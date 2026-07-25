@@ -1,0 +1,63 @@
+@import "tailwindcss";
+
+@theme {
+  --color-lisno-navy: #17213f;
+  --color-lisno-violet: #7057ff;
+  --color-lisno-parchment: #f8f4ed;
+  --color-lisno-success: #2f9e72;
+  --color-lisno-warning: #d99125;
+  --color-lisno-danger: #cc4b4b;
+  --color-lisno-ink: #1e2433;
+  --color-lisno-muted: #697386;
+}
+
+@layer base {
+  :root {
+    color: var(--color-lisno-ink);
+    background: var(--color-lisno-parchment);
+    font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+  }
+
+  body {
+    margin: 0;
+  }
+}
+
+.lisno-shell {
+  box-sizing: border-box;
+  display: grid;
+  min-height: 100vh;
+  place-content: center;
+  gap: 1rem;
+  padding: 2rem;
+  background: radial-gradient(circle at top, #2b3761, var(--color-lisno-navy) 65%);
+  color: var(--color-lisno-parchment);
+  text-align: center;
+}
+
+.lisno-mark {
+  display: grid;
+  width: 3.5rem;
+  height: 3.5rem;
+  place-items: center;
+  justify-self: center;
+  border-radius: 1rem;
+  background: var(--color-lisno-violet);
+  font-size: 1.5rem;
+  font-weight: 800;
+}
+
+.lisno-eyebrow {
+  margin: 0;
+  color: #cfc8ff;
+  font-size: 0.75rem;
+  font-weight: 800;
+  letter-spacing: 0.2em;
+}
+
+.lisno-shell h1 {
+  max-width: 34rem;
+  margin: 0;
+  font-size: clamp(2.5rem, 7vw, 4.5rem);
+  line-height: 1;
+}
