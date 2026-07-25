@@ -1,0 +1,320 @@
+import type { Role, TaskStatus } from "../contracts/domain.js";
+
+export type ProjectStatus = "planning" | "active" | "on_hold" | "completed";
+
+export type DesignStageType =
+  | "internal_kickoff"
+  | "client_kickoff"
+  | "key_collection"
+  | "site_measurement"
+  | "concept_mood_board"
+  | "floor_plan"
+  | "client_revisions"
+  | "final_approval"
+  | "design_handoff";
+
+export type TaskEventType =
+  | "status_changed"
+  | "progress_changed"
+  | "note_added"
+  | "deadline_revised";
+
+export type ApprovalStatus = "draft" | "in_review" | "approved" | "rejected";
+
+export type JsonObject = Record<string, unknown>;
+
+export interface UserRecord {
+  id: string;
+  name: string;
+  email: string;
+  passwordHash: string;
+  role: Role;
+  active: boolean;
+  managerId: string | null;
+  avatar?: string;
+  title?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ProjectRecord {
+  id: string;
+  name: string;
+  clientId: string;
+  initiatingDesignerId: string;
+  assignedDesignerIds: string[];
+  managerId: string;
+  status: ProjectStatus;
+  location: string;
+  plannedStartAt: string;
+  plannedEndAt: string;
+  actualStartAt: string | null;
+  actualEndAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface FloorRecord {
+  id: string;
+  projectId: string;
+  name: string;
+  number: string;
+  order: number;
+  progress: number;
+  plannedStartAt: string;
+  plannedEndAt: string;
+  actualStartAt: string | null;
+  actualEndAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface DesignStageRecord {
+  id: string;
+  projectId: string;
+  floorId: string;
+  name: string;
+  type: DesignStageType;
+  order: number;
+  dependencyStageIds: string[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface TaskRecordBase {
+  id: string;
+  projectId: string;
+  floorId: string;
+  stageId: string;
+  title: string;
+  description: string;
+  order: number;
+  ownerId: string;
+  plannedStartAt: string;
+  originalDeadlineAt: string;
+  currentDeadlineAt: string;
+  plannedEffort: number | null;
+  progress: number;
+  dependencyTaskIds: string[];
+  latestUpdateAt: string | null;
+  wasYellow?: boolean;
+  approvalVersion?: number | null;
+  approvalStatus?: "approved" | "rejected" | "unapproved" | null;
+  revisionCount?: number | null;
+  hasReview?: boolean;
+  updateEvents?: Array<{ occurredAt: string }>;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type TaskRecord =
+  | (TaskRecordBase & { status: "completed"; completedAt: string })
+  | (TaskRecordBase & {
+      status: Exclude<TaskStatus, "completed">;
+      completedAt: null;
+    });
+
+export interface TaskChange {
+  status?: TaskStatus;
+  progress?: number;
+  currentDeadlineAt?: string;
+  completedAt?: string | null;
+  latestUpdateAt?: string | null;
+  description?: string;
+}
+
+export interface TaskEventRecord {
+  id: string;
+  taskId: string;
+  actorId: string;
+  type: TaskEventType;
+  occurredAt: string;
+  from: JsonObject;
+  to: JsonObject;
+  note: string | null;
+  createdAt: string;
+}
+
+export type NewTaskEvent = Omit<TaskEventRecord, "id" | "createdAt"> & {
+  id?: string;
+  createdAt?: string;
+};
+
+export interface DesignVersionRecord {
+  id: string;
+  projectId: string;
+  floorId: string;
+  stageId: string;
+  taskId: string | null;
+  versionNumber: number;
+  originalFilename: string;
+  storedFileReference: string;
+  mimeType: string;
+  sizeBytes: number;
+  uploaderId: string;
+  uploadedAt: string;
+  approvalStatus: ApprovalStatus;
+  reviewerId: string | null;
+  approvedAt: string | null;
+  clientVisible: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type NewDesignVersion = Omit<
+  DesignVersionRecord,
+  "id" | "createdAt" | "updatedAt"
+> & {
+  id?: string;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
+export interface DesignVersionChange {
+  approvalStatus?: ApprovalStatus;
+  reviewerId?: string | null;
+  approvedAt?: string | null;
+  clientVisible?: boolean;
+}
+
+export interface EvaluationRecord {
+  id: string;
+  subjectUserId: string;
+  evaluatorUserId: string;
+  evaluatorRole: Extract<Role, "design_manager" | "design_head">;
+  periodStartAt: string;
+  periodEndAt: string;
+  score: number;
+  comments: string;
+  revisionOf: string | null;
+  createdAt: string;
+}
+
+export type NewEvaluation = Omit<EvaluationRecord, "id" | "revisionOf" | "createdAt"> & {
+  id?: string;
+  revisionOf?: string | null;
+  createdAt?: string;
+};
+
+export interface AuditEventRecord {
+  id: string;
+  actorId: string;
+  action: string;
+  entityType: string;
+  entityId: string;
+  occurredAt: string;
+  oldValues: JsonObject;
+  newValues: JsonObject;
+  reason: string | null;
+  createdAt: string;
+}
+
+export type NewAuditEvent = Omit<AuditEventRecord, "id" | "reason" | "createdAt"> & {
+  id?: string;
+  reason?: string | null;
+  createdAt?: string;
+};
+
+export interface ManagerTreeDesigner {
+  id: string;
+  name: string;
+  email: string;
+  avatar?: string;
+  title?: string;
+}
+
+export interface ManagerTreeNode {
+  id: string;
+  name: string;
+  email: string;
+  avatar?: string;
+  title?: string;
+  designers: ManagerTreeDesigner[];
+}
+
+export interface ProjectHierarchy extends ProjectRecord {
+  floors: Array<
+    FloorRecord & {
+      stages: Array<
+        DesignStageRecord & {
+          tasks: TaskRecord[];
+        }
+      >;
+    }
+  >;
+}
+
+export interface TaskFilters {
+  projectId?: string;
+  floorId?: string;
+  stageId?: string;
+  ownerId?: string;
+}
+
+export interface AuditFilters {
+  actorId?: string;
+  entityType?: string;
+  entityId?: string;
+}
+
+export interface SeedData {
+  users: UserRecord[];
+  projects: ProjectRecord[];
+  floors: FloorRecord[];
+  stages: DesignStageRecord[];
+  tasks: TaskRecord[];
+  taskEvents: TaskEventRecord[];
+  designVersions: DesignVersionRecord[];
+  evaluations: EvaluationRecord[];
+  auditEvents: AuditEventRecord[];
+}
+
+export type NewProject = ProjectRecord;
+export type NewFloor = FloorRecord;
+export type NewDesignStage = DesignStageRecord;
+export type NewTask = TaskRecord;
+
+export interface AppRepository {
+  findUserById(id: string): Promise<UserRecord | null>;
+  findUserByEmail(email: string): Promise<UserRecord | null>;
+  listUsers(): Promise<UserRecord[]>;
+  listProjectsForUser(user: UserRecord): Promise<ProjectRecord[]>;
+  findProjectById(id: string): Promise<ProjectRecord | null>;
+  createProject(input: NewProject): Promise<ProjectRecord>;
+  createFloor(input: NewFloor): Promise<FloorRecord>;
+  createDesignStage(input: NewDesignStage): Promise<DesignStageRecord>;
+  createTask(input: NewTask): Promise<TaskRecord>;
+  getProjectHierarchy(projectId: string): Promise<ProjectHierarchy | null>;
+  getOrganizationTree(): Promise<ManagerTreeNode[]>;
+  findTaskById(id: string): Promise<TaskRecord | null>;
+  listTasks(filters: TaskFilters): Promise<TaskRecord[]>;
+  updateTask(id: string, expectedVersion: number, change: TaskChange): Promise<TaskRecord>;
+  appendTaskEvent(input: NewTaskEvent): Promise<TaskEventRecord>;
+  listTaskEvents(taskId: string): Promise<TaskEventRecord[]>;
+  createDesignVersion(input: NewDesignVersion): Promise<DesignVersionRecord>;
+  findDesignVersionById(id: string): Promise<DesignVersionRecord | null>;
+  listDesignVersions(projectId: string): Promise<DesignVersionRecord[]>;
+  updateDesignVersion(
+    id: string,
+    change: DesignVersionChange
+  ): Promise<DesignVersionRecord>;
+  createEvaluation(input: NewEvaluation): Promise<EvaluationRecord>;
+  listEvaluationsForSubject(subjectUserId: string): Promise<EvaluationRecord[]>;
+  appendAuditEvent(input: NewAuditEvent): Promise<AuditEventRecord>;
+  listAuditEvents(filters: AuditFilters): Promise<AuditEventRecord[]>;
+}
+
+export class RepositoryConflictError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "RepositoryConflictError";
+  }
+}
+
+export class RepositoryNotFoundError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "RepositoryNotFoundError";
+  }
+}
