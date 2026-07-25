@@ -17,6 +17,37 @@ export interface TaskRisk {
   forecastCompletion?: string;
 }
 
+interface KpiTaskBase {
+  id: string;
+  plannedStartAt: string;
+  currentDeadlineAt: string;
+  plannedEffort?: number | null;
+  progress: number;
+  wasYellow?: boolean;
+  approvalVersion?: number | null;
+  approvalStatus?: "approved" | "rejected" | "unapproved" | null;
+  revisionCount?: number | null;
+  hasReview?: boolean;
+  updateEvents?: Array<{ occurredAt: string }>;
+}
+
+export type KpiTask =
+  | (KpiTaskBase & {
+      status: "completed";
+      completedAt: string;
+    })
+  | (KpiTaskBase & {
+      status: Exclude<TaskStatus, "completed">;
+      completedAt?: null;
+    });
+
+export interface KpiInput {
+  tasks: KpiTask[];
+  periodStartAt: string;
+  periodEndAt: string;
+  now: Date;
+}
+
 export type KpiComponentKey =
   | "onTime"
   | "quality"

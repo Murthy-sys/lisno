@@ -143,6 +143,152 @@ describe("calculateKpi", () => {
     expect(result).toMatchObject({ score: 75, eligibleCount: 2 });
   });
 
+  it("effort-weights update discipline across task window scores", () => {
+    const result = component(
+      {
+        periodStartAt: "2026-07-06T00:00:00.000Z",
+        periodEndAt: "2026-07-10T00:00:00.000Z",
+        now: at("2026-07-10T00:00:00.000Z"),
+        tasks: [
+          task({
+            id: "high-effort-missed",
+            plannedStartAt: "2026-07-06T00:00:00.000Z",
+            currentDeadlineAt: "2026-07-07T00:00:00.000Z",
+            plannedEffort: 9,
+            status: "in_progress",
+            progress: 50,
+            completedAt: null,
+            updateEvents: []
+          }),
+          task({
+            id: "low-effort-timely",
+            plannedStartAt: "2026-07-06T00:00:00.000Z",
+            currentDeadlineAt: "2026-07-07T00:00:00.000Z",
+            plannedEffort: 1,
+            status: "in_progress",
+            progress: 50,
+            completedAt: null,
+            updateEvents: [
+              { occurredAt: "2026-07-06T12:00:00.000Z" },
+              { occurredAt: "2026-07-08T12:00:00.000Z" }
+            ]
+          })
+        ]
+      },
+      "updateDiscipline"
+    );
+
+    expect(result).toMatchObject({ score: 10, eligibleCount: 2 });
+  });
+
+  it("uses completion as an update-discipline lifecycle end", () => {
+    const result = component(
+      {
+        periodStartAt: "2026-07-06T00:00:00.000Z",
+        periodEndAt: "2026-07-10T00:00:00.000Z",
+        now: at("2026-07-10T00:00:00.000Z"),
+        tasks: [
+          task({
+            id: "completed-with-updates",
+            plannedStartAt: "2026-07-06T00:00:00.000Z",
+            currentDeadlineAt: "2026-07-07T00:00:00.000Z",
+            completedAt: "2026-07-10T00:00:00.000Z",
+            updateEvents: [
+              { occurredAt: "2026-07-06T12:00:00.000Z" },
+              { occurredAt: "2026-07-08T12:00:00.000Z" }
+            ]
+          })
+        ]
+      },
+      "updateDiscipline"
+    );
+
+    expect(result).toMatchObject({ score: 100, eligibleCount: 1 });
+  });
+
+  it("does not count an event before the actual active start instant", () => {
+    const result = component(
+      {
+        periodStartAt: "2026-07-06T00:00:00.000Z",
+        periodEndAt: "2026-07-08T12:00:00.000Z",
+        now: at("2026-07-08T12:00:00.000Z"),
+        tasks: [
+          task({
+            id: "precise-boundary",
+            plannedStartAt: "2026-07-06T12:00:00.000Z",
+            currentDeadlineAt: "2026-07-31T00:00:00.000Z",
+            status: "in_progress",
+            progress: 50,
+            completedAt: null,
+            updateEvents: [{ occurredAt: "2026-07-06T11:59:59.999Z" }]
+          })
+        ]
+      },
+      "updateDiscipline"
+    );
+
+    expect(result).toMatchObject({ score: 0, eligibleCount: 1 });
+  });
+
+  it("does not require a partial two-business-day window", () => {
+    const result = component(
+      {
+        periodStartAt: "2026-07-06T00:00:00.000Z",
+        periodEndAt: "2026-07-08T11:59:59.999Z",
+        now: at("2026-07-08T11:59:59.999Z"),
+        tasks: [
+          task({
+            id: "partial-window",
+            plannedStartAt: "2026-07-06T12:00:00.000Z",
+            currentDeadlineAt: "2026-07-31T00:00:00.000Z",
+            status: "in_progress",
+            progress: 50,
+            completedAt: null
+          })
+        ]
+      },
+      "updateDiscipline"
+    );
+
+    expect(result).toMatchObject({ score: null, eligibleCount: 0 });
+  });
+
+  it("continues requiring updates from an overdue task that remains active", () => {
+    const result = component(
+      {
+        periodStartAt: "2026-07-06T00:00:00.000Z",
+        periodEndAt: "2026-07-10T00:00:00.000Z",
+        now: at("2026-07-10T00:00:00.000Z"),
+        tasks: [
+          task({
+            id: "overdue-but-active",
+            plannedStartAt: "2026-07-06T00:00:00.000Z",
+            currentDeadlineAt: "2026-07-07T00:00:00.000Z",
+            status: "in_progress",
+            progress: 50,
+            completedAt: null,
+            updateEvents: [{ occurredAt: "2026-07-08T12:00:00.000Z" }]
+          })
+        ]
+      },
+      "updateDiscipline"
+    );
+
+    expect(result).toMatchObject({ score: 50, eligibleCount: 1 });
+  });
+
+  it("does not award revision efficiency to work without an explicit review", () => {
+    const result = component(
+      {
+        ...period,
+        tasks: [task({ id: "not-reviewed", hasReview: false, revisionCount: 0 })]
+      },
+      "revisionEfficiency"
+    );
+
+    expect(result).toMatchObject({ score: null, eligibleCount: 0 });
+  });
+
   it("uses planned effort and defaults missing effort to one for workload completion", () => {
     const result = component(
       {
@@ -167,7 +313,7 @@ describe("calculateKpi", () => {
   it("normalizes configured weights after excluding components without eligible data", () => {
     const result = calculateKpi({
       ...period,
-      tasks: [task()]
+      tasks: [task({ completedAt: "2026-07-01T00:00:00.000Z" })]
     });
 
     expect(result.score).toBe(100);

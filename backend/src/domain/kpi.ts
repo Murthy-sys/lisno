@@ -141,9 +141,7 @@ function approvalScoreFor(task: KpiTask, now: Date): number | null {
 
 function revisionEfficiencyComponent(tasks: KpiTask[]) {
   const eligible = tasks.flatMap((task) => {
-    if (!task.hasReview && (task.revisionCount === null || task.revisionCount === undefined)) {
-      return [];
-    }
+    if (task.hasReview !== true) return [];
     const revisionCount = Math.max(0, task.revisionCount ?? 0);
     return [{ score: Math.max(0, 100 - Math.max(0, revisionCount - 1) * 20), weight: taskWeight(task) }];
   });
@@ -152,57 +150,50 @@ function revisionEfficiencyComponent(tasks: KpiTask[]) {
 }
 
 function updateDisciplineComponent(tasks: KpiTask[], input: KpiInput) {
-  let timelyWindows = 0;
-  let requiredWindows = 0;
-  let eligibleCount = 0;
+  const eligible = tasks.flatMap((task) => {
+    const windows = requiredUpdateWindows(task, input);
+    if (windows.length === 0) return [];
 
-  for (const task of tasks) {
-    if (task.status === "completed") continue;
-    const windowCount = updateWindowCount(task, input);
-    if (windowCount === 0) continue;
+    const timelyWindows = windows.filter((window) =>
+      (task.updateEvents ?? []).some((event) => {
+        const occurredAt = new Date(event.occurredAt).getTime();
+        return occurredAt >= window.start.getTime() && occurredAt < window.end.getTime();
+      })
+    ).length;
 
-    eligibleCount += 1;
-    requiredWindows += windowCount;
-    timelyWindows += timelyUpdateWindowCount(task, input, windowCount);
-  }
+    return [{ score: (timelyWindows / windows.length) * 100, weight: taskWeight(task) }];
+  });
 
-  return {
-    score: requiredWindows === 0 ? null : (timelyWindows / requiredWindows) * 100,
-    eligibleCount
-  };
+  return componentAverage(eligible);
 }
 
-function updateWindowCount(task: KpiTask, input: KpiInput): number {
-  return Math.ceil(businessDaysInActiveRange(task, input).length / 2);
+function requiredUpdateWindows(task: KpiTask, input: KpiInput): Array<{ start: Date; end: Date }> {
+  const start = maxDate(new Date(task.plannedStartAt), new Date(input.periodStartAt));
+  const endCandidates = [input.now, new Date(input.periodEndAt)];
+  if (task.status === "completed") endCandidates.push(new Date(task.completedAt));
+  const end = endCandidates.reduce(minDate);
+  const windows: Array<{ start: Date; end: Date }> = [];
+  let windowStart = start;
+
+  while (true) {
+    const windowEnd = addBusinessDays(windowStart, 2);
+    if (windowEnd.getTime() > end.getTime()) return windows;
+    windows.push({ start: windowStart, end: windowEnd });
+    windowStart = windowEnd;
+  }
 }
 
-function timelyUpdateWindowCount(task: KpiTask, input: KpiInput, windowCount: number): number {
-  const businessDays = businessDaysInActiveRange(task, input);
-  const indexes = new Map(businessDays.map((day, index) => [day, index]));
-  const timelyWindows = new Set<number>();
+function addBusinessDays(start: Date, count: number): Date {
+  const result = new Date(start);
+  let added = 0;
 
-  for (const event of task.updateEvents ?? []) {
-    const index = indexes.get(utcDay(new Date(event.occurredAt)));
-    if (index !== undefined) timelyWindows.add(Math.floor(index / 2));
+  while (added < count) {
+    result.setUTCDate(result.getUTCDate() + 1);
+    const day = result.getUTCDay();
+    if (day !== 0 && day !== 6) added += 1;
   }
 
-  return [...timelyWindows].filter((index) => index < windowCount).length;
-}
-
-function businessDaysInActiveRange(task: KpiTask, input: KpiInput): string[] {
-  const rangeStart = maxDate(new Date(task.plannedStartAt), new Date(input.periodStartAt));
-  const rangeEnd = minDate(input.now, new Date(input.periodEndAt));
-  const days: string[] = [];
-  const cursor = utcMidnight(rangeStart);
-  const end = utcMidnight(rangeEnd);
-
-  while (cursor.getTime() < end.getTime()) {
-    const day = cursor.getUTCDay();
-    if (day !== 0 && day !== 6) days.push(utcDay(cursor));
-    cursor.setUTCDate(cursor.getUTCDate() + 1);
-  }
-
-  return days;
+  return result;
 }
 
 function workloadCompletionComponent(tasks: KpiTask[]) {
@@ -246,14 +237,6 @@ function completionDate(task: KpiTask): Date | undefined {
 
 function taskWeight(task: KpiTask): number {
   return task.plannedEffort && task.plannedEffort > 0 ? task.plannedEffort : 1;
-}
-
-function utcMidnight(value: Date): Date {
-  return new Date(Date.UTC(value.getUTCFullYear(), value.getUTCMonth(), value.getUTCDate()));
-}
-
-function utcDay(value: Date): string {
-  return value.toISOString().slice(0, 10);
 }
 
 function maxDate(left: Date, right: Date): Date {

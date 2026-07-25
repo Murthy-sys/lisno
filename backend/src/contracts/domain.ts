@@ -17,14 +17,12 @@ export interface TaskRisk {
   forecastCompletion?: string;
 }
 
-export interface KpiTask {
+interface KpiTaskBase {
   id: string;
   plannedStartAt: string;
   currentDeadlineAt: string;
   plannedEffort?: number | null;
   progress: number;
-  status: TaskStatus;
-  completedAt?: string | null;
   wasYellow?: boolean;
   approvalVersion?: number | null;
   approvalStatus?: "approved" | "rejected" | "unapproved" | null;
@@ -32,6 +30,16 @@ export interface KpiTask {
   hasReview?: boolean;
   updateEvents?: Array<{ occurredAt: string }>;
 }
+
+export type KpiTask =
+  | (KpiTaskBase & {
+      status: "completed";
+      completedAt: string;
+    })
+  | (KpiTaskBase & {
+      status: Exclude<TaskStatus, "completed">;
+      completedAt?: null;
+    });
 
 export interface KpiInput {
   tasks: KpiTask[];

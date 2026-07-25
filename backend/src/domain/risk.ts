@@ -15,7 +15,8 @@ export function calculateTaskRisk(task: KpiTask, now: Date): TaskRisk {
   const progressRatio = clamp(task.progress / 100);
 
   if (task.status === "completed") {
-    const completedAt = task.completedAt ? new Date(task.completedAt) : now;
+    if (!task.completedAt) throw new Error("Completed tasks require completedAt.");
+    const completedAt = new Date(task.completedAt);
     return {
       level: completedAt.getTime() > currentDeadlineAt.getTime() ? "red" : "green",
       reason:

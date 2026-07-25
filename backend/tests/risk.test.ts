@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import type { KpiTask } from "../src/contracts/domain.js";
 import { calculateTaskRisk } from "../src/domain/risk.js";
 
 const at = (value: string) => new Date(value);
@@ -105,6 +106,26 @@ describe("calculateTaskRisk", () => {
       level: "red",
       reason: "Task is overdue."
     });
+  });
+
+  it("keeps overdue blocked work red because deadline breaches outrank blocked status", () => {
+    const result = calculateTaskRisk(
+      task({ progress: 50, status: "blocked" }),
+      at("2026-07-11T00:00:00.001Z")
+    );
+
+    expect(result).toMatchObject({
+      level: "red",
+      reason: "Task is overdue."
+    });
+  });
+
+  it("rejects a completed task that omits its completion timestamp", () => {
+    const invalidCompletedTask = task({ status: "completed" }) as unknown as KpiTask;
+
+    expect(() => calculateTaskRisk(invalidCompletedTask, at("2026-07-12T00:00:00.000Z"))).toThrow(
+      "Completed tasks require completedAt."
+    );
   });
 
   it("marks a completed task green when it completed at its deadline", () => {
