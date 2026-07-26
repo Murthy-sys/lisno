@@ -2,7 +2,11 @@ import { Router } from "express";
 import { z } from "zod";
 
 import { authenticate, authorizeRoles } from "../middleware/auth.js";
-import { validateBody } from "../middleware/validate.js";
+import {
+  paginatedEnvelope,
+  paginationShape
+} from "../middleware/pagination.js";
+import { validateBody, validateQuery } from "../middleware/validate.js";
 import type { AuthService } from "../services/auth.service.js";
 import type { EvaluationService } from "../services/evaluation.service.js";
 
@@ -16,6 +20,7 @@ const evaluationSchema = z
     revisionOf: z.string().trim().min(1).optional()
   })
   .strict();
+const listQuerySchema = z.object(paginationShape).strict();
 
 export function createEvaluationsRouter(
   authService: AuthService,
@@ -47,12 +52,18 @@ export function createEvaluationsRouter(
     "/evaluations/:subjectId",
     protectedRoute,
     authorizeRoles("designer", "design_manager", "design_head"),
+    validateQuery(listQuerySchema),
     async (request, response, next) => {
       try {
+        const pagination = response.locals.validatedQuery;
         response.json({
-          data: await evaluationService.list(
-            request.authenticatedUser!,
-            request.params.subjectId as string
+          data: paginatedEnvelope(
+            await evaluationService.list(
+              request.authenticatedUser!,
+              request.params.subjectId as string,
+              pagination
+            ),
+            pagination
           )
         });
       } catch (error) {

@@ -2,7 +2,9 @@ import type {
   AppRepository,
   AuditEventRecord,
   AuditFilters,
-  JsonObject
+  JsonObject,
+  PageResult,
+  PaginationInput
 } from "../repositories/types.js";
 import type { PublicUser } from "./auth.service.js";
 import { forbidden, requireActor } from "./workflow.js";
@@ -23,7 +25,11 @@ export interface AuditService {
     input: AuditWrite,
     transactionRepository?: AppRepository
   ): Promise<AuditEventRecord>;
-  list(actor: PublicUser, filters: AuditFilters): Promise<AuditEventRecord[]>;
+  list(
+    actor: PublicUser,
+    filters: AuditFilters,
+    pagination: PaginationInput
+  ): Promise<PageResult<AuditEventRecord>>;
 }
 
 export function createAuditService(repository: AppRepository): AuditService {
@@ -41,17 +47,24 @@ export function createAuditService(repository: AppRepository): AuditService {
       });
     },
 
-    async list(actor, filters) {
+    async list(actor, filters, pagination) {
       await requireActor(repository, actor);
       if (actor.role === "client") forbidden();
-      const events = await repository.listAuditEvents(filters);
-      if (actor.role === "design_head") return events;
-
-      const users = await repository.listUsers();
-      if (actor.role === "designer") {
-        return events.filter((event) => event.actorId === actor.id);
+      if (actor.role === "design_head") {
+        return repository.pageAuditEvents(filters, pagination);
       }
 
+      if (actor.role === "designer") {
+        if (filters.actorId && filters.actorId !== actor.id) {
+          return { items: [], total: 0 };
+        }
+        return repository.pageAuditEvents(
+          { ...filters, actorId: actor.id },
+          pagination
+        );
+      }
+
+      const users = await repository.listUsers();
       const directDesignerIds = new Set(
         users
           .filter(
@@ -70,11 +83,13 @@ export function createAuditService(repository: AppRepository): AuditService {
           .flat()
           .map((task) => task.id)
       );
-      return events.filter(
-        (event) =>
-          event.actorId === actor.id ||
-          directDesignerIds.has(event.actorId) ||
-          (event.entityType === "task" && visibleTaskIds.has(event.entityId))
+      return repository.pageAuditEvents(
+        {
+          ...filters,
+          visibleActorIds: [actor.id, ...directDesignerIds],
+          visibleTaskIds: [...visibleTaskIds]
+        },
+        pagination
       );
     }
   };

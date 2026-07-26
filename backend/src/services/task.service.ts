@@ -2,12 +2,16 @@ import { ApiError } from "../middleware/errors.js";
 import {
   RepositoryConflictError,
   type AppRepository,
+  type PageResult,
+  type PaginationInput,
+  type TaskEventRecord,
   type TaskRecord
 } from "../repositories/types.js";
 import type { PublicUser } from "./auth.service.js";
 import type { AuditService } from "./audit.service.js";
 import {
   forbidden,
+  requireAccessibleProject,
   requireTask,
   requireUser,
   type Clock
@@ -28,6 +32,11 @@ export interface ReviseDeadlineInput {
 }
 
 export interface TaskService {
+  listEvents(
+    actor: PublicUser,
+    taskId: string,
+    pagination: PaginationInput
+  ): Promise<PageResult<TaskEventRecord>>;
   update(
     actor: PublicUser,
     taskId: string,
@@ -54,6 +63,13 @@ export function createTaskService(
   clock: Clock
 ): TaskService {
   return {
+    async listEvents(actor, taskId, pagination) {
+      if (actor.role === "client") forbidden();
+      const task = await requireTask(repository, taskId);
+      await requireAccessibleProject(repository, actor, task.projectId);
+      return repository.pageTaskEvents(task.id, pagination);
+    },
+
     async update(actor, taskId, input) {
       if (actor.role !== "designer") forbidden();
       const current = await requireTask(repository, taskId);

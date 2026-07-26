@@ -2,14 +2,19 @@ import { Router } from "express";
 import { z } from "zod";
 
 import { authenticate, authorizeRoles } from "../middleware/auth.js";
-import { ApiError } from "../middleware/errors.js";
+import {
+  paginatedEnvelope,
+  paginationShape
+} from "../middleware/pagination.js";
+import { validateQuery } from "../middleware/validate.js";
 import type { AuthService } from "../services/auth.service.js";
 import type { KpiService } from "../services/kpi.service.js";
 
 const querySchema = z
   .object({
     from: z.string().datetime({ offset: true }),
-    to: z.string().datetime({ offset: true })
+    to: z.string().datetime({ offset: true }),
+    ...paginationShape
   })
   .strict();
 
@@ -23,29 +28,41 @@ export function createKpisRouter(
     "/kpis/users/:userId",
     authenticate(authService),
     authorizeRoles("designer", "design_manager", "design_head"),
+    validateQuery(querySchema),
     async (request, response, next) => {
       try {
-        const parsed = querySchema.safeParse(request.query);
-        if (!parsed.success) {
-          const fields = Object.fromEntries(
-            parsed.error.issues
-              .filter((issue) => issue.path.length > 0)
-              .map((issue) => [issue.path.join("."), issue.message])
-          );
-          throw new ApiError(
-            400,
-            "VALIDATION_ERROR",
-            "Request validation failed.",
-            fields
-          );
-        }
+        const { from, to, limit, offset } =
+          response.locals.validatedQuery;
+        const pagination = { limit, offset };
+        const data = await kpiService.get(
+          request.authenticatedUser!,
+          request.params.userId as string,
+          from,
+          to,
+          pagination
+        );
         response.json({
-          data: await kpiService.get(
-            request.authenticatedUser!,
-            request.params.userId as string,
-            parsed.data.from,
-            parsed.data.to
-          )
+          data: {
+            ...data,
+            tasks: paginatedEnvelope(
+              {
+                ...data.tasks,
+                items: data.tasks.items.map((task) => ({
+                  ...task,
+                  events: {
+                    ...paginatedEnvelope(task.events, {
+                      limit: 20,
+                      offset: 0
+                    }),
+                    href: `/api/v1/tasks/${encodeURIComponent(
+                      task.id
+                    )}/events`
+                  }
+                }))
+              },
+              pagination
+            )
+          }
         });
       } catch (error) {
         next(error);

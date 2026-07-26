@@ -7,23 +7,12 @@ export function validateBody(schema: ZodType): RequestHandler {
   return (request, _response, next) => {
     const result = schema.safeParse(request.body);
     if (!result.success) {
-      const fields: Record<string, string> = {};
-      for (const issue of result.error.issues) {
-        if (issue.code === "unrecognized_keys") {
-          for (const key of issue.keys) {
-            if (!fields[key]) fields[key] = `Unrecognized field: ${key}.`;
-          }
-          continue;
-        }
-        const field = issue.path.join(".");
-        if (field && !fields[field]) fields[field] = issue.message;
-      }
       next(
         new ApiError(
           400,
           "VALIDATION_ERROR",
           "Request validation failed.",
-          fields
+          validationFields(result.error.issues)
         )
       );
       return;
@@ -32,4 +21,45 @@ export function validateBody(schema: ZodType): RequestHandler {
     request.body = result.data;
     next();
   };
+}
+
+export function validateQuery(schema: ZodType): RequestHandler {
+  return (request, response, next) => {
+    const result = schema.safeParse(request.query);
+    if (!result.success) {
+      next(
+        new ApiError(
+          400,
+          "VALIDATION_ERROR",
+          "Request validation failed.",
+          validationFields(result.error.issues)
+        )
+      );
+      return;
+    }
+    response.locals.validatedQuery = result.data;
+    next();
+  };
+}
+
+function validationFields(
+  issues: Array<{
+    code: string;
+    path: PropertyKey[];
+    message: string;
+    keys?: string[];
+  }>
+) {
+  const fields: Record<string, string> = {};
+  for (const issue of issues) {
+    if (issue.code === "unrecognized_keys") {
+      for (const key of issue.keys ?? []) {
+        if (!fields[key]) fields[key] = `Unrecognized field: ${key}.`;
+      }
+      continue;
+    }
+    const field = issue.path.map(String).join(".");
+    if (field && !fields[field]) fields[field] = issue.message;
+  }
+  return fields;
 }

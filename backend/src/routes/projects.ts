@@ -2,11 +2,16 @@ import { Router } from "express";
 import { z } from "zod";
 
 import { authenticate, authorizeRoles } from "../middleware/auth.js";
-import { validateBody } from "../middleware/validate.js";
+import {
+  paginatedEnvelope,
+  paginationShape
+} from "../middleware/pagination.js";
+import { validateBody, validateQuery } from "../middleware/validate.js";
 import type { AuthService } from "../services/auth.service.js";
 import type { ProjectService } from "../services/project.service.js";
 
 const isoDateTime = z.string().datetime({ offset: true });
+const listQuerySchema = z.object(paginationShape).strict();
 const projectSchema = z
   .object({
     name: z.string().trim().min(1),
@@ -67,15 +72,27 @@ export function createProjectsRouter(
   const router = Router();
   const protectedRoute = authenticate(authService);
 
-  router.get("/projects", protectedRoute, async (request, response, next) => {
-    try {
-      response.json({
-        data: await projectService.list(request.authenticatedUser!)
-      });
-    } catch (error) {
-      next(error);
+  router.get(
+    "/projects",
+    protectedRoute,
+    validateQuery(listQuerySchema),
+    async (request, response, next) => {
+      try {
+        const pagination = response.locals.validatedQuery;
+        response.json({
+          data: paginatedEnvelope(
+            await projectService.list(
+              request.authenticatedUser!,
+              pagination
+            ),
+            pagination
+          )
+        });
+      } catch (error) {
+        next(error);
+      }
     }
-  });
+  );
 
   router.post(
     "/projects",

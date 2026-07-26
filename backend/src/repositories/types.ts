@@ -257,6 +257,18 @@ export interface AuditFilters {
   actorId?: string;
   entityType?: string;
   entityId?: string;
+  visibleActorIds?: string[];
+  visibleTaskIds?: string[];
+}
+
+export interface PaginationInput {
+  limit: number;
+  offset: number;
+}
+
+export interface PageResult<T> {
+  items: T[];
+  total: number;
 }
 
 export interface SeedData {
@@ -284,6 +296,10 @@ export interface AppRepository {
   findUserByEmail(email: string): Promise<UserRecord | null>;
   listUsers(): Promise<UserRecord[]>;
   listProjectsForUser(user: UserRecord): Promise<ProjectRecord[]>;
+  pageProjectsForUser(
+    user: UserRecord,
+    pagination: PaginationInput
+  ): Promise<PageResult<ProjectRecord>>;
   findProjectById(id: string): Promise<ProjectRecord | null>;
   createProject(input: NewProject): Promise<ProjectRecord>;
   createFloor(input: NewFloor): Promise<FloorRecord>;
@@ -293,9 +309,37 @@ export interface AppRepository {
   getOrganizationTree(): Promise<ManagerTreeNode[]>;
   findTaskById(id: string): Promise<TaskRecord | null>;
   listTasks(filters: TaskFilters): Promise<TaskRecord[]>;
+  listKpiTasksForPeriod(
+    ownerIds: string[],
+    periodStartAt: string,
+    periodEndAt: string
+  ): Promise<TaskRecord[]>;
+  pageKpiTasksForPeriod(
+    ownerIds: string[],
+    periodStartAt: string,
+    periodEndAt: string,
+    pagination: PaginationInput
+  ): Promise<PageResult<TaskRecord>>;
   updateTask(id: string, expectedVersion: number, change: TaskChange): Promise<TaskRecord>;
   appendTaskEvent(input: NewTaskEvent): Promise<TaskEventRecord>;
   listTaskEvents(taskId: string): Promise<TaskEventRecord[]>;
+  pageTaskEvents(
+    taskId: string,
+    pagination: PaginationInput
+  ): Promise<PageResult<TaskEventRecord>>;
+  listKpiTaskEventsForPeriod(
+    taskId: string,
+    actorId: string,
+    periodStartAt: string,
+    periodEndAt: string
+  ): Promise<TaskEventRecord[]>;
+  pageKpiTaskEventsForPeriod(
+    taskId: string,
+    actorId: string,
+    periodStartAt: string,
+    periodEndAt: string,
+    pagination: PaginationInput
+  ): Promise<PageResult<TaskEventRecord>>;
   createDesignVersion(input: NewDesignVersion): Promise<DesignVersionRecord>;
   findDesignVersionById(id: string): Promise<DesignVersionRecord | null>;
   listDesignVersions(projectId: string): Promise<DesignVersionRecord[]>;
@@ -305,8 +349,16 @@ export interface AppRepository {
   ): Promise<DesignVersionRecord>;
   createEvaluation(input: NewEvaluation): Promise<EvaluationRecord>;
   listEvaluationsForSubject(subjectUserId: string): Promise<EvaluationRecord[]>;
+  pageEvaluationsForSubject(
+    subjectUserId: string,
+    pagination: PaginationInput
+  ): Promise<PageResult<EvaluationRecord>>;
   appendAuditEvent(input: NewAuditEvent): Promise<AuditEventRecord>;
   listAuditEvents(filters: AuditFilters): Promise<AuditEventRecord[]>;
+  pageAuditEvents(
+    filters: AuditFilters,
+    pagination: PaginationInput
+  ): Promise<PageResult<AuditEventRecord>>;
 }
 
 export class RepositoryConflictError extends Error {

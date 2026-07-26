@@ -1,7 +1,9 @@
 import { ApiError } from "../middleware/errors.js";
 import type {
   AppRepository,
-  EvaluationRecord
+  EvaluationRecord,
+  PageResult,
+  PaginationInput
 } from "../repositories/types.js";
 import type { PublicUser } from "./auth.service.js";
 import type { AuditService } from "./audit.service.js";
@@ -27,7 +29,11 @@ export interface EvaluationService {
     actor: PublicUser,
     input: CreateEvaluationInput
   ): Promise<EvaluationRecord>;
-  list(actor: PublicUser, subjectId: string): Promise<EvaluationRecord[]>;
+  list(
+    actor: PublicUser,
+    subjectId: string,
+    pagination: PaginationInput
+  ): Promise<PageResult<EvaluationRecord>>;
 }
 
 export function createEvaluationService(
@@ -135,11 +141,11 @@ export function createEvaluationService(
       });
     },
 
-    async list(actor, subjectId) {
+    async list(actor, subjectId, pagination) {
       await requireActor(repository, actor);
       if (actor.role === "client") forbidden();
       await assertCanViewSubject(actor, subjectId);
-      return repository.listEvaluationsForSubject(subjectId);
+      return repository.pageEvaluationsForSubject(subjectId, pagination);
     }
   };
 }

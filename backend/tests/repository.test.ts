@@ -49,6 +49,103 @@ describe("memory repository", () => {
     await expect(repository.listProjectsForUser(head!)).resolves.toHaveLength(3);
   });
 
+  it("slices paginated reads while retaining filtered totals", async () => {
+    const seed = structuredClone(demoSeedData);
+    seed.evaluations.push({
+      ...structuredClone(seed.evaluations[0]!),
+      id: "evaluation-kabir-june-revision",
+      revisionOf: "evaluation-kabir-june",
+      createdAt: "2026-07-02T09:00:00.000Z"
+    });
+    seed.auditEvents.push({
+      ...structuredClone(seed.auditEvents[0]!),
+      id: "audit-kabir-progress",
+      actorId: "user-designer-kabir",
+      entityId: "task-circulation",
+      occurredAt: "2026-07-15T09:00:00.000Z",
+      createdAt: "2026-07-15T09:00:00.000Z"
+    });
+    seed.taskEvents.push(
+      {
+        ...structuredClone(seed.taskEvents[0]!),
+        id: "event-circulation-progress-1",
+        taskId: "task-circulation",
+        actorId: "user-designer-kabir",
+        occurredAt: "2026-07-15T09:00:00.000Z",
+        createdAt: "2026-07-15T09:00:00.000Z"
+      },
+      {
+        ...structuredClone(seed.taskEvents[0]!),
+        id: "event-circulation-progress-2",
+        taskId: "task-circulation",
+        actorId: "user-designer-kabir",
+        occurredAt: "2026-07-16T09:00:00.000Z",
+        createdAt: "2026-07-16T09:00:00.000Z"
+      },
+      {
+        ...structuredClone(seed.taskEvents[0]!),
+        id: "event-circulation-progress-offset",
+        taskId: "task-circulation",
+        actorId: "user-designer-kabir",
+        occurredAt: "2026-08-01T01:00:00+05:30",
+        createdAt: "2026-07-31T19:30:00.000Z"
+      }
+    );
+    const repository = createMemoryRepository(seed);
+    const client = await repository.findUserById("user-client-aurora");
+
+    await expect(
+      repository.pageProjectsForUser(client!, { limit: 1, offset: 1 })
+    ).resolves.toMatchObject({
+      items: [{ id: "project-aurora-villa" }],
+      total: 2
+    });
+    await expect(
+      repository.pageEvaluationsForSubject("user-designer-kabir", {
+        limit: 1,
+        offset: 1
+      })
+    ).resolves.toMatchObject({
+      items: [{ id: "evaluation-kabir-june-revision" }],
+      total: 2
+    });
+    await expect(
+      repository.pageAuditEvents(
+        {
+          visibleActorIds: ["user-designer-kabir"],
+          visibleTaskIds: []
+        },
+        { limit: 1, offset: 0 }
+      )
+    ).resolves.toMatchObject({
+      items: [{ id: "audit-kabir-progress" }],
+      total: 1
+    });
+    await expect(
+      repository.pageKpiTasksForPeriod(
+        ["user-designer-kabir"],
+        "2026-07-01T00:00:00.000Z",
+        "2026-07-31T23:59:59.999Z",
+        { limit: 1, offset: 1 }
+      )
+    ).resolves.toMatchObject({
+      items: [{ id: "task-circulation" }],
+      total: 2
+    });
+    await expect(
+      repository.pageKpiTaskEventsForPeriod(
+        "task-circulation",
+        "user-designer-kabir",
+        "2026-07-01T00:00:00.000Z",
+        "2026-07-31T23:59:59.999Z",
+        { limit: 1, offset: 2 }
+      )
+    ).resolves.toMatchObject({
+      items: [{ id: "event-circulation-progress-offset" }],
+      total: 3
+    });
+  });
+
   it("does not treat a manager-linked non-designer as a direct report", async () => {
     const seed = structuredClone(demoSeedData);
     const client = seed.users.find((user) => user.id === "user-client-celeste")!;

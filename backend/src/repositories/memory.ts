@@ -31,7 +31,9 @@ const byDateThenId = <T extends { id: string }>(
   left: T,
   right: T
 ) =>
-  String(left[field]).localeCompare(String(right[field])) || left.id.localeCompare(right.id);
+  new Date(String(left[field])).getTime() -
+    new Date(String(right[field])).getTime() ||
+  left.id.localeCompare(right.id);
 
 interface MemorySnapshot {
   state: SeedData;
@@ -175,6 +177,11 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
       return clone([...projects].sort(byNameThenId));
     },
 
+    async pageProjectsForUser(user, pagination) {
+      const projects = await implementation.listProjectsForUser(user);
+      return paginate(projects, pagination);
+    },
+
     async findProjectById(id) {
       return copyOrNull(state.projects.find((project) => project.id === id));
     },
@@ -280,6 +287,32 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
       );
     },
 
+    async listKpiTasksForPeriod(ownerIds, periodStartAt, periodEndAt) {
+      return clone(
+        state.tasks
+          .filter(
+            (task) =>
+              ownerIds.includes(task.ownerId) &&
+              overlapsPeriod(task, periodStartAt, periodEndAt)
+          )
+          .sort(compareTasks)
+      );
+    },
+
+    async pageKpiTasksForPeriod(
+      ownerIds,
+      periodStartAt,
+      periodEndAt,
+      pagination
+    ) {
+      const tasks = await implementation.listKpiTasksForPeriod(
+        ownerIds,
+        periodStartAt,
+        periodEndAt
+      );
+      return paginate(tasks, pagination);
+    },
+
     async updateTask(id, expectedVersion, change) {
       const index = state.tasks.findIndex((task) => task.id === id);
       if (index < 0) throw new RepositoryNotFoundError(`Task ${id} was not found.`);
@@ -330,6 +363,48 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
           .filter((event) => event.taskId === taskId)
           .sort((left, right) => byDateThenId("occurredAt", left, right))
       );
+    },
+
+    async pageTaskEvents(taskId, pagination) {
+      const events = await implementation.listTaskEvents(taskId);
+      return paginate(events, pagination);
+    },
+
+    async listKpiTaskEventsForPeriod(
+      taskId,
+      actorId,
+      periodStartAt,
+      periodEndAt
+    ) {
+      return clone(
+        state.taskEvents
+          .filter((event) =>
+            matchesKpiEvent(
+              event,
+              taskId,
+              actorId,
+              periodStartAt,
+              periodEndAt
+            )
+          )
+          .sort((left, right) => byDateThenId("occurredAt", left, right))
+      );
+    },
+
+    async pageKpiTaskEventsForPeriod(
+      taskId,
+      actorId,
+      periodStartAt,
+      periodEndAt,
+      pagination
+    ) {
+      const events = await implementation.listKpiTaskEventsForPeriod(
+        taskId,
+        actorId,
+        periodStartAt,
+        periodEndAt
+      );
+      return paginate(events, pagination);
     },
 
     async createDesignVersion(input) {
@@ -413,6 +488,13 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
       );
     },
 
+    async pageEvaluationsForSubject(subjectUserId, pagination) {
+      const evaluations = await implementation.listEvaluationsForSubject(
+        subjectUserId
+      );
+      return paginate(evaluations, pagination);
+    },
+
     async appendAuditEvent(input) {
       const id = input.id ?? nextId("audit-event");
       ensureUniqueId(state.auditEvents, id, "Audit event");
@@ -432,6 +514,11 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
           .filter((event) => matchesAuditFilters(event, filters))
           .sort((left, right) => byDateThenId("occurredAt", left, right))
       );
+    },
+
+    async pageAuditEvents(filters, pagination) {
+      const events = await implementation.listAuditEvents(filters);
+      return paginate(events, pagination);
     }
   };
   const repository = new Proxy(implementation, {
@@ -480,12 +567,79 @@ function matchesTaskFilters(task: TaskRecord, filters: TaskFilters) {
   );
 }
 
-function matchesAuditFilters(event: AuditEventRecord, filters: AuditFilters) {
+function compareTasks(left: TaskRecord, right: TaskRecord) {
   return (
+    left.projectId.localeCompare(right.projectId) ||
+    left.floorId.localeCompare(right.floorId) ||
+    left.stageId.localeCompare(right.stageId) ||
+    byOrderThenId(left, right)
+  );
+}
+
+function matchesAuditFilters(event: AuditEventRecord, filters: AuditFilters) {
+  const hasVisibilityScope =
+    filters.visibleActorIds !== undefined ||
+    filters.visibleTaskIds !== undefined;
+  const isVisible =
+    !hasVisibilityScope ||
+    filters.visibleActorIds?.includes(event.actorId) === true ||
+    (event.entityType === "task" &&
+      filters.visibleTaskIds?.includes(event.entityId) === true);
+  return (
+    isVisible &&
     (filters.actorId === undefined || event.actorId === filters.actorId) &&
     (filters.entityType === undefined || event.entityType === filters.entityType) &&
     (filters.entityId === undefined || event.entityId === filters.entityId)
   );
+}
+
+function overlapsPeriod(
+  task: TaskRecord,
+  periodStartAt: string,
+  periodEndAt: string
+) {
+  const periodStart = new Date(periodStartAt).getTime();
+  const periodEnd = new Date(periodEndAt).getTime();
+  const taskStart = new Date(task.plannedStartAt).getTime();
+  const taskEnd = new Date(task.currentDeadlineAt).getTime();
+  const completedAt = task.completedAt
+    ? new Date(task.completedAt).getTime()
+    : undefined;
+  return (
+    (taskStart <= periodEnd && taskEnd >= periodStart) ||
+    (completedAt !== undefined &&
+      completedAt >= periodStart &&
+      completedAt <= periodEnd)
+  );
+}
+
+function matchesKpiEvent(
+  event: TaskEventRecord,
+  taskId: string,
+  actorId: string,
+  periodStartAt: string,
+  periodEndAt: string
+) {
+  return (
+    event.taskId === taskId &&
+    event.actorId === actorId &&
+    event.type !== "deadline_revised" &&
+    new Date(event.occurredAt).getTime() >=
+      new Date(periodStartAt).getTime() &&
+    new Date(event.occurredAt).getTime() <= new Date(periodEndAt).getTime()
+  );
+}
+
+function paginate<T>(
+  items: T[],
+  pagination: { limit: number; offset: number }
+) {
+  return {
+    items: clone(
+      items.slice(pagination.offset, pagination.offset + pagination.limit)
+    ),
+    total: items.length
+  };
 }
 
 function latestTimestamp(seed: SeedData): number {

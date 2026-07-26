@@ -14,6 +14,7 @@ import {
   RepositoryNotFoundError,
   type AppRepository,
   type AuditEventRecord,
+  type AuditFilters,
   type DesignStageRecord,
   type DesignVersionRecord,
   type EvaluationRecord,
@@ -30,6 +31,34 @@ import {
 type PlainDocument = Record<string, any>;
 
 export function createMongoRepository(session?: ClientSession): AppRepository {
+  const projectFilterForUser = async (user: UserRecord) => {
+    let filter: PlainDocument = {};
+    if (user.role === "client") filter = { clientId: user.id };
+    if (user.role === "designer") {
+      filter = {
+        $or: [
+          { initiatingDesignerId: user.id },
+          { assignedDesignerIds: user.id }
+        ]
+      };
+    }
+    if (user.role === "design_manager") {
+      const directReportQuery = UserModel.find({
+        managerId: user.id,
+        role: "designer"
+      });
+      if (session) directReportQuery.session(session);
+      const directReports = await directReportQuery.distinct("_id").exec();
+      filter = {
+        $or: [
+          { managerId: user.id },
+          { assignedDesignerIds: { $in: directReports } }
+        ]
+      };
+    }
+    return filter;
+  };
+
   const repository: AppRepository = {
     async runInTransaction(operation) {
       if (session) return operation(repository);
@@ -73,35 +102,26 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
     },
 
     async listProjectsForUser(user) {
-      let query: PlainDocument = {};
-      if (user.role === "client") query = { clientId: user.id };
-      if (user.role === "designer") {
-        query = {
-          $or: [
-            { initiatingDesignerId: user.id },
-            { assignedDesignerIds: user.id }
-          ]
-        };
-      }
-      if (user.role === "design_manager") {
-        const directReports = await UserModel.find({
-          managerId: user.id,
-          role: "designer"
-        })
-          .distinct("_id")
-          .exec();
-        query = {
-          $or: [
-            { managerId: user.id },
-            { assignedDesignerIds: { $in: directReports } }
-          ]
-        };
-      }
-      const documents = await ProjectModel.find(query)
+      const filter = await projectFilterForUser(user);
+      const documents = await ProjectModel.find(filter)
         .sort({ name: 1, _id: 1 })
         .lean()
         .exec();
       return documents.map(mapProject);
+    },
+
+    async pageProjectsForUser(user, pagination) {
+      const filter = await projectFilterForUser(user);
+      const [documents, total] = await Promise.all([
+        ProjectModel.find(filter)
+          .sort({ name: 1, _id: 1 })
+          .skip(pagination.offset)
+          .limit(pagination.limit)
+          .lean()
+          .exec(),
+        ProjectModel.countDocuments(filter).exec()
+      ]);
+      return { items: documents.map(mapProject), total };
     },
 
     async findProjectById(id) {
@@ -111,44 +131,44 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
 
     async createProject(input) {
       const document = await createMongoDocument("Project", () =>
-        ProjectModel.create({
+        createDocument(ProjectModel, {
           ...projectForMongo(input),
           _id: input.id
-        })
+        }, session)
       );
       return mapProject(document.toObject());
     },
 
     async createFloor(input) {
       const document = await createMongoDocument("Floor", () =>
-        FloorModel.create({
+        createDocument(FloorModel, {
           ...floorForMongo(input),
           _id: input.id
-        })
+        }, session)
       );
       return mapFloor(document.toObject());
     },
 
     async createDesignStage(input) {
       const document = await createMongoDocument("Design stage", () =>
-        DesignStageModel.create({
+        createDocument(DesignStageModel, {
           ...input,
           _id: input.id,
           id: undefined,
           createdAt: date(input.createdAt),
           updatedAt: date(input.updatedAt)
-        })
+        }, session)
       );
       return mapStage(document.toObject());
     },
 
     async createTask(input) {
       const document = await createMongoDocument("Task", () =>
-        TaskModel.create({
+        createDocument(TaskModel, {
           ...taskForMongo(input),
           _id: input.id,
           __v: input.version - 1
-        })
+        }, session)
       );
       return mapTask(document.toObject());
     },
@@ -235,6 +255,35 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
       return documents.map(mapTask);
     },
 
+    async listKpiTasksForPeriod(ownerIds, periodStartAt, periodEndAt) {
+      const documents = await TaskModel.find(
+        kpiTaskFilter(ownerIds, periodStartAt, periodEndAt)
+      )
+        .sort({ projectId: 1, floorId: 1, stageId: 1, order: 1, _id: 1 })
+        .lean()
+        .exec();
+      return documents.map(mapTask);
+    },
+
+    async pageKpiTasksForPeriod(
+      ownerIds,
+      periodStartAt,
+      periodEndAt,
+      pagination
+    ) {
+      const filter = kpiTaskFilter(ownerIds, periodStartAt, periodEndAt);
+      const [documents, total] = await Promise.all([
+        TaskModel.find(filter)
+          .sort({ projectId: 1, floorId: 1, stageId: 1, order: 1, _id: 1 })
+          .skip(pagination.offset)
+          .limit(pagination.limit)
+          .lean()
+          .exec(),
+        TaskModel.countDocuments(filter).exec()
+      ]);
+      return { items: documents.map(mapTask), total };
+    },
+
     async updateTask(id, expectedVersion, change) {
       const currentQuery = TaskModel.findById(id);
       if (session) currentQuery.session(session);
@@ -298,6 +347,60 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
         .lean()
         .exec();
       return documents.map(mapTaskEvent);
+    },
+
+    async pageTaskEvents(taskId, pagination) {
+      const filter = { taskId };
+      const [documents, total] = await Promise.all([
+        TaskEventModel.find(filter)
+          .sort({ occurredAt: 1, _id: 1 })
+          .skip(pagination.offset)
+          .limit(pagination.limit)
+          .lean()
+          .exec(),
+        TaskEventModel.countDocuments(filter).exec()
+      ]);
+      return { items: documents.map(mapTaskEvent), total };
+    },
+
+    async listKpiTaskEventsForPeriod(
+      taskId,
+      actorId,
+      periodStartAt,
+      periodEndAt
+    ) {
+      const documents = await TaskEventModel.find(
+        kpiTaskEventFilter(taskId, actorId, periodStartAt, periodEndAt)
+      )
+        .sort({ occurredAt: 1, _id: 1 })
+        .lean()
+        .exec();
+      return documents.map(mapTaskEvent);
+    },
+
+    async pageKpiTaskEventsForPeriod(
+      taskId,
+      actorId,
+      periodStartAt,
+      periodEndAt,
+      pagination
+    ) {
+      const filter = kpiTaskEventFilter(
+        taskId,
+        actorId,
+        periodStartAt,
+        periodEndAt
+      );
+      const [documents, total] = await Promise.all([
+        TaskEventModel.find(filter)
+          .sort({ occurredAt: 1, _id: 1 })
+          .skip(pagination.offset)
+          .limit(pagination.limit)
+          .lean()
+          .exec(),
+        TaskEventModel.countDocuments(filter).exec()
+      ]);
+      return { items: documents.map(mapTaskEvent), total };
     },
 
     async createDesignVersion(input) {
@@ -364,6 +467,20 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
       return documents.map(mapEvaluation);
     },
 
+    async pageEvaluationsForSubject(subjectUserId, pagination) {
+      const filter = { subjectUserId };
+      const [documents, total] = await Promise.all([
+        EvaluationModel.find(filter)
+          .sort({ createdAt: 1, _id: 1 })
+          .skip(pagination.offset)
+          .limit(pagination.limit)
+          .lean()
+          .exec(),
+        EvaluationModel.countDocuments(filter).exec()
+      ]);
+      return { items: documents.map(mapEvaluation), total };
+    },
+
     async appendAuditEvent(input) {
       const document = await createMongoDocument("Audit event", () =>
         createDocument(AuditEventModel, {
@@ -379,11 +496,25 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
     },
 
     async listAuditEvents(filters) {
-      const documents = await AuditEventModel.find(compactFilter(filters))
+      const documents = await AuditEventModel.find(auditFilter(filters))
         .sort({ occurredAt: 1, _id: 1 })
         .lean()
         .exec();
       return documents.map(mapAuditEvent);
+    },
+
+    async pageAuditEvents(filters, pagination) {
+      const filter = auditFilter(filters);
+      const [documents, total] = await Promise.all([
+        AuditEventModel.find(filter)
+          .sort({ occurredAt: 1, _id: 1 })
+          .skip(pagination.offset)
+          .limit(pagination.limit)
+          .lean()
+          .exec(),
+        AuditEventModel.countDocuments(filter).exec()
+      ]);
+      return { items: documents.map(mapAuditEvent), total };
     }
   };
   return repository;
@@ -426,6 +557,63 @@ function compactFilter(value: object): PlainDocument {
   return Object.fromEntries(
     Object.entries(value).filter(([, fieldValue]) => fieldValue !== undefined)
   );
+}
+
+function kpiTaskFilter(
+  ownerIds: string[],
+  periodStartAt: string,
+  periodEndAt: string
+): PlainDocument {
+  const periodStart = date(periodStartAt);
+  const periodEnd = date(periodEndAt);
+  return {
+    ownerId: { $in: ownerIds },
+    $or: [
+      {
+        plannedStartAt: { $lte: periodEnd },
+        currentDeadlineAt: { $gte: periodStart }
+      },
+      { completedAt: { $gte: periodStart, $lte: periodEnd } }
+    ]
+  };
+}
+
+function kpiTaskEventFilter(
+  taskId: string,
+  actorId: string,
+  periodStartAt: string,
+  periodEndAt: string
+): PlainDocument {
+  return {
+    taskId,
+    actorId,
+    type: { $in: ["status_changed", "progress_changed", "note_added"] },
+    occurredAt: {
+      $gte: date(periodStartAt),
+      $lte: date(periodEndAt)
+    }
+  };
+}
+
+function auditFilter(filters: AuditFilters): PlainDocument {
+  const filter = compactFilter({
+    actorId: filters.actorId,
+    entityType: filters.entityType,
+    entityId: filters.entityId
+  });
+  if (
+    filters.visibleActorIds !== undefined ||
+    filters.visibleTaskIds !== undefined
+  ) {
+    filter.$or = [
+      { actorId: { $in: filters.visibleActorIds ?? [] } },
+      {
+        entityType: "task",
+        entityId: { $in: filters.visibleTaskIds ?? [] }
+      }
+    ];
+  }
+  return filter;
 }
 
 function date(value: string | Date): Date {

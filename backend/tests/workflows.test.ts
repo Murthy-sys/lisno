@@ -39,7 +39,81 @@ function setup() {
   };
 }
 
+function failAuditWrites(base: AppRepository): AppRepository {
+  return new Proxy(base, {
+    get(target, property, receiver) {
+      if (property === "appendAuditEvent") {
+        return async () => {
+          throw new Error("simulated audit storage failure");
+        };
+      }
+      if (property !== "runInTransaction") {
+        return Reflect.get(target, property, receiver);
+      }
+      return <T>(
+        operation: (transaction: AppRepository) => Promise<T>
+      ) =>
+        target.runInTransaction((transaction) =>
+          operation(
+            new Proxy(transaction, {
+              get(transactionTarget, transactionProperty, transactionReceiver) {
+                if (transactionProperty === "appendAuditEvent") {
+                  return async () => {
+                    throw new Error("simulated audit storage failure");
+                  };
+                }
+                return Reflect.get(
+                  transactionTarget,
+                  transactionProperty,
+                  transactionReceiver
+                );
+              }
+            })
+          )
+        );
+    }
+  });
+}
+
 describe("project workflows", () => {
+  it("paginates projects with validated defaults, limits, totals, and unknown fields", async () => {
+    const { app } = setup();
+    const page = await request(app)
+      .get("/api/v1/projects?limit=1&offset=1")
+      .set("Authorization", bearer(users.head));
+
+    expect(page.status).toBe(200);
+    expect(page.body).toEqual({
+      data: {
+        items: [expect.objectContaining({ id: "project-aurora-villa" })],
+        pagination: {
+          limit: 1,
+          offset: 1,
+          total: 3,
+          hasMore: true
+        }
+      }
+    });
+
+    const tooLarge = await request(app)
+      .get("/api/v1/projects?limit=101")
+      .set("Authorization", bearer(users.head));
+    expect(tooLarge.status).toBe(400);
+    expect(tooLarge.body.error).toMatchObject({
+      code: "VALIDATION_ERROR",
+      fields: { limit: expect.any(String) }
+    });
+
+    const unknown = await request(app)
+      .get("/api/v1/projects?foo=bar")
+      .set("Authorization", bearer(users.head));
+    expect(unknown.status).toBe(400);
+    expect(unknown.body.error).toMatchObject({
+      code: "VALIDATION_ERROR",
+      fields: { foo: expect.any(String) }
+    });
+  });
+
   it("lets a designer initiate a project and then exposes it in their project list", async () => {
     const { app } = setup();
     const created = await request(app)
@@ -69,9 +143,9 @@ describe("project workflows", () => {
       .set("Authorization", bearer(users.ananya));
 
     expect(listed.status).toBe(200);
-    expect(listed.body.data.map((project: { id: string }) => project.id)).toContain(
-      created.body.data.id
-    );
+    expect(
+      listed.body.data.items.map((project: { id: string }) => project.id)
+    ).toContain(created.body.data.id);
   });
 
   it("validates project timestamps as ISO datetimes", async () => {
@@ -143,10 +217,9 @@ describe("project workflows", () => {
       .set("Authorization", bearer(users.auroraClient));
 
     expect(listed.status).toBe(200);
-    expect(listed.body.data.map((project: { id: string }) => project.id)).toEqual([
-      "project-aurora-studio",
-      "project-aurora-villa"
-    ]);
+    expect(
+      listed.body.data.items.map((project: { id: string }) => project.id)
+    ).toEqual(["project-aurora-studio", "project-aurora-villa"]);
     expect(JSON.stringify(listed.body)).not.toContain("project-celeste-office");
     expect(JSON.stringify(listed.body)).not.toContain("assignedDesignerIds");
     expect(JSON.stringify(listed.body)).not.toContain("managerId");
@@ -222,6 +295,59 @@ describe("project workflows", () => {
       version: 1
     });
   });
+
+  it.each([
+    ["project", "/api/v1/projects", {
+      name: "Atomic Project",
+      clientId: "user-client-aurora",
+      assignedDesignerIds: ["user-designer-ananya"],
+      managerId: "user-manager-aarav",
+      location: "Bengaluru",
+      plannedStartAt: "2026-08-01T09:00:00.000Z",
+      plannedEndAt: "2026-10-31T17:00:00.000Z"
+    }, "Atomic Project"],
+    ["floor", "/api/v1/projects/project-aurora-villa/floors", {
+      name: "Atomic Floor",
+      number: "A",
+      order: 99,
+      plannedStartAt: "2026-08-01T09:00:00.000Z",
+      plannedEndAt: "2026-08-31T17:00:00.000Z"
+    }, "Atomic Floor"],
+    ["stage", "/api/v1/floors/floor-aurora-ground/stages", {
+      name: "Atomic Stage",
+      type: "concept_mood_board",
+      order: 99
+    }, "Atomic Stage"],
+    ["task", "/api/v1/stages/stage-ground-plan/tasks", {
+      title: "Atomic Task",
+      order: 99,
+      ownerId: "user-designer-ananya",
+      plannedStartAt: "2026-07-16T09:00:00.000Z",
+      originalDeadlineAt: "2026-07-30T17:00:00.000Z"
+    }, "Atomic Task"]
+  ] as const)(
+    "rolls back %s creation when its audit append fails",
+    async (_entityType, path, body, marker) => {
+      const base = createMemoryRepository(structuredClone(demoSeedData));
+      const app = createApp({
+        repository: failAuditWrites(base),
+        auth,
+        clock
+      });
+
+      const response = await request(app)
+        .post(path)
+        .set("Authorization", bearer(users.ananya))
+        .send(body);
+
+      expect(response.status).toBe(500);
+      const projects = await base.listProjectsForUser(
+        (await base.findUserById("user-head"))!
+      );
+      const hierarchy = await base.getProjectHierarchy("project-aurora-villa");
+      expect(JSON.stringify({ projects, hierarchy })).not.toContain(marker);
+    }
+  );
 });
 
 describe("task workflows", () => {
@@ -570,15 +696,17 @@ describe("organization and KPI workflows", () => {
       periodEndAt: "2026-07-31T23:59:59.999Z",
       score: expect.any(Number),
       components: expect.any(Array),
-      tasks: expect.arrayContaining([
-        expect.objectContaining({
-          id: "task-circulation",
-          risk: expect.objectContaining({
-            level: expect.any(String),
-            reason: expect.any(String)
+      tasks: {
+        items: expect.arrayContaining([
+          expect.objectContaining({
+            id: "task-circulation",
+            risk: expect.objectContaining({
+              level: expect.any(String),
+              reason: expect.any(String)
+            })
           })
-        })
-      ])
+        ])
+      }
     });
     expect(response.body.data).not.toHaveProperty("evaluations");
 
@@ -618,7 +746,11 @@ describe("organization and KPI workflows", () => {
       .get(`/api/v1/kpis/users/user-manager-aarav${query}`)
       .set("Authorization", bearer(users.head));
     expect(managerKpi.status).toBe(200);
-    expect(managerKpi.body.data.tasks.map((task: { id: string }) => task.id)).toEqual(
+    expect(
+      managerKpi.body.data.tasks.items.map(
+        (task: { id: string }) => task.id
+      )
+    ).toEqual(
       expect.arrayContaining([
         "task-furniture-layout",
         "task-circulation",
@@ -626,7 +758,9 @@ describe("organization and KPI workflows", () => {
       ])
     );
     expect(
-      managerKpi.body.data.tasks.map((task: { id: string }) => task.id)
+      managerKpi.body.data.tasks.items.map(
+        (task: { id: string }) => task.id
+      )
     ).not.toContain("task-overdue-measurement");
 
     const designerKpi = await request(app)
@@ -637,6 +771,117 @@ describe("organization and KPI workflows", () => {
     );
     expect(designerKpi.status).toBe(200);
     expect(updateDiscipline.score).toBe(0);
+  });
+
+  it("paginates KPI task details, bounds per-task events, and rejects unknown query fields", async () => {
+    const seed = structuredClone(demoSeedData);
+    for (let index = 0; index < 25; index += 1) {
+      seed.taskEvents.push({
+        id: `event-circulation-page-${index}`,
+        taskId: "task-circulation",
+        actorId: "user-designer-kabir",
+        type: "progress_changed",
+        occurredAt: `2026-07-${String(index + 1).padStart(2, "0")}T09:00:00.000Z`,
+        from: { progress: index },
+        to: { progress: index + 1 },
+        note: null,
+        createdAt: `2026-07-${String(index + 1).padStart(2, "0")}T09:00:00.000Z`
+      });
+    }
+    const repository = createMemoryRepository(seed);
+    const app = createApp({ repository, auth, clock });
+    const range =
+      "from=2026-07-01T00%3A00%3A00.000Z&to=2026-07-31T23%3A59%3A59.999Z";
+
+    const page = await request(app)
+      .get(
+        `/api/v1/kpis/users/user-designer-kabir?${range}&limit=1&offset=1`
+      )
+      .set("Authorization", bearer(users.managerAarav));
+
+    expect(page.status).toBe(200);
+    expect(page.body.data.tasks.pagination).toEqual({
+      limit: 1,
+      offset: 1,
+      total: 2,
+      hasMore: false
+    });
+    expect(page.body.data.tasks.items).toHaveLength(1);
+    expect(page.body.data.tasks.items[0]).toMatchObject({
+      id: "task-circulation",
+      events: {
+        items: expect.any(Array),
+        href: "/api/v1/tasks/task-circulation/events",
+        pagination: {
+          limit: 20,
+          offset: 0,
+          total: 25,
+          hasMore: true
+        }
+      }
+    });
+    expect(page.body.data.tasks.items[0].events.items).toHaveLength(20);
+
+    const eventPageOne = await request(app)
+      .get("/api/v1/tasks/task-circulation/events?limit=20&offset=0")
+      .set("Authorization", bearer(users.managerAarav));
+    expect(eventPageOne.status).toBe(200);
+    expect(eventPageOne.body.data.pagination).toEqual({
+      limit: 20,
+      offset: 0,
+      total: 25,
+      hasMore: true
+    });
+    expect(eventPageOne.body.data.items).toHaveLength(20);
+
+    const eventPageTwo = await request(app)
+      .get("/api/v1/tasks/task-circulation/events?limit=20&offset=20")
+      .set("Authorization", bearer(users.managerAarav));
+    expect(eventPageTwo.status).toBe(200);
+    expect(eventPageTwo.body.data.pagination).toEqual({
+      limit: 20,
+      offset: 20,
+      total: 25,
+      hasMore: false
+    });
+    expect(eventPageTwo.body.data.items).toHaveLength(5);
+
+    const assignedDesigner = await request(app)
+      .get("/api/v1/tasks/task-circulation/events?limit=1")
+      .set("Authorization", bearer(users.ananya));
+    expect(assignedDesigner.status).toBe(200);
+
+    const eventUnknown = await request(app)
+      .get("/api/v1/tasks/task-circulation/events?foo=bar")
+      .set("Authorization", bearer(users.managerAarav));
+    expect(eventUnknown.status).toBe(400);
+    expect(eventUnknown.body.error.fields).toEqual({
+      foo: expect.any(String)
+    });
+
+    const crossTeam = await request(app)
+      .get("/api/v1/tasks/task-circulation/events")
+      .set("Authorization", bearer(users.managerMeera));
+    expect(crossTeam.status).toBe(404);
+
+    const crossTeamDesigner = await request(app)
+      .get("/api/v1/tasks/task-circulation/events")
+      .set("Authorization", bearer(users.ishita));
+    expect(crossTeamDesigner.status).toBe(404);
+
+    const client = await request(app)
+      .get("/api/v1/tasks/task-circulation/events")
+      .set("Authorization", bearer(users.auroraClient));
+    expect(client.status).toBe(403);
+
+    const unknown = await request(app)
+      .get(`/api/v1/kpis/users/user-designer-kabir?${range}&foo=bar`)
+      .set("Authorization", bearer(users.managerAarav));
+    expect(unknown.status).toBe(400);
+    expect(unknown.body.error).toMatchObject({
+      code: "VALIDATION_ERROR",
+      fields: { foo: expect.any(String) }
+    });
   });
 });
 
@@ -691,14 +936,40 @@ describe("evaluation and audit workflows", () => {
       .set("Authorization", bearer(users.kabir));
     expect(evaluations.status).toBe(200);
     expect(evaluations.body.data).toEqual(
-      expect.arrayContaining([
+      expect.objectContaining({
+        items: expect.arrayContaining([
         expect.objectContaining({ id: original.body.data.id, revisionOf: null }),
         expect.objectContaining({
           id: correction.body.data.id,
           revisionOf: original.body.data.id
         })
-      ])
+        ]),
+        pagination: expect.objectContaining({ total: 3 })
+      })
     );
+  });
+
+  it("paginates evaluation history and rejects limit overflow", async () => {
+    const { app } = setup();
+    const response = await request(app)
+      .get("/api/v1/evaluations/user-designer-kabir?limit=1&offset=0")
+      .set("Authorization", bearer(users.kabir));
+    expect(response.status).toBe(200);
+    expect(response.body.data).toEqual({
+      items: [expect.objectContaining({ id: "evaluation-kabir-june" })],
+      pagination: {
+        limit: 1,
+        offset: 0,
+        total: 1,
+        hasMore: false
+      }
+    });
+
+    const invalid = await request(app)
+      .get("/api/v1/evaluations/user-designer-kabir?limit=101")
+      .set("Authorization", bearer(users.kabir));
+    expect(invalid.status).toBe(400);
+    expect(invalid.body.error.fields.limit).toEqual(expect.any(String));
   });
 
   it("lets the head evaluate managers and inspect complete audit history", async () => {
@@ -721,26 +992,55 @@ describe("evaluation and audit workflows", () => {
       .set("Authorization", bearer(users.head));
     expect(audit.status).toBe(200);
     expect(audit.body.data).toEqual(
-      expect.arrayContaining([
+      expect.objectContaining({
+        items: expect.arrayContaining([
         expect.objectContaining({
           actorId: "user-head",
           action: "evaluation_created",
           entityType: "evaluation",
           entityId: evaluation.body.data.id
         })
-      ])
+        ]),
+        pagination: expect.objectContaining({ total: 1 })
+      })
     );
 
     const otherManager = await request(app)
       .get("/api/v1/audit?entityId=task-furniture-layout")
       .set("Authorization", bearer(users.managerMeera));
     expect(otherManager.status).toBe(200);
-    expect(otherManager.body.data).toEqual([]);
+    expect(otherManager.body.data.items).toEqual([]);
 
     const client = await request(app)
       .get("/api/v1/audit")
       .set("Authorization", bearer(users.auroraClient));
     expect(client.status).toBe(403);
+  });
+
+  it("paginates audit history and maps unknown strict query fields", async () => {
+    const { app } = setup();
+    const page = await request(app)
+      .get("/api/v1/audit?limit=1&offset=0")
+      .set("Authorization", bearer(users.head));
+    expect(page.status).toBe(200);
+    expect(page.body.data).toEqual({
+      items: [expect.objectContaining({ id: "audit-furniture-progress" })],
+      pagination: {
+        limit: 1,
+        offset: 0,
+        total: 1,
+        hasMore: false
+      }
+    });
+
+    const unknown = await request(app)
+      .get("/api/v1/audit?foo=bar")
+      .set("Authorization", bearer(users.head));
+    expect(unknown.status).toBe(400);
+    expect(unknown.body.error).toMatchObject({
+      code: "VALIDATION_ERROR",
+      fields: { foo: expect.any(String) }
+    });
   });
 
   it("rolls an evaluation back when its audit append fails", async () => {

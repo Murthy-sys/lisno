@@ -1,7 +1,13 @@
 import { ApiError } from "../middleware/errors.js";
 import { calculateKpi } from "../domain/kpi.js";
 import { calculateTaskRisk } from "../domain/risk.js";
-import type { AppRepository, TaskRecord } from "../repositories/types.js";
+import type {
+  AppRepository,
+  PageResult,
+  PaginationInput,
+  TaskEventRecord,
+  TaskRecord
+} from "../repositories/types.js";
 import type { PublicUser } from "./auth.service.js";
 import {
   assertDesignerRelationship,
@@ -16,7 +22,7 @@ export interface KpiRead {
   periodEndAt: string;
   score: number;
   components: ReturnType<typeof calculateKpi>["components"];
-  tasks: Array<{
+  tasks: PageResult<{
     id: string;
     projectId: string;
     title: string;
@@ -25,6 +31,7 @@ export interface KpiRead {
     currentDeadlineAt: string;
     plannedEffort: number | null;
     risk: ReturnType<typeof calculateTaskRisk>;
+    events: PageResult<TaskEventRecord>;
   }>;
 }
 
@@ -33,7 +40,8 @@ export interface KpiService {
     actor: PublicUser,
     userId: string,
     periodStartAt: string,
-    periodEndAt: string
+    periodEndAt: string,
+    pagination: PaginationInput
   ): Promise<KpiRead>;
 }
 
@@ -42,7 +50,7 @@ export function createKpiService(
   clock: Clock
 ): KpiService {
   return {
-    async get(actor, userId, periodStartAt, periodEndAt) {
+    async get(actor, userId, periodStartAt, periodEndAt, pagination) {
       if (actor.role === "client") forbidden();
       const subject = await requireUser(repository, userId);
       if (subject.role === "designer") {
@@ -70,25 +78,24 @@ export function createKpiService(
               )
               .map((user) => user.id)
           : [subject.id];
-      const storedTasks = (
-        await Promise.all(
-          ownerIds.map((ownerId) => repository.listTasks({ ownerId }))
-        )
-      ).flat();
+      const storedTasks = await repository.listKpiTasksForPeriod(
+        ownerIds,
+        periodStartAt,
+        periodEndAt
+      );
       const tasks = await Promise.all(
         storedTasks.map(async (task) => {
-          const events = await repository.listTaskEvents(task.id);
+          const events = await repository.listKpiTaskEventsForPeriod(
+            task.id,
+            task.ownerId,
+            periodStartAt,
+            periodEndAt
+          );
           return {
             ...task,
-            updateEvents: events
-              .filter(
-                (event) =>
-                  event.actorId === task.ownerId &&
-                  (event.type === "status_changed" ||
-                    event.type === "progress_changed" ||
-                    event.type === "note_added")
-              )
-              .map((event) => ({ occurredAt: event.occurredAt }))
+            updateEvents: events.map((event) => ({
+              occurredAt: event.occurredAt
+            }))
           };
         })
       );
@@ -99,6 +106,28 @@ export function createKpiService(
         periodEndAt,
         now
       });
+      const storedTaskPage = await repository.pageKpiTasksForPeriod(
+        ownerIds,
+        periodStartAt,
+        periodEndAt,
+        pagination
+      );
+      const taskItems = await Promise.all(
+        storedTaskPage.items.map(async (task) => ({
+          id: task.id,
+          projectId: task.projectId,
+          title: task.title,
+          status: task.status,
+          progress: task.progress,
+          currentDeadlineAt: task.currentDeadlineAt,
+          plannedEffort: task.plannedEffort,
+          risk: calculateTaskRisk(task, now),
+          events: await repository.pageTaskEvents(task.id, {
+            limit: 20,
+            offset: 0
+          })
+        }))
+      );
 
       return {
         userId: subject.id,
@@ -106,35 +135,11 @@ export function createKpiService(
         periodEndAt,
         score: result.score,
         components: result.components,
-        tasks: storedTasks
-          .filter((task) => overlaps(task, periodStartAt, periodEndAt))
-          .map((task) => ({
-            id: task.id,
-            projectId: task.projectId,
-            title: task.title,
-            status: task.status,
-            progress: task.progress,
-            currentDeadlineAt: task.currentDeadlineAt,
-            plannedEffort: task.plannedEffort,
-            risk: calculateTaskRisk(task, now)
-          }))
+        tasks: {
+          items: taskItems,
+          total: storedTaskPage.total
+        }
       };
     }
   };
-}
-
-function overlaps(task: TaskRecord, from: string, to: string) {
-  const periodStart = new Date(from).getTime();
-  const periodEnd = new Date(to).getTime();
-  const taskStart = new Date(task.plannedStartAt).getTime();
-  const taskEnd = new Date(task.currentDeadlineAt).getTime();
-  const completion = task.completedAt
-    ? new Date(task.completedAt).getTime()
-    : undefined;
-  return (
-    (taskStart <= periodEnd && taskEnd >= periodStart) ||
-    (completion !== undefined &&
-      completion >= periodStart &&
-      completion <= periodEnd)
-  );
 }

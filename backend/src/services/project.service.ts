@@ -6,6 +6,8 @@ import type {
   DesignStageRecord,
   DesignStageType,
   FloorRecord,
+  PageResult,
+  PaginationInput,
   ProjectHierarchy,
   ProjectRecord,
   TaskRecord
@@ -73,7 +75,10 @@ export type ClientProject = Pick<
 >;
 
 export interface ProjectService {
-  list(actor: PublicUser): Promise<Array<ProjectRecord | ClientProject>>;
+  list(
+    actor: PublicUser,
+    pagination: PaginationInput
+  ): Promise<PageResult<ProjectRecord | ClientProject>>;
   create(actor: PublicUser, input: CreateProjectInput): Promise<ProjectRecord>;
   get(actor: PublicUser, projectId: string): Promise<ProjectHierarchy | ClientProjectView>;
   createFloor(
@@ -117,10 +122,16 @@ export function createProjectService(
   clock: Clock
 ): ProjectService {
   return {
-    async list(actor) {
+    async list(actor, pagination) {
       const user = await requireActor(repository, actor);
-      const projects = await repository.listProjectsForUser(user);
-      return actor.role === "client" ? projects.map(toClientProject) : projects;
+      const page = await repository.pageProjectsForUser(user, pagination);
+      return {
+        ...page,
+        items:
+          actor.role === "client"
+            ? page.items.map(toClientProject)
+            : page.items
+      };
     },
 
     async create(actor, input) {
@@ -179,7 +190,7 @@ export function createProjectService(
         );
       }
       const timestamp = clock().toISOString();
-      const project = await repository.createProject({
+      const projectInput: ProjectRecord = {
         id: `project-${randomUUID()}`,
         name: input.name,
         clientId: client.id,
@@ -194,16 +205,22 @@ export function createProjectService(
         actualEndAt: null,
         createdAt: timestamp,
         updatedAt: timestamp
+      };
+      return repository.runInTransaction(async (transaction) => {
+        const project = await transaction.createProject(projectInput);
+        await audit.append(
+          {
+            actorId: actor.id,
+            action: "project_created",
+            entityType: "project",
+            entityId: project.id,
+            occurredAt: timestamp,
+            newValues: { name: project.name, status: project.status }
+          },
+          transaction
+        );
+        return project;
       });
-      await audit.append({
-        actorId: actor.id,
-        action: "project_created",
-        entityType: "project",
-        entityId: project.id,
-        occurredAt: timestamp,
-        newValues: { name: project.name, status: project.status }
-      });
-      return project;
     },
 
     async get(actor, projectId) {
@@ -242,7 +259,7 @@ export function createProjectService(
         );
       }
       const timestamp = clock().toISOString();
-      const floor = await repository.createFloor({
+      const floorInput: FloorRecord = {
         id: `floor-${randomUUID()}`,
         projectId: project.id,
         name: input.name,
@@ -255,16 +272,22 @@ export function createProjectService(
         actualEndAt: null,
         createdAt: timestamp,
         updatedAt: timestamp
+      };
+      return repository.runInTransaction(async (transaction) => {
+        const floor = await transaction.createFloor(floorInput);
+        await audit.append(
+          {
+            actorId: actor.id,
+            action: "floor_created",
+            entityType: "floor",
+            entityId: floor.id,
+            occurredAt: timestamp,
+            newValues: { projectId: project.id, name: floor.name }
+          },
+          transaction
+        );
+        return floor;
       });
-      await audit.append({
-        actorId: actor.id,
-        action: "floor_created",
-        entityType: "floor",
-        entityId: floor.id,
-        occurredAt: timestamp,
-        newValues: { projectId: project.id, name: floor.name }
-      });
-      return floor;
     },
 
     async createStage(actor, floorId, input) {
@@ -284,7 +307,7 @@ export function createProjectService(
         );
       }
       const timestamp = clock().toISOString();
-      const stage = await repository.createDesignStage({
+      const stageInput: DesignStageRecord = {
         id: `stage-${randomUUID()}`,
         projectId: project.id,
         floorId: floor.id,
@@ -294,16 +317,26 @@ export function createProjectService(
         dependencyStageIds: dependencyIds,
         createdAt: timestamp,
         updatedAt: timestamp
+      };
+      return repository.runInTransaction(async (transaction) => {
+        const stage = await transaction.createDesignStage(stageInput);
+        await audit.append(
+          {
+            actorId: actor.id,
+            action: "stage_created",
+            entityType: "design_stage",
+            entityId: stage.id,
+            occurredAt: timestamp,
+            newValues: {
+              projectId: project.id,
+              floorId: floor.id,
+              name: stage.name
+            }
+          },
+          transaction
+        );
+        return stage;
       });
-      await audit.append({
-        actorId: actor.id,
-        action: "stage_created",
-        entityType: "design_stage",
-        entityId: stage.id,
-        occurredAt: timestamp,
-        newValues: { projectId: project.id, floorId: floor.id, name: stage.name }
-      });
-      return stage;
     },
 
     async createTask(actor, stageId, input) {
@@ -356,7 +389,7 @@ export function createProjectService(
         );
       }
       const timestamp = clock().toISOString();
-      const task = await repository.createTask({
+      const taskInput: TaskRecord = {
         id: `task-${randomUUID()}`,
         projectId: project.id,
         floorId: floor.id,
@@ -377,21 +410,27 @@ export function createProjectService(
         version: 1,
         createdAt: timestamp,
         updatedAt: timestamp
+      };
+      return repository.runInTransaction(async (transaction) => {
+        const task = await transaction.createTask(taskInput);
+        await audit.append(
+          {
+            actorId: actor.id,
+            action: "task_created",
+            entityType: "task",
+            entityId: task.id,
+            occurredAt: timestamp,
+            newValues: {
+              projectId: project.id,
+              stageId: stage.id,
+              ownerId: owner.id,
+              title: task.title
+            }
+          },
+          transaction
+        );
+        return task;
       });
-      await audit.append({
-        actorId: actor.id,
-        action: "task_created",
-        entityType: "task",
-        entityId: task.id,
-        occurredAt: timestamp,
-        newValues: {
-          projectId: project.id,
-          stageId: stage.id,
-          ownerId: owner.id,
-          title: task.title
-        }
-      });
-      return task;
     }
   };
 }
