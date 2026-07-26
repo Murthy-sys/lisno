@@ -225,6 +225,41 @@ export interface KpiTaskRead {
   currentDeadlineAt: string;
   plannedEffort: number | null;
   risk: TaskRisk;
+}
+
+export type RiskCounts = Record<RiskLevel, number>;
+
+export interface KpiProjectAggregate {
+  projectId: string;
+  totalTasks: number;
+  completedTasks: number;
+  progress: number;
+  riskCounts: RiskCounts;
+}
+
+export interface KpiAggregates {
+  taskCounts: {
+    total: number;
+    completed: number;
+    active: number;
+  };
+  riskCounts: RiskCounts;
+  effort: {
+    planned: number;
+    completed: number;
+    remaining: number;
+    workloadPercentage: number;
+  };
+  projects: KpiProjectAggregate[];
+  recentActivity: Array<{
+    taskId: string;
+    projectId: string;
+    taskTitle: string;
+    event: TaskEvent;
+  }>;
+}
+
+export interface KpiTaskWithEvents extends KpiTaskRead {
   events: LinkedPageData<TaskEvent>;
 }
 
@@ -234,7 +269,8 @@ export interface KpiRead {
   periodEndAt: string;
   score: number;
   components: KpiComponent[];
-  tasks: PageData<KpiTaskRead>;
+  aggregates: KpiAggregates;
+  tasks: PageData<KpiTaskWithEvents>;
 }
 
 export interface UpdateTaskInput {

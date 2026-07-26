@@ -131,6 +131,14 @@ describe("LoginPage", () => {
             }
           })
         ),
+        http.get("/api/v1/kpis/users/:userId/tasks", () =>
+          HttpResponse.json({
+            data: {
+              items: [],
+              pagination: { limit: 20, offset: 0, total: 0, hasMore: false }
+            }
+          })
+        ),
         http.get("/api/v1/kpis/users/:userId", ({ params }) =>
           HttpResponse.json({
             data: {
@@ -139,6 +147,18 @@ describe("LoginPage", () => {
               periodEndAt: "2100-01-01T00:00:00.000Z",
               score: 0,
               components: [],
+              aggregates: {
+                taskCounts: { total: 0, completed: 0, active: 0 },
+                riskCounts: { gray: 0, green: 0, yellow: 0, red: 0 },
+                effort: {
+                  planned: 0,
+                  completed: 0,
+                  remaining: 0,
+                  workloadPercentage: 0
+                },
+                projects: [],
+                recentActivity: []
+              },
               tasks: {
                 items: [],
                 pagination: { limit: 100, offset: 0, total: 0, hasMore: false }

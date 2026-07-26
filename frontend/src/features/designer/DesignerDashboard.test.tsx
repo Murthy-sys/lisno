@@ -126,6 +126,41 @@ const kpiTasks = [
   }
 ];
 
+const aggregates = {
+  taskCounts: { total: 2, completed: 0, active: 2 },
+  riskCounts: { gray: 0, green: 0, yellow: 1, red: 1 },
+  effort: {
+    planned: 26,
+    completed: 0,
+    remaining: 26,
+    workloadPercentage: 100
+  },
+  projects: [
+    {
+      projectId: "project-aurora-villa",
+      totalTasks: 1,
+      completedTasks: 0,
+      progress: 0,
+      riskCounts: { gray: 0, green: 0, yellow: 0, red: 1 }
+    },
+    {
+      projectId: "project-aurora-studio",
+      totalTasks: 1,
+      completedTasks: 0,
+      progress: 0,
+      riskCounts: { gray: 0, green: 0, yellow: 1, red: 0 }
+    }
+  ],
+  recentActivity: [
+    {
+      taskId: "task-circulation",
+      projectId: "project-aurora-villa",
+      taskTitle: "Circulation planning",
+      event: kpiTasks[0].events.items[0]
+    }
+  ]
+};
+
 function response(data: unknown, init?: ResponseInit) {
   return Response.json({ data }, init);
 }
@@ -136,7 +171,8 @@ function installDashboardApi(options?: {
   kpiHasMore?: boolean;
 }) {
   let projectRequests = 0;
-  const kpiRequests: string[] = [];
+  const mainKpiRequests: string[] = [];
+  const taskFeedRequests: string[] = [];
   let createBody: unknown;
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = String(input);
@@ -156,10 +192,38 @@ function installDashboardApi(options?: {
           : pagination
       });
     }
-    if (url.startsWith(`/api/v1/kpis/users/${designer.id}?`)) {
-      kpiRequests.push(url);
+    if (url.startsWith(`/api/v1/kpis/users/${designer.id}/tasks?`)) {
+      taskFeedRequests.push(url);
       const offset = Number(new URL(`https://lisno.test${url}`).searchParams.get("offset"));
       const firstPage = offset === 0;
+      return response({
+        items: options?.empty
+          ? []
+          : firstPage
+            ? kpiTasks.map(({ events: _events, ...task }) => task)
+            : [{
+                ...kpiTasks[0],
+                id: "task-page-2",
+                title: "Loaded later",
+                status: "in_progress",
+                progress: 10,
+                risk: {
+                  ...kpiTasks[0].risk,
+                  level: "red",
+                  reason: "Task is overdue."
+                },
+                events: undefined
+              }],
+        pagination: {
+          limit: 20,
+          offset,
+          total: options?.empty ? 0 : options?.kpiHasMore ? 21 : 2,
+          hasMore: Boolean(options?.kpiHasMore && firstPage)
+        }
+      });
+    }
+    if (url.startsWith(`/api/v1/kpis/users/${designer.id}?`)) {
+      mainKpiRequests.push(url);
       return response({
         userId: designer.id,
         periodStartAt: "2000-01-01T00:00:00.000Z",
@@ -168,17 +232,63 @@ function installDashboardApi(options?: {
         components: options?.empty
           ? components.map((component) => ({ ...component, score: null, eligibleCount: 0 }))
           : components,
+        aggregates: options?.empty
+          ? {
+              taskCounts: { total: 0, completed: 0, active: 0 },
+              riskCounts: { gray: 0, green: 0, yellow: 0, red: 0 },
+              effort: {
+                planned: 0,
+                completed: 0,
+                remaining: 0,
+                workloadPercentage: 0
+              },
+              projects: [],
+              recentActivity: []
+            }
+          : options?.kpiHasMore
+            ? {
+                ...aggregates,
+                taskCounts: { total: 21, completed: 1, active: 20 },
+                riskCounts: { gray: 17, green: 1, yellow: 1, red: 2 },
+                effort: {
+                  planned: 50,
+                  completed: 10,
+                  remaining: 40,
+                  workloadPercentage: 80
+                },
+                projects: [
+                  {
+                    projectId: "project-aurora-villa",
+                    totalTasks: 20,
+                    completedTasks: 1,
+                    progress: 5,
+                    riskCounts: { gray: 17, green: 1, yellow: 0, red: 2 }
+                  },
+                  aggregates.projects[1]
+                ],
+                recentActivity: [
+                  {
+                    taskId: "task-later-completed",
+                    projectId: "project-aurora-villa",
+                    taskTitle: "Later completed task",
+                    event: {
+                      ...kpiTasks[0].events.items[0],
+                      id: "event-later-completed",
+                      taskId: "task-later-completed",
+                      occurredAt: "2026-07-26T09:30:00.000Z",
+                      note: "Later-page completion recorded."
+                    }
+                  }
+                ]
+              }
+            : aggregates,
         tasks: {
-          items: options?.empty
-            ? []
-            : firstPage
-              ? kpiTasks
-              : [{ ...kpiTasks[1], id: "task-page-2", title: "Loaded later" }],
+          items: options?.empty ? [] : kpiTasks,
           pagination: {
             limit: 20,
-            offset,
+            offset: 0,
             total: options?.empty ? 0 : options?.kpiHasMore ? 21 : 2,
-            hasMore: Boolean(options?.kpiHasMore && firstPage)
+            hasMore: Boolean(options?.kpiHasMore)
           }
         }
       });
@@ -191,7 +301,8 @@ function installDashboardApi(options?: {
   });
   return {
     getCreateBody: () => createBody,
-    getKpiRequests: () => kpiRequests
+    getMainKpiRequests: () => mainKpiRequests,
+    getTaskFeedRequests: () => taskFeedRequests
   };
 }
 
@@ -325,14 +436,33 @@ describe("DesignerDashboard", () => {
     renderApp(["/designer"]);
 
     await screen.findByRole("heading", { name: "Good morning, Ananya." });
-    expect(api.getKpiRequests()).toHaveLength(1);
-    expect(api.getKpiRequests()[0]).toMatch(/limit=20&offset=0$/);
+    expect(api.getMainKpiRequests()).toHaveLength(1);
+    expect(api.getTaskFeedRequests()).toHaveLength(1);
+    expect(api.getTaskFeedRequests()[0]).toMatch(/limit=20&offset=0$/);
     expect(screen.queryByText("Loaded later")).not.toBeInTheDocument();
+    expect(screen.getByText("2 red")).toBeVisible();
+    expect(screen.getByText("Later-page completion recorded.")).toBeVisible();
+    expect(screen.getByText("20 active · 1 completed tasks")).toBeVisible();
+    expect(
+      screen.getByText("10h completed of 50h · 80% remains")
+    ).toBeVisible();
+    const projectCard = screen.getByRole("article", { name: "Aurora Villa" });
+    expect(within(projectCard).getByText("5%")).toBeVisible();
+    expect(within(projectCard).getByText("2 red")).toBeVisible();
+    expect(
+      within(screen.getByText("Open workload").closest("article")!)
+        .getByText("40h")
+    ).toBeVisible();
 
     await user.click(screen.getByRole("button", { name: "Load more tasks" }));
 
     expect(await screen.findByText("Loaded later")).toBeVisible();
-    expect(api.getKpiRequests()).toHaveLength(2);
-    expect(api.getKpiRequests()[1]).toMatch(/limit=20&offset=20$/);
+    expect(api.getMainKpiRequests()).toHaveLength(1);
+    expect(api.getTaskFeedRequests()).toHaveLength(2);
+    expect(api.getTaskFeedRequests()[1]).toMatch(/limit=20&offset=20$/);
+    expect(screen.getByText("2 red")).toBeVisible();
+    expect(within(projectCard).getByText("5%")).toBeVisible();
+    expect(within(projectCard).getByText("2 red")).toBeVisible();
+    expect(screen.getByText("Later-page completion recorded.")).toBeVisible();
   });
 });

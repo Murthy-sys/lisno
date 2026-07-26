@@ -749,6 +749,188 @@ describe("organization and KPI workflows", () => {
     expect(writeAttempt.status).toBe(404);
   });
 
+  it("computes complete KPI aggregates and bounded newest activity beyond the first task page", async () => {
+    const seed = structuredClone(demoSeedData);
+    const template = seed.tasks.find(
+      (task) => task.id === "task-circulation"
+    )!;
+    seed.tasks = seed.tasks.filter(
+      (task) => task.ownerId !== "user-designer-kabir"
+    );
+    seed.taskEvents = seed.taskEvents.filter(
+      (event) => event.actorId !== "user-designer-kabir"
+    );
+    for (let index = 0; index < 20; index += 1) {
+      seed.tasks.push({
+        ...template,
+        id: `task-aggregate-gray-${index}`,
+        title: `Gray task ${index}`,
+        order: index + 1,
+        status: "not_started",
+        progress: 0,
+        plannedStartAt: "2026-07-20T09:00:00.000Z",
+        originalDeadlineAt: "2026-07-30T17:00:00.000Z",
+        currentDeadlineAt: "2026-07-30T17:00:00.000Z",
+        plannedEffort: 2,
+        completedAt: null
+      });
+    }
+    seed.tasks.push(
+      {
+        ...template,
+        id: "task-aggregate-later-red",
+        title: "Later red task",
+        order: 21,
+        status: "in_progress",
+        progress: 10,
+        plannedStartAt: "2026-07-01T09:00:00.000Z",
+        originalDeadlineAt: "2026-07-10T17:00:00.000Z",
+        currentDeadlineAt: "2026-07-10T17:00:00.000Z",
+        plannedEffort: 2,
+        completedAt: null
+      },
+      {
+        ...template,
+        id: "task-aggregate-later-completed",
+        title: "Later completed task",
+        order: 22,
+        status: "completed",
+        progress: 100,
+        plannedStartAt: "2026-07-01T09:00:00.000Z",
+        originalDeadlineAt: "2026-07-20T17:00:00.000Z",
+        currentDeadlineAt: "2026-07-20T17:00:00.000Z",
+        plannedEffort: 2,
+        completedAt: "2026-07-15T17:00:00.000Z"
+      }
+    );
+    for (let day = 1; day <= 6; day += 1) {
+      seed.taskEvents.push({
+        id: `event-aggregate-${day}`,
+        taskId: "task-aggregate-gray-0",
+        actorId: "user-designer-kabir",
+        type: "note_added",
+        occurredAt: `2026-07-0${day}T09:00:00.000Z`,
+        from: {},
+        to: {},
+        note: `Activity ${day}`,
+        createdAt: `2026-07-0${day}T09:00:00.000Z`
+      });
+    }
+    const app = createApp({
+      repository: createMemoryRepository(seed),
+      auth,
+      clock
+    });
+    const range =
+      "from=2026-07-01T00%3A00%3A00.000Z&to=2026-07-31T23%3A59%3A59.999Z";
+
+    const response = await request(app)
+      .get(`/api/v1/kpis/users/user-designer-kabir?${range}&limit=20&offset=0`)
+      .set("Authorization", bearer(users.managerAarav));
+
+    expect(response.status).toBe(200);
+    expect(response.body.data.tasks.pagination).toMatchObject({
+      total: 22,
+      hasMore: true
+    });
+    expect(response.body.data.aggregates).toEqual({
+      taskCounts: { total: 22, completed: 1, active: 21 },
+      riskCounts: { gray: 20, green: 1, yellow: 0, red: 1 },
+      effort: {
+        planned: 44,
+        completed: 2,
+        remaining: 42,
+        workloadPercentage: 95
+      },
+      projects: [
+        {
+          projectId: "project-aurora-villa",
+          totalTasks: 22,
+          completedTasks: 1,
+          progress: 5,
+          riskCounts: { gray: 20, green: 1, yellow: 0, red: 1 }
+        }
+      ],
+      recentActivity: [
+        expect.objectContaining({
+          taskId: "task-aggregate-gray-0",
+          taskTitle: "Gray task 0",
+          event: expect.objectContaining({
+            id: "event-aggregate-6",
+            occurredAt: "2026-07-06T09:00:00.000Z"
+          })
+        }),
+        expect.objectContaining({
+          event: expect.objectContaining({ id: "event-aggregate-5" })
+        }),
+        expect.objectContaining({
+          event: expect.objectContaining({ id: "event-aggregate-4" })
+        }),
+        expect.objectContaining({
+          event: expect.objectContaining({ id: "event-aggregate-3" })
+        }),
+        expect.objectContaining({
+          event: expect.objectContaining({ id: "event-aggregate-2" })
+        })
+      ]
+    });
+  });
+
+  it("serves an authorized lightweight KPI task feed without entering the full calculation path", async () => {
+    const base = createMemoryRepository(structuredClone(demoSeedData));
+    const repository = new Proxy(base, {
+      get(target, property, receiver) {
+        if (
+          property === "listKpiTasksForPeriod" ||
+          property === "listKpiTaskEventsForPeriod"
+        ) {
+          return async () => {
+            throw new Error("full KPI calculation path invoked");
+          };
+        }
+        return Reflect.get(target, property, receiver);
+      }
+    });
+    const app = createApp({ repository, auth, clock });
+    const range =
+      "from=2026-07-01T00%3A00%3A00.000Z&to=2026-07-31T23%3A59%3A59.999Z";
+
+    const response = await request(app)
+      .get(
+        `/api/v1/kpis/users/user-designer-kabir/tasks?${range}&limit=1&offset=1`
+      )
+      .set("Authorization", bearer(users.managerAarav));
+
+    expect(response.status).toBe(200);
+    expect(response.body.data).toMatchObject({
+      items: [
+        {
+          id: "task-circulation",
+          projectId: "project-aurora-villa",
+          risk: {
+            level: expect.any(String),
+            reason: expect.any(String)
+          }
+        }
+      ],
+      pagination: { limit: 1, offset: 1, total: 2, hasMore: false }
+    });
+    expect(response.body.data.items[0]).not.toHaveProperty("events");
+    expect(response.body.data).not.toHaveProperty("components");
+    expect(response.body.data).not.toHaveProperty("score");
+
+    const crossTeam = await request(app)
+      .get(`/api/v1/kpis/users/user-designer-kabir/tasks?${range}`)
+      .set("Authorization", bearer(users.managerMeera));
+    expect(crossTeam.status).toBe(403);
+
+    const unknown = await request(app)
+      .get(`/api/v1/kpis/users/user-designer-kabir/tasks?${range}&foo=bar`)
+      .set("Authorization", bearer(users.managerAarav));
+    expect(unknown.status).toBe(400);
+    expect(unknown.body.error.fields).toEqual({ foo: expect.any(String) });
+  });
+
   it("aggregates manager KPI from direct-report tasks and excludes manager deadline events from update discipline", async () => {
     const seed = structuredClone(demoSeedData);
     seed.taskEvents.push({

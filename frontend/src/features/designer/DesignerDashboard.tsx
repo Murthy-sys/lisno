@@ -11,7 +11,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { useState } from "react";
 
 import type {
-  KpiTaskRead,
+  KpiProjectAggregate,
   Project,
   ProjectStatus,
   TaskEvent
@@ -27,7 +27,8 @@ import { ProjectCreateDialog } from "./ProjectCreateDialog";
 import {
   designerKeys,
   getAllProjects,
-  getKpiPage
+  getKpi,
+  getKpiTaskPage
 } from "./designerApi";
 
 const statusLabels: Record<ProjectStatus, string> = {
@@ -60,20 +61,24 @@ export function DesignerDashboard() {
     queryKey: designerKeys.projects(),
     queryFn: getAllProjects
   });
-  const kpiQuery = useInfiniteQuery({
+  const kpiQuery = useQuery({
     queryKey: designerKeys.kpi(user.id),
-    queryFn: ({ pageParam }) => getKpiPage(user.id, pageParam),
+    queryFn: () => getKpi(user.id)
+  });
+  const taskFeedQuery = useInfiniteQuery({
+    queryKey: designerKeys.kpiTasks(user.id),
+    queryFn: ({ pageParam }) => getKpiTaskPage(user.id, pageParam),
     initialPageParam: 0,
     getNextPageParam: (lastPage) =>
-      lastPage.tasks.pagination.hasMore
-        ? lastPage.tasks.pagination.offset + lastPage.tasks.pagination.limit
+      lastPage.pagination.hasMore
+        ? lastPage.pagination.offset + lastPage.pagination.limit
         : undefined
   });
 
-  if (projectsQuery.isPending || kpiQuery.isPending) {
+  if (projectsQuery.isPending || kpiQuery.isPending || taskFeedQuery.isPending) {
     return <AsyncState state="loading" message="Loading your design operations…" />;
   }
-  if (projectsQuery.isError || kpiQuery.isError) {
+  if (projectsQuery.isError || kpiQuery.isError || taskFeedQuery.isError) {
     return (
       <AsyncState
         state="error"
@@ -82,24 +87,22 @@ export function DesignerDashboard() {
         onAction={() => {
           void projectsQuery.refetch();
           void kpiQuery.refetch();
+          void taskFeedQuery.refetch();
         }}
       />
     );
   }
 
   const projects = projectsQuery.data;
-  const kpi = kpiQuery.data.pages[0];
-  const kpiTasks = kpiQuery.data.pages.flatMap((page) => page.tasks.items);
-  const activeProjects = projects.filter((project) => project.status === "active");
+  const kpi = kpiQuery.data;
+  const kpiTasks = taskFeedQuery.data.pages.flatMap((page) => page.items);
+  const aggregates = kpi.aggregates;
   const redTasks = kpiTasks.filter((task) => task.risk.level === "red");
   const yellowTasks = kpiTasks.filter(
     (task) => task.risk.level === "yellow"
   );
-  const workload = kpiTasks
-    .filter((task) => task.status !== "completed")
-    .reduce((total, task) => total + (task.plannedEffort ?? 0), 0);
   const riskQueue = [...redTasks, ...yellowTasks];
-  const recentActivity = collectActivity(kpiTasks).slice(0, 5);
+  const atRiskCount = aggregates.riskCounts.red + aggregates.riskCounts.yellow;
 
   return (
     <section className="designer-page" aria-labelledby="designer-title">
@@ -134,20 +137,20 @@ export function DesignerDashboard() {
       <div className="metrics-grid">
         <MetricCard
           label="Active projects"
-          value={activeProjects.length}
-          detail={`${projects.length} total assigned`}
+          value={aggregates.projects.length}
+          detail={`${aggregates.taskCounts.active} active · ${aggregates.taskCounts.completed} completed tasks`}
           icon={<FolderKanban />}
         />
         <MetricCard
           label="At-risk queue"
-          value={riskQueue.length}
-          detail={`${redTasks.length} red · ${yellowTasks.length} yellow`}
+          value={atRiskCount}
+          detail={`${aggregates.riskCounts.red} red · ${aggregates.riskCounts.yellow} yellow`}
           icon={<AlertTriangle />}
         />
         <MetricCard
           label="Open workload"
-          value={`${workload}h`}
-          detail="Planned effort on incomplete tasks"
+          value={`${aggregates.effort.remaining}h`}
+          detail={`${aggregates.effort.completed}h completed of ${aggregates.effort.planned}h · ${aggregates.effort.workloadPercentage}% remains`}
           icon={<BriefcaseBusiness />}
         />
       </div>
@@ -159,7 +162,7 @@ export function DesignerDashboard() {
               <p className="eyebrow">Priority queue</p>
               <h2 id="risk-queue-title">Red and yellow tasks</h2>
             </div>
-            <span>{riskQueue.length} open</span>
+            <span>{atRiskCount} open</span>
           </div>
           {riskQueue.length ? (
             <div className="risk-list">
@@ -189,15 +192,15 @@ export function DesignerDashboard() {
               <h2 id="activity-title">Recent activity</h2>
             </div>
           </div>
-          {recentActivity.length ? (
+          {aggregates.recentActivity.length ? (
             <ol className="activity-list">
-              {recentActivity.map(({ task, event }) => (
+              {aggregates.recentActivity.map(({ taskTitle, event }) => (
                 <li key={event.id}>
                   <span className="activity-list__icon"><Clock3 aria-hidden="true" /></span>
                   <div>
                     <strong>{event.note ?? eventLabel(event)}</strong>
                     <span>
-                      {task.title} · {projectDate.format(new Date(event.occurredAt))}
+                      {taskTitle} · {projectDate.format(new Date(event.occurredAt))}
                     </span>
                   </div>
                 </li>
@@ -209,15 +212,15 @@ export function DesignerDashboard() {
         </section>
       </div>
 
-      {kpiQuery.hasNextPage ? (
+      {taskFeedQuery.hasNextPage ? (
         <div className="dashboard-load-more">
           <button
             type="button"
             className="button button--secondary"
-            onClick={() => void kpiQuery.fetchNextPage()}
-            disabled={kpiQuery.isFetchingNextPage}
+            onClick={() => void taskFeedQuery.fetchNextPage()}
+            disabled={taskFeedQuery.isFetchingNextPage}
           >
-            {kpiQuery.isFetchingNextPage ? "Loading more tasks…" : "Load more tasks"}
+            {taskFeedQuery.isFetchingNextPage ? "Loading more tasks…" : "Load more tasks"}
           </button>
         </div>
       ) : null}
@@ -235,8 +238,8 @@ export function DesignerDashboard() {
               <ProjectCard
                 key={project.id}
                 project={project}
-                tasks={kpiTasks.filter(
-                  (task) => task.projectId === project.id
+                aggregate={aggregates.projects.find(
+                  (candidate) => candidate.projectId === project.id
                 )}
               />
             ))}
@@ -274,15 +277,14 @@ export function DesignerDashboard() {
 
 function ProjectCard({
   project,
-  tasks
+  aggregate
 }: {
   project: Project;
-  tasks: KpiTaskRead[];
+  aggregate?: KpiProjectAggregate;
 }) {
-  const red = tasks.filter((task) => task.risk.level === "red").length;
-  const yellow = tasks.filter((task) => task.risk.level === "yellow").length;
-  const completed = tasks.filter((task) => task.status === "completed").length;
-  const progress = tasks.length ? Math.round((completed / tasks.length) * 100) : 0;
+  const red = aggregate?.riskCounts.red ?? 0;
+  const yellow = aggregate?.riskCounts.yellow ?? 0;
+  const progress = aggregate?.progress ?? 0;
 
   return (
     <article className="project-card" aria-label={project.name}>
@@ -305,14 +307,6 @@ function ProjectCard({
       </Link>
     </article>
   );
-}
-
-function collectActivity(tasks: KpiTaskRead[]) {
-  return tasks
-    .flatMap((task) => task.events.items.map((event) => ({ task, event })))
-    .sort((left, right) =>
-      right.event.occurredAt.localeCompare(left.event.occurredAt)
-    );
 }
 
 function eventLabel(event: TaskEvent): string {

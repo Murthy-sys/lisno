@@ -1,6 +1,7 @@
 import { apiClient } from "../../api/client";
 import type {
   KpiRead,
+  KpiTaskRead,
   PageData,
   Project,
   TaskEvent
@@ -17,6 +18,8 @@ export const designerKeys = {
   project: (projectId: string) =>
     [...designerKeys.projects(), projectId] as const,
   kpi: (userId: string) => [...designerKeys.all, "kpi", userId] as const,
+  kpiTasks: (userId: string) =>
+    [...designerKeys.all, "kpi-tasks", userId] as const,
   taskEvents: (taskId: string) =>
     [...designerKeys.all, "tasks", taskId, "events", { sort: "desc", limit: 1 }] as const,
   designVersions: (projectId: string) =>
@@ -31,18 +34,35 @@ export async function getAllProjects(): Promise<Project[]> {
   );
 }
 
-function kpiPath(userId: string, offset: number): string {
+function kpiQuery(): string {
+  const query = new URLSearchParams({
+    from: KPI_FROM,
+    to: KPI_TO,
+    limit: String(KPI_PAGE_SIZE),
+    offset: "0"
+  });
+  return query.toString();
+}
+
+export function getKpi(userId: string): Promise<KpiRead> {
+  return apiClient.get<KpiRead>(
+    `/kpis/users/${encodeURIComponent(userId)}?${kpiQuery()}`
+  );
+}
+
+export function getKpiTaskPage(
+  userId: string,
+  offset = 0
+): Promise<PageData<KpiTaskRead>> {
   const query = new URLSearchParams({
     from: KPI_FROM,
     to: KPI_TO,
     limit: String(KPI_PAGE_SIZE),
     offset: String(offset)
   });
-  return `/kpis/users/${encodeURIComponent(userId)}?${query.toString()}`;
-}
-
-export function getKpiPage(userId: string, offset = 0): Promise<KpiRead> {
-  return apiClient.get<KpiRead>(kpiPath(userId, offset));
+  return apiClient.get(
+    `/kpis/users/${encodeURIComponent(userId)}/tasks?${query.toString()}`
+  );
 }
 
 export function getLatestTaskEvent(taskId: string): Promise<PageData<TaskEvent>> {

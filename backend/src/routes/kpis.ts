@@ -25,6 +25,34 @@ export function createKpisRouter(
   const router = Router();
 
   router.get(
+    "/kpis/users/:userId/tasks",
+    authenticate(authService),
+    authorizeRoles("designer", "design_manager", "design_head"),
+    validateQuery(querySchema),
+    async (request, response, next) => {
+      try {
+        const { from, to, limit, offset } =
+          response.locals.validatedQuery;
+        const pagination = { limit, offset };
+        response.json({
+          data: paginatedEnvelope(
+            await kpiService.listTasks(
+              request.authenticatedUser!,
+              request.params.userId as string,
+              from,
+              to,
+              pagination
+            ),
+            pagination
+          )
+        });
+      } catch (error) {
+        next(error);
+      }
+    }
+  );
+
+  router.get(
     "/kpis/users/:userId",
     authenticate(authService),
     authorizeRoles("designer", "design_manager", "design_head"),
