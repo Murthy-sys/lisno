@@ -27,7 +27,7 @@ export function DesignerDetail() {
     <section className="dashboard-section"><h2>Projects</h2>{designer.projects.map((project) => <Link key={project.id} to={`${base}/projects/${project.id}`}>{project.name}</Link>)}</section>
     <section className="dashboard-section"><h2>Risk queue</h2>{designer.tasks.filter((task) => task.risk.level === "red" || task.risk.level === "yellow").map((task) => <article key={task.id} className="risk-item"><strong>{task.title}</strong><RiskBadge risk={task.risk} /><p>{task.risk.reason}</p><button type="button" onClick={() => setRevisionTaskId(task.id)}>Revise deadline</button></article>)}</section>
     <section className="dashboard-section"><h2>Audit timeline</h2><ol>{audit.data.items.map((event) => <li key={event.id}>{event.action}{event.reason ? ` · ${event.reason}` : ""}</li>)}</ol></section>
-    <EvaluationForm subjectUserId={designerId} queryKey={managementKeys.evaluations(designerId)} revision={evaluations.data.items[0]} />
+    <EvaluationForm subjectUserId={designerId} queryKey={managementKeys.evaluations(designerId)} revisionCandidates={evaluations.data.items} />
     {revisionTask ? <DeadlineRevisionDialog task={revisionTask} onClose={() => setRevisionTaskId(null)} onConflict={() => summary.refetch()} /> : null}
   </section>;
 }

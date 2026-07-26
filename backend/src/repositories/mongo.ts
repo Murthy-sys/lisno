@@ -577,7 +577,7 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
 
     async listAuditEvents(filters) {
       const documents = await AuditEventModel.find(auditFilter(filters))
-        .sort({ occurredAt: 1, _id: 1 })
+        .sort(filters.sort === "desc" ? { occurredAt: -1, _id: -1 } : { occurredAt: 1, _id: 1 })
         .lean()
         .exec();
       return documents.map(mapAuditEvent);
@@ -587,7 +587,7 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
       const filter = auditFilter(filters);
       const [documents, total] = await Promise.all([
         AuditEventModel.find(filter)
-          .sort({ occurredAt: 1, _id: 1 })
+          .sort(filters.sort === "desc" ? { occurredAt: -1, _id: -1 } : { occurredAt: 1, _id: 1 })
           .skip(pagination.offset)
           .limit(pagination.limit)
           .lean()

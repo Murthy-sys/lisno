@@ -271,6 +271,7 @@ export interface AuditFilters {
   entityIds?: string[];
   visibleActorIds?: string[];
   visibleTaskIds?: string[];
+  sort?: TaskEventSort;
 }
 
 export interface PaginationInput {

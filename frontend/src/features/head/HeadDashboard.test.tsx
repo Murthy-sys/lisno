@@ -1,4 +1,5 @@
 import { screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import { tokenStorage } from "../../api/client";
@@ -28,6 +29,25 @@ describe("HeadDashboard", () => {
           }]
         });
       }
+      if (url.startsWith("/api/v1/evaluations/manager-1?")) {
+        return Response.json({
+          data: {
+            items: [{
+              id: "evaluation-latest",
+              subjectUserId: "manager-1",
+              evaluatorUserId: "user-head",
+              evaluatorRole: "design_head",
+              periodStartAt: "2026-07-01T00:00:00.000Z",
+              periodEndAt: "2026-07-31T23:59:59.999Z",
+              score: 88,
+              comments: "Head correction",
+              revisionOf: "evaluation-previous",
+              createdAt: "2026-08-01T00:00:00.000Z"
+            }],
+            pagination: { limit: 100, offset: 0, total: 1, hasMore: false }
+          }
+        });
+      }
       throw new Error(`Unhandled request: ${url}`);
     });
 
@@ -35,5 +55,8 @@ describe("HeadDashboard", () => {
 
     expect(await screen.findByRole("heading", { name: "Organization delivery health" })).toBeVisible();
     expect(screen.getByRole("button", { name: /Aarav Shah/ })).toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: /Aarav Shah/ }));
+    expect(await screen.findByText(/Head correction/)).toBeVisible();
+    expect(screen.getByText(/design_head \(user-head\).*revision of evaluation-previous/)).toBeVisible();
   });
 });

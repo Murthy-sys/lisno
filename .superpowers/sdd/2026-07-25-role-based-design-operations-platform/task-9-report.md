@@ -56,3 +56,20 @@
 - Final verification: backend typecheck, build, and all 11 test files (117
   tests) pass; frontend typecheck, production build, and all 10 test files
   (51 tests) pass. `git diff --check` also passes.
+
+## Review Round 2
+
+- Expanding a manager in the head tree fetches and renders the manager's
+  newest-first evaluation history, including period, score, comments,
+  evaluator identity/role, and revision linkage.
+- Corrections are selectable only from evaluations authored by the signed-in
+  evaluator in the same role; a correction sends the source period's exact
+  ISO timestamps rather than reserializing local datetime input.
+- Scoped designer task audit supports `sort=desc`, and the detail workspace
+  requests the newest page. A workflow regression covers 101 added events so
+  the most recent activity remains visible beyond the first 100 records.
+- Focused checks: frontend head/detail tests (3 tests) and backend workflow
+  tests (30 tests) pass, along with both typechecks.
+- Final round-two verification: backend typecheck, build, and all 11 test
+  files (118 tests) pass; frontend typecheck, production build, and all 10
+  test files (52 tests) pass.

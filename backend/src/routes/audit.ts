@@ -15,6 +15,7 @@ const querySchema = z
     actorId: z.string().min(1).optional(),
     entityType: z.string().min(1).optional(),
     entityId: z.string().min(1).optional(),
+    sort: z.enum(["asc", "desc"]).optional(),
     ...paginationShape
   })
   .strict();
@@ -29,11 +30,11 @@ export function createAuditRouter(
     "/designers/:designerId/audit",
     authenticate(authService),
     authorizeRoles("designer", "design_manager", "design_head"),
-    validateQuery(z.object(paginationShape).strict()),
+    validateQuery(z.object({ ...paginationShape, sort: z.enum(["asc", "desc"]).optional() }).strict()),
     async (request, response, next) => {
       try {
-        const pagination = response.locals.validatedQuery;
-        response.json({ data: paginatedEnvelope(await auditService.listForDesigner(request.authenticatedUser!, request.params.designerId as string, pagination), pagination) });
+        const { sort, ...pagination } = response.locals.validatedQuery;
+        response.json({ data: paginatedEnvelope(await auditService.listForDesigner(request.authenticatedUser!, request.params.designerId as string, pagination, sort), pagination) });
       } catch (error) { next(error); }
     }
   );

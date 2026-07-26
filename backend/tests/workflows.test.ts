@@ -1345,6 +1345,30 @@ describe("evaluation and audit workflows", () => {
     });
   });
 
+  it("returns the newest scoped designer task activity when the audit history exceeds one page", async () => {
+    const { app, repository } = setup();
+    await Promise.all(Array.from({ length: 101 }, (_, index) => repository.appendAuditEvent({
+      id: `audit-designer-history-${index}`,
+      actorId: "user-manager-aarav",
+      action: "task_deadline_revised",
+      entityType: "task",
+      entityId: "task-furniture-layout",
+      occurredAt: new Date(Date.UTC(2026, 8, 1, 0, 0, index)).toISOString(),
+      oldValues: {},
+      newValues: {},
+      reason: `Revision ${index}`
+    })));
+
+    const response = await request(app)
+      .get("/api/v1/designers/user-designer-ananya/audit?limit=100&offset=0&sort=desc")
+      .set("Authorization", bearer(users.managerAarav));
+
+    expect(response.status).toBe(200);
+    expect(response.body.data.pagination).toMatchObject({ total: 102, hasMore: true });
+    expect(response.body.data.items).toHaveLength(100);
+    expect(response.body.data.items[0]).toMatchObject({ id: "audit-designer-history-100" });
+  });
+
   it("rolls an evaluation back when its audit append fails", async () => {
     const base = createMemoryRepository(structuredClone(demoSeedData));
     const failingRepository = new Proxy(base, {

@@ -556,7 +556,9 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
       return clone(
         state.auditEvents
           .filter((event) => matchesAuditFilters(event, filters))
-          .sort((left, right) => byDateThenId("occurredAt", left, right))
+          .sort((left, right) => filters.sort === "desc"
+            ? byDateThenId("occurredAt", right, left)
+            : byDateThenId("occurredAt", left, right))
       );
     },
 
