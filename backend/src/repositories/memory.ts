@@ -72,7 +72,10 @@ export function createMemoryRepository(seed: SeedData = demoSeedData): AppReposi
         user.role === "design_manager"
           ? new Set(
               state.users
-                .filter((candidate) => candidate.managerId === user.id)
+                .filter(
+                  (candidate) =>
+                    candidate.role === "designer" && candidate.managerId === user.id
+                )
                 .map((candidate) => candidate.id)
             )
           : new Set<string>();
@@ -225,7 +228,7 @@ export function createMemoryRepository(seed: SeedData = demoSeedData): AppReposi
         status,
         completedAt,
         version: current.version + 1,
-        updatedAt: change.latestUpdateAt ?? nextIso()
+        updatedAt: nextIso()
       } as TaskRecord;
       state.tasks[index] = updated;
       return clone(updated);
@@ -255,6 +258,20 @@ export function createMemoryRepository(seed: SeedData = demoSeedData): AppReposi
     async createDesignVersion(input) {
       const id = input.id ?? nextId("design-version");
       ensureUniqueId(state.designVersions, id, "Design version");
+      if (
+        state.designVersions.some(
+          (version) =>
+            version.projectId === input.projectId &&
+            version.floorId === input.floorId &&
+            version.stageId === input.stageId &&
+            version.taskId === input.taskId &&
+            version.versionNumber === input.versionNumber
+        )
+      ) {
+        throw new RepositoryConflictError(
+          "Design version target and version number already exist."
+        );
+      }
       const createdAt = input.createdAt ?? nextIso();
       const record: DesignVersionRecord = {
         ...clone(input),

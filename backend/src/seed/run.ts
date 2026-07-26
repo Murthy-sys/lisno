@@ -31,14 +31,26 @@ export async function seedMongoDatabase(): Promise<void> {
   await replaceAll(FloorModel, demoSeedData.floors, floorDocument);
   await replaceAll(DesignStageModel, demoSeedData.stages, stageDocument);
   await replaceAll(TaskModel, demoSeedData.tasks, taskDocument);
-  await replaceAll(TaskEventModel, demoSeedData.taskEvents, taskEventDocument);
   await replaceAll(
     DesignVersionModel,
     demoSeedData.designVersions,
     designVersionDocument
   );
-  await replaceAll(EvaluationModel, demoSeedData.evaluations, evaluationDocument);
-  await replaceAll(AuditEventModel, demoSeedData.auditEvents, auditEventDocument);
+  await resetAppendOnlyHistoryForSeed(
+    TaskEventModel,
+    demoSeedData.taskEvents,
+    taskEventDocument
+  );
+  await resetAppendOnlyHistoryForSeed(
+    EvaluationModel,
+    demoSeedData.evaluations,
+    evaluationDocument
+  );
+  await resetAppendOnlyHistoryForSeed(
+    AuditEventModel,
+    demoSeedData.auditEvents,
+    auditEventDocument
+  );
 }
 
 async function replaceAll<T extends { id: string }>(
@@ -57,6 +69,16 @@ async function replaceAll<T extends { id: string }>(
       }
     }))
   );
+}
+
+async function resetAppendOnlyHistoryForSeed<T extends { id: string }>(
+  model: Model<any>,
+  records: T[],
+  serialize: (record: T) => MongoRecord
+) {
+  await model.deleteMany({});
+  if (records.length === 0) return;
+  await model.insertMany(records.map(serialize), { timestamps: false });
 }
 
 function userDocument(record: UserRecord): MongoRecord {

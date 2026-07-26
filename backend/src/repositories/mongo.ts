@@ -90,38 +90,46 @@ export function createMongoRepository(): AppRepository {
     },
 
     async createProject(input) {
-      const document = await ProjectModel.create({
-        ...projectForMongo(input),
-        _id: input.id
-      });
+      const document = await createMongoDocument("Project", () =>
+        ProjectModel.create({
+          ...projectForMongo(input),
+          _id: input.id
+        })
+      );
       return mapProject(document.toObject());
     },
 
     async createFloor(input) {
-      const document = await FloorModel.create({
-        ...floorForMongo(input),
-        _id: input.id
-      });
+      const document = await createMongoDocument("Floor", () =>
+        FloorModel.create({
+          ...floorForMongo(input),
+          _id: input.id
+        })
+      );
       return mapFloor(document.toObject());
     },
 
     async createDesignStage(input) {
-      const document = await DesignStageModel.create({
-        ...input,
-        _id: input.id,
-        id: undefined,
-        createdAt: date(input.createdAt),
-        updatedAt: date(input.updatedAt)
-      });
+      const document = await createMongoDocument("Design stage", () =>
+        DesignStageModel.create({
+          ...input,
+          _id: input.id,
+          id: undefined,
+          createdAt: date(input.createdAt),
+          updatedAt: date(input.updatedAt)
+        })
+      );
       return mapStage(document.toObject());
     },
 
     async createTask(input) {
-      const document = await TaskModel.create({
-        ...taskForMongo(input),
-        _id: input.id,
-        __v: input.version - 1
-      });
+      const document = await createMongoDocument("Task", () =>
+        TaskModel.create({
+          ...taskForMongo(input),
+          _id: input.id,
+          __v: input.version - 1
+        })
+      );
       return mapTask(document.toObject());
     },
 
@@ -247,14 +255,16 @@ export function createMongoRepository(): AppRepository {
     },
 
     async appendTaskEvent(input) {
-      const document = await TaskEventModel.create({
-        ...input,
-        _id: input.id ?? randomUUID(),
-        id: undefined,
-        occurredAt: date(input.occurredAt),
-        createdAt: input.createdAt ? date(input.createdAt) : undefined,
-        note: input.note ?? null
-      });
+      const document = await createMongoDocument("Task event", () =>
+        TaskEventModel.create({
+          ...input,
+          _id: input.id ?? randomUUID(),
+          id: undefined,
+          occurredAt: date(input.occurredAt),
+          createdAt: input.createdAt ? date(input.createdAt) : undefined,
+          note: input.note ?? null
+        })
+      );
       return mapTaskEvent(document.toObject());
     },
 
@@ -267,10 +277,12 @@ export function createMongoRepository(): AppRepository {
     },
 
     async createDesignVersion(input) {
-      const document = await DesignVersionModel.create({
-        ...designVersionForMongo(input),
-        _id: input.id ?? randomUUID()
-      });
+      const document = await createMongoDocument("Design version", () =>
+        DesignVersionModel.create({
+          ...designVersionForMongo(input),
+          _id: input.id ?? randomUUID()
+        })
+      );
       return mapDesignVersion(document.toObject());
     },
 
@@ -306,15 +318,17 @@ export function createMongoRepository(): AppRepository {
     },
 
     async createEvaluation(input) {
-      const document = await EvaluationModel.create({
-        ...input,
-        _id: input.id ?? randomUUID(),
-        id: undefined,
-        revisionOf: input.revisionOf ?? null,
-        periodStartAt: date(input.periodStartAt),
-        periodEndAt: date(input.periodEndAt),
-        createdAt: input.createdAt ? date(input.createdAt) : undefined
-      });
+      const document = await createMongoDocument("Evaluation", () =>
+        EvaluationModel.create({
+          ...input,
+          _id: input.id ?? randomUUID(),
+          id: undefined,
+          revisionOf: input.revisionOf ?? null,
+          periodStartAt: date(input.periodStartAt),
+          periodEndAt: date(input.periodEndAt),
+          createdAt: input.createdAt ? date(input.createdAt) : undefined
+        })
+      );
       return mapEvaluation(document.toObject());
     },
 
@@ -327,14 +341,16 @@ export function createMongoRepository(): AppRepository {
     },
 
     async appendAuditEvent(input) {
-      const document = await AuditEventModel.create({
-        ...input,
-        _id: input.id ?? randomUUID(),
-        id: undefined,
-        occurredAt: date(input.occurredAt),
-        createdAt: input.createdAt ? date(input.createdAt) : undefined,
-        reason: input.reason ?? null
-      });
+      const document = await createMongoDocument("Audit event", () =>
+        AuditEventModel.create({
+          ...input,
+          _id: input.id ?? randomUUID(),
+          id: undefined,
+          occurredAt: date(input.occurredAt),
+          createdAt: input.createdAt ? date(input.createdAt) : undefined,
+          reason: input.reason ?? null
+        })
+      );
       return mapAuditEvent(document.toObject());
     },
 
@@ -346,6 +362,29 @@ export function createMongoRepository(): AppRepository {
       return documents.map(mapAuditEvent);
     }
   };
+}
+
+async function createMongoDocument<T>(
+  label: string,
+  create: () => Promise<T>
+): Promise<T> {
+  try {
+    return await create();
+  } catch (error) {
+    if (isMongoDuplicateKeyError(error)) {
+      throw new RepositoryConflictError(`${label} already exists.`);
+    }
+    throw error;
+  }
+}
+
+function isMongoDuplicateKeyError(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    error.code === 11000
+  );
 }
 
 function compactFilter(value: object): PlainDocument {

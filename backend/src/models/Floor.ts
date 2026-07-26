@@ -16,6 +16,6 @@ const floorSchema = new Schema(
   { timestamps: true, versionKey: false }
 );
 
-floorSchema.index({ projectId: 1, order: 1, _id: 1 }, { unique: true });
+floorSchema.index({ projectId: 1, order: 1 }, { unique: true });
 
 export const FloorModel = models.Floor ?? model("Floor", floorSchema);

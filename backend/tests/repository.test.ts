@@ -49,6 +49,27 @@ describe("memory repository", () => {
     await expect(repository.listProjectsForUser(head!)).resolves.toHaveLength(3);
   });
 
+  it("does not treat a manager-linked non-designer as a direct report", async () => {
+    const seed = structuredClone(demoSeedData);
+    const client = seed.users.find((user) => user.id === "user-client-celeste")!;
+    client.managerId = "user-manager-aarav";
+    seed.projects.push({
+      ...structuredClone(seed.projects[0]!),
+      id: "project-non-designer-assignment",
+      name: "Non-designer assignment",
+      managerId: "user-manager-meera",
+      assignedDesignerIds: [client.id]
+    });
+    const repository = createMemoryRepository(seed);
+    const manager = await repository.findUserById("user-manager-aarav");
+
+    const visibleProjectIds = (await repository.listProjectsForUser(manager!)).map(
+      (project) => project.id
+    );
+
+    expect(visibleProjectIds).not.toContain("project-non-designer-assignment");
+  });
+
   it("returns floors, stages, and tasks in explicit order", async () => {
     const repository = createMemoryRepository(demoSeedData);
 
@@ -113,6 +134,21 @@ describe("memory repository", () => {
     ).rejects.toBeInstanceOf(RepositoryConflictError);
   });
 
+  it("keeps backdated task event time separate from repository mutation time", async () => {
+    const repository = createMemoryRepository(demoSeedData);
+    const original = await repository.findTaskById("task-circulation");
+
+    const updated = await repository.updateTask("task-circulation", original!.version, {
+      progress: 25,
+      latestUpdateAt: "2026-06-20T09:30:00.000Z"
+    });
+
+    expect(updated.latestUpdateAt).toBe("2026-06-20T09:30:00.000Z");
+    expect(new Date(updated.updatedAt).getTime()).toBeGreaterThan(
+      new Date(original!.updatedAt).getTime()
+    );
+  });
+
   it("appends task events without exposing mutable history", async () => {
     const repository = createMemoryRepository(demoSeedData);
     const before = await repository.listTaskEvents("task-circulation");
@@ -132,6 +168,44 @@ describe("memory repository", () => {
     appended.to.progress = 99;
     const reread = await repository.listTaskEvents("task-circulation");
     expect(reread.at(-1)?.to).toEqual({ progress: 35 });
+  });
+
+  it("accepts successive design versions for the same design target", async () => {
+    const repository = createMemoryRepository(demoSeedData);
+    const versionOne = demoSeedData.designVersions[0]!;
+
+    const versionTwo = await repository.createDesignVersion({
+      ...structuredClone(versionOne),
+      id: "version-aurora-plan-2",
+      versionNumber: 2,
+      originalFilename: "aurora-ground-plan-v2.pdf",
+      storedFileReference: "seed/aurora-ground-plan-v2.pdf",
+      uploadedAt: "2026-07-16T10:00:00.000Z",
+      createdAt: "2026-07-16T10:00:00.000Z",
+      updatedAt: "2026-07-16T10:00:00.000Z"
+    });
+
+    expect(versionTwo.versionNumber).toBe(2);
+    await expect(
+      repository.listDesignVersions("project-aurora-villa")
+    ).resolves.toMatchObject([
+      { id: "version-aurora-plan-1", versionNumber: 1 },
+      { id: "version-aurora-plan-2", versionNumber: 2 }
+    ]);
+  });
+
+  it("rejects a duplicate design-version target and version number", async () => {
+    const repository = createMemoryRepository(demoSeedData);
+    const versionOne = demoSeedData.designVersions[0]!;
+
+    await expect(
+      repository.createDesignVersion({
+        ...structuredClone(versionOne),
+        id: "version-aurora-plan-duplicate",
+        originalFilename: "duplicate-name.pdf",
+        storedFileReference: "seed/duplicate-name.pdf"
+      })
+    ).rejects.toBeInstanceOf(RepositoryConflictError);
   });
 
   it("retains evaluation corrections as chronological revisions", async () => {
