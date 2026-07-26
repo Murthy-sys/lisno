@@ -97,7 +97,7 @@ describe("LoginPage", () => {
   });
 
   it.each([
-    ["designer", "/designer", "Designer workspace"],
+    ["designer", "/designer", "Good morning, Demo."],
     ["design_manager", "/manager", "Design manager workspace"],
     ["design_head", "/head", "Design head workspace"],
     ["client", "/client", "Client workspace"]
@@ -122,7 +122,30 @@ describe("LoginPage", () => {
               }
             }
           });
-        })
+        }),
+        http.get("/api/v1/projects", () =>
+          HttpResponse.json({
+            data: {
+              items: [],
+              pagination: { limit: 100, offset: 0, total: 0, hasMore: false }
+            }
+          })
+        ),
+        http.get("/api/v1/kpis/users/:userId", ({ params }) =>
+          HttpResponse.json({
+            data: {
+              userId: params.userId,
+              periodStartAt: "2000-01-01T00:00:00.000Z",
+              periodEndAt: "2100-01-01T00:00:00.000Z",
+              score: 0,
+              components: [],
+              tasks: {
+                items: [],
+                pagination: { limit: 100, offset: 0, total: 0, hasMore: false }
+              }
+            }
+          })
+        )
       );
       const { router } = renderApp(["/login"]);
 

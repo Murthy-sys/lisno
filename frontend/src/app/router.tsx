@@ -12,6 +12,8 @@ import { ProtectedRoute, roleHomePath } from "../auth/ProtectedRoute";
 import { AppShell } from "../components/layout/AppShell";
 import { AsyncState } from "../components/ui/AsyncState";
 import { StatusBadge } from "../components/ui/StatusBadge";
+import { DesignerDashboard } from "../features/designer/DesignerDashboard";
+import { ProjectWorkspace } from "../features/designer/ProjectWorkspace";
 
 const roleHomeContent: Record<
   Role,
@@ -130,7 +132,15 @@ export function AppRoutes() {
           path="/designer"
           element={
             <ProtectedRoute allowedRoles={["designer"]}>
-              <RoleLanding role="designer" />
+              <DesignerDashboard />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/designer/projects/:projectId"
+          element={
+            <ProtectedRoute allowedRoles={["designer"]}>
+              <ProjectWorkspace />
             </ProtectedRoute>
           }
         />

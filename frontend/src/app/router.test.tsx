@@ -12,23 +12,58 @@ const designer = {
   role: "designer" as const
 };
 
+function installDesignerApi(
+  inspectAuth?: (input: RequestInfo | URL, init?: RequestInit) => void
+) {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const url = String(input);
+    if (url === "/api/v1/auth/me") {
+      inspectAuth?.(input, init);
+      return Response.json({ data: designer });
+    }
+    if (url.startsWith("/api/v1/projects?")) {
+      return Response.json({
+        data: {
+          items: [],
+          pagination: { limit: 100, offset: 0, total: 0, hasMore: false }
+        }
+      });
+    }
+    if (url.startsWith(`/api/v1/kpis/users/${designer.id}?`)) {
+      return Response.json({
+        data: {
+          userId: designer.id,
+          periodStartAt: "2000-01-01T00:00:00.000Z",
+          periodEndAt: "2100-01-01T00:00:00.000Z",
+          score: 0,
+          components: [],
+          tasks: {
+            items: [],
+            pagination: { limit: 100, offset: 0, total: 0, hasMore: false }
+          }
+        }
+      });
+    }
+    throw new Error(`Unhandled request: ${url}`);
+  });
+}
+
 describe("protected role routing", () => {
   it("restores a persisted token through /auth/me before showing the role home", async () => {
     tokenStorage.set("restored-token");
-    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    installDesignerApi((input, init) => {
       expect(String(input)).toBe("/api/v1/auth/me");
       expect(new Headers(init?.headers).get("authorization")).toBe(
         "Bearer restored-token"
       );
       expect(init?.signal).toBeInstanceOf(AbortSignal);
-      return Response.json({ data: designer });
     });
 
     const { router } = renderApp(["/designer"]);
 
     expect(screen.getByRole("status")).toHaveTextContent("Restoring your session");
     expect(
-      await screen.findByRole("heading", { name: "Designer workspace" })
+      await screen.findByRole("heading", { name: "Good morning, Ananya." })
     ).toBeVisible();
     expect(router.state.location.pathname).toBe("/designer");
   });
@@ -58,14 +93,12 @@ describe("protected role routing", () => {
 
   it("redirects a valid designer away from another role without destroying the session", async () => {
     tokenStorage.set("valid-token");
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      Response.json({ data: designer })
-    );
+    installDesignerApi();
 
     const { router } = renderApp(["/manager"]);
 
     expect(
-      await screen.findByRole("heading", { name: "Designer workspace" })
+      await screen.findByRole("heading", { name: "Good morning, Ananya." })
     ).toBeVisible();
     expect(router.state.location.pathname).toBe("/designer");
     expect(tokenStorage.get()).toBe("valid-token");
@@ -73,11 +106,9 @@ describe("protected role routing", () => {
 
   it("logs out, clears the token, and returns to login", async () => {
     tokenStorage.set("valid-token");
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      Response.json({ data: designer })
-    );
+    installDesignerApi();
     const { router } = renderApp(["/designer"]);
-    await screen.findByRole("heading", { name: "Designer workspace" });
+    await screen.findByRole("heading", { name: "Good morning, Ananya." });
 
     await userEvent.click(screen.getByRole("button", { name: "Sign out" }));
 
@@ -88,11 +119,9 @@ describe("protected role routing", () => {
 
   it("opens an accessible mobile drawer, wraps focus in both directions, and closes on Escape", async () => {
     tokenStorage.set("valid-token");
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      Response.json({ data: designer })
-    );
+    installDesignerApi();
     renderApp(["/designer"]);
-    await screen.findByRole("heading", { name: "Designer workspace" });
+    await screen.findByRole("heading", { name: "Good morning, Ananya." });
 
     const trigger = screen.getByRole("button", { name: "Open navigation" });
     await userEvent.click(trigger);
