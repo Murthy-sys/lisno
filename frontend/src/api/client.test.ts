@@ -71,6 +71,31 @@ describe("apiClient", () => {
     window.removeEventListener("lisno:unauthorized", listener);
   });
 
+  it("ignores a stale unauthorized response after the request token was replaced", async () => {
+    tokenStorage.set("token-a");
+    let resolveResponse!: (response: Response) => void;
+    const response = new Promise<Response>((resolve) => {
+      resolveResponse = resolve;
+    });
+    vi.spyOn(globalThis, "fetch").mockReturnValueOnce(response);
+    const listener = vi.fn();
+    window.addEventListener("lisno:unauthorized", listener);
+
+    const staleRequest = apiClient.get("/private");
+    tokenStorage.set("token-b");
+    resolveResponse(
+      Response.json(
+        { error: { code: "TOKEN_EXPIRED", message: "Session expired." } },
+        { status: 401 }
+      )
+    );
+
+    await expect(staleRequest).rejects.toMatchObject({ status: 401 });
+    expect(tokenStorage.get()).toBe("token-b");
+    expect(listener).not.toHaveBeenCalled();
+    window.removeEventListener("lisno:unauthorized", listener);
+  });
+
   it("keeps a valid token when the server forbids one resource", async () => {
     tokenStorage.set("valid-token");
     server.use(

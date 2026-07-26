@@ -11,6 +11,37 @@ import { server } from "../test/server";
 const password = "LisnoDemo2026!";
 
 describe("LoginPage", () => {
+  it("announces all validation errors and focuses email when both fields are invalid", async () => {
+    renderApp(["/login"]);
+
+    await userEvent.click(screen.getByRole("button", { name: "Sign in" }));
+
+    const summary = await screen.findByRole("status", {
+      name: "Sign-in validation summary"
+    });
+    expect(summary).toHaveAttribute("aria-live", "polite");
+    expect(summary).toHaveTextContent("Enter a valid email address.");
+    expect(summary).toHaveTextContent("Password is required.");
+    expect(screen.getByLabelText("Email address")).toHaveFocus();
+  });
+
+  it("focuses password when it is the first invalid field", async () => {
+    renderApp(["/login"]);
+    await userEvent.type(
+      screen.getByLabelText("Email address"),
+      "person@lisno.example"
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "Sign in" }));
+
+    expect(
+      await screen.findByRole("status", {
+        name: "Sign-in validation summary"
+      })
+    ).toHaveTextContent("Password is required.");
+    expect(screen.getByLabelText("Password")).toHaveFocus();
+  });
+
   it("shows a generic error for invalid credentials without disclosing which field failed", async () => {
     server.use(
       http.post("/api/v1/auth/login", () =>

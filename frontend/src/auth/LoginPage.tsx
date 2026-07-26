@@ -1,5 +1,5 @@
 import { Eye, EyeOff, Sparkles } from "lucide-react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { useNavigate } from "react-router-dom";
 import { z } from "zod";
@@ -25,6 +25,9 @@ export function LoginPage() {
   const navigate = useNavigate();
   const [showPassword, setShowPassword] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [validationSummary, setValidationSummary] = useState<string[]>([]);
+  const emailRef = useRef<HTMLInputElement>(null);
+  const passwordRef = useRef<HTMLInputElement>(null);
   const {
     register,
     handleSubmit,
@@ -34,20 +37,36 @@ export function LoginPage() {
   } = useForm<LoginFields>({
     defaultValues: { email: "", password: "" }
   });
+  const { ref: registerEmail, ...emailRegistration } = register("email");
+  const { ref: registerPassword, ...passwordRegistration } =
+    register("password");
 
   const submit = handleSubmit(async (values) => {
     setSubmitError(null);
     const parsed = loginSchema.safeParse(values);
     if (!parsed.success) {
+      const messages: Partial<Record<keyof LoginFields, string>> = {};
       for (const issue of parsed.error.issues) {
         const field = issue.path[0];
         if (field === "email" || field === "password") {
           setError(field, { message: issue.message });
+          messages[field] ??= issue.message;
         }
+      }
+      setValidationSummary(
+        (["email", "password"] as const).flatMap((field) =>
+          messages[field] ? [messages[field]] : []
+        )
+      );
+      if (messages.email) {
+        emailRef.current?.focus();
+      } else if (messages.password) {
+        passwordRef.current?.focus();
       }
       return;
     }
 
+    setValidationSummary([]);
     try {
       const user = await auth.login(parsed.data);
       navigate(roleHomePath(user.role), { replace: true });
@@ -64,6 +83,7 @@ export function LoginPage() {
     setValue("email", DEMO_ACCOUNT.email, { shouldValidate: true });
     setValue("password", DEMO_ACCOUNT.password, { shouldValidate: true });
     setSubmitError(null);
+    setValidationSummary([]);
   };
 
   return (
@@ -107,6 +127,21 @@ export function LoginPage() {
                 {submitError}
               </div>
             ) : null}
+            {validationSummary.length > 0 ? (
+              <div
+                className="form-alert form-alert--validation"
+                role="status"
+                aria-live="polite"
+                aria-label="Sign-in validation summary"
+              >
+                <strong>Review the highlighted fields:</strong>
+                <ul>
+                  {validationSummary.map((message) => (
+                    <li key={message}>{message}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
 
             <div className="field">
               <label htmlFor="email">Email address</label>
@@ -116,7 +151,11 @@ export function LoginPage() {
                 autoComplete="username"
                 aria-invalid={Boolean(errors.email)}
                 aria-describedby={errors.email ? "email-error" : undefined}
-                {...register("email")}
+                {...emailRegistration}
+                ref={(element) => {
+                  registerEmail(element);
+                  emailRef.current = element;
+                }}
               />
               {errors.email ? (
                 <p id="email-error" className="field__error">
@@ -134,7 +173,11 @@ export function LoginPage() {
                   autoComplete="current-password"
                   aria-invalid={Boolean(errors.password)}
                   aria-describedby={errors.password ? "password-error" : undefined}
-                  {...register("password")}
+                  {...passwordRegistration}
+                  ref={(element) => {
+                    registerPassword(element);
+                    passwordRef.current = element;
+                  }}
                 />
                 <button
                   type="button"

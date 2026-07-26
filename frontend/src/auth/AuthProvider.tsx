@@ -4,9 +4,11 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode
 } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 
 import { apiClient, tokenStorage } from "../api/client";
 import type { AuthPayload, PublicUser } from "../api/types";
@@ -26,61 +28,125 @@ interface AuthContextValue {
   status: AuthStatus;
   user: PublicUser | null;
   login(credentials: Credentials): Promise<PublicUser>;
-  logout(): void;
+  logout(): Promise<void>;
   restore(): Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
+  const queryClient = useQueryClient();
   const [status, setStatus] = useState<AuthStatus>(() =>
     tokenStorage.get() ? "restoring" : "unauthenticated"
   );
   const [user, setUser] = useState<PublicUser | null>(null);
+  const generationRef = useRef(0);
+  const restoreControllerRef = useRef<AbortController | null>(null);
+  const mountedRef = useRef(true);
 
-  const logout = useCallback(() => {
+  const supersedeRestore = useCallback(() => {
+    generationRef.current += 1;
+    restoreControllerRef.current?.abort();
+    restoreControllerRef.current = null;
+    return generationRef.current;
+  }, []);
+
+  const clearAuthenticatedCache = useCallback(async () => {
+    await queryClient.cancelQueries();
+    queryClient.clear();
+  }, [queryClient]);
+
+  const logout = useCallback(async () => {
+    supersedeRestore();
     tokenStorage.clear();
     setUser(null);
     setStatus("unauthenticated");
-  }, []);
+    await clearAuthenticatedCache();
+  }, [clearAuthenticatedCache, supersedeRestore]);
 
   const restore = useCallback(async () => {
-    if (!tokenStorage.get()) {
+    const token = tokenStorage.get();
+    const generation = supersedeRestore();
+    if (!token) {
       setUser(null);
       setStatus("unauthenticated");
       return;
     }
 
+    const controller = new AbortController();
+    restoreControllerRef.current = controller;
     setStatus("restoring");
     try {
-      const currentUser = await apiClient.get<PublicUser>("/auth/me");
+      const currentUser = await apiClient.get<PublicUser>("/auth/me", {
+        signal: controller.signal
+      });
+      if (
+        !mountedRef.current ||
+        generationRef.current !== generation ||
+        tokenStorage.get() !== token
+      ) {
+        return;
+      }
       setUser(currentUser);
       setStatus("authenticated");
     } catch (error) {
+      if (
+        controller.signal.aborted ||
+        !mountedRef.current ||
+        generationRef.current !== generation ||
+        tokenStorage.get() !== token
+      ) {
+        return;
+      }
       if (!tokenStorage.get()) {
         setUser(null);
         setStatus("unauthenticated");
         return;
       }
       setStatus("error");
+    } finally {
+      if (restoreControllerRef.current === controller) {
+        restoreControllerRef.current = null;
+      }
     }
-  }, []);
+  }, [supersedeRestore]);
 
-  const login = useCallback(async (credentials: Credentials) => {
-    const payload = await apiClient.post<AuthPayload>("/auth/login", credentials);
-    tokenStorage.set(payload.token);
-    setUser(payload.user);
-    setStatus("authenticated");
-    return payload.user;
-  }, []);
+  const login = useCallback(
+    async (credentials: Credentials) => {
+      const generation = supersedeRestore();
+      const payload = await apiClient.post<AuthPayload>(
+        "/auth/login",
+        credentials
+      );
+      if (!mountedRef.current || generationRef.current !== generation) {
+        throw new DOMException("Login was superseded.", "AbortError");
+      }
+      await clearAuthenticatedCache();
+      if (!mountedRef.current || generationRef.current !== generation) {
+        throw new DOMException("Login was superseded.", "AbortError");
+      }
+      tokenStorage.set(payload.token);
+      setUser(payload.user);
+      setStatus("authenticated");
+      return payload.user;
+    },
+    [clearAuthenticatedCache, supersedeRestore]
+  );
 
   useEffect(() => {
+    mountedRef.current = true;
     void restore();
-  }, [restore]);
+    return () => {
+      mountedRef.current = false;
+      supersedeRestore();
+    };
+  }, [restore, supersedeRestore]);
 
   useEffect(() => {
-    window.addEventListener("lisno:unauthorized", logout);
-    return () => window.removeEventListener("lisno:unauthorized", logout);
+    const handleUnauthorized = () => void logout();
+    window.addEventListener("lisno:unauthorized", handleUnauthorized);
+    return () =>
+      window.removeEventListener("lisno:unauthorized", handleUnauthorized);
   }, [logout]);
 
   const value = useMemo<AuthContextValue>(

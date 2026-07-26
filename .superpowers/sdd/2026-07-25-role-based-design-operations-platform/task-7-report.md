@@ -111,3 +111,66 @@ dist/assets/index-B3AY5f_h.js   373.71 kB │ gzip: 115.81 kB
   7.18.1 is retained pending an upstream patched release.
 - The untracked `reference_docs/` directory predated this task and is
   intentionally excluded from the Task 7 commit.
+
+## Fix Round 1
+
+Review follow-up hardened the session boundary and completed the requested
+keyboard and validation coverage:
+
+- Every API request now captures one token snapshot for both its bearer header
+  and `401` handling. A delayed `401` only clears the session and emits
+  `lisno:unauthorized` when that request token still matches storage, so an old
+  user A response cannot log out a replacement user B session.
+- Session restoration now uses an `AbortController`, generation guard, token
+  snapshot, and mounted-state guard. Logout, login, a newer restore, and
+  unmount supersede and abort older restores; stale successes and failures
+  cannot commit state.
+- `AuthProvider` now owns the TanStack Query session boundary. Logout, an
+  accepted `401`, and token replacement cancel authenticated requests and
+  clear cached user data. Login does not render the replacement user until
+  that cleanup has completed.
+- The mobile drawer test now proves both forward and reverse focus wrapping in
+  addition to initial focus, Escape close, and trigger focus restoration.
+- Invalid login submission now renders a named `role="status"` summary with
+  `aria-live="polite"` and moves focus to the first invalid field in form
+  order: email, then password.
+
+### Fix-round TDD evidence
+
+- Token/session concurrency: 3 intended regressions failed before the fixes
+  (one stale-token `401`, two overlapping restore cases), then the combined
+  API client, provider, and router slice passed 15/15.
+- Cache isolation: all 3 new lifecycle tests failed before query cancellation
+  and removal were implemented, then the provider slice passed 5/5.
+- Login accessibility: both new summary/focus tests failed before the UI
+  change, then the login and drawer slices passed 14/14.
+- Production-StrictMode restoration and unmount-abort cases were added during
+  diff review.
+- The jsdom/MSW runtime combines a jsdom `AbortSignal` with Node's `Request`
+  constructor, which rejects that cross-realm signal. The abort-sensitive
+  tests therefore use a controlled `fetch` boundary while retaining the real
+  API client and provider. They explicitly assert that superseded restore
+  signals are aborted.
+
+### Fix-round verification
+
+Fresh final commands executed from `frontend/`:
+
+```text
+npm run typecheck  -> PASS (exit 0)
+npm test           -> PASS (30/30, 5 files, exit 0)
+npm run build      -> PASS (1946 modules, exit 0)
+git diff --check   -> PASS
+```
+
+Production build output:
+
+```text
+dist/index.html                   0.44 kB │ gzip:   0.28 kB
+dist/assets/index-0raCK5ms.css   16.34 kB │ gzip:   4.73 kB
+dist/assets/index-DVdBmzWy.js   375.34 kB │ gzip: 116.35 kB
+```
+
+Live browser visual QA remains deferred for the same environment limitation
+recorded above. The pre-existing untracked `reference_docs/` directory remains
+untouched and excluded.

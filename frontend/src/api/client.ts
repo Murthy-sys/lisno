@@ -67,9 +67,12 @@ async function parseApiError(response: Response): Promise<ApiError> {
   );
 }
 
-function buildHeaders(headers: HeadersInit | undefined, hasJsonBody: boolean): Headers {
+function buildHeaders(
+  headers: HeadersInit | undefined,
+  hasJsonBody: boolean,
+  token: string | null
+): Headers {
   const result = new Headers(headers);
-  const token = tokenStorage.get();
 
   if (token) result.set("Authorization", `Bearer ${token}`);
   if (hasJsonBody && !result.has("Content-Type")) {
@@ -79,14 +82,26 @@ function buildHeaders(headers: HeadersInit | undefined, hasJsonBody: boolean): H
   return result;
 }
 
-async function fetchApi(path: string, options: RequestInit): Promise<Response> {
+async function fetchApi(
+  path: string,
+  options: RequestInit,
+  requestToken: string | null
+): Promise<Response> {
   const response = await fetch(`${API_BASE_URL}${path}`, options);
 
   if (!response.ok) {
     const error = await parseApiError(response);
-    if (response.status === 401) {
+    if (
+      response.status === 401 &&
+      requestToken !== null &&
+      tokenStorage.get() === requestToken
+    ) {
       tokenStorage.clear();
-      window.dispatchEvent(new Event("lisno:unauthorized"));
+      window.dispatchEvent(
+        new CustomEvent("lisno:unauthorized", {
+          detail: { token: requestToken }
+        })
+      );
     }
     throw error;
   }
@@ -99,11 +114,12 @@ async function request<T>(
   { body, headers, ...options }: JsonRequestOptions = {}
 ): Promise<T> {
   const hasBody = body !== undefined;
+  const requestToken = tokenStorage.get();
   const response = await fetchApi(path, {
     ...options,
-    headers: buildHeaders(headers, hasBody),
+    headers: buildHeaders(headers, hasBody, requestToken),
     ...(hasBody ? { body: JSON.stringify(body) } : {})
-  });
+  }, requestToken);
   const envelope = (await response.json()) as ApiResponse<T>;
   return envelope.data;
 }
@@ -128,21 +144,23 @@ export const apiClient = {
     return request<T>(path, { method: "PATCH", body });
   },
   async postMultipart<T>(path: string, body: FormData): Promise<T> {
+    const requestToken = tokenStorage.get();
     const response = await fetchApi(path, {
       method: "POST",
-      headers: buildHeaders(undefined, false),
+      headers: buildHeaders(undefined, false, requestToken),
       body
-    });
+    }, requestToken);
     const envelope = (await response.json()) as ApiResponse<T>;
     return envelope.data;
   },
   async getBlob(
     path: string
   ): Promise<{ blob: Blob; filename: string | undefined }> {
+    const requestToken = tokenStorage.get();
     const response = await fetchApi(path, {
       method: "GET",
-      headers: buildHeaders(undefined, false)
-    });
+      headers: buildHeaders(undefined, false, requestToken)
+    }, requestToken);
     return {
       blob: await response.blob(),
       filename: filenameFromDisposition(response.headers.get("Content-Disposition"))
