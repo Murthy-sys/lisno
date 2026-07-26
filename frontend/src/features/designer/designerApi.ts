@@ -1,12 +1,13 @@
 import { apiClient } from "../../api/client";
 import type {
   KpiRead,
-  KpiTaskRead,
   PageData,
-  Project
+  Project,
+  TaskEvent
 } from "../../api/types";
 
-const PAGE_SIZE = 100;
+const PROJECT_PAGE_SIZE = 100;
+const KPI_PAGE_SIZE = 20;
 const KPI_FROM = "2000-01-01T00:00:00.000Z";
 const KPI_TO = "2100-01-01T00:00:00.000Z";
 
@@ -16,6 +17,8 @@ export const designerKeys = {
   project: (projectId: string) =>
     [...designerKeys.projects(), projectId] as const,
   kpi: (userId: string) => [...designerKeys.all, "kpi", userId] as const,
+  taskEvents: (taskId: string) =>
+    [...designerKeys.all, "tasks", taskId, "events", { sort: "desc", limit: 1 }] as const,
   designVersions: (projectId: string) =>
     [...designerKeys.project(projectId), "design-versions"] as const
 };
@@ -23,7 +26,7 @@ export const designerKeys = {
 export async function getAllProjects(): Promise<Project[]> {
   return getAllPages<Project>((offset) =>
     apiClient.get<PageData<Project>>(
-      `/projects?limit=${PAGE_SIZE}&offset=${offset}`
+      `/projects?limit=${PROJECT_PAGE_SIZE}&offset=${offset}`
     )
   );
 }
@@ -32,34 +35,20 @@ function kpiPath(userId: string, offset: number): string {
   const query = new URLSearchParams({
     from: KPI_FROM,
     to: KPI_TO,
-    limit: String(PAGE_SIZE),
+    limit: String(KPI_PAGE_SIZE),
     offset: String(offset)
   });
   return `/kpis/users/${encodeURIComponent(userId)}?${query.toString()}`;
 }
 
-export async function getCompleteKpi(userId: string): Promise<KpiRead> {
-  const first = await apiClient.get<KpiRead>(kpiPath(userId, 0));
-  if (!first.tasks.pagination.hasMore) return first;
+export function getKpiPage(userId: string, offset = 0): Promise<KpiRead> {
+  return apiClient.get<KpiRead>(kpiPath(userId, offset));
+}
 
-  const remaining = await getRemainingPages<KpiTaskRead>(
-    first.tasks.pagination.offset + first.tasks.pagination.limit,
-    (offset) =>
-      apiClient
-        .get<KpiRead>(kpiPath(userId, offset))
-        .then((response) => response.tasks)
+export function getLatestTaskEvent(taskId: string): Promise<PageData<TaskEvent>> {
+  return apiClient.get<PageData<TaskEvent>>(
+    `/tasks/${encodeURIComponent(taskId)}/events?sort=desc&limit=1&offset=0`
   );
-  return {
-    ...first,
-    tasks: {
-      items: [...first.tasks.items, ...remaining],
-      pagination: {
-        ...first.tasks.pagination,
-        total: first.tasks.pagination.total,
-        hasMore: false
-      }
-    }
-  };
 }
 
 async function getAllPages<T>(

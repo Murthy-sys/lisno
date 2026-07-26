@@ -350,11 +350,12 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
       return documents.map(mapTaskEvent);
     },
 
-    async pageTaskEvents(taskId, pagination) {
+    async pageTaskEvents(taskId, pagination, sort = "asc") {
       const filter = { taskId };
+      const direction = sort === "desc" ? -1 : 1;
       const [documents, total] = await Promise.all([
         TaskEventModel.find(filter)
-          .sort({ occurredAt: 1, _id: 1 })
+          .sort({ occurredAt: direction, _id: direction })
           .skip(pagination.offset)
           .limit(pagination.limit)
           .lean()

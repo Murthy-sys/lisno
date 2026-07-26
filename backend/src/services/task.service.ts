@@ -4,6 +4,7 @@ import {
   type AppRepository,
   type PageResult,
   type PaginationInput,
+  type TaskEventSort,
   type TaskEventRecord,
   type TaskRecord
 } from "../repositories/types.js";
@@ -35,7 +36,8 @@ export interface TaskService {
   listEvents(
     actor: PublicUser,
     taskId: string,
-    pagination: PaginationInput
+    pagination: PaginationInput,
+    sort?: TaskEventSort
   ): Promise<PageResult<TaskEventRecord>>;
   update(
     actor: PublicUser,
@@ -63,11 +65,11 @@ export function createTaskService(
   clock: Clock
 ): TaskService {
   return {
-    async listEvents(actor, taskId, pagination) {
+    async listEvents(actor, taskId, pagination, sort = "asc") {
       if (actor.role === "client") forbidden();
       const task = await requireTask(repository, taskId);
       await requireAccessibleProject(repository, actor, task.projectId);
-      return repository.pageTaskEvents(task.id, pagination);
+      return repository.pageTaskEvents(task.id, pagination, sort);
     },
 
     async update(actor, taskId, input) {

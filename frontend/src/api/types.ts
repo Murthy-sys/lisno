@@ -174,12 +174,14 @@ export type TaskRecord =
       completedAt: null;
     });
 
+export type ProjectTask = TaskRecord & { risk: TaskRisk };
+
 export interface ProjectHierarchy extends Project {
   floors: Array<
     Floor & {
       stages: Array<
         DesignStage & {
-          tasks: TaskRecord[];
+          tasks: ProjectTask[];
         }
       >;
     }

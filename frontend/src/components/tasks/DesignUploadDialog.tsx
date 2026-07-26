@@ -9,12 +9,10 @@ import { ProgressBar } from "../ui/ProgressBar";
 
 export function DesignUploadDialog({
   task,
-  userId,
   onClose,
   onUploaded
 }: {
   task: TaskRecord;
-  userId: string;
   onClose: () => void;
   onUploaded: (version: DesignVersion) => void;
 }) {
@@ -38,20 +36,19 @@ export function DesignUploadDialog({
           : "The design file could not be uploaded. Please try again."
       );
     },
-    onSuccess: (version) => {
-      onUploaded(version);
-      onClose();
-    },
-    onSettled: async () => {
+    onSuccess: async (version) => {
       await Promise.all([
         queryClient.invalidateQueries({
-          queryKey: designerKeys.project(task.projectId)
+          queryKey: designerKeys.project(task.projectId),
+          exact: true
         }),
-        queryClient.invalidateQueries({ queryKey: designerKeys.kpi(userId) }),
         queryClient.invalidateQueries({
-          queryKey: designerKeys.designVersions(task.projectId)
+          queryKey: designerKeys.designVersions(task.projectId),
+          exact: true
         })
       ]);
+      onUploaded(version);
+      onClose();
     }
   });
 
@@ -62,8 +59,8 @@ export function DesignUploadDialog({
       setError("Choose a PDF or image file to upload.");
       return;
     }
-    if (!(file.type === "application/pdf" || file.type.startsWith("image/"))) {
-      setError("Only PDF and image files are supported.");
+    if (!allowedMimeTypes.has(file.type)) {
+      setError("Only PDF, PNG, JPEG, and WebP files are supported.");
       return;
     }
     mutation.mutate(file);
@@ -83,10 +80,10 @@ export function DesignUploadDialog({
           <input
             id={`design-file-${task.id}`}
             type="file"
-            accept="application/pdf,image/*"
+            accept="application/pdf,image/png,image/jpeg,image/webp"
             onChange={(event) => setFile(event.target.files?.[0] ?? null)}
           />
-          <p>PDF, PNG, JPEG, WEBP, or GIF. Server upload limits apply.</p>
+          <p>PDF, PNG, JPEG, or WebP. Server upload limits apply.</p>
           {file ? (
             <strong>{file.name} · {formatBytes(file.size)}</strong>
           ) : null}
@@ -123,5 +120,13 @@ export function DesignUploadDialog({
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
+
+const allowedMimeTypes = new Set([
+  "application/pdf",
+  "image/png",
+  "image/jpeg",
+  "image/webp"
+]);

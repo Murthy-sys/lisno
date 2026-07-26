@@ -1,6 +1,11 @@
 import { CalendarDays, Clock3, FileUp, PencilLine } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
 
-import type { KpiTaskRead, TaskRecord, TaskStatus } from "../../api/types";
+import type { ProjectTask, TaskStatus } from "../../api/types";
+import {
+  designerKeys,
+  getLatestTaskEvent
+} from "../../features/designer/designerApi";
 import { ProgressBar } from "../ui/ProgressBar";
 import { StatusBadge } from "../ui/StatusBadge";
 import { RiskBadge } from "./RiskBadge";
@@ -34,18 +39,26 @@ export function formatTaskDate(value: string): string {
 
 export function TaskRow({
   task,
-  insight,
+  userId,
   onUpdate,
   onUpload
 }: {
-  task: TaskRecord;
-  insight?: KpiTaskRead;
+  task: ProjectTask;
+  userId: string;
   onUpdate: () => void;
   onUpload: () => void;
 }) {
-  const latestEvent = insight?.events.items
-    .slice()
-    .sort((left, right) => right.occurredAt.localeCompare(left.occurredAt))[0];
+  const eventsQuery = useQuery({
+    queryKey: designerKeys.taskEvents(task.id),
+    queryFn: () => getLatestTaskEvent(task.id)
+  });
+  const latestEvent = eventsQuery.data?.items[0];
+  const readOnlyReason =
+    task.status === "completed"
+      ? "This task is complete"
+      : task.ownerId !== userId
+        ? "Assigned to teammate"
+        : null;
 
   return (
     <article className="task-row" aria-label={task.title}>
@@ -60,11 +73,11 @@ export function TaskRow({
             label={statusLabels[task.status]}
             tone={statusTones[task.status]}
           />
-          {insight ? <RiskBadge risk={insight.risk} /> : null}
+          <RiskBadge risk={task.risk} />
         </div>
       </div>
 
-      {insight ? <p className="task-row__risk-reason">{insight.risk.reason}</p> : null}
+      <p className="task-row__risk-reason">{task.risk.reason}</p>
 
       <div className="task-row__progress">
         <div>
@@ -107,26 +120,30 @@ export function TaskRow({
         </blockquote>
       ) : null}
 
-      <div className="task-row__actions">
-        <button
-          type="button"
-          className="button button--secondary"
-          onClick={onUpdate}
-          aria-label={`Update ${task.title}`}
-        >
-          <PencilLine aria-hidden="true" />
-          Update task
-        </button>
-        <button
-          type="button"
-          className="button button--secondary"
-          onClick={onUpload}
-          aria-label={`Upload design for ${task.title}`}
-        >
-          <FileUp aria-hidden="true" />
-          Upload design
-        </button>
-      </div>
+      {readOnlyReason ? (
+        <p className="task-row__read-only">{readOnlyReason}</p>
+      ) : (
+        <div className="task-row__actions">
+          <button
+            type="button"
+            className="button button--secondary"
+            onClick={onUpdate}
+            aria-label={`Update ${task.title}`}
+          >
+            <PencilLine aria-hidden="true" />
+            Update task
+          </button>
+          <button
+            type="button"
+            className="button button--secondary"
+            onClick={onUpload}
+            aria-label={`Upload design for ${task.title}`}
+          >
+            <FileUp aria-hidden="true" />
+            Upload design
+          </button>
+        </div>
+      )}
     </article>
   );
 }

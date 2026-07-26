@@ -1,9 +1,10 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 
 import { ApiError, apiClient } from "../../api/client";
 import type {
   ProjectHierarchy,
+  ProjectTask,
   TaskRecord,
   TaskStatus,
   UpdateTaskInput
@@ -47,6 +48,17 @@ export function TaskUpdateDialog({
   const [progress, setProgress] = useState(String(task.progress));
   const [note, setNote] = useState("");
   const [validationError, setValidationError] = useState<string | null>(null);
+  const [conflictVersion, setConflictVersion] = useState<number | null>(null);
+  const [needsReview, setNeedsReview] = useState(false);
+
+  useEffect(() => {
+    if (conflictVersion === null || task.version === conflictVersion) return;
+    setStatus(task.status);
+    setProgress(String(task.progress));
+    setNote("");
+    setConflictVersion(null);
+    setNeedsReview(true);
+  }, [conflictVersion, task.progress, task.status, task.version]);
 
   const mutation = useMutation<
     TaskRecord,
@@ -76,6 +88,12 @@ export function TaskUpdateDialog({
         setValidationError(
           "This task changed on the server. We refreshed it so you can review the latest version."
         );
+        setConflictVersion(task.version);
+        void queryClient.refetchQueries({
+          queryKey: designerKeys.project(task.projectId),
+          exact: true,
+          type: "active"
+        });
       } else if (error instanceof ApiError && error.fields) {
         setValidationError(Object.values(error.fields)[0] ?? error.message);
       } else {
@@ -86,22 +104,26 @@ export function TaskUpdateDialog({
         );
       }
     },
-    onSuccess: (updated) => {
-      onSaved(updated);
-      onClose();
-    },
-    onSettled: async () => {
+    onSuccess: async (updated) => {
       await Promise.all([
         queryClient.invalidateQueries({
-          queryKey: designerKeys.project(task.projectId)
+          queryKey: designerKeys.project(task.projectId),
+          exact: true
         }),
-        queryClient.invalidateQueries({ queryKey: designerKeys.kpi(userId) })
+        queryClient.invalidateQueries({
+          queryKey: designerKeys.kpi(userId),
+          exact: true,
+          refetchType: "none"
+        })
       ]);
+      onSaved(updated);
+      onClose();
     }
   });
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
+    if (conflictVersion !== null || needsReview) return;
     setValidationError(null);
     const numericProgress = Number(progress);
     if (
@@ -148,6 +170,7 @@ export function TaskUpdateDialog({
           <select
             id={`task-status-${task.id}`}
             value={status}
+            disabled={conflictVersion !== null || needsReview}
             onChange={(event) => setStatus(event.target.value as TaskStatus)}
           >
             {transitions[task.status].map((option) => (
@@ -166,6 +189,7 @@ export function TaskUpdateDialog({
               max="100"
               step="1"
               value={progress}
+              disabled={conflictVersion !== null || needsReview}
               onChange={(event) => setProgress(event.target.value)}
             />
             <span>%</span>
@@ -180,24 +204,37 @@ export function TaskUpdateDialog({
             id={`task-note-${task.id}`}
             rows={4}
             value={note}
+            disabled={conflictVersion !== null || needsReview}
             onChange={(event) => setNote(event.target.value)}
             placeholder="Share what changed or what the team needs to know."
           />
         </div>
+
+        {needsReview ? (
+          <button
+            type="button"
+            className="button button--secondary"
+            onClick={() => setNeedsReview(false)}
+          >
+            Review refreshed values
+          </button>
+        ) : null}
 
         <div className="modal-form__actions">
           <button
             type="button"
             className="button button--secondary"
             onClick={onClose}
-            disabled={mutation.isPending}
+            disabled={mutation.isPending || conflictVersion !== null}
           >
             Cancel
           </button>
           <button
             type="submit"
             className="button button--primary"
-            disabled={mutation.isPending}
+            disabled={
+              mutation.isPending || conflictVersion !== null || needsReview
+            }
           >
             {mutation.isPending ? "Saving…" : "Save update"}
           </button>
@@ -226,7 +263,7 @@ function replaceTask(
                 ...(input.progress !== undefined
                   ? { progress: input.progress }
                   : {})
-              } as TaskRecord)
+              } as ProjectTask)
             : current
         )
       }))

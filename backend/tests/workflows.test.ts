@@ -238,6 +238,31 @@ describe("project workflows", () => {
     expect(otherClientProject.status).toBe(404);
   });
 
+  it("decorates every internal hierarchy task, including teammate work, with server risk", async () => {
+    const { app } = setup();
+    const response = await request(app)
+      .get("/api/v1/projects/project-aurora-villa")
+      .set("Authorization", bearer(users.ananya));
+
+    expect(response.status).toBe(200);
+    const tasks = response.body.data.floors.flatMap(
+      (floor: { stages: Array<{ tasks: Array<Record<string, unknown>> }> }) =>
+        floor.stages.flatMap((stage) => stage.tasks)
+    );
+    const teammateTask = tasks.find(
+      (candidate: { id: string }) => candidate.id === "task-circulation"
+    );
+    expect(teammateTask).toMatchObject({
+      ownerId: "user-designer-kabir",
+      risk: {
+        level: expect.any(String),
+        reason: expect.any(String),
+        elapsedRatio: expect.any(Number),
+        progressRatio: 0.2
+      }
+    });
+  });
+
   it("creates floor and stage records but rejects nonzero initial task progress", async () => {
     const { app } = setup();
     const floor = await request(app)
@@ -821,6 +846,10 @@ describe("organization and KPI workflows", () => {
       }
     });
     expect(page.body.data.tasks.items[0].events.items).toHaveLength(20);
+    expect(page.body.data.tasks.items[0].events.items[0]).toMatchObject({
+      id: "event-circulation-page-24",
+      occurredAt: "2026-07-25T09:00:00.000Z"
+    });
 
     const eventPageOne = await request(app)
       .get("/api/v1/tasks/task-circulation/events?limit=20&offset=0")
@@ -845,6 +874,38 @@ describe("organization and KPI workflows", () => {
       hasMore: false
     });
     expect(eventPageTwo.body.data.items).toHaveLength(5);
+
+    const newestFirst = await request(app)
+      .get("/api/v1/tasks/task-circulation/events?sort=desc&limit=3&offset=0")
+      .set("Authorization", bearer(users.managerAarav));
+    expect(newestFirst.status).toBe(200);
+    expect(newestFirst.body.data.pagination).toEqual({
+      limit: 3,
+      offset: 0,
+      total: 25,
+      hasMore: true
+    });
+    expect(
+      newestFirst.body.data.items.map(
+        (event: { occurredAt: string }) => event.occurredAt
+      )
+    ).toEqual([
+      "2026-07-25T09:00:00.000Z",
+      "2026-07-24T09:00:00.000Z",
+      "2026-07-23T09:00:00.000Z"
+    ]);
+
+    const defaultOldestFirst = await request(app)
+      .get("/api/v1/tasks/task-circulation/events?limit=2&offset=0")
+      .set("Authorization", bearer(users.managerAarav));
+    expect(
+      defaultOldestFirst.body.data.items.map(
+        (event: { occurredAt: string }) => event.occurredAt
+      )
+    ).toEqual([
+      "2026-07-01T09:00:00.000Z",
+      "2026-07-02T09:00:00.000Z"
+    ]);
 
     const assignedDesigner = await request(app)
       .get("/api/v1/tasks/task-circulation/events?limit=1")

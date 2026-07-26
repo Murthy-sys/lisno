@@ -32,7 +32,44 @@ const task = {
   completedAt: null,
   version: 3,
   createdAt: "2026-06-01T08:00:00.000Z",
-  updatedAt: "2026-07-18T12:00:00.000Z"
+  updatedAt: "2026-07-18T12:00:00.000Z",
+  risk: {
+    level: "yellow",
+    reason: "Forecast completion crosses the deadline.",
+    elapsedRatio: 0.72,
+    progressRatio: 0.55,
+    forecastCompletion: "2026-07-28T10:00:00.000Z"
+  }
+};
+
+const teammateTask = {
+  ...task,
+  id: "task-teammate",
+  title: "Teammate lighting plan",
+  order: 3,
+  ownerId: "user-designer-kabir",
+  risk: {
+    level: "red",
+    reason: "Deadline passed while work is incomplete.",
+    elapsedRatio: 1.1,
+    progressRatio: 0.55
+  }
+};
+
+const completedTask = {
+  ...task,
+  id: "task-completed",
+  title: "Approved concept",
+  order: 4,
+  status: "completed",
+  progress: 100,
+  completedAt: "2026-07-18T12:00:00.000Z",
+  risk: {
+    level: "green",
+    reason: "Completed on or before the current deadline.",
+    elapsedRatio: 1,
+    progressRatio: 1
+  }
 };
 
 const project = {
@@ -75,45 +112,11 @@ const project = {
           dependencyStageIds: [],
           createdAt: "2026-06-01T08:00:00.000Z",
           updatedAt: "2026-07-18T12:00:00.000Z",
-          tasks: [task]
+          tasks: [task, teammateTask, completedTask]
         }
       ]
     }
   ]
-};
-
-const riskTask = {
-  id: task.id,
-  projectId: task.projectId,
-  title: task.title,
-  status: task.status,
-  progress: task.progress,
-  currentDeadlineAt: task.currentDeadlineAt,
-  plannedEffort: task.plannedEffort,
-  risk: {
-    level: "yellow",
-    reason: "Forecast completion crosses the deadline.",
-    elapsedRatio: 0.72,
-    progressRatio: 0.55,
-    forecastCompletion: "2026-07-28T10:00:00.000Z"
-  },
-  events: {
-    items: [
-      {
-        id: "event-progress-1",
-        taskId: task.id,
-        actorId: designer.id,
-        type: "progress_changed",
-        occurredAt: "2026-07-18T12:00:00.000Z",
-        from: { progress: 40 },
-        to: { progress: 55 },
-        note: "Paths aligned with furniture.",
-        createdAt: "2026-07-18T12:00:00.000Z"
-      }
-    ],
-    href: `/api/v1/tasks/${task.id}/events`,
-    pagination: { limit: 20, offset: 0, total: 1, hasMore: false }
-  }
 };
 
 function response(data: unknown, init?: ResponseInit) {
@@ -122,13 +125,13 @@ function response(data: unknown, init?: ResponseInit) {
 
 function installWorkspaceApi(options?: {
   conflict?: boolean;
+  mutationError?: boolean;
   holdUpload?: boolean;
   uploadError?: boolean;
 }) {
   let currentTask = structuredClone(task);
   let projectReads = 0;
-  let kpiReads = 0;
-  let patchBody: unknown;
+  const patchBodies: unknown[] = [];
   let uploadBody: FormData | undefined;
   let releaseUpload: () => void = () => {};
   const uploadGate = options?.holdUpload
@@ -143,26 +146,60 @@ function installWorkspaceApi(options?: {
     if (url === `/api/v1/projects/${project.id}`) {
       projectReads += 1;
       const hierarchy = structuredClone(project);
-      hierarchy.floors[0]!.stages[0]!.tasks = [structuredClone(currentTask)];
+      hierarchy.floors[0]!.stages[0]!.tasks = [
+        structuredClone(currentTask),
+        structuredClone(teammateTask),
+        structuredClone(completedTask)
+      ];
       return response(hierarchy);
     }
-    if (url.startsWith(`/api/v1/kpis/users/${designer.id}?`)) {
-      kpiReads += 1;
+    if (url.includes("/kpis/")) {
+      throw new Error("The project workspace must not request personal KPI pages.");
+    }
+    if (url.startsWith("/api/v1/tasks/") && url.includes("/events?")) {
+      expect(url).toMatch(/sort=desc&limit=1&offset=0$/);
+      const taskId = url.split("/tasks/")[1]!.split("/events")[0]!;
       return response({
-        userId: designer.id,
-        periodStartAt: "2000-01-01T00:00:00.000Z",
-        periodEndAt: "2100-01-01T00:00:00.000Z",
-        score: 84,
-        components: [],
-        tasks: {
-          items: [{ ...riskTask, status: currentTask.status, progress: currentTask.progress }],
-          pagination: { limit: 100, offset: 0, total: 1, hasMore: false }
+        items: taskId === task.id ? [{
+          id: "event-progress-newest",
+          taskId,
+          actorId: designer.id,
+          type: "progress_changed",
+          occurredAt: "2026-07-26T12:00:00.000Z",
+          from: { progress: 54 },
+          to: { progress: 55 },
+          note: "Newest of more than twenty updates.",
+          createdAt: "2026-07-26T12:00:00.000Z"
+        }] : [],
+        pagination: {
+          limit: 1,
+          offset: 0,
+          total: taskId === task.id ? 25 : 0,
+          hasMore: taskId === task.id
         }
       });
     }
     if (url === `/api/v1/tasks/${task.id}` && init?.method === "PATCH") {
-      patchBody = JSON.parse(String(init.body));
-      if (options?.conflict) {
+      const inputBody = JSON.parse(String(init.body)) as {
+        status: string;
+        progress: number;
+      };
+      patchBodies.push(inputBody);
+      if (options?.mutationError) {
+        return Response.json(
+          { error: { code: "REQUEST_FAILED", message: "Update unavailable." } },
+          { status: 503 }
+        );
+      }
+      if (options?.conflict && patchBodies.length === 1) {
+        currentTask = {
+          ...currentTask,
+          status: "in_review",
+          progress: 70,
+          latestUpdateAt: "2026-07-26T08:00:00.000Z",
+          version: 4,
+          updatedAt: "2026-07-26T08:00:00.000Z"
+        };
         return Response.json(
           {
             error: {
@@ -175,10 +212,10 @@ function installWorkspaceApi(options?: {
       }
       currentTask = {
         ...currentTask,
-        status: "blocked",
-        progress: 60,
+        status: inputBody.status,
+        progress: inputBody.progress,
         latestUpdateAt: "2026-07-26T08:00:00.000Z",
-        version: 4,
+        version: currentTask.version + 1,
         updatedAt: "2026-07-26T08:00:00.000Z"
       };
       return response(currentTask);
@@ -224,10 +261,9 @@ function installWorkspaceApi(options?: {
   });
 
   return {
-    getPatchBody: () => patchBody,
+    getPatchBodies: () => patchBodies,
     getUploadBody: () => uploadBody,
     getProjectReads: () => projectReads,
-    getKpiReads: () => kpiReads,
     releaseUpload
   };
 }
@@ -260,7 +296,42 @@ describe("ProjectWorkspace", () => {
     expect(within(row).getByText("Current: 25 Jul 2026")).toBeVisible();
     expect(within(row).getByText("16 hours")).toBeVisible();
     expect(within(row).getByText("Updated 18 Jul 2026")).toBeVisible();
-    expect(within(row).getByText("Paths aligned with furniture.")).toBeVisible();
+    expect(
+      await within(row).findByText("Newest of more than twenty updates.")
+    ).toBeVisible();
+  });
+
+  it("allows mutations only for owned incomplete tasks and explains read-only rows", async () => {
+    tokenStorage.set("valid-token");
+    installWorkspaceApi();
+    renderApp([`/designer/projects/${project.id}`]);
+    await expandTask();
+
+    const owned = screen.getByRole("article", { name: task.title });
+    expect(within(owned).getByRole("button", {
+      name: `Update ${task.title}`
+    })).toBeEnabled();
+    expect(within(owned).getByRole("button", {
+      name: `Upload design for ${task.title}`
+    })).toBeEnabled();
+
+    const teammate = screen.getByRole("article", { name: teammateTask.title });
+    expect(within(teammate).getByText("Red risk")).toBeVisible();
+    expect(
+      within(teammate).getByText("Deadline passed while work is incomplete.")
+    ).toBeVisible();
+    expect(within(teammate).getByText("Assigned to teammate")).toBeVisible();
+    expect(within(teammate).queryByRole("button", { name: /Update/ }))
+      .not.toBeInTheDocument();
+    expect(within(teammate).queryByRole("button", { name: /Upload design/ }))
+      .not.toBeInTheDocument();
+
+    const completed = screen.getByRole("article", { name: completedTask.title });
+    expect(within(completed).getByText("Completed")).toBeVisible();
+    expect(within(completed).queryByRole("button", { name: /Update/ }))
+      .not.toBeInTheDocument();
+    expect(within(completed).queryByRole("button", { name: /Upload design/ }))
+      .not.toBeInTheDocument();
   });
 
   it("validates a blocked note, submits versioned updates, and refreshes project and KPI queries", async () => {
@@ -291,13 +362,12 @@ describe("ProjectWorkspace", () => {
     await user.click(within(dialog).getByRole("button", { name: "Save update" }));
 
     await waitFor(() => expect(api.getProjectReads()).toBeGreaterThan(1));
-    await waitFor(() => expect(api.getKpiReads()).toBeGreaterThan(1));
-    expect(api.getPatchBody()).toEqual({
+    expect(api.getPatchBodies()).toEqual([{
       version: 3,
       status: "blocked",
       progress: 60,
       note: "Waiting for structural confirmation."
-    });
+    }]);
     expect(screen.queryByRole("dialog", { name: "Update task" }))
       .not.toBeInTheDocument();
     expect(trigger).toHaveFocus();
@@ -306,7 +376,7 @@ describe("ProjectWorkspace", () => {
     expect(screen.getByText("60% complete")).toBeVisible();
   });
 
-  it("keeps the update dialog open and refreshes stale data after an optimistic conflict", async () => {
+  it("requires review of refreshed values before resubmitting after a version conflict", async () => {
     tokenStorage.set("valid-token");
     const api = installWorkspaceApi({ conflict: true });
     const user = userEvent.setup();
@@ -317,15 +387,60 @@ describe("ProjectWorkspace", () => {
       name: "Update Circulation planning"
     }));
     const dialog = screen.getByRole("dialog", { name: "Update task" });
+    await user.selectOptions(within(dialog).getByLabelText("Status"), "blocked");
     await user.clear(within(dialog).getByLabelText("Progress"));
     await user.type(within(dialog).getByLabelText("Progress"), "60");
+    await user.type(
+      within(dialog).getByLabelText(/^Note/),
+      "This stale note must be discarded."
+    );
     await user.click(within(dialog).getByRole("button", { name: "Save update" }));
 
     expect(await within(dialog).findByRole("alert")).toHaveTextContent(
       "This task changed on the server"
     );
     await waitFor(() => expect(api.getProjectReads()).toBeGreaterThan(1));
-    await waitFor(() => expect(api.getKpiReads()).toBeGreaterThan(1));
+    expect(within(dialog).getByLabelText("Status")).toHaveValue("in_review");
+    expect(within(dialog).getByLabelText("Progress")).toHaveValue(70);
+    expect(within(dialog).getByLabelText(/^Note/)).toHaveValue("");
+    const save = within(dialog).getByRole("button", { name: "Save update" });
+    expect(save).toBeDisabled();
+    await user.click(save);
+    expect(api.getPatchBodies()).toHaveLength(1);
+
+    await user.click(
+      within(dialog).getByRole("button", { name: "Review refreshed values" })
+    );
+    expect(save).toBeEnabled();
+    await user.click(save);
+
+    await waitFor(() => expect(api.getPatchBodies()).toHaveLength(2));
+    expect(api.getPatchBodies()[1]).toEqual({
+      version: 4,
+      status: "in_review",
+      progress: 70
+    });
+  });
+
+  it("does not refetch or invalidate project data after a failed task update", async () => {
+    tokenStorage.set("valid-token");
+    const api = installWorkspaceApi({ mutationError: true });
+    const user = userEvent.setup();
+    renderApp([`/designer/projects/${project.id}`]);
+    await expandTask();
+
+    await user.click(screen.getByRole("button", {
+      name: "Update Circulation planning"
+    }));
+    await user.clear(screen.getByLabelText("Progress"));
+    await user.type(screen.getByLabelText("Progress"), "60");
+    await user.click(screen.getByRole("button", { name: "Save update" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Update unavailable."
+    );
+    await new Promise((resolve) => window.setTimeout(resolve, 20));
+    expect(api.getProjectReads()).toBe(1);
   });
 
   it("uploads an accepted PDF and refreshes task data", async () => {
@@ -350,9 +465,10 @@ describe("ProjectWorkspace", () => {
     );
     expect(within(dialog).getByRole("progressbar", { name: "Upload in progress" }))
       .not.toHaveAttribute("aria-valuenow");
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.getByRole("dialog", { name: "Upload design" })).toBeVisible();
     api.releaseUpload();
     await waitFor(() => expect(api.getProjectReads()).toBeGreaterThan(1));
-    await waitFor(() => expect(api.getKpiReads()).toBeGreaterThan(1));
     expect(api.getUploadBody()?.get("file")).toEqual(file);
     expect(screen.getByRole("status")).toHaveTextContent(
       "circulation.pdf uploaded as version 2."
@@ -361,7 +477,7 @@ describe("ProjectWorkspace", () => {
 
   it("keeps the upload dialog open and explains a server file error", async () => {
     tokenStorage.set("valid-token");
-    installWorkspaceApi({ uploadError: true });
+    const api = installWorkspaceApi({ uploadError: true });
     const user = userEvent.setup();
     renderApp([`/designer/projects/${project.id}`]);
     await expandTask();
@@ -380,6 +496,42 @@ describe("ProjectWorkspace", () => {
       "The uploaded file type is not supported."
     );
     expect(screen.getByRole("dialog", { name: "Upload design" })).toBeVisible();
+    await new Promise((resolve) => window.setTimeout(resolve, 20));
+    expect(api.getProjectReads()).toBe(1);
+  });
+
+  it("accepts only backend-supported upload MIME types and formats kilobytes", async () => {
+    tokenStorage.set("valid-token");
+    installWorkspaceApi();
+    const user = userEvent.setup();
+    renderApp([`/designer/projects/${project.id}`]);
+    await expandTask();
+
+    await user.click(screen.getByRole("button", {
+      name: "Upload design for Circulation planning"
+    }));
+    const dialog = screen.getByRole("dialog", { name: "Upload design" });
+    const input = within(dialog).getByLabelText("Design file");
+    expect(input).toHaveAttribute(
+      "accept",
+      "application/pdf,image/png,image/jpeg,image/webp"
+    );
+
+    const png = new File([new Uint8Array(2048)], "plan.png", {
+      type: "image/png"
+    });
+    await user.upload(input, png);
+    expect(within(dialog).getByText("plan.png · 2.0 KB")).toBeVisible();
+
+    fireEvent.change(input, {
+      target: {
+        files: [new File(["<svg/>"], "plan.svg", { type: "image/svg+xml" })]
+      }
+    });
+    await user.click(within(dialog).getByRole("button", { name: "Upload file" }));
+    expect(within(dialog).getByRole("alert")).toHaveTextContent(
+      "Only PDF, PNG, JPEG, and WebP files are supported."
+    );
   });
 
   it("closes task dialogs with Escape and restores focus", async () => {

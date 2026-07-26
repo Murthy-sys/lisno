@@ -912,6 +912,14 @@
   background: #9d8fff;
 }
 
+.kpi-component__unavailable {
+  display: block;
+  margin-top: 0.75rem;
+  color: #c8c0e9;
+  font-size: 0.72rem;
+  font-weight: 750;
+}
+
 .kpi-component p {
   margin: 0.55rem 0 0;
   line-height: 1.45;
@@ -1584,6 +1592,20 @@
   min-height: 2.35rem;
   padding: 0.5rem 0.75rem;
   font-size: 0.72rem;
+}
+
+.task-row__read-only {
+  margin: 1rem 0 0;
+  color: var(--color-lisno-muted);
+  font-size: 0.72rem;
+  font-weight: 750;
+  text-align: right;
+}
+
+.dashboard-load-more {
+  display: flex;
+  justify-content: center;
+  margin-top: 1.25rem;
 }
 
 .project-empty--compact {

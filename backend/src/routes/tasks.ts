@@ -36,7 +36,12 @@ const deadlineSchema = z
     reason: z.string().trim().min(1, "A deadline revision reason is required.")
   })
   .strict();
-const listEventsQuerySchema = z.object(paginationShape).strict();
+const listEventsQuerySchema = z
+  .object({
+    ...paginationShape,
+    sort: z.enum(["asc", "desc"]).default("asc")
+  })
+  .strict();
 
 export function createTasksRouter(
   authService: AuthService,
@@ -52,13 +57,15 @@ export function createTasksRouter(
     validateQuery(listEventsQuerySchema),
     async (request, response, next) => {
       try {
-        const pagination = response.locals.validatedQuery;
+        const { sort, limit, offset } = response.locals.validatedQuery;
+        const pagination = { limit, offset };
         response.json({
           data: paginatedEnvelope(
             await taskService.listEvents(
               request.authenticatedUser!,
               request.params.taskId as string,
-              pagination
+              pagination,
+              sort
             ),
             pagination
           )

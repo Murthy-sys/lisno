@@ -6,7 +6,7 @@ import {
   FolderKanban,
   Plus
 } from "lucide-react";
-import { useQuery } from "@tanstack/react-query";
+import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { Link, useNavigate } from "react-router-dom";
 import { useState } from "react";
 
@@ -27,7 +27,7 @@ import { ProjectCreateDialog } from "./ProjectCreateDialog";
 import {
   designerKeys,
   getAllProjects,
-  getCompleteKpi
+  getKpiPage
 } from "./designerApi";
 
 const statusLabels: Record<ProjectStatus, string> = {
@@ -60,9 +60,14 @@ export function DesignerDashboard() {
     queryKey: designerKeys.projects(),
     queryFn: getAllProjects
   });
-  const kpiQuery = useQuery({
+  const kpiQuery = useInfiniteQuery({
     queryKey: designerKeys.kpi(user.id),
-    queryFn: () => getCompleteKpi(user.id)
+    queryFn: ({ pageParam }) => getKpiPage(user.id, pageParam),
+    initialPageParam: 0,
+    getNextPageParam: (lastPage) =>
+      lastPage.tasks.pagination.hasMore
+        ? lastPage.tasks.pagination.offset + lastPage.tasks.pagination.limit
+        : undefined
   });
 
   if (projectsQuery.isPending || kpiQuery.isPending) {
@@ -83,17 +88,18 @@ export function DesignerDashboard() {
   }
 
   const projects = projectsQuery.data;
-  const kpi = kpiQuery.data;
+  const kpi = kpiQuery.data.pages[0];
+  const kpiTasks = kpiQuery.data.pages.flatMap((page) => page.tasks.items);
   const activeProjects = projects.filter((project) => project.status === "active");
-  const redTasks = kpi.tasks.items.filter((task) => task.risk.level === "red");
-  const yellowTasks = kpi.tasks.items.filter(
+  const redTasks = kpiTasks.filter((task) => task.risk.level === "red");
+  const yellowTasks = kpiTasks.filter(
     (task) => task.risk.level === "yellow"
   );
-  const workload = kpi.tasks.items
+  const workload = kpiTasks
     .filter((task) => task.status !== "completed")
     .reduce((total, task) => total + (task.plannedEffort ?? 0), 0);
   const riskQueue = [...redTasks, ...yellowTasks];
-  const recentActivity = collectActivity(kpi.tasks.items).slice(0, 5);
+  const recentActivity = collectActivity(kpiTasks).slice(0, 5);
 
   return (
     <section className="designer-page" aria-labelledby="designer-title">
@@ -203,6 +209,19 @@ export function DesignerDashboard() {
         </section>
       </div>
 
+      {kpiQuery.hasNextPage ? (
+        <div className="dashboard-load-more">
+          <button
+            type="button"
+            className="button button--secondary"
+            onClick={() => void kpiQuery.fetchNextPage()}
+            disabled={kpiQuery.isFetchingNextPage}
+          >
+            {kpiQuery.isFetchingNextPage ? "Loading more tasks…" : "Load more tasks"}
+          </button>
+        </div>
+      ) : null}
+
       <section className="projects-section" aria-labelledby="projects-title">
         <div className="section-heading">
           <div>
@@ -216,7 +235,7 @@ export function DesignerDashboard() {
               <ProjectCard
                 key={project.id}
                 project={project}
-                tasks={kpi.tasks.items.filter(
+                tasks={kpiTasks.filter(
                   (task) => task.projectId === project.id
                 )}
               />

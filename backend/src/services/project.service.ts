@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import { ApiError } from "../middleware/errors.js";
+import { calculateTaskRisk } from "../domain/risk.js";
 import type {
   AppRepository,
   DesignStageRecord,
@@ -80,7 +81,10 @@ export interface ProjectService {
     pagination: PaginationInput
   ): Promise<PageResult<ProjectRecord | ClientProject>>;
   create(actor: PublicUser, input: CreateProjectInput): Promise<ProjectRecord>;
-  get(actor: PublicUser, projectId: string): Promise<ProjectHierarchy | ClientProjectView>;
+  get(
+    actor: PublicUser,
+    projectId: string
+  ): Promise<RiskDecoratedProjectHierarchy | ClientProjectView>;
   createFloor(
     actor: PublicUser,
     projectId: string,
@@ -97,6 +101,20 @@ export interface ProjectService {
     input: CreateTaskInput
   ): Promise<TaskRecord>;
 }
+
+export type RiskDecoratedProjectHierarchy = Omit<ProjectHierarchy, "floors"> & {
+  floors: Array<
+    FloorRecord & {
+      stages: Array<
+        DesignStageRecord & {
+          tasks: Array<
+            TaskRecord & { risk: ReturnType<typeof calculateTaskRisk> }
+          >;
+        }
+      >;
+    }
+  >;
+};
 
 interface ClientProjectView extends ClientProject {
   floors: Array<
@@ -229,7 +247,22 @@ export function createProjectService(
       if (!hierarchy) {
         throw new ApiError(404, "NOT_FOUND", "The requested resource was not found.");
       }
-      if (actor.role !== "client") return hierarchy;
+      if (actor.role !== "client") {
+        const now = clock();
+        return {
+          ...hierarchy,
+          floors: hierarchy.floors.map((floor) => ({
+            ...floor,
+            stages: floor.stages.map((stage) => ({
+              ...stage,
+              tasks: stage.tasks.map((task) => ({
+                ...task,
+                risk: calculateTaskRisk(task, now)
+              }))
+            }))
+          }))
+        };
+      }
       return {
         ...toClientProject(hierarchy),
         floors: hierarchy.floors.map((floor) => ({

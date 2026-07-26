@@ -277,6 +277,8 @@ export interface PaginationInput {
   offset: number;
 }
 
+export type TaskEventSort = "asc" | "desc";
+
 export interface PageResult<T> {
   items: T[];
   total: number;
@@ -336,7 +338,8 @@ export interface AppRepository {
   listTaskEvents(taskId: string): Promise<TaskEventRecord[]>;
   pageTaskEvents(
     taskId: string,
-    pagination: PaginationInput
+    pagination: PaginationInput,
+    sort?: TaskEventSort
   ): Promise<PageResult<TaskEventRecord>>;
   listKpiTaskEventsForPeriod(
     taskId: string,

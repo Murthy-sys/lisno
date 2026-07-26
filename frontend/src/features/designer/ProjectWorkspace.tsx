@@ -13,7 +13,7 @@ import { apiClient } from "../../api/client";
 import type {
   DesignVersion,
   ProjectHierarchy,
-  TaskRecord
+  ProjectTask
 } from "../../api/types";
 import { useAuth } from "../../auth/AuthProvider";
 import { DesignUploadDialog } from "../../components/tasks/DesignUploadDialog";
@@ -22,10 +22,7 @@ import { TaskUpdateDialog } from "../../components/tasks/TaskUpdateDialog";
 import { AsyncState } from "../../components/ui/AsyncState";
 import { ProgressBar } from "../../components/ui/ProgressBar";
 import { StatusBadge } from "../../components/ui/StatusBadge";
-import {
-  designerKeys,
-  getCompleteKpi
-} from "./designerApi";
+import { designerKeys } from "./designerApi";
 
 type TaskAction = { kind: "update" | "upload"; taskId: string } | null;
 
@@ -60,15 +57,11 @@ export function ProjectWorkspace() {
       ),
     enabled: Boolean(projectId)
   });
-  const kpiQuery = useQuery({
-    queryKey: designerKeys.kpi(user.id),
-    queryFn: () => getCompleteKpi(user.id)
-  });
 
-  if (projectQuery.isPending || kpiQuery.isPending) {
+  if (projectQuery.isPending) {
     return <AsyncState state="loading" message="Opening the project workspace…" />;
   }
-  if (projectQuery.isError || kpiQuery.isError) {
+  if (projectQuery.isError) {
     return (
       <AsyncState
         state="error"
@@ -76,16 +69,12 @@ export function ProjectWorkspace() {
         actionLabel="Try again"
         onAction={() => {
           void projectQuery.refetch();
-          void kpiQuery.refetch();
         }}
       />
     );
   }
 
   const project = projectQuery.data;
-  const insights = new Map(
-    kpiQuery.data.tasks.items.map((task) => [task.id, task])
-  );
   const selectedTask = taskAction
     ? findTask(project, taskAction.taskId)
     : undefined;
@@ -231,7 +220,7 @@ export function ProjectWorkspace() {
                                             <TaskRow
                                               key={task.id}
                                               task={task}
-                                              insight={insights.get(task.id)}
+                                              userId={user.id}
                                               onUpdate={() =>
                                                 setTaskAction({
                                                   kind: "update",
@@ -288,7 +277,6 @@ export function ProjectWorkspace() {
       {taskAction?.kind === "upload" && selectedTask ? (
         <DesignUploadDialog
           task={selectedTask}
-          userId={user.id}
           onClose={() => setTaskAction(null)}
           onUploaded={(version: DesignVersion) =>
             setNotice(
@@ -304,7 +292,7 @@ export function ProjectWorkspace() {
 function findTask(
   project: ProjectHierarchy,
   taskId: string
-): TaskRecord | undefined {
+): ProjectTask | undefined {
   for (const floor of project.floors) {
     for (const stage of floor.stages) {
       const task = stage.tasks.find((candidate) => candidate.id === taskId);

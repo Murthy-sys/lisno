@@ -366,9 +366,9 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
       );
     },
 
-    async pageTaskEvents(taskId, pagination) {
+    async pageTaskEvents(taskId, pagination, sort = "asc") {
       const events = await implementation.listTaskEvents(taskId);
-      return paginate(events, pagination);
+      return paginate(sort === "desc" ? events.reverse() : events, pagination);
     },
 
     async listKpiTaskEventsForPeriod(

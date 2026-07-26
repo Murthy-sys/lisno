@@ -130,8 +130,13 @@ function response(data: unknown, init?: ResponseInit) {
   return Response.json({ data }, init);
 }
 
-function installDashboardApi(options?: { empty?: boolean; failProjectsOnce?: boolean }) {
+function installDashboardApi(options?: {
+  empty?: boolean;
+  failProjectsOnce?: boolean;
+  kpiHasMore?: boolean;
+}) {
   let projectRequests = 0;
+  const kpiRequests: string[] = [];
   let createBody: unknown;
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = String(input);
@@ -152,6 +157,9 @@ function installDashboardApi(options?: { empty?: boolean; failProjectsOnce?: boo
       });
     }
     if (url.startsWith(`/api/v1/kpis/users/${designer.id}?`)) {
+      kpiRequests.push(url);
+      const offset = Number(new URL(`https://lisno.test${url}`).searchParams.get("offset"));
+      const firstPage = offset === 0;
       return response({
         userId: designer.id,
         periodStartAt: "2000-01-01T00:00:00.000Z",
@@ -161,10 +169,17 @@ function installDashboardApi(options?: { empty?: boolean; failProjectsOnce?: boo
           ? components.map((component) => ({ ...component, score: null, eligibleCount: 0 }))
           : components,
         tasks: {
-          items: options?.empty ? [] : kpiTasks,
-          pagination: options?.empty
-            ? { ...pagination, total: 0 }
-            : pagination
+          items: options?.empty
+            ? []
+            : firstPage
+              ? kpiTasks
+              : [{ ...kpiTasks[1], id: "task-page-2", title: "Loaded later" }],
+          pagination: {
+            limit: 20,
+            offset,
+            total: options?.empty ? 0 : options?.kpiHasMore ? 21 : 2,
+            hasMore: Boolean(options?.kpiHasMore && firstPage)
+          }
         }
       });
     }
@@ -174,7 +189,10 @@ function installDashboardApi(options?: { empty?: boolean; failProjectsOnce?: boo
     }
     throw new Error(`Unhandled request: ${url}`);
   });
-  return { getCreateBody: () => createBody };
+  return {
+    getCreateBody: () => createBody,
+    getKpiRequests: () => kpiRequests
+  };
 }
 
 describe("DesignerDashboard", () => {
@@ -219,6 +237,9 @@ describe("DesignerDashboard", () => {
     ).toBeVisible();
     expect(screen.getByRole("button", { name: "Create project" })).toBeEnabled();
     expect(screen.getByText("No recent task activity yet.")).toBeVisible();
+    const unavailable = screen.getByText("On-time delivery").closest("article")!;
+    expect(within(unavailable).getByText("Not available")).toBeVisible();
+    expect(within(unavailable).queryByRole("progressbar")).not.toBeInTheDocument();
   });
 
   it("offers retry when dashboard data cannot be loaded", async () => {
@@ -295,5 +316,23 @@ describe("DesignerDashboard", () => {
       assignedDesignerIds: [designer.id, "user-designer-kabir"],
       location: "Chennai"
     });
+  });
+
+  it("bounds KPI task reads and loads another page only on request", async () => {
+    tokenStorage.set("valid-token");
+    const api = installDashboardApi({ kpiHasMore: true });
+    const user = userEvent.setup();
+    renderApp(["/designer"]);
+
+    await screen.findByRole("heading", { name: "Good morning, Ananya." });
+    expect(api.getKpiRequests()).toHaveLength(1);
+    expect(api.getKpiRequests()[0]).toMatch(/limit=20&offset=0$/);
+    expect(screen.queryByText("Loaded later")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Load more tasks" }));
+
+    expect(await screen.findByText("Loaded later")).toBeVisible();
+    expect(api.getKpiRequests()).toHaveLength(2);
+    expect(api.getKpiRequests()[1]).toMatch(/limit=20&offset=20$/);
   });
 });

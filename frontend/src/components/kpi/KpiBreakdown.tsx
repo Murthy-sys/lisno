@@ -17,12 +17,14 @@ export function KpiBreakdown({
             </div>
             <b>{component.score === null ? "—" : Math.round(component.score)}</b>
           </div>
-          <ProgressBar
-            value={component.score ?? 0}
-            label={`${component.label}: ${
-              component.score === null ? "not yet eligible" : `${component.score} out of 100`
-            }`}
-          />
+          {component.score === null ? (
+            <span className="kpi-component__unavailable">Not available</span>
+          ) : (
+            <ProgressBar
+              value={component.score}
+              label={`${component.label}: ${component.score} out of 100`}
+            />
+          )}
           <p>{component.explanation}</p>
         </article>
       ))}

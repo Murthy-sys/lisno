@@ -125,7 +125,7 @@ export function createKpiService(
           events: await repository.pageTaskEvents(task.id, {
             limit: 20,
             offset: 0
-          })
+          }, "desc")
         }))
       );
 
