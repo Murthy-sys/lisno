@@ -7,7 +7,8 @@ const environmentSchema = z.object({
     .default("mongodb://127.0.0.1:27017/lisno?replicaSet=rs0"),
   JWT_SECRET: z.string().min(32),
   CORS_ORIGIN: z.string().url().default("http://localhost:5173"),
-  UPLOADS_DIR: z.string().default("uploads")
+  UPLOADS_DIR: z.string().default("uploads"),
+  MAX_UPLOAD_MB: z.coerce.number().positive().default(25)
 });
 
 export const loadEnvironment = (

@@ -1,4 +1,5 @@
 import express from "express";
+import path from "node:path";
 
 import { errorHandler, notFoundHandler } from "./middleware/errors.js";
 import { createMemoryRepository } from "./repositories/memory.js";
@@ -6,6 +7,7 @@ import type { AppRepository } from "./repositories/types.js";
 import { createAuditRouter } from "./routes/audit.js";
 import { createAuthRouter } from "./routes/auth.js";
 import { createEvaluationsRouter } from "./routes/evaluations.js";
+import { createDesignVersionsRouter } from "./routes/design-versions.js";
 import { healthRouter } from "./routes/health.js";
 import { createKpisRouter } from "./routes/kpis.js";
 import { createOrganizationRouter } from "./routes/organization.js";
@@ -17,22 +19,31 @@ import {
   type AuthConfig
 } from "./services/auth.service.js";
 import { createEvaluationService } from "./services/evaluation.service.js";
+import { createDesignVersionService } from "./services/design-version.service.js";
 import { createHierarchyService } from "./services/hierarchy.service.js";
 import { createKpiService } from "./services/kpi.service.js";
 import { createProjectService } from "./services/project.service.js";
 import { createTaskService } from "./services/task.service.js";
 import { systemClock, type Clock } from "./services/workflow.js";
+import { createLocalStorage } from "./storage/local-storage.js";
+import type { FileStorage } from "./storage/storage.js";
 
 export interface AppDependencies {
   repository?: AppRepository;
   auth: AuthConfig;
   clock?: Clock;
+  storage?: FileStorage;
+  maxUploadBytes?: number;
 }
 
 export function createApp(dependencies: AppDependencies) {
   const app = express();
   const repository = dependencies.repository ?? createMemoryRepository();
   const clock = dependencies.clock ?? systemClock;
+  const storage =
+    dependencies.storage ??
+    createLocalStorage(path.resolve(process.cwd(), "uploads"));
+  const maxUploadBytes = dependencies.maxUploadBytes ?? 25 * 1024 * 1024;
   const authService = createAuthService(repository, dependencies.auth);
   const auditService = createAuditService(repository);
   const projectService = createProjectService(repository, auditService, clock);
@@ -40,6 +51,12 @@ export function createApp(dependencies: AppDependencies) {
   const hierarchyService = createHierarchyService(repository, clock);
   const kpiService = createKpiService(repository, clock);
   const evaluationService = createEvaluationService(repository, auditService, clock);
+  const designVersionService = createDesignVersionService(
+    repository,
+    auditService,
+    storage,
+    clock
+  );
 
   app.use(express.json());
   app.use("/api/v1", healthRouter);
@@ -49,6 +66,14 @@ export function createApp(dependencies: AppDependencies) {
   app.use("/api/v1", createOrganizationRouter(authService, hierarchyService));
   app.use("/api/v1", createKpisRouter(authService, kpiService));
   app.use("/api/v1", createEvaluationsRouter(authService, evaluationService));
+  app.use(
+    "/api/v1",
+    createDesignVersionsRouter(
+      authService,
+      designVersionService,
+      maxUploadBytes
+    )
+  );
   app.use("/api/v1", createAuditRouter(authService, auditService));
   app.use(notFoundHandler);
   app.use(errorHandler);

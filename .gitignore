@@ -3,7 +3,8 @@ node_modules/
 dist/
 backend/.env
 backend/dist/
-backend/uploads/
+backend/uploads/*
+!backend/uploads/.gitkeep
 frontend/.env
 frontend/dist/
 server/uploads/originals/*

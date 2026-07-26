@@ -172,10 +172,21 @@ export type NewDesignVersion = Omit<
   updatedAt?: string;
 };
 
+export type NewDesignVersionWithAllocatedNumber = Omit<
+  NewDesignVersion,
+  "versionNumber"
+>;
+
 export interface DesignVersionChange {
   approvalStatus?: ApprovalStatus;
   reviewerId?: string | null;
   approvedAt?: string | null;
+  clientVisible?: boolean;
+}
+
+export interface DesignVersionFilters {
+  projectId: string;
+  approvalStatus?: ApprovalStatus;
   clientVisible?: boolean;
 }
 
@@ -341,8 +352,15 @@ export interface AppRepository {
     pagination: PaginationInput
   ): Promise<PageResult<TaskEventRecord>>;
   createDesignVersion(input: NewDesignVersion): Promise<DesignVersionRecord>;
+  createNextDesignVersion(
+    input: NewDesignVersionWithAllocatedNumber
+  ): Promise<DesignVersionRecord>;
   findDesignVersionById(id: string): Promise<DesignVersionRecord | null>;
   listDesignVersions(projectId: string): Promise<DesignVersionRecord[]>;
+  pageDesignVersions(
+    filters: DesignVersionFilters,
+    pagination: PaginationInput
+  ): Promise<PageResult<DesignVersionRecord>>;
   updateDesignVersion(
     id: string,
     change: DesignVersionChange

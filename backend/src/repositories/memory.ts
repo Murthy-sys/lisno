@@ -50,6 +50,7 @@ const mutationMethods = new Set<keyof AppRepository>([
   "updateTask",
   "appendTaskEvent",
   "createDesignVersion",
+  "createNextDesignVersion",
   "updateDesignVersion",
   "createEvaluation",
   "appendAuditEvent"
@@ -435,6 +436,26 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
       return clone(record);
     },
 
+    async createNextDesignVersion(input) {
+      const versionNumber =
+        Math.max(
+          0,
+          ...state.designVersions
+            .filter(
+              (version) =>
+                version.projectId === input.projectId &&
+                version.floorId === input.floorId &&
+                version.stageId === input.stageId &&
+                version.taskId === input.taskId
+            )
+            .map((version) => version.versionNumber)
+        ) + 1;
+      return implementation.createDesignVersion({
+        ...input,
+        versionNumber
+      });
+    },
+
     async findDesignVersionById(id) {
       return copyOrNull(state.designVersions.find((version) => version.id === id));
     },
@@ -451,6 +472,19 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
               left.id.localeCompare(right.id)
           )
       );
+    },
+
+    async pageDesignVersions(filters, pagination) {
+      const versions = (await implementation.listDesignVersions(filters.projectId))
+        .filter(
+          (version) =>
+            (filters.approvalStatus === undefined ||
+              version.approvalStatus === filters.approvalStatus) &&
+            (filters.clientVisible === undefined ||
+              version.clientVisible === filters.clientVisible)
+        )
+        .sort((left, right) => byDateThenId("uploadedAt", left, right));
+      return paginate(versions, pagination);
     },
 
     async updateDesignVersion(id, change) {

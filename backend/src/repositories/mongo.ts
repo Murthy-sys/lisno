@@ -3,6 +3,7 @@ import mongoose, { type ClientSession, type Model } from "mongoose";
 import { AuditEventModel } from "../models/AuditEvent.js";
 import { DesignStageModel } from "../models/DesignStage.js";
 import { DesignVersionModel } from "../models/DesignVersion.js";
+import { DesignVersionSequenceModel } from "../models/DesignVersionSequence.js";
 import { EvaluationModel } from "../models/Evaluation.js";
 import { FloorModel } from "../models/Floor.js";
 import { ProjectModel } from "../models/Project.js";
@@ -405,25 +406,93 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
 
     async createDesignVersion(input) {
       const document = await createMongoDocument("Design version", () =>
-        DesignVersionModel.create({
+        createDocument(DesignVersionModel, {
           ...designVersionForMongo(input),
           _id: input.id ?? randomUUID()
-        })
+        }, session)
       );
       return mapDesignVersion(document.toObject());
     },
 
+    async createNextDesignVersion(input) {
+      const target = {
+        projectId: input.projectId,
+        floorId: input.floorId,
+        stageId: input.stageId,
+        taskId: input.taskId
+      };
+      const latestQuery = DesignVersionModel.findOne(target)
+        .sort({ versionNumber: -1 })
+        .select({ versionNumber: 1 })
+        .lean();
+      if (session) latestQuery.session(session);
+      const latest = await latestQuery.exec();
+      const baseline = latest?.versionNumber ?? 0;
+      const sequenceQuery = DesignVersionSequenceModel.findOneAndUpdate(
+        { _id: designVersionSequenceKey(target) },
+        [
+          {
+            $set: {
+              nextNumber: {
+                $add: [
+                  {
+                    $max: [
+                      { $ifNull: ["$nextNumber", baseline] },
+                      baseline
+                    ]
+                  },
+                  1
+                ]
+              }
+            }
+          }
+        ],
+        { upsert: true, new: true }
+      );
+      if (session) sequenceQuery.session(session);
+      const sequence = await sequenceQuery.lean().exec();
+      if (!sequence) {
+        throw new Error("Design version sequence allocation failed.");
+      }
+      return repository.createDesignVersion({
+        ...input,
+        versionNumber: sequence.nextNumber
+      });
+    },
+
     async findDesignVersionById(id) {
-      const document = await DesignVersionModel.findById(id).lean().exec();
+      const query = DesignVersionModel.findById(id);
+      if (session) query.session(session);
+      const document = await query.lean().exec();
       return document ? mapDesignVersion(document) : null;
     },
 
     async listDesignVersions(projectId) {
-      const documents = await DesignVersionModel.find({ projectId })
+      const query = DesignVersionModel.find({ projectId })
         .sort({ floorId: 1, stageId: 1, versionNumber: 1, _id: 1 })
-        .lean()
-        .exec();
+        .lean();
+      if (session) query.session(session);
+      const documents = await query.exec();
       return documents.map(mapDesignVersion);
+    },
+
+    async pageDesignVersions(filters, pagination) {
+      const filter = compactFilter(filters);
+      const documentsQuery = DesignVersionModel.find(filter)
+        .sort({ uploadedAt: 1, _id: 1 })
+        .skip(pagination.offset)
+        .limit(pagination.limit)
+        .lean();
+      const countQuery = DesignVersionModel.countDocuments(filter);
+      if (session) {
+        documentsQuery.session(session);
+        countQuery.session(session);
+      }
+      const [documents, total] = await Promise.all([
+        documentsQuery.exec(),
+        countQuery.exec()
+      ]);
+      return { items: documents.map(mapDesignVersion), total };
     },
 
     async updateDesignVersion(id, change) {
@@ -435,13 +504,13 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
         id,
         { $set: set },
         { new: true, runValidators: true }
-      )
-        .lean()
-        .exec();
-      if (!document) {
+      );
+      if (session) document.session(session);
+      const updated = await document.lean().exec();
+      if (!updated) {
         throw new RepositoryNotFoundError(`Design version ${id} was not found.`);
       }
-      return mapDesignVersion(document);
+      return mapDesignVersion(updated);
     },
 
     async createEvaluation(input) {
@@ -557,6 +626,22 @@ function compactFilter(value: object): PlainDocument {
   return Object.fromEntries(
     Object.entries(value).filter(([, fieldValue]) => fieldValue !== undefined)
   );
+}
+
+function designVersionSequenceKey(target: {
+  projectId: string;
+  floorId: string;
+  stageId: string;
+  taskId: string | null;
+}) {
+  return [
+    target.projectId,
+    target.floorId,
+    target.stageId,
+    target.taskId ?? "-"
+  ]
+    .map(encodeURIComponent)
+    .join(":");
 }
 
 function kpiTaskFilter(

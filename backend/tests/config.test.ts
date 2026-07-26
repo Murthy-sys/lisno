@@ -26,4 +26,20 @@ describe("environment authentication configuration", () => {
       }).MONGODB_URI
     ).toBe("mongodb://127.0.0.1:27017/lisno?replicaSet=rs0");
   });
+
+  it("loads a positive configurable upload size in megabytes", () => {
+    expect(
+      loadEnvironment({
+        JWT_SECRET: "runtime-secret-with-at-least-32-characters",
+        MAX_UPLOAD_MB: "12.5"
+      }).MAX_UPLOAD_MB
+    ).toBe(12.5);
+
+    expect(() =>
+      loadEnvironment({
+        JWT_SECRET: "runtime-secret-with-at-least-32-characters",
+        MAX_UPLOAD_MB: "0"
+      })
+    ).toThrow();
+  });
 });
