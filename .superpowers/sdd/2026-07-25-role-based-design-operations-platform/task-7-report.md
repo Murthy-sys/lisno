@@ -174,3 +174,63 @@ dist/assets/index-DVdBmzWy.js   375.34 kB │ gzip: 116.35 kB
 Live browser visual QA remains deferred for the same environment limitation
 recorded above. The pre-existing untracked `reference_docs/` directory remains
 untouched and excluded.
+
+## Fix Round 2
+
+The A-to-B session transition now establishes B as the current token before
+waiting for authenticated cache cleanup:
+
+1. Login begins a new auth generation and aborts any older restore.
+2. After the B login response is accepted, the provider hides user A, enters a
+   loading state, and stores token B.
+3. Authenticated queries are canceled and cached user data is removed.
+4. User B is only exposed as authenticated after cleanup succeeds and the
+   generation and stored token still match.
+
+This ordering means a delayed request that captured token A sees token B in
+storage and its `401` is correctly treated as stale. Conversely, a request
+capturing token B can still accept a `401` during the hidden transition,
+supersede the login generation, and leave the provider unauthenticated.
+
+Cleanup always removes cached user data even when query cancellation rejects.
+Login and cleanup failures roll back only when their generation and owned token
+are still current; superseded transitions cannot clear a newer session.
+
+### Round-2 TDD evidence
+
+- Exact race RED: with cache cancellation deliberately deferred, A's `401`
+  cleared storage and the assertion received `null` instead of `token-b`
+  (1 failed, 7 passed).
+- Exact race GREEN: token B remained current and hidden throughout cleanup,
+  then user B rendered only after user A's cache was removed (8/8).
+- Cleanup-failure RED: the provider remained stuck in `restoring`
+  (1 failed, 8 passed).
+- Cleanup-failure GREEN: the current B transition rolled back to a clean
+  unauthenticated state and removed cached A data (9/9).
+- A failed login request was separately reproduced leaving user A
+  authenticated, then fixed to produce a cleared unauthenticated state.
+- Focused final provider coverage passes 11/11, including stale A `401`,
+  accepted B `401` during cleanup, cleanup rejection, login rejection, and
+  prior restore/cache concurrency cases.
+
+### Round-2 verification
+
+Fresh final commands executed from `frontend/`:
+
+```text
+npm run typecheck  -> PASS (exit 0)
+npm test           -> PASS (34/34, 5 files, exit 0)
+npm run build      -> PASS (1946 modules, exit 0)
+git diff --check   -> PASS
+```
+
+Production build output:
+
+```text
+dist/index.html                   0.44 kB │ gzip:   0.28 kB
+dist/assets/index-0raCK5ms.css   16.34 kB │ gzip:   4.73 kB
+dist/assets/index-Cre1id4R.js   375.57 kB │ gzip: 116.43 kB
+```
+
+The pre-existing untracked `reference_docs/` directory remains untouched and
+excluded.

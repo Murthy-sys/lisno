@@ -283,6 +283,190 @@ describe("AuthProvider cache isolation", () => {
     await inFlight.pendingQuery;
   });
 
+  it("keeps user B when user A receives a 401 during deferred cache cleanup", async () => {
+    const cleanupStarted = deferred();
+    const cleanupGate = deferred();
+    const staleResponseGate = deferred();
+    const queryClient = createQueryClient();
+    const realCancelQueries = queryClient.cancelQueries.bind(queryClient);
+    vi.spyOn(queryClient, "cancelQueries").mockImplementation(async () => {
+      cleanupStarted.resolve();
+      await cleanupGate.promise;
+      await realCancelQueries();
+    });
+    tokenStorage.set("token-a");
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const path = String(input);
+      if (path.endsWith("/auth/me")) {
+        return Response.json({ data: userA });
+      }
+      if (path.endsWith("/auth/login")) {
+        return Response.json({ data: { token: "token-b", user: userB } });
+      }
+      await staleResponseGate.promise;
+      return Response.json(
+        {
+          error: {
+            code: "TOKEN_EXPIRED",
+            message: "User A's request expired."
+          }
+        },
+        { status: 401 }
+      );
+    });
+    renderAuthProvider(queryClient);
+    await waitFor(() =>
+      expect(screen.getByLabelText("Current user")).toHaveTextContent("User A")
+    );
+    queryClient.setQueryData(["viewer"], { owner: "User A" });
+    const staleARequest = apiClient.get("/stale-a");
+
+    await userEvent.click(screen.getByRole("button", { name: "Log in as B" }));
+    await cleanupStarted.promise;
+    staleResponseGate.resolve();
+    await expect(staleARequest).rejects.toMatchObject({ status: 401 });
+
+    expect(tokenStorage.get()).toBe("token-b");
+    expect(screen.getByLabelText("Authentication status")).toHaveTextContent(
+      "restoring"
+    );
+    expect(screen.getByLabelText("Current user")).toHaveTextContent("none");
+
+    cleanupGate.resolve();
+    await waitFor(() => {
+      expect(screen.getByLabelText("Authentication status")).toHaveTextContent(
+        "authenticated"
+      );
+      expect(screen.getByLabelText("Current user")).toHaveTextContent("User B");
+    });
+    expect(tokenStorage.get()).toBe("token-b");
+    expect(queryClient.getQueryData(["viewer"])).toBeUndefined();
+  });
+
+  it("removes the transitional user B session when cache cleanup fails", async () => {
+    const queryClient = createQueryClient();
+    vi.spyOn(queryClient, "cancelQueries").mockRejectedValue(
+      new Error("Cache cancellation failed.")
+    );
+    tokenStorage.set("token-a");
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      if (String(input).endsWith("/auth/me")) {
+        return Response.json({ data: userA });
+      }
+      return Response.json({ data: { token: "token-b", user: userB } });
+    });
+    renderAuthProvider(queryClient);
+    await waitFor(() =>
+      expect(screen.getByLabelText("Current user")).toHaveTextContent("User A")
+    );
+    queryClient.setQueryData(["viewer"], { owner: "User A" });
+
+    await userEvent.click(screen.getByRole("button", { name: "Log in as B" }));
+
+    await waitFor(() =>
+      expect(screen.getByLabelText("Authentication status")).toHaveTextContent(
+        "unauthenticated"
+      )
+    );
+    expect(screen.getByLabelText("Current user")).toHaveTextContent("none");
+    expect(tokenStorage.get()).toBeNull();
+    expect(queryClient.getQueryData(["viewer"])).toBeUndefined();
+  });
+
+  it("accepts a user B 401 while user B is still hidden during cleanup", async () => {
+    const cleanupStarted = deferred();
+    const cleanupGate = deferred();
+    const queryClient = createQueryClient();
+    const realCancelQueries = queryClient.cancelQueries.bind(queryClient);
+    vi.spyOn(queryClient, "cancelQueries").mockImplementation(async () => {
+      cleanupStarted.resolve();
+      await cleanupGate.promise;
+      await realCancelQueries();
+    });
+    tokenStorage.set("token-a");
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const path = String(input);
+      if (path.endsWith("/auth/me")) {
+        return Response.json({ data: userA });
+      }
+      if (path.endsWith("/auth/login")) {
+        return Response.json({ data: { token: "token-b", user: userB } });
+      }
+      expect(new Headers(init?.headers).get("authorization")).toBe(
+        "Bearer token-b"
+      );
+      return Response.json(
+        {
+          error: {
+            code: "TOKEN_EXPIRED",
+            message: "User B's request expired."
+          }
+        },
+        { status: 401 }
+      );
+    });
+    renderAuthProvider(queryClient);
+    await waitFor(() =>
+      expect(screen.getByLabelText("Current user")).toHaveTextContent("User A")
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "Log in as B" }));
+    await cleanupStarted.promise;
+    expect(screen.getByLabelText("Current user")).toHaveTextContent("none");
+    await expect(apiClient.get("/user-b-private")).rejects.toMatchObject({
+      status: 401
+    });
+
+    expect(tokenStorage.get()).toBeNull();
+    await waitFor(() =>
+      expect(screen.getByLabelText("Authentication status")).toHaveTextContent(
+        "unauthenticated"
+      )
+    );
+    cleanupGate.resolve();
+    await waitFor(() =>
+      expect(screen.getByLabelText("Authentication status")).toHaveTextContent(
+        "unauthenticated"
+      )
+    );
+    expect(screen.getByLabelText("Current user")).toHaveTextContent("none");
+  });
+
+  it("leaves an unauthenticated state and clears user data when login fails", async () => {
+    const queryClient = createQueryClient();
+    tokenStorage.set("token-a");
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      if (String(input).endsWith("/auth/me")) {
+        return Response.json({ data: userA });
+      }
+      return Response.json(
+        {
+          error: {
+            code: "LOGIN_FAILED",
+            message: "Login could not be completed."
+          }
+        },
+        { status: 500 }
+      );
+    });
+    renderAuthProvider(queryClient);
+    await waitFor(() =>
+      expect(screen.getByLabelText("Current user")).toHaveTextContent("User A")
+    );
+    queryClient.setQueryData(["viewer"], { owner: "User A" });
+
+    await userEvent.click(screen.getByRole("button", { name: "Log in as B" }));
+
+    await waitFor(() =>
+      expect(screen.getByLabelText("Authentication status")).toHaveTextContent(
+        "unauthenticated"
+      )
+    );
+    expect(screen.getByLabelText("Current user")).toHaveTextContent("none");
+    expect(tokenStorage.get()).toBeNull();
+    expect(queryClient.getQueryData(["viewer"])).toBeUndefined();
+  });
+
   it("clears authenticated cache after an accepted 401", async () => {
     tokenStorage.set("token-a");
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {

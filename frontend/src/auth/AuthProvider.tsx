@@ -52,8 +52,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const clearAuthenticatedCache = useCallback(async () => {
-    await queryClient.cancelQueries();
-    queryClient.clear();
+    try {
+      await queryClient.cancelQueries();
+    } finally {
+      queryClient.clear();
+    }
   }, [queryClient]);
 
   const logout = useCallback(async () => {
@@ -113,22 +116,54 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const login = useCallback(
     async (credentials: Credentials) => {
+      const previousToken = tokenStorage.get();
       const generation = supersedeRestore();
-      const payload = await apiClient.post<AuthPayload>(
-        "/auth/login",
-        credentials
-      );
-      if (!mountedRef.current || generationRef.current !== generation) {
-        throw new DOMException("Login was superseded.", "AbortError");
+      let replacementToken: string | null = null;
+      let cleanupAttempted = false;
+      try {
+        const payload = await apiClient.post<AuthPayload>(
+          "/auth/login",
+          credentials
+        );
+        if (!mountedRef.current || generationRef.current !== generation) {
+          throw new DOMException("Login was superseded.", "AbortError");
+        }
+        replacementToken = payload.token;
+        setUser(null);
+        setStatus("restoring");
+        tokenStorage.set(replacementToken);
+        cleanupAttempted = true;
+        await clearAuthenticatedCache();
+        if (
+          !mountedRef.current ||
+          generationRef.current !== generation ||
+          tokenStorage.get() !== replacementToken
+        ) {
+          throw new DOMException("Login was superseded.", "AbortError");
+        }
+        setUser(payload.user);
+        setStatus("authenticated");
+        return payload.user;
+      } catch (error) {
+        const ownedToken = replacementToken ?? previousToken;
+        if (
+          mountedRef.current &&
+          generationRef.current === generation &&
+          tokenStorage.get() === ownedToken
+        ) {
+          tokenStorage.clear();
+          setUser(null);
+          setStatus("unauthenticated");
+          if (!cleanupAttempted) {
+            try {
+              await clearAuthenticatedCache();
+            } catch {
+              // Cache removal still runs in clearAuthenticatedCache's finally.
+            }
+          }
+        }
+        throw error;
       }
-      await clearAuthenticatedCache();
-      if (!mountedRef.current || generationRef.current !== generation) {
-        throw new DOMException("Login was superseded.", "AbortError");
-      }
-      tokenStorage.set(payload.token);
-      setUser(payload.user);
-      setStatus("authenticated");
-      return payload.user;
     },
     [clearAuthenticatedCache, supersedeRestore]
   );
