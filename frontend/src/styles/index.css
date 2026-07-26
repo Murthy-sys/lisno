@@ -62,6 +62,30 @@
   border: 0;
 }
 
+.designer-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+  gap: 1rem;
+  margin-top: 1.25rem;
+}
+
+.designer-card,
+.manager-card,
+.evaluation-form,
+.kpi-trend {
+  display: grid;
+  gap: 0.65rem;
+  padding: 1.15rem;
+  border: 1px solid rgba(23, 33, 63, 0.12);
+  border-radius: 1rem;
+  background: white;
+}
+
+.manager-card + .manager-card { margin-top: 0.85rem; }
+.manager-card > button { display: grid; gap: 0.35rem; width: 100%; border: 0; background: transparent; color: inherit; text-align: left; cursor: pointer; }
+.evaluation-form label { display: grid; gap: 0.35rem; }
+.evaluation-form textarea { min-height: 5rem; resize: vertical; }
+
 .skip-link {
   position: absolute;
   top: 1rem;

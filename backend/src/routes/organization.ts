@@ -12,6 +12,21 @@ export function createOrganizationRouter(
   const protectedRoute = authenticate(authService);
 
   router.get(
+    "/organization/team",
+    protectedRoute,
+    authorizeRoles("design_manager"),
+    async (request, response, next) => {
+      try {
+        response.json({
+          data: await hierarchyService.team(request.authenticatedUser!)
+        });
+      } catch (error) {
+        next(error);
+      }
+    }
+  );
+
+  router.get(
     "/organization/tree",
     protectedRoute,
     authorizeRoles("design_head"),

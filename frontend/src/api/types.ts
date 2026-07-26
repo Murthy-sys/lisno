@@ -273,6 +273,69 @@ export interface KpiRead {
   tasks: PageData<KpiTaskWithEvents>;
 }
 
+export interface DesignerSummary {
+  user: PublicUser;
+  activeProjectCount: number;
+  kpi: KpiResult;
+  workload: number;
+  overdueCount: number;
+  yellowRiskCount: number;
+  pendingEvaluation: boolean;
+  projects: Project[];
+  tasks: ProjectTask[];
+}
+
+export interface OrganizationDesigner {
+  id: string;
+  name: string;
+  email: string;
+  avatar?: string;
+  title?: string;
+  summary: Omit<DesignerSummary, "user">;
+}
+
+export interface OrganizationManager {
+  id: string;
+  name: string;
+  email: string;
+  avatar?: string;
+  title?: string;
+  designers: OrganizationDesigner[];
+  summary: {
+    teamKpi: KpiResult;
+    workload: number;
+    redCount: number;
+    yellowCount: number;
+    evaluationCoverage: number;
+  };
+}
+
+export interface Evaluation {
+  id: string;
+  subjectUserId: string;
+  evaluatorUserId: string;
+  evaluatorRole: "design_manager" | "design_head";
+  periodStartAt: string;
+  periodEndAt: string;
+  score: number;
+  comments: string;
+  revisionOf: string | null;
+  createdAt: string;
+}
+
+export interface AuditEvent {
+  id: string;
+  actorId: string;
+  action: string;
+  entityType: string;
+  entityId: string;
+  occurredAt: string;
+  oldValues: Record<string, unknown>;
+  newValues: Record<string, unknown>;
+  reason: string | null;
+  createdAt: string;
+}
+
 export interface UpdateTaskInput {
   version: number;
   status?: TaskStatus;

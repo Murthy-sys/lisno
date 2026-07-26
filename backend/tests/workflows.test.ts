@@ -658,6 +658,36 @@ describe("task workflows", () => {
 });
 
 describe("organization and KPI workflows", () => {
+  it("returns direct-report summaries only to the authenticated design manager", async () => {
+    const { app } = setup();
+
+    const response = await request(app)
+      .get("/api/v1/organization/team")
+      .set("Authorization", bearer(users.managerAarav));
+
+    expect(response.status).toBe(200);
+    expect(response.body.data).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          user: expect.objectContaining({ id: "user-designer-ananya" }),
+          kpi: expect.objectContaining({ score: expect.any(Number) }),
+          workload: expect.any(Number),
+          overdueCount: expect.any(Number),
+          yellowRiskCount: expect.any(Number)
+        }),
+        expect.objectContaining({
+          user: expect.objectContaining({ id: "user-designer-kabir" })
+        })
+      ])
+    );
+    expect(response.body.data).toHaveLength(2);
+
+    const crossRole = await request(app)
+      .get("/api/v1/organization/team")
+      .set("Authorization", bearer(users.head));
+    expect(crossRole.status).toBe(403);
+  });
+
   it("restricts the full organization tree to the design head and returns safe designer summaries", async () => {
     const { app } = setup();
     const denied = await request(app)

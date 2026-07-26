@@ -24,18 +24,7 @@ export interface DesignerSummary {
   yellowRiskCount: number;
   pendingEvaluation: boolean;
   projects: ProjectRecord[];
-  tasks: Array<
-    Pick<
-      TaskRecord,
-      | "id"
-      | "projectId"
-      | "title"
-      | "status"
-      | "progress"
-      | "currentDeadlineAt"
-      | "plannedEffort"
-    > & { risk: ReturnType<typeof calculateTaskRisk> }
-  >;
+  tasks: Array<TaskRecord & { risk: ReturnType<typeof calculateTaskRisk> }>;
 }
 
 export type OrganizationTreeNode = Omit<ManagerTreeNode, "designers"> & {
@@ -51,6 +40,7 @@ export type OrganizationTreeNode = Omit<ManagerTreeNode, "designers"> & {
 
 export interface HierarchyService {
   tree(actor: PublicUser): Promise<OrganizationTreeNode[]>;
+  team(actor: PublicUser): Promise<DesignerSummary[]>;
   designerSummary(
     actor: PublicUser,
     designerId: string
@@ -70,16 +60,7 @@ export function createHierarchyService(
     const tasks = await repository.listTasks({ ownerId: designer.id });
     const evaluations = await repository.listEvaluationsForSubject(designer.id);
     const now = clock();
-    const withRisk = tasks.map((task) => ({
-      id: task.id,
-      projectId: task.projectId,
-      title: task.title,
-      status: task.status,
-      progress: task.progress,
-      currentDeadlineAt: task.currentDeadlineAt,
-      plannedEffort: task.plannedEffort,
-      risk: calculateTaskRisk(task, now)
-    }));
+    const withRisk = tasks.map((task) => ({ ...task, risk: calculateTaskRisk(task, now) }));
 
     return {
       user: {
@@ -105,6 +86,16 @@ export function createHierarchyService(
   };
 
   return {
+    async team(actor) {
+      await requireActor(repository, actor);
+      if (actor.role !== "design_manager") forbidden();
+      const designers = (await repository.listUsers()).filter(
+        (user) =>
+          user.active && user.role === "designer" && user.managerId === actor.id
+      );
+      return Promise.all(designers.map((designer) => buildSummary(actor, designer.id)));
+    },
+
     async tree(actor) {
       await requireActor(repository, actor);
       if (actor.role !== "design_head") forbidden();

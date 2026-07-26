@@ -14,6 +14,9 @@ import { AsyncState } from "../components/ui/AsyncState";
 import { StatusBadge } from "../components/ui/StatusBadge";
 import { DesignerDashboard } from "../features/designer/DesignerDashboard";
 import { ProjectWorkspace } from "../features/designer/ProjectWorkspace";
+import { ManagerDashboard } from "../features/manager/ManagerDashboard";
+import { DesignerDetail } from "../features/manager/DesignerDetail";
+import { HeadDashboard } from "../features/head/HeadDashboard";
 
 const roleHomeContent: Record<
   Role,
@@ -148,7 +151,15 @@ export function AppRoutes() {
           path="/manager"
           element={
             <ProtectedRoute allowedRoles={["design_manager"]}>
-              <RoleLanding role="design_manager" />
+              <ManagerDashboard />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/manager/designers/:designerId"
+          element={
+            <ProtectedRoute allowedRoles={["design_manager", "design_head"]}>
+              <DesignerDetail />
             </ProtectedRoute>
           }
         />
@@ -156,7 +167,7 @@ export function AppRoutes() {
           path="/head"
           element={
             <ProtectedRoute allowedRoles={["design_head"]}>
-              <RoleLanding role="design_head" />
+              <HeadDashboard />
             </ProtectedRoute>
           }
         />

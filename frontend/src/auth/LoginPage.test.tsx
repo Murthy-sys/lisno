@@ -98,8 +98,8 @@ describe("LoginPage", () => {
 
   it.each([
     ["designer", "/designer", "Good morning, Demo."],
-    ["design_manager", "/manager", "Design manager workspace"],
-    ["design_head", "/head", "Design head workspace"],
+    ["design_manager", "/manager", "Team delivery pulse"],
+    ["design_head", "/head", "Organization delivery health"],
     ["client", "/client", "Client workspace"]
   ] satisfies Array<[Role, string, string]>)(
     "redirects a %s to its exact role home",
@@ -130,6 +130,12 @@ describe("LoginPage", () => {
               pagination: { limit: 100, offset: 0, total: 0, hasMore: false }
             }
           })
+        ),
+        http.get("/api/v1/organization/team", () =>
+          HttpResponse.json({ data: [] })
+        ),
+        http.get("/api/v1/organization/tree", () =>
+          HttpResponse.json({ data: [] })
         ),
         http.get("/api/v1/kpis/users/:userId/tasks", () =>
           HttpResponse.json({
