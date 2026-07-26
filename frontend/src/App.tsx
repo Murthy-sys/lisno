@@ -1,10 +1,11 @@
+import { AppProviders } from "./app/providers";
+import { AppRouter } from "./app/router";
+
 function App() {
   return (
-    <main className="lisno-shell">
-      <div className="lisno-mark" aria-hidden="true">L</div>
-      <p className="lisno-eyebrow">LISNO</p>
-      <h1>Design operations, clearly delivered.</h1>
-    </main>
+    <AppProviders>
+      <AppRouter />
+    </AppProviders>
   );
 }
 

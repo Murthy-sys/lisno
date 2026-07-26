@@ -1,5 +1,18 @@
 export type Role = "designer" | "design_manager" | "design_head" | "client";
 
+export interface PublicUser {
+  id: string;
+  name: string;
+  email: string;
+  role: Role;
+  avatar?: string;
+}
+
+export interface AuthPayload {
+  token: string;
+  user: PublicUser;
+}
+
 export type TaskStatus =
   | "not_started"
   | "in_progress"
