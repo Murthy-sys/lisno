@@ -30,6 +30,11 @@ export interface AuditService {
     filters: AuditFilters,
     pagination: PaginationInput
   ): Promise<PageResult<AuditEventRecord>>;
+  listForDesigner(
+    actor: PublicUser,
+    designerId: string,
+    pagination: PaginationInput
+  ): Promise<PageResult<AuditEventRecord>>;
 }
 
 export function createAuditService(repository: AppRepository): AuditService {
@@ -89,6 +94,21 @@ export function createAuditService(repository: AppRepository): AuditService {
           visibleActorIds: [actor.id, ...directDesignerIds],
           visibleTaskIds: [...visibleTaskIds]
         },
+        pagination
+      );
+    },
+
+    async listForDesigner(actor, designerId, pagination) {
+      await requireActor(repository, actor);
+      if (actor.role === "client") forbidden();
+      const users = await repository.listUsers();
+      const designer = users.find((user) => user.id === designerId && user.role === "designer");
+      if (!designer) forbidden();
+      if (actor.role === "design_manager" && designer.managerId !== actor.id) forbidden();
+      if (actor.role === "designer" && actor.id !== designer.id) forbidden();
+      const taskIds = (await repository.listTasks({ ownerId: designer.id })).map((task) => task.id);
+      return repository.pageAuditEvents(
+        { entityType: "task", entityIds: taskIds, visibleActorIds: actor.role === "design_head" ? undefined : [actor.id, designer.id], visibleTaskIds: taskIds },
         pagination
       );
     }

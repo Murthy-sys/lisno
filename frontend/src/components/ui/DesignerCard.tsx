@@ -1,7 +1,9 @@
 import { Link } from "react-router-dom";
-import type { DesignerSummary } from "../../api/types";
+import type { DesignerSummary, PublicUser } from "../../api/types";
 
-export function DesignerCard({ designer, to }: { designer: DesignerSummary; to: string }) {
+type DesignerCardSummary = Omit<DesignerSummary, "user"> & { user: Pick<PublicUser, "id" | "name" | "email" | "avatar"> };
+
+export function DesignerCard({ designer, to }: { designer: DesignerCardSummary; to: string }) {
   return <article className="designer-card" aria-label={designer.user.name}>
     <div><p className="eyebrow">Designer</p><h3>{designer.user.name}</h3><p>{designer.user.email}</p></div>
     <strong>KPI {designer.kpi.score}</strong>

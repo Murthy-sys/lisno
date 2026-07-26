@@ -268,6 +268,7 @@ export interface AuditFilters {
   actorId?: string;
   entityType?: string;
   entityId?: string;
+  entityIds?: string[];
   visibleActorIds?: string[];
   visibleTaskIds?: string[];
 }

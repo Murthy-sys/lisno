@@ -40,3 +40,19 @@
   scoped to the selected designer's authored activity. Deadline revisions are
   additionally represented by the task's immutable original/current deadline
   data and the server-side task event/audit records.
+
+## Review Round 1
+
+- Added role-authorized management project inspection routes and role-correct
+  manager/head navigation.
+- Evaluation history now returns newest first and renders period, evaluator,
+  comments, and revision markers. Evaluation submission accepts a period and
+  correction reference and refreshes management caches.
+- Deadline revisions disable controls while pending, report conflicts after a
+  fresh summary read, and use targeted management invalidation.
+- Added a scoped designer task-audit endpoint so deadline revisions authored
+  by managers or heads appear in the designer audit timeline without exposing
+  unrelated task audits.
+- Final verification: backend typecheck, build, and all 11 test files (117
+  tests) pass; frontend typecheck, production build, and all 10 test files
+  (51 tests) pass. `git diff --check` also passes.

@@ -26,6 +26,19 @@ export function createAuditRouter(
   const router = Router();
 
   router.get(
+    "/designers/:designerId/audit",
+    authenticate(authService),
+    authorizeRoles("designer", "design_manager", "design_head"),
+    validateQuery(z.object(paginationShape).strict()),
+    async (request, response, next) => {
+      try {
+        const pagination = response.locals.validatedQuery;
+        response.json({ data: paginatedEnvelope(await auditService.listForDesigner(request.authenticatedUser!, request.params.designerId as string, pagination), pagination) });
+      } catch (error) { next(error); }
+    }
+  );
+
+  router.get(
     "/audit",
     authenticate(authService),
     authorizeRoles("designer", "design_manager", "design_head"),

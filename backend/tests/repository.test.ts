@@ -106,7 +106,7 @@ describe("memory repository", () => {
         offset: 1
       })
     ).resolves.toMatchObject({
-      items: [{ id: "evaluation-kabir-june-revision" }],
+      items: [{ id: "evaluation-kabir-june" }],
       total: 2
     });
     await expect(
@@ -428,7 +428,7 @@ describe("memory repository", () => {
     ).rejects.toBeInstanceOf(RepositoryConflictError);
   });
 
-  it("retains evaluation corrections as chronological revisions", async () => {
+  it("returns evaluation corrections newest first while preserving revision links", async () => {
     const repository = createMemoryRepository(demoSeedData);
     const first = await repository.createEvaluation({
       id: "evaluation-ananya-july-1",
@@ -455,8 +455,8 @@ describe("memory repository", () => {
     });
 
     expect(await repository.listEvaluationsForSubject("user-designer-ananya")).toMatchObject([
-      { id: first.id, revisionOf: null },
-      { id: correction.id, revisionOf: first.id }
+      { id: correction.id, revisionOf: first.id },
+      { id: first.id, revisionOf: null }
     ]);
   });
 

@@ -14,5 +14,5 @@ export const managementKeys = {
 export const getManagerTeam = () => apiClient.get<DesignerSummary[]>("/organization/team");
 export const getDesignerSummary = (id: string) => apiClient.get<DesignerSummary>(`/designers/${encodeURIComponent(id)}/summary`);
 export const getEvaluations = (id: string) => apiClient.get<PageData<Evaluation>>(`/evaluations/${encodeURIComponent(id)}?${page}`);
-export const getDesignerAudit = (id: string) => apiClient.get<PageData<AuditEvent>>(`/audit?actorId=${encodeURIComponent(id)}&${page}`);
+export const getDesignerAudit = (id: string) => apiClient.get<PageData<AuditEvent>>(`/designers/${encodeURIComponent(id)}/audit?${page}`);
 export const getOrganization = () => apiClient.get<import("../../api/types").OrganizationManager[]>("/organization/tree");

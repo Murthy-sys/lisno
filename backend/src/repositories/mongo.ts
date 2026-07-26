@@ -541,7 +541,7 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
 
     async listEvaluationsForSubject(subjectUserId) {
       const documents = await EvaluationModel.find({ subjectUserId })
-        .sort({ createdAt: 1, _id: 1 })
+        .sort({ createdAt: -1, _id: -1 })
         .lean()
         .exec();
       return documents.map(mapEvaluation);
@@ -551,7 +551,7 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
       const filter = { subjectUserId };
       const [documents, total] = await Promise.all([
         EvaluationModel.find(filter)
-          .sort({ createdAt: 1, _id: 1 })
+          .sort({ createdAt: -1, _id: -1 })
           .skip(pagination.offset)
           .limit(pagination.limit)
           .lean()
@@ -697,6 +697,7 @@ function auditFilter(filters: AuditFilters): PlainDocument {
     entityType: filters.entityType,
     entityId: filters.entityId
   });
+  if (filters.entityIds !== undefined) filter.entityId = { $in: filters.entityIds };
   if (
     filters.visibleActorIds !== undefined ||
     filters.visibleTaskIds !== undefined

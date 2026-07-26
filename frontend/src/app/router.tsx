@@ -16,6 +16,7 @@ import { DesignerDashboard } from "../features/designer/DesignerDashboard";
 import { ProjectWorkspace } from "../features/designer/ProjectWorkspace";
 import { ManagerDashboard } from "../features/manager/ManagerDashboard";
 import { DesignerDetail } from "../features/manager/DesignerDetail";
+import { ManagementProjectWorkspace } from "../features/manager/ManagementProjectWorkspace";
 import { HeadDashboard } from "../features/head/HeadDashboard";
 
 const roleHomeContent: Record<
@@ -163,6 +164,7 @@ export function AppRoutes() {
             </ProtectedRoute>
           }
         />
+        <Route path="/manager/projects/:projectId" element={<ProtectedRoute allowedRoles={["design_manager"]}><ManagementProjectWorkspace /></ProtectedRoute>} />
         <Route
           path="/head"
           element={
@@ -171,6 +173,8 @@ export function AppRoutes() {
             </ProtectedRoute>
           }
         />
+        <Route path="/head/designers/:designerId" element={<ProtectedRoute allowedRoles={["design_head"]}><DesignerDetail /></ProtectedRoute>} />
+        <Route path="/head/projects/:projectId" element={<ProtectedRoute allowedRoles={["design_head"]}><ManagementProjectWorkspace /></ProtectedRoute>} />
         <Route
           path="/client"
           element={

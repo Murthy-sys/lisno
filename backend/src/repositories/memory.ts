@@ -528,7 +528,7 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
       return clone(
         state.evaluations
           .filter((evaluation) => evaluation.subjectUserId === subjectUserId)
-          .sort((left, right) => byDateThenId("createdAt", left, right))
+          .sort((left, right) => byDateThenId("createdAt", right, left))
       );
     },
 
@@ -634,6 +634,7 @@ function matchesAuditFilters(event: AuditEventRecord, filters: AuditFilters) {
     (filters.actorId === undefined || event.actorId === filters.actorId) &&
     (filters.entityType === undefined || event.entityType === filters.entityType) &&
     (filters.entityId === undefined || event.entityId === filters.entityId)
+    && (filters.entityIds === undefined || filters.entityIds.includes(event.entityId))
   );
 }
 
