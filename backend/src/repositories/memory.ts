@@ -484,6 +484,16 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
       );
     },
 
+    async listLatestClientVisibleDesignVersions(projectIds) {
+      const latest = new Map<string, DesignVersionRecord>();
+      for (const version of state.designVersions) {
+        if (!projectIds.includes(version.projectId) || version.approvalStatus !== "approved" || !version.clientVisible) continue;
+        const current = latest.get(version.projectId);
+        if (!current || byDateThenId("approvedAt", version, current) > 0 || (version.approvedAt === current.approvedAt && byDateThenId("uploadedAt", version, current) > 0)) latest.set(version.projectId, version);
+      }
+      return clone([...latest.values()].sort((left, right) => left.projectId.localeCompare(right.projectId)));
+    },
+
     async pageDesignVersions(filters, pagination) {
       const versions = (await implementation.listDesignVersions(filters.projectId))
         .filter(

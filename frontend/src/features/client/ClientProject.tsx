@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link, useParams } from "react-router-dom";
 
-import type { DesignVersion } from "../../api/types";
+import type { ClientDesignVersion } from "../../api/types";
 import { FilePreview } from "../../components/ui/FilePreview";
 import { AsyncState } from "../../components/ui/AsyncState";
 import { ProgressBar } from "../../components/ui/ProgressBar";
@@ -24,7 +24,7 @@ export function ClientProject() {
   </section>;
 }
 
-function VisibleVersion({ version }: { version: DesignVersion }) {
+function VisibleVersion({ version }: { version: ClientDesignVersion }) {
   return <article className="client-version"><div><strong>{version.originalFilename}</strong><p>Approved {version.approvedAt ? formatDate(version.approvedAt) : "recently"} · Version {version.versionNumber}</p></div><FilePreview version={version} /></article>;
 }
 

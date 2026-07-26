@@ -375,3 +375,8 @@ export interface DesignVersion {
   createdAt: string;
   updatedAt: string;
 }
+
+export type ClientDesignVersion = Omit<
+  DesignVersion,
+  "uploaderId" | "reviewerId"
+>;

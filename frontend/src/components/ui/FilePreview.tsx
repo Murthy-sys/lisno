@@ -1,9 +1,9 @@
 import { useEffect, useState } from "react";
 
 import { apiClient } from "../../api/client";
-import type { DesignVersion } from "../../api/types";
+import type { ClientDesignVersion } from "../../api/types";
 
-export function FilePreview({ version }: { version: DesignVersion }) {
+export function FilePreview({ version }: { version: ClientDesignVersion }) {
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [busy, setBusy] = useState<"preview" | "download" | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -30,8 +30,9 @@ export function FilePreview({ version }: { version: DesignVersion }) {
       const anchor = document.createElement("a");
       anchor.href = url;
       anchor.download = filename ?? version.originalFilename;
+      document.body.append(anchor);
       anchor.click();
-      URL.revokeObjectURL(url);
+      window.setTimeout(() => { anchor.remove(); URL.revokeObjectURL(url); }, 0);
     } catch { setError("The download could not be prepared. Please try again."); }
     finally { setBusy(null); }
   };

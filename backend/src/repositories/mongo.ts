@@ -487,6 +487,21 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
       return documents.map(mapDesignVersion);
     },
 
+    async listLatestClientVisibleDesignVersions(projectIds) {
+      if (!projectIds.length) return [];
+      const documents = await DesignVersionModel.find({ projectId: { $in: projectIds }, approvalStatus: "approved", clientVisible: true })
+        .sort({ projectId: 1, approvedAt: -1, uploadedAt: -1, _id: -1 })
+        .lean()
+        .exec();
+      const seen = new Set<string>();
+      return documents.filter((document) => {
+        const projectId = String(document.projectId);
+        if (seen.has(projectId)) return false;
+        seen.add(projectId);
+        return true;
+      }).map(mapDesignVersion);
+    },
+
     async pageDesignVersions(filters, pagination) {
       const filter = compactFilter(filters);
       const documentsQuery = DesignVersionModel.find(filter)

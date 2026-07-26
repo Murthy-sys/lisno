@@ -582,6 +582,32 @@ describe("design-version approval and client visibility", () => {
     expect(otherClient.status).toBe(404);
   });
 
+  it("returns one newest approved update per client project without exposing drafts or staff metadata", async () => {
+    const { app } = setup();
+    const draft = await upload(app, users.ananya, "task-furniture-layout", PDF, "draft-only.pdf", "application/pdf");
+    const visible = await upload(app, users.ananya, "task-future-concept", PNG, "latest-visible.png", "image/png");
+    const internal = await upload(app, users.ananya, "task-future-concept", PDF, "approved-internal.pdf", "application/pdf");
+    await approval(app, users.managerAarav, visible.body.data.id, { approvalStatus: "approved", clientVisible: true });
+    await approval(app, users.managerAarav, internal.body.data.id, { approvalStatus: "approved", clientVisible: false });
+
+    const response = await request(app)
+      .get("/api/v1/client/latest-approved-versions")
+      .set("Authorization", bearer(users.auroraClient));
+
+    expect(response.status).toBe(200);
+    expect(response.body.data).toEqual([expect.objectContaining({ id: visible.body.data.id, projectId: "project-aurora-villa", originalFilename: "latest-visible.png" })]);
+    expect(JSON.stringify(response.body)).not.toContain(draft.body.data.id);
+    expect(JSON.stringify(response.body)).not.toContain(internal.body.data.id);
+    expect(response.body.data[0]).not.toHaveProperty("uploaderId");
+    expect(response.body.data[0]).not.toHaveProperty("reviewerId");
+
+    const otherClient = await request(app)
+      .get("/api/v1/client/latest-approved-versions")
+      .set("Authorization", bearer(users.celesteClient));
+    expect(otherClient.status).toBe(200);
+    expect(otherClient.body.data).toEqual([]);
+  });
+
   it("denies client download for drafts and internal approvals, then streams a visible file safely", async () => {
     const { app } = setup();
     const uploaded = await upload(

@@ -51,6 +51,7 @@ export interface DesignVersionService {
     projectId: string,
     pagination: PaginationInput
   ): Promise<PageResult<VisibleDesignVersion>>;
+  listLatestForClient(actor: PublicUser): Promise<ClientDesignVersion[]>;
   approve(
     actor: PublicUser,
     versionId: string,
@@ -176,6 +177,14 @@ export function createDesignVersionService(
             : publicVersion(version)
         )
       };
+    },
+
+    async listLatestForClient(actor) {
+      const user = await requireActor(repository, actor);
+      if (user.role !== "client") forbidden();
+      const projects = await repository.listProjectsForUser(user);
+      const versions = await repository.listLatestClientVisibleDesignVersions(projects.map((project) => project.id));
+      return versions.map(clientVersion);
     },
 
     async approve(actor, versionId, input) {

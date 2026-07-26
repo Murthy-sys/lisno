@@ -131,6 +131,9 @@ describe("LoginPage", () => {
             }
           })
         ),
+        http.get("/api/v1/client/latest-approved-versions", () =>
+          HttpResponse.json({ data: [] })
+        ),
         http.get("/api/v1/organization/team", () =>
           HttpResponse.json({ data: [] })
         ),

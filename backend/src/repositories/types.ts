@@ -366,6 +366,7 @@ export interface AppRepository {
   ): Promise<DesignVersionRecord>;
   findDesignVersionById(id: string): Promise<DesignVersionRecord | null>;
   listDesignVersions(projectId: string): Promise<DesignVersionRecord[]>;
+  listLatestClientVisibleDesignVersions(projectIds: string[]): Promise<DesignVersionRecord[]>;
   pageDesignVersions(
     filters: DesignVersionFilters,
     pagination: PaginationInput

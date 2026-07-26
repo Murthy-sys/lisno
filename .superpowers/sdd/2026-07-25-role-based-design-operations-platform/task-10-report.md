@@ -31,6 +31,23 @@
 
 ## Notes
 
-- No backend changes were required: existing project, design-version, and
-  download services enforce client membership and approved/client-visible
-  filtering.
+- Existing project-detail and download services continue to enforce client
+  membership and approved/client-visible filtering; the review round adds a
+  bounded latest-approved summary endpoint for the dashboard.
+
+## Review Round 1
+
+- Replaced the dashboard's project-by-project full version histories with one
+  client-scoped `GET /client/latest-approved-versions` endpoint. It returns at
+  most one approved, client-visible, redacted version per accessible project.
+- Project cards now show a clear retryable update-fetch failure instead of
+  presenting an unavailable update as an empty approved-plan state.
+- Added a narrow client design-version type, defensive frontend filtering for
+  malformed responses, delayed object-URL cleanup after download, and tests
+  covering hidden draft/internal fixtures plus the authenticated download
+  request.
+- The new backend endpoint is covered for client isolation, newest-visible
+  selection, and staff-metadata redaction.
+- Final verification: backend typecheck, build, and all 11 test files (119
+  tests) pass; frontend typecheck, production build, and all 12 test files
+  (57 tests) pass.

@@ -29,6 +29,17 @@ export function createDesignVersionsRouter(
   const router = Router();
   const protectedRoute = authenticate(authService);
 
+  router.get(
+    "/client/latest-approved-versions",
+    protectedRoute,
+    authorizeRoles("client"),
+    async (request, response, next) => {
+      try {
+        response.json({ data: await designVersions.listLatestForClient(request.authenticatedUser!) });
+      } catch (error) { next(error); }
+    }
+  );
+
   router.post(
     "/tasks/:taskId/design-versions",
     protectedRoute,

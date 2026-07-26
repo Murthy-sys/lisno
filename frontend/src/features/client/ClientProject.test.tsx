@@ -20,12 +20,16 @@ describe("ClientProject", () => {
     const download = vi.fn();
     vi.stubGlobal("URL", { createObjectURL: vi.fn(() => "blob:preview"), revokeObjectURL: vi.fn() });
     vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(download);
-    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const url = String(input);
       if (url === "/api/v1/auth/me") return Response.json({ data: client });
       if (url === "/api/v1/projects/project-villa") return Response.json({ data: project });
-      if (url.startsWith("/api/v1/projects/project-villa/design-versions?")) return Response.json({ data: { items: [{ id: "version-visible", projectId: "project-villa", floorId: "floor-ground", stageId: "stage-1", taskId: null, versionNumber: 3, originalFilename: "Ground plan.pdf", mimeType: "application/pdf", sizeBytes: 1200, uploadedAt: "2026-07-12T00:00:00.000Z", approvalStatus: "approved", approvedAt: "2026-07-14T00:00:00.000Z", clientVisible: true, createdAt: "2026-07-12T00:00:00.000Z", updatedAt: "2026-07-14T00:00:00.000Z" }], pagination: { limit: 100, offset: 0, total: 1, hasMore: false } } });
-      if (url === "/api/v1/design-versions/version-visible/download") return new Response(new Blob(["file"], { type: "application/pdf" }), { headers: { "Content-Disposition": "attachment; filename=Ground plan.pdf" } });
+      if (url.startsWith("/api/v1/projects/project-villa/design-versions?")) return Response.json({ data: { items: [
+        { id: "version-visible", projectId: "project-villa", floorId: "floor-ground", stageId: "stage-1", taskId: null, versionNumber: 3, originalFilename: "Ground plan.pdf", mimeType: "application/pdf", sizeBytes: 1200, uploadedAt: "2026-07-12T00:00:00.000Z", approvalStatus: "approved", approvedAt: "2026-07-14T00:00:00.000Z", clientVisible: true, createdAt: "2026-07-12T00:00:00.000Z", updatedAt: "2026-07-14T00:00:00.000Z" },
+        { id: "version-draft", projectId: "project-villa", floorId: "floor-ground", stageId: "stage-1", taskId: null, versionNumber: 4, originalFilename: "Internal draft.pdf", mimeType: "application/pdf", sizeBytes: 1200, uploadedAt: "2026-07-13T00:00:00.000Z", approvalStatus: "draft", approvedAt: null, clientVisible: false, createdAt: "2026-07-13T00:00:00.000Z", updatedAt: "2026-07-13T00:00:00.000Z" },
+        { id: "version-internal", projectId: "project-villa", floorId: "floor-first", stageId: "stage-2", taskId: null, versionNumber: 1, originalFilename: "Approved internal.pdf", mimeType: "application/pdf", sizeBytes: 1200, uploadedAt: "2026-07-13T00:00:00.000Z", approvalStatus: "approved", approvedAt: "2026-07-14T00:00:00.000Z", clientVisible: false, createdAt: "2026-07-13T00:00:00.000Z", updatedAt: "2026-07-14T00:00:00.000Z" }
+      ], pagination: { limit: 100, offset: 0, total: 3, hasMore: false } } });
+      if (url === "/api/v1/design-versions/version-visible/download") { expect(new Headers(init?.headers).get("Authorization")).toBe("Bearer client-token"); return new Response(new Blob(["file"], { type: "application/pdf" }), { headers: { "Content-Disposition": "attachment; filename=Ground plan.pdf" } }); }
       throw new Error(`Unhandled request: ${url}`);
     });
 
@@ -37,6 +41,8 @@ describe("ClientProject", () => {
     expect(screen.getByText("First floor")).toBeVisible();
     expect(screen.getByText("35% complete")).toBeVisible();
     expect(await screen.findByText("Ground plan.pdf")).toBeVisible();
+    expect(screen.queryByText("Internal draft.pdf")).not.toBeInTheDocument();
+    expect(screen.queryByText("Approved internal.pdf")).not.toBeInTheDocument();
     expect(screen.queryByText(/draft|internal note|KPI|evaluation/i)).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Preview Ground plan.pdf" }));
     expect(await screen.findByTitle("Preview of Ground plan.pdf")).toBeVisible();
