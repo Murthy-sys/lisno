@@ -129,6 +129,10 @@ export function createKpiService(
         periodEndAt,
         now
       });
+      const recentEvents = await repository.listRecentTaskEvents(
+        storedTasks.map((task) => task.id),
+        5
+      );
       const storedTaskPage = await repository.pageKpiTasksForPeriod(
         ownerIds,
         periodStartAt,
@@ -158,7 +162,7 @@ export function createKpiService(
         periodEndAt,
         score: result.score,
         components: result.components,
-        aggregates: aggregateKpi(storedTasks, taskContexts, now),
+        aggregates: aggregateKpi(storedTasks, recentEvents, now),
         tasks: {
           items: taskItems,
           total: storedTaskPage.total
@@ -244,7 +248,7 @@ function emptyRiskCounts(): RiskCounts {
 
 function aggregateKpi(
   tasks: TaskRecord[],
-  contexts: Array<{ task: TaskRecord; events: TaskEventRecord[] }>,
+  recentEvents: TaskEventRecord[],
   now: Date
 ): KpiAggregates {
   const riskCounts = emptyRiskCounts();
@@ -303,20 +307,16 @@ function aggregateKpi(
         ? Math.round((project.completedTasks / project.totalTasks) * 100)
         : 0
     })),
-    recentActivity: contexts
-      .flatMap(({ task, events }) =>
-        events.map((event) => ({
-          taskId: task.id,
-          projectId: task.projectId,
-          taskTitle: task.title,
-          event
-        }))
-      )
-      .sort(
-        (left, right) =>
-          right.event.occurredAt.localeCompare(left.event.occurredAt) ||
-          right.event.id.localeCompare(left.event.id)
-      )
-      .slice(0, 5)
+    recentActivity: recentEvents.flatMap((event) => {
+      const task = tasks.find((candidate) => candidate.id === event.taskId);
+      return task
+        ? [{
+            taskId: task.id,
+            projectId: task.projectId,
+            taskTitle: task.title,
+            event
+          }]
+        : [];
+    })
   };
 }

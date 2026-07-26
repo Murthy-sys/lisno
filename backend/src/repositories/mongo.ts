@@ -350,6 +350,16 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
       return documents.map(mapTaskEvent);
     },
 
+    async listRecentTaskEvents(taskIds, limit) {
+      if (!taskIds.length || limit <= 0) return [];
+      const query = TaskEventModel.find({ taskId: { $in: taskIds } })
+        .sort({ occurredAt: -1, _id: -1 })
+        .limit(limit);
+      if (session) query.session(session);
+      const documents = await query.lean().exec();
+      return documents.map(mapTaskEvent);
+    },
+
     async pageTaskEvents(taskId, pagination, sort = "asc") {
       const filter = { taskId };
       const direction = sort === "desc" ? -1 : 1;

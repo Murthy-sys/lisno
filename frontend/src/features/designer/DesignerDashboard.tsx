@@ -97,6 +97,9 @@ export function DesignerDashboard() {
   const kpi = kpiQuery.data;
   const kpiTasks = taskFeedQuery.data.pages.flatMap((page) => page.items);
   const aggregates = kpi.aggregates;
+  const activeProjectCount = projects.filter(
+    (project) => project.status === "active"
+  ).length;
   const redTasks = kpiTasks.filter((task) => task.risk.level === "red");
   const yellowTasks = kpiTasks.filter(
     (task) => task.risk.level === "yellow"
@@ -137,7 +140,7 @@ export function DesignerDashboard() {
       <div className="metrics-grid">
         <MetricCard
           label="Active projects"
-          value={aggregates.projects.length}
+          value={activeProjectCount}
           detail={`${aggregates.taskCounts.active} active · ${aggregates.taskCounts.completed} completed tasks`}
           icon={<FolderKanban />}
         />

@@ -366,6 +366,16 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
       );
     },
 
+    async listRecentTaskEvents(taskIds, limit) {
+      const scopedTaskIds = new Set(taskIds);
+      return clone(
+        state.taskEvents
+          .filter((event) => scopedTaskIds.has(event.taskId))
+          .sort((left, right) => byDateThenId("occurredAt", right, left))
+          .slice(0, limit)
+      );
+    },
+
     async pageTaskEvents(taskId, pagination, sort = "asc") {
       const events = await implementation.listTaskEvents(taskId);
       return paginate(sort === "desc" ? events.reverse() : events, pagination);

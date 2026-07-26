@@ -336,6 +336,10 @@ export interface AppRepository {
   updateTask(id: string, expectedVersion: number, change: TaskChange): Promise<TaskRecord>;
   appendTaskEvent(input: NewTaskEvent): Promise<TaskEventRecord>;
   listTaskEvents(taskId: string): Promise<TaskEventRecord[]>;
+  listRecentTaskEvents(
+    taskIds: string[],
+    limit: number
+  ): Promise<TaskEventRecord[]>;
   pageTaskEvents(
     taskId: string,
     pagination: PaginationInput,

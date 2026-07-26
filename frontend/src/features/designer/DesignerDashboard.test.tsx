@@ -43,12 +43,12 @@ const projects = [
     initiatingDesignerId: designer.id,
     assignedDesignerIds: [designer.id],
     managerId: "user-manager-aarav",
-    status: "active",
+    status: "completed",
     location: "Mumbai",
     plannedStartAt: "2026-06-01T09:00:00.000Z",
     plannedEndAt: "2026-08-01T17:00:00.000Z",
     actualStartAt: "2026-06-01T09:00:00.000Z",
-    actualEndAt: null,
+    actualEndAt: "2026-07-15T17:00:00.000Z",
     createdAt: "2026-06-01T08:00:00.000Z",
     updatedAt: "2026-07-15T08:00:00.000Z"
   }
@@ -321,7 +321,7 @@ describe("DesignerDashboard", () => {
     }
     expect(
       within(screen.getByText("Active projects").closest("article")!)
-        .getByText("2")
+        .getByText("1")
     ).toBeVisible();
     expect(screen.getByText("1 red")).toBeVisible();
     expect(screen.getByText("1 yellow")).toBeVisible();

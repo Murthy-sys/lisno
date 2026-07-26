@@ -816,6 +816,30 @@ describe("organization and KPI workflows", () => {
         createdAt: `2026-07-0${day}T09:00:00.000Z`
       });
     }
+    seed.taskEvents.push(
+      {
+        id: "event-aggregate-collaborator",
+        taskId: "task-aggregate-gray-0",
+        actorId: "user-designer-ananya",
+        type: "note_added",
+        occurredAt: "2026-07-07T09:00:00.000Z",
+        from: {},
+        to: {},
+        note: "Collaborator activity",
+        createdAt: "2026-07-07T09:00:00.000Z"
+      },
+      {
+        id: "event-aggregate-manager",
+        taskId: "task-aggregate-gray-0",
+        actorId: "user-manager-aarav",
+        type: "deadline_revised",
+        occurredAt: "2026-07-08T09:00:00.000Z",
+        from: { currentDeadlineAt: "2026-07-20T17:00:00.000Z" },
+        to: { currentDeadlineAt: "2026-07-22T17:00:00.000Z" },
+        note: "Manager deadline revision",
+        createdAt: "2026-07-08T09:00:00.000Z"
+      }
+    );
     const app = createApp({
       repository: createMemoryRepository(seed),
       auth,
@@ -856,21 +880,26 @@ describe("organization and KPI workflows", () => {
           taskId: "task-aggregate-gray-0",
           taskTitle: "Gray task 0",
           event: expect.objectContaining({
-            id: "event-aggregate-6",
-            occurredAt: "2026-07-06T09:00:00.000Z"
+            id: "event-aggregate-manager",
+            actorId: "user-manager-aarav",
+            type: "deadline_revised",
+            occurredAt: "2026-07-08T09:00:00.000Z"
           })
+        }),
+        expect.objectContaining({
+          event: expect.objectContaining({
+            id: "event-aggregate-collaborator",
+            actorId: "user-designer-ananya"
+          })
+        }),
+        expect.objectContaining({
+          event: expect.objectContaining({ id: "event-aggregate-6" })
         }),
         expect.objectContaining({
           event: expect.objectContaining({ id: "event-aggregate-5" })
         }),
         expect.objectContaining({
           event: expect.objectContaining({ id: "event-aggregate-4" })
-        }),
-        expect.objectContaining({
-          event: expect.objectContaining({ id: "event-aggregate-3" })
-        }),
-        expect.objectContaining({
-          event: expect.objectContaining({ id: "event-aggregate-2" })
         })
       ]
     });
