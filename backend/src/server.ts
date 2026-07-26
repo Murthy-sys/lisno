@@ -1,6 +1,12 @@
 import { createApp } from "./app.js";
-import { env } from "./config/env.js";
+import { loadEnvironment } from "./config/env.js";
 
-createApp().listen(env.PORT, () => {
+const env = loadEnvironment();
+createApp({
+  auth: {
+    jwtSecret: env.JWT_SECRET,
+    jwtExpiresInSeconds: 900
+  }
+}).listen(env.PORT, () => {
   console.log(`Lisno API listening on port ${env.PORT}`);
 });

@@ -8,13 +8,17 @@ import type {
 
 const CREATED_AT = "2026-06-01T08:00:00.000Z";
 const UPDATED_AT = "2026-07-15T08:00:00.000Z";
-const PASSWORD_HASH_PLACEHOLDER = "auth-task-will-supply-bcrypt-hash";
+
+// Demo login for every seeded account: password `LisnoDemo2026!`.
+// This precomputed hash keeps seed imports deterministic and side-effect free.
+const DEMO_PASSWORD_HASH =
+  "$2b$10$7EqJtq98hPqEX7fNZaFWoOhqP8D5iEyOH6v9mJEkjEBlrptHw28.O";
 
 const user = (
   input: Pick<UserRecord, "id" | "name" | "email" | "role"> &
     Partial<Pick<UserRecord, "managerId" | "title">>
 ): UserRecord => ({
-  passwordHash: PASSWORD_HASH_PLACEHOLDER,
+  passwordHash: DEMO_PASSWORD_HASH,
   active: true,
   managerId: input.managerId ?? null,
   createdAt: CREATED_AT,

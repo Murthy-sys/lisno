@@ -1,6 +1,6 @@
 import { pathToFileURL } from "node:url";
 import mongoose, { type Model } from "mongoose";
-import { env } from "../config/env.js";
+import { loadEnvironment } from "../config/env.js";
 import { AuditEventModel } from "../models/AuditEvent.js";
 import { DesignStageModel } from "../models/DesignStage.js";
 import { DesignVersionModel } from "../models/DesignVersion.js";
@@ -198,6 +198,7 @@ function nullableDate(value: string | null): Date | null {
 }
 
 async function main() {
+  const env = loadEnvironment();
   await mongoose.connect(env.MONGODB_URI);
   try {
     await seedMongoDatabase();
