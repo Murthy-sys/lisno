@@ -1,0 +1,60 @@
+import { screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { describe, expect, it, vi } from "vitest";
+
+import { tokenStorage } from "../../api/client";
+import { renderApp } from "../../test/render";
+
+const client = { id: "client-1", name: "Aurora Homes", email: "client@lisno.example", role: "client" as const };
+const project = {
+  id: "project-villa", name: "Aurora Villa", clientId: "client-1", initiatingDesignerId: "designer-1", assignedDesignerIds: ["designer-1"], managerId: "manager-1", status: "active", location: "Bengaluru", plannedStartAt: "2026-06-01T00:00:00.000Z", plannedEndAt: "2026-09-30T00:00:00.000Z", actualStartAt: null, actualEndAt: null, createdAt: "2026-05-01T00:00:00.000Z", updatedAt: "2026-07-01T00:00:00.000Z",
+  floors: [
+    { id: "floor-ground", projectId: "project-villa", name: "Ground floor", number: "G", order: 1, progress: 70, plannedStartAt: "2026-06-01T00:00:00.000Z", plannedEndAt: "2026-08-01T00:00:00.000Z", actualStartAt: null, actualEndAt: null, createdAt: "2026-05-01T00:00:00.000Z", updatedAt: "2026-07-01T00:00:00.000Z", stages: [] },
+    { id: "floor-first", projectId: "project-villa", name: "First floor", number: "1", order: 2, progress: 35, plannedStartAt: "2026-07-01T00:00:00.000Z", plannedEndAt: "2026-09-01T00:00:00.000Z", actualStartAt: null, actualEndAt: null, createdAt: "2026-05-01T00:00:00.000Z", updatedAt: "2026-07-01T00:00:00.000Z", stages: [] }
+  ]
+};
+
+describe("ClientProject", () => {
+  it("shows floor progress and only approved visible files with preview and authenticated download", async () => {
+    tokenStorage.set("client-token");
+    const download = vi.fn();
+    vi.stubGlobal("URL", { createObjectURL: vi.fn(() => "blob:preview"), revokeObjectURL: vi.fn() });
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(download);
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url === "/api/v1/auth/me") return Response.json({ data: client });
+      if (url === "/api/v1/projects/project-villa") return Response.json({ data: project });
+      if (url.startsWith("/api/v1/projects/project-villa/design-versions?")) return Response.json({ data: { items: [{ id: "version-visible", projectId: "project-villa", floorId: "floor-ground", stageId: "stage-1", taskId: null, versionNumber: 3, originalFilename: "Ground plan.pdf", mimeType: "application/pdf", sizeBytes: 1200, uploadedAt: "2026-07-12T00:00:00.000Z", approvalStatus: "approved", approvedAt: "2026-07-14T00:00:00.000Z", clientVisible: true, createdAt: "2026-07-12T00:00:00.000Z", updatedAt: "2026-07-14T00:00:00.000Z" }], pagination: { limit: 100, offset: 0, total: 1, hasMore: false } } });
+      if (url === "/api/v1/design-versions/version-visible/download") return new Response(new Blob(["file"], { type: "application/pdf" }), { headers: { "Content-Disposition": "attachment; filename=Ground plan.pdf" } });
+      throw new Error(`Unhandled request: ${url}`);
+    });
+
+    renderApp(["/client/projects/project-villa"]);
+    const user = userEvent.setup();
+    expect(await screen.findByRole("heading", { name: "Aurora Villa" })).toBeVisible();
+    expect(screen.getByText("Ground floor")).toBeVisible();
+    expect(screen.getByText("70% complete")).toBeVisible();
+    expect(screen.getByText("First floor")).toBeVisible();
+    expect(screen.getByText("35% complete")).toBeVisible();
+    expect(await screen.findByText("Ground plan.pdf")).toBeVisible();
+    expect(screen.queryByText(/draft|internal note|KPI|evaluation/i)).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Preview Ground plan.pdf" }));
+    expect(await screen.findByTitle("Preview of Ground plan.pdf")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Download Ground plan.pdf" }));
+    expect(download).toHaveBeenCalled();
+  });
+
+  it("explains when a project is still in progress without an approved plan", async () => {
+    tokenStorage.set("client-token");
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url === "/api/v1/auth/me") return Response.json({ data: client });
+      if (url === "/api/v1/projects/project-villa") return Response.json({ data: project });
+      if (url.startsWith("/api/v1/projects/project-villa/design-versions?")) return Response.json({ data: { items: [], pagination: { limit: 100, offset: 0, total: 0, hasMore: false } } });
+      throw new Error(`Unhandled request: ${url}`);
+    });
+
+    renderApp(["/client/projects/project-villa"]);
+    expect(await screen.findByText("Your project is in progress. Approved plans will appear here once ready.")).toBeVisible();
+  });
+});

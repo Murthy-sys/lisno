@@ -100,7 +100,7 @@ describe("LoginPage", () => {
     ["designer", "/designer", "Good morning, Demo."],
     ["design_manager", "/manager", "Team delivery pulse"],
     ["design_head", "/head", "Organization delivery health"],
-    ["client", "/client", "Client workspace"]
+    ["client", "/client", "Your design plans"]
   ] satisfies Array<[Role, string, string]>)(
     "redirects a %s to its exact role home",
     async (role, path, heading) => {

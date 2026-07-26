@@ -18,6 +18,8 @@ import { ManagerDashboard } from "../features/manager/ManagerDashboard";
 import { DesignerDetail } from "../features/manager/DesignerDetail";
 import { ManagementProjectWorkspace } from "../features/manager/ManagementProjectWorkspace";
 import { HeadDashboard } from "../features/head/HeadDashboard";
+import { ClientDashboard } from "../features/client/ClientDashboard";
+import { ClientProject } from "../features/client/ClientProject";
 
 const roleHomeContent: Record<
   Role,
@@ -179,10 +181,11 @@ export function AppRoutes() {
           path="/client"
           element={
             <ProtectedRoute allowedRoles={["client"]}>
-              <RoleLanding role="client" />
+              <ClientDashboard />
             </ProtectedRoute>
           }
         />
+        <Route path="/client/projects/:projectId" element={<ProtectedRoute allowedRoles={["client"]}><ClientProject /></ProtectedRoute>} />
       </Route>
       <Route path="*" element={<HomeRedirect />} />
     </Routes>
