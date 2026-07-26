@@ -9,6 +9,12 @@ export function validateBody(schema: ZodType): RequestHandler {
     if (!result.success) {
       const fields: Record<string, string> = {};
       for (const issue of result.error.issues) {
+        if (issue.code === "unrecognized_keys") {
+          for (const key of issue.keys) {
+            if (!fields[key]) fields[key] = `Unrecognized field: ${key}.`;
+          }
+          continue;
+        }
         const field = issue.path.join(".");
         if (field && !fields[field]) fields[field] = issue.message;
       }

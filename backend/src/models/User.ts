@@ -13,6 +13,7 @@ const userSchema = new Schema(
     },
     active: { type: Boolean, required: true, default: true },
     managerId: { type: String, ref: "User", default: null },
+    authorizedClientIds: [{ type: String, ref: "User" }],
     avatar: { type: String },
     title: { type: String }
   },

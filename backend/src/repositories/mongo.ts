@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import mongoose, { type ClientSession, type Model } from "mongoose";
 import { AuditEventModel } from "../models/AuditEvent.js";
 import { DesignStageModel } from "../models/DesignStage.js";
 import { DesignVersionModel } from "../models/DesignVersion.js";
@@ -28,8 +29,27 @@ import {
 
 type PlainDocument = Record<string, any>;
 
-export function createMongoRepository(): AppRepository {
-  return {
+export function createMongoRepository(session?: ClientSession): AppRepository {
+  const repository: AppRepository = {
+    async runInTransaction(operation) {
+      if (session) return operation(repository);
+      const transactionSession = await mongoose.startSession();
+      let result: unknown;
+      let completed = false;
+      try {
+        await transactionSession.withTransaction(async () => {
+          result = await operation(createMongoRepository(transactionSession));
+          completed = true;
+        });
+        if (!completed) {
+          throw new Error("MongoDB transaction did not complete.");
+        }
+        return result as Awaited<ReturnType<typeof operation>>;
+      } finally {
+        await transactionSession.endSession();
+      }
+    },
+
     async findUserById(id) {
       const document = await UserModel.findById(id).select("+passwordHash").lean().exec();
       return document ? mapUser(document) : null;
@@ -201,7 +221,9 @@ export function createMongoRepository(): AppRepository {
     },
 
     async findTaskById(id) {
-      const document = await TaskModel.findById(id).lean().exec();
+      const query = TaskModel.findById(id);
+      if (session) query.session(session);
+      const document = await query.lean().exec();
       return document ? mapTask(document) : null;
     },
 
@@ -214,7 +236,9 @@ export function createMongoRepository(): AppRepository {
     },
 
     async updateTask(id, expectedVersion, change) {
-      const current = await TaskModel.findById(id).lean().exec();
+      const currentQuery = TaskModel.findById(id);
+      if (session) currentQuery.session(session);
+      const current = await currentQuery.lean().exec();
       if (!current) throw new RepositoryNotFoundError(`Task ${id} was not found.`);
       if ((current.__v ?? 0) + 1 !== expectedVersion) {
         throw new RepositoryConflictError(
@@ -241,13 +265,13 @@ export function createMongoRepository(): AppRepository {
       if (change.currentDeadlineAt) set.currentDeadlineAt = date(change.currentDeadlineAt);
       if (change.latestUpdateAt) set.latestUpdateAt = date(change.latestUpdateAt);
 
-      const updated = await TaskModel.findOneAndUpdate(
+      const updateQuery = TaskModel.findOneAndUpdate(
         { _id: id, __v: expectedVersion - 1 },
         { $set: set, $inc: { __v: 1 } },
         { new: true, runValidators: true }
-      )
-        .lean()
-        .exec();
+      );
+      if (session) updateQuery.session(session);
+      const updated = await updateQuery.lean().exec();
       if (!updated) {
         throw new RepositoryConflictError(`Task ${id} was updated concurrently.`);
       }
@@ -256,14 +280,14 @@ export function createMongoRepository(): AppRepository {
 
     async appendTaskEvent(input) {
       const document = await createMongoDocument("Task event", () =>
-        TaskEventModel.create({
+        createDocument(TaskEventModel, {
           ...input,
           _id: input.id ?? randomUUID(),
           id: undefined,
           occurredAt: date(input.occurredAt),
           createdAt: input.createdAt ? date(input.createdAt) : undefined,
           note: input.note ?? null
-        })
+        }, session)
       );
       return mapTaskEvent(document.toObject());
     },
@@ -319,7 +343,7 @@ export function createMongoRepository(): AppRepository {
 
     async createEvaluation(input) {
       const document = await createMongoDocument("Evaluation", () =>
-        EvaluationModel.create({
+        createDocument(EvaluationModel, {
           ...input,
           _id: input.id ?? randomUUID(),
           id: undefined,
@@ -327,7 +351,7 @@ export function createMongoRepository(): AppRepository {
           periodStartAt: date(input.periodStartAt),
           periodEndAt: date(input.periodEndAt),
           createdAt: input.createdAt ? date(input.createdAt) : undefined
-        })
+        }, session)
       );
       return mapEvaluation(document.toObject());
     },
@@ -342,14 +366,14 @@ export function createMongoRepository(): AppRepository {
 
     async appendAuditEvent(input) {
       const document = await createMongoDocument("Audit event", () =>
-        AuditEventModel.create({
+        createDocument(AuditEventModel, {
           ...input,
           _id: input.id ?? randomUUID(),
           id: undefined,
           occurredAt: date(input.occurredAt),
           createdAt: input.createdAt ? date(input.createdAt) : undefined,
           reason: input.reason ?? null
-        })
+        }, session)
       );
       return mapAuditEvent(document.toObject());
     },
@@ -362,6 +386,17 @@ export function createMongoRepository(): AppRepository {
       return documents.map(mapAuditEvent);
     }
   };
+  return repository;
+}
+
+async function createDocument(
+  model: Model<any>,
+  input: PlainDocument,
+  session?: ClientSession
+) {
+  if (!session) return model.create(input);
+  const documents = await model.create([input], { session });
+  return documents[0]!;
 }
 
 async function createMongoDocument<T>(
@@ -418,6 +453,7 @@ function mapUser(document: PlainDocument): UserRecord {
     role: document.role,
     active: document.active,
     managerId: document.managerId ?? null,
+    authorizedClientIds: [...(document.authorizedClientIds ?? [])],
     ...(document.avatar ? { avatar: document.avatar } : {}),
     ...(document.title ? { title: document.title } : {}),
     createdAt: iso(document.createdAt),

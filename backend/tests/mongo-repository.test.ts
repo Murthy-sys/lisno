@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import mongoose from "mongoose";
 import { DesignVersionModel } from "../src/models/DesignVersion.js";
+import { EvaluationModel } from "../src/models/Evaluation.js";
 import { FloorModel } from "../src/models/Floor.js";
 import { TaskEventModel } from "../src/models/TaskEvent.js";
 import { createMongoRepository } from "../src/repositories/mongo.js";
@@ -62,5 +64,44 @@ describe("Mongo repository contracts", () => {
       to: true,
       note: true
     });
+  });
+
+  it("runs evaluation writes with the active Mongo transaction session", async () => {
+    const session = {
+      withTransaction: vi.fn(async (operation: () => Promise<unknown>) =>
+        operation()
+      ),
+      endSession: vi.fn(async () => undefined)
+    };
+    vi.spyOn(mongoose, "startSession").mockResolvedValueOnce(session as never);
+    const evaluation = demoSeedData.evaluations[0]!;
+    const create = vi.spyOn(EvaluationModel, "create").mockResolvedValueOnce([
+      {
+        toObject: () => ({
+          ...evaluation,
+          _id: evaluation.id,
+          periodStartAt: new Date(evaluation.periodStartAt),
+          periodEndAt: new Date(evaluation.periodEndAt),
+          createdAt: new Date(evaluation.createdAt)
+        })
+      }
+    ] as never);
+
+    const result = await createMongoRepository().runInTransaction((transaction) =>
+      transaction.createEvaluation(evaluation)
+    );
+
+    expect(result.id).toBe(evaluation.id);
+    expect(create).toHaveBeenCalledWith(
+      [
+        expect.objectContaining({
+          _id: evaluation.id,
+          subjectUserId: evaluation.subjectUserId
+        })
+      ],
+      { session }
+    );
+    expect(session.withTransaction).toHaveBeenCalledOnce();
+    expect(session.endSession).toHaveBeenCalledOnce();
   });
 });

@@ -16,11 +16,12 @@ const DEMO_PASSWORD_HASH =
 
 const user = (
   input: Pick<UserRecord, "id" | "name" | "email" | "role"> &
-    Partial<Pick<UserRecord, "managerId" | "title">>
+    Partial<Pick<UserRecord, "managerId" | "title" | "authorizedClientIds">>
 ): UserRecord => ({
   passwordHash: DEMO_PASSWORD_HASH,
   active: true,
   managerId: input.managerId ?? null,
+  authorizedClientIds: input.authorizedClientIds ?? [],
   createdAt: CREATED_AT,
   updatedAt: UPDATED_AT,
   ...input
@@ -134,7 +135,8 @@ const users: UserRecord[] = [
     email: "ananya@lisno.example",
     role: "designer",
     managerId: "user-manager-aarav",
-    title: "Senior Designer"
+    title: "Senior Designer",
+    authorizedClientIds: ["user-client-aurora", "user-client-celeste"]
   }),
   user({
     id: "user-designer-kabir",
@@ -142,7 +144,8 @@ const users: UserRecord[] = [
     email: "kabir@lisno.example",
     role: "designer",
     managerId: "user-manager-aarav",
-    title: "Designer"
+    title: "Designer",
+    authorizedClientIds: ["user-client-aurora"]
   }),
   user({
     id: "user-designer-ishita",
@@ -150,7 +153,8 @@ const users: UserRecord[] = [
     email: "ishita@lisno.example",
     role: "designer",
     managerId: "user-manager-meera",
-    title: "Senior Designer"
+    title: "Senior Designer",
+    authorizedClientIds: ["user-client-celeste"]
   }),
   user({
     id: "user-designer-vikram",
@@ -158,7 +162,8 @@ const users: UserRecord[] = [
     email: "vikram@lisno.example",
     role: "designer",
     managerId: "user-manager-meera",
-    title: "Designer"
+    title: "Designer",
+    authorizedClientIds: ["user-client-celeste"]
   }),
   user({
     id: "user-client-aurora",

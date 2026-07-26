@@ -134,6 +134,129 @@ describe("memory repository", () => {
     ).rejects.toBeInstanceOf(RepositoryConflictError);
   });
 
+  it("rolls back every in-memory write when a transaction operation fails", async () => {
+    const repository = createMemoryRepository(demoSeedData);
+    const original = await repository.findTaskById("task-circulation");
+
+    await expect(
+      repository.runInTransaction(async (transaction) => {
+        await transaction.updateTask("task-circulation", original!.version, {
+          progress: 45
+        });
+        await transaction.appendTaskEvent({
+          taskId: "task-circulation",
+          actorId: "user-designer-kabir",
+          type: "progress_changed",
+          occurredAt: "2026-07-16T09:30:00.000Z",
+          from: { progress: 20 },
+          to: { progress: 45 },
+          note: null
+        });
+        throw new Error("simulated audit failure");
+      })
+    ).rejects.toThrow("simulated audit failure");
+
+    await expect(repository.findTaskById("task-circulation")).resolves.toEqual(
+      original
+    );
+    await expect(repository.listTaskEvents("task-circulation")).resolves.toEqual(
+      []
+    );
+  });
+
+  it("serializes overlapping memory transactions so rollback cannot erase another commit", async () => {
+    const repository = createMemoryRepository(demoSeedData);
+    let releaseFailure!: () => void;
+    let failureStarted!: () => void;
+    const failureGate = new Promise<void>((resolve) => {
+      releaseFailure = resolve;
+    });
+    const started = new Promise<void>((resolve) => {
+      failureStarted = resolve;
+    });
+
+    const failing = repository.runInTransaction(async () => {
+      failureStarted();
+      await failureGate;
+      throw new Error("late transaction failure");
+    });
+    await started;
+    const successful = repository.runInTransaction((transaction) =>
+      transaction.updateTask("task-circulation", 1, { progress: 45 })
+    );
+    releaseFailure();
+
+    await expect(failing).rejects.toThrow("late transaction failure");
+    await expect(successful).resolves.toMatchObject({ progress: 45, version: 2 });
+    await expect(repository.findTaskById("task-circulation")).resolves.toMatchObject({
+      progress: 45,
+      version: 2
+    });
+  });
+
+  it("rejects nested memory transactions explicitly", async () => {
+    const repository = createMemoryRepository(demoSeedData);
+
+    await expect(
+      repository.runInTransaction((transaction) =>
+        transaction.runInTransaction(async () => "nested")
+      )
+    ).rejects.toThrow("Nested memory transactions are not supported.");
+  });
+
+  it("isolates a concurrent direct write from a failing memory transaction", async () => {
+    const repository = createMemoryRepository(demoSeedData);
+    let releaseFailure!: () => void;
+    let failureStarted!: () => void;
+    const failureGate = new Promise<void>((resolve) => {
+      releaseFailure = resolve;
+    });
+    const started = new Promise<void>((resolve) => {
+      failureStarted = resolve;
+    });
+    const failing = repository.runInTransaction(async () => {
+      failureStarted();
+      await failureGate;
+      throw new Error("transaction failed");
+    });
+    await started;
+    const directWrite = repository.updateTask("task-circulation", 1, {
+      progress: 45
+    });
+    releaseFailure();
+
+    await expect(failing).rejects.toThrow("transaction failed");
+    await expect(directWrite).resolves.toMatchObject({ progress: 45, version: 2 });
+    await expect(repository.findTaskById("task-circulation")).resolves.toMatchObject({
+      progress: 45,
+      version: 2
+    });
+  });
+
+  it("does not expose uncommitted memory transaction state to ordinary reads", async () => {
+    const repository = createMemoryRepository(demoSeedData);
+    let releaseTransaction!: () => void;
+    let mutationComplete!: () => void;
+    const transactionGate = new Promise<void>((resolve) => {
+      releaseTransaction = resolve;
+    });
+    const mutated = new Promise<void>((resolve) => {
+      mutationComplete = resolve;
+    });
+    const transaction = repository.runInTransaction(async (unit) => {
+      await unit.updateTask("task-circulation", 1, { progress: 45 });
+      mutationComplete();
+      await transactionGate;
+      throw new Error("rollback after observation window");
+    });
+    await mutated;
+    const read = repository.findTaskById("task-circulation");
+    await expect(read).resolves.toMatchObject({ progress: 20, version: 1 });
+    releaseTransaction();
+
+    await expect(transaction).rejects.toThrow("rollback after observation window");
+  });
+
   it("keeps backdated task event time separate from repository mutation time", async () => {
     const repository = createMemoryRepository(demoSeedData);
     const original = await repository.findTaskById("task-circulation");

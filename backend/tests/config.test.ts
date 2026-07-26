@@ -18,4 +18,12 @@ describe("environment authentication configuration", () => {
       }).JWT_SECRET
     ).toBe("runtime-secret-with-at-least-32-characters");
   });
+
+  it("defaults local MongoDB to the documented transaction-capable replica set", () => {
+    expect(
+      loadEnvironment({
+        JWT_SECRET: "runtime-secret-with-at-least-32-characters"
+      }).MONGODB_URI
+    ).toBe("mongodb://127.0.0.1:27017/lisno?replicaSet=rs0");
+  });
 });

@@ -1,3 +1,5 @@
+import { AsyncLocalStorage } from "node:async_hooks";
+
 import { demoSeedData } from "../seed/data.js";
 import {
   RepositoryConflictError,
@@ -31,10 +33,50 @@ const byDateThenId = <T extends { id: string }>(
 ) =>
   String(left[field]).localeCompare(String(right[field])) || left.id.localeCompare(right.id);
 
+interface MemorySnapshot {
+  state: SeedData;
+  counters: Map<string, number>;
+  timestamp: number;
+}
+
+const snapshotReaders = new WeakMap<AppRepository, () => MemorySnapshot>();
+const mutationMethods = new Set<keyof AppRepository>([
+  "createProject",
+  "createFloor",
+  "createDesignStage",
+  "createTask",
+  "updateTask",
+  "appendTaskEvent",
+  "createDesignVersion",
+  "updateDesignVersion",
+  "createEvaluation",
+  "appendAuditEvent"
+]);
+
 export function createMemoryRepository(seed: SeedData = demoSeedData): AppRepository {
-  const state = clone(seed);
-  const counters = new Map<string, number>();
-  let timestamp = latestTimestamp(state);
+  return buildMemoryRepository({
+    state: clone(seed),
+    counters: new Map(),
+    timestamp: latestTimestamp(seed)
+  });
+}
+
+function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
+  let state = clone(initial.state);
+  const counters = new Map(initial.counters);
+  const transactionContext = new AsyncLocalStorage<boolean>();
+  let writeTail: Promise<void> = Promise.resolve();
+  let timestamp = initial.timestamp;
+
+  const acquireWriteLock = async () => {
+    const previousWrite = writeTail;
+    let releaseWrite!: () => void;
+    writeTail = new Promise<void>((resolve) => {
+      releaseWrite = resolve;
+    });
+    await previousWrite;
+    return releaseWrite;
+  };
 
   const nextId = (prefix: string) => {
     const count = (counters.get(prefix) ?? 0) + 1;
@@ -51,7 +93,42 @@ export function createMemoryRepository(seed: SeedData = demoSeedData): AppReposi
     }
   };
 
-  return {
+  const implementation: AppRepository = {
+    async runInTransaction(operation) {
+      if (transactionContext.getStore()) {
+        throw new Error("Nested memory transactions are not supported.");
+      }
+      const releaseWrite = await acquireWriteLock();
+      const transactionRepository = buildMemoryRepository({
+        state,
+        counters,
+        timestamp
+      });
+      const transactionView = new Proxy(transactionRepository, {
+        get(target, property, receiver) {
+          if (property === "runInTransaction") {
+            return async () => {
+              throw new Error("Nested memory transactions are not supported.");
+            };
+          }
+          return Reflect.get(target, property, receiver);
+        }
+      });
+      try {
+        const result = await transactionContext.run(true, () =>
+          operation(transactionView)
+        );
+        const committed = snapshotReaders.get(transactionRepository)!();
+        state = committed.state;
+        timestamp = committed.timestamp;
+        counters.clear();
+        for (const [key, value] of committed.counters) counters.set(key, value);
+        return result;
+      } finally {
+        releaseWrite();
+      }
+    },
+
     async findUserById(id) {
       return copyOrNull(state.users.find((user) => user.id === id));
     },
@@ -357,6 +434,37 @@ export function createMemoryRepository(seed: SeedData = demoSeedData): AppReposi
       );
     }
   };
+  const repository = new Proxy(implementation, {
+    get(target, property: keyof AppRepository, receiver) {
+      const value = Reflect.get(target, property, receiver) as unknown;
+      if (
+        property === "runInTransaction" ||
+        !mutationMethods.has(property) ||
+        typeof value !== "function"
+      ) {
+        return typeof value === "function" ? value.bind(target) : value;
+      }
+      return async (...args: unknown[]) => {
+        if (transactionContext.getStore()) {
+          throw new Error(
+            "Use the transaction repository for writes inside a memory transaction."
+          );
+        }
+        const releaseWrite = await acquireWriteLock();
+        try {
+          return await value.apply(target, args);
+        } finally {
+          releaseWrite();
+        }
+      };
+    }
+  }) as AppRepository;
+  snapshotReaders.set(repository, () => ({
+    state: clone(state),
+    counters: new Map(counters),
+    timestamp
+  }));
+  return repository;
 }
 
 function copyOrNull<T>(value: T | undefined): T | null {

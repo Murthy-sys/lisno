@@ -31,6 +31,7 @@ export interface UserRecord {
   role: Role;
   active: boolean;
   managerId: string | null;
+  authorizedClientIds: string[];
   avatar?: string;
   title?: string;
   createdAt: string;
@@ -276,6 +277,9 @@ export type NewDesignStage = DesignStageRecord;
 export type NewTask = TaskRecord;
 
 export interface AppRepository {
+  runInTransaction<T>(
+    operation: (repository: AppRepository) => Promise<T>
+  ): Promise<T>;
   findUserById(id: string): Promise<UserRecord | null>;
   findUserByEmail(email: string): Promise<UserRecord | null>;
   listUsers(): Promise<UserRecord[]>;
