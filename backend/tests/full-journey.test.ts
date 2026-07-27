@@ -1,13 +1,14 @@
 import { Readable } from "node:stream";
+import { PDFDocument } from "pdf-lib";
 import request from "supertest";
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 
 import { createApp } from "../src/app.js";
 import { createMemoryRepository } from "../src/repositories/memory.js";
 import { demoSeedData } from "../src/seed/data.js";
 
 const password = "LisnoDemo2026!";
-const PDF = Buffer.from("%PDF-1.7\n1 0 obj\n<<>>\nendobj\n%%EOF");
+let PDF: Buffer;
 const PNG = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAADklEQVQImWP4DwYMEAoAU7oL9W/sIDEAAAAASUVORK5CYII=",
   "base64"
@@ -17,6 +18,12 @@ const CROP_PNG = Buffer.from(
   "base64"
 );
 const workerToken = "journey-worker-token-that-is-at-least-32-characters";
+
+beforeAll(async () => {
+  const document = await PDFDocument.create();
+  document.addPage([612, 792]);
+  PDF = Buffer.from(await document.save({ useObjectStreams: false }));
+});
 
 class JourneyStorage {
   readonly files = new Map<string, Buffer>();

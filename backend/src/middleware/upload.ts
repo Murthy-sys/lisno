@@ -1,6 +1,7 @@
 import path from "node:path";
 
 import multer, { MulterError } from "multer";
+import { PDFDocument } from "pdf-lib";
 import type { RequestHandler } from "express";
 
 import { ApiError } from "./errors.js";
@@ -55,7 +56,7 @@ export function uploadSingleFile(maxUploadBytes: number): RequestHandler {
   }).single("file");
 
   return (request, _response, next) => {
-    parse(request, _response, (error) => {
+    parse(request, _response, async (error) => {
       if (error) {
         if (error instanceof MulterError && error.code === "LIMIT_FILE_SIZE") {
           next(
@@ -106,7 +107,14 @@ export function uploadSingleFile(maxUploadBytes: number): RequestHandler {
         claimed === "application/octet-stream" ||
         claimed === "text/plain" ||
         claimed === "";
-      if (!detected || (!claimIsGeneric && detected.mimeType !== claimed)) {
+      const contentIsValid =
+        detected?.mimeType !== "application/pdf" ||
+        (await isValidPdfDocument(request.file.buffer));
+      if (
+        !detected ||
+        !contentIsValid ||
+        (!claimIsGeneric && detected.mimeType !== claimed)
+      ) {
         next(
           new ApiError(
             415,
@@ -165,6 +173,113 @@ function detectFileType(data: Buffer): Pick<
     return { extension: ".webp", mimeType: "image/webp" };
   }
   return null;
+}
+
+export async function isValidPdfDocument(data: Buffer) {
+  const source = data.toString("latin1");
+  if (!/^%PDF-\d\.\d/.test(source)) return false;
+
+  const eofOffset = source.lastIndexOf("%%EOF");
+  if (
+    eofOffset < 0 ||
+    source.slice(eofOffset + "%%EOF".length).trim().length > 0
+  ) {
+    return false;
+  }
+
+  const startXrefOffset = source.lastIndexOf("startxref", eofOffset);
+  if (startXrefOffset < 0) return false;
+  const startXref = /^startxref\s+(\d+)\s*$/.exec(
+    source.slice(startXrefOffset, eofOffset)
+  );
+  if (!startXref) return false;
+
+  const xrefOffset = Number(startXref[1]);
+  if (!Number.isSafeInteger(xrefOffset) || xrefOffset <= 0 || xrefOffset >= startXrefOffset) {
+    return false;
+  }
+
+  if (
+    source.startsWith("xref", xrefOffset) &&
+    !hasValidClassicXref(source, xrefOffset)
+  ) {
+    return false;
+  }
+  if (
+    !source.startsWith("xref", xrefOffset) &&
+    !/^\d+\s+\d+\s+obj\b/.test(source.slice(xrefOffset, xrefOffset + 64))
+  ) {
+    return false;
+  }
+
+  try {
+    const document = await PDFDocument.load(data, {
+      throwOnInvalidObject: true,
+      updateMetadata: false
+    });
+    return document.getPageCount() > 0;
+  } catch {
+    return false;
+  }
+}
+
+function hasValidClassicXref(source: string, xrefOffset: number) {
+  const trailerOffset = source.indexOf("trailer", xrefOffset + 4);
+  if (trailerOffset < 0) return false;
+
+  const lines = source
+    .slice(xrefOffset + 4, trailerOffset)
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const inUseObjects: Array<{
+    objectNumber: number;
+    generation: number;
+    offset: number;
+  }> = [];
+
+  let lineIndex = 0;
+  while (lineIndex < lines.length) {
+    const subsection = /^(\d+)\s+(\d+)$/.exec(lines[lineIndex] ?? "");
+    if (!subsection) return false;
+    const firstObject = Number(subsection[1]);
+    const count = Number(subsection[2]);
+    if (!Number.isSafeInteger(firstObject) || !Number.isSafeInteger(count) || count <= 0) {
+      return false;
+    }
+    lineIndex += 1;
+
+    for (let entryIndex = 0; entryIndex < count; entryIndex += 1) {
+      const entry = /^(\d{10})\s+(\d{5})\s+([fn])\s*$/.exec(
+        lines[lineIndex] ?? ""
+      );
+      if (!entry) return false;
+      if (entry[3] === "n") {
+        inUseObjects.push({
+          objectNumber: firstObject + entryIndex,
+          generation: Number(entry[2]),
+          offset: Number(entry[1])
+        });
+      }
+      lineIndex += 1;
+    }
+  }
+
+  const sorted = inUseObjects.sort((left, right) => left.offset - right.offset);
+  return sorted.every((entry, index) => {
+    const objectHeader = new RegExp(
+      `^${entry.objectNumber}\\s+${entry.generation}\\s+obj\\b`
+    );
+    const objectSource = source.slice(entry.offset, entry.offset + 68);
+    const leadingWhitespace =
+      /^[\u0000\u0009\u000a\u000c\u000d\u0020]{0,4}/.exec(objectSource)?.[0]
+        .length ?? 0;
+    if (!objectHeader.test(objectSource.slice(leadingWhitespace))) {
+      return false;
+    }
+    const nextOffset = sorted[index + 1]?.offset ?? xrefOffset;
+    return source.slice(entry.offset, nextOffset).includes("endobj");
+  });
 }
 
 function safeOriginalFilename(

@@ -3,8 +3,9 @@ import { Readable } from "node:stream";
 import express from "express";
 import jwt from "jsonwebtoken";
 import multer from "multer";
+import { PDFDocument } from "pdf-lib";
 import request from "supertest";
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 
 import { createApp } from "../src/app.js";
 import type { Role } from "../src/contracts/domain.js";
@@ -19,7 +20,7 @@ const auth = {
 };
 const TEST_NOW = "2026-07-16T12:00:00.000Z";
 const clock = () => new Date(TEST_NOW);
-const PDF = Buffer.from("%PDF-1.7\n1 0 obj\n<<>>\nendobj\n%%EOF");
+let PDF: Buffer;
 const PNG = Buffer.from([
   0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x00
 ]);
@@ -27,6 +28,12 @@ const PNG = Buffer.from([
 // These include JPEG SOI/EOI and a RIFF/WebP header whose declared size matches.
 const JPEG = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01, 0x01, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0xff, 0xd9]);
 const WEBP = Buffer.from([0x52, 0x49, 0x46, 0x46, 0x16, 0x00, 0x00, 0x00, 0x57, 0x45, 0x42, 0x50, 0x56, 0x50, 0x38, 0x58, 0x0a, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
+
+beforeAll(async () => {
+  const document = await PDFDocument.create();
+  document.addPage([612, 792]);
+  PDF = Buffer.from(await document.save({ useObjectStreams: false }));
+});
 
 const users = {
   head: ["user-head", "design_head"],
@@ -387,6 +394,38 @@ describe("design-version uploads", () => {
     expect(malformedPdf.body.error.code).toBe("UNSUPPORTED_FILE_TYPE");
     expect(mismatchedPng.status).toBe(415);
     expect(mismatchedPng.body.error.code).toBe("UNSUPPORTED_FILE_TYPE");
+  });
+
+  it("rejects signature-only, truncated, invalid-xref, and malformed-object PDFs", async () => {
+    const { app } = setup();
+    const invalidXref = Buffer.from(
+      PDF.toString("latin1").replace(/startxref\s+\d+/, "startxref\n0"),
+      "latin1"
+    );
+    const malformedObject = Buffer.from(
+      PDF.toString("latin1").replace(/\bendobj\b/, "broken"),
+      "latin1"
+    );
+    const fixtures = [
+      Buffer.from("%PDF-not a document"),
+      PDF.subarray(0, Math.floor(PDF.byteLength / 2)),
+      invalidXref,
+      malformedObject
+    ];
+
+    for (const [index, fixture] of fixtures.entries()) {
+      const response = await upload(
+        app,
+        users.ananya,
+        "task-furniture-layout",
+        fixture,
+        `invalid-${index}.pdf`,
+        "application/pdf"
+      );
+
+      expect(response.status).toBe(415);
+      expect(response.body.error.code).toBe("UNSUPPORTED_FILE_TYPE");
+    }
   });
 
   it("rolls back the version and deletes the original when extraction enqueue fails", async () => {

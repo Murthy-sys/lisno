@@ -25,6 +25,16 @@ from .title_classifier import OcrLine, classify_drawing_titles
 
 
 _MAX_CLASSIFIER_LINES = 2_000
+_MAX_DRAWING_REGIONS = 2_000
+_TEXT_DENSE_REGION_LINE_COUNT = 5
+_TEXT_DENSE_REGION_AREA_RATIO = 0.12
+_RESERVED_REGION_PHRASES = (
+    "general notes",
+    "legend",
+    "key plan",
+    "vicinity plan",
+    "location map",
+)
 
 
 class Extractor:
@@ -138,6 +148,20 @@ class Extractor:
             self._accepted_plan_types,
             self._accepted_room_types,
         )
+        title_boxes = tuple(title.box for title in titles)
+        association_lines = tuple(
+            line
+            for line in eligible_lines
+            if not any(_boxes_overlap(line.box, box) for box in title_boxes)
+        )
+        region_penalties = {
+            region: _region_text_penalty(
+                region,
+                (-1, -1, -1, -1),
+                association_lines,
+            )
+            for region in regions
+        }
         page_base64 = _png_base64(image)
         used = _decoded_base64_size(page_base64)
         _require_budget(used, remaining_bytes)
@@ -151,6 +175,7 @@ class Extractor:
                 title.label,
                 title.confidence,
                 regions,
+                region_penalties,
             )
             section_bytes = _decoded_base64_size(section.image_base64)
             _require_budget(used + section_bytes, remaining_bytes)
@@ -203,10 +228,20 @@ class Extractor:
         label: str,
         confidence: float,
         regions: list[tuple[int, int, int, int]],
+        region_penalties: Mapping[
+            tuple[int, int, int, int],
+            tuple[int, int, float],
+        ],
     ) -> ExtractedSection:
+        candidate_regions = regions or [(0, 0, image.width, image.height)]
+        largest_region_area = max(_box_area(region) for region in candidate_regions)
         selected = min(
-            regions or [(0, 0, image.width, image.height)],
-            key=lambda region: _squared_distance(label_box, region),
+            candidate_regions,
+            key=lambda region: (
+                *region_penalties.get(region, (0, 0, 0.0)),
+                int(_box_area(region) < largest_region_area * 0.1),
+                _squared_distance(label_box, region),
+            ),
         )
         left, top, right, bottom = _expanded_and_clamped(
             selected, image.width, image.height, padding=16
@@ -360,7 +395,7 @@ def _drawing_regions(
             regions.append((min_x, min_y, max_x + 1, max_y + 1))
 
     if regions:
-        return regions
+        return sorted(regions, key=_box_area, reverse=True)[:_MAX_DRAWING_REGIONS]
     ys, xs = np.nonzero(ink)
     if len(xs):
         return [
@@ -382,6 +417,63 @@ def _squared_distance(
     right_x = (right[0] + right[2]) / 2
     right_y = (right[1] + right[3]) / 2
     return (left_x - right_x) ** 2 + (left_y - right_y) ** 2
+
+
+def _region_text_penalty(
+    region: tuple[int, int, int, int],
+    title_box: tuple[int, int, int, int],
+    recognized_lines: Sequence[OcrLine],
+) -> tuple[int, int, float]:
+    left, top, right, bottom = region
+    region_area = max(1, (right - left) * (bottom - top))
+    contained_count = 0
+    contained_area = 0
+    reserved = False
+    for line in recognized_lines:
+        if _boxes_overlap(line.box, title_box):
+            continue
+        center_x = (line.box[0] + line.box[2]) / 2
+        center_y = (line.box[1] + line.box[3]) / 2
+        if not (left <= center_x <= right and top <= center_y <= bottom):
+            continue
+        contained_count += 1
+        overlap_left = max(left, line.box[0])
+        overlap_top = max(top, line.box[1])
+        overlap_right = min(right, line.box[2])
+        overlap_bottom = min(bottom, line.box[3])
+        contained_area += max(0, overlap_right - overlap_left) * max(
+            0, overlap_bottom - overlap_top
+        )
+        normalized = " ".join(line.text.casefold().split())
+        if any(phrase in normalized for phrase in _RESERVED_REGION_PHRASES):
+            reserved = True
+
+    text_area_ratio = contained_area / region_area
+    is_text_dense = (
+        contained_count >= _TEXT_DENSE_REGION_LINE_COUNT
+        or text_area_ratio >= _TEXT_DENSE_REGION_AREA_RATIO
+    )
+    # Sparse drawing labels do not affect association. Reserved or dense
+    # text blocks sort after drawing-like regions; distance then breaks ties.
+    return (
+        int(reserved),
+        int(is_text_dense),
+        text_area_ratio if is_text_dense else 0.0,
+    )
+
+
+def _boxes_overlap(
+    first: tuple[int, int, int, int],
+    second: tuple[int, int, int, int],
+) -> bool:
+    return (
+        max(first[0], second[0]) < min(first[2], second[2])
+        and max(first[1], second[1]) < min(first[3], second[3])
+    )
+
+
+def _box_area(box: tuple[int, int, int, int]) -> int:
+    return max(0, box[2] - box[0]) * max(0, box[3] - box[1])
 
 
 def _expanded_and_clamped(

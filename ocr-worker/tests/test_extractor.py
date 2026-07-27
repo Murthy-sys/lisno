@@ -278,6 +278,73 @@ def test_extracts_zero_sections_from_a_noise_only_page(tmp_path):
     assert page.sections == ()
 
 
+def test_crop_association_penalizes_nearby_text_dense_notes_panel(tmp_path):
+    source = tmp_path / "drawing-versus-notes.png"
+    image = Image.new("RGB", (1000, 700), "white")
+    draw = ImageDraw.Draw(image)
+    font = ImageFont.load_default(size=24)
+
+    title = ((40, 35, 310, 70), "Front Elevation", 0.98)
+    note_lines = [
+        ((75, 150 + index * 32, 320, 174 + index * 32), text, 0.99)
+        for index, text in enumerate(
+            (
+                "GENERAL NOTES",
+                "1. VERIFY ALL LEVELS",
+                "2. DIMENSIONS IN MM",
+                "3. REFER FLOOR PLAN",
+                "4. DO NOT SCALE",
+                "5. CONTRACTOR TO CHECK",
+            )
+        )
+    ]
+    draw.rectangle((35, 110, 365, 370), outline="black", width=4)
+    for box, text, _confidence in note_lines:
+        draw.text((box[0], box[1]), text, fill="black", font=font)
+
+    # A farther, sparse architectural line drawing.
+    draw.rectangle((500, 120, 940, 620), outline="black", width=4)
+    draw.line((500, 280, 940, 280), fill="black", width=4)
+    draw.line((650, 120, 650, 620), fill="black", width=4)
+    draw.rectangle((700, 340, 860, 560), outline="black", width=4)
+    image.save(source, format="PNG")
+    image.close()
+
+    lines = [title, *note_lines]
+    ocr = FakePaddleOCR3([{
+        "rec_boxes": [box for box, _text, _score in lines],
+        "rec_texts": [text for _box, text, _score in lines],
+        "rec_scores": [score for _box, _text, score in lines],
+    }])
+
+    section = Extractor(ocr_engine=ocr).extract(source)[0].sections[0]
+
+    assert section.label == "Front Elevation"
+    assert section.crop.x >= 450
+    assert section.crop.x + section.crop.width > 900
+    assert section.crop.y + section.crop.height > 580
+    assert section.crop.x >= 365
+
+
+def test_crop_fallback_without_detected_drawing_stays_within_page(tmp_path):
+    source = tmp_path / "title-only.png"
+    image = Image.new("RGB", (320, 180), "white")
+    image.save(source, format="PNG")
+    image.close()
+    ocr = FakePaddleOCR3([{
+        "rec_boxes": [[20, 20, 180, 48]],
+        "rec_texts": ["Roof Plan"],
+        "rec_scores": [0.97],
+    }])
+
+    section = Extractor(ocr_engine=ocr).extract(source)[0].sections[0]
+
+    assert 0 <= section.crop.x < 320
+    assert 0 <= section.crop.y < 180
+    assert section.crop.x + section.crop.width <= 320
+    assert section.crop.y + section.crop.height <= 180
+
+
 def test_uses_paddleocr3_predict_and_parses_structured_results():
     result = [
         {
@@ -428,6 +495,37 @@ def test_classifier_input_is_bounded_before_the_output_candidate_cap(
     assert sections == ()
 
 
+def test_region_text_scoring_is_computed_once_per_page_not_per_title(
+    monkeypatch,
+):
+    labels = 100
+    ocr = FakePaddleOCR3([{
+        "rec_boxes": [
+            [20 + index, 20 + index, 200 + index, 50 + index]
+            for index in range(labels)
+        ],
+        "rec_texts": [f"Bedroom {index + 1} Plan" for index in range(labels)],
+        "rec_scores": [0.9] * labels,
+    }])
+    from lisno_ocr import extractor as module
+    original = module._region_text_penalty
+    calls = 0
+
+    def counted(region, title_box, recognized_lines):
+        nonlocal calls
+        calls += 1
+        return original(region, title_box, recognized_lines)
+
+    monkeypatch.setattr(module, "_region_text_penalty", counted)
+
+    sections = Extractor(ocr_engine=ocr).extract(
+        FIXTURES / "labeled-plan.png"
+    )[0].sections
+
+    assert len(sections) == labels
+    assert calls < labels
+
+
 def test_output_budget_stops_before_encoding_later_candidates(monkeypatch):
     ocr = FakePaddleOCR3([{
         "rec_boxes": [[1, 1, 20, 20], [30, 30, 60, 60]],
@@ -543,9 +641,10 @@ def test_legacy_ocr_output_remains_a_fallback():
 @pytest.mark.model
 def test_installed_paddle_model_smoke():
     pytest.importorskip("paddleocr")
-    pages = Extractor().extract(FIXTURES / "labeled-plan.png")
+    pages = Extractor().extract(FIXTURES / "model-supported-title.png")
     assert pages
     assert all(page.width > 0 and page.height > 0 for page in pages)
+    assert sum(len(page.sections) for page in pages) >= 1
     taxonomy = LayoutSettings.defaults()
     for page in pages:
         for section in page.sections:
