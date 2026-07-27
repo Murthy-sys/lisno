@@ -9,6 +9,7 @@ import { createAuditRouter } from "./routes/audit.js";
 import { createAuthRouter } from "./routes/auth.js";
 import { createEvaluationsRouter } from "./routes/evaluations.js";
 import { createDesignVersionsRouter } from "./routes/design-versions.js";
+import { createExtractionWorkerRouter } from "./routes/extraction-worker.js";
 import { healthRouter } from "./routes/health.js";
 import { createKpisRouter } from "./routes/kpis.js";
 import { createOrganizationRouter } from "./routes/organization.js";
@@ -21,6 +22,7 @@ import {
 } from "./services/auth.service.js";
 import { createEvaluationService } from "./services/evaluation.service.js";
 import { createDesignVersionService } from "./services/design-version.service.js";
+import { createExtractionWorkerService } from "./services/extraction-worker.service.js";
 import { createHierarchyService } from "./services/hierarchy.service.js";
 import { createKpiService } from "./services/kpi.service.js";
 import { createProjectActivityService } from "./services/project-activity.service.js";
@@ -37,6 +39,7 @@ export interface AppDependencies {
   storage?: FileStorage;
   maxUploadBytes?: number;
   ocrLeaseSeconds?: number;
+  ocrWorkerToken?: string;
   corsOrigins?: readonly string[];
 }
 
@@ -62,8 +65,27 @@ export function createApp(dependencies: AppDependencies) {
     storage,
     clock
   );
+  const extractionWorkerService = dependencies.ocrWorkerToken
+    ? createExtractionWorkerService(
+        repository,
+        auditService,
+        storage,
+        clock,
+        dependencies.ocrLeaseSeconds ?? 300,
+        maxUploadBytes
+      )
+    : null;
 
   app.use(allowCors(dependencies.corsOrigins ?? []));
+  if (extractionWorkerService && dependencies.ocrWorkerToken) {
+    app.use(
+      "/api/v1",
+      createExtractionWorkerRouter(
+        dependencies.ocrWorkerToken,
+        extractionWorkerService
+      )
+    );
+  }
   app.use(express.json());
   app.use("/api/v1", healthRouter);
   app.use("/api/v1", createAuthRouter(authService));

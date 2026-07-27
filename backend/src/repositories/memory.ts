@@ -727,6 +727,10 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
       return clone(failed);
     },
 
+    async findExtractionJobById(id) {
+      return copyOrNull(state.extractionJobs.find((job) => job.id === id));
+    },
+
     async findExtractionJobByVersionId(designVersionId) {
       return copyOrNull(
         state.extractionJobs.find((job) => job.designVersionId === designVersionId)

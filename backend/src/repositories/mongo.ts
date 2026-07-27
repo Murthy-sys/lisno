@@ -821,6 +821,13 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
       return mapExtractionJob(document);
     },
 
+    async findExtractionJobById(id) {
+      const query = DesignExtractionJobModel.findById(id);
+      if (session) query.session(session);
+      const document = await query.lean().exec();
+      return document ? mapExtractionJob(document) : null;
+    },
+
     async findExtractionJobByVersionId(designVersionId) {
       const query = DesignExtractionJobModel.findOne({ designVersionId });
       if (session) query.session(session);

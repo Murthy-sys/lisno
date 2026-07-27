@@ -524,6 +524,7 @@ export interface AppRepository {
     failureMessage: string,
     completedAt: string
   ): Promise<DesignExtractionJobRecord>;
+  findExtractionJobById(id: string): Promise<DesignExtractionJobRecord | null>;
   findExtractionJobByVersionId(
     designVersionId: string
   ): Promise<DesignExtractionJobRecord | null>;
