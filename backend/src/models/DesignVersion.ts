@@ -30,7 +30,14 @@ designVersionSchema.index(
   { projectId: 1, floorId: 1, stageId: 1, taskId: 1, versionNumber: 1 },
   { unique: true }
 );
-designVersionSchema.index({ projectId: 1, approvalStatus: 1, clientVisible: 1 });
+designVersionSchema.index({
+  projectId: 1,
+  approvalStatus: 1,
+  clientVisible: 1,
+  approvedAt: -1,
+  uploadedAt: -1,
+  _id: -1
+});
 
 export const DesignVersionModel =
   models.DesignVersion ?? model("DesignVersion", designVersionSchema);

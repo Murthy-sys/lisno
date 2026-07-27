@@ -40,6 +40,30 @@ describe("Mongo repository contracts", () => {
     expect(uniqueIndexes).toEqual([{ projectId: 1, order: 1 }]);
   });
 
+  it("uses a bounded grouped aggregation for latest client-visible versions", async () => {
+    const version = demoSeedData.designVersions[0]!;
+    const aggregate = vi.spyOn(DesignVersionModel, "aggregate").mockReturnValueOnce({
+      exec: vi.fn().mockResolvedValue([{ ...version, _id: version.id, uploadedAt: new Date(version.uploadedAt), approvedAt: new Date(version.approvedAt!), createdAt: new Date(version.createdAt), updatedAt: new Date(version.updatedAt) }])
+    } as never);
+    const find = vi.spyOn(DesignVersionModel, "find");
+
+    const results = await createMongoRepository().listLatestClientVisibleDesignVersions(["project-aurora-villa", "project-aurora-studio"]);
+
+    expect(find).not.toHaveBeenCalled();
+    expect(aggregate).toHaveBeenCalledWith([
+      { $match: { projectId: { $in: ["project-aurora-villa", "project-aurora-studio"] }, approvalStatus: "approved", clientVisible: true } },
+      { $sort: { projectId: 1, approvedAt: -1, uploadedAt: -1, _id: -1 } },
+      { $group: { _id: "$projectId", version: { $first: "$$ROOT" } } },
+      { $replaceRoot: { newRoot: "$version" } },
+      { $sort: { projectId: 1 } }
+    ]);
+    expect(results).toMatchObject([{ id: version.id, projectId: version.projectId }]);
+  });
+
+  it("indexes the client latest-version query fields and deterministic sort", () => {
+    expect(DesignVersionModel.schema.indexes().map(([fields]) => fields)).toContainEqual({ projectId: 1, approvalStatus: 1, clientVisible: 1, approvedAt: -1, uploadedAt: -1, _id: -1 });
+  });
+
   it("marks every task-event history field immutable", () => {
     const historyFields = [
       "taskId",

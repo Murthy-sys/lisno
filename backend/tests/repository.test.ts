@@ -428,6 +428,21 @@ describe("memory repository", () => {
     ).rejects.toBeInstanceOf(RepositoryConflictError);
   });
 
+  it("returns one latest client-visible approval per project with approved/uploaded/id descending ties", async () => {
+    const repository = createMemoryRepository(structuredClone(demoSeedData));
+    const source = demoSeedData.designVersions[0]!;
+    await repository.createDesignVersion({ ...structuredClone(source), id: "version-villa-earlier", versionNumber: 2, approvedAt: "2026-07-20T09:00:00.000Z", uploadedAt: "2026-07-20T08:00:00.000Z", createdAt: "2026-07-20T08:00:00.000Z", updatedAt: "2026-07-20T09:00:00.000Z" });
+    await repository.createDesignVersion({ ...structuredClone(source), id: "version-villa-z-early", versionNumber: 3, approvedAt: "2026-07-21T09:00:00.000Z", uploadedAt: "2026-07-21T08:00:00.000Z", createdAt: "2026-07-21T08:00:00.000Z", updatedAt: "2026-07-21T09:00:00.000Z" });
+    await repository.createDesignVersion({ ...structuredClone(source), id: "version-villa-a-later", versionNumber: 4, approvedAt: "2026-07-21T09:00:00.000Z", uploadedAt: "2026-07-21T10:00:00.000Z", createdAt: "2026-07-21T10:00:00.000Z", updatedAt: "2026-07-21T10:00:00.000Z" });
+    await repository.createDesignVersion({ ...structuredClone(source), id: "version-villa-b-later", versionNumber: 5, approvedAt: "2026-07-21T09:00:00.000Z", uploadedAt: "2026-07-21T10:00:00.000Z", createdAt: "2026-07-21T10:00:00.000Z", updatedAt: "2026-07-21T10:00:00.000Z" });
+    await repository.createDesignVersion({ ...structuredClone(source), id: "version-studio-visible", projectId: "project-aurora-studio", floorId: "floor-studio", stageId: "stage-studio", versionNumber: 1, approvedAt: "2026-07-22T09:00:00.000Z", uploadedAt: "2026-07-22T08:00:00.000Z", createdAt: "2026-07-22T08:00:00.000Z", updatedAt: "2026-07-22T09:00:00.000Z" });
+
+    await expect(repository.listLatestClientVisibleDesignVersions(["project-aurora-villa", "project-aurora-studio", "project-missing"])).resolves.toMatchObject([
+      { projectId: "project-aurora-studio", id: "version-studio-visible" },
+      { projectId: "project-aurora-villa", id: "version-villa-b-later" }
+    ]);
+  });
+
   it("returns evaluation corrections newest first while preserving revision links", async () => {
     const repository = createMemoryRepository(demoSeedData);
     const first = await repository.createEvaluation({

@@ -51,3 +51,18 @@
 - Final verification: backend typecheck, build, and all 11 test files (119
   tests) pass; frontend typecheck, production build, and all 12 test files
   (57 tests) pass.
+
+## Review Round 2
+
+- Mongo now uses a bounded aggregation (`$match`, deterministic `$sort`,
+  `$group`, and root replacement) to return at most one approved,
+  client-visible version per requested project without materializing version
+  history in the application process.
+- Added a compound index covering project, visibility filters, and the
+  approved/uploaded/stable-ID ordering. The memory repository uses the exact
+  same approved-at, uploaded-at, and ID-descending selection rules.
+- Regression coverage proves one result per project, ordering ties, the
+  aggregation contract (rather than `find`), and the compound index.
+- Final verification: backend typecheck, build, and all 11 test files (122
+  tests) pass; frontend typecheck, production build, and all 12 test files
+  (57 tests) pass.

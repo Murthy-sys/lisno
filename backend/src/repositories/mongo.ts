@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import mongoose, { type ClientSession, type Model } from "mongoose";
+import mongoose, { type ClientSession, type Model, type PipelineStage } from "mongoose";
 import { AuditEventModel } from "../models/AuditEvent.js";
 import { DesignStageModel } from "../models/DesignStage.js";
 import { DesignVersionModel } from "../models/DesignVersion.js";
@@ -489,17 +489,16 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
 
     async listLatestClientVisibleDesignVersions(projectIds) {
       if (!projectIds.length) return [];
-      const documents = await DesignVersionModel.find({ projectId: { $in: projectIds }, approvalStatus: "approved", clientVisible: true })
-        .sort({ projectId: 1, approvedAt: -1, uploadedAt: -1, _id: -1 })
-        .lean()
-        .exec();
-      const seen = new Set<string>();
-      return documents.filter((document) => {
-        const projectId = String(document.projectId);
-        if (seen.has(projectId)) return false;
-        seen.add(projectId);
-        return true;
-      }).map(mapDesignVersion);
+      const pipeline: PipelineStage[] = [
+        { $match: { projectId: { $in: projectIds }, approvalStatus: "approved", clientVisible: true } },
+        { $sort: { projectId: 1 as const, approvedAt: -1 as const, uploadedAt: -1 as const, _id: -1 as const } },
+        { $group: { _id: "$projectId", version: { $first: "$$ROOT" } } },
+        { $replaceRoot: { newRoot: "$version" } },
+        { $sort: { projectId: 1 as const } }
+      ];
+      const aggregate = DesignVersionModel.aggregate(pipeline);
+      if (session) aggregate.session(session);
+      return (await aggregate.exec()).map(mapDesignVersion);
     },
 
     async pageDesignVersions(filters, pagination) {

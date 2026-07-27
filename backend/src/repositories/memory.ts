@@ -489,7 +489,7 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
       for (const version of state.designVersions) {
         if (!projectIds.includes(version.projectId) || version.approvalStatus !== "approved" || !version.clientVisible) continue;
         const current = latest.get(version.projectId);
-        if (!current || byDateThenId("approvedAt", version, current) > 0 || (version.approvedAt === current.approvedAt && byDateThenId("uploadedAt", version, current) > 0)) latest.set(version.projectId, version);
+        if (!current || compareLatestClientVisibleVersion(version, current) > 0) latest.set(version.projectId, version);
       }
       return clone([...latest.values()].sort((left, right) => left.projectId.localeCompare(right.projectId)));
     },
@@ -608,6 +608,12 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
     timestamp
   }));
   return repository;
+}
+
+function compareLatestClientVisibleVersion(left: DesignVersionRecord, right: DesignVersionRecord) {
+  return new Date(left.approvedAt ?? 0).getTime() - new Date(right.approvedAt ?? 0).getTime()
+    || new Date(left.uploadedAt).getTime() - new Date(right.uploadedAt).getTime()
+    || left.id.localeCompare(right.id);
 }
 
 function copyOrNull<T>(value: T | undefined): T | null {
