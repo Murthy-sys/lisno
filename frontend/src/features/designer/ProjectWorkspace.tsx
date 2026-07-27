@@ -5,7 +5,8 @@ import {
   Building2,
   ChevronDown,
   Layers3,
-  MapPin
+  MapPin,
+  Plus
 } from "lucide-react";
 import { Link, useParams } from "react-router-dom";
 
@@ -23,6 +24,10 @@ import { AsyncState } from "../../components/ui/AsyncState";
 import { ProgressBar } from "../../components/ui/ProgressBar";
 import { StatusBadge } from "../../components/ui/StatusBadge";
 import { designerKeys } from "./designerApi";
+import {
+  ProjectStructureDialog,
+  type StructureAction
+} from "./ProjectStructureDialog";
 
 type TaskAction = { kind: "update" | "upload"; taskId: string } | null;
 
@@ -47,6 +52,8 @@ export function ProjectWorkspace() {
   const [openFloors, setOpenFloors] = useState<Set<string>>(() => new Set());
   const [openStages, setOpenStages] = useState<Set<string>>(() => new Set());
   const [taskAction, setTaskAction] = useState<TaskAction>(null);
+  const [structureAction, setStructureAction] =
+    useState<StructureAction | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
   const projectQuery = useQuery({
@@ -141,6 +148,19 @@ export function ProjectWorkspace() {
             <p className="eyebrow">Delivery structure</p>
             <h2 id="structure-title">Floors, stages, and tasks</h2>
           </div>
+          <button
+            type="button"
+            className="button button--secondary"
+            onClick={() =>
+              setStructureAction({
+                kind: "floor",
+                projectId: project.id,
+                nextOrder: nextOrder(project.floors)
+              })
+            }
+          >
+            <Plus aria-hidden="true" /> Add floor
+          </button>
         </div>
 
         {project.floors.length ? (
@@ -182,6 +202,23 @@ export function ProjectWorkspace() {
 
                     {floorOpen ? (
                       <div id={floorPanelId} className="floor-card__content">
+                        <div className="structure-actions">
+                          <button
+                            type="button"
+                            className="button button--secondary"
+                            aria-label={`Add stage to ${floor.name}`}
+                            onClick={() =>
+                              setStructureAction({
+                                kind: "stage",
+                                projectId: project.id,
+                                floorId: floor.id,
+                                nextOrder: nextOrder(floor.stages)
+                              })
+                            }
+                          >
+                            <Plus aria-hidden="true" /> Add stage
+                          </button>
+                        </div>
                         {floor.stages.length ? (
                           floor.stages
                             .slice()
@@ -212,6 +249,25 @@ export function ProjectWorkspace() {
                                   </button>
                                   {stageOpen ? (
                                     <div id={stagePanelId} className="task-list">
+                                      <div className="structure-actions">
+                                        <button
+                                          type="button"
+                                          className="button button--secondary"
+                                          aria-label={`Add task to ${stage.name}`}
+                                          onClick={() =>
+                                            setStructureAction({
+                                              kind: "task",
+                                              projectId: project.id,
+                                              stageId: stage.id,
+                                              assignedDesignerIds:
+                                                project.assignedDesignerIds,
+                                              nextOrder: nextOrder(stage.tasks)
+                                            })
+                                          }
+                                        >
+                                          <Plus aria-hidden="true" /> Add task
+                                        </button>
+                                      </div>
                                       {stage.tasks.length ? (
                                         stage.tasks
                                           .slice()
@@ -285,8 +341,19 @@ export function ProjectWorkspace() {
           }
         />
       ) : null}
+      {structureAction ? (
+        <ProjectStructureDialog
+          action={structureAction}
+          onClose={() => setStructureAction(null)}
+          onCreated={setNotice}
+        />
+      ) : null}
     </section>
   );
+}
+
+function nextOrder(items: Array<{ order: number }>): number {
+  return items.reduce((highest, item) => Math.max(highest, item.order), 0) + 1;
 }
 
 function findTask(

@@ -28,7 +28,6 @@ const floorSchema = z
     name: z.string().trim().min(1),
     number: z.string().trim().min(1),
     order: z.number().int().nonnegative(),
-    progress: z.number().min(0).max(100).optional(),
     plannedStartAt: isoDateTime,
     plannedEndAt: isoDateTime
   })
@@ -82,6 +81,29 @@ export function createProjectsRouter(
         response.json({
           data: paginatedEnvelope(
             await projectService.list(
+              request.authenticatedUser!,
+              pagination
+            ),
+            pagination
+          )
+        });
+      } catch (error) {
+        next(error);
+      }
+    }
+  );
+
+  router.get(
+    "/client/project-summaries",
+    protectedRoute,
+    authorizeRoles("client"),
+    validateQuery(listQuerySchema),
+    async (request, response, next) => {
+      try {
+        const pagination = response.locals.validatedQuery;
+        response.json({
+          data: paginatedEnvelope(
+            await projectService.clientSummaries(
               request.authenticatedUser!,
               pagination
             ),

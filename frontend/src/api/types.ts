@@ -117,6 +117,7 @@ export interface Project {
   actualEndAt: string | null;
   createdAt: string;
   updatedAt: string;
+  progress?: number;
 }
 
 export interface Floor {
@@ -352,6 +353,44 @@ export interface CreateProjectInput {
   location: string;
   plannedStartAt: string;
   plannedEndAt: string;
+}
+
+export interface CreateFloorInput {
+  name: string;
+  number: string;
+  order: number;
+  plannedStartAt: string;
+  plannedEndAt: string;
+}
+
+export interface CreateStageInput {
+  name: string;
+  type: DesignStageType;
+  order: number;
+}
+
+export interface CreateTaskInput {
+  title: string;
+  order: number;
+  ownerId: string;
+  plannedStartAt: string;
+  originalDeadlineAt: string;
+  plannedEffort?: number;
+}
+
+export interface ClientProjectSummary {
+  id: string;
+  name: string;
+  status: ProjectStatus;
+  location: string;
+  plannedStartAt: string;
+  plannedEndAt: string;
+  actualStartAt: string | null;
+  actualEndAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  progress: number;
+  floorCount: number;
 }
 
 export type ApprovalStatus = "draft" | "in_review" | "approved" | "rejected";

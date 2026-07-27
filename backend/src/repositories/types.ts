@@ -322,8 +322,18 @@ export interface AppRepository {
   createTask(input: NewTask): Promise<TaskRecord>;
   getProjectHierarchy(projectId: string): Promise<ProjectHierarchy | null>;
   getOrganizationTree(): Promise<ManagerTreeNode[]>;
+  pageOrganizationManagers(
+    pagination: PaginationInput
+  ): Promise<PageResult<ManagerTreeNode>>;
+  pageDesignersForManager(
+    managerId: string,
+    pagination: PaginationInput
+  ): Promise<PageResult<UserRecord>>;
   findTaskById(id: string): Promise<TaskRecord | null>;
   listTasks(filters: TaskFilters): Promise<TaskRecord[]>;
+  listTasksForProjectIds(projectIds: string[]): Promise<TaskRecord[]>;
+  listTasksForOwnerIds(ownerIds: string[]): Promise<TaskRecord[]>;
+  listFloorsForProjectIds(projectIds: string[]): Promise<FloorRecord[]>;
   listKpiTasksForPeriod(
     ownerIds: string[],
     periodStartAt: string,
@@ -383,6 +393,9 @@ export interface AppRepository {
   ): Promise<DesignVersionRecord>;
   createEvaluation(input: NewEvaluation): Promise<EvaluationRecord>;
   listEvaluationsForSubject(subjectUserId: string): Promise<EvaluationRecord[]>;
+  listEvaluationsForSubjectIds(
+    subjectUserIds: string[]
+  ): Promise<EvaluationRecord[]>;
   pageEvaluationsForSubject(
     subjectUserId: string,
     pagination: PaginationInput

@@ -241,6 +241,73 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
         }));
     },
 
+    async pageOrganizationManagers(pagination) {
+      const managerFilter = { active: true, role: "design_manager" };
+      const [managerDocuments, total] = await Promise.all([
+        UserModel.find(managerFilter)
+          .select("+passwordHash")
+          .sort({ name: 1, _id: 1 })
+          .skip(pagination.offset)
+          .limit(pagination.limit)
+          .lean()
+          .exec(),
+        UserModel.countDocuments(managerFilter).exec()
+      ]);
+      const managers = managerDocuments.map(mapUser);
+      const managerIds = managers.map((manager) => manager.id);
+      const designerDocuments =
+        managerIds.length === 0
+          ? []
+          : await UserModel.find({
+              active: true,
+              role: "designer",
+              managerId: { $in: managerIds }
+            })
+              .select("+passwordHash")
+              .sort({ name: 1, _id: 1 })
+              .lean()
+              .exec();
+      const designers = designerDocuments.map(mapUser);
+      return {
+        items: managers.map<ManagerTreeNode>((manager) => ({
+          id: manager.id,
+          name: manager.name,
+          email: manager.email,
+          ...(manager.avatar ? { avatar: manager.avatar } : {}),
+          ...(manager.title ? { title: manager.title } : {}),
+          designers: designers
+            .filter((designer) => designer.managerId === manager.id)
+            .map((designer) => ({
+              id: designer.id,
+              name: designer.name,
+              email: designer.email,
+              ...(designer.avatar ? { avatar: designer.avatar } : {}),
+              ...(designer.title ? { title: designer.title } : {})
+            }))
+        })),
+        total
+      };
+    },
+
+    async pageDesignersForManager(managerId, pagination) {
+      const filter = {
+        active: true,
+        role: "designer",
+        managerId
+      };
+      const [documents, total] = await Promise.all([
+        UserModel.find(filter)
+          .select("+passwordHash")
+          .sort({ name: 1, _id: 1 })
+          .skip(pagination.offset)
+          .limit(pagination.limit)
+          .lean()
+          .exec(),
+        UserModel.countDocuments(filter).exec()
+      ]);
+      return { items: documents.map(mapUser), total };
+    },
+
     async findTaskById(id) {
       const query = TaskModel.findById(id);
       if (session) query.session(session);
@@ -254,6 +321,33 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
         .lean()
         .exec();
       return documents.map(mapTask);
+    },
+
+    async listTasksForProjectIds(projectIds) {
+      if (projectIds.length === 0) return [];
+      const documents = await TaskModel.find({ projectId: { $in: projectIds } })
+        .sort({ projectId: 1, floorId: 1, stageId: 1, order: 1, _id: 1 })
+        .lean()
+        .exec();
+      return documents.map(mapTask);
+    },
+
+    async listTasksForOwnerIds(ownerIds) {
+      if (ownerIds.length === 0) return [];
+      const documents = await TaskModel.find({ ownerId: { $in: ownerIds } })
+        .sort({ projectId: 1, floorId: 1, stageId: 1, order: 1, _id: 1 })
+        .lean()
+        .exec();
+      return documents.map(mapTask);
+    },
+
+    async listFloorsForProjectIds(projectIds) {
+      if (projectIds.length === 0) return [];
+      const documents = await FloorModel.find({ projectId: { $in: projectIds } })
+        .sort({ projectId: 1, order: 1, _id: 1 })
+        .lean()
+        .exec();
+      return documents.map(mapFloor);
     },
 
     async listKpiTasksForPeriod(ownerIds, periodStartAt, periodEndAt) {
@@ -577,6 +671,17 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
 
     async listEvaluationsForSubject(subjectUserId) {
       const documents = await EvaluationModel.find({ subjectUserId })
+        .sort({ createdAt: -1, _id: -1 })
+        .lean()
+        .exec();
+      return documents.map(mapEvaluation);
+    },
+
+    async listEvaluationsForSubjectIds(subjectUserIds) {
+      if (subjectUserIds.length === 0) return [];
+      const documents = await EvaluationModel.find({
+        subjectUserId: { $in: subjectUserIds }
+      })
         .sort({ createdAt: -1, _id: -1 })
         .lean()
         .exec();

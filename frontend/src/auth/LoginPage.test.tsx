@@ -134,11 +134,29 @@ describe("LoginPage", () => {
         http.get("/api/v1/client/latest-approved-versions", () =>
           HttpResponse.json({ data: [] })
         ),
+        http.get("/api/v1/client/project-summaries", () =>
+          HttpResponse.json({
+            data: {
+              items: [],
+              pagination: { limit: 100, offset: 0, total: 0, hasMore: false }
+            }
+          })
+        ),
         http.get("/api/v1/organization/team", () =>
-          HttpResponse.json({ data: [] })
+          HttpResponse.json({
+            data: {
+              items: [],
+              pagination: { limit: 100, offset: 0, total: 0, hasMore: false }
+            }
+          })
         ),
         http.get("/api/v1/organization/tree", () =>
-          HttpResponse.json({ data: [] })
+          HttpResponse.json({
+            data: {
+              items: [],
+              pagination: { limit: 100, offset: 0, total: 0, hasMore: false }
+            }
+          })
         ),
         http.get("/api/v1/kpis/users/:userId/tasks", () =>
           HttpResponse.json({

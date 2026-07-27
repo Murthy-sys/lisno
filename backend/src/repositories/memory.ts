@@ -270,6 +270,22 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
       return clone(managers);
     },
 
+    async pageOrganizationManagers(pagination) {
+      return paginate(await implementation.getOrganizationTree(), pagination);
+    },
+
+    async pageDesignersForManager(managerId, pagination) {
+      const designers = state.users
+        .filter(
+          (user) =>
+            user.active &&
+            user.role === "designer" &&
+            user.managerId === managerId
+        )
+        .sort(byNameThenId);
+      return paginate(clone(designers), pagination);
+    },
+
     async findTaskById(id) {
       return copyOrNull(state.tasks.find((task) => task.id === id));
     },
@@ -283,6 +299,29 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
               left.projectId.localeCompare(right.projectId) ||
               left.floorId.localeCompare(right.floorId) ||
               left.stageId.localeCompare(right.stageId) ||
+              byOrderThenId(left, right)
+          )
+      );
+    },
+
+    async listTasksForProjectIds(projectIds) {
+      const ids = new Set(projectIds);
+      return clone(state.tasks.filter((task) => ids.has(task.projectId)).sort(compareTasks));
+    },
+
+    async listTasksForOwnerIds(ownerIds) {
+      const ids = new Set(ownerIds);
+      return clone(state.tasks.filter((task) => ids.has(task.ownerId)).sort(compareTasks));
+    },
+
+    async listFloorsForProjectIds(projectIds) {
+      const ids = new Set(projectIds);
+      return clone(
+        state.floors
+          .filter((floor) => ids.has(floor.projectId))
+          .sort(
+            (left, right) =>
+              left.projectId.localeCompare(right.projectId) ||
               byOrderThenId(left, right)
           )
       );
@@ -559,6 +598,15 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
       return clone(
         state.evaluations
           .filter((evaluation) => evaluation.subjectUserId === subjectUserId)
+          .sort((left, right) => byDateThenId("createdAt", right, left))
+      );
+    },
+
+    async listEvaluationsForSubjectIds(subjectUserIds) {
+      const ids = new Set(subjectUserIds);
+      return clone(
+        state.evaluations
+          .filter((evaluation) => ids.has(evaluation.subjectUserId))
           .sort((left, right) => byDateThenId("createdAt", right, left))
       );
     },

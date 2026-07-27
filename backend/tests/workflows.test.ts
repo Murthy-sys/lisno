@@ -238,6 +238,111 @@ describe("project workflows", () => {
     expect(otherClientProject.status).toBe(404);
   });
 
+  it("derives project and floor delivery state from effort-weighted task progress", async () => {
+    const seed = structuredClone(demoSeedData);
+    const project = seed.projects.find(
+      (candidate) => candidate.id === "project-aurora-villa"
+    )!;
+    project.status = "on_hold";
+    for (const floor of seed.floors.filter(
+      (candidate) => candidate.projectId === project.id
+    )) {
+      floor.progress = 99;
+    }
+    const furniture = seed.tasks.find(
+      (candidate) => candidate.id === "task-furniture-layout"
+    )!;
+    furniture.status = "completed";
+    furniture.progress = 100;
+    furniture.plannedEffort = 3;
+    furniture.completedAt = "2026-07-15T17:00:00.000Z";
+    const circulation = seed.tasks.find(
+      (candidate) => candidate.id === "task-circulation"
+    )!;
+    circulation.status = "not_started";
+    circulation.progress = 0;
+    circulation.plannedEffort = 1;
+    circulation.completedAt = null;
+    const future = seed.tasks.find(
+      (candidate) => candidate.id === "task-future-concept"
+    )!;
+    future.plannedEffort = 1;
+
+    const app = createApp({
+      repository: createMemoryRepository(seed),
+      auth,
+      clock
+    });
+    const internal = await request(app)
+      .get(`/api/v1/projects/${project.id}`)
+      .set("Authorization", bearer(users.ananya));
+
+    expect(internal.status).toBe(200);
+    expect(internal.body.data).toMatchObject({
+      id: project.id,
+      status: "active",
+      progress: 60,
+      floors: [
+        expect.objectContaining({ id: "floor-aurora-ground", progress: 75 }),
+        expect.objectContaining({ id: "floor-aurora-first", progress: 0 })
+      ]
+    });
+
+    const listed = await request(app)
+      .get("/api/v1/projects?limit=20&offset=0")
+      .set("Authorization", bearer(users.ananya));
+    expect(
+      listed.body.data.items.find(
+        (candidate: { id: string }) => candidate.id === project.id
+      )
+    ).toMatchObject({ status: "active", progress: 60 });
+
+    const client = await request(app)
+      .get("/api/v1/client/project-summaries?limit=1&offset=1")
+      .set("Authorization", bearer(users.auroraClient));
+    expect(client.status).toBe(200);
+    expect(client.body.data).toEqual({
+      items: [
+        expect.objectContaining({
+          id: project.id,
+          status: "active",
+          progress: 60,
+          floorCount: 2
+        })
+      ],
+      pagination: {
+        limit: 1,
+        offset: 1,
+        total: 2,
+        hasMore: false
+      }
+    });
+    expect(JSON.stringify(client.body)).not.toContain("assignedDesignerIds");
+    expect(JSON.stringify(client.body)).not.toContain("managerId");
+    expect(JSON.stringify(client.body)).not.toContain("ownerId");
+  });
+
+  it("keeps caller-supplied floor progress out of the creation contract", async () => {
+    const { app } = setup();
+    const response = await request(app)
+      .post("/api/v1/projects/project-aurora-villa/floors")
+      .set("Authorization", bearer(users.ananya))
+      .send({
+        name: "Caller Progress Floor",
+        number: "CP",
+        order: 4,
+        progress: 87,
+        plannedStartAt: "2026-08-01T09:00:00.000Z",
+        plannedEndAt: "2026-08-31T17:00:00.000Z"
+      });
+
+    expect(response.status).toBe(400);
+    expect(response.body.error).toMatchObject({
+      code: "VALIDATION_ERROR",
+      fields: { progress: expect.any(String) }
+    });
+  });
+
   it("decorates every internal hierarchy task, including teammate work, with server risk", async () => {
     const { app } = setup();
     const response = await request(app)
@@ -666,8 +771,8 @@ describe("organization and KPI workflows", () => {
       .set("Authorization", bearer(users.managerAarav));
 
     expect(response.status).toBe(200);
-    expect(response.body.data).toEqual(
-      expect.arrayContaining([
+    expect(response.body.data).toEqual({
+      items: expect.arrayContaining([
         expect.objectContaining({
           user: expect.objectContaining({ id: "user-designer-ananya" }),
           kpi: expect.objectContaining({ score: expect.any(Number) }),
@@ -678,9 +783,15 @@ describe("organization and KPI workflows", () => {
         expect.objectContaining({
           user: expect.objectContaining({ id: "user-designer-kabir" })
         })
-      ])
-    );
-    expect(response.body.data).toHaveLength(2);
+      ]),
+      pagination: {
+        limit: 20,
+        offset: 0,
+        total: 2,
+        hasMore: false
+      }
+    });
+    expect(response.body.data.items).toHaveLength(2);
 
     const crossRole = await request(app)
       .get("/api/v1/organization/team")
@@ -699,8 +810,14 @@ describe("organization and KPI workflows", () => {
       .get("/api/v1/organization/tree")
       .set("Authorization", bearer(users.head));
     expect(tree.status).toBe(200);
-    expect(tree.body.data).toHaveLength(2);
-    expect(tree.body.data[0]).toMatchObject({
+    expect(tree.body.data.pagination).toEqual({
+      limit: 20,
+      offset: 0,
+      total: 2,
+      hasMore: false
+    });
+    expect(tree.body.data.items).toHaveLength(2);
+    expect(tree.body.data.items[0]).toMatchObject({
       id: "user-manager-aarav",
       summary: {
         teamKpi: { score: expect.any(Number) },
@@ -712,7 +829,12 @@ describe("organization and KPI workflows", () => {
       designers: [
         {
           id: "user-designer-ananya",
-          summary: { kpi: { score: expect.any(Number) } }
+          summary: {
+            kpi: { score: expect.any(Number) },
+            projects: expect.arrayContaining([
+              expect.objectContaining({ id: "project-aurora-villa" })
+            ])
+          }
         },
         { id: "user-designer-kabir", summary: expect.any(Object) }
       ]
@@ -735,6 +857,115 @@ describe("organization and KPI workflows", () => {
       tasks: expect.any(Array)
     });
     expect(JSON.stringify(ownTeam.body)).not.toContain("password");
+  });
+
+  it("paginates more than one page of manager team and head hierarchy records", async () => {
+    const seed = structuredClone(demoSeedData);
+    const designerTemplate = seed.users.find(
+      (candidate) => candidate.id === "user-designer-ananya"
+    )!;
+    const managerTemplate = seed.users.find(
+      (candidate) => candidate.id === "user-manager-aarav"
+    )!;
+    for (let index = 0; index < 21; index += 1) {
+      seed.users.push({
+        ...designerTemplate,
+        id: `user-designer-page-${String(index).padStart(2, "0")}`,
+        name: `Paged Designer ${String(index).padStart(2, "0")}`,
+        email: `paged-designer-${index}@lisno.example`,
+        managerId: managerTemplate.id,
+        authorizedClientIds: []
+      });
+      seed.users.push({
+        ...managerTemplate,
+        id: `user-manager-page-${String(index).padStart(2, "0")}`,
+        name: `Paged Manager ${String(index).padStart(2, "0")}`,
+        email: `paged-manager-${index}@lisno.example`
+      });
+    }
+    const app = createApp({
+      repository: createMemoryRepository(seed),
+      auth,
+      clock
+    });
+
+    const teamFirst = await request(app)
+      .get("/api/v1/organization/team?limit=20&offset=0")
+      .set("Authorization", bearer(users.managerAarav));
+    expect(teamFirst.status).toBe(200);
+    expect(teamFirst.body.data.items).toHaveLength(20);
+    expect(teamFirst.body.data.pagination).toEqual({
+      limit: 20,
+      offset: 0,
+      total: 23,
+      hasMore: true
+    });
+
+    const teamSecond = await request(app)
+      .get("/api/v1/organization/team?limit=20&offset=20")
+      .set("Authorization", bearer(users.managerAarav));
+    expect(teamSecond.status).toBe(200);
+    expect(teamSecond.body.data.items).toHaveLength(3);
+    expect(teamSecond.body.data.pagination).toEqual({
+      limit: 20,
+      offset: 20,
+      total: 23,
+      hasMore: false
+    });
+
+    const treeFirst = await request(app)
+      .get("/api/v1/organization/tree?limit=20&offset=0")
+      .set("Authorization", bearer(users.head));
+    expect(treeFirst.status).toBe(200);
+    expect(treeFirst.body.data.items).toHaveLength(20);
+    expect(treeFirst.body.data.pagination).toEqual({
+      limit: 20,
+      offset: 0,
+      total: 23,
+      hasMore: true
+    });
+
+    const treeSecond = await request(app)
+      .get("/api/v1/organization/tree?limit=20&offset=20")
+      .set("Authorization", bearer(users.head));
+    expect(treeSecond.status).toBe(200);
+    expect(treeSecond.body.data.items).toHaveLength(3);
+    expect(treeSecond.body.data.pagination).toEqual({
+      limit: 20,
+      offset: 20,
+      total: 23,
+      hasMore: false
+    });
+  });
+
+  it("builds the paginated hierarchy with bounded batch reads", async () => {
+    const base = createMemoryRepository(structuredClone(demoSeedData));
+    let eventBatchCalls = 0;
+    const repository = new Proxy(base, {
+      get(target, property, receiver) {
+        if (property === "listEvaluationsForSubject") {
+          return async () => {
+            throw new Error("single-subject evaluation read invoked");
+          };
+        }
+        if (property === "listKpiTaskEventsForTasks") {
+          return async (...args: Parameters<AppRepository["listKpiTaskEventsForTasks"]>) => {
+            eventBatchCalls += 1;
+            return target.listKpiTaskEventsForTasks(...args);
+          };
+        }
+        return Reflect.get(target, property, receiver);
+      }
+    });
+    const app = createApp({ repository, auth, clock });
+
+    const response = await request(app)
+      .get("/api/v1/organization/tree?limit=20&offset=0")
+      .set("Authorization", bearer(users.head));
+
+    expect(response.status).toBe(200);
+    expect(response.body.data.items).toHaveLength(2);
+    expect(eventBatchCalls).toBe(1);
   });
 
   it("calculates KPI and risk explanations on read while keeping KPI immutable", async () => {

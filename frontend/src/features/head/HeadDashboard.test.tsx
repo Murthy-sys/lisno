@@ -18,15 +18,26 @@ describe("HeadDashboard", () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = String(input);
       if (url === "/api/v1/auth/me") return Response.json({ data: head });
-      if (url === "/api/v1/organization/tree") {
+      if (url === "/api/v1/organization/tree?limit=100&offset=0") {
         return Response.json({
-          data: [{
+          data: { items: [{
             id: "manager-1",
             name: "Aarav Shah",
             email: "aarav@lisno.example",
-            designers: [{ id: "designer-1", name: "Ananya Rao", email: "ananya@lisno.example", summary: { activeProjectCount: 1, workload: 8, overdueCount: 0, yellowRiskCount: 1, pendingEvaluation: false, kpi: { score: 82, components: [] }, projects: [], tasks: [] } }],
+            designers: [{ id: "designer-1", name: "Ananya Rao", email: "ananya@lisno.example", summary: { activeProjectCount: 1, workload: 8, overdueCount: 0, yellowRiskCount: 1, pendingEvaluation: false, kpi: { score: 82, components: [] }, projects: [{ id: "project-1", name: "Aurora Villa", progress: 64 }], tasks: [] } }],
             summary: { teamKpi: { score: 82, components: [] }, workload: 8, redCount: 0, yellowCount: 1, evaluationCoverage: 100 }
-          }]
+          }], pagination: { limit: 100, offset: 0, total: 101, hasMore: true } }
+        });
+      }
+      if (url === "/api/v1/organization/tree?limit=100&offset=100") {
+        return Response.json({
+          data: { items: [{
+            id: "manager-2",
+            name: "Meera Iyer",
+            email: "meera@lisno.example",
+            designers: [],
+            summary: { teamKpi: { score: 0, components: [] }, workload: 0, redCount: 0, yellowCount: 0, evaluationCoverage: 0 }
+          }], pagination: { limit: 100, offset: 100, total: 101, hasMore: false } }
         });
       }
       if (url.startsWith("/api/v1/evaluations/manager-1?")) {
@@ -55,7 +66,12 @@ describe("HeadDashboard", () => {
 
     expect(await screen.findByRole("heading", { name: "Organization delivery health" })).toBeVisible();
     expect(screen.getByRole("button", { name: /Aarav Shah/ })).toBeVisible();
+    expect(screen.getByRole("button", { name: /Meera Iyer/ })).toBeVisible();
     await userEvent.click(screen.getByRole("button", { name: /Aarav Shah/ }));
+    expect(screen.getByRole("link", { name: /Aurora Villa/ })).toHaveAttribute(
+      "href",
+      "/head/projects/project-1"
+    );
     expect(await screen.findByText(/Head correction/)).toBeVisible();
     expect(screen.getByText(/design_head \(user-head\).*revision of evaluation-previous/)).toBeVisible();
   });

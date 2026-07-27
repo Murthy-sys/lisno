@@ -1,6 +1,12 @@
 import { Router } from "express";
+import { z } from "zod";
 
 import { authenticate, authorizeRoles } from "../middleware/auth.js";
+import {
+  paginatedEnvelope,
+  paginationShape
+} from "../middleware/pagination.js";
+import { validateQuery } from "../middleware/validate.js";
 import type { AuthService } from "../services/auth.service.js";
 import type { HierarchyService } from "../services/hierarchy.service.js";
 
@@ -10,15 +16,24 @@ export function createOrganizationRouter(
 ): Router {
   const router = Router();
   const protectedRoute = authenticate(authService);
+  const pageQuery = z.object(paginationShape).strict();
 
   router.get(
     "/organization/team",
     protectedRoute,
     authorizeRoles("design_manager"),
+    validateQuery(pageQuery),
     async (request, response, next) => {
       try {
+        const pagination = response.locals.validatedQuery;
         response.json({
-          data: await hierarchyService.team(request.authenticatedUser!)
+          data: paginatedEnvelope(
+            await hierarchyService.team(
+              request.authenticatedUser!,
+              pagination
+            ),
+            pagination
+          )
         });
       } catch (error) {
         next(error);
@@ -30,10 +45,18 @@ export function createOrganizationRouter(
     "/organization/tree",
     protectedRoute,
     authorizeRoles("design_head"),
+    validateQuery(pageQuery),
     async (request, response, next) => {
       try {
+        const pagination = response.locals.validatedQuery;
         response.json({
-          data: await hierarchyService.tree(request.authenticatedUser!)
+          data: paginatedEnvelope(
+            await hierarchyService.tree(
+              request.authenticatedUser!,
+              pagination
+            ),
+            pagination
+          )
         });
       } catch (error) {
         next(error);

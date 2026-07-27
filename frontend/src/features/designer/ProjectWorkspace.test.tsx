@@ -133,6 +133,7 @@ function installWorkspaceApi(options?: {
   let projectReads = 0;
   const patchBodies: unknown[] = [];
   let uploadBody: FormData | undefined;
+  const structureRequests: Array<{ path: string; body: unknown }> = [];
   let releaseUpload: () => void = () => {};
   const uploadGate = options?.holdUpload
     ? new Promise<void>((resolve) => {
@@ -152,6 +153,57 @@ function installWorkspaceApi(options?: {
         structuredClone(completedTask)
       ];
       return response(hierarchy);
+    }
+    if (
+      url === `/api/v1/projects/${project.id}/floors` &&
+      init?.method === "POST"
+    ) {
+      structureRequests.push({
+        path: url,
+        body: JSON.parse(String(init.body))
+      });
+      return response({
+        ...project.floors[0],
+        id: "floor-terrace",
+        name: "Terrace",
+        number: "T",
+        order: 2,
+        progress: 0
+      }, { status: 201 });
+    }
+    if (
+      url === `/api/v1/floors/floor-ground/stages` &&
+      init?.method === "POST"
+    ) {
+      structureRequests.push({
+        path: url,
+        body: JSON.parse(String(init.body))
+      });
+      return response({
+        ...project.floors[0]!.stages[0],
+        id: "stage-terrace",
+        name: "Terrace concept",
+        type: "concept_mood_board",
+        order: 2,
+        dependencyStageIds: []
+      }, { status: 201 });
+    }
+    if (
+      url === `/api/v1/stages/stage-plan/tasks` &&
+      init?.method === "POST"
+    ) {
+      structureRequests.push({
+        path: url,
+        body: JSON.parse(String(init.body))
+      });
+      return response({
+        ...task,
+        id: "task-terrace",
+        title: "Draft terrace concept",
+        status: "not_started",
+        progress: 0,
+        version: 1
+      }, { status: 201 });
     }
     if (url.includes("/kpis/")) {
       throw new Error("The project workspace must not request personal KPI pages.");
@@ -264,6 +316,7 @@ function installWorkspaceApi(options?: {
     getPatchBodies: () => patchBodies,
     getUploadBody: () => uploadBody,
     getProjectReads: () => projectReads,
+    getStructureRequests: () => structureRequests,
     releaseUpload
   };
 }
@@ -274,6 +327,114 @@ async function expandTask() {
 }
 
 describe("ProjectWorkspace", () => {
+  it("creates floors, stages, and tasks through labeled accessible controls", async () => {
+    tokenStorage.set("valid-token");
+    const api = installWorkspaceApi();
+    const user = userEvent.setup();
+    renderApp([`/designer/projects/${project.id}`]);
+
+    await screen.findByRole("heading", { name: "Aurora Villa" });
+    await user.click(screen.getByRole("button", { name: "Add floor" }));
+    const floorDialog = screen.getByRole("dialog", { name: "Add floor" });
+    await user.type(within(floorDialog).getByLabelText("Floor name"), "Terrace");
+    await user.type(within(floorDialog).getByLabelText("Floor number"), "T");
+    await user.clear(within(floorDialog).getByLabelText("Floor order"));
+    await user.type(within(floorDialog).getByLabelText("Floor order"), "2");
+    await user.type(
+      within(floorDialog).getByLabelText("Planned start"),
+      "2026-08-01T09:00"
+    );
+    await user.type(
+      within(floorDialog).getByLabelText("Planned end"),
+      "2026-08-31T17:00"
+    );
+    await user.click(
+      within(floorDialog).getByRole("button", { name: "Create floor" })
+    );
+
+    await user.click(await screen.findByRole("button", { name: /Ground Floor/ }));
+    await user.click(screen.getByRole("button", { name: "Add stage to Ground Floor" }));
+    const stageDialog = screen.getByRole("dialog", { name: "Add stage" });
+    await user.type(
+      within(stageDialog).getByLabelText("Stage name"),
+      "Terrace concept"
+    );
+    await user.selectOptions(
+      within(stageDialog).getByLabelText("Stage type"),
+      "concept_mood_board"
+    );
+    await user.clear(within(stageDialog).getByLabelText("Stage order"));
+    await user.type(within(stageDialog).getByLabelText("Stage order"), "2");
+    await user.click(
+      within(stageDialog).getByRole("button", { name: "Create stage" })
+    );
+
+    await user.click(await screen.findByRole("button", { name: /Floor plan/ }));
+    await user.click(screen.getByRole("button", { name: "Add task to Floor plan" }));
+    const taskDialog = screen.getByRole("dialog", { name: "Add task" });
+    await user.type(
+      within(taskDialog).getByLabelText("Task title"),
+      "Draft terrace concept"
+    );
+    await user.selectOptions(
+      within(taskDialog).getByLabelText("Task owner"),
+      designer.id
+    );
+    await user.clear(within(taskDialog).getByLabelText("Task order"));
+    await user.type(within(taskDialog).getByLabelText("Task order"), "5");
+    await user.type(
+      within(taskDialog).getByLabelText("Planned start"),
+      "2026-08-01T09:00"
+    );
+    await user.type(
+      within(taskDialog).getByLabelText("Original deadline"),
+      "2026-08-15T17:00"
+    );
+    await user.type(
+      within(taskDialog).getByLabelText("Planned effort"),
+      "12"
+    );
+    await user.click(
+      within(taskDialog).getByRole("button", { name: "Create task" })
+    );
+
+    await waitFor(() => expect(api.getStructureRequests()).toHaveLength(3));
+    expect(api.getStructureRequests()).toEqual([
+      {
+        path: `/api/v1/projects/${project.id}/floors`,
+        body: {
+          name: "Terrace",
+          number: "T",
+          order: 2,
+          plannedStartAt: new Date("2026-08-01T09:00").toISOString(),
+          plannedEndAt: new Date("2026-08-31T17:00").toISOString()
+        }
+      },
+      {
+        path: "/api/v1/floors/floor-ground/stages",
+        body: {
+          name: "Terrace concept",
+          type: "concept_mood_board",
+          order: 2
+        }
+      },
+      {
+        path: "/api/v1/stages/stage-plan/tasks",
+        body: {
+          title: "Draft terrace concept",
+          order: 5,
+          ownerId: designer.id,
+          plannedStartAt: new Date("2026-08-01T09:00").toISOString(),
+          originalDeadlineAt: new Date("2026-08-15T17:00").toISOString(),
+          plannedEffort: 12
+        }
+      }
+    ]);
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "Draft terrace concept was added."
+    );
+  });
+
   it("uses accessible floor and stage disclosures and shows ordered task details with server risk", async () => {
     tokenStorage.set("valid-token");
     installWorkspaceApi();

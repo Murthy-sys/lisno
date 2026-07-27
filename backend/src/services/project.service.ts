@@ -37,7 +37,6 @@ export interface CreateFloorInput {
   name: string;
   number: string;
   order: number;
-  progress?: number;
   plannedStartAt: string;
   plannedEndAt: string;
 }
@@ -61,8 +60,10 @@ export interface CreateTaskInput {
   dependencyTaskIds?: string[];
 }
 
+export type DerivedProject = ProjectRecord & { progress: number };
+
 export type ClientProject = Pick<
-  ProjectRecord,
+  DerivedProject,
   | "id"
   | "name"
   | "status"
@@ -73,13 +74,20 @@ export type ClientProject = Pick<
   | "actualEndAt"
   | "createdAt"
   | "updatedAt"
+  | "progress"
 >;
+
+export type ClientProjectSummary = ClientProject & { floorCount: number };
 
 export interface ProjectService {
   list(
     actor: PublicUser,
     pagination: PaginationInput
-  ): Promise<PageResult<ProjectRecord | ClientProject>>;
+  ): Promise<PageResult<DerivedProject | ClientProject>>;
+  clientSummaries(
+    actor: PublicUser,
+    pagination: PaginationInput
+  ): Promise<PageResult<ClientProjectSummary>>;
   create(actor: PublicUser, input: CreateProjectInput): Promise<ProjectRecord>;
   get(
     actor: PublicUser,
@@ -103,6 +111,7 @@ export interface ProjectService {
 }
 
 export type RiskDecoratedProjectHierarchy = Omit<ProjectHierarchy, "floors"> & {
+  progress: number;
   floors: Array<
     FloorRecord & {
       stages: Array<
@@ -143,12 +152,41 @@ export function createProjectService(
     async list(actor, pagination) {
       const user = await requireActor(repository, actor);
       const page = await repository.pageProjectsForUser(user, pagination);
+      const tasks = await repository.listTasksForProjectIds(
+        page.items.map((project) => project.id)
+      );
+      const items = page.items.map((project) =>
+        deriveProjectRead(project, tasks.filter((task) => task.projectId === project.id))
+      );
       return {
         ...page,
         items:
           actor.role === "client"
-            ? page.items.map(toClientProject)
-            : page.items
+            ? items.map(toClientProject)
+            : items
+      };
+    },
+
+    async clientSummaries(actor, pagination) {
+      const user = await requireActor(repository, actor);
+      if (user.role !== "client") forbidden();
+      const page = await repository.pageProjectsForUser(user, pagination);
+      const projectIds = page.items.map((project) => project.id);
+      const [tasks, floors] = await Promise.all([
+        repository.listTasksForProjectIds(projectIds),
+        repository.listFloorsForProjectIds(projectIds)
+      ]);
+      return {
+        ...page,
+        items: page.items.map((project) => ({
+          ...toClientProject(
+            deriveProjectRead(
+              project,
+              tasks.filter((task) => task.projectId === project.id)
+            )
+          ),
+          floorCount: floors.filter((floor) => floor.projectId === project.id).length
+        }))
       };
     },
 
@@ -247,11 +285,12 @@ export function createProjectService(
       if (!hierarchy) {
         throw new ApiError(404, "NOT_FOUND", "The requested resource was not found.");
       }
+      const derivedHierarchy = deriveHierarchy(hierarchy);
       if (actor.role !== "client") {
         const now = clock();
         return {
-          ...hierarchy,
-          floors: hierarchy.floors.map((floor) => ({
+          ...derivedHierarchy,
+          floors: derivedHierarchy.floors.map((floor) => ({
             ...floor,
             stages: floor.stages.map((stage) => ({
               ...stage,
@@ -264,8 +303,8 @@ export function createProjectService(
         };
       }
       return {
-        ...toClientProject(hierarchy),
-        floors: hierarchy.floors.map((floor) => ({
+        ...toClientProject(derivedHierarchy),
+        floors: derivedHierarchy.floors.map((floor) => ({
           id: floor.id,
           projectId: floor.projectId,
           name: floor.name,
@@ -298,7 +337,7 @@ export function createProjectService(
         name: input.name,
         number: input.number,
         order: input.order,
-        progress: input.progress ?? 0,
+        progress: 0,
         plannedStartAt: input.plannedStartAt,
         plannedEndAt: input.plannedEndAt,
         actualStartAt: null,
@@ -468,7 +507,7 @@ export function createProjectService(
   };
 }
 
-function toClientProject(project: ProjectRecord): ClientProject {
+function toClientProject(project: DerivedProject): ClientProject {
   return {
     id: project.id,
     name: project.name,
@@ -479,8 +518,62 @@ function toClientProject(project: ProjectRecord): ClientProject {
     actualStartAt: project.actualStartAt,
     actualEndAt: project.actualEndAt,
     createdAt: project.createdAt,
-    updatedAt: project.updatedAt
+    updatedAt: project.updatedAt,
+    progress: project.progress
   };
+}
+
+function deriveHierarchy(
+  hierarchy: ProjectHierarchy
+): ProjectHierarchy & { progress: number } {
+  const allTasks = hierarchy.floors.flatMap((floor) =>
+    floor.stages.flatMap((stage) => stage.tasks)
+  );
+  const project = deriveProjectRead(hierarchy, allTasks);
+  return {
+    ...hierarchy,
+    status: project.status,
+    progress: project.progress,
+    floors: hierarchy.floors.map((floor) => {
+      const floorTasks = floor.stages.flatMap((stage) => stage.tasks);
+      return { ...floor, progress: taskProgress(floorTasks) };
+    })
+  };
+}
+
+export function deriveProjectRead(
+  project: ProjectRecord,
+  tasks: TaskRecord[]
+): DerivedProject {
+  return {
+    ...project,
+    status:
+      tasks.length === 0
+        ? "planning"
+        : tasks.every((task) => task.status === "completed")
+          ? "completed"
+          : tasks.some(
+                (task) => task.status !== "not_started" || task.progress > 0
+              )
+            ? "active"
+            : "planning",
+    progress: taskProgress(tasks)
+  };
+}
+
+function taskProgress(tasks: TaskRecord[]): number {
+  const totalEffort = tasks.reduce((total, task) => total + taskWeight(task), 0);
+  if (totalEffort === 0) return 0;
+  return Math.round(
+    tasks.reduce(
+      (total, task) => total + task.progress * taskWeight(task),
+      0
+    ) / totalEffort
+  );
+}
+
+function taskWeight(task: TaskRecord): number {
+  return task.plannedEffort && task.plannedEffort > 0 ? task.plannedEffort : 1;
 }
 
 async function findAccessibleFloor(

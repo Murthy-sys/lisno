@@ -1,5 +1,5 @@
 import { apiClient } from "../../api/client";
-import type { ClientDesignVersion, PageData, Project, ProjectHierarchy } from "../../api/types";
+import type { ClientDesignVersion, ClientProjectSummary, PageData, Project, ProjectHierarchy } from "../../api/types";
 
 const PAGE_SIZE = 100;
 
@@ -12,6 +12,14 @@ export const clientKeys = {
 
 export async function getClientProjects(): Promise<Project[]> {
   return getAllPages((offset) => apiClient.get<PageData<Project>>(`/projects?limit=${PAGE_SIZE}&offset=${offset}`));
+}
+
+export async function getClientProjectSummaries(): Promise<ClientProjectSummary[]> {
+  return getAllPages((offset) =>
+    apiClient.get<PageData<ClientProjectSummary>>(
+      `/client/project-summaries?limit=${PAGE_SIZE}&offset=${offset}`
+    )
+  );
 }
 
 export const getClientProject = (projectId: string) => apiClient.get<ProjectHierarchy>(`/projects/${encodeURIComponent(projectId)}`);

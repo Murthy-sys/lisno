@@ -1,9 +1,15 @@
 import { apiClient } from "../../api/client";
 import type {
+  CreateFloorInput,
+  CreateStageInput,
+  CreateTaskInput,
+  DesignStage,
+  Floor,
   KpiRead,
   KpiTaskRead,
   PageData,
   Project,
+  TaskRecord,
   TaskEvent
 } from "../../api/types";
 
@@ -77,6 +83,36 @@ export function getKpiTaskPage(
 export function getLatestTaskEvent(taskId: string): Promise<PageData<TaskEvent>> {
   return apiClient.get<PageData<TaskEvent>>(
     `/tasks/${encodeURIComponent(taskId)}/events?sort=desc&limit=1&offset=0`
+  );
+}
+
+export function createFloor(
+  projectId: string,
+  input: CreateFloorInput
+): Promise<Floor> {
+  return apiClient.post(
+    `/projects/${encodeURIComponent(projectId)}/floors`,
+    input
+  );
+}
+
+export function createStage(
+  floorId: string,
+  input: CreateStageInput
+): Promise<DesignStage> {
+  return apiClient.post(
+    `/floors/${encodeURIComponent(floorId)}/stages`,
+    input
+  );
+}
+
+export function createTask(
+  stageId: string,
+  input: CreateTaskInput
+): Promise<TaskRecord> {
+  return apiClient.post(
+    `/stages/${encodeURIComponent(stageId)}/tasks`,
+    input
   );
 }
 
