@@ -63,6 +63,21 @@ PaddleOCR may download and cache model files on its first real extraction, so
 the first job can take longer. See [ocr-worker/README.md](ocr-worker/README.md)
 for worker settings, supported formats, model-cache behavior, and recovery.
 
+## Drawing-title extraction
+
+OCR creates application-internal `section` records only for supported drawing
+titles: floor, room, ceiling, site, roof, electrical, plumbing, and furniture
+layout plans, plus directional elevations (front, rear/back, side, left, and
+right). A supported title may include a controlled floor, room, residence, or
+project qualifier.
+
+The worker explicitly excludes legends, notes and directives, key/vicinity
+plans and location maps, dimensions and symbols, material/finish specifications,
+cross sections, details, diagrams, schedules, and unsupported drawing types.
+In this application, a `section` record is an extracted UI/data record; it must
+not be confused with an architectural Section drawing, which is excluded from
+this title taxonomy.
+
 > Warning: `npm run seed` is an explicit demo-reset operation. It deletes all
 > records in Lisno's demo-domain collections (including design-version
 > sequences) before inserting the deterministic seed. Never run it against a

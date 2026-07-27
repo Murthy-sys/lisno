@@ -15,9 +15,17 @@ class FixtureOcr:
     def predict(self, input):
         height, width = input.shape[:2]
         return [{
-            "rec_boxes": [[width // 5, height // 3, width // 2, height // 3 + 45]],
-            "rec_texts": ["Front Elevation"],
-            "rec_scores": [0.97],
+            "rec_boxes": [
+                [width // 5, height // 3, width // 2, height // 3 + 45],
+                [width // 5, height // 2, width // 2, height // 2 + 45],
+                [width // 5, height * 2 // 3, width // 2, height * 2 // 3 + 45],
+            ],
+            "rec_texts": [
+                "Front Elevation",
+                "Electrical Legend",
+                "Building Cross Section A-A",
+            ],
+            "rec_scores": [0.97, 0.99, 0.99],
         }]
 
 
@@ -35,6 +43,9 @@ def test_labeled_plan_serializes_to_the_backend_completion_contract():
     assert payload["pages"][0]["pageNumber"] == 1
     assert payload["pages"][0]["width"] > 0
     assert payload["pages"][0]["height"] > 0
+    assert [section["label"] for section in payload["pages"][0]["sections"]] == [
+        "Front Elevation"
+    ]
 
     section = payload["pages"][0]["sections"][0]
     assert set(section) == {"label", "confidence", "crop", "imageBase64"}

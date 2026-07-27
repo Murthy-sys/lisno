@@ -21,6 +21,19 @@ class FakePaddleOCR3:
         return self.result
 
 
+class PageAwareFakePaddleOCR3(FakePaddleOCR3):
+    def __init__(self, page_results):
+        super().__init__([page_results[0]])
+        self.page_results = page_results
+
+    def predict(self, input):
+        assert input.ndim == 3
+        assert self.calls < len(self.page_results)
+        result = self.page_results[self.calls]
+        self.calls += 1
+        return [result]
+
+
 class FakeLegacyPaddleOCR:
     def __init__(self, result):
         self.result = result
@@ -42,6 +55,84 @@ def test_renders_every_pdf_page_with_positive_pixel_dimensions():
     assert all(page.width > 0 and page.height > 0 for page in pages)
     assert all(page.image_base64 for page in pages)
     assert ocr.calls == 2
+
+
+def test_extracts_exact_approved_blueprint_titles_in_page_order():
+    page_results = [
+        {
+            "rec_boxes": [
+                [40, 40, 410, 78],
+                [450, 42, 690, 76],
+                [40, 125, 300, 157],
+                [450, 125, 700, 157],
+            ],
+            "rec_texts": [
+                "Floor Plan – 3BHK Residence",
+                "Electrical Legend",
+                "Building Cross Section A-A",
+                "GENERAL NOTES",
+            ],
+            "rec_scores": [0.97, 0.99, 0.99, 0.99],
+        },
+        {
+            "rec_boxes": [
+                [40, 40, 260, 72],
+                [44, 78, 330, 114],
+                [40, 160, 290, 198],
+                [40, 250, 390, 288],
+                [450, 40, 710, 72],
+                [450, 120, 700, 152],
+            ],
+            "rec_texts": [
+                "Living Room",
+                "Front Elevation",
+                "Side Elevation (Left)",
+                "Ceiling Plan – Living Room",
+                "Door Schedule",
+                "1. All dimensions in mm",
+            ],
+            "rec_scores": [0.96, 0.91, 0.93, 0.94, 0.99, 0.99],
+        },
+    ]
+
+    pages = Extractor(
+        ocr_engine=PageAwareFakePaddleOCR3(page_results)
+    ).extract(FIXTURES / "two-page-plan.pdf")
+
+    assert [[section.label for section in page.sections] for page in pages] == [
+        ["Floor Plan – 3BHK Residence"],
+        [
+            "Living Room – Front Elevation",
+            "Side Elevation (Left)",
+            "Ceiling Plan – Living Room",
+        ],
+    ]
+
+
+def test_extracts_zero_sections_from_a_noise_only_page():
+    ocr = PageAwareFakePaddleOCR3([
+        {
+            "rec_boxes": [
+                [40, 40, 320, 76],
+                [40, 120, 320, 156],
+                [40, 200, 320, 236],
+                [40, 280, 320, 316],
+                [40, 360, 320, 396],
+            ],
+            "rec_texts": [
+                "GENERAL NOTES",
+                "Key Plan",
+                "Window Detail 04",
+                "Building Cross Section A-A",
+                "1. Refer to Floor Plan",
+            ],
+            "rec_scores": [0.99, 0.99, 0.99, 0.99, 0.99],
+        }
+    ])
+
+    page = Extractor(ocr_engine=ocr).extract(FIXTURES / "labeled-plan.png")[0]
+
+    assert page.sections == ()
 
 
 def test_uses_paddleocr3_predict_and_parses_structured_results():
