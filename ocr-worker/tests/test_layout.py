@@ -74,6 +74,25 @@ def test_rejects_annotations_dimensions_reserved_regions_and_room_labels(text):
     ) is None
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        "A. MATERIAL TEAK VENEER – POLISHED",
+        "A. TILE WITH GROUT",
+        "B. DISPLAY UNIT WITH LED LIGHT",
+        "C. WALL PANEL FLUTED FINISH",
+        "D. LAMINATE FINISH",
+    ],
+)
+def test_rejects_marked_mid_page_material_and_finish_callouts(text):
+    assert classify_heading(
+        OcrLine((100, 420, 700, 465), text, 0.99),
+        1400,
+        1000,
+        LayoutSettings.defaults(),
+    ) is None
+
+
 def test_rejects_unmarked_heading_evidence_in_the_reserved_bottom_band():
     assert classify_heading(
         OcrLine((100, 900, 700, 950), "FLOOR PLAN – 3BHK RESIDENCE", 0.99),

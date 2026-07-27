@@ -61,7 +61,9 @@ def is_reserved_or_annotation(
         return True
     if _DIMENSION_RE.search(match_text) or _UNIT_DIMENSION_RE.search(match_text):
         return True
-    if _NOTE_RE.search(match_text) or _looks_like_callout(text, match_text):
+    if _NOTE_RE.search(match_text) or _looks_like_callout(
+        text, match_text, _has_drawing_term(match_text, settings)
+    ):
         return True
     if (
         page_height > 0
@@ -81,9 +83,7 @@ def heading_evidence(
 ) -> tuple[float, Literal["page_title", "panel"]]:
     match_text = _match_text(text)
     has_marker = bool(_PANEL_MARKER_RE.match(text))
-    has_drawing_term = any(
-        _contains_term(match_text, term) for term in settings.drawing_terms
-    )
+    has_drawing_term = _has_drawing_term(match_text, settings)
     words = re.findall(r"[A-Za-z]+", text)
     left, top, right, _bottom = box
     width_ratio = max(0, right - left) / max(page_width, 1)
@@ -139,6 +139,10 @@ def _contains_term(text: str, term: str) -> bool:
     return bool(re.search(rf"(?<!\w){re.escape(term.casefold())}(?!\w)", text))
 
 
+def _has_drawing_term(text: str, settings: LayoutSettings) -> bool:
+    return any(_contains_term(text, term) for term in settings.drawing_terms)
+
+
 def _has_heading_case(text: str) -> bool:
     letters = "".join(character for character in text if character.isalpha())
     return bool(letters) and (letters.isupper() or text.istitle())
@@ -165,18 +169,29 @@ _NOTE_RE = re.compile(r"\b(?:all\s+dimensions?|dimensions?\s+are|note|notes)\b")
 _CALLOUT_PHRASE_RE = re.compile(
     r"\b(?:to\s+match|match\s+existing|as\s+per|refer\s+to|to\s+existing|to\s+be)\b"
 )
+_CALLOUT_PREFIX_RE = re.compile(r"^(?:material|finish|spec(?:ification)?)\b")
+_FINISH_TREATMENT_RE = re.compile(r"\bfinish\b")
 _DISPLAY_WORD_RE = re.compile(r"[A-Za-z]+(?:\d+)?|\d+[A-Za-z][A-Za-z0-9]*")
 _DIGIT_ACRONYM_RE = re.compile(r"\d+[A-Z]{2,}\d*")
 _DISPLAY_ACRONYMS = frozenset({"AC", "DB", "FFL", "HVAC", "LED", "MEP", "RCP", "TV", "UPVC", "WC"})
 
 
-def _looks_like_callout(text: str, match_text: str) -> bool:
+def _looks_like_callout(
+    text: str, match_text: str, has_drawing_term: bool
+) -> bool:
     unmarked = _PANEL_MARKER_RE.sub("", text).strip()
+    if _CALLOUT_PREFIX_RE.search(_match_text(unmarked)):
+        return True
     prefix, separator, description = unmarked.partition(":")
     if separator and len(_match_text(prefix).split()) <= 3 and len(
         _match_text(description).split()
     ) >= 2:
         return True
-    if not _PANEL_MARKER_RE.match(text) and re.search(r"\bwith\b", match_text):
+    has_marker = bool(_PANEL_MARKER_RE.match(text))
+    has_with_phrase = bool(re.search(r"\bwith\b", match_text))
+    has_finish_treatment = bool(_FINISH_TREATMENT_RE.search(match_text))
+    if (not has_marker and has_with_phrase) or (
+        not has_drawing_term and (has_with_phrase or has_finish_treatment)
+    ):
         return True
     return bool(_CALLOUT_PHRASE_RE.search(match_text))
