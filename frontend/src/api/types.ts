@@ -487,6 +487,7 @@ export interface DesignSection {
   createdAt: string;
   updatedAt: string;
   revision: DesignSectionRevision;
+  history?: DesignSectionRevision[];
 }
 
 export interface DesignSectionReviewItem extends DesignSection {

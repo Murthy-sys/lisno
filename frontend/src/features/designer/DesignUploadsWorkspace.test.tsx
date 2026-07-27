@@ -38,7 +38,7 @@ const page = {
 };
 const secondPage = { ...page, id: "page-2", pageNumber: 2, width: 1000, height: 700, imageUrl: "/api/v1/design-source-pages/page-2/image" };
 
-const section = {
+const section: DesignSection = {
   id: "section-1",
   designVersionId: "version-1",
   sourcePageId: "page-1",
@@ -72,7 +72,23 @@ function response(data: unknown, init?: ResponseInit) {
 function installApi(status = "designer_review", mutation?: "network" | "conflict") {
   const requests: Array<{ url: string; method: string; body?: unknown }> = [];
   let currentStatus = status;
-  let currentSections = status === "designer_review" ? [structuredClone(section)] : [];
+  let currentSections: DesignSection[] = status === "designer_review" ? [structuredClone(section)] :
+    status === "submitted" || status === "approved" ? [{
+      ...structuredClone(section),
+      revision: {
+        ...structuredClone(section.revision),
+        reviewStatus: status === "approved" ? "approved" as const : "submitted" as const,
+        submittedAt: "2026-07-27T01:00:00.000Z"
+      },
+      history: [{
+        ...structuredClone(section.revision),
+        reviewStatus: "rejected" as const,
+        submittedAt: "2026-07-27T00:30:00.000Z",
+        reviewedAt: "2026-07-27T00:45:00.000Z",
+        reviewerId: "client-1",
+        rejectionComment: "Show the full roof line."
+      }]
+    }] : [];
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = String(input);
     const method = init?.method ?? "GET";
@@ -148,6 +164,14 @@ function installApi(status = "designer_review", mutation?: "network" | "conflict
 }
 
 describe("DesignUploadsWorkspace", () => {
+  it("shows terminal review history to the designer as read-only", async () => {
+    installApi("submitted");
+    renderWithQuery(<DesignUploadsWorkspace projectId="project-1" />);
+    expect(await screen.findByText(/Sections submitted to the client/i)).toBeVisible();
+    expect(screen.getByText(/Show the full roof line/i)).toBeVisible();
+    expect(screen.getByLabelText("Section label")).toBeDisabled();
+  });
+
   it("shows processing and failed extraction states with retry", async () => {
     installApi("processing");
     const { unmount } = renderWithQuery(<DesignUploadsWorkspace projectId="project-1" />);

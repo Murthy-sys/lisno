@@ -37,7 +37,9 @@ service; do not delete it during routine deployments.
 - `OCR_CONFIDENCE_FLOOR` — candidates below this score are discarded; default
   `0.2`, while candidates below the UI warning threshold remain reviewable.
 - `OCR_MAX_PDF_PAGES`, `OCR_MAX_PAGE_PIXELS`, and `OCR_MAX_OUTPUT_BYTES` bound
-  PDF rendering, decompression, and generated page/crop payloads.
+  PDF rendering, decompression, and generated page/crop payloads. Output
+  defaults to 40 MiB and cannot exceed 44 MiB so base64 and JSON overhead stay
+  below the backend's 64 MiB request limit.
 - `OCR_MAX_PROCESSING_SECONDS` stops lease renewal after a bounded processing
   window (default `900`), allowing a wedged model job to be reclaimed safely.
 

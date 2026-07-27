@@ -42,3 +42,22 @@ polling thread. Instead, it stops renewing the lease after
 `OCR_MAX_PROCESSING_SECONDS`; stale completion is claim-token rejected and the
 job becomes reclaimable. Page, pixel, candidate, and output ceilings bound
 normal document-driven resource growth.
+
+## Hardening round 2
+
+- PDF pages are now inspected and rendered lazily. Page count and scaled pixel
+  dimensions are rejected before pixmap allocation; each full-resolution page
+  image is closed before advancing.
+- Image dimensions are inspected from the header before Pillow loads and
+  decompresses image pixels.
+- OCR candidate count is enforced before crop/PNG work. A running decoded
+  output budget rejects during page/section generation, so later candidates
+  and pages are not encoded after exhaustion.
+- Worker output defaults to 40 MiB and is capped at 44 MiB, leaving bounded
+  base64 and JSON overhead below Express's 64 MiB transport limit.
+- Backend result validation now fully decodes PNGs with Sharp and verifies page
+  and crop pixel dimensions against the declared contract.
+- Worker startup validates heartbeat interval below the configured lease and
+  maximum processing duration above the heartbeat interval.
+- Owning designers receive safe non-draft revision history and client comments
+  in terminal/review states; the read-only UI renders that history.

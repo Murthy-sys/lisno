@@ -171,6 +171,12 @@ describe("client design section review", () => {
       reviewStatus: "rejected",
       rejectionComment: "Show the full roof line."
     });
+    expect(response.body.data.sections[0].history).toEqual([
+      expect.objectContaining({
+        reviewStatus: "rejected",
+        rejectionComment: "Show the full roof line."
+      })
+    ]);
 
     await request(app)
       .get("/api/v1/design-versions/version-aurora-plan-1/sections")

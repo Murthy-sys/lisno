@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 from collections.abc import Mapping
 from collections import deque
+from collections.abc import Iterator
 from io import BytesIO
 from pathlib import Path
 from typing import Any, Iterable
@@ -39,45 +40,44 @@ class Extractor:
             raise InvalidSourceError("The extraction source does not exist.")
         suffix = path.suffix.lower()
         if suffix == ".pdf":
-            images = self._render_pdf(path)
+            images = self._render_pdf_pages(path)
         elif suffix in {".png", ".jpg", ".jpeg", ".webp"}:
-            images = [self._open_image(path)]
+            images = iter((self._open_image(path),))
         else:
             raise InvalidSourceError("The extraction source type is unsupported.")
-        pages = [
-            self._extract_page(image, page_number)
-            for page_number, image in enumerate(images, start=1)
-        ]
-        encoded_bytes = sum(
-            len(page.image_base64) +
-            sum(len(section.image_base64) for section in page.sections)
-            for page in pages
-        ) * 3 // 4
-        if encoded_bytes > self._max_output_bytes:
-            raise OcrError("The extracted image output is too large.")
+        pages: list[ExtractedPage] = []
+        remaining = self._max_output_bytes
+        for page_number, image in enumerate(images, start=1):
+            try:
+                page, used = self._extract_page(image, page_number, remaining)
+                pages.append(page)
+                remaining -= used
+            finally:
+                image.close()
         return pages
 
-    def _render_pdf(self, path: Path) -> list[Image.Image]:
+    def _render_pdf_pages(self, path: Path) -> Iterator[Image.Image]:
         try:
             document = fitz.open(path)
         except Exception as error:
             raise PdfRenderError("The PDF could not be opened.") from error
+        if document.page_count < 1:
+            document.close()
+            raise PdfRenderError("The PDF contains no pages.")
+        if document.page_count > self._max_pdf_pages:
+            document.close()
+            raise PdfRenderError("The PDF contains too many pages.")
+        matrix = fitz.Matrix(self._render_scale, self._render_scale)
         try:
-            if document.page_count < 1:
-                raise PdfRenderError("The PDF contains no pages.")
-            if document.page_count > self._max_pdf_pages:
-                raise PdfRenderError("The PDF contains too many pages.")
-            matrix = fitz.Matrix(self._render_scale, self._render_scale)
-            images: list[Image.Image] = []
             for page in document:
-                pixmap = page.get_pixmap(matrix=matrix, alpha=False)
-                if pixmap.width * pixmap.height > self._max_page_pixels:
+                expected_width = int(round(page.rect.width * self._render_scale))
+                expected_height = int(round(page.rect.height * self._render_scale))
+                if expected_width * expected_height > self._max_page_pixels:
                     raise PdfRenderError("A rendered PDF page is too large.")
-                image = Image.frombytes(
+                pixmap = page.get_pixmap(matrix=matrix, alpha=False)
+                yield Image.frombytes(
                     "RGB", (pixmap.width, pixmap.height), pixmap.samples
                 )
-                images.append(image)
-            return images
         except PdfRenderError:
             raise
         except Exception as error:
@@ -87,29 +87,45 @@ class Extractor:
 
     def _open_image(self, path: Path) -> Image.Image:
         try:
-            with Image.open(path) as source:
-                source.load()
-                if source.width * source.height > self._max_page_pixels:
-                    raise InvalidSourceError("The source image is too large.")
-                return source.convert("RGB")
+            source = Image.open(path)
+            if source.width * source.height > self._max_page_pixels:
+                source.close()
+                raise InvalidSourceError("The source image is too large.")
+            source.load()
+            converted = source.convert("RGB")
+            source.close()
+            return converted
         except (UnidentifiedImageError, OSError, ValueError) as error:
             raise InvalidSourceError("The source image could not be decoded.") from error
 
-    def _extract_page(self, image: Image.Image, page_number: int) -> ExtractedPage:
+    def _extract_page(
+        self, image: Image.Image, page_number: int, remaining_bytes: int
+    ) -> tuple[ExtractedPage, int]:
         labels = self._recognize(image)
         regions = _drawing_regions(image, [box for box, _, _ in labels])
-        sections = tuple(
-            self._section_for_label(image, box, label, confidence, regions)
-            for box, label, confidence in labels
-            if label and confidence >= self._confidence_floor
-        )[:500]
+        page_base64 = _png_base64(image)
+        used = _decoded_base64_size(page_base64)
+        _require_budget(used, remaining_bytes)
+        sections: list[ExtractedSection] = []
+        for box, label, confidence in labels:
+            if len(sections) >= 500:
+                break
+            if not label or confidence < self._confidence_floor:
+                continue
+            section = self._section_for_label(
+                image, box, label, confidence, regions
+            )
+            section_bytes = _decoded_base64_size(section.image_base64)
+            _require_budget(used + section_bytes, remaining_bytes)
+            sections.append(section)
+            used += section_bytes
         return ExtractedPage(
             page_number=page_number,
             width=image.width,
             height=image.height,
-            image_base64=_png_base64(image),
-            sections=sections,
-        )
+            image_base64=page_base64,
+            sections=tuple(sections),
+        ), used
 
     def _recognize(
         self, image: Image.Image
@@ -348,3 +364,12 @@ def _png_base64(image: Image.Image) -> str:
     output = BytesIO()
     image.save(output, format="PNG", optimize=True)
     return base64.b64encode(output.getvalue()).decode("ascii")
+
+
+def _decoded_base64_size(value: str) -> int:
+    return len(value) * 3 // 4
+
+
+def _require_budget(used: int, maximum: int) -> None:
+    if used > maximum:
+        raise OcrError("The extracted image output is too large.")

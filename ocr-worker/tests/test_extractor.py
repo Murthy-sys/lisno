@@ -79,6 +79,81 @@ def test_filters_candidates_below_configured_confidence_floor():
     assert [section.label for section in sections] == ["Ambiguous elevation"]
 
 
+def test_candidate_cap_stops_crop_encoding_before_candidate_501(monkeypatch):
+    labels = 501
+    ocr = FakePaddleOCR3([{
+        "rec_boxes": [[1, 1, 20, 20]] * labels,
+        "rec_texts": [f"Section {index}" for index in range(labels)],
+        "rec_scores": [0.9] * labels,
+    }])
+    encoded = 0
+    from lisno_ocr import extractor as module
+    original = module._png_base64
+
+    def counted(image):
+        nonlocal encoded
+        encoded += 1
+        return original(image)
+
+    monkeypatch.setattr(module, "_png_base64", counted)
+    sections = Extractor(ocr_engine=ocr).extract(
+        FIXTURES / "labeled-plan.png"
+    )[0].sections
+
+    assert len(sections) == 500
+    assert encoded == 501  # one page plus exactly 500 crops
+
+
+def test_output_budget_stops_before_encoding_later_candidates(monkeypatch):
+    ocr = FakePaddleOCR3([{
+        "rec_boxes": [[1, 1, 20, 20], [30, 30, 60, 60]],
+        "rec_texts": ["First", "Second"],
+        "rec_scores": [0.9, 0.9],
+    }])
+    encoded = 0
+    from lisno_ocr import extractor as module
+
+    def fixed(_image):
+        nonlocal encoded
+        encoded += 1
+        return "A" * 40
+
+    monkeypatch.setattr(module, "_png_base64", fixed)
+    with pytest.raises(Exception, match="output is too large"):
+        Extractor(ocr_engine=ocr, max_output_bytes=31).extract(
+            FIXTURES / "labeled-plan.png"
+        )
+    assert encoded == 2  # page + first crop; second crop never encoded
+
+
+def test_pdf_dimension_budget_rejects_before_pixmap_allocation(monkeypatch, tmp_path):
+    class Rect:
+        width = 10_000
+        height = 10_000
+
+    class Page:
+        rect = Rect()
+
+        def get_pixmap(self, **_kwargs):
+            raise AssertionError("oversized page must not allocate a pixmap")
+
+    class Document:
+        page_count = 1
+
+        def __iter__(self):
+            return iter([Page()])
+
+        def close(self):
+            pass
+
+    source = tmp_path / "large.pdf"
+    source.write_bytes(b"%PDF")
+    monkeypatch.setattr("lisno_ocr.extractor.fitz.open", lambda _path: Document())
+
+    with pytest.raises(Exception, match="page is too large"):
+        Extractor(ocr_engine=FakePaddleOCR3([]), max_page_pixels=1_000).extract(source)
+
+
 def test_legacy_ocr_output_remains_a_fallback():
     result = [
         [

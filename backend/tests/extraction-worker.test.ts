@@ -2,6 +2,7 @@ import { Readable } from "node:stream";
 
 import jwt from "jsonwebtoken";
 import request from "supertest";
+import sharp from "sharp";
 import { describe, expect, it } from "vitest";
 
 import { createApp } from "../src/app.js";
@@ -21,6 +22,12 @@ const PNG_BASE64 =
 const NON_CANONICAL_PNG_BASE64 =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYIJ=";
 const PNG = Buffer.from(PNG_BASE64, "base64");
+const PAGE_PNG = await sharp({
+  create: { width: 1000, height: 800, channels: 3, background: "white" }
+}).png().toBuffer();
+const CROP_PNG = await sharp({
+  create: { width: 200, height: 100, channels: 3, background: "white" }
+}).png().toBuffer();
 
 class TestStorage {
   private sequence = 0;
@@ -78,7 +85,7 @@ async function setup() {
     storage,
     ocrLeaseSeconds: 300,
     ocrWorkerToken: WORKER_TOKEN,
-    maxUploadBytes: 1024
+    maxUploadBytes: 10_000
   });
   return { app, repository, storage };
 }
@@ -98,13 +105,13 @@ function completeBody(crop = { x: 20, y: 30, width: 200, height: 100 }) {
         pageNumber: 1,
         width: 1000,
         height: 800,
-        imageBase64: PNG.toString("base64"),
+        imageBase64: PAGE_PNG.toString("base64"),
         sections: [
           {
             label: "  Ground   Floor Elevation  ",
             confidence: 0.42,
             crop,
-            imageBase64: PNG.toString("base64")
+            imageBase64: CROP_PNG.toString("base64")
           }
         ]
       }
@@ -276,7 +283,7 @@ describe("OCR extraction worker contract", () => {
     const { app } = await setup();
     const leased = await claim(app);
     const body = completeBody();
-    body.pages[0]!.imageBase64 = Buffer.alloc(1025).toString("base64");
+    body.pages[0]!.imageBase64 = Buffer.alloc(10_001).toString("base64");
 
     await request(app)
       .post("/api/v1/internal/extraction-jobs/job-1/complete")
@@ -313,6 +320,31 @@ describe("OCR extraction worker contract", () => {
       .set("X-Extraction-Claim-Token", leased.body.data.claimToken)
       .send(body)
       .expect(400);
+  });
+
+  it("rejects truncated PNGs and declared dimensions that do not match decoded images", async () => {
+    for (const mutate of [
+      (body: ReturnType<typeof completeBody>) => {
+        body.pages[0]!.imageBase64 = PNG.subarray(0, 24).toString("base64");
+      },
+      (body: ReturnType<typeof completeBody>) => {
+        body.pages[0]!.width = 2;
+      },
+      (body: ReturnType<typeof completeBody>) => {
+        body.pages[0]!.sections[0]!.crop.width = 2;
+      }
+    ]) {
+      const { app } = await setup();
+      const leased = await claim(app);
+      const body = completeBody();
+      mutate(body);
+      await request(app)
+        .post("/api/v1/internal/extraction-jobs/job-1/complete")
+        .set("Authorization", `Bearer ${WORKER_TOKEN}`)
+        .set("X-Extraction-Claim-Token", leased.body.data.claimToken)
+        .send(body)
+        .expect(400);
+    }
   });
 
   it("filters OCR proposals below the configured confidence floor", async () => {

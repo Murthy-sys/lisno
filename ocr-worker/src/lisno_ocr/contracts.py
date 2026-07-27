@@ -87,7 +87,7 @@ class WorkerSettings:
     confidence_floor: float = 0.2
     max_pdf_pages: int = 50
     max_page_pixels: int = 40_000_000
-    max_output_bytes: int = 64_000_000
+    max_output_bytes: int = 40 * 1024 * 1024
     heartbeat_seconds: float = 60.0
     max_processing_seconds: float = 900.0
 
@@ -104,9 +104,16 @@ class WorkerSettings:
         confidence_floor = _bounded_float("OCR_CONFIDENCE_FLOOR", 0.2, 0.0, 1.0)
         max_pdf_pages = _positive_int("OCR_MAX_PDF_PAGES", 50)
         max_page_pixels = _positive_int("OCR_MAX_PAGE_PIXELS", 40_000_000)
-        max_output_bytes = _positive_int("OCR_MAX_OUTPUT_BYTES", 64_000_000)
+        max_output_bytes = _bounded_positive_int(
+            "OCR_MAX_OUTPUT_BYTES", 40 * 1024 * 1024, 44 * 1024 * 1024
+        )
         heartbeat_seconds = _positive_float("OCR_HEARTBEAT_SECONDS", 60.0)
         max_processing_seconds = _positive_float("OCR_MAX_PROCESSING_SECONDS", 900.0)
+        lease_seconds = _positive_float("OCR_LEASE_SECONDS", 300.0)
+        if heartbeat_seconds >= lease_seconds:
+            raise ValueError("OCR_HEARTBEAT_SECONDS must be below OCR_LEASE_SECONDS.")
+        if max_processing_seconds <= heartbeat_seconds:
+            raise ValueError("OCR_MAX_PROCESSING_SECONDS must exceed OCR_HEARTBEAT_SECONDS.")
         return cls(
             api_base_url=api_base_url,
             worker_token=worker_token,
@@ -153,6 +160,13 @@ def _positive_int(name: str, default: int) -> int:
     value = int(os.environ.get(name, str(default)))
     if value <= 0:
         raise ValueError(f"{name} must be positive.")
+    return value
+
+
+def _bounded_positive_int(name: str, default: int, maximum: int) -> int:
+    value = _positive_int(name, default)
+    if value > maximum:
+        raise ValueError(f"{name} must not exceed {maximum}.")
     return value
 
 

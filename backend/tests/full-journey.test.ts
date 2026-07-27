@@ -12,6 +12,10 @@ const PNG = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAADklEQVQImWP4DwYMEAoAU7oL9W/sIDEAAAAASUVORK5CYII=",
   "base64"
 );
+const CROP_PNG = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+  "base64"
+);
 const workerToken = "journey-worker-token-that-is-at-least-32-characters";
 
 class JourneyStorage {
@@ -83,13 +87,13 @@ describe("complete cross-role journey", () => {
               label: "Elevation",
               confidence: 0.96,
               crop: { x: 0, y: 0, width: 1, height: 1 },
-              imageBase64: PNG.toString("base64")
+              imageBase64: CROP_PNG.toString("base64")
             },
             {
               label: "Plan",
               confidence: 0.94,
               crop: { x: 1, y: 0, width: 1, height: 1 },
-              imageBase64: PNG.toString("base64")
+              imageBase64: CROP_PNG.toString("base64")
             }
           ]
         }]

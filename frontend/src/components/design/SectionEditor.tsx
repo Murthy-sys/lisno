@@ -83,6 +83,19 @@ export function SectionEditor({
       {section.revision.rejectionComment ? (
         <p className="client-comment"><strong>Client comment:</strong> {section.revision.rejectionComment}</p>
       ) : null}
+      {section.history?.length ? (
+        <section aria-label={`Revision history for ${section.label}`}>
+          <h4>Review history</h4>
+          <ol>
+            {section.history.slice().reverse().map((revision) => (
+              <li key={revision.id}>
+                Revision {revision.revisionNumber} · {revision.reviewStatus}
+                {revision.rejectionComment ? ` — ${revision.rejectionComment}` : ""}
+              </li>
+            ))}
+          </ol>
+        </section>
+      ) : null}
 
       {editable ? <CropEditor label={label || section.label} crop={crop} page={page} onChange={setCrop} /> : (
         <p className="locked-section">{locked ? "This submission is read-only." : "Approved sections are locked."}</p>

@@ -125,7 +125,12 @@ export function createDesignSectionService(
         sections: await Promise.all(
           sections.map(async (section) => {
             const revisions = await repository.listSectionRevisions(section.id);
-            return publicSection(section, revisions.at(-1)!);
+            return {
+              ...publicSection(section, revisions.at(-1)!),
+              history: revisions
+                .filter((revision) => revision.reviewStatus !== "draft")
+                .map(publicRevision)
+            };
           })
         )
       };

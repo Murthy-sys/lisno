@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 
+import sharp from "sharp";
 import { ApiError } from "../middleware/errors.js";
 import {
   RepositoryConflictError,
@@ -187,7 +188,7 @@ export function createExtractionWorkerService(
           "The requested resource was not found."
         );
       }
-      const normalized = normalizeAndValidateResult(result, maxImageBytes, confidenceFloor);
+      const normalized = await normalizeAndValidateResult(result, maxImageBytes, confidenceFloor);
       const storedReferences: string[] = [];
       try {
         const sourcePages: ExtractionDraftReplacement["sourcePages"] = [];
@@ -348,21 +349,24 @@ function requireCurrentClaim(
   }
 }
 
-function normalizeAndValidateResult(
+async function normalizeAndValidateResult(
   result: WorkerExtractionResult,
   maxImageBytes: number,
   confidenceFloor: number
 ) {
   const pageNumbers = new Set<number>();
   let totalBytes = 0;
-  const pages = result.pages.map((page) => {
+  const pages = [];
+  for (const page of result.pages) {
     if (pageNumbers.has(page.pageNumber)) {
       invalidResult("Page numbers must be unique.");
     }
     pageNumbers.add(page.pageNumber);
     const image = decodeBase64(page.imageBase64, maxImageBytes);
+    await validatePng(image, page.width, page.height);
     totalBytes += image.length;
-    const sections = page.sections.filter((section) => section.confidence >= confidenceFloor).map((section) => {
+    const sections = [];
+    for (const section of page.sections.filter((item) => item.confidence >= confidenceFloor)) {
       const label = section.label.replace(/\s+/g, " ").trim();
       if (!label || label.length > 200) {
         invalidResult("Section labels must contain 1 to 200 characters.");
@@ -374,20 +378,40 @@ function normalizeAndValidateResult(
         section.imageBase64,
         maxImageBytes
       );
+      await validatePng(sectionImage, section.crop.width, section.crop.height);
       totalBytes += sectionImage.length;
-      return {
+      sections.push({
         ...section,
         label,
         crop: { ...section.crop },
         image: sectionImage
-      };
-    });
-    return { ...page, image, sections };
-  });
+      });
+    }
+    pages.push({ ...page, image, sections });
+  }
   if (totalBytes > maxImageBytes * 4) {
     invalidResult("The extraction result contains too much image data.");
   }
   return { pages };
+}
+
+async function validatePng(image: Buffer, width: number, height: number) {
+  try {
+    const decoded = await sharp(image, {
+      failOn: "error",
+      limitInputPixels: 100_000_000
+    }).raw().toBuffer({ resolveWithObject: true });
+    if (
+      decoded.info.format !== "raw" ||
+      decoded.info.width !== width ||
+      decoded.info.height !== height
+    ) {
+      invalidResult("Worker image dimensions must match the declared dimensions.");
+    }
+  } catch (error) {
+    if (error instanceof ApiError) throw error;
+    invalidResult("Worker images must be complete decodable PNG files.");
+  }
 }
 
 function decodeBase64(value: string, maxBytes: number) {

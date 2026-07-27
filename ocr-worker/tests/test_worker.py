@@ -114,6 +114,22 @@ def settings():
     )
 
 
+def test_settings_reject_heartbeat_not_below_known_backend_lease(monkeypatch):
+    monkeypatch.setenv("OCR_WORKER_TOKEN", "worker-token-with-at-least-32-characters")
+    monkeypatch.setenv("OCR_HEARTBEAT_SECONDS", "60")
+    monkeypatch.setenv("OCR_LEASE_SECONDS", "60")
+    with pytest.raises(ValueError, match="below OCR_LEASE_SECONDS"):
+        WorkerSettings.from_environment()
+
+
+def test_settings_bounds_output_for_base64_json_transport(monkeypatch):
+    monkeypatch.setenv("OCR_WORKER_TOKEN", "worker-token-with-at-least-32-characters")
+    assert WorkerSettings.from_environment().max_output_bytes == 40 * 1024 * 1024
+    monkeypatch.setenv("OCR_MAX_OUTPUT_BYTES", str(44 * 1024 * 1024 + 1))
+    with pytest.raises(ValueError, match="must not exceed"):
+        WorkerSettings.from_environment()
+
+
 def test_api_claim_returns_metadata_without_downloading_source():
     class ClaimOnlyApi(WorkerApi):
         def _request_json(self, *_args, **_kwargs):
