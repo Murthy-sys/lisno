@@ -133,3 +133,39 @@ hierarchy regression before removing the remaining evaluation/KPI N+1 reads.
 
 No lint script exists in either package. `reference_docs/` remained untouched
 and untracked.
+
+## Final review fix round 2
+
+Implementation commit: `1aacdc1` (`fix: close final review data bounds`).
+
+- Unified personal, manager, and head KPI calculations behind one bounded
+  enrichment path. Revision count is now `max(version count - 1, 0)`,
+  `in_review` is review evidence, and task updates preserve a previously
+  observed yellow-risk state before recovery.
+- Added structured 366-day, 1,000-task, 5,000-evidence, hierarchy-summary, and
+  project-history limits. Mongo task/owner event predicates are processed in
+  fixed-size batches, hierarchy project/task/evaluation reads are scoped to
+  the current nested page, and organization nodes expose a 20-designer nested
+  page with exact totals plus an explicit continuation endpoint.
+- Added an authorized, newest-first project activity feed spanning project,
+  related task, and design-version audit entities. The management workspace
+  now traverses every design-version and activity page instead of stopping at
+  100 records.
+- Added regressions for personal/hierarchy KPI parity, review and revision
+  evidence, recovered yellow risk, hard report limits, nested designer
+  continuation, avoidance of head-wide project enumeration, cross-project
+  activity isolation, newest-first pagination, and frontend second-page
+  rendering.
+
+### Final review round 2 verification
+
+| Area | Commands | Result |
+| --- | --- | --- |
+| Backend | `npm run typecheck`, `npm test`, `npm run build` | passed; 14 test files, 137 tests |
+| Frontend | `npm run typecheck`, `npm test`, `npm run build` | passed; 14 test files, 65 tests |
+| Focused backend | `npm test -- --run tests/workflows.test.ts` | passed; 1 file, 38 tests |
+| Focused frontend | `npm test -- --run src/features/head/HeadDashboard.test.tsx src/features/manager/ManagementProjectWorkspace.test.tsx` | passed; 2 files, 2 tests |
+| Diff hygiene | `git diff --check`, `git diff --cached --check` | passed |
+
+No lint script exists in either package. `reference_docs/` remained untouched
+and untracked.
