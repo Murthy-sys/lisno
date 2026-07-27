@@ -540,12 +540,21 @@ export interface AppRepository {
     id: string,
     change: Partial<
       Pick<DesignSectionRecord, "sourcePageId" | "label" | "active" | "ocrConfidence">
-    >
+    >,
+    expected?: {
+      revisionNumber: number;
+      statuses: SectionReviewStatus[];
+      active?: boolean;
+    }
   ): Promise<DesignSectionRecord>;
   createSectionRevision(
     input: DesignSectionRevisionRecord
   ): Promise<DesignSectionRevisionRecord>;
   retryExtractionJob(id: string, queuedAt: string): Promise<DesignExtractionJobRecord>;
+  recoverFailedExtractionJob(
+    id: string,
+    recoveredAt: string
+  ): Promise<DesignExtractionJobRecord>;
   submitDesignSectionDrafts(
     designVersionId: string,
     submittedAt: string

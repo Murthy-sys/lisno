@@ -253,6 +253,149 @@ describe("designer section correction", () => {
     });
   });
 
+  it("preserves approved sections and submits only a rejected section replacement", async () => {
+    const seed = sectionSeed();
+    seed.extractionJobs[0]!.status = "changes_requested";
+    seed.designSectionRevisions[0] = {
+      ...seed.designSectionRevisions[0]!,
+      reviewStatus: "rejected",
+      submittedAt: NOW,
+      reviewerId: "user-client-aurora",
+      reviewedAt: NOW,
+      rejectionComment: "Include the complete elevation."
+    };
+    seed.designSections.push({
+      ...seed.designSections[0]!,
+      id: "section-approved",
+      label: "Approved Plan"
+    });
+    seed.designSectionRevisions.push({
+      ...seed.designSectionRevisions[0]!,
+      id: "revision-approved",
+      sectionId: "section-approved",
+      label: "Approved Plan",
+      reviewStatus: "approved",
+      rejectionComment: null
+    });
+    const repository = createMemoryRepository(seed);
+    const storage = new TestStorage();
+    const app = createApp({
+      repository,
+      storage,
+      auth: { jwtSecret: SECRET, jwtExpiresInSeconds: 900 },
+      clock: () => new Date(NOW)
+    });
+    const auth = `Bearer ${token("user-designer-ananya", "designer")}`;
+
+    await request(app)
+      .patch("/api/v1/design-sections/section-1")
+      .set("Authorization", auth)
+      .send({ version: 1, crop: { x: 0, y: 1, width: 2, height: 1 } })
+      .expect(200);
+    const submitted = await request(app)
+      .post("/api/v1/design-versions/version-aurora-plan-1/submit-sections")
+      .set("Authorization", auth)
+      .expect(200);
+
+    expect(submitted.body.data).toEqual({
+      extractionStatus: "submitted",
+      submittedCount: 1
+    });
+    expect((await repository.listSectionRevisions("section-approved")).at(-1)).toMatchObject({
+      reviewStatus: "approved",
+      revisionNumber: 1
+    });
+    expect((await repository.listSectionRevisions("section-1")).at(-1)).toMatchObject({
+      reviewStatus: "submitted",
+      revisionNumber: 2
+    });
+  });
+
+  it("allows one concurrent same-version edit and returns a documented conflict for the loser", async () => {
+    const { app, repository, storage } = setup();
+    const auth = `Bearer ${token("user-designer-ananya", "designer")}`;
+    const [first, second] = await Promise.all([
+      request(app)
+        .patch("/api/v1/design-sections/section-1")
+        .set("Authorization", auth)
+        .send({ version: 1, crop: { x: 0, y: 0, width: 2, height: 1 } }),
+      request(app)
+        .patch("/api/v1/design-sections/section-1")
+        .set("Authorization", auth)
+        .send({ version: 1, crop: { x: 0, y: 1, width: 2, height: 1 } })
+    ]);
+
+    expect([first.status, second.status].sort()).toEqual([200, 409]);
+    const conflict = first.status === 409 ? first : second;
+    expect(conflict.body.error.code).toBe("STALE_SECTION_VERSION");
+    expect(await repository.listSectionRevisions("section-1")).toHaveLength(2);
+    expect(storage.objects.size).toBe(2);
+  });
+
+  it("rolls back a failed edit transaction and removes its uncommitted crop artifact", async () => {
+    const base = createMemoryRepository(sectionSeed());
+    const repository = new Proxy(base, {
+      get(target, property, receiver) {
+        if (property !== "runInTransaction") return Reflect.get(target, property, receiver);
+        return async (operation: (transaction: typeof base) => Promise<unknown>) =>
+          target.runInTransaction((transaction) =>
+            operation(new Proxy(transaction, {
+              get(transactionTarget, transactionProperty, transactionReceiver) {
+                if (transactionProperty === "appendAuditEvent") {
+                  return async () => {
+                    throw new Error("forced audit failure");
+                  };
+                }
+                return Reflect.get(transactionTarget, transactionProperty, transactionReceiver);
+              }
+            }))
+          );
+      }
+    });
+    const storage = new TestStorage();
+    const app = createApp({
+      repository,
+      storage,
+      auth: { jwtSecret: SECRET, jwtExpiresInSeconds: 900 },
+      clock: () => new Date(NOW)
+    });
+
+    await request(app)
+      .patch("/api/v1/design-sections/section-1")
+      .set("Authorization", `Bearer ${token("user-designer-ananya", "designer")}`)
+      .send({ version: 1, crop: { x: 0, y: 1, width: 2, height: 1 } })
+      .expect(500);
+
+    expect(await base.listSectionRevisions("section-1")).toHaveLength(1);
+    expect(storage.objects.size).toBe(1);
+  });
+
+  it("supports manual recovery after OCR failure and then submits the manual section", async () => {
+    const { app, repository } = setup("processing_failed");
+    const auth = `Bearer ${token("user-designer-ananya", "designer")}`;
+
+    const added = await request(app)
+      .post("/api/v1/design-versions/version-aurora-plan-1/sections")
+      .set("Authorization", auth)
+      .send({ sourcePageId: "page-1", label: "Manual Elevation", crop: { x: 0, y: 0, width: 2, height: 2 } })
+      .expect(201);
+    expect(added.body.data.label).toBe("Manual Elevation");
+    expect(await repository.findExtractionJobByVersionId("version-aurora-plan-1")).toMatchObject({
+      status: "designer_review",
+      failureCode: null,
+      failureMessage: null
+    });
+
+    const submitted = await request(app)
+      .post("/api/v1/design-versions/version-aurora-plan-1/submit-sections")
+      .set("Authorization", auth)
+      .expect(200);
+    expect(submitted.body.data).toMatchObject({
+      extractionStatus: "submitted",
+      submittedCount: 2
+    });
+  });
+
   it("rejects submission with no active sections and submits all active drafts atomically", async () => {
     const empty = setup();
     const auth = `Bearer ${token("user-designer-ananya", "designer")}`;
@@ -293,6 +436,23 @@ describe("designer section correction", () => {
     await request(app)
       .get("/api/v1/design-section-revisions/revision-1/image")
       .set("Authorization", `Bearer ${token("user-client-aurora", "client")}`)
+      .expect(404);
+
+    await request(app)
+      .post("/api/v1/design-versions/version-aurora-plan-1/submit-sections")
+      .set("Authorization", owner)
+      .expect(200);
+    await request(app)
+      .get("/api/v1/design-source-pages/page-1/image")
+      .set("Authorization", `Bearer ${token("user-client-aurora", "client")}`)
+      .expect(200);
+    await request(app)
+      .get("/api/v1/design-section-revisions/revision-1/image")
+      .set("Authorization", `Bearer ${token("user-client-aurora", "client")}`)
+      .expect(200);
+    await request(app)
+      .get("/api/v1/design-section-revisions/revision-1/image")
+      .set("Authorization", `Bearer ${token("user-client-celeste", "client")}`)
       .expect(404);
   });
 });

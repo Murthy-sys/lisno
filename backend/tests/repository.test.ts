@@ -5,6 +5,96 @@ import { RepositoryConflictError } from "../src/repositories/types.js";
 import { demoSeedData } from "../src/seed/data.js";
 
 describe("memory repository", () => {
+  it("submits replacement drafts while preserving approved active section revisions", async () => {
+    const seed = structuredClone(demoSeedData);
+    seed.extractionJobs.push({
+      id: "job-partial",
+      designVersionId: "version-aurora-plan-1",
+      status: "changes_requested",
+      attemptCount: 1,
+      queuedAt: "2026-07-27T09:00:00.000Z",
+      startedAt: "2026-07-27T09:01:00.000Z",
+      completedAt: "2026-07-27T09:02:00.000Z",
+      leaseExpiresAt: null,
+      failureCode: null,
+      failureMessage: null,
+      claimId: null,
+      workerResultId: "result-partial",
+      createdAt: "2026-07-27T09:00:00.000Z",
+      updatedAt: "2026-07-27T09:02:00.000Z"
+    });
+    seed.designSections.push(
+      {
+        id: "section-approved",
+        designVersionId: "version-aurora-plan-1",
+        sourcePageId: "page-partial",
+        label: "Approved",
+        active: true,
+        source: "ocr",
+        ocrConfidence: 0.9,
+        createdAt: "2026-07-27T09:00:00.000Z",
+        updatedAt: "2026-07-27T09:00:00.000Z"
+      },
+      {
+        id: "section-replacement",
+        designVersionId: "version-aurora-plan-1",
+        sourcePageId: "page-partial",
+        label: "Replacement",
+        active: true,
+        source: "ocr",
+        ocrConfidence: 0.8,
+        createdAt: "2026-07-27T09:00:00.000Z",
+        updatedAt: "2026-07-27T09:00:00.000Z"
+      }
+    );
+    seed.designSectionRevisions.push(
+      {
+        id: "revision-approved",
+        sectionId: "section-approved",
+        revisionNumber: 1,
+        sourcePageId: "page-partial",
+        crop: { x: 0, y: 0, width: 1, height: 1 },
+        croppedFileReference: "approved.png",
+        label: "Approved",
+        reviewStatus: "approved",
+        submittedAt: "2026-07-27T09:01:00.000Z",
+        reviewerId: "user-client-aurora",
+        reviewedAt: "2026-07-27T09:02:00.000Z",
+        rejectionComment: null,
+        createdAt: "2026-07-27T09:00:00.000Z"
+      },
+      {
+        id: "revision-replacement",
+        sectionId: "section-replacement",
+        revisionNumber: 2,
+        sourcePageId: "page-partial",
+        crop: { x: 0, y: 0, width: 1, height: 1 },
+        croppedFileReference: "replacement.png",
+        label: "Replacement",
+        reviewStatus: "draft",
+        submittedAt: null,
+        reviewerId: null,
+        reviewedAt: null,
+        rejectionComment: null,
+        createdAt: "2026-07-27T09:03:00.000Z"
+      }
+    );
+    const repository = createMemoryRepository(seed);
+
+    await expect(
+      repository.submitDesignSectionDrafts(
+        "version-aurora-plan-1",
+        "2026-07-27T10:00:00.000Z"
+      )
+    ).resolves.toBe(1);
+    await expect(repository.listSectionRevisions("section-approved")).resolves.toEqual([
+      expect.objectContaining({ reviewStatus: "approved" })
+    ]);
+    await expect(repository.listSectionRevisions("section-replacement")).resolves.toEqual([
+      expect.objectContaining({ reviewStatus: "submitted" })
+    ]);
+  });
+
   it("leases queued extraction jobs once and reclaims expired leases", async () => {
     const repository = createMemoryRepository(demoSeedData);
 

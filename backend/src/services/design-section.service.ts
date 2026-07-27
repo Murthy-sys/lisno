@@ -10,6 +10,7 @@ import type {
   DesignSectionRevisionRecord,
   DesignSourcePageRecord
 } from "../repositories/types.js";
+import { RepositoryConflictError } from "../repositories/types.js";
 import type { FileStorage } from "../storage/storage.js";
 import type { AuditService } from "./audit.service.js";
 import type { PublicUser } from "./auth.service.js";
@@ -114,7 +115,7 @@ export function createDesignSectionService(
     },
 
     async add(actor, versionId, input) {
-      await requireEditable(actor, versionId);
+      const { job } = await requireEditable(actor, versionId);
       const page = await pageForVersion(input.sourcePageId, versionId);
       const label = normalizeLabel(input.label);
       const stored = await cropPage(page, input.crop);
@@ -135,6 +136,18 @@ export function createDesignSectionService(
           const revision = draftRevision(section, page, input.crop, stored.reference, 1, occurredAt);
           await transaction.createManualSection(section);
           await transaction.createSectionRevision(revision);
+          if (job.status === "processing_failed") {
+            await transaction.recoverFailedExtractionJob(job.id, occurredAt);
+            await audit.append({
+              actorId: actor.id,
+              action: "design_extraction_manually_recovered",
+              entityType: "design_version",
+              entityId: versionId,
+              occurredAt,
+              oldValues: { status: job.status, failureCode: job.failureCode },
+              newValues: { status: "designer_review" }
+            }, transaction);
+          }
           await audit.append({
             actorId: actor.id,
             action: "design_section_created",
@@ -148,7 +161,7 @@ export function createDesignSectionService(
         return result;
       } catch (error) {
         await storage.delete(stored.reference).catch(() => undefined);
-        throw error;
+        throw mapRepositoryConflict(error);
       }
     },
 
@@ -177,8 +190,16 @@ export function createDesignSectionService(
       );
       try {
         const result = await repository.runInTransaction(async (transaction) => {
+          await transaction.updateDraftSection(
+            section.id,
+            { label, sourcePageId: page.id },
+            {
+              revisionNumber: input.version,
+              statuses: ["draft", "rejected"],
+              active: true
+            }
+          );
           await transaction.createSectionRevision(revision);
-          await transaction.updateDraftSection(section.id, { label, sourcePageId: page.id });
           await audit.append({
             actorId: actor.id,
             action: latest.reviewStatus === "rejected"
@@ -195,7 +216,7 @@ export function createDesignSectionService(
         return result;
       } catch (error) {
         if (generated) await storage.delete(generated.reference).catch(() => undefined);
-        throw error;
+        throw mapRepositoryConflict(error);
       }
     },
 
@@ -206,18 +227,26 @@ export function createDesignSectionService(
       const latest = (await repository.listSectionRevisions(section.id)).at(-1);
       if (!latest || latest.reviewStatus !== "draft" || latest.revisionNumber !== version) conflict();
       const occurredAt = clock().toISOString();
-      await repository.runInTransaction(async (transaction) => {
-        await transaction.updateDraftSection(section.id, { active: false });
-        await audit.append({
-          actorId: actor.id,
-          action: "design_section_removed",
-          entityType: "design_section",
-          entityId: section.id,
-          occurredAt,
-          oldValues: { active: true },
-          newValues: { active: false }
-        }, transaction);
-      });
+      try {
+        await repository.runInTransaction(async (transaction) => {
+          await transaction.updateDraftSection(
+            section.id,
+            { active: false },
+            { revisionNumber: version, statuses: ["draft"], active: true }
+          );
+          await audit.append({
+            actorId: actor.id,
+            action: "design_section_removed",
+            entityType: "design_section",
+            entityId: section.id,
+            occurredAt,
+            oldValues: { active: true },
+            newValues: { active: false }
+          }, transaction);
+        });
+      } catch (error) {
+        throw mapRepositoryConflict(error);
+      }
       return { id: section.id, active: false };
     },
 
@@ -227,19 +256,24 @@ export function createDesignSectionService(
         throw new ApiError(409, "INVALID_EXTRACTION_STATE", "Only failed extraction can be retried.");
       }
       const occurredAt = clock().toISOString();
-      const updated = await repository.runInTransaction(async (transaction) => {
-        const result = await transaction.retryExtractionJob(job.id, occurredAt);
-        await audit.append({
-          actorId: actor.id,
-          action: "design_extraction_retried",
-          entityType: "design_version",
-          entityId: versionId,
-          occurredAt,
-          oldValues: { status: job.status, failureCode: job.failureCode },
-          newValues: { status: result.status }
-        }, transaction);
-        return result;
-      });
+      let updated;
+      try {
+        updated = await repository.runInTransaction(async (transaction) => {
+          const result = await transaction.retryExtractionJob(job.id, occurredAt);
+          await audit.append({
+            actorId: actor.id,
+            action: "design_extraction_retried",
+            entityType: "design_version",
+            entityId: versionId,
+            occurredAt,
+            oldValues: { status: job.status, failureCode: job.failureCode },
+            newValues: { status: result.status }
+          }, transaction);
+          return result;
+        });
+      } catch (error) {
+        throw mapRepositoryConflict(error);
+      }
       return { extractionStatus: updated.status };
     },
 
@@ -253,19 +287,24 @@ export function createDesignSectionService(
         throw new ApiError(400, "NO_ACTIVE_SECTIONS", "At least one active section is required.");
       }
       const occurredAt = clock().toISOString();
-      const submittedCount = await repository.runInTransaction(async (transaction) => {
-        const count = await transaction.submitDesignSectionDrafts(versionId, occurredAt);
-        await audit.append({
-          actorId: actor.id,
-          action: "design_sections_submitted",
-          entityType: "design_version",
-          entityId: versionId,
-          occurredAt,
-          oldValues: { extractionStatus: job.status },
-          newValues: { extractionStatus: "submitted", submittedCount: count }
-        }, transaction);
-        return count;
-      });
+      let submittedCount: number;
+      try {
+        submittedCount = await repository.runInTransaction(async (transaction) => {
+          const count = await transaction.submitDesignSectionDrafts(versionId, occurredAt);
+          await audit.append({
+            actorId: actor.id,
+            action: "design_sections_submitted",
+            entityType: "design_version",
+            entityId: versionId,
+            occurredAt,
+            oldValues: { extractionStatus: job.status },
+            newValues: { extractionStatus: "submitted", submittedCount: count }
+          }, transaction);
+          return count;
+        });
+      } catch (error) {
+        throw mapRepositoryConflict(error);
+      }
       return { extractionStatus: "submitted", submittedCount };
     },
 
@@ -372,6 +411,12 @@ function assertCrop(crop: CropRect, page: DesignSourcePageRecord) {
 
 function conflict(): never {
   throw new ApiError(409, "STALE_SECTION_VERSION", "The section was changed. Refresh and try again.");
+}
+
+function mapRepositoryConflict(error: unknown): unknown {
+  return error instanceof RepositoryConflictError
+    ? new ApiError(409, "STALE_SECTION_VERSION", "The section was changed. Refresh and try again.")
+    : error;
 }
 
 function notFound(): never {

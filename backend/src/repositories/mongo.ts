@@ -980,10 +980,10 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
       return mapSection(document.toObject());
     },
 
-    async updateDraftSection(id, change) {
+    async updateDraftSection(id, change, expected) {
       if (!session) {
         return repository.runInTransaction((transaction) =>
-          transaction.updateDraftSection(id, change)
+          transaction.updateDraftSection(id, change, expected)
         );
       }
       const revisionQuery = DesignSectionRevisionModel.findOne({ sectionId: id })
@@ -991,26 +991,43 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
         .lean();
       if (session) revisionQuery.session(session);
       const latestRevision = await revisionQuery.exec();
-      if (!latestRevision || latestRevision.reviewStatus !== "draft") {
+      const statuses = expected?.statuses ?? ["draft"];
+      if (
+        !latestRevision ||
+        !statuses.includes(latestRevision.reviewStatus) ||
+        (expected && latestRevision.revisionNumber !== expected.revisionNumber)
+      ) {
         throw new RepositoryConflictError("Only sections with a draft latest revision can be edited.");
       }
       const guardQuery = DesignSectionRevisionModel.updateOne(
-        { _id: latestRevision._id, reviewStatus: "draft" },
-        { $set: { label: change.label ?? latestRevision.label } }
+        {
+          _id: latestRevision._id,
+          revisionNumber: latestRevision.revisionNumber,
+          reviewStatus: { $in: statuses }
+        },
+        { $set: { label: latestRevision.label } }
       );
       guardQuery.session(session);
       const guarded = await guardQuery.exec();
       if (guarded.matchedCount !== 1) {
         throw new RepositoryConflictError("Only sections with a draft latest revision can be edited.");
       }
-      const query = DesignSectionModel.findByIdAndUpdate(
-        id,
+      const query = DesignSectionModel.findOneAndUpdate(
+        {
+          _id: id,
+          ...(expected?.active === undefined ? {} : { active: expected.active })
+        },
         { $set: change },
         { new: true, runValidators: true }
       );
       if (session) query.session(session);
       const document = await query.lean().exec();
-      if (!document) throw new RepositoryNotFoundError(`Design section ${id} was not found.`);
+      if (!document) {
+        if (expected) {
+          throw new RepositoryConflictError("The design section changed before the update completed.");
+        }
+        throw new RepositoryNotFoundError(`Design section ${id} was not found.`);
+      }
       return mapSection(document);
     },
 
@@ -1054,6 +1071,28 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
       return mapExtractionJob(document);
     },
 
+    async recoverFailedExtractionJob(id, recoveredAt) {
+      const query = DesignExtractionJobModel.findOneAndUpdate(
+        { _id: id, status: "processing_failed" },
+        {
+          $set: {
+            status: "designer_review",
+            completedAt: date(recoveredAt),
+            failureCode: null,
+            failureMessage: null,
+            updatedAt: date(recoveredAt)
+          }
+        },
+        { new: true, runValidators: true }
+      );
+      if (session) query.session(session);
+      const document = await query.lean().exec();
+      if (!document) {
+        throw new RepositoryConflictError("Only failed extraction jobs can use manual recovery.");
+      }
+      return mapExtractionJob(document);
+    },
+
     async submitDesignSectionDrafts(designVersionId, submittedAt) {
       if (!session) {
         return repository.runInTransaction((transaction) =>
@@ -1066,15 +1105,17 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
       if (sections.length === 0) {
         throw new RepositoryConflictError("At least one active section is required.");
       }
+      let submittedCount = 0;
       for (const section of sections) {
         const revisionQuery = DesignSectionRevisionModel.findOne({ sectionId: idOf(section) })
           .sort({ revisionNumber: -1 })
           .lean();
         revisionQuery.session(session);
         const revision = await revisionQuery.exec();
-        if (!revision || revision.reviewStatus !== "draft") {
+        if (!revision || revision.reviewStatus === "rejected") {
           throw new RepositoryConflictError("Every active section must have an eligible draft.");
         }
+        if (revision.reviewStatus === "approved" || revision.reviewStatus === "submitted") continue;
         const update = DesignSectionRevisionModel.updateOne(
           { _id: revision._id, reviewStatus: "draft" },
           { $set: { reviewStatus: "submitted", submittedAt: date(submittedAt) } }
@@ -1084,6 +1125,10 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
         if (result.matchedCount !== 1) {
           throw new RepositoryConflictError("Every active section must have an eligible draft.");
         }
+        submittedCount += 1;
+      }
+      if (submittedCount === 0) {
+        throw new RepositoryConflictError("At least one draft section is required.");
       }
       const jobUpdate = DesignExtractionJobModel.updateOne(
         { designVersionId },
@@ -1094,7 +1139,7 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
       if (result.matchedCount !== 1) {
         throw new RepositoryNotFoundError("Design extraction job was not found.");
       }
-      return sections.length;
+      return submittedCount;
     },
 
     async createEvaluation(input) {

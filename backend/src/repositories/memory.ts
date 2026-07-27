@@ -66,6 +66,7 @@ const mutationMethods = new Set<keyof AppRepository>([
   "updateDraftSection",
   "createSectionRevision",
   "retryExtractionJob",
+  "recoverFailedExtractionJob",
   "submitDesignSectionDrafts",
   "createEvaluation",
   "appendAuditEvent"
@@ -839,13 +840,20 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
       return clone(section);
     },
 
-    async updateDraftSection(id, change) {
+    async updateDraftSection(id, change, expected) {
       const index = state.designSections.findIndex((section) => section.id === id);
       if (index < 0) throw new RepositoryNotFoundError(`Design section ${id} was not found.`);
       const latestRevision = state.designSectionRevisions
         .filter((revision) => revision.sectionId === id)
         .sort((left, right) => right.revisionNumber - left.revisionNumber)[0];
-      if (!latestRevision || latestRevision.reviewStatus !== "draft") {
+      const statuses = expected?.statuses ?? ["draft"];
+      if (
+        !latestRevision ||
+        !statuses.includes(latestRevision.reviewStatus) ||
+        (expected && latestRevision.revisionNumber !== expected.revisionNumber) ||
+        (expected?.active !== undefined &&
+          state.designSections[index]!.active !== expected.active)
+      ) {
         throw new RepositoryConflictError("Only sections with a draft latest revision can be edited.");
       }
       const updated: DesignSectionRecord = {
@@ -897,6 +905,24 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
       return clone(updated);
     },
 
+    async recoverFailedExtractionJob(id, recoveredAt) {
+      const index = state.extractionJobs.findIndex((job) => job.id === id);
+      if (index < 0) throw new RepositoryNotFoundError(`Design extraction job ${id} was not found.`);
+      if (state.extractionJobs[index]!.status !== "processing_failed") {
+        throw new RepositoryConflictError("Only failed extraction jobs can use manual recovery.");
+      }
+      const updated = {
+        ...state.extractionJobs[index]!,
+        status: "designer_review" as const,
+        completedAt: recoveredAt,
+        failureCode: null,
+        failureMessage: null,
+        updatedAt: recoveredAt
+      };
+      state.extractionJobs[index] = updated;
+      return clone(updated);
+    },
+
     async submitDesignSectionDrafts(designVersionId, submittedAt) {
       const activeIds = new Set(
         state.designSections
@@ -911,9 +937,10 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
         const latest = state.designSectionRevisions
           .filter((revision) => revision.sectionId === sectionId)
           .sort((left, right) => right.revisionNumber - left.revisionNumber)[0];
-        if (!latest || latest.reviewStatus !== "draft") {
+        if (!latest || latest.reviewStatus === "rejected") {
           throw new RepositoryConflictError("Every active section must have an eligible draft.");
         }
+        if (latest.reviewStatus === "approved" || latest.reviewStatus === "submitted") continue;
         const index = state.designSectionRevisions.findIndex((item) => item.id === latest.id);
         state.designSectionRevisions[index] = {
           ...latest,
@@ -921,6 +948,9 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
           submittedAt
         };
         count += 1;
+      }
+      if (count === 0) {
+        throw new RepositoryConflictError("At least one draft section is required.");
       }
       const jobIndex = state.extractionJobs.findIndex((job) => job.designVersionId === designVersionId);
       if (jobIndex < 0) throw new RepositoryNotFoundError("Design extraction job was not found.");
