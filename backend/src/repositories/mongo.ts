@@ -788,7 +788,7 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
       if (session) query.session(session);
       const document = await query.lean().exec();
       if (!document) {
-        throw new RepositoryConflictError("Extraction job claim is no longer current.");
+        await throwExtractionJobClaimError(id, session);
       }
       return mapExtractionJob(document);
     },
@@ -816,7 +816,7 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
       if (session) query.session(session);
       const document = await query.lean().exec();
       if (!document) {
-        throw new RepositoryConflictError("Extraction job claim is no longer current.");
+        await throwExtractionJobClaimError(id, session);
       }
       return mapExtractionJob(document);
     },
@@ -945,6 +945,11 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
     },
 
     async updateDraftSection(id, change) {
+      if (!session) {
+        return repository.runInTransaction((transaction) =>
+          transaction.updateDraftSection(id, change)
+        );
+      }
       const revisionQuery = DesignSectionRevisionModel.findOne({ sectionId: id })
         .sort({ revisionNumber: -1 })
         .lean();
@@ -1098,6 +1103,15 @@ function isMongoDuplicateKeyError(error: unknown): boolean {
     "code" in error &&
     error.code === 11000
   );
+}
+
+async function throwExtractionJobClaimError(id: string, session?: ClientSession): Promise<never> {
+  const query = DesignExtractionJobModel.exists({ _id: id });
+  if (session) query.session(session);
+  if (!(await query.exec())) {
+    throw new RepositoryNotFoundError(`Design extraction job ${id} was not found.`);
+  }
+  throw new RepositoryConflictError("Extraction job claim is no longer current.");
 }
 
 function compactFilter(value: object): PlainDocument {

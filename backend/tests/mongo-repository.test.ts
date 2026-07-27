@@ -19,6 +19,107 @@ import {
 } from "../src/repositories/types.js";
 import { demoSeedData } from "../src/seed/data.js";
 
+const query = (value: unknown) => ({
+  session: () => undefined,
+  exec: vi.fn().mockResolvedValue(value)
+});
+
+const validReplacement = (workerResultId = "result-1") => ({
+  jobId: "job-replace",
+  claimId: "claim-replace",
+  processedAt: "2026-07-27T10:02:00.000Z",
+  designVersionId: "version-replace",
+  workerResultId,
+  sourcePages: [
+    {
+      id: "page-replace",
+      designVersionId: "version-replace",
+      pageNumber: 1,
+      renderedFileReference: "page.png",
+      width: 100,
+      height: 100,
+      createdAt: "2026-07-27T10:00:00.000Z",
+      updatedAt: "2026-07-27T10:00:00.000Z"
+    }
+  ],
+  sections: [
+    {
+      section: {
+        id: "section-replace",
+        designVersionId: "version-replace",
+        sourcePageId: "page-replace",
+        label: "Kitchen",
+        active: true as const,
+        source: "ocr" as const,
+        ocrConfidence: 0.99,
+        createdAt: "2026-07-27T10:00:00.000Z",
+        updatedAt: "2026-07-27T10:00:00.000Z"
+      },
+      revision: {
+        id: "revision-replace",
+        sectionId: "section-replace",
+        revisionNumber: 1,
+        sourcePageId: "page-replace",
+        crop: { x: 0, y: 0, width: 10, height: 10 },
+        croppedFileReference: "section.png",
+        label: "Kitchen",
+        reviewStatus: "draft" as const,
+        submittedAt: null,
+        reviewerId: null,
+        reviewedAt: null,
+        rejectionComment: null,
+        createdAt: "2026-07-27T10:00:00.000Z"
+      }
+    }
+  ]
+});
+
+const processingJob = (workerResultId: string | null = null) => ({
+  _id: "job-replace",
+  designVersionId: "version-replace",
+  status: "processing",
+  claimId: "claim-replace",
+  leaseExpiresAt: new Date("2026-07-27T10:06:00.000Z"),
+  workerResultId
+});
+
+const replacementWriteQuery = () => ({
+  session: () => undefined,
+  exec: vi.fn().mockResolvedValue(undefined)
+});
+
+const mockSuccessfulReplacement = (job = processingJob()) => {
+  const deletePages = replacementWriteQuery();
+  const deleteSections = replacementWriteQuery();
+  const deleteRevisions = replacementWriteQuery();
+  const updateJob = replacementWriteQuery();
+  vi.spyOn(DesignExtractionJobModel, "findOne").mockReturnValueOnce({
+    lean: () => query(job)
+  } as never);
+  vi.spyOn(DesignSectionModel, "find").mockReturnValueOnce({
+    select: () => ({ lean: () => query([]) })
+  } as never);
+  vi.spyOn(DesignSectionRevisionModel, "exists").mockReturnValueOnce(
+    query(null) as never
+  );
+  vi.spyOn(DesignSourcePageModel, "deleteMany").mockReturnValueOnce(
+    deletePages as never
+  );
+  vi.spyOn(DesignSectionModel, "deleteMany").mockReturnValueOnce(
+    deleteSections as never
+  );
+  vi.spyOn(DesignSectionRevisionModel, "deleteMany").mockReturnValueOnce(
+    deleteRevisions as never
+  );
+  vi.spyOn(DesignSourcePageModel, "create").mockResolvedValueOnce([] as never);
+  vi.spyOn(DesignSectionModel, "create").mockResolvedValueOnce([] as never);
+  vi.spyOn(DesignSectionRevisionModel, "create").mockResolvedValueOnce([] as never);
+  vi.spyOn(DesignExtractionJobModel, "updateOne").mockReturnValueOnce(
+    updateJob as never
+  );
+  return { deletePages, deleteSections, deleteRevisions, updateJob };
+};
+
 afterEach(() => {
   vi.restoreAllMocks();
 });
@@ -28,6 +129,9 @@ describe("Mongo repository contracts", () => {
     const update = vi.spyOn(DesignExtractionJobModel, "findByIdAndUpdate").mockReturnValueOnce({
       lean: () => ({ exec: vi.fn().mockResolvedValue(null) })
     } as never);
+    vi.spyOn(DesignExtractionJobModel, "exists").mockReturnValueOnce(
+      { exec: vi.fn().mockResolvedValue({ _id: "job-stale" }) } as never
+    );
 
     await expect(
       createMongoRepository().completeExtractionJob(
@@ -46,6 +150,131 @@ describe("Mongo repository contracts", () => {
       expect.any(Object),
       expect.any(Object)
     );
+  });
+
+  it("distinguishes a missing extraction job from a stale completion claim", async () => {
+    vi.spyOn(DesignExtractionJobModel, "findByIdAndUpdate").mockReturnValueOnce({
+      lean: () => ({ exec: vi.fn().mockResolvedValue(null) })
+    } as never);
+    vi.spyOn(DesignExtractionJobModel, "exists").mockReturnValueOnce(
+      { exec: vi.fn().mockResolvedValue(null) } as never
+    );
+
+    await expect(
+      createMongoRepository().completeExtractionJob(
+        "job-missing",
+        "claim-missing",
+        "2026-07-27T10:03:00.000Z"
+      )
+    ).rejects.toBeInstanceOf(RepositoryNotFoundError);
+  });
+
+  it("distinguishes a missing extraction job from a stale failure claim", async () => {
+    vi.spyOn(DesignExtractionJobModel, "findByIdAndUpdate").mockReturnValueOnce({
+      lean: () => ({ exec: vi.fn().mockResolvedValue(null) })
+    } as never);
+    vi.spyOn(DesignExtractionJobModel, "exists").mockReturnValueOnce(
+      { exec: vi.fn().mockResolvedValue(null) } as never
+    );
+
+    await expect(
+      createMongoRepository().failExtractionJob(
+        "job-missing",
+        "claim-missing",
+        "OCR_FAILED",
+        "OCR failed",
+        "2026-07-27T10:03:00.000Z"
+      )
+    ).rejects.toBeInstanceOf(RepositoryNotFoundError);
+  });
+
+  it("runs draft-state verification and section update in one Mongo transaction", async () => {
+    const session = {
+      withTransaction: vi.fn(async (operation: () => Promise<unknown>) => operation()),
+      endSession: vi.fn(async () => undefined)
+    };
+    vi.spyOn(mongoose, "startSession").mockResolvedValueOnce(session as never);
+    vi.spyOn(DesignSectionRevisionModel, "findOne").mockReturnValueOnce({
+      sort: () => ({ lean: () => query({ reviewStatus: "draft" }) })
+    } as never);
+    const update = vi.spyOn(DesignSectionModel, "findByIdAndUpdate").mockReturnValueOnce({
+      session: () => undefined,
+      lean: () => ({
+        exec: vi.fn().mockResolvedValue({
+          _id: "section-draft",
+          designVersionId: "version-draft",
+          sourcePageId: "page-draft",
+          label: "Changed",
+          active: true,
+          source: "manual",
+          ocrConfidence: null,
+          createdAt: new Date("2026-07-27T10:00:00.000Z"),
+          updatedAt: new Date("2026-07-27T10:01:00.000Z")
+        })
+      })
+    } as never);
+
+    await expect(
+      createMongoRepository().updateDraftSection("section-draft", { label: "Changed" })
+    ).resolves.toMatchObject({ label: "Changed" });
+    expect(session.withTransaction).toHaveBeenCalledOnce();
+    expect(update).toHaveBeenCalledOnce();
+  });
+
+  it("persists a valid Mongo extraction draft as one replacement", async () => {
+    const writes = mockSuccessfulReplacement();
+
+    await expect(
+      createMongoRepository({} as never).replaceExtractionDraft(validReplacement())
+    ).resolves.toBeUndefined();
+    expect(writes.deletePages.exec).toHaveBeenCalledOnce();
+    expect(writes.deleteSections.exec).toHaveBeenCalledOnce();
+    expect(writes.deleteRevisions.exec).toHaveBeenCalledOnce();
+    expect(writes.updateJob.exec).toHaveBeenCalledOnce();
+  });
+
+  it("treats only the exact Mongo worker result ID as a replacement replay", async () => {
+    vi.spyOn(DesignExtractionJobModel, "findOne").mockReturnValueOnce({
+      lean: () => query(processingJob("result-1"))
+    } as never);
+    const sections = vi.spyOn(DesignSectionModel, "find");
+
+    await expect(
+      createMongoRepository({} as never).replaceExtractionDraft(validReplacement("result-1"))
+    ).resolves.toBeUndefined();
+    expect(sections).not.toHaveBeenCalled();
+  });
+
+  it("replaces a Mongo draft when a current worker submits a different result ID", async () => {
+    const writes = mockSuccessfulReplacement(processingJob("result-old"));
+
+    await createMongoRepository({} as never).replaceExtractionDraft(
+      validReplacement("result-new")
+    );
+
+    expect(writes.deletePages.exec).toHaveBeenCalledOnce();
+    expect(DesignExtractionJobModel.updateOne).toHaveBeenCalledWith(
+      { _id: "job-replace" },
+      { $set: { workerResultId: "result-new" } }
+    );
+  });
+
+  it("rejects Mongo replacement before deleting a reviewed section revision", async () => {
+    vi.spyOn(DesignExtractionJobModel, "findOne").mockReturnValueOnce({
+      lean: () => query(processingJob())
+    } as never);
+    vi.spyOn(DesignSectionModel, "find").mockReturnValueOnce({
+      select: () => ({ lean: () => query([{ _id: "section-reviewed" }]) })
+    } as never);
+    vi.spyOn(DesignSectionRevisionModel, "exists").mockReturnValueOnce(
+      query({ _id: "revision-reviewed" }) as never
+    );
+    const deletePages = vi.spyOn(DesignSourcePageModel, "deleteMany");
+
+    await expect(
+      createMongoRepository({} as never).replaceExtractionDraft(validReplacement())
+    ).rejects.toBeInstanceOf(RepositoryConflictError);
+    expect(deletePages).not.toHaveBeenCalled();
   });
 
   it("rejects Mongo section revisions for missing sections", async () => {
@@ -73,9 +302,15 @@ describe("Mongo repository contracts", () => {
   });
 
   it("rejects Mongo section edits after the latest revision leaves draft", async () => {
+    const session = {
+      withTransaction: vi.fn(async (operation: () => Promise<unknown>) => operation()),
+      endSession: vi.fn(async () => undefined)
+    };
+    vi.spyOn(mongoose, "startSession").mockResolvedValueOnce(session as never);
     vi.spyOn(DesignSectionRevisionModel, "findOne").mockReturnValueOnce({
       sort: () => ({
         lean: () => ({
+          session: () => undefined,
           exec: vi.fn().mockResolvedValue({ reviewStatus: "submitted" })
         })
       })
