@@ -1,6 +1,18 @@
 const TOKEN_KEY = "lisno.auth.token";
 const API_BASE_URL = (import.meta.env.VITE_API_URL ?? "/api/v1").replace(/\/$/, "");
 
+export function resolveApiUrl(baseUrl: string, path: string): string {
+  const normalizedBase = baseUrl.replace(/\/$/, "");
+  const absolute = normalizedBase.match(/^(https?:\/\/[^/]+)(\/.*)?$/i);
+  const origin = absolute?.[1] ?? "";
+  const apiPath = (absolute?.[2] ?? normalizedBase).replace(/\/$/, "");
+  if (path === apiPath || path.startsWith(`${apiPath}/`)) {
+    return origin ? `${origin}${path}` : path;
+  }
+  const suffix = path.startsWith("/") ? path : `/${path}`;
+  return `${origin}${apiPath}${suffix}`;
+}
+
 export interface ApiResponse<T> {
   data: T;
 }
@@ -87,9 +99,7 @@ async function fetchApi(
   options: RequestInit,
   requestToken: string | null
 ): Promise<Response> {
-  const url = path === API_BASE_URL || path.startsWith(`${API_BASE_URL}/`)
-    ? path
-    : `${API_BASE_URL}${path.startsWith("/") ? path : `/${path}`}`;
+  const url = resolveApiUrl(API_BASE_URL, path);
   const response = await fetch(url, options);
 
   if (!response.ok) {

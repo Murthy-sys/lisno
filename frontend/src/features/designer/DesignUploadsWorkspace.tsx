@@ -20,7 +20,6 @@ export function DesignUploadsWorkspace({ projectId }: { projectId: string }) {
   const [selectedVersionId, setSelectedVersionId] = useState("");
   const [adding, setAdding] = useState(false);
   const [newLabel, setNewLabel] = useState("");
-  const [notice, setNotice] = useState("");
   const [actionError, setActionError] = useState("");
   const [draftStates, setDraftStates] = useState<Record<string, { dirty: boolean; valid: boolean }>>({});
   const [manualPageId, setManualPageId] = useState("");
@@ -56,35 +55,60 @@ export function DesignUploadsWorkspace({ projectId }: { projectId: string }) {
   const extraction = sectionsQuery.data;
   const status = extraction?.extractionStatus ?? selected?.extractionStatus;
 
-  const invalidate = async (versionId = selected!.id) => {
+  const refresh = async (versionId = selected!.id) => {
     await Promise.all([
-      queryClient.invalidateQueries({ queryKey: designerKeys.designExtraction(versionId), refetchType: "none" }),
-      queryClient.invalidateQueries({ queryKey: designerKeys.designSections(versionId), refetchType: "none" }),
-      queryClient.invalidateQueries({ queryKey: designerKeys.designVersions(projectId), refetchType: "none" }),
-      queryClient.invalidateQueries({ queryKey: designerKeys.project(projectId), refetchType: "none" })
+      queryClient.invalidateQueries({ queryKey: designerKeys.designExtraction(versionId) }),
+      queryClient.invalidateQueries({ queryKey: designerKeys.designSections(versionId) }),
+      queryClient.invalidateQueries({ queryKey: designerKeys.designVersions(projectId) }),
+      queryClient.invalidateQueries({ queryKey: designerKeys.project(projectId) })
     ]);
+  };
+  const setVersionStatus = (extractionStatus: NonNullable<typeof selected>["extractionStatus"]) => {
+    queryClient.setQueryData(
+      designerKeys.designVersions(projectId),
+      (current: typeof versions) => current?.map((item) =>
+        item.id === selected?.id ? { ...item, extractionStatus } : item
+      )
+    );
+    queryClient.setQueryData(
+      designerKeys.designSections(selected!.id),
+      (current: typeof extraction) => current ? { ...current, extractionStatus: extractionStatus! } : current
+    );
   };
 
   const retry = useMutation({
     mutationFn: () => retryDesignExtraction(selected!.id),
-    onSuccess: async () => { setActionError(""); await invalidate(); },
+    onSuccess: async (result) => {
+      setActionError("");
+      setVersionStatus(result.extractionStatus);
+      await refresh();
+    },
     onError: () => setActionError("Extraction retry failed. Please try again.")
   });
   const submit = useMutation({
     mutationFn: () => submitDesignSections(selected!.id),
     onSuccess: async () => {
-      setNotice("Sections submitted to the client.");
-      await invalidate();
+      setActionError("");
+      setVersionStatus("submitted");
+      await refresh();
     },
     onError: () => setActionError("Sections could not be submitted. Your edits are unchanged.")
   });
   const add = useMutation({
     mutationFn: (input: { sourcePageId: string; label: string; crop: CropRect }) =>
       addDesignSection(selected!.id, input),
-    onSuccess: async () => {
+    onSuccess: async (created) => {
+      setActionError("");
+      queryClient.setQueryData(
+        designerKeys.designSections(selected!.id),
+        (current: typeof extraction) => current ? {
+          ...current,
+          sections: [...current.sections, created]
+        } : current
+      );
       setAdding(false);
       setNewLabel("");
-      await invalidate();
+      await refresh();
     },
     onError: () => setActionError("The missing section could not be created. Your draft is unchanged.")
   });
@@ -97,6 +121,9 @@ export function DesignUploadsWorkspace({ projectId }: { projectId: string }) {
   const editableSections = activeSections.filter(({ revision }) =>
     revision.reviewStatus === "draft" || revision.reviewStatus === "rejected"
   );
+  const rejectedReplacementMissing = status === "changes_requested" &&
+    activeSections.some(({ revision }) => revision.reviewStatus === "rejected");
+  const terminal = status === "submitted" || status === "approved";
   const allCropsValid = activeSections.every((section) => {
     const page = pagesById.get(section.revision.sourcePageId);
     const { x, y, width, height } = section.revision.crop;
@@ -173,7 +200,9 @@ export function DesignUploadsWorkspace({ projectId }: { projectId: string }) {
         </div>
       ) : null}
       {sectionsQuery.isPending && canReadSections ? <p role="status">Loading extracted sections…</p> : null}
-      {notice ? <p role="status">{notice}</p> : null}
+      {terminal ? (
+        <p className="processing-status" role="status">Sections submitted to the client. This version is read-only.</p>
+      ) : null}
       {actionError ? <div role="alert">{actionError} <button type="button" onClick={() => setActionError("")}>Dismiss</button></div> : null}
 
       {activeSections.map((section) => {
@@ -197,14 +226,22 @@ export function DesignUploadsWorkspace({ projectId }: { projectId: string }) {
                   sections: current.sections.map((item) => item.id === updated.id ? updated : item)
                 } : current
               );
-              await invalidate();
+              setActionError("");
+              await refresh();
               return updated;
             }}
             onRemove={async () => {
               try {
                 await removeDesignSection(section.id, section.revision.revisionNumber);
                 setActionError("");
-                await invalidate();
+                queryClient.setQueryData(
+                  designerKeys.designSections(selected!.id),
+                  (current: typeof extraction) => current ? {
+                    ...current,
+                    sections: current.sections.filter((item) => item.id !== section.id)
+                  } : current
+                );
+                await refresh();
               } catch {
                 setActionError("The section could not be removed. It remains in the review set.");
               }
@@ -217,11 +254,12 @@ export function DesignUploadsWorkspace({ projectId }: { projectId: string }) {
                 return { ...current, [section.id]: state };
               })
             }
+            locked={terminal}
           />
         );
       })}
 
-      {extraction?.pages.length ? (
+      {extraction?.pages.length && !terminal ? (
         <div className="manual-section">
           {!adding ? (
             <button type="button" className="button button--secondary" onClick={() => setAdding(true)}>
@@ -261,6 +299,7 @@ export function DesignUploadsWorkspace({ projectId }: { projectId: string }) {
           (status !== "designer_review" && status !== "changes_requested") ||
           activeSections.length === 0 ||
           editableSections.length === 0 ||
+          rejectedReplacementMissing ||
           !allCropsValid ||
           hasUnsafeDraft ||
           adding ||

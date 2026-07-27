@@ -10,11 +10,13 @@ interface ProtectedImageProps {
 
 export function ProtectedImage({ source, alt, dataRevision }: ProtectedImageProps) {
   const [imageSource, setImageSource] = useState<string>();
+  const [failed, setFailed] = useState(false);
 
   useEffect(() => {
     let active = true;
     let objectUrl: string | undefined;
     setImageSource(undefined);
+    setFailed(false);
     void apiClient.getBlob(source).then(({ blob }) => {
       if (!active) return;
       if (typeof URL.createObjectURL === "function") {
@@ -22,7 +24,7 @@ export function ProtectedImage({ source, alt, dataRevision }: ProtectedImageProp
         setImageSource(objectUrl);
       }
     }).catch(() => {
-      // Keep the API reference as a graceful fallback if preview loading fails.
+      if (active) setFailed(true);
     });
     return () => {
       active = false;
@@ -30,5 +32,10 @@ export function ProtectedImage({ source, alt, dataRevision }: ProtectedImageProp
     };
   }, [source]);
 
-  return <img src={imageSource} alt={alt} data-revision={dataRevision} />;
+  return (
+    <>
+      <img src={imageSource} alt={alt} data-revision={dataRevision} />
+      {failed ? <span role="status">Preview unavailable.</span> : null}
+    </>
+  );
 }

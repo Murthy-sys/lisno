@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import { renderWithQuery } from "../../test/render";
+import type { DesignSection } from "../../api/types";
 import { DesignUploadsWorkspace } from "./DesignUploadsWorkspace";
 
 const version = {
@@ -70,20 +71,22 @@ function response(data: unknown, init?: ResponseInit) {
 
 function installApi(status = "designer_review", mutation?: "network" | "conflict") {
   const requests: Array<{ url: string; method: string; body?: unknown }> = [];
+  let currentStatus = status;
+  let currentSections = status === "designer_review" ? [structuredClone(section)] : [];
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = String(input);
     const method = init?.method ?? "GET";
     if (url.startsWith("/api/v1/projects/project-1/design-versions?")) {
       return response({
-        items: [{ ...version, extractionStatus: status }],
+        items: [{ ...version, extractionStatus: currentStatus }],
         pagination: { limit: 100, offset: 0, total: 1, hasMore: false }
       });
     }
     if (url === "/api/v1/design-versions/version-1/sections" && method === "GET") {
       return response({
-        extractionStatus: status,
-        pages: status === "processing" || status === "queued" ? [] : [page, secondPage],
-        sections: status === "designer_review" ? [section] : []
+        extractionStatus: currentStatus,
+        pages: currentStatus === "processing" || currentStatus === "queued" ? [] : [page, secondPage],
+        sections: currentSections
       });
     }
     if (url.includes("/api/v1/design-source-pages/") || url.includes("/api/v1/design-section-revisions/")) {
@@ -102,7 +105,7 @@ function installApi(status = "designer_review", mutation?: "network" | "conflict
         );
       }
       if (method === "PATCH") {
-        return response({
+        const updated = {
           ...section,
           label: (body as { label?: string }).label ?? section.label,
           revision: {
@@ -113,11 +116,30 @@ function installApi(status = "designer_review", mutation?: "network" | "conflict
             crop: (body as { crop?: typeof section.revision.crop }).crop ?? section.revision.crop,
             imageReference: "/api/v1/design-section-revisions/revision-2/image"
           }
-        });
+        };
+        currentSections = currentSections.map((item) => item.id === updated.id ? updated : item);
+        return response(updated);
       }
       if (method === "POST" && url.endsWith("/sections")) {
-        return response({ ...section, id: "manual-1", label: "Kitchen" }, { status: 201 });
+        const created = {
+          ...section,
+          id: "manual-1",
+          label: (body as { label: string }).label,
+          revision: { ...section.revision, id: "manual-r1", sectionId: "manual-1", label: (body as { label: string }).label }
+        };
+        currentSections.push(created);
+        return response(created, { status: 201 });
       }
+      if (method === "DELETE") {
+        const sectionId = url.split("/").at(-1);
+        currentSections = currentSections.filter((item) => item.id !== sectionId);
+        return response({ id: sectionId, active: false });
+      }
+      if (url.endsWith("/retry-extraction")) {
+        currentStatus = "queued";
+        return response({ extractionStatus: "queued" });
+      }
+      currentStatus = "submitted";
       return response({ extractionStatus: "submitted", submittedCount: 1 });
     }
     throw new Error(`Unhandled request: ${method} ${url}`);
@@ -250,5 +272,52 @@ describe("DesignUploadsWorkspace", () => {
       url: "/api/v1/design-versions/version-1/submit-sections",
       method: "POST"
     }));
+  });
+
+  it("reflects successful add, remove, submit, and retry transitions", async () => {
+    const user = userEvent.setup();
+    installApi();
+    const added = renderWithQuery(<DesignUploadsWorkspace projectId="project-1" />);
+    await user.click(await screen.findByRole("button", { name: "Add missing section" }));
+    await user.type(screen.getByLabelText("New section label"), "Kitchen");
+    await user.click(screen.getByRole("button", { name: "Create section" }));
+    expect(await screen.findByDisplayValue("Kitchen")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Remove Kitchen" }));
+    await waitFor(() => expect(screen.queryByDisplayValue("Kitchen")).not.toBeInTheDocument());
+    await user.click(screen.getByRole("button", { name: /submit sections/i }));
+    expect(await screen.findByText(/submitted to the client/i)).toBeVisible();
+    expect(screen.getByRole("button", { name: /submit sections/i })).toBeDisabled();
+    added.unmount();
+
+    installApi("processing_failed");
+    renderWithQuery(<DesignUploadsWorkspace projectId="project-1" />);
+    await user.click(await screen.findByRole("button", { name: "Retry extraction" }));
+    expect(await screen.findByText(/OCR is processing/i)).toBeVisible();
+  });
+
+  it("requires every rejected section to have a saved replacement before resubmission", async () => {
+    const approved: DesignSection = { ...section, source: "ocr", id: "approved", revision: { ...section.revision, id: "approved-r1", sectionId: "approved", reviewStatus: "approved" as const } };
+    const rejected: DesignSection = { ...section, source: "ocr", id: "rejected", label: "Kitchen", revision: { ...section.revision, id: "rejected-r1", sectionId: "rejected", label: "Kitchen", reviewStatus: "rejected" as const, rejectionComment: "Adjust the island." } };
+    let reviewSections: DesignSection[] = [approved, rejected];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.startsWith("/api/v1/projects/project-1/design-versions?")) return response({ items: [{ ...version, extractionStatus: "changes_requested" }], pagination: { limit: 100, offset: 0, total: 1, hasMore: false } });
+      if (url.endsWith("/sections") && (!init || init.method === "GET")) return response({ extractionStatus: "changes_requested", pages: [page], sections: reviewSections });
+      if (url.includes("/design-sections/rejected") && init?.method === "PATCH") {
+        const body = JSON.parse(String(init.body));
+        const updated = { ...rejected, label: body.label, revision: { ...rejected.revision, revisionNumber: 2, reviewStatus: "draft" as const, label: body.label } };
+        reviewSections = [approved, updated];
+        return response(updated);
+      }
+      return new Response(new Blob(["image"], { type: "image/png" }));
+    });
+    const user = userEvent.setup();
+    renderWithQuery(<DesignUploadsWorkspace projectId="project-1" />);
+    const submit = await screen.findByRole("button", { name: /submit sections/i });
+    expect(submit).toBeDisabled();
+    const labels = screen.getAllByLabelText("Section label");
+    await user.type(labels[1]!, " updated");
+    await user.click(screen.getByRole("button", { name: "Save Kitchen updated" }));
+    await waitFor(() => expect(submit).toBeEnabled());
   });
 });

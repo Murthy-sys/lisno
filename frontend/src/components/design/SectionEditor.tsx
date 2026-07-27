@@ -12,6 +12,7 @@ interface SectionEditorProps {
   onRemove: () => Promise<void>;
   onConflictRefresh: () => Promise<unknown>;
   onDraftState: (state: { dirty: boolean; valid: boolean }) => void;
+  locked?: boolean;
 }
 
 export function SectionEditor({
@@ -20,14 +21,17 @@ export function SectionEditor({
   onSave,
   onRemove,
   onConflictRefresh,
-  onDraftState
+  onDraftState,
+  locked = false
 }: SectionEditorProps) {
   const [label, setLabel] = useState(section.label);
   const [crop, setCrop] = useState(section.revision.crop);
   const [error, setError] = useState<unknown>(null);
 
-  const editable = section.revision.reviewStatus === "draft" ||
-    section.revision.reviewStatus === "rejected";
+  const editable = !locked && (
+    section.revision.reviewStatus === "draft" ||
+    section.revision.reviewStatus === "rejected"
+  );
   const dirty = label !== section.label ||
     JSON.stringify(crop) !== JSON.stringify(section.revision.crop);
   const valid = Boolean(label.trim()) && cropIsValid(crop, page);
@@ -81,7 +85,7 @@ export function SectionEditor({
       ) : null}
 
       {editable ? <CropEditor label={label || section.label} crop={crop} page={page} onChange={setCrop} /> : (
-        <p className="locked-section">Approved sections are locked.</p>
+        <p className="locked-section">{locked ? "This submission is read-only." : "Approved sections are locked."}</p>
       )}
       <figure className="crop-preview">
         <ProtectedImage
