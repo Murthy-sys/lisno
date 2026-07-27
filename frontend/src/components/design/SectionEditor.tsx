@@ -2,15 +2,16 @@ import { useEffect, useState } from "react";
 
 import { ApiError } from "../../api/client";
 import type { CropRect, DesignSection, DesignSourcePage } from "../../api/types";
-import { CropEditor } from "./CropEditor";
+import { CropEditor, cropIsValid } from "./CropEditor";
 import { ProtectedImage } from "./ProtectedImage";
 
 interface SectionEditorProps {
   section: DesignSection;
   page: DesignSourcePage;
-  onSave: (input: { label: string; crop: CropRect }) => Promise<void>;
+  onSave: (input: { label: string; crop: CropRect }) => Promise<DesignSection>;
   onRemove: () => Promise<void>;
   onConflictRefresh: () => Promise<unknown>;
+  onDraftState: (state: { dirty: boolean; valid: boolean }) => void;
 }
 
 export function SectionEditor({
@@ -18,21 +19,36 @@ export function SectionEditor({
   page,
   onSave,
   onRemove,
-  onConflictRefresh
+  onConflictRefresh,
+  onDraftState
 }: SectionEditorProps) {
   const [label, setLabel] = useState(section.label);
   const [crop, setCrop] = useState(section.revision.crop);
   const [error, setError] = useState<unknown>(null);
 
+  const editable = section.revision.reviewStatus === "draft" ||
+    section.revision.reviewStatus === "rejected";
+  const dirty = label !== section.label ||
+    JSON.stringify(crop) !== JSON.stringify(section.revision.crop);
+  const valid = Boolean(label.trim()) && cropIsValid(crop, page);
+
   useEffect(() => {
-    setLabel(section.label);
-    setCrop(section.revision.crop);
-  }, [section.id, section.revision.revisionNumber, section.label, section.revision.crop]);
+    onDraftState({ dirty, valid });
+  }, [dirty, valid, onDraftState]);
+
+  useEffect(() => {
+    if (!dirty) {
+      setLabel(section.label);
+      setCrop(section.revision.crop);
+    }
+  }, [section.id, section.revision.revisionNumber, section.label, section.revision.crop, dirty]);
 
   const save = async () => {
     setError(null);
     try {
-      await onSave({ label, crop });
+      const updated = await onSave({ label, crop });
+      setLabel(updated.label);
+      setCrop(updated.revision.crop);
     } catch (caught) {
       setError(caught);
     }
@@ -47,6 +63,7 @@ export function SectionEditor({
             <input
               aria-label="Section label"
               value={label}
+              disabled={!editable}
               onChange={(event) => setLabel(event.target.value)}
             />
           </label>
@@ -63,7 +80,9 @@ export function SectionEditor({
         <p className="client-comment"><strong>Client comment:</strong> {section.revision.rejectionComment}</p>
       ) : null}
 
-      <CropEditor label={label || section.label} crop={crop} page={page} onChange={setCrop} />
+      {editable ? <CropEditor label={label || section.label} crop={crop} page={page} onChange={setCrop} /> : (
+        <p className="locked-section">Approved sections are locked.</p>
+      )}
       <figure className="crop-preview">
         <ProtectedImage
           source={section.revision.imageReference}
@@ -86,14 +105,14 @@ export function SectionEditor({
         </div>
       ) : null}
 
-      <div className="design-section-editor__actions">
-        <button type="button" className="button button--primary" disabled={!label.trim()} onClick={() => void save()}>
+      {editable ? <div className="design-section-editor__actions">
+        <button type="button" className="button button--primary" disabled={!valid || !dirty} onClick={() => void save()}>
           Save {label || "section"}
         </button>
         <button type="button" className="button button--secondary" onClick={() => void onRemove()}>
           Remove {label || "section"}
         </button>
-      </div>
+      </div> : null}
     </article>
   );
 }

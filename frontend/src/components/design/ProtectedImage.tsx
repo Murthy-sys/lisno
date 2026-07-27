@@ -9,16 +9,18 @@ interface ProtectedImageProps {
 }
 
 export function ProtectedImage({ source, alt, dataRevision }: ProtectedImageProps) {
-  const [imageSource, setImageSource] = useState(source);
+  const [imageSource, setImageSource] = useState<string>();
 
   useEffect(() => {
     let active = true;
     let objectUrl: string | undefined;
-    setImageSource(source);
+    setImageSource(undefined);
     void apiClient.getBlob(source).then(({ blob }) => {
-      if (!active || typeof URL.createObjectURL !== "function") return;
-      objectUrl = URL.createObjectURL(blob);
-      setImageSource(objectUrl);
+      if (!active) return;
+      if (typeof URL.createObjectURL === "function") {
+        objectUrl = URL.createObjectURL(blob);
+        setImageSource(objectUrl);
+      }
     }).catch(() => {
       // Keep the API reference as a graceful fallback if preview loading fails.
     });

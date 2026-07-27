@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import type { CropRect, DesignSection } from "../../api/types";
+import { CropEditor, cropIsValid } from "../../components/design/CropEditor";
 import { SectionEditor } from "../../components/design/SectionEditor";
 import {
   addDesignSection,
@@ -20,11 +21,20 @@ export function DesignUploadsWorkspace({ projectId }: { projectId: string }) {
   const [adding, setAdding] = useState(false);
   const [newLabel, setNewLabel] = useState("");
   const [notice, setNotice] = useState("");
+  const [actionError, setActionError] = useState("");
+  const [draftStates, setDraftStates] = useState<Record<string, { dirty: boolean; valid: boolean }>>({});
+  const [manualPageId, setManualPageId] = useState("");
+  const [manualCrop, setManualCrop] = useState<CropRect>({ x: 0, y: 0, width: 1, height: 1 });
 
   const versionsQuery = useQuery({
     queryKey: designerKeys.designVersions(projectId),
     queryFn: () => getDesignVersions(projectId),
-    refetchInterval: 3_000
+    refetchInterval: (query) => {
+      const items = query.state.data;
+      return items?.some((item) => item.extractionStatus === "queued" || item.extractionStatus === "processing")
+        ? 3_000
+        : false;
+    }
   });
   const versions = versionsQuery.data ?? [];
   const selected = versions.find(({ id }) => id === selectedVersionId) ??
@@ -46,24 +56,27 @@ export function DesignUploadsWorkspace({ projectId }: { projectId: string }) {
   const extraction = sectionsQuery.data;
   const status = extraction?.extractionStatus ?? selected?.extractionStatus;
 
-  const invalidate = async () => {
+  const invalidate = async (versionId = selected!.id) => {
     await Promise.all([
-      queryClient.invalidateQueries({ queryKey: designerKeys.designSections(selected!.id) }),
-      queryClient.invalidateQueries({ queryKey: designerKeys.designVersions(projectId) }),
-      queryClient.invalidateQueries({ queryKey: designerKeys.project(projectId) })
+      queryClient.invalidateQueries({ queryKey: designerKeys.designExtraction(versionId), refetchType: "none" }),
+      queryClient.invalidateQueries({ queryKey: designerKeys.designSections(versionId), refetchType: "none" }),
+      queryClient.invalidateQueries({ queryKey: designerKeys.designVersions(projectId), refetchType: "none" }),
+      queryClient.invalidateQueries({ queryKey: designerKeys.project(projectId), refetchType: "none" })
     ]);
   };
 
   const retry = useMutation({
     mutationFn: () => retryDesignExtraction(selected!.id),
-    onSuccess: invalidate
+    onSuccess: async () => { setActionError(""); await invalidate(); },
+    onError: () => setActionError("Extraction retry failed. Please try again.")
   });
   const submit = useMutation({
     mutationFn: () => submitDesignSections(selected!.id),
     onSuccess: async () => {
       setNotice("Sections submitted to the client.");
       await invalidate();
-    }
+    },
+    onError: () => setActionError("Sections could not be submitted. Your edits are unchanged.")
   });
   const add = useMutation({
     mutationFn: (input: { sourcePageId: string; label: string; crop: CropRect }) =>
@@ -72,7 +85,8 @@ export function DesignUploadsWorkspace({ projectId }: { projectId: string }) {
       setAdding(false);
       setNewLabel("");
       await invalidate();
-    }
+    },
+    onError: () => setActionError("The missing section could not be created. Your draft is unchanged.")
   });
 
   const pagesById = useMemo(
@@ -80,6 +94,9 @@ export function DesignUploadsWorkspace({ projectId }: { projectId: string }) {
     [extraction?.pages]
   );
   const activeSections = extraction?.sections.filter(({ active }) => active) ?? [];
+  const editableSections = activeSections.filter(({ revision }) =>
+    revision.reviewStatus === "draft" || revision.reviewStatus === "rejected"
+  );
   const allCropsValid = activeSections.every((section) => {
     const page = pagesById.get(section.revision.sourcePageId);
     const { x, y, width, height } = section.revision.crop;
@@ -93,6 +110,26 @@ export function DesignUploadsWorkspace({ projectId }: { projectId: string }) {
       y + height <= page.height
     );
   });
+  const hasUnsafeDraft = activeSections.some((section) => {
+    const state = draftStates[section.id];
+    return state ? state.dirty || !state.valid : false;
+  });
+  const manualPage = pagesById.get(manualPageId) ?? extraction?.pages[0];
+
+  useEffect(() => {
+    if (!manualPage) return;
+    setManualPageId(manualPage.id);
+    setManualCrop((current) =>
+      current.width === 1 && current.height === 1
+        ? { x: 0, y: 0, width: manualPage.width, height: manualPage.height }
+        : {
+            x: Math.min(current.x, manualPage.width - 1),
+            y: Math.min(current.y, manualPage.height - 1),
+            width: Math.min(current.width, manualPage.width - Math.min(current.x, manualPage.width - 1)),
+            height: Math.min(current.height, manualPage.height - Math.min(current.y, manualPage.height - 1))
+          }
+    );
+  }, [manualPage?.id, manualPage?.width, manualPage?.height]);
 
   if (versionsQuery.isPending) return <p role="status">Loading design uploads…</p>;
   if (versionsQuery.isError) {
@@ -127,7 +164,9 @@ export function DesignUploadsWorkspace({ projectId }: { projectId: string }) {
       ) : null}
       {status === "processing_failed" ? (
         <div className="processing-failure" role="alert">
-          <p>We couldn't extract sections from this design. Retry OCR or add sections manually.</p>
+          <p>{extraction?.pages.length
+            ? "We couldn't extract all sections. Retry OCR or add sections manually from the available pages."
+            : "We couldn't extract this design and no source pages are available for manual sections. Retry OCR."}</p>
           <button type="button" className="button button--secondary" disabled={retry.isPending} onClick={() => retry.mutate()}>
             Retry extraction
           </button>
@@ -135,6 +174,7 @@ export function DesignUploadsWorkspace({ projectId }: { projectId: string }) {
       ) : null}
       {sectionsQuery.isPending && canReadSections ? <p role="status">Loading extracted sections…</p> : null}
       {notice ? <p role="status">{notice}</p> : null}
+      {actionError ? <div role="alert">{actionError} <button type="button" onClick={() => setActionError("")}>Dismiss</button></div> : null}
 
       {activeSections.map((section) => {
         const page = pagesById.get(section.revision.sourcePageId);
@@ -152,18 +192,31 @@ export function DesignUploadsWorkspace({ projectId }: { projectId: string }) {
               });
               queryClient.setQueryData(
                 designerKeys.designSections(selected!.id),
-                extraction && {
-                  ...extraction,
-                  sections: extraction.sections.map((item) => item.id === updated.id ? updated : item)
-                }
+                (current: typeof extraction) => current ? {
+                  ...current,
+                  sections: current.sections.map((item) => item.id === updated.id ? updated : item)
+                } : current
               );
-              await queryClient.invalidateQueries({ queryKey: designerKeys.project(projectId) });
+              await invalidate();
+              return updated;
             }}
             onRemove={async () => {
-              await removeDesignSection(section.id, section.revision.revisionNumber);
-              await invalidate();
+              try {
+                await removeDesignSection(section.id, section.revision.revisionNumber);
+                setActionError("");
+                await invalidate();
+              } catch {
+                setActionError("The section could not be removed. It remains in the review set.");
+              }
             }}
             onConflictRefresh={() => sectionsQuery.refetch()}
+            onDraftState={(state) =>
+              setDraftStates((current) => {
+                const previous = current[section.id];
+                if (previous?.dirty === state.dirty && previous.valid === state.valid) return current;
+                return { ...current, [section.id]: state };
+              })
+            }
           />
         );
       })}
@@ -177,18 +230,25 @@ export function DesignUploadsWorkspace({ projectId }: { projectId: string }) {
           ) : (
             <form onSubmit={(event) => {
               event.preventDefault();
-              const source = extraction.pages[0]!;
+              if (!manualPage) return;
               add.mutate({
-                sourcePageId: source.id,
+                sourcePageId: manualPage.id,
                 label: newLabel,
-                crop: { x: 0, y: 0, width: source.width, height: source.height }
+                crop: manualCrop
               });
             }}>
+              <label>
+                <span>Source page</span>
+                <select aria-label="Source page" value={manualPage?.id ?? ""} onChange={(event) => setManualPageId(event.target.value)}>
+                  {extraction.pages.map((page) => <option key={page.id} value={page.id}>Page {page.pageNumber}</option>)}
+                </select>
+              </label>
               <label>
                 <span>New section label</span>
                 <input aria-label="New section label" value={newLabel} onChange={(event) => setNewLabel(event.target.value)} />
               </label>
-              <button type="submit" className="button button--primary" disabled={!newLabel.trim()}>Create section</button>
+              {manualPage ? <CropEditor label={newLabel || "New section"} crop={manualCrop} page={manualPage} onChange={setManualCrop} /> : null}
+              <button type="submit" className="button button--primary" disabled={!newLabel.trim() || !manualPage || !cropIsValid(manualCrop, manualPage)}>Create section</button>
             </form>
           )}
         </div>
@@ -200,7 +260,10 @@ export function DesignUploadsWorkspace({ projectId }: { projectId: string }) {
         disabled={
           (status !== "designer_review" && status !== "changes_requested") ||
           activeSections.length === 0 ||
+          editableSections.length === 0 ||
           !allCropsValid ||
+          hasUnsafeDraft ||
+          adding ||
           submit.isPending
         }
         onClick={() => submit.mutate()}

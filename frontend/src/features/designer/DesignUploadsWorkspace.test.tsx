@@ -35,6 +35,7 @@ const page = {
   imageUrl: "/api/v1/design-source-pages/page-1/image",
   createdAt: "2026-07-27T00:00:00.000Z"
 };
+const secondPage = { ...page, id: "page-2", pageNumber: 2, width: 1000, height: 700, imageUrl: "/api/v1/design-source-pages/page-2/image" };
 
 const section = {
   id: "section-1",
@@ -81,7 +82,7 @@ function installApi(status = "designer_review", mutation?: "network" | "conflict
     if (url === "/api/v1/design-versions/version-1/sections" && method === "GET") {
       return response({
         extractionStatus: status,
-        pages: status === "processing" || status === "queued" ? [] : [page],
+        pages: status === "processing" || status === "queued" ? [] : [page, secondPage],
         sections: status === "designer_review" ? [section] : []
       });
     }
@@ -196,8 +197,47 @@ describe("DesignUploadsWorkspace", () => {
     await user.clear(conflictLabel);
     await user.type(conflictLabel, "Still retained");
     await user.click(screen.getByRole("button", { name: "Save Still retained" }));
-    expect(await screen.findByRole("button", { name: "Refresh server version" })).toBeVisible();
+    const refresh = await screen.findByRole("button", { name: "Refresh server version" });
+    await user.click(refresh);
     expect(conflictLabel).toHaveValue("Still retained");
+  });
+
+  it("blocks submission for dirty local edits and locks approved sections", async () => {
+    installApi();
+    const user = userEvent.setup();
+    const first = renderWithQuery(<DesignUploadsWorkspace projectId="project-1" />);
+    const submit = await screen.findByRole("button", { name: /submit sections/i });
+    await user.type(screen.getByLabelText("Section label"), " changed");
+    expect(submit).toBeDisabled();
+    first.unmount();
+
+    const approved = { ...section, revision: { ...section.revision, reviewStatus: "approved" as const } };
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.startsWith("/api/v1/projects/project-1/design-versions?")) return response({ items: [{ ...version, extractionStatus: "changes_requested" }], pagination: { limit: 100, offset: 0, total: 1, hasMore: false } });
+      if (url.endsWith("/sections")) return response({ extractionStatus: "changes_requested", pages: [page], sections: [approved] });
+      return new Response(new Blob(["image"], { type: "image/png" }));
+    });
+    renderWithQuery(<DesignUploadsWorkspace projectId="project-1" />);
+    expect(await screen.findByLabelText("Section label")).toBeDisabled();
+    expect(screen.queryByRole("button", { name: /Save Elevation/ })).not.toBeInTheDocument();
+  });
+
+  it("lets a designer choose the source page and crop for a missing section", async () => {
+    const requests = installApi();
+    const user = userEvent.setup();
+    renderWithQuery(<DesignUploadsWorkspace projectId="project-1" />);
+    await user.click(await screen.findByRole("button", { name: "Add missing section" }));
+    await user.selectOptions(screen.getByLabelText("Source page"), "page-2");
+    await user.type(screen.getByLabelText("New section label"), "Kitchen");
+    const crop = screen.getByRole("group", { name: "Kitchen crop boundaries" });
+    await user.clear(within(crop).getByLabelText("Crop width"));
+    await user.type(within(crop).getByLabelText("Crop width"), "300");
+    await user.click(screen.getByRole("button", { name: "Create section" }));
+    expect(requests.at(-1)?.body).toMatchObject({
+      sourcePageId: "page-2",
+      crop: { width: 300 }
+    });
   });
 
   it("submits only when processing is complete and an active section exists", async () => {

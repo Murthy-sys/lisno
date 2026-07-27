@@ -87,7 +87,10 @@ async function fetchApi(
   options: RequestInit,
   requestToken: string | null
 ): Promise<Response> {
-  const response = await fetch(`${API_BASE_URL}${path}`, options);
+  const url = path === API_BASE_URL || path.startsWith(`${API_BASE_URL}/`)
+    ? path
+    : `${API_BASE_URL}${path.startsWith("/") ? path : `/${path}`}`;
+  const response = await fetch(url, options);
 
   if (!response.ok) {
     const error = await parseApiError(response);

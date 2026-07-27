@@ -15,6 +15,11 @@ const coordinates: Array<{ key: keyof CropRect; label: string; min: number }> = 
   { key: "height", label: "Crop height", min: 1 }
 ];
 
+export function cropIsValid(crop: CropRect, page: DesignSourcePage) {
+  return crop.x >= 0 && crop.y >= 0 && crop.width > 0 && crop.height > 0 &&
+    crop.x + crop.width <= page.width && crop.y + crop.height <= page.height;
+}
+
 export function CropEditor({ label, crop, page, onChange }: CropEditorProps) {
   return (
     <fieldset className="crop-editor" aria-label={`${label} crop boundaries`}>
@@ -33,13 +38,19 @@ export function CropEditor({ label, crop, page, onChange }: CropEditorProps) {
         />
       </div>
       <div className="crop-editor__inputs">
-        {coordinates.map(({ key, label: inputLabel, min }) => (
+        {coordinates.map(({ key, label: inputLabel, min }) => {
+          const max = key === "x" ? page.width - crop.width
+            : key === "y" ? page.height - crop.height
+              : key === "width" ? page.width - crop.x
+                : page.height - crop.y;
+          return (
           <label key={key}>
             <span>{inputLabel}</span>
             <input
               aria-label={inputLabel}
               type="number"
               min={min}
+              max={Math.max(min, max)}
               value={crop[key]}
               onKeyDown={(event) => {
                 const direction =
@@ -50,17 +61,20 @@ export function CropEditor({ label, crop, page, onChange }: CropEditorProps) {
                       : 0;
                 if (!direction) return;
                 event.preventDefault();
-                onChange({ ...crop, [key]: Math.max(min, crop[key] + direction) });
+                onChange({ ...crop, [key]: Math.min(Math.max(min, max), Math.max(min, crop[key] + direction)) });
               }}
               onChange={(event) =>
                 onChange({
                   ...crop,
-                  [key]: Math.max(min, Number(event.target.value))
+                  [key]: event.target.value === ""
+                    ? 0
+                    : Math.min(Math.max(min, max), Math.max(min, Number(event.target.value)))
                 })
               }
             />
           </label>
-        ))}
+          );
+        })}
       </div>
     </fieldset>
   );
