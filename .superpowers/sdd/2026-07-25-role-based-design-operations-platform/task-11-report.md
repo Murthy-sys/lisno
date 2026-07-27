@@ -169,3 +169,35 @@ Implementation commit: `1aacdc1` (`fix: close final review data bounds`).
 
 No lint script exists in either package. `reference_docs/` remained untouched
 and untracked.
+
+## Final review fix round 3
+
+Implementation commit: `75eb4fc` (`fix: complete management review context`).
+
+- Manager nodes retain a separately paginated 20-designer nested payload, but
+  their KPI, workload, red/yellow risk, and evaluation-coverage aggregates now
+  include the complete team up to an explicit 100-designer limit. A hierarchy
+  page is also capped at 1,000 aggregate designers, with structured 422 errors
+  for either cardinality violation.
+- The project inspection task view now distinguishes original and current
+  deadlines. Design-version history includes uploader, upload time, reviewer,
+  approval status/time, and client visibility.
+- Project activity now identifies the entity (mapping task IDs to task titles),
+  actor, timestamp, old/new field values, and reason in compact labeled rows.
+- Regression coverage proves designer 21 changes team risk, workload,
+  evaluation coverage, and KPI eligibility while staying outside the first
+  nested page; it also proves the hard team limit and all requested history
+  metadata.
+
+### Final review round 3 verification
+
+| Area | Commands | Result |
+| --- | --- | --- |
+| Backend | `npm test`, `npm run typecheck`, `npm run build` | passed; 14 test files, 139 tests |
+| Frontend | `npm test`, `npm run typecheck`, `npm run build` | passed; 14 test files, 65 tests |
+| Focused backend | `npm test -- --run tests/workflows.test.ts` | passed; 1 file, 40 tests |
+| Focused frontend | `npm test -- --run src/features/manager/ManagementProjectWorkspace.test.tsx` | passed; 1 file, 1 test |
+| Diff hygiene | `git diff --check`, `git diff --cached --check` | passed |
+
+No lint script exists in either package. `reference_docs/` remained untouched
+and untracked.
