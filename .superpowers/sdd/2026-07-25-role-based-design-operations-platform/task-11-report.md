@@ -93,3 +93,43 @@ claim is made for this review round.
   revision KPI components.
 - The designer workspace uses a visible current-month/previous-month reporting
   period selector instead of the former 2000–2100 hardcoded query.
+
+## Final role-workflow blocker slice
+
+Implementation commit: `3f48533` (`feat: complete role workflow blockers`).
+
+- Added accessible, labeled designer workspace dialogs for creating floors,
+  stages, and tasks. Their mutations refresh the project hierarchy and announce
+  successful creation.
+- Made project status plus project/floor progress server-derived from task state
+  and effort. A project becomes active when task work begins, and completed only
+  when all tasks complete.
+- Added a client-authorized, paginated project-summary endpoint with redacted
+  project fields, derived progress, and floor count; the client dashboard now
+  displays both.
+- Paginated manager-team and head-organization APIs. Frontend organization,
+  evaluation, and audit readers explicitly fetch every page so records beyond
+  the page boundary are not silently omitted.
+- Replaced hierarchy task, evaluation, and KPI-event fan-out with bounded batch
+  repository reads. Regression coverage includes collections larger than the
+  page size and rejects fallback to single-subject evaluation reads.
+- Nested each designer's assigned projects, including derived progress and
+  head project links, beneath that designer in the head hierarchy.
+
+### TDD and verification
+
+The backend progress/client-summary/pagination tests and frontend
+structure-dialog/all-page/nested-project tests were added first and observed
+failing before implementation. Self-review then added a failing bounded-batch
+hierarchy regression before removing the remaining evaluation/KPI N+1 reads.
+
+| Area | Commands | Result |
+| --- | --- | --- |
+| Backend | `npm run typecheck`, `npm test`, `npm run build` | passed; 14 test files, 133 tests |
+| Frontend | `npm run typecheck`, `npm test`, `npm run build` | passed; 13 test files, 64 tests |
+| Focused backend | `npm test -- workflows.test.ts` | passed; 34 tests |
+| Focused frontend | five role-workflow test paths | passed; 4 discovered test files, 15 tests |
+| Diff hygiene | `git diff --check`, `git diff --cached --check` | passed |
+
+No lint script exists in either package. `reference_docs/` remained untouched
+and untracked.
