@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from collections import deque
 from dataclasses import dataclass
-from math import ceil, sqrt
+from math import ceil, floor, sqrt
 from typing import Literal, Sequence, TypeAlias
 
 import numpy as np
@@ -66,9 +66,7 @@ def propose_panels(
     if not candidates:
         return ()
 
-    reserved_zones = _reserved_zones(
-        lines, page_width, page_height, settings
-    )
+    reserved_zones = _reserved_zones(image, lines, settings)
     regions = _discover_drawing_regions(
         image,
         lines,
@@ -77,56 +75,67 @@ def propose_panels(
     )
     if not regions:
         return ()
+    measurement_mask, measurement_scale_x, measurement_scale_y = (
+        _measurement_mask(image, lines, reserved_zones)
+    )
 
     if len(candidates) == 1 and candidates[0].kind == "page_title":
         dominant = _dominant_region(regions, page_width, page_height, settings)
         if dominant is None:
             return ()
-        raw_proposals = (
-            _make_proposal(
-                candidates[0],
-                dominant,
-                1.0,
-                page_width,
-                page_height,
-                reserved_zones,
-            ),
+        proposal = _make_proposal(
+            candidates[0],
+            dominant,
+            1.0,
+            page_width,
+            page_height,
+            reserved_zones,
         )
+        raw_proposals = () if proposal is None else (proposal,)
     else:
-        assignments = tuple(
-            assignment
-            for candidate in candidates
+        assignments = _global_heading_region_assignments(
+            candidates,
+            regions,
+            page_width,
+            page_height,
+        )
+        raw_proposals = tuple(
+            proposal
+            for candidate, layout_score, region in assignments
             if (
-                assignment := _best_region_for_heading(
+                partition := _measure_partition(
+                    _partition_region_box(
+                        candidate,
+                        tuple(
+                            other_candidate
+                            for other_candidate, _score, other_region in assignments
+                            if other_region == region
+                        ),
+                        region,
+                        page_width,
+                        page_height,
+                    ).box,
                     candidate,
-                    candidates,
-                    regions,
+                    measurement_mask,
+                    measurement_scale_x,
+                    measurement_scale_y,
                     page_width,
                     page_height,
+                    settings,
                 )
             )
             is not None
-        )
-        raw_proposals = tuple(
-            _make_proposal(
-                candidate,
-                _partition_region_box(
+            and (
+                proposal := _make_proposal(
                     candidate,
-                    tuple(
-                        other_candidate
-                        for other_candidate, _score, other_region in assignments
-                        if other_region == region
-                    ),
-                    region,
+                    partition,
+                    layout_score,
                     page_width,
                     page_height,
-                ),
-                layout_score,
-                page_width,
-                page_height,
-                reserved_zones,
+                    reserved_zones,
+                )
             )
-            for candidate, layout_score, region in assignments
+            is not None
         )
 
     return _suppress_and_separate(raw_proposals, settings)
@@ -150,38 +159,173 @@ def classify_heading(
 
 
 def _reserved_zones(
+    image: Image.Image,
     lines: Sequence[OcrLine],
-    page_width: int,
-    page_height: int,
     settings: LayoutSettings,
 ) -> tuple[Box, ...]:
-    bottom_start = int(page_height * (1 - settings.reserved_bottom_ratio))
-    zones: list[Box] = [(0, bottom_start, page_width, page_height)]
+    page_width, page_height = image.size
+    mask, scale_x, scale_y = _base_analysis_mask(image)
+    analysis_height, analysis_width = mask.shape
+    text_padding = max(
+        2, round(min(analysis_width, analysis_height) * 0.004)
+    )
+    for line in lines:
+        _erase_mask_box(
+            mask,
+            _pad_box(
+                _scale_box(line.box, scale_x, scale_y),
+                text_padding,
+            ),
+            analysis_width,
+            analysis_height,
+        )
+    if np.count_nonzero(mask) > mask.size * 0.45:
+        return ()
+    components = tuple(
+        _DrawingRegion(
+            _unscale_box(
+                component.box,
+                scale_x,
+                scale_y,
+                page_width,
+                page_height,
+            ),
+            component.ink_pixels,
+        )
+        for component in _connected_components(mask)
+    )
+    zones: list[Box] = []
     for line in lines:
         match_text = _match_text(line.text)
         if not any(
             _contains_term(match_text, term) for term in settings.reserved_terms
         ):
             continue
-        left, top, right, bottom = line.box
-        horizontal_padding = max(
-            int(page_width * 0.04), int(max(0, right - left) * 0.45)
-        )
-        vertical_above = max(int(page_height * 0.025), bottom - top)
-        vertical_below = max(int(page_height * 0.14), (bottom - top) * 5)
-        zones.append(
-            _clamp_box(
-                (
-                    left - horizontal_padding,
-                    top - vertical_above,
-                    right + horizontal_padding,
-                    bottom + vertical_below,
-                ),
+        if not _box_near_page_edge(line.box, page_width, page_height):
+            continue
+        geometric_candidates = tuple(
+            component
+            for component in components
+            if _reserved_geometry_evidence(
+                component.box,
+                components,
                 page_width,
                 page_height,
             )
+            and _box_distance(line.box, component.box)
+            <= max(page_width, page_height) * 0.08
         )
-    return tuple(zones)
+        if geometric_candidates:
+            zones.append(
+                min(
+                    geometric_candidates,
+                    key=lambda component: _box_distance(
+                        line.box, component.box
+                    ),
+                ).box
+            )
+
+    zones.extend(
+        component.box
+        for component in components
+        if _unlabeled_edge_reserved_geometry(
+            component.box,
+            components,
+            page_width,
+            page_height,
+        )
+    )
+    return _deduplicate_boxes(zones)
+
+
+def _reserved_geometry_evidence(
+    box: Box,
+    components: Sequence[_DrawingRegion],
+    page_width: int,
+    page_height: int,
+) -> bool:
+    width, height = _box_size(box)
+    area_ratio = _box_area(box) / max(page_width * page_height, 1)
+    bottom_band = (
+        box[3] >= page_height * 0.92
+        and width >= page_width * 0.35
+        and height <= page_height * 0.30
+    )
+    compact_edge_container = (
+        0.004 <= area_ratio <= 0.08
+        and width <= page_width * 0.35
+        and height <= page_height * 0.35
+        and _box_near_page_edge(box, page_width, page_height)
+        and _contained_component_count(box, components) >= 1
+    )
+    return bottom_band or compact_edge_container
+
+
+def _unlabeled_edge_reserved_geometry(
+    box: Box,
+    components: Sequence[_DrawingRegion],
+    page_width: int,
+    page_height: int,
+) -> bool:
+    width, height = _box_size(box)
+    area_ratio = _box_area(box) / max(page_width * page_height, 1)
+    title_block = (
+        box[3] >= page_height * 0.96
+        and box[1] >= page_height * 0.68
+        and width >= page_width * 0.45
+        and height <= page_height * 0.30
+        and _contained_component_count(box, components) >= 3
+    )
+    compact_key_plan = (
+        0.006 <= area_ratio <= 0.06
+        and box[1] <= page_height * 0.20
+        and (box[0] <= page_width * 0.08 or box[2] >= page_width * 0.92)
+        and _contained_component_count(box, components) >= 1
+    )
+    return title_block or compact_key_plan
+
+
+def _contained_component_count(
+    container: Box,
+    components: Sequence[_DrawingRegion],
+) -> int:
+    return sum(
+        1
+        for component in components
+        if component.box != container
+        and component.box[0] >= container[0]
+        and component.box[1] >= container[1]
+        and component.box[2] <= container[2]
+        and component.box[3] <= container[3]
+    )
+
+
+def _box_near_page_edge(
+    box: Box,
+    page_width: int,
+    page_height: int,
+) -> bool:
+    return (
+        box[0] <= page_width * 0.08
+        or box[2] >= page_width * 0.92
+        or box[1] <= page_height * 0.20
+        or box[3] >= page_height * 0.80
+    )
+
+
+def _box_distance(first: Box, second: Box) -> float:
+    x_gap = max(0, max(first[0], second[0]) - min(first[2], second[2]))
+    y_gap = max(0, max(first[1], second[1]) - min(first[3], second[3]))
+    return sqrt(x_gap * x_gap + y_gap * y_gap)
+
+
+def _deduplicate_boxes(boxes: Sequence[Box]) -> tuple[Box, ...]:
+    unique: list[Box] = []
+    for box in sorted(boxes, key=lambda item: (_box_area(item), item)):
+        if any(_box_iou(box, existing) >= 0.80 for existing in unique):
+            continue
+        unique.append(box)
+    return tuple(unique)
 
 
 def _discover_drawing_regions(
@@ -191,19 +335,8 @@ def _discover_drawing_regions(
     settings: LayoutSettings,
 ) -> tuple[_DrawingRegion, ...]:
     page_width, page_height = image.size
-    analysis_scale = min(
-        1.0, sqrt(_MAX_ANALYSIS_PIXELS / max(page_width * page_height, 1))
-    )
-    analysis_width = max(1, round(page_width * analysis_scale))
-    analysis_height = max(1, round(page_height * analysis_scale))
-    grayscale_image = image.convert("L")
-    if analysis_scale < 1:
-        grayscale_image = grayscale_image.resize(
-            (analysis_width, analysis_height),
-            Image.Resampling.BOX,
-        )
-    grayscale = np.asarray(grayscale_image)
-    mask = grayscale < 210
+    mask, scale_x, scale_y = _base_analysis_mask(image)
+    analysis_height, analysis_width = mask.shape
     text_padding = max(
         2, round(min(analysis_width, analysis_height) * 0.004)
     )
@@ -211,7 +344,7 @@ def _discover_drawing_regions(
         _erase_mask_box(
             mask,
             _pad_box(
-                _scale_box(line.box, analysis_scale, analysis_scale),
+                _scale_box(line.box, scale_x, scale_y),
                 text_padding,
             ),
             analysis_width,
@@ -220,7 +353,7 @@ def _discover_drawing_regions(
     for zone in reserved_zones:
         _erase_mask_box(
             mask,
-            _scale_box(zone, analysis_scale, analysis_scale),
+            _scale_box(zone, scale_x, scale_y),
             analysis_width,
             analysis_height,
         )
@@ -233,7 +366,7 @@ def _discover_drawing_regions(
     )
     analysis_area = analysis_width * analysis_height
     analysis_zones = tuple(
-        _scale_box(zone, analysis_scale, analysis_scale)
+        _scale_box(zone, scale_x, scale_y)
         for zone in reserved_zones
     )
     regions = []
@@ -258,7 +391,8 @@ def _discover_drawing_regions(
             _DrawingRegion(
                 _unscale_box(
                     region.box,
-                    analysis_scale,
+                    scale_x,
+                    scale_y,
                     page_width,
                     page_height,
                 ),
@@ -266,6 +400,59 @@ def _discover_drawing_regions(
             )
         )
     return tuple(sorted(regions, key=lambda region: (region.box[1], region.box[0])))
+
+
+def _measurement_mask(
+    image: Image.Image,
+    lines: Sequence[OcrLine],
+    reserved_zones: Sequence[Box],
+) -> tuple[np.ndarray, float, float]:
+    mask, scale_x, scale_y = _base_analysis_mask(image)
+    analysis_height, analysis_width = mask.shape
+    text_padding = max(
+        2, round(min(analysis_width, analysis_height) * 0.004)
+    )
+    for line in lines:
+        _erase_mask_box(
+            mask,
+            _pad_box(
+                _scale_box(line.box, scale_x, scale_y),
+                text_padding,
+            ),
+            analysis_width,
+            analysis_height,
+        )
+    for zone in reserved_zones:
+        _erase_mask_box(
+            mask,
+            _scale_box(zone, scale_x, scale_y),
+            analysis_width,
+            analysis_height,
+        )
+    return mask, scale_x, scale_y
+
+
+def _base_analysis_mask(
+    image: Image.Image,
+) -> tuple[np.ndarray, float, float]:
+    page_width, page_height = image.size
+    analysis_width, analysis_height = _bounded_analysis_size(
+        page_width,
+        page_height,
+        _MAX_ANALYSIS_PIXELS,
+    )
+    analysis_image = image
+    if (analysis_width, analysis_height) != image.size:
+        analysis_image = image.resize(
+            (analysis_width, analysis_height),
+            Image.Resampling.BOX,
+        )
+    mask = np.asarray(analysis_image.convert("L")) < 210
+    return (
+        mask,
+        analysis_width / page_width,
+        analysis_height / page_height,
+    )
 
 
 def _erase_mask_box(
@@ -290,9 +477,13 @@ def _connected_components(mask: np.ndarray) -> tuple[_DrawingRegion, ...]:
         left = right = int(start_x)
         top = bottom = int(start_y)
         pixels = 0
+        row_counts: dict[int, int] = {}
+        column_counts: dict[int, int] = {}
         while queue:
             x, y = queue.popleft()
             pixels += 1
+            row_counts[y] = row_counts.get(y, 0) + 1
+            column_counts[x] = column_counts.get(x, 0) + 1
             left = min(left, x)
             top = min(top, y)
             right = max(right, x)
@@ -315,12 +506,44 @@ def _connected_components(mask: np.ndarray) -> tuple[_DrawingRegion, ...]:
                 ):
                     visited[neighbor_y, neighbor_x] = True
                     queue.append((neighbor_x, neighbor_y))
+        raw_box = (left, top, right + 1, bottom + 1)
         components.append(
-            _DrawingRegion((left, top, right + 1, bottom + 1), pixels)
+            _DrawingRegion(
+                _robust_component_box(raw_box, row_counts, column_counts),
+                pixels,
+            )
         )
         if len(components) > _MAX_COMPONENTS:
             return ()
     return tuple(components)
+
+
+def _robust_component_box(
+    raw_box: Box,
+    row_counts: dict[int, int],
+    column_counts: dict[int, int],
+) -> Box:
+    width, height = _box_size(raw_box)
+    minimum_column_ink = max(2, round(height * 0.10))
+    minimum_row_ink = max(2, round(width * 0.10))
+    structural_columns = [
+        column
+        for column, count in column_counts.items()
+        if count >= minimum_column_ink
+    ]
+    structural_rows = [
+        row
+        for row, count in row_counts.items()
+        if count >= minimum_row_ink
+    ]
+    if not structural_columns or not structural_rows:
+        return raw_box
+    return (
+        min(structural_columns),
+        min(structural_rows),
+        max(structural_columns) + 1,
+        max(structural_rows) + 1,
+    )
 
 
 def _has_interior_drawing_ink(
@@ -347,39 +570,69 @@ def _merge_nearby_components(
     settings: LayoutSettings,
 ) -> tuple[_DrawingRegion, ...]:
     page_area = page_width * page_height
-    minimum_fragment_area = page_area * settings.min_region_area_ratio * 0.12
+    minimum_fragment_ink = max(
+        4, round(page_area * settings.min_region_area_ratio * 0.0005)
+    )
     regions = [
         component
         for component in components
-        if _box_area(component.box) >= minimum_fragment_area
-        or component.ink_pixels >= minimum_fragment_area * 0.02
+        if component.ink_pixels >= minimum_fragment_ink
     ]
-    horizontal_gap = max(2, round(page_width * 0.012))
-    vertical_gap = max(2, round(page_height * 0.012))
+    horizontal_gap = max(2, round(page_width * 0.02))
+    vertical_gap = max(2, round(page_height * 0.02))
+    if len(regions) < 2:
+        return tuple(regions)
 
-    changed = True
-    while changed:
-        changed = False
-        for first_index, first in enumerate(regions):
-            for second_index in range(first_index + 1, len(regions)):
-                second = regions[second_index]
-                if not _components_belong_together(
-                    first.box,
-                    second.box,
-                    horizontal_gap,
-                    vertical_gap,
-                ):
-                    continue
-                regions[first_index] = _DrawingRegion(
-                    _union_box(first.box, second.box),
-                    first.ink_pixels + second.ink_pixels,
-                )
-                del regions[second_index]
-                changed = True
-                break
-            if changed:
-                break
-    return tuple(regions)
+    parents = list(range(len(regions)))
+
+    def find(index: int) -> int:
+        while parents[index] != index:
+            parents[index] = parents[parents[index]]
+            index = parents[index]
+        return index
+
+    def union(first_index: int, second_index: int) -> None:
+        first_root = find(first_index)
+        second_root = find(second_index)
+        if first_root != second_root:
+            parents[second_root] = first_root
+
+    cell_size = max(16, horizontal_gap * 2, vertical_gap * 2)
+    spatial_index: dict[tuple[int, int], list[int]] = {}
+    for index, region in enumerate(regions):
+        expanded = _pad_box(
+            region.box, max(horizontal_gap, vertical_gap)
+        )
+        left_cell = max(0, expanded[0]) // cell_size
+        top_cell = max(0, expanded[1]) // cell_size
+        right_cell = max(0, expanded[2]) // cell_size
+        bottom_cell = max(0, expanded[3]) // cell_size
+        neighbors: set[int] = set()
+        for cell_y in range(top_cell, bottom_cell + 1):
+            for cell_x in range(left_cell, right_cell + 1):
+                neighbors.update(spatial_index.get((cell_x, cell_y), ()))
+        for neighbor_index in neighbors:
+            if _components_belong_together(
+                region.box,
+                regions[neighbor_index].box,
+                horizontal_gap,
+                vertical_gap,
+            ):
+                union(index, neighbor_index)
+        for cell_y in range(top_cell, bottom_cell + 1):
+            for cell_x in range(left_cell, right_cell + 1):
+                spatial_index.setdefault((cell_x, cell_y), []).append(index)
+
+    grouped: dict[int, list[_DrawingRegion]] = {}
+    for index, region in enumerate(regions):
+        grouped.setdefault(find(index), []).append(region)
+    return tuple(
+        _DrawingRegion(
+            _union_boxes(member.box for member in members),
+            sum(member.ink_pixels for member in members),
+        )
+        for members in grouped.values()
+    )
 
 
 def _components_belong_together(
@@ -396,6 +649,22 @@ def _components_belong_together(
     y_overlap = max(0, min(first[3], second[3]) - max(first[1], second[1]))
     x_gap = max(0, max(first[0], second[0]) - min(first[2], second[2]))
     y_gap = max(0, max(first[1], second[1]) - min(first[3], second[3]))
+    first_flat = first_width > first_height * 8
+    second_flat = second_width > second_height * 8
+    first_tall = first_height > first_width * 8
+    second_tall = second_height > second_width * 8
+    first_two_dimensional = not first_flat and not first_tall
+    second_two_dimensional = not second_flat and not second_tall
+    if y_gap and (
+        (first_flat and second_two_dimensional)
+        or (second_flat and first_two_dimensional)
+    ):
+        return False
+    if x_gap and (
+        (first_tall and second_two_dimensional)
+        or (second_tall and first_two_dimensional)
+    ):
+        return False
     vertically_aligned = x_overlap >= min(first_width, second_width) * 0.3
     horizontally_aligned = y_overlap >= min(first_height, second_height) * 0.3
     return (
@@ -423,14 +692,13 @@ def _dominant_region(
     return ordered[0]
 
 
-def _best_region_for_heading(
-    candidate: HeadingCandidate,
+def _global_heading_region_assignments(
     candidates: Sequence[HeadingCandidate],
     regions: Sequence[_DrawingRegion],
     page_width: int,
     page_height: int,
-) -> tuple[HeadingCandidate, float, _DrawingRegion] | None:
-    scored_regions = tuple(
+) -> tuple[tuple[HeadingCandidate, float, _DrawingRegion], ...]:
+    scored_pairs = sorted(
         (
             _association_score(
                 candidate,
@@ -439,16 +707,108 @@ def _best_region_for_heading(
                 page_width,
                 page_height,
             ),
-            region,
+            candidate_index,
+            region_index,
         )
-        for region in regions
+        for candidate_index, candidate in enumerate(candidates)
+        for region_index, region in enumerate(regions)
     )
-    layout_score, region = max(
-        scored_regions, key=lambda item: item[0], default=(0.0, None)
-    )
-    if region is None or layout_score < 0.42:
+    scored_pairs.reverse()
+    assignments: list[tuple[HeadingCandidate, float, _DrawingRegion]] = []
+    assigned_candidates: set[int] = set()
+    assigned_regions: set[int] = set()
+    for score, candidate_index, region_index in scored_pairs:
+        if score < 0.42:
+            break
+        if (
+            candidate_index in assigned_candidates
+            or region_index in assigned_regions
+        ):
+            continue
+        assignments.append(
+            (
+                candidates[candidate_index],
+                score,
+                regions[region_index],
+            )
+        )
+        assigned_candidates.add(candidate_index)
+        assigned_regions.add(region_index)
+
+    for candidate_index, candidate in enumerate(candidates):
+        if candidate_index in assigned_candidates:
+            continue
+        best = max(
+            (
+                (
+                    _association_score(
+                        candidate,
+                        candidates,
+                        region,
+                        page_width,
+                        page_height,
+                    ),
+                    region,
+                )
+                for region in regions
+            ),
+            key=lambda item: item[0],
+            default=(0.0, None),
+        )
+        score, region = best
+        if region is not None and score >= 0.42:
+            assignments.append((candidate, score, region))
+    return tuple(assignments)
+
+
+def _measure_partition(
+    box: Box,
+    candidate: HeadingCandidate,
+    mask: np.ndarray,
+    scale_x: float,
+    scale_y: float,
+    page_width: int,
+    page_height: int,
+    settings: LayoutSettings,
+) -> _DrawingRegion | None:
+    box = _clamp_box(box, page_width, page_height)
+    width, height = _box_size(box)
+    page_area = page_width * page_height
+    if (
+        _box_area(box) < page_area * settings.min_region_area_ratio
+        or width < page_width * 0.08
+        or height < page_height * 0.06
+    ):
         return None
-    return candidate, layout_score, region
+    analysis_box = _clamp_box(
+        _scale_box(box, scale_x, scale_y),
+        mask.shape[1],
+        mask.shape[0],
+    )
+    left, top, right, bottom = analysis_box
+    ink_pixels = int(np.count_nonzero(mask[top:bottom, left:right]))
+    analysis_area = _box_area(analysis_box)
+    density = ink_pixels / max(analysis_area, 1)
+    measured = _DrawingRegion(analysis_box, ink_pixels)
+    if (
+        density <= 0.001
+        or density >= 0.62
+        or not _has_interior_drawing_ink(mask, measured)
+    ):
+        return None
+    source_region = _DrawingRegion(box, ink_pixels)
+    if (
+        _association_score(
+            candidate,
+            (candidate,),
+            source_region,
+            page_width,
+            page_height,
+        )
+        < 0.42
+    ):
+        return None
+    return source_region
 
 
 def _partition_region_box(
@@ -548,10 +908,9 @@ def _make_proposal(
     page_width: int,
     page_height: int,
     reserved_zones: Sequence[Box],
-) -> PanelProposal:
-    padding = max(4, round(min(page_width, page_height) * 0.012))
+) -> PanelProposal | None:
     crop = _clamp_box(
-        _pad_box(_union_box(candidate.line.box, region.box), padding),
+        _union_box(candidate.line.box, region.box),
         page_width,
         page_height,
     )
@@ -561,6 +920,10 @@ def _make_proposal(
         region.box,
         reserved_zones,
     )
+    if any(
+        _intersection_area(crop, zone) > 0 for zone in reserved_zones
+    ):
+        return None
     confidence = min(
         1.0,
         candidate.line.confidence * 0.45
@@ -618,37 +981,46 @@ def _suppress_and_separate(
             )
             for existing in accepted
         )
-        substantial_overlap = any(
-            _box_iou(proposal.crop, existing.crop)
-            >= min(settings.duplicate_iou, 0.35)
+        colliding_headings = any(
+            _intersection_area(proposal.heading_box, existing.heading_box) > 0
             for existing in accepted
         )
-        if not duplicate and not substantial_overlap:
-            accepted.append(proposal)
-
-    ordered = sorted(
-        accepted, key=lambda item: (item.heading_box[1], item.heading_box[0])
-    )
-    for first_index in range(len(ordered)):
-        for second_index in range(first_index + 1, len(ordered)):
-            first = ordered[first_index]
-            second = ordered[second_index]
-            if _intersection_area(first.crop, second.crop) == 0:
+        if duplicate or colliding_headings:
+            continue
+        candidate = proposal
+        for existing_index, existing in enumerate(accepted):
+            if _intersection_area(existing.crop, candidate.crop) == 0:
                 continue
-            first_crop, second_crop = _split_overlap(first, second)
-            ordered[first_index] = PanelProposal(
-                first.label,
-                first.confidence,
-                first_crop,
-                first.heading_box,
+            existing_crop, candidate_crop = _split_overlap(
+                existing, candidate
             )
-            ordered[second_index] = PanelProposal(
-                second.label,
-                second.confidence,
-                second_crop,
-                second.heading_box,
+            if (
+                not _box_contains(existing_crop, existing.heading_box)
+                or not _box_contains(candidate_crop, candidate.heading_box)
+                or _intersection_area(existing_crop, candidate_crop) > 0
+            ):
+                candidate = None
+                break
+            accepted[existing_index] = PanelProposal(
+                existing.label,
+                existing.confidence,
+                existing_crop,
+                existing.heading_box,
             )
-    return tuple(ordered)
+            candidate = PanelProposal(
+                candidate.label,
+                candidate.confidence,
+                candidate_crop,
+                candidate.heading_box,
+            )
+        if candidate is not None:
+            accepted.append(candidate)
+    return tuple(
+        sorted(
+            accepted,
+            key=lambda item: (item.heading_box[1], item.heading_box[0]),
+        )
+    )
 
 
 def _split_overlap(
@@ -703,20 +1075,43 @@ def _scale_box(box: Box, scale_x: float, scale_y: float) -> Box:
 
 def _unscale_box(
     box: Box,
-    scale: float,
+    scale_x: float,
+    scale_y: float,
     page_width: int,
     page_height: int,
 ) -> Box:
     return _clamp_box(
         (
-            int(box[0] / scale),
-            int(box[1] / scale),
-            ceil(box[2] / scale),
-            ceil(box[3] / scale),
+            int(box[0] / scale_x),
+            int(box[1] / scale_y),
+            ceil(box[2] / scale_x),
+            ceil(box[3] / scale_y),
         ),
         page_width,
         page_height,
     )
+
+
+def _bounded_analysis_size(
+    width: int,
+    height: int,
+    pixel_cap: int,
+) -> tuple[int, int]:
+    if width <= 0 or height <= 0 or pixel_cap <= 0:
+        raise ValueError("Image dimensions and analysis pixel cap must be positive.")
+    if width * height <= pixel_cap:
+        return width, height
+    scale = sqrt(pixel_cap / (width * height))
+    analysis_width = max(1, floor(width * scale))
+    analysis_height = max(1, floor(height * scale))
+    if analysis_width * analysis_height > pixel_cap:
+        if analysis_width >= analysis_height:
+            analysis_width = max(1, pixel_cap // analysis_height)
+        else:
+            analysis_height = max(1, pixel_cap // analysis_width)
+    if analysis_width * analysis_height > pixel_cap:
+        analysis_width, analysis_height = pixel_cap, 1
+    return analysis_width, analysis_height
 
 
 def _clamp_box(box: Box, page_width: int, page_height: int) -> Box:
@@ -749,6 +1144,14 @@ def _union_box(first: Box, second: Box) -> Box:
     )
 
 
+def _union_boxes(boxes: Sequence[Box]) -> Box:
+    iterator = iter(boxes)
+    combined = next(iterator)
+    for box in iterator:
+        combined = _union_box(combined, box)
+    return combined
+
+
 def _intersection_area(first: Box, second: Box) -> int:
     width = max(0, min(first[2], second[2]) - max(first[0], second[0]))
     height = max(0, min(first[3], second[3]) - max(first[1], second[1]))
@@ -759,6 +1162,15 @@ def _box_iou(first: Box, second: Box) -> float:
     intersection = _intersection_area(first, second)
     union = _box_area(first) + _box_area(second) - intersection
     return intersection / max(union, 1)
+
+
+def _box_contains(container: Box, contained: Box) -> bool:
+    return (
+        container[0] <= contained[0]
+        and container[1] <= contained[1]
+        and container[2] >= contained[2]
+        and container[3] >= contained[3]
+    )
 
 
 def normalize_display_text(text: str) -> str:

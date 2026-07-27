@@ -16,6 +16,10 @@ FIXTURES = Path(__file__).parent / "fixtures"
 PAGE_SIZE = (1400, 1000)
 KEY_PLAN_BOX = (1080, 35, 1360, 205)
 LEGEND_NOTES_BOX = (0, 820, 1400, 1000)
+EXTERNAL_DIMENSION_BOX = (835, 499, 1316, 512)
+EXTERNAL_LEADER_BOX = (1, 430, 40, 451)
+EXTERNAL_CALLOUT_SYMBOL_BOX = (788, 690, 808, 707)
+TITLE_BLOCK_BOX = (700, 820, 1400, 1000)
 
 
 def fixture_image(name: str) -> Image.Image:
@@ -246,10 +250,15 @@ def test_rejects_unmarked_heading_evidence_in_the_reserved_bottom_band():
 
 
 def test_multi_panel_sheet_returns_only_major_drawing_panels():
+    from lisno_ocr.layout import _reserved_zones
+
+    image = fixture_image("major-panels.png")
+    lines = blueprint_two_ocr_lines()
+    settings = LayoutSettings.defaults()
     proposals = propose_panels(
-        fixture_image("major-panels.png"),
-        blueprint_two_ocr_lines(),
-        LayoutSettings.defaults(),
+        image,
+        lines,
+        settings,
     )
 
     assert [proposal.label for proposal in proposals] == [
@@ -260,6 +269,23 @@ def test_multi_panel_sheet_returns_only_major_drawing_panels():
     assert all(not intersects(proposal.crop, KEY_PLAN_BOX) for proposal in proposals)
     assert all(
         not intersects(proposal.crop, LEGEND_NOTES_BOX) for proposal in proposals
+    )
+    excluded_geometry = (
+        EXTERNAL_DIMENSION_BOX,
+        EXTERNAL_LEADER_BOX,
+        EXTERNAL_CALLOUT_SYMBOL_BOX,
+        TITLE_BLOCK_BOX,
+    )
+    assert all(
+        not intersects(proposal.crop, excluded)
+        for proposal in proposals
+        for excluded in excluded_geometry
+    )
+    confirmed_reserved_zones = _reserved_zones(image, lines, settings)
+    assert all(
+        not intersects(proposal.crop, zone)
+        for proposal in proposals
+        for zone in confirmed_reserved_zones
     )
 
 
@@ -404,3 +430,207 @@ def test_crop_padding_is_trimmed_before_the_reserved_bottom_band():
 
     assert len(proposals) == 1
     assert proposals[0].crop[3] <= 410
+
+
+def test_reserved_words_inside_a_drawing_do_not_create_an_exclusion_zone():
+    image = Image.new("RGB", (800, 500), "white")
+    draw = ImageDraw.Draw(image)
+    draw.rectangle((80, 145, 720, 440), outline="black", width=4)
+    draw.line((80, 280, 720, 280), fill="black", width=3)
+    draw.line((300, 145, 300, 440), fill="black", width=3)
+    lines = [
+        OcrLine((85, 85, 510, 120), "A. FRONT ELEVATION", 0.98),
+        OcrLine((130, 250, 670, 300), "KEY PLAN", 0.99),
+    ]
+
+    proposals = propose_panels(image, lines, LayoutSettings.defaults())
+
+    assert len(proposals) == 1
+    assert proposals[0].crop[3] >= 440
+
+
+def test_unlabeled_edge_key_plan_and_title_block_have_geometry_evidence():
+    from lisno_ocr.layout import _reserved_zones
+
+    image = fixture_image("major-panels.png")
+    lines_without_reserved_labels = [
+        line
+        for line in blueprint_one_ocr_lines()
+        if line.text not in {"KEY PLAN", "SYMBOL LEGEND", "GENERAL NOTES"}
+    ]
+
+    zones = _reserved_zones(
+        image,
+        lines_without_reserved_labels,
+        LayoutSettings.defaults(),
+    )
+
+    assert any(intersects(zone, KEY_PLAN_BOX) for zone in zones)
+    assert any(intersects(zone, TITLE_BLOCK_BOX) for zone in zones)
+
+
+def test_overlapping_heading_boxes_leave_only_the_higher_score_proposal():
+    image = Image.new("RGB", (800, 500), "white")
+    draw = ImageDraw.Draw(image)
+    draw.rectangle((35, 145, 385, 430), outline="black", width=4)
+    draw.line((35, 280, 385, 280), fill="black", width=3)
+    draw.rectangle((415, 145, 765, 430), outline="black", width=4)
+    draw.line((415, 280, 765, 280), fill="black", width=3)
+    lines = [
+        OcrLine((45, 75, 440, 115), "A. FRONT ELEVATION", 0.97),
+        OcrLine((370, 75, 755, 115), "B. SIDE ELEVATION", 0.88),
+    ]
+
+    proposals = propose_panels(image, lines, LayoutSettings.defaults())
+
+    assert [proposal.label for proposal in proposals] == ["Front Elevation"]
+
+
+def test_shared_region_partition_rejects_non_major_heading_sliver():
+    image = Image.new("RGB", (800, 500), "white")
+    draw = ImageDraw.Draw(image)
+    draw.rectangle((40, 220, 760, 400), outline="black", width=4)
+    draw.line((400, 220, 400, 400), fill="black", width=4)
+    draw.line((40, 310, 760, 310), fill="black", width=3)
+    lines = [
+        OcrLine((55, 80, 345, 120), "A. FRONT ELEVATION", 0.97),
+        OcrLine((505, 80, 795, 120), "B. SIDE ELEVATION", 0.95),
+        OcrLine((720, 80, 780, 120), "C. PLAN", 0.94),
+    ]
+
+    proposals = propose_panels(image, lines, LayoutSettings.defaults())
+
+    assert [proposal.label for proposal in proposals] == [
+        "Front Elevation",
+        "Side Elevation",
+    ]
+
+
+def test_fragmented_antialiased_drawing_still_forms_a_major_region():
+    image = Image.new("RGB", (800, 500), "white")
+    draw = ImageDraw.Draw(image)
+    for x in range(80, 720, 24):
+        draw.line((x, 150, min(x + 16, 720), 150), fill=(155, 155, 155), width=2)
+        draw.line((x, 410, min(x + 16, 720), 410), fill=(155, 155, 155), width=2)
+    for y in range(150, 410, 24):
+        draw.line((80, y, 80, min(y + 16, 410)), fill=(155, 155, 155), width=2)
+        draw.line((720, y, 720, min(y + 16, 410)), fill=(155, 155, 155), width=2)
+        draw.line((400, y, 400, min(y + 16, 410)), fill=(170, 170, 170), width=2)
+    lines = [
+        OcrLine((85, 85, 560, 120), "A. REFLECTED CEILING PLAN", 0.96),
+    ]
+
+    proposals = propose_panels(image, lines, LayoutSettings.defaults())
+
+    assert [proposal.label for proposal in proposals] == [
+        "Reflected Ceiling Plan"
+    ]
+    assert proposals[0].crop[2] >= 720
+    assert proposals[0].crop[3] >= 410
+
+
+def test_unrecognized_external_text_does_not_become_a_drawing_region():
+    image = Image.new("RGB", (800, 500), "white")
+    draw = ImageDraw.Draw(image)
+    draw.rectangle((80, 145, 720, 390), outline="black", width=4)
+    draw.line((80, 270, 720, 270), fill="black", width=3)
+    draw.line((310, 145, 310, 390), fill="black", width=3)
+    for row in range(410, 470, 15):
+        for column in range(90, 700, 16):
+            draw.rectangle(
+                (column, row, column + 5, row + 8),
+                outline=(80, 80, 80),
+                width=1,
+            )
+    lines = [
+        OcrLine((85, 85, 510, 120), "A. FRONT ELEVATION", 0.98),
+    ]
+
+    proposals = propose_panels(image, lines, LayoutSettings.defaults())
+
+    assert len(proposals) == 1
+    assert proposals[0].crop[3] < 410
+
+
+def test_four_x_analysis_preserves_source_coordinate_crops():
+    source = fixture_image("major-panels.png")
+    baseline = propose_panels(
+        source,
+        blueprint_two_ocr_lines(),
+        LayoutSettings.defaults(),
+    )
+    scale_x = 4.003
+    scale_y = 3.997
+    large = source.resize(
+        (round(source.width * scale_x), round(source.height * scale_y)),
+        Image.Resampling.NEAREST,
+    )
+    scaled_lines = [
+        OcrLine(
+            (
+                round(line.box[0] * scale_x),
+                round(line.box[1] * scale_y),
+                round(line.box[2] * scale_x),
+                round(line.box[3] * scale_y),
+            ),
+            line.text,
+            line.confidence,
+        )
+        for line in blueprint_two_ocr_lines()
+    ]
+
+    enlarged = propose_panels(large, scaled_lines, LayoutSettings.defaults())
+
+    assert [proposal.label for proposal in enlarged] == [
+        proposal.label for proposal in baseline
+    ]
+    for expected, actual in zip(baseline, enlarged):
+        normalized = (
+            round(actual.crop[0] / scale_x),
+            round(actual.crop[1] / scale_y),
+            round(actual.crop[2] / scale_x),
+            round(actual.crop[3] / scale_y),
+        )
+        assert all(
+            abs(expected_value - actual_value) <= 2
+            for expected_value, actual_value in zip(expected.crop, normalized)
+        )
+
+
+@pytest.mark.parametrize(
+    ("width", "height"),
+    [
+        (40_000_000, 1),
+        (1, 40_000_000),
+        (20_000_000, 2),
+        (9_999_991, 3),
+    ],
+)
+def test_analysis_dimensions_never_exceed_the_pixel_cap(width, height):
+    from lisno_ocr.layout import _MAX_ANALYSIS_PIXELS, _bounded_analysis_size
+
+    analysis_width, analysis_height = _bounded_analysis_size(
+        width,
+        height,
+        _MAX_ANALYSIS_PIXELS,
+    )
+
+    assert analysis_width >= 1
+    assert analysis_height >= 1
+    assert analysis_width * analysis_height <= _MAX_ANALYSIS_PIXELS
+
+
+def test_dense_page_is_rejected_before_component_traversal(monkeypatch):
+    import lisno_ocr.layout as layout
+
+    image = Image.new("RGB", (2000, 1000), "black")
+    lines = [
+        OcrLine((100, 80, 1000, 130), "A. FRONT ELEVATION", 0.98),
+    ]
+
+    def fail_if_traversed(_mask):
+        raise AssertionError("dense mask reached component traversal")
+
+    monkeypatch.setattr(layout, "_connected_components", fail_if_traversed)
+
+    assert propose_panels(image, lines, LayoutSettings.defaults()) == ()
