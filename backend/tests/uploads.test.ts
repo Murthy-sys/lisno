@@ -9,6 +9,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 
 import { createApp } from "../src/app.js";
 import type { Role } from "../src/contracts/domain.js";
+import { isValidPdfDocument } from "../src/middleware/upload.js";
 import { createMemoryRepository } from "../src/repositories/memory.js";
 import type { AppRepository } from "../src/repositories/types.js";
 import { demoSeedData } from "../src/seed/data.js";
@@ -21,6 +22,7 @@ const auth = {
 const TEST_NOW = "2026-07-16T12:00:00.000Z";
 const clock = () => new Date(TEST_NOW);
 let PDF: Buffer;
+let XREF_STREAM_PDF: Buffer;
 const PNG = Buffer.from([
   0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x00
 ]);
@@ -33,6 +35,10 @@ beforeAll(async () => {
   const document = await PDFDocument.create();
   document.addPage([612, 792]);
   PDF = Buffer.from(await document.save({ useObjectStreams: false }));
+
+  const xrefStreamDocument = await PDFDocument.create();
+  xrefStreamDocument.addPage([612, 792]);
+  XREF_STREAM_PDF = Buffer.from(await xrefStreamDocument.save());
 });
 
 const users = {
@@ -426,6 +432,74 @@ describe("design-version uploads", () => {
       expect(response.status).toBe(415);
       expect(response.body.error.code).toBe("UNSUPPORTED_FILE_TYPE");
     }
+  });
+
+  it("accepts classic and xref-stream PDFs but rejects startxref targets that are not xref structures", async () => {
+    const { app } = setup();
+    const ordinaryObjectTarget = Buffer.from(
+      PDF.toString("latin1").replace(
+        /startxref\s+\d+/,
+        "startxref\n16"
+      ),
+      "latin1"
+    );
+    const fakeXrefStream = Buffer.from(
+      XREF_STREAM_PDF.toString("latin1").replace(
+        "/Type /XRef",
+        "/Type /Fake"
+      ),
+      "latin1"
+    );
+
+    expect(PDF.toString("latin1").slice(16)).toMatch(/^\d+\s+\d+\s+obj\b/);
+    expect(XREF_STREAM_PDF.toString("latin1")).toContain("/Type /XRef");
+    expect(fakeXrefStream.toString("latin1")).toContain("/Type /Fake");
+    await expect(isValidPdfDocument(PDF)).resolves.toBe(true);
+    await expect(isValidPdfDocument(XREF_STREAM_PDF)).resolves.toBe(true);
+    await expect(isValidPdfDocument(ordinaryObjectTarget)).resolves.toBe(false);
+    await expect(isValidPdfDocument(fakeXrefStream)).resolves.toBe(false);
+
+    const responses = await Promise.all([
+      upload(
+        app,
+        users.ananya,
+        "task-furniture-layout",
+        PDF,
+        "classic.pdf",
+        "application/pdf"
+      ),
+      upload(
+        app,
+        users.ananya,
+        "task-furniture-layout",
+        XREF_STREAM_PDF,
+        "xref-stream.pdf",
+        "application/pdf"
+      ),
+      upload(
+        app,
+        users.ananya,
+        "task-furniture-layout",
+        ordinaryObjectTarget,
+        "ordinary-object-target.pdf",
+        "application/pdf"
+      ),
+      upload(
+        app,
+        users.ananya,
+        "task-furniture-layout",
+        fakeXrefStream,
+        "fake-xref-stream.pdf",
+        "application/pdf"
+      )
+    ]);
+
+    expect(responses.map((response) => response.status)).toEqual([
+      201,
+      201,
+      415,
+      415
+    ]);
   });
 
   it("rolls back the version and deletes the original when extraction enqueue fails", async () => {

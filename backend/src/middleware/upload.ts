@@ -1,7 +1,15 @@
 import path from "node:path";
 
 import multer, { MulterError } from "multer";
-import { PDFDocument } from "pdf-lib";
+import {
+  PDFArray,
+  PDFContext,
+  PDFDocument,
+  PDFName,
+  PDFNumber,
+  PDFObjectParser,
+  PDFRawStream
+} from "pdf-lib";
 import type { RequestHandler } from "express";
 
 import { ApiError } from "./errors.js";
@@ -199,18 +207,11 @@ export async function isValidPdfDocument(data: Buffer) {
     return false;
   }
 
-  if (
-    source.startsWith("xref", xrefOffset) &&
-    !hasValidClassicXref(source, xrefOffset)
-  ) {
-    return false;
-  }
-  if (
-    !source.startsWith("xref", xrefOffset) &&
-    !/^\d+\s+\d+\s+obj\b/.test(source.slice(xrefOffset, xrefOffset + 64))
-  ) {
-    return false;
-  }
+  const pointsToClassicXref = /^xref(?=\s)/.test(source.slice(xrefOffset));
+  const hasValidXrefTarget = pointsToClassicXref
+    ? hasValidClassicXref(source, xrefOffset)
+    : hasValidXrefStream(data, source, xrefOffset);
+  if (!hasValidXrefTarget) return false;
 
   try {
     const document = await PDFDocument.load(data, {
@@ -218,6 +219,52 @@ export async function isValidPdfDocument(data: Buffer) {
       updateMetadata: false
     });
     return document.getPageCount() > 0;
+  } catch {
+    return false;
+  }
+}
+
+function hasValidXrefStream(
+  data: Buffer,
+  source: string,
+  xrefOffset: number
+) {
+  const candidate = source.slice(xrefOffset);
+  const header = /^(\d+)\s+(\d+)\s+obj\b/.exec(candidate);
+  if (!header) return false;
+
+  try {
+    const parsed = PDFObjectParser.forBytes(
+      data.subarray(xrefOffset + header[0].length),
+      PDFContext.create(),
+      true
+    ).parseObject();
+    if (!(parsed instanceof PDFRawStream)) return false;
+
+    const type = parsed.dict.lookupMaybe(PDFName.Type, PDFName);
+    const widths = parsed.dict.lookupMaybe(PDFName.of("W"), PDFArray);
+    const size = parsed.dict.lookupMaybe(PDFName.of("Size"), PDFNumber);
+    const objectCount = size?.asNumber();
+    if (
+      type?.asString() !== "/XRef" ||
+      widths?.size() !== 3 ||
+      !Number.isSafeInteger(objectCount) ||
+      (objectCount ?? 0) <= 0
+    ) {
+      return false;
+    }
+    const widthValues = widths.asArray();
+    return (
+      widthValues.some(
+        (width) => width instanceof PDFNumber && width.asNumber() > 0
+      ) &&
+      widthValues.every(
+        (width) =>
+          width instanceof PDFNumber &&
+          Number.isSafeInteger(width.asNumber()) &&
+          width.asNumber() >= 0
+      )
+    );
   } catch {
     return false;
   }
