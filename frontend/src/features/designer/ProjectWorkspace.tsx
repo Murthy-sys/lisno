@@ -24,6 +24,7 @@ import { AsyncState } from "../../components/ui/AsyncState";
 import { ProgressBar } from "../../components/ui/ProgressBar";
 import { StatusBadge } from "../../components/ui/StatusBadge";
 import { designerKeys } from "./designerApi";
+import { DesignUploadsWorkspace } from "./DesignUploadsWorkspace";
 import {
   ProjectStructureDialog,
   type StructureAction
@@ -321,6 +322,8 @@ export function ProjectWorkspace() {
           </div>
         )}
       </section>
+
+      <DesignUploadsWorkspace projectId={project.id} />
 
       {taskAction?.kind === "update" && selectedTask ? (
         <TaskUpdateDialog

@@ -143,6 +143,9 @@ export const apiClient = {
   patch<T>(path: string, body?: unknown): Promise<T> {
     return request<T>(path, { method: "PATCH", body });
   },
+  delete<T>(path: string, body?: unknown): Promise<T> {
+    return request<T>(path, { method: "DELETE", body });
+  },
   async postMultipart<T>(path: string, body: FormData): Promise<T> {
     const requestToken = tokenStorage.get();
     const response = await fetchApi(path, {

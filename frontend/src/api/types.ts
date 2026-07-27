@@ -418,9 +418,73 @@ export interface DesignVersion {
   clientVisible: boolean;
   createdAt: string;
   updatedAt: string;
+  extractionStatus?: ExtractionStatus | null;
 }
 
 export type ClientDesignVersion = Omit<
   DesignVersion,
   "uploaderId" | "reviewerId"
 >;
+
+export type ExtractionStatus =
+  | "queued"
+  | "processing"
+  | "designer_review"
+  | "submitted"
+  | "changes_requested"
+  | "approved"
+  | "processing_failed";
+
+export type SectionReviewStatus = "draft" | "submitted" | "approved" | "rejected";
+
+export interface CropRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface DesignExtraction {
+  extractionStatus: ExtractionStatus;
+  pages: DesignSourcePage[];
+  sections: DesignSection[];
+}
+
+export interface DesignSourcePage {
+  id: string;
+  designVersionId: string;
+  pageNumber: number;
+  width: number;
+  height: number;
+  imageUrl: string;
+  createdAt: string;
+}
+
+export interface DesignSectionRevision {
+  id: string;
+  sectionId: string;
+  revisionNumber: number;
+  sourcePageId: string;
+  crop: CropRect;
+  label: string;
+  reviewStatus: SectionReviewStatus;
+  submittedAt: string | null;
+  reviewerId: string | null;
+  reviewedAt: string | null;
+  rejectionComment: string | null;
+  createdAt: string;
+  imageReference: string;
+}
+
+export interface DesignSection {
+  id: string;
+  designVersionId: string;
+  sourcePageId: string;
+  label: string;
+  active: boolean;
+  source: "ocr" | "manual";
+  ocrConfidence: number | null;
+  createdAt: string;
+  updatedAt: string;
+  revision: DesignSectionRevision;
+}
