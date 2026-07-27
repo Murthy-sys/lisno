@@ -24,6 +24,33 @@ _DEFAULT_RESERVED_TERMS = (
     "title block",
     "dimensions",
 )
+_DEFAULT_MATERIAL_SPEC_TERMS = (
+    "aluminium",
+    "aluminum",
+    "brass",
+    "concrete",
+    "fabric",
+    "felt",
+    "glass",
+    "granite",
+    "grout",
+    "laminate",
+    "leather",
+    "marble",
+    "metal",
+    "paint",
+    "plaster",
+    "plywood",
+    "quartz",
+    "stone",
+    "steel",
+    "teak",
+    "tile",
+    "timber",
+    "veneer",
+    "wallpaper",
+    "wood",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,6 +61,7 @@ class LayoutSettings:
     min_region_area_ratio: float
     duplicate_iou: float
     reserved_bottom_ratio: float
+    material_spec_terms: tuple[str, ...]
 
     @classmethod
     def defaults(cls) -> LayoutSettings:
@@ -44,6 +72,7 @@ class LayoutSettings:
             min_region_area_ratio=0.03,
             duplicate_iou=0.65,
             reserved_bottom_ratio=0.18,
+            material_spec_terms=_DEFAULT_MATERIAL_SPEC_TERMS,
         )
 
     @classmethod
@@ -66,6 +95,10 @@ class LayoutSettings:
             duplicate_iou=_bounded_ratio("OCR_PANEL_DUPLICATE_IOU", defaults.duplicate_iou),
             reserved_bottom_ratio=_bounded_ratio(
                 "OCR_RESERVED_BOTTOM_RATIO", defaults.reserved_bottom_ratio
+            ),
+            material_spec_terms=_extend_terms(
+                defaults.material_spec_terms,
+                os.environ.get("OCR_MATERIAL_SPEC_TERMS"),
             ),
         )
 

@@ -109,8 +109,53 @@ def test_rejects_marked_with_callouts_even_when_heading_has_drawing_terms(text):
     ) is None
 
 
-@pytest.mark.parametrize("text", ["A. FINISH PLAN", "A. BESPOKE FINISH STUDY"])
-def test_accepts_structured_finish_drawing_titles(text):
+@pytest.mark.parametrize(
+    "text",
+    [
+        "A. CEILING PANEL – TEAK VENEER",
+        "B. FLOOR PLAN – MARBLE FINISH",
+        "C. WALL ELEVATION – OAK LAMINATE",
+        "D. REFLECTED CEILING PLAN – TILE / GROUT",
+        "E. FRONT ELEVATION – TEXTURED PAINT",
+        "F. BUILDING SECTION – BRUSHED METAL",
+        "G. CEILING LAYOUT – HONED STONE",
+        "H. CEILING PANEL (TEAK VENEER)",
+        "I. WALL ELEVATION (MARBLE FINISH)",
+    ],
+)
+def test_rejects_marked_material_specification_suffixes(text):
+    assert classify_heading(
+        OcrLine((100, 420, 700, 465), text, 0.99),
+        1400,
+        1000,
+        LayoutSettings.defaults(),
+    ) is None
+
+
+def test_rejects_configured_material_specification_suffix(monkeypatch):
+    monkeypatch.setenv("OCR_MATERIAL_SPEC_TERMS", "cork")
+
+    assert classify_heading(
+        OcrLine((100, 420, 700, 465), "A. CEILING PANEL – CORK", 0.99),
+        1400,
+        1000,
+        LayoutSettings.from_environment(),
+    ) is None
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "A. FINISH PLAN",
+        "A. BESPOKE FINISH STUDY",
+        "A. LIVING ROOM – FRONT ELEVATION",
+        "B. REFLECTED CEILING PLAN",
+        "C. FLOOR PLAN – FIRST FLOOR",
+        "D. FRONT ELEVATION (LEFT)",
+        "E. BESPOKE STONE STUDY",
+    ],
+)
+def test_accepts_structured_and_genuine_drawing_titles(text):
     assert classify_heading(
         OcrLine((100, 420, 700, 465), text, 0.99),
         1400,

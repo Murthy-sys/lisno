@@ -174,6 +174,7 @@ _CALLOUT_PREFIX_RE = re.compile(
 )
 _LEADER_PREFIX_RE = re.compile(r"^leader\b")
 _FINISH_TREATMENT_RE = re.compile(r"\bfinish$")
+_PARENTHETICAL_PROPERTY_RE = re.compile(r"\(([^()]*)\)")
 _DISPLAY_WORD_RE = re.compile(r"[A-Za-z]+(?:\d+)?|\d+[A-Za-z][A-Za-z0-9]*")
 _DIGIT_ACRONYM_RE = re.compile(r"\d+[A-Z]{2,}\d*")
 _DISPLAY_ACRONYMS = frozenset({"AC", "DB", "FFL", "HVAC", "LED", "MEP", "RCP", "TV", "UPVC", "WC"})
@@ -184,6 +185,8 @@ def _looks_like_callout(
 ) -> bool:
     unmarked = _PANEL_MARKER_RE.sub("", text).strip()
     unmarked_match = _match_text(unmarked)
+    if _has_material_specification_suffix(unmarked, settings):
+        return True
     prefix_match = _CALLOUT_PREFIX_RE.match(unmarked_match)
     if prefix_match and not _has_drawing_term(
         prefix_match.group("remainder") or "", settings
@@ -204,3 +207,20 @@ def _looks_like_callout(
     ):
         return True
     return bool(_CALLOUT_PHRASE_RE.search(match_text))
+
+
+def _has_material_specification_suffix(
+    text: str, settings: LayoutSettings
+) -> bool:
+    dash_suffixes = text.split(" – ")[1:]
+    parenthetical_properties = _PARENTHETICAL_PROPERTY_RE.findall(text)
+    for phrase in (*dash_suffixes, *parenthetical_properties):
+        match_phrase = _match_text(phrase)
+        if _has_drawing_term(match_phrase, settings):
+            continue
+        if any(
+            _contains_term(match_phrase, term)
+            for term in settings.material_spec_terms
+        ):
+            return True
+    return False

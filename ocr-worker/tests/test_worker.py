@@ -141,6 +141,7 @@ def test_settings_bounds_output_for_base64_json_transport(monkeypatch):
 def test_layout_settings_extend_default_terms_and_parse_bounded_values(monkeypatch):
     monkeypatch.setenv("OCR_DRAWING_TERMS", " reflected plan, cabinetry ")
     monkeypatch.setenv("OCR_RESERVED_TERMS", "revision cloud, north arrow")
+    monkeypatch.setenv("OCR_MATERIAL_SPEC_TERMS", "cork, acoustic-felt")
     monkeypatch.setenv("OCR_MIN_HEADING_SCORE", "0.8")
     monkeypatch.setenv("OCR_MIN_DRAWING_REGION_AREA_RATIO", "0.04")
     monkeypatch.setenv("OCR_PANEL_DUPLICATE_IOU", "0.7")
@@ -150,6 +151,7 @@ def test_layout_settings_extend_default_terms_and_parse_bounded_values(monkeypat
 
     assert {"plan", "reflected plan", "cabinetry"} <= set(settings.drawing_terms)
     assert {"legend", "revision cloud", "north arrow"} <= set(settings.reserved_terms)
+    assert {"veneer", "cork", "acoustic felt"} <= set(settings.material_spec_terms)
     assert settings.min_heading_score == 0.8
     assert settings.min_region_area_ratio == 0.04
     assert settings.duplicate_iou == 0.7
@@ -159,6 +161,7 @@ def test_layout_settings_extend_default_terms_and_parse_bounded_values(monkeypat
 def test_layout_settings_ignore_empty_term_extensions(monkeypatch):
     monkeypatch.setenv("OCR_DRAWING_TERMS", " , ")
     monkeypatch.setenv("OCR_RESERVED_TERMS", "")
+    monkeypatch.setenv("OCR_MATERIAL_SPEC_TERMS", " , ")
 
     assert LayoutSettings.from_environment() == LayoutSettings.defaults()
 
