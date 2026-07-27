@@ -6,6 +6,7 @@ import { FilePreview } from "../../components/ui/FilePreview";
 import { AsyncState } from "../../components/ui/AsyncState";
 import { ProgressBar } from "../../components/ui/ProgressBar";
 import { clientKeys, getClientProject, getClientVersions } from "./clientApi";
+import { DesignSectionReview } from "./DesignSectionReview";
 
 export function ClientProject() {
   const { projectId = "" } = useParams();
@@ -19,6 +20,7 @@ export function ClientProject() {
   return <section className="client-page" aria-labelledby="client-project-title">
     <Link className="back-link" to="/client">Back to projects</Link>
     <header className="workspace-header"><div><p className="eyebrow">Project plan</p><h1 id="client-project-title">{project.name}</h1><p>{project.location} · Expected completion {formatDate(project.plannedEndAt)}</p></div></header>
+    <DesignSectionReview projectId={projectId} mode="client" />
     <section className="client-floor-list" aria-labelledby="floor-progress-title"><h2 id="floor-progress-title">Floor progress</h2>{project.floors.slice().sort((left, right) => left.order - right.order).map((floor) => <article key={floor.id} className="client-floor-card"><div><p>Floor {floor.number}</p><h3>{floor.name}</h3></div><div><strong>{floor.progress}% complete</strong><ProgressBar value={floor.progress} label={`${floor.name}: ${floor.progress}% complete`} /></div>{(versionsByFloor.get(floor.id) ?? []).map((version) => <VisibleVersion key={version.id} version={version} />)}</article>)}</section>
     {!versions.length ? <div className="project-empty"><div><h2>Your project is in progress. Approved plans will appear here once ready.</h2><p>Your team will share documents here after review and approval.</p></div></div> : null}
   </section>;

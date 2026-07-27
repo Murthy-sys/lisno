@@ -7,6 +7,7 @@ import { tokenStorage } from "../api/client";
 import { renderApp } from "./render";
 import { renderWithQuery } from "./render";
 import { DesignUploadsWorkspace } from "../features/designer/DesignUploadsWorkspace";
+import { DesignSectionReview } from "../features/client/DesignSectionReview";
 
 const userFor = (role: "designer" | "design_manager" | "design_head" | "client") => ({ id: `${role}-1`, name: "Accessible Person", email: `${role}@lisno.example`, role });
 
@@ -99,6 +100,41 @@ async function expectNoAxeViolations() {
 }
 
 describe("accessibility smoke coverage", () => {
+  it("associates rejection errors and keeps the review dialog keyboard accessible", async () => {
+    const user = userEvent.setup();
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url === "/api/v1/client/projects/project-review/design-sections") {
+        return Response.json({ data: {
+          projectId: "project-review",
+          progress: { approved: 0, rejected: 0, awaitingReview: 1, total: 1 },
+          sections: [{
+            id: "section-review", designVersionId: "version-review", sourcePageId: "page-review",
+            label: "North elevation", active: true, source: "ocr", ocrConfidence: .9,
+            createdAt: "now", updatedAt: "now", versionNumber: 1,
+            revision: {
+              id: "revision-review", sectionId: "section-review", revisionNumber: 1,
+              sourcePageId: "page-review", crop: { x: 0, y: 0, width: 100, height: 100 },
+              label: "North elevation", reviewStatus: "submitted", submittedAt: "now",
+              reviewerId: null, reviewedAt: null, rejectionComment: null, createdAt: "now",
+              imageReference: "/revision-review.png"
+            },
+            history: []
+          }]
+        } });
+      }
+      if (url === "/revision-review.png") return new Response(new Blob(["image"], { type: "image/png" }));
+      throw new Error(`Unhandled request: ${url}`);
+    });
+    renderWithQuery(<DesignSectionReview projectId="project-review" mode="client" />);
+    await user.click(await screen.findByRole("button", { name: "Reject North elevation" }));
+    const dialog = screen.getByRole("dialog", { name: "Request changes for North elevation" });
+    await waitFor(() => expect(within(dialog).getByLabelText("Modification comment")).toHaveFocus());
+    await user.click(within(dialog).getByRole("button", { name: "Send request" }));
+    expect(within(dialog).getByLabelText("Modification comment")).toHaveAccessibleDescription("Explain what the designer should modify.");
+    await expectNoAxeViolations();
+  });
+
   it("gives OCR crop controls accessible names and keyboard operation", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = String(input);

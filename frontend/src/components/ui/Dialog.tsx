@@ -46,8 +46,10 @@ export function Dialog({
     document.body.style.overflow = "hidden";
 
     const focusFirst = window.setTimeout(() => {
-      dialogRef.current
-        ?.querySelector<HTMLElement>(focusableSelector)
+      const initial = dialogRef.current?.querySelector<HTMLElement>(
+        "[data-dialog-initial-focus]"
+      );
+      (initial ?? dialogRef.current?.querySelector<HTMLElement>(focusableSelector))
         ?.focus();
     }, 0);
 

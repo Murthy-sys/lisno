@@ -11,6 +11,7 @@ import type {
 import { useAuth } from "../../auth/AuthProvider";
 import { RiskBadge } from "../../components/tasks/RiskBadge";
 import { AsyncState } from "../../components/ui/AsyncState";
+import { DesignSectionReview } from "../client/DesignSectionReview";
 import {
   getManagementProjectActivity,
   getManagementProjectVersions
@@ -116,6 +117,8 @@ export function ManagementProjectWorkspace() {
           </article>
         ))}
       </section>
+
+      <DesignSectionReview projectId={projectId} mode="read-only" />
 
       <section aria-labelledby="version-timeline-title">
         <h2 id="version-timeline-title">Design-version timeline</h2>

@@ -488,3 +488,27 @@ export interface DesignSection {
   updatedAt: string;
   revision: DesignSectionRevision;
 }
+
+export interface DesignSectionReviewItem extends DesignSection {
+  versionNumber: number;
+  history: DesignSectionRevision[];
+}
+
+export interface DesignSectionReviewProgress {
+  approved: number;
+  rejected: number;
+  awaitingReview: number;
+  total: number;
+}
+
+export interface DesignSectionReviewData {
+  projectId: string;
+  progress: DesignSectionReviewProgress;
+  sections: DesignSectionReviewItem[];
+}
+
+export interface DesignSectionDecisionResult {
+  revision: DesignSectionRevision;
+  extractionStatus: ExtractionStatus;
+  progress: DesignSectionReviewProgress;
+}
