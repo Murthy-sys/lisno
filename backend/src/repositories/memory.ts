@@ -65,6 +65,8 @@ const mutationMethods = new Set<keyof AppRepository>([
   "createManualSection",
   "updateDraftSection",
   "createSectionRevision",
+  "retryExtractionJob",
+  "submitDesignSectionDrafts",
   "createEvaluation",
   "appendAuditEvent"
 ]);
@@ -745,6 +747,10 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
       );
     },
 
+    async findSourcePageById(id) {
+      return copyOrNull(state.sourcePages.find((page) => page.id === id));
+    },
+
     async replaceExtractionDraft(input) {
       const jobIndex = state.extractionJobs.findIndex(
         (job) => job.id === input.jobId
@@ -810,6 +816,22 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
       );
     },
 
+    async findDesignSectionById(id) {
+      return copyOrNull(state.designSections.find((section) => section.id === id));
+    },
+
+    async listSectionRevisions(sectionId) {
+      return clone(
+        state.designSectionRevisions
+          .filter((revision) => revision.sectionId === sectionId)
+          .sort((left, right) => left.revisionNumber - right.revisionNumber)
+      );
+    },
+
+    async findSectionRevisionById(id) {
+      return copyOrNull(state.designSectionRevisions.find((revision) => revision.id === id));
+    },
+
     async createManualSection(input) {
       ensureUniqueId(state.designSections, input.id, "Design section");
       const section: DesignSectionRecord = { ...clone(input), source: "manual" };
@@ -851,6 +873,63 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
       }
       state.designSectionRevisions.push(clone(input));
       return clone(input);
+    },
+
+    async retryExtractionJob(id, queuedAt) {
+      const index = state.extractionJobs.findIndex((job) => job.id === id);
+      if (index < 0) throw new RepositoryNotFoundError(`Design extraction job ${id} was not found.`);
+      if (state.extractionJobs[index]!.status !== "processing_failed") {
+        throw new RepositoryConflictError("Only failed extraction jobs can be retried.");
+      }
+      const updated = {
+        ...state.extractionJobs[index]!,
+        status: "queued" as const,
+        queuedAt,
+        startedAt: null,
+        completedAt: null,
+        leaseExpiresAt: null,
+        failureCode: null,
+        failureMessage: null,
+        claimId: null,
+        updatedAt: queuedAt
+      };
+      state.extractionJobs[index] = updated;
+      return clone(updated);
+    },
+
+    async submitDesignSectionDrafts(designVersionId, submittedAt) {
+      const activeIds = new Set(
+        state.designSections
+          .filter((section) => section.designVersionId === designVersionId && section.active)
+          .map((section) => section.id)
+      );
+      if (activeIds.size === 0) {
+        throw new RepositoryConflictError("At least one active section is required.");
+      }
+      let count = 0;
+      for (const sectionId of activeIds) {
+        const latest = state.designSectionRevisions
+          .filter((revision) => revision.sectionId === sectionId)
+          .sort((left, right) => right.revisionNumber - left.revisionNumber)[0];
+        if (!latest || latest.reviewStatus !== "draft") {
+          throw new RepositoryConflictError("Every active section must have an eligible draft.");
+        }
+        const index = state.designSectionRevisions.findIndex((item) => item.id === latest.id);
+        state.designSectionRevisions[index] = {
+          ...latest,
+          reviewStatus: "submitted",
+          submittedAt
+        };
+        count += 1;
+      }
+      const jobIndex = state.extractionJobs.findIndex((job) => job.designVersionId === designVersionId);
+      if (jobIndex < 0) throw new RepositoryNotFoundError("Design extraction job was not found.");
+      state.extractionJobs[jobIndex] = {
+        ...state.extractionJobs[jobIndex]!,
+        status: "submitted",
+        updatedAt: submittedAt
+      };
+      return count;
     },
 
     async createEvaluation(input) {

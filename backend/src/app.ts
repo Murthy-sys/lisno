@@ -9,6 +9,7 @@ import { createAuditRouter } from "./routes/audit.js";
 import { createAuthRouter } from "./routes/auth.js";
 import { createEvaluationsRouter } from "./routes/evaluations.js";
 import { createDesignVersionsRouter } from "./routes/design-versions.js";
+import { createDesignSectionsRouter } from "./routes/design-sections.js";
 import { createExtractionWorkerRouter } from "./routes/extraction-worker.js";
 import { healthRouter } from "./routes/health.js";
 import { createKpisRouter } from "./routes/kpis.js";
@@ -22,6 +23,7 @@ import {
 } from "./services/auth.service.js";
 import { createEvaluationService } from "./services/evaluation.service.js";
 import { createDesignVersionService } from "./services/design-version.service.js";
+import { createDesignSectionService } from "./services/design-section.service.js";
 import { createExtractionWorkerService } from "./services/extraction-worker.service.js";
 import { createHierarchyService } from "./services/hierarchy.service.js";
 import { createKpiService } from "./services/kpi.service.js";
@@ -65,6 +67,12 @@ export function createApp(dependencies: AppDependencies) {
     storage,
     clock
   );
+  const designSectionService = createDesignSectionService(
+    repository,
+    auditService,
+    storage,
+    clock
+  );
   const extractionWorkerService = dependencies.ocrWorkerToken
     ? createExtractionWorkerService(
         repository,
@@ -101,6 +109,10 @@ export function createApp(dependencies: AppDependencies) {
       designVersionService,
       maxUploadBytes
     )
+  );
+  app.use(
+    "/api/v1",
+    createDesignSectionsRouter(authService, designSectionService)
   );
   app.use(
     "/api/v1",

@@ -843,6 +843,13 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
       return (await query.exec()).map(mapSourcePage);
     },
 
+    async findSourcePageById(id) {
+      const query = DesignSourcePageModel.findById(id).lean();
+      if (session) query.session(session);
+      const document = await query.exec();
+      return document ? mapSourcePage(document) : null;
+    },
+
     async replaceExtractionDraft(input) {
       if (!session) {
         await repository.runInTransaction((transaction) =>
@@ -940,6 +947,28 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
       return (await query.exec()).map(mapSection);
     },
 
+    async findDesignSectionById(id) {
+      const query = DesignSectionModel.findById(id).lean();
+      if (session) query.session(session);
+      const document = await query.exec();
+      return document ? mapSection(document) : null;
+    },
+
+    async listSectionRevisions(sectionId) {
+      const query = DesignSectionRevisionModel.find({ sectionId })
+        .sort({ revisionNumber: 1 })
+        .lean();
+      if (session) query.session(session);
+      return (await query.exec()).map(mapSectionRevision);
+    },
+
+    async findSectionRevisionById(id) {
+      const query = DesignSectionRevisionModel.findById(id).lean();
+      if (session) query.session(session);
+      const document = await query.exec();
+      return document ? mapSectionRevision(document) : null;
+    },
+
     async createManualSection(input) {
       const document = await createMongoDocument("Design section", () =>
         createDocument(
@@ -999,6 +1028,73 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
         )
       );
       return mapSectionRevision(document.toObject());
+    },
+
+    async retryExtractionJob(id, queuedAt) {
+      const query = DesignExtractionJobModel.findOneAndUpdate(
+        { _id: id, status: "processing_failed" },
+        {
+          $set: {
+            status: "queued",
+            queuedAt: date(queuedAt),
+            startedAt: null,
+            completedAt: null,
+            leaseExpiresAt: null,
+            failureCode: null,
+            failureMessage: null,
+            claimId: null,
+            updatedAt: date(queuedAt)
+          }
+        },
+        { new: true, runValidators: true }
+      );
+      if (session) query.session(session);
+      const document = await query.lean().exec();
+      if (!document) throw new RepositoryConflictError("Only failed extraction jobs can be retried.");
+      return mapExtractionJob(document);
+    },
+
+    async submitDesignSectionDrafts(designVersionId, submittedAt) {
+      if (!session) {
+        return repository.runInTransaction((transaction) =>
+          transaction.submitDesignSectionDrafts(designVersionId, submittedAt)
+        );
+      }
+      const sectionsQuery = DesignSectionModel.find({ designVersionId, active: true }).lean();
+      sectionsQuery.session(session);
+      const sections = await sectionsQuery.exec();
+      if (sections.length === 0) {
+        throw new RepositoryConflictError("At least one active section is required.");
+      }
+      for (const section of sections) {
+        const revisionQuery = DesignSectionRevisionModel.findOne({ sectionId: idOf(section) })
+          .sort({ revisionNumber: -1 })
+          .lean();
+        revisionQuery.session(session);
+        const revision = await revisionQuery.exec();
+        if (!revision || revision.reviewStatus !== "draft") {
+          throw new RepositoryConflictError("Every active section must have an eligible draft.");
+        }
+        const update = DesignSectionRevisionModel.updateOne(
+          { _id: revision._id, reviewStatus: "draft" },
+          { $set: { reviewStatus: "submitted", submittedAt: date(submittedAt) } }
+        );
+        update.session(session);
+        const result = await update.exec();
+        if (result.matchedCount !== 1) {
+          throw new RepositoryConflictError("Every active section must have an eligible draft.");
+        }
+      }
+      const jobUpdate = DesignExtractionJobModel.updateOne(
+        { designVersionId },
+        { $set: { status: "submitted", updatedAt: date(submittedAt) } }
+      );
+      jobUpdate.session(session);
+      const result = await jobUpdate.exec();
+      if (result.matchedCount !== 1) {
+        throw new RepositoryNotFoundError("Design extraction job was not found.");
+      }
+      return sections.length;
     },
 
     async createEvaluation(input) {

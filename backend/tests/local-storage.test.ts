@@ -38,15 +38,33 @@ describe("local file storage", () => {
     );
     expect(await readdir(directory)).toEqual([saved.reference]);
     expect(await buffer(await storage.open(saved.reference))).toEqual(data);
+    expect(await storage.read(saved.reference)).toEqual(data);
 
     await storage.delete(saved.reference);
     expect(await readdir(directory)).toEqual([]);
+  });
+
+  it("stores generated images through the same opaque, immutable adapter", async () => {
+    const { directory, storage } = await setup();
+    const generated = Buffer.from("generated crop");
+
+    const saved = await storage.saveGenerated({
+      data: generated,
+      extension: ".png"
+    });
+
+    expect(saved.reference).toMatch(/\.png$/);
+    expect(await storage.read(saved.reference)).toEqual(generated);
+    expect(await readdir(directory)).toEqual([saved.reference]);
   });
 
   it("rejects path traversal references for reads and deletes", async () => {
     const { storage } = await setup();
 
     await expect(storage.open("../outside.pdf")).rejects.toThrow(
+      "Invalid storage reference."
+    );
+    await expect(storage.read("../outside.pdf")).rejects.toThrow(
       "Invalid storage reference."
     );
     await expect(storage.delete("../../outside.pdf")).rejects.toThrow(

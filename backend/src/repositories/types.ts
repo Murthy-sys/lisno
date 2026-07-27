@@ -529,8 +529,12 @@ export interface AppRepository {
     designVersionId: string
   ): Promise<DesignExtractionJobRecord | null>;
   listSourcePages(designVersionId: string): Promise<DesignSourcePageRecord[]>;
+  findSourcePageById(id: string): Promise<DesignSourcePageRecord | null>;
   replaceExtractionDraft(input: ExtractionDraftReplacement): Promise<void>;
   listDesignSections(designVersionId: string): Promise<DesignSectionRecord[]>;
+  findDesignSectionById(id: string): Promise<DesignSectionRecord | null>;
+  listSectionRevisions(sectionId: string): Promise<DesignSectionRevisionRecord[]>;
+  findSectionRevisionById(id: string): Promise<DesignSectionRevisionRecord | null>;
   createManualSection(input: DesignSectionRecord): Promise<DesignSectionRecord>;
   updateDraftSection(
     id: string,
@@ -541,6 +545,11 @@ export interface AppRepository {
   createSectionRevision(
     input: DesignSectionRevisionRecord
   ): Promise<DesignSectionRevisionRecord>;
+  retryExtractionJob(id: string, queuedAt: string): Promise<DesignExtractionJobRecord>;
+  submitDesignSectionDrafts(
+    designVersionId: string,
+    submittedAt: string
+  ): Promise<number>;
   createEvaluation(input: NewEvaluation): Promise<EvaluationRecord>;
   listEvaluationsForSubject(subjectUserId: string): Promise<EvaluationRecord[]>;
   listEvaluationsForSubjectIds(
