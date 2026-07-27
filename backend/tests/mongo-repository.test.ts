@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import mongoose from "mongoose";
+import { AuditEventModel } from "../src/models/AuditEvent.js";
 import { DesignExtractionJobModel } from "../src/models/DesignExtractionJob.js";
 import { DesignSectionModel } from "../src/models/DesignSection.js";
 import { DesignStageModel } from "../src/models/DesignStage.js";
@@ -350,6 +351,206 @@ describe("Mongo repository contracts", () => {
           submittedAt: new Date("2026-07-27T10:00:00.000Z")
         }
       }
+    );
+  });
+
+  it("decides a submitted revision with a transactional CAS and aggregate update", async () => {
+    const session = {
+      withTransaction: vi.fn(async (operation: () => Promise<unknown>) => operation()),
+      endSession: vi.fn(async () => undefined)
+    };
+    vi.spyOn(mongoose, "startSession").mockResolvedValueOnce(session as never);
+    const decidedRevision = {
+      _id: "revision-decision",
+      sectionId: "section-decision",
+      revisionNumber: 2,
+      sourcePageId: "page-decision",
+      crop: { x: 0, y: 0, width: 10, height: 10 },
+      croppedFileReference: "decision.png",
+      label: "Elevation",
+      reviewStatus: "rejected",
+      submittedAt: new Date("2026-07-27T09:00:00.000Z"),
+      reviewerId: "user-client-aurora",
+      reviewedAt: new Date("2026-07-27T10:00:00.000Z"),
+      rejectionComment: "Include dimensions.",
+      createdAt: new Date("2026-07-27T08:00:00.000Z")
+    };
+    const decisionQuery = {
+      session: vi.fn(),
+      lean: () => ({ exec: vi.fn().mockResolvedValue(decidedRevision) })
+    };
+    const decisionUpdate = vi.spyOn(DesignSectionRevisionModel, "findOneAndUpdate")
+      .mockReturnValueOnce(decisionQuery as never);
+    vi.spyOn(DesignSectionModel, "findById").mockReturnValueOnce({
+      lean: () => query({
+        _id: "section-decision",
+        designVersionId: "version-decision",
+        active: true
+      })
+    } as never);
+    vi.spyOn(DesignSectionModel, "find").mockReturnValueOnce({
+      lean: () => query([
+        { _id: "section-approved" },
+        { _id: "section-decision" },
+        { _id: "section-awaiting" }
+      ])
+    } as never);
+    vi.spyOn(DesignSectionRevisionModel, "findOne")
+      .mockReturnValueOnce({
+        sort: () => ({ lean: () => query({ reviewStatus: "approved", revisionNumber: 1 }) })
+      } as never)
+      .mockReturnValueOnce({
+        sort: () => ({ lean: () => query({ reviewStatus: "rejected", revisionNumber: 2 }) })
+      } as never)
+      .mockReturnValueOnce({
+        sort: () => ({ lean: () => query({ reviewStatus: "submitted", revisionNumber: 1 }) })
+      } as never);
+    const jobUpdate = vi.spyOn(DesignExtractionJobModel, "updateOne")
+      .mockReturnValueOnce(query({ matchedCount: 1, modifiedCount: 1 }) as never);
+
+    await expect(
+      createMongoRepository().decideSubmittedSectionRevision(
+        "revision-decision",
+        2,
+        "rejected",
+        "user-client-aurora",
+        "Include dimensions.",
+        "2026-07-27T10:00:00.000Z"
+      )
+    ).resolves.toMatchObject({
+      revision: {
+        id: "revision-decision",
+        reviewStatus: "rejected",
+        reviewerId: "user-client-aurora"
+      },
+      extractionStatus: "changes_requested",
+      progress: { approved: 1, rejected: 1, awaitingReview: 1, total: 3 }
+    });
+    expect(session.withTransaction).toHaveBeenCalledOnce();
+    expect(session.endSession).toHaveBeenCalledOnce();
+    expect(decisionQuery.session).toHaveBeenCalledWith(session);
+    expect(decisionUpdate).toHaveBeenCalledWith(
+      {
+        _id: "revision-decision",
+        revisionNumber: 2,
+        reviewStatus: "submitted"
+      },
+      expect.objectContaining({
+        $set: expect.objectContaining({
+          reviewStatus: "rejected",
+          reviewerId: "user-client-aurora",
+          rejectionComment: "Include dimensions."
+        })
+      }),
+      { new: true, runValidators: true }
+    );
+    expect(jobUpdate).toHaveBeenCalledWith(
+      { designVersionId: "version-decision" },
+      { $set: {
+        status: "changes_requested",
+        updatedAt: new Date("2026-07-27T10:00:00.000Z")
+      } }
+    );
+  });
+
+  it("rejects a stale Mongo decision CAS without recomputing aggregate state", async () => {
+    const session = {} as never;
+    const decisionQuery = {
+      session: vi.fn(),
+      lean: () => ({ exec: vi.fn().mockResolvedValue(null) })
+    };
+    vi.spyOn(DesignSectionRevisionModel, "findOneAndUpdate")
+      .mockReturnValueOnce(decisionQuery as never);
+    vi.spyOn(DesignSectionRevisionModel, "exists")
+      .mockReturnValueOnce(query({ _id: "revision-stale" }) as never);
+    const findSection = vi.spyOn(DesignSectionModel, "findById");
+    const updateJob = vi.spyOn(DesignExtractionJobModel, "updateOne");
+
+    await expect(
+      createMongoRepository(session).decideSubmittedSectionRevision(
+        "revision-stale",
+        1,
+        "approved",
+        "user-client-aurora",
+        null,
+        "2026-07-27T10:00:00.000Z"
+      )
+    ).rejects.toBeInstanceOf(RepositoryConflictError);
+    expect(findSection).not.toHaveBeenCalled();
+    expect(updateJob).not.toHaveBeenCalled();
+  });
+
+  it("keeps Mongo decision, aggregate, and audit writes in one aborting session", async () => {
+    const session = {
+      withTransaction: vi.fn(async (operation: () => Promise<unknown>) => operation()),
+      endSession: vi.fn(async () => undefined)
+    };
+    vi.spyOn(mongoose, "startSession").mockResolvedValueOnce(session as never);
+    const decidedRevision = {
+      _id: "revision-audit",
+      sectionId: "section-audit",
+      revisionNumber: 1,
+      sourcePageId: "page-audit",
+      crop: { x: 0, y: 0, width: 10, height: 10 },
+      croppedFileReference: "audit.png",
+      label: "Plan",
+      reviewStatus: "approved",
+      submittedAt: new Date("2026-07-27T09:00:00.000Z"),
+      reviewerId: "user-client-aurora",
+      reviewedAt: new Date("2026-07-27T10:00:00.000Z"),
+      rejectionComment: null,
+      createdAt: new Date("2026-07-27T08:00:00.000Z")
+    };
+    const decisionQuery = {
+      session: vi.fn(),
+      lean: () => ({ exec: vi.fn().mockResolvedValue(decidedRevision) })
+    };
+    vi.spyOn(DesignSectionRevisionModel, "findOneAndUpdate")
+      .mockReturnValueOnce(decisionQuery as never);
+    vi.spyOn(DesignSectionModel, "findById").mockReturnValueOnce({
+      lean: () => query({
+        _id: "section-audit",
+        designVersionId: "version-audit",
+        active: true
+      })
+    } as never);
+    vi.spyOn(DesignSectionModel, "find").mockReturnValueOnce({
+      lean: () => query([{ _id: "section-audit" }])
+    } as never);
+    vi.spyOn(DesignSectionRevisionModel, "findOne").mockReturnValueOnce({
+      sort: () => ({ lean: () => query({ reviewStatus: "approved", revisionNumber: 1 }) })
+    } as never);
+    vi.spyOn(DesignExtractionJobModel, "updateOne")
+      .mockReturnValueOnce(query({ matchedCount: 1, modifiedCount: 1 }) as never);
+    const auditCreate = vi.spyOn(AuditEventModel, "create")
+      .mockRejectedValueOnce(new Error("forced audit failure"));
+    const repository = createMongoRepository();
+
+    await expect(
+      repository.runInTransaction(async (transaction) => {
+        await transaction.decideSubmittedSectionRevision(
+          "revision-audit",
+          1,
+          "approved",
+          "user-client-aurora",
+          null,
+          "2026-07-27T10:00:00.000Z"
+        );
+        await transaction.appendAuditEvent({
+          actorId: "user-client-aurora",
+          action: "design_section_approved",
+          entityType: "design_section_revision",
+          entityId: "revision-audit",
+          occurredAt: "2026-07-27T10:00:00.000Z"
+        });
+      })
+    ).rejects.toThrow("forced audit failure");
+    expect(session.withTransaction).toHaveBeenCalledOnce();
+    expect(session.endSession).toHaveBeenCalledOnce();
+    expect(decisionQuery.session).toHaveBeenCalledWith(session);
+    expect(auditCreate).toHaveBeenCalledWith(
+      expect.arrayContaining([expect.objectContaining({ action: "design_section_approved" })]),
+      { session }
     );
   });
 

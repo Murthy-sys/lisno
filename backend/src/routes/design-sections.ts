@@ -28,7 +28,7 @@ const removeSchema = z.object({ version: z.number().int().positive() }).strict()
 const decisionSchema = z.object({
   version: z.number().int().positive(),
   decision: z.enum(["approved", "rejected"]),
-  comment: z.string().max(1000).optional()
+  comment: z.string().trim().max(1000).optional()
 }).strict();
 
 export function createDesignSectionsRouter(

@@ -185,6 +185,29 @@ describe("client design section review", () => {
     }
   });
 
+  it("trims rejection comments before enforcing the 1000-character limit", async () => {
+    const accepted = setup();
+    await request(accepted.app)
+      .post("/api/v1/design-section-revisions/revision-1/decision")
+      .set("Authorization", auth("user-client-aurora", "client"))
+      .send({ version: 1, decision: "rejected", comment: ` ${"x".repeat(1000)} ` })
+      .expect(200);
+    expect(await accepted.repository.findSectionRevisionById("revision-1")).toMatchObject({
+      rejectionComment: "x".repeat(1000)
+    });
+
+    const rejected = setup();
+    const response = await request(rejected.app)
+      .post("/api/v1/design-section-revisions/revision-1/decision")
+      .set("Authorization", auth("user-client-aurora", "client"))
+      .send({ version: 1, decision: "rejected", comment: ` ${"x".repeat(1001)} ` })
+      .expect(400);
+    expect(response.body.error).toMatchObject({
+      code: "VALIDATION_ERROR",
+      fields: { comment: expect.any(String) }
+    });
+  });
+
   it("approves idempotently, rejects stale decisions, and keeps approved revisions immutable", async () => {
     const { app, repository } = setup();
     const client = auth("user-client-aurora", "client");
