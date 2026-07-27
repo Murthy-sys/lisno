@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import mongoose from "mongoose";
+import { DesignExtractionJobModel } from "../src/models/DesignExtractionJob.js";
 import { DesignStageModel } from "../src/models/DesignStage.js";
+import { DesignSectionRevisionModel } from "../src/models/DesignSectionRevision.js";
+import { DesignSourcePageModel } from "../src/models/DesignSourcePage.js";
 import { DesignVersionModel } from "../src/models/DesignVersion.js";
 import { DesignVersionSequenceModel } from "../src/models/DesignVersionSequence.js";
 import { EvaluationModel } from "../src/models/Evaluation.js";
@@ -17,6 +20,26 @@ afterEach(() => {
 });
 
 describe("Mongo repository contracts", () => {
+  it("indexes extraction jobs, source pages, and section revisions by their natural keys", () => {
+    const uniqueIndexes = (model: typeof DesignExtractionJobModel) =>
+      model.schema
+        .indexes()
+        .filter(([, options]) => options.unique)
+        .map(([fields]) => fields);
+
+    expect(uniqueIndexes(DesignExtractionJobModel)).toContainEqual({
+      designVersionId: 1
+    });
+    expect(uniqueIndexes(DesignSourcePageModel)).toContainEqual({
+      designVersionId: 1,
+      pageNumber: 1
+    });
+    expect(uniqueIndexes(DesignSectionRevisionModel)).toContainEqual({
+      sectionId: 1,
+      revisionNumber: 1
+    });
+  });
+
   it("enables Mongo update pipelines when allocating a design version number", async () => {
     const version = demoSeedData.designVersions[0]!;
     const { id: _id, versionNumber: _versionNumber, ...input } =

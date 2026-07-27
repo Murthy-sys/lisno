@@ -7,7 +7,11 @@ import {
   type AppRepository,
   type AuditEventRecord,
   type AuditFilters,
+  type DesignExtractionJobRecord,
+  type DesignSectionRecord,
+  type DesignSectionRevisionRecord,
   type DesignStageRecord,
+  type DesignSourcePageRecord,
   type DesignVersionRecord,
   type EvaluationRecord,
   type FloorRecord,
@@ -52,6 +56,14 @@ const mutationMethods = new Set<keyof AppRepository>([
   "createDesignVersion",
   "createNextDesignVersion",
   "updateDesignVersion",
+  "enqueueExtractionJob",
+  "claimExtractionJob",
+  "completeExtractionJob",
+  "failExtractionJob",
+  "replaceExtractionDraft",
+  "createManualSection",
+  "updateDraftSection",
+  "createSectionRevision",
   "createEvaluation",
   "appendAuditEvent"
 ]);
@@ -616,6 +628,207 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
       return clone(updated);
     },
 
+    async enqueueExtractionJob(input) {
+      ensureUniqueId(state.extractionJobs, input.id, "Design extraction job");
+      if (
+        state.extractionJobs.some(
+          (job) => job.designVersionId === input.designVersionId
+        )
+      ) {
+        throw new RepositoryConflictError(
+          "Design version already has an extraction job."
+        );
+      }
+      const createdAt = input.createdAt ?? input.queuedAt;
+      const job: DesignExtractionJobRecord = {
+        ...clone(input),
+        workerResultId: input.workerResultId ?? null,
+        createdAt,
+        updatedAt: input.updatedAt ?? createdAt
+      };
+      state.extractionJobs.push(job);
+      return clone(job);
+    },
+
+    async claimExtractionJob(now, leaseExpiresAt) {
+      const nowTime = new Date(now).getTime();
+      const index = state.extractionJobs
+        .map((job, candidateIndex) => ({ job, candidateIndex }))
+        .filter(
+          ({ job }) =>
+            job.status === "queued" ||
+            (job.status === "processing" &&
+              job.leaseExpiresAt !== null &&
+              new Date(job.leaseExpiresAt).getTime() <= nowTime)
+        )
+        .sort(
+          (left, right) =>
+            new Date(left.job.queuedAt).getTime() -
+              new Date(right.job.queuedAt).getTime() ||
+            left.job.id.localeCompare(right.job.id)
+        )[0]?.candidateIndex;
+      if (index === undefined) return null;
+
+      const job = state.extractionJobs[index]!;
+      const claimed: DesignExtractionJobRecord = {
+        ...job,
+        status: "processing",
+        attemptCount: job.attemptCount + 1,
+        startedAt: now,
+        leaseExpiresAt,
+        failureCode: null,
+        failureMessage: null,
+        updatedAt: now
+      };
+      state.extractionJobs[index] = claimed;
+      return clone(claimed);
+    },
+
+    async completeExtractionJob(id, completedAt) {
+      const index = state.extractionJobs.findIndex((job) => job.id === id);
+      if (index < 0) {
+        throw new RepositoryNotFoundError(`Design extraction job ${id} was not found.`);
+      }
+      const completed: DesignExtractionJobRecord = {
+        ...state.extractionJobs[index]!,
+        status: "designer_review",
+        completedAt,
+        leaseExpiresAt: null,
+        failureCode: null,
+        failureMessage: null,
+        updatedAt: completedAt
+      };
+      state.extractionJobs[index] = completed;
+      return clone(completed);
+    },
+
+    async failExtractionJob(id, failureCode, failureMessage, completedAt) {
+      const index = state.extractionJobs.findIndex((job) => job.id === id);
+      if (index < 0) {
+        throw new RepositoryNotFoundError(`Design extraction job ${id} was not found.`);
+      }
+      const failed: DesignExtractionJobRecord = {
+        ...state.extractionJobs[index]!,
+        status: "processing_failed",
+        completedAt,
+        leaseExpiresAt: null,
+        failureCode,
+        failureMessage,
+        updatedAt: completedAt
+      };
+      state.extractionJobs[index] = failed;
+      return clone(failed);
+    },
+
+    async findExtractionJobByVersionId(designVersionId) {
+      return copyOrNull(
+        state.extractionJobs.find((job) => job.designVersionId === designVersionId)
+      );
+    },
+
+    async listSourcePages(designVersionId) {
+      return clone(
+        state.sourcePages
+          .filter((page) => page.designVersionId === designVersionId)
+          .sort((left, right) => left.pageNumber - right.pageNumber || left.id.localeCompare(right.id))
+      );
+    },
+
+    async replaceExtractionDraft(input) {
+      const jobIndex = state.extractionJobs.findIndex(
+        (job) => job.designVersionId === input.designVersionId
+      );
+      const existingPages = state.sourcePages.filter(
+        (page) => page.designVersionId === input.designVersionId
+      );
+      const existingSections = state.designSections.filter(
+        (section) => section.designVersionId === input.designVersionId
+      );
+      const isReplay =
+        state.extractionJobs[jobIndex]?.workerResultId === input.workerResultId ||
+        (existingPages.length === input.sourcePages.length &&
+          existingSections.length === input.sections.length &&
+          input.sourcePages.every((page) => existingPages.some((existing) => existing.id === page.id)) &&
+          input.sections.every(({ section }) =>
+            existingSections.some((existing) => existing.id === section.id)
+          ));
+      if (isReplay) return;
+
+      const sectionIds = new Set(existingSections.map((section) => section.id));
+      state.sourcePages = state.sourcePages.filter(
+        (page) => page.designVersionId !== input.designVersionId
+      );
+      state.designSections = state.designSections.filter(
+        (section) => section.designVersionId !== input.designVersionId
+      );
+      state.designSectionRevisions = state.designSectionRevisions.filter(
+        (revision) => !sectionIds.has(revision.sectionId)
+      );
+
+      for (const page of input.sourcePages) {
+        ensureUniqueId(state.sourcePages, page.id, "Design source page");
+        state.sourcePages.push(clone(page));
+      }
+      for (const { section, revision } of input.sections) {
+        ensureUniqueId(state.designSections, section.id, "Design section");
+        ensureUniqueId(state.designSectionRevisions, revision.id, "Design section revision");
+        state.designSections.push(clone(section));
+        state.designSectionRevisions.push(clone(revision));
+      }
+      if (jobIndex >= 0) {
+        state.extractionJobs[jobIndex] = {
+          ...state.extractionJobs[jobIndex]!,
+          workerResultId: input.workerResultId,
+          updatedAt: nextIso()
+        };
+      }
+    },
+
+    async listDesignSections(designVersionId) {
+      return clone(
+        state.designSections
+          .filter((section) => section.designVersionId === designVersionId)
+          .sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id))
+      );
+    },
+
+    async createManualSection(input) {
+      ensureUniqueId(state.designSections, input.id, "Design section");
+      const section: DesignSectionRecord = { ...clone(input), source: "manual" };
+      state.designSections.push(section);
+      return clone(section);
+    },
+
+    async updateDraftSection(id, change) {
+      const index = state.designSections.findIndex((section) => section.id === id);
+      if (index < 0) throw new RepositoryNotFoundError(`Design section ${id} was not found.`);
+      const updated: DesignSectionRecord = {
+        ...state.designSections[index]!,
+        ...clone(change),
+        updatedAt: nextIso()
+      };
+      state.designSections[index] = updated;
+      return clone(updated);
+    },
+
+    async createSectionRevision(input) {
+      ensureUniqueId(state.designSectionRevisions, input.id, "Design section revision");
+      if (!state.designSections.some((section) => section.id === input.sectionId)) {
+        throw new RepositoryNotFoundError(`Design section ${input.sectionId} was not found.`);
+      }
+      if (
+        state.designSectionRevisions.some(
+          (revision) =>
+            revision.sectionId === input.sectionId &&
+            revision.revisionNumber === input.revisionNumber
+        )
+      ) {
+        throw new RepositoryConflictError("Design section revision number already exists.");
+      }
+      state.designSectionRevisions.push(clone(input));
+      return clone(input);
+    },
+
     async createEvaluation(input) {
       const id = input.id ?? nextId("evaluation");
       ensureUniqueId(state.evaluations, id, "Evaluation");
@@ -817,9 +1030,22 @@ function latestTimestamp(seed: SeedData): number {
     ...seed.tasks.flatMap((record) => [record.createdAt, record.updatedAt]),
     ...seed.taskEvents.map((record) => record.createdAt),
     ...seed.designVersions.flatMap((record) => [record.createdAt, record.updatedAt]),
+    ...seed.extractionJobs.flatMap((record) => [
+      record.queuedAt,
+      record.startedAt,
+      record.completedAt,
+      record.leaseExpiresAt,
+      record.createdAt,
+      record.updatedAt
+    ]),
+    ...seed.sourcePages.flatMap((record) => [record.createdAt, record.updatedAt]),
+    ...seed.designSections.flatMap((record) => [record.createdAt, record.updatedAt]),
+    ...seed.designSectionRevisions.map((record) => record.createdAt),
     ...seed.evaluations.map((record) => record.createdAt),
     ...seed.auditEvents.map((record) => record.createdAt)
-  ].map((value) => new Date(value).getTime());
+  ]
+    .filter((value): value is string => value !== null && value !== undefined)
+    .map((value) => new Date(value).getTime());
 
   return Math.max(0, ...timestamps);
 }

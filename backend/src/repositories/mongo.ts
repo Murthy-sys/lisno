@@ -2,6 +2,10 @@ import { randomUUID } from "node:crypto";
 import mongoose, { type ClientSession, type Model, type PipelineStage } from "mongoose";
 import { AuditEventModel } from "../models/AuditEvent.js";
 import { DesignStageModel } from "../models/DesignStage.js";
+import { DesignExtractionJobModel } from "../models/DesignExtractionJob.js";
+import { DesignSectionModel } from "../models/DesignSection.js";
+import { DesignSectionRevisionModel } from "../models/DesignSectionRevision.js";
+import { DesignSourcePageModel } from "../models/DesignSourcePage.js";
 import { DesignVersionModel } from "../models/DesignVersion.js";
 import { DesignVersionSequenceModel } from "../models/DesignVersionSequence.js";
 import { EvaluationModel } from "../models/Evaluation.js";
@@ -16,7 +20,11 @@ import {
   type AppRepository,
   type AuditEventRecord,
   type AuditFilters,
+  type DesignExtractionJobRecord,
+  type DesignSectionRecord,
+  type DesignSectionRevisionRecord,
   type DesignStageRecord,
+  type DesignSourcePageRecord,
   type DesignVersionRecord,
   type EvaluationRecord,
   type FloorRecord,
@@ -718,6 +726,207 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
       return mapDesignVersion(updated);
     },
 
+    async enqueueExtractionJob(input) {
+      const document = await createMongoDocument("Design extraction job", () =>
+        createDocument(
+          DesignExtractionJobModel,
+          extractionJobForMongo(input),
+          session
+        )
+      );
+      return mapExtractionJob(document.toObject());
+    },
+
+    async claimExtractionJob(now, leaseExpiresAt) {
+      const query = DesignExtractionJobModel.findOneAndUpdate(
+        {
+          $or: [
+            { status: "queued" },
+            { status: "processing", leaseExpiresAt: { $lte: date(now) } }
+          ]
+        },
+        {
+          $set: {
+            status: "processing",
+            startedAt: date(now),
+            leaseExpiresAt: date(leaseExpiresAt),
+            failureCode: null,
+            failureMessage: null
+          },
+          $inc: { attemptCount: 1 }
+        },
+        { new: true, sort: { queuedAt: 1, _id: 1 }, runValidators: true }
+      );
+      if (session) query.session(session);
+      const document = await query.lean().exec();
+      return document ? mapExtractionJob(document) : null;
+    },
+
+    async completeExtractionJob(id, completedAt) {
+      const query = DesignExtractionJobModel.findByIdAndUpdate(
+        id,
+        {
+          $set: {
+            status: "designer_review",
+            completedAt: date(completedAt),
+            leaseExpiresAt: null,
+            failureCode: null,
+            failureMessage: null
+          }
+        },
+        { new: true, runValidators: true }
+      );
+      if (session) query.session(session);
+      const document = await query.lean().exec();
+      if (!document) {
+        throw new RepositoryNotFoundError(`Design extraction job ${id} was not found.`);
+      }
+      return mapExtractionJob(document);
+    },
+
+    async failExtractionJob(id, failureCode, failureMessage, completedAt) {
+      const query = DesignExtractionJobModel.findByIdAndUpdate(
+        id,
+        {
+          $set: {
+            status: "processing_failed",
+            completedAt: date(completedAt),
+            leaseExpiresAt: null,
+            failureCode,
+            failureMessage
+          }
+        },
+        { new: true, runValidators: true }
+      );
+      if (session) query.session(session);
+      const document = await query.lean().exec();
+      if (!document) {
+        throw new RepositoryNotFoundError(`Design extraction job ${id} was not found.`);
+      }
+      return mapExtractionJob(document);
+    },
+
+    async findExtractionJobByVersionId(designVersionId) {
+      const query = DesignExtractionJobModel.findOne({ designVersionId });
+      if (session) query.session(session);
+      const document = await query.lean().exec();
+      return document ? mapExtractionJob(document) : null;
+    },
+
+    async listSourcePages(designVersionId) {
+      const query = DesignSourcePageModel.find({ designVersionId })
+        .sort({ pageNumber: 1, _id: 1 })
+        .lean();
+      if (session) query.session(session);
+      return (await query.exec()).map(mapSourcePage);
+    },
+
+    async replaceExtractionDraft(input) {
+      if (!session) {
+        await repository.runInTransaction((transaction) =>
+          transaction.replaceExtractionDraft(input)
+        );
+        return;
+      }
+
+      const jobQuery = DesignExtractionJobModel.findOne({
+        designVersionId: input.designVersionId
+      }).lean();
+      jobQuery.session(session);
+      const job = await jobQuery.exec();
+      if (job?.workerResultId === input.workerResultId) return;
+
+      const sectionsQuery = DesignSectionModel.find({
+        designVersionId: input.designVersionId
+      })
+        .select("_id")
+        .lean();
+      sectionsQuery.session(session);
+      const existingSections = await sectionsQuery.exec();
+      const sectionIds = existingSections.map(idOf);
+      const deletePages = DesignSourcePageModel.deleteMany({
+        designVersionId: input.designVersionId
+      });
+      const deleteSections = DesignSectionModel.deleteMany({
+        designVersionId: input.designVersionId
+      });
+      const deleteRevisions = DesignSectionRevisionModel.deleteMany({
+        sectionId: { $in: sectionIds }
+      });
+      deletePages.session(session);
+      deleteSections.session(session);
+      deleteRevisions.session(session);
+      await Promise.all([deletePages.exec(), deleteSections.exec(), deleteRevisions.exec()]);
+
+      for (const page of input.sourcePages) {
+        await createMongoDocument("Design source page", () =>
+          createDocument(DesignSourcePageModel, sourcePageForMongo(page), session)
+        );
+      }
+      for (const { section, revision } of input.sections) {
+        await createMongoDocument("Design section", () =>
+          createDocument(DesignSectionModel, sectionForMongo(section), session)
+        );
+        await createMongoDocument("Design section revision", () =>
+          createDocument(
+            DesignSectionRevisionModel,
+            sectionRevisionForMongo(revision),
+            session
+          )
+        );
+      }
+      if (job) {
+        const update = DesignExtractionJobModel.updateOne(
+          { _id: job._id },
+          { $set: { workerResultId: input.workerResultId } }
+        );
+        update.session(session);
+        await update.exec();
+      }
+    },
+
+    async listDesignSections(designVersionId) {
+      const query = DesignSectionModel.find({ designVersionId })
+        .sort({ createdAt: 1, _id: 1 })
+        .lean();
+      if (session) query.session(session);
+      return (await query.exec()).map(mapSection);
+    },
+
+    async createManualSection(input) {
+      const document = await createMongoDocument("Design section", () =>
+        createDocument(
+          DesignSectionModel,
+          sectionForMongo({ ...input, source: "manual" }),
+          session
+        )
+      );
+      return mapSection(document.toObject());
+    },
+
+    async updateDraftSection(id, change) {
+      const query = DesignSectionModel.findByIdAndUpdate(
+        id,
+        { $set: change },
+        { new: true, runValidators: true }
+      );
+      if (session) query.session(session);
+      const document = await query.lean().exec();
+      if (!document) throw new RepositoryNotFoundError(`Design section ${id} was not found.`);
+      return mapSection(document);
+    },
+
+    async createSectionRevision(input) {
+      const document = await createMongoDocument("Design section revision", () =>
+        createDocument(
+          DesignSectionRevisionModel,
+          sectionRevisionForMongo(input),
+          session
+        )
+      );
+      return mapSectionRevision(document.toObject());
+    },
+
     async createEvaluation(input) {
       const document = await createMongoDocument("Evaluation", () =>
         createDocument(EvaluationModel, {
@@ -1091,6 +1300,69 @@ function mapDesignVersion(document: PlainDocument): DesignVersionRecord {
   };
 }
 
+function mapExtractionJob(document: PlainDocument): DesignExtractionJobRecord {
+  return {
+    id: idOf(document),
+    designVersionId: document.designVersionId,
+    status: document.status,
+    attemptCount: document.attemptCount,
+    queuedAt: iso(document.queuedAt),
+    startedAt: nullableIso(document.startedAt),
+    completedAt: nullableIso(document.completedAt),
+    leaseExpiresAt: nullableIso(document.leaseExpiresAt),
+    failureCode: document.failureCode ?? null,
+    failureMessage: document.failureMessage ?? null,
+    workerResultId: document.workerResultId ?? null,
+    createdAt: iso(document.createdAt),
+    updatedAt: iso(document.updatedAt)
+  };
+}
+
+function mapSourcePage(document: PlainDocument): DesignSourcePageRecord {
+  return {
+    id: idOf(document),
+    designVersionId: document.designVersionId,
+    pageNumber: document.pageNumber,
+    renderedFileReference: document.renderedFileReference,
+    width: document.width,
+    height: document.height,
+    createdAt: iso(document.createdAt),
+    updatedAt: iso(document.updatedAt)
+  };
+}
+
+function mapSection(document: PlainDocument): DesignSectionRecord {
+  return {
+    id: idOf(document),
+    designVersionId: document.designVersionId,
+    sourcePageId: document.sourcePageId,
+    label: document.label,
+    active: document.active,
+    source: document.source,
+    ocrConfidence: document.ocrConfidence ?? null,
+    createdAt: iso(document.createdAt),
+    updatedAt: iso(document.updatedAt)
+  };
+}
+
+function mapSectionRevision(document: PlainDocument): DesignSectionRevisionRecord {
+  return {
+    id: idOf(document),
+    sectionId: document.sectionId,
+    revisionNumber: document.revisionNumber,
+    sourcePageId: document.sourcePageId,
+    crop: structuredClone(document.crop),
+    croppedFileReference: document.croppedFileReference,
+    label: document.label,
+    reviewStatus: document.reviewStatus,
+    submittedAt: nullableIso(document.submittedAt),
+    reviewerId: document.reviewerId ?? null,
+    reviewedAt: nullableIso(document.reviewedAt),
+    rejectionComment: document.rejectionComment ?? null,
+    createdAt: iso(document.createdAt)
+  };
+}
+
 function mapEvaluation(document: PlainDocument): EvaluationRecord {
   return {
     id: idOf(document),
@@ -1173,5 +1445,51 @@ function designVersionForMongo(input: NewDesignVersion): PlainDocument {
     approvedAt: input.approvedAt ? date(input.approvedAt) : null,
     createdAt: input.createdAt ? date(input.createdAt) : undefined,
     updatedAt: input.updatedAt ? date(input.updatedAt) : undefined
+  };
+}
+
+function extractionJobForMongo(input: DesignExtractionJobRecord): PlainDocument {
+  return {
+    ...input,
+    _id: input.id,
+    id: undefined,
+    queuedAt: date(input.queuedAt),
+    startedAt: input.startedAt ? date(input.startedAt) : null,
+    completedAt: input.completedAt ? date(input.completedAt) : null,
+    leaseExpiresAt: input.leaseExpiresAt ? date(input.leaseExpiresAt) : null,
+    workerResultId: input.workerResultId ?? null,
+    createdAt: input.createdAt ? date(input.createdAt) : undefined,
+    updatedAt: input.updatedAt ? date(input.updatedAt) : undefined
+  };
+}
+
+function sourcePageForMongo(input: DesignSourcePageRecord): PlainDocument {
+  return {
+    ...input,
+    _id: input.id,
+    id: undefined,
+    createdAt: date(input.createdAt),
+    updatedAt: date(input.updatedAt)
+  };
+}
+
+function sectionForMongo(input: DesignSectionRecord): PlainDocument {
+  return {
+    ...input,
+    _id: input.id,
+    id: undefined,
+    createdAt: date(input.createdAt),
+    updatedAt: date(input.updatedAt)
+  };
+}
+
+function sectionRevisionForMongo(input: DesignSectionRevisionRecord): PlainDocument {
+  return {
+    ...input,
+    _id: input.id,
+    id: undefined,
+    submittedAt: input.submittedAt ? date(input.submittedAt) : null,
+    reviewedAt: input.reviewedAt ? date(input.reviewedAt) : null,
+    createdAt: date(input.createdAt)
   };
 }
