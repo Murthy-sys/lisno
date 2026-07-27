@@ -161,7 +161,12 @@ describe("complete cross-role journey", () => {
     ]);
     expect(correctedA.body.data.revision.id).toBe(submittedA.revision.id);
     expect(await repository.listSectionRevisions(sectionB.id)).toEqual([
-      expect.objectContaining({ id: submittedB.revision.id, revisionNumber: 1, reviewStatus: "rejected" }),
+      expect.objectContaining({
+        id: submittedB.revision.id,
+        revisionNumber: 1,
+        reviewStatus: "rejected",
+        rejectionComment: "Include the complete plan boundary."
+      }),
       expect.objectContaining({ id: replacement.body.data.revision.id, revisionNumber: 2, reviewStatus: "approved" })
     ]);
     expect(
@@ -184,6 +189,20 @@ describe("complete cross-role journey", () => {
     expect(
       auditActions.filter((action) => action === "design_section_approved")
     ).toHaveLength(2);
+    expect(
+      await repository.listAuditEvents({ entityIds: [submittedB.revision.id] })
+    ).toEqual([
+      expect.objectContaining({
+        action: "design_section_rejected",
+        entityType: "design_section_revision",
+        entityId: submittedB.revision.id,
+        newValues: expect.objectContaining({
+          reviewStatus: "rejected",
+          revisionNumber: 1,
+          comment: "Include the complete plan boundary."
+        })
+      })
+    ]);
   });
 
   it("moves a designer upload through manager/head review into the client portal", async () => {

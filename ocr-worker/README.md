@@ -38,10 +38,14 @@ normal processing time of the largest supported input. An abandoned job becomes
 claimable after its lease expires.
 
 ```bash
-export OCR_WORKER_TOKEN="replace-with-the-same-long-backend-secret"
+export OCR_WORKER_TOKEN="local-development-only-ocr-worker-token-123456"
 export OCR_API_BASE_URL="http://127.0.0.1:3000/api/v1"
 python -m lisno_ocr.worker
 ```
+
+That token is a non-secret local-development example. Use the exact same value
+for the backend process, and replace it with a real secret in shared or
+production environments.
 
 ## Inputs and processing
 

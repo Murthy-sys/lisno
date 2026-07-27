@@ -39,17 +39,19 @@ development server, production `start` command, and seed command; Vite loads
 
 ## Start the application
 
-Use the same long `OCR_WORKER_TOKEN` in `backend/.env` and the worker shell.
-Start services in this order:
+Use the same long `OCR_WORKER_TOKEN` for the backend and worker. The value below
+is an explicitly non-secret local-development example; replace it outside local
+development. Start services in this order:
 
 ```bash
 # Terminal 1
-cd backend && npm run dev
+cd backend
+OCR_WORKER_TOKEN="local-development-only-ocr-worker-token-123456" npm run dev
 
 # Terminal 2
 cd ocr-worker
 source .venv/bin/activate
-export OCR_WORKER_TOKEN="the-same-backend-worker-secret"
+export OCR_WORKER_TOKEN="local-development-only-ocr-worker-token-123456"
 python3 -m lisno_ocr.worker
 
 # Terminal 3

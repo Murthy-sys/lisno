@@ -90,3 +90,15 @@ def test_installed_paddle_model_smoke():
     pages = Extractor().extract(FIXTURES / "labeled-plan.png")
     assert pages
     assert all(page.width > 0 and page.height > 0 for page in pages)
+    sections = [section for page in pages for section in page.sections]
+    assert sections
+    for page in pages:
+        for section in page.sections:
+            assert section.label
+            assert section.label == " ".join(section.label.split())
+            assert section.crop.width > 0
+            assert section.crop.height > 0
+            assert 0 <= section.crop.x < page.width
+            assert 0 <= section.crop.y < page.height
+            assert section.crop.x + section.crop.width <= page.width
+            assert section.crop.y + section.crop.height <= page.height
