@@ -16,7 +16,7 @@ class FixtureOcr:
         height, width = input.shape[:2]
         return [{
             "rec_boxes": [[width // 5, height // 3, width // 2, height // 3 + 45]],
-            "rec_texts": ["Ground Floor Elevation"],
+            "rec_texts": ["Front Elevation"],
             "rec_scores": [0.97],
         }]
 
@@ -38,7 +38,7 @@ def test_labeled_plan_serializes_to_the_backend_completion_contract():
 
     section = payload["pages"][0]["sections"][0]
     assert set(section) == {"label", "confidence", "crop", "imageBase64"}
-    assert section["label"] == "Ground Floor Elevation"
+    assert section["label"] == "Front Elevation"
     assert 0 <= section["confidence"] <= 1
     assert set(section["crop"]) == {"x", "y", "width", "height"}
     assert (

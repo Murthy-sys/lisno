@@ -34,6 +34,12 @@ service; do not delete it during routine deployments.
 - `OCR_REQUEST_TIMEOUT_SECONDS` — positive HTTP timeout; default `60`.
 - `OCR_CONFIDENCE_FLOOR` — candidates below this score are discarded; default
   `0.2`, while candidates below the UI warning threshold remain reviewable.
+- `OCR_ACCEPTED_PLAN_TYPES` — comma-separated plan families eligible for OCR
+  proposals; default
+  `floor,room,ceiling,site,roof,electrical,plumbing,furniture layout`.
+  Values are normalized and deduplicated, and the setting must contain at
+  least one family. Directional front, rear/back, side, left, and right
+  elevations are always supported.
 - `OCR_MAX_PDF_PAGES`, `OCR_MAX_PAGE_PIXELS`, and `OCR_MAX_OUTPUT_BYTES` bound
   PDF rendering, decompression, and generated page/crop payloads. Output
   defaults to 40 MiB and cannot exceed 44 MiB so base64 and JSON overhead stay
@@ -61,7 +67,11 @@ production environments.
 Supported uploads are multi-page PDF, PNG, JPEG, and WebP. PDFs are rendered in
 page order; images are decoded directly. Worker results contain PNG page images,
 PNG crops, one-based page numbers, pixel dimensions, confidence values, and
-bounded pixel crops. OCR labels and crops are proposals a designer must verify.
+bounded pixel crops. Only configured plan families and directional elevation
+titles seed proposals. Legends, notes, key plans, dimensions, symbols,
+standalone room labels, material callouts, sections, details, diagrams, and
+schedules are excluded before title matching. OCR labels and crops are proposals
+a designer must verify.
 
 ## Health and recovery
 

@@ -51,6 +51,16 @@ _DEFAULT_MATERIAL_SPEC_TERMS = (
     "wallpaper",
     "wood",
 )
+DEFAULT_PLAN_TYPES = (
+    "floor",
+    "room",
+    "ceiling",
+    "site",
+    "roof",
+    "electrical",
+    "plumbing",
+    "furniture layout",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,6 +72,7 @@ class LayoutSettings:
     duplicate_iou: float
     reserved_bottom_ratio: float
     material_spec_terms: tuple[str, ...] = _DEFAULT_MATERIAL_SPEC_TERMS
+    accepted_plan_types: tuple[str, ...] = DEFAULT_PLAN_TYPES
 
     @classmethod
     def defaults(cls) -> LayoutSettings:
@@ -73,6 +84,7 @@ class LayoutSettings:
             duplicate_iou=0.65,
             reserved_bottom_ratio=0.18,
             material_spec_terms=_DEFAULT_MATERIAL_SPEC_TERMS,
+            accepted_plan_types=DEFAULT_PLAN_TYPES,
         )
 
     @classmethod
@@ -100,6 +112,10 @@ class LayoutSettings:
                 defaults.material_spec_terms,
                 os.environ.get("OCR_MATERIAL_SPEC_TERMS"),
             ),
+            accepted_plan_types=_accepted_plan_types(
+                os.environ.get("OCR_ACCEPTED_PLAN_TYPES"),
+                defaults.accepted_plan_types,
+            ),
         )
 
 
@@ -114,6 +130,25 @@ def _extend_terms(defaults: tuple[str, ...], raw: str | None) -> tuple[str, ...]
 
 def normalize_matching_text(text: str) -> str:
     return re.sub(r"[^a-z0-9]+", " ", text.casefold()).strip()
+
+
+def _accepted_plan_types(
+    raw: str | None,
+    defaults: tuple[str, ...],
+) -> tuple[str, ...]:
+    if raw is None:
+        return defaults
+    values = tuple(
+        value
+        for part in raw.split(",")
+        if (value := normalize_matching_text(part))
+    )
+    unique = tuple(dict.fromkeys(values))
+    if not unique:
+        raise ValueError(
+            "OCR_ACCEPTED_PLAN_TYPES must contain at least one plan type."
+        )
+    return unique
 
 
 def _bounded_float(name: str, default: float, minimum: float, maximum: float) -> float:

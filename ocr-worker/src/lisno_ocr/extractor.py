@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import base64
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from collections import deque
 from collections.abc import Iterator
 from io import BytesIO
@@ -20,19 +20,27 @@ from .contracts import (
     OcrError,
     PdfRenderError,
 )
+from .settings import LayoutSettings
+from .title_classifier import OcrLine, classify_drawing_titles
 
 
 class Extractor:
     def __init__(self, ocr_engine: Any | None = None, render_scale: float = 2.0,
                  confidence_floor: float = 0.2, max_pdf_pages: int = 50,
                  max_page_pixels: int = 40_000_000,
-                 max_output_bytes: int = 64_000_000):
+                 max_output_bytes: int = 64_000_000,
+                 accepted_plan_types: Sequence[str] | None = None):
         self._ocr_engine = ocr_engine
         self._render_scale = render_scale
         self._confidence_floor = confidence_floor
         self._max_pdf_pages = max_pdf_pages
         self._max_page_pixels = max_page_pixels
         self._max_output_bytes = max_output_bytes
+        self._accepted_plan_types = tuple(
+            accepted_plan_types
+            if accepted_plan_types is not None
+            else LayoutSettings.from_environment().accepted_plan_types
+        )
 
     def extract(self, source_path: str | Path) -> list[ExtractedPage]:
         path = Path(source_path)
@@ -108,19 +116,31 @@ class Extractor:
     def _extract_page(
         self, image: Image.Image, page_number: int, remaining_bytes: int
     ) -> tuple[ExtractedPage, int]:
-        labels = self._recognize(image)
-        regions = _drawing_regions(image, [box for box, _, _ in labels])
+        recognized = self._recognize(image)
+        regions = _drawing_regions(
+            image, [box for box, _, _ in recognized]
+        )
+        titles = classify_drawing_titles(
+            [
+                OcrLine(box, label, confidence)
+                for box, label, confidence in recognized
+                if label and confidence >= self._confidence_floor
+            ],
+            self._accepted_plan_types,
+        )
         page_base64 = _png_base64(image)
         used = _decoded_base64_size(page_base64)
         _require_budget(used, remaining_bytes)
         sections: list[ExtractedSection] = []
-        for box, label, confidence in labels:
+        for title in titles:
             if len(sections) >= 500:
                 break
-            if not label or confidence < self._confidence_floor:
-                continue
             section = self._section_for_label(
-                image, box, label, confidence, regions
+                image,
+                title.box,
+                title.label,
+                title.confidence,
+                regions,
             )
             section_bytes = _decoded_base64_size(section.image_base64)
             _require_budget(used + section_bytes, remaining_bytes)

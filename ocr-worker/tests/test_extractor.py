@@ -46,7 +46,7 @@ def test_uses_paddleocr3_predict_and_parses_structured_results():
     result = [
         {
             "rec_boxes": [[285, 520, 515, 565]],
-            "rec_texts": ["  Ground   Floor Elevation  "],
+            "rec_texts": ["  Front   Elevation  "],
             "rec_scores": [0.23],
         }
     ]
@@ -57,7 +57,7 @@ def test_uses_paddleocr3_predict_and_parses_structured_results():
 
     sections = pages[0].sections
     assert ocr.calls == 1
-    assert any(section.label == "Ground Floor Elevation" for section in sections)
+    assert any(section.label == "Front Elevation" for section in sections)
     assert sections[0].confidence == pytest.approx(0.23)
     assert all(0 <= section.crop.x < 2000 for section in sections)
     assert all(section.crop.x + section.crop.width <= pages[0].width for section in sections)
@@ -68,7 +68,7 @@ def test_uses_paddleocr3_predict_and_parses_structured_results():
 def test_filters_candidates_below_configured_confidence_floor():
     ocr = FakePaddleOCR3([{
         "rec_boxes": [[1, 1, 20, 20], [30, 30, 60, 60]],
-        "rec_texts": ["Noise", "Ambiguous elevation"],
+        "rec_texts": ["Floor Plan", "Rear Elevation"],
         "rec_scores": [0.19, 0.2],
     }])
 
@@ -76,14 +76,72 @@ def test_filters_candidates_below_configured_confidence_floor():
         FIXTURES / "labeled-plan.png"
     )[0].sections
 
-    assert [section.label for section in sections] == ["Ambiguous elevation"]
+    assert [section.label for section in sections] == ["Rear Elevation"]
+
+
+def test_extracts_only_supported_titles_from_mixed_ocr_lines_in_reading_order():
+    labels = [
+        ((40, 40, 410, 78), "Floor Plan – 3BHK Residence", 0.97),
+        ((450, 42, 690, 76), "Electrical Legend", 0.99),
+        ((40, 125, 260, 157), "Living Room", 0.96),
+        ((44, 163, 330, 199), "Front Elevation", 0.91),
+        ((450, 125, 700, 157), "GENERAL NOTES", 0.99),
+        ((450, 168, 710, 200), "1. All dimensions in mm", 0.99),
+        ((40, 250, 180, 282), "4500", 0.99),
+        ((210, 250, 340, 282), "N", 0.99),
+        ((370, 250, 570, 282), "Key Plan", 0.99),
+        ((40, 330, 300, 362), "MATERIAL: TEAK VENEER", 0.99),
+        ((330, 330, 590, 362), "Building Cross Section A-A", 0.99),
+        ((40, 410, 250, 442), "Window Detail 04", 0.99),
+        ((280, 410, 510, 442), "Single Line Diagram", 0.99),
+        ((540, 410, 730, 442), "Door Schedule", 0.99),
+        ((40, 520, 390, 558), "Ceiling Plan – Living Room", 0.94),
+    ]
+    ocr = FakePaddleOCR3([{
+        "rec_boxes": [box for box, _text, _score in labels],
+        "rec_texts": [text for _box, text, _score in labels],
+        "rec_scores": [score for _box, _text, score in labels],
+    }])
+
+    page = Extractor(ocr_engine=ocr).extract(FIXTURES / "labeled-plan.png")[0]
+
+    assert [section.label for section in page.sections] == [
+        "Floor Plan – 3BHK Residence",
+        "Living Room – Front Elevation",
+        "Ceiling Plan – Living Room",
+    ]
+    assert all(0 <= section.crop.x < page.width for section in page.sections)
+    assert all(0 <= section.crop.y < page.height for section in page.sections)
+    assert all(
+        section.crop.x + section.crop.width <= page.width
+        for section in page.sections
+    )
+    assert all(
+        section.crop.y + section.crop.height <= page.height
+        for section in page.sections
+    )
+
+
+def test_uses_configured_accepted_plan_types_for_extraction(monkeypatch):
+    monkeypatch.setenv("OCR_ACCEPTED_PLAN_TYPES", "landscape")
+    ocr = FakePaddleOCR3([{
+        "rec_boxes": [[40, 40, 300, 80], [40, 140, 300, 180]],
+        "rec_texts": ["Landscape Plan", "Floor Plan"],
+        "rec_scores": [0.95, 0.96],
+    }])
+
+    sections = Extractor(ocr_engine=ocr).extract(
+        FIXTURES / "labeled-plan.png"
+    )[0].sections
+
+    assert [section.label for section in sections] == ["Landscape Plan"]
 
 
 def test_candidate_cap_stops_crop_encoding_before_candidate_501(monkeypatch):
     labels = 501
     ocr = FakePaddleOCR3([{
         "rec_boxes": [[1, 1, 20, 20]] * labels,
-        "rec_texts": [f"Section {index}" for index in range(labels)],
+        "rec_texts": [f"Floor Plan – Wing {index}" for index in range(labels)],
         "rec_scores": [0.9] * labels,
     }])
     encoded = 0
@@ -107,7 +165,7 @@ def test_candidate_cap_stops_crop_encoding_before_candidate_501(monkeypatch):
 def test_output_budget_stops_before_encoding_later_candidates(monkeypatch):
     ocr = FakePaddleOCR3([{
         "rec_boxes": [[1, 1, 20, 20], [30, 30, 60, 60]],
-        "rec_texts": ["First", "Second"],
+        "rec_texts": ["Floor Plan", "Rear Elevation"],
         "rec_scores": [0.9, 0.9],
     }])
     encoded = 0
@@ -202,7 +260,7 @@ def test_legacy_ocr_output_remains_a_fallback():
         [
             [
                 [[285, 520], [515, 520], [515, 565], [285, 565]],
-                ("Legacy Elevation", 0.91),
+                ("Left Elevation", 0.91),
             ]
         ]
     ]
@@ -213,7 +271,7 @@ def test_legacy_ocr_output_remains_a_fallback():
     )[0].sections
 
     assert ocr.calls == 1
-    assert sections[0].label == "Legacy Elevation"
+    assert sections[0].label == "Left Elevation"
 
 
 @pytest.mark.model
