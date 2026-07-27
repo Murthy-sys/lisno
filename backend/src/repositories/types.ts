@@ -213,10 +213,21 @@ export interface DesignExtractionJobRecord {
   leaseExpiresAt: string | null;
   failureCode: string | null;
   failureMessage: string | null;
+  claimId: string | null;
+  workerResultId: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type NewDesignExtractionJob = Omit<
+  DesignExtractionJobRecord,
+  "claimId" | "workerResultId" | "createdAt" | "updatedAt"
+> & {
+  claimId?: string | null;
   workerResultId?: string | null;
   createdAt?: string;
   updatedAt?: string;
-}
+};
 
 export interface DesignSourcePageRecord {
   id: string;
@@ -265,6 +276,9 @@ export interface DesignSectionRevisionRecord {
 }
 
 export interface ExtractionDraftReplacement {
+  jobId: string;
+  claimId: string;
+  processedAt: string;
   designVersionId: string;
   workerResultId: string;
   sourcePages: DesignSourcePageRecord[];
@@ -493,17 +507,19 @@ export interface AppRepository {
     id: string,
     change: DesignVersionChange
   ): Promise<DesignVersionRecord>;
-  enqueueExtractionJob(input: DesignExtractionJobRecord): Promise<DesignExtractionJobRecord>;
+  enqueueExtractionJob(input: NewDesignExtractionJob): Promise<DesignExtractionJobRecord>;
   claimExtractionJob(
     now: string,
     leaseExpiresAt: string
   ): Promise<DesignExtractionJobRecord | null>;
   completeExtractionJob(
     id: string,
+    claimId: string,
     completedAt: string
   ): Promise<DesignExtractionJobRecord>;
   failExtractionJob(
     id: string,
+    claimId: string,
     failureCode: string,
     failureMessage: string,
     completedAt: string

@@ -12,6 +12,7 @@ import {
   type DesignSectionRevisionRecord,
   type DesignStageRecord,
   type DesignSourcePageRecord,
+  type ExtractionDraftReplacement,
   type DesignVersionRecord,
   type EvaluationRecord,
   type FloorRecord,
@@ -642,6 +643,7 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
       const createdAt = input.createdAt ?? input.queuedAt;
       const job: DesignExtractionJobRecord = {
         ...clone(input),
+        claimId: input.claimId ?? null,
         workerResultId: input.workerResultId ?? null,
         createdAt,
         updatedAt: input.updatedAt ?? createdAt
@@ -676,6 +678,7 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
         attemptCount: job.attemptCount + 1,
         startedAt: now,
         leaseExpiresAt,
+        claimId: nextId("extraction-claim"),
         failureCode: null,
         failureMessage: null,
         updatedAt: now
@@ -684,16 +687,18 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
       return clone(claimed);
     },
 
-    async completeExtractionJob(id, completedAt) {
+    async completeExtractionJob(id, claimId, completedAt) {
       const index = state.extractionJobs.findIndex((job) => job.id === id);
       if (index < 0) {
         throw new RepositoryNotFoundError(`Design extraction job ${id} was not found.`);
       }
+      ensureCurrentExtractionClaim(state.extractionJobs[index]!, claimId, completedAt);
       const completed: DesignExtractionJobRecord = {
         ...state.extractionJobs[index]!,
         status: "designer_review",
         completedAt,
         leaseExpiresAt: null,
+        claimId: null,
         failureCode: null,
         failureMessage: null,
         updatedAt: completedAt
@@ -702,16 +707,18 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
       return clone(completed);
     },
 
-    async failExtractionJob(id, failureCode, failureMessage, completedAt) {
+    async failExtractionJob(id, claimId, failureCode, failureMessage, completedAt) {
       const index = state.extractionJobs.findIndex((job) => job.id === id);
       if (index < 0) {
         throw new RepositoryNotFoundError(`Design extraction job ${id} was not found.`);
       }
+      ensureCurrentExtractionClaim(state.extractionJobs[index]!, claimId, completedAt);
       const failed: DesignExtractionJobRecord = {
         ...state.extractionJobs[index]!,
         status: "processing_failed",
         completedAt,
         leaseExpiresAt: null,
+        claimId: null,
         failureCode,
         failureMessage,
         updatedAt: completedAt
@@ -736,25 +743,32 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
 
     async replaceExtractionDraft(input) {
       const jobIndex = state.extractionJobs.findIndex(
-        (job) => job.designVersionId === input.designVersionId
+        (job) => job.id === input.jobId
       );
-      const existingPages = state.sourcePages.filter(
-        (page) => page.designVersionId === input.designVersionId
-      );
+      if (jobIndex < 0) {
+        throw new RepositoryNotFoundError(`Design extraction job ${input.jobId} was not found.`);
+      }
+      const job = state.extractionJobs[jobIndex]!;
+      if (job.designVersionId !== input.designVersionId) {
+        throw new RepositoryConflictError("Extraction job does not match the draft version.");
+      }
+      if (job.workerResultId === input.workerResultId) return;
+      ensureCurrentExtractionClaim(job, input.claimId, input.processedAt);
+      validateExtractionDraft(input);
       const existingSections = state.designSections.filter(
         (section) => section.designVersionId === input.designVersionId
       );
-      const isReplay =
-        state.extractionJobs[jobIndex]?.workerResultId === input.workerResultId ||
-        (existingPages.length === input.sourcePages.length &&
-          existingSections.length === input.sections.length &&
-          input.sourcePages.every((page) => existingPages.some((existing) => existing.id === page.id)) &&
-          input.sections.every(({ section }) =>
-            existingSections.some((existing) => existing.id === section.id)
-          ));
-      if (isReplay) return;
-
       const sectionIds = new Set(existingSections.map((section) => section.id));
+      if (
+        state.designSectionRevisions.some(
+          (revision) =>
+            sectionIds.has(revision.sectionId) && revision.reviewStatus !== "draft"
+        )
+      ) {
+        throw new RepositoryConflictError(
+          "Reviewed section revisions cannot be replaced by extraction output."
+        );
+      }
       state.sourcePages = state.sourcePages.filter(
         (page) => page.designVersionId !== input.designVersionId
       );
@@ -779,7 +793,7 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
         state.extractionJobs[jobIndex] = {
           ...state.extractionJobs[jobIndex]!,
           workerResultId: input.workerResultId,
-          updatedAt: nextIso()
+          updatedAt: input.processedAt
         };
       }
     },
@@ -802,6 +816,12 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
     async updateDraftSection(id, change) {
       const index = state.designSections.findIndex((section) => section.id === id);
       if (index < 0) throw new RepositoryNotFoundError(`Design section ${id} was not found.`);
+      const latestRevision = state.designSectionRevisions
+        .filter((revision) => revision.sectionId === id)
+        .sort((left, right) => right.revisionNumber - left.revisionNumber)[0];
+      if (!latestRevision || latestRevision.reviewStatus !== "draft") {
+        throw new RepositoryConflictError("Only sections with a draft latest revision can be edited.");
+      }
       const updated: DesignSectionRecord = {
         ...state.designSections[index]!,
         ...clone(change),
@@ -930,6 +950,62 @@ function compareLatestClientVisibleVersion(left: DesignVersionRecord, right: Des
   return new Date(left.approvedAt ?? 0).getTime() - new Date(right.approvedAt ?? 0).getTime()
     || new Date(left.uploadedAt).getTime() - new Date(right.uploadedAt).getTime()
     || left.id.localeCompare(right.id);
+}
+
+function ensureCurrentExtractionClaim(
+  job: DesignExtractionJobRecord,
+  claimId: string,
+  now: string
+) {
+  if (
+    job.status !== "processing" ||
+    job.claimId !== claimId ||
+    job.leaseExpiresAt === null ||
+    new Date(job.leaseExpiresAt).getTime() <= new Date(now).getTime()
+  ) {
+    throw new RepositoryConflictError("Extraction job claim is no longer current.");
+  }
+}
+
+function validateExtractionDraft(input: ExtractionDraftReplacement) {
+  const pageIds = new Set<string>();
+  const pageNumbers = new Set<number>();
+  for (const page of input.sourcePages) {
+    if (
+      page.designVersionId !== input.designVersionId ||
+      pageIds.has(page.id) ||
+      pageNumbers.has(page.pageNumber)
+    ) {
+      throw new RepositoryConflictError("Extraction source pages are inconsistent.");
+    }
+    pageIds.add(page.id);
+    pageNumbers.add(page.pageNumber);
+  }
+  const sectionIds = new Set<string>();
+  const revisionIds = new Set<string>();
+  for (const { section, revision } of input.sections) {
+    if (
+      section.designVersionId !== input.designVersionId ||
+      section.source !== "ocr" ||
+      !section.active ||
+      !pageIds.has(section.sourcePageId) ||
+      sectionIds.has(section.id) ||
+      revisionIds.has(revision.id) ||
+      revision.sectionId !== section.id ||
+      revision.sourcePageId !== section.sourcePageId ||
+      revision.revisionNumber !== 1 ||
+      revision.reviewStatus !== "draft" ||
+      revision.label !== section.label ||
+      revision.submittedAt !== null ||
+      revision.reviewerId !== null ||
+      revision.reviewedAt !== null ||
+      revision.rejectionComment !== null
+    ) {
+      throw new RepositoryConflictError("Extraction section proposal is inconsistent.");
+    }
+    sectionIds.add(section.id);
+    revisionIds.add(revision.id);
+  }
 }
 
 function copyOrNull<T>(value: T | undefined): T | null {

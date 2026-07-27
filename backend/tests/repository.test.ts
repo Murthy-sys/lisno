@@ -43,7 +43,26 @@ describe("memory repository", () => {
 
   it("replaces a worker draft idempotently without duplicating pages or sections", async () => {
     const repository = createMemoryRepository(demoSeedData);
+    await repository.enqueueExtractionJob({
+      id: "job-replacement",
+      designVersionId: "version-1",
+      status: "queued",
+      attemptCount: 0,
+      queuedAt: "2026-07-27T10:00:00.000Z",
+      startedAt: null,
+      completedAt: null,
+      leaseExpiresAt: null,
+      failureCode: null,
+      failureMessage: null
+    });
+    const claim = await repository.claimExtractionJob(
+      "2026-07-27T10:01:00.000Z",
+      "2026-07-27T10:06:00.000Z"
+    );
     const replacement = {
+      jobId: "job-replacement",
+      claimId: claim!.claimId,
+      processedAt: "2026-07-27T10:02:00.000Z",
       designVersionId: "version-1",
       workerResultId: "result-1",
       sourcePages: [
@@ -131,6 +150,12 @@ describe("memory repository", () => {
     await repository.replaceExtractionDraft(replacement);
     await repository.replaceExtractionDraft(replacement);
 
+    const retry = structuredClone(replacement);
+    retry.workerResultId = "result-2";
+    retry.sections[0]!.section.label = "Kitchen revised";
+    retry.sections[0]!.revision.label = "Kitchen revised";
+    await repository.replaceExtractionDraft(retry);
+
     await expect(repository.listSourcePages("version-1")).resolves.toHaveLength(2);
     await expect(repository.listDesignSections("version-1")).resolves.toEqual(
       expect.arrayContaining([
@@ -139,6 +164,174 @@ describe("memory repository", () => {
       ])
     );
     await expect(repository.listDesignSections("version-1")).resolves.toHaveLength(2);
+    await expect(repository.listDesignSections("version-1")).resolves.toEqual(
+      expect.arrayContaining([expect.objectContaining({ label: "Kitchen revised" })])
+    );
+  });
+
+  it("protects reviewed extraction drafts and rejects invalid worker proposals", async () => {
+    const repository = createMemoryRepository(demoSeedData);
+    const queued = await repository.enqueueExtractionJob({
+      id: "job-protected",
+      designVersionId: "version-protected",
+      status: "queued",
+      attemptCount: 0,
+      queuedAt: "2026-07-27T10:00:00.000Z",
+      startedAt: null,
+      completedAt: null,
+      leaseExpiresAt: null,
+      failureCode: null,
+      failureMessage: null
+    });
+    const claim = await repository.claimExtractionJob(
+      "2026-07-27T10:01:00.000Z",
+      "2026-07-27T10:06:00.000Z"
+    );
+    const replacement = {
+      jobId: queued.id,
+      claimId: claim!.claimId,
+      processedAt: "2026-07-27T10:02:00.000Z",
+      designVersionId: queued.designVersionId,
+      workerResultId: "result-protected",
+      sourcePages: [
+        {
+          id: "page-protected",
+          designVersionId: queued.designVersionId,
+          pageNumber: 1,
+          renderedFileReference: "generated/protected.png",
+          width: 1000,
+          height: 800,
+          createdAt: "2026-07-27T10:02:00.000Z",
+          updatedAt: "2026-07-27T10:02:00.000Z"
+        }
+      ],
+      sections: [
+        {
+          section: {
+            id: "section-protected",
+            designVersionId: queued.designVersionId,
+            sourcePageId: "page-protected",
+            label: "Study",
+            active: true,
+            source: "ocr" as const,
+            ocrConfidence: 0.95,
+            createdAt: "2026-07-27T10:02:00.000Z",
+            updatedAt: "2026-07-27T10:02:00.000Z"
+          },
+          revision: {
+            id: "revision-protected",
+            sectionId: "section-protected",
+            revisionNumber: 1,
+            sourcePageId: "page-protected",
+            crop: { x: 1, y: 2, width: 300, height: 200 },
+            croppedFileReference: "generated/study.png",
+            label: "Study",
+            reviewStatus: "draft" as const,
+            submittedAt: null,
+            reviewerId: null,
+            reviewedAt: null,
+            rejectionComment: null,
+            createdAt: "2026-07-27T10:02:00.000Z"
+          }
+        }
+      ]
+    };
+
+    await expect(
+      repository.replaceExtractionDraft({
+        ...structuredClone(replacement),
+        sections: [
+          {
+            ...structuredClone(replacement.sections[0]!),
+            section: { ...replacement.sections[0]!.section, active: false }
+          }
+        ]
+      })
+    ).rejects.toBeInstanceOf(RepositoryConflictError);
+
+    await repository.replaceExtractionDraft(replacement);
+    await repository.createSectionRevision({
+      ...replacement.sections[0]!.revision,
+      id: "revision-protected-submitted",
+      revisionNumber: 2,
+      reviewStatus: "submitted",
+      submittedAt: "2026-07-27T10:03:00.000Z"
+    });
+    await expect(
+      repository.replaceExtractionDraft({
+        ...replacement,
+        workerResultId: "result-protected-retry"
+      })
+    ).rejects.toBeInstanceOf(RepositoryConflictError);
+  });
+
+  it("rejects stale job completion and edits after a section leaves draft review", async () => {
+    const repository = createMemoryRepository(demoSeedData);
+    await repository.enqueueExtractionJob({
+      id: "job-stale",
+      designVersionId: "version-stale",
+      status: "queued",
+      attemptCount: 0,
+      queuedAt: "2026-07-27T10:00:00.000Z",
+      startedAt: null,
+      completedAt: null,
+      leaseExpiresAt: null,
+      failureCode: null,
+      failureMessage: null
+    });
+    const firstClaim = await repository.claimExtractionJob(
+      "2026-07-27T10:01:00.000Z",
+      "2026-07-27T10:02:00.000Z"
+    );
+    const secondClaim = await repository.claimExtractionJob(
+      "2026-07-27T10:03:00.000Z",
+      "2026-07-27T10:04:00.000Z"
+    );
+
+    await expect(
+      repository.completeExtractionJob(
+        "job-stale",
+        firstClaim!.claimId,
+        "2026-07-27T10:03:00.000Z"
+      )
+    ).rejects.toBeInstanceOf(RepositoryConflictError);
+    await expect(
+      repository.completeExtractionJob(
+        "job-stale",
+        secondClaim!.claimId,
+        "2026-07-27T10:03:30.000Z"
+      )
+    ).resolves.toMatchObject({ status: "designer_review" });
+
+    await repository.createManualSection({
+      id: "section-locked",
+      designVersionId: "version-stale",
+      sourcePageId: "page-locked",
+      label: "Locked",
+      active: true,
+      source: "manual",
+      ocrConfidence: null,
+      createdAt: "2026-07-27T10:00:00.000Z",
+      updatedAt: "2026-07-27T10:00:00.000Z"
+    });
+    await repository.createSectionRevision({
+      id: "revision-locked",
+      sectionId: "section-locked",
+      revisionNumber: 1,
+      sourcePageId: "page-locked",
+      crop: { x: 0, y: 0, width: 10, height: 10 },
+      croppedFileReference: "locked.png",
+      label: "Locked",
+      reviewStatus: "submitted",
+      submittedAt: "2026-07-27T10:01:00.000Z",
+      reviewerId: null,
+      reviewedAt: null,
+      rejectionComment: null,
+      createdAt: "2026-07-27T10:00:00.000Z"
+    });
+    await expect(
+      repository.updateDraftSection("section-locked", { label: "Changed" })
+    ).rejects.toBeInstanceOf(RepositoryConflictError);
   });
 
   it("returns a deterministic manager-to-designer organization tree", async () => {

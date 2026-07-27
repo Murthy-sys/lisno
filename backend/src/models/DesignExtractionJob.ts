@@ -22,6 +22,7 @@ const designExtractionJobSchema = new Schema(
     startedAt: { type: Date, default: null },
     completedAt: { type: Date, default: null },
     leaseExpiresAt: { type: Date, default: null },
+    claimId: { type: String, default: null, maxlength: 128 },
     failureCode: { type: String, default: null, maxlength: 64 },
     failureMessage: { type: String, default: null, maxlength: 500 },
     workerResultId: { type: String, default: null, maxlength: 128 }

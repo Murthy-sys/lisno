@@ -29,6 +29,7 @@ import {
   type EvaluationRecord,
   type FloorRecord,
   type ManagerTreeNode,
+  type NewDesignExtractionJob,
   type NewDesignVersion,
   type ProjectHierarchy,
   type ProjectRecord,
@@ -738,6 +739,7 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
     },
 
     async claimExtractionJob(now, leaseExpiresAt) {
+      const claimId = randomUUID();
       const query = DesignExtractionJobModel.findOneAndUpdate(
         {
           $or: [
@@ -750,6 +752,7 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
             status: "processing",
             startedAt: date(now),
             leaseExpiresAt: date(leaseExpiresAt),
+            claimId,
             failureCode: null,
             failureMessage: null
           },
@@ -762,14 +765,20 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
       return document ? mapExtractionJob(document) : null;
     },
 
-    async completeExtractionJob(id, completedAt) {
+    async completeExtractionJob(id, claimId, completedAt) {
       const query = DesignExtractionJobModel.findByIdAndUpdate(
-        id,
+        {
+          _id: id,
+          status: "processing",
+          claimId,
+          leaseExpiresAt: { $gt: date(completedAt) }
+        },
         {
           $set: {
             status: "designer_review",
             completedAt: date(completedAt),
             leaseExpiresAt: null,
+            claimId: null,
             failureCode: null,
             failureMessage: null
           }
@@ -779,19 +788,25 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
       if (session) query.session(session);
       const document = await query.lean().exec();
       if (!document) {
-        throw new RepositoryNotFoundError(`Design extraction job ${id} was not found.`);
+        throw new RepositoryConflictError("Extraction job claim is no longer current.");
       }
       return mapExtractionJob(document);
     },
 
-    async failExtractionJob(id, failureCode, failureMessage, completedAt) {
+    async failExtractionJob(id, claimId, failureCode, failureMessage, completedAt) {
       const query = DesignExtractionJobModel.findByIdAndUpdate(
-        id,
+        {
+          _id: id,
+          status: "processing",
+          claimId,
+          leaseExpiresAt: { $gt: date(completedAt) }
+        },
         {
           $set: {
             status: "processing_failed",
             completedAt: date(completedAt),
             leaseExpiresAt: null,
+            claimId: null,
             failureCode,
             failureMessage
           }
@@ -801,7 +816,7 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
       if (session) query.session(session);
       const document = await query.lean().exec();
       if (!document) {
-        throw new RepositoryNotFoundError(`Design extraction job ${id} was not found.`);
+        throw new RepositoryConflictError("Extraction job claim is no longer current.");
       }
       return mapExtractionJob(document);
     },
@@ -830,11 +845,26 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
       }
 
       const jobQuery = DesignExtractionJobModel.findOne({
-        designVersionId: input.designVersionId
+        _id: input.jobId
       }).lean();
       jobQuery.session(session);
       const job = await jobQuery.exec();
-      if (job?.workerResultId === input.workerResultId) return;
+      if (!job) {
+        throw new RepositoryNotFoundError(`Design extraction job ${input.jobId} was not found.`);
+      }
+      if (job.designVersionId !== input.designVersionId) {
+        throw new RepositoryConflictError("Extraction job does not match the draft version.");
+      }
+      if (job.workerResultId === input.workerResultId) return;
+      if (
+        job.status !== "processing" ||
+        job.claimId !== input.claimId ||
+        job.leaseExpiresAt === null ||
+        date(job.leaseExpiresAt).getTime() <= date(input.processedAt).getTime()
+      ) {
+        throw new RepositoryConflictError("Extraction job claim is no longer current.");
+      }
+      validateExtractionDraft(input);
 
       const sectionsQuery = DesignSectionModel.find({
         designVersionId: input.designVersionId
@@ -844,6 +874,16 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
       sectionsQuery.session(session);
       const existingSections = await sectionsQuery.exec();
       const sectionIds = existingSections.map(idOf);
+      const reviewedRevisionQuery = DesignSectionRevisionModel.exists({
+        sectionId: { $in: sectionIds },
+        reviewStatus: { $ne: "draft" }
+      });
+      reviewedRevisionQuery.session(session);
+      if (await reviewedRevisionQuery.exec()) {
+        throw new RepositoryConflictError(
+          "Reviewed section revisions cannot be replaced by extraction output."
+        );
+      }
       const deletePages = DesignSourcePageModel.deleteMany({
         designVersionId: input.designVersionId
       });
@@ -905,6 +945,14 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
     },
 
     async updateDraftSection(id, change) {
+      const revisionQuery = DesignSectionRevisionModel.findOne({ sectionId: id })
+        .sort({ revisionNumber: -1 })
+        .lean();
+      if (session) revisionQuery.session(session);
+      const latestRevision = await revisionQuery.exec();
+      if (!latestRevision || latestRevision.reviewStatus !== "draft") {
+        throw new RepositoryConflictError("Only sections with a draft latest revision can be edited.");
+      }
       const query = DesignSectionModel.findByIdAndUpdate(
         id,
         { $set: change },
@@ -917,6 +965,11 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
     },
 
     async createSectionRevision(input) {
+      const sectionQuery = DesignSectionModel.exists({ _id: input.sectionId });
+      if (session) sectionQuery.session(session);
+      if (!(await sectionQuery.exec())) {
+        throw new RepositoryNotFoundError(`Design section ${input.sectionId} was not found.`);
+      }
       const document = await createMongoDocument("Design section revision", () =>
         createDocument(
           DesignSectionRevisionModel,
@@ -1312,6 +1365,7 @@ function mapExtractionJob(document: PlainDocument): DesignExtractionJobRecord {
     leaseExpiresAt: nullableIso(document.leaseExpiresAt),
     failureCode: document.failureCode ?? null,
     failureMessage: document.failureMessage ?? null,
+    claimId: document.claimId ?? null,
     workerResultId: document.workerResultId ?? null,
     createdAt: iso(document.createdAt),
     updatedAt: iso(document.updatedAt)
@@ -1361,6 +1415,47 @@ function mapSectionRevision(document: PlainDocument): DesignSectionRevisionRecor
     rejectionComment: document.rejectionComment ?? null,
     createdAt: iso(document.createdAt)
   };
+}
+
+function validateExtractionDraft(input: import("./types.js").ExtractionDraftReplacement) {
+  const pageIds = new Set<string>();
+  const pageNumbers = new Set<number>();
+  for (const page of input.sourcePages) {
+    if (
+      page.designVersionId !== input.designVersionId ||
+      pageIds.has(page.id) ||
+      pageNumbers.has(page.pageNumber)
+    ) {
+      throw new RepositoryConflictError("Extraction source pages are inconsistent.");
+    }
+    pageIds.add(page.id);
+    pageNumbers.add(page.pageNumber);
+  }
+  const sectionIds = new Set<string>();
+  const revisionIds = new Set<string>();
+  for (const { section, revision } of input.sections) {
+    if (
+      section.designVersionId !== input.designVersionId ||
+      section.source !== "ocr" ||
+      !section.active ||
+      !pageIds.has(section.sourcePageId) ||
+      sectionIds.has(section.id) ||
+      revisionIds.has(revision.id) ||
+      revision.sectionId !== section.id ||
+      revision.sourcePageId !== section.sourcePageId ||
+      revision.revisionNumber !== 1 ||
+      revision.reviewStatus !== "draft" ||
+      revision.label !== section.label ||
+      revision.submittedAt !== null ||
+      revision.reviewerId !== null ||
+      revision.reviewedAt !== null ||
+      revision.rejectionComment !== null
+    ) {
+      throw new RepositoryConflictError("Extraction section proposal is inconsistent.");
+    }
+    sectionIds.add(section.id);
+    revisionIds.add(revision.id);
+  }
 }
 
 function mapEvaluation(document: PlainDocument): EvaluationRecord {
@@ -1448,7 +1543,7 @@ function designVersionForMongo(input: NewDesignVersion): PlainDocument {
   };
 }
 
-function extractionJobForMongo(input: DesignExtractionJobRecord): PlainDocument {
+function extractionJobForMongo(input: NewDesignExtractionJob): PlainDocument {
   return {
     ...input,
     _id: input.id,
@@ -1457,6 +1552,7 @@ function extractionJobForMongo(input: DesignExtractionJobRecord): PlainDocument 
     startedAt: input.startedAt ? date(input.startedAt) : null,
     completedAt: input.completedAt ? date(input.completedAt) : null,
     leaseExpiresAt: input.leaseExpiresAt ? date(input.leaseExpiresAt) : null,
+    claimId: input.claimId ?? null,
     workerResultId: input.workerResultId ?? null,
     createdAt: input.createdAt ? date(input.createdAt) : undefined,
     updatedAt: input.updatedAt ? date(input.updatedAt) : undefined

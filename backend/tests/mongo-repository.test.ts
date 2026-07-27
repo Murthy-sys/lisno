@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import mongoose from "mongoose";
 import { DesignExtractionJobModel } from "../src/models/DesignExtractionJob.js";
+import { DesignSectionModel } from "../src/models/DesignSection.js";
 import { DesignStageModel } from "../src/models/DesignStage.js";
 import { DesignSectionRevisionModel } from "../src/models/DesignSectionRevision.js";
 import { DesignSourcePageModel } from "../src/models/DesignSourcePage.js";
@@ -12,7 +13,10 @@ import { ProjectModel } from "../src/models/Project.js";
 import { TaskModel } from "../src/models/Task.js";
 import { TaskEventModel } from "../src/models/TaskEvent.js";
 import { createMongoRepository } from "../src/repositories/mongo.js";
-import { RepositoryConflictError } from "../src/repositories/types.js";
+import {
+  RepositoryConflictError,
+  RepositoryNotFoundError
+} from "../src/repositories/types.js";
 import { demoSeedData } from "../src/seed/data.js";
 
 afterEach(() => {
@@ -20,6 +24,137 @@ afterEach(() => {
 });
 
 describe("Mongo repository contracts", () => {
+  it("rejects a stale extraction completion with the current-lease filter", async () => {
+    const update = vi.spyOn(DesignExtractionJobModel, "findByIdAndUpdate").mockReturnValueOnce({
+      lean: () => ({ exec: vi.fn().mockResolvedValue(null) })
+    } as never);
+
+    await expect(
+      createMongoRepository().completeExtractionJob(
+        "job-stale",
+        "old-claim",
+        "2026-07-27T10:03:00.000Z"
+      )
+    ).rejects.toBeInstanceOf(RepositoryConflictError);
+    expect(update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        _id: "job-stale",
+        status: "processing",
+        claimId: "old-claim",
+        leaseExpiresAt: { $gt: new Date("2026-07-27T10:03:00.000Z") }
+      }),
+      expect.any(Object),
+      expect.any(Object)
+    );
+  });
+
+  it("rejects Mongo section revisions for missing sections", async () => {
+    vi.spyOn(DesignSectionModel, "exists").mockReturnValueOnce({
+      exec: vi.fn().mockResolvedValue(null)
+    } as never);
+
+    await expect(
+      createMongoRepository().createSectionRevision({
+        id: "revision-missing",
+        sectionId: "section-missing",
+        revisionNumber: 1,
+        sourcePageId: "page-missing",
+        crop: { x: 0, y: 0, width: 1, height: 1 },
+        croppedFileReference: "missing.png",
+        label: "Missing",
+        reviewStatus: "draft",
+        submittedAt: null,
+        reviewerId: null,
+        reviewedAt: null,
+        rejectionComment: null,
+        createdAt: "2026-07-27T10:00:00.000Z"
+      })
+    ).rejects.toBeInstanceOf(RepositoryNotFoundError);
+  });
+
+  it("rejects Mongo section edits after the latest revision leaves draft", async () => {
+    vi.spyOn(DesignSectionRevisionModel, "findOne").mockReturnValueOnce({
+      sort: () => ({
+        lean: () => ({
+          exec: vi.fn().mockResolvedValue({ reviewStatus: "submitted" })
+        })
+      })
+    } as never);
+
+    await expect(
+      createMongoRepository().updateDraftSection("section-locked", { label: "Changed" })
+    ).rejects.toBeInstanceOf(RepositoryConflictError);
+  });
+
+  it("rejects Mongo worker proposals that are not active OCR draft revision ones", async () => {
+    const session = {} as never;
+    vi.spyOn(DesignExtractionJobModel, "findOne").mockReturnValueOnce({
+      lean: () => ({
+        session: () => undefined,
+        exec: vi.fn().mockResolvedValue({
+          _id: "job-invalid",
+          designVersionId: "version-invalid",
+          status: "processing",
+          claimId: "claim-invalid",
+          leaseExpiresAt: new Date("2026-07-27T10:06:00.000Z"),
+          workerResultId: null
+        })
+      })
+    } as never);
+
+    await expect(
+      createMongoRepository(session).replaceExtractionDraft({
+        jobId: "job-invalid",
+        claimId: "claim-invalid",
+        processedAt: "2026-07-27T10:02:00.000Z",
+        designVersionId: "version-invalid",
+        workerResultId: "result-invalid",
+        sourcePages: [
+          {
+            id: "page-invalid",
+            designVersionId: "version-invalid",
+            pageNumber: 1,
+            renderedFileReference: "page-invalid.png",
+            width: 100,
+            height: 100,
+            createdAt: "2026-07-27T10:00:00.000Z",
+            updatedAt: "2026-07-27T10:00:00.000Z"
+          }
+        ],
+        sections: [
+          {
+            section: {
+              id: "section-invalid",
+              designVersionId: "version-invalid",
+              sourcePageId: "page-invalid",
+              label: "Invalid",
+              active: false,
+              source: "ocr",
+              ocrConfidence: 1,
+              createdAt: "2026-07-27T10:00:00.000Z",
+              updatedAt: "2026-07-27T10:00:00.000Z"
+            },
+            revision: {
+              id: "revision-invalid",
+              sectionId: "section-invalid",
+              revisionNumber: 1,
+              sourcePageId: "page-invalid",
+              crop: { x: 0, y: 0, width: 10, height: 10 },
+              croppedFileReference: "section-invalid.png",
+              label: "Invalid",
+              reviewStatus: "draft",
+              submittedAt: null,
+              reviewerId: null,
+              reviewedAt: null,
+              rejectionComment: null,
+              createdAt: "2026-07-27T10:00:00.000Z"
+            }
+          }
+        ]
+      })
+    ).rejects.toBeInstanceOf(RepositoryConflictError);
+  });
+
   it("indexes extraction jobs, source pages, and section revisions by their natural keys", () => {
     const uniqueIndexes = (model: typeof DesignExtractionJobModel) =>
       model.schema
