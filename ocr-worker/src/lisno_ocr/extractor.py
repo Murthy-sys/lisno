@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+from collections.abc import Mapping
 from collections import deque
 from io import BytesIO
 from pathlib import Path
@@ -94,8 +95,12 @@ class Extractor:
     ) -> list[tuple[tuple[int, int, int, int], str, float]]:
         try:
             engine = self._engine()
+            predict = getattr(engine, "predict", None)
+            if callable(predict):
+                raw = predict(input=np.asarray(image))
+                return list(_parse_predict_results(raw))
             raw = engine.ocr(np.asarray(image), cls=True)
-            return list(_parse_ocr_lines(raw))
+            return list(_parse_legacy_ocr_lines(raw))
         except OcrError:
             raise
         except Exception as error:
@@ -110,7 +115,11 @@ class Extractor:
             raise OcrError(
                 "PaddleOCR is not installed; install the model extra to run OCR."
             ) from error
-        self._ocr_engine = PaddleOCR(use_doc_orientation_classify=False)
+        self._ocr_engine = PaddleOCR(
+            use_doc_orientation_classify=False,
+            use_doc_unwarping=False,
+            use_textline_orientation=False,
+        )
         return self._ocr_engine
 
     def _section_for_label(
@@ -142,7 +151,56 @@ class Extractor:
         )
 
 
-def _parse_ocr_lines(
+def _parse_predict_results(
+    raw: Any,
+) -> Iterable[tuple[tuple[int, int, int, int], str, float]]:
+    if not isinstance(raw, (list, tuple)):
+        return
+    for result in raw:
+        data = _structured_result_data(result)
+        boxes = data.get("rec_boxes", [])
+        texts = data.get("rec_texts", [])
+        scores = data.get("rec_scores", [])
+        for box, text, score in zip(boxes, texts, scores):
+            values = np.asarray(box).reshape(-1).tolist()
+            if len(values) == 4:
+                left, top, right, bottom = values
+            elif len(values) >= 8 and len(values) % 2 == 0:
+                xs = values[0::2]
+                ys = values[1::2]
+                left, top, right, bottom = min(xs), min(ys), max(xs), max(ys)
+            else:
+                continue
+            label = " ".join(str(text).split())
+            yield (
+                (
+                    int(round(float(left))),
+                    int(round(float(top))),
+                    int(round(float(right))) + 1,
+                    int(round(float(bottom))) + 1,
+                ),
+                label,
+                float(score),
+            )
+
+
+def _structured_result_data(result: Any) -> Mapping[str, Any]:
+    if isinstance(result, Mapping):
+        data: Any = result
+    else:
+        json_value = getattr(result, "json", None)
+        data = json_value() if callable(json_value) else json_value
+        if not isinstance(data, Mapping):
+            data = {
+                "rec_boxes": getattr(result, "rec_boxes", []),
+                "rec_texts": getattr(result, "rec_texts", []),
+                "rec_scores": getattr(result, "rec_scores", []),
+            }
+    nested = data.get("res") if isinstance(data, Mapping) else None
+    return nested if isinstance(nested, Mapping) else data
+
+
+def _parse_legacy_ocr_lines(
     raw: Any,
 ) -> Iterable[tuple[tuple[int, int, int, int], str, float]]:
     if not isinstance(raw, (list, tuple)):

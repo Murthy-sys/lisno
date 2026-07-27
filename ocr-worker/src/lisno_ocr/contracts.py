@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Literal
 
 
@@ -68,8 +67,8 @@ class ExtractedPage:
 class ClaimedJob:
     id: str
     claim_token: str
-    source_path: Path
-    temporary_source: bool = False
+    source_url: str
+    source_filename: str
 
 
 @dataclass(frozen=True, slots=True)

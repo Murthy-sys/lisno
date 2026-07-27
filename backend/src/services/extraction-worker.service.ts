@@ -382,8 +382,12 @@ function decodeBase64(value: string, maxBytes: number) {
     invalidResult("Worker images must be valid bounded base64.");
   }
   const decoded = Buffer.from(value, "base64");
-  if (decoded.length === 0 || decoded.length > maxBytes) {
-    invalidResult("Worker images exceed the configured byte limit.");
+  if (
+    decoded.length === 0 ||
+    decoded.length > maxBytes ||
+    decoded.toString("base64") !== value
+  ) {
+    invalidResult("Worker images must be canonical bounded base64.");
   }
   return decoded;
 }

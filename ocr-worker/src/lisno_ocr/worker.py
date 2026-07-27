@@ -7,7 +7,7 @@ import time
 from pathlib import Path
 from typing import Any, Callable, Protocol, Sequence
 from urllib.error import HTTPError, URLError
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urljoin
 from urllib.request import Request, urlopen
 from uuid import uuid4
 
@@ -26,6 +26,8 @@ from .extractor import Extractor
 
 class Api(Protocol):
     def claim(self) -> ClaimedJob | None: ...
+    def download(self, claimed: ClaimedJob) -> Path: ...
+    def cleanup(self, source_path: Path) -> None: ...
     def complete(self, job_id: str, pages: Sequence[ExtractedPage]) -> None: ...
     def fail(self, job_id: str, failure: WorkerFailure) -> None: ...
 
@@ -50,17 +52,29 @@ class WorkerApi:
         claim_token = _required_string(data, "claimToken")
         source_url = _required_string(data, "sourceUrl")
         filename = str(data.get("source", {}).get("filename", "source"))
-        suffix = Path(filename).suffix.lower()
-        if suffix not in {".pdf", ".png", ".jpg", ".jpeg", ".webp"}:
-            suffix = ".bin"
-        source_path = self._download_source(source_url, suffix)
         self._claim_tokens[job_id] = claim_token
         return ClaimedJob(
             id=job_id,
             claim_token=claim_token,
-            source_path=source_path,
-            temporary_source=True,
+            source_url=source_url,
+            source_filename=filename,
         )
+
+    def download(self, claimed: ClaimedJob) -> Path:
+        suffix = Path(claimed.source_filename).suffix.lower()
+        if suffix not in {".pdf", ".png", ".jpg", ".jpeg", ".webp"}:
+            suffix = ".bin"
+        return self._download_source(
+            claimed.source_url,
+            suffix,
+            claimed.claim_token,
+        )
+
+    def cleanup(self, source_path: Path) -> None:
+        try:
+            os.unlink(source_path)
+        except FileNotFoundError:
+            pass
 
     def complete(self, job_id: str, pages: Sequence[ExtractedPage]) -> None:
         result = {
@@ -84,10 +98,15 @@ class WorkerApi:
         )
         self._claim_tokens.pop(job_id, None)
 
-    def _download_source(self, source_url: str, suffix: str) -> Path:
+    def _download_source(
+        self, source_url: str, suffix: str, claim_token: str
+    ) -> Path:
         request = Request(
             urljoin(self._settings.api_base_url + "/", source_url),
-            headers={"Authorization": f"Bearer {self._settings.worker_token}"},
+            headers={
+                "Authorization": f"Bearer {self._settings.worker_token}",
+                "X-Extraction-Claim-Token": claim_token,
+            },
             method="GET",
         )
         try:
@@ -172,18 +191,40 @@ def run_worker(
         if claimed is None:
             sleep(settings.poll_seconds)
             continue
+        source_path: Path | None = None
         try:
+            source_path = worker_api.download(claimed)
             worker_api.complete(
-                claimed.id, page_extractor.extract(claimed.source_path)
+                claimed.id, page_extractor.extract(source_path)
             )
         except Exception as error:
-            worker_api.fail(claimed.id, classify_failure(error))
+            _report_failure_with_retry(
+                worker_api,
+                claimed.id,
+                classify_failure(error),
+                sleep,
+            )
         finally:
-            if claimed.temporary_source:
-                try:
-                    os.unlink(claimed.source_path)
-                except FileNotFoundError:
-                    pass
+            if source_path is not None:
+                worker_api.cleanup(source_path)
+
+
+def _report_failure_with_retry(
+    api: Api,
+    job_id: str,
+    failure: WorkerFailure,
+    sleep: Callable[[float], None],
+    attempts: int = 3,
+    initial_backoff_seconds: float = 1.0,
+) -> bool:
+    for attempt in range(attempts):
+        try:
+            api.fail(job_id, failure)
+            return True
+        except Exception:
+            if attempt + 1 < attempts:
+                sleep(initial_backoff_seconds * (2**attempt))
+    return False
 
 
 def classify_failure(error: Exception) -> WorkerFailure:

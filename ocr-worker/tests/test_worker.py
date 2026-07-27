@@ -10,26 +10,55 @@ from lisno_ocr.contracts import (
     ResultRejectedError,
     WorkerSettings,
 )
-from lisno_ocr.worker import classify_failure, run_worker
+from lisno_ocr.worker import WorkerApi, classify_failure, run_worker
 
 
 FIXTURE = Path(__file__).parent / "fixtures" / "labeled-plan.png"
 
 
 class FakeApi:
-    def __init__(self, jobs):
+    def __init__(
+        self,
+        jobs,
+        *,
+        download_error=None,
+        complete_errors=None,
+        fail_errors=None,
+    ):
         self.jobs = list(jobs)
+        self.download_error = download_error
+        self.complete_errors = list(complete_errors or [])
+        self.fail_errors = list(fail_errors or [])
+        self.downloaded = []
+        self.cleaned = []
         self.completed = []
         self.failed = []
 
     def claim(self):
         return self.jobs.pop(0) if self.jobs else None
 
+    def download(self, claimed):
+        self.downloaded.append(claimed.id)
+        if self.download_error:
+            raise self.download_error
+        return FIXTURE
+
+    def cleanup(self, source_path):
+        self.cleaned.append(source_path)
+
     def complete(self, job_id, pages):
+        if self.complete_errors:
+            error = self.complete_errors.pop(0)
+            if error:
+                raise error
         self.completed.append((job_id, pages))
 
     def fail(self, job_id, failure):
         self.failed.append((job_id, failure))
+        if self.fail_errors:
+            error = self.fail_errors.pop(0)
+            if error:
+                raise error
 
 
 class FakeExtractor:
@@ -44,11 +73,33 @@ class FakeExtractor:
         return self.pages
 
 
+class ScriptedExtractor:
+    def __init__(self, results):
+        self.results = list(results)
+
+    def extract(self, source_path):
+        assert source_path == FIXTURE
+        result = self.results.pop(0)
+        if isinstance(result, Exception):
+            raise result
+        return result
+
+
 def job():
     return ClaimedJob(
         id="job-1",
         claim_token="claim-1",
-        source_path=FIXTURE,
+        source_url="/api/v1/internal/extraction-jobs/job-1/source",
+        source_filename="labeled-plan.png",
+    )
+
+
+def second_job():
+    return ClaimedJob(
+        id="job-2",
+        claim_token="claim-2",
+        source_url="/api/v1/internal/extraction-jobs/job-2/source",
+        source_filename="labeled-plan.png",
     )
 
 
@@ -59,6 +110,28 @@ def settings():
         poll_seconds=2.5,
         request_timeout_seconds=30,
     )
+
+
+def test_api_claim_returns_metadata_without_downloading_source():
+    class ClaimOnlyApi(WorkerApi):
+        def _request_json(self, *_args, **_kwargs):
+            return 200, {
+                "data": {
+                    "id": "job-1",
+                    "claimToken": "claim-1",
+                    "sourceUrl": "/api/v1/internal/extraction-jobs/job-1/source",
+                    "source": {"filename": "plan.pdf"},
+                }
+            }
+
+        def download(self, _claimed):
+            raise AssertionError("claim must not download")
+
+    claimed = ClaimOnlyApi(settings()).claim()
+
+    assert claimed.id == "job-1"
+    assert claimed.claim_token == "claim-1"
+    assert claimed.source_filename == "plan.pdf"
 
 
 def test_polling_sleeps_when_empty_then_completes_the_next_claim():
@@ -95,6 +168,77 @@ def test_worker_reports_bounded_failure_without_a_traceback():
     assert api.failed[0][1].code == "OCR_FAILED"
     assert api.failed[0][1].message == "engine failed"
     assert len(api.failed[0][1].message) <= 500
+
+
+def test_download_failure_marks_the_claim_invalid_source():
+    api = FakeApi(
+        [job()],
+        download_error=InvalidSourceError("source download failed"),
+    )
+
+    run_worker(
+        settings(),
+        api=api,
+        extractor=FakeExtractor(error=AssertionError("must not extract")),
+        sleep=lambda _seconds: None,
+        max_iterations=1,
+    )
+
+    assert api.completed == []
+    assert api.failed[0][0] == "job-1"
+    assert api.failed[0][1].code == "INVALID_SOURCE"
+
+
+def test_fail_callback_outage_is_bounded_and_polling_continues():
+    api = FakeApi(
+        [job(), second_job()],
+        fail_errors=[
+            OcrError("callback unavailable"),
+            OcrError("callback unavailable"),
+            OcrError("callback unavailable"),
+        ],
+    )
+    recovered_pages = [object()]
+    extractor = ScriptedExtractor(
+        [OcrError("engine failed"), recovered_pages]
+    )
+    sleeps = []
+
+    run_worker(
+        settings(),
+        api=api,
+        extractor=extractor,
+        sleep=sleeps.append,
+        max_iterations=2,
+    )
+
+    assert [job_id for job_id, _failure in api.failed] == [
+        "job-1",
+        "job-1",
+        "job-1",
+    ]
+    assert sleeps == [1.0, 2.0]
+    assert api.downloaded == ["job-1", "job-2"]
+    assert api.completed == [("job-2", recovered_pages)]
+
+
+def test_completion_callback_failure_is_reported_and_next_poll_runs():
+    api = FakeApi(
+        [job(), second_job()],
+        complete_errors=[OcrError("completion unavailable"), None],
+    )
+    pages = [object()]
+
+    run_worker(
+        settings(),
+        api=api,
+        extractor=FakeExtractor(pages=pages),
+        sleep=lambda _seconds: None,
+        max_iterations=2,
+    )
+
+    assert api.failed[0][0] == "job-1"
+    assert api.completed == [("job-2", pages)]
 
 
 @pytest.mark.parametrize(

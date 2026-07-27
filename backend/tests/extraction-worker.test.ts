@@ -16,9 +16,11 @@ const SOURCE = Buffer.concat([
   Buffer.from("%PDF-1.7\nworker source\n"),
   Buffer.alloc(245760 - 23)
 ]);
-const PNG = Buffer.from([
-  0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x00
-]);
+const PNG_BASE64 =
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+const NON_CANONICAL_PNG_BASE64 =
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYIJ=";
+const PNG = Buffer.from(PNG_BASE64, "base64");
 
 class TestStorage {
   private sequence = 0;
@@ -253,6 +255,20 @@ describe("OCR extraction worker contract", () => {
     const leased = await claim(app);
     const body = completeBody();
     body.pages[0]!.imageBase64 = Buffer.alloc(1025).toString("base64");
+
+    await request(app)
+      .post("/api/v1/internal/extraction-jobs/job-1/complete")
+      .set("Authorization", `Bearer ${WORKER_TOKEN}`)
+      .set("X-Extraction-Claim-Token", leased.body.data.claimToken)
+      .send(body)
+      .expect(400);
+  });
+
+  it("rejects non-canonical base64 encodings", async () => {
+    const { app } = await setup();
+    const leased = await claim(app);
+    const body = completeBody();
+    body.pages[0]!.imageBase64 = NON_CANONICAL_PNG_BASE64;
 
     await request(app)
       .post("/api/v1/internal/extraction-jobs/job-1/complete")
