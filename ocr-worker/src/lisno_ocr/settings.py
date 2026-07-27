@@ -61,7 +61,7 @@ class LayoutSettings:
     min_region_area_ratio: float
     duplicate_iou: float
     reserved_bottom_ratio: float
-    material_spec_terms: tuple[str, ...]
+    material_spec_terms: tuple[str, ...] = _DEFAULT_MATERIAL_SPEC_TERMS
 
     @classmethod
     def defaults(cls) -> LayoutSettings:

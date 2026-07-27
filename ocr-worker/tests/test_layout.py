@@ -143,6 +143,24 @@ def test_rejects_configured_material_specification_suffix(monkeypatch):
     ) is None
 
 
+def test_six_argument_layout_settings_reject_material_specification_suffix():
+    settings = LayoutSettings(
+        ("ceiling",),
+        (),
+        0.65,
+        0.03,
+        0.65,
+        0.18,
+    )
+
+    assert classify_heading(
+        OcrLine((100, 420, 700, 465), "A. CEILING PANEL – TEAK VENEER", 0.99),
+        1400,
+        1000,
+        settings,
+    ) is None
+
+
 @pytest.mark.parametrize(
     "text",
     [
