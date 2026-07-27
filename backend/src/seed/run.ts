@@ -6,6 +6,7 @@ import { loadEnvironment } from "../config/env.js";
 import { AuditEventModel } from "../models/AuditEvent.js";
 import { DesignStageModel } from "../models/DesignStage.js";
 import { DesignVersionModel } from "../models/DesignVersion.js";
+import { DesignVersionSequenceModel } from "../models/DesignVersionSequence.js";
 import { EvaluationModel } from "../models/Evaluation.js";
 import { FloorModel } from "../models/Floor.js";
 import { ProjectModel } from "../models/Project.js";
@@ -28,6 +29,18 @@ import { demoSeedData } from "./data.js";
 type MongoRecord = Record<string, unknown>;
 
 export async function seedMongoDatabase(): Promise<void> {
+  await Promise.all([
+    UserModel,
+    ProjectModel,
+    FloorModel,
+    DesignStageModel,
+    TaskModel,
+    TaskEventModel,
+    DesignVersionModel,
+    DesignVersionSequenceModel,
+    EvaluationModel,
+    AuditEventModel
+  ].map((model) => model.deleteMany({})));
   await replaceAll(UserModel, demoSeedData.users, userDocument);
   await replaceAll(ProjectModel, demoSeedData.projects, projectDocument);
   await replaceAll(FloorModel, demoSeedData.floors, floorDocument);
@@ -78,7 +91,6 @@ async function resetAppendOnlyHistoryForSeed<T extends { id: string }>(
   records: T[],
   serialize: (record: T) => MongoRecord
 ) {
-  await model.deleteMany({});
   if (records.length === 0) return;
   await model.insertMany(records.map(serialize), { timestamps: false });
 }

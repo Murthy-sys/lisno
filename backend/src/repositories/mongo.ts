@@ -415,6 +415,19 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
       return { items: documents.map(mapTaskEvent), total };
     },
 
+    async listKpiTaskEventsForTasks(taskOwners, periodStartAt, periodEndAt) {
+      if (taskOwners.length === 0) return [];
+      const documents = await TaskEventModel.find({
+        type: { $in: ["status_changed", "progress_changed", "note_added"] },
+        occurredAt: { $gte: date(periodStartAt), $lte: date(periodEndAt) },
+        $or: taskOwners.map((task) => ({ taskId: task.id, actorId: task.ownerId }))
+      })
+        .sort({ occurredAt: 1, _id: 1 })
+        .lean()
+        .exec();
+      return documents.map(mapTaskEvent);
+    },
+
     async createDesignVersion(input) {
       const document = await createMongoDocument("Design version", () =>
         createDocument(DesignVersionModel, {
@@ -484,6 +497,15 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
         .lean();
       if (session) query.session(session);
       const documents = await query.exec();
+      return documents.map(mapDesignVersion);
+    },
+
+    async listDesignVersionsForTaskIds(taskIds) {
+      if (taskIds.length === 0) return [];
+      const documents = await DesignVersionModel.find({ taskId: { $in: taskIds } })
+        .sort({ taskId: 1, versionNumber: 1, _id: 1 })
+        .lean()
+        .exec();
       return documents.map(mapDesignVersion);
     },
 

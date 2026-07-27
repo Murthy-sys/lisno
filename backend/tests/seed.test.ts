@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { AuditEventModel } from "../src/models/AuditEvent.js";
 import { DesignStageModel } from "../src/models/DesignStage.js";
 import { DesignVersionModel } from "../src/models/DesignVersion.js";
+import { DesignVersionSequenceModel } from "../src/models/DesignVersionSequence.js";
 import { EvaluationModel } from "../src/models/Evaluation.js";
 import { FloorModel } from "../src/models/Floor.js";
 import { ProjectModel } from "../src/models/Project.js";
@@ -15,7 +16,7 @@ afterEach(() => {
 });
 
 describe("Mongo seed reset", () => {
-  it("resets append-only history collections before inserting seed history", async () => {
+  it("clears every demo-seed collection, including version sequences, before writing deterministic records", async () => {
     for (const model of [
       UserModel,
       ProjectModel,
@@ -24,19 +25,36 @@ describe("Mongo seed reset", () => {
       TaskModel,
       TaskEventModel,
       DesignVersionModel,
+      DesignVersionSequenceModel,
       EvaluationModel,
       AuditEventModel
     ]) {
       vi.spyOn(model, "bulkWrite").mockResolvedValue({} as never);
+      vi.spyOn(model, "deleteMany").mockResolvedValue({} as never);
     }
 
     const historyModels = [TaskEventModel, EvaluationModel, AuditEventModel];
     const resets = historyModels.map((model) => ({
-      deleteMany: vi.spyOn(model, "deleteMany").mockResolvedValue({} as never),
+      deleteMany: vi.mocked(model.deleteMany),
       insertMany: vi.spyOn(model, "insertMany").mockResolvedValue([] as never)
     }));
 
     await seedMongoDatabase();
+
+    for (const model of [
+      UserModel,
+      ProjectModel,
+      FloorModel,
+      DesignStageModel,
+      TaskModel,
+      TaskEventModel,
+      DesignVersionModel,
+      DesignVersionSequenceModel,
+      EvaluationModel,
+      AuditEventModel
+    ]) {
+      expect(model.deleteMany).toHaveBeenCalledWith({});
+    }
 
     for (const reset of resets) {
       expect(reset.deleteMany).toHaveBeenCalledOnce();

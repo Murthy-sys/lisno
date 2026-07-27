@@ -353,6 +353,11 @@ export interface AppRepository {
     periodStartAt: string,
     periodEndAt: string
   ): Promise<TaskEventRecord[]>;
+  listKpiTaskEventsForTasks(
+    taskOwners: Array<Pick<TaskRecord, "id" | "ownerId">>,
+    periodStartAt: string,
+    periodEndAt: string
+  ): Promise<TaskEventRecord[]>;
   pageKpiTaskEventsForPeriod(
     taskId: string,
     actorId: string,
@@ -366,6 +371,7 @@ export interface AppRepository {
   ): Promise<DesignVersionRecord>;
   findDesignVersionById(id: string): Promise<DesignVersionRecord | null>;
   listDesignVersions(projectId: string): Promise<DesignVersionRecord[]>;
+  listDesignVersionsForTaskIds(taskIds: string[]): Promise<DesignVersionRecord[]>;
   listLatestClientVisibleDesignVersions(projectIds: string[]): Promise<DesignVersionRecord[]>;
   pageDesignVersions(
     filters: DesignVersionFilters,

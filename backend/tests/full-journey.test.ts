@@ -33,6 +33,16 @@ describe("complete cross-role journey", () => {
     const manager = await login("aarav@lisno.example");
     const approved = await request(app).patch(`/api/v1/design-versions/${uploaded.body.data.id}/approval`).set("Authorization", manager).send({ approvalStatus: "approved", clientVisible: true });
     expect(approved.status).toBe(200);
+    const kpiAfterApproval = await request(app)
+      .get("/api/v1/kpis/users/user-designer-ananya?from=2026-07-01T00%3A00%3A00.000Z&to=2026-07-31T23%3A59%3A59.999Z&limit=20&offset=0")
+      .set("Authorization", designer);
+    expect(kpiAfterApproval.status).toBe(200);
+    expect(kpiAfterApproval.body.data.components).toEqual(expect.arrayContaining([
+      expect.objectContaining({ key: "quality", eligibleCount: expect.any(Number) }),
+      expect.objectContaining({ key: "revisionEfficiency", eligibleCount: expect.any(Number) })
+    ]));
+    expect(kpiAfterApproval.body.data.components.find((component: { key: string }) => component.key === "quality").eligibleCount).toBeGreaterThan(0);
+    expect(kpiAfterApproval.body.data.components.find((component: { key: string }) => component.key === "revisionEfficiency").eligibleCount).toBeGreaterThan(0);
     const draft = await request(app).post("/api/v1/tasks/task-furniture-layout/design-versions").set("Authorization", designer).attach("file", PDF, { filename: "draft-plan.pdf", contentType: "application/pdf" });
     expect(draft.status).toBe(201);
     const internal = await request(app).post("/api/v1/tasks/task-furniture-layout/design-versions").set("Authorization", designer).attach("file", PDF, { filename: "internal-plan.pdf", contentType: "application/pdf" });

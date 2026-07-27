@@ -9,8 +9,16 @@ import type {
 
 const PROJECT_PAGE_SIZE = 100;
 const KPI_PAGE_SIZE = 20;
-const KPI_FROM = "2000-01-01T00:00:00.000Z";
-const KPI_TO = "2100-01-01T00:00:00.000Z";
+export interface ReportingPeriod {
+  from: string;
+  to: string;
+}
+
+export function reviewPeriod(monthOffset = 0, now = new Date()): ReportingPeriod {
+  const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + monthOffset, 1));
+  const end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + monthOffset + 1, 1) - 1);
+  return { from: start.toISOString(), to: end.toISOString() };
+}
 
 export const designerKeys = {
   all: ["designer"] as const,
@@ -34,29 +42,30 @@ export async function getAllProjects(): Promise<Project[]> {
   );
 }
 
-function kpiQuery(): string {
+function kpiQuery(period: ReportingPeriod): string {
   const query = new URLSearchParams({
-    from: KPI_FROM,
-    to: KPI_TO,
+    from: period.from,
+    to: period.to,
     limit: String(KPI_PAGE_SIZE),
     offset: "0"
   });
   return query.toString();
 }
 
-export function getKpi(userId: string): Promise<KpiRead> {
+export function getKpi(userId: string, period = reviewPeriod()): Promise<KpiRead> {
   return apiClient.get<KpiRead>(
-    `/kpis/users/${encodeURIComponent(userId)}?${kpiQuery()}`
+    `/kpis/users/${encodeURIComponent(userId)}?${kpiQuery(period)}`
   );
 }
 
 export function getKpiTaskPage(
   userId: string,
-  offset = 0
+  offset = 0,
+  period = reviewPeriod()
 ): Promise<PageData<KpiTaskRead>> {
   const query = new URLSearchParams({
-    from: KPI_FROM,
-    to: KPI_TO,
+    from: period.from,
+    to: period.to,
     limit: String(KPI_PAGE_SIZE),
     offset: String(offset)
   });

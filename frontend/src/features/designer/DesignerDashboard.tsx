@@ -28,7 +28,8 @@ import {
   designerKeys,
   getAllProjects,
   getKpi,
-  getKpiTaskPage
+  getKpiTaskPage,
+  reviewPeriod
 } from "./designerApi";
 
 const statusLabels: Record<ProjectStatus, string> = {
@@ -56,18 +57,20 @@ export function DesignerDashboard() {
   const auth = useAuth();
   const navigate = useNavigate();
   const [createOpen, setCreateOpen] = useState(false);
+  const [periodOffset, setPeriodOffset] = useState(0);
   const user = auth.user!;
+  const period = reviewPeriod(periodOffset);
   const projectsQuery = useQuery({
     queryKey: designerKeys.projects(),
     queryFn: getAllProjects
   });
   const kpiQuery = useQuery({
-    queryKey: designerKeys.kpi(user.id),
-    queryFn: () => getKpi(user.id)
+    queryKey: [...designerKeys.kpi(user.id), period.from, period.to],
+    queryFn: () => getKpi(user.id, period)
   });
   const taskFeedQuery = useInfiniteQuery({
-    queryKey: designerKeys.kpiTasks(user.id),
-    queryFn: ({ pageParam }) => getKpiTaskPage(user.id, pageParam),
+    queryKey: [...designerKeys.kpiTasks(user.id), period.from, period.to],
+    queryFn: ({ pageParam }) => getKpiTaskPage(user.id, pageParam, period),
     initialPageParam: 0,
     getNextPageParam: (lastPage) =>
       lastPage.pagination.hasMore
@@ -114,6 +117,11 @@ export function DesignerDashboard() {
           <p className="eyebrow">My design operations</p>
           <h1 id="designer-title">Good morning, {user.name.split(" ")[0]}.</h1>
           <p>Here’s what needs your eye across active client work.</p>
+          <label className="sr-only" htmlFor="reporting-period">Reporting period</label>
+          <select id="reporting-period" value={periodOffset} onChange={(event) => setPeriodOffset(Number(event.target.value))}>
+            <option value={0}>Current month</option>
+            <option value={-1}>Previous month</option>
+          </select>
         </div>
         <button
           type="button"

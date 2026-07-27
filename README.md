@@ -34,6 +34,11 @@ data and provides the accounts below. The backend loads `backend/.env` for its
 development server, production `start` command, and seed command; Vite loads
 `frontend/.env`.
 
+> Warning: `npm run seed` is an explicit demo-reset operation. It deletes all
+> records in Lisno's demo-domain collections (including design-version
+> sequences) before inserting the deterministic seed. Never run it against a
+> production database.
+
 ## Environment variables
 
 Backend: `PORT`, `MONGODB_URI`, `JWT_SECRET`, `CORS_ORIGIN`, `UPLOADS_DIR`, and

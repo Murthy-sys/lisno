@@ -80,3 +80,16 @@ claim is made for this review round.
 | Backend | `npm run typecheck`, `npm test`, `npm run build` | passed; 14 test files, 129 tests |
 | Frontend | `npm run typecheck`, `npm test`, `npm run build` | passed; 13 test files, 63 tests |
 | Lint | no `lint` script exists in either package | documented in README |
+
+## Release-blocker foundation slice
+
+- Demo seeding now clears all Lisno domain collections and the design-version
+  sequence before re-inserting deterministic records; README warns that the
+  command is destructive and must never target production.
+- KPI input now derives approval outcome, approved version, revision count, and
+  review presence from persisted design versions. KPI update events are fetched
+  in one batched repository call rather than one call per task. The cross-role
+  lifecycle test proves an upload and approval produces eligible quality and
+  revision KPI components.
+- The designer workspace uses a visible current-month/previous-month reporting
+  period selector instead of the former 2000–2100 hardcoded query.

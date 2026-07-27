@@ -418,6 +418,18 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
       return paginate(events, pagination);
     },
 
+    async listKpiTaskEventsForTasks(taskOwners, periodStartAt, periodEndAt) {
+      const ownerByTaskId = new Map(taskOwners.map((task) => [task.id, task.ownerId]));
+      return clone(
+        state.taskEvents
+          .filter((event) =>
+            ownerByTaskId.get(event.taskId) === event.actorId &&
+            matchesKpiEvent(event, event.taskId, event.actorId, periodStartAt, periodEndAt)
+          )
+          .sort((left, right) => byDateThenId("occurredAt", left, right))
+      );
+    },
+
     async createDesignVersion(input) {
       const id = input.id ?? nextId("design-version");
       ensureUniqueId(state.designVersions, id, "Design version");
@@ -481,6 +493,15 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
               left.versionNumber - right.versionNumber ||
               left.id.localeCompare(right.id)
           )
+      );
+    },
+
+    async listDesignVersionsForTaskIds(taskIds) {
+      const ids = new Set(taskIds);
+      return clone(
+        state.designVersions
+          .filter((version) => version.taskId !== null && ids.has(version.taskId))
+          .sort((left, right) => left.taskId!.localeCompare(right.taskId!) || left.versionNumber - right.versionNumber || left.id.localeCompare(right.id))
       );
     },
 

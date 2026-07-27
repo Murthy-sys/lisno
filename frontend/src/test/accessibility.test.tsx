@@ -82,7 +82,7 @@ function fixtureFetch(user: ReturnType<typeof userFor>) {
     if (url === "/api/v1/client/latest-approved-versions") return Response.json({ data: [] });
     if (url === "/api/v1/organization/team") return Response.json({ data: [] });
     if (url === "/api/v1/organization/tree") return Response.json({ data: [] });
-    if (url.startsWith("/api/v1/kpis/users/") && url.endsWith("/tasks?from=2000-01-01T00%3A00%3A00.000Z&to=2100-01-01T00%3A00%3A00.000Z&limit=20&offset=0")) return Response.json({ data: { items: [], pagination: { limit: 20, offset: 0, total: 0, hasMore: false } } });
+    if (url.startsWith("/api/v1/kpis/users/") && url.includes("/tasks?")) return Response.json({ data: { items: [], pagination: { limit: 20, offset: 0, total: 0, hasMore: false } } });
     if (url.startsWith("/api/v1/kpis/users/")) return Response.json({ data: { userId: user.id, periodStartAt: "2000-01-01T00:00:00.000Z", periodEndAt: "2100-01-01T00:00:00.000Z", score: 0, components: [], aggregates: { taskCounts: { total: 0, completed: 0, active: 0 }, riskCounts: { gray: 0, green: 0, yellow: 0, red: 0 }, effort: { planned: 0, completed: 0, remaining: 0, workloadPercentage: 0 }, projects: [], recentActivity: [] }, tasks: { items: [], pagination: { limit: 100, offset: 0, total: 0, hasMore: false } } } });
     throw new Error(`Unhandled request: ${url}`);
   });
