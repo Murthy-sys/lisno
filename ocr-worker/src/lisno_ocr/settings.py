@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass
 
 
@@ -70,8 +71,16 @@ class LayoutSettings:
 
 
 def _extend_terms(defaults: tuple[str, ...], raw: str | None) -> tuple[str, ...]:
-    extra = tuple(term for part in (raw or "").split(",") if (term := part.strip().casefold()))
-    return tuple(dict.fromkeys((*defaults, *extra)))
+    extra = tuple(
+        term
+        for part in (raw or "").split(",")
+        if (term := normalize_matching_text(part))
+    )
+    return tuple(dict.fromkeys((*map(normalize_matching_text, defaults), *extra)))
+
+
+def normalize_matching_text(text: str) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", text.casefold()).strip()
 
 
 def _bounded_float(name: str, default: float, minimum: float, maximum: float) -> float:

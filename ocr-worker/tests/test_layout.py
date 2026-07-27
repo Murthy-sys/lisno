@@ -18,6 +18,12 @@ def test_accepts_numbered_and_unknown_structured_panel_headings():
         1000,
         settings,
     ) is not None
+    assert classify_heading(
+        OcrLine((100, 420, 650, 465), "A. BESPOKE FEATURE", 0.96),
+        1400,
+        1000,
+        settings,
+    ) is not None
 
 
 def test_strips_decimal_panel_marker_from_display_label():
@@ -32,6 +38,17 @@ def test_strips_decimal_panel_marker_from_display_label():
     assert candidate.kind == "panel"
 
 
+def test_preserves_meaningful_acronyms_in_display_labels():
+    candidate = classify_heading(
+        OcrLine((100, 420, 700, 465), "A. LED FEATURE FOR 3BHK", 0.94),
+        1400,
+        1000,
+        LayoutSettings.defaults(),
+    )
+
+    assert candidate.label == "LED Feature For 3BHK"
+
+
 @pytest.mark.parametrize(
     "text",
     [
@@ -41,11 +58,16 @@ def test_strips_decimal_panel_marker_from_display_label():
         "ALL DIMENSIONS ARE IN MM.",
         "KEY PLAN",
         "BEDROOM 2",
+        "A. MATERIAL: TEAK VENEER – MATCH EXISTING",
+        "FINISH: BRUSHED BRASS TO MATCH EXISTING",
+        "SPECIFICATION: PAINT AS PER APPROVED SAMPLE",
+        "FIXTURE TO MATCH EXISTING",
+        "LEADER: CONTINUE TILE TO CEILING",
     ],
 )
 def test_rejects_annotations_dimensions_reserved_regions_and_room_labels(text):
     assert classify_heading(
-        OcrLine((100, 900, 500, 940), text, 0.99),
+        OcrLine((100, 420, 500, 460), text, 0.99),
         1400,
         1000,
         LayoutSettings.defaults(),

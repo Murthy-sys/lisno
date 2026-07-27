@@ -4,7 +4,7 @@ import re
 from dataclasses import dataclass
 from typing import Literal, TypeAlias
 
-from .settings import LayoutSettings
+from .settings import LayoutSettings, normalize_matching_text
 
 
 Box: TypeAlias = tuple[int, int, int, int]
@@ -61,7 +61,7 @@ def is_reserved_or_annotation(
         return True
     if _DIMENSION_RE.search(match_text) or _UNIT_DIMENSION_RE.search(match_text):
         return True
-    if _NOTE_RE.search(match_text) or _ANNOTATION_RE.search(match_text):
+    if _NOTE_RE.search(match_text) or _looks_like_callout(text, match_text):
         return True
     if (
         page_height > 0
@@ -91,7 +91,7 @@ def heading_evidence(
 
     score = 0.0
     if has_marker:
-        score += 0.25
+        score += 0.28
     if has_drawing_term:
         score += 0.30
     if " – " in text:
@@ -117,11 +117,22 @@ def strip_panel_marker(text: str) -> str:
 
 
 def _title_case_display(text: str) -> str:
-    return " – ".join(segment.title() for segment in text.split(" – "))
+    return " – ".join(_title_case_segment(segment) for segment in text.split(" – "))
+
+
+def _title_case_segment(segment: str) -> str:
+    return _DISPLAY_WORD_RE.sub(_display_word, segment)
+
+
+def _display_word(match: re.Match[str]) -> str:
+    word = match.group()
+    if word in _DISPLAY_ACRONYMS or _DIGIT_ACRONYM_RE.fullmatch(word):
+        return word
+    return word.capitalize()
 
 
 def _match_text(text: str) -> str:
-    return re.sub(r"[^a-z0-9]+", " ", text.casefold()).strip()
+    return normalize_matching_text(text)
 
 
 def _contains_term(text: str, term: str) -> bool:
@@ -151,6 +162,21 @@ _PANEL_MARKER_RE = re.compile(
 _DIMENSION_RE = re.compile(r"\b\d+(?:\.\d+)?\s*(?:x|×)\s*\d+(?:\.\d+)?\b")
 _UNIT_DIMENSION_RE = re.compile(r"\b\d+(?:\.\d+)?\s*(?:mm|cm|m|ft|in)\b")
 _NOTE_RE = re.compile(r"\b(?:all\s+dimensions?|dimensions?\s+are|note|notes)\b")
-_ANNOTATION_RE = re.compile(
-    r"\b(?:false\s+ceiling|led\s+strip|with\s+(?:led|tile|paint|finish))\b"
+_CALLOUT_PHRASE_RE = re.compile(
+    r"\b(?:to\s+match|match\s+existing|as\s+per|refer\s+to|to\s+existing|to\s+be)\b"
 )
+_DISPLAY_WORD_RE = re.compile(r"[A-Za-z]+(?:\d+)?|\d+[A-Za-z][A-Za-z0-9]*")
+_DIGIT_ACRONYM_RE = re.compile(r"\d+[A-Z]{2,}\d*")
+_DISPLAY_ACRONYMS = frozenset({"AC", "DB", "FFL", "HVAC", "LED", "MEP", "RCP", "TV", "UPVC", "WC"})
+
+
+def _looks_like_callout(text: str, match_text: str) -> bool:
+    unmarked = _PANEL_MARKER_RE.sub("", text).strip()
+    prefix, separator, description = unmarked.partition(":")
+    if separator and len(_match_text(prefix).split()) <= 3 and len(
+        _match_text(description).split()
+    ) >= 2:
+        return True
+    if not _PANEL_MARKER_RE.match(text) and re.search(r"\bwith\b", match_text):
+        return True
+    return bool(_CALLOUT_PHRASE_RE.search(match_text))

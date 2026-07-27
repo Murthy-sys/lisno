@@ -11,6 +11,7 @@ from lisno_ocr.contracts import (
     ResultRejectedError,
     WorkerSettings,
 )
+from lisno_ocr.layout import OcrLine, classify_heading
 from lisno_ocr.settings import LayoutSettings
 from lisno_ocr.worker import WorkerApi, classify_failure, run_worker
 
@@ -160,6 +161,20 @@ def test_layout_settings_ignore_empty_term_extensions(monkeypatch):
     monkeypatch.setenv("OCR_RESERVED_TERMS", "")
 
     assert LayoutSettings.from_environment() == LayoutSettings.defaults()
+
+
+def test_layout_settings_normalize_configured_terms_for_classifier(monkeypatch):
+    monkeypatch.setenv("OCR_RESERVED_TERMS", "revision-cloud")
+
+    settings = LayoutSettings.from_environment()
+
+    assert "revision cloud" in settings.reserved_terms
+    assert classify_heading(
+        OcrLine((100, 420, 500, 460), "REVISION CLOUD", 0.99),
+        1400,
+        1000,
+        settings,
+    ) is None
 
 
 @pytest.mark.parametrize(
