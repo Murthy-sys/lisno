@@ -157,6 +157,35 @@ function failDesignVersionMetadataWrites(base: AppRepository): AppRepository {
   });
 }
 
+function failExtractionJobEnqueues(base: AppRepository): AppRepository {
+  return new Proxy(base, {
+    get(target, property, receiver) {
+      if (property !== "runInTransaction") {
+        return Reflect.get(target, property, receiver);
+      }
+      return <T>(operation: (transaction: AppRepository) => Promise<T>) =>
+        target.runInTransaction((transaction) =>
+          operation(
+            new Proxy(transaction, {
+              get(transactionTarget, transactionProperty, transactionReceiver) {
+                if (transactionProperty === "enqueueExtractionJob") {
+                  return async () => {
+                    throw new Error("simulated extraction enqueue failure");
+                  };
+                }
+                return Reflect.get(
+                  transactionTarget,
+                  transactionProperty,
+                  transactionReceiver
+                );
+              }
+            })
+          )
+        );
+    }
+  });
+}
+
 function failAuditWrites(base: AppRepository): AppRepository {
   return new Proxy(base, {
     get(target, property, receiver) {
@@ -222,6 +251,10 @@ describe("design-version uploads", () => {
     );
 
     expect(pdf.status).toBe(201);
+    expect(pdf.body.data.extractionStatus).toBe("queued");
+    expect(
+      await repository.findExtractionJobByVersionId(pdf.body.data.id)
+    ).toMatchObject({ status: "queued", attemptCount: 0 });
     expect(pdf.body.data).toMatchObject({
       taskId: "task-furniture-layout",
       projectId: "project-aurora-villa",
@@ -247,6 +280,58 @@ describe("design-version uploads", () => {
       )
     ]);
     expect(await repository.listDesignVersions("project-aurora-villa")).toHaveLength(3);
+  });
+
+  it("rolls back the version and deletes the original when extraction enqueue fails", async () => {
+    const baseRepository = createMemoryRepository(structuredClone(demoSeedData));
+    const storage = new TestStorage();
+    const { app } = setup({
+      repository: failExtractionJobEnqueues(baseRepository),
+      storage
+    });
+
+    const response = await upload(
+      app,
+      users.ananya,
+      "task-furniture-layout",
+      PDF,
+      "enqueue-failure.pdf",
+      "application/pdf"
+    );
+
+    expect(response.status).toBe(500);
+    expect(storage.deleted).toHaveLength(1);
+    expect(storage.objects.size).toBe(0);
+    expect(
+      await baseRepository.listDesignVersions("project-aurora-villa")
+    ).toHaveLength(1);
+  });
+
+  it("returns extraction status only to users with project access", async () => {
+    const { app } = setup();
+    const uploaded = await upload(
+      app,
+      users.ananya,
+      "task-furniture-layout",
+      PDF,
+      "status.pdf",
+      "application/pdf"
+    );
+
+    const owner = await request(app)
+      .get(`/api/v1/design-versions/${uploaded.body.data.id}/extraction`)
+      .set("Authorization", bearer(users.ananya));
+    const unrelated = await request(app)
+      .get(`/api/v1/design-versions/${uploaded.body.data.id}/extraction`)
+      .set("Authorization", bearer(users.celesteClient));
+
+    expect(owner.status).toBe(200);
+    expect(owner.body.data).toMatchObject({
+      designVersionId: uploaded.body.data.id,
+      status: "queued",
+      attemptCount: 0
+    });
+    expect(unrelated.status).toBe(404);
   });
 
   it("allocates distinct monotonic versions under concurrent uploads", async () => {

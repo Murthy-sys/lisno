@@ -43,4 +43,25 @@ describe("environment authentication configuration", () => {
       })
     ).toThrow();
   });
+
+  it("loads a positive OCR lease duration and defaults it to five minutes", () => {
+    const env = loadEnvironment({
+      JWT_SECRET: "runtime-secret-with-at-least-32-characters"
+    });
+    expect(env.OCR_LEASE_SECONDS).toBe(300);
+
+    expect(
+      loadEnvironment({
+        JWT_SECRET: "runtime-secret-with-at-least-32-characters",
+        OCR_LEASE_SECONDS: "30"
+      }).OCR_LEASE_SECONDS
+    ).toBe(30);
+
+    expect(() =>
+      loadEnvironment({
+        JWT_SECRET: "runtime-secret-with-at-least-32-characters",
+        OCR_LEASE_SECONDS: "0"
+      })
+    ).toThrow();
+  });
 });

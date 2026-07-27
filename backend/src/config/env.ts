@@ -17,7 +17,8 @@ const environmentSchema = z.object({
     )
     .pipe(z.array(z.string().url()).min(1)),
   UPLOADS_DIR: z.string().default("uploads"),
-  MAX_UPLOAD_MB: z.coerce.number().positive().default(25)
+  MAX_UPLOAD_MB: z.coerce.number().positive().default(25),
+  OCR_LEASE_SECONDS: z.coerce.number().int().positive().default(300)
 });
 
 export const loadEnvironment = (

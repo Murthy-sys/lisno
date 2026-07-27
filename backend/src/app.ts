@@ -36,6 +36,7 @@ export interface AppDependencies {
   clock?: Clock;
   storage?: FileStorage;
   maxUploadBytes?: number;
+  ocrLeaseSeconds?: number;
   corsOrigins?: readonly string[];
 }
 

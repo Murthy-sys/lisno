@@ -49,7 +49,8 @@ export async function startServer(
       },
       corsOrigins: env.CORS_ORIGIN,
       storage: createLocalStorage(env.UPLOADS_DIR),
-      maxUploadBytes: Math.floor(env.MAX_UPLOAD_MB * 1024 * 1024)
+      maxUploadBytes: Math.floor(env.MAX_UPLOAD_MB * 1024 * 1024),
+      ocrLeaseSeconds: env.OCR_LEASE_SECONDS
     });
     server = await listen(app, env.PORT);
     (dependencies.writeOutput ?? ((message) => process.stdout.write(message)))(
