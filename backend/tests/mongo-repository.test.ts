@@ -195,8 +195,11 @@ describe("Mongo repository contracts", () => {
     };
     vi.spyOn(mongoose, "startSession").mockResolvedValueOnce(session as never);
     vi.spyOn(DesignSectionRevisionModel, "findOne").mockReturnValueOnce({
-      sort: () => ({ lean: () => query({ reviewStatus: "draft" }) })
+      sort: () => ({ lean: () => query({ _id: "revision-draft", reviewStatus: "draft", label: "Before" }) })
     } as never);
+    const guard = vi.spyOn(DesignSectionRevisionModel, "updateOne").mockReturnValueOnce(
+      query({ matchedCount: 1, modifiedCount: 1 }) as never
+    );
     const update = vi.spyOn(DesignSectionModel, "findByIdAndUpdate").mockReturnValueOnce({
       session: () => undefined,
       lean: () => ({
@@ -218,7 +221,48 @@ describe("Mongo repository contracts", () => {
       createMongoRepository().updateDraftSection("section-draft", { label: "Changed" })
     ).resolves.toMatchObject({ label: "Changed" });
     expect(session.withTransaction).toHaveBeenCalledOnce();
+    expect(guard).toHaveBeenCalledWith(
+      { _id: "revision-draft", reviewStatus: "draft" },
+      { $set: { label: "Changed" } }
+    );
     expect(update).toHaveBeenCalledOnce();
+  });
+
+  it("rejects a concurrent Mongo draft-review transition before updating the section", async () => {
+    const session = {
+      withTransaction: vi.fn(async (operation: () => Promise<unknown>) => operation()),
+      endSession: vi.fn(async () => undefined)
+    };
+    vi.spyOn(mongoose, "startSession").mockResolvedValueOnce(session as never);
+    vi.spyOn(DesignSectionRevisionModel, "findOne").mockReturnValueOnce({
+      sort: () => ({
+        lean: () => query({ _id: "revision-raced", reviewStatus: "draft", label: "Before" })
+      })
+    } as never);
+    vi.spyOn(DesignSectionRevisionModel, "updateOne").mockReturnValueOnce(
+      query({ matchedCount: 0, modifiedCount: 0 }) as never
+    );
+    const updateSection = vi.spyOn(DesignSectionModel, "findByIdAndUpdate").mockReturnValueOnce({
+      session: () => undefined,
+      lean: () => ({
+        exec: vi.fn().mockResolvedValue({
+          _id: "section-raced",
+          designVersionId: "version-raced",
+          sourcePageId: "page-raced",
+          label: "Changed",
+          active: true,
+          source: "manual",
+          ocrConfidence: null,
+          createdAt: new Date("2026-07-27T10:00:00.000Z"),
+          updatedAt: new Date("2026-07-27T10:01:00.000Z")
+        })
+      })
+    } as never);
+
+    await expect(
+      createMongoRepository().updateDraftSection("section-raced", { label: "Changed" })
+    ).rejects.toBeInstanceOf(RepositoryConflictError);
+    expect(updateSection).not.toHaveBeenCalled();
   });
 
   it("persists a valid Mongo extraction draft as one replacement", async () => {

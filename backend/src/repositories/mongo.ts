@@ -958,6 +958,15 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
       if (!latestRevision || latestRevision.reviewStatus !== "draft") {
         throw new RepositoryConflictError("Only sections with a draft latest revision can be edited.");
       }
+      const guardQuery = DesignSectionRevisionModel.updateOne(
+        { _id: latestRevision._id, reviewStatus: "draft" },
+        { $set: { label: change.label ?? latestRevision.label } }
+      );
+      guardQuery.session(session);
+      const guarded = await guardQuery.exec();
+      if (guarded.matchedCount !== 1) {
+        throw new RepositoryConflictError("Only sections with a draft latest revision can be edited.");
+      }
       const query = DesignSectionModel.findByIdAndUpdate(
         id,
         { $set: change },
