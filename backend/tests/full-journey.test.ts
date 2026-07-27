@@ -56,13 +56,16 @@ describe("complete cross-role journey", () => {
     const versions = await request(app).get("/api/v1/projects/project-aurora-villa/design-versions?limit=100&offset=0").set("Authorization", client);
     expect(versions.status).toBe(200);
     expect(versions.body.data.items).toEqual(expect.arrayContaining([expect.objectContaining({ id: uploaded.body.data.id, approvalStatus: "approved", clientVisible: true })]));
-    expect(versions.body.data.items).not.toEqual(expect.arrayContaining([expect.objectContaining({ id: draft.body.data.id }), expect.objectContaining({ id: internal.body.data.id })]));
+    const auroraClientVersionIds = versions.body.data.items.map((version: { id: string }) => version.id);
+    expect(auroraClientVersionIds).not.toContain(draft.body.data.id);
+    expect(auroraClientVersionIds).not.toContain(internal.body.data.id);
     expect((await request(app).get(`/api/v1/design-versions/${uploaded.body.data.id}/download`).set("Authorization", client)).status).toBe(200);
     expect((await request(app).get(`/api/v1/design-versions/${draft.body.data.id}/download`).set("Authorization", client)).status).toBe(404);
     expect((await request(app).get(`/api/v1/design-versions/${internal.body.data.id}/download`).set("Authorization", client)).status).toBe(404);
     expect((await request(app).get("/api/v1/projects/project-celeste-office/design-versions?limit=100&offset=0").set("Authorization", client)).status).toBe(404);
     expect((await request(app).get(`/api/v1/design-versions/${celesteVersion.body.data.id}/download`).set("Authorization", client)).status).toBe(404);
     const latest = await request(app).get("/api/v1/client/latest-approved-versions").set("Authorization", client);
-    expect(latest.body.data).not.toEqual(expect.arrayContaining([expect.objectContaining({ id: celesteVersion.body.data.id })]));
+    const latestClientVersionIds = latest.body.data.map((version: { id: string }) => version.id);
+    expect(latestClientVersionIds).not.toContain(celesteVersion.body.data.id);
   });
 });

@@ -109,6 +109,7 @@ export function MobileHeader({
                 onLogout();
               }}
               onNavigate={() => setOpen(false)}
+              navigationLabel="Mobile navigation"
             />
           </div>
         </div>

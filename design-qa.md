@@ -24,8 +24,9 @@ accessibility coverage was run in its place.
   color.
 - The workspace smoke test opens disclosure controls, verifies an upload
   dialog's focus and Escape restoration, exercises the mobile navigation, and
-  runs `axe-core` (with color-contrast disabled because JSDOM cannot calculate
-  rendered contrast).
+  runs `axe-core` for login, each role home, and each open interactive state
+  (with color-contrast disabled because JSDOM cannot calculate rendered
+  contrast).
 - Client content excludes draft/internal versions, KPI, and evaluation data.
 
 ## Evidence

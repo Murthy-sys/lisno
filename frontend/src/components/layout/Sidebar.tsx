@@ -14,11 +14,13 @@ const roleLabels = {
 export function Sidebar({
   user,
   onLogout,
-  onNavigate
+  onNavigate,
+  navigationLabel = "Primary navigation"
 }: {
   user: PublicUser;
   onLogout: () => void;
   onNavigate?: () => void;
+  navigationLabel?: string;
 }) {
   const initials = user.name
     .split(/\s+/)
@@ -39,7 +41,7 @@ export function Sidebar({
         <strong>{roleLabels[user.role]}</strong>
       </div>
 
-      <nav aria-label="Primary navigation" className="sidebar__nav">
+      <nav aria-label={navigationLabel} className="sidebar__nav">
         <NavLink
           to={roleHomePath(user.role)}
           end

@@ -60,3 +60,23 @@ The available browser-control runtime reported that no browser binding was avail
 
 The browser-binding limitation remains unchanged; no desktop/mobile screenshot
 claim is made for this review round.
+
+## Review fix round 2
+
+- Split the full-journey client isolation checks into independent draft-ID,
+  internal-ID, and cross-client-ID exclusions so a combined matcher cannot
+  conceal a regression.
+- Ran `axe-core` with zero violations for login and all four role homes, and
+  while the workspace disclosure, upload dialog, and mobile navigation are
+  open. The disclosure is activated with keyboard Enter in the smoke test.
+- Axe exposed and this round corrected two additional semantics issues: the
+  KPI component grouping is now a labeled section, and the mobile drawer uses
+  a distinct `Mobile navigation` landmark label from the desktop sidebar.
+
+### Review round 2 verification
+
+| Area | Commands | Result |
+| --- | --- | --- |
+| Backend | `npm run typecheck`, `npm test`, `npm run build` | passed; 14 test files, 129 tests |
+| Frontend | `npm run typecheck`, `npm test`, `npm run build` | passed; 13 test files, 63 tests |
+| Lint | no `lint` script exists in either package | documented in README |

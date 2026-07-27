@@ -88,6 +88,13 @@ function fixtureFetch(user: ReturnType<typeof userFor>) {
   });
 }
 
+async function expectNoAxeViolations() {
+  const results = await axe.run(document.body, {
+    rules: { "color-contrast": { enabled: false } }
+  });
+  expect(results.violations).toEqual([]);
+}
+
 describe("accessibility smoke coverage", () => {
   it("keeps login fields labeled and password visibility keyboard-operable", async () => {
     renderApp(["/login"]);
@@ -98,6 +105,7 @@ describe("accessibility smoke coverage", () => {
     expect(toggle).toHaveFocus();
     await userEvent.keyboard("{Enter}");
     expect(toggle).toHaveAttribute("aria-pressed", "true");
+    await expectNoAxeViolations();
   });
 
   it.each([
@@ -113,6 +121,7 @@ describe("accessibility smoke coverage", () => {
     expect(screen.getByRole("navigation", { name: "Primary navigation" })).toBeVisible();
     expect(screen.getByRole("main")).toHaveAttribute("id", "main-content");
     expect(screen.getByRole("button", { name: "Sign out" })).toBeVisible();
+    await expectNoAxeViolations();
   });
 
   it("keeps a workspace disclosure, upload dialog, mobile navigation, and textual risk status keyboard-accessible", async () => {
@@ -123,19 +132,22 @@ describe("accessibility smoke coverage", () => {
 
     await screen.findByRole("heading", { name: "Accessible residence" });
     const floor = screen.getByRole("button", { name: /Floor G Accessible floor/i });
-    await user.click(floor);
+    floor.focus();
+    await user.keyboard("{Enter}");
     expect(floor).toHaveAttribute("aria-expanded", "true");
     const stage = screen.getByRole("button", { name: /Accessible planning/i });
     await user.click(stage);
     expect(stage).toHaveAttribute("aria-expanded", "true");
     expect(screen.getByText("Red risk")).toBeVisible();
     expect(screen.getAllByText(/Deadline needs attention/)).toHaveLength(2);
+    await expectNoAxeViolations();
 
     const upload = screen.getByRole("button", { name: "Upload design for Accessible task" });
     await user.click(upload);
     const dialog = screen.getByRole("dialog", { name: "Upload design" });
     expect(dialog).toBeVisible();
     await waitFor(() => expect(within(dialog).getByRole("button", { name: "Close Upload design" })).toHaveFocus());
+    await expectNoAxeViolations();
     await user.keyboard("{Escape}");
     expect(screen.queryByRole("dialog", { name: "Upload design" })).not.toBeInTheDocument();
     expect(upload).toHaveFocus();
@@ -143,11 +155,11 @@ describe("accessibility smoke coverage", () => {
     const menu = screen.getByRole("button", { name: "Open navigation" });
     await user.click(menu);
     expect(screen.getByRole("dialog", { name: "Navigation" })).toBeVisible();
+    await expectNoAxeViolations();
     await user.keyboard("{Escape}");
     expect(screen.queryByRole("dialog", { name: "Navigation" })).not.toBeInTheDocument();
     expect(menu).toHaveFocus();
 
-    const results = await axe.run(document.body, { rules: { "color-contrast": { enabled: false } } });
-    expect(results.violations).toEqual([]);
+    await expectNoAxeViolations();
   });
 });
