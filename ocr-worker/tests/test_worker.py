@@ -11,6 +11,7 @@ from lisno_ocr.contracts import (
     ResultRejectedError,
     WorkerSettings,
 )
+from lisno_ocr.settings import LayoutSettings
 from lisno_ocr.worker import WorkerApi, classify_failure, run_worker
 
 
@@ -134,6 +135,51 @@ def test_settings_bounds_output_for_base64_json_transport(monkeypatch):
     monkeypatch.setenv("OCR_MAX_OUTPUT_BYTES", str(44 * 1024 * 1024 + 1))
     with pytest.raises(ValueError, match="must not exceed"):
         WorkerSettings.from_environment()
+
+
+def test_layout_settings_extend_default_terms_and_parse_bounded_values(monkeypatch):
+    monkeypatch.setenv("OCR_DRAWING_TERMS", " reflected plan, cabinetry ")
+    monkeypatch.setenv("OCR_RESERVED_TERMS", "revision cloud, north arrow")
+    monkeypatch.setenv("OCR_MIN_HEADING_SCORE", "0.8")
+    monkeypatch.setenv("OCR_MIN_DRAWING_REGION_AREA_RATIO", "0.04")
+    monkeypatch.setenv("OCR_PANEL_DUPLICATE_IOU", "0.7")
+    monkeypatch.setenv("OCR_RESERVED_BOTTOM_RATIO", "0.2")
+
+    settings = LayoutSettings.from_environment()
+
+    assert {"plan", "reflected plan", "cabinetry"} <= set(settings.drawing_terms)
+    assert {"legend", "revision cloud", "north arrow"} <= set(settings.reserved_terms)
+    assert settings.min_heading_score == 0.8
+    assert settings.min_region_area_ratio == 0.04
+    assert settings.duplicate_iou == 0.7
+    assert settings.reserved_bottom_ratio == 0.2
+
+
+def test_layout_settings_ignore_empty_term_extensions(monkeypatch):
+    monkeypatch.setenv("OCR_DRAWING_TERMS", " , ")
+    monkeypatch.setenv("OCR_RESERVED_TERMS", "")
+
+    assert LayoutSettings.from_environment() == LayoutSettings.defaults()
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("OCR_MIN_HEADING_SCORE", "-0.01"),
+        ("OCR_MIN_HEADING_SCORE", "1.01"),
+        ("OCR_MIN_DRAWING_REGION_AREA_RATIO", "0"),
+        ("OCR_MIN_DRAWING_REGION_AREA_RATIO", "1"),
+        ("OCR_PANEL_DUPLICATE_IOU", "0"),
+        ("OCR_PANEL_DUPLICATE_IOU", "1"),
+        ("OCR_RESERVED_BOTTOM_RATIO", "0"),
+        ("OCR_RESERVED_BOTTOM_RATIO", "1"),
+    ],
+)
+def test_layout_settings_reject_out_of_range_values(monkeypatch, name, value):
+    monkeypatch.setenv(name, value)
+
+    with pytest.raises(ValueError, match=name):
+        LayoutSettings.from_environment()
 
 
 def test_api_claim_returns_metadata_without_downloading_source():

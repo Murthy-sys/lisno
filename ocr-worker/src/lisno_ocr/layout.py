@@ -1,0 +1,156 @@
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass
+from typing import Literal, TypeAlias
+
+from .settings import LayoutSettings
+
+
+Box: TypeAlias = tuple[int, int, int, int]
+
+
+@dataclass(frozen=True, slots=True)
+class OcrLine:
+    box: Box
+    text: str
+    confidence: float
+
+
+@dataclass(frozen=True, slots=True)
+class HeadingCandidate:
+    line: OcrLine
+    label: str
+    semantic_score: float
+    kind: Literal["page_title", "panel"]
+
+
+def classify_heading(
+    line: OcrLine,
+    page_width: int,
+    page_height: int,
+    settings: LayoutSettings,
+) -> HeadingCandidate | None:
+    text = normalize_display_text(line.text)
+    if not text or is_reserved_or_annotation(
+        text, line.box, page_width, page_height, settings
+    ):
+        return None
+    score, kind = heading_evidence(text, line.box, page_width, page_height, settings)
+    if score < settings.min_heading_score:
+        return None
+    return HeadingCandidate(line, strip_panel_marker(text), score, kind)
+
+
+def normalize_display_text(text: str) -> str:
+    normalized = " ".join(text.replace("–", " - ").replace("—", " - ").split())
+    normalized = re.sub(r"\s*-\s*", " – ", normalized)
+    return normalized.strip()
+
+
+def is_reserved_or_annotation(
+    text: str,
+    box: Box,
+    page_width: int,
+    page_height: int,
+    settings: LayoutSettings,
+) -> bool:
+    del page_width
+    match_text = _match_text(text)
+    if any(_contains_term(match_text, term) for term in settings.reserved_terms):
+        return True
+    if _DIMENSION_RE.search(match_text) or _UNIT_DIMENSION_RE.search(match_text):
+        return True
+    if _NOTE_RE.search(match_text) or _ANNOTATION_RE.search(match_text):
+        return True
+    if (
+        page_height > 0
+        and box[1] >= page_height * (1 - settings.reserved_bottom_ratio)
+        and not _PANEL_MARKER_RE.match(text)
+    ):
+        return True
+    return _is_short_room_or_fixture_label(text, match_text, settings)
+
+
+def heading_evidence(
+    text: str,
+    box: Box,
+    page_width: int,
+    page_height: int,
+    settings: LayoutSettings,
+) -> tuple[float, Literal["page_title", "panel"]]:
+    match_text = _match_text(text)
+    has_marker = bool(_PANEL_MARKER_RE.match(text))
+    has_drawing_term = any(
+        _contains_term(match_text, term) for term in settings.drawing_terms
+    )
+    words = re.findall(r"[A-Za-z]+", text)
+    left, top, right, _bottom = box
+    width_ratio = max(0, right - left) / max(page_width, 1)
+    top_ratio = max(top, 0) / max(page_height, 1)
+
+    score = 0.0
+    if has_marker:
+        score += 0.25
+    if has_drawing_term:
+        score += 0.30
+    if " – " in text:
+        score += 0.15
+    if _has_heading_case(text):
+        score += 0.12
+    if 0.15 <= width_ratio <= 0.85:
+        score += 0.10
+    if top_ratio < 0.80:
+        score += 0.06
+    if len(words) >= 3:
+        score += 0.10
+
+    kind: Literal["page_title", "panel"] = (
+        "panel" if has_marker else "page_title"
+    )
+    return min(score, 1.0), kind
+
+
+def strip_panel_marker(text: str) -> str:
+    without_marker = _PANEL_MARKER_RE.sub("", text).strip(" –")
+    return _title_case_display(without_marker)
+
+
+def _title_case_display(text: str) -> str:
+    return " – ".join(segment.title() for segment in text.split(" – "))
+
+
+def _match_text(text: str) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", text.casefold()).strip()
+
+
+def _contains_term(text: str, term: str) -> bool:
+    return bool(re.search(rf"(?<!\w){re.escape(term.casefold())}(?!\w)", text))
+
+
+def _has_heading_case(text: str) -> bool:
+    letters = "".join(character for character in text if character.isalpha())
+    return bool(letters) and (letters.isupper() or text.istitle())
+
+
+def _is_short_room_or_fixture_label(
+    text: str, match_text: str, settings: LayoutSettings
+) -> bool:
+    if _PANEL_MARKER_RE.match(text):
+        return False
+    words = match_text.split()
+    return len(words) <= 2 and not any(
+        _contains_term(match_text, term) for term in settings.drawing_terms
+    )
+
+
+_PANEL_MARKER_RE = re.compile(
+    r"^(?:[A-Z]\.(?:\d+\.?)?\s+|DETAIL\s+\d+\s*(?:[.\-–]\s*)?)",
+    re.IGNORECASE,
+)
+_DIMENSION_RE = re.compile(r"\b\d+(?:\.\d+)?\s*(?:x|×)\s*\d+(?:\.\d+)?\b")
+_UNIT_DIMENSION_RE = re.compile(r"\b\d+(?:\.\d+)?\s*(?:mm|cm|m|ft|in)\b")
+_NOTE_RE = re.compile(r"\b(?:all\s+dimensions?|dimensions?\s+are|note|notes)\b")
+_ANNOTATION_RE = re.compile(
+    r"\b(?:false\s+ceiling|led\s+strip|with\s+(?:led|tile|paint|finish))\b"
+)
