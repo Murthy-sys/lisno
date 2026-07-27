@@ -7,7 +7,7 @@ const taskSchema = new Schema(
     floorId: { type: String, ref: "Floor", required: true },
     stageId: { type: String, ref: "DesignStage", required: true },
     title: { type: String, required: true },
-    description: { type: String, required: true, default: "" },
+    description: { type: String, default: "" },
     order: { type: Number, required: true, min: 0 },
     ownerId: { type: String, ref: "User", required: true },
     plannedStartAt: { type: Date, required: true },

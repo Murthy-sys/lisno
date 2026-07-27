@@ -629,7 +629,7 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
             }
           }
         ],
-        { upsert: true, new: true }
+        { upsert: true, new: true, updatePipeline: true }
       );
       if (session) sequenceQuery.session(session);
       const sequence = await sequenceQuery.lean().exec();

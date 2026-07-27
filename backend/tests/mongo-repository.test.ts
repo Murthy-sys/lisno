@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import mongoose from "mongoose";
 import { DesignStageModel } from "../src/models/DesignStage.js";
 import { DesignVersionModel } from "../src/models/DesignVersion.js";
+import { DesignVersionSequenceModel } from "../src/models/DesignVersionSequence.js";
 import { EvaluationModel } from "../src/models/Evaluation.js";
 import { FloorModel } from "../src/models/Floor.js";
 import { ProjectModel } from "../src/models/Project.js";
@@ -16,6 +17,51 @@ afterEach(() => {
 });
 
 describe("Mongo repository contracts", () => {
+  it("enables Mongo update pipelines when allocating a design version number", async () => {
+    const version = demoSeedData.designVersions[0]!;
+    const { id: _id, versionNumber: _versionNumber, ...input } =
+      structuredClone(version);
+    vi.spyOn(DesignVersionModel, "findOne").mockReturnValueOnce({
+      sort: () => ({
+        select: () => ({
+          lean: () => ({ exec: vi.fn().mockResolvedValue(null) })
+        })
+      })
+    } as never);
+    const allocate = vi
+      .spyOn(DesignVersionSequenceModel, "findOneAndUpdate")
+      .mockReturnValueOnce({
+        lean: () => ({
+          exec: vi.fn().mockResolvedValue({ nextNumber: 1 })
+        })
+      } as never);
+    const repository = createMongoRepository();
+    vi.spyOn(repository, "createDesignVersion").mockResolvedValueOnce({
+      ...version,
+      id: "version-allocated",
+      versionNumber: 1
+    });
+
+    await repository.createNextDesignVersion(input);
+
+    expect(allocate).toHaveBeenCalledWith(
+      expect.any(Object),
+      expect.any(Array),
+      expect.objectContaining({ updatePipeline: true })
+    );
+  });
+
+  it("accepts the API default empty task description", async () => {
+    const task = demoSeedData.tasks[0]!;
+    const document = new TaskModel({
+      ...structuredClone(task),
+      _id: "task-without-description",
+      description: ""
+    });
+
+    await expect(document.validate()).resolves.toBeUndefined();
+  });
+
   it("normalizes a duplicate design-version tuple into a repository conflict", async () => {
     vi.spyOn(DesignVersionModel, "create").mockRejectedValueOnce(
       Object.assign(new Error("E11000 duplicate key error"), { code: 11000 })
