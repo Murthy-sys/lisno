@@ -152,7 +152,7 @@ describe("DesignUploadsWorkspace", () => {
     installApi("processing");
     const { unmount } = renderWithQuery(<DesignUploadsWorkspace projectId="project-1" />);
     expect(await screen.findByText(/OCR is processing/i)).toBeVisible();
-    expect(screen.getByRole("button", { name: /submit sections/i })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: /submit sections/i })).not.toBeInTheDocument();
     unmount();
 
     const requests = installApi("processing_failed");
@@ -319,5 +319,35 @@ describe("DesignUploadsWorkspace", () => {
     await user.type(labels[1]!, " updated");
     await user.click(screen.getByRole("button", { name: "Save Kitchen updated" }));
     await waitFor(() => expect(submit).toBeEnabled());
+  });
+
+  it("hides retained correction drafts immediately when failed extraction is retried", async () => {
+    let currentStatus = "processing_failed";
+    let draftReads = 0;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.startsWith("/api/v1/projects/project-1/design-versions?")) {
+        return response({ items: [{ ...version, extractionStatus: currentStatus }], pagination: { limit: 100, offset: 0, total: 1, hasMore: false } });
+      }
+      if (url.endsWith("/design-versions/version-1/sections") && (!init || init.method === "GET")) {
+        draftReads += 1;
+        return response({ extractionStatus: currentStatus, pages: [page], sections: [section] });
+      }
+      if (url.endsWith("/retry-extraction") && init?.method === "POST") {
+        currentStatus = "queued";
+        return response({ extractionStatus: "queued" });
+      }
+      return new Response(new Blob(["image"], { type: "image/png" }));
+    });
+    const user = userEvent.setup();
+    renderWithQuery(<DesignUploadsWorkspace projectId="project-1" />);
+    expect(await screen.findByLabelText("Section label")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Add missing section" })).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Retry extraction" }));
+    expect(await screen.findByText(/OCR is processing/i)).toBeVisible();
+    expect(screen.queryByLabelText("Section label")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Add missing section" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Save|Remove/ })).not.toBeInTheDocument();
+    expect(draftReads).toBe(1);
   });
 });

@@ -55,13 +55,18 @@ export function DesignUploadsWorkspace({ projectId }: { projectId: string }) {
   const extraction = sectionsQuery.data;
   const status = extraction?.extractionStatus ?? selected?.extractionStatus;
 
-  const refresh = async (versionId = selected!.id) => {
-    await Promise.all([
-      queryClient.invalidateQueries({ queryKey: designerKeys.designExtraction(versionId) }),
-      queryClient.invalidateQueries({ queryKey: designerKeys.designSections(versionId) }),
+  const refresh = async (versionId = selected!.id, includeDrafts = true) => {
+    const operations = [
       queryClient.invalidateQueries({ queryKey: designerKeys.designVersions(projectId) }),
       queryClient.invalidateQueries({ queryKey: designerKeys.project(projectId) })
-    ]);
+    ];
+    if (includeDrafts) {
+      operations.push(
+        queryClient.invalidateQueries({ queryKey: designerKeys.designExtraction(versionId) }),
+        queryClient.invalidateQueries({ queryKey: designerKeys.designSections(versionId) })
+      );
+    }
+    await Promise.all(operations);
   };
   const setVersionStatus = (extractionStatus: NonNullable<typeof selected>["extractionStatus"]) => {
     queryClient.setQueryData(
@@ -81,7 +86,7 @@ export function DesignUploadsWorkspace({ projectId }: { projectId: string }) {
     onSuccess: async (result) => {
       setActionError("");
       setVersionStatus(result.extractionStatus);
-      await refresh();
+      await refresh(selected!.id, false);
     },
     onError: () => setActionError("Extraction retry failed. Please try again.")
   });
@@ -90,7 +95,7 @@ export function DesignUploadsWorkspace({ projectId }: { projectId: string }) {
     onSuccess: async () => {
       setActionError("");
       setVersionStatus("submitted");
-      await refresh();
+      await refresh(selected!.id, false);
     },
     onError: () => setActionError("Sections could not be submitted. Your edits are unchanged.")
   });
@@ -124,6 +129,9 @@ export function DesignUploadsWorkspace({ projectId }: { projectId: string }) {
   const rejectedReplacementMissing = status === "changes_requested" &&
     activeSections.some(({ revision }) => revision.reviewStatus === "rejected");
   const terminal = status === "submitted" || status === "approved";
+  const showCorrections = status === "designer_review" ||
+    status === "changes_requested" ||
+    status === "processing_failed";
   const allCropsValid = activeSections.every((section) => {
     const page = pagesById.get(section.revision.sourcePageId);
     const { x, y, width, height } = section.revision.crop;
@@ -205,7 +213,7 @@ export function DesignUploadsWorkspace({ projectId }: { projectId: string }) {
       ) : null}
       {actionError ? <div role="alert">{actionError} <button type="button" onClick={() => setActionError("")}>Dismiss</button></div> : null}
 
-      {activeSections.map((section) => {
+      {showCorrections ? activeSections.map((section) => {
         const page = pagesById.get(section.revision.sourcePageId);
         if (!page) return null;
         return (
@@ -257,9 +265,9 @@ export function DesignUploadsWorkspace({ projectId }: { projectId: string }) {
             locked={terminal}
           />
         );
-      })}
+      }) : null}
 
-      {extraction?.pages.length && !terminal ? (
+      {showCorrections && extraction?.pages.length && !terminal ? (
         <div className="manual-section">
           {!adding ? (
             <button type="button" className="button button--secondary" onClick={() => setAdding(true)}>
@@ -292,7 +300,7 @@ export function DesignUploadsWorkspace({ projectId }: { projectId: string }) {
         </div>
       ) : null}
 
-      <button
+      {showCorrections || terminal ? <button
         type="button"
         className="button button--primary submit-sections"
         disabled={
@@ -308,7 +316,7 @@ export function DesignUploadsWorkspace({ projectId }: { projectId: string }) {
         onClick={() => submit.mutate()}
       >
         Submit sections to client
-      </button>
+      </button> : null}
     </section>
   );
 }
