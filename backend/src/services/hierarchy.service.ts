@@ -77,6 +77,7 @@ export function createHierarchyService(
   clock: Clock
 ): HierarchyService {
   const MAX_NESTED_DESIGNERS = 20;
+  const MAX_TEAM_DESIGNERS = 100;
   const MAX_SUMMARY_RECORDS = 1_000;
   const buildSummaries = async (
     designers: UserRecord[]
@@ -195,32 +196,62 @@ export function createHierarchyService(
       await requireActor(repository, actor);
       if (actor.role !== "design_head") forbidden();
       const page = await repository.pageOrganizationManagers(pagination);
-      const firstPageDesigners = page.items.flatMap((manager) =>
-        manager.designers.slice(0, MAX_NESTED_DESIGNERS)
+      const teamPages = await Promise.all(
+        page.items.map(async (manager) => ({
+          managerId: manager.id,
+          page: await repository.pageDesignersForManager(manager.id, {
+            limit: MAX_TEAM_DESIGNERS + 1,
+            offset: 0
+          })
+        }))
       );
-      const designerIds = new Set(
-        firstPageDesigners.map((designer) => designer.id)
-      );
-      const users = await repository.listUsersByIds([...designerIds]);
-      const summaries = await buildSummaries(users);
+      if (
+        teamPages.some(
+          (team) =>
+            team.page.total > MAX_TEAM_DESIGNERS ||
+            team.page.items.length > MAX_TEAM_DESIGNERS
+        )
+      ) {
+        throw new ApiError(
+          422,
+          "TEAM_SUMMARY_LIMIT_EXCEEDED",
+          `Manager aggregates support at most ${MAX_TEAM_DESIGNERS} designers per team.`
+        );
+      }
+      const teamUsers = teamPages.flatMap((team) => team.page.items);
+      if (teamUsers.length > MAX_SUMMARY_RECORDS) {
+        throw new ApiError(
+          422,
+          "SUMMARY_LIMIT_EXCEEDED",
+          `Hierarchy pages support at most ${MAX_SUMMARY_RECORDS} designers across manager aggregates.`
+        );
+      }
+      const summaries = await buildSummaries(teamUsers);
       const now = clock();
       const nodes = page.items.map((manager) => {
         const {
           designerTotal,
-          designers: nestedDesigners,
+          designers: _nestedDesigners,
           ...managerRead
         } = manager;
-        const designerItems = nestedDesigners
+        const team = teamPages.find(
+          (candidate) => candidate.managerId === manager.id
+        )!.page.items;
+        const teamIds = new Set(team.map((designer) => designer.id));
+        const teamSummaries = summaries.filter((summary) =>
+          teamIds.has(summary.user.id)
+        );
+        const designerItems = team
           .slice(0, MAX_NESTED_DESIGNERS)
           .map((designer) => {
-            const summary = summaries.find(
+            const summary = teamSummaries.find(
               (candidate) => candidate.user.id === designer.id
             )!;
             const { user: _user, ...withoutUser } = summary;
-            return { ...designer, summary: withoutUser };
+            return { ...publicDesigner(designer), summary: withoutUser };
           });
-        const teamTasks = designerItems.flatMap(
-          (designer) => designer.summary.tasks
+        const teamTasks = teamSummaries.flatMap(
+          (designer) => designer.tasks
         );
         return {
           ...managerRead,
@@ -235,26 +266,26 @@ export function createHierarchyService(
           },
           summary: {
             teamKpi: calculateKpiSnapshot(teamTasks, now),
-            workload: designerItems.reduce(
-              (total, designer) => total + designer.summary.workload,
+            workload: teamSummaries.reduce(
+              (total, designer) => total + designer.workload,
               0
             ),
-            redCount: designerItems.reduce(
-              (total, designer) => total + designer.summary.overdueCount,
+            redCount: teamSummaries.reduce(
+              (total, designer) => total + designer.overdueCount,
               0
             ),
-            yellowCount: designerItems.reduce(
-              (total, designer) => total + designer.summary.yellowRiskCount,
+            yellowCount: teamSummaries.reduce(
+              (total, designer) => total + designer.yellowRiskCount,
               0
             ),
             evaluationCoverage:
-              designerItems.length === 0
+              teamSummaries.length === 0
                 ? 0
                 : Math.round(
-                    (designerItems.filter(
-                      (designer) => !designer.summary.pendingEvaluation
+                    (teamSummaries.filter(
+                      (designer) => !designer.pendingEvaluation
                     ).length /
-                      designerItems.length) *
+                      teamSummaries.length) *
                       1000
                   ) / 10
           }

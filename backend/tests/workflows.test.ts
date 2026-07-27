@@ -867,6 +867,120 @@ describe("organization and KPI workflows", () => {
     expect(JSON.stringify(ownTeam.body)).not.toContain("password");
   });
 
+  it("computes manager aggregates over the full bounded team beyond the nested designer page", async () => {
+    const seed = structuredClone(demoSeedData);
+    const designerTemplate = seed.users.find(
+      (candidate) => candidate.id === "user-designer-ananya"
+    )!;
+    const evaluationTemplate = seed.evaluations[0]!;
+    seed.evaluations.push({
+      ...evaluationTemplate,
+      id: "evaluation-ananya-june",
+      subjectUserId: designerTemplate.id
+    });
+    for (let index = 0; index < 18; index += 1) {
+      const designerId = `user-designer-aggregate-${String(index).padStart(2, "0")}`;
+      seed.users.push({
+        ...designerTemplate,
+        id: designerId,
+        name: `Aggregate Designer ${String(index).padStart(2, "0")}`,
+        email: `aggregate-designer-${index}@lisno.example`,
+        authorizedClientIds: []
+      });
+      seed.evaluations.push({
+        ...evaluationTemplate,
+        id: `evaluation-aggregate-${index}`,
+        subjectUserId: designerId
+      });
+    }
+    seed.users.push({
+      ...designerTemplate,
+      id: "user-designer-aggregate-last",
+      name: "ZZ Aggregate Designer",
+      email: "aggregate-designer-last@lisno.example",
+      authorizedClientIds: []
+    });
+    seed.tasks.push({
+      ...seed.tasks.find(
+        (candidate) => candidate.id === "task-furniture-layout"
+      )!,
+      id: "task-aggregate-last-overdue",
+      title: "Recover overdue aggregate task",
+      ownerId: "user-designer-aggregate-last",
+      plannedEffort: 13,
+      progress: 40,
+      originalDeadlineAt: "2026-07-10T17:00:00.000Z",
+      currentDeadlineAt: "2026-07-10T17:00:00.000Z"
+    });
+    const app = createApp({
+      repository: createMemoryRepository(seed),
+      auth,
+      clock
+    });
+
+    const response = await request(app)
+      .get("/api/v1/organization/tree")
+      .set("Authorization", bearer(users.head));
+
+    expect(response.status).toBe(200);
+    const manager = response.body.data.items.find(
+      (candidate: { id: string }) => candidate.id === "user-manager-aarav"
+    );
+    expect(manager.designers.items).toHaveLength(20);
+    expect(manager.designers.items).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "user-designer-aggregate-last" })
+      ])
+    );
+    expect(manager.designers.pagination).toMatchObject({
+      total: 21,
+      hasMore: true
+    });
+    expect(manager.summary).toMatchObject({
+      workload: 45,
+      redCount: 1,
+      evaluationCoverage: 95.2,
+      teamKpi: {
+        components: expect.arrayContaining([
+          expect.objectContaining({
+            key: "workloadCompletion",
+            eligibleCount: 5
+          })
+        ])
+      }
+    });
+  });
+
+  it("rejects manager aggregates above the explicit team cardinality limit", async () => {
+    const seed = structuredClone(demoSeedData);
+    const designerTemplate = seed.users.find(
+      (candidate) => candidate.id === "user-designer-ananya"
+    )!;
+    for (let index = 0; index < 99; index += 1) {
+      seed.users.push({
+        ...designerTemplate,
+        id: `user-designer-over-limit-${index}`,
+        name: `Over Limit Designer ${index}`,
+        email: `over-limit-designer-${index}@lisno.example`,
+        authorizedClientIds: []
+      });
+    }
+    const app = createApp({
+      repository: createMemoryRepository(seed),
+      auth,
+      clock
+    });
+
+    const response = await request(app)
+      .get("/api/v1/organization/tree")
+      .set("Authorization", bearer(users.head));
+
+    expect(response.status).toBe(422);
+    expect(response.body.error).toMatchObject({
+      code: "TEAM_SUMMARY_LIMIT_EXCEEDED"
+    });
+  });
+
   it("paginates more than one page of manager team and head hierarchy records", async () => {
     const seed = structuredClone(demoSeedData);
     const designerTemplate = seed.users.find(
