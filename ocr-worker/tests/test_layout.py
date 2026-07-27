@@ -93,6 +93,32 @@ def test_rejects_marked_mid_page_material_and_finish_callouts(text):
     ) is None
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        "A. FALSE CEILING WITH LED STRIP",
+        "A. CEILING PLAN WITH LED STRIP",
+    ],
+)
+def test_rejects_marked_with_callouts_even_when_heading_has_drawing_terms(text):
+    assert classify_heading(
+        OcrLine((100, 420, 700, 465), text, 0.99),
+        1400,
+        1000,
+        LayoutSettings.defaults(),
+    ) is None
+
+
+@pytest.mark.parametrize("text", ["A. FINISH PLAN", "A. BESPOKE FINISH STUDY"])
+def test_accepts_structured_finish_drawing_titles(text):
+    assert classify_heading(
+        OcrLine((100, 420, 700, 465), text, 0.99),
+        1400,
+        1000,
+        LayoutSettings.defaults(),
+    ) is not None
+
+
 def test_rejects_unmarked_heading_evidence_in_the_reserved_bottom_band():
     assert classify_heading(
         OcrLine((100, 900, 700, 950), "FLOOR PLAN – 3BHK RESIDENCE", 0.99),

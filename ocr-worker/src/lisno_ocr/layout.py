@@ -62,7 +62,7 @@ def is_reserved_or_annotation(
     if _DIMENSION_RE.search(match_text) or _UNIT_DIMENSION_RE.search(match_text):
         return True
     if _NOTE_RE.search(match_text) or _looks_like_callout(
-        text, match_text, _has_drawing_term(match_text, settings)
+        text, match_text, settings
     ):
         return True
     if (
@@ -169,29 +169,38 @@ _NOTE_RE = re.compile(r"\b(?:all\s+dimensions?|dimensions?\s+are|note|notes)\b")
 _CALLOUT_PHRASE_RE = re.compile(
     r"\b(?:to\s+match|match\s+existing|as\s+per|refer\s+to|to\s+existing|to\s+be)\b"
 )
-_CALLOUT_PREFIX_RE = re.compile(r"^(?:material|finish|spec(?:ification)?)\b")
-_FINISH_TREATMENT_RE = re.compile(r"\bfinish\b")
+_CALLOUT_PREFIX_RE = re.compile(
+    r"^(?:material|finish|spec(?:ification)?)(?:\s+(?P<remainder>.*))?$"
+)
+_LEADER_PREFIX_RE = re.compile(r"^leader\b")
+_FINISH_TREATMENT_RE = re.compile(r"\bfinish$")
 _DISPLAY_WORD_RE = re.compile(r"[A-Za-z]+(?:\d+)?|\d+[A-Za-z][A-Za-z0-9]*")
 _DIGIT_ACRONYM_RE = re.compile(r"\d+[A-Z]{2,}\d*")
 _DISPLAY_ACRONYMS = frozenset({"AC", "DB", "FFL", "HVAC", "LED", "MEP", "RCP", "TV", "UPVC", "WC"})
 
 
 def _looks_like_callout(
-    text: str, match_text: str, has_drawing_term: bool
+    text: str, match_text: str, settings: LayoutSettings
 ) -> bool:
     unmarked = _PANEL_MARKER_RE.sub("", text).strip()
-    if _CALLOUT_PREFIX_RE.search(_match_text(unmarked)):
+    unmarked_match = _match_text(unmarked)
+    prefix_match = _CALLOUT_PREFIX_RE.match(unmarked_match)
+    if prefix_match and not _has_drawing_term(
+        prefix_match.group("remainder") or "", settings
+    ):
+        return True
+    if _LEADER_PREFIX_RE.search(unmarked_match):
         return True
     prefix, separator, description = unmarked.partition(":")
     if separator and len(_match_text(prefix).split()) <= 3 and len(
         _match_text(description).split()
-    ) >= 2:
+    ) >= 2 and not _has_drawing_term(_match_text(description), settings):
         return True
-    has_marker = bool(_PANEL_MARKER_RE.match(text))
-    has_with_phrase = bool(re.search(r"\bwith\b", match_text))
-    has_finish_treatment = bool(_FINISH_TREATMENT_RE.search(match_text))
-    if (not has_marker and has_with_phrase) or (
-        not has_drawing_term and (has_with_phrase or has_finish_treatment)
+    _head, has_with, tail = match_text.partition(" with ")
+    if has_with and not _has_drawing_term(tail, settings):
+        return True
+    if not _has_drawing_term(match_text, settings) and _FINISH_TREATMENT_RE.search(
+        match_text
     ):
         return True
     return bool(_CALLOUT_PHRASE_RE.search(match_text))
