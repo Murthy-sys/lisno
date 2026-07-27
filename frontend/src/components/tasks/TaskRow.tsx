@@ -65,7 +65,7 @@ export function TaskRow({
       <div className="task-row__heading">
         <div>
           <p className="task-row__order">Task {String(task.order).padStart(2, "0")}</p>
-          <h4>{task.title}</h4>
+          <h3>{task.title}</h3>
           {task.description ? <p>{task.description}</p> : null}
         </div>
         <div className="task-row__badges">

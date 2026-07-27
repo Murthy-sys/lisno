@@ -1,0 +1,33 @@
+import request from "supertest";
+import { describe, expect, it } from "vitest";
+
+import { createApp } from "../src/app.js";
+import { createMemoryRepository } from "../src/repositories/memory.js";
+import { demoSeedData } from "../src/seed/data.js";
+
+const app = createApp({
+  repository: createMemoryRepository(structuredClone(demoSeedData)),
+  auth: { jwtSecret: "cors-test-secret-with-at-least-32-characters", jwtExpiresInSeconds: 900 },
+  corsOrigins: ["http://localhost:5173", "https://lisno.example"]
+});
+
+describe("CORS", () => {
+  it("allows configured origins and completes their preflight requests", async () => {
+    const response = await request(app)
+      .options("/api/v1/health")
+      .set("Origin", "http://localhost:5173")
+      .set("Access-Control-Request-Method", "POST");
+
+    expect(response.status).toBe(204);
+    expect(response.headers["access-control-allow-origin"]).toBe("http://localhost:5173");
+    expect(response.headers.vary).toContain("Origin");
+  });
+
+  it("does not grant CORS access to an origin outside the parsed allow-list", async () => {
+    const response = await request(app)
+      .get("/api/v1/health")
+      .set("Origin", "https://untrusted.example");
+
+    expect(response.headers["access-control-allow-origin"]).toBeUndefined();
+  });
+});

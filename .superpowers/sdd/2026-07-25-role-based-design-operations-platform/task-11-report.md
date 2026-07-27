@@ -27,3 +27,36 @@ The upload hardening test was added before the filename sanitizer. It initially 
 The API was started with a local development JWT secret and returned `200` from `/api/v1/health`; the Vite frontend also returned `200` from `http://127.0.0.1:5173/`. The required 1440×900 and 390×844 matrix for login, designer, manager, design head, and client routes is recorded in `design-qa.md`.
 
 The available browser-control runtime reported that no browser binding was available in this environment. Consequently, screenshot capture and manual viewport inspection could not be performed here, and no screenshot result is claimed. This remains the only visual-QA follow-up: run the recorded matrix in an environment with a browser binding.
+
+## Review fix round 1
+
+- Replaced the shipped server's implicit memory-repository path with a
+  testable production bootstrap. It loads `backend/.env`, connects using
+  `MONGODB_URI` before listening, injects `createMongoRepository`, fails fast
+  when Mongo is unavailable, and closes HTTP before disconnecting Mongo on
+  shutdown.
+- Parsed `CORS_ORIGIN` into an allow-list and applied it to standard and
+  preflight API responses. Added `dotenv`, `start`, and `seed` runtime support
+  and corrected frontend configuration/documentation to `VITE_API_URL`.
+- Extended the cross-role journey to create draft, approved-internal, and
+  other-client versions; it proves that the Aurora client cannot enumerate or
+  download those resources.
+- Added `axe-core` accessibility smoke coverage for a workspace disclosure,
+  upload dialog focus/Escape restoration, mobile navigation, textual risk
+  status, and all role homes. Axe identified and the review corrected a skipped
+  heading level (`h4` to `h3`) on task titles.
+- Extended filename directional-control stripping to U+061C, U+200E, and
+  U+200F. JPEG/WebP test fixtures now meet the boundary's documented
+  signature-level checks (including a size-consistent RIFF/WebP container).
+
+### Review verification
+
+| Area | Commands | Result |
+| --- | --- | --- |
+| Backend | `npm run typecheck`, `npm test`, `npm run build` | passed; 14 test files, 129 tests |
+| Frontend | `npm run typecheck`, `npm test`, `npm run build` | passed; 13 test files, 63 tests |
+| Targeted runtime | `npm test -- --run tests/server.test.ts` and typecheck | passed; 3 tests |
+| Lint | no `lint` script exists in either package | documented in README |
+
+The browser-binding limitation remains unchanged; no desktop/mobile screenshot
+claim is made for this review round.

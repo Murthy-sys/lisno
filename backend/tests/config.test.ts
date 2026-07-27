@@ -19,12 +19,13 @@ describe("environment authentication configuration", () => {
     ).toBe("runtime-secret-with-at-least-32-characters");
   });
 
-  it("defaults local MongoDB to the documented transaction-capable replica set", () => {
+  it("parses local MongoDB origins into a CORS allow-list", () => {
     expect(
       loadEnvironment({
-        JWT_SECRET: "runtime-secret-with-at-least-32-characters"
-      }).MONGODB_URI
-    ).toBe("mongodb://127.0.0.1:27017/lisno?replicaSet=rs0");
+        JWT_SECRET: "runtime-secret-with-at-least-32-characters",
+        CORS_ORIGIN: "http://localhost:5173, https://lisno.example"
+      }).CORS_ORIGIN
+    ).toEqual(["http://localhost:5173", "https://lisno.example"]);
   });
 
   it("loads a positive configurable upload size in megabytes", () => {

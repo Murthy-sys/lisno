@@ -1,15 +1,114 @@
+import "dotenv/config";
+
+import { pathToFileURL } from "node:url";
+import type { Server } from "node:http";
+import mongoose from "mongoose";
+
 import { createApp } from "./app.js";
 import { loadEnvironment } from "./config/env.js";
+import { createMongoRepository } from "./repositories/mongo.js";
+import type { AppRepository } from "./repositories/types.js";
 import { createLocalStorage } from "./storage/local-storage.js";
 
-const env = loadEnvironment();
-createApp({
-  auth: {
-    jwtSecret: env.JWT_SECRET,
-    jwtExpiresInSeconds: 900
-  },
-  storage: createLocalStorage(env.UPLOADS_DIR),
-  maxUploadBytes: Math.floor(env.MAX_UPLOAD_MB * 1024 * 1024)
-}).listen(env.PORT, () => {
-  console.log(`Lisno API listening on port ${env.PORT}`);
-});
+type ServerApp = {
+  listen(port: number, callback: () => void): Server;
+};
+
+export interface ServerDependencies {
+  loadEnvironment?: typeof loadEnvironment;
+  connect?: (uri: string) => Promise<unknown>;
+  disconnect?: () => Promise<unknown>;
+  repositoryFactory?: () => AppRepository;
+  appFactory?: (dependencies: Parameters<typeof createApp>[0]) => ServerApp;
+  registerSignalHandlers?: boolean;
+}
+
+export interface RunningServer {
+  stop(): Promise<void>;
+}
+
+export async function startServer(
+  dependencies: ServerDependencies = {}
+): Promise<RunningServer> {
+  const env = (dependencies.loadEnvironment ?? loadEnvironment)();
+  const connect = dependencies.connect ?? ((uri: string) => mongoose.connect(uri));
+  const disconnect = dependencies.disconnect ?? (() => mongoose.disconnect());
+  const repositoryFactory = dependencies.repositoryFactory ?? createMongoRepository;
+  const appFactory = dependencies.appFactory ?? createApp;
+
+  await connect(env.MONGODB_URI);
+
+  let server: Server;
+  try {
+    const app = appFactory({
+      repository: repositoryFactory(),
+      auth: {
+        jwtSecret: env.JWT_SECRET,
+        jwtExpiresInSeconds: 900
+      },
+      corsOrigins: env.CORS_ORIGIN,
+      storage: createLocalStorage(env.UPLOADS_DIR),
+      maxUploadBytes: Math.floor(env.MAX_UPLOAD_MB * 1024 * 1024)
+    });
+    server = await listen(app, env.PORT);
+  } catch (error) {
+    await disconnect();
+    throw error;
+  }
+
+  let stopping: Promise<void> | undefined;
+  const stop = () => {
+    stopping ??= close(server).then(() => disconnect()).then(() => undefined);
+    return stopping;
+  };
+
+  if (dependencies.registerSignalHandlers ?? true) {
+    const shutdown = (signal: NodeJS.Signals) => {
+      void stop().then(
+        () => process.exit(0),
+        (error: unknown) => {
+          process.stderr.write(`Failed to shut down after ${signal}: ${String(error)}\n`);
+          process.exit(1);
+        }
+      );
+    };
+    process.once("SIGINT", () => shutdown("SIGINT"));
+    process.once("SIGTERM", () => shutdown("SIGTERM"));
+  }
+
+  return { stop };
+}
+
+function listen(app: ServerApp, port: number): Promise<Server> {
+  return new Promise((resolve, reject) => {
+    let server: Server | undefined;
+    const onListening = () => {
+      if (!server) {
+        queueMicrotask(onListening);
+        return;
+      }
+      server.off("error", reject);
+      resolve(server);
+    };
+    server = app.listen(port, onListening);
+    server.once("error", reject);
+  });
+}
+
+function close(server: Server): Promise<void> {
+  return new Promise((resolve, reject) => {
+    server.close((error) => (error ? reject(error) : resolve()));
+  });
+}
+
+const entrypoint = process.argv[1] ? pathToFileURL(process.argv[1]).href : "";
+if (import.meta.url === entrypoint) {
+  startServer().then(
+    () => undefined,
+    (error: unknown) => {
+      const message = error instanceof Error ? error.stack ?? error.message : String(error);
+      process.stderr.write(`${message}\n`);
+      process.exitCode = 1;
+    }
+  );
+}

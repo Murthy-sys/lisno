@@ -22,21 +22,27 @@ Copy each workspace example environment file, then set a long JWT secret:
 ```bash
 cp backend/.env.example backend/.env
 cp frontend/.env.example frontend/.env
-cd backend && npm install && npm run dev
+cd backend && npm install && npm run seed && npm run dev
 # in another terminal
 cd frontend && npm install && npm run dev
 ```
 
 The API defaults to `http://localhost:3000`; Vite defaults to
 `http://localhost:5173`. Uploaded files are stored under `backend/uploads`
-unless `UPLOADS_DIR` is changed. The development seed is loaded by the backend
-seed command/configuration and provides the accounts below.
+unless `UPLOADS_DIR` is changed. `npm run seed` loads the deterministic demo
+data and provides the accounts below. The backend loads `backend/.env` for its
+development server, production `start` command, and seed command; Vite loads
+`frontend/.env`.
 
 ## Environment variables
 
 Backend: `PORT`, `MONGODB_URI`, `JWT_SECRET`, `CORS_ORIGIN`, `UPLOADS_DIR`, and
-`MAX_UPLOAD_MB`. Frontend: `VITE_API_ORIGIN` (the API origin without `/api/v1`).
-See the two `.env.example` files for local defaults.
+`MAX_UPLOAD_MB`. `CORS_ORIGIN` is a comma-separated allow-list of full browser
+origins. The server connects to `MONGODB_URI` before listening and exits on a
+connection failure; the shipped server never uses the in-memory repository.
+Frontend: `VITE_API_URL`, the full versioned API base URL (for example,
+`http://localhost:3000/api/v1`). See the two `.env.example` files for local
+defaults.
 
 ## Demo accounts
 
@@ -69,7 +75,8 @@ from the calculated KPI.
 
 ## Verification and production builds
 
-Both workspaces expose `npm test`, `npm run typecheck`, and `npm run build`.
+The backend additionally exposes `npm run seed` and `npm start`. Both
+workspaces expose `npm test`, `npm run typecheck`, and `npm run build`.
 There is currently no lint script in either `package.json`.
 
 ```bash
@@ -79,4 +86,6 @@ cd ../frontend && npm run typecheck && npm test && npm run build
 
 `npm run build` produces deployable TypeScript output in `backend/dist` and the
 Vite production bundle in `frontend/dist`. `GET /api/v1/health` reports API
-health.
+health. Upload validation intentionally verifies allowed file signatures and
+claimed MIME agreement at the API boundary; it does not fully decode image
+contents.

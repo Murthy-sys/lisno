@@ -2,9 +2,9 @@
 
 ## Deterministic review matrix
 
-The backend (`http://127.0.0.1:3000/api/v1/health`) and Vite application
-(`http://127.0.0.1:5173`) started successfully with the deterministic local
-configuration. The browser-control runtime reported that no browser binding
+The prior API and Vite readiness checks returned HTTP 200. The current backend
+bootstrap additionally requires a successful Mongo replica-set connection
+before it listens. The browser-control runtime reported that no browser binding
 was available in this execution environment, so viewport screenshots could
 not be captured here. The matrix below is the prepared review plan; automated
 accessibility coverage was run in its place.
@@ -22,10 +22,16 @@ accessibility coverage was run in its place.
   content landmark.
 - Progress controls carry text labels; risk/status labels pair text with their
   color.
+- The workspace smoke test opens disclosure controls, verifies an upload
+  dialog's focus and Escape restoration, exercises the mobile navigation, and
+  runs `axe-core` (with color-contrast disabled because JSDOM cannot calculate
+  rendered contrast).
 - Client content excludes draft/internal versions, KPI, and evaluation data.
 
 ## Evidence
 
-Automated role-home accessibility smoke test: `frontend/src/test/accessibility.test.tsx`.
-Automated cross-role journey: `backend/tests/full-journey.test.ts`.
+Automated role-home and interaction accessibility smoke test:
+`frontend/src/test/accessibility.test.tsx`.
+Automated cross-role journey (including draft/internal and cross-client denial):
+`backend/tests/full-journey.test.ts`.
 Final commands and test totals are recorded in the Task 11 report.

@@ -21,8 +21,10 @@ const PDF = Buffer.from("%PDF-1.7\n1 0 obj\n<<>>\nendobj\n%%EOF");
 const PNG = Buffer.from([
   0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x00
 ]);
-const JPEG = Buffer.from([0xff, 0xd8, 0xff, 0xd9]);
-const WEBP = Buffer.from([0x52, 0x49, 0x46, 0x46, 0x04, 0x00, 0x00, 0x00, 0x57, 0x45, 0x42, 0x50]);
+// The upload boundary verifies file signatures rather than fully decoding images.
+// These include JPEG SOI/EOI and a RIFF/WebP header whose declared size matches.
+const JPEG = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01, 0x01, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0xff, 0xd9]);
+const WEBP = Buffer.from([0x52, 0x49, 0x46, 0x46, 0x16, 0x00, 0x00, 0x00, 0x57, 0x45, 0x42, 0x50, 0x56, 0x50, 0x38, 0x58, 0x0a, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
 
 const users = {
   head: ["user-head", "design_head"],
@@ -185,9 +187,9 @@ function failAuditWrites(base: AppRepository): AppRepository {
 }
 
 describe("design-version uploads", () => {
-  it("accepts JPEG/WebP bytes, rejects claimed MIME mismatches, and strips bidi filename controls", async () => {
+  it("accepts signature-valid JPEG/WebP bytes, rejects claimed MIME mismatches, and strips directional filename controls", async () => {
     const { app } = setup();
-    const jpeg = await upload(app, users.ananya, "task-furniture-layout", JPEG, "render\u202Egpj.jpg", "image/jpeg");
+    const jpeg = await upload(app, users.ananya, "task-furniture-layout", JPEG, "render\u202E\u200E\u200F\u061Cgpj.jpg", "image/jpeg");
     const webp = await upload(app, users.ananya, "task-furniture-layout", WEBP, "render.webp", "image/webp");
     const mismatch = await upload(app, users.ananya, "task-furniture-layout", JPEG, "not-a-png.png", "image/png");
 

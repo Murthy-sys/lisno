@@ -153,7 +153,8 @@ function detectFileType(data: Buffer): Pick<
   if (
     data.length >= 12 &&
     data.subarray(0, 4).toString("ascii") === "RIFF" &&
-    data.subarray(8, 12).toString("ascii") === "WEBP"
+    data.subarray(8, 12).toString("ascii") === "WEBP" &&
+    data.readUInt32LE(4) === data.length - 8
   ) {
     return { extension: ".webp", mimeType: "image/webp" };
   }
@@ -167,7 +168,7 @@ function safeOriginalFilename(
   const decodedFilename = Buffer.from(originalFilename, "latin1").toString("utf8");
   const filename = path
     .basename((decodedFilename.includes("\uFFFD") ? originalFilename : decodedFilename).replaceAll("\\", "/"))
-    .replace(/[\u0000-\u001f\u007f\u202a-\u202e\u2066-\u2069]/g, "")
+    .replace(/[\u0000-\u001f\u007f\u061c\u200e-\u200f\u202a-\u202e\u2066-\u2069]/g, "")
     .trim()
     .slice(0, 255);
   return filename || `upload${extension}`;

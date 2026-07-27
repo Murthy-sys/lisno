@@ -1,3 +1,5 @@
+import "dotenv/config";
+
 import { pathToFileURL } from "node:url";
 import mongoose, { type Model } from "mongoose";
 import { loadEnvironment } from "../config/env.js";

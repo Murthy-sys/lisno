@@ -1,6 +1,7 @@
 import express from "express";
 import path from "node:path";
 
+import { allowCors } from "./middleware/cors.js";
 import { errorHandler, notFoundHandler } from "./middleware/errors.js";
 import { createMemoryRepository } from "./repositories/memory.js";
 import type { AppRepository } from "./repositories/types.js";
@@ -34,6 +35,7 @@ export interface AppDependencies {
   clock?: Clock;
   storage?: FileStorage;
   maxUploadBytes?: number;
+  corsOrigins?: readonly string[];
 }
 
 export function createApp(dependencies: AppDependencies) {
@@ -58,6 +60,7 @@ export function createApp(dependencies: AppDependencies) {
     clock
   );
 
+  app.use(allowCors(dependencies.corsOrigins ?? []));
   app.use(express.json());
   app.use("/api/v1", healthRouter);
   app.use("/api/v1", createAuthRouter(authService));
