@@ -25,7 +25,9 @@ const allowedClaimedMimeTypes = new Set([
   "image/png",
   "image/jpeg",
   "image/webp",
-  "application/octet-stream"
+  "application/octet-stream",
+  // Busboy uses text/plain when a multipart file part omits Content-Type.
+  "text/plain"
 ]);
 
 export function uploadSingleFile(maxUploadBytes: number): RequestHandler {
@@ -99,8 +101,11 @@ export function uploadSingleFile(maxUploadBytes: number): RequestHandler {
 
       const detected = detectFileType(request.file.buffer);
       const claimed = request.file.mimetype.toLowerCase();
+      // This is advisory only: all generic claims must still match magic bytes.
       const claimIsGeneric =
-        claimed === "application/octet-stream" || claimed === "";
+        claimed === "application/octet-stream" ||
+        claimed === "text/plain" ||
+        claimed === "";
       if (!detected || (!claimIsGeneric && detected.mimeType !== claimed)) {
         next(
           new ApiError(

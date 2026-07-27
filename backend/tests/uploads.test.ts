@@ -1,6 +1,8 @@
 import { Readable } from "node:stream";
 
+import express from "express";
 import jwt from "jsonwebtoken";
+import multer from "multer";
 import request from "supertest";
 import { describe, expect, it } from "vitest";
 
@@ -104,6 +106,26 @@ function upload(
     .post(`/api/v1/tasks/${taskId}/design-versions`)
     .set("Authorization", bearer(actor))
     .attach("file", data, { filename, contentType: mimeType });
+}
+
+function rawMultipartUploadWithoutFileContentType(
+  app: ReturnType<typeof createApp>,
+  actor: readonly [string, Role],
+  taskId: string,
+  data: Buffer,
+  filename: string
+) {
+  const boundary = "lisno-upload-without-file-content-type";
+  const opening = Buffer.from(
+    `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${filename}"\r\n\r\n`
+  );
+  const closing = Buffer.from(`\r\n--${boundary}--\r\n`);
+
+  return request(app)
+    .post(`/api/v1/tasks/${taskId}/design-versions`)
+    .set("Authorization", bearer(actor))
+    .set("Content-Type", `multipart/form-data; boundary=${boundary}`)
+    .send(Buffer.concat([opening, data, closing]));
 }
 
 function approval(
@@ -216,6 +238,30 @@ function failAuditWrites(base: AppRepository): AppRepository {
 }
 
 describe("design-version uploads", () => {
+  it("Busboy maps a file part without Content-Type to text/plain", async () => {
+    const app = express();
+    const parse = multer({ storage: multer.memoryStorage() }).single("file");
+    app.post("/upload", parse, (request, response) => {
+      response.json({ mimeType: request.file?.mimetype });
+    });
+    const boundary = "lisno-busboy-missing-file-content-type";
+    const body = Buffer.concat([
+      Buffer.from(
+        `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="plan.pdf"\r\n\r\n`
+      ),
+      PDF,
+      Buffer.from(`\r\n--${boundary}--\r\n`)
+    ]);
+
+    const response = await request(app)
+      .post("/upload")
+      .set("Content-Type", `multipart/form-data; boundary=${boundary}`)
+      .send(body);
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({ mimeType: "text/plain" });
+  });
+
   it("accepts signature-valid JPEG/WebP bytes, rejects claimed MIME mismatches, and strips directional filename controls", async () => {
     const { app } = setup();
     const jpeg = await upload(app, users.ananya, "task-furniture-layout", JPEG, "render\u202E\u200E\u200F\u061Cgpj.jpg", "image/jpeg");
@@ -285,13 +331,12 @@ describe("design-version uploads", () => {
   it("accepts PDF magic bytes with generic multipart MIME metadata but rejects invalid or mismatched content", async () => {
     const { app, storage } = setup();
 
-    const emptyMimePdf = await upload(
+    const missingContentTypePdf = await rawMultipartUploadWithoutFileContentType(
       app,
       users.ananya,
       "task-furniture-layout",
       PDF,
-      "generic-empty.pdf",
-      ""
+      "missing-content-type.pdf"
     );
     const octetStreamPdf = await upload(
       app,
@@ -301,6 +346,14 @@ describe("design-version uploads", () => {
       "generic-octet.pdf",
       "application/octet-stream"
     );
+    const malformedMissingContentTypePdf =
+      await rawMultipartUploadWithoutFileContentType(
+        app,
+        users.ananya,
+        "task-furniture-layout",
+        Buffer.from("not really a PDF"),
+        "malformed-missing-content-type.pdf"
+      );
     const malformedPdf = await upload(
       app,
       users.ananya,
@@ -318,14 +371,18 @@ describe("design-version uploads", () => {
       "application/pdf"
     );
 
-    expect(emptyMimePdf.status).toBe(201);
-    expect(emptyMimePdf.body.data.mimeType).toBe("application/pdf");
+    expect(missingContentTypePdf.status).toBe(201);
+    expect(missingContentTypePdf.body.data.mimeType).toBe("application/pdf");
     expect(octetStreamPdf.status).toBe(201);
     expect(octetStreamPdf.body.data.mimeType).toBe("application/pdf");
     expect([...storage.objects.keys()]).toEqual([
       expect.stringMatching(/\.pdf$/),
       expect.stringMatching(/\.pdf$/)
     ]);
+    expect(malformedMissingContentTypePdf.status).toBe(415);
+    expect(malformedMissingContentTypePdf.body.error.code).toBe(
+      "UNSUPPORTED_FILE_TYPE"
+    );
     expect(malformedPdf.status).toBe(415);
     expect(malformedPdf.body.error.code).toBe("UNSUPPORTED_FILE_TYPE");
     expect(mismatchedPng.status).toBe(415);
