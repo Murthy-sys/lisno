@@ -7,6 +7,7 @@ import type {
   AppRepository,
   CropRect,
   DesignSectionRecord,
+  DesignSectionReviewProgress,
   DesignSectionRevisionRecord,
   DesignSourcePageRecord
 } from "../repositories/types.js";
@@ -23,6 +24,12 @@ export interface DesignSectionService {
   remove(actor: PublicUser, sectionId: string, version: number): Promise<unknown>;
   retry(actor: PublicUser, versionId: string): Promise<unknown>;
   submit(actor: PublicUser, versionId: string): Promise<unknown>;
+  listReview(actor: PublicUser, projectId: string): Promise<unknown>;
+  decide(
+    actor: PublicUser,
+    revisionId: string,
+    input: SectionDecisionInput
+  ): Promise<unknown>;
   pageImage(actor: PublicUser, pageId: string): Promise<NodeJS.ReadableStream>;
   revisionImage(actor: PublicUser, revisionId: string): Promise<NodeJS.ReadableStream>;
 }
@@ -37,6 +44,12 @@ export interface PatchSectionInput {
   version: number;
   label?: string;
   crop?: CropRect;
+}
+
+export interface SectionDecisionInput {
+  version: number;
+  decision: "approved" | "rejected";
+  comment?: string;
 }
 
 export function createDesignSectionService(
@@ -308,6 +321,115 @@ export function createDesignSectionService(
       return { extractionStatus: "submitted", submittedCount };
     },
 
+    async listReview(actor, projectId) {
+      await requireAccessibleProject(repository, actor, projectId);
+      const versions = await repository.listDesignVersions(projectId);
+      const sections = [];
+      const progress: DesignSectionReviewProgress = {
+        approved: 0,
+        rejected: 0,
+        awaitingReview: 0,
+        total: 0
+      };
+      for (const version of versions) {
+        const job = await repository.findExtractionJobByVersionId(version.id);
+        if (!job || !["submitted", "changes_requested", "approved"].includes(job.status)) continue;
+        for (const section of await repository.listDesignSections(version.id)) {
+          if (!section.active) continue;
+          const history = (await repository.listSectionRevisions(section.id))
+            .filter((revision) => revision.reviewStatus !== "draft");
+          const latest = history.at(-1);
+          if (!latest) continue;
+          progress.total += 1;
+          if (latest.reviewStatus === "approved") progress.approved += 1;
+          else if (latest.reviewStatus === "rejected") progress.rejected += 1;
+          else progress.awaitingReview += 1;
+          sections.push({
+            ...publicSection(section, latest),
+            versionNumber: version.versionNumber,
+            history: history.map(publicRevision)
+          });
+        }
+      }
+      return { projectId, progress, sections };
+    },
+
+    async decide(actor, revisionId, input) {
+      const comment = input.comment?.trim() || null;
+      if (input.decision === "rejected" && !comment) {
+        throw new ApiError(400, "VALIDATION_ERROR", "A rejection comment is required.", {
+          comment: "Explain what the designer should modify."
+        });
+      }
+      const reviewedAt = clock().toISOString();
+      try {
+        return await repository.runInTransaction(async (transaction) => {
+          const revision = await transaction.findSectionRevisionById(revisionId);
+          if (!revision) notFound();
+          const section = await transaction.findDesignSectionById(revision.sectionId);
+          if (!section || !section.active) notFound();
+          const version = await transaction.findDesignVersionById(section.designVersionId);
+          if (!version) notFound();
+          const project = await requireAccessibleProject(transaction, actor, version.projectId);
+          if (actor.role !== "client") {
+            throw new ApiError(403, "FORBIDDEN", "Only the assigned property client can review sections.");
+          }
+          if (project.clientId !== actor.id) notFound();
+          if (revision.revisionNumber !== input.version) conflict();
+
+          if (revision.reviewStatus === input.decision) {
+            const sameComment =
+              input.decision === "approved" ||
+              revision.rejectionComment === comment;
+            if (!sameComment) locked();
+            const aggregate = await reviewAggregate(transaction, version.id);
+            const job = await transaction.findExtractionJobByVersionId(version.id);
+            if (!job || !["submitted", "changes_requested", "approved"].includes(job.status)) {
+              conflict();
+            }
+            return {
+              revision: publicRevision(revision),
+              extractionStatus: job.status,
+              progress: aggregate
+            };
+          }
+          if (revision.reviewStatus !== "submitted") locked();
+
+          const result = await transaction.decideSubmittedSectionRevision(
+            revision.id,
+            input.version,
+            input.decision,
+            actor.id,
+            input.decision === "rejected" ? comment : null,
+            reviewedAt
+          );
+          await audit.append({
+            actorId: actor.id,
+            action: input.decision === "approved"
+              ? "design_section_approved"
+              : "design_section_rejected",
+            entityType: "design_section_revision",
+            entityId: revision.id,
+            occurredAt: reviewedAt,
+            oldValues: { reviewStatus: revision.reviewStatus },
+            newValues: {
+              reviewStatus: input.decision,
+              revisionNumber: revision.revisionNumber,
+              ...(comment ? { comment } : {})
+            }
+          }, transaction);
+          return {
+            revision: publicRevision(result.revision),
+            extractionStatus: result.extractionStatus,
+            progress: result.progress
+          };
+        });
+      } catch (error) {
+        if (error instanceof RepositoryConflictError) conflict();
+        throw error;
+      }
+    },
+
     async pageImage(actor, pageId) {
       const page = await repository.findSourcePageById(pageId);
       if (!page) notFound();
@@ -373,13 +495,36 @@ function publicPage(page: DesignSourcePageRecord) {
 }
 
 function publicSection(section: DesignSectionRecord, revision: DesignSectionRevisionRecord) {
-  const { croppedFileReference: _private, ...visibleRevision } = revision;
   return {
     ...section,
-    revision: {
-      ...visibleRevision,
-      imageReference: `/api/v1/design-section-revisions/${revision.id}/image`
-    }
+    revision: publicRevision(revision)
+  };
+}
+
+function publicRevision(revision: DesignSectionRevisionRecord) {
+  const { croppedFileReference: _private, ...visible } = revision;
+  return {
+    ...visible,
+    imageReference: `/api/v1/design-section-revisions/${revision.id}/image`
+  };
+}
+
+async function reviewAggregate(repository: AppRepository, versionId: string) {
+  const latest = [];
+  for (const section of await repository.listDesignSections(versionId)) {
+    if (!section.active) continue;
+    const revision = (await repository.listSectionRevisions(section.id))
+      .filter((item) => item.reviewStatus !== "draft")
+      .at(-1);
+    if (revision) latest.push(revision);
+  }
+  const approved = latest.filter((revision) => revision.reviewStatus === "approved").length;
+  const rejected = latest.filter((revision) => revision.reviewStatus === "rejected").length;
+  return {
+    approved,
+    rejected,
+    awaitingReview: latest.length - approved - rejected,
+    total: latest.length
   };
 }
 
@@ -411,6 +556,10 @@ function assertCrop(crop: CropRect, page: DesignSourcePageRecord) {
 
 function conflict(): never {
   throw new ApiError(409, "STALE_SECTION_VERSION", "The section was changed. Refresh and try again.");
+}
+
+function locked(): never {
+  throw new ApiError(409, "SECTION_REVISION_LOCKED", "The section revision can no longer be changed.");
 }
 
 function mapRepositoryConflict(error: unknown): unknown {

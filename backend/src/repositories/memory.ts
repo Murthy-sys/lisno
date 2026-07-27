@@ -68,6 +68,7 @@ const mutationMethods = new Set<keyof AppRepository>([
   "retryExtractionJob",
   "recoverFailedExtractionJob",
   "submitDesignSectionDrafts",
+  "decideSubmittedSectionRevision",
   "createEvaluation",
   "appendAuditEvent"
 ]);
@@ -960,6 +961,82 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
         updatedAt: submittedAt
       };
       return count;
+    },
+
+    async decideSubmittedSectionRevision(
+      revisionId,
+      expectedRevisionNumber,
+      decision,
+      reviewerId,
+      comment,
+      reviewedAt
+    ) {
+      const revisionIndex = state.designSectionRevisions.findIndex(
+        (revision) => revision.id === revisionId
+      );
+      if (revisionIndex < 0) {
+        throw new RepositoryNotFoundError("Design section revision was not found.");
+      }
+      const current = state.designSectionRevisions[revisionIndex]!;
+      if (
+        current.revisionNumber !== expectedRevisionNumber ||
+        current.reviewStatus !== "submitted"
+      ) {
+        throw new RepositoryConflictError("The submitted section revision changed.");
+      }
+      state.designSectionRevisions[revisionIndex] = {
+        ...current,
+        reviewStatus: decision,
+        reviewerId,
+        reviewedAt,
+        rejectionComment: decision === "rejected" ? comment : null
+      };
+      const section = state.designSections.find((item) => item.id === current.sectionId);
+      if (!section) {
+        throw new RepositoryNotFoundError("Design section was not found.");
+      }
+      const activeSectionIds = new Set(
+        state.designSections
+          .filter((item) => item.designVersionId === section.designVersionId && item.active)
+          .map((item) => item.id)
+      );
+      const latestReviewable = [...activeSectionIds].map((sectionId) =>
+        state.designSectionRevisions
+          .filter((item) => item.sectionId === sectionId && item.reviewStatus !== "draft")
+          .sort((left, right) => right.revisionNumber - left.revisionNumber)[0]
+      );
+      if (latestReviewable.some((item) => !item)) {
+        throw new RepositoryConflictError("Every active section must have a submitted revision.");
+      }
+      const approved = latestReviewable.filter((item) => item!.reviewStatus === "approved").length;
+      const rejected = latestReviewable.filter((item) => item!.reviewStatus === "rejected").length;
+      const awaitingReview = latestReviewable.length - approved - rejected;
+      const extractionStatus = rejected > 0
+        ? "changes_requested" as const
+        : approved === latestReviewable.length
+          ? "approved" as const
+          : "submitted" as const;
+      const jobIndex = state.extractionJobs.findIndex(
+        (job) => job.designVersionId === section.designVersionId
+      );
+      if (jobIndex < 0) {
+        throw new RepositoryNotFoundError("Design extraction job was not found.");
+      }
+      state.extractionJobs[jobIndex] = {
+        ...state.extractionJobs[jobIndex]!,
+        status: extractionStatus,
+        updatedAt: reviewedAt
+      };
+      return {
+        revision: clone(state.designSectionRevisions[revisionIndex]!),
+        extractionStatus,
+        progress: {
+          approved,
+          rejected,
+          awaitingReview,
+          total: latestReviewable.length
+        }
+      };
     },
 
     async createEvaluation(input) {

@@ -1142,6 +1142,106 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
       return submittedCount;
     },
 
+    async decideSubmittedSectionRevision(
+      revisionId,
+      expectedRevisionNumber,
+      decision,
+      reviewerId,
+      comment,
+      reviewedAt
+    ) {
+      if (!session) {
+        return repository.runInTransaction((transaction) =>
+          transaction.decideSubmittedSectionRevision(
+            revisionId,
+            expectedRevisionNumber,
+            decision,
+            reviewerId,
+            comment,
+            reviewedAt
+          )
+        );
+      }
+      const revisionUpdate = DesignSectionRevisionModel.findOneAndUpdate(
+        {
+          _id: revisionId,
+          revisionNumber: expectedRevisionNumber,
+          reviewStatus: "submitted"
+        },
+        {
+          $set: {
+            reviewStatus: decision,
+            reviewerId,
+            reviewedAt: date(reviewedAt),
+            rejectionComment: decision === "rejected" ? comment : null
+          }
+        },
+        { new: true, runValidators: true }
+      );
+      revisionUpdate.session(session);
+      const revision = await revisionUpdate.lean().exec();
+      if (!revision) {
+        const exists = DesignSectionRevisionModel.exists({ _id: revisionId });
+        exists.session(session);
+        if (!(await exists.exec())) {
+          throw new RepositoryNotFoundError("Design section revision was not found.");
+        }
+        throw new RepositoryConflictError("The submitted section revision changed.");
+      }
+      const sectionQuery = DesignSectionModel.findById(revision.sectionId).lean();
+      sectionQuery.session(session);
+      const section = await sectionQuery.exec();
+      if (!section) {
+        throw new RepositoryNotFoundError("Design section was not found.");
+      }
+      const activeSectionsQuery = DesignSectionModel.find({
+        designVersionId: section.designVersionId,
+        active: true
+      }).lean();
+      activeSectionsQuery.session(session);
+      const activeSections = await activeSectionsQuery.exec();
+      const latestReviewable = [];
+      for (const activeSection of activeSections) {
+        const latestQuery = DesignSectionRevisionModel.findOne({
+          sectionId: idOf(activeSection),
+          reviewStatus: { $ne: "draft" }
+        }).sort({ revisionNumber: -1 }).lean();
+        latestQuery.session(session);
+        const latest = await latestQuery.exec();
+        if (!latest) {
+          throw new RepositoryConflictError("Every active section must have a submitted revision.");
+        }
+        latestReviewable.push(latest);
+      }
+      const approved = latestReviewable.filter((item) => item.reviewStatus === "approved").length;
+      const rejected = latestReviewable.filter((item) => item.reviewStatus === "rejected").length;
+      const awaitingReview = latestReviewable.length - approved - rejected;
+      const extractionStatus = rejected > 0
+        ? "changes_requested" as const
+        : approved === latestReviewable.length
+          ? "approved" as const
+          : "submitted" as const;
+      const jobUpdate = DesignExtractionJobModel.updateOne(
+        { designVersionId: section.designVersionId },
+        { $set: { status: extractionStatus, updatedAt: date(reviewedAt) } }
+      );
+      jobUpdate.session(session);
+      const jobResult = await jobUpdate.exec();
+      if (jobResult.matchedCount !== 1) {
+        throw new RepositoryNotFoundError("Design extraction job was not found.");
+      }
+      return {
+        revision: mapSectionRevision(revision),
+        extractionStatus,
+        progress: {
+          approved,
+          rejected,
+          awaitingReview,
+          total: latestReviewable.length
+        }
+      };
+    },
+
     async createEvaluation(input) {
       const document = await createMongoDocument("Evaluation", () =>
         createDocument(EvaluationModel, {

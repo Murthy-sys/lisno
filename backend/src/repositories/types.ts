@@ -275,6 +275,19 @@ export interface DesignSectionRevisionRecord {
   createdAt: string;
 }
 
+export interface DesignSectionReviewProgress {
+  approved: number;
+  rejected: number;
+  awaitingReview: number;
+  total: number;
+}
+
+export interface SectionDecisionResult {
+  revision: DesignSectionRevisionRecord;
+  extractionStatus: Extract<ExtractionStatus, "submitted" | "changes_requested" | "approved">;
+  progress: DesignSectionReviewProgress;
+}
+
 export interface ExtractionDraftReplacement {
   jobId: string;
   claimId: string;
@@ -559,6 +572,14 @@ export interface AppRepository {
     designVersionId: string,
     submittedAt: string
   ): Promise<number>;
+  decideSubmittedSectionRevision(
+    revisionId: string,
+    expectedRevisionNumber: number,
+    decision: Extract<SectionReviewStatus, "approved" | "rejected">,
+    reviewerId: string,
+    comment: string | null,
+    reviewedAt: string
+  ): Promise<SectionDecisionResult>;
   createEvaluation(input: NewEvaluation): Promise<EvaluationRecord>;
   listEvaluationsForSubject(subjectUserId: string): Promise<EvaluationRecord[]>;
   listEvaluationsForSubjectIds(

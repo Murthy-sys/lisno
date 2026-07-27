@@ -25,6 +25,11 @@ const editSchema = z.object({
   crop: cropSchema.optional()
 }).strict().refine((input) => input.label !== undefined || input.crop !== undefined);
 const removeSchema = z.object({ version: z.number().int().positive() }).strict();
+const decisionSchema = z.object({
+  version: z.number().int().positive(),
+  decision: z.enum(["approved", "rejected"]),
+  comment: z.string().max(1000).optional()
+}).strict();
 
 export function createDesignSectionsRouter(
   authService: AuthService,
@@ -51,6 +56,21 @@ export function createDesignSectionsRouter(
   router.post("/design-versions/:versionId/submit-sections", protectedRoute, handler(async (request) =>
     sections.submit(request.authenticatedUser!, request.params.versionId as string)
   ));
+  router.get("/client/projects/:projectId/design-sections", protectedRoute, handler(async (request) =>
+    sections.listReview(request.authenticatedUser!, request.params.projectId as string)
+  ));
+  router.post(
+    "/design-section-revisions/:revisionId/decision",
+    protectedRoute,
+    validateBody(decisionSchema),
+    handler(async (request) =>
+      sections.decide(
+        request.authenticatedUser!,
+        request.params.revisionId as string,
+        request.body
+      )
+    )
+  );
 
   router.get("/design-source-pages/:pageId/image", protectedRoute, async (request, response, next) => {
     try {
