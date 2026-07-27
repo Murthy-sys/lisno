@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import pytest
+from PIL import Image, ImageDraw, ImageFont
 
 from lisno_ocr.extractor import Extractor
 from lisno_ocr.settings import LayoutSettings
@@ -8,6 +9,123 @@ from lisno_ocr.title_classifier import OcrLine, classify_drawing_titles
 
 
 FIXTURES = Path(__file__).parent / "fixtures"
+
+
+def _write_representative_blueprint_pdf(tmp_path):
+    path = tmp_path / "representative-blueprint.pdf"
+    first = Image.new("RGB", (900, 700), "white")
+    second = Image.new("RGB", (900, 700), "white")
+    font = ImageFont.load_default(size=24)
+    first_draw = ImageDraw.Draw(first)
+    second_draw = ImageDraw.Draw(second)
+
+    first_lines = []
+    second_lines = []
+
+    def add_text(draw, lines, position, text, confidence=0.99):
+        draw.text(position, text, fill="black", font=font)
+        lines.append((draw.textbbox(position, text, font=font), text, confidence))
+
+    add_text(first_draw, first_lines, (50, 50), "Floor Plan – 3BHK Residence", 0.97)
+    add_text(first_draw, first_lines, (470, 55), "Electrical Legend")
+    add_text(first_draw, first_lines, (470, 100), "Building Cross Section A-A")
+    add_text(first_draw, first_lines, (470, 145), "GENERAL NOTES")
+    first_draw.rectangle((40, 115, 410, 350), outline="black", width=4)
+    first_draw.rectangle((500, 300, 820, 600), outline="black", width=4)
+
+    add_text(second_draw, second_lines, (50, 45), "Living Room", 0.96)
+    add_text(second_draw, second_lines, (50, 80), "Front Elevation", 0.91)
+    add_text(second_draw, second_lines, (460, 80), "Side Elevation (Left)", 0.93)
+    add_text(second_draw, second_lines, (50, 420), "Ceiling Plan – Living Room", 0.94)
+    add_text(second_draw, second_lines, (480, 45), "Door Schedule")
+    add_text(second_draw, second_lines, (480, 130), "1. All dimensions in mm")
+    second_draw.rectangle((40, 140, 350, 330), outline="black", width=4)
+    second_draw.rectangle((450, 220, 790, 410), outline="black", width=4)
+    second_draw.rectangle((40, 490, 400, 650), outline="black", width=4)
+
+    page_results = []
+    for lines in (first_lines, second_lines):
+        page_results.append({
+            "rec_boxes": [box for box, _text, _score in lines],
+            "rec_texts": [text for _box, text, _score in lines],
+            "rec_scores": [score for _box, _text, score in lines],
+        })
+    try:
+        first.save(path, format="PDF", save_all=True, append_images=[second])
+    finally:
+        first.close()
+        second.close()
+    return path, page_results, [
+        {
+            "Floor Plan – 3BHK Residence": (40, 115, 410, 350),
+            "unrelated": (500, 300, 820, 600),
+        },
+        {
+            "Living Room – Front Elevation": (40, 140, 350, 330),
+            "Side Elevation (Left)": (450, 220, 790, 410),
+            "Ceiling Plan – Living Room": (40, 490, 400, 650),
+        },
+    ]
+
+
+def _write_noise_only_blueprint_page(tmp_path):
+    path = tmp_path / "noise-only-blueprint.png"
+    image = Image.new("RGB", (900, 800), "white")
+    draw = ImageDraw.Draw(image)
+    font = ImageFont.load_default(size=22)
+    labels = [
+        "SYMBOL LEGEND",
+        "GENERAL NOTES",
+        "1. Refer to Floor Plan",
+        "Key Plan",
+        "4500",
+        "SCALE 1:100",
+        "N",
+        "Living Room",
+        "MATERIAL: TEAK VENEER",
+        "FINISH: BRUSHED BRASS",
+        "FIXTURE: WALL LIGHT",
+        "Building Cross Section A-A",
+        "Window Detail 04",
+        "Single Line Diagram",
+        "Door Schedule",
+        "Landscape Plan",
+        "Some Arbitrary Text",
+    ]
+    lines = []
+    for index, label in enumerate(labels):
+        position = (50 + (index % 2) * 430, 35 + (index // 2) * 82)
+        draw.text(position, label, fill="black", font=font)
+        lines.append((draw.textbbox(position, label, font=font), label, 0.99))
+    try:
+        image.save(path, format="PNG")
+    finally:
+        image.close()
+    return path, {
+        "rec_boxes": [box for box, _text, _score in lines],
+        "rec_texts": [text for _box, text, _score in lines],
+        "rec_scores": [score for _box, _text, score in lines],
+    }
+
+
+def _contains_region(crop, region):
+    left, top, right, bottom = region
+    return (
+        crop.x <= left
+        and crop.y <= top
+        and crop.x + crop.width >= right
+        and crop.y + crop.height >= bottom
+    )
+
+
+def _overlaps_region(crop, region):
+    left, top, right, bottom = region
+    return (
+        crop.x < right
+        and left < crop.x + crop.width
+        and crop.y < bottom
+        and top < crop.y + crop.height
+    )
 
 
 class FakePaddleOCR3:
@@ -57,47 +175,14 @@ def test_renders_every_pdf_page_with_positive_pixel_dimensions():
     assert ocr.calls == 2
 
 
-def test_extracts_exact_approved_blueprint_titles_in_page_order():
-    page_results = [
-        {
-            "rec_boxes": [
-                [40, 40, 410, 78],
-                [450, 42, 690, 76],
-                [40, 125, 300, 157],
-                [450, 125, 700, 157],
-            ],
-            "rec_texts": [
-                "Floor Plan – 3BHK Residence",
-                "Electrical Legend",
-                "Building Cross Section A-A",
-                "GENERAL NOTES",
-            ],
-            "rec_scores": [0.97, 0.99, 0.99, 0.99],
-        },
-        {
-            "rec_boxes": [
-                [40, 40, 260, 72],
-                [44, 78, 330, 114],
-                [40, 160, 290, 198],
-                [40, 250, 390, 288],
-                [450, 40, 710, 72],
-                [450, 120, 700, 152],
-            ],
-            "rec_texts": [
-                "Living Room",
-                "Front Elevation",
-                "Side Elevation (Left)",
-                "Ceiling Plan – Living Room",
-                "Door Schedule",
-                "1. All dimensions in mm",
-            ],
-            "rec_scores": [0.96, 0.91, 0.93, 0.94, 0.99, 0.99],
-        },
-    ]
+def test_extracts_exact_approved_blueprint_titles_in_page_order(tmp_path):
+    source, page_results, expected_regions = _write_representative_blueprint_pdf(
+        tmp_path
+    )
 
     pages = Extractor(
-        ocr_engine=PageAwareFakePaddleOCR3(page_results)
-    ).extract(FIXTURES / "two-page-plan.pdf")
+        ocr_engine=PageAwareFakePaddleOCR3(page_results), render_scale=1
+    ).extract(source)
 
     assert [[section.label for section in page.sections] for page in pages] == [
         ["Floor Plan – 3BHK Residence"],
@@ -108,29 +193,21 @@ def test_extracts_exact_approved_blueprint_titles_in_page_order():
         ],
     ]
 
+    for page, regions in zip(pages, expected_regions):
+        for section in page.sections:
+            assert _contains_region(section.crop, regions[section.label])
+            assert all(
+                not _overlaps_region(section.crop, region)
+                for label, region in regions.items()
+                if label != section.label
+            )
 
-def test_extracts_zero_sections_from_a_noise_only_page():
-    ocr = PageAwareFakePaddleOCR3([
-        {
-            "rec_boxes": [
-                [40, 40, 320, 76],
-                [40, 120, 320, 156],
-                [40, 200, 320, 236],
-                [40, 280, 320, 316],
-                [40, 360, 320, 396],
-            ],
-            "rec_texts": [
-                "GENERAL NOTES",
-                "Key Plan",
-                "Window Detail 04",
-                "Building Cross Section A-A",
-                "1. Refer to Floor Plan",
-            ],
-            "rec_scores": [0.99, 0.99, 0.99, 0.99, 0.99],
-        }
-    ])
 
-    page = Extractor(ocr_engine=ocr).extract(FIXTURES / "labeled-plan.png")[0]
+def test_extracts_zero_sections_from_a_noise_only_page(tmp_path):
+    source, page_result = _write_noise_only_blueprint_page(tmp_path)
+    ocr = PageAwareFakePaddleOCR3([page_result])
+
+    page = Extractor(ocr_engine=ocr).extract(source)[0]
 
     assert page.sections == ()
 
