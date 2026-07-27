@@ -20,6 +20,7 @@ export interface ServerDependencies {
   disconnect?: () => Promise<unknown>;
   repositoryFactory?: () => AppRepository;
   appFactory?: (dependencies: Parameters<typeof createApp>[0]) => ServerApp;
+  writeOutput?: (message: string) => void;
   registerSignalHandlers?: boolean;
 }
 
@@ -51,6 +52,9 @@ export async function startServer(
       maxUploadBytes: Math.floor(env.MAX_UPLOAD_MB * 1024 * 1024)
     });
     server = await listen(app, env.PORT);
+    (dependencies.writeOutput ?? ((message) => process.stdout.write(message)))(
+      `Backend ready at http://localhost:${env.PORT}\n`
+    );
   } catch (error) {
     await disconnect();
     throw error;

@@ -37,6 +37,7 @@ describe("production server bootstrap", () => {
   it("uses the shipped Mongo repository factory when no test override is supplied", async () => {
     const server = fakeServer();
     const repository = {} as AppRepository;
+    const writeOutput = vi.fn();
     createMongoRepository.mockReturnValue(repository);
     const appFactory = vi.fn(() => ({
       listen: vi.fn((_port: number, callback: () => void) => {
@@ -50,10 +51,12 @@ describe("production server bootstrap", () => {
       connect: async () => undefined,
       disconnect: async () => undefined,
       appFactory,
+      writeOutput,
       registerSignalHandlers: false
     });
 
     expect(createMongoRepository).toHaveBeenCalledOnce();
+    expect(writeOutput).toHaveBeenCalledOnce();
     expect(appFactory).toHaveBeenCalledWith(
       expect.objectContaining({ repository })
     );
@@ -68,6 +71,7 @@ describe("production server bootstrap", () => {
     const disconnect = vi.fn(async () => {
       shutdownOrder.push("mongo");
     });
+    const writeOutput = vi.fn();
     const repositoryFactory = vi.fn(() => repository);
     const appFactory = vi.fn(() => ({
       listen: vi.fn((_port: number, callback: () => void) => {
@@ -82,6 +86,7 @@ describe("production server bootstrap", () => {
       disconnect,
       repositoryFactory,
       appFactory,
+      writeOutput,
       registerSignalHandlers: false
     });
 
@@ -89,6 +94,10 @@ describe("production server bootstrap", () => {
     expect(repositoryFactory).toHaveBeenCalledOnce();
     expect(appFactory).toHaveBeenCalledWith(
       expect.objectContaining({ repository, corsOrigins: env.CORS_ORIGIN })
+    );
+    expect(writeOutput).toHaveBeenCalledOnce();
+    expect(writeOutput).toHaveBeenCalledWith(
+      `Backend ready at http://localhost:${env.PORT}\n`
     );
     await runtime.stop();
     expect(disconnect).toHaveBeenCalledOnce();
@@ -118,6 +127,7 @@ describe("production server bootstrap", () => {
     });
     const server = fakeServer();
     const disconnect = vi.fn(async () => undefined);
+    const writeOutput = vi.fn();
     const appFactory = vi.fn(() => ({
       listen: vi.fn(
         (_port: number, callback: (error?: Error) => void) => {
@@ -134,9 +144,11 @@ describe("production server bootstrap", () => {
         disconnect,
         repositoryFactory: () => ({} as AppRepository),
         appFactory,
+        writeOutput,
         registerSignalHandlers: false
       })
     ).rejects.toBe(listenError);
     expect(disconnect).toHaveBeenCalledOnce();
+    expect(writeOutput).not.toHaveBeenCalled();
   });
 });
