@@ -7,6 +7,7 @@ only approved, client-visible plans.
 ## Prerequisites and setup
 
 - Node.js 20+ and npm
+- Python 3.11+ for OCR extraction
 - MongoDB configured as a replica set (transactions are required)
 
 For a local replica set:
@@ -22,9 +23,11 @@ Copy each workspace example environment file, then set a long JWT secret:
 ```bash
 cp backend/.env.example backend/.env
 cp frontend/.env.example frontend/.env
-cd backend && npm install && npm run seed && npm run dev
-# in another terminal
-cd frontend && npm install && npm run dev
+cd backend && npm install && npm run seed
+cd ../frontend && npm install
+cd ../ocr-worker && python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -e ".[test,model]"
 ```
 
 The API defaults to `http://localhost:3000`; Vite defaults to
@@ -34,6 +37,30 @@ data and provides the accounts below. The backend loads `backend/.env` for its
 development server, production `start` command, and seed command; Vite loads
 `frontend/.env`.
 
+## Start the application
+
+Use the same long `OCR_WORKER_TOKEN` in `backend/.env` and the worker shell.
+Start services in this order:
+
+```bash
+# Terminal 1
+cd backend && npm run dev
+
+# Terminal 2
+cd ocr-worker
+source .venv/bin/activate
+export OCR_WORKER_TOKEN="the-same-backend-worker-secret"
+python3 -m lisno_ocr.worker
+
+# Terminal 3
+cd frontend && npm run dev
+```
+
+Check `GET http://127.0.0.1:3000/api/v1/health` before starting the worker.
+PaddleOCR may download and cache model files on its first real extraction, so
+the first job can take longer. See [ocr-worker/README.md](ocr-worker/README.md)
+for worker settings, supported formats, model-cache behavior, and recovery.
+
 > Warning: `npm run seed` is an explicit demo-reset operation. It deletes all
 > records in Lisno's demo-domain collections (including design-version
 > sequences) before inserting the deterministic seed. Never run it against a
@@ -41,10 +68,12 @@ development server, production `start` command, and seed command; Vite loads
 
 ## Environment variables
 
-Backend: `PORT`, `MONGODB_URI`, `JWT_SECRET`, `CORS_ORIGIN`, `UPLOADS_DIR`, and
-`MAX_UPLOAD_MB`. `CORS_ORIGIN` is a comma-separated allow-list of full browser
-origins. The server connects to `MONGODB_URI` before listening and exits on a
-connection failure; the shipped server never uses the in-memory repository.
+Backend: `PORT`, `MONGODB_URI`, `JWT_SECRET`, `CORS_ORIGIN`, `UPLOADS_DIR`,
+`MAX_UPLOAD_MB`, `OCR_WORKER_TOKEN`, and `OCR_LEASE_SECONDS`. The worker uses
+the matching token, `OCR_API_BASE_URL`, `OCR_POLL_SECONDS`, and
+`OCR_REQUEST_TIMEOUT_SECONDS`. `CORS_ORIGIN` is a comma-separated allow-list of
+full browser origins. The server connects to `MONGODB_URI` before listening and
+exits on a connection failure; the shipped server never uses the in-memory repository.
 Frontend: `VITE_API_URL`, the full versioned API base URL (for example,
 `http://localhost:3000/api/v1`). See the two `.env.example` files for local
 defaults.
@@ -87,6 +116,7 @@ There is currently no lint script in either `package.json`.
 ```bash
 cd backend && npm run typecheck && npm test && npm run build
 cd ../frontend && npm run typecheck && npm test && npm run build
+cd ../ocr-worker && .venv/bin/python -m pytest -m "not model"
 ```
 
 `npm run build` produces deployable TypeScript output in `backend/dist` and the
