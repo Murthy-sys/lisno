@@ -1,4 +1,5 @@
 import { Readable } from "node:stream";
+import { deflateSync, inflateSync } from "node:zlib";
 
 import express from "express";
 import jwt from "jsonwebtoken";
@@ -23,6 +24,7 @@ const TEST_NOW = "2026-07-16T12:00:00.000Z";
 const clock = () => new Date(TEST_NOW);
 let PDF: Buffer;
 let XREF_STREAM_PDF: Buffer;
+let UNCOMPRESSED_XREF_STREAM_PDF: Buffer;
 const PNG = Buffer.from([
   0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x00
 ]);
@@ -30,6 +32,49 @@ const PNG = Buffer.from([
 // These include JPEG SOI/EOI and a RIFF/WebP header whose declared size matches.
 const JPEG = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01, 0x01, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0xff, 0xd9]);
 const WEBP = Buffer.from([0x52, 0x49, 0x46, 0x46, 0x16, 0x00, 0x00, 0x00, 0x57, 0x45, 0x42, 0x50, 0x56, 0x50, 0x38, 0x58, 0x0a, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
+
+function rewriteXrefStream(
+  data: Buffer,
+  options: {
+    compressed?: boolean;
+    dictionary?: (value: string) => string;
+    payload?: (value: Buffer) => Buffer;
+  } = {}
+) {
+  const source = data.toString("latin1");
+  const startXref = /startxref\s+(\d+)\s+%%EOF\s*$/.exec(source);
+  if (!startXref) throw new Error("Expected an xref-stream PDF fixture.");
+  const xrefOffset = Number(startXref[1]);
+  const candidate = source.slice(xrefOffset);
+  const header = /^(\d+\s+\d+\s+obj\s*<<[\s\S]*?>>)\s*stream\r?\n/.exec(
+    candidate
+  );
+  if (!header) throw new Error("Expected an xref stream object.");
+  const payloadStart = xrefOffset + header[0].length;
+  const payloadEnd = source.indexOf("\nendstream", payloadStart);
+  if (payloadEnd < 0) throw new Error("Expected an xref stream terminator.");
+
+  const decoded = inflateSync(data.subarray(payloadStart, payloadEnd));
+  const decodedPayload = options.payload?.(decoded) ?? decoded;
+  const payload = options.compressed
+    ? deflateSync(decodedPayload)
+    : decodedPayload;
+  let dictionary = header[1];
+  if (!options.compressed) {
+    dictionary = dictionary.replace(/\n\/Filter\s+\/FlateDecode\b/, "");
+  }
+  dictionary = dictionary.replace(
+    /\/Length\s+\d+\b/,
+    `/Length ${payload.byteLength}`
+  );
+  dictionary = options.dictionary?.(dictionary) ?? dictionary;
+  return Buffer.concat([
+    data.subarray(0, xrefOffset),
+    Buffer.from(`${dictionary}\nstream\n`, "latin1"),
+    payload,
+    Buffer.from(source.slice(payloadEnd), "latin1")
+  ]);
+}
 
 beforeAll(async () => {
   const document = await PDFDocument.create();
@@ -39,6 +84,7 @@ beforeAll(async () => {
   const xrefStreamDocument = await PDFDocument.create();
   xrefStreamDocument.addPage([612, 792]);
   XREF_STREAM_PDF = Buffer.from(await xrefStreamDocument.save());
+  UNCOMPRESSED_XREF_STREAM_PDF = rewriteXrefStream(XREF_STREAM_PDF);
 });
 
 const users = {
@@ -456,6 +502,9 @@ describe("design-version uploads", () => {
     expect(fakeXrefStream.toString("latin1")).toContain("/Type /Fake");
     await expect(isValidPdfDocument(PDF)).resolves.toBe(true);
     await expect(isValidPdfDocument(XREF_STREAM_PDF)).resolves.toBe(true);
+    await expect(
+      isValidPdfDocument(UNCOMPRESSED_XREF_STREAM_PDF)
+    ).resolves.toBe(true);
     await expect(isValidPdfDocument(ordinaryObjectTarget)).resolves.toBe(false);
     await expect(isValidPdfDocument(fakeXrefStream)).resolves.toBe(false);
 
@@ -480,6 +529,14 @@ describe("design-version uploads", () => {
         app,
         users.ananya,
         "task-furniture-layout",
+        UNCOMPRESSED_XREF_STREAM_PDF,
+        "uncompressed-xref-stream.pdf",
+        "application/pdf"
+      ),
+      upload(
+        app,
+        users.ananya,
+        "task-furniture-layout",
         ordinaryObjectTarget,
         "ordinary-object-target.pdf",
         "application/pdf"
@@ -497,9 +554,65 @@ describe("design-version uploads", () => {
     expect(responses.map((response) => response.status)).toEqual([
       201,
       201,
+      201,
       415,
       415
     ]);
+  });
+
+  it("rejects unsafe xref stream widths, indexes, and decoded payload lengths", async () => {
+    const { app } = setup();
+    const fixtures = [
+      rewriteXrefStream(XREF_STREAM_PDF, {
+        dictionary: (value) =>
+          value.replace(/\/W\s*\[[^\]]+\]/, "/W [ 999999 999999 999999 ]")
+      }),
+      rewriteXrefStream(XREF_STREAM_PDF, {
+        dictionary: (value) =>
+          value.replace(/\/Index\s*\[[^\]]+\]/, "/Index [ 0 1000001 ]")
+      }),
+      rewriteXrefStream(XREF_STREAM_PDF, {
+        dictionary: (value) =>
+          value.replace(/\/Index\s*\[[^\]]+\]/, "/Index [ 0 7 3 ]")
+      }),
+      rewriteXrefStream(XREF_STREAM_PDF, {
+        payload: () => Buffer.alloc(0)
+      }),
+      rewriteXrefStream(XREF_STREAM_PDF, {
+        payload: (value) => value.subarray(0, value.byteLength - 1)
+      }),
+      rewriteXrefStream(XREF_STREAM_PDF, {
+        compressed: true,
+        payload: () => Buffer.alloc(1024 * 1024)
+      }),
+      rewriteXrefStream(XREF_STREAM_PDF, {
+        compressed: true,
+        dictionary: (value) =>
+          value.replace("/Filter /FlateDecode", "/Filter /LZWDecode")
+      }),
+      rewriteXrefStream(XREF_STREAM_PDF, {
+        compressed: true,
+        dictionary: (value) =>
+          value.replace(
+            />>$/,
+            "/DecodeParms << /Predictor 12 >>\n>>"
+          )
+      })
+    ];
+
+    for (const [index, fixture] of fixtures.entries()) {
+      await expect(isValidPdfDocument(fixture)).resolves.toBe(false);
+      const response = await upload(
+        app,
+        users.ananya,
+        "task-furniture-layout",
+        fixture,
+        `unsafe-xref-${index}.pdf`,
+        "application/pdf"
+      );
+      expect(response.status).toBe(415);
+      expect(response.body.error.code).toBe("UNSUPPORTED_FILE_TYPE");
+    }
   });
 
   it("rolls back the version and deletes the original when extraction enqueue fails", async () => {

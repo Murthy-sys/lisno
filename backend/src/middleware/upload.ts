@@ -1,4 +1,5 @@
 import path from "node:path";
+import { inflateSync } from "node:zlib";
 
 import multer, { MulterError } from "multer";
 import {
@@ -38,6 +39,11 @@ const allowedClaimedMimeTypes = new Set([
   // Busboy uses text/plain when a multipart file part omits Content-Type.
   "text/plain"
 ]);
+const MAX_XREF_FIELD_WIDTH_BYTES = 8;
+const MAX_XREF_OBJECTS = 1_000_000;
+const MAX_XREF_INDEX_VALUES = 4_096;
+const MAX_DECODED_XREF_BYTES = 32 * 1024 * 1024;
+const MAX_XREF_DICTIONARY_BYTES = 256 * 1024;
 
 export function uploadSingleFile(maxUploadBytes: number): RequestHandler {
   const parse = multer({
@@ -232,6 +238,13 @@ function hasValidXrefStream(
   const candidate = source.slice(xrefOffset);
   const header = /^(\d+)\s+(\d+)\s+obj\b/.exec(candidate);
   if (!header) return false;
+  const streamMarker = /\bstream(?:\r\n|\n|\r)/.exec(candidate);
+  if (
+    !streamMarker ||
+    streamMarker.index > MAX_XREF_DICTIONARY_BYTES
+  ) {
+    return false;
+  }
 
   try {
     const parsed = PDFObjectParser.forBytes(
@@ -249,24 +262,117 @@ function hasValidXrefStream(
       type?.asString() !== "/XRef" ||
       widths?.size() !== 3 ||
       !Number.isSafeInteger(objectCount) ||
-      (objectCount ?? 0) <= 0
+      (objectCount ?? 0) <= 0 ||
+      (objectCount ?? 0) > MAX_XREF_OBJECTS
     ) {
       return false;
     }
-    const widthValues = widths.asArray();
-    return (
-      widthValues.some(
-        (width) => width instanceof PDFNumber && width.asNumber() > 0
-      ) &&
-      widthValues.every(
-        (width) =>
-          width instanceof PDFNumber &&
-          Number.isSafeInteger(width.asNumber()) &&
-          width.asNumber() >= 0
-      )
+    const widthValues = pdfIntegerArray(
+      widths,
+      3,
+      MAX_XREF_FIELD_WIDTH_BYTES
     );
+    if (!widthValues) return false;
+    const rowWidth = widthValues.reduce((total, width) => total + width, 0);
+    if (rowWidth <= 0) return false;
+
+    const indexName = PDFName.of("Index");
+    const index = parsed.dict.lookupMaybe(indexName, PDFArray);
+    if (parsed.dict.has(indexName) && !index) return false;
+    const entryCount = index
+      ? xrefIndexEntryCount(index, objectCount as number)
+      : objectCount as number;
+    if (entryCount === null) return false;
+
+    const expectedBytes = entryCount * rowWidth;
+    if (
+      !Number.isSafeInteger(expectedBytes) ||
+      expectedBytes <= 0 ||
+      expectedBytes > MAX_DECODED_XREF_BYTES
+    ) {
+      return false;
+    }
+    const decoded = decodeXrefStream(parsed, expectedBytes);
+    return decoded?.byteLength === expectedBytes;
   } catch {
     return false;
+  }
+}
+
+function pdfIntegerArray(
+  value: PDFArray,
+  expectedLength: number,
+  maximum: number
+) {
+  if (value.size() !== expectedLength) return null;
+  const result: number[] = [];
+  for (const item of value.asArray()) {
+    if (!(item instanceof PDFNumber)) return null;
+    const number = item.asNumber();
+    if (
+      !Number.isSafeInteger(number) ||
+      number < 0 ||
+      number > maximum
+    ) {
+      return null;
+    }
+    result.push(number);
+  }
+  return result;
+}
+
+function xrefIndexEntryCount(index: PDFArray, size: number) {
+  if (
+    index.size() < 2 ||
+    index.size() > MAX_XREF_INDEX_VALUES ||
+    index.size() % 2 !== 0
+  ) {
+    return null;
+  }
+
+  let total = 0;
+  for (let offset = 0; offset < index.size(); offset += 2) {
+    const start = index.get(offset);
+    const count = index.get(offset + 1);
+    if (!(start instanceof PDFNumber) || !(count instanceof PDFNumber)) {
+      return null;
+    }
+    const startValue = start.asNumber();
+    const countValue = count.asNumber();
+    if (
+      !Number.isSafeInteger(startValue) ||
+      !Number.isSafeInteger(countValue) ||
+      startValue < 0 ||
+      countValue <= 0 ||
+      startValue + countValue > size
+    ) {
+      return null;
+    }
+    total += countValue;
+    if (!Number.isSafeInteger(total) || total > MAX_XREF_OBJECTS) {
+      return null;
+    }
+  }
+  return total;
+}
+
+function decodeXrefStream(stream: PDFRawStream, expectedBytes: number) {
+  const filterName = PDFName.of("Filter");
+  const decodeParametersName = PDFName.of("DecodeParms");
+  if (stream.dict.has(decodeParametersName)) return null;
+  if (!stream.dict.has(filterName)) return stream.contents;
+
+  const filter = stream.dict.lookupMaybe(filterName, PDFName);
+  if (filter?.asString() !== "/FlateDecode") return null;
+  try {
+    return inflateSync(stream.contents, {
+      maxOutputLength: Math.min(
+        expectedBytes,
+        MAX_DECODED_XREF_BYTES
+      )
+    });
+  } catch {
+    return null;
   }
 }
 
