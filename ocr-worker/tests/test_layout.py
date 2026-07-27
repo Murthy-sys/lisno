@@ -1,5 +1,6 @@
 from pathlib import Path
 
+import numpy as np
 import pytest
 from PIL import Image, ImageDraw
 
@@ -632,5 +633,139 @@ def test_dense_page_is_rejected_before_component_traversal(monkeypatch):
         raise AssertionError("dense mask reached component traversal")
 
     monkeypatch.setattr(layout, "_connected_components", fail_if_traversed)
+
+    assert propose_panels(image, lines, LayoutSettings.defaults()) == ()
+
+
+def test_headed_upper_corner_detail_is_not_reserved_as_a_key_plan():
+    image = Image.new("RGB", (800, 500), "white")
+    draw = ImageDraw.Draw(image)
+    draw.rectangle((620, 60, 780, 190), outline="black", width=4)
+    draw.rectangle((650, 100, 750, 165), outline="black", width=3)
+    lines = [
+        OcrLine((610, 15, 790, 50), "A. WALL SECTION", 0.97),
+    ]
+
+    proposals = propose_panels(image, lines, LayoutSettings.defaults())
+
+    assert [proposal.label for proposal in proposals] == ["Wall Section"]
+    assert proposals[0].crop[2] >= 780
+    assert proposals[0].crop[3] >= 190
+
+
+def test_headed_wide_bottom_elevation_is_not_reserved_as_a_title_block():
+    image = Image.new("RGB", (800, 500), "white")
+    draw = ImageDraw.Draw(image)
+    draw.rectangle((40, 350, 760, 490), outline="black", width=4)
+    draw.rectangle((80, 380, 240, 460), outline="black", width=3)
+    draw.rectangle((320, 380, 480, 460), outline="black", width=3)
+    draw.rectangle((560, 380, 720, 460), outline="black", width=3)
+    lines = [
+        OcrLine((55, 305, 500, 340), "A. FRONT ELEVATION", 0.98),
+    ]
+
+    proposals = propose_panels(image, lines, LayoutSettings.defaults())
+
+    assert [proposal.label for proposal in proposals] == ["Front Elevation"]
+    assert proposals[0].crop[3] >= 490
+
+
+def test_global_matching_keeps_constrained_heading_on_its_only_region():
+    from lisno_ocr.layout import (
+        _DrawingRegion,
+        _global_heading_region_assignments,
+    )
+
+    settings = LayoutSettings.defaults()
+    flexible = classify_heading(
+        OcrLine((100, 100, 500, 140), "A. FLEXIBLE ELEVATION", 0.98),
+        800,
+        600,
+        settings,
+    )
+    constrained = classify_heading(
+        OcrLine((0, 100, 90, 140), "B. CONSTRAINED DETAIL", 0.97),
+        800,
+        600,
+        settings,
+    )
+    first_region = _DrawingRegion((40, 160, 360, 450), 5000)
+    second_region = _DrawingRegion((400, 160, 760, 450), 5000)
+
+    assignments = _global_heading_region_assignments(
+        (flexible, constrained),
+        (first_region, second_region),
+        800,
+        600,
+    )
+    by_label = {
+        candidate.label: region.box
+        for candidate, _score, region in assignments
+    }
+
+    assert by_label == {
+        "Flexible Elevation": second_region.box,
+        "Constrained Detail": first_region.box,
+    }
+
+
+def test_overlap_rejection_does_not_mutate_previously_accepted_crops():
+    from lisno_ocr.layout import _PanelCandidate, _suppress_and_separate
+
+    first = _PanelCandidate(
+        PanelProposal("First", 0.99, (0, 0, 100, 100), (10, 10, 30, 30)),
+        (10, 35, 80, 90),
+    )
+    second = _PanelCandidate(
+        PanelProposal("Second", 0.98, (100, 0, 200, 100), (170, 10, 190, 30)),
+        (120, 35, 190, 90),
+    )
+    rejected = _PanelCandidate(
+        PanelProposal("Rejected", 0.80, (80, 0, 180, 100), (90, 10, 160, 30)),
+        (95, 35, 155, 90),
+    )
+
+    proposals = _suppress_and_separate(
+        (first, second, rejected),
+        LayoutSettings.defaults(),
+    )
+
+    assert [(proposal.label, proposal.crop) for proposal in proposals] == [
+        ("First", (0, 0, 100, 100)),
+        ("Second", (100, 0, 200, 100)),
+    ]
+
+
+def test_robust_component_ink_count_excludes_trimmed_leader_pixels():
+    from lisno_ocr.layout import _connected_components
+
+    mask = np.zeros((120, 180), dtype=bool)
+    mask[20:100, 40:44] = True
+    mask[20:24, 40:160] = True
+    mask[96:100, 40:160] = True
+    mask[20:100, 156:160] = True
+    mask[60, 5:40] = True
+
+    component = _connected_components(mask)[0]
+    left, top, right, bottom = component.box
+
+    assert component.ink_pixels == int(
+        np.count_nonzero(mask[top:bottom, left:right])
+    )
+
+
+def test_heading_above_unrecognized_text_grid_has_no_drawing_region():
+    image = Image.new("RGB", (800, 500), "white")
+    draw = ImageDraw.Draw(image)
+    for row in range(170, 430, 18):
+        for column in range(80, 720, 18):
+            draw.rectangle(
+                (column, row, column + 7, row + 10),
+                outline=(70, 70, 70),
+                width=2,
+            )
+    lines = [
+        OcrLine((85, 85, 510, 120), "A. FRONT ELEVATION", 0.98),
+    ]
 
     assert propose_panels(image, lines, LayoutSettings.defaults()) == ()

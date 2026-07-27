@@ -39,9 +39,17 @@ class PanelProposal:
 
 
 @dataclass(frozen=True, slots=True)
+class _PanelCandidate:
+    proposal: PanelProposal
+    drawing_box: Box
+
+
+@dataclass(frozen=True, slots=True)
 class _DrawingRegion:
     box: Box
     ink_pixels: int
+    component_count: int = 1
+    compact_component_count: int = 0
 
 
 def propose_panels(
@@ -194,6 +202,19 @@ def _reserved_zones(
         )
         for component in _connected_components(mask)
     )
+    heading_candidates = tuple(
+        candidate
+        for line in lines
+        if (
+            candidate := classify_heading(
+                line,
+                page_width,
+                page_height,
+                settings,
+            )
+        )
+        is not None
+    )
     zones: list[Box] = []
     for line in lines:
         match_text = _match_text(line.text)
@@ -211,6 +232,13 @@ def _reserved_zones(
                 components,
                 page_width,
                 page_height,
+            )
+            and not _region_has_heading_counter_evidence(
+                component,
+                heading_candidates,
+                page_width,
+                page_height,
+                settings,
             )
             and _box_distance(line.box, component.box)
             <= max(page_width, page_height) * 0.08
@@ -234,8 +262,43 @@ def _reserved_zones(
             page_width,
             page_height,
         )
+        and not _region_has_heading_counter_evidence(
+            component,
+            heading_candidates,
+            page_width,
+            page_height,
+            settings,
+        )
     )
     return _deduplicate_boxes(zones)
+
+
+def _region_has_heading_counter_evidence(
+    region: _DrawingRegion,
+    candidates: Sequence[HeadingCandidate],
+    page_width: int,
+    page_height: int,
+    settings: LayoutSettings,
+) -> bool:
+    width, height = _box_size(region.box)
+    if (
+        _box_area(region.box)
+        < page_width * page_height * settings.min_region_area_ratio
+        or width < page_width * 0.08
+        or height < page_height * 0.06
+    ):
+        return False
+    return any(
+        _association_score(
+            candidate,
+            (candidate,),
+            region,
+            page_width,
+            page_height,
+        )
+        >= 0.42
+        for candidate in candidates
+    )
 
 
 def _reserved_geometry_evidence(
@@ -380,6 +443,8 @@ def _discover_drawing_regions(
             continue
         if ink_density <= 0.001 or ink_density >= 0.62:
             continue
+        if _looks_like_unrecognized_text(region):
+            continue
         if not _has_interior_drawing_ink(mask, region):
             continue
         if any(
@@ -397,6 +462,8 @@ def _discover_drawing_regions(
                     page_height,
                 ),
                 region.ink_pixels,
+                region.component_count,
+                region.compact_component_count,
             )
         )
     return tuple(sorted(regions, key=lambda region: (region.box[1], region.box[0])))
@@ -476,12 +543,10 @@ def _connected_components(mask: np.ndarray) -> tuple[_DrawingRegion, ...]:
         visited[start_y, start_x] = True
         left = right = int(start_x)
         top = bottom = int(start_y)
-        pixels = 0
         row_counts: dict[int, int] = {}
         column_counts: dict[int, int] = {}
         while queue:
             x, y = queue.popleft()
-            pixels += 1
             row_counts[y] = row_counts.get(y, 0) + 1
             column_counts[x] = column_counts.get(x, 0) + 1
             left = min(left, x)
@@ -507,10 +572,29 @@ def _connected_components(mask: np.ndarray) -> tuple[_DrawingRegion, ...]:
                     visited[neighbor_y, neighbor_x] = True
                     queue.append((neighbor_x, neighbor_y))
         raw_box = (left, top, right + 1, bottom + 1)
+        robust_box = _robust_component_box(
+            raw_box, row_counts, column_counts
+        )
+        robust_left, robust_top, robust_right, robust_bottom = robust_box
+        robust_pixels = int(
+            np.count_nonzero(
+                mask[
+                    robust_top:robust_bottom,
+                    robust_left:robust_right,
+                ]
+            )
+        )
+        robust_width, robust_height = _box_size(robust_box)
+        is_compact = (
+            robust_width < robust_height * 3
+            and robust_height < robust_width * 3
+        )
         components.append(
             _DrawingRegion(
-                _robust_component_box(raw_box, row_counts, column_counts),
-                pixels,
+                robust_box,
+                robust_pixels,
+                1,
+                int(is_compact),
             )
         )
         if len(components) > _MAX_COMPONENTS:
@@ -561,6 +645,13 @@ def _has_interior_drawing_ink(
         )
     )
     return interior_pixels >= max(24, round(region.ink_pixels * 0.08))
+
+
+def _looks_like_unrecognized_text(region: _DrawingRegion) -> bool:
+    return (
+        region.component_count >= 12
+        and region.compact_component_count / region.component_count >= 0.75
+    )
 
 
 def _merge_nearby_components(
@@ -630,6 +721,8 @@ def _merge_nearby_components(
         _DrawingRegion(
             _union_boxes(member.box for member in members),
             sum(member.ink_pixels for member in members),
+            sum(member.component_count for member in members),
+            sum(member.compact_component_count for member in members),
         )
         for members in grouped.values()
     )
@@ -698,33 +791,26 @@ def _global_heading_region_assignments(
     page_width: int,
     page_height: int,
 ) -> tuple[tuple[HeadingCandidate, float, _DrawingRegion], ...]:
-    scored_pairs = sorted(
-        (
+    score_matrix = tuple(
+        tuple(
             _association_score(
                 candidate,
                 candidates,
                 region,
                 page_width,
                 page_height,
-            ),
-            candidate_index,
-            region_index,
+            )
+            for region in regions
         )
-        for candidate_index, candidate in enumerate(candidates)
-        for region_index, region in enumerate(regions)
+        for candidate in candidates
     )
-    scored_pairs.reverse()
     assignments: list[tuple[HeadingCandidate, float, _DrawingRegion]] = []
     assigned_candidates: set[int] = set()
-    assigned_regions: set[int] = set()
-    for score, candidate_index, region_index in scored_pairs:
-        if score < 0.42:
-            break
-        if (
-            candidate_index in assigned_candidates
-            or region_index in assigned_regions
-        ):
-            continue
+    for candidate_index, region_index in _maximum_weight_matching(
+        score_matrix,
+        minimum_weight=0.42,
+    ):
+        score = score_matrix[candidate_index][region_index]
         assignments.append(
             (
                 candidates[candidate_index],
@@ -733,7 +819,6 @@ def _global_heading_region_assignments(
             )
         )
         assigned_candidates.add(candidate_index)
-        assigned_regions.add(region_index)
 
     for candidate_index, candidate in enumerate(candidates):
         if candidate_index in assigned_candidates:
@@ -759,6 +844,84 @@ def _global_heading_region_assignments(
         if region is not None and score >= 0.42:
             assignments.append((candidate, score, region))
     return tuple(assignments)
+
+
+def _maximum_weight_matching(
+    weights: Sequence[Sequence[float]],
+    minimum_weight: float,
+) -> tuple[tuple[int, int], ...]:
+    row_count = len(weights)
+    region_count = len(weights[0]) if row_count else 0
+    if row_count == 0 or region_count == 0:
+        return ()
+    column_count = region_count + row_count
+    costs = tuple(
+        tuple(
+            -(
+                row[column]
+                if column < region_count
+                and row[column] >= minimum_weight
+                else 0.0
+            )
+            for column in range(column_count)
+        )
+        for row in weights
+    )
+
+    row_potential = [0.0] * (row_count + 1)
+    column_potential = [0.0] * (column_count + 1)
+    matched_row = [0] * (column_count + 1)
+    predecessor = [0] * (column_count + 1)
+    for row_index in range(1, row_count + 1):
+        matched_row[0] = row_index
+        minimum_cost = [float("inf")] * (column_count + 1)
+        used = [False] * (column_count + 1)
+        column = 0
+        while True:
+            used[column] = True
+            active_row = matched_row[column]
+            delta = float("inf")
+            next_column = 0
+            for candidate_column in range(1, column_count + 1):
+                if used[candidate_column]:
+                    continue
+                reduced_cost = (
+                    costs[active_row - 1][candidate_column - 1]
+                    - row_potential[active_row]
+                    - column_potential[candidate_column]
+                )
+                if reduced_cost < minimum_cost[candidate_column]:
+                    minimum_cost[candidate_column] = reduced_cost
+                    predecessor[candidate_column] = column
+                if minimum_cost[candidate_column] < delta:
+                    delta = minimum_cost[candidate_column]
+                    next_column = candidate_column
+            for candidate_column in range(column_count + 1):
+                if used[candidate_column]:
+                    row_potential[matched_row[candidate_column]] += delta
+                    column_potential[candidate_column] -= delta
+                else:
+                    minimum_cost[candidate_column] -= delta
+            column = next_column
+            if matched_row[column] == 0:
+                break
+        while True:
+            previous_column = predecessor[column]
+            matched_row[column] = matched_row[previous_column]
+            column = previous_column
+            if column == 0:
+                break
+
+    assignment_by_row = [-1] * row_count
+    for column in range(1, column_count + 1):
+        if matched_row[column]:
+            assignment_by_row[matched_row[column] - 1] = column - 1
+    return tuple(
+        (row_index, column)
+        for row_index, column in enumerate(assignment_by_row)
+        if column < region_count
+        and weights[row_index][column] >= minimum_weight
+    )
 
 
 def _measure_partition(
@@ -908,7 +1071,7 @@ def _make_proposal(
     page_width: int,
     page_height: int,
     reserved_zones: Sequence[Box],
-) -> PanelProposal | None:
+) -> _PanelCandidate | None:
     crop = _clamp_box(
         _union_box(candidate.line.box, region.box),
         page_width,
@@ -930,13 +1093,16 @@ def _make_proposal(
         + candidate.semantic_score * 0.30
         + layout_score * 0.25,
     )
-    return PanelProposal(
-        label=candidate.label,
-        confidence=confidence,
-        crop=crop,
-        heading_box=_clamp_box(
-            candidate.line.box, page_width, page_height
+    return _PanelCandidate(
+        PanelProposal(
+            label=candidate.label,
+            confidence=confidence,
+            crop=crop,
+            heading_box=_clamp_box(
+                candidate.line.box, page_width, page_height
+            ),
         ),
+        region.box,
     )
 
 
@@ -963,63 +1129,119 @@ def _trim_crop_against_reserved_zones(
 
 
 def _suppress_and_separate(
-    proposals: Sequence[PanelProposal],
+    candidates: Sequence[_PanelCandidate],
     settings: LayoutSettings,
 ) -> tuple[PanelProposal, ...]:
-    accepted: list[PanelProposal] = []
-    for proposal in sorted(
-        proposals, key=lambda item: item.confidence, reverse=True
+    accepted: list[_PanelCandidate] = []
+    for candidate in sorted(
+        candidates,
+        key=lambda item: item.proposal.confidence,
+        reverse=True,
     ):
+        proposal = candidate.proposal
         normalized_label = _match_text(proposal.label)
         duplicate = any(
-            normalized_label == _match_text(existing.label)
+            normalized_label == _match_text(existing.proposal.label)
             and (
-                _box_iou(proposal.heading_box, existing.heading_box)
+                _box_iou(
+                    proposal.heading_box,
+                    existing.proposal.heading_box,
+                )
                 >= settings.duplicate_iou
-                or _box_iou(proposal.crop, existing.crop)
+                or _box_iou(proposal.crop, existing.proposal.crop)
                 >= settings.duplicate_iou
             )
             for existing in accepted
         )
         colliding_headings = any(
-            _intersection_area(proposal.heading_box, existing.heading_box) > 0
+            _intersection_area(
+                proposal.heading_box,
+                existing.proposal.heading_box,
+            )
+            > 0
             for existing in accepted
         )
         if duplicate or colliding_headings:
             continue
-        candidate = proposal
-        for existing_index, existing in enumerate(accepted):
-            if _intersection_area(existing.crop, candidate.crop) == 0:
+        trial_accepted = list(accepted)
+        trial_candidate = candidate
+        for existing_index, existing in enumerate(trial_accepted):
+            if (
+                _intersection_area(
+                    existing.proposal.crop,
+                    trial_candidate.proposal.crop,
+                )
+                == 0
+            ):
                 continue
             existing_crop, candidate_crop = _split_overlap(
-                existing, candidate
+                existing.proposal,
+                trial_candidate.proposal,
             )
             if (
-                not _box_contains(existing_crop, existing.heading_box)
-                or not _box_contains(candidate_crop, candidate.heading_box)
+                not _candidate_crop_is_valid(existing, existing_crop)
+                or not _candidate_crop_is_valid(
+                    trial_candidate, candidate_crop
+                )
                 or _intersection_area(existing_crop, candidate_crop) > 0
             ):
-                candidate = None
+                trial_candidate = None
                 break
-            accepted[existing_index] = PanelProposal(
-                existing.label,
-                existing.confidence,
-                existing_crop,
-                existing.heading_box,
+            trial_accepted[existing_index] = _PanelCandidate(
+                PanelProposal(
+                    existing.proposal.label,
+                    existing.proposal.confidence,
+                    existing_crop,
+                    existing.proposal.heading_box,
+                ),
+                existing.drawing_box,
             )
-            candidate = PanelProposal(
-                candidate.label,
-                candidate.confidence,
-                candidate_crop,
-                candidate.heading_box,
+            trial_candidate = _PanelCandidate(
+                PanelProposal(
+                    trial_candidate.proposal.label,
+                    trial_candidate.proposal.confidence,
+                    candidate_crop,
+                    trial_candidate.proposal.heading_box,
+                ),
+                trial_candidate.drawing_box,
             )
-        if candidate is not None:
-            accepted.append(candidate)
+        if trial_candidate is None:
+            continue
+        trial_accepted.append(trial_candidate)
+        if not _candidate_set_is_valid(trial_accepted):
+            continue
+        accepted = trial_accepted
     return tuple(
-        sorted(
+        candidate.proposal
+        for candidate in sorted(
             accepted,
-            key=lambda item: (item.heading_box[1], item.heading_box[0]),
+            key=lambda item: (
+                item.proposal.heading_box[1],
+                item.proposal.heading_box[0],
+            ),
         )
+    )
+
+
+def _candidate_crop_is_valid(
+    candidate: _PanelCandidate,
+    crop: Box,
+) -> bool:
+    return _box_contains(
+        crop, candidate.proposal.heading_box
+    ) and _box_contains(crop, candidate.drawing_box)
+
+
+def _candidate_set_is_valid(
+    candidates: Sequence[_PanelCandidate],
+) -> bool:
+    return all(
+        _candidate_crop_is_valid(candidate, candidate.proposal.crop)
+        for candidate in candidates
+    ) and all(
+        _intersection_area(first.proposal.crop, second.proposal.crop) == 0
+        for index, first in enumerate(candidates)
+        for second in candidates[index + 1 :]
     )
 
 
