@@ -164,9 +164,10 @@ function safeOriginalFilename(
   originalFilename: string,
   extension: ValidatedUpload["extension"]
 ) {
+  const decodedFilename = Buffer.from(originalFilename, "latin1").toString("utf8");
   const filename = path
-    .basename(originalFilename.replaceAll("\\", "/"))
-    .replace(/[\u0000-\u001f\u007f]/g, "")
+    .basename((decodedFilename.includes("\uFFFD") ? originalFilename : decodedFilename).replaceAll("\\", "/"))
+    .replace(/[\u0000-\u001f\u007f\u202a-\u202e\u2066-\u2069]/g, "")
     .trim()
     .slice(0, 255);
   return filename || `upload${extension}`;

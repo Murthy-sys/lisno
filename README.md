@@ -1,12 +1,15 @@
 # Lisno
 
-Lisno is a role-based design operations platform with independent React and Node.js workspaces.
+Lisno is a role-based design operations platform. Designers manage delivery
+work, managers and heads oversee deadlines and evaluations, and clients see
+only approved, client-visible plans.
 
-## Development
+## Prerequisites and setup
 
-Task, history, audit, and evaluation writes use MongoDB transactions. Local
-MongoDB must therefore run as a replica set (or use a transaction-capable
-MongoDB Atlas URI). One local setup is:
+- Node.js 20+ and npm
+- MongoDB configured as a replica set (transactions are required)
+
+For a local replica set:
 
 ```bash
 mkdir -p .local/mongo-rs0
@@ -14,37 +17,66 @@ mongod --dbpath .local/mongo-rs0 --replSet rs0 --bind_ip 127.0.0.1
 mongosh --eval 'rs.initiate({_id:"rs0",members:[{_id:0,host:"127.0.0.1:27017"}]})'
 ```
 
-Set `MONGODB_URI=mongodb://127.0.0.1:27017/lisno?replicaSet=rs0`. A standalone
-MongoDB server is not sufficient for the atomic workflow APIs.
-
-Start the API:
+Copy each workspace example environment file, then set a long JWT secret:
 
 ```bash
-cd backend
-npm install
-npm run dev
+cp backend/.env.example backend/.env
+cp frontend/.env.example frontend/.env
+cd backend && npm install && npm run dev
+# in another terminal
+cd frontend && npm install && npm run dev
 ```
 
-Start the web application in a second terminal:
+The API defaults to `http://localhost:3000`; Vite defaults to
+`http://localhost:5173`. Uploaded files are stored under `backend/uploads`
+unless `UPLOADS_DIR` is changed. The development seed is loaded by the backend
+seed command/configuration and provides the accounts below.
+
+## Environment variables
+
+Backend: `PORT`, `MONGODB_URI`, `JWT_SECRET`, `CORS_ORIGIN`, `UPLOADS_DIR`, and
+`MAX_UPLOAD_MB`. Frontend: `VITE_API_ORIGIN` (the API origin without `/api/v1`).
+See the two `.env.example` files for local defaults.
+
+## Demo accounts
+
+All accounts use `LisnoDemo2026!`.
+
+- Designer — `ananya@lisno.example`
+- Design manager — `aarav@lisno.example`
+- Design head — `head@lisno.example`
+- Client — `client@aurora.example`
+
+## Roles and visibility
+
+- Designers create projects within their authorization, update their tasks,
+  and upload versions.
+- Managers view direct reports, revise deadlines with a reason, approve plans,
+  and record separate evaluations.
+- Heads inspect the organization, approvals, and evaluations.
+- Clients view their projects, floor progress, and only approved,
+  client-visible files. Drafts, internal notes, KPI details, and evaluations
+  are never exposed to the client UI or API responses.
+
+## Delivery signals
+
+Risk is calculated on the backend: gray for not-started work before its start,
+green for healthy/on-time work, yellow for forecast or near-term risk, and red
+for missed deadlines. KPI combines weighted on-time completion (35%), approval
+quality (25%), revision efficiency (15%), update discipline (15%), and workload
+completion (10%) for eligible tasks; manager/head evaluations remain separate
+from the calculated KPI.
+
+## Verification and production builds
+
+Both workspaces expose `npm test`, `npm run typecheck`, and `npm run build`.
+There is currently no lint script in either `package.json`.
 
 ```bash
-cd frontend
-npm install
-npm run dev
+cd backend && npm run typecheck && npm test && npm run build
+cd ../frontend && npm run typecheck && npm test && npm run build
 ```
 
-Each workspace also supports `npm test`, `npm run typecheck`, and `npm run build`.
-
-## Demo authentication
-
-Every seeded account uses the demo password `LisnoDemo2026!`. Representative
-logins are:
-
-- Designer: `ananya@lisno.example`
-- Design manager: `aarav@lisno.example`
-- Design head: `head@lisno.example`
-- Client: `client@aurora.example`
-
-## Health check
-
-`GET /api/v1/health` returns `{ "data": { "status": "ok" } }`.
+`npm run build` produces deployable TypeScript output in `backend/dist` and the
+Vite production bundle in `frontend/dist`. `GET /api/v1/health` reports API
+health.

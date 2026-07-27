@@ -1,5 +1,5 @@
 import bcrypt from "bcryptjs";
-import jwt, { TokenExpiredError } from "jsonwebtoken";
+import jwt from "jsonwebtoken";
 import { z } from "zod";
 
 import type { Role } from "../contracts/domain.js";
@@ -101,7 +101,7 @@ export function createAuthService(
           algorithms: ["HS256"]
         });
       } catch (error) {
-        if (error instanceof TokenExpiredError) {
+        if (error instanceof jwt.TokenExpiredError) {
           throw new ExpiredTokenError();
         }
         throw new InvalidTokenError();

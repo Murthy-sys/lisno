@@ -21,6 +21,8 @@ const PDF = Buffer.from("%PDF-1.7\n1 0 obj\n<<>>\nendobj\n%%EOF");
 const PNG = Buffer.from([
   0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x00
 ]);
+const JPEG = Buffer.from([0xff, 0xd8, 0xff, 0xd9]);
+const WEBP = Buffer.from([0x52, 0x49, 0x46, 0x46, 0x04, 0x00, 0x00, 0x00, 0x57, 0x45, 0x42, 0x50]);
 
 const users = {
   head: ["user-head", "design_head"],
@@ -183,6 +185,20 @@ function failAuditWrites(base: AppRepository): AppRepository {
 }
 
 describe("design-version uploads", () => {
+  it("accepts JPEG/WebP bytes, rejects claimed MIME mismatches, and strips bidi filename controls", async () => {
+    const { app } = setup();
+    const jpeg = await upload(app, users.ananya, "task-furniture-layout", JPEG, "render\u202Egpj.jpg", "image/jpeg");
+    const webp = await upload(app, users.ananya, "task-furniture-layout", WEBP, "render.webp", "image/webp");
+    const mismatch = await upload(app, users.ananya, "task-furniture-layout", JPEG, "not-a-png.png", "image/png");
+
+    expect(jpeg.status).toBe(201);
+    expect(jpeg.body.data).toMatchObject({ mimeType: "image/jpeg", originalFilename: "rendergpj.jpg" });
+    expect(webp.status).toBe(201);
+    expect(webp.body.data.mimeType).toBe("image/webp");
+    expect(mismatch.status).toBe(415);
+    expect(mismatch.body.error.code).toBe("UNSUPPORTED_FILE_TYPE");
+  });
+
   it("accepts PDF and image magic bytes and allocates monotonic task versions", async () => {
     const { app, repository, storage } = setup();
 
