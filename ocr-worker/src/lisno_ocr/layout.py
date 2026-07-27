@@ -61,6 +61,7 @@ def propose_panels(
     if page_width <= 0 or page_height <= 0:
         return ()
 
+    lines = _bounded_layout_lines(lines)
     candidates = tuple(
         candidate
         for line in lines
@@ -74,7 +75,12 @@ def propose_panels(
     if not candidates:
         return ()
 
-    reserved_zones = _reserved_zones(image, lines, settings)
+    reserved_zones = _reserved_zones(
+        image,
+        lines,
+        settings,
+        heading_candidates=candidates,
+    )
     regions = _discover_drawing_regions(
         image,
         lines,
@@ -149,6 +155,38 @@ def propose_panels(
     return _suppress_and_separate(raw_proposals, settings)
 
 
+def _bounded_layout_lines(
+    lines: Sequence[OcrLine],
+) -> tuple[OcrLine, ...]:
+    ranked = sorted(
+        enumerate(lines),
+        key=lambda item: (
+            -item[1].confidence,
+            item[1].box[1],
+            item[1].box[0],
+            item[1].box[3],
+            item[1].box[2],
+            item[1].text,
+            item[0],
+        ),
+    )[:_MAX_LAYOUT_CANDIDATES]
+    return tuple(
+        line
+        for _index, line in sorted(
+            ranked,
+            key=lambda item: (
+                item[1].box[1],
+                item[1].box[0],
+                item[1].box[3],
+                item[1].box[2],
+                -item[1].confidence,
+                item[1].text,
+                item[0],
+            ),
+        )
+    )
+
+
 def classify_heading(
     line: OcrLine,
     page_width: int,
@@ -170,6 +208,7 @@ def _reserved_zones(
     image: Image.Image,
     lines: Sequence[OcrLine],
     settings: LayoutSettings,
+    heading_candidates: Sequence[HeadingCandidate] | None = None,
 ) -> tuple[Box, ...]:
     page_width, page_height = image.size
     mask, scale_x, scale_y = _base_analysis_mask(image)
@@ -202,19 +241,20 @@ def _reserved_zones(
         )
         for component in _connected_components(mask)
     )
-    heading_candidates = tuple(
-        candidate
-        for line in lines
-        if (
-            candidate := classify_heading(
-                line,
-                page_width,
-                page_height,
-                settings,
+    if heading_candidates is None:
+        heading_candidates = tuple(
+            candidate
+            for line in lines
+            if (
+                candidate := classify_heading(
+                    line,
+                    page_width,
+                    page_height,
+                    settings,
+                )
             )
+            is not None
         )
-        is not None
-    )
     zones: list[Box] = []
     for line in lines:
         match_text = _match_text(line.text)
@@ -425,7 +465,11 @@ def _discover_drawing_regions(
 
     components = _connected_components(mask)
     merged = _merge_nearby_components(
-        components, analysis_width, analysis_height, settings
+        components,
+        mask,
+        analysis_width,
+        analysis_height,
+        settings,
     )
     analysis_area = analysis_width * analysis_height
     analysis_zones = tuple(
@@ -656,6 +700,7 @@ def _looks_like_unrecognized_text(region: _DrawingRegion) -> bool:
 
 def _merge_nearby_components(
     components: Sequence[_DrawingRegion],
+    mask: np.ndarray,
     page_width: int,
     page_height: int,
     settings: LayoutSettings,
@@ -717,15 +762,19 @@ def _merge_nearby_components(
     grouped: dict[int, list[_DrawingRegion]] = {}
     for index, region in enumerate(regions):
         grouped.setdefault(find(index), []).append(region)
-    return tuple(
-        _DrawingRegion(
-            _union_boxes(member.box for member in members),
-            sum(member.ink_pixels for member in members),
-            sum(member.component_count for member in members),
-            sum(member.compact_component_count for member in members),
+    merged: list[_DrawingRegion] = []
+    for members in grouped.values():
+        box = _union_boxes(member.box for member in members)
+        left, top, right, bottom = box
+        merged.append(
+            _DrawingRegion(
+                box,
+                int(np.count_nonzero(mask[top:bottom, left:right])),
+                sum(member.component_count for member in members),
+                sum(member.compact_component_count for member in members),
+            )
         )
-        for members in grouped.values()
-    )
+    return tuple(merged)
 
 
 def _components_belong_together(
@@ -1514,6 +1563,8 @@ def _is_short_room_or_fixture_label(
 
 _MAX_ANALYSIS_PIXELS = 2_000_000
 _MAX_COMPONENTS = 20_000
+# Align layout's public OCR-line budget with the extractor's section cap.
+_MAX_LAYOUT_CANDIDATES = 500
 _PANEL_MARKER_RE = re.compile(
     r"^(?:[A-Z]\.(?:\d+\.?)?\s+|DETAIL\s+\d+\s*(?:[.\-–]\s*)?)",
     re.IGNORECASE,

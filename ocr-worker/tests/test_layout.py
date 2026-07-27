@@ -769,3 +769,88 @@ def test_heading_above_unrecognized_text_grid_has_no_drawing_region():
     ]
 
     assert propose_panels(image, lines, LayoutSettings.defaults()) == ()
+
+
+def test_propose_panels_caps_and_orders_lines_before_matching(monkeypatch):
+    import lisno_ocr.layout as layout
+
+    image = Image.new("RGB", (800, 500), "white")
+    draw = ImageDraw.Draw(image)
+    draw.rectangle((80, 160, 720, 430), outline="black", width=4)
+    draw.line((80, 295, 720, 295), fill="black", width=3)
+    lines = [
+        OcrLine(
+            (50, 80, 350, 115),
+            f"A. DETAIL {index} ELEVATION",
+            0.50 + index / 10_000,
+        )
+        for index in range(2_001)
+    ]
+    original_classify = layout.classify_heading
+    classified_runs: list[list[str]] = []
+    matcher_dimensions: list[tuple[int, int]] = []
+
+    class MatchingBoundaryReached(Exception):
+        pass
+
+    def run_with(candidate_lines):
+        classified: list[str] = []
+
+        def counted_classify(line, page_width, page_height, settings):
+            classified.append(line.text)
+            return original_classify(
+                line, page_width, page_height, settings
+            )
+
+        def observed_matching(weights, minimum_weight):
+            matcher_dimensions.append(
+                (len(weights), len(weights[0]) if weights else 0)
+            )
+            raise MatchingBoundaryReached
+
+        monkeypatch.setattr(layout, "classify_heading", counted_classify)
+        monkeypatch.setattr(
+            layout, "_maximum_weight_matching", observed_matching
+        )
+        monkeypatch.setattr(
+            layout, "_association_score", lambda *_args: 0.80
+        )
+        with pytest.raises(MatchingBoundaryReached):
+            propose_panels(
+                image,
+                candidate_lines,
+                LayoutSettings.defaults(),
+            )
+        classified_runs.append(classified)
+
+    run_with(lines)
+    run_with(tuple(reversed(lines)))
+
+    assert matcher_dimensions == [(500, 1), (500, 1)]
+    assert [len(run) for run in classified_runs] == [500, 500]
+    assert classified_runs[0] == classified_runs[1]
+
+
+def test_nested_components_use_unique_ink_for_merged_region_density():
+    from lisno_ocr.layout import _discover_drawing_regions
+
+    image = Image.new("RGB", (180, 140), "white")
+    draw = ImageDraw.Draw(image)
+    draw.rectangle((10, 10, 170, 130), outline="black", width=3)
+    draw.rectangle((30, 30, 70, 70), outline="black", width=3)
+    draw.rectangle((90, 30, 150, 70), outline="black", width=3)
+    draw.ellipse((70, 85, 110, 120), outline="black", width=3)
+    mask = np.asarray(image.convert("L")) < 210
+
+    regions = _discover_drawing_regions(
+        image,
+        (),
+        (),
+        LayoutSettings.defaults(),
+    )
+
+    assert len(regions) == 1
+    left, top, right, bottom = regions[0].box
+    assert regions[0].ink_pixels == int(
+        np.count_nonzero(mask[top:bottom, left:right])
+    )
