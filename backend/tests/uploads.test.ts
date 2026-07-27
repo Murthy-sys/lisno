@@ -615,6 +615,76 @@ describe("design-version uploads", () => {
     }
   });
 
+  it("accepts a one-name FlateDecode filter array and rejects other filter arrays", async () => {
+    const { app } = setup();
+    const oneFlateFilter = rewriteXrefStream(XREF_STREAM_PDF, {
+      compressed: true,
+      dictionary: (value) =>
+        value.replace(
+          "/Filter /FlateDecode",
+          "/Filter [ /FlateDecode ]"
+        )
+    });
+    const invalidFilters = [
+      "[ /FlateDecode /FlateDecode ]",
+      "[ 1 ]",
+      "[ /LZWDecode ]"
+    ].map((filter) =>
+      rewriteXrefStream(XREF_STREAM_PDF, {
+        compressed: true,
+        dictionary: (value) =>
+          value.replace("/Filter /FlateDecode", `/Filter ${filter}`)
+      })
+    );
+
+    await expect(isValidPdfDocument(oneFlateFilter)).resolves.toBe(true);
+    const accepted = await upload(
+      app,
+      users.ananya,
+      "task-furniture-layout",
+      oneFlateFilter,
+      "one-flate-filter.pdf",
+      "application/pdf"
+    );
+    expect(accepted.status).toBe(201);
+
+    for (const [index, fixture] of invalidFilters.entries()) {
+      await expect(isValidPdfDocument(fixture)).resolves.toBe(false);
+      const rejected = await upload(
+        app,
+        users.ananya,
+        "task-furniture-layout",
+        fixture,
+        `invalid-filter-array-${index}.pdf`,
+        "application/pdf"
+      );
+      expect(rejected.status).toBe(415);
+    }
+  });
+
+  it("rejects an xref stream with a 300 KiB comment prefix despite an early stream token", async () => {
+    const { app } = setup();
+    const oversizedPrefix = rewriteXrefStream(XREF_STREAM_PDF, {
+      dictionary: (value) =>
+        value.replace(
+          /\bobj\b/,
+          `obj\n% stream\n%${"x".repeat(300 * 1024)}\n`
+        )
+    });
+
+    await expect(isValidPdfDocument(XREF_STREAM_PDF)).resolves.toBe(true);
+    await expect(isValidPdfDocument(oversizedPrefix)).resolves.toBe(false);
+    const response = await upload(
+      app,
+      users.ananya,
+      "task-furniture-layout",
+      oversizedPrefix,
+      "oversized-xref-prefix.pdf",
+      "application/pdf"
+    );
+    expect(response.status).toBe(415);
+  });
+
   it("rolls back the version and deletes the original when extraction enqueue fails", async () => {
     const baseRepository = createMemoryRepository(structuredClone(demoSeedData));
     const storage = new TestStorage();

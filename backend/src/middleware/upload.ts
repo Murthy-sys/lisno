@@ -238,21 +238,27 @@ function hasValidXrefStream(
   const candidate = source.slice(xrefOffset);
   const header = /^(\d+)\s+(\d+)\s+obj\b/.exec(candidate);
   if (!header) return false;
-  const streamMarker = /\bstream(?:\r\n|\n|\r)/.exec(candidate);
-  if (
-    !streamMarker ||
-    streamMarker.index > MAX_XREF_DICTIONARY_BYTES
-  ) {
-    return false;
-  }
 
   try {
-    const parsed = PDFObjectParser.forBytes(
+    const parser = PDFObjectParser.forBytes(
       data.subarray(xrefOffset + header[0].length),
       PDFContext.create(),
       true
-    ).parseObject();
+    );
+    const parsed = parser.parseObject();
     if (!(parsed instanceof PDFRawStream)) return false;
+    const parserOffset = pdfObjectParserOffset(parser);
+    const objectOverhead =
+      parserOffset === null
+        ? null
+        : parserOffset - parsed.contents.byteLength;
+    if (
+      objectOverhead === null ||
+      objectOverhead < 0 ||
+      objectOverhead > MAX_XREF_DICTIONARY_BYTES
+    ) {
+      return false;
+    }
 
     const type = parsed.dict.lookupMaybe(PDFName.Type, PDFName);
     const widths = parsed.dict.lookupMaybe(PDFName.of("W"), PDFArray);
@@ -297,6 +303,18 @@ function hasValidXrefStream(
   } catch {
     return false;
   }
+}
+
+function pdfObjectParserOffset(parser: PDFObjectParser) {
+  // pdf-lib does not expose its cursor publicly. Read it defensively and fail
+  // closed if a future version changes this internal shape.
+  const byteStream = Reflect.get(parser, "bytes") as
+    | { offset?: () => unknown }
+    | undefined;
+  const offset = byteStream?.offset?.();
+  return typeof offset === "number" && Number.isSafeInteger(offset)
+    ? offset
+    : null;
 }
 
 function pdfIntegerArray(
@@ -362,8 +380,17 @@ function decodeXrefStream(stream: PDFRawStream, expectedBytes: number) {
   if (stream.dict.has(decodeParametersName)) return null;
   if (!stream.dict.has(filterName)) return stream.contents;
 
-  const filter = stream.dict.lookupMaybe(filterName, PDFName);
-  if (filter?.asString() !== "/FlateDecode") return null;
+  const filter = stream.dict.get(filterName);
+  const arrayFilter =
+    filter instanceof PDFArray && filter.size() === 1
+      ? filter.get(0)
+      : undefined;
+  const flateDecode =
+    filter instanceof PDFName
+      ? filter.asString() === "/FlateDecode"
+      : arrayFilter instanceof PDFName &&
+        arrayFilter.asString() === "/FlateDecode";
+  if (!flateDecode) return null;
   try {
     return inflateSync(stream.contents, {
       maxOutputLength: Math.min(
