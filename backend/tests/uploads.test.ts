@@ -282,6 +282,56 @@ describe("design-version uploads", () => {
     expect(await repository.listDesignVersions("project-aurora-villa")).toHaveLength(3);
   });
 
+  it("accepts PDF magic bytes with generic multipart MIME metadata but rejects invalid or mismatched content", async () => {
+    const { app, storage } = setup();
+
+    const emptyMimePdf = await upload(
+      app,
+      users.ananya,
+      "task-furniture-layout",
+      PDF,
+      "generic-empty.pdf",
+      ""
+    );
+    const octetStreamPdf = await upload(
+      app,
+      users.ananya,
+      "task-furniture-layout",
+      PDF,
+      "generic-octet.pdf",
+      "application/octet-stream"
+    );
+    const malformedPdf = await upload(
+      app,
+      users.ananya,
+      "task-furniture-layout",
+      Buffer.from("not really a PDF"),
+      "malformed.pdf",
+      "application/octet-stream"
+    );
+    const mismatchedPng = await upload(
+      app,
+      users.ananya,
+      "task-furniture-layout",
+      PNG,
+      "actually-png.pdf",
+      "application/pdf"
+    );
+
+    expect(emptyMimePdf.status).toBe(201);
+    expect(emptyMimePdf.body.data.mimeType).toBe("application/pdf");
+    expect(octetStreamPdf.status).toBe(201);
+    expect(octetStreamPdf.body.data.mimeType).toBe("application/pdf");
+    expect([...storage.objects.keys()]).toEqual([
+      expect.stringMatching(/\.pdf$/),
+      expect.stringMatching(/\.pdf$/)
+    ]);
+    expect(malformedPdf.status).toBe(415);
+    expect(malformedPdf.body.error.code).toBe("UNSUPPORTED_FILE_TYPE");
+    expect(mismatchedPng.status).toBe(415);
+    expect(mismatchedPng.body.error.code).toBe("UNSUPPORTED_FILE_TYPE");
+  });
+
   it("rolls back the version and deletes the original when extraction enqueue fails", async () => {
     const baseRepository = createMemoryRepository(structuredClone(demoSeedData));
     const storage = new TestStorage();

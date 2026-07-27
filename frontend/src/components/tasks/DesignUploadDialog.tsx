@@ -59,7 +59,7 @@ export function DesignUploadDialog({
       setError("Choose a PDF or image file to upload.");
       return;
     }
-    if (!allowedMimeTypes.has(file.type)) {
+    if (!isSupportedUploadSelection(file)) {
       setError("Only PDF, PNG, JPEG, and WebP files are supported.");
       return;
     }
@@ -130,3 +130,14 @@ const allowedMimeTypes = new Set([
   "image/jpeg",
   "image/webp"
 ]);
+
+const supportedExtensions = new Set([".pdf", ".png", ".jpg", ".jpeg", ".webp"]);
+const genericMimeTypes = new Set(["", "application/octet-stream"]);
+
+export function isSupportedUploadSelection(file: File): boolean {
+  const mimeType = file.type.toLowerCase();
+  if (allowedMimeTypes.has(mimeType)) return true;
+  if (!genericMimeTypes.has(mimeType)) return false;
+  const dot = file.name.lastIndexOf(".");
+  return dot >= 0 && supportedExtensions.has(file.name.slice(dot).toLowerCase());
+}

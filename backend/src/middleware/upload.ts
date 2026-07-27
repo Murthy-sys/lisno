@@ -24,7 +24,8 @@ const allowedClaimedMimeTypes = new Set([
   "application/pdf",
   "image/png",
   "image/jpeg",
-  "image/webp"
+  "image/webp",
+  "application/octet-stream"
 ]);
 
 export function uploadSingleFile(maxUploadBytes: number): RequestHandler {
@@ -97,10 +98,10 @@ export function uploadSingleFile(maxUploadBytes: number): RequestHandler {
       }
 
       const detected = detectFileType(request.file.buffer);
-      if (
-        !detected ||
-        detected.mimeType !== request.file.mimetype.toLowerCase()
-      ) {
+      const claimed = request.file.mimetype.toLowerCase();
+      const claimIsGeneric =
+        claimed === "application/octet-stream" || claimed === "";
+      if (!detected || (!claimIsGeneric && detected.mimeType !== claimed)) {
         next(
           new ApiError(
             415,
