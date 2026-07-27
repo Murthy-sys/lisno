@@ -213,7 +213,7 @@ export function DesignUploadsWorkspace({ projectId }: { projectId: string }) {
       ) : null}
       {actionError ? <div role="alert">{actionError} <button type="button" onClick={() => setActionError("")}>Dismiss</button></div> : null}
 
-      {showCorrections ? activeSections.map((section) => {
+      {showCorrections || terminal ? activeSections.map((section) => {
         const page = pagesById.get(section.revision.sourcePageId);
         if (!page) return null;
         return (

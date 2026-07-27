@@ -287,6 +287,11 @@ describe("DesignUploadsWorkspace", () => {
     await user.click(screen.getByRole("button", { name: /submit sections/i }));
     expect(await screen.findByText(/submitted to the client/i)).toBeVisible();
     expect(screen.getByRole("button", { name: /submit sections/i })).toBeDisabled();
+    expect(screen.getByDisplayValue("Elevation")).toBeDisabled();
+    expect(screen.getByRole("img", { name: "Elevation crop preview" })).toBeVisible();
+    expect(screen.getByText(/Revision 1/)).toBeVisible();
+    expect(screen.queryByRole("group", { name: /crop boundaries/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Save|Remove/ })).not.toBeInTheDocument();
     added.unmount();
 
     installApi("processing_failed");
