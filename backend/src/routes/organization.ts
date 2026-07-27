@@ -65,6 +65,30 @@ export function createOrganizationRouter(
   );
 
   router.get(
+    "/organization/managers/:managerId/designers",
+    protectedRoute,
+    authorizeRoles("design_head"),
+    validateQuery(pageQuery),
+    async (request, response, next) => {
+      try {
+        const pagination = response.locals.validatedQuery;
+        response.json({
+          data: paginatedEnvelope(
+            await hierarchyService.managerDesigners(
+              request.authenticatedUser!,
+              request.params.managerId as string,
+              pagination
+            ),
+            pagination
+          )
+        });
+      } catch (error) {
+        next(error);
+      }
+    }
+  );
+
+  router.get(
     "/designers/:designerId/summary",
     protectedRoute,
     authorizeRoles("designer", "design_manager", "design_head"),

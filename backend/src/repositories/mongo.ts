@@ -102,12 +102,35 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
       return documents.map(mapUser);
     },
 
+    async listUsersByIds(ids) {
+      if (ids.length === 0) return [];
+      const documents = await UserModel.find({ _id: { $in: ids } })
+        .select("+passwordHash")
+        .sort({ name: 1, _id: 1 })
+        .lean()
+        .exec();
+      return documents.map(mapUser);
+    },
+
     async listProjectsForUser(user) {
       const filter = await projectFilterForUser(user);
       const documents = await ProjectModel.find(filter)
         .sort({ name: 1, _id: 1 })
         .lean()
         .exec();
+      return documents.map(mapProject);
+    },
+
+    async listProjectsForDesignerIds(designerIds, limit) {
+      if (designerIds.length === 0) return [];
+      const query = ProjectModel.find({
+        $or: [
+          { initiatingDesignerId: { $in: designerIds } },
+          { assignedDesignerIds: { $in: designerIds } }
+        ]
+      }).sort({ name: 1, _id: 1 });
+      if (limit !== undefined) query.limit(limit);
+      const documents = await query.lean().exec();
       return documents.map(mapProject);
     },
 
@@ -227,6 +250,9 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
           email: manager.email,
           ...(manager.avatar ? { avatar: manager.avatar } : {}),
           ...(manager.title ? { title: manager.title } : {}),
+          designerTotal: mapped.filter(
+            (user) => user.role === "designer" && user.managerId === manager.id
+          ).length,
           designers: mapped
             .filter(
               (user) => user.role === "designer" && user.managerId === manager.id
@@ -254,37 +280,50 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
         UserModel.countDocuments(managerFilter).exec()
       ]);
       const managers = managerDocuments.map(mapUser);
-      const managerIds = managers.map((manager) => manager.id);
-      const designerDocuments =
-        managerIds.length === 0
-          ? []
-          : await UserModel.find({
-              active: true,
-              role: "designer",
-              managerId: { $in: managerIds }
-            })
+      const designerPages = await Promise.all(
+        managers.map(async (manager) => {
+          const filter = {
+            active: true,
+            role: "designer",
+            managerId: manager.id
+          };
+          const [documents, designerTotal] = await Promise.all([
+            UserModel.find(filter)
               .select("+passwordHash")
               .sort({ name: 1, _id: 1 })
+              .limit(20)
               .lean()
-              .exec();
-      const designers = designerDocuments.map(mapUser);
+              .exec(),
+            UserModel.countDocuments(filter).exec()
+          ]);
+          return {
+            managerId: manager.id,
+            designerTotal,
+            designers: documents.map(mapUser)
+          };
+        })
+      );
       return {
-        items: managers.map<ManagerTreeNode>((manager) => ({
-          id: manager.id,
-          name: manager.name,
-          email: manager.email,
-          ...(manager.avatar ? { avatar: manager.avatar } : {}),
-          ...(manager.title ? { title: manager.title } : {}),
-          designers: designers
-            .filter((designer) => designer.managerId === manager.id)
-            .map((designer) => ({
+        items: managers.map<ManagerTreeNode>((manager) => {
+          const designerPage = designerPages.find(
+            (candidate) => candidate.managerId === manager.id
+          )!;
+          return {
+            id: manager.id,
+            name: manager.name,
+            email: manager.email,
+            ...(manager.avatar ? { avatar: manager.avatar } : {}),
+            ...(manager.title ? { title: manager.title } : {}),
+            designerTotal: designerPage.designerTotal,
+            designers: designerPage.designers.map((designer) => ({
               id: designer.id,
               name: designer.name,
               email: designer.email,
               ...(designer.avatar ? { avatar: designer.avatar } : {}),
               ...(designer.title ? { title: designer.title } : {})
             }))
-        })),
+          };
+        }),
         total
       };
     },
@@ -323,21 +362,21 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
       return documents.map(mapTask);
     },
 
-    async listTasksForProjectIds(projectIds) {
+    async listTasksForProjectIds(projectIds, limit) {
       if (projectIds.length === 0) return [];
-      const documents = await TaskModel.find({ projectId: { $in: projectIds } })
-        .sort({ projectId: 1, floorId: 1, stageId: 1, order: 1, _id: 1 })
-        .lean()
-        .exec();
+      const query = TaskModel.find({ projectId: { $in: projectIds } })
+        .sort({ projectId: 1, floorId: 1, stageId: 1, order: 1, _id: 1 });
+      if (limit !== undefined) query.limit(limit);
+      const documents = await query.lean().exec();
       return documents.map(mapTask);
     },
 
-    async listTasksForOwnerIds(ownerIds) {
+    async listTasksForOwnerIds(ownerIds, limit) {
       if (ownerIds.length === 0) return [];
-      const documents = await TaskModel.find({ ownerId: { $in: ownerIds } })
-        .sort({ projectId: 1, floorId: 1, stageId: 1, order: 1, _id: 1 })
-        .lean()
-        .exec();
+      const query = TaskModel.find({ ownerId: { $in: ownerIds } })
+        .sort({ projectId: 1, floorId: 1, stageId: 1, order: 1, _id: 1 });
+      if (limit !== undefined) query.limit(limit);
+      const documents = await query.lean().exec();
       return documents.map(mapTask);
     },
 
@@ -350,13 +389,13 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
       return documents.map(mapFloor);
     },
 
-    async listKpiTasksForPeriod(ownerIds, periodStartAt, periodEndAt) {
-      const documents = await TaskModel.find(
+    async listKpiTasksForPeriod(ownerIds, periodStartAt, periodEndAt, limit) {
+      const query = TaskModel.find(
         kpiTaskFilter(ownerIds, periodStartAt, periodEndAt)
       )
-        .sort({ projectId: 1, floorId: 1, stageId: 1, order: 1, _id: 1 })
-        .lean()
-        .exec();
+        .sort({ projectId: 1, floorId: 1, stageId: 1, order: 1, _id: 1 });
+      if (limit !== undefined) query.limit(limit);
+      const documents = await query.lean().exec();
       return documents.map(mapTask);
     },
 
@@ -509,17 +548,42 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
       return { items: documents.map(mapTaskEvent), total };
     },
 
-    async listKpiTaskEventsForTasks(taskOwners, periodStartAt, periodEndAt) {
+    async listKpiTaskEventsForTasks(
+      taskOwners,
+      periodStartAt,
+      periodEndAt,
+      limit
+    ) {
       if (taskOwners.length === 0) return [];
-      const documents = await TaskEventModel.find({
-        type: { $in: ["status_changed", "progress_changed", "note_added"] },
-        occurredAt: { $gte: date(periodStartAt), $lte: date(periodEndAt) },
-        $or: taskOwners.map((task) => ({ taskId: task.id, actorId: task.ownerId }))
-      })
-        .sort({ occurredAt: 1, _id: 1 })
-        .lean()
-        .exec();
-      return documents.map(mapTaskEvent);
+      const events: TaskEventRecord[] = [];
+      const pairBatchSize = 100;
+      for (
+        let offset = 0;
+        offset < taskOwners.length;
+        offset += pairBatchSize
+      ) {
+        if (events.length >= limit) break;
+        const batch = taskOwners.slice(offset, offset + pairBatchSize);
+        const documents = await TaskEventModel.find({
+          $or: batch.map((task) => ({
+            taskId: task.id,
+            actorId: task.ownerId
+          })),
+          type: { $in: ["status_changed", "progress_changed", "note_added"] },
+          occurredAt: { $gte: date(periodStartAt), $lte: date(periodEndAt) }
+        })
+          .sort({ occurredAt: 1, _id: 1 })
+          .limit(limit - events.length)
+          .lean()
+          .exec();
+        events.push(...documents.map(mapTaskEvent));
+      }
+      return events
+        .sort((left, right) =>
+          left.occurredAt.localeCompare(right.occurredAt) ||
+          left.id.localeCompare(right.id)
+        )
+        .slice(0, limit);
     },
 
     async createDesignVersion(input) {
@@ -585,21 +649,21 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
       return document ? mapDesignVersion(document) : null;
     },
 
-    async listDesignVersions(projectId) {
+    async listDesignVersions(projectId, limit) {
       const query = DesignVersionModel.find({ projectId })
-        .sort({ floorId: 1, stageId: 1, versionNumber: 1, _id: 1 })
-        .lean();
+        .sort({ floorId: 1, stageId: 1, versionNumber: 1, _id: 1 });
+      if (limit !== undefined) query.limit(limit);
       if (session) query.session(session);
-      const documents = await query.exec();
+      const documents = await query.lean().exec();
       return documents.map(mapDesignVersion);
     },
 
-    async listDesignVersionsForTaskIds(taskIds) {
+    async listDesignVersionsForTaskIds(taskIds, limit) {
       if (taskIds.length === 0) return [];
-      const documents = await DesignVersionModel.find({ taskId: { $in: taskIds } })
-        .sort({ taskId: 1, versionNumber: 1, _id: 1 })
-        .lean()
-        .exec();
+      const query = DesignVersionModel.find({ taskId: { $in: taskIds } })
+        .sort({ taskId: 1, versionNumber: 1, _id: 1 });
+      if (limit !== undefined) query.limit(limit);
+      const documents = await query.lean().exec();
       return documents.map(mapDesignVersion);
     },
 
@@ -677,14 +741,14 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
       return documents.map(mapEvaluation);
     },
 
-    async listEvaluationsForSubjectIds(subjectUserIds) {
+    async listEvaluationsForSubjectIds(subjectUserIds, limit) {
       if (subjectUserIds.length === 0) return [];
-      const documents = await EvaluationModel.find({
+      const query = EvaluationModel.find({
         subjectUserId: { $in: subjectUserIds }
       })
-        .sort({ createdAt: -1, _id: -1 })
-        .lean()
-        .exec();
+        .sort({ createdAt: -1, _id: -1 });
+      if (limit !== undefined) query.limit(limit);
+      const documents = await query.lean().exec();
       return documents.map(mapEvaluation);
     },
 

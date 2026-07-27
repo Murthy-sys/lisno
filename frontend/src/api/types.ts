@@ -311,6 +311,11 @@ export interface OrganizationManager {
   };
 }
 
+export interface OrganizationManagerPage
+  extends Omit<OrganizationManager, "designers"> {
+  designers: PageData<OrganizationDesigner>;
+}
+
 export interface Evaluation {
   id: string;
   subjectUserId: string;

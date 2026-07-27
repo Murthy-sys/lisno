@@ -119,6 +119,7 @@ export type TaskRecord =
 export interface TaskChange {
   status?: TaskStatus;
   progress?: number;
+  wasYellow?: boolean;
   currentDeadlineAt?: string;
   completedAt?: string | null;
   latestUpdateAt?: string | null;
@@ -242,6 +243,7 @@ export interface ManagerTreeNode {
   email: string;
   avatar?: string;
   title?: string;
+  designerTotal: number;
   designers: ManagerTreeDesigner[];
 }
 
@@ -310,7 +312,12 @@ export interface AppRepository {
   findUserById(id: string): Promise<UserRecord | null>;
   findUserByEmail(email: string): Promise<UserRecord | null>;
   listUsers(): Promise<UserRecord[]>;
+  listUsersByIds(ids: string[]): Promise<UserRecord[]>;
   listProjectsForUser(user: UserRecord): Promise<ProjectRecord[]>;
+  listProjectsForDesignerIds(
+    designerIds: string[],
+    limit?: number
+  ): Promise<ProjectRecord[]>;
   pageProjectsForUser(
     user: UserRecord,
     pagination: PaginationInput
@@ -331,13 +338,14 @@ export interface AppRepository {
   ): Promise<PageResult<UserRecord>>;
   findTaskById(id: string): Promise<TaskRecord | null>;
   listTasks(filters: TaskFilters): Promise<TaskRecord[]>;
-  listTasksForProjectIds(projectIds: string[]): Promise<TaskRecord[]>;
-  listTasksForOwnerIds(ownerIds: string[]): Promise<TaskRecord[]>;
+  listTasksForProjectIds(projectIds: string[], limit?: number): Promise<TaskRecord[]>;
+  listTasksForOwnerIds(ownerIds: string[], limit?: number): Promise<TaskRecord[]>;
   listFloorsForProjectIds(projectIds: string[]): Promise<FloorRecord[]>;
   listKpiTasksForPeriod(
     ownerIds: string[],
     periodStartAt: string,
-    periodEndAt: string
+    periodEndAt: string,
+    limit?: number
   ): Promise<TaskRecord[]>;
   pageKpiTasksForPeriod(
     ownerIds: string[],
@@ -366,7 +374,8 @@ export interface AppRepository {
   listKpiTaskEventsForTasks(
     taskOwners: Array<Pick<TaskRecord, "id" | "ownerId">>,
     periodStartAt: string,
-    periodEndAt: string
+    periodEndAt: string,
+    limit: number
   ): Promise<TaskEventRecord[]>;
   pageKpiTaskEventsForPeriod(
     taskId: string,
@@ -380,8 +389,14 @@ export interface AppRepository {
     input: NewDesignVersionWithAllocatedNumber
   ): Promise<DesignVersionRecord>;
   findDesignVersionById(id: string): Promise<DesignVersionRecord | null>;
-  listDesignVersions(projectId: string): Promise<DesignVersionRecord[]>;
-  listDesignVersionsForTaskIds(taskIds: string[]): Promise<DesignVersionRecord[]>;
+  listDesignVersions(
+    projectId: string,
+    limit?: number
+  ): Promise<DesignVersionRecord[]>;
+  listDesignVersionsForTaskIds(
+    taskIds: string[],
+    limit?: number
+  ): Promise<DesignVersionRecord[]>;
   listLatestClientVisibleDesignVersions(projectIds: string[]): Promise<DesignVersionRecord[]>;
   pageDesignVersions(
     filters: DesignVersionFilters,
@@ -394,7 +409,8 @@ export interface AppRepository {
   createEvaluation(input: NewEvaluation): Promise<EvaluationRecord>;
   listEvaluationsForSubject(subjectUserId: string): Promise<EvaluationRecord[]>;
   listEvaluationsForSubjectIds(
-    subjectUserIds: string[]
+    subjectUserIds: string[],
+    limit?: number
   ): Promise<EvaluationRecord[]>;
   pageEvaluationsForSubject(
     subjectUserId: string,

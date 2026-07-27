@@ -826,18 +826,26 @@ describe("organization and KPI workflows", () => {
         yellowCount: expect.any(Number),
         evaluationCoverage: 50
       },
-      designers: [
-        {
-          id: "user-designer-ananya",
-          summary: {
-            kpi: { score: expect.any(Number) },
-            projects: expect.arrayContaining([
-              expect.objectContaining({ id: "project-aurora-villa" })
-            ])
-          }
-        },
-        { id: "user-designer-kabir", summary: expect.any(Object) }
-      ]
+      designers: {
+        items: [
+          {
+            id: "user-designer-ananya",
+            summary: {
+              kpi: { score: expect.any(Number) },
+              projects: expect.arrayContaining([
+                expect.objectContaining({ id: "project-aurora-villa" })
+              ])
+            }
+          },
+          { id: "user-designer-kabir", summary: expect.any(Object) }
+        ],
+        pagination: {
+          limit: 20,
+          offset: 0,
+          total: 2,
+          hasMore: false
+        }
+      }
     });
     expect(JSON.stringify(tree.body)).not.toContain("passwordHash");
 
@@ -924,6 +932,30 @@ describe("organization and KPI workflows", () => {
       total: 23,
       hasMore: true
     });
+    const aarav = treeFirst.body.data.items.find(
+      (manager: { id: string }) => manager.id === "user-manager-aarav"
+    );
+    expect(aarav.designers.items).toHaveLength(20);
+    expect(aarav.designers.pagination).toEqual({
+      limit: 20,
+      offset: 0,
+      total: 23,
+      hasMore: true
+    });
+
+    const nestedSecond = await request(app)
+      .get(
+        "/api/v1/organization/managers/user-manager-aarav/designers?limit=20&offset=20"
+      )
+      .set("Authorization", bearer(users.head));
+    expect(nestedSecond.status).toBe(200);
+    expect(nestedSecond.body.data.items).toHaveLength(3);
+    expect(nestedSecond.body.data.pagination).toEqual({
+      limit: 20,
+      offset: 20,
+      total: 23,
+      hasMore: false
+    });
 
     const treeSecond = await request(app)
       .get("/api/v1/organization/tree?limit=20&offset=20")
@@ -943,6 +975,14 @@ describe("organization and KPI workflows", () => {
     let eventBatchCalls = 0;
     const repository = new Proxy(base, {
       get(target, property, receiver) {
+        if (property === "listProjectsForUser") {
+          return async (user: { role: string }) => {
+            if (user.role === "design_head") {
+              throw new Error("head-wide project enumeration invoked");
+            }
+            return target.listProjectsForUser(user as never);
+          };
+        }
         if (property === "listEvaluationsForSubject") {
           return async () => {
             throw new Error("single-subject evaluation read invoked");
@@ -966,6 +1006,115 @@ describe("organization and KPI workflows", () => {
     expect(response.status).toBe(200);
     expect(response.body.data.items).toHaveLength(2);
     expect(eventBatchCalls).toBe(1);
+  });
+
+  it("uses the same version-enriched KPI evidence for personal and hierarchy summaries", async () => {
+    const seed = structuredClone(demoSeedData);
+    const version = seed.designVersions[0]!;
+    seed.designVersions.push(
+      {
+        ...version,
+        id: "version-circulation-1",
+        taskId: "task-circulation",
+        versionNumber: 1,
+        approvalStatus: "draft",
+        reviewerId: null,
+        approvedAt: null,
+        clientVisible: false
+      },
+      {
+        ...version,
+        id: "version-circulation-2",
+        taskId: "task-circulation",
+        versionNumber: 2,
+        approvalStatus: "in_review",
+        reviewerId: "user-manager-aarav",
+        approvedAt: null,
+        clientVisible: false
+      }
+    );
+    const app = createApp({
+      repository: createMemoryRepository(seed),
+      auth,
+      clock
+    });
+    const range =
+      "from=2026-07-01T00%3A00%3A00.000Z&to=2026-07-31T23%3A59%3A59.999Z";
+
+    const personal = await request(app)
+      .get(`/api/v1/kpis/users/user-designer-kabir?${range}`)
+      .set("Authorization", bearer(users.managerAarav));
+    const team = await request(app)
+      .get("/api/v1/organization/team?limit=20&offset=0")
+      .set("Authorization", bearer(users.managerAarav));
+
+    expect(personal.status).toBe(200);
+    expect(team.status).toBe(200);
+    const personalRevision = personal.body.data.components.find(
+      (component: { key: string }) => component.key === "revisionEfficiency"
+    );
+    const hierarchyRevision = team.body.data.items
+      .find(
+        (summary: { user: { id: string } }) =>
+          summary.user.id === "user-designer-kabir"
+      )
+      .kpi.components.find(
+        (component: { key: string }) => component.key === "revisionEfficiency"
+      );
+    expect(personalRevision).toMatchObject({ score: 100, eligibleCount: 1 });
+    expect(hierarchyRevision).toEqual(personalRevision);
+  });
+
+  it("persists yellow risk history before a task recovers", async () => {
+    const { app, repository } = setup();
+
+    const response = await request(app)
+      .patch("/api/v1/tasks/task-circulation")
+      .set("Authorization", bearer(users.kabir))
+      .send({ version: 1, progress: 90 });
+
+    expect(response.status).toBe(200);
+    expect(response.body.data).toMatchObject({ progress: 90, wasYellow: true });
+    await expect(repository.findTaskById("task-circulation")).resolves.toMatchObject({
+      wasYellow: true
+    });
+  });
+
+  it("rejects overlong and over-cardinality KPI reports with structured errors", async () => {
+    const overlong = await request(setup().app)
+      .get(
+        "/api/v1/kpis/users/user-designer-kabir?from=2025-01-01T00%3A00%3A00.000Z&to=2026-07-31T23%3A59%3A59.999Z"
+      )
+      .set("Authorization", bearer(users.managerAarav));
+    expect(overlong.status).toBe(400);
+    expect(overlong.body.error.code).toBe("INVALID_KPI_RANGE");
+
+    const seed = structuredClone(demoSeedData);
+    const template = seed.tasks.find(
+      (task) => task.id === "task-circulation"
+    )!;
+    seed.tasks = seed.tasks.filter(
+      (task) => task.ownerId !== "user-designer-kabir"
+    );
+    seed.tasks.push(
+      ...Array.from({ length: 1001 }, (_, index) => ({
+        ...template,
+        id: `task-cardinality-${index}`,
+        order: index
+      }))
+    );
+    const app = createApp({
+      repository: createMemoryRepository(seed),
+      auth,
+      clock
+    });
+    const cardinality = await request(app)
+      .get(
+        "/api/v1/kpis/users/user-designer-kabir?from=2026-07-01T00%3A00%3A00.000Z&to=2026-07-31T23%3A59%3A59.999Z"
+      )
+      .set("Authorization", bearer(users.managerAarav));
+    expect(cardinality.status).toBe(422);
+    expect(cardinality.body.error.code).toBe("KPI_TASK_LIMIT_EXCEEDED");
   });
 
   it("calculates KPI and risk explanations on read while keeping KPI immutable", async () => {
@@ -1598,6 +1747,70 @@ describe("evaluation and audit workflows", () => {
     expect(response.body.data.pagination).toMatchObject({ total: 102, hasMore: true });
     expect(response.body.data.items).toHaveLength(100);
     expect(response.body.data.items[0]).toMatchObject({ id: "audit-designer-history-100" });
+  });
+
+  it("paginates complete project activity newest first without cross-project leakage", async () => {
+    const { app, repository } = setup();
+    const events = [
+      ["activity-project", "project_created", "project", "project-aurora-villa"],
+      ["activity-status", "task_status_changed", "task", "task-circulation"],
+      ["activity-progress", "task_progress_changed", "task", "task-circulation"],
+      ["activity-deadline", "task_deadline_revised", "task", "task-circulation"],
+      ["activity-upload", "design_version_uploaded", "design_version", "version-aurora-plan-1"],
+      ["activity-approval", "design_version_approval_changed", "design_version", "version-aurora-plan-1"],
+      ["activity-unrelated", "task_progress_changed", "task", "task-overdue-measurement"]
+    ] as const;
+    await Promise.all(
+      events.map(([id, action, entityType, entityId], index) =>
+        repository.appendAuditEvent({
+          id,
+          actorId: "user-manager-aarav",
+          action,
+          entityType,
+          entityId,
+          occurredAt: new Date(Date.UTC(2026, 8, 1, 0, 0, index)).toISOString(),
+          oldValues: {},
+          newValues: {},
+          reason: null
+        })
+      )
+    );
+
+    const first = await request(app)
+      .get(
+        "/api/v1/projects/project-aurora-villa/activity?limit=3&offset=0"
+      )
+      .set("Authorization", bearer(users.managerAarav));
+    expect(first.status).toBe(200);
+    expect(
+      first.body.data.items.map((event: { id: string }) => event.id)
+    ).toEqual(["activity-approval", "activity-upload", "activity-deadline"]);
+    expect(first.body.data.pagination).toEqual({
+      limit: 3,
+      offset: 0,
+      total: 7,
+      hasMore: true
+    });
+
+    const second = await request(app)
+      .get(
+        "/api/v1/projects/project-aurora-villa/activity?limit=3&offset=3"
+      )
+      .set("Authorization", bearer(users.managerAarav));
+    expect(
+      second.body.data.items.map((event: { id: string }) => event.id)
+    ).toEqual(["activity-progress", "activity-status", "activity-project"]);
+    expect(JSON.stringify(second.body)).not.toContain("activity-unrelated");
+
+    const crossTeam = await request(app)
+      .get("/api/v1/projects/project-aurora-villa/activity")
+      .set("Authorization", bearer(users.managerMeera));
+    expect(crossTeam.status).toBe(404);
+
+    const client = await request(app)
+      .get("/api/v1/projects/project-aurora-villa/activity")
+      .set("Authorization", bearer(users.auroraClient));
+    expect(client.status).toBe(403);
   });
 
   it("rolls an evaluation back when its audit append fails", async () => {

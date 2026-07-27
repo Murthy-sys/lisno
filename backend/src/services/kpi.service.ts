@@ -1,15 +1,19 @@
-import { ApiError } from "../middleware/errors.js";
 import { calculateKpi } from "../domain/kpi.js";
 import { calculateTaskRisk } from "../domain/risk.js";
+import { ApiError } from "../middleware/errors.js";
 import type {
   AppRepository,
-  DesignVersionRecord,
   PageResult,
   PaginationInput,
   TaskEventRecord,
   TaskRecord
 } from "../repositories/types.js";
 import type { PublicUser } from "./auth.service.js";
+import {
+  assertKpiPeriod,
+  enrichKpiTasks,
+  MAX_KPI_TASKS
+} from "./kpi-enrichment.service.js";
 import {
   assertDesignerRelationship,
   forbidden,
@@ -101,19 +105,16 @@ export function createKpiService(
       const storedTasks = await repository.listKpiTasksForPeriod(
         ownerIds,
         periodStartAt,
+        periodEndAt,
+        MAX_KPI_TASKS + 1
+      );
+      const tasks = await enrichKpiTasks(
+        repository,
+        storedTasks,
+        periodStartAt,
         periodEndAt
       );
-      const [events, versions] = await Promise.all([
-        repository.listKpiTaskEventsForTasks(storedTasks, periodStartAt, periodEndAt),
-        repository.listDesignVersionsForTaskIds(storedTasks.map((task) => task.id))
-      ]);
-      const eventsByTaskId = groupByTaskId(events);
-      const versionsByTaskId = groupByTaskId(versions);
-      const taskContexts = storedTasks.map((task) => ({
-        task: toKpiTask(task, eventsByTaskId.get(task.id) ?? [], versionsByTaskId.get(task.id) ?? [])
-      }));
       const now = clock();
-      const tasks = taskContexts.map((context) => context.task);
       const result = calculateKpi({
         tasks,
         periodStartAt,
@@ -192,32 +193,36 @@ async function resolveKpiSubject(
   periodEndAt: string
 ) {
   if (actor.role === "client") forbidden();
+  assertKpiPeriod(periodStartAt, periodEndAt);
   const subject = await requireUser(repository, userId);
   if (subject.role === "designer") {
     await assertDesignerRelationship(repository, actor, userId);
   } else if (!(actor.role === "design_head" && subject.role === "design_manager")) {
     forbidden();
   }
-  if (new Date(periodStartAt) > new Date(periodEndAt)) {
-    throw new ApiError(
-      400,
-      "INVALID_DATE_RANGE",
-      "The KPI period start must not follow its end.",
-      { to: "The KPI period end must not precede its start." }
-    );
-  }
   const ownerIds =
     subject.role === "design_manager"
-      ? (await repository.listUsers())
-          .filter(
-            (user) =>
-              user.active &&
-              user.role === "designer" &&
-              user.managerId === subject.id
-          )
-          .map((user) => user.id)
+      ? await managerDesignerIds(repository, subject.id)
       : [subject.id];
   return { subject, ownerIds };
+}
+
+async function managerDesignerIds(
+  repository: AppRepository,
+  managerId: string
+): Promise<string[]> {
+  const page = await repository.pageDesignersForManager(managerId, {
+    limit: MAX_KPI_TASKS + 1,
+    offset: 0
+  });
+  if (page.total > MAX_KPI_TASKS) {
+    throw new ApiError(
+      422,
+      "KPI_SUBJECT_LIMIT_EXCEEDED",
+      `KPI reports support at most ${MAX_KPI_TASKS} designers per manager.`
+    );
+  }
+  return page.items.map((designer) => designer.id);
 }
 
 function toTaskDetail(task: TaskRecord, now: Date): KpiTaskDetail {
@@ -231,51 +236,6 @@ function toTaskDetail(task: TaskRecord, now: Date): KpiTaskDetail {
     plannedEffort: task.plannedEffort,
     risk: calculateTaskRisk(task, now)
   };
-}
-
-function toKpiTask(
-  task: TaskRecord,
-  events: TaskEventRecord[],
-  versions: DesignVersionRecord[]
-): TaskRecord {
-  const orderedVersions = versions.slice().sort(
-    (left, right) =>
-      left.versionNumber - right.versionNumber || left.id.localeCompare(right.id)
-  );
-  const reviewedVersions = orderedVersions.filter(
-    (version) =>
-      version.approvalStatus === "approved" || version.approvalStatus === "rejected"
-  );
-  const latestReview = reviewedVersions.at(-1);
-  const latestApproval = orderedVersions
-    .filter((version) => version.approvalStatus === "approved")
-    .at(-1);
-
-  return {
-    ...task,
-    updateEvents: events.map((event) => ({ occurredAt: event.occurredAt })),
-    approvalStatus: latestApproval
-      ? "approved"
-      : latestReview?.approvalStatus === "rejected"
-        ? "rejected"
-        : orderedVersions.length > 0
-          ? "unapproved"
-          : undefined,
-    approvalVersion: latestApproval?.versionNumber,
-    revisionCount: orderedVersions.length,
-    hasReview: reviewedVersions.length > 0
-  };
-}
-
-function groupByTaskId<T extends { taskId: string | null }>(items: T[]) {
-  const groups = new Map<string, T[]>();
-  for (const item of items) {
-    if (!item.taskId) continue;
-    const group = groups.get(item.taskId) ?? [];
-    group.push(item);
-    groups.set(item.taskId, group);
-  }
-  return groups;
 }
 
 function emptyRiskCounts(): RiskCounts {

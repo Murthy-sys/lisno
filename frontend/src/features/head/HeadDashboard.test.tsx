@@ -24,7 +24,10 @@ describe("HeadDashboard", () => {
             id: "manager-1",
             name: "Aarav Shah",
             email: "aarav@lisno.example",
-            designers: [{ id: "designer-1", name: "Ananya Rao", email: "ananya@lisno.example", summary: { activeProjectCount: 1, workload: 8, overdueCount: 0, yellowRiskCount: 1, pendingEvaluation: false, kpi: { score: 82, components: [] }, projects: [{ id: "project-1", name: "Aurora Villa", progress: 64 }], tasks: [] } }],
+            designers: {
+              items: [{ id: "designer-1", name: "Ananya Rao", email: "ananya@lisno.example", summary: { activeProjectCount: 1, workload: 8, overdueCount: 0, yellowRiskCount: 1, pendingEvaluation: false, kpi: { score: 82, components: [] }, projects: [{ id: "project-1", name: "Aurora Villa", progress: 64 }], tasks: [] } }],
+              pagination: { limit: 20, offset: 0, total: 21, hasMore: true }
+            },
             summary: { teamKpi: { score: 82, components: [] }, workload: 8, redCount: 0, yellowCount: 1, evaluationCoverage: 100 }
           }], pagination: { limit: 100, offset: 0, total: 101, hasMore: true } }
         });
@@ -35,9 +38,17 @@ describe("HeadDashboard", () => {
             id: "manager-2",
             name: "Meera Iyer",
             email: "meera@lisno.example",
-            designers: [],
+            designers: { items: [], pagination: { limit: 20, offset: 0, total: 0, hasMore: false } },
             summary: { teamKpi: { score: 0, components: [] }, workload: 0, redCount: 0, yellowCount: 0, evaluationCoverage: 0 }
           }], pagination: { limit: 100, offset: 100, total: 101, hasMore: false } }
+        });
+      }
+      if (url === "/api/v1/organization/managers/manager-1/designers?limit=100&offset=20") {
+        return Response.json({
+          data: {
+            items: [{ id: "designer-21", name: "Zoya Sen", email: "zoya@lisno.example", activeProjectCount: 0, workload: 2, overdueCount: 0, yellowRiskCount: 0, pendingEvaluation: true, kpi: { score: 70, components: [] }, projects: [], tasks: [], user: { id: "designer-21", name: "Zoya Sen", email: "zoya@lisno.example" } }],
+            pagination: { limit: 100, offset: 20, total: 21, hasMore: false }
+          }
         });
       }
       if (url.startsWith("/api/v1/evaluations/manager-1?")) {
@@ -72,6 +83,7 @@ describe("HeadDashboard", () => {
       "href",
       "/head/projects/project-1"
     );
+    expect(screen.getByText("Zoya Sen")).toBeVisible();
     expect(await screen.findByText(/Head correction/)).toBeVisible();
     expect(screen.getByText(/design_head \(user-head\).*revision of evaluation-previous/)).toBeVisible();
   });

@@ -1,4 +1,5 @@
 import { ApiError } from "../middleware/errors.js";
+import { calculateTaskRisk } from "../domain/risk.js";
 import {
   RepositoryConflictError,
   type AppRepository,
@@ -113,7 +114,9 @@ export function createTaskService(
         await assertDependenciesCompleted(repository, current);
       }
 
-      const occurredAt = clock().toISOString();
+      const now = clock();
+      const occurredAt = now.toISOString();
+      const observedYellow = calculateTaskRisk(current, now).level === "yellow";
       return repository.runInTransaction(async (transaction) => {
         let updated: TaskRecord;
         try {
@@ -123,6 +126,7 @@ export function createTaskService(
             ...(input.description !== undefined
               ? { description: input.description }
               : {}),
+            ...(current.wasYellow || observedYellow ? { wasYellow: true } : {}),
             ...(nextStatus === "completed" ? { completedAt: occurredAt } : {}),
             latestUpdateAt: occurredAt
           });
@@ -214,12 +218,15 @@ export function createTaskService(
         );
       }
 
-      const occurredAt = clock().toISOString();
+      const now = clock();
+      const occurredAt = now.toISOString();
+      const observedYellow = calculateTaskRisk(current, now).level === "yellow";
       return repository.runInTransaction(async (transaction) => {
         let updated: TaskRecord;
         try {
           updated = await transaction.updateTask(taskId, input.version, {
             currentDeadlineAt: input.currentDeadlineAt,
+            ...(current.wasYellow || observedYellow ? { wasYellow: true } : {}),
             latestUpdateAt: occurredAt
           });
         } catch (error) {

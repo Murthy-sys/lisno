@@ -147,6 +147,13 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
       return clone([...state.users].sort(byNameThenId));
     },
 
+    async listUsersByIds(ids) {
+      const selected = new Set(ids);
+      return clone(
+        state.users.filter((user) => selected.has(user.id)).sort(byNameThenId)
+      );
+    },
+
     async listProjectsForUser(user) {
       const directReportIds =
         user.role === "design_manager"
@@ -176,6 +183,18 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
       });
 
       return clone([...projects].sort(byNameThenId));
+    },
+
+    async listProjectsForDesignerIds(designerIds, limit) {
+      const ids = new Set(designerIds);
+      const projects = state.projects
+        .filter(
+          (project) =>
+            ids.has(project.initiatingDesignerId) ||
+            project.assignedDesignerIds.some((id) => ids.has(id))
+        )
+        .sort(byNameThenId);
+      return clone(limit === undefined ? projects : projects.slice(0, limit));
     },
 
     async pageProjectsForUser(user, pagination) {
@@ -252,6 +271,12 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
           email: manager.email,
           ...(manager.avatar ? { avatar: manager.avatar } : {}),
           ...(manager.title ? { title: manager.title } : {}),
+          designerTotal: state.users.filter(
+            (user) =>
+              user.active &&
+              user.role === "designer" &&
+              user.managerId === manager.id
+          ).length,
           designers: state.users
             .filter(
               (user) =>
@@ -271,7 +296,14 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
     },
 
     async pageOrganizationManagers(pagination) {
-      return paginate(await implementation.getOrganizationTree(), pagination);
+      const page = paginate(await implementation.getOrganizationTree(), pagination);
+      return {
+        ...page,
+        items: page.items.map((manager) => ({
+          ...manager,
+          designers: manager.designers.slice(0, 20)
+        }))
+      };
     },
 
     async pageDesignersForManager(managerId, pagination) {
@@ -304,14 +336,16 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
       );
     },
 
-    async listTasksForProjectIds(projectIds) {
+    async listTasksForProjectIds(projectIds, limit) {
       const ids = new Set(projectIds);
-      return clone(state.tasks.filter((task) => ids.has(task.projectId)).sort(compareTasks));
+      const tasks = state.tasks.filter((task) => ids.has(task.projectId)).sort(compareTasks);
+      return clone(limit === undefined ? tasks : tasks.slice(0, limit));
     },
 
-    async listTasksForOwnerIds(ownerIds) {
+    async listTasksForOwnerIds(ownerIds, limit) {
       const ids = new Set(ownerIds);
-      return clone(state.tasks.filter((task) => ids.has(task.ownerId)).sort(compareTasks));
+      const tasks = state.tasks.filter((task) => ids.has(task.ownerId)).sort(compareTasks);
+      return clone(limit === undefined ? tasks : tasks.slice(0, limit));
     },
 
     async listFloorsForProjectIds(projectIds) {
@@ -327,16 +361,15 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
       );
     },
 
-    async listKpiTasksForPeriod(ownerIds, periodStartAt, periodEndAt) {
-      return clone(
-        state.tasks
+    async listKpiTasksForPeriod(ownerIds, periodStartAt, periodEndAt, limit) {
+      const tasks = state.tasks
           .filter(
             (task) =>
               ownerIds.includes(task.ownerId) &&
               overlapsPeriod(task, periodStartAt, periodEndAt)
           )
-          .sort(compareTasks)
-      );
+          .sort(compareTasks);
+      return clone(limit === undefined ? tasks : tasks.slice(0, limit));
     },
 
     async pageKpiTasksForPeriod(
@@ -457,16 +490,20 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
       return paginate(events, pagination);
     },
 
-    async listKpiTaskEventsForTasks(taskOwners, periodStartAt, periodEndAt) {
+    async listKpiTaskEventsForTasks(
+      taskOwners,
+      periodStartAt,
+      periodEndAt,
+      limit
+    ) {
       const ownerByTaskId = new Map(taskOwners.map((task) => [task.id, task.ownerId]));
-      return clone(
-        state.taskEvents
+      const events = state.taskEvents
           .filter((event) =>
             ownerByTaskId.get(event.taskId) === event.actorId &&
             matchesKpiEvent(event, event.taskId, event.actorId, periodStartAt, periodEndAt)
           )
-          .sort((left, right) => byDateThenId("occurredAt", left, right))
-      );
+          .sort((left, right) => byDateThenId("occurredAt", left, right));
+      return clone(limit === undefined ? events : events.slice(0, limit));
     },
 
     async createDesignVersion(input) {
@@ -521,9 +558,8 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
       return copyOrNull(state.designVersions.find((version) => version.id === id));
     },
 
-    async listDesignVersions(projectId) {
-      return clone(
-        state.designVersions
+    async listDesignVersions(projectId, limit) {
+      const versions = state.designVersions
           .filter((version) => version.projectId === projectId)
           .sort(
             (left, right) =>
@@ -531,17 +567,16 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
               left.stageId.localeCompare(right.stageId) ||
               left.versionNumber - right.versionNumber ||
               left.id.localeCompare(right.id)
-          )
-      );
+          );
+      return clone(limit === undefined ? versions : versions.slice(0, limit));
     },
 
-    async listDesignVersionsForTaskIds(taskIds) {
+    async listDesignVersionsForTaskIds(taskIds, limit) {
       const ids = new Set(taskIds);
-      return clone(
-        state.designVersions
+      const versions = state.designVersions
           .filter((version) => version.taskId !== null && ids.has(version.taskId))
-          .sort((left, right) => left.taskId!.localeCompare(right.taskId!) || left.versionNumber - right.versionNumber || left.id.localeCompare(right.id))
-      );
+          .sort((left, right) => left.taskId!.localeCompare(right.taskId!) || left.versionNumber - right.versionNumber || left.id.localeCompare(right.id));
+      return clone(limit === undefined ? versions : versions.slice(0, limit));
     },
 
     async listLatestClientVisibleDesignVersions(projectIds) {
@@ -602,13 +637,12 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
       );
     },
 
-    async listEvaluationsForSubjectIds(subjectUserIds) {
+    async listEvaluationsForSubjectIds(subjectUserIds, limit) {
       const ids = new Set(subjectUserIds);
-      return clone(
-        state.evaluations
+      const evaluations = state.evaluations
           .filter((evaluation) => ids.has(evaluation.subjectUserId))
-          .sort((left, right) => byDateThenId("createdAt", right, left))
-      );
+          .sort((left, right) => byDateThenId("createdAt", right, left));
+      return clone(limit === undefined ? evaluations : evaluations.slice(0, limit));
     },
 
     async pageEvaluationsForSubject(subjectUserId, pagination) {

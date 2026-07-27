@@ -9,6 +9,7 @@ import {
 import { validateQuery } from "../middleware/validate.js";
 import type { AuditService } from "../services/audit.service.js";
 import type { AuthService } from "../services/auth.service.js";
+import type { ProjectActivityService } from "../services/project-activity.service.js";
 
 const querySchema = z
   .object({
@@ -22,9 +23,34 @@ const querySchema = z
 
 export function createAuditRouter(
   authService: AuthService,
-  auditService: AuditService
+  auditService: AuditService,
+  projectActivityService: ProjectActivityService
 ): Router {
   const router = Router();
+
+  router.get(
+    "/projects/:projectId/activity",
+    authenticate(authService),
+    authorizeRoles("design_manager", "design_head"),
+    validateQuery(z.object(paginationShape).strict()),
+    async (request, response, next) => {
+      try {
+        const pagination = response.locals.validatedQuery;
+        response.json({
+          data: paginatedEnvelope(
+            await projectActivityService.list(
+              request.authenticatedUser!,
+              request.params.projectId as string,
+              pagination
+            ),
+            pagination
+          )
+        });
+      } catch (error) {
+        next(error);
+      }
+    }
+  );
 
   router.get(
     "/designers/:designerId/audit",

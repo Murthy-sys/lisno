@@ -23,6 +23,7 @@ import { createEvaluationService } from "./services/evaluation.service.js";
 import { createDesignVersionService } from "./services/design-version.service.js";
 import { createHierarchyService } from "./services/hierarchy.service.js";
 import { createKpiService } from "./services/kpi.service.js";
+import { createProjectActivityService } from "./services/project-activity.service.js";
 import { createProjectService } from "./services/project.service.js";
 import { createTaskService } from "./services/task.service.js";
 import { systemClock, type Clock } from "./services/workflow.js";
@@ -48,6 +49,7 @@ export function createApp(dependencies: AppDependencies) {
   const maxUploadBytes = dependencies.maxUploadBytes ?? 25 * 1024 * 1024;
   const authService = createAuthService(repository, dependencies.auth);
   const auditService = createAuditService(repository);
+  const projectActivityService = createProjectActivityService(repository);
   const projectService = createProjectService(repository, auditService, clock);
   const taskService = createTaskService(repository, auditService, clock);
   const hierarchyService = createHierarchyService(repository, clock);
@@ -77,7 +79,10 @@ export function createApp(dependencies: AppDependencies) {
       maxUploadBytes
     )
   );
-  app.use("/api/v1", createAuditRouter(authService, auditService));
+  app.use(
+    "/api/v1",
+    createAuditRouter(authService, auditService, projectActivityService)
+  );
   app.use(notFoundHandler);
   app.use(errorHandler);
 
