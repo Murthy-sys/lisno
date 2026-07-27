@@ -24,7 +24,7 @@ _DEFAULT_RESERVED_TERMS = (
     "title block",
     "dimensions",
 )
-_DEFAULT_MATERIAL_SPEC_TERMS = (
+DEFAULT_MATERIAL_SPEC_TERMS = (
     "aluminium",
     "aluminum",
     "brass",
@@ -61,6 +61,34 @@ DEFAULT_PLAN_TYPES = (
     "plumbing",
     "furniture layout",
 )
+DEFAULT_ROOM_TYPES = (
+    "living room",
+    "bedroom",
+    "master bedroom",
+    "guest bedroom",
+    "kids bedroom",
+    "kitchen",
+    "dining room",
+    "bathroom",
+    "toilet",
+    "powder room",
+    "foyer",
+    "lobby",
+    "corridor",
+    "passage",
+    "utility",
+    "utility room",
+    "study",
+    "family room",
+    "pooja room",
+    "prayer room",
+    "balcony",
+    "terrace",
+    "garage",
+    "store",
+    "store room",
+    "pantry",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,8 +99,9 @@ class LayoutSettings:
     min_region_area_ratio: float
     duplicate_iou: float
     reserved_bottom_ratio: float
-    material_spec_terms: tuple[str, ...] = _DEFAULT_MATERIAL_SPEC_TERMS
+    material_spec_terms: tuple[str, ...] = DEFAULT_MATERIAL_SPEC_TERMS
     accepted_plan_types: tuple[str, ...] = DEFAULT_PLAN_TYPES
+    accepted_room_types: tuple[str, ...] = DEFAULT_ROOM_TYPES
 
     @classmethod
     def defaults(cls) -> LayoutSettings:
@@ -83,8 +112,9 @@ class LayoutSettings:
             min_region_area_ratio=0.03,
             duplicate_iou=0.65,
             reserved_bottom_ratio=0.18,
-            material_spec_terms=_DEFAULT_MATERIAL_SPEC_TERMS,
+            material_spec_terms=DEFAULT_MATERIAL_SPEC_TERMS,
             accepted_plan_types=DEFAULT_PLAN_TYPES,
+            accepted_room_types=DEFAULT_ROOM_TYPES,
         )
 
     @classmethod
@@ -112,9 +142,15 @@ class LayoutSettings:
                 defaults.material_spec_terms,
                 os.environ.get("OCR_MATERIAL_SPEC_TERMS"),
             ),
-            accepted_plan_types=_accepted_plan_types(
+            accepted_plan_types=_configured_terms(
+                "OCR_ACCEPTED_PLAN_TYPES",
                 os.environ.get("OCR_ACCEPTED_PLAN_TYPES"),
                 defaults.accepted_plan_types,
+            ),
+            accepted_room_types=_configured_terms(
+                "OCR_ACCEPTED_ROOM_TYPES",
+                os.environ.get("OCR_ACCEPTED_ROOM_TYPES"),
+                defaults.accepted_room_types,
             ),
         )
 
@@ -132,7 +168,8 @@ def normalize_matching_text(text: str) -> str:
     return re.sub(r"[^a-z0-9]+", " ", text.casefold()).strip()
 
 
-def _accepted_plan_types(
+def _configured_terms(
+    name: str,
     raw: str | None,
     defaults: tuple[str, ...],
 ) -> tuple[str, ...]:
@@ -145,9 +182,7 @@ def _accepted_plan_types(
     )
     unique = tuple(dict.fromkeys(values))
     if not unique:
-        raise ValueError(
-            "OCR_ACCEPTED_PLAN_TYPES must contain at least one plan type."
-        )
+        raise ValueError(f"{name} must contain at least one value.")
     return unique
 
 

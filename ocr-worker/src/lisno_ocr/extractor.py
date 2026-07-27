@@ -24,12 +24,16 @@ from .settings import LayoutSettings
 from .title_classifier import OcrLine, classify_drawing_titles
 
 
+_MAX_CLASSIFIER_LINES = 2_000
+
+
 class Extractor:
     def __init__(self, ocr_engine: Any | None = None, render_scale: float = 2.0,
                  confidence_floor: float = 0.2, max_pdf_pages: int = 50,
                  max_page_pixels: int = 40_000_000,
                  max_output_bytes: int = 64_000_000,
                  accepted_plan_types: Sequence[str] | None = None):
+        classifier_settings = LayoutSettings.from_environment()
         self._ocr_engine = ocr_engine
         self._render_scale = render_scale
         self._confidence_floor = confidence_floor
@@ -39,8 +43,9 @@ class Extractor:
         self._accepted_plan_types = tuple(
             accepted_plan_types
             if accepted_plan_types is not None
-            else LayoutSettings.from_environment().accepted_plan_types
+            else classifier_settings.accepted_plan_types
         )
+        self._accepted_room_types = classifier_settings.accepted_room_types
 
     def extract(self, source_path: str | Path) -> list[ExtractedPage]:
         path = Path(source_path)
@@ -120,13 +125,18 @@ class Extractor:
         regions = _drawing_regions(
             image, [box for box, _, _ in recognized]
         )
+        eligible_lines: list[OcrLine] = []
+        for box, label, confidence in recognized:
+            if not label or confidence < self._confidence_floor:
+                continue
+            eligible_lines.append(OcrLine(box, label, confidence))
+            # Keep title work bounded before the separate 500-crop output cap.
+            if len(eligible_lines) >= _MAX_CLASSIFIER_LINES:
+                break
         titles = classify_drawing_titles(
-            [
-                OcrLine(box, label, confidence)
-                for box, label, confidence in recognized
-                if label and confidence >= self._confidence_floor
-            ],
+            eligible_lines,
             self._accepted_plan_types,
+            self._accepted_room_types,
         )
         page_base64 = _png_base64(image)
         used = _decoded_base64_size(page_base64)

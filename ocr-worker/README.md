@@ -40,6 +40,11 @@ service; do not delete it during routine deployments.
   Values are normalized and deduplicated, and the setting must contain at
   least one family. Directional front, rear/back, side, left, and right
   elevations are always supported.
+- `OCR_ACCEPTED_ROOM_TYPES` — comma-separated room names allowed when the
+  `room` plan family is enabled. Defaults cover common rooms such as living
+  rooms, bedrooms, kitchens, dining rooms, bathrooms, circulation, utility,
+  study, prayer, outdoor, garage, store, and pantry spaces. Values are
+  normalized, deduplicated, and isolated from non-room plan families.
 - `OCR_MAX_PDF_PAGES`, `OCR_MAX_PAGE_PIXELS`, and `OCR_MAX_OUTPUT_BYTES` bound
   PDF rendering, decompression, and generated page/crop payloads. Output
   defaults to 40 MiB and cannot exceed 44 MiB so base64 and JSON overhead stay
@@ -71,7 +76,8 @@ bounded pixel crops. Only configured plan families and directional elevation
 titles seed proposals. Legends, notes, key plans, dimensions, symbols,
 standalone room labels, material callouts, sections, details, diagrams, and
 schedules are excluded before title matching. OCR labels and crops are proposals
-a designer must verify.
+a designer must verify. At most 2,000 confidence-eligible OCR lines reach title
+classification and at most 500 accepted titles reach crop encoding per page.
 
 ## Health and recovery
 

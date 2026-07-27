@@ -162,6 +162,36 @@ def test_candidate_cap_stops_crop_encoding_before_candidate_501(monkeypatch):
     assert encoded == 501  # one page plus exactly 500 crops
 
 
+def test_classifier_input_is_bounded_before_the_output_candidate_cap(
+    monkeypatch,
+):
+    labels = 2_001
+    ocr = FakePaddleOCR3([{
+        "rec_boxes": [[1, 1, 20, 20]] * labels,
+        "rec_texts": [f"Floor Plan – Wing {index}" for index in range(labels)],
+        "rec_scores": [0.9] * labels,
+    }])
+    received = []
+    from lisno_ocr import extractor as module
+
+    def bounded_classifier(lines, _plan_types, _room_types):
+        received.append(len(lines))
+        return ()
+
+    monkeypatch.setattr(
+        module,
+        "classify_drawing_titles",
+        bounded_classifier,
+    )
+
+    sections = Extractor(ocr_engine=ocr).extract(
+        FIXTURES / "labeled-plan.png"
+    )[0].sections
+
+    assert received == [2_000]
+    assert sections == ()
+
+
 def test_output_budget_stops_before_encoding_later_candidates(monkeypatch):
     ocr = FakePaddleOCR3([{
         "rec_boxes": [[1, 1, 20, 20], [30, 30, 60, 60]],

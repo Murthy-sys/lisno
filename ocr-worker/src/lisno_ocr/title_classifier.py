@@ -5,6 +5,8 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import TypeAlias
 
+from .settings import DEFAULT_MATERIAL_SPEC_TERMS, DEFAULT_ROOM_TYPES
+
 
 Box: TypeAlias = tuple[int, int, int, int]
 
@@ -26,6 +28,9 @@ _EXCLUDED_PHRASES = (
 )
 _EXCLUDED_WORDS = frozenset(
     {
+        "arrow",
+        "callout",
+        "cloud",
         "detail",
         "details",
         "diagram",
@@ -51,45 +56,42 @@ _EXCLUDED_WORDS = frozenset(
         "symbols",
     }
 )
-_CALLOUT_WORDS = frozenset(
+_DIRECTIVE_PHRASES = (
+    "refer to",
+    "see",
+    "as per",
+    "typical",
+    "note",
+    "verify",
+    "provide",
+    "do not",
+    "not for construction",
+)
+_FLOOR_QUALIFIERS = frozenset(
     {
-        "aluminium",
-        "aluminum",
-        "brass",
-        "concrete",
-        "fabric",
-        "glass",
-        "granite",
-        "grout",
-        "laminate",
-        "marble",
-        "metal",
-        "paint",
-        "plaster",
-        "plywood",
-        "quartz",
-        "stone",
-        "steel",
-        "teak",
-        "tile",
-        "timber",
-        "veneer",
-        "wallpaper",
-        "wood",
+        "basement",
+        "ground floor",
+        "first floor",
+        "second floor",
+        "third floor",
+        "upper floor",
+        "lower floor",
     }
 )
-_NOTE_WORDS = frozenset(
+_DIRECTIONAL_QUALIFIERS = frozenset(
     {
-        "all",
-        "approved",
-        "continue",
-        "existing",
-        "match",
-        "provide",
-        "refer",
-        "typical",
+        "front",
+        "rear",
+        "back",
+        "left",
+        "right",
+        "north",
+        "south",
+        "east",
+        "west",
     }
 )
+_MATERIAL_SPEC_TERMS = frozenset(DEFAULT_MATERIAL_SPEC_TERMS)
 _DASHES = str.maketrans(
     {
         "\u2010": "-",
@@ -100,6 +102,8 @@ _DASHES = str.maketrans(
         "\u2212": "-",
     }
 )
+_NEIGHBOR_WINDOW = 8
+_DEDUPE_CELL_SIZE = 128
 
 
 @dataclass(frozen=True, slots=True)
@@ -119,8 +123,10 @@ class DrawingTitle:
 def classify_drawing_titles(
     lines: Sequence[OcrLine],
     accepted_plan_types: Sequence[str],
+    accepted_room_types: Sequence[str] = DEFAULT_ROOM_TYPES,
 ) -> tuple[DrawingTitle, ...]:
     plan_types = _normalized_plan_types(accepted_plan_types)
+    room_types = _normalized_plan_types(accepted_room_types)
     ordered = sorted(
         (line for line in lines if line.text.strip()),
         key=lambda line: (line.box[1], line.box[0]),
@@ -132,14 +138,20 @@ def classify_drawing_titles(
         if index in consumed:
             continue
         comparison = _comparison_text(line.text)
-        if not _is_supported_title(comparison, plan_types):
+        if not _is_supported_title(comparison, plan_types, room_types):
             continue
 
         label = _display_text(line.text)
         box = line.box
         confidence = line.confidence
         if _is_bare_drawing_type(comparison, plan_types):
-            neighbor = _adjacent_qualifier(ordered, index, consumed, plan_types)
+            neighbor = _adjacent_qualifier(
+                ordered,
+                index,
+                consumed,
+                plan_types,
+                room_types,
+            )
             if neighbor is not None:
                 neighbor_index, qualifier, qualifier_precedes = neighbor
                 consumed.add(neighbor_index)
@@ -155,15 +167,29 @@ def classify_drawing_titles(
         titles.append(DrawingTitle(box, label, float(confidence)))
 
     deduplicated: list[DrawingTitle] = []
+    spatial_index: dict[
+        tuple[str, int, int],
+        set[DrawingTitle],
+    ] = {}
     for title in sorted(titles, key=lambda item: (item.box[1], item.box[0])):
         normalized_label = _comparison_text(title.label)
-        if any(
-            _comparison_text(existing.label) == normalized_label
-            and _boxes_overlap(existing.box, title.box)
-            for existing in deduplicated
-        ):
+        cells = _box_cells(title.box)
+        nearby = {
+            existing
+            for cell_x, cell_y in cells
+            for existing in spatial_index.get(
+                (normalized_label, cell_x, cell_y),
+                (),
+            )
+        }
+        if any(_boxes_overlap(existing.box, title.box) for existing in nearby):
             continue
         deduplicated.append(title)
+        for cell_x, cell_y in cells:
+            spatial_index.setdefault(
+                (normalized_label, cell_x, cell_y),
+                set(),
+            ).add(title)
     return tuple(deduplicated)
 
 
@@ -185,23 +211,29 @@ def _display_text(text: str) -> str:
     return " ".join(text.split())
 
 
-def _is_supported_title(text: str, plan_types: tuple[str, ...]) -> bool:
+def _is_supported_title(
+    text: str,
+    plan_types: tuple[str, ...],
+    room_types: tuple[str, ...],
+) -> bool:
     if not text or _is_excluded(text):
         return False
     if _matches_directional_elevation(text):
         return True
-    return _matches_plan_title(text, plan_types)
+    return _matches_plan_title(text, plan_types, room_types)
 
 
 def _is_excluded(text: str) -> bool:
     words = set(text.split())
     if re.match(r"^\d+\s+", text):
         return True
+    if any(_contains_phrase(text, phrase) for phrase in _DIRECTIVE_PHRASES):
+        return True
     if any(phrase in text for phrase in _EXCLUDED_PHRASES):
         return True
     if words & _EXCLUDED_WORDS:
         return True
-    if words & _CALLOUT_WORDS:
+    if words & _MATERIAL_SPEC_TERMS:
         return True
     if "scale" in words:
         return True
@@ -227,7 +259,11 @@ def _matches_directional_elevation(text: str) -> bool:
     )
 
 
-def _matches_plan_title(text: str, plan_types: tuple[str, ...]) -> bool:
+def _matches_plan_title(
+    text: str,
+    plan_types: tuple[str, ...],
+    room_types: tuple[str, ...],
+) -> bool:
     for plan_type in plan_types:
         if plan_type == "room":
             continue
@@ -241,7 +277,18 @@ def _matches_plan_title(text: str, plan_types: tuple[str, ...]) -> bool:
     if "room" not in plan_types or not text.endswith(" plan"):
         return False
     qualifier = text.removesuffix(" plan").strip()
-    return _is_qualifier(qualifier, plan_types)
+    return _matches_room_qualifier(qualifier, room_types)
+
+
+def _matches_room_qualifier(
+    qualifier: str,
+    room_types: tuple[str, ...],
+) -> bool:
+    return any(
+        qualifier == room_type
+        or re.fullmatch(rf"{re.escape(room_type)}\s+\d+", qualifier)
+        for room_type in room_types
+    )
 
 
 def _is_bare_drawing_type(text: str, plan_types: tuple[str, ...]) -> bool:
@@ -256,12 +303,16 @@ def _adjacent_qualifier(
     title_index: int,
     consumed: set[int],
     plan_types: tuple[str, ...],
+    room_types: tuple[str, ...],
 ) -> tuple[int, OcrLine, bool] | None:
     title = lines[title_index]
     neighbors: list[tuple[int, int, OcrLine, bool]] = []
-    for neighbor_index, qualifier in enumerate(lines):
+    start = max(0, title_index - _NEIGHBOR_WINDOW)
+    stop = min(len(lines), title_index + _NEIGHBOR_WINDOW + 1)
+    for neighbor_index in range(start, stop):
         if neighbor_index == title_index or neighbor_index in consumed:
             continue
+        qualifier = lines[neighbor_index]
         if qualifier.box[3] <= title.box[1]:
             precedes = True
             gap = title.box[1] - qualifier.box[3]
@@ -272,8 +323,12 @@ def _adjacent_qualifier(
             continue
         qualifier_text = _comparison_text(qualifier.text)
         if (
-            _is_qualifier(qualifier_text, plan_types)
-            and not _is_supported_title(qualifier_text, plan_types)
+            _is_controlled_qualifier(qualifier_text, room_types)
+            and not _is_supported_title(
+                qualifier_text,
+                plan_types,
+                room_types,
+            )
             and _is_title_neighbor(qualifier.box, title.box, precedes)
         ):
             neighbors.append((gap, neighbor_index, qualifier, precedes))
@@ -286,23 +341,36 @@ def _adjacent_qualifier(
     return neighbor_index, qualifier, precedes
 
 
-def _is_qualifier(text: str, plan_types: tuple[str, ...]) -> bool:
+def _is_controlled_qualifier(
+    text: str,
+    room_types: tuple[str, ...],
+) -> bool:
     if not text or len(text) > 64 or len(text.split()) > 8:
         return False
     if _is_excluded(text):
         return False
-    words = set(text.split())
-    if words & _NOTE_WORDS:
-        return False
-    if _matches_directional_elevation(text):
-        return False
-    if any(
-        text == f"{plan_type} plan"
-        for plan_type in plan_types
-        if plan_type != "room"
-    ):
-        return False
-    return any(character.isalpha() for character in text)
+    return (
+        _matches_room_qualifier(text, room_types)
+        or _matches_residence_qualifier(text)
+        or _matches_floor_qualifier(text)
+        or text in _DIRECTIONAL_QUALIFIERS
+    )
+
+
+def _matches_residence_qualifier(text: str) -> bool:
+    return bool(
+        re.fullmatch(r"[a-z0-9]+(?:\s+[a-z0-9]+){0,3}\s+residence", text)
+    )
+
+
+def _matches_floor_qualifier(text: str) -> bool:
+    return text in _FLOOR_QUALIFIERS or bool(
+        re.fullmatch(r"level\s+[a-z0-9]+", text)
+    )
+
+
+def _contains_phrase(text: str, phrase: str) -> bool:
+    return f" {phrase} " in f" {text} "
 
 
 def _is_title_neighbor(
@@ -340,4 +408,17 @@ def _boxes_overlap(first: Box, second: Box) -> bool:
     return (
         max(first[0], second[0]) < min(first[2], second[2])
         and max(first[1], second[1]) < min(first[3], second[3])
+    )
+
+
+def _box_cells(box: Box) -> tuple[tuple[int, int], ...]:
+    left, top, right, bottom = box
+    first_x = min(left, right - 1) // _DEDUPE_CELL_SIZE
+    last_x = max(left, right - 1) // _DEDUPE_CELL_SIZE
+    first_y = min(top, bottom - 1) // _DEDUPE_CELL_SIZE
+    last_y = max(top, bottom - 1) // _DEDUPE_CELL_SIZE
+    return tuple(
+        (cell_x, cell_y)
+        for cell_y in range(first_y, last_y + 1)
+        for cell_x in range(first_x, last_x + 1)
     )
