@@ -19,6 +19,7 @@ const environmentSchema = z.object({
   UPLOADS_DIR: z.string().default("uploads"),
   MAX_UPLOAD_MB: z.coerce.number().positive().default(25),
   OCR_LEASE_SECONDS: z.coerce.number().int().positive().default(300),
+  OCR_CONFIDENCE_FLOOR: z.coerce.number().min(0).max(1).default(0.2),
   OCR_WORKER_TOKEN: z.string().min(32)
 });
 

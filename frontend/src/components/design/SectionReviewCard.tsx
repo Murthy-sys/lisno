@@ -34,6 +34,15 @@ export function SectionReviewCard({
           dataRevision={revision.revisionNumber}
         />
       </figure>
+      <details>
+        <summary>View source page</summary>
+        <figure className="section-review-card__source-page">
+          <ProtectedImage
+            source={section.sourcePageUrl}
+            alt={`Source page for ${section.label}`}
+          />
+        </figure>
+      </details>
       {revision.rejectionComment ? <p className="client-comment"><strong>Client comment:</strong> {revision.rejectionComment}</p> : null}
       <section className="section-review-history-panel" aria-label={`Revision history for ${section.label}`}>
         <h4>Revision history ({section.history.length})</h4>

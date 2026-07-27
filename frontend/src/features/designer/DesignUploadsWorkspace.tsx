@@ -44,9 +44,7 @@ export function DesignUploadsWorkspace({ projectId }: { projectId: string }) {
   }, [selected, selectedVersionId]);
 
   const canReadSections = selected?.extractionStatus !== "queued" &&
-    selected?.extractionStatus !== "processing" &&
-    selected?.extractionStatus !== "submitted" &&
-    selected?.extractionStatus !== "approved";
+    selected?.extractionStatus !== "processing";
   const sectionsQuery = useQuery({
     queryKey: designerKeys.designSections(selected?.id ?? ""),
     queryFn: () => getDesignSections(selected!.id),

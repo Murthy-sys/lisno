@@ -65,6 +65,20 @@ def test_uses_paddleocr3_predict_and_parses_structured_results():
     assert all(section.image_base64 for section in sections)
 
 
+def test_filters_candidates_below_configured_confidence_floor():
+    ocr = FakePaddleOCR3([{
+        "rec_boxes": [[1, 1, 20, 20], [30, 30, 60, 60]],
+        "rec_texts": ["Noise", "Ambiguous elevation"],
+        "rec_scores": [0.19, 0.2],
+    }])
+
+    sections = Extractor(ocr_engine=ocr, confidence_floor=0.2).extract(
+        FIXTURES / "labeled-plan.png"
+    )[0].sections
+
+    assert [section.label for section in sections] == ["Ambiguous elevation"]
+
+
 def test_legacy_ocr_output_remains_a_fallback():
     result = [
         [

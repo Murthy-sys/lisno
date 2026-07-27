@@ -132,7 +132,7 @@ describe("OCR extraction worker contract", () => {
       .expect(401);
   });
 
-  it("atomically leases one job and returns a claim-authenticated source URL", async () => {
+  it("atomically leases one job and keeps the claim token out of the source URL", async () => {
     const { app } = await setup();
 
     const [first, second] = await Promise.all([claim(app), claim(app)]);
@@ -156,21 +156,43 @@ describe("OCR extraction worker contract", () => {
     expect(claimed?.body.data.sourceUrl).toContain(
       "/api/v1/internal/extraction-jobs/job-1/source"
     );
+    expect(claimed?.body.data.sourceUrl).not.toContain("claimToken");
     expect(empty).toBeDefined();
 
     const source = await request(app)
       .get(claimed!.body.data.sourceUrl)
       .set("Authorization", `Bearer ${WORKER_TOKEN}`)
+      .set("X-Extraction-Claim-Token", claimed!.body.data.claimToken)
       .buffer(true)
       .parse(binaryParser)
       .expect(200);
     expect(source.body).toEqual(SOURCE);
 
     await request(app)
-      .get(
-        "/api/v1/internal/extraction-jobs/job-1/source?claimToken=stale-token"
-      )
+      .get("/api/v1/internal/extraction-jobs/job-1/source")
       .set("Authorization", `Bearer ${WORKER_TOKEN}`)
+      .set("X-Extraction-Claim-Token", "stale-token")
+      .expect(409);
+  });
+
+  it("renews only the current extraction lease", async () => {
+    const { app, repository } = await setup();
+    const leased = await claim(app);
+
+    await request(app)
+      .post("/api/v1/internal/extraction-jobs/job-1/heartbeat")
+      .set("Authorization", `Bearer ${WORKER_TOKEN}`)
+      .set("X-Extraction-Claim-Token", leased.body.data.claimToken)
+      .expect(200);
+    expect(await repository.findExtractionJobById("job-1")).toMatchObject({
+      status: "processing",
+      leaseExpiresAt: "2026-07-27T10:05:00.000Z"
+    });
+
+    await request(app)
+      .post("/api/v1/internal/extraction-jobs/job-1/heartbeat")
+      .set("Authorization", `Bearer ${WORKER_TOKEN}`)
+      .set("X-Extraction-Claim-Token", "stale")
       .expect(409);
   });
 
@@ -276,5 +298,42 @@ describe("OCR extraction worker contract", () => {
       .set("X-Extraction-Claim-Token", leased.body.data.claimToken)
       .send(body)
       .expect(400);
+  });
+
+  it("rejects canonical base64 whose decoded bytes are not PNG images", async () => {
+    const { app } = await setup();
+    const leased = await claim(app);
+    const body = completeBody();
+    body.pages[0]!.sections[0]!.imageBase64 =
+      Buffer.from("not a png").toString("base64");
+
+    await request(app)
+      .post("/api/v1/internal/extraction-jobs/job-1/complete")
+      .set("Authorization", `Bearer ${WORKER_TOKEN}`)
+      .set("X-Extraction-Claim-Token", leased.body.data.claimToken)
+      .send(body)
+      .expect(400);
+  });
+
+  it("filters OCR proposals below the configured confidence floor", async () => {
+    const { app, repository } = await setup();
+    const leased = await claim(app);
+    const body = completeBody();
+    body.pages[0]!.sections.push({
+      label: "Noise",
+      confidence: 0.19,
+      crop: { x: 0, y: 0, width: 1, height: 1 },
+      imageBase64: PNG_BASE64
+    });
+
+    await request(app)
+      .post("/api/v1/internal/extraction-jobs/job-1/complete")
+      .set("Authorization", `Bearer ${WORKER_TOKEN}`)
+      .set("X-Extraction-Claim-Token", leased.body.data.claimToken)
+      .send(body)
+      .expect(200);
+
+    expect(await repository.listDesignSections("version-aurora-plan-1"))
+      .toHaveLength(1);
   });
 });

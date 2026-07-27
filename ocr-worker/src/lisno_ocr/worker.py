@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+import threading
 import time
 from pathlib import Path
 from typing import Any, Callable, Protocol, Sequence
@@ -30,6 +31,7 @@ class Api(Protocol):
     def cleanup(self, source_path: Path) -> None: ...
     def complete(self, job_id: str, pages: Sequence[ExtractedPage]) -> None: ...
     def fail(self, job_id: str, failure: WorkerFailure) -> None: ...
+    def heartbeat(self, job_id: str) -> None: ...
 
 
 class PageExtractor(Protocol):
@@ -52,18 +54,23 @@ class WorkerApi:
         claim_token = _required_string(data, "claimToken")
         source_url = _required_string(data, "sourceUrl")
         filename = str(data.get("source", {}).get("filename", "source"))
+        mime_type = _required_string(data.get("source", {}), "mimeType")
         self._claim_tokens[job_id] = claim_token
         return ClaimedJob(
             id=job_id,
             claim_token=claim_token,
             source_url=source_url,
             source_filename=filename,
+            source_mime_type=mime_type,
         )
 
     def download(self, claimed: ClaimedJob) -> Path:
-        suffix = Path(claimed.source_filename).suffix.lower()
-        if suffix not in {".pdf", ".png", ".jpg", ".jpeg", ".webp"}:
-            suffix = ".bin"
+        suffix = {
+            "application/pdf": ".pdf",
+            "image/png": ".png",
+            "image/jpeg": ".jpg",
+            "image/webp": ".webp",
+        }.get(claimed.source_mime_type, ".bin")
         return self._download_source(
             claimed.source_url,
             suffix,
@@ -97,6 +104,13 @@ class WorkerApi:
             claim_token=self._claim_tokens.get(job_id),
         )
         self._claim_tokens.pop(job_id, None)
+
+    def heartbeat(self, job_id: str) -> None:
+        self._request_json(
+            "POST",
+            f"/internal/extraction-jobs/{job_id}/heartbeat",
+            claim_token=self._claim_tokens.get(job_id),
+        )
 
     def _download_source(
         self, source_url: str, suffix: str, claim_token: str
@@ -183,7 +197,12 @@ def run_worker(
     max_iterations: int | None = None,
 ) -> None:
     worker_api = api or WorkerApi(settings)
-    page_extractor = extractor or Extractor()
+    page_extractor = extractor or Extractor(
+        confidence_floor=settings.confidence_floor,
+        max_pdf_pages=settings.max_pdf_pages,
+        max_page_pixels=settings.max_page_pixels,
+        max_output_bytes=settings.max_output_bytes,
+    )
     iterations = 0
     while max_iterations is None or iterations < max_iterations:
         iterations += 1
@@ -192,6 +211,19 @@ def run_worker(
             sleep(settings.poll_seconds)
             continue
         source_path: Path | None = None
+        stop_heartbeat = threading.Event()
+        heartbeat = threading.Thread(
+            target=_heartbeat_loop,
+            args=(
+                worker_api,
+                claimed.id,
+                settings.heartbeat_seconds,
+                settings.max_processing_seconds,
+                stop_heartbeat,
+            ),
+            daemon=True,
+        )
+        heartbeat.start()
         try:
             source_path = worker_api.download(claimed)
             worker_api.complete(
@@ -205,8 +237,27 @@ def run_worker(
                 sleep,
             )
         finally:
+            stop_heartbeat.set()
+            heartbeat.join(timeout=min(settings.heartbeat_seconds, 1.0))
             if source_path is not None:
                 worker_api.cleanup(source_path)
+
+
+def _heartbeat_loop(
+    api: Api,
+    job_id: str,
+    interval: float,
+    max_processing_seconds: float,
+    stop: threading.Event,
+) -> None:
+    deadline = time.monotonic() + max_processing_seconds
+    while time.monotonic() < deadline and not stop.wait(interval):
+        try:
+            api.heartbeat(job_id)
+        except Exception:
+            # Completion/failure remains claim-token guarded; a transient heartbeat
+            # outage must not terminate the polling process.
+            continue
 
 
 def _report_failure_with_retry(

@@ -59,6 +59,7 @@ const mutationMethods = new Set<keyof AppRepository>([
   "updateDesignVersion",
   "enqueueExtractionJob",
   "claimExtractionJob",
+  "renewExtractionJobLease",
   "completeExtractionJob",
   "failExtractionJob",
   "replaceExtractionDraft",
@@ -689,6 +690,21 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
       };
       state.extractionJobs[index] = claimed;
       return clone(claimed);
+    },
+
+    async renewExtractionJobLease(id, claimId, now, leaseExpiresAt) {
+      const index = state.extractionJobs.findIndex((job) => job.id === id);
+      if (index < 0) {
+        throw new RepositoryNotFoundError(`Design extraction job ${id} was not found.`);
+      }
+      ensureCurrentExtractionClaim(state.extractionJobs[index]!, claimId, now);
+      const renewed = {
+        ...state.extractionJobs[index]!,
+        leaseExpiresAt,
+        updatedAt: now
+      };
+      state.extractionJobs[index] = renewed;
+      return clone(renewed);
     },
 
     async completeExtractionJob(id, claimId, completedAt) {

@@ -91,6 +91,7 @@ def job():
         claim_token="claim-1",
         source_url="/api/v1/internal/extraction-jobs/job-1/source",
         source_filename="labeled-plan.png",
+        source_mime_type="image/png",
     )
 
 
@@ -100,6 +101,7 @@ def second_job():
         claim_token="claim-2",
         source_url="/api/v1/internal/extraction-jobs/job-2/source",
         source_filename="labeled-plan.png",
+        source_mime_type="image/png",
     )
 
 
@@ -120,7 +122,7 @@ def test_api_claim_returns_metadata_without_downloading_source():
                     "id": "job-1",
                     "claimToken": "claim-1",
                     "sourceUrl": "/api/v1/internal/extraction-jobs/job-1/source",
-                    "source": {"filename": "plan.pdf"},
+                    "source": {"filename": "plan.pdf", "mimeType": "application/pdf"},
                 }
             }
 
@@ -132,6 +134,23 @@ def test_api_claim_returns_metadata_without_downloading_source():
     assert claimed.id == "job-1"
     assert claimed.claim_token == "claim-1"
     assert claimed.source_filename == "plan.pdf"
+
+
+def test_download_uses_authoritative_mime_type_for_temporary_suffix():
+    claimed = ClaimedJob(
+        id="job-1",
+        claim_token="claim-1",
+        source_url="/source",
+        source_filename="wrong.pdf",
+        source_mime_type="image/webp",
+    )
+
+    class DownloadApi(WorkerApi):
+        def _download_source(self, _url, suffix, _claim):
+            assert suffix == ".webp"
+            return FIXTURE
+
+    assert DownloadApi(settings()).download(claimed) == FIXTURE
 
 
 def test_polling_sleeps_when_empty_then_completes_the_next_claim():

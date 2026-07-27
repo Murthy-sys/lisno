@@ -525,6 +525,12 @@ export interface AppRepository {
     now: string,
     leaseExpiresAt: string
   ): Promise<DesignExtractionJobRecord | null>;
+  renewExtractionJobLease(
+    id: string,
+    claimId: string,
+    now: string,
+    leaseExpiresAt: string
+  ): Promise<DesignExtractionJobRecord>;
   completeExtractionJob(
     id: string,
     claimId: string,

@@ -491,6 +491,7 @@ export interface DesignSection {
 
 export interface DesignSectionReviewItem extends DesignSection {
   versionNumber: number;
+  sourcePageUrl: string;
   history: DesignSectionRevision[];
 }
 

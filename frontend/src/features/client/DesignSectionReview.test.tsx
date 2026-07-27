@@ -38,6 +38,7 @@ const review: DesignSectionReviewData = {
     updatedAt: "2026-07-27T10:00:00.000Z",
     revision,
     versionNumber: 3,
+    sourcePageUrl: "/api/v1/design-source-pages/page-1/image",
     history: [
       { ...revision, id: "revision-1", revisionNumber: 1, reviewStatus: "rejected" as const, rejectionComment: "Show the roof line.", reviewedAt: "2026-07-26T10:00:00.000Z" },
       revision
@@ -54,6 +55,7 @@ function installApi(options: { failList?: boolean; failDecision?: boolean } = {}
       return Response.json({ data: current });
     }
     if (url === revision.imageReference) return new Response(new Blob(["image"], { type: "image/png" }));
+    if (url === "/api/v1/design-source-pages/page-1/image") return new Response(new Blob(["page"], { type: "image/png" }));
     if (url === "/api/v1/design-section-revisions/revision-2/decision") {
       if (options.failDecision) return Response.json({ error: { code: "CONFLICT", message: "Already reviewed." } }, { status: 409 });
       const body = JSON.parse(String(init?.body)) as { decision: "approved" | "rejected"; comment?: string };
@@ -86,6 +88,8 @@ describe("DesignSectionReview", () => {
     expect(within(card).getByText("Design version 3 · Section revision 2")).toBeVisible();
     expect(within(card).getByText("Revision 1 · Rejected")).toBeVisible();
     expect(within(card).getByText("Show the roof line.")).toBeVisible();
+    await userEvent.click(within(card).getByText("View source page"));
+    expect(within(card).getByRole("img", { name: "Source page for Front elevation" })).toBeVisible();
     expect(screen.queryByText(/draft/i)).not.toBeInTheDocument();
   });
 

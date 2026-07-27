@@ -79,6 +79,23 @@ describe("environment authentication configuration", () => {
     ).toThrow();
   });
 
+  it("loads a bounded OCR confidence floor and defaults it to 0.2", () => {
+    expect(loadEnvironment({
+      JWT_SECRET: "config-jwt-secret-with-at-least-32-characters",
+      OCR_WORKER_TOKEN
+    }).OCR_CONFIDENCE_FLOOR).toBe(0.2);
+    expect(loadEnvironment({
+      JWT_SECRET: "config-jwt-secret-with-at-least-32-characters",
+      OCR_WORKER_TOKEN,
+      OCR_CONFIDENCE_FLOOR: "0.35"
+    }).OCR_CONFIDENCE_FLOOR).toBe(0.35);
+    expect(() => loadEnvironment({
+      JWT_SECRET: "config-jwt-secret-with-at-least-32-characters",
+      OCR_WORKER_TOKEN,
+      OCR_CONFIDENCE_FLOOR: "1.1"
+    })).toThrow();
+  });
+
   it("requires a separate strong OCR worker token", () => {
     expect(() =>
       loadEnvironment({

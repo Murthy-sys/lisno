@@ -69,6 +69,7 @@ class ClaimedJob:
     claim_token: str
     source_url: str
     source_filename: str
+    source_mime_type: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -83,6 +84,12 @@ class WorkerSettings:
     worker_token: str
     poll_seconds: float = 5.0
     request_timeout_seconds: float = 60.0
+    confidence_floor: float = 0.2
+    max_pdf_pages: int = 50
+    max_page_pixels: int = 40_000_000
+    max_output_bytes: int = 64_000_000
+    heartbeat_seconds: float = 60.0
+    max_processing_seconds: float = 900.0
 
     @classmethod
     def from_environment(cls) -> WorkerSettings:
@@ -94,11 +101,23 @@ class WorkerSettings:
             raise ValueError("OCR_WORKER_TOKEN must contain at least 32 characters.")
         poll_seconds = _positive_float("OCR_POLL_SECONDS", 5.0)
         timeout_seconds = _positive_float("OCR_REQUEST_TIMEOUT_SECONDS", 60.0)
+        confidence_floor = _bounded_float("OCR_CONFIDENCE_FLOOR", 0.2, 0.0, 1.0)
+        max_pdf_pages = _positive_int("OCR_MAX_PDF_PAGES", 50)
+        max_page_pixels = _positive_int("OCR_MAX_PAGE_PIXELS", 40_000_000)
+        max_output_bytes = _positive_int("OCR_MAX_OUTPUT_BYTES", 64_000_000)
+        heartbeat_seconds = _positive_float("OCR_HEARTBEAT_SECONDS", 60.0)
+        max_processing_seconds = _positive_float("OCR_MAX_PROCESSING_SECONDS", 900.0)
         return cls(
             api_base_url=api_base_url,
             worker_token=worker_token,
             poll_seconds=poll_seconds,
             request_timeout_seconds=timeout_seconds,
+            confidence_floor=confidence_floor,
+            max_pdf_pages=max_pdf_pages,
+            max_page_pixels=max_page_pixels,
+            max_output_bytes=max_output_bytes,
+            heartbeat_seconds=heartbeat_seconds,
+            max_processing_seconds=max_processing_seconds,
         )
 
 
@@ -127,4 +146,18 @@ def _positive_float(name: str, default: float) -> float:
     value = default if raw is None else float(raw)
     if value <= 0:
         raise ValueError(f"{name} must be positive.")
+    return value
+
+
+def _positive_int(name: str, default: int) -> int:
+    value = int(os.environ.get(name, str(default)))
+    if value <= 0:
+        raise ValueError(f"{name} must be positive.")
+    return value
+
+
+def _bounded_float(name: str, default: float, minimum: float, maximum: float) -> float:
+    value = float(os.environ.get(name, str(default)))
+    if not minimum <= value <= maximum:
+        raise ValueError(f"{name} must be between {minimum} and {maximum}.")
     return value

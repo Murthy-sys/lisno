@@ -765,6 +765,28 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
       return document ? mapExtractionJob(document) : null;
     },
 
+    async renewExtractionJobLease(id, claimId, now, leaseExpiresAt) {
+      const query = DesignExtractionJobModel.findOneAndUpdate(
+        {
+          _id: id,
+          status: "processing",
+          claimId,
+          leaseExpiresAt: { $gt: date(now) }
+        },
+        {
+          $set: {
+            leaseExpiresAt: date(leaseExpiresAt),
+            updatedAt: date(now)
+          }
+        },
+        { new: true, runValidators: true }
+      );
+      if (session) query.session(session);
+      const document = await query.lean().exec();
+      if (!document) await throwExtractionJobClaimError(id, session);
+      return mapExtractionJob(document);
+    },
+
     async completeExtractionJob(id, claimId, completedAt) {
       const query = DesignExtractionJobModel.findByIdAndUpdate(
         {

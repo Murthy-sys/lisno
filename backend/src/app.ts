@@ -41,6 +41,7 @@ export interface AppDependencies {
   storage?: FileStorage;
   maxUploadBytes?: number;
   ocrLeaseSeconds?: number;
+  ocrConfidenceFloor?: number;
   ocrWorkerToken?: string;
   corsOrigins?: readonly string[];
 }
@@ -80,7 +81,8 @@ export function createApp(dependencies: AppDependencies) {
         storage,
         clock,
         dependencies.ocrLeaseSeconds ?? 300,
-        maxUploadBytes
+        maxUploadBytes,
+        dependencies.ocrConfidenceFloor ?? 0.2
       )
     : null;
 

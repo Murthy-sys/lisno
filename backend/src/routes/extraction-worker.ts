@@ -85,14 +85,8 @@ export function createExtractionWorkerRouter(
     "/internal/extraction-jobs/:jobId/source",
     async (request, response, next) => {
       try {
-        const claimToken = singleString(request.query.claimToken);
-        if (!claimToken) {
-          throw new ApiError(
-            400,
-            "VALIDATION_ERROR",
-            "A claim token is required."
-          );
-        }
+        const claimToken = request.header("X-Extraction-Claim-Token")?.trim();
+        if (!claimToken) throw new ApiError(400, "VALIDATION_ERROR", "A claim token is required.");
         const download = await service.downloadSource(
           request.params.jobId as string,
           claimToken
@@ -109,6 +103,22 @@ export function createExtractionWorkerRouter(
           response.destroy(error instanceof Error ? error : undefined);
           return;
         }
+        next(error);
+      }
+    }
+  );
+
+  router.post(
+    "/internal/extraction-jobs/:jobId/heartbeat",
+    requireClaimToken,
+    async (request, response, next) => {
+      try {
+        const job = await service.heartbeat(
+          request.params.jobId as string,
+          request.extractionClaimToken!
+        );
+        response.json({ data: { id: job.id, leaseExpiresAt: job.leaseExpiresAt } });
+      } catch (error) {
         next(error);
       }
     }
@@ -194,10 +204,6 @@ const requireClaimToken: RequestHandler = (request, _response, next) => {
 
 function digest(value: string) {
   return createHash("sha256").update(value, "utf8").digest();
-}
-
-function singleString(value: unknown) {
-  return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
 function contentDisposition(filename: string) {

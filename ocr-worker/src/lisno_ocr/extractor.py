@@ -22,9 +22,16 @@ from .contracts import (
 
 
 class Extractor:
-    def __init__(self, ocr_engine: Any | None = None, render_scale: float = 2.0):
+    def __init__(self, ocr_engine: Any | None = None, render_scale: float = 2.0,
+                 confidence_floor: float = 0.2, max_pdf_pages: int = 50,
+                 max_page_pixels: int = 40_000_000,
+                 max_output_bytes: int = 64_000_000):
         self._ocr_engine = ocr_engine
         self._render_scale = render_scale
+        self._confidence_floor = confidence_floor
+        self._max_pdf_pages = max_pdf_pages
+        self._max_page_pixels = max_page_pixels
+        self._max_output_bytes = max_output_bytes
 
     def extract(self, source_path: str | Path) -> list[ExtractedPage]:
         path = Path(source_path)
@@ -37,10 +44,18 @@ class Extractor:
             images = [self._open_image(path)]
         else:
             raise InvalidSourceError("The extraction source type is unsupported.")
-        return [
+        pages = [
             self._extract_page(image, page_number)
             for page_number, image in enumerate(images, start=1)
         ]
+        encoded_bytes = sum(
+            len(page.image_base64) +
+            sum(len(section.image_base64) for section in page.sections)
+            for page in pages
+        ) * 3 // 4
+        if encoded_bytes > self._max_output_bytes:
+            raise OcrError("The extracted image output is too large.")
+        return pages
 
     def _render_pdf(self, path: Path) -> list[Image.Image]:
         try:
@@ -50,10 +65,14 @@ class Extractor:
         try:
             if document.page_count < 1:
                 raise PdfRenderError("The PDF contains no pages.")
+            if document.page_count > self._max_pdf_pages:
+                raise PdfRenderError("The PDF contains too many pages.")
             matrix = fitz.Matrix(self._render_scale, self._render_scale)
             images: list[Image.Image] = []
             for page in document:
                 pixmap = page.get_pixmap(matrix=matrix, alpha=False)
+                if pixmap.width * pixmap.height > self._max_page_pixels:
+                    raise PdfRenderError("A rendered PDF page is too large.")
                 image = Image.frombytes(
                     "RGB", (pixmap.width, pixmap.height), pixmap.samples
                 )
@@ -70,6 +89,8 @@ class Extractor:
         try:
             with Image.open(path) as source:
                 source.load()
+                if source.width * source.height > self._max_page_pixels:
+                    raise InvalidSourceError("The source image is too large.")
                 return source.convert("RGB")
         except (UnidentifiedImageError, OSError, ValueError) as error:
             raise InvalidSourceError("The source image could not be decoded.") from error
@@ -80,8 +101,8 @@ class Extractor:
         sections = tuple(
             self._section_for_label(image, box, label, confidence, regions)
             for box, label, confidence in labels
-            if label
-        )
+            if label and confidence >= self._confidence_floor
+        )[:500]
         return ExtractedPage(
             page_number=page_number,
             width=image.width,

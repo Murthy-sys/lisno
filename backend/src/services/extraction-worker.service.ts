@@ -70,6 +70,7 @@ export interface ExtractionWorkerService {
     jobId: string,
     claimToken: string
   ): Promise<WorkerSourceDownload>;
+  heartbeat(jobId: string, claimToken: string): Promise<DesignExtractionJobRecord>;
   complete(
     jobId: string,
     claimToken: string,
@@ -89,7 +90,8 @@ export function createExtractionWorkerService(
   storage: FileStorage,
   clock: Clock,
   leaseSeconds: number,
-  maxImageBytes: number
+  maxImageBytes: number,
+  confidenceFloor: number
 ): ExtractionWorkerService {
   return {
     async claim() {
@@ -111,8 +113,7 @@ export function createExtractionWorkerService(
         );
       }
       const sourceUrl =
-        `/api/v1/internal/extraction-jobs/${encodeURIComponent(job.id)}/source` +
-        `?claimToken=${encodeURIComponent(job.claimId)}`;
+        `/api/v1/internal/extraction-jobs/${encodeURIComponent(job.id)}/source`;
       return {
         id: job.id,
         designVersionId: job.designVersionId,
@@ -157,6 +158,23 @@ export function createExtractionWorkerService(
       }
     },
 
+    async heartbeat(jobId, claimToken) {
+      const now = clock();
+      const leaseExpiresAt = new Date(
+        now.getTime() + leaseSeconds * 1000
+      ).toISOString();
+      try {
+        return await repository.renewExtractionJobLease(
+          jobId,
+          claimToken,
+          now.toISOString(),
+          leaseExpiresAt
+        );
+      } catch (error) {
+        throw mapRepositoryError(error);
+      }
+    },
+
     async complete(jobId, claimToken, result) {
       const processedAt = clock().toISOString();
       const job = await requireJob(repository, jobId);
@@ -169,7 +187,7 @@ export function createExtractionWorkerService(
           "The requested resource was not found."
         );
       }
-      const normalized = normalizeAndValidateResult(result, maxImageBytes);
+      const normalized = normalizeAndValidateResult(result, maxImageBytes, confidenceFloor);
       const storedReferences: string[] = [];
       try {
         const sourcePages: ExtractionDraftReplacement["sourcePages"] = [];
@@ -332,7 +350,8 @@ function requireCurrentClaim(
 
 function normalizeAndValidateResult(
   result: WorkerExtractionResult,
-  maxImageBytes: number
+  maxImageBytes: number,
+  confidenceFloor: number
 ) {
   const pageNumbers = new Set<number>();
   let totalBytes = 0;
@@ -343,7 +362,7 @@ function normalizeAndValidateResult(
     pageNumbers.add(page.pageNumber);
     const image = decodeBase64(page.imageBase64, maxImageBytes);
     totalBytes += image.length;
-    const sections = page.sections.map((section) => {
+    const sections = page.sections.filter((section) => section.confidence >= confidenceFloor).map((section) => {
       const label = section.label.replace(/\s+/g, " ").trim();
       if (!label || label.length > 200) {
         invalidResult("Section labels must contain 1 to 200 characters.");
@@ -388,6 +407,13 @@ function decodeBase64(value: string, maxBytes: number) {
     decoded.toString("base64") !== value
   ) {
     invalidResult("Worker images must be canonical bounded base64.");
+  }
+  if (
+    decoded.length < 24 ||
+    !decoded.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])) ||
+    decoded.subarray(12, 16).toString("ascii") !== "IHDR"
+  ) {
+    invalidResult("Worker images must be valid PNG files.");
   }
   return decoded;
 }

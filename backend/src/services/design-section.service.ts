@@ -110,7 +110,11 @@ export function createDesignSectionService(
 
   return {
     async listDrafts(actor, versionId) {
-      const { job } = await requireEditable(actor, versionId);
+      await requireOwner(actor, versionId);
+      const job = await repository.findExtractionJobByVersionId(versionId);
+      if (!job || ["queued", "processing"].includes(job.status)) {
+        throw new ApiError(409, "INVALID_EXTRACTION_STATE", "The extracted sections are not available yet.");
+      }
       const [pages, sections] = await Promise.all([
         repository.listSourcePages(versionId),
         repository.listDesignSections(versionId)
@@ -347,6 +351,7 @@ export function createDesignSectionService(
           sections.push({
             ...publicSection(section, latest),
             versionNumber: version.versionNumber,
+            sourcePageUrl: `/api/v1/design-source-pages/${latest.sourcePageId}/image`,
             history: history.map(publicRevision)
           });
         }

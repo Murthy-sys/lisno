@@ -133,6 +133,8 @@ describe("client design section review", () => {
       progress: { approved: 0, rejected: 0, awaitingReview: 2, total: 2 }
     });
     expect(response.body.data.sections).toHaveLength(2);
+    expect(response.body.data.sections[0].sourcePageUrl)
+      .toBe("/api/v1/design-source-pages/page-1/image");
     expect(response.body.data.sections[0].revision).not.toHaveProperty("croppedFileReference");
 
     await request(app)
@@ -146,6 +148,33 @@ describe("client design section review", () => {
     await request(app)
       .get("/api/v1/client/projects/project-aurora-villa/design-sections")
       .set("Authorization", auth("user-client-celeste", "client"))
+      .expect(404);
+  });
+
+  it("lets only the owning designer reload submitted sections and comments", async () => {
+    const seed = reviewSeed();
+    seed.designSectionRevisions[0] = {
+      ...seed.designSectionRevisions[0]!,
+      reviewStatus: "rejected",
+      reviewerId: "user-client-aurora",
+      reviewedAt: NOW,
+      rejectionComment: "Show the full roof line."
+    };
+    seed.extractionJobs[0]!.status = "changes_requested";
+    const { app } = setup(seed);
+
+    const response = await request(app)
+      .get("/api/v1/design-versions/version-aurora-plan-1/sections")
+      .set("Authorization", auth("user-designer-ananya", "designer"))
+      .expect(200);
+    expect(response.body.data.sections[0].revision).toMatchObject({
+      reviewStatus: "rejected",
+      rejectionComment: "Show the full roof line."
+    });
+
+    await request(app)
+      .get("/api/v1/design-versions/version-aurora-plan-1/sections")
+      .set("Authorization", auth("user-designer-vikram", "designer"))
       .expect(404);
   });
 
