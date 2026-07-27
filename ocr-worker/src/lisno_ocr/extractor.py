@@ -75,9 +75,13 @@ class Extractor:
                 if expected_width * expected_height > self._max_page_pixels:
                     raise PdfRenderError("A rendered PDF page is too large.")
                 pixmap = page.get_pixmap(matrix=matrix, alpha=False)
-                yield Image.frombytes(
-                    "RGB", (pixmap.width, pixmap.height), pixmap.samples
-                )
+                try:
+                    image = Image.frombytes(
+                        "RGB", (pixmap.width, pixmap.height), pixmap.samples
+                    )
+                finally:
+                    del pixmap
+                yield image
         except PdfRenderError:
             raise
         except Exception as error:
@@ -86,6 +90,7 @@ class Extractor:
             document.close()
 
     def _open_image(self, path: Path) -> Image.Image:
+        source: Image.Image | None = None
         try:
             source = Image.open(path)
             if source.width * source.height > self._max_page_pixels:
@@ -93,10 +98,12 @@ class Extractor:
                 raise InvalidSourceError("The source image is too large.")
             source.load()
             converted = source.convert("RGB")
-            source.close()
             return converted
         except (UnidentifiedImageError, OSError, ValueError) as error:
             raise InvalidSourceError("The source image could not be decoded.") from error
+        finally:
+            if source is not None:
+                source.close()
 
     def _extract_page(
         self, image: Image.Image, page_number: int, remaining_bytes: int

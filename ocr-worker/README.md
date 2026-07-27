@@ -32,8 +32,6 @@ service; do not delete it during routine deployments.
   `http://127.0.0.1:3000/api/v1`.
 - `OCR_POLL_SECONDS` — positive empty-queue poll delay; default `5`.
 - `OCR_REQUEST_TIMEOUT_SECONDS` — positive HTTP timeout; default `60`.
-- `OCR_HEARTBEAT_SECONDS` — lease renewal interval; default `60` and should
-  remain comfortably below the backend lease.
 - `OCR_CONFIDENCE_FLOOR` — candidates below this score are discarded; default
   `0.2`, while candidates below the UI warning threshold remain reviewable.
 - `OCR_MAX_PDF_PAGES`, `OCR_MAX_PAGE_PIXELS`, and `OCR_MAX_OUTPUT_BYTES` bound
@@ -43,9 +41,10 @@ service; do not delete it during routine deployments.
 - `OCR_MAX_PROCESSING_SECONDS` stops lease renewal after a bounded processing
   window (default `900`), allowing a wedged model job to be reclaimed safely.
 
-The backend controls `OCR_LEASE_SECONDS` (default `300`). Set it longer than the
-normal processing time of the largest supported input. An abandoned job becomes
-claimable after its lease expires.
+The backend controls `OCR_LEASE_SECONDS` (default `300`) and returns the
+authoritative duration on every claim and renewal. The worker schedules each
+heartbeat from that response with a safety fraction; no duplicate worker lease
+setting is required. An abandoned job becomes claimable after expiry.
 
 ```bash
 export OCR_WORKER_TOKEN="local-development-only-ocr-worker-token-123456"

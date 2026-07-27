@@ -63,7 +63,7 @@ function binaryParser(
   response.on("error", callback);
 }
 
-async function setup() {
+async function setup(ocrLeaseSeconds = 300) {
   const repository = createMemoryRepository(structuredClone(demoSeedData));
   const storage = new TestStorage();
   await repository.enqueueExtractionJob({
@@ -83,7 +83,7 @@ async function setup() {
     auth: { jwtSecret: JWT_SECRET, jwtExpiresInSeconds: 900 },
     clock: () => new Date(TEST_NOW),
     storage,
-    ocrLeaseSeconds: 300,
+    ocrLeaseSeconds,
     ocrWorkerToken: WORKER_TOKEN,
     maxUploadBytes: 10_000
   });
@@ -160,6 +160,7 @@ describe("OCR extraction worker contract", () => {
     expect(claimed?.body.data.leaseExpiresAt).toBe(
       "2026-07-27T10:05:00.000Z"
     );
+    expect(claimed?.body.data.leaseDurationMs).toBe(300_000);
     expect(claimed?.body.data.sourceUrl).toContain(
       "/api/v1/internal/extraction-jobs/job-1/source"
     );
@@ -190,7 +191,11 @@ describe("OCR extraction worker contract", () => {
       .post("/api/v1/internal/extraction-jobs/job-1/heartbeat")
       .set("Authorization", `Bearer ${WORKER_TOKEN}`)
       .set("X-Extraction-Claim-Token", leased.body.data.claimToken)
-      .expect(200);
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.data.leaseDurationMs).toBe(300_000);
+        expect(body.data.leaseExpiresAt).toBe("2026-07-27T10:05:00.000Z");
+      });
     expect(await repository.findExtractionJobById("job-1")).toMatchObject({
       status: "processing",
       leaseExpiresAt: "2026-07-27T10:05:00.000Z"
@@ -201,6 +206,19 @@ describe("OCR extraction worker contract", () => {
       .set("Authorization", `Bearer ${WORKER_TOKEN}`)
       .set("X-Extraction-Claim-Token", "stale")
       .expect(409);
+  });
+
+  it("publishes a non-default short lease duration on claim and renewal", async () => {
+    const { app } = await setup(2);
+    const leased = await claim(app);
+    expect(leased.body.data.leaseDurationMs).toBe(2_000);
+
+    await request(app)
+      .post("/api/v1/internal/extraction-jobs/job-1/heartbeat")
+      .set("Authorization", `Bearer ${WORKER_TOKEN}`)
+      .set("X-Extraction-Claim-Token", leased.body.data.claimToken)
+      .expect(200)
+      .expect(({ body }) => expect(body.data.leaseDurationMs).toBe(2_000));
   });
 
   it("rejects out-of-bounds crops before storing worker images", async () => {

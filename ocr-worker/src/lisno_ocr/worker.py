@@ -31,7 +31,7 @@ class Api(Protocol):
     def cleanup(self, source_path: Path) -> None: ...
     def complete(self, job_id: str, pages: Sequence[ExtractedPage]) -> None: ...
     def fail(self, job_id: str, failure: WorkerFailure) -> None: ...
-    def heartbeat(self, job_id: str) -> None: ...
+    def heartbeat(self, job_id: str) -> float: ...
 
 
 class PageExtractor(Protocol):
@@ -55,6 +55,7 @@ class WorkerApi:
         source_url = _required_string(data, "sourceUrl")
         filename = str(data.get("source", {}).get("filename", "source"))
         mime_type = _required_string(data.get("source", {}), "mimeType")
+        lease_duration_ms = _required_positive_number(data, "leaseDurationMs")
         self._claim_tokens[job_id] = claim_token
         return ClaimedJob(
             id=job_id,
@@ -62,6 +63,7 @@ class WorkerApi:
             source_url=source_url,
             source_filename=filename,
             source_mime_type=mime_type,
+            lease_duration_seconds=lease_duration_ms / 1000,
         )
 
     def download(self, claimed: ClaimedJob) -> Path:
@@ -105,12 +107,15 @@ class WorkerApi:
         )
         self._claim_tokens.pop(job_id, None)
 
-    def heartbeat(self, job_id: str) -> None:
-        self._request_json(
+    def heartbeat(self, job_id: str) -> float:
+        _status, payload = self._request_json(
             "POST",
             f"/internal/extraction-jobs/{job_id}/heartbeat",
             claim_token=self._claim_tokens.get(job_id),
         )
+        return _required_positive_number(
+            payload.get("data", {}), "leaseDurationMs"
+        ) / 1000
 
     def _download_source(
         self, source_url: str, suffix: str, claim_token: str
@@ -217,7 +222,7 @@ def run_worker(
             args=(
                 worker_api,
                 claimed.id,
-                settings.heartbeat_seconds,
+                claimed.lease_duration_seconds,
                 settings.max_processing_seconds,
                 stop_heartbeat,
             ),
@@ -238,7 +243,7 @@ def run_worker(
             )
         finally:
             stop_heartbeat.set()
-            heartbeat.join(timeout=min(settings.heartbeat_seconds, 1.0))
+            heartbeat.join(timeout=min(claimed.lease_duration_seconds * 0.4, 1.0))
             if source_path is not None:
                 worker_api.cleanup(source_path)
 
@@ -246,14 +251,18 @@ def run_worker(
 def _heartbeat_loop(
     api: Api,
     job_id: str,
-    interval: float,
+    lease_duration_seconds: float,
     max_processing_seconds: float,
     stop: threading.Event,
 ) -> None:
     deadline = time.monotonic() + max_processing_seconds
-    while time.monotonic() < deadline and not stop.wait(interval):
+    lease_duration = lease_duration_seconds
+    while time.monotonic() < deadline:
+        interval = max(0.01, min(60.0, lease_duration * 0.4))
+        if stop.wait(interval):
+            break
         try:
-            api.heartbeat(job_id)
+            lease_duration = api.heartbeat(job_id)
         except Exception:
             # Completion/failure remains claim-token guarded; a transient heartbeat
             # outage must not terminate the polling process.
@@ -306,6 +315,15 @@ def _required_string(data: dict[str, Any], field: str) -> str:
             f"The backend worker response omitted {field}."
         )
     return value
+
+
+def _required_positive_number(data: dict[str, Any], field: str) -> float:
+    value = data.get(field)
+    if not isinstance(value, (int, float)) or isinstance(value, bool) or value <= 0:
+        raise ResultRejectedError(
+            f"The backend worker response omitted {field}."
+        )
+    return float(value)
 
 
 def main() -> None:

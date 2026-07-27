@@ -61,3 +61,17 @@ normal document-driven resource growth.
   maximum processing duration above the heartbeat interval.
 - Owning designers receive safe non-draft revision history and client comments
   in terminal/review states; the read-only UI renders that history.
+
+## Hardening round 3
+
+- PyMuPDF pixmaps are explicitly dropped after Pillow copies their samples and
+  before the page is yielded to OCR; page images and documents close on success
+  and failure paths.
+- Claim and heartbeat responses now carry the authoritative lease duration.
+  The worker schedules renewal at a safety fraction of each returned duration,
+  including non-default short leases, without duplicating backend lease config.
+- Backend PNG validation reads Sharp metadata first, rejects format, declared
+  dimension, and 40-million-pixel violations before full decode, then performs
+  a complete decode under the same pixel cap.
+- Pillow source handles now close through `finally` on load and conversion
+  failures.

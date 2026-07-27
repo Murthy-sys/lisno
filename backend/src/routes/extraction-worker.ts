@@ -113,11 +113,17 @@ export function createExtractionWorkerRouter(
     requireClaimToken,
     async (request, response, next) => {
       try {
-        const job = await service.heartbeat(
+        const renewed = await service.heartbeat(
           request.params.jobId as string,
           request.extractionClaimToken!
         );
-        response.json({ data: { id: job.id, leaseExpiresAt: job.leaseExpiresAt } });
+        response.json({
+          data: {
+            id: renewed.job.id,
+            leaseExpiresAt: renewed.job.leaseExpiresAt,
+            leaseDurationMs: renewed.leaseDurationMs
+          }
+        });
       } catch (error) {
         next(error);
       }

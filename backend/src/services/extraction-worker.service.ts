@@ -49,6 +49,7 @@ export interface ClaimedExtractionJob {
   attemptCount: number;
   claimToken: string;
   leaseExpiresAt: string;
+  leaseDurationMs: number;
   sourceUrl: string;
   source: {
     url: string;
@@ -71,7 +72,10 @@ export interface ExtractionWorkerService {
     jobId: string,
     claimToken: string
   ): Promise<WorkerSourceDownload>;
-  heartbeat(jobId: string, claimToken: string): Promise<DesignExtractionJobRecord>;
+  heartbeat(jobId: string, claimToken: string): Promise<{
+    job: DesignExtractionJobRecord;
+    leaseDurationMs: number;
+  }>;
   complete(
     jobId: string,
     claimToken: string,
@@ -121,6 +125,7 @@ export function createExtractionWorkerService(
         attemptCount: job.attemptCount,
         claimToken: job.claimId,
         leaseExpiresAt,
+        leaseDurationMs: leaseSeconds * 1000,
         sourceUrl,
         source: {
           url: sourceUrl,
@@ -165,12 +170,13 @@ export function createExtractionWorkerService(
         now.getTime() + leaseSeconds * 1000
       ).toISOString();
       try {
-        return await repository.renewExtractionJobLease(
+        const job = await repository.renewExtractionJobLease(
           jobId,
           claimToken,
           now.toISOString(),
           leaseExpiresAt
         );
+        return { job, leaseDurationMs: leaseSeconds * 1000 };
       } catch (error) {
         throw mapRepositoryError(error);
       }
@@ -396,18 +402,22 @@ async function normalizeAndValidateResult(
 }
 
 async function validatePng(image: Buffer, width: number, height: number) {
+  const maxPixels = 40_000_000;
   try {
-    const decoded = await sharp(image, {
+    const decoder = sharp(image, {
       failOn: "error",
-      limitInputPixels: 100_000_000
-    }).raw().toBuffer({ resolveWithObject: true });
+      limitInputPixels: maxPixels
+    });
+    const metadata = await decoder.metadata();
     if (
-      decoded.info.format !== "raw" ||
-      decoded.info.width !== width ||
-      decoded.info.height !== height
+      metadata.format !== "png" ||
+      metadata.width !== width ||
+      metadata.height !== height ||
+      width * height > maxPixels
     ) {
       invalidResult("Worker image dimensions must match the declared dimensions.");
     }
+    await decoder.raw().toBuffer();
   } catch (error) {
     if (error instanceof ApiError) throw error;
     invalidResult("Worker images must be complete decodable PNG files.");

@@ -154,6 +154,49 @@ def test_pdf_dimension_budget_rejects_before_pixmap_allocation(monkeypatch, tmp_
         Extractor(ocr_engine=FakePaddleOCR3([]), max_page_pixels=1_000).extract(source)
 
 
+def test_pdf_pixmap_is_released_before_ocr_consumes_page(monkeypatch, tmp_path):
+    released = []
+
+    class Rect:
+        width = 1
+        height = 1
+
+    class Pixmap:
+        width = 1
+        height = 1
+        samples = b"\xff\xff\xff"
+
+        def __del__(self):
+            released.append(True)
+
+    class Page:
+        rect = Rect()
+
+        def get_pixmap(self, **_kwargs):
+            return Pixmap()
+
+    class Document:
+        page_count = 1
+
+        def __iter__(self):
+            return iter([Page()])
+
+        def close(self):
+            pass
+
+    class LifecycleOcr:
+        def predict(self, input):
+            assert input.shape == (1, 1, 3)
+            assert released
+            return [{"rec_boxes": [], "rec_texts": [], "rec_scores": []}]
+
+    source = tmp_path / "one.pdf"
+    source.write_bytes(b"%PDF")
+    monkeypatch.setattr("lisno_ocr.extractor.fitz.open", lambda _path: Document())
+
+    Extractor(ocr_engine=LifecycleOcr()).extract(source)
+
+
 def test_legacy_ocr_output_remains_a_fallback():
     result = [
         [

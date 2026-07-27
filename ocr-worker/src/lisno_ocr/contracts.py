@@ -70,6 +70,7 @@ class ClaimedJob:
     source_url: str
     source_filename: str
     source_mime_type: str
+    lease_duration_seconds: float
 
 
 @dataclass(frozen=True, slots=True)
@@ -88,7 +89,6 @@ class WorkerSettings:
     max_pdf_pages: int = 50
     max_page_pixels: int = 40_000_000
     max_output_bytes: int = 40 * 1024 * 1024
-    heartbeat_seconds: float = 60.0
     max_processing_seconds: float = 900.0
 
     @classmethod
@@ -107,13 +107,7 @@ class WorkerSettings:
         max_output_bytes = _bounded_positive_int(
             "OCR_MAX_OUTPUT_BYTES", 40 * 1024 * 1024, 44 * 1024 * 1024
         )
-        heartbeat_seconds = _positive_float("OCR_HEARTBEAT_SECONDS", 60.0)
         max_processing_seconds = _positive_float("OCR_MAX_PROCESSING_SECONDS", 900.0)
-        lease_seconds = _positive_float("OCR_LEASE_SECONDS", 300.0)
-        if heartbeat_seconds >= lease_seconds:
-            raise ValueError("OCR_HEARTBEAT_SECONDS must be below OCR_LEASE_SECONDS.")
-        if max_processing_seconds <= heartbeat_seconds:
-            raise ValueError("OCR_MAX_PROCESSING_SECONDS must exceed OCR_HEARTBEAT_SECONDS.")
         return cls(
             api_base_url=api_base_url,
             worker_token=worker_token,
@@ -123,7 +117,6 @@ class WorkerSettings:
             max_pdf_pages=max_pdf_pages,
             max_page_pixels=max_page_pixels,
             max_output_bytes=max_output_bytes,
-            heartbeat_seconds=heartbeat_seconds,
             max_processing_seconds=max_processing_seconds,
         )
 

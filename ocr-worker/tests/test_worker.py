@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import pytest
+import time
 
 from lisno_ocr.contracts import (
     ClaimedJob,
@@ -33,6 +34,7 @@ class FakeApi:
         self.cleaned = []
         self.completed = []
         self.failed = []
+        self.heartbeats = []
 
     def claim(self):
         return self.jobs.pop(0) if self.jobs else None
@@ -59,6 +61,10 @@ class FakeApi:
             error = self.fail_errors.pop(0)
             if error:
                 raise error
+
+    def heartbeat(self, job_id):
+        self.heartbeats.append(job_id)
+        return 0.06
 
 
 class FakeExtractor:
@@ -92,6 +98,7 @@ def job():
         source_url="/api/v1/internal/extraction-jobs/job-1/source",
         source_filename="labeled-plan.png",
         source_mime_type="image/png",
+        lease_duration_seconds=0.06,
     )
 
 
@@ -102,6 +109,7 @@ def second_job():
         source_url="/api/v1/internal/extraction-jobs/job-2/source",
         source_filename="labeled-plan.png",
         source_mime_type="image/png",
+        lease_duration_seconds=0.06,
     )
 
 
@@ -114,12 +122,10 @@ def settings():
     )
 
 
-def test_settings_reject_heartbeat_not_below_known_backend_lease(monkeypatch):
+def test_settings_does_not_require_a_duplicate_backend_lease_value(monkeypatch):
     monkeypatch.setenv("OCR_WORKER_TOKEN", "worker-token-with-at-least-32-characters")
-    monkeypatch.setenv("OCR_HEARTBEAT_SECONDS", "60")
     monkeypatch.setenv("OCR_LEASE_SECONDS", "60")
-    with pytest.raises(ValueError, match="below OCR_LEASE_SECONDS"):
-        WorkerSettings.from_environment()
+    assert WorkerSettings.from_environment().max_processing_seconds == 900
 
 
 def test_settings_bounds_output_for_base64_json_transport(monkeypatch):
@@ -139,6 +145,7 @@ def test_api_claim_returns_metadata_without_downloading_source():
                     "claimToken": "claim-1",
                     "sourceUrl": "/api/v1/internal/extraction-jobs/job-1/source",
                     "source": {"filename": "plan.pdf", "mimeType": "application/pdf"},
+                    "leaseDurationMs": 300000,
                 }
             }
 
@@ -150,6 +157,7 @@ def test_api_claim_returns_metadata_without_downloading_source():
     assert claimed.id == "job-1"
     assert claimed.claim_token == "claim-1"
     assert claimed.source_filename == "plan.pdf"
+    assert claimed.lease_duration_seconds == 300
 
 
 def test_download_uses_authoritative_mime_type_for_temporary_suffix():
@@ -159,6 +167,7 @@ def test_download_uses_authoritative_mime_type_for_temporary_suffix():
         source_url="/source",
         source_filename="wrong.pdf",
         source_mime_type="image/webp",
+        lease_duration_seconds=300,
     )
 
     class DownloadApi(WorkerApi):
@@ -185,6 +194,25 @@ def test_polling_sleeps_when_empty_then_completes_the_next_claim():
     assert sleeps == [2.5]
     assert api.completed == [("job-1", pages)]
     assert api.failed == []
+
+
+def test_short_authoritative_lease_heartbeats_before_expiry_without_worker_lease_env():
+    api = FakeApi([job()])
+
+    class SlowExtractor:
+        def extract(self, _source):
+            time.sleep(0.04)
+            return []
+
+    run_worker(
+        settings(),
+        api=api,
+        extractor=SlowExtractor(),
+        sleep=lambda _seconds: None,
+        max_iterations=1,
+    )
+
+    assert api.heartbeats
 
 
 def test_worker_reports_bounded_failure_without_a_traceback():
