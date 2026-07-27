@@ -1,3 +1,5 @@
+import base64
+import io
 from pathlib import Path
 
 import pytest
@@ -21,24 +23,66 @@ def _write_representative_blueprint_pdf(tmp_path):
 
     first_lines = []
     second_lines = []
+    first_dashes = []
+    second_dashes = []
 
-    def add_text(draw, lines, position, text, confidence=0.99):
-        draw.text(position, text, fill="black", font=font)
-        lines.append((draw.textbbox(position, text, font=font), text, confidence))
+    def add_text(draw, lines, dashes, position, text, confidence=0.99):
+        if " – " not in text:
+            draw.text(position, text, fill="black", font=font)
+            lines.append(
+                (draw.textbbox(position, text, font=font), text, confidence)
+            )
+            return
 
-    add_text(first_draw, first_lines, (50, 50), "Floor Plan – 3BHK Residence", 0.97)
-    add_text(first_draw, first_lines, (470, 55), "Electrical Legend")
-    add_text(first_draw, first_lines, (470, 100), "Building Cross Section A-A")
-    add_text(first_draw, first_lines, (470, 145), "GENERAL NOTES")
+        before_dash, after_dash = text.split(" – ", maxsplit=1)
+        left_box = draw.textbbox(position, before_dash, font=font)
+        space_width = round(draw.textlength(" ", font=font))
+        dash_left = left_box[2] + space_width
+        dash_right = dash_left + 12
+        dash_top = position[1] + 15
+        dash_bottom = dash_top + 2
+        draw.text(position, before_dash, fill="black", font=font)
+        draw.rectangle(
+            (dash_left, dash_top, dash_right - 1, dash_bottom - 1),
+            fill="black",
+        )
+        right_position = (dash_right + space_width, position[1])
+        draw.text(right_position, after_dash, fill="black", font=font)
+        right_box = draw.textbbox(right_position, after_dash, font=font)
+        lines.append(
+            (
+                (
+                    left_box[0],
+                    min(left_box[1], dash_top, right_box[1]),
+                    right_box[2],
+                    max(left_box[3], dash_bottom, right_box[3]),
+                ),
+                text,
+                confidence,
+            )
+        )
+        dashes.append((dash_left, dash_top, dash_right, dash_bottom))
+
+    add_text(
+        first_draw,
+        first_lines,
+        first_dashes,
+        (50, 50),
+        "Floor Plan – 3BHK Residence",
+        0.97,
+    )
+    add_text(first_draw, first_lines, first_dashes, (470, 55), "Electrical Legend")
+    add_text(first_draw, first_lines, first_dashes, (470, 100), "Building Cross Section A-A")
+    add_text(first_draw, first_lines, first_dashes, (470, 145), "GENERAL NOTES")
     first_draw.rectangle((40, 115, 410, 350), outline="black", width=4)
     first_draw.rectangle((500, 300, 820, 600), outline="black", width=4)
 
-    add_text(second_draw, second_lines, (50, 45), "Living Room", 0.96)
-    add_text(second_draw, second_lines, (50, 80), "Front Elevation", 0.91)
-    add_text(second_draw, second_lines, (460, 80), "Side Elevation (Left)", 0.93)
-    add_text(second_draw, second_lines, (50, 420), "Ceiling Plan – Living Room", 0.94)
-    add_text(second_draw, second_lines, (480, 45), "Door Schedule")
-    add_text(second_draw, second_lines, (480, 130), "1. All dimensions in mm")
+    add_text(second_draw, second_lines, second_dashes, (50, 45), "Living Room", 0.96)
+    add_text(second_draw, second_lines, second_dashes, (50, 80), "Front Elevation", 0.91)
+    add_text(second_draw, second_lines, second_dashes, (460, 80), "Side Elevation (Left)", 0.93)
+    add_text(second_draw, second_lines, second_dashes, (50, 420), "Ceiling Plan – Living Room", 0.94)
+    add_text(second_draw, second_lines, second_dashes, (480, 45), "Door Schedule")
+    add_text(second_draw, second_lines, second_dashes, (480, 130), "1. All dimensions in mm")
     second_draw.rectangle((40, 140, 350, 330), outline="black", width=4)
     second_draw.rectangle((450, 220, 790, 410), outline="black", width=4)
     second_draw.rectangle((40, 490, 400, 650), outline="black", width=4)
@@ -65,7 +109,7 @@ def _write_representative_blueprint_pdf(tmp_path):
             "Side Elevation (Left)": (450, 220, 790, 410),
             "Ceiling Plan – Living Room": (40, 490, 400, 650),
         },
-    ]
+    ], [first_dashes, second_dashes]
 
 
 def _write_noise_only_blueprint_page(tmp_path):
@@ -128,6 +172,26 @@ def _overlaps_region(crop, region):
     )
 
 
+def _assert_dash_is_a_horizontal_stroke(page, dash_regions):
+    rendered = Image.open(
+        io.BytesIO(base64.b64decode(page.image_base64))
+    ).convert("L")
+    try:
+        for left, top, right, bottom in dash_regions:
+            assert all(
+                rendered.getpixel((x, y)) < 100
+                for x in range(left, right)
+                for y in range(top, bottom)
+            )
+            assert all(
+                rendered.getpixel((x, y)) > 235
+                for x in range(left - 1, right + 1)
+                for y in (top - 2, bottom + 2)
+            )
+    finally:
+        rendered.close()
+
+
 class FakePaddleOCR3:
     def __init__(self, result):
         self.result = result
@@ -176,8 +240,8 @@ def test_renders_every_pdf_page_with_positive_pixel_dimensions():
 
 
 def test_extracts_exact_approved_blueprint_titles_in_page_order(tmp_path):
-    source, page_results, expected_regions = _write_representative_blueprint_pdf(
-        tmp_path
+    source, page_results, expected_regions, dash_regions = (
+        _write_representative_blueprint_pdf(tmp_path)
     )
 
     pages = Extractor(
@@ -201,6 +265,8 @@ def test_extracts_exact_approved_blueprint_titles_in_page_order(tmp_path):
                 for label, region in regions.items()
                 if label != section.label
             )
+    for page, dashes in zip(pages, dash_regions):
+        _assert_dash_is_a_horizontal_stroke(page, dashes)
 
 
 def test_extracts_zero_sections_from_a_noise_only_page(tmp_path):
