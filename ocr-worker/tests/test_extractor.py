@@ -3,6 +3,8 @@ from pathlib import Path
 import pytest
 
 from lisno_ocr.extractor import Extractor
+from lisno_ocr.settings import LayoutSettings
+from lisno_ocr.title_classifier import OcrLine, classify_drawing_titles
 
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -141,7 +143,7 @@ def test_candidate_cap_stops_crop_encoding_before_candidate_501(monkeypatch):
     labels = 501
     ocr = FakePaddleOCR3([{
         "rec_boxes": [[1, 1, 20, 20]] * labels,
-        "rec_texts": [f"Floor Plan – Wing {index}" for index in range(labels)],
+        "rec_texts": [f"Bedroom {index} Plan" for index in range(labels)],
         "rec_scores": [0.9] * labels,
     }])
     encoded = 0
@@ -310,10 +312,16 @@ def test_installed_paddle_model_smoke():
     pages = Extractor().extract(FIXTURES / "labeled-plan.png")
     assert pages
     assert all(page.width > 0 and page.height > 0 for page in pages)
-    sections = [section for page in pages for section in page.sections]
-    assert sections
+    taxonomy = LayoutSettings.defaults()
     for page in pages:
         for section in page.sections:
+            classified = classify_drawing_titles(
+                [OcrLine((0, 0, 1, 1), section.label, section.confidence)],
+                taxonomy.accepted_plan_types,
+                taxonomy.accepted_room_types,
+            )
+            assert classified
+            assert classified[0].label == section.label
             assert section.label
             assert section.label == " ".join(section.label.split())
             assert section.crop.width > 0

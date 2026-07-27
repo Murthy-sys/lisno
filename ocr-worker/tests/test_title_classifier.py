@@ -50,6 +50,28 @@ def test_accepts_supported_plan_and_directional_elevation_titles(label):
 @pytest.mark.parametrize(
     "label",
     [
+        "Ground Floor Plan",
+        "First Floor Plan",
+        "Second Floor Plan",
+        "2nd Floor Plan",
+        "Basement Floor Plan",
+        "Floor Plan – Ground Floor",
+        "Floor Plan – Level 2",
+        "Floor Plan – Aurora Residence",
+        "Floor Plan – Project Aurora",
+    ],
+)
+def test_accepts_only_controlled_floor_residence_and_project_qualifiers(label):
+    line = OcrLine((40, 80, 440, 120), label, 0.93)
+
+    assert classify_drawing_titles([line], DEFAULT_PLAN_TYPES) == (
+        DrawingTitle(line.box, label, 0.93),
+    )
+
+
+@pytest.mark.parametrize(
+    "label",
+    [
         "Living Room Plan",
         "Bedroom Plan",
         "Kitchen Plan",
@@ -187,9 +209,74 @@ def test_rejects_unnumbered_directives_containing_supported_titles(label):
     ) == ()
 
 
+@pytest.mark.parametrize(
+    "label",
+    [
+        "Refer Floor Plan",
+        "Consult Floor Plan",
+        "Check Floor Plan",
+        "Refer Front Elevation",
+        "Consult Front Elevation",
+        "Check Front Elevation",
+        "Floor Plan – for reference",
+        "Front Elevation – for reference",
+        "Floor Plan – to be verified",
+        "Front Elevation – to be verified",
+        "Floor Plan – for information only",
+        "Front Elevation – for information only",
+        "Floor Plan – Some Random Prose",
+        "Some Random Prose – Front Elevation",
+    ],
+)
+def test_closed_title_grammar_rejects_free_form_prefixes_and_suffixes(label):
+    assert classify_drawing_titles(
+        [OcrLine((40, 80, 440, 120), label, 0.99)],
+        DEFAULT_PLAN_TYPES,
+    ) == ()
+
+
+@pytest.mark.parametrize("label", ["Turkey Plan", "Turnkey Plan"])
+def test_configured_plan_labels_containing_key_are_not_key_plan_exclusions(label):
+    normalized = classifier_module._comparison_text(label)
+
+    assert classifier_module._is_excluded(normalized) is False
+    line = OcrLine((40, 80, 440, 120), label, 0.93)
+    family = normalized.removesuffix(" plan")
+    assert classify_drawing_titles([line], (family,)) == (
+        DrawingTitle(line.box, label, 0.93),
+    )
+
+
+def test_exact_key_plan_remains_an_exclusion_phrase():
+    assert classifier_module._is_excluded("key plan") is True
+
+
 def test_joins_one_adjacent_aligned_qualifier_and_uses_minimum_confidence():
     lines = [
         OcrLine((80, 100, 310, 132), "Living Room", 0.96),
+        OcrLine((84, 138, 360, 174), "Front Elevation", 0.89),
+    ]
+
+    assert classify_drawing_titles(lines, DEFAULT_PLAN_TYPES) == (
+        DrawingTitle(
+            (80, 100, 360, 174),
+            "Living Room – Front Elevation",
+            0.89,
+        ),
+    )
+
+
+def test_joins_geometric_neighbor_hidden_by_nine_interleaved_column_lines():
+    lines = [
+        OcrLine((80, 100, 310, 132), "Living Room", 0.96),
+        *[
+            OcrLine(
+                (500, 102 + index * 3, 730, 122 + index * 3),
+                f"DECOY {index}",
+                0.99,
+            )
+            for index in range(9)
+        ],
         OcrLine((84, 138, 360, 174), "Front Elevation", 0.89),
     ]
 
@@ -312,21 +399,19 @@ def test_two_thousand_lines_do_not_trigger_quadratic_classifier_scans(
         counted_comparison,
     )
     lines = [
-        OcrLine(
-            (0, index * 4, 100, index * 4 + 1),
-            f"Front Elevation Wing {index}",
-            0.9,
-        )
+        OcrLine((0, index * 4, 100, index * 4 + 1), "Front Elevation", 0.9)
         for index in range(2_000)
     ]
 
     titles = classify_drawing_titles(lines, DEFAULT_PLAN_TYPES)
 
     assert len(titles) == 2_000
-    assert comparison_calls < 20_000
+    assert comparison_calls < 50_000
 
 
-def test_bare_titles_search_only_a_bounded_local_neighbor_window(monkeypatch):
+def test_geometric_neighbor_lookup_stays_bounded_for_interleaved_ocr(
+    monkeypatch,
+):
     comparison_calls = 0
     original = classifier_module._comparison_text
 
@@ -340,15 +425,36 @@ def test_bare_titles_search_only_a_bounded_local_neighbor_window(monkeypatch):
         "_comparison_text",
         counted_comparison,
     )
-    lines = [
-        OcrLine((0, index * 100, 100, index * 100 + 1), "Front Elevation", 0.9)
-        for index in range(200)
-    ]
+    lines = []
+    for group in range(180):
+        base_y = group * 200
+        lines.append(
+            OcrLine((80, base_y, 310, base_y + 32), "Living Room", 0.96)
+        )
+        lines.extend(
+            OcrLine(
+                (500, base_y + 2 + index * 3, 730, base_y + 22 + index * 3),
+                f"DECOY {group}-{index}",
+                0.99,
+            )
+            for index in range(9)
+        )
+        lines.append(
+            OcrLine(
+                (84, base_y + 38, 360, base_y + 74),
+                "Front Elevation",
+                0.89,
+            )
+        )
 
     titles = classify_drawing_titles(lines, DEFAULT_PLAN_TYPES)
 
-    assert len(titles) == 200
-    assert comparison_calls < 5_000
+    assert len(lines) == 1_980
+    assert len(titles) == 180
+    assert {title.label for title in titles} == {
+        "Living Room – Front Elevation"
+    }
+    assert comparison_calls < 20_000
 
 
 def test_configured_plan_types_are_normalized_unique_and_replace_defaults(

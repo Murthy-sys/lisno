@@ -57,7 +57,10 @@ _EXCLUDED_WORDS = frozenset(
     }
 )
 _DIRECTIVE_PHRASES = (
+    "refer",
     "refer to",
+    "consult",
+    "check",
     "see",
     "as per",
     "typical",
@@ -66,15 +69,24 @@ _DIRECTIVE_PHRASES = (
     "provide",
     "do not",
     "not for construction",
+    "for reference",
+    "to be verified",
+    "for information only",
 )
 _FLOOR_QUALIFIERS = frozenset(
     {
         "basement",
+        "ground",
         "ground floor",
+        "first",
         "first floor",
+        "second",
         "second floor",
+        "third",
         "third floor",
+        "upper",
         "upper floor",
+        "lower",
         "lower floor",
     }
 )
@@ -102,7 +114,10 @@ _DASHES = str.maketrans(
         "\u2212": "-",
     }
 )
-_NEIGHBOR_WINDOW = 8
+_NEIGHBOR_Y_BUCKET_SIZE = 64
+_NEIGHBOR_X_BUCKET_SIZE = 128
+_MAX_JOIN_GAP = 96
+_MAX_NEIGHBORS_PER_BUCKET = 64
 _DEDUPE_CELL_SIZE = 128
 
 
@@ -120,6 +135,12 @@ class DrawingTitle:
     confidence: float
 
 
+@dataclass(frozen=True, slots=True)
+class _QualifierIndex:
+    by_bottom: dict[tuple[int, int], tuple[int, ...]]
+    by_top: dict[tuple[int, int], tuple[int, ...]]
+
+
 def classify_drawing_titles(
     lines: Sequence[OcrLine],
     accepted_plan_types: Sequence[str],
@@ -131,13 +152,20 @@ def classify_drawing_titles(
         (line for line in lines if line.text.strip()),
         key=lambda line: (line.box[1], line.box[0]),
     )
+    comparison_texts = tuple(_comparison_text(line.text) for line in ordered)
+    qualifier_index = _build_qualifier_index(
+        ordered,
+        comparison_texts,
+        plan_types,
+        room_types,
+    )
     consumed: set[int] = set()
     titles: list[DrawingTitle] = []
 
     for index, line in enumerate(ordered):
         if index in consumed:
             continue
-        comparison = _comparison_text(line.text)
+        comparison = comparison_texts[index]
         if not _is_supported_title(comparison, plan_types, room_types):
             continue
 
@@ -149,8 +177,7 @@ def classify_drawing_titles(
                 ordered,
                 index,
                 consumed,
-                plan_types,
-                room_types,
+                qualifier_index,
             )
             if neighbor is not None:
                 neighbor_index, qualifier, qualifier_precedes = neighbor
@@ -218,7 +245,7 @@ def _is_supported_title(
 ) -> bool:
     if not text or _is_excluded(text):
         return False
-    if _matches_directional_elevation(text):
+    if _matches_directional_elevation(text, room_types):
         return True
     return _matches_plan_title(text, plan_types, room_types)
 
@@ -229,7 +256,7 @@ def _is_excluded(text: str) -> bool:
         return True
     if any(_contains_phrase(text, phrase) for phrase in _DIRECTIVE_PHRASES):
         return True
-    if any(phrase in text for phrase in _EXCLUDED_PHRASES):
+    if any(_contains_phrase(text, phrase) for phrase in _EXCLUDED_PHRASES):
         return True
     if words & _EXCLUDED_WORDS:
         return True
@@ -250,11 +277,12 @@ def _is_dimension_or_symbol(text: str) -> bool:
     return False
 
 
-def _matches_directional_elevation(text: str) -> bool:
+def _matches_directional_elevation(
+    text: str,
+    room_types: tuple[str, ...],
+) -> bool:
     return any(
-        text == elevation
-        or text.startswith(f"{elevation} ")
-        or text.endswith(f" {elevation}")
+        _matches_closed_base(text, elevation, room_types)
         for elevation in _DIRECTIONAL_ELEVATIONS
     )
 
@@ -268,16 +296,26 @@ def _matches_plan_title(
         if plan_type == "room":
             continue
         drawing_type = f"{plan_type} plan"
-        if (
-            text == drawing_type
-            or text.startswith(f"{drawing_type} ")
-            or text.endswith(f" {drawing_type}")
-        ):
+        if _matches_closed_base(text, drawing_type, room_types):
             return True
     if "room" not in plan_types or not text.endswith(" plan"):
         return False
     qualifier = text.removesuffix(" plan").strip()
     return _matches_room_qualifier(qualifier, room_types)
+
+
+def _matches_closed_base(
+    text: str,
+    drawing_type: str,
+    room_types: tuple[str, ...],
+) -> bool:
+    if text == drawing_type:
+        return True
+    prefix = text.removesuffix(f" {drawing_type}")
+    if prefix != text and _is_controlled_qualifier(prefix, room_types):
+        return True
+    suffix = text.removeprefix(f"{drawing_type} ")
+    return suffix != text and _is_controlled_qualifier(suffix, room_types)
 
 
 def _matches_room_qualifier(
@@ -302,14 +340,15 @@ def _adjacent_qualifier(
     lines: Sequence[OcrLine],
     title_index: int,
     consumed: set[int],
-    plan_types: tuple[str, ...],
-    room_types: tuple[str, ...],
+    qualifier_index: _QualifierIndex,
 ) -> tuple[int, OcrLine, bool] | None:
     title = lines[title_index]
     neighbors: list[tuple[int, int, OcrLine, bool]] = []
-    start = max(0, title_index - _NEIGHBOR_WINDOW)
-    stop = min(len(lines), title_index + _NEIGHBOR_WINDOW + 1)
-    for neighbor_index in range(start, stop):
+    candidate_indices = _geometric_qualifier_candidates(
+        title.box,
+        qualifier_index,
+    )
+    for neighbor_index in candidate_indices:
         if neighbor_index == title_index or neighbor_index in consumed:
             continue
         qualifier = lines[neighbor_index]
@@ -321,16 +360,7 @@ def _adjacent_qualifier(
             gap = qualifier.box[1] - title.box[3]
         else:
             continue
-        qualifier_text = _comparison_text(qualifier.text)
-        if (
-            _is_controlled_qualifier(qualifier_text, room_types)
-            and not _is_supported_title(
-                qualifier_text,
-                plan_types,
-                room_types,
-            )
-            and _is_title_neighbor(qualifier.box, title.box, precedes)
-        ):
+        if _is_title_neighbor(qualifier.box, title.box, precedes):
             neighbors.append((gap, neighbor_index, qualifier, precedes))
     if not neighbors:
         return None
@@ -339,6 +369,76 @@ def _adjacent_qualifier(
         key=lambda item: (item[0], item[2].box[1], item[2].box[0]),
     )
     return neighbor_index, qualifier, precedes
+
+
+def _build_qualifier_index(
+    lines: Sequence[OcrLine],
+    comparison_texts: Sequence[str],
+    plan_types: tuple[str, ...],
+    room_types: tuple[str, ...],
+) -> _QualifierIndex:
+    by_bottom: dict[tuple[int, int], list[int]] = {}
+    by_top: dict[tuple[int, int], list[int]] = {}
+    for index, (line, text) in enumerate(zip(lines, comparison_texts)):
+        if not _is_controlled_qualifier(text, room_types):
+            continue
+        if _is_supported_title(text, plan_types, room_types):
+            continue
+        for cell_x in _neighbor_x_cells(line.box):
+            bottom_key = (
+                line.box[3] // _NEIGHBOR_Y_BUCKET_SIZE,
+                cell_x,
+            )
+            top_key = (
+                line.box[1] // _NEIGHBOR_Y_BUCKET_SIZE,
+                cell_x,
+            )
+            _append_bounded(by_bottom, bottom_key, index)
+            _append_bounded(by_top, top_key, index)
+    return _QualifierIndex(
+        by_bottom={
+            key: tuple(indices)
+            for key, indices in by_bottom.items()
+        },
+        by_top={
+            key: tuple(indices)
+            for key, indices in by_top.items()
+        },
+    )
+
+
+def _geometric_qualifier_candidates(
+    title: Box,
+    index: _QualifierIndex,
+) -> tuple[int, ...]:
+    candidates: set[int] = set()
+    x_cells = _neighbor_x_cells(title)
+    above_start = (title[1] - _MAX_JOIN_GAP) // _NEIGHBOR_Y_BUCKET_SIZE
+    above_stop = title[1] // _NEIGHBOR_Y_BUCKET_SIZE
+    below_start = title[3] // _NEIGHBOR_Y_BUCKET_SIZE
+    below_stop = (title[3] + _MAX_JOIN_GAP) // _NEIGHBOR_Y_BUCKET_SIZE
+    for cell_x in x_cells:
+        for cell_y in range(above_start, above_stop + 1):
+            candidates.update(index.by_bottom.get((cell_y, cell_x), ()))
+        for cell_y in range(below_start, below_stop + 1):
+            candidates.update(index.by_top.get((cell_y, cell_x), ()))
+    return tuple(candidates)
+
+
+def _neighbor_x_cells(box: Box) -> range:
+    first_x = min(box[0], box[2] - 1) // _NEIGHBOR_X_BUCKET_SIZE
+    last_x = max(box[0], box[2] - 1) // _NEIGHBOR_X_BUCKET_SIZE
+    return range(first_x, last_x + 1)
+
+
+def _append_bounded(
+    buckets: dict[tuple[int, int], list[int]],
+    key: tuple[int, int],
+    value: int,
+) -> None:
+    bucket = buckets.setdefault(key, [])
+    if len(bucket) < _MAX_NEIGHBORS_PER_BUCKET:
+        bucket.append(value)
 
 
 def _is_controlled_qualifier(
@@ -352,6 +452,7 @@ def _is_controlled_qualifier(
     return (
         _matches_room_qualifier(text, room_types)
         or _matches_residence_qualifier(text)
+        or _matches_project_qualifier(text)
         or _matches_floor_qualifier(text)
         or text in _DIRECTIONAL_QUALIFIERS
     )
@@ -363,9 +464,15 @@ def _matches_residence_qualifier(text: str) -> bool:
     )
 
 
+def _matches_project_qualifier(text: str) -> bool:
+    return bool(
+        re.fullmatch(r"project\s+[a-z0-9]+(?:\s+[a-z0-9]+){0,2}", text)
+    )
+
+
 def _matches_floor_qualifier(text: str) -> bool:
     return text in _FLOOR_QUALIFIERS or bool(
-        re.fullmatch(r"level\s+[a-z0-9]+", text)
+        re.fullmatch(r"(?:level\s+)?\d+(?:st|nd|rd|th)?", text)
     )
 
 
