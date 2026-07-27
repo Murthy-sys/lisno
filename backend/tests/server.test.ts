@@ -111,4 +111,32 @@ describe("production server bootstrap", () => {
     ).rejects.toThrow("Mongo unavailable");
     expect(appFactory).not.toHaveBeenCalled();
   });
+
+  it("rejects and disconnects when Express reports a listen error", async () => {
+    const listenError = Object.assign(new Error("address already in use"), {
+      code: "EADDRINUSE"
+    });
+    const server = fakeServer();
+    const disconnect = vi.fn(async () => undefined);
+    const appFactory = vi.fn(() => ({
+      listen: vi.fn(
+        (_port: number, callback: (error?: Error) => void) => {
+          callback(listenError);
+          return server;
+        }
+      )
+    }));
+
+    await expect(
+      startServer({
+        loadEnvironment: () => env,
+        connect: async () => undefined,
+        disconnect,
+        repositoryFactory: () => ({} as AppRepository),
+        appFactory,
+        registerSignalHandlers: false
+      })
+    ).rejects.toBe(listenError);
+    expect(disconnect).toHaveBeenCalledOnce();
+  });
 });

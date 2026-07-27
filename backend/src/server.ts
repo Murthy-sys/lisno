@@ -11,7 +11,7 @@ import type { AppRepository } from "./repositories/types.js";
 import { createLocalStorage } from "./storage/local-storage.js";
 
 type ServerApp = {
-  listen(port: number, callback: () => void): Server;
+  listen(port: number, callback: (error?: Error) => void): Server;
 };
 
 export interface ServerDependencies {
@@ -82,7 +82,11 @@ export async function startServer(
 function listen(app: ServerApp, port: number): Promise<Server> {
   return new Promise((resolve, reject) => {
     let server: Server | undefined;
-    const onListening = () => {
+    const onListening = (error?: Error) => {
+      if (error) {
+        reject(error);
+        return;
+      }
       if (!server) {
         queueMicrotask(onListening);
         return;
