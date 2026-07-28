@@ -69,8 +69,8 @@ const review: DesignSectionReviewData = {
   }]
 };
 
-function installApi(options: { failList?: boolean; failDecision?: boolean } = {}) {
-  let current = structuredClone(review);
+function installApi(options: { failList?: boolean; failDecision?: boolean; reviewData?: DesignSectionReviewData } = {}) {
+  let current = structuredClone(options.reviewData ?? review);
   return vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = String(input);
     if (url === "/api/v1/client/projects/project-1/design-sections") {
@@ -116,7 +116,7 @@ describe("DesignSectionReview", () => {
     renderWithQuery(<DesignSectionReview projectId="project-1" mode="client" />);
     const user = userEvent.setup();
 
-    const progress = await screen.findByLabelText("0 approved, 0 rejected, 2 awaiting review, 2 total");
+    const progress = await screen.findByRole("group", { name: "0 approved, 0 rejected, 2 awaiting review, 2 total" });
     const approvedStat = getProgressStat(progress, "Approved");
     const rejectedStat = getProgressStat(progress, "Rejected");
     const awaitingStat = getProgressStat(progress, "Awaiting review");
@@ -171,10 +171,38 @@ describe("DesignSectionReview", () => {
     await user.click(approve);
     const dialog = screen.getByRole("dialog", { name: "Approve Front elevation?" });
     await user.click(within(dialog).getByRole("button", { name: "Confirm approval" }));
-    const progress = await screen.findByLabelText("1 approved, 0 rejected, 1 awaiting review, 2 total");
+    const progress = await screen.findByRole("group", { name: "1 approved, 0 rejected, 1 awaiting review, 2 total" });
     expect(within(getProgressStat(progress, "Approved")).getByText("1")).toBeVisible();
     expect(within(getProgressStat(progress, "Awaiting review")).getByText("1")).toBeVisible();
     expect(screen.queryByRole("button", { name: "Approve Front elevation" })).not.toBeInTheDocument();
+  });
+
+  it("uses the first source page in API order when the highest versions tie", async () => {
+    vi.stubGlobal("URL", {
+      createObjectURL: vi.fn(() => "blob:tied-source-preview"),
+      revokeObjectURL: vi.fn()
+    });
+    const tiedReview = structuredClone(review);
+    tiedReview.sections = tiedReview.sections.map((section) => ({ ...section, versionNumber: 4 }));
+    const api = installApi({ reviewData: tiedReview });
+    renderWithQuery(<DesignSectionReview projectId="project-1" mode="client" />);
+
+    const sourceTrigger = await screen.findByRole("button", { name: "View source image" });
+    await waitFor(() => expect(sourceTrigger).toBeEnabled());
+    expect(api.mock.calls.filter(([input]) => String(input) === "/api/v1/design-source-pages/page-1/image")).toHaveLength(1);
+    expect(api.mock.calls.some(([input]) => String(input) === "/api/v1/design-source-pages/page-2/image")).toBe(false);
+  });
+
+  it("omits the source trigger when source URLs are absent or empty", async () => {
+    const noSourceReview = structuredClone(review);
+    delete (noSourceReview.sections[0] as { sourcePageUrl?: string }).sourcePageUrl;
+    noSourceReview.sections[1]!.sourcePageUrl = "";
+    const api = installApi({ reviewData: noSourceReview });
+    renderWithQuery(<DesignSectionReview projectId="project-1" mode="client" />);
+
+    await screen.findByRole("article", { name: "Front elevation review" });
+    expect(screen.queryByRole("button", { name: "View source image" })).not.toBeInTheDocument();
+    expect(api.mock.calls.some(([input]) => String(input).includes("/api/v1/design-source-pages/"))).toBe(false);
   });
 
   it("requires an associated rejection comment and surfaces decision failures", async () => {
