@@ -96,6 +96,91 @@ def test_rejects_blueprint_overviews_and_symbol_legend_entries(label):
 @pytest.mark.parametrize(
     ("label", "plan_types", "room_types"),
     [
+        ("Bed & Bath Plan", ("room",), ("bed & bath",)),
+        (
+            "Research & Development Plan",
+            ("research & development",),
+            DEFAULT_ROOM_TYPES,
+        ),
+    ],
+)
+def test_preserves_configured_single_titles_containing_ampersands(
+    label,
+    plan_types,
+    room_types,
+):
+    line = OcrLine((40, 80, 440, 120), label, 0.99)
+
+    assert classify_drawing_titles(
+        [line],
+        plan_types,
+        room_types,
+    ) == (DrawingTitle(line.box, label, 0.99),)
+
+
+@pytest.mark.parametrize(
+    "continuation_box",
+    [
+        (84, 138, 360, 174),
+        (326, 100, 570, 132),
+    ],
+)
+def test_rejects_aligned_adjacent_segmented_overview_titles(
+    continuation_box,
+):
+    lines = [
+        OcrLine((80, 100, 310, 132), "ELEVATION &", 0.96),
+        OcrLine(continuation_box, "CEILING PLAN", 0.94),
+    ]
+
+    assert classify_drawing_titles(lines, DEFAULT_PLAN_TYPES) == ()
+
+
+@pytest.mark.parametrize(
+    "unrelated_box",
+    [
+        (500, 138, 760, 174),
+        (84, 300, 360, 336),
+    ],
+)
+def test_segmented_overview_fragment_does_not_suppress_unrelated_titles(
+    unrelated_box,
+):
+    lines = [
+        OcrLine((80, 100, 310, 132), "ELEVATION &", 0.96),
+        OcrLine(unrelated_box, "CEILING PLAN", 0.94),
+    ]
+
+    assert classify_drawing_titles(lines, DEFAULT_PLAN_TYPES) == (
+        DrawingTitle(unrelated_box, "CEILING PLAN", 0.94),
+    )
+
+
+@pytest.mark.parametrize(
+    ("captured", "normalized"),
+    [
+        ("﹠CEILING PLAN", ""),
+        ("B．SIDE ELEVATION（LEFT）", "SIDE ELEVATION (LEFT)"),
+        (
+            "FLOOR PLAN―3BHK RESIDENCE",
+            "FLOOR PLAN – 3BHK RESIDENCE",
+        ),
+    ],
+)
+def test_normalizes_compatibility_punctuation_and_horizontal_bar(
+    captured,
+    normalized,
+):
+    assert normalize_ocr_title(
+        captured,
+        DEFAULT_PLAN_TYPES,
+        DEFAULT_ROOM_TYPES,
+    ) == normalized
+
+
+@pytest.mark.parametrize(
+    ("label", "plan_types", "room_types"),
+    [
         ("LANDSCAPEPLAN", DEFAULT_PLAN_TYPES, DEFAULT_ROOM_TYPES),
         ("CONSERVATORYPLAN", ("room",), DEFAULT_ROOM_TYPES),
         ("LIVINGROOMPLAN", ("room",), ("mud room",)),
