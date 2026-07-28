@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   ApiError,
   apiClient,
+  resolveApiUrl,
   tokenStorage,
   type PaginatedData
 } from "./client";
@@ -166,5 +167,25 @@ describe("apiClient", () => {
 
     expect(download.filename).toBe("floor-plan.pdf");
     expect(download.blob.type).toBe("application/pdf");
+  });
+
+  it("does not duplicate the API prefix for opaque artifact URLs", async () => {
+    tokenStorage.set("artifact-token");
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementationOnce(async (input, init) => {
+      expect(String(input)).toBe("/api/v1/design-source-pages/page-1/image");
+      expect(new Headers(init?.headers).get("authorization")).toBe("Bearer artifact-token");
+      return new Response(new Blob(["image"], { type: "image/png" }));
+    });
+
+    await apiClient.getBlob("/api/v1/design-source-pages/page-1/image");
+
+    expect(fetchSpy).toHaveBeenCalledOnce();
+  });
+
+  it("resolves backend artifact paths against an absolute API origin without duplicating api/v1", () => {
+    expect(resolveApiUrl(
+      "http://localhost:3000/api/v1",
+      "/api/v1/design-section-revisions/revision-1/image"
+    )).toBe("http://localhost:3000/api/v1/design-section-revisions/revision-1/image");
   });
 });

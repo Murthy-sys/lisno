@@ -1,0 +1,34 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "lisno-ocr-worker"
+version = "0.1.0"
+description = "Leased PaddleOCR extraction worker for Lisno design uploads"
+requires-python = ">=3.11"
+dependencies = [
+  "numpy>=1.26,<3",
+  "Pillow>=10,<13",
+  "PyMuPDF>=1.24,<2",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=8,<10"]
+model = [
+  "paddleocr>=3,<4",
+  "paddlepaddle>=3,<4",
+]
+
+[project.scripts]
+lisno-ocr-worker = "lisno_ocr.worker:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/lisno_ocr"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+markers = [
+  "model: opt-in smoke tests that require locally installed PaddleOCR models",
+]

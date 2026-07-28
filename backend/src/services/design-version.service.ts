@@ -1,9 +1,13 @@
+import { randomUUID } from "node:crypto";
+
 import { ApiError } from "../middleware/errors.js";
 import type { ValidatedUpload } from "../middleware/upload.js";
 import type {
   AppRepository,
   ApprovalStatus,
+  DesignExtractionJobRecord,
   DesignVersionRecord,
+  ExtractionStatus,
   PageResult,
   PaginationInput
 } from "../repositories/types.js";
@@ -21,12 +25,24 @@ import {
 export type PublicDesignVersion = Omit<
   DesignVersionRecord,
   "storedFileReference"
->;
+> & { extractionStatus: ExtractionStatus | null };
 export type ClientDesignVersion = Omit<
   PublicDesignVersion,
   "uploaderId" | "reviewerId"
 >;
 export type VisibleDesignVersion = PublicDesignVersion | ClientDesignVersion;
+export type PublicExtractionJob = Pick<
+  DesignExtractionJobRecord,
+  | "id"
+  | "designVersionId"
+  | "status"
+  | "attemptCount"
+  | "queuedAt"
+  | "startedAt"
+  | "completedAt"
+  | "failureCode"
+  | "failureMessage"
+>;
 
 export interface ApprovalInput {
   approvalStatus: ApprovalStatus;
@@ -61,6 +77,10 @@ export interface DesignVersionService {
     actor: PublicUser,
     versionId: string
   ): Promise<DesignVersionDownload>;
+  getExtraction(
+    actor: PublicUser,
+    versionId: string
+  ): Promise<PublicExtractionJob>;
 }
 
 export function createDesignVersionService(
@@ -122,6 +142,18 @@ export function createDesignVersionService(
             approvedAt: null,
             clientVisible: false
           });
+          const extraction = await transaction.enqueueExtractionJob({
+            id: randomUUID(),
+            designVersionId: version.id,
+            status: "queued",
+            attemptCount: 0,
+            queuedAt: uploadedAt,
+            startedAt: null,
+            completedAt: null,
+            leaseExpiresAt: null,
+            failureCode: null,
+            failureMessage: null
+          });
           await audit.append(
             {
               actorId: actor.id,
@@ -140,9 +172,9 @@ export function createDesignVersionService(
             },
             transaction
           );
-          return version;
+          return { version, extractionStatus: extraction.status };
         });
-        return publicVersion(created);
+        return publicVersion(created.version, created.extractionStatus);
       } catch (error) {
         try {
           await storage.delete(stored.reference);
@@ -169,13 +201,17 @@ export function createDesignVersionService(
           : { projectId },
         pagination
       );
+      const items = await Promise.all(
+        page.items.map(async (version) => {
+          const job = await repository.findExtractionJobByVersionId(version.id);
+          return actor.role === "client"
+            ? clientVersion(version, job?.status ?? null)
+            : publicVersion(version, job?.status ?? null);
+        })
+      );
       return {
         total: page.total,
-        items: page.items.map((version) =>
-          actor.role === "client"
-            ? clientVersion(version)
-            : publicVersion(version)
-        )
+        items
       };
     },
 
@@ -184,7 +220,12 @@ export function createDesignVersionService(
       if (user.role !== "client") forbidden();
       const projects = await repository.listProjectsForUser(user);
       const versions = await repository.listLatestClientVisibleDesignVersions(projects.map((project) => project.id));
-      return versions.map(clientVersion);
+      return Promise.all(
+        versions.map(async (version) => {
+          const job = await repository.findExtractionJobByVersionId(version.id);
+          return clientVersion(version, job?.status ?? null);
+        })
+      );
     },
 
     async approve(actor, versionId, input) {
@@ -273,7 +314,8 @@ export function createDesignVersionService(
         );
         return version;
       });
-      return publicVersion(updated);
+      const job = await repository.findExtractionJobByVersionId(updated.id);
+      return publicVersion(updated, job?.status ?? null);
     },
 
     async download(actor, versionId) {
@@ -310,25 +352,70 @@ export function createDesignVersionService(
           "The stored file is temporarily unavailable."
         );
       }
+    },
+
+    async getExtraction(actor, versionId) {
+      const version = await repository.findDesignVersionById(versionId);
+      if (!version) {
+        throw new ApiError(
+          404,
+          "NOT_FOUND",
+          "The requested resource was not found."
+        );
+      }
+      await requireAccessibleProject(repository, actor, version.projectId);
+      const job = await repository.findExtractionJobByVersionId(version.id);
+      if (!job) {
+        throw new ApiError(
+          404,
+          "NOT_FOUND",
+          "The requested resource was not found."
+        );
+      }
+      return publicExtractionJob(job);
     }
   };
 }
 
 function publicVersion(
-  version: DesignVersionRecord
+  version: DesignVersionRecord,
+  extractionStatus: ExtractionStatus | null
 ): PublicDesignVersion {
   const { storedFileReference: _storedFileReference, ...visible } = version;
-  return visible;
+  return { ...visible, extractionStatus };
 }
 
-function clientVersion(
-  version: DesignVersionRecord
-): ClientDesignVersion {
+function clientVersion(version: DesignVersionRecord, extractionStatus: ExtractionStatus | null): ClientDesignVersion {
   const {
     storedFileReference: _storedFileReference,
     uploaderId: _uploaderId,
     reviewerId: _reviewerId,
     ...visible
   } = version;
-  return visible;
+  return { ...visible, extractionStatus };
+}
+
+function publicExtractionJob(job: DesignExtractionJobRecord): PublicExtractionJob {
+  const {
+    id,
+    designVersionId,
+    status,
+    attemptCount,
+    queuedAt,
+    startedAt,
+    completedAt,
+    failureCode,
+    failureMessage
+  } = job;
+  return {
+    id,
+    designVersionId,
+    status,
+    attemptCount,
+    queuedAt,
+    startedAt,
+    completedAt,
+    failureCode,
+    failureMessage
+  };
 }

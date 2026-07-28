@@ -4,6 +4,11 @@ import type {
   CreateStageInput,
   CreateTaskInput,
   DesignStage,
+  DesignExtraction,
+  DesignSection,
+  CropRect,
+  DesignVersion,
+  ExtractionStatus,
   Floor,
   KpiRead,
   KpiTaskRead,
@@ -37,8 +42,57 @@ export const designerKeys = {
   taskEvents: (taskId: string) =>
     [...designerKeys.all, "tasks", taskId, "events", { sort: "desc", limit: 1 }] as const,
   designVersions: (projectId: string) =>
-    [...designerKeys.project(projectId), "design-versions"] as const
+    [...designerKeys.project(projectId), "design-versions"] as const,
+  designExtraction: (versionId: string) =>
+    [...designerKeys.all, "design-versions", versionId, "extraction"] as const,
+  designSections: (versionId: string) =>
+    [...designerKeys.all, "design-versions", versionId, "sections"] as const
 };
+
+export function getDesignVersions(projectId: string): Promise<DesignVersion[]> {
+  return getAllPages<DesignVersion>((offset) =>
+    apiClient.get<PageData<DesignVersion>>(
+      `/projects/${encodeURIComponent(projectId)}/design-versions?limit=${PROJECT_PAGE_SIZE}&offset=${offset}`
+    )
+  );
+}
+
+export const getDesignSections = (versionId: string) =>
+  apiClient.get<DesignExtraction>(
+    `/design-versions/${encodeURIComponent(versionId)}/sections`
+  );
+
+export const addDesignSection = (
+  versionId: string,
+  input: { sourcePageId: string; label: string; crop: CropRect }
+) => apiClient.post<DesignSection>(
+  `/design-versions/${encodeURIComponent(versionId)}/sections`,
+  input
+);
+
+export const editDesignSection = (
+  sectionId: string,
+  input: { version: number; label?: string; crop?: CropRect }
+) => apiClient.patch<DesignSection>(
+  `/design-sections/${encodeURIComponent(sectionId)}`,
+  input
+);
+
+export const removeDesignSection = (sectionId: string, version: number) =>
+  apiClient.delete<{ id: string; active: false }>(
+    `/design-sections/${encodeURIComponent(sectionId)}`,
+    { version }
+  );
+
+export const retryDesignExtraction = (versionId: string) =>
+  apiClient.post<{ extractionStatus: ExtractionStatus }>(
+    `/design-versions/${encodeURIComponent(versionId)}/retry-extraction`
+  );
+
+export const submitDesignSections = (versionId: string) =>
+  apiClient.post<{ extractionStatus: ExtractionStatus; submittedCount: number }>(
+    `/design-versions/${encodeURIComponent(versionId)}/submit-sections`
+  );
 
 export async function getAllProjects(): Promise<Project[]> {
   return getAllPages<Project>((offset) =>

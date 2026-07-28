@@ -21,6 +21,17 @@ export type TaskEventType =
 
 export type ApprovalStatus = "draft" | "in_review" | "approved" | "rejected";
 
+export type ExtractionStatus =
+  | "queued"
+  | "processing"
+  | "designer_review"
+  | "submitted"
+  | "changes_requested"
+  | "approved"
+  | "processing_failed";
+
+export type SectionReviewStatus = "draft" | "submitted" | "approved" | "rejected";
+
 export type JsonObject = Record<string, unknown>;
 
 export interface UserRecord {
@@ -191,6 +202,105 @@ export interface DesignVersionFilters {
   clientVisible?: boolean;
 }
 
+export interface DesignExtractionJobRecord {
+  id: string;
+  designVersionId: string;
+  status: ExtractionStatus;
+  attemptCount: number;
+  queuedAt: string;
+  startedAt: string | null;
+  completedAt: string | null;
+  leaseExpiresAt: string | null;
+  failureCode: string | null;
+  failureMessage: string | null;
+  claimId: string | null;
+  workerResultId: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type NewDesignExtractionJob = Omit<
+  DesignExtractionJobRecord,
+  "claimId" | "workerResultId" | "createdAt" | "updatedAt"
+> & {
+  claimId?: string | null;
+  workerResultId?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
+export interface DesignSourcePageRecord {
+  id: string;
+  designVersionId: string;
+  pageNumber: number;
+  renderedFileReference: string;
+  width: number;
+  height: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface DesignSectionRecord {
+  id: string;
+  designVersionId: string;
+  sourcePageId: string;
+  label: string;
+  active: boolean;
+  source: "ocr" | "manual";
+  ocrConfidence: number | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CropRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface DesignSectionRevisionRecord {
+  id: string;
+  sectionId: string;
+  revisionNumber: number;
+  sourcePageId: string;
+  crop: CropRect;
+  croppedFileReference: string;
+  label: string;
+  reviewStatus: SectionReviewStatus;
+  submittedAt: string | null;
+  reviewerId: string | null;
+  reviewedAt: string | null;
+  rejectionComment: string | null;
+  createdAt: string;
+}
+
+export interface DesignSectionReviewProgress {
+  approved: number;
+  rejected: number;
+  awaitingReview: number;
+  total: number;
+}
+
+export interface SectionDecisionResult {
+  revision: DesignSectionRevisionRecord;
+  extractionStatus: Extract<ExtractionStatus, "submitted" | "changes_requested" | "approved">;
+  progress: DesignSectionReviewProgress;
+}
+
+export interface ExtractionDraftReplacement {
+  jobId: string;
+  claimId: string;
+  processedAt: string;
+  designVersionId: string;
+  workerResultId: string;
+  sourcePages: DesignSourcePageRecord[];
+  sections: Array<{
+    section: DesignSectionRecord;
+    revision: DesignSectionRevisionRecord;
+  }>;
+}
+
 export interface EvaluationRecord {
   id: string;
   subjectUserId: string;
@@ -296,6 +406,10 @@ export interface SeedData {
   tasks: TaskRecord[];
   taskEvents: TaskEventRecord[];
   designVersions: DesignVersionRecord[];
+  extractionJobs: DesignExtractionJobRecord[];
+  sourcePages: DesignSourcePageRecord[];
+  designSections: DesignSectionRecord[];
+  designSectionRevisions: DesignSectionRevisionRecord[];
   evaluations: EvaluationRecord[];
   auditEvents: AuditEventRecord[];
 }
@@ -406,6 +520,72 @@ export interface AppRepository {
     id: string,
     change: DesignVersionChange
   ): Promise<DesignVersionRecord>;
+  enqueueExtractionJob(input: NewDesignExtractionJob): Promise<DesignExtractionJobRecord>;
+  claimExtractionJob(
+    now: string,
+    leaseExpiresAt: string
+  ): Promise<DesignExtractionJobRecord | null>;
+  renewExtractionJobLease(
+    id: string,
+    claimId: string,
+    now: string,
+    leaseExpiresAt: string
+  ): Promise<DesignExtractionJobRecord>;
+  completeExtractionJob(
+    id: string,
+    claimId: string,
+    completedAt: string
+  ): Promise<DesignExtractionJobRecord>;
+  failExtractionJob(
+    id: string,
+    claimId: string,
+    failureCode: string,
+    failureMessage: string,
+    completedAt: string
+  ): Promise<DesignExtractionJobRecord>;
+  findExtractionJobById(id: string): Promise<DesignExtractionJobRecord | null>;
+  findExtractionJobByVersionId(
+    designVersionId: string
+  ): Promise<DesignExtractionJobRecord | null>;
+  listSourcePages(designVersionId: string): Promise<DesignSourcePageRecord[]>;
+  findSourcePageById(id: string): Promise<DesignSourcePageRecord | null>;
+  replaceExtractionDraft(input: ExtractionDraftReplacement): Promise<void>;
+  listDesignSections(designVersionId: string): Promise<DesignSectionRecord[]>;
+  findDesignSectionById(id: string): Promise<DesignSectionRecord | null>;
+  listSectionRevisions(sectionId: string): Promise<DesignSectionRevisionRecord[]>;
+  findSectionRevisionById(id: string): Promise<DesignSectionRevisionRecord | null>;
+  createManualSection(input: DesignSectionRecord): Promise<DesignSectionRecord>;
+  updateDraftSection(
+    id: string,
+    change: Partial<
+      Pick<DesignSectionRecord, "sourcePageId" | "label" | "active" | "ocrConfidence">
+    >,
+    expected?: {
+      revisionNumber: number;
+      statuses: SectionReviewStatus[];
+      active?: boolean;
+    }
+  ): Promise<DesignSectionRecord>;
+  createSectionRevision(
+    input: DesignSectionRevisionRecord
+  ): Promise<DesignSectionRevisionRecord>;
+  retryExtractionJob(id: string, queuedAt: string): Promise<DesignExtractionJobRecord>;
+  recoverFailedExtractionJob(
+    id: string,
+    recoveredAt: string
+  ): Promise<DesignExtractionJobRecord>;
+  submitDesignSectionDrafts(
+    designVersionId: string,
+    submittedAt: string
+  ): Promise<number>;
+  decideSubmittedSectionRevision(
+    revisionId: string,
+    expectedRevisionNumber: number,
+    decision: Extract<SectionReviewStatus, "approved" | "rejected">,
+    reviewerId: string,
+    comment: string | null,
+    reviewedAt: string
+  ): Promise<SectionDecisionResult>;
   createEvaluation(input: NewEvaluation): Promise<EvaluationRecord>;
   listEvaluationsForSubject(subjectUserId: string): Promise<EvaluationRecord[]>;
   listEvaluationsForSubjectIds(

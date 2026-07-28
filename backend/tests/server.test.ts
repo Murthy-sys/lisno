@@ -15,7 +15,9 @@ const env = {
   JWT_SECRET: "server-runtime-secret-with-at-least-32-characters",
   CORS_ORIGIN: ["http://localhost:5173"],
   UPLOADS_DIR: "uploads",
-  MAX_UPLOAD_MB: 25
+  MAX_UPLOAD_MB: 25,
+  OCR_LEASE_SECONDS: 300,
+  OCR_WORKER_TOKEN: "server-worker-token-with-at-least-32-characters"
 };
 
 afterEach(() => {

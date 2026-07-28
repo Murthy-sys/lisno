@@ -436,6 +436,10 @@ export const demoSeedData: SeedData = {
       updatedAt: "2026-07-15T08:00:00.000Z"
     }
   ],
+  extractionJobs: [],
+  sourcePages: [],
+  designSections: [],
+  designSectionRevisions: [],
   evaluations: [
     {
       id: "evaluation-kabir-june",

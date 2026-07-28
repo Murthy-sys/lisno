@@ -83,6 +83,23 @@ export function createDesignVersionsRouter(
     }
   );
 
+  router.get(
+    "/design-versions/:versionId/extraction",
+    protectedRoute,
+    async (request, response, next) => {
+      try {
+        response.json({
+          data: await designVersions.getExtraction(
+            request.authenticatedUser!,
+            request.params.versionId as string
+          )
+        });
+      } catch (error) {
+        next(error);
+      }
+    }
+  );
+
   router.patch(
     "/design-versions/:versionId/approval",
     protectedRoute,

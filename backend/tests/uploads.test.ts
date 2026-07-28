@@ -1,11 +1,16 @@
 import { Readable } from "node:stream";
+import { deflateSync, inflateSync } from "node:zlib";
 
+import express from "express";
 import jwt from "jsonwebtoken";
+import multer from "multer";
+import { PDFDocument } from "pdf-lib";
 import request from "supertest";
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 
 import { createApp } from "../src/app.js";
 import type { Role } from "../src/contracts/domain.js";
+import { isValidPdfDocument } from "../src/middleware/upload.js";
 import { createMemoryRepository } from "../src/repositories/memory.js";
 import type { AppRepository } from "../src/repositories/types.js";
 import { demoSeedData } from "../src/seed/data.js";
@@ -17,7 +22,9 @@ const auth = {
 };
 const TEST_NOW = "2026-07-16T12:00:00.000Z";
 const clock = () => new Date(TEST_NOW);
-const PDF = Buffer.from("%PDF-1.7\n1 0 obj\n<<>>\nendobj\n%%EOF");
+let PDF: Buffer;
+let XREF_STREAM_PDF: Buffer;
+let UNCOMPRESSED_XREF_STREAM_PDF: Buffer;
 const PNG = Buffer.from([
   0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x00
 ]);
@@ -25,6 +32,60 @@ const PNG = Buffer.from([
 // These include JPEG SOI/EOI and a RIFF/WebP header whose declared size matches.
 const JPEG = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01, 0x01, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0xff, 0xd9]);
 const WEBP = Buffer.from([0x52, 0x49, 0x46, 0x46, 0x16, 0x00, 0x00, 0x00, 0x57, 0x45, 0x42, 0x50, 0x56, 0x50, 0x38, 0x58, 0x0a, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
+
+function rewriteXrefStream(
+  data: Buffer,
+  options: {
+    compressed?: boolean;
+    dictionary?: (value: string) => string;
+    payload?: (value: Buffer) => Buffer;
+  } = {}
+) {
+  const source = data.toString("latin1");
+  const startXref = /startxref\s+(\d+)\s+%%EOF\s*$/.exec(source);
+  if (!startXref) throw new Error("Expected an xref-stream PDF fixture.");
+  const xrefOffset = Number(startXref[1]);
+  const candidate = source.slice(xrefOffset);
+  const header = /^(\d+\s+\d+\s+obj\s*<<[\s\S]*?>>)\s*stream\r?\n/.exec(
+    candidate
+  );
+  if (!header) throw new Error("Expected an xref stream object.");
+  const payloadStart = xrefOffset + header[0].length;
+  const payloadEnd = source.indexOf("\nendstream", payloadStart);
+  if (payloadEnd < 0) throw new Error("Expected an xref stream terminator.");
+
+  const decoded = inflateSync(data.subarray(payloadStart, payloadEnd));
+  const decodedPayload = options.payload?.(decoded) ?? decoded;
+  const payload = options.compressed
+    ? deflateSync(decodedPayload)
+    : decodedPayload;
+  let dictionary = header[1];
+  if (!options.compressed) {
+    dictionary = dictionary.replace(/\n\/Filter\s+\/FlateDecode\b/, "");
+  }
+  dictionary = dictionary.replace(
+    /\/Length\s+\d+\b/,
+    `/Length ${payload.byteLength}`
+  );
+  dictionary = options.dictionary?.(dictionary) ?? dictionary;
+  return Buffer.concat([
+    data.subarray(0, xrefOffset),
+    Buffer.from(`${dictionary}\nstream\n`, "latin1"),
+    payload,
+    Buffer.from(source.slice(payloadEnd), "latin1")
+  ]);
+}
+
+beforeAll(async () => {
+  const document = await PDFDocument.create();
+  document.addPage([612, 792]);
+  PDF = Buffer.from(await document.save({ useObjectStreams: false }));
+
+  const xrefStreamDocument = await PDFDocument.create();
+  xrefStreamDocument.addPage([612, 792]);
+  XREF_STREAM_PDF = Buffer.from(await xrefStreamDocument.save());
+  UNCOMPRESSED_XREF_STREAM_PDF = rewriteXrefStream(XREF_STREAM_PDF);
+});
 
 const users = {
   head: ["user-head", "design_head"],
@@ -106,6 +167,26 @@ function upload(
     .attach("file", data, { filename, contentType: mimeType });
 }
 
+function rawMultipartUploadWithoutFileContentType(
+  app: ReturnType<typeof createApp>,
+  actor: readonly [string, Role],
+  taskId: string,
+  data: Buffer,
+  filename: string
+) {
+  const boundary = "lisno-upload-without-file-content-type";
+  const opening = Buffer.from(
+    `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${filename}"\r\n\r\n`
+  );
+  const closing = Buffer.from(`\r\n--${boundary}--\r\n`);
+
+  return request(app)
+    .post(`/api/v1/tasks/${taskId}/design-versions`)
+    .set("Authorization", bearer(actor))
+    .set("Content-Type", `multipart/form-data; boundary=${boundary}`)
+    .send(Buffer.concat([opening, data, closing]));
+}
+
 function approval(
   app: ReturnType<typeof createApp>,
   actor: readonly [string, Role],
@@ -157,6 +238,35 @@ function failDesignVersionMetadataWrites(base: AppRepository): AppRepository {
   });
 }
 
+function failExtractionJobEnqueues(base: AppRepository): AppRepository {
+  return new Proxy(base, {
+    get(target, property, receiver) {
+      if (property !== "runInTransaction") {
+        return Reflect.get(target, property, receiver);
+      }
+      return <T>(operation: (transaction: AppRepository) => Promise<T>) =>
+        target.runInTransaction((transaction) =>
+          operation(
+            new Proxy(transaction, {
+              get(transactionTarget, transactionProperty, transactionReceiver) {
+                if (transactionProperty === "enqueueExtractionJob") {
+                  return async () => {
+                    throw new Error("simulated extraction enqueue failure");
+                  };
+                }
+                return Reflect.get(
+                  transactionTarget,
+                  transactionProperty,
+                  transactionReceiver
+                );
+              }
+            })
+          )
+        );
+    }
+  });
+}
+
 function failAuditWrites(base: AppRepository): AppRepository {
   return new Proxy(base, {
     get(target, property, receiver) {
@@ -187,6 +297,30 @@ function failAuditWrites(base: AppRepository): AppRepository {
 }
 
 describe("design-version uploads", () => {
+  it("Busboy maps a file part without Content-Type to text/plain", async () => {
+    const app = express();
+    const parse = multer({ storage: multer.memoryStorage() }).single("file");
+    app.post("/upload", parse, (request, response) => {
+      response.json({ mimeType: request.file?.mimetype });
+    });
+    const boundary = "lisno-busboy-missing-file-content-type";
+    const body = Buffer.concat([
+      Buffer.from(
+        `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="plan.pdf"\r\n\r\n`
+      ),
+      PDF,
+      Buffer.from(`\r\n--${boundary}--\r\n`)
+    ]);
+
+    const response = await request(app)
+      .post("/upload")
+      .set("Content-Type", `multipart/form-data; boundary=${boundary}`)
+      .send(body);
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({ mimeType: "text/plain" });
+  });
+
   it("accepts signature-valid JPEG/WebP bytes, rejects claimed MIME mismatches, and strips directional filename controls", async () => {
     const { app } = setup();
     const jpeg = await upload(app, users.ananya, "task-furniture-layout", JPEG, "render\u202E\u200E\u200F\u061Cgpj.jpg", "image/jpeg");
@@ -222,6 +356,10 @@ describe("design-version uploads", () => {
     );
 
     expect(pdf.status).toBe(201);
+    expect(pdf.body.data.extractionStatus).toBe("queued");
+    expect(
+      await repository.findExtractionJobByVersionId(pdf.body.data.id)
+    ).toMatchObject({ status: "queued", attemptCount: 0 });
     expect(pdf.body.data).toMatchObject({
       taskId: "task-furniture-layout",
       projectId: "project-aurora-villa",
@@ -247,6 +385,356 @@ describe("design-version uploads", () => {
       )
     ]);
     expect(await repository.listDesignVersions("project-aurora-villa")).toHaveLength(3);
+  });
+
+  it("accepts PDF magic bytes with generic multipart MIME metadata but rejects invalid or mismatched content", async () => {
+    const { app, storage } = setup();
+
+    const missingContentTypePdf = await rawMultipartUploadWithoutFileContentType(
+      app,
+      users.ananya,
+      "task-furniture-layout",
+      PDF,
+      "missing-content-type.pdf"
+    );
+    const octetStreamPdf = await upload(
+      app,
+      users.ananya,
+      "task-furniture-layout",
+      PDF,
+      "generic-octet.pdf",
+      "application/octet-stream"
+    );
+    const malformedMissingContentTypePdf =
+      await rawMultipartUploadWithoutFileContentType(
+        app,
+        users.ananya,
+        "task-furniture-layout",
+        Buffer.from("not really a PDF"),
+        "malformed-missing-content-type.pdf"
+      );
+    const malformedPdf = await upload(
+      app,
+      users.ananya,
+      "task-furniture-layout",
+      Buffer.from("not really a PDF"),
+      "malformed.pdf",
+      "application/octet-stream"
+    );
+    const mismatchedPng = await upload(
+      app,
+      users.ananya,
+      "task-furniture-layout",
+      PNG,
+      "actually-png.pdf",
+      "application/pdf"
+    );
+
+    expect(missingContentTypePdf.status).toBe(201);
+    expect(missingContentTypePdf.body.data.mimeType).toBe("application/pdf");
+    expect(octetStreamPdf.status).toBe(201);
+    expect(octetStreamPdf.body.data.mimeType).toBe("application/pdf");
+    expect([...storage.objects.keys()]).toEqual([
+      expect.stringMatching(/\.pdf$/),
+      expect.stringMatching(/\.pdf$/)
+    ]);
+    expect(malformedMissingContentTypePdf.status).toBe(415);
+    expect(malformedMissingContentTypePdf.body.error.code).toBe(
+      "UNSUPPORTED_FILE_TYPE"
+    );
+    expect(malformedPdf.status).toBe(415);
+    expect(malformedPdf.body.error.code).toBe("UNSUPPORTED_FILE_TYPE");
+    expect(mismatchedPng.status).toBe(415);
+    expect(mismatchedPng.body.error.code).toBe("UNSUPPORTED_FILE_TYPE");
+  });
+
+  it("rejects signature-only, truncated, invalid-xref, and malformed-object PDFs", async () => {
+    const { app } = setup();
+    const invalidXref = Buffer.from(
+      PDF.toString("latin1").replace(/startxref\s+\d+/, "startxref\n0"),
+      "latin1"
+    );
+    const malformedObject = Buffer.from(
+      PDF.toString("latin1").replace(/\bendobj\b/, "broken"),
+      "latin1"
+    );
+    const fixtures = [
+      Buffer.from("%PDF-not a document"),
+      PDF.subarray(0, Math.floor(PDF.byteLength / 2)),
+      invalidXref,
+      malformedObject
+    ];
+
+    for (const [index, fixture] of fixtures.entries()) {
+      const response = await upload(
+        app,
+        users.ananya,
+        "task-furniture-layout",
+        fixture,
+        `invalid-${index}.pdf`,
+        "application/pdf"
+      );
+
+      expect(response.status).toBe(415);
+      expect(response.body.error.code).toBe("UNSUPPORTED_FILE_TYPE");
+    }
+  });
+
+  it("accepts classic and xref-stream PDFs but rejects startxref targets that are not xref structures", async () => {
+    const { app } = setup();
+    const ordinaryObjectTarget = Buffer.from(
+      PDF.toString("latin1").replace(
+        /startxref\s+\d+/,
+        "startxref\n16"
+      ),
+      "latin1"
+    );
+    const fakeXrefStream = Buffer.from(
+      XREF_STREAM_PDF.toString("latin1").replace(
+        "/Type /XRef",
+        "/Type /Fake"
+      ),
+      "latin1"
+    );
+
+    expect(PDF.toString("latin1").slice(16)).toMatch(/^\d+\s+\d+\s+obj\b/);
+    expect(XREF_STREAM_PDF.toString("latin1")).toContain("/Type /XRef");
+    expect(fakeXrefStream.toString("latin1")).toContain("/Type /Fake");
+    await expect(isValidPdfDocument(PDF)).resolves.toBe(true);
+    await expect(isValidPdfDocument(XREF_STREAM_PDF)).resolves.toBe(true);
+    await expect(
+      isValidPdfDocument(UNCOMPRESSED_XREF_STREAM_PDF)
+    ).resolves.toBe(true);
+    await expect(isValidPdfDocument(ordinaryObjectTarget)).resolves.toBe(false);
+    await expect(isValidPdfDocument(fakeXrefStream)).resolves.toBe(false);
+
+    const responses = await Promise.all([
+      upload(
+        app,
+        users.ananya,
+        "task-furniture-layout",
+        PDF,
+        "classic.pdf",
+        "application/pdf"
+      ),
+      upload(
+        app,
+        users.ananya,
+        "task-furniture-layout",
+        XREF_STREAM_PDF,
+        "xref-stream.pdf",
+        "application/pdf"
+      ),
+      upload(
+        app,
+        users.ananya,
+        "task-furniture-layout",
+        UNCOMPRESSED_XREF_STREAM_PDF,
+        "uncompressed-xref-stream.pdf",
+        "application/pdf"
+      ),
+      upload(
+        app,
+        users.ananya,
+        "task-furniture-layout",
+        ordinaryObjectTarget,
+        "ordinary-object-target.pdf",
+        "application/pdf"
+      ),
+      upload(
+        app,
+        users.ananya,
+        "task-furniture-layout",
+        fakeXrefStream,
+        "fake-xref-stream.pdf",
+        "application/pdf"
+      )
+    ]);
+
+    expect(responses.map((response) => response.status)).toEqual([
+      201,
+      201,
+      201,
+      415,
+      415
+    ]);
+  });
+
+  it("rejects unsafe xref stream widths, indexes, and decoded payload lengths", async () => {
+    const { app } = setup();
+    const fixtures = [
+      rewriteXrefStream(XREF_STREAM_PDF, {
+        dictionary: (value) =>
+          value.replace(/\/W\s*\[[^\]]+\]/, "/W [ 999999 999999 999999 ]")
+      }),
+      rewriteXrefStream(XREF_STREAM_PDF, {
+        dictionary: (value) =>
+          value.replace(/\/Index\s*\[[^\]]+\]/, "/Index [ 0 1000001 ]")
+      }),
+      rewriteXrefStream(XREF_STREAM_PDF, {
+        dictionary: (value) =>
+          value.replace(/\/Index\s*\[[^\]]+\]/, "/Index [ 0 7 3 ]")
+      }),
+      rewriteXrefStream(XREF_STREAM_PDF, {
+        payload: () => Buffer.alloc(0)
+      }),
+      rewriteXrefStream(XREF_STREAM_PDF, {
+        payload: (value) => value.subarray(0, value.byteLength - 1)
+      }),
+      rewriteXrefStream(XREF_STREAM_PDF, {
+        compressed: true,
+        payload: () => Buffer.alloc(1024 * 1024)
+      }),
+      rewriteXrefStream(XREF_STREAM_PDF, {
+        compressed: true,
+        dictionary: (value) =>
+          value.replace("/Filter /FlateDecode", "/Filter /LZWDecode")
+      }),
+      rewriteXrefStream(XREF_STREAM_PDF, {
+        compressed: true,
+        dictionary: (value) =>
+          value.replace(
+            />>$/,
+            "/DecodeParms << /Predictor 12 >>\n>>"
+          )
+      })
+    ];
+
+    for (const [index, fixture] of fixtures.entries()) {
+      await expect(isValidPdfDocument(fixture)).resolves.toBe(false);
+      const response = await upload(
+        app,
+        users.ananya,
+        "task-furniture-layout",
+        fixture,
+        `unsafe-xref-${index}.pdf`,
+        "application/pdf"
+      );
+      expect(response.status).toBe(415);
+      expect(response.body.error.code).toBe("UNSUPPORTED_FILE_TYPE");
+    }
+  });
+
+  it("accepts a one-name FlateDecode filter array and rejects other filter arrays", async () => {
+    const { app } = setup();
+    const oneFlateFilter = rewriteXrefStream(XREF_STREAM_PDF, {
+      compressed: true,
+      dictionary: (value) =>
+        value.replace(
+          "/Filter /FlateDecode",
+          "/Filter [ /FlateDecode ]"
+        )
+    });
+    const invalidFilters = [
+      "[ /FlateDecode /FlateDecode ]",
+      "[ 1 ]",
+      "[ /LZWDecode ]"
+    ].map((filter) =>
+      rewriteXrefStream(XREF_STREAM_PDF, {
+        compressed: true,
+        dictionary: (value) =>
+          value.replace("/Filter /FlateDecode", `/Filter ${filter}`)
+      })
+    );
+
+    await expect(isValidPdfDocument(oneFlateFilter)).resolves.toBe(true);
+    const accepted = await upload(
+      app,
+      users.ananya,
+      "task-furniture-layout",
+      oneFlateFilter,
+      "one-flate-filter.pdf",
+      "application/pdf"
+    );
+    expect(accepted.status).toBe(201);
+
+    for (const [index, fixture] of invalidFilters.entries()) {
+      await expect(isValidPdfDocument(fixture)).resolves.toBe(false);
+      const rejected = await upload(
+        app,
+        users.ananya,
+        "task-furniture-layout",
+        fixture,
+        `invalid-filter-array-${index}.pdf`,
+        "application/pdf"
+      );
+      expect(rejected.status).toBe(415);
+    }
+  });
+
+  it("rejects an xref stream with a 300 KiB comment prefix despite an early stream token", async () => {
+    const { app } = setup();
+    const oversizedPrefix = rewriteXrefStream(XREF_STREAM_PDF, {
+      dictionary: (value) =>
+        value.replace(
+          /\bobj\b/,
+          `obj\n% stream\n%${"x".repeat(300 * 1024)}\n`
+        )
+    });
+
+    await expect(isValidPdfDocument(XREF_STREAM_PDF)).resolves.toBe(true);
+    await expect(isValidPdfDocument(oversizedPrefix)).resolves.toBe(false);
+    const response = await upload(
+      app,
+      users.ananya,
+      "task-furniture-layout",
+      oversizedPrefix,
+      "oversized-xref-prefix.pdf",
+      "application/pdf"
+    );
+    expect(response.status).toBe(415);
+  });
+
+  it("rolls back the version and deletes the original when extraction enqueue fails", async () => {
+    const baseRepository = createMemoryRepository(structuredClone(demoSeedData));
+    const storage = new TestStorage();
+    const { app } = setup({
+      repository: failExtractionJobEnqueues(baseRepository),
+      storage
+    });
+
+    const response = await upload(
+      app,
+      users.ananya,
+      "task-furniture-layout",
+      PDF,
+      "enqueue-failure.pdf",
+      "application/pdf"
+    );
+
+    expect(response.status).toBe(500);
+    expect(storage.deleted).toHaveLength(1);
+    expect(storage.objects.size).toBe(0);
+    expect(
+      await baseRepository.listDesignVersions("project-aurora-villa")
+    ).toHaveLength(1);
+  });
+
+  it("returns extraction status only to users with project access", async () => {
+    const { app } = setup();
+    const uploaded = await upload(
+      app,
+      users.ananya,
+      "task-furniture-layout",
+      PDF,
+      "status.pdf",
+      "application/pdf"
+    );
+
+    const owner = await request(app)
+      .get(`/api/v1/design-versions/${uploaded.body.data.id}/extraction`)
+      .set("Authorization", bearer(users.ananya));
+    const unrelated = await request(app)
+      .get(`/api/v1/design-versions/${uploaded.body.data.id}/extraction`)
+      .set("Authorization", bearer(users.celesteClient));
+
+    expect(owner.status).toBe(200);
+    expect(owner.body.data).toMatchObject({
+      designVersionId: uploaded.body.data.id,
+      status: "queued",
+      attemptCount: 0
+    });
+    expect(unrelated.status).toBe(404);
   });
 
   it("allocates distinct monotonic versions under concurrent uploads", async () => {

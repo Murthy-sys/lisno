@@ -177,6 +177,31 @@ describe("ManagementProjectWorkspace", () => {
           }
         });
       }
+      if (url === "/api/v1/client/projects/project-1/design-sections") {
+        return Response.json({ data: {
+          projectId: "project-1",
+          progress: { approved: 0, rejected: 1, awaitingReview: 0, total: 1 },
+          sections: [{
+            id: "section-review", designVersionId: "version-page-two",
+            sourcePageId: "page-1", label: "Kitchen elevation", active: true,
+            source: "ocr", ocrConfidence: .92, createdAt: "2026-07-20T10:00:00.000Z",
+            updatedAt: "2026-07-21T10:00:00.000Z", versionNumber: 101,
+            revision: {
+              id: "revision-review", sectionId: "section-review", revisionNumber: 2,
+              sourcePageId: "page-1", crop: { x: 0, y: 0, width: 100, height: 100 },
+              label: "Kitchen elevation", reviewStatus: "rejected",
+              submittedAt: "2026-07-20T10:00:00.000Z", reviewerId: "client-1",
+              reviewedAt: "2026-07-21T10:00:00.000Z",
+              rejectionComment: "Show the full island.", createdAt: "2026-07-20T10:00:00.000Z",
+              imageReference: "/api/v1/design-section-revisions/revision-review/image"
+            },
+            history: []
+          }]
+        } });
+      }
+      if (url === "/api/v1/design-section-revisions/revision-review/image") {
+        return new Response(new Blob(["image"], { type: "image/png" }));
+      }
       throw new Error(`Unhandled request: ${url}`);
     });
 
@@ -219,5 +244,10 @@ describe("ManagementProjectWorkspace", () => {
         "Reason: Client requested coordination time"
       )
     ).toBeVisible();
+    const review = await screen.findByRole("article", { name: "Kitchen elevation review" });
+    expect(within(review).getByText("Show the full island.")).toBeVisible();
+    expect(within(review).getByText("Design version 101 · Section revision 2")).toBeVisible();
+    expect(within(review).queryByRole("button", { name: /approve/i })).not.toBeInTheDocument();
+    expect(within(review).queryByRole("button", { name: /reject/i })).not.toBeInTheDocument();
   });
 });

@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { ReadStream } from "node:fs";
-import { mkdir, open as openFile, unlink, writeFile } from "node:fs/promises";
+import { mkdir, open as openFile, readFile, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import type {
@@ -15,8 +15,7 @@ const safeReference =
 export function createLocalStorage(rootDirectory: string): FileStorage {
   const root = path.resolve(rootDirectory);
 
-  return {
-    async save(input: SaveFileInput): Promise<StoredFile> {
+  const save = async (input: SaveFileInput): Promise<StoredFile> => {
       await mkdir(root, { recursive: true });
       for (let attempt = 0; attempt < 3; attempt += 1) {
         const reference = `${randomUUID()}${input.extension}`;
@@ -38,8 +37,14 @@ export function createLocalStorage(rootDirectory: string): FileStorage {
         }
       }
       throw new Error("Could not allocate a unique storage filename.");
-    },
+  };
 
+  return {
+    save,
+    saveGenerated: save,
+    async read(reference: string) {
+      return readFile(resolveReference(root, reference));
+    },
     async delete(reference: string) {
       try {
         await unlink(resolveReference(root, reference));

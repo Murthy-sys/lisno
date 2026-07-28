@@ -663,7 +663,7 @@ describe("ProjectWorkspace", () => {
 
   it("accepts only backend-supported upload MIME types and formats kilobytes", async () => {
     tokenStorage.set("valid-token");
-    installWorkspaceApi();
+    const api = installWorkspaceApi();
     const user = userEvent.setup();
     renderApp([`/designer/projects/${project.id}`]);
     await expandTask();
@@ -684,13 +684,51 @@ describe("ProjectWorkspace", () => {
     await user.upload(input, png);
     expect(within(dialog).getByText("plan.png · 2.0 KB")).toBeVisible();
 
-    fireEvent.change(input, {
+    const emptyMimePdf = new File(["%PDF-1.7\n%%EOF"], "Software data R1.pdf", {
+      type: ""
+    });
+    fireEvent.change(input, { target: { files: [emptyMimePdf] } });
+    await user.click(within(dialog).getByRole("button", { name: "Upload file" }));
+    await waitFor(() => expect(api.getUploadBody()?.get("file")).toEqual(emptyMimePdf));
+
+    await user.click(screen.getByRole("button", {
+      name: "Upload design for Circulation planning"
+    }));
+    const genericMimeDialog = screen.getByRole("dialog", { name: "Upload design" });
+    const genericMimePdf = new File(["%PDF-1.7\n%%EOF"], "plan.pdf", {
+      type: "application/octet-stream"
+    });
+    fireEvent.change(within(genericMimeDialog).getByLabelText("Design file"), {
+      target: { files: [genericMimePdf] }
+    });
+    await user.click(
+      within(genericMimeDialog).getByRole("button", { name: "Upload file" })
+    );
+    await waitFor(() => expect(api.getUploadBody()?.get("file")).toEqual(genericMimePdf));
+
+    await user.click(screen.getByRole("button", {
+      name: "Upload design for Circulation planning"
+    }));
+    const invalidDialog = screen.getByRole("dialog", { name: "Upload design" });
+    const invalidInput = within(invalidDialog).getByLabelText("Design file");
+
+    fireEvent.change(invalidInput, {
       target: {
-        files: [new File(["<svg/>"], "plan.svg", { type: "image/svg+xml" })]
+        files: [new File(["notes"], "notes.txt", { type: "" })]
       }
     });
-    await user.click(within(dialog).getByRole("button", { name: "Upload file" }));
-    expect(within(dialog).getByRole("alert")).toHaveTextContent(
+    await user.click(within(invalidDialog).getByRole("button", { name: "Upload file" }));
+    expect(within(invalidDialog).getByRole("alert")).toHaveTextContent(
+      "Only PDF, PNG, JPEG, and WebP files are supported."
+    );
+
+    fireEvent.change(invalidInput, {
+      target: {
+        files: [new File(["MZ"], "plan.exe", { type: "application/octet-stream" })]
+      }
+    });
+    await user.click(within(invalidDialog).getByRole("button", { name: "Upload file" }));
+    expect(within(invalidDialog).getByRole("alert")).toHaveTextContent(
       "Only PDF, PNG, JPEG, and WebP files are supported."
     );
   });
