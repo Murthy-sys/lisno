@@ -1,6 +1,7 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useEffect, useState } from "react";
+import { flushSync } from "react-dom";
 import { QueryClient, QueryClientProvider, useQueryClient } from "@tanstack/react-query";
 import { describe, expect, it, vi } from "vitest";
 
@@ -210,6 +211,25 @@ describe("DesignSectionReview", () => {
     expect(await screen.findByRole("article", { name: "Front elevation review" })).toBeVisible();
     expect(screen.queryByRole("article", { name: "Site plan review" })).not.toBeInTheDocument();
     expect(screen.getByText("Plan 2 of 2")).toBeVisible();
+  });
+
+  it("does not carry an open preview into the next plan", async () => {
+    vi.stubGlobal("URL", {
+      createObjectURL: vi.fn(() => "blob:section-preview"),
+      revokeObjectURL: vi.fn()
+    });
+    installApi();
+    renderWithQuery(<DesignSectionReview projectId="project-1" mode="client" />);
+    const user = userEvent.setup();
+
+    await user.click(await screen.findByRole("button", { name: "Preview Front elevation" }));
+    expect(screen.getByRole("dialog", { name: "Front elevation preview" })).toBeVisible();
+
+    flushSync(() => screen.getByRole("button", { name: "Next plan: Site plan" }).click());
+
+    expect(screen.getByRole("article", { name: "Site plan review" })).toBeVisible();
+    expect(screen.queryByRole("dialog", { name: "Site plan preview" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("img", { name: "Full preview of Site plan" })).not.toBeInTheDocument();
   });
 
   it("confirms approval, disables the card while pending, and refreshes progress", async () => {

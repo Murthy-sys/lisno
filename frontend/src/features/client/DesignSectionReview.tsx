@@ -91,6 +91,7 @@ export function DesignSectionReview({ projectId, mode }: { projectId: string; mo
       </div>
       {preferredSection ? (
         <SectionReviewCard
+          key={preferredSection.id}
           section={preferredSection}
           mode={mode}
           busy={mutation.isPending && choice?.section.id === preferredSection.id}
