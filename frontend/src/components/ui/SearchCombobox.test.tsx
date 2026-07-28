@@ -60,11 +60,14 @@ describe("SearchCombobox", () => {
 
     const input = screen.getByRole("combobox", { name: "Project manager" });
     expect(input).toHaveAttribute("aria-expanded", "false");
+    expect(input).not.toHaveAttribute("aria-controls");
     await user.click(input);
     expect(input).toHaveAttribute("aria-expanded", "true");
     const listbox = screen.getByRole("listbox", { name: "Project manager options" });
     expect(input).toHaveAttribute("aria-controls", listbox.id);
-    expect(screen.getAllByRole("option")).toHaveLength(2);
+    const options = screen.getAllByRole("option");
+    expect(options).toHaveLength(2);
+    expect(options[0]).toHaveAttribute("tabindex", "-1");
 
     await user.keyboard("{ArrowDown}{Enter}");
     expect(input).toHaveValue("Aarav Mehta");
@@ -101,22 +104,42 @@ describe("SearchCombobox", () => {
     expect(input).toHaveValue("Aarav Mehta");
   });
 
+  it("clears an active option that disappears while the popup remains open", async () => {
+    const user = userEvent.setup();
+    const { rerender } = render(<ManagerCombobox />);
+    const input = screen.getByRole("combobox", { name: "Project manager" });
+    await user.click(input);
+    await user.keyboard("{ArrowDown}{ArrowDown}");
+    expect(input).toHaveAttribute("aria-activedescendant", expect.stringContaining("manager-meera"));
+
+    rerender(<ManagerCombobox items={[managers[0]!]} />);
+
+    expect(input).not.toHaveAttribute("aria-activedescendant");
+    expect(input).toHaveFocus();
+  });
+
   it("supports Escape and exposes loading, empty, and retryable error states", async () => {
     const user = userEvent.setup();
     const onRetry = vi.fn();
     const { rerender } = render(<ManagerCombobox loading />);
     const input = screen.getByRole("combobox", { name: "Project manager" });
     await user.click(input);
-    expect(screen.getByText("Loading options…")).toBeVisible();
+    const loading = screen.getByRole("status");
+    expect(loading).toHaveTextContent("Loading options…");
+    expect(loading.closest('[role="listbox"]')).toBeNull();
     await user.keyboard("{Escape}");
     expect(input).toHaveAttribute("aria-expanded", "false");
 
     rerender(<ManagerCombobox items={[]} />);
     await user.click(input);
-    expect(screen.getByText("No options found.")).toBeVisible();
+    const empty = screen.getByRole("status");
+    expect(empty).toHaveTextContent("No options found.");
+    expect(empty.closest('[role="listbox"]')).toBeNull();
 
     rerender(<ManagerCombobox error onRetry={onRetry} />);
-    expect(screen.getByRole("alert")).toHaveTextContent("Managers are unavailable.");
+    const alert = screen.getByRole("alert");
+    expect(alert).toHaveTextContent("Managers are unavailable.");
+    expect(alert.closest('[role="listbox"]')).toBeNull();
     await user.click(screen.getByRole("button", { name: "Try again" }));
     expect(onRetry).toHaveBeenCalledOnce();
   });

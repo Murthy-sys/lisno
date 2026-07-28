@@ -47,6 +47,10 @@ export function SearchCombobox<T>({
   const [open, setOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState(-1);
   const selectedKey = value ? itemKey(value) : undefined;
+  const activeItem = activeIndex >= 0 && activeIndex < items.length
+    ? items[activeIndex]
+    : null;
+  const showListbox = open && !loading && !error && items.length > 0;
 
   useEffect(() => {
     const onPointerDown = (event: MouseEvent) => {
@@ -55,6 +59,10 @@ export function SearchCombobox<T>({
     document.addEventListener("mousedown", onPointerDown);
     return () => document.removeEventListener("mousedown", onPointerDown);
   }, []);
+
+  useEffect(() => {
+    setActiveIndex((current) => current >= items.length ? -1 : current);
+  }, [items]);
 
   const select = (item: T) => {
     onChange(item);
@@ -88,9 +96,9 @@ export function SearchCombobox<T>({
         required={required}
         aria-autocomplete="list"
         aria-expanded={open}
-        aria-controls={listboxId}
+        aria-controls={showListbox ? listboxId : undefined}
         aria-activedescendant={
-          open && activeIndex >= 0 ? `${listboxId}-${itemKey(items[activeIndex]!)}` : undefined
+          showListbox && activeItem ? `${listboxId}-${itemKey(activeItem)}` : undefined
         }
         onFocus={openList}
         onClick={openList}
@@ -108,9 +116,9 @@ export function SearchCombobox<T>({
             event.preventDefault();
             if (!open) openList();
             setActiveIndex((current) => current < 0 ? items.length - 1 : Math.max(current - 1, 0));
-          } else if (event.key === "Enter" && open && activeIndex >= 0) {
+          } else if (event.key === "Enter" && open && activeItem) {
             event.preventDefault();
-            select(items[activeIndex]!);
+            select(activeItem);
           } else if (event.key === "Escape") {
             event.preventDefault();
             setOpen(false);
@@ -119,32 +127,41 @@ export function SearchCombobox<T>({
         }}
       />
       {open ? (
-        <div id={listboxId} className="search-combobox__popup" role="listbox" aria-label={`${label} options`}>
-          {loading ? <p className="search-combobox__status">Loading options…</p> : null}
+        <div className="search-combobox__popup">
+          {loading ? (
+            <p className="search-combobox__status" role="status">Loading options…</p>
+          ) : null}
           {!loading && error ? (
             <div className="search-combobox__error" role="alert">
               <span>{error}</span>
               {onRetry ? <button type="button" onClick={onRetry}>Try again</button> : null}
             </div>
           ) : null}
-          {!loading && !error && items.length === 0 ? <p className="search-combobox__status">No options found.</p> : null}
-          {!loading && !error ? items.map((item, index) => {
-            const key = itemKey(item);
-            return (
-              <button
-                key={key}
-                id={`${listboxId}-${key}`}
-                type="button"
-                role="option"
-                aria-selected={key === selectedKey}
-                className={index === activeIndex ? "is-active" : undefined}
-                onMouseDown={(event) => event.preventDefault()}
-                onClick={() => select(item)}
-              >
-                {renderItem(item)}
-              </button>
-            );
-          }) : null}
+          {!loading && !error && items.length === 0 ? (
+            <p className="search-combobox__status" role="status">No options found.</p>
+          ) : null}
+          {showListbox ? (
+            <div id={listboxId} role="listbox" aria-label={`${label} options`}>
+              {items.map((item, index) => {
+                const key = itemKey(item);
+                return (
+                  <button
+                    key={key}
+                    id={`${listboxId}-${key}`}
+                    type="button"
+                    role="option"
+                    tabIndex={-1}
+                    aria-selected={key === selectedKey}
+                    className={index === activeIndex ? "is-active" : undefined}
+                    onMouseDown={(event) => event.preventDefault()}
+                    onClick={() => select(item)}
+                  >
+                    {renderItem(item)}
+                  </button>
+                );
+              })}
+            </div>
+          ) : null}
         </div>
       ) : null}
     </div>

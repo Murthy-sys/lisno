@@ -197,8 +197,10 @@ describe("accessibility smoke coverage", () => {
     await user.click(await screen.findByRole("button", { name: "Create project" }));
     const dialog = screen.getByRole("dialog", { name: "Create project" });
     const manager = within(dialog).getByRole("combobox", { name: "Project manager" });
+    expect(manager).not.toHaveAttribute("aria-controls");
     await user.click(manager);
-    expect(await within(dialog).findByRole("option", { name: /Aarav Mehta/i })).toBeVisible();
+    const option = await within(dialog).findByRole("option", { name: /Aarav Mehta/i });
+    expect(option).toHaveAttribute("tabindex", "-1");
     await user.keyboard("{ArrowDown}{Enter}");
     expect(manager).toHaveValue("Aarav Mehta");
     await expectNoAxeViolations();
