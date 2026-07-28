@@ -134,6 +134,7 @@ _NEIGHBOR_Y_BUCKET_SIZE = 64
 _NEIGHBOR_X_BUCKET_SIZE = 128
 _MAX_JOIN_GAP = 96
 _MAX_NEIGHBORS_PER_BUCKET = 64
+_MAX_OVERVIEW_SEGMENT_TOLERANCE = 24
 _DEDUPE_CELL_SIZE = 128
 
 
@@ -184,14 +185,18 @@ def classify_drawing_titles(
         (line for line in lines if line.text.strip()),
         key=lambda line: (line.box[1], line.box[0]),
     )
-    normalized_texts = tuple(
-        _normalize_ocr_title(
+    segment_texts = tuple(
+        _prepare_ocr_title(
             line.text,
-            plan_types,
-            room_types,
             compact_title_tokens,
         )
         for line in ordered
+    )
+    normalized_texts = tuple(
+        ""
+        if _is_single_line_overview(text, plan_types, room_types)
+        else text
+        for text in segment_texts
     )
     comparison_texts = tuple(
         _comparison_text(text)
@@ -199,6 +204,7 @@ def classify_drawing_titles(
     )
     overview_indices = _segmented_overview_indices(
         ordered,
+        segment_texts,
         normalized_texts,
         plan_types,
         room_types,
@@ -307,6 +313,16 @@ def _normalize_ocr_title(
     room_types: tuple[str, ...],
     compact_title_tokens: dict[str, str],
 ) -> str:
+    prepared = _prepare_ocr_title(text, compact_title_tokens)
+    if _is_single_line_overview(prepared, plan_types, room_types):
+        return ""
+    return prepared
+
+
+def _prepare_ocr_title(
+    text: str,
+    compact_title_tokens: dict[str, str],
+) -> str:
     compatible = unicodedata.normalize("NFKC", text)
     punctuated = compatible.translate(_OCR_PUNCTUATION)
     unmarked = _DRAWING_MARKER_PATTERN.sub("", punctuated, count=1)
@@ -326,8 +342,6 @@ def _normalize_ocr_title(
         separate_configured_token,
         unmarked,
     )
-    if _is_single_line_overview(separated, plan_types, room_types):
-        return ""
     dashed = _OCR_DASH_PATTERN.sub(" \u2013 ", separated)
     parenthesized = re.sub(r"\s*\(\s*", " (", dashed)
     parenthesized = re.sub(r"\s*\)\s*", ") ", parenthesized)
@@ -342,9 +356,21 @@ def _is_single_line_overview(
     stripped = text.strip()
     if stripped.startswith("&"):
         return True
-    if "&" not in stripped:
+    return _is_combined_drawing_overview(
+        stripped,
+        plan_types,
+        room_types,
+    )
+
+
+def _is_combined_drawing_overview(
+    text: str,
+    plan_types: tuple[str, ...],
+    room_types: tuple[str, ...],
+) -> bool:
+    if "&" not in text:
         return False
-    fragments = stripped.split("&")
+    fragments = text.split("&")
     return any(
         _contains_drawing_family_fragment(left, plan_types, room_types)
         and _contains_drawing_family_fragment(right, plan_types, room_types)
@@ -376,92 +402,189 @@ def _contains_drawing_family_fragment(
 
 def _segmented_overview_indices(
     lines: Sequence[OcrLine],
+    segment_texts: Sequence[str],
     normalized_texts: Sequence[str],
     plan_types: tuple[str, ...],
     room_types: tuple[str, ...],
 ) -> frozenset[int]:
-    overview_starts = tuple(
+    ampersand_indices = tuple(
         index
-        for index, text in enumerate(normalized_texts)
-        if text.rstrip().endswith("&")
-        and _contains_drawing_family_fragment(
-            text.rsplit("&", 1)[0],
-            plan_types,
-            room_types,
-        )
+        for index, text in enumerate(segment_texts)
+        if "&" in text
     )
-    if not overview_starts:
+    if not ampersand_indices:
         return frozenset()
 
-    by_top: dict[tuple[int, int], list[int]] = {}
+    spatial_index: dict[tuple[int, int], list[int]] = {}
     for index, line in enumerate(lines):
-        top_cell = line.box[1] // _NEIGHBOR_Y_BUCKET_SIZE
-        for cell_x in _neighbor_x_cells(line.box):
-            _append_bounded(by_top, (top_cell, cell_x), index)
+        for cell in _overview_spatial_cells(line.box):
+            _append_bounded(spatial_index, cell, index)
 
     excluded: set[int] = set()
-    for overview_index in overview_starts:
-        overview = lines[overview_index]
+    for ampersand_index in ampersand_indices:
         candidates: set[int] = set()
-        first_y = (
-            overview.box[1] - _NEIGHBOR_Y_BUCKET_SIZE
-        ) // _NEIGHBOR_Y_BUCKET_SIZE
-        last_y = (
-            overview.box[3] + _MAX_JOIN_GAP
-        ) // _NEIGHBOR_Y_BUCKET_SIZE
-        first_x = overview.box[0] // _NEIGHBOR_X_BUCKET_SIZE
-        last_x = (
-            overview.box[2] + _MAX_JOIN_GAP
-        ) // _NEIGHBOR_X_BUCKET_SIZE
-        for cell_y in range(first_y, last_y + 1):
-            for cell_x in range(first_x, last_x + 1):
-                candidates.update(by_top.get((cell_y, cell_x), ()))
+        for cell in _overview_spatial_cells(
+            lines[ampersand_index].box,
+            _MAX_OVERVIEW_SEGMENT_TOLERANCE,
+        ):
+            candidates.update(spatial_index.get(cell, ()))
 
-        continuations = [
-            (distance, candidate_index)
-            for candidate_index in candidates
-            if candidate_index != overview_index
-            and (
-                distance := _overview_continuation_distance(
-                    overview.box,
-                    lines[candidate_index].box,
+        closest: dict[tuple[str, int], tuple[tuple[int, int], int]] = {}
+        for candidate_index in candidates:
+            if candidate_index == ampersand_index:
+                continue
+            for orientation, direction, gap in _overview_segment_relations(
+                lines[ampersand_index].box,
+                lines[candidate_index].box,
+            ):
+                key = (orientation, direction)
+                score = (
+                    max(0, gap),
+                    abs(gap),
+                )
+                current = closest.get(key)
+                if current is None or (score, candidate_index) < (
+                    current[0],
+                    current[1],
+                ):
+                    closest[key] = (score, candidate_index)
+
+        components: set[tuple[str, tuple[int, ...]]] = set()
+        for (orientation, _direction), (
+            _score,
+            candidate_index,
+        ) in closest.items():
+            components.add(
+                (
+                    orientation,
+                    tuple(sorted((ampersand_index, candidate_index))),
                 )
             )
-            is not None
-            and _contains_drawing_family_fragment(
-                normalized_texts[candidate_index],
+        for orientation in ("row", "column"):
+            before = closest.get((orientation, -1))
+            after = closest.get((orientation, 1))
+            if before is not None and after is not None:
+                components.add(
+                    (
+                        orientation,
+                        tuple(
+                            sorted(
+                                (
+                                    before[1],
+                                    ampersand_index,
+                                    after[1],
+                                )
+                            )
+                        ),
+                    )
+                )
+
+        for orientation, component in components:
+            reading_order = sorted(
+                component,
+                key=lambda index: _overview_reading_order_key(
+                    lines[index].box,
+                    orientation,
+                ),
+            )
+            combined = " ".join(
+                segment_texts[index]
+                for index in reading_order
+                if segment_texts[index]
+            )
+            if _is_combined_drawing_overview(
+                combined,
                 plan_types,
                 room_types,
-            )
-        ]
-        if continuations:
-            _distance, continuation_index = min(continuations)
-            excluded.update((overview_index, continuation_index))
+            ):
+                excluded.update(
+                    index
+                    for index in component
+                    if _is_supported_title(
+                        _comparison_text(normalized_texts[index]),
+                        plan_types,
+                        room_types,
+                    )
+                )
     return frozenset(excluded)
 
 
-def _overview_continuation_distance(
-    overview: Box,
-    continuation: Box,
-) -> int | None:
-    if _is_title_neighbor(continuation, overview, False):
-        return continuation[1] - overview[3]
+def _overview_spatial_cells(
+    box: Box,
+    margin: int = 0,
+) -> tuple[tuple[int, int], ...]:
+    left = box[0] - margin
+    top = box[1] - margin
+    right = box[2] + margin
+    bottom = box[3] + margin
+    first_x = left // _NEIGHBOR_X_BUCKET_SIZE
+    last_x = max(left, right - 1) // _NEIGHBOR_X_BUCKET_SIZE
+    first_y = top // _NEIGHBOR_Y_BUCKET_SIZE
+    last_y = max(top, bottom - 1) // _NEIGHBOR_Y_BUCKET_SIZE
+    return tuple(
+        (cell_y, cell_x)
+        for cell_y in range(first_y, last_y + 1)
+        for cell_x in range(first_x, last_x + 1)
+    )
 
-    horizontal_gap = continuation[0] - overview[2]
-    overview_height = max(1, overview[3] - overview[1])
-    continuation_height = max(1, continuation[3] - continuation[1])
-    maximum_gap = max(16, max(overview_height, continuation_height))
-    if horizontal_gap < 0 or horizontal_gap > maximum_gap:
-        return None
+
+def _overview_segment_relations(
+    reference: Box,
+    candidate: Box,
+) -> tuple[tuple[str, int, int], ...]:
+    reference_height = max(1, reference[3] - reference[1])
+    candidate_height = max(1, candidate[3] - candidate[1])
+    tolerance = min(
+        _MAX_OVERVIEW_SEGMENT_TOLERANCE,
+        max(4, max(reference_height, candidate_height) // 2),
+    )
+    relations: list[tuple[str, int, int]] = []
+
     vertical_overlap = max(
         0,
-        min(overview[3], continuation[3])
-        - max(overview[1], continuation[1]),
+        min(reference[3], candidate[3])
+        - max(reference[1], candidate[1]),
     )
-    narrower_height = min(overview_height, continuation_height)
-    if vertical_overlap / narrower_height < 0.4:
-        return None
-    return horizontal_gap
+    if vertical_overlap / min(reference_height, candidate_height) >= 0.4:
+        reference_center_x = reference[0] + reference[2]
+        candidate_center_x = candidate[0] + candidate[2]
+        if candidate_center_x < reference_center_x:
+            direction = -1
+            gap = reference[0] - candidate[2]
+        else:
+            direction = 1
+            gap = candidate[0] - reference[2]
+        if -tolerance <= gap <= tolerance:
+            relations.append(("row", direction, gap))
+
+    reference_width = max(1, reference[2] - reference[0])
+    candidate_width = max(1, candidate[2] - candidate[0])
+    horizontal_overlap = max(
+        0,
+        min(reference[2], candidate[2])
+        - max(reference[0], candidate[0]),
+    )
+    if horizontal_overlap / min(reference_width, candidate_width) >= 0.4:
+        reference_center_y = reference[1] + reference[3]
+        candidate_center_y = candidate[1] + candidate[3]
+        if candidate_center_y < reference_center_y:
+            direction = -1
+            gap = reference[1] - candidate[3]
+        else:
+            direction = 1
+            gap = candidate[1] - reference[3]
+        if -tolerance <= gap <= tolerance:
+            relations.append(("column", direction, gap))
+    return tuple(relations)
+
+
+def _overview_reading_order_key(
+    box: Box,
+    orientation: str,
+) -> tuple[int, int]:
+    if orientation == "row":
+        return (box[0], box[1])
+    return (box[1], box[0])
 
 
 def _comparison_text(text: str) -> str:

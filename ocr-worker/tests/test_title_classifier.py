@@ -123,6 +123,8 @@ def test_preserves_configured_single_titles_containing_ampersands(
     [
         (84, 138, 360, 174),
         (326, 100, 570, 132),
+        (84, 128, 360, 164),
+        (305, 100, 570, 132),
     ],
 )
 def test_rejects_aligned_adjacent_segmented_overview_titles(
@@ -136,11 +138,22 @@ def test_rejects_aligned_adjacent_segmented_overview_titles(
     assert classify_drawing_titles(lines, DEFAULT_PLAN_TYPES) == ()
 
 
+def test_rejects_three_box_segmented_overview_title():
+    lines = [
+        OcrLine((80, 100, 250, 132), "ELEVATION", 0.96),
+        OcrLine((246, 100, 276, 132), "&", 0.95),
+        OcrLine((272, 100, 520, 132), "CEILING PLAN", 0.94),
+    ]
+
+    assert classify_drawing_titles(lines, DEFAULT_PLAN_TYPES) == ()
+
+
 @pytest.mark.parametrize(
     "unrelated_box",
     [
         (500, 138, 760, 174),
         (84, 300, 360, 336),
+        (316, 127, 570, 159),
     ],
 )
 def test_segmented_overview_fragment_does_not_suppress_unrelated_titles(
