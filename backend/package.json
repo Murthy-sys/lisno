@@ -7,6 +7,7 @@
     "dev": "tsx watch src/server.ts",
     "start": "node dist/server.js",
     "seed": "tsx src/seed/run.ts",
+    "migrate:client-linking": "tsx src/migrations/client-email-project-linking.ts",
     "build": "tsc",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"

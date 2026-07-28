@@ -1,10 +1,96 @@
 import { describe, expect, it } from "vitest";
+import { normalizeEmail } from "../src/domain/email.js";
 import { calculateTaskRisk } from "../src/domain/risk.js";
 import { createMemoryRepository } from "../src/repositories/memory.js";
 import { RepositoryConflictError } from "../src/repositories/types.js";
 import { demoSeedData } from "../src/seed/data.js";
 
 describe("memory repository", () => {
+  it("normalizes account emails before identity lookup and project linking", async () => {
+    const seed = structuredClone(demoSeedData);
+    const client = seed.users.find((user) => user.id === "user-client-aurora")!;
+    const projectA = seed.projects.find((project) => project.id === "project-aurora-villa")!;
+    const projectB = structuredClone(projectA);
+    projectA.id = "project-a";
+    projectB.id = "project-b";
+    projectB.name = "Aurora Loft";
+    const alreadyLinked = structuredClone(projectA);
+    alreadyLinked.id = "project-linked";
+    alreadyLinked.clientId = "existing-client";
+    seed.projects = [
+      Object.assign(projectA, {
+        clientId: null,
+        clientEmail: "  John@Gmail.COM ",
+        clientEmailNormalized: "john@gmail.com"
+      }),
+      Object.assign(projectB, {
+        clientId: null,
+        clientEmail: "JOHN@gmail.com",
+        clientEmailNormalized: "john@gmail.com"
+      }),
+      alreadyLinked
+    ] as typeof seed.projects;
+    const repository = createMemoryRepository(seed);
+    const clientRepository = repository as typeof repository & {
+      linkUnclaimedProjectsToClient(
+        emailNormalized: string,
+        clientId: string,
+        updatedAt: string
+      ): Promise<Array<{ id: string }>>;
+    };
+
+    expect(normalizeEmail("  John@Gmail.COM ")).toBe("john@gmail.com");
+    await expect(repository.findUserByEmail(" CLIENT@AURORA.EXAMPLE ")).resolves.toMatchObject({
+      id: client.id
+    });
+    const linked = await clientRepository.linkUnclaimedProjectsToClient(
+      "john@gmail.com",
+      "client-john",
+      "2026-07-28T09:00:00.000Z"
+    );
+    expect(linked.map((project) => project.id)).toEqual(["project-a", "project-b"]);
+    await expect(repository.findProjectById("project-linked")).resolves.toMatchObject({
+      clientId: "existing-client"
+    });
+  });
+
+  it("pages active design managers by a case-insensitive email search", async () => {
+    const repository = createMemoryRepository(demoSeedData) as ReturnType<
+      typeof createMemoryRepository
+    > & {
+      pageActiveManagers(
+        search: string,
+        pagination: { limit: number; offset: number }
+      ): Promise<{ items: Array<{ id: string; active: boolean; role: string }>; total: number }>;
+    };
+
+    await expect(
+      repository.pageActiveManagers("AARAV@", { limit: 1, offset: 0 })
+    ).resolves.toEqual({
+      items: [
+        expect.objectContaining({
+          id: "user-manager-aarav",
+          active: true,
+          role: "design_manager"
+        })
+      ],
+      total: 1
+    });
+  });
+
+  it("rejects a second account whose email normalizes to an existing identity", async () => {
+    const repository = createMemoryRepository(demoSeedData);
+
+    await expect(
+      repository.createUser({
+        name: "Duplicate Aurora",
+        email: " CLIENT@AURORA.EXAMPLE ",
+        passwordHash: "hash",
+        role: "client"
+      })
+    ).rejects.toBeInstanceOf(RepositoryConflictError);
+  });
+
   it("submits replacement drafts while preserving approved active section revisions", async () => {
     const seed = structuredClone(demoSeedData);
     seed.extractionJobs.push({

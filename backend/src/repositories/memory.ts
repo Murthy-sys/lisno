@@ -1,5 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 
+import { normalizeEmail } from "../domain/email.js";
 import { demoSeedData } from "../seed/data.js";
 import {
   RepositoryConflictError,
@@ -17,6 +18,7 @@ import {
   type EvaluationRecord,
   type FloorRecord,
   type ManagerTreeNode,
+  type NewUser,
   type ProjectHierarchy,
   type ProjectRecord,
   type SeedData,
@@ -49,6 +51,8 @@ interface MemorySnapshot {
 const snapshotReaders = new WeakMap<AppRepository, () => MemorySnapshot>();
 const mutationMethods = new Set<keyof AppRepository>([
   "createProject",
+  "createUser",
+  "linkUnclaimedProjectsToClient",
   "createFloor",
   "createDesignStage",
   "createTask",
@@ -155,10 +159,38 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
     },
 
     async findUserByEmail(email) {
-      const normalizedEmail = email.trim().toLowerCase();
+      const normalizedEmail = normalizeEmail(email);
       return copyOrNull(
-        state.users.find((user) => user.email.trim().toLowerCase() === normalizedEmail)
+        state.users.find((user) => user.emailNormalized === normalizedEmail)
       );
+    },
+
+    async createUser(input: NewUser) {
+      const emailNormalized = normalizeEmail(input.email);
+      if (state.users.some((user) => user.emailNormalized === emailNormalized)) {
+        throw new RepositoryConflictError(`User email ${emailNormalized} already exists.`);
+      }
+      const createdAt = input.createdAt ?? nextIso();
+      const record: UserRecord = {
+        id: input.id ?? nextId("user"),
+        name: input.name,
+        email: input.email.trim(),
+        emailNormalized,
+        mobile: input.mobile ?? null,
+        address: input.address ?? null,
+        passwordHash: input.passwordHash,
+        role: input.role,
+        active: input.active ?? true,
+        managerId: input.managerId ?? null,
+        authorizedClientIds: input.authorizedClientIds ?? [],
+        ...(input.avatar ? { avatar: input.avatar } : {}),
+        ...(input.title ? { title: input.title } : {}),
+        createdAt,
+        updatedAt: input.updatedAt ?? createdAt
+      };
+      ensureUniqueId(state.users, record.id, "User");
+      state.users.push(record);
+      return clone(record);
     },
 
     async listUsers() {
@@ -222,6 +254,22 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
 
     async findProjectById(id) {
       return copyOrNull(state.projects.find((project) => project.id === id));
+    },
+
+    async linkUnclaimedProjectsToClient(emailNormalized, clientId, updatedAt) {
+      const normalized = normalizeEmail(emailNormalized);
+      const linked: ProjectRecord[] = [];
+      for (const project of state.projects) {
+        if (
+          project.clientId === null &&
+          project.clientEmailNormalized === normalized
+        ) {
+          project.clientId = clientId;
+          project.updatedAt = updatedAt;
+          linked.push(clone(project));
+        }
+      }
+      return linked;
     },
 
     async createProject(input) {
@@ -322,6 +370,22 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
           designers: manager.designers.slice(0, 20)
         }))
       };
+    },
+
+    async pageActiveManagers(search, pagination) {
+      const query = search.trim().toLowerCase();
+      const managers = state.users
+        .filter(
+          (user) =>
+            user.active &&
+            user.role === "design_manager" &&
+            (query.length === 0 ||
+              user.name.toLowerCase().includes(query) ||
+              user.email.toLowerCase().includes(query) ||
+              user.emailNormalized.includes(query))
+        )
+        .sort(byNameThenId);
+      return paginate(managers, pagination);
     },
 
     async pageDesignersForManager(managerId, pagination) {

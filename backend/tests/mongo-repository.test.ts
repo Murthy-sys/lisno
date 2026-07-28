@@ -13,6 +13,7 @@ import { FloorModel } from "../src/models/Floor.js";
 import { ProjectModel } from "../src/models/Project.js";
 import { TaskModel } from "../src/models/Task.js";
 import { TaskEventModel } from "../src/models/TaskEvent.js";
+import { UserModel } from "../src/models/User.js";
 import { createMongoRepository } from "../src/repositories/mongo.js";
 import {
   RepositoryConflictError,
@@ -126,6 +127,108 @@ afterEach(() => {
 });
 
 describe("Mongo repository contracts", () => {
+  it("uses the normalized account email for Mongo user lookups", async () => {
+    const findOne = vi.spyOn(UserModel, "findOne").mockReturnValueOnce({
+      select: () => ({ lean: () => ({ exec: vi.fn().mockResolvedValue(null) }) })
+    } as never);
+
+    await createMongoRepository().findUserByEmail("  AARAV@LISNO.EXAMPLE ");
+
+    expect(findOne).toHaveBeenCalledWith({ emailNormalized: "aarav@lisno.example" });
+  });
+
+  it("declares globally unique normalized account emails", () => {
+    expect(UserModel.schema.indexes()).toContainEqual([
+      { emailNormalized: 1 },
+      { unique: true }
+    ]);
+  });
+
+  it("rejects a duplicate normalized Mongo account email", async () => {
+    vi.spyOn(UserModel, "create").mockRejectedValueOnce(
+      Object.assign(new Error("E11000 duplicate key error"), { code: 11000 })
+    );
+
+    await expect(
+      createMongoRepository().createUser({
+        name: "Duplicate Aarav",
+        email: " AARAV@LISNO.EXAMPLE ",
+        passwordHash: "hash",
+        role: "design_manager"
+      })
+    ).rejects.toBeInstanceOf(RepositoryConflictError);
+  });
+
+  it("links only unclaimed Mongo projects with the matching normalized email", async () => {
+    const findOneAndUpdate = vi.spyOn(ProjectModel, "findOneAndUpdate");
+    findOneAndUpdate
+      .mockReturnValueOnce({
+        lean: () => ({
+          exec: vi.fn().mockResolvedValue({
+            _id: "project-a",
+            name: "A",
+            clientId: "client-john",
+            initiatingDesignerId: "designer",
+            assignedDesignerIds: ["designer"],
+            managerId: "manager",
+            status: "active",
+            location: "Mumbai",
+            plannedStartAt: new Date("2026-01-01T00:00:00.000Z"),
+            plannedEndAt: new Date("2026-02-01T00:00:00.000Z"),
+            actualStartAt: null,
+            actualEndAt: null,
+            createdAt: new Date("2026-01-01T00:00:00.000Z"),
+            updatedAt: new Date("2026-07-28T09:00:00.000Z")
+          })
+        })
+      } as never)
+      .mockReturnValueOnce({ lean: () => ({ exec: vi.fn().mockResolvedValue(null) }) } as never);
+    const repository = createMongoRepository() as ReturnType<typeof createMongoRepository> & {
+      linkUnclaimedProjectsToClient(
+        emailNormalized: string,
+        clientId: string,
+        updatedAt: string
+      ): Promise<Array<{ id: string }>>;
+    };
+
+    const linked = await repository.linkUnclaimedProjectsToClient(
+      "JOHN@GMAIL.COM",
+      "client-john",
+      "2026-07-28T09:00:00.000Z"
+    );
+    expect(linked.map((project) => project.id)).toEqual(["project-a"]);
+    expect(findOneAndUpdate).toHaveBeenCalledWith(
+      { clientId: null, clientEmailNormalized: "john@gmail.com" },
+      expect.objectContaining({ $set: expect.objectContaining({ clientId: "client-john" }) }),
+      expect.objectContaining({ new: true })
+    );
+  });
+
+  it("pages active Mongo managers with a case-insensitive search", async () => {
+    const find = vi.spyOn(UserModel, "find").mockReturnValueOnce({
+      select: () => ({
+        sort: () => ({ skip: () => ({ limit: () => ({ lean: () => ({ exec: vi.fn().mockResolvedValue([]) }) }) }) })
+      })
+    } as never);
+    vi.spyOn(UserModel, "countDocuments").mockReturnValueOnce(
+      { exec: vi.fn().mockResolvedValue(0) } as never
+    );
+    const repository = createMongoRepository() as ReturnType<typeof createMongoRepository> & {
+      pageActiveManagers(
+        search: string,
+        pagination: { limit: number; offset: number }
+      ): Promise<{ items: unknown[]; total: number }>;
+    };
+
+    await expect(repository.pageActiveManagers("AARAV@", { limit: 20, offset: 0 })).resolves.toEqual({
+      items: [],
+      total: 0
+    });
+    expect(find).toHaveBeenCalledWith(
+      expect.objectContaining({ active: true, role: "design_manager" })
+    );
+  });
+
   it("rejects a stale extraction completion with the current-lease filter", async () => {
     const update = vi.spyOn(DesignExtractionJobModel, "findByIdAndUpdate").mockReturnValueOnce({
       lean: () => ({ exec: vi.fn().mockResolvedValue(null) })

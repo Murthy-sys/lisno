@@ -9,6 +9,7 @@ import { ProjectModel } from "../src/models/Project.js";
 import { TaskModel } from "../src/models/Task.js";
 import { TaskEventModel } from "../src/models/TaskEvent.js";
 import { UserModel } from "../src/models/User.js";
+import { demoSeedData } from "../src/seed/data.js";
 import { seedMongoDatabase } from "../src/seed/run.js";
 
 afterEach(() => {
@@ -16,6 +17,26 @@ afterEach(() => {
 });
 
 describe("Mongo seed reset", () => {
+  it("includes normalized account identity and client snapshots in demo records", () => {
+    expect(demoSeedData.users).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "user-client-aurora",
+          emailNormalized: "client@aurora.example"
+        })
+      ])
+    );
+    expect(demoSeedData.projects).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "project-aurora-villa",
+          clientId: "user-client-aurora",
+          clientEmailNormalized: "client@aurora.example"
+        })
+      ])
+    );
+  });
+
   it("clears every demo-seed collection, including version sequences, before writing deterministic records", async () => {
     for (const model of [
       UserModel,

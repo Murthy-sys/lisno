@@ -5,6 +5,7 @@ import type {
   TaskRecord,
   UserRecord
 } from "../repositories/types.js";
+import { normalizeEmail } from "../domain/email.js";
 
 const CREATED_AT = "2026-06-01T08:00:00.000Z";
 const UPDATED_AT = "2026-07-15T08:00:00.000Z";
@@ -16,8 +17,16 @@ const DEMO_PASSWORD_HASH =
 
 const user = (
   input: Pick<UserRecord, "id" | "name" | "email" | "role"> &
-    Partial<Pick<UserRecord, "managerId" | "title" | "authorizedClientIds">>
+    Partial<
+      Pick<
+        UserRecord,
+        "managerId" | "title" | "authorizedClientIds" | "mobile" | "address"
+      >
+    >
 ): UserRecord => ({
+  emailNormalized: normalizeEmail(input.email),
+  mobile: input.mobile ?? null,
+  address: input.address ?? null,
   passwordHash: DEMO_PASSWORD_HASH,
   active: true,
   managerId: input.managerId ?? null,
@@ -37,8 +46,23 @@ const project = (
     | "assignedDesignerIds"
     | "managerId"
     | "location"
-  >
+  > &
+    Partial<
+      Pick<
+        ProjectRecord,
+        | "clientName"
+        | "clientEmail"
+        | "clientEmailNormalized"
+        | "clientMobile"
+        | "clientAddress"
+      >
+    >
 ): ProjectRecord => ({
+  clientName: input.clientName ?? "",
+  clientEmail: input.clientEmail ?? "",
+  clientEmailNormalized: input.clientEmailNormalized ?? normalizeEmail(input.clientEmail ?? ""),
+  clientMobile: input.clientMobile ?? "",
+  clientAddress: input.clientAddress ?? "",
   status: "active",
   plannedStartAt: "2026-06-01T09:00:00.000Z",
   plannedEndAt: "2026-09-30T17:00:00.000Z",
@@ -189,7 +213,10 @@ const projects: ProjectRecord[] = [
     initiatingDesignerId: "user-designer-ananya",
     assignedDesignerIds: ["user-designer-ananya", "user-designer-kabir"],
     managerId: "user-manager-aarav",
-    location: "Bengaluru"
+    location: "Bengaluru",
+    clientName: "Rhea Kapoor",
+    clientEmail: "client@aurora.example",
+    clientEmailNormalized: "client@aurora.example"
   }),
   project({
     id: "project-aurora-studio",
@@ -198,7 +225,10 @@ const projects: ProjectRecord[] = [
     initiatingDesignerId: "user-designer-kabir",
     assignedDesignerIds: ["user-designer-kabir"],
     managerId: "user-manager-aarav",
-    location: "Mumbai"
+    location: "Mumbai",
+    clientName: "Rhea Kapoor",
+    clientEmail: "client@aurora.example",
+    clientEmailNormalized: "client@aurora.example"
   }),
   project({
     id: "project-celeste-office",
@@ -207,7 +237,10 @@ const projects: ProjectRecord[] = [
     initiatingDesignerId: "user-designer-ishita",
     assignedDesignerIds: ["user-designer-ananya", "user-designer-ishita", "user-designer-vikram"],
     managerId: "user-manager-meera",
-    location: "Pune"
+    location: "Pune",
+    clientName: "Noah Fernandes",
+    clientEmail: "client@celeste.example",
+    clientEmailNormalized: "client@celeste.example"
   })
 ];
 

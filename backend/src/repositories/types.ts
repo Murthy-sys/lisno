@@ -38,6 +38,9 @@ export interface UserRecord {
   id: string;
   name: string;
   email: string;
+  emailNormalized: string;
+  mobile: string | null;
+  address: string | null;
   passwordHash: string;
   role: Role;
   active: boolean;
@@ -52,7 +55,12 @@ export interface UserRecord {
 export interface ProjectRecord {
   id: string;
   name: string;
-  clientId: string;
+  clientId: string | null;
+  clientName: string;
+  clientEmail: string;
+  clientEmailNormalized: string;
+  clientMobile: string;
+  clientAddress: string;
   initiatingDesignerId: string;
   assignedDesignerIds: string[];
   managerId: string;
@@ -415,6 +423,23 @@ export interface SeedData {
 }
 
 export type NewProject = ProjectRecord;
+export type NewUser = Pick<UserRecord, "name" | "email" | "passwordHash" | "role"> &
+  Partial<
+    Pick<
+      UserRecord,
+      | "id"
+      | "emailNormalized"
+      | "mobile"
+      | "address"
+      | "active"
+      | "managerId"
+      | "authorizedClientIds"
+      | "avatar"
+      | "title"
+      | "createdAt"
+      | "updatedAt"
+    >
+  >;
 export type NewFloor = FloorRecord;
 export type NewDesignStage = DesignStageRecord;
 export type NewTask = TaskRecord;
@@ -425,6 +450,7 @@ export interface AppRepository {
   ): Promise<T>;
   findUserById(id: string): Promise<UserRecord | null>;
   findUserByEmail(email: string): Promise<UserRecord | null>;
+  createUser(input: NewUser): Promise<UserRecord>;
   listUsers(): Promise<UserRecord[]>;
   listUsersByIds(ids: string[]): Promise<UserRecord[]>;
   listProjectsForUser(user: UserRecord): Promise<ProjectRecord[]>;
@@ -437,6 +463,11 @@ export interface AppRepository {
     pagination: PaginationInput
   ): Promise<PageResult<ProjectRecord>>;
   findProjectById(id: string): Promise<ProjectRecord | null>;
+  linkUnclaimedProjectsToClient(
+    emailNormalized: string,
+    clientId: string,
+    updatedAt: string
+  ): Promise<ProjectRecord[]>;
   createProject(input: NewProject): Promise<ProjectRecord>;
   createFloor(input: NewFloor): Promise<FloorRecord>;
   createDesignStage(input: NewDesignStage): Promise<DesignStageRecord>;
@@ -446,6 +477,10 @@ export interface AppRepository {
   pageOrganizationManagers(
     pagination: PaginationInput
   ): Promise<PageResult<ManagerTreeNode>>;
+  pageActiveManagers(
+    search: string,
+    pagination: PaginationInput
+  ): Promise<PageResult<UserRecord>>;
   pageDesignersForManager(
     managerId: string,
     pagination: PaginationInput

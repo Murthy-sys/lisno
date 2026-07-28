@@ -4,7 +4,12 @@ const projectSchema = new Schema(
   {
     _id: { type: String, required: true },
     name: { type: String, required: true, trim: true },
-    clientId: { type: String, ref: "User", required: true },
+    clientId: { type: String, ref: "User", default: null },
+    clientName: { type: String, required: true, default: "" },
+    clientEmail: { type: String, required: true, default: "" },
+    clientEmailNormalized: { type: String, required: true, default: "" },
+    clientMobile: { type: String, required: true, default: "" },
+    clientAddress: { type: String, required: true, default: "" },
     initiatingDesignerId: { type: String, ref: "User", required: true },
     assignedDesignerIds: [{ type: String, ref: "User", required: true }],
     managerId: { type: String, ref: "User", required: true },
@@ -23,6 +28,7 @@ const projectSchema = new Schema(
 );
 
 projectSchema.index({ clientId: 1, name: 1 });
+projectSchema.index({ clientEmailNormalized: 1, clientId: 1 });
 projectSchema.index({ managerId: 1, status: 1 });
 projectSchema.index({ assignedDesignerIds: 1, status: 1 });
 projectSchema.index({ initiatingDesignerId: 1 });

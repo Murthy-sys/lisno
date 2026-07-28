@@ -4,7 +4,10 @@ const userSchema = new Schema(
   {
     _id: { type: String, required: true },
     name: { type: String, required: true, trim: true },
-    email: { type: String, required: true, trim: true, lowercase: true },
+    email: { type: String, required: true, trim: true },
+    emailNormalized: { type: String, required: true, trim: true, lowercase: true },
+    mobile: { type: String, default: null },
+    address: { type: String, default: null },
     passwordHash: { type: String, required: true, select: false },
     role: {
       type: String,
@@ -20,7 +23,7 @@ const userSchema = new Schema(
   { timestamps: true, versionKey: false }
 );
 
-userSchema.index({ email: 1 }, { unique: true });
+userSchema.index({ emailNormalized: 1 }, { unique: true });
 userSchema.index({ role: 1, active: 1 });
 userSchema.index({ managerId: 1, role: 1 });
 

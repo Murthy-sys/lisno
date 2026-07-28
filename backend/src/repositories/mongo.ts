@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import mongoose, { type ClientSession, type Model, type PipelineStage } from "mongoose";
+import { normalizeEmail } from "../domain/email.js";
 import { AuditEventModel } from "../models/AuditEvent.js";
 import { DesignStageModel } from "../models/DesignStage.js";
 import { DesignExtractionJobModel } from "../models/DesignExtractionJob.js";
@@ -29,6 +30,7 @@ import {
   type EvaluationRecord,
   type FloorRecord,
   type ManagerTreeNode,
+  type NewUser,
   type NewDesignExtractionJob,
   type NewDesignVersion,
   type ProjectHierarchy,
@@ -95,11 +97,36 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
     },
 
     async findUserByEmail(email) {
-      const document = await UserModel.findOne({ email: email.trim().toLowerCase() })
+      const document = await UserModel.findOne({ emailNormalized: normalizeEmail(email) })
         .select("+passwordHash")
         .lean()
         .exec();
       return document ? mapUser(document) : null;
+    },
+
+    async createUser(input: NewUser) {
+      const emailNormalized = normalizeEmail(input.email);
+      const createdAt = input.createdAt ? date(input.createdAt) : new Date();
+      const document = await createMongoDocument("User", () =>
+        createDocument(UserModel, {
+          _id: input.id ?? randomUUID(),
+          name: input.name,
+          email: input.email.trim(),
+          emailNormalized,
+          mobile: input.mobile ?? null,
+          address: input.address ?? null,
+          passwordHash: input.passwordHash,
+          role: input.role,
+          active: input.active ?? true,
+          managerId: input.managerId ?? null,
+          authorizedClientIds: input.authorizedClientIds ?? [],
+          ...(input.avatar ? { avatar: input.avatar } : {}),
+          ...(input.title ? { title: input.title } : {}),
+          createdAt,
+          updatedAt: input.updatedAt ? date(input.updatedAt) : createdAt
+        }, session)
+      );
+      return mapUser(document.toObject());
     },
 
     async listUsers() {
@@ -160,6 +187,26 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
     async findProjectById(id) {
       const document = await ProjectModel.findById(id).lean().exec();
       return document ? mapProject(document) : null;
+    },
+
+    async linkUnclaimedProjectsToClient(emailNormalized, clientId, updatedAt) {
+      const linked: ProjectRecord[] = [];
+      const filter = {
+        clientId: null,
+        clientEmailNormalized: normalizeEmail(emailNormalized)
+      };
+      for (;;) {
+        const query = ProjectModel.findOneAndUpdate(
+          filter,
+          { $set: { clientId, updatedAt: date(updatedAt) } },
+          { new: true, runValidators: true }
+        ).lean();
+        if (session) query.session(session);
+        const document = await query.exec();
+        if (!document) break;
+        linked.push(mapProject(document));
+      }
+      return linked;
     },
 
     async createProject(input) {
@@ -335,6 +382,30 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
         }),
         total
       };
+    },
+
+    async pageActiveManagers(search, pagination) {
+      const query = search.trim();
+      const managerFilter: PlainDocument = { active: true, role: "design_manager" };
+      if (query.length > 0) {
+        const pattern = new RegExp(escapeRegex(query), "i");
+        managerFilter.$or = [
+          { name: pattern },
+          { email: pattern },
+          { emailNormalized: pattern }
+        ];
+      }
+      const [documents, total] = await Promise.all([
+        UserModel.find(managerFilter)
+          .select("+passwordHash")
+          .sort({ name: 1, _id: 1 })
+          .skip(pagination.offset)
+          .limit(pagination.limit)
+          .lean()
+          .exec(),
+        UserModel.countDocuments(managerFilter).exec()
+      ]);
+      return { items: documents.map(mapUser), total };
     },
 
     async pageDesignersForManager(managerId, pagination) {
@@ -1473,6 +1544,10 @@ function auditFilter(filters: AuditFilters): PlainDocument {
   return filter;
 }
 
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 function date(value: string | Date): Date {
   return value instanceof Date ? value : new Date(value);
 }
@@ -1494,6 +1569,9 @@ function mapUser(document: PlainDocument): UserRecord {
     id: idOf(document),
     name: document.name,
     email: document.email,
+    emailNormalized: document.emailNormalized ?? normalizeEmail(document.email),
+    mobile: document.mobile ?? null,
+    address: document.address ?? null,
     passwordHash: document.passwordHash,
     role: document.role,
     active: document.active,
@@ -1510,7 +1588,13 @@ function mapProject(document: PlainDocument): ProjectRecord {
   return {
     id: idOf(document),
     name: document.name,
-    clientId: document.clientId,
+    clientId: document.clientId ?? null,
+    clientName: document.clientName ?? "",
+    clientEmail: document.clientEmail ?? "",
+    clientEmailNormalized:
+      document.clientEmailNormalized ?? normalizeEmail(document.clientEmail ?? ""),
+    clientMobile: document.clientMobile ?? "",
+    clientAddress: document.clientAddress ?? "",
     initiatingDesignerId: document.initiatingDesignerId,
     assignedDesignerIds: [...document.assignedDesignerIds],
     managerId: document.managerId,
