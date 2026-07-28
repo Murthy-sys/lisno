@@ -2255,7 +2255,7 @@
   margin: 0;
 }
 
-.client-page {
+.client-page--project {
   gap: 2rem;
   min-width: 0;
   overflow-x: clip;
@@ -2265,18 +2265,18 @@
   font-family: Inter, ui-sans-serif, system-ui, sans-serif;
 }
 
-.client-page h1,
-.client-page h2,
-.client-page h3 {
+.client-page--project h1,
+.client-page--project h2,
+.client-page--project h3 {
   font-family: Georgia, "Times New Roman", serif;
 }
 
-.client-page .back-link {
+.client-page--project .back-link {
   width: fit-content;
   color: #5b6040;
 }
 
-.client-project-hero {
+.client-page--project .client-project-hero {
   display: flex;
   align-items: end;
   justify-content: space-between;
@@ -2287,22 +2287,22 @@
   color: #f8f3e7;
 }
 
-.client-project-hero .eyebrow {
+.client-page--project .client-project-hero .eyebrow {
   color: #d8c78b;
 }
 
-.client-project-hero h1 {
+.client-page--project .client-project-hero h1 {
   margin: 0.25rem 0 0.75rem;
   font-size: clamp(2.2rem, 5vw, 4.5rem);
   line-height: 0.98;
 }
 
-.client-project-hero p:not(.eyebrow) {
+.client-page--project .client-project-hero p:not(.eyebrow) {
   margin: 0;
   color: #e4ddc9;
 }
 
-.client-project-hero__completion {
+.client-page--project .client-project-hero__completion {
   display: grid;
   gap: 0.2rem;
   flex: 0 0 auto;
@@ -2313,31 +2313,31 @@
   background: rgb(255 255 255 / 8%);
 }
 
-.client-project-hero__completion strong {
+.client-page--project .client-project-hero__completion strong {
   color: #f4d875;
   font-family: Georgia, "Times New Roman", serif;
   font-size: 2.8rem;
   line-height: 1;
 }
 
-.client-project-hero__completion span {
+.client-page--project .client-project-hero__completion span {
   color: #f5efdf;
 }
 
-.client-floor-progress,
-.client-approved-documents {
+.client-page--project .client-floor-progress,
+.client-page--project .client-approved-documents {
   display: grid;
   gap: 1rem;
 }
 
-.client-floor-progress > h2,
-.client-approved-documents > h2 {
+.client-page--project .client-floor-progress > h2,
+.client-page--project .client-approved-documents > h2 {
   margin: 0;
   color: #3f442e;
   font-size: clamp(1.65rem, 3vw, 2.2rem);
 }
 
-.client-page .client-floor-card {
+.client-page--project .client-floor-card {
   grid-template-columns: minmax(0, 1fr) minmax(12rem, 0.9fr);
   align-items: center;
   border-color: #d7cfba;
@@ -2345,50 +2345,50 @@
   background: #e8e2d3;
 }
 
-.client-page .client-floor-card > div:first-child > p,
-.client-page .client-version p {
+.client-page--project .client-floor-card > div:first-child > p,
+.client-page--project .client-version p {
   color: #706d5b;
 }
 
-.client-page .client-floor-card .progress {
+.client-page--project .client-floor-card .progress {
   background: #c9c1a9;
 }
 
-.client-page .client-floor-card .progress > span {
+.client-page--project .client-floor-card .progress > span {
   background: linear-gradient(90deg, #798149, #c7a94b);
 }
 
-.client-page .client-approved-documents {
+.client-page--project .client-approved-documents {
   padding-top: 0.5rem;
   border-top: 1px solid #d7cfba;
 }
 
-.client-page .client-version {
+.client-page--project .client-version {
   border-color: #ded7c5;
   border-radius: 0.75rem;
   background: #f8f5ec;
 }
 
-.client-page .project-empty {
+.client-page--project .project-empty {
   min-height: 12rem;
   border: 1px dashed #c8b988;
   border-radius: 0.85rem;
   background: #eee8da;
 }
 
-.client-page .project-empty h3 {
+.client-page--project .project-empty h3 {
   color: #4c5037;
 }
 
 @media (max-width: 760px) {
-  .client-project-hero,
-  .client-page .client-floor-card {
+  .client-page--project .client-project-hero,
+  .client-page--project .client-floor-card {
     align-items: stretch;
     grid-template-columns: 1fr;
     flex-direction: column;
   }
 
-  .client-project-hero__completion {
+  .client-page--project .client-project-hero__completion {
     width: 100%;
   }
 }

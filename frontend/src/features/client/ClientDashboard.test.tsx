@@ -43,6 +43,7 @@ describe("ClientDashboard", () => {
     renderApp(["/client"]);
 
     expect(await screen.findByRole("heading", { name: "Your design plans" })).toBeVisible();
+    expect(screen.getByRole("region", { name: "Your design plans" })).not.toHaveClass("client-page--project");
     expect(screen.getByText("Aurora Villa")).toBeVisible();
     expect(screen.getByText("Cedar Loft")).toBeVisible();
     expect(screen.getByText("64% complete")).toBeVisible();
