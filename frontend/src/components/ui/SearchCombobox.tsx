@@ -147,8 +147,9 @@ export function SearchCombobox<T>({
           } else if (event.key === "Enter" && open && activeItem) {
             event.preventDefault();
             select(activeItem);
-          } else if (event.key === "Escape") {
+          } else if (event.key === "Escape" && open) {
             event.preventDefault();
+            event.stopPropagation();
             setOpen(false);
             setActiveKey(null);
           }

@@ -1,6 +1,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync } from "node:fs";
 import path from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 
 import { withDevelopmentCredentials } from "../config/development-env.js";
 
@@ -29,7 +30,10 @@ interface RunDevelopmentProcessesOptions {
   pathExists?: (path: string) => boolean;
   spawnProcess?: typeof spawn;
   signalSource?: SignalSource;
-  waitForBackend?: (spec: DevelopmentProcessSpec) => Promise<void>;
+  waitForBackend?: (
+    spec: DevelopmentProcessSpec,
+    signal: AbortSignal
+  ) => Promise<void>;
   writeError?: (message: string) => void;
   writeOutput?: (message: string) => void;
 }
@@ -105,6 +109,7 @@ export function runDevelopmentProcesses({
 
   return new Promise((resolve) => {
     const liveChildren = new Set<ChildProcess>();
+    const readiness = new AbortController();
     let requestedExitCode: number | undefined;
     let settled = false;
 
@@ -120,6 +125,7 @@ export function runDevelopmentProcesses({
     };
     const requestShutdown = (exitCode: number) => {
       requestedExitCode ??= exitCode;
+      readiness.abort();
       for (const child of liveChildren) {
         child.kill("SIGTERM");
       }
@@ -162,13 +168,14 @@ export function runDevelopmentProcesses({
       return;
     }
 
-    void waitForBackend(backend).then(
+    void waitForBackend(backend, readiness.signal).then(
       () => {
-        if (requestedExitCode !== undefined) return;
+        if (readiness.signal.aborted || requestedExitCode !== undefined) return;
         writeOutput("Backend is ready; starting OCR worker.\n");
         if (!spawnSpec(worker)) finishIfStopped();
       },
       (error: unknown) => {
+        if (readiness.signal.aborted || requestedExitCode !== undefined) return;
         writeError(
           `Backend did not become ready: ${
             error instanceof Error ? error.message : String(error)
@@ -181,20 +188,23 @@ export function runDevelopmentProcesses({
 }
 
 async function waitForBackendHealth(
-  spec: DevelopmentProcessSpec
+  spec: DevelopmentProcessSpec,
+  signal: AbortSignal
 ): Promise<void> {
   const apiBaseUrl = spec.env.OCR_API_BASE_URL;
   if (!apiBaseUrl) throw new Error("OCR_API_BASE_URL is not configured.");
   const healthUrl = `${apiBaseUrl.replace(/\/+$/, "")}/health`;
 
   for (let attempt = 0; attempt < 120; attempt += 1) {
+    signal.throwIfAborted();
     try {
-      const response = await fetch(healthUrl);
+      const response = await fetch(healthUrl, { signal });
       if (response.ok) return;
     } catch {
+      signal.throwIfAborted();
       // The backend watcher may still be compiling or connecting to MongoDB.
     }
-    await new Promise((resolve) => setTimeout(resolve, 250));
+    await delay(250, undefined, { signal });
   }
 
   throw new Error(`timed out waiting for ${healthUrl}`);

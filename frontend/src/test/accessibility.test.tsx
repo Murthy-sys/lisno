@@ -128,7 +128,7 @@ describe("accessibility smoke coverage", () => {
       throw new Error(`Unhandled request: ${url}`);
     });
     renderWithQuery(<DesignSectionReview projectId="project-review" mode="client" />);
-    await user.click(await screen.findByRole("button", { name: "Reject North elevation" }));
+    await user.click(await screen.findByRole("button", { name: "Request changes for North elevation" }));
     const dialog = screen.getByRole("dialog", { name: "Request changes for North elevation" });
     await waitFor(() => expect(within(dialog).getByLabelText("Modification comment")).toHaveFocus());
     await user.click(within(dialog).getByRole("button", { name: "Send request" }));

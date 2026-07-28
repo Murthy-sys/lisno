@@ -245,6 +245,10 @@ describe("ManagementProjectWorkspace", () => {
       )
     ).toBeVisible();
     const review = await screen.findByRole("article", { name: "Kitchen elevation review" });
+    const reviewRegion = review.closest(".design-review");
+    expect(reviewRegion).toHaveClass("design-review--read-only");
+    expect(reviewRegion).not.toHaveClass("design-review--client");
+    expect(review.closest(".client-page--project")).toBeNull();
     expect(within(review).getByText("Show the full island.")).toBeVisible();
     expect(within(review).getByText("Design version 101 · Section revision 2")).toBeVisible();
     expect(within(review).queryByRole("button", { name: /approve/i })).not.toBeInTheDocument();

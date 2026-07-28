@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { X } from "lucide-react";
 
 import type { DesignSectionReviewItem } from "../../api/types";
@@ -32,8 +32,20 @@ export function SectionReviewCard({
 }) {
   const revision = section.revision;
   const decided = revision.reviewStatus !== "submitted";
-  const [previewSource, setPreviewSource] = useState<string>();
-  const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewSourceState, setPreviewSourceState] = useState<{
+    sectionId: string;
+    source?: string;
+  }>();
+  const [previewOpenSectionId, setPreviewOpenSectionId] = useState<string>();
+  const previewSource =
+    previewSourceState?.sectionId === section.id
+      ? previewSourceState.source
+      : undefined;
+  const previewOpen = previewOpenSectionId === section.id;
+  useEffect(() => {
+    setPreviewOpenSectionId(undefined);
+    setPreviewSourceState(undefined);
+  }, [section.id]);
   return (
     <article className="section-review-card" aria-label={`${section.label} review`} aria-busy={busy}>
       <header>
@@ -45,14 +57,17 @@ export function SectionReviewCard({
           className="section-review-card__image-trigger"
           aria-label={`Preview ${section.label}`}
           disabled={!previewSource}
-          onClick={() => setPreviewOpen(true)}
+          onClick={() => setPreviewOpenSectionId(section.id)}
         >
           <ProtectedImage
             source={revision.imageReference}
             alt={`${section.label}, revision ${revision.revisionNumber}`}
             className="section-review-card__image"
             dataRevision={revision.revisionNumber}
-            onSourceChange={setPreviewSource}
+            onSourceChange={(source) => setPreviewSourceState({
+              sectionId: section.id,
+              source
+            })}
           />
           <span className="section-review-card__zoom-affordance">Zoom image</span>
         </button>
@@ -78,21 +93,21 @@ export function SectionReviewCard({
           {mode === "client" && !decided ? (
             <div className="section-review-card__actions">
               <button type="button" className="button button--success" disabled={busy} onClick={onApprove} aria-label={`Approve ${section.label}`}>Approve</button>
-              <button type="button" className="button button--danger" disabled={busy} onClick={onReject} aria-label={`Reject ${section.label}`}>Request changes</button>
+              <button type="button" className="button button--danger" disabled={busy} onClick={onReject} aria-label={`Request changes for ${section.label}`}>Request changes</button>
             </div>
           ) : null}
         </div>
       </div>
       <footer className="section-review-card__navigation" aria-label="Plan navigation">
-        <button type="button" className="secondary-button" aria-label={previousLabel ? `Previous plan: ${previousLabel}` : "Previous plan"} disabled={!previousLabel} onClick={onPrevious}>Previous</button>
+        <button type="button" className="secondary-button" aria-label={previousLabel ? `Previous plan: ${previousLabel}` : "Previous plan"} disabled={busy || !previousLabel} onClick={onPrevious}>Previous</button>
         <span>Plan {position} of {total}</span>
-        <button type="button" className="secondary-button" aria-label={nextLabel ? `Next plan: ${nextLabel}` : "Next plan"} disabled={!nextLabel} onClick={onNext}>Next</button>
+        <button type="button" className="secondary-button" aria-label={nextLabel ? `Next plan: ${nextLabel}` : "Next plan"} disabled={busy || !nextLabel} onClick={onNext}>Next</button>
       </footer>
       {previewOpen && previewSource ? (
         <Dialog
           title={`${section.label} preview`}
           eyebrow="Section preview"
-          onClose={() => setPreviewOpen(false)}
+          onClose={() => setPreviewOpenSectionId(undefined)}
         >
           <div className="section-review-card__modal">
             <img
@@ -104,7 +119,7 @@ export function SectionReviewCard({
               <button
                 type="button"
                 className="button button--close"
-                onClick={() => setPreviewOpen(false)}
+                onClick={() => setPreviewOpenSectionId(undefined)}
               >
                 <X aria-hidden="true" size={18} />
                 Close preview

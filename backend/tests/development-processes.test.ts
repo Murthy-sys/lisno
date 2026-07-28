@@ -137,6 +137,48 @@ describe("combined backend and OCR development processes", () => {
     await completion;
   });
 
+  it("aborts readiness without a late timeout when the backend exits before ready", async () => {
+    const backend = new FakeChild();
+    const spawnProcess = vi
+      .fn()
+      .mockReturnValueOnce(backend as unknown as ChildProcess);
+    const writeError = vi.fn();
+    let readinessSignal: AbortSignal | undefined;
+    const waitForBackend = (_spec: unknown, signal: AbortSignal) =>
+      new Promise<void>((_resolve, reject) => {
+        readinessSignal = signal;
+        signal.addEventListener(
+          "abort",
+          () => reject(new DOMException("Readiness aborted.", "AbortError")),
+          { once: true }
+        );
+      });
+
+    const completion = runDevelopmentProcesses({
+      specs: createDevelopmentProcessSpecs({
+        backendRoot: "/repo/backend",
+        environment: {},
+        nodeExecutable: "/node",
+        platform: "linux"
+      }),
+      pathExists: () => true,
+      spawnProcess: spawnProcess as typeof spawn,
+      signalSource: new EventEmitter(),
+      waitForBackend,
+      writeError,
+      writeOutput: () => undefined
+    });
+
+    backend.exit(3);
+
+    await expect(completion).resolves.toBe(3);
+    expect(readinessSignal).toBeDefined();
+    expect(readinessSignal?.aborted).toBe(true);
+    await Promise.resolve();
+    expect(writeError).not.toHaveBeenCalled();
+    expect(spawnProcess).toHaveBeenCalledTimes(1);
+  });
+
   it("stops the sibling and returns failure when a child exits", async () => {
     const backend = new FakeChild();
     const worker = new FakeChild();
