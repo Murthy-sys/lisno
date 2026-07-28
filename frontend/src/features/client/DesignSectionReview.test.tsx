@@ -23,9 +23,18 @@ const revision = {
   imageReference: "/api/v1/design-section-revisions/revision-2/image"
 };
 
+const secondRevision = {
+  ...revision,
+  id: "revision-3",
+  sectionId: "section-2",
+  sourcePageId: "page-2",
+  label: "Site plan",
+  imageReference: "/api/v1/design-section-revisions/revision-3/image"
+};
+
 const review: DesignSectionReviewData = {
   projectId: "project-1",
-  progress: { approved: 0, rejected: 0, awaitingReview: 1, total: 1 },
+  progress: { approved: 0, rejected: 0, awaitingReview: 2, total: 2 },
   sections: [{
     id: "section-1",
     designVersionId: "version-1",
@@ -43,6 +52,20 @@ const review: DesignSectionReviewData = {
       { ...revision, id: "revision-1", revisionNumber: 1, reviewStatus: "rejected" as const, rejectionComment: "Show the roof line.", reviewedAt: "2026-07-26T10:00:00.000Z" },
       revision
     ]
+  }, {
+    id: "section-2",
+    designVersionId: "version-2",
+    sourcePageId: "page-2",
+    label: "Site plan",
+    active: true,
+    source: "ocr" as const,
+    ocrConfidence: .91,
+    createdAt: "2026-07-27T08:00:00.000Z",
+    updatedAt: "2026-07-27T10:00:00.000Z",
+    revision: secondRevision,
+    versionNumber: 4,
+    sourcePageUrl: "/api/v1/design-source-pages/page-2/image",
+    history: [secondRevision]
   }]
 };
 
@@ -54,16 +77,17 @@ function installApi(options: { failList?: boolean; failDecision?: boolean } = {}
       if (options.failList) return Response.json({ error: { code: "FAILED", message: "Nope" } }, { status: 500 });
       return Response.json({ data: current });
     }
-    if (url === revision.imageReference) return new Response(new Blob(["image"], { type: "image/png" }));
+    if (url === revision.imageReference || url === secondRevision.imageReference) return new Response(new Blob(["image"], { type: "image/png" }));
     if (url === "/api/v1/design-source-pages/page-1/image") return new Response(new Blob(["page"], { type: "image/png" }));
+    if (url === "/api/v1/design-source-pages/page-2/image") return new Response(new Blob(["page"], { type: "image/png" }));
     if (url === "/api/v1/design-section-revisions/revision-2/decision") {
       if (options.failDecision) return Response.json({ error: { code: "CONFLICT", message: "Already reviewed." } }, { status: 409 });
       const body = JSON.parse(String(init?.body)) as { decision: "approved" | "rejected"; comment?: string };
       current = {
         ...current,
         progress: body.decision === "approved"
-          ? { approved: 1, rejected: 0, awaitingReview: 0, total: 1 }
-          : { approved: 0, rejected: 1, awaitingReview: 0, total: 1 },
+          ? { approved: 1, rejected: 0, awaitingReview: 1, total: 2 }
+          : { approved: 0, rejected: 1, awaitingReview: 1, total: 2 },
         sections: current.sections.map((section) => ({
           ...section,
           revision: { ...section.revision, reviewStatus: body.decision, rejectionComment: body.comment ?? null }
@@ -76,18 +100,23 @@ function installApi(options: { failList?: boolean; failDecision?: boolean } = {}
 }
 
 describe("DesignSectionReview", () => {
-  it("shows submitted revisions as protected thumbnails with modal preview, history, and progress", async () => {
+  it("shows submitted revisions with a project-level source modal, history, and semantic progress", async () => {
     tokenStorage.set("client-token");
     vi.stubGlobal("URL", {
       createObjectURL: vi.fn(() => "blob:section-preview"),
       revokeObjectURL: vi.fn()
     });
-    installApi();
+    const api = installApi();
     renderWithQuery(<DesignSectionReview projectId="project-1" mode="client" />);
     const user = userEvent.setup();
 
     expect(await screen.findByText("0 approved")).toBeVisible();
-    expect(screen.getByText("1 awaiting review")).toBeVisible();
+    expect(screen.getByText("2 awaiting review")).toBeVisible();
+    expect(screen.getByText("2 total")).toBeVisible();
+    expect(screen.getByText("0 approved").closest(".design-review__stat")).toHaveClass("design-review__stat--approved");
+    expect(screen.getByText("0 rejected").closest(".design-review__stat")).toHaveClass("design-review__stat--rejected");
+    expect(screen.getByText("2 awaiting review").closest(".design-review__stat")).toHaveClass("design-review__stat--awaiting");
+    expect(screen.getByText("2 total").closest(".design-review__stat")).toHaveClass("design-review__stat--total");
     const card = screen.getByRole("article", { name: "Front elevation review" });
     const thumbnail = await within(card).findByRole("button", { name: "Preview Front elevation" });
     expect(thumbnail).toHaveClass("section-review-card__thumbnail");
@@ -103,10 +132,20 @@ describe("DesignSectionReview", () => {
     await user.keyboard("{Escape}");
     expect(screen.queryByRole("dialog", { name: "Front elevation preview" })).not.toBeInTheDocument();
     expect(thumbnail).toHaveFocus();
-    const sourceSummary = within(card).getByText("View source page");
-    expect(sourceSummary).toHaveClass("section-review-card__source-summary");
-    await user.click(sourceSummary);
-    expect(within(card).getByRole("img", { name: "Source page for Front elevation" })).toBeVisible();
+    expect(await screen.findAllByRole("button", { name: "View source image" })).toHaveLength(1);
+    expect(screen.queryByText("View source page")).not.toBeInTheDocument();
+    const sourceTrigger = screen.getByRole("button", { name: "View source image" });
+    await waitFor(() => expect(sourceTrigger).toBeEnabled());
+    const sourceRequests = () => api.mock.calls.filter(([input]) => String(input) === "/api/v1/design-source-pages/page-2/image");
+    expect(sourceRequests()).toHaveLength(1);
+    expect(api.mock.calls.some(([input]) => String(input) === "/api/v1/design-source-pages/page-1/image")).toBe(false);
+    await user.click(sourceTrigger);
+    expect(screen.getByRole("dialog", { name: "Project source image" })).toBeVisible();
+    expect(screen.getByRole("img", { name: "Project source image" })).toHaveAttribute("src", expect.stringContaining("blob:"));
+    expect(sourceRequests()).toHaveLength(1);
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog", { name: "Project source image" })).not.toBeInTheDocument();
+    expect(sourceTrigger).toHaveFocus();
     expect(screen.queryByText(/draft/i)).not.toBeInTheDocument();
   });
 
@@ -119,6 +158,7 @@ describe("DesignSectionReview", () => {
     const dialog = screen.getByRole("dialog", { name: "Approve Front elevation?" });
     await user.click(within(dialog).getByRole("button", { name: "Confirm approval" }));
     expect(await screen.findByText("1 approved")).toBeVisible();
+    expect(screen.getByText("1 awaiting review")).toBeVisible();
     expect(screen.queryByRole("button", { name: "Approve Front elevation" })).not.toBeInTheDocument();
   });
 

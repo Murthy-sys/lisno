@@ -1,8 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useId, useState } from "react";
+import { Image, X } from "lucide-react";
 
 import { ApiError } from "../../api/client";
 import type { DesignSectionReviewItem } from "../../api/types";
+import { ProtectedImage } from "../../components/design/ProtectedImage";
 import { SectionReviewCard } from "../../components/design/SectionReviewCard";
 import { Dialog } from "../../components/ui/Dialog";
 import { clientKeys, decideDesignSection, getDesignSectionReview } from "./clientApi";
@@ -17,6 +19,8 @@ export function DesignSectionReview({ projectId, mode }: { projectId: string; mo
   const [choice, setChoice] = useState<{ section: DesignSectionReviewItem; decision: "approved" | "rejected" }>();
   const [comment, setComment] = useState("");
   const [commentError, setCommentError] = useState("");
+  const [sourceImageUrl, setSourceImageUrl] = useState<string>();
+  const [sourcePreviewOpen, setSourcePreviewOpen] = useState(false);
   const mutation = useMutation({
     mutationFn: ({ section, decision, comment: value }: { section: DesignSectionReviewItem; decision: "approved" | "rejected"; comment?: string }) =>
       decideDesignSection(section.revision.id, section.revision.revisionNumber, decision, value),
@@ -32,6 +36,10 @@ export function DesignSectionReview({ projectId, mode }: { projectId: string; mo
   if (review.isError) return <section className="design-review"><h2>Design review</h2><p role="alert">We couldn't load the design review.</p><button type="button" onClick={() => void review.refetch()}>Try again</button></section>;
 
   const { progress, sections } = review.data;
+  const projectSource = sections.reduce<DesignSectionReviewItem | undefined>((current, section) => {
+    if (!section.sourcePageUrl || (current && current.versionNumber >= section.versionNumber)) return current;
+    return section;
+  }, undefined);
   const submitRejection = () => {
     if (!choice) return;
     if (!comment.trim()) {
@@ -43,9 +51,29 @@ export function DesignSectionReview({ projectId, mode }: { projectId: string; mo
   };
   return (
     <section className="design-review" aria-labelledby={`design-review-${projectId}`}>
-      <header><div><p className="eyebrow">{mode === "client" ? "Client decisions" : "Read-only inspection"}</p><h2 id={`design-review-${projectId}`}>Design review</h2></div></header>
+      <header>
+        <div><p className="eyebrow">{mode === "client" ? "Client decisions" : "Read-only inspection"}</p><h2 id={`design-review-${projectId}`}>Design review</h2></div>
+        {projectSource ? <button
+          type="button"
+          className="design-review__source-trigger"
+          aria-label="View source image"
+          disabled={!sourceImageUrl}
+          onClick={() => setSourcePreviewOpen(true)}
+        >
+          <ProtectedImage
+            source={projectSource.sourcePageUrl}
+            alt=""
+            className="design-review__source-thumbnail"
+            onSourceChange={setSourceImageUrl}
+          />
+          <span><Image aria-hidden="true" size={18} />View source image</span>
+        </button> : null}
+      </header>
       <div className="design-review__progress" aria-label={`${progress.approved} approved, ${progress.rejected} rejected, ${progress.awaitingReview} awaiting review, ${progress.total} total`}>
-        <strong>{progress.approved} approved</strong><span>{progress.rejected} rejected</span><span>{progress.awaitingReview} awaiting review</span><span>{progress.total} total</span>
+        <div className="design-review__stat design-review__stat--approved"><strong>{progress.approved} approved</strong><span>Approved</span></div>
+        <div className="design-review__stat design-review__stat--rejected"><strong>{progress.rejected} rejected</strong><span>Rejected</span></div>
+        <div className="design-review__stat design-review__stat--awaiting"><strong>{progress.awaitingReview} awaiting review</strong><span>Awaiting review</span></div>
+        <div className="design-review__stat design-review__stat--total"><strong>{progress.total} total</strong><span>Total</span></div>
       </div>
       {sections.length ? <div className="section-review-grid">{sections.map((section) => (
         <SectionReviewCard
@@ -76,6 +104,17 @@ export function DesignSectionReview({ projectId, mode }: { projectId: string; mo
         onSubmit={submitRejection}
         onClose={() => setChoice(undefined)}
       /> : null}
+      {sourcePreviewOpen && sourceImageUrl ? <Dialog title="Project source image" eyebrow="Project source" onClose={() => setSourcePreviewOpen(false)}>
+        <div className="design-review__source-modal">
+          <img className="design-review__source-modal-image" src={sourceImageUrl} alt="Project source image" />
+          <div className="design-review__source-modal-actions">
+            <button type="button" className="button button--close" onClick={() => setSourcePreviewOpen(false)}>
+              <X aria-hidden="true" size={18} />
+              Close preview
+            </button>
+          </div>
+        </div>
+      </Dialog> : null}
     </section>
   );
 }
