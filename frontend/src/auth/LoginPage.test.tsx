@@ -11,6 +11,14 @@ import { server } from "../test/server";
 const password = "LisnoDemo2026!";
 
 describe("LoginPage", () => {
+  it("links prospective clients to the account signup form", async () => {
+    renderApp(["/login"]);
+
+    await userEvent.click(screen.getByRole("link", { name: "Create a client account" }));
+
+    expect(await screen.findByRole("heading", { name: "Create your client account" })).toBeVisible();
+  });
+
   it("announces all validation errors and focuses email when both fields are invalid", async () => {
     renderApp(["/login"]);
 

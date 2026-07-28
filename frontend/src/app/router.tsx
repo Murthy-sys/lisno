@@ -8,6 +8,7 @@ import {
 import type { Role } from "../api/types";
 import { useAuth } from "../auth/AuthProvider";
 import { LoginPage } from "../auth/LoginPage";
+import { SignupPage } from "../auth/SignupPage";
 import { ProtectedRoute, roleHomePath } from "../auth/ProtectedRoute";
 import { AppShell } from "../components/layout/AppShell";
 import { AsyncState } from "../components/ui/AsyncState";
@@ -94,6 +95,18 @@ function LoginRoute() {
   return <LoginPage />;
 }
 
+function SignupRoute() {
+  const auth = useAuth();
+
+  if (auth.status === "restoring") {
+    return <AsyncState state="loading" message="Restoring your session…" />;
+  }
+  if (auth.status === "authenticated" && auth.user) {
+    return <Navigate to={roleHomePath(auth.user.role)} replace />;
+  }
+  return <SignupPage />;
+}
+
 function HomeRedirect() {
   const auth = useAuth();
 
@@ -126,6 +139,7 @@ export function AppRoutes() {
   return (
     <Routes>
       <Route path="/login" element={<LoginRoute />} />
+      <Route path="/signup" element={<SignupRoute />} />
       <Route path="/" element={<HomeRedirect />} />
       <Route
         element={

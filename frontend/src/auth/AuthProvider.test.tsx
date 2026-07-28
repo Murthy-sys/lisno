@@ -5,7 +5,7 @@ import { StrictMode, type ReactNode } from "react";
 import { describe, expect, it, vi } from "vitest";
 
 import { apiClient, tokenStorage } from "../api/client";
-import type { PublicUser } from "../api/types";
+import type { ClientSignupInput, PublicUser } from "../api/types";
 import { AuthProvider, useAuth } from "./AuthProvider";
 
 const userA: PublicUser = {
@@ -20,6 +20,22 @@ const userB: PublicUser = {
   name: "User B",
   email: "b@lisno.example",
   role: "design_manager"
+};
+
+const clientSignup: ClientSignupInput = {
+  name: "Client C",
+  email: "c@lisno.example",
+  mobile: "+91 98765 43210",
+  address: "42 Garden Lane",
+  password: "StrongPassword!23",
+  passwordConfirmation: "StrongPassword!23"
+};
+
+const userC: PublicUser = {
+  id: "user-c",
+  name: clientSignup.name,
+  email: clientSignup.email,
+  role: "client"
 };
 
 function deferred() {
@@ -49,6 +65,12 @@ function AuthHarness() {
         }
       >
         Log in as B
+      </button>
+      <button
+        type="button"
+        onClick={() => void auth.signupClient(clientSignup).catch(() => undefined)}
+      >
+        Sign up as C
       </button>
       <button
         type="button"
@@ -119,6 +141,52 @@ async function seedAuthenticatedCache(queryClient: QueryClient) {
 }
 
 describe("AuthProvider session concurrency", () => {
+  it("persists the client-signup auth payload and exposes its authenticated client", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      expect(String(input)).toBe("/api/v1/auth/client-signup");
+      expect(JSON.parse(String(init?.body))).toEqual(clientSignup);
+      return Response.json({ data: { token: "token-c", user: userC } }, { status: 201 });
+    });
+    renderAuthProvider();
+
+    await userEvent.click(screen.getByRole("button", { name: "Sign up as C" }));
+
+    await waitFor(() =>
+      expect(screen.getByLabelText("Authentication status")).toHaveTextContent(
+        "authenticated"
+      )
+    );
+    expect(screen.getByLabelText("Current user")).toHaveTextContent("Client C");
+    expect(tokenStorage.get()).toBe("token-c");
+  });
+
+  it("does not let a stale client-signup response replace a newer login", async () => {
+    let resolveSignup!: () => void;
+    const signupGate = new Promise<void>((resolve) => {
+      resolveSignup = resolve;
+    });
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      if (String(input).endsWith("/auth/client-signup")) {
+        await signupGate;
+        return Response.json({ data: { token: "token-c", user: userC } }, { status: 201 });
+      }
+      return Response.json({ data: { token: "token-b", user: userB } });
+    });
+    renderAuthProvider();
+
+    await userEvent.click(screen.getByRole("button", { name: "Sign up as C" }));
+    await userEvent.click(screen.getByRole("button", { name: "Log in as B" }));
+    await waitFor(() =>
+      expect(screen.getByLabelText("Current user")).toHaveTextContent("User B")
+    );
+    resolveSignup();
+
+    await waitFor(() =>
+      expect(screen.getByLabelText("Current user")).toHaveTextContent("User B")
+    );
+    expect(tokenStorage.get()).toBe("token-b");
+  });
+
   it("restores the current session when wrapped in production StrictMode", async () => {
     tokenStorage.set("token-a");
     vi.spyOn(globalThis, "fetch").mockResolvedValue(

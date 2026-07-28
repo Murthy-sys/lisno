@@ -177,6 +177,17 @@ describe("accessibility smoke coverage", () => {
     await expectNoAxeViolations();
   });
 
+  it("keeps signup controls labelled, visible by keyboard, and free of accessibility violations", async () => {
+    renderApp(["/signup"]);
+    expect(screen.getByLabelText("Full name")).toBeVisible();
+    expect(screen.getByLabelText("Email address")).toHaveAttribute("type", "email");
+    const toggle = screen.getAllByRole("button", { name: "Show password" })[0];
+    toggle.focus();
+    await userEvent.keyboard("{Enter}");
+    expect(toggle).toHaveAttribute("aria-pressed", "true");
+    await expectNoAxeViolations();
+  });
+
   it.each([
     ["designer", "/designer", "Good morning, Accessible."],
     ["design_manager", "/manager", "Team delivery pulse"],

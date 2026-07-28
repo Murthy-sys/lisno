@@ -11,7 +11,7 @@ import {
 import { useQueryClient } from "@tanstack/react-query";
 
 import { apiClient, tokenStorage } from "../api/client";
-import type { AuthPayload, PublicUser } from "../api/types";
+import type { AuthPayload, ClientSignupInput, PublicUser } from "../api/types";
 
 export type AuthStatus =
   | "restoring"
@@ -28,6 +28,7 @@ interface AuthContextValue {
   status: AuthStatus;
   user: PublicUser | null;
   login(credentials: Credentials): Promise<PublicUser>;
+  signupClient(input: ClientSignupInput): Promise<PublicUser>;
   logout(): Promise<void>;
   restore(): Promise<void>;
 }
@@ -114,19 +115,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, [supersedeRestore]);
 
-  const login = useCallback(
-    async (credentials: Credentials) => {
+  const establishSession = useCallback(
+    async (path: string, body: Credentials | ClientSignupInput) => {
       const previousToken = tokenStorage.get();
       const generation = supersedeRestore();
       let replacementToken: string | null = null;
       let cleanupAttempted = false;
       try {
-        const payload = await apiClient.post<AuthPayload>(
-          "/auth/login",
-          credentials
-        );
+        const payload = await apiClient.post<AuthPayload>(path, body);
         if (!mountedRef.current || generationRef.current !== generation) {
-          throw new DOMException("Login was superseded.", "AbortError");
+          throw new DOMException("Authentication was superseded.", "AbortError");
         }
         replacementToken = payload.token;
         setUser(null);
@@ -139,7 +137,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           generationRef.current !== generation ||
           tokenStorage.get() !== replacementToken
         ) {
-          throw new DOMException("Login was superseded.", "AbortError");
+          throw new DOMException("Authentication was superseded.", "AbortError");
         }
         setUser(payload.user);
         setStatus("authenticated");
@@ -168,6 +166,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [clearAuthenticatedCache, supersedeRestore]
   );
 
+  const login = useCallback(
+    (credentials: Credentials) => establishSession("/auth/login", credentials),
+    [establishSession]
+  );
+
+  const signupClient = useCallback(
+    (input: ClientSignupInput) =>
+      establishSession("/auth/client-signup", input),
+    [establishSession]
+  );
+
   useEffect(() => {
     mountedRef.current = true;
     void restore();
@@ -185,8 +194,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [logout]);
 
   const value = useMemo<AuthContextValue>(
-    () => ({ status, user, login, logout, restore }),
-    [status, user, login, logout, restore]
+    () => ({ status, user, login, signupClient, logout, restore }),
+    [status, user, login, signupClient, logout, restore]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

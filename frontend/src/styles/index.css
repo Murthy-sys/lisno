@@ -311,6 +311,22 @@
   line-height: 1.6;
 }
 
+.signup-card {
+  padding-bottom: 2rem;
+}
+
+.auth-switch {
+  margin: 1.4rem 0 0;
+  color: var(--color-lisno-muted);
+  font-size: 0.9rem;
+  text-align: center;
+}
+
+.auth-switch a {
+  color: #5d46d7;
+  font-weight: 750;
+}
+
 .form-alert {
   margin-bottom: 1.1rem;
   border: 1px solid #f0c3c3;

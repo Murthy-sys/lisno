@@ -13,6 +13,15 @@ export interface AuthPayload {
   user: PublicUser;
 }
 
+export interface ClientSignupInput {
+  name: string;
+  email: string;
+  mobile: string;
+  address: string;
+  password: string;
+  passwordConfirmation: string;
+}
+
 export type TaskStatus =
   | "not_started"
   | "in_progress"

@@ -1,7 +1,7 @@
 import { Eye, EyeOff, Sparkles } from "lucide-react";
 import { useRef, useState } from "react";
 import { useForm } from "react-hook-form";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { z } from "zod";
 
 import { ApiError } from "../api/client";
@@ -223,6 +223,9 @@ export function LoginPage() {
               Use designer demo account
             </button>
           </div>
+          <p className="auth-switch">
+            New to Lisno? <Link to="/signup">Create a client account</Link>
+          </p>
         </div>
       </section>
     </main>
