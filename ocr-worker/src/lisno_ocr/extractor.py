@@ -5,6 +5,7 @@ from collections.abc import Mapping, Sequence
 from collections import deque
 from collections.abc import Iterator
 from io import BytesIO
+import math
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -234,13 +235,22 @@ class Extractor:
         ],
     ) -> ExtractedSection:
         candidate_regions = regions or [(0, 0, image.width, image.height)]
-        largest_region_area = max(_box_area(region) for region in candidate_regions)
+        drawing_regions = [
+            region
+            for region in candidate_regions
+            if not _is_page_frame(region, image.width, image.height)
+        ]
+        if drawing_regions:
+            candidate_regions = drawing_regions
         selected = min(
             candidate_regions,
             key=lambda region: (
-                *region_penalties.get(region, (0, 0, 0.0)),
-                int(_box_area(region) < largest_region_area * 0.1),
-                _squared_distance(label_box, region),
+                region_penalties.get(region, (0, 0, 0.0))[0],
+                int(_is_title_decoration(label_box, region)),
+                int(_is_title_scale_fragment(label_box, region)),
+                int(_box_area(region) < _box_area(label_box) * 2),
+                _size_adjusted_distance(label_box, region),
+                *region_penalties.get(region, (0, 0, 0.0))[1:],
             ),
         )
         left, top, right, bottom = _expanded_and_clamped(
@@ -417,6 +427,49 @@ def _squared_distance(
     right_x = (right[0] + right[2]) / 2
     right_y = (right[1] + right[3]) / 2
     return (left_x - right_x) ** 2 + (left_y - right_y) ** 2
+
+
+def _size_adjusted_distance(
+    title: tuple[int, int, int, int],
+    region: tuple[int, int, int, int],
+) -> float:
+    return _squared_distance(title, region) / math.sqrt(max(1, _box_area(region)))
+
+
+def _is_title_decoration(
+    title: tuple[int, int, int, int],
+    region: tuple[int, int, int, int],
+) -> bool:
+    title_height = max(1, title[3] - title[1])
+    region_height = region[3] - region[1]
+    vertical_gap = region[1] - title[3]
+    return (
+        -title_height <= vertical_gap <= max(40, title_height * 4)
+        and region_height <= title_height * 2
+    )
+
+
+def _is_title_scale_fragment(
+    title: tuple[int, int, int, int],
+    region: tuple[int, int, int, int],
+) -> bool:
+    title_height = max(1, title[3] - title[1])
+    return region[3] - region[1] <= max(24, title_height * 2)
+
+
+def _is_page_frame(
+    region: tuple[int, int, int, int],
+    page_width: int,
+    page_height: int,
+) -> bool:
+    left, top, right, bottom = region
+    near_vertical_edges = top <= page_height * 0.03 and bottom >= page_height * 0.97
+    near_horizontal_edges = left <= page_width * 0.03 and right >= page_width * 0.97
+    return (
+        near_vertical_edges and bottom - top >= page_height * 0.85
+    ) or (
+        near_horizontal_edges and right - left >= page_width * 0.85
+    )
 
 
 def _region_text_penalty(

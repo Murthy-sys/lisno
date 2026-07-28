@@ -11,6 +11,64 @@ from lisno_ocr.title_classifier import OcrLine, classify_drawing_titles
 
 
 FIXTURES = Path(__file__).parent / "fixtures"
+SUPPLIED_BLUEPRINT_SHA256 = (
+    "980c69b279fb2d283ff33836f5539264d117cdff76928252177863c2ffc3e65c"
+)
+
+
+SUPPLIED_BLUEPRINT_OCR = [
+    ((34, 32, 247, 60), "BLUEPRINT 01", 0.9613800644874573),
+    ((734, 32, 911, 59), "BLUEPRINT", 0.9939998984336853),
+    ((903, 32, 950, 59), "02", 0.9947403073310852),
+    ((1195, 32, 1270, 49), "KEY PLAN", 0.9569981098175049),
+    ((34, 70, 285, 84), "FLOOR PLAN—3BHK RESIDENCE", 0.9452375769615173),
+    ((733, 68, 831, 85), "ELEVATION", 0.9987469911575317),
+    ((828, 69, 968, 86), "&CEILING PLAN", 0.9627071022987366),
+    ((329, 124, 366, 139), "13500", 0.9989112019538879),
+    ((109, 154, 140, 169), "1800", 0.9990113973617554),
+    ((226, 154, 258, 169), "4200", 0.9994466304779053),
+    ((364, 154, 396, 169), "2700", 0.9996252655982971),
+    ((507, 151, 541, 170), "4800", 0.999168872833252),
+    ((829, 161, 844, 173), "A.", 0.9105772972106934),
+    (
+        (852, 160, 1070, 173),
+        "LIVING ROOM—FRONTELEVATION",
+        0.9670242667198181,
+    ),
+    ((731, 238, 801, 249), "FALSE CEILING", 0.9744109511375427),
+    ((732, 334, 791, 344), "WALL PANEL", 0.9555436968803406),
+    ((1291, 334, 1356, 344), "DISPLAYUNIT", 0.9957664608955383),
+    ((335, 418, 394, 429), "BEDROOM 2", 0.9815718531608582),
+    ((479, 418, 572, 428), "MASTERBEDROOM", 0.9964205622673035),
+    ((147, 447, 195, 461), "LIVING/DINING", 0.5892143845558167),
+    ((731, 440, 770, 451), "TV UNIT", 0.9705317616462708),
+    ((534, 486, 576, 497), "WALK IN", 0.9571718573570251),
+    ((527, 500, 583, 511), "WARDROBE", 0.9981621503829956),
+    ((101, 580, 137, 594), "ENTRY", 0.9969401359558105),
+    (
+        (731, 609, 898, 627),
+        "B.SIDE ELEVATION(LEFT）",
+        0.9535936117172241,
+    ),
+    (
+        (1000, 611, 1236, 625),
+        "C.CEILINGPLAN-LIVINGROOM",
+        0.9797329902648926,
+    ),
+    ((867, 698, 928, 709), "WALLPANEL", 0.9878377914428711),
+    ((867, 820, 908, 831), "TV UNIT", 0.9440501928329468),
+    ((36, 949, 89, 963), "LEGEND", 0.9480158090591431),
+    ((214, 949, 362, 962), "WALL & FINISHLEGEND", 0.9982010722160339),
+    ((496, 948, 543, 963), "NOTES", 0.9857620000839233),
+    (
+        (739, 949, 947, 963),
+        "SYMBOLLEGEND(CEILINGPLAN)",
+        0.9980929493904114,
+    ),
+    ((1165, 948, 1211, 963), "NOTES", 0.9964715838432312),
+    ((801, 997, 896, 1011), "LED DOWN LIGHT", 0.976708173751831),
+    ((995, 997, 1063, 1011), "CEILING FAN", 0.9604941606521606),
+]
 
 
 def _write_representative_blueprint_pdf(tmp_path):
@@ -276,6 +334,44 @@ def test_extracts_zero_sections_from_a_noise_only_page(tmp_path):
     page = Extractor(ocr_engine=ocr).extract(source)[0]
 
     assert page.sections == ()
+
+
+def test_supplied_blueprint_extracts_four_distinct_drawing_crops():
+    import hashlib
+
+    source = FIXTURES / "blueprint-01-02.png"
+    assert hashlib.sha256(source.read_bytes()).hexdigest() == (
+        SUPPLIED_BLUEPRINT_SHA256
+    )
+    ocr = PageAwareFakePaddleOCR3([{
+        "rec_boxes": [box for box, _text, _score in SUPPLIED_BLUEPRINT_OCR],
+        "rec_texts": [text for _box, text, _score in SUPPLIED_BLUEPRINT_OCR],
+        "rec_scores": [score for _box, _text, score in SUPPLIED_BLUEPRINT_OCR],
+    }])
+
+    page = Extractor(ocr_engine=ocr).extract(source)[0]
+
+    assert [section.label for section in page.sections] == [
+        "FLOOR PLAN – 3BHK RESIDENCE",
+        "LIVING ROOM – FRONT ELEVATION",
+        "SIDE ELEVATION (LEFT)",
+        "CEILING PLAN – LIVING ROOM",
+    ]
+    by_label = {section.label: section.crop for section in page.sections}
+    expected_drawings = {
+        "FLOOR PLAN – 3BHK RESIDENCE": (87, 200, 620, 815),
+        "LIVING ROOM – FRONT ELEVATION": (835, 196, 1275, 550),
+        "SIDE ELEVATION (LEFT)": (758, 649, 840, 890),
+        "CEILING PLAN – LIVING ROOM": (1015, 650, 1315, 890),
+    }
+    for label, drawing in expected_drawings.items():
+        assert _contains_region(by_label[label], drawing)
+    assert len({
+        (crop.x, crop.y, crop.width, crop.height)
+        for crop in by_label.values()
+    }) == 4
+    for label, crop in by_label.items():
+        assert crop.y + crop.height < 934, label
 
 
 def test_crop_association_penalizes_nearby_text_dense_notes_panel(tmp_path):

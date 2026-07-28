@@ -86,6 +86,15 @@ schedules are excluded before title matching. OCR labels and crops are proposals
 a designer must verify. At most 2,000 confidence-eligible OCR lines reach title
 classification and at most 500 accepted titles reach crop encoding per page.
 
+Common PaddleOCR title variants are normalized before classification. This
+includes compact drawing prefixes and punctuation (for example,
+`B.SIDE ELEVATION(LEFT）`), missing word boundaries
+(`C.CEILINGPLAN-LIVINGROOM`), and OCR dash variants. Sheet overview headings
+such as `ELEVATION & CEILING PLAN` remain excluded. Crop association ignores
+sheet-border frames and short title/dimension-line fragments, then favors a
+substantial nearby drawing region; this keeps multiple drawings on one sheet
+mapped to distinct designer-review crops rather than reusing the largest panel.
+
 ## Health and recovery
 
 Confirm the backend before starting the worker:
