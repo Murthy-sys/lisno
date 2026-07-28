@@ -1,4 +1,8 @@
+import { useState } from "react";
+import { X } from "lucide-react";
+
 import type { DesignSectionReviewItem } from "../../api/types";
+import { Dialog } from "../ui/Dialog";
 import { ProtectedImage } from "./ProtectedImage";
 
 export function SectionReviewCard({
@@ -16,6 +20,8 @@ export function SectionReviewCard({
 }) {
   const revision = section.revision;
   const decided = revision.reviewStatus !== "submitted";
+  const [previewSource, setPreviewSource] = useState<string>();
+  const [previewOpen, setPreviewOpen] = useState(false);
   return (
     <article className="section-review-card" aria-label={`${section.label} review`} aria-busy={busy}>
       <header>
@@ -27,15 +33,25 @@ export function SectionReviewCard({
           {statusLabel(revision.reviewStatus)}
         </span>
       </header>
-      <figure className="section-review-card__preview">
+      <button
+        type="button"
+        className="section-review-card__thumbnail"
+        aria-label={`Preview ${section.label}`}
+        disabled={!previewSource}
+        onClick={() => setPreviewOpen(true)}
+      >
         <ProtectedImage
           source={revision.imageReference}
           alt={`${section.label}, revision ${revision.revisionNumber}`}
+          className="section-review-card__thumbnail-image"
           dataRevision={revision.revisionNumber}
+          onSourceChange={setPreviewSource}
         />
-      </figure>
+      </button>
       <details>
-        <summary>View source page</summary>
+        <summary className="section-review-card__source-summary">
+          View source page
+        </summary>
         <figure className="section-review-card__source-page">
           <ProtectedImage
             source={section.sourcePageUrl}
@@ -57,9 +73,34 @@ export function SectionReviewCard({
       </section>
       {mode === "client" && !decided ? (
         <div className="section-review-card__actions">
-          <button type="button" disabled={busy} onClick={onApprove} aria-label={`Approve ${section.label}`}>Approve</button>
-          <button type="button" className="secondary-button" disabled={busy} onClick={onReject} aria-label={`Reject ${section.label}`}>Request changes</button>
+          <button type="button" className="button button--success" disabled={busy} onClick={onApprove} aria-label={`Approve ${section.label}`}>Approve</button>
+          <button type="button" className="button button--danger" disabled={busy} onClick={onReject} aria-label={`Reject ${section.label}`}>Request changes</button>
         </div>
+      ) : null}
+      {previewOpen && previewSource ? (
+        <Dialog
+          title={`${section.label} preview`}
+          eyebrow="Section preview"
+          onClose={() => setPreviewOpen(false)}
+        >
+          <div className="section-review-card__modal">
+            <img
+              className="section-review-card__modal-image"
+              src={previewSource}
+              alt={`Full preview of ${section.label}`}
+            />
+            <div className="section-review-card__modal-actions">
+              <button
+                type="button"
+                className="button button--close"
+                onClick={() => setPreviewOpen(false)}
+              >
+                <X aria-hidden="true" size={18} />
+                Close preview
+              </button>
+            </div>
+          </div>
+        </Dialog>
       ) : null}
     </article>
   );

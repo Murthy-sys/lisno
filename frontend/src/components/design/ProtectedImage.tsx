@@ -1,16 +1,26 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { apiClient } from "../../api/client";
 
 interface ProtectedImageProps {
   source: string;
   alt: string;
+  className?: string;
   dataRevision?: number;
+  onSourceChange?: (source: string | undefined) => void;
 }
 
-export function ProtectedImage({ source, alt, dataRevision }: ProtectedImageProps) {
+export function ProtectedImage({
+  source,
+  alt,
+  className,
+  dataRevision,
+  onSourceChange
+}: ProtectedImageProps) {
   const [imageSource, setImageSource] = useState<string>();
   const [failed, setFailed] = useState(false);
+  const onSourceChangeRef = useRef(onSourceChange);
+  onSourceChangeRef.current = onSourceChange;
 
   useEffect(() => {
     let active = true;
@@ -22,19 +32,26 @@ export function ProtectedImage({ source, alt, dataRevision }: ProtectedImageProp
       if (typeof URL.createObjectURL === "function") {
         objectUrl = URL.createObjectURL(blob);
         setImageSource(objectUrl);
+        onSourceChangeRef.current?.(objectUrl);
       }
     }).catch(() => {
       if (active) setFailed(true);
     });
     return () => {
       active = false;
+      onSourceChangeRef.current?.(undefined);
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
   }, [source]);
 
   return (
     <>
-      <img src={imageSource} alt={alt} data-revision={dataRevision} />
+      <img
+        src={imageSource}
+        alt={alt}
+        className={className}
+        data-revision={dataRevision}
+      />
       {failed ? <span role="status">Preview unavailable.</span> : null}
     </>
   );

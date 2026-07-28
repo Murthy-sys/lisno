@@ -76,19 +76,36 @@ function installApi(options: { failList?: boolean; failDecision?: boolean } = {}
 }
 
 describe("DesignSectionReview", () => {
-  it("shows only backend-submitted latest revisions with a large protected preview, history, and progress", async () => {
+  it("shows submitted revisions as protected thumbnails with modal preview, history, and progress", async () => {
     tokenStorage.set("client-token");
+    vi.stubGlobal("URL", {
+      createObjectURL: vi.fn(() => "blob:section-preview"),
+      revokeObjectURL: vi.fn()
+    });
     installApi();
     renderWithQuery(<DesignSectionReview projectId="project-1" mode="client" />);
+    const user = userEvent.setup();
 
     expect(await screen.findByText("0 approved")).toBeVisible();
     expect(screen.getByText("1 awaiting review")).toBeVisible();
     const card = screen.getByRole("article", { name: "Front elevation review" });
-    expect(within(card).getByRole("img", { name: "Front elevation, revision 2" })).toHaveAttribute("data-revision", "2");
+    const thumbnail = await within(card).findByRole("button", { name: "Preview Front elevation" });
+    expect(thumbnail).toHaveClass("section-review-card__thumbnail");
+    expect(within(thumbnail).getByRole("img", { name: "Front elevation, revision 2" })).toHaveClass("section-review-card__thumbnail-image");
     expect(within(card).getByText("Design version 3 · Section revision 2")).toBeVisible();
     expect(within(card).getByText("Revision 1 · Rejected")).toBeVisible();
     expect(within(card).getByText("Show the roof line.")).toBeVisible();
-    await userEvent.click(within(card).getByText("View source page"));
+    expect(within(card).getByRole("button", { name: "Approve Front elevation" })).toHaveClass("button--success");
+    expect(within(card).getByRole("button", { name: "Reject Front elevation" })).toHaveClass("button--danger");
+    await user.click(thumbnail);
+    expect(screen.getByRole("dialog", { name: "Front elevation preview" })).toBeVisible();
+    expect(screen.getByRole("img", { name: "Full preview of Front elevation" })).toBeVisible();
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog", { name: "Front elevation preview" })).not.toBeInTheDocument();
+    expect(thumbnail).toHaveFocus();
+    const sourceSummary = within(card).getByText("View source page");
+    expect(sourceSummary).toHaveClass("section-review-card__source-summary");
+    await user.click(sourceSummary);
     expect(within(card).getByRole("img", { name: "Source page for Front elevation" })).toBeVisible();
     expect(screen.queryByText(/draft/i)).not.toBeInTheDocument();
   });
