@@ -22,7 +22,6 @@ Copy each workspace example environment file, then set a long JWT secret:
 
 ```bash
 cp backend/.env.example backend/.env
-cp frontend/.env.example frontend/.env
 cd backend && npm install && npm run seed
 cd ../frontend && npm install
 cd ../ocr-worker && python3 -m venv .venv
@@ -31,11 +30,11 @@ python -m pip install -e ".[test,model]"
 ```
 
 The API defaults to `http://localhost:3000`; Vite defaults to
-`http://localhost:5173`. Uploaded files are stored under `backend/uploads`
-unless `UPLOADS_DIR` is changed. `npm run seed` loads the deterministic demo
-data and provides the accounts below. The backend loads `backend/.env` for its
-development server, production `start` command, and seed command; Vite loads
-`frontend/.env`.
+`http://localhost:5173` and proxies local `/api` requests to the API, so local
+frontend development does not require an environment file. Uploaded files are
+stored under `backend/uploads` unless `UPLOADS_DIR` is changed. `npm run seed`
+loads the deterministic demo data and provides the accounts below. The backend
+loads `backend/.env` for its production `start` and seed commands.
 
 ## Start the application
 
@@ -131,9 +130,9 @@ the matching token, `OCR_API_BASE_URL`, `OCR_POLL_SECONDS`, and
 `OCR_REQUEST_TIMEOUT_SECONDS`. `CORS_ORIGIN` is a comma-separated allow-list of
 full browser origins. The server connects to `MONGODB_URI` before listening and
 exits on a connection failure; the shipped server never uses the in-memory repository.
-Frontend: `VITE_API_URL`, the full versioned API base URL (for example,
-`http://localhost:3000/api/v1`). See the two `.env.example` files for local
-defaults.
+Frontend deployments may set `VITE_API_URL` to a full versioned API base URL
+(for example, `https://api.example.com/api/v1`) when the API uses a separate
+origin. Local Vite development uses its `/api` proxy without this variable.
 
 ## Demo accounts
 
