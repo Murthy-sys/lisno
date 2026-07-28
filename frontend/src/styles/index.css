@@ -2951,3 +2951,149 @@
     grid-template-columns: 1fr;
   }
 }
+
+/* Client project theme: aligned with the navy and violet sidebar palette. */
+.client-page--project[data-theme="sidebar"] {
+  background: #f3f2ff;
+  color: var(--color-lisno-navy);
+}
+
+.client-page--project[data-theme="sidebar"] .back-link {
+  color: #5944cf;
+}
+
+.client-page--project[data-theme="sidebar"] .client-project-hero {
+  background: linear-gradient(130deg, var(--color-lisno-navy) 0%, #302472 58%, #7057ff 100%);
+  color: white;
+}
+
+.client-page--project[data-theme="sidebar"] .client-project-hero .eyebrow,
+.client-page--project[data-theme="sidebar"] .client-project-hero__completion strong {
+  color: #c9c0ff;
+}
+
+.client-page--project[data-theme="sidebar"] .client-project-hero p:not(.eyebrow),
+.client-page--project[data-theme="sidebar"] .client-project-hero__completion span {
+  color: #e7e3ff;
+}
+
+.client-page--project[data-theme="sidebar"] .client-project-hero__completion {
+  border-color: rgb(201 192 255 / 45%);
+  background: rgb(255 255 255 / 10%);
+}
+
+.client-page--project[data-theme="sidebar"] .client-floor-progress > h2,
+.client-page--project[data-theme="sidebar"] .client-approved-documents > h2 {
+  color: var(--color-lisno-navy);
+}
+
+.client-page--project[data-theme="sidebar"] .client-floor-card {
+  border-color: #d8d2ff;
+  background: #ebe8ff;
+}
+
+.client-page--project[data-theme="sidebar"] .client-floor-card > div:first-child > p,
+.client-page--project[data-theme="sidebar"] .client-version p {
+  color: #656987;
+}
+
+.client-page--project[data-theme="sidebar"] .client-floor-card .progress {
+  background: #d8d4ee;
+}
+
+.client-page--project[data-theme="sidebar"] .client-floor-card .progress > span {
+  background: linear-gradient(90deg, #5140bd, #7057ff);
+}
+
+.client-page--project[data-theme="sidebar"] .client-approved-documents {
+  border-top-color: #d8d2ff;
+}
+
+.client-page--project[data-theme="sidebar"] .client-version {
+  border-color: #ddd8ff;
+  background: #faf9ff;
+}
+
+.client-page--project[data-theme="sidebar"] .project-empty {
+  border-color: #bbb0ff;
+  background: #ebe8ff;
+}
+
+.client-page--project[data-theme="sidebar"] .project-empty h3 {
+  color: var(--color-lisno-navy);
+}
+
+.client-page--project .design-review--client .design-review__announcement,
+.client-page--project .design-review--client .section-review-card__metadata,
+.client-page--project .design-review--client .section-review-card__navigation span {
+  color: #656987;
+}
+
+.client-page--project .design-review--client .design-review__empty {
+  border-color: #d8d2ff;
+  background: #ebe8ff;
+  color: var(--color-lisno-navy);
+}
+
+.client-page--project .design-review--client .design-review__source-trigger {
+  border-color: #c9c0ff;
+  background: #efedff;
+  color: #5140bd;
+}
+
+.client-page--project .design-review--client .section-review-card {
+  gap: 0.75rem;
+  padding: 1rem;
+  border-color: #d8d2ff;
+  background: #fff;
+  box-shadow: 0 1rem 2.5rem rgb(30 24 76 / 8%);
+}
+
+.client-page--project .design-review--client .section-review-card__body {
+  gap: 1rem;
+}
+
+.client-page--project .design-review--client .section-review-card__image-trigger {
+  min-height: 12rem;
+  height: 12rem;
+  border-color: #d8d2ff;
+  background: #f3f2ff;
+}
+
+.client-page--project .design-review--client .section-review-card__image {
+  min-height: 12rem;
+  height: 12rem;
+  object-fit: contain;
+}
+
+.client-page--project .design-review--client .section-review-card__image-trigger:hover:not(:disabled) {
+  border-color: #7057ff;
+  box-shadow: 0 0 0 3px rgb(112 87 255 / 16%);
+}
+
+.client-page--project .design-review--client .section-review-card__image-trigger:focus-visible,
+.client-page--project .design-review--client .section-review-card__navigation button:focus-visible {
+  outline-color: rgb(112 87 255 / 45%);
+}
+
+.client-page--project .design-review--client .section-review-card__zoom-affordance {
+  background: rgb(22 18 54 / 86%);
+}
+
+.client-page--project .design-review--client .section-review-card__details .client-comment {
+  border-left-color: #7057ff;
+  background: #f3f2ff;
+  color: var(--color-lisno-navy);
+}
+
+.client-page--project .design-review--client .section-review-card__navigation {
+  border-top-color: #ddd8ff;
+}
+
+@media (max-width: 800px) {
+  .client-page--project .design-review--client .section-review-card__image-trigger,
+  .client-page--project .design-review--client .section-review-card__image {
+    min-height: 10rem;
+    height: 10rem;
+  }
+}

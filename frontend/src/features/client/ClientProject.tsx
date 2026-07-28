@@ -16,7 +16,7 @@ export function ClientProject() {
   if (projectQuery.isError || versionsQuery.isError) return <AsyncState state="error" message="We couldn't load this project." actionLabel="Try again" onAction={() => { void projectQuery.refetch(); void versionsQuery.refetch(); }} />;
   const project = projectQuery.data;
   const versions = versionsQuery.data.filter((version) => version.approvalStatus === "approved" && version.clientVisible);
-  return <section className="client-page client-page--project" aria-labelledby="client-project-title">
+  return <section className="client-page client-page--project" data-theme="sidebar" aria-labelledby="client-project-title">
     <Link className="back-link" to="/client">Back to projects</Link>
     <section className="client-project-hero" aria-label={`${project.name} project overview`}>
       <div>

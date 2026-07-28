@@ -37,7 +37,9 @@ describe("ClientProject", () => {
 
     renderApp(["/client/projects/project-villa"]);
     const user = userEvent.setup();
-    expect(await screen.findByRole("region", { name: "Aurora Villa" })).toHaveClass("client-page--project");
+    const projectPage = await screen.findByRole("region", { name: "Aurora Villa" });
+    expect(projectPage).toHaveClass("client-page--project");
+    expect(projectPage).toHaveAttribute("data-theme", "sidebar");
     const hero = await screen.findByRole("region", { name: "Aurora Villa project overview" });
     expect(within(hero).getByRole("heading", { name: "Aurora Villa" })).toBeVisible();
     expect(within(hero).getByText("52%")).toBeVisible();

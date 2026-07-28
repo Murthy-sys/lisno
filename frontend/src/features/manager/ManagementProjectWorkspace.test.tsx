@@ -249,6 +249,7 @@ describe("ManagementProjectWorkspace", () => {
     expect(reviewRegion).toHaveClass("design-review--read-only");
     expect(reviewRegion).not.toHaveClass("design-review--client");
     expect(review.closest(".client-page--project")).toBeNull();
+    expect(review.closest('[data-theme="sidebar"]')).toBeNull();
     expect(within(review).getByText("Show the full island.")).toBeVisible();
     expect(within(review).getByText("Design version 101 · Section revision 2")).toBeVisible();
     expect(within(review).queryByRole("button", { name: /approve/i })).not.toBeInTheDocument();
