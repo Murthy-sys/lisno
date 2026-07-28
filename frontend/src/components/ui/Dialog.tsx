@@ -17,12 +17,14 @@ const focusableSelector = [
 
 export function Dialog({
   title,
+  eyebrow = "Designer workflow",
   description,
   onClose,
   children,
   busy = false
 }: {
   title: string;
+  eyebrow?: string;
   description?: string;
   onClose: () => void;
   children: ReactNode;
@@ -109,7 +111,7 @@ export function Dialog({
       >
         <header className="modal__header">
           <div>
-            <p className="eyebrow">Designer workflow</p>
+            <p className="eyebrow">{eyebrow}</p>
             <h2 id={titleId}>{title}</h2>
             {description ? <p id={descriptionId}>{description}</p> : null}
           </div>
