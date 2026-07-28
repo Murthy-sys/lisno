@@ -23,7 +23,10 @@ export async function getClientProjectSummaries(): Promise<ClientProjectSummary[
   );
 }
 
-export const getClientProject = (projectId: string) => apiClient.get<ProjectHierarchy>(`/projects/${encodeURIComponent(projectId)}`);
+export const getClientProject = (projectId: string) =>
+  apiClient.get<ProjectHierarchy & { progress: number }>(
+    `/projects/${encodeURIComponent(projectId)}`
+  );
 export const getClientVersions = (projectId: string) => getAllPages((offset) => apiClient.get<PageData<ClientDesignVersion>>(`/projects/${encodeURIComponent(projectId)}/design-versions?limit=${PAGE_SIZE}&offset=${offset}`));
 export const getClientLatestApprovedVersions = () => apiClient.get<ClientDesignVersion[]>("/client/latest-approved-versions");
 export const getDesignSectionReview = (projectId: string) =>

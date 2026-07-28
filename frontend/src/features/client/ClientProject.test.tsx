@@ -7,7 +7,7 @@ import { renderApp } from "../../test/render";
 
 const client = { id: "client-1", name: "Aurora Homes", email: "client@lisno.example", role: "client" as const };
 const project = {
-  id: "project-villa", name: "Aurora Villa", clientId: "client-1", initiatingDesignerId: "designer-1", assignedDesignerIds: ["designer-1"], managerId: "manager-1", status: "active", location: "Bengaluru", plannedStartAt: "2026-06-01T00:00:00.000Z", plannedEndAt: "2026-09-30T00:00:00.000Z", actualStartAt: null, actualEndAt: null, createdAt: "2026-05-01T00:00:00.000Z", updatedAt: "2026-07-01T00:00:00.000Z",
+  id: "project-villa", name: "Aurora Villa", clientId: "client-1", initiatingDesignerId: "designer-1", assignedDesignerIds: ["designer-1"], managerId: "manager-1", status: "active", location: "Bengaluru", progress: 52, plannedStartAt: "2026-06-01T00:00:00.000Z", plannedEndAt: "2026-09-30T00:00:00.000Z", actualStartAt: null, actualEndAt: null, createdAt: "2026-05-01T00:00:00.000Z", updatedAt: "2026-07-01T00:00:00.000Z",
   floors: [
     { id: "floor-ground", projectId: "project-villa", name: "Ground floor", number: "G", order: 1, progress: 70, plannedStartAt: "2026-06-01T00:00:00.000Z", plannedEndAt: "2026-08-01T00:00:00.000Z", actualStartAt: null, actualEndAt: null, createdAt: "2026-05-01T00:00:00.000Z", updatedAt: "2026-07-01T00:00:00.000Z", stages: [] },
     { id: "floor-first", projectId: "project-villa", name: "First floor", number: "1", order: 2, progress: 35, plannedStartAt: "2026-07-01T00:00:00.000Z", plannedEndAt: "2026-09-01T00:00:00.000Z", actualStartAt: null, actualEndAt: null, createdAt: "2026-05-01T00:00:00.000Z", updatedAt: "2026-07-01T00:00:00.000Z", stages: [] }
@@ -37,9 +37,17 @@ describe("ClientProject", () => {
 
     renderApp(["/client/projects/project-villa"]);
     const user = userEvent.setup();
-    expect(await screen.findByRole("heading", { name: "Aurora Villa" })).toBeVisible();
-    expect(screen.getByText("Ground floor")).toBeVisible();
-    expect(screen.getByText("70% complete")).toBeVisible();
+    const hero = await screen.findByRole("region", { name: "Aurora Villa project overview" });
+    expect(within(hero).getByRole("heading", { name: "Aurora Villa" })).toBeVisible();
+    expect(within(hero).getByText("52%")).toBeVisible();
+    expect(within(hero).getByText("Project complete")).toBeVisible();
+
+    const floors = screen.getByRole("region", { name: "Floor progress" });
+    expect(within(floors).getByText("Ground floor")).toBeVisible();
+    expect(within(floors).getByText("70% complete")).toBeVisible();
+
+    const documents = screen.getByRole("region", { name: "Approved documents" });
+    expect(within(documents).getByText("Ground plan.pdf")).toBeVisible();
     expect(screen.getByText("First floor")).toBeVisible();
     expect(screen.getByText("35% complete")).toBeVisible();
     expect(await screen.findByText("Ground plan.pdf")).toBeVisible();
@@ -79,6 +87,7 @@ describe("ClientProject", () => {
     });
 
     renderApp(["/client/projects/project-villa"]);
-    expect(await screen.findByText("Your project is in progress. Approved plans will appear here once ready.")).toBeVisible();
+    const documents = await screen.findByRole("region", { name: "Approved documents" });
+    expect(within(documents).getByText("Your project is in progress. Approved plans will appear here once ready.")).toBeVisible();
   });
 });
