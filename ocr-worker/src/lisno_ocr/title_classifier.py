@@ -114,6 +114,20 @@ _DASHES = str.maketrans(
         "\u2212": "-",
     }
 )
+_OCR_PUNCTUATION = str.maketrans(
+    {
+        "\uff06": "&",
+        "\uff08": "(",
+        "\uff09": ")",
+        "\uff0e": ".",
+        "\uff0d": "-",
+    }
+)
+_OCR_DASH_PATTERN = re.compile(
+    r"\s*[-\u2010\u2011\u2012\u2013\u2014\u2212]\s*"
+)
+_DRAWING_MARKER_PATTERN = re.compile(r"^[ \t]*[abc]\.[ \t]*", re.IGNORECASE)
+_ALPHANUMERIC_TOKEN_PATTERN = re.compile(r"[A-Za-z0-9]+")
 _NEIGHBOR_Y_BUCKET_SIZE = 64
 _NEIGHBOR_X_BUCKET_SIZE = 128
 _MAX_JOIN_GAP = 96
@@ -141,6 +155,19 @@ class _QualifierIndex:
     by_top: dict[tuple[int, int], tuple[int, ...]]
 
 
+def normalize_ocr_title(
+    text: str,
+    accepted_plan_types: Sequence[str],
+    accepted_room_types: Sequence[str],
+) -> str:
+    plan_types = _normalized_plan_types(accepted_plan_types)
+    room_types = _normalized_plan_types(accepted_room_types)
+    return _normalize_ocr_title(
+        text,
+        _compact_title_tokens(plan_types, room_types),
+    )
+
+
 def classify_drawing_titles(
     lines: Sequence[OcrLine],
     accepted_plan_types: Sequence[str],
@@ -148,11 +175,19 @@ def classify_drawing_titles(
 ) -> tuple[DrawingTitle, ...]:
     plan_types = _normalized_plan_types(accepted_plan_types)
     room_types = _normalized_plan_types(accepted_room_types)
+    compact_title_tokens = _compact_title_tokens(plan_types, room_types)
     ordered = sorted(
         (line for line in lines if line.text.strip()),
         key=lambda line: (line.box[1], line.box[0]),
     )
-    comparison_texts = tuple(_comparison_text(line.text) for line in ordered)
+    normalized_texts = tuple(
+        _normalize_ocr_title(line.text, compact_title_tokens)
+        for line in ordered
+    )
+    comparison_texts = tuple(
+        _comparison_text(text)
+        for text in normalized_texts
+    )
     qualifier_index = _build_qualifier_index(
         ordered,
         comparison_texts,
@@ -169,7 +204,7 @@ def classify_drawing_titles(
         if not _is_supported_title(comparison, plan_types, room_types):
             continue
 
-        label = _display_text(line.text)
+        label = normalized_texts[index]
         box = line.box
         confidence = line.confidence
         if _is_bare_drawing_type(comparison, plan_types):
@@ -184,7 +219,7 @@ def classify_drawing_titles(
                 consumed.add(neighbor_index)
                 box = _union_box(box, qualifier.box)
                 confidence = min(confidence, qualifier.confidence)
-                qualifier_label = _display_text(qualifier.text)
+                qualifier_label = normalized_texts[neighbor_index]
                 label = (
                     f"{qualifier_label} \u2013 {label}"
                     if qualifier_precedes
@@ -227,6 +262,58 @@ def _normalized_plan_types(accepted_plan_types: Sequence[str]) -> tuple[str, ...
         if (value := _comparison_text(plan_type))
     )
     return tuple(dict.fromkeys(normalized))
+
+
+def _compact_title_tokens(
+    plan_types: tuple[str, ...],
+    room_types: tuple[str, ...],
+) -> dict[str, str]:
+    phrases = [
+        *_DIRECTIONAL_ELEVATIONS,
+        *(
+            f"{plan_type} plan"
+            for plan_type in plan_types
+            if plan_type != "room"
+        ),
+        *room_types,
+    ]
+    if "room" in plan_types:
+        phrases.extend(f"{room_type} plan" for room_type in room_types)
+    return {
+        phrase.replace(" ", ""): phrase
+        for phrase in phrases
+        if " " in phrase
+    }
+
+
+def _normalize_ocr_title(
+    text: str,
+    compact_title_tokens: dict[str, str],
+) -> str:
+    punctuated = text.translate(_OCR_PUNCTUATION)
+    unmarked = _DRAWING_MARKER_PATTERN.sub("", punctuated, count=1)
+    if "&" in unmarked:
+        return ""
+
+    def separate_configured_token(match: re.Match[str]) -> str:
+        token = match.group(0)
+        phrase = compact_title_tokens.get(token.casefold())
+        if phrase is None:
+            return token
+        if token.isupper():
+            return phrase.upper()
+        if token.islower():
+            return phrase
+        return phrase.title()
+
+    separated = _ALPHANUMERIC_TOKEN_PATTERN.sub(
+        separate_configured_token,
+        unmarked,
+    )
+    dashed = _OCR_DASH_PATTERN.sub(" \u2013 ", separated)
+    parenthesized = re.sub(r"\s*\(\s*", " (", dashed)
+    parenthesized = re.sub(r"\s*\)\s*", ") ", parenthesized)
+    return _display_text(parenthesized)
 
 
 def _comparison_text(text: str) -> str:

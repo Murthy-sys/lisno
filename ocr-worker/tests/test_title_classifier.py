@@ -1,11 +1,12 @@
 import pytest
 
 from lisno_ocr import title_classifier as classifier_module
-from lisno_ocr.settings import LayoutSettings
+from lisno_ocr.settings import DEFAULT_ROOM_TYPES, LayoutSettings
 from lisno_ocr.title_classifier import (
     DrawingTitle,
     OcrLine,
     classify_drawing_titles,
+    normalize_ocr_title,
 )
 
 
@@ -19,6 +20,97 @@ DEFAULT_PLAN_TYPES = (
     "plumbing",
     "furniture layout",
 )
+
+
+@pytest.mark.parametrize(
+    ("captured", "normalized"),
+    [
+        (
+            "FLOOR PLAN—3BHK RESIDENCE",
+            "FLOOR PLAN – 3BHK RESIDENCE",
+        ),
+        ("&CEILING PLAN", ""),
+        (
+            "LIVING ROOM—FRONTELEVATION",
+            "LIVING ROOM – FRONT ELEVATION",
+        ),
+        ("B.SIDE ELEVATION(LEFT）", "SIDE ELEVATION (LEFT)"),
+        (
+            "C.CEILINGPLAN-LIVINGROOM",
+            "CEILING PLAN – LIVING ROOM",
+        ),
+        ("CEILING FAN", "CEILING FAN"),
+    ],
+)
+def test_normalizes_only_captured_blueprint_title_variants(
+    captured,
+    normalized,
+):
+    assert normalize_ocr_title(
+        captured,
+        DEFAULT_PLAN_TYPES,
+        DEFAULT_ROOM_TYPES,
+    ) == normalized
+
+
+def test_captured_blueprint_lines_produce_exactly_four_titles():
+    captured = [
+        "FLOOR PLAN—3BHK RESIDENCE",
+        "&CEILING PLAN",
+        "LIVING ROOM—FRONTELEVATION",
+        "B.SIDE ELEVATION(LEFT）",
+        "C.CEILINGPLAN-LIVINGROOM",
+        "CEILING FAN",
+    ]
+    lines = [
+        OcrLine((40, 80 + index * 80, 440, 120 + index * 80), text, 0.93)
+        for index, text in enumerate(captured)
+    ]
+
+    assert [
+        title.label
+        for title in classify_drawing_titles(lines, DEFAULT_PLAN_TYPES)
+    ] == [
+        "FLOOR PLAN – 3BHK RESIDENCE",
+        "LIVING ROOM – FRONT ELEVATION",
+        "SIDE ELEVATION (LEFT)",
+        "CEILING PLAN – LIVING ROOM",
+    ]
+
+
+@pytest.mark.parametrize(
+    "label",
+    [
+        "&CEILING PLAN",
+        "ELEVATION & CEILING PLAN",
+        "CEILING FAN",
+    ],
+)
+def test_rejects_blueprint_overviews_and_symbol_legend_entries(label):
+    assert classify_drawing_titles(
+        [OcrLine((40, 80, 440, 120), label, 0.99)],
+        DEFAULT_PLAN_TYPES,
+    ) == ()
+
+
+@pytest.mark.parametrize(
+    ("label", "plan_types", "room_types"),
+    [
+        ("LANDSCAPEPLAN", DEFAULT_PLAN_TYPES, DEFAULT_ROOM_TYPES),
+        ("CONSERVATORYPLAN", ("room",), DEFAULT_ROOM_TYPES),
+        ("LIVINGROOMPLAN", ("room",), ("mud room",)),
+    ],
+)
+def test_compact_unsupported_words_remain_rejected_by_configuration(
+    label,
+    plan_types,
+    room_types,
+):
+    assert classify_drawing_titles(
+        [OcrLine((40, 80, 440, 120), label, 0.99)],
+        plan_types,
+        room_types,
+    ) == ()
 
 
 @pytest.mark.parametrize(
