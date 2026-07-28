@@ -45,7 +45,7 @@ export interface AppDependencies {
   ocrConfidenceFloor?: number;
   ocrWorkerToken?: string;
   corsOrigins?: readonly string[];
-  authRateLimit?: { windowMs?: number; maxAttempts?: number };
+  authRateLimit?: { windowMs?: number; maxAttempts?: number; maxEntries?: number };
 }
 
 export function createApp(dependencies: AppDependencies) {
@@ -64,6 +64,7 @@ export function createApp(dependencies: AppDependencies) {
   const authRateLimit = createAuthRateLimit({
     windowMs: dependencies.authRateLimit?.windowMs ?? 15 * 60_000,
     maxAttempts: dependencies.authRateLimit?.maxAttempts ?? 20,
+    maxEntries: dependencies.authRateLimit?.maxEntries,
     clock: () => clock().getTime()
   });
   const projectActivityService = createProjectActivityService(repository);

@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 import { createApp } from "../src/app.js";
 import { isRoleAuthorized } from "../src/domain/permissions.js";
 import { authenticate, authorizeRoles } from "../src/middleware/auth.js";
+import { createAuthRateLimit } from "../src/middleware/auth-rate-limit.js";
 import { errorHandler } from "../src/middleware/errors.js";
 import { createMemoryRepository } from "../src/repositories/memory.js";
 import type { AppRepository, ProjectRecord } from "../src/repositories/types.js";
@@ -66,6 +67,92 @@ function failSignupAuditWrites(base: AppRepository): AppRepository {
     }
   });
 }
+
+function createRateLimitApp(input: {
+  windowMs: number;
+  maxAttempts: number;
+  maxEntries: number;
+  clock: () => number;
+}) {
+  const limiter = createAuthRateLimit(input);
+  const app = express();
+  app.set("trust proxy", true);
+  app.post("/auth", limiter, (_request, response) => response.sendStatus(204));
+  app.use(errorHandler);
+  return { app, limiter };
+}
+
+const attempt = (app: express.Express, ip: string) =>
+  request(app).post("/auth").set("X-Forwarded-For", ip).send();
+
+describe("authentication rate limiter", () => {
+  it("keeps no more than the configured number of live IP buckets", async () => {
+    let now = 0;
+    const { app, limiter } = createRateLimitApp({
+      windowMs: 15 * 60_000,
+      maxAttempts: 1,
+      maxEntries: 3,
+      clock: () => now
+    });
+
+    for (const ip of ["198.51.100.1", "198.51.100.2", "198.51.100.3", "198.51.100.4"]) {
+      await attempt(app, ip).expect(204);
+      expect(limiter.activeBucketCount()).toBeLessThanOrEqual(3);
+      now += 1;
+    }
+  });
+
+  it("evicts the oldest live IP deterministically when capacity is reached", async () => {
+    let now = 0;
+    const { app, limiter } = createRateLimitApp({
+      windowMs: 15 * 60_000,
+      maxAttempts: 1,
+      maxEntries: 2,
+      clock: () => now
+    });
+
+    await attempt(app, "198.51.100.1").expect(204);
+    now += 1;
+    await attempt(app, "198.51.100.2").expect(204);
+    now += 1;
+    await attempt(app, "198.51.100.3").expect(204);
+
+    await attempt(app, "198.51.100.2").expect(429);
+    await attempt(app, "198.51.100.1").expect(204);
+    expect(limiter.activeBucketCount()).toBe(2);
+  });
+
+  it("removes expired buckets without retaining their capacity", async () => {
+    let now = 0;
+    const { app, limiter } = createRateLimitApp({
+      windowMs: 100,
+      maxAttempts: 1,
+      maxEntries: 2,
+      clock: () => now
+    });
+
+    await attempt(app, "198.51.100.1").expect(204);
+    await attempt(app, "198.51.100.2").expect(204);
+    expect(limiter.activeBucketCount()).toBe(2);
+    now = 100;
+    await attempt(app, "198.51.100.3").expect(204);
+    expect(limiter.activeBucketCount()).toBe(1);
+  });
+
+  it("continues to throttle a hot IP while it remains in the active window", async () => {
+    const { app } = createRateLimitApp({
+      windowMs: 15 * 60_000,
+      maxAttempts: 2,
+      maxEntries: 2,
+      clock: () => 0
+    });
+
+    await attempt(app, "198.51.100.1").expect(204);
+    await attempt(app, "198.51.100.2").expect(204);
+    await attempt(app, "198.51.100.1").expect(204);
+    await attempt(app, "198.51.100.1").expect(429);
+  });
+});
 
 describe("authentication API", () => {
   it("requires an explicit JWT configuration", () => {
