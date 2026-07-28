@@ -15,7 +15,10 @@ const listQuerySchema = z.object(paginationShape).strict();
 const projectSchema = z
   .object({
     name: z.string().trim().min(1),
-    clientId: z.string().trim().min(1),
+    clientName: z.string().trim().min(1),
+    clientEmail: z.string().trim().min(1),
+    clientMobile: z.string().trim().min(1),
+    clientAddress: z.string().trim().min(1),
     assignedDesignerIds: z.array(z.string().trim().min(1)).min(1),
     managerId: z.string().trim().min(1),
     location: z.string().trim().min(1),

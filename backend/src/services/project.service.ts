@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 
+import { normalizeEmail } from "../domain/email.js";
 import { ApiError } from "../middleware/errors.js";
 import { calculateTaskRisk } from "../domain/risk.js";
 import type {
@@ -25,7 +26,10 @@ import {
 
 export interface CreateProjectInput {
   name: string;
-  clientId: string;
+  clientName: string;
+  clientEmail: string;
+  clientMobile: string;
+  clientAddress: string;
   assignedDesignerIds: string[];
   managerId: string;
   location: string;
@@ -193,47 +197,41 @@ export function createProjectService(
     async create(actor, input) {
       if (actor.role !== "designer") forbidden();
       const designer = await requireActor(repository, actor);
-      const client = await requireUser(repository, input.clientId);
-      const manager = await requireUser(repository, input.managerId);
-      if (client.role !== "client" || manager.role !== "design_manager") {
-        throw new ApiError(400, "INVALID_PROJECT", "Project relationships are invalid.");
-      }
-      if (designer.managerId !== manager.id) {
-        throw new ApiError(403, "FORBIDDEN", "You are not authorized to perform this action.");
-      }
-      if (!designer.authorizedClientIds.includes(client.id)) {
-        throw new ApiError(
-          403,
-          "FORBIDDEN",
-          "You are not authorized to create projects for this client."
-        );
-      }
-      const assignedDesignerIds = [...new Set(input.assignedDesignerIds)];
-      if (!assignedDesignerIds.includes(actor.id)) {
+      const existingClient = await repository.findUserByEmail(input.clientEmail);
+      if (existingClient && existingClient.role !== "client") {
         throw new ApiError(
           400,
           "INVALID_PROJECT",
-          "The initiating designer must be assigned to the project."
+          "Client email is unavailable.",
+          { clientEmail: "This email belongs to an internal account." }
         );
       }
-      const assigned = await Promise.all(
-        assignedDesignerIds.map((id) => requireUser(repository, id))
-      );
+      const manager = await repository.findUserById(input.managerId);
+      if (!manager || !manager.active || manager.role !== "design_manager") {
+        throw new ApiError(
+          400,
+          "INVALID_PROJECT",
+          "Project manager is invalid.",
+          { managerId: "Select an active design manager." }
+        );
+      }
+      const assignedDesignerIds = [...new Set([...input.assignedDesignerIds, designer.id])];
+      const assigned = await Promise.all(assignedDesignerIds.map((id) => repository.findUserById(id)));
       if (
         assigned.some(
           (user) =>
-            user.role !== "designer" ||
-            user.managerId !== manager.id ||
-            !user.authorizedClientIds.includes(client.id)
+            !user ||
+            !user.active ||
+            user.role !== "designer"
         )
       ) {
         throw new ApiError(
           400,
           "INVALID_PROJECT",
-          "Assigned designers must belong to the manager team and be authorized for the client.",
+          "Assigned designers are invalid.",
           {
             assignedDesignerIds:
-              "Assigned designers must belong to the manager team and be authorized for the client."
+              "Assigned designers must be active designer accounts."
           }
         );
       }
@@ -249,12 +247,12 @@ export function createProjectService(
       const projectInput: ProjectRecord = {
         id: `project-${randomUUID()}`,
         name: input.name,
-        clientId: client.id,
-        clientName: client.name,
-        clientEmail: client.email,
-        clientEmailNormalized: client.emailNormalized,
-        clientMobile: client.mobile ?? "",
-        clientAddress: client.address ?? "",
+        clientId: existingClient?.id ?? null,
+        clientName: input.clientName,
+        clientEmail: input.clientEmail,
+        clientEmailNormalized: normalizeEmail(input.clientEmail),
+        clientMobile: input.clientMobile,
+        clientAddress: input.clientAddress,
         initiatingDesignerId: actor.id,
         assignedDesignerIds,
         managerId: manager.id,

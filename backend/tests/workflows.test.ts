@@ -31,11 +31,27 @@ function bearer([id, role]: readonly [string, Role]) {
   return `Bearer ${jwt.sign({ id, role }, JWT_SECRET, { expiresIn: 900 })}`;
 }
 
-function setup() {
-  const repository = createMemoryRepository(structuredClone(demoSeedData));
+function setup(seed = demoSeedData) {
+  const repository = createMemoryRepository(structuredClone(seed));
   return {
     repository,
     app: createApp({ repository, auth, clock })
+  };
+}
+
+function projectInput(overrides: Record<string, unknown> = {}) {
+  return {
+    name: "Courtyard Residence",
+    clientName: "Rhea Kapoor",
+    clientEmail: "client@aurora.example",
+    clientMobile: "+91 98765 43210",
+    clientAddress: "12 Aurora Lane, Bengaluru",
+    assignedDesignerIds: ["user-designer-ananya"],
+    managerId: "user-manager-aarav",
+    location: "Mysuru",
+    plannedStartAt: "2026-08-01T09:00:00.000Z",
+    plannedEndAt: "2026-10-31T17:00:00.000Z",
+    ...overrides
   };
 }
 
@@ -119,15 +135,7 @@ describe("project workflows", () => {
     const created = await request(app)
       .post("/api/v1/projects")
       .set("Authorization", bearer(users.ananya))
-      .send({
-        name: "Courtyard Residence",
-        clientId: "user-client-aurora",
-        assignedDesignerIds: ["user-designer-ananya"],
-        managerId: "user-manager-aarav",
-        location: "Mysuru",
-        plannedStartAt: "2026-08-01T09:00:00.000Z",
-        plannedEndAt: "2026-10-31T17:00:00.000Z"
-      });
+      .send(projectInput());
 
     expect(created.status).toBe(201);
     expect(created.body.data).toMatchObject({
@@ -135,6 +143,8 @@ describe("project workflows", () => {
       name: "Courtyard Residence",
       initiatingDesignerId: "user-designer-ananya",
       assignedDesignerIds: ["user-designer-ananya"],
+      clientId: "user-client-aurora",
+      clientEmailNormalized: "client@aurora.example",
       status: "planning"
     });
 
@@ -153,15 +163,11 @@ describe("project workflows", () => {
     const response = await request(app)
       .post("/api/v1/projects")
       .set("Authorization", bearer(users.ananya))
-      .send({
+      .send(projectInput({
         name: "Invalid Schedule",
-        clientId: "user-client-aurora",
-        assignedDesignerIds: ["user-designer-ananya"],
-        managerId: "user-manager-aarav",
-        location: "Mysuru",
         plannedStartAt: "next Tuesday",
         plannedEndAt: "2026-10-31"
-      });
+      }));
 
     expect(response.status).toBe(400);
     expect(response.body).toMatchObject({
@@ -175,39 +181,118 @@ describe("project workflows", () => {
     });
   });
 
-  it("rejects unauthorized clients and cross-team project staffing", async () => {
+  it("links a known client through a mixed-case email and keeps contact details as a snapshot", async () => {
     const { app } = setup();
-    const unauthorizedClient = await request(app)
-      .post("/api/v1/projects")
-      .set("Authorization", bearer(users.kabir))
-      .send({
-        name: "Unauthorized Client Project",
-        clientId: "user-client-celeste",
-        assignedDesignerIds: ["user-designer-kabir"],
-        managerId: "user-manager-aarav",
-        location: "Pune",
-        plannedStartAt: "2026-08-01T09:00:00.000Z",
-        plannedEndAt: "2026-10-31T17:00:00.000Z"
-      });
-    expect(unauthorizedClient.status).toBe(403);
-
-    const crossTeam = await request(app)
+    const created = await request(app)
       .post("/api/v1/projects")
       .set("Authorization", bearer(users.ananya))
-      .send({
-        name: "Cross Team Project",
-        clientId: "user-client-aurora",
-        assignedDesignerIds: [
-          "user-designer-ananya",
-          "user-designer-ishita"
-        ],
-        managerId: "user-manager-aarav",
-        location: "Bengaluru",
-        plannedStartAt: "2026-08-01T09:00:00.000Z",
-        plannedEndAt: "2026-10-31T17:00:00.000Z"
-      });
-    expect(crossTeam.status).toBe(400);
-    expect(crossTeam.body.error.code).toBe("INVALID_PROJECT");
+      .send(projectInput({
+        clientEmail: "  CLIENT@AURORA.EXAMPLE ",
+        clientMobile: "+91 90000 00000",
+        clientAddress: "A snapshot address"
+      }));
+
+    expect(created.status).toBe(201);
+    expect(created.body.data).toMatchObject({
+      clientId: "user-client-aurora",
+      clientName: "Rhea Kapoor",
+      clientEmail: "CLIENT@AURORA.EXAMPLE",
+      clientEmailNormalized: "client@aurora.example",
+      clientMobile: "+91 90000 00000",
+      clientAddress: "A snapshot address"
+    });
+  });
+
+  it("creates an unclaimed project when the client email has no account", async () => {
+    const { app } = setup();
+    const created = await request(app)
+      .post("/api/v1/projects")
+      .set("Authorization", bearer(users.ananya))
+      .send(projectInput({
+        name: "Unclaimed Project",
+        clientName: "New Contact",
+        clientEmail: "new-contact@example.com"
+      }));
+
+    expect(created.status).toBe(201);
+    expect(created.body.data).toMatchObject({
+      clientId: null,
+      clientEmail: "new-contact@example.com",
+      clientEmailNormalized: "new-contact@example.com"
+    });
+  });
+
+  it("rejects an internal account email as a client contact", async () => {
+    const { app } = setup();
+    const response = await request(app)
+      .post("/api/v1/projects")
+      .set("Authorization", bearer(users.ananya))
+      .send(projectInput({ clientEmail: "aarav@lisno.example" }));
+
+    expect(response.status).toBe(400);
+    expect(response.body.error).toMatchObject({
+      code: "INVALID_PROJECT",
+      fields: { clientEmail: expect.any(String) }
+    });
+  });
+
+  it("accepts any active manager and active cross-team designers without changing reporting lines", async () => {
+    const seed = structuredClone(demoSeedData);
+    const { app } = setup(seed);
+    const created = await request(app)
+      .post("/api/v1/projects")
+      .set("Authorization", bearer(users.ananya))
+      .send(projectInput({
+        assignedDesignerIds: ["user-designer-ishita"],
+        managerId: "user-manager-meera"
+      }));
+
+    expect(created.status).toBe(201);
+    expect(created.body.data).toMatchObject({
+      initiatingDesignerId: "user-designer-ananya",
+      assignedDesignerIds: ["user-designer-ishita", "user-designer-ananya"],
+      managerId: "user-manager-meera"
+    });
+    expect(seed.users.find((user) => user.id === "user-designer-ananya")?.managerId).toBe(
+      "user-manager-aarav"
+    );
+    expect(seed.users.find((user) => user.id === "user-designer-ishita")?.managerId).toBe(
+      "user-manager-meera"
+    );
+  });
+
+  it("rejects inactive managers and inactive or non-designer assignees", async () => {
+    const inactiveManagerSeed = structuredClone(demoSeedData);
+    inactiveManagerSeed.users.find((user) => user.id === "user-manager-meera")!.active = false;
+    const inactiveManager = await request(setup(inactiveManagerSeed).app)
+      .post("/api/v1/projects")
+      .set("Authorization", bearer(users.ananya))
+      .send(projectInput({ managerId: "user-manager-meera" }));
+    expect(inactiveManager.status).toBe(400);
+    expect(inactiveManager.body.error.fields).toHaveProperty("managerId");
+
+    const nonManager = await request(setup().app)
+      .post("/api/v1/projects")
+      .set("Authorization", bearer(users.ananya))
+      .send(projectInput({ managerId: "user-designer-ishita" }));
+    expect(nonManager.status).toBe(400);
+    expect(nonManager.body.error.fields).toHaveProperty("managerId");
+
+    const inactiveDesignerSeed = structuredClone(demoSeedData);
+    inactiveDesignerSeed.users.find((user) => user.id === "user-designer-ishita")!.active = false;
+    const inactiveDesigner = await request(setup(inactiveDesignerSeed).app)
+      .post("/api/v1/projects")
+      .set("Authorization", bearer(users.ananya))
+      .send(projectInput({ assignedDesignerIds: ["user-designer-ananya", "user-designer-ishita"] }));
+    expect(inactiveDesigner.status).toBe(400);
+    expect(inactiveDesigner.body.error.fields).toHaveProperty("assignedDesignerIds");
+
+    const nonDesigner = await request(setup().app)
+      .post("/api/v1/projects")
+      .set("Authorization", bearer(users.ananya))
+      .send(projectInput({ assignedDesignerIds: ["user-client-aurora"] }));
+    expect(nonDesigner.status).toBe(400);
+    expect(nonDesigner.body.error.fields).toHaveProperty("assignedDesignerIds");
   });
 
   it("isolates client projects and removes internal project hierarchy fields", async () => {
@@ -429,7 +514,10 @@ describe("project workflows", () => {
   it.each([
     ["project", "/api/v1/projects", {
       name: "Atomic Project",
-      clientId: "user-client-aurora",
+      clientName: "Rhea Kapoor",
+      clientEmail: "client@aurora.example",
+      clientMobile: "+91 98765 43210",
+      clientAddress: "12 Aurora Lane, Bengaluru",
       assignedDesignerIds: ["user-designer-ananya"],
       managerId: "user-manager-aarav",
       location: "Bengaluru",

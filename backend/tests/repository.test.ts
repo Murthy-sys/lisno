@@ -527,7 +527,15 @@ describe("memory repository", () => {
   });
 
   it("isolates client projects while preserving staff visibility rules", async () => {
-    const repository = createMemoryRepository(demoSeedData);
+    const seed = structuredClone(demoSeedData);
+    seed.projects.push({
+      ...seed.projects[0],
+      id: "project-unclaimed-aurora-email",
+      clientId: null,
+      clientEmail: "client@aurora.example",
+      clientEmailNormalized: "client@aurora.example"
+    });
+    const repository = createMemoryRepository(seed);
     const client = await repository.findUserByEmail("client@aurora.example");
     const designer = await repository.findUserByEmail("ananya@lisno.example");
     const manager = await repository.findUserByEmail("aarav@lisno.example");
@@ -544,14 +552,16 @@ describe("memory repository", () => {
     ]);
     await expect(repository.listProjectsForUser(designer!)).resolves.toMatchObject([
       { id: "project-aurora-villa" },
+      { id: "project-unclaimed-aurora-email" },
       { id: "project-celeste-office" }
     ]);
     await expect(repository.listProjectsForUser(manager!)).resolves.toMatchObject([
       { id: "project-aurora-studio" },
       { id: "project-aurora-villa" },
+      { id: "project-unclaimed-aurora-email" },
       { id: "project-celeste-office" }
     ]);
-    await expect(repository.listProjectsForUser(head!)).resolves.toHaveLength(3);
+    await expect(repository.listProjectsForUser(head!)).resolves.toHaveLength(4);
   });
 
   it("slices paginated reads while retaining filtered totals", async () => {
