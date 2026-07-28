@@ -169,14 +169,43 @@ function installDashboardApi(options?: {
   empty?: boolean;
   failProjectsOnce?: boolean;
   kpiHasMore?: boolean;
+  failManagersOnce?: boolean;
+  createFieldError?: string;
 }) {
   let projectRequests = 0;
+  let managerRequests = 0;
   const mainKpiRequests: string[] = [];
   const taskFeedRequests: string[] = [];
   let createBody: unknown;
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = String(input);
     if (url === "/api/v1/auth/me") return response(designer);
+    if (url.startsWith("/api/v1/organization/managers?")) {
+      managerRequests += 1;
+      if (options?.failManagersOnce && managerRequests === 1) {
+        return Response.json(
+          { error: { code: "REQUEST_FAILED", message: "Managers unavailable." } },
+          { status: 503 }
+        );
+      }
+      return response({
+        items: [
+          {
+            id: "user-manager-aarav",
+            name: "Aarav Mehta",
+            email: "aarav@lisno.example",
+            mobile: "+91 98765 00001"
+          },
+          {
+            id: "user-manager-meera",
+            name: "Meera Bose",
+            email: "meera@lisno.example",
+            mobile: "+91 98765 00002"
+          }
+        ],
+        pagination: { limit: 20, offset: 0, total: 2, hasMore: false }
+      });
+    }
     if (url.startsWith("/api/v1/projects?")) {
       projectRequests += 1;
       if (options?.failProjectsOnce && projectRequests === 1) {
@@ -295,12 +324,25 @@ function installDashboardApi(options?: {
     }
     if (url === "/api/v1/projects" && init?.method === "POST") {
       createBody = JSON.parse(String(init.body));
+      if (options?.createFieldError) {
+        return Response.json(
+          {
+            error: {
+              code: "INVALID_PROJECT",
+              message: "Client email is unavailable.",
+              fields: { [options.createFieldError]: "This email belongs to an internal account." }
+            }
+          },
+          { status: 400 }
+        );
+      }
       return response(projects[0], { status: 201 });
     }
     throw new Error(`Unhandled request: ${url}`);
   });
   return {
     getCreateBody: () => createBody,
+    getManagerRequests: () => managerRequests,
     getMainKpiRequests: () => mainKpiRequests,
     getTaskFeedRequests: () => taskFeedRequests
   };
@@ -370,7 +412,7 @@ describe("DesignerDashboard", () => {
     );
   });
 
-  it("creates a project with explicit client and team IDs and includes the initiating designer", async () => {
+  it("creates a project from client contact details and the selected manager", async () => {
     tokenStorage.set("valid-token");
     const api = installDashboardApi({ empty: true });
     const user = userEvent.setup();
@@ -379,14 +421,18 @@ describe("DesignerDashboard", () => {
 
     await user.click(screen.getByRole("button", { name: "Create project" }));
     const dialog = screen.getByRole("dialog", { name: "Create project" });
-    expect(within(dialog).getByLabelText("Client ID")).toHaveAttribute(
-      "placeholder",
-      "e.g. user-client-aurora"
-    );
-    expect(within(dialog).getByLabelText("Manager ID")).toHaveAttribute(
-      "placeholder",
-      "e.g. user-manager-aarav"
-    );
+    expect(api.getManagerRequests()).toBe(1);
+    expect(within(dialog).queryByLabelText("Client ID")).not.toBeInTheDocument();
+    expect(within(dialog).queryByLabelText("Manager ID")).not.toBeInTheDocument();
+    expect(within(dialog).getByLabelText("Client name")).toBeRequired();
+    expect(within(dialog).getByLabelText("Client email")).toHaveAttribute("type", "email");
+    expect(within(dialog).getByLabelText("Client mobile")).toBeRequired();
+    expect(within(dialog).getByLabelText("Client address")).toBeRequired();
+    const manager = within(dialog).getByRole("combobox", { name: "Project manager" });
+    await user.click(manager);
+    expect(within(dialog).getByRole("option", { name: /Aarav Mehta aarav@lisno\.example · \+91 98765 00001/i })).toBeVisible();
+    await user.keyboard("{ArrowDown}{Enter}");
+    expect(manager).toHaveValue("Aarav Mehta");
     expect(within(dialog).getByLabelText("Assigned designer IDs")).toHaveAttribute(
       "placeholder",
       "e.g. user-designer-ananya, user-designer-kabir"
@@ -394,14 +440,10 @@ describe("DesignerDashboard", () => {
 
     await user.type(within(dialog).getByLabelText("Project name"), "New Residence");
     await user.type(within(dialog).getByLabelText("Location"), "Chennai");
-    await user.type(
-      within(dialog).getByLabelText("Client ID"),
-      "user-client-aurora"
-    );
-    await user.type(
-      within(dialog).getByLabelText("Manager ID"),
-      "user-manager-aarav"
-    );
+    await user.type(within(dialog).getByLabelText("Client name"), "Rhea Kapoor");
+    await user.type(within(dialog).getByLabelText("Client email"), "rhea@example.com");
+    await user.type(within(dialog).getByLabelText("Client mobile"), "+91 90000 00000");
+    await user.type(within(dialog).getByLabelText("Client address"), "12 Aurora Lane, Bengaluru");
     await user.clear(within(dialog).getByLabelText("Assigned designer IDs"));
     await user.type(
       within(dialog).getByLabelText("Assigned designer IDs"),
@@ -422,11 +464,43 @@ describe("DesignerDashboard", () => {
     );
     expect(api.getCreateBody()).toMatchObject({
       name: "New Residence",
-      clientId: "user-client-aurora",
+      clientName: "Rhea Kapoor",
+      clientEmail: "rhea@example.com",
+      clientMobile: "+91 90000 00000",
+      clientAddress: "12 Aurora Lane, Bengaluru",
       managerId: "user-manager-aarav",
       assignedDesignerIds: [designer.id, "user-designer-kabir"],
       location: "Chennai"
     });
+  });
+
+  it("keeps manager requests inside the open dialog, debounces search, and focuses API field errors", async () => {
+    tokenStorage.set("valid-token");
+    const api = installDashboardApi({ empty: true, createFieldError: "clientEmail" });
+    const user = userEvent.setup();
+    renderApp(["/designer"]);
+    await screen.findByText("No projects yet");
+    expect(api.getManagerRequests()).toBe(0);
+
+    await user.click(screen.getByRole("button", { name: "Create project" }));
+    const dialog = screen.getByRole("dialog", { name: "Create project" });
+    const manager = within(dialog).getByRole("combobox", { name: "Project manager" });
+    await user.type(manager, "meera");
+    await waitFor(() => expect(api.getManagerRequests()).toBe(2));
+    await user.click(within(dialog).getByRole("option", { name: /Meera Bose/i }));
+
+    await user.type(within(dialog).getByLabelText("Project name"), "New Residence");
+    await user.type(within(dialog).getByLabelText("Location"), "Chennai");
+    await user.type(within(dialog).getByLabelText("Client name"), "Rhea Kapoor");
+    await user.type(within(dialog).getByLabelText("Client email"), "rhea@example.com");
+    await user.type(within(dialog).getByLabelText("Client mobile"), "+91 90000 00000");
+    await user.type(within(dialog).getByLabelText("Client address"), "12 Aurora Lane, Bengaluru");
+    fireEvent.change(within(dialog).getByLabelText("Planned start"), { target: { value: "2026-08-01T09:00" } });
+    fireEvent.change(within(dialog).getByLabelText("Planned end"), { target: { value: "2026-10-01T17:00" } });
+    await user.click(within(dialog).getByRole("button", { name: "Create project" }));
+
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent("This email belongs to an internal account.");
+    expect(within(dialog).getByLabelText("Client email")).toHaveFocus();
   });
 
   it("bounds KPI task reads and loads another page only on request", async () => {

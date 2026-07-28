@@ -86,6 +86,7 @@ function fixtureFetch(user: ReturnType<typeof userFor>) {
     if (url.startsWith("/api/v1/client/project-summaries?")) return Response.json({ data: { items: [], pagination: { limit: 100, offset: 0, total: 0, hasMore: false } } });
     if (url.startsWith("/api/v1/organization/team?")) return Response.json({ data: { items: [], pagination: { limit: 100, offset: 0, total: 0, hasMore: false } } });
     if (url.startsWith("/api/v1/organization/tree?")) return Response.json({ data: { items: [], pagination: { limit: 100, offset: 0, total: 0, hasMore: false } } });
+    if (url.startsWith("/api/v1/organization/managers?")) return Response.json({ data: { items: [{ id: "manager-a11y", name: "Aarav Mehta", email: "aarav@lisno.example", mobile: "+91 90000 00001" }], pagination: { limit: 20, offset: 0, total: 1, hasMore: false } } });
     if (url.startsWith("/api/v1/kpis/users/") && url.includes("/tasks?")) return Response.json({ data: { items: [], pagination: { limit: 20, offset: 0, total: 0, hasMore: false } } });
     if (url.startsWith("/api/v1/kpis/users/")) return Response.json({ data: { userId: user.id, periodStartAt: "2000-01-01T00:00:00.000Z", periodEndAt: "2100-01-01T00:00:00.000Z", score: 0, components: [], aggregates: { taskCounts: { total: 0, completed: 0, active: 0 }, riskCounts: { gray: 0, green: 0, yellow: 0, red: 0 }, effort: { planned: 0, completed: 0, remaining: 0, workloadPercentage: 0 }, projects: [], recentActivity: [] }, tasks: { items: [], pagination: { limit: 100, offset: 0, total: 0, hasMore: false } } } });
     throw new Error(`Unhandled request: ${url}`);
@@ -185,6 +186,21 @@ describe("accessibility smoke coverage", () => {
     toggle.focus();
     await userEvent.keyboard("{Enter}");
     expect(toggle).toHaveAttribute("aria-pressed", "true");
+    await expectNoAxeViolations();
+  });
+
+  it("keeps project manager selection labelled and keyboard-accessible", async () => {
+    const user = userEvent.setup();
+    tokenStorage.set("designer-token");
+    fixtureFetch(userFor("designer"));
+    renderApp(["/designer"]);
+    await user.click(await screen.findByRole("button", { name: "Create project" }));
+    const dialog = screen.getByRole("dialog", { name: "Create project" });
+    const manager = within(dialog).getByRole("combobox", { name: "Project manager" });
+    await user.click(manager);
+    expect(await within(dialog).findByRole("option", { name: /Aarav Mehta/i })).toBeVisible();
+    await user.keyboard("{ArrowDown}{Enter}");
+    expect(manager).toHaveValue("Aarav Mehta");
     await expectNoAxeViolations();
   });
 

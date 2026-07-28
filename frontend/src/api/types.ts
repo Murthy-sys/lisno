@@ -114,7 +114,11 @@ export type TaskEventType =
 export interface Project {
   id: string;
   name: string;
-  clientId: string;
+  clientId: string | null;
+  clientName: string;
+  clientEmail: string;
+  clientMobile: string;
+  clientAddress: string;
   initiatingDesignerId: string;
   assignedDesignerIds: string[];
   managerId: string;
@@ -361,12 +365,22 @@ export interface UpdateTaskInput {
 
 export interface CreateProjectInput {
   name: string;
-  clientId: string;
+  clientName: string;
+  clientEmail: string;
+  clientMobile: string;
+  clientAddress: string;
   assignedDesignerIds: string[];
   managerId: string;
   location: string;
   plannedStartAt: string;
   plannedEndAt: string;
+}
+
+export interface ManagerOption {
+  id: string;
+  name: string;
+  email: string;
+  mobile?: string;
 }
 
 export interface CreateFloorInput {

@@ -12,6 +12,7 @@ import type {
   Floor,
   KpiRead,
   KpiTaskRead,
+  ManagerOption,
   PageData,
   Project,
   TaskRecord,
@@ -46,7 +47,20 @@ export const designerKeys = {
   designExtraction: (versionId: string) =>
     [...designerKeys.all, "design-versions", versionId, "extraction"] as const,
   designSections: (versionId: string) =>
-    [...designerKeys.all, "design-versions", versionId, "sections"] as const
+    [...designerKeys.all, "design-versions", versionId, "sections"] as const,
+  managers: (search: string) =>
+    [...designerKeys.all, "managers", search.trim().toLowerCase()] as const
+};
+
+export const searchManagers = (search: string, offset = 0) => {
+  const query = new URLSearchParams({
+    search,
+    limit: "20",
+    offset: String(offset)
+  });
+  return apiClient.get<PageData<ManagerOption>>(
+    `/organization/managers?${query.toString()}`
+  );
 };
 
 export function getDesignVersions(projectId: string): Promise<DesignVersion[]> {
