@@ -17,6 +17,37 @@ export function createOrganizationRouter(
   const router = Router();
   const protectedRoute = authenticate(authService);
   const pageQuery = z.object(paginationShape).strict();
+  const managerSearchQuery = z
+    .object({
+      search: z.string().trim().max(100).default(""),
+      limit: z.coerce.number().int().min(1).max(50).default(20),
+      offset: z.coerce.number().int().min(0).default(0)
+    })
+    .strict();
+
+  router.get(
+    "/organization/managers",
+    protectedRoute,
+    authorizeRoles("designer"),
+    validateQuery(managerSearchQuery),
+    async (request, response, next) => {
+      try {
+        const { search, ...pagination } = response.locals.validatedQuery;
+        response.json({
+          data: paginatedEnvelope(
+            await hierarchyService.managers(
+              request.authenticatedUser!,
+              search,
+              pagination
+            ),
+            pagination
+          )
+        });
+      } catch (error) {
+        next(error);
+      }
+    }
+  );
 
   router.get(
     "/organization/team",

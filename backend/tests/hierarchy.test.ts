@@ -112,7 +112,7 @@ describe("active manager directory", () => {
 
     expect(response.body.data).toEqual({
       items: [
-        { id: "user-manager-aarav", name: "Aarav Mehta", email: "aarav@lisno.example" },
+        { id: "manager-a", name: "Aardvark", email: "a@example.test" },
         { id: "user-manager-meera", name: "Meera Iyer", email: "meera@lisno.example" }
       ],
       pagination: { limit: 2, offset: 1, total: 4, hasMore: true }

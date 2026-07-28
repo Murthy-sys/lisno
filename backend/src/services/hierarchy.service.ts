@@ -33,6 +33,13 @@ export interface DesignerSummary {
   tasks: Array<TaskRecord & { risk: ReturnType<typeof calculateTaskRisk> }>;
 }
 
+export interface ManagerOption {
+  id: string;
+  name: string;
+  email: string;
+  mobile?: string;
+}
+
 export type OrganizationTreeNode = Omit<
   ManagerTreeNode,
   "designerTotal" | "designers"
@@ -53,6 +60,11 @@ export type OrganizationTreeNode = Omit<
 };
 
 export interface HierarchyService {
+  managers(
+    actor: PublicUser,
+    search: string,
+    pagination: PaginationInput
+  ): Promise<PageResult<ManagerOption>>;
   tree(
     actor: PublicUser,
     pagination: PaginationInput
@@ -165,6 +177,16 @@ export function createHierarchyService(
   };
 
   return {
+    async managers(actor, search, pagination) {
+      await requireActor(repository, actor);
+      if (actor.role !== "designer") forbidden();
+      const page = await repository.pageActiveManagers(search, pagination);
+      return {
+        total: page.total,
+        items: page.items.map(publicManager)
+      };
+    },
+
     async team(actor, pagination) {
       await requireActor(repository, actor);
       if (actor.role !== "design_manager") forbidden();
@@ -313,6 +335,15 @@ function publicDesigner(designer: UserRecord): ManagerTreeDesigner {
     email: designer.email,
     ...(designer.avatar ? { avatar: designer.avatar } : {}),
     ...(designer.title ? { title: designer.title } : {})
+  };
+}
+
+function publicManager(manager: UserRecord): ManagerOption {
+  return {
+    id: manager.id,
+    name: manager.name,
+    email: manager.email,
+    ...(manager.mobile ? { mobile: manager.mobile } : {})
   };
 }
 
