@@ -134,3 +134,49 @@ test verifies the supplied blueprint output when PaddleOCR models are installed.
 Frontend and backend upload tests verify that a valid PDF succeeds with
 `application/pdf`, empty MIME metadata, or `application/octet-stream`, while
 malformed PDFs and explicit type/content mismatches are rejected.
+
+## OCR-tolerant title normalization
+
+PaddleOCR may omit whitespace inside known architectural title phrases, attach
+an alphabetical drawing marker, or return full-width punctuation. Before the
+strict title grammar runs, normalize only known tokens and punctuation:
+
+- `A.`, `B.`, or `C.` at the start is removed as a drawing marker;
+- `FRONTELEVATION`, `REARELEVATION`, and `SIDEELEVATION` are separated;
+- `CEILINGPLAN`, `FLOORPLAN`, and other already-supported configured plan
+  phrases are separated;
+- configured room names such as `LIVINGROOM` are separated;
+- full-width parentheses and dash variants are canonicalized.
+
+Normalization must remain closed to the configured taxonomy. It must not split
+or accept arbitrary compact words.
+
+Overview fragments beginning with `&`, including OCR output such as
+`&CEILING PLAN`, are not drawing titles. Combined overview headings such as
+`ELEVATION & CEILING PLAN` are also not sections. Symbol-legend entries such as
+`CEILING FAN` remain excluded.
+
+The supplied blueprint image is a required real-output regression. Captured
+PaddleOCR lines:
+
+```text
+FLOOR PLAN—3BHK RESIDENCE
+&CEILING PLAN
+LIVING ROOM—FRONTELEVATION
+B.SIDE ELEVATION(LEFT）
+C.CEILINGPLAN-LIVINGROOM
+CEILING FAN
+```
+
+must produce exactly:
+
+```text
+FLOOR PLAN – 3BHK RESIDENCE
+LIVING ROOM – FRONT ELEVATION
+SIDE ELEVATION (LEFT)
+CEILING PLAN – LIVING ROOM
+```
+
+The overview fragment and ceiling-fan legend entry produce no section. The
+three Blueprint 02 titles must map to three different drawings: top front
+elevation, bottom-left side elevation, and bottom-right ceiling plan.
