@@ -3,7 +3,14 @@ import jwt from "jsonwebtoken";
 import { z } from "zod";
 
 import type { Role } from "../contracts/domain.js";
-import type { AppRepository, UserRecord } from "../repositories/types.js";
+import { normalizeEmail } from "../domain/email.js";
+import {
+  RepositoryConflictError,
+  type AppRepository,
+  type UserRecord
+} from "../repositories/types.js";
+import { createAuditService, type AuditService } from "./audit.service.js";
+import { systemClock, type Clock } from "./workflow.js";
 
 const roleSchema = z.enum(["designer", "design_manager", "design_head", "client"]);
 const tokenPayloadSchema = z
@@ -43,10 +50,30 @@ export interface AuthPayload {
   user: PublicUser;
 }
 
+export interface ClientSignupInput {
+  name: string;
+  email: string;
+  mobile: string;
+  address: string;
+  password: string;
+}
+
+export interface AuthServiceDependencies {
+  auditService: AuditService;
+  clock?: Clock;
+}
+
 export class InvalidCredentialsError extends Error {
   constructor() {
     super("Invalid email or password.");
     this.name = "InvalidCredentialsError";
+  }
+}
+
+export class AccountExistsError extends Error {
+  constructor() {
+    super("An account already exists for this email.");
+    this.name = "AccountExistsError";
   }
 }
 
@@ -66,14 +93,18 @@ export class ExpiredTokenError extends Error {
 
 export interface AuthService {
   login(email: string, password: string): Promise<AuthPayload>;
+  signupClient(input: ClientSignupInput): Promise<AuthPayload>;
   authenticate(token: string): Promise<PublicUser>;
 }
 
 export function createAuthService(
   repository: AppRepository,
-  config: AuthConfig
+  config: AuthConfig,
+  dependencies?: AuthServiceDependencies
 ): AuthService {
   const validatedConfig = authConfigSchema.parse(config);
+  const clock = dependencies?.clock ?? systemClock;
+  const auditService = dependencies?.auditService ?? createAuditService(repository);
 
   return {
     async login(email, password) {
@@ -91,6 +122,79 @@ export function createAuthService(
         expiresIn: validatedConfig.jwtExpiresInSeconds
       });
 
+      return { token, user: toPublicUser(user) };
+    },
+
+    async signupClient(input) {
+      const emailNormalized = normalizeEmail(input.email);
+      let user: UserRecord;
+      try {
+        user = await repository.runInTransaction(async (transaction) => {
+          if (await transaction.findUserByEmail(emailNormalized)) {
+            throw new AccountExistsError();
+          }
+
+          const occurredAt = clock().toISOString();
+          let created: UserRecord;
+          try {
+            created = await transaction.createUser({
+              name: input.name.trim(),
+              email: input.email.trim(),
+              mobile: input.mobile.trim(),
+              address: input.address.trim(),
+              passwordHash: await bcrypt.hash(input.password, 12),
+              role: "client",
+              active: true,
+              createdAt: occurredAt,
+              updatedAt: occurredAt
+            });
+          } catch (error) {
+            if (error instanceof RepositoryConflictError) throw new AccountExistsError();
+            throw error;
+          }
+
+          const linkedProjects = await transaction.linkUnclaimedProjectsToClient(
+            emailNormalized,
+            created.id,
+            occurredAt
+          );
+          await auditService.append(
+            {
+              actorId: created.id,
+              action: "client_signed_up",
+              entityType: "user",
+              entityId: created.id,
+              occurredAt,
+              newValues: { role: "client", email: created.emailNormalized }
+            },
+            transaction
+          );
+          for (const project of linkedProjects) {
+            await auditService.append(
+              {
+                actorId: created.id,
+                action: "client_project_linked",
+                entityType: "project",
+                entityId: project.id,
+                occurredAt,
+                oldValues: { clientId: null },
+                newValues: { clientId: created.id }
+              },
+              transaction
+            );
+          }
+          return created;
+        });
+      } catch (error) {
+        if (error instanceof AccountExistsError || error instanceof RepositoryConflictError) {
+          throw new AccountExistsError();
+        }
+        throw error;
+      }
+
+      const token = jwt.sign({ id: user.id, role: user.role }, validatedConfig.jwtSecret, {
+        expiresIn: validatedConfig.jwtExpiresInSeconds
+      });
       return { token, user: toPublicUser(user) };
     },
 

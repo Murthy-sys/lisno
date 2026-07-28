@@ -46,6 +46,43 @@ class JourneyStorage {
 }
 
 describe("complete cross-role journey", () => {
+  it("lets a newly registered client access projects claimed by email", async () => {
+    const seed = structuredClone(demoSeedData);
+    const claimedProject = {
+      ...seed.projects[0],
+      id: "project-new-client-home",
+      name: "New Client Home",
+      clientId: null,
+      clientEmail: "new-client@example.com",
+      clientEmailNormalized: "new-client@example.com"
+    };
+    seed.projects.push(claimedProject);
+    const app = createApp({
+      repository: createMemoryRepository(seed),
+      storage: new JourneyStorage(),
+      auth: { jwtSecret: "journey-secret-that-is-at-least-thirty-two-characters", jwtExpiresInSeconds: 900 },
+      clock: () => new Date("2026-07-28T12:00:00.000Z")
+    });
+
+    const signup = await request(app).post("/api/v1/auth/client-signup").send({
+      name: "New Client",
+      email: "NEW-CLIENT@example.com",
+      mobile: "+91 91234 56789",
+      address: "42 Linking Lane, Bengaluru",
+      password: "StrongPassword!23",
+      passwordConfirmation: "StrongPassword!23"
+    });
+
+    expect(signup.status).toBe(201);
+    const projects = await request(app)
+      .get("/api/v1/projects?limit=20&offset=0")
+      .set("Authorization", `Bearer ${signup.body.data.token}`);
+    expect(projects.status).toBe(200);
+    expect(projects.body.data.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "project-new-client-home", name: "New Client Home" })
+    ]));
+  });
+
   it("preserves approved sections while a rejected section is replaced and approved", async () => {
     const repository = createMemoryRepository(structuredClone(demoSeedData));
     const app = createApp({

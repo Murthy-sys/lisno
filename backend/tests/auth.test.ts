@@ -1,4 +1,5 @@
 import express from "express";
+import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import request from "supertest";
 import { describe, expect, it } from "vitest";
@@ -8,6 +9,7 @@ import { isRoleAuthorized } from "../src/domain/permissions.js";
 import { authenticate, authorizeRoles } from "../src/middleware/auth.js";
 import { errorHandler } from "../src/middleware/errors.js";
 import { createMemoryRepository } from "../src/repositories/memory.js";
+import type { AppRepository, ProjectRecord } from "../src/repositories/types.js";
 import { demoSeedData } from "../src/seed/data.js";
 import { createAuthService } from "../src/services/auth.service.js";
 
@@ -22,6 +24,48 @@ const createTestApp = (seed = demoSeedData) =>
       jwtExpiresInSeconds: 900
     }
   });
+
+const signupBody = (overrides: Partial<Record<string, string>> = {}) => ({
+  name: "Priya Sharma",
+  email: "priya@example.com",
+  mobile: "+91 98765 43210",
+  address: "12 Garden Road, Bengaluru",
+  password: "StrongPassword!23",
+  passwordConfirmation: "StrongPassword!23",
+  ...overrides
+});
+
+function unclaimedProject(id: string, email: string): ProjectRecord {
+  return {
+    ...structuredClone(demoSeedData.projects[0]),
+    id,
+    name: `Project ${id}`,
+    clientId: null,
+    clientEmail: email,
+    clientEmailNormalized: email.trim().toLowerCase()
+  };
+}
+
+function failSignupAuditWrites(base: AppRepository): AppRepository {
+  return new Proxy(base, {
+    get(target, property, receiver) {
+      if (property !== "runInTransaction") return Reflect.get(target, property, receiver);
+      return <T>(operation: (transaction: AppRepository) => Promise<T>) =>
+        target.runInTransaction((transaction) =>
+          operation(
+            new Proxy(transaction, {
+              get(transactionTarget, transactionProperty, transactionReceiver) {
+                if (transactionProperty === "appendAuditEvent") {
+                  return async () => { throw new Error("simulated signup audit failure"); };
+                }
+                return Reflect.get(transactionTarget, transactionProperty, transactionReceiver);
+              }
+            })
+          )
+        );
+    }
+  });
+}
 
 describe("authentication API", () => {
   it("requires an explicit JWT configuration", () => {
@@ -228,6 +272,117 @@ describe("authentication API", () => {
     expect(response.body).toEqual({
       error: { code: "INVALID_TOKEN", message: "Authentication token is invalid." }
     });
+  });
+});
+
+describe("client signup API", () => {
+  it("creates an active client, claims every matching unclaimed project, and omits password fields", async () => {
+    const seed = structuredClone(demoSeedData);
+    seed.projects.push(
+      unclaimedProject("project-priya-home", "PRIYA@EXAMPLE.COM"),
+      unclaimedProject("project-priya-office", "priya@example.com"),
+      { ...unclaimedProject("project-priya-already-linked", "priya@example.com"), clientId: "user-client-aurora" }
+    );
+    const repository = createMemoryRepository(seed);
+    const response = await request(
+      createApp({ repository, auth: { jwtSecret: JWT_SECRET, jwtExpiresInSeconds: 900 } })
+    )
+      .post("/api/v1/auth/client-signup")
+      .send(signupBody({ email: "  Priya@Example.COM  " }));
+
+    expect(response.status).toBe(201);
+    expect(response.body.data.user.role).toBe("client");
+    expect(response.body.data.token).toEqual(expect.any(String));
+    expect(JSON.stringify(response.body)).not.toContain("password");
+    const stored = await repository.findUserByEmail("priya@example.com");
+    expect(stored).toMatchObject({ active: true, role: "client", email: "priya@example.com" });
+    expect(await bcrypt.compare("StrongPassword!23", stored!.passwordHash)).toBe(true);
+    const linkedProjects = await Promise.all([
+      repository.findProjectById("project-priya-home"),
+      repository.findProjectById("project-priya-office")
+    ]);
+    expect(linkedProjects.map(({ clientId }) => clientId)).toEqual([stored!.id, stored!.id]);
+    await expect(repository.findProjectById("project-priya-already-linked")).resolves.toMatchObject({ clientId: "user-client-aurora" });
+    expect(await repository.listAuditEvents({ actorId: stored!.id })).toEqual(expect.arrayContaining([
+      expect.objectContaining({ action: "client_signed_up", entityType: "user", entityId: stored!.id }),
+      expect.objectContaining({ action: "client_project_linked", entityType: "project", entityId: "project-priya-home" }),
+      expect.objectContaining({ action: "client_project_linked", entityType: "project", entityId: "project-priya-office" })
+    ]));
+  });
+
+  it("rejects an email already used by either a client or internal role", async () => {
+    const app = createTestApp();
+    for (const email of ["client@aurora.example", "ananya@lisno.example"]) {
+      const response = await request(app).post("/api/v1/auth/client-signup").send(signupBody({ email }));
+      expect(response.status).toBe(409);
+      expect(response.body).toEqual({
+        error: { code: "ACCOUNT_EXISTS", message: "An account already exists for this email." }
+      });
+    }
+  });
+
+  it("validates confirmation and refuses unknown signup fields", async () => {
+    const response = await request(createTestApp())
+      .post("/api/v1/auth/client-signup")
+      .send({ ...signupBody({ passwordConfirmation: "DifferentPassword!23" }), role: "design_head" });
+
+    expect(response.status).toBe(400);
+    expect(response.body).toEqual({
+      error: {
+        code: "VALIDATION_ERROR",
+        message: "Request validation failed.",
+        fields: {
+          role: "Unrecognized field: role.",
+          passwordConfirmation: "Passwords do not match."
+        }
+      }
+    });
+  });
+
+  it("rolls back the user and project claims when audit storage fails", async () => {
+    const seed = structuredClone(demoSeedData);
+    seed.projects.push(unclaimedProject("project-rollback", "rollback@example.com"));
+    const repository = createMemoryRepository(seed);
+    const response = await request(
+      createApp({ repository: failSignupAuditWrites(repository), auth: { jwtSecret: JWT_SECRET, jwtExpiresInSeconds: 900 } })
+    )
+      .post("/api/v1/auth/client-signup")
+      .send(signupBody({ email: "rollback@example.com" }));
+
+    expect(response.status).toBe(500);
+    await expect(repository.findUserByEmail("rollback@example.com")).resolves.toBeNull();
+    await expect(repository.findProjectById("project-rollback")).resolves.toMatchObject({ clientId: null });
+  });
+
+  it("allows only one concurrent signup for the same normalized email", async () => {
+    const repository = createMemoryRepository(structuredClone(demoSeedData));
+    const app = createApp({ repository, auth: { jwtSecret: JWT_SECRET, jwtExpiresInSeconds: 900 } });
+    const [first, second] = await Promise.all([
+      request(app).post("/api/v1/auth/client-signup").send(signupBody({ email: "duplicate@example.com" })),
+      request(app).post("/api/v1/auth/client-signup").send(signupBody({ email: "DUPLICATE@example.com" }))
+    ]);
+
+    expect([first.status, second.status].sort()).toEqual([201, 409]);
+    expect((await repository.listUsers()).filter((user) => user.emailNormalized === "duplicate@example.com")).toHaveLength(1);
+  });
+
+  it("throttles login and signup attempts until the configured fixed window expires", async () => {
+    let now = new Date("2026-07-28T00:00:00.000Z");
+    const app = createApp({
+      repository: createMemoryRepository(structuredClone(demoSeedData)),
+      auth: { jwtSecret: JWT_SECRET, jwtExpiresInSeconds: 900 },
+      clock: () => now,
+      authRateLimit: { windowMs: 15 * 60_000, maxAttempts: 2 }
+    });
+    await request(app).post("/api/v1/auth/login").send({ email: "missing@example.com", password: "wrong" }).expect(401);
+    await request(app).post("/api/v1/auth/client-signup").send(signupBody({ email: "missing@example.com" })).expect(201);
+    const limited = await request(app).post("/api/v1/auth/login").send({ email: "missing@example.com", password: "wrong" });
+    expect(limited.status).toBe(429);
+    expect(limited.body).toEqual({
+      error: { code: "TOO_MANY_ATTEMPTS", message: "Please try again later." }
+    });
+    now = new Date("2026-07-28T00:15:00.000Z");
+    await request(app).post("/api/v1/auth/login").send({ email: "missing@example.com", password: "wrong" }).expect(401);
   });
 });
 

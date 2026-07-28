@@ -1,6 +1,7 @@
 import express from "express";
 import path from "node:path";
 
+import { createAuthRateLimit } from "./middleware/auth-rate-limit.js";
 import { allowCors } from "./middleware/cors.js";
 import { errorHandler, notFoundHandler } from "./middleware/errors.js";
 import { createMemoryRepository } from "./repositories/memory.js";
@@ -44,6 +45,7 @@ export interface AppDependencies {
   ocrConfidenceFloor?: number;
   ocrWorkerToken?: string;
   corsOrigins?: readonly string[];
+  authRateLimit?: { windowMs?: number; maxAttempts?: number };
 }
 
 export function createApp(dependencies: AppDependencies) {
@@ -54,8 +56,16 @@ export function createApp(dependencies: AppDependencies) {
     dependencies.storage ??
     createLocalStorage(path.resolve(process.cwd(), "uploads"));
   const maxUploadBytes = dependencies.maxUploadBytes ?? 25 * 1024 * 1024;
-  const authService = createAuthService(repository, dependencies.auth);
   const auditService = createAuditService(repository);
+  const authService = createAuthService(repository, dependencies.auth, {
+    auditService,
+    clock
+  });
+  const authRateLimit = createAuthRateLimit({
+    windowMs: dependencies.authRateLimit?.windowMs ?? 15 * 60_000,
+    maxAttempts: dependencies.authRateLimit?.maxAttempts ?? 20,
+    clock: () => clock().getTime()
+  });
   const projectActivityService = createProjectActivityService(repository);
   const projectService = createProjectService(repository, auditService, clock);
   const taskService = createTaskService(repository, auditService, clock);
@@ -98,7 +108,7 @@ export function createApp(dependencies: AppDependencies) {
   }
   app.use(express.json());
   app.use("/api/v1", healthRouter);
-  app.use("/api/v1", createAuthRouter(authService));
+  app.use("/api/v1", createAuthRouter(authService, authRateLimit));
   app.use("/api/v1", createProjectsRouter(authService, projectService));
   app.use("/api/v1", createTasksRouter(authService, taskService));
   app.use("/api/v1", createOrganizationRouter(authService, hierarchyService));
