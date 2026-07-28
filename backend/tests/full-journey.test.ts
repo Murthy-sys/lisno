@@ -46,6 +46,322 @@ class JourneyStorage {
 }
 
 describe("complete cross-role journey", () => {
+  it("links every unclaimed mixed-case client project through upload, review, and revision history", async () => {
+    const repository = createMemoryRepository(structuredClone(demoSeedData));
+    const storage = new JourneyStorage();
+    const app = createApp({
+      repository,
+      storage,
+      auth: {
+        jwtSecret: "journey-secret-that-is-at-least-thirty-two-characters",
+        jwtExpiresInSeconds: 900
+      },
+      clock: () => new Date("2026-07-28T12:00:00.000Z"),
+      ocrWorkerToken: workerToken
+    });
+    const login = async (email: string) => {
+      const response = await request(app)
+        .post("/api/v1/auth/login")
+        .send({ email, password })
+        .expect(200);
+      return `Bearer ${response.body.data.token}`;
+    };
+    const designer = await login("ananya@lisno.example");
+    const unrelatedClient = await login("client@aurora.example");
+
+    const managerSearch = await request(app)
+      .get("/api/v1/organization/managers?search=AARAV&limit=20&offset=0")
+      .set("Authorization", designer)
+      .expect(200);
+    expect(managerSearch.body.data.items).toEqual([
+      expect.objectContaining({
+        id: "user-manager-aarav",
+        name: "Aarav Mehta",
+        email: "aarav@lisno.example"
+      })
+    ]);
+    const managerId = managerSearch.body.data.items[0].id as string;
+
+    const createProject = async (name: string, clientEmail: string) => {
+      const response = await request(app)
+        .post("/api/v1/projects")
+        .set("Authorization", designer)
+        .send({
+          name,
+          clientName: "Journey Client",
+          clientEmail,
+          clientMobile: "+91 91234 56789",
+          clientAddress: "42 Linking Lane, Bengaluru",
+          assignedDesignerIds: ["user-designer-ananya"],
+          managerId,
+          location: "Bengaluru",
+          plannedStartAt: "2026-08-01T09:00:00.000Z",
+          plannedEndAt: "2026-12-15T17:00:00.000Z"
+        })
+        .expect(201);
+      expect(response.body.data).toMatchObject({
+        name,
+        clientId: null,
+        clientEmail: clientEmail.trim(),
+        clientEmailNormalized: "journey.client@example.com",
+        managerId
+      });
+      return response.body.data;
+    };
+    const residence = await createProject(
+      "Journey Residence",
+      "Journey.Client@Example.COM"
+    );
+    const studio = await createProject(
+      "Journey Studio",
+      "  JOURNEY.CLIENT@example.com  "
+    );
+
+    const createFloor = async (
+      projectId: string,
+      name: string,
+      number: string,
+      order: number
+    ) =>
+      request(app)
+        .post(`/api/v1/projects/${projectId}/floors`)
+        .set("Authorization", designer)
+        .send({
+          name,
+          number,
+          order,
+          plannedStartAt: "2026-08-01T09:00:00.000Z",
+          plannedEndAt: "2026-09-30T17:00:00.000Z"
+        })
+        .expect(201);
+    const groundFloor = await createFloor(residence.id, "Ground floor", "G", 0);
+    await createFloor(residence.id, "First floor", "1", 1);
+    await createFloor(studio.id, "Studio floor", "G", 0);
+
+    const stage = await request(app)
+      .post(`/api/v1/floors/${groundFloor.body.data.id}/stages`)
+      .set("Authorization", designer)
+      .send({
+        name: "Floor plan",
+        type: "floor_plan",
+        order: 0
+      })
+      .expect(201);
+    const task = await request(app)
+      .post(`/api/v1/stages/${stage.body.data.id}/tasks`)
+      .set("Authorization", designer)
+      .send({
+        title: "Prepare client floor plan",
+        order: 0,
+        ownerId: "user-designer-ananya",
+        plannedStartAt: "2026-08-01T09:00:00.000Z",
+        originalDeadlineAt: "2026-08-31T17:00:00.000Z",
+        plannedEffort: 16
+      })
+      .expect(201);
+    const upload = await request(app)
+      .post(`/api/v1/tasks/${task.body.data.id}/design-versions`)
+      .set("Authorization", designer)
+      .attach("file", PDF, {
+        filename: "journey-client-plan.pdf",
+        contentType: "application/pdf"
+      })
+      .expect(201);
+
+    const manager = await login("aarav@lisno.example");
+    await request(app)
+      .patch(`/api/v1/design-versions/${upload.body.data.id}/approval`)
+      .set("Authorization", manager)
+      .send({ approvalStatus: "approved", clientVisible: true })
+      .expect(200);
+
+    const extractionJob = await repository.findExtractionJobByVersionId(
+      upload.body.data.id
+    );
+    expect(extractionJob).not.toBeNull();
+    const claim = await request(app)
+      .post("/api/v1/internal/extraction-jobs/claim")
+      .set("Authorization", `Bearer ${workerToken}`)
+      .send()
+      .expect(200);
+    await request(app)
+      .post(`/api/v1/internal/extraction-jobs/${extractionJob!.id}/complete`)
+      .set("Authorization", `Bearer ${workerToken}`)
+      .set("X-Extraction-Claim-Token", claim.body.data.claimToken)
+      .send({
+        resultId: "email-linking-journey-result",
+        pages: [{
+          pageNumber: 1,
+          width: 2,
+          height: 2,
+          imageBase64: PNG.toString("base64"),
+          sections: [
+            {
+              label: "Front Elevation",
+              confidence: 0.96,
+              crop: { x: 0, y: 0, width: 1, height: 1 },
+              imageBase64: CROP_PNG.toString("base64")
+            },
+            {
+              label: "Floor Plan",
+              confidence: 0.94,
+              crop: { x: 1, y: 0, width: 1, height: 1 },
+              imageBase64: CROP_PNG.toString("base64")
+            }
+          ]
+        }]
+      })
+      .expect(200);
+    await request(app)
+      .post(`/api/v1/design-versions/${upload.body.data.id}/submit-sections`)
+      .set("Authorization", designer)
+      .expect(200);
+
+    const submitted = await request(app)
+      .get(`/api/v1/client/projects/${residence.id}/design-sections`)
+      .set("Authorization", unrelatedClient)
+      .expect(404);
+    expect(submitted.body.error.code).toBe("NOT_FOUND");
+
+    const signup = await request(app)
+      .post("/api/v1/auth/client-signup")
+      .send({
+        name: "Journey Client",
+        email: "journey.client@example.com",
+        mobile: "+91 91234 56789",
+        address: "42 Linking Lane, Bengaluru",
+        password: "StrongPassword!23",
+        passwordConfirmation: "StrongPassword!23"
+      })
+      .expect(201);
+    const client = `Bearer ${signup.body.data.token}`;
+
+    const projects = await request(app)
+      .get("/api/v1/projects?limit=20&offset=0")
+      .set("Authorization", client)
+      .expect(200);
+    expect(projects.body.data.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: residence.id, name: "Journey Residence" }),
+      expect.objectContaining({ id: studio.id, name: "Journey Studio" })
+    ]));
+    const dashboard = await request(app)
+      .get("/api/v1/client/project-summaries?limit=20&offset=0")
+      .set("Authorization", client)
+      .expect(200);
+    expect(dashboard.body.data.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: residence.id,
+        name: "Journey Residence",
+        floorCount: 2
+      }),
+      expect.objectContaining({
+        id: studio.id,
+        name: "Journey Studio",
+        floorCount: 1
+      })
+    ]));
+
+    const review = await request(app)
+      .get(`/api/v1/client/projects/${residence.id}/design-sections`)
+      .set("Authorization", client)
+      .expect(200);
+    expect(review.body.data.progress).toEqual({
+      approved: 0,
+      rejected: 0,
+      awaitingReview: 2,
+      total: 2
+    });
+    const [frontElevation, floorPlan] = review.body.data.sections;
+    await request(app)
+      .get(frontElevation.revision.imageReference)
+      .set("Authorization", client)
+      .expect(200)
+      .expect("Content-Type", /png/);
+    await request(app)
+      .get(frontElevation.revision.imageReference)
+      .set("Authorization", unrelatedClient)
+      .expect(404);
+
+    await request(app)
+      .post(`/api/v1/design-section-revisions/${frontElevation.revision.id}/decision`)
+      .set("Authorization", client)
+      .send({
+        version: frontElevation.revision.revisionNumber,
+        decision: "approved"
+      })
+      .expect(200);
+    await request(app)
+      .post(`/api/v1/design-section-revisions/${floorPlan.revision.id}/decision`)
+      .set("Authorization", client)
+      .send({
+        version: floorPlan.revision.revisionNumber,
+        decision: "rejected",
+        comment: "Include the full plan boundary."
+      })
+      .expect(200);
+
+    const replacement = await request(app)
+      .patch(`/api/v1/design-sections/${floorPlan.id}`)
+      .set("Authorization", designer)
+      .send({
+        version: floorPlan.revision.revisionNumber,
+        crop: { x: 0, y: 1, width: 2, height: 1 }
+      })
+      .expect(200);
+    await request(app)
+      .post(`/api/v1/design-versions/${upload.body.data.id}/submit-sections`)
+      .set("Authorization", designer)
+      .expect(200);
+    await request(app)
+      .post(
+        `/api/v1/design-section-revisions/${replacement.body.data.revision.id}/decision`
+      )
+      .set("Authorization", client)
+      .send({ version: 2, decision: "approved" })
+      .expect(200);
+
+    const finalReview = await request(app)
+      .get(`/api/v1/client/projects/${residence.id}/design-sections`)
+      .set("Authorization", client)
+      .expect(200);
+    expect(finalReview.body.data.progress).toEqual({
+      approved: 2,
+      rejected: 0,
+      awaitingReview: 0,
+      total: 2
+    });
+    expect(
+      finalReview.body.data.sections.find(
+        (section: { id: string }) => section.id === floorPlan.id
+      ).history
+    ).toEqual([
+      expect.objectContaining({
+        id: floorPlan.revision.id,
+        revisionNumber: 1,
+        reviewStatus: "rejected",
+        rejectionComment: "Include the full plan boundary."
+      }),
+      expect.objectContaining({
+        id: replacement.body.data.revision.id,
+        revisionNumber: 2,
+        reviewStatus: "approved"
+      })
+    ]);
+    await request(app)
+      .get(replacement.body.data.revision.imageReference)
+      .set("Authorization", client)
+      .expect(200)
+      .expect("Content-Type", /png/);
+    expect(await repository.findProjectById(residence.id)).toMatchObject({
+      clientId: signup.body.data.user.id,
+      clientEmailNormalized: "journey.client@example.com"
+    });
+    expect(await repository.findProjectById(studio.id)).toMatchObject({
+      clientId: signup.body.data.user.id,
+      clientEmailNormalized: "journey.client@example.com"
+    });
+  });
+
   it("lets a newly registered client access projects claimed by email", async () => {
     const seed = structuredClone(demoSeedData);
     const claimedProject = {

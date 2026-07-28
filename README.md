@@ -63,6 +63,50 @@ PaddleOCR may download and cache model files on its first real extraction, so
 the first job can take longer. See [ocr-worker/README.md](ocr-worker/README.md)
 for worker settings, supported formats, model-cache behavior, and recovery.
 
+## Client signup and project linking
+
+Clients create an account at `http://localhost:5173/signup`. The form requires
+name, email, mobile number, address, password, and password confirmation;
+passwords must be 12–128 characters and both password fields must match.
+
+When a designer creates a project, they enter the client's contact details even
+if that client does not have a Lisno account yet. Lisno stores those details as
+a project snapshot and normalizes the email for linking. Client signup
+atomically claims every unclaimed project with the same normalized email, so
+capitalization and surrounding whitespace do not affect the match. Existing
+project contact snapshots remain unchanged. An email already used by an
+internal account cannot be selected as a project client.
+
+Designers choose the project manager from the active-manager search in the
+project creation dialog. The selection is independent of the designer's
+reporting line: any active design manager can own the project, while inactive
+or non-manager accounts are rejected.
+
+### Existing database migration
+
+Back up the production database and run the migration dry run first. The command
+reads `MONGODB_URI` from `backend/.env` (or the current environment), reports
+the number of users and projects inspected, and reports duplicate normalized
+emails without writing:
+
+```bash
+cd backend
+npm run migrate:client-linking -- --dry-run
+```
+
+Resolve every reported duplicate before the production migration. Then run the
+same migration without `--dry-run`; it backfills normalized emails and missing
+client-contact snapshots and synchronizes the relevant indexes:
+
+```bash
+cd backend
+MONGODB_URI="mongodb://production-host/lisno" npm run migrate:client-linking
+```
+
+The migration is safe to rerun after it succeeds because it writes only missing
+or changed compatibility fields. Do not run `npm run seed` as part of the
+migration; the seed command resets demo-domain data.
+
 ## Drawing-title extraction
 
 OCR creates application-internal `section` records only for supported drawing
