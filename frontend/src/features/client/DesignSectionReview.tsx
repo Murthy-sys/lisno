@@ -3,7 +3,7 @@ import { useEffect, useId, useState } from "react";
 import { Image, X } from "lucide-react";
 
 import { ApiError } from "../../api/client";
-import type { DesignSectionReviewItem } from "../../api/types";
+import type { DesignSectionReviewData, DesignSectionReviewItem } from "../../api/types";
 import { ProtectedImage } from "../../components/design/ProtectedImage";
 import { SectionReviewCard } from "../../components/design/SectionReviewCard";
 import { Dialog } from "../../components/ui/Dialog";
@@ -22,6 +22,7 @@ export function DesignSectionReview({ projectId, mode }: { projectId: string; mo
   const [sourceImageUrl, setSourceImageUrl] = useState<string>();
   const [sourcePreviewOpen, setSourcePreviewOpen] = useState(false);
   const [activeSectionId, setActiveSectionId] = useState<string>();
+  const [announcement, setAnnouncement] = useState("");
   const sections = review.data?.sections ?? [];
   const preferredSection =
     sections.find((section) => section.id === activeSectionId) ??
@@ -38,11 +39,22 @@ export function DesignSectionReview({ projectId, mode }: { projectId: string; mo
   const mutation = useMutation({
     mutationFn: ({ section, decision, comment: value }: { section: DesignSectionReviewItem; decision: "approved" | "rejected"; comment?: string }) =>
       decideDesignSection(section.revision.id, section.revision.revisionNumber, decision, value),
-    onSuccess: async () => {
+    onMutate: ({ section }) => ({ decidedSectionId: section.id }),
+    onSuccess: async (_result, _variables, context) => {
       setChoice(undefined);
       setComment("");
       setCommentError("");
       await queryClient.invalidateQueries({ queryKey: clientKeys.designSections(projectId) });
+      const refreshed = queryClient.getQueryData<DesignSectionReviewData>(clientKeys.designSections(projectId));
+      const nextSubmittedSection = refreshed?.sections.find((section) =>
+        section.id !== context.decidedSectionId && section.revision.reviewStatus === "submitted");
+      if (nextSubmittedSection) {
+        setActiveSectionId(nextSubmittedSection.id);
+        setAnnouncement("Review saved. Showing the next plan awaiting review.");
+      } else {
+        setActiveSectionId(context.decidedSectionId);
+        setAnnouncement("Review complete");
+      }
     }
   });
 
@@ -89,6 +101,15 @@ export function DesignSectionReview({ projectId, mode }: { projectId: string; mo
         <div className="design-review__stat design-review__stat--awaiting"><strong>{progress.awaitingReview}</strong><span>Awaiting review</span></div>
         <div className="design-review__stat design-review__stat--total"><strong>{progress.total}</strong><span>Total</span></div>
       </div>
+      <p className="design-review__announcement" role="status" aria-live="polite">
+        {announcement}
+      </p>
+      {!sections.some((section) => section.revision.reviewStatus === "submitted") ? (
+        <section className="design-review__complete" aria-labelledby={`design-review-complete-${projectId}`}>
+          <h3 id={`design-review-complete-${projectId}`}>Review complete</h3>
+          <p>All current plans have a decision.</p>
+        </section>
+      ) : null}
       {preferredSection ? (
         <SectionReviewCard
           key={preferredSection.id}

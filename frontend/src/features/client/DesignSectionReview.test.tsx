@@ -84,20 +84,28 @@ function installApi(options: { failList?: boolean; failDecision?: boolean; revie
     if (url === revision.imageReference || url === secondRevision.imageReference) return new Response(new Blob(["image"], { type: "image/png" }));
     if (url === "/api/v1/design-source-pages/page-1/image") return new Response(new Blob(["page"], { type: "image/png" }));
     if (url === "/api/v1/design-source-pages/page-2/image") return new Response(new Blob(["page"], { type: "image/png" }));
-    if (url === "/api/v1/design-section-revisions/revision-2/decision") {
+    const revisionId = url.match(/^\/api\/v1\/design-section-revisions\/(.+)\/decision$/)?.[1];
+    if (revisionId) {
       if (options.failDecision) return Response.json({ error: { code: "CONFLICT", message: "Already reviewed." } }, { status: 409 });
       const body = JSON.parse(String(init?.body)) as { decision: "approved" | "rejected"; comment?: string };
+      const section = current.sections.find((item) => item.revision.id === revisionId);
+      if (!section) throw new Error(`Unhandled decision: ${url}`);
+      const sections = current.sections.map((item) => item.id === section.id
+        ? { ...item, revision: { ...item.revision, reviewStatus: body.decision, rejectionComment: body.comment ?? null } }
+        : item);
+      const progress = sections.reduce((next, item) => {
+        next.total += 1;
+        if (item.revision.reviewStatus === "approved") next.approved += 1;
+        else if (item.revision.reviewStatus === "rejected") next.rejected += 1;
+        else next.awaitingReview += 1;
+        return next;
+      }, { approved: 0, rejected: 0, awaitingReview: 0, total: 0 });
       current = {
         ...current,
-        progress: body.decision === "approved"
-          ? { approved: 1, rejected: 0, awaitingReview: 1, total: 2 }
-          : { approved: 0, rejected: 1, awaitingReview: 1, total: 2 },
-        sections: current.sections.map((section) => ({
-          ...section,
-          revision: { ...section.revision, reviewStatus: body.decision, rejectionComment: body.comment ?? null }
-        }))
+        progress,
+        sections
       };
-      return Response.json({ data: { revision: current.sections[0].revision, extractionStatus: body.decision === "approved" ? "approved" : "changes_requested", progress: current.progress } });
+      return Response.json({ data: { revision: current.sections.find((item) => item.id === section.id)!.revision, extractionStatus: body.decision === "approved" ? "approved" : "changes_requested", progress } });
     }
     throw new Error(`Unhandled request: ${url}`);
   });
@@ -232,18 +240,74 @@ describe("DesignSectionReview", () => {
     expect(screen.queryByRole("img", { name: "Full preview of Site plan" })).not.toBeInTheDocument();
   });
 
-  it("confirms approval, disables the card while pending, and refreshes progress", async () => {
+  it("advances to the next submitted plan after approval", async () => {
     const user = userEvent.setup();
     installApi();
     renderWithQuery(<DesignSectionReview projectId="project-1" mode="client" />);
-    const approve = await screen.findByRole("button", { name: "Approve Front elevation" });
-    await user.click(approve);
+    await user.click(await screen.findByRole("button", { name: "Approve Front elevation" }));
     const dialog = screen.getByRole("dialog", { name: "Approve Front elevation?" });
     await user.click(within(dialog).getByRole("button", { name: "Confirm approval" }));
-    const progress = await screen.findByRole("group", { name: "1 approved, 0 rejected, 1 awaiting review, 2 total" });
-    expect(within(getProgressStat(progress, "Approved")).getByText("1")).toBeVisible();
-    expect(within(getProgressStat(progress, "Awaiting review")).getByText("1")).toBeVisible();
+    expect(await screen.findByRole("status")).toHaveTextContent("Review saved. Showing the next plan awaiting review.");
+    expect(screen.getByRole("article", { name: "Site plan review" })).toBeVisible();
     expect(screen.queryByRole("button", { name: "Approve Front elevation" })).not.toBeInTheDocument();
+  });
+
+  it("advances to the next submitted plan after a rejection", async () => {
+    const user = userEvent.setup();
+    installApi();
+    renderWithQuery(<DesignSectionReview projectId="project-1" mode="client" />);
+
+    await user.click(await screen.findByRole("button", { name: "Reject Front elevation" }));
+    const dialog = screen.getByRole("dialog", { name: "Request changes for Front elevation" });
+    await user.type(within(dialog).getByLabelText("Modification comment"), "Raise the roof line.");
+    await user.click(within(dialog).getByRole("button", { name: "Send request" }));
+
+    expect(await screen.findByRole("status")).toHaveTextContent("Review saved. Showing the next plan awaiting review.");
+    expect(screen.getByRole("article", { name: "Site plan review" })).toBeVisible();
+  });
+
+  it("retains the failed rejection form and its chosen plan", async () => {
+    const user = userEvent.setup();
+    installApi({ failDecision: true });
+    renderWithQuery(<DesignSectionReview projectId="project-1" mode="client" />);
+
+    await user.click(await screen.findByRole("button", { name: "Reject Front elevation" }));
+    const dialog = screen.getByRole("dialog", { name: "Request changes for Front elevation" });
+    const comment = within(dialog).getByLabelText("Modification comment");
+    await user.type(comment, "Include the full roof line.");
+    await user.click(within(dialog).getByRole("button", { name: "Send request" }));
+
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent("Already reviewed.");
+    expect(screen.getByRole("dialog", { name: "Request changes for Front elevation" })).toBeVisible();
+    expect(comment).toHaveValue("Include the full roof line.");
+    expect(screen.getByRole("article", { name: "Front elevation review" })).toBeVisible();
+  });
+
+  it("announces completion while retaining the decided plan in the queue", async () => {
+    const user = userEvent.setup();
+    const singleReview = structuredClone(review);
+    singleReview.sections = [singleReview.sections[0]!];
+    singleReview.progress = { approved: 0, rejected: 0, awaitingReview: 1, total: 1 };
+    installApi({ reviewData: singleReview });
+    renderWithQuery(<DesignSectionReview projectId="project-1" mode="client" />);
+
+    await user.click(await screen.findByRole("button", { name: "Approve Front elevation" }));
+    await user.click(screen.getByRole("button", { name: "Confirm approval" }));
+
+    expect(await screen.findByRole("heading", { name: "Review complete" })).toBeVisible();
+    expect(screen.getByRole("status")).toHaveTextContent("Review complete");
+    expect(screen.getByRole("article", { name: "Front elevation review" })).toBeVisible();
+  });
+
+  it("keeps queue navigation but no decision actions in read-only mode", async () => {
+    installApi();
+    renderWithQuery(<DesignSectionReview projectId="project-1" mode="read-only" />);
+
+    await screen.findByRole("article", { name: "Front elevation review" });
+    expect(screen.getByRole("button", { name: "Previous plan" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Next plan: Site plan" })).toBeEnabled();
+    expect(screen.queryByRole("button", { name: /Approve/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Request changes|Reject/ })).not.toBeInTheDocument();
   });
 
   it("uses the first source page in API order when the highest versions tie", async () => {

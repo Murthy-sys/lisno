@@ -2642,6 +2642,28 @@
   color: #1e40af;
 }
 
+.design-review__announcement {
+  min-height: 1.5rem;
+  margin: 0;
+  color: #475569;
+  font-weight: 600;
+}
+
+.design-review__complete {
+  display: grid;
+  gap: 0.35rem;
+  padding: 1rem;
+  border: 1px solid #86efac;
+  border-radius: 0.8rem;
+  background: #f0fdf4;
+  color: #166534;
+}
+
+.design-review__complete h3,
+.design-review__complete p {
+  margin: 0;
+}
+
 .design-review__source-trigger {
   display: inline-flex;
   align-items: center;

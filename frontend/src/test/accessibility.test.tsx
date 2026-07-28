@@ -136,6 +136,39 @@ describe("accessibility smoke coverage", () => {
     await expectNoAxeViolations();
   });
 
+  it("keeps the focused read-only review surface navigable without decision actions", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url === "/api/v1/client/projects/project-review/design-sections") {
+        return Response.json({ data: {
+          projectId: "project-review",
+          progress: { approved: 0, rejected: 0, awaitingReview: 2, total: 2 },
+          sections: ["North elevation", "Site plan"].map((label, index) => ({
+            id: `section-review-${index}`, designVersionId: `version-review-${index}`, sourcePageId: `page-review-${index}`,
+            label, active: true, source: "ocr", ocrConfidence: .9,
+            createdAt: "now", updatedAt: "now", versionNumber: 1,
+            revision: {
+              id: `revision-review-${index}`, sectionId: `section-review-${index}`, revisionNumber: 1,
+              sourcePageId: `page-review-${index}`, crop: { x: 0, y: 0, width: 100, height: 100 },
+              label, reviewStatus: "submitted", submittedAt: "now", reviewerId: null,
+              reviewedAt: null, rejectionComment: null, createdAt: "now", imageReference: `/revision-review-${index}.png`
+            }, history: []
+          }))
+        } });
+      }
+      if (url.startsWith("/revision-review-")) return new Response(new Blob(["image"], { type: "image/png" }));
+      throw new Error(`Unhandled request: ${url}`);
+    });
+    renderWithQuery(<DesignSectionReview projectId="project-review" mode="read-only" />);
+
+    expect(await screen.findAllByRole("article", { name: /review$/ })).toHaveLength(1);
+    expect(screen.getByRole("button", { name: "Previous plan" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Next plan: Site plan" })).toBeVisible();
+    expect(screen.getByRole("group", { name: "0 approved, 0 rejected, 2 awaiting review, 2 total" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: /Approve|Request changes|Reject/ })).not.toBeInTheDocument();
+    await expectNoAxeViolations();
+  });
+
   it("gives OCR crop controls accessible names and keyboard operation", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = String(input);
