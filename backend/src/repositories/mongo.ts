@@ -42,6 +42,7 @@ import {
 } from "./types.js";
 
 type PlainDocument = Record<string, any>;
+const MAX_DUPLICATE_KEY_TRANSACTION_ATTEMPTS = 2;
 
 export function createMongoRepository(session?: ClientSession): AppRepository {
   const projectFilterForUser = (user: UserRecord) => {
@@ -64,21 +65,35 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
   const repository: AppRepository = {
     async runInTransaction(operation) {
       if (session) return operation(repository);
-      const transactionSession = await mongoose.startSession();
-      let result: unknown;
-      let completed = false;
-      try {
-        await transactionSession.withTransaction(async () => {
-          result = await operation(createMongoRepository(transactionSession));
-          completed = true;
-        });
-        if (!completed) {
-          throw new Error("MongoDB transaction did not complete.");
+      for (
+        let attempt = 0;
+        attempt < MAX_DUPLICATE_KEY_TRANSACTION_ATTEMPTS;
+        attempt += 1
+      ) {
+        const transactionSession = await mongoose.startSession();
+        let result: unknown;
+        let completed = false;
+        try {
+          await transactionSession.withTransaction(async () => {
+            result = await operation(createMongoRepository(transactionSession));
+            completed = true;
+          });
+          if (!completed) {
+            throw new Error("MongoDB transaction did not complete.");
+          }
+          return result as Awaited<ReturnType<typeof operation>>;
+        } catch (error) {
+          if (
+            !isMongoDuplicateKeyError(error) ||
+            attempt === MAX_DUPLICATE_KEY_TRANSACTION_ATTEMPTS - 1
+          ) {
+            throw error;
+          }
+        } finally {
+          await transactionSession.endSession();
         }
-        return result as Awaited<ReturnType<typeof operation>>;
-      } finally {
-        await transactionSession.endSession();
       }
+      throw new Error("MongoDB transaction retry limit was exhausted.");
     },
 
     async coordinateClientEmail(emailNormalized) {

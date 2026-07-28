@@ -128,6 +128,84 @@ afterEach(() => {
 });
 
 describe("Mongo repository contracts", () => {
+  it.each(["client signup", "project creation"])(
+    "retries the complete %s transaction after a first-use coordination duplicate",
+    async (workflow) => {
+      const sessions = [0, 1].map(() => ({
+        withTransaction: vi.fn(async (operation: () => Promise<unknown>) =>
+          operation()
+        ),
+        endSession: vi.fn(async () => undefined)
+      }));
+      vi.spyOn(mongoose, "startSession")
+        .mockResolvedValueOnce(sessions[0] as never)
+        .mockResolvedValueOnce(sessions[1] as never);
+      const firstCoordination = {
+        session: vi.fn(),
+        exec: vi.fn().mockRejectedValue(
+          Object.assign(new Error("first-use E11000"), { code: 11000 })
+        )
+      };
+      const retriedCoordination = {
+        session: vi.fn(),
+        exec: vi.fn().mockResolvedValue({ acknowledged: true })
+      };
+      vi.spyOn(EmailCoordinationModel, "updateOne")
+        .mockReturnValueOnce(firstCoordination as never)
+        .mockReturnValueOnce(retriedCoordination as never);
+      const attempts: string[] = [];
+
+      const result = await createMongoRepository().runInTransaction(
+        async (transaction) => {
+          attempts.push(workflow);
+          await transaction.coordinateClientEmail(
+            `${workflow.replaceAll(" ", "-")}@example.com`
+          );
+          return `${workflow} completed`;
+        }
+      );
+
+      expect(result).toBe(`${workflow} completed`);
+      expect(attempts).toEqual([workflow, workflow]);
+      expect(mongoose.startSession).toHaveBeenCalledTimes(2);
+      expect(firstCoordination.session).toHaveBeenCalledWith(sessions[0]);
+      expect(retriedCoordination.session).toHaveBeenCalledWith(sessions[1]);
+      expect(sessions[0]!.endSession).toHaveBeenCalledOnce();
+      expect(sessions[1]!.endSession).toHaveBeenCalledOnce();
+    }
+  );
+
+  it("bounds first-use duplicate transaction retry to one additional attempt", async () => {
+    const sessions = [0, 1].map(() => ({
+      withTransaction: vi.fn(async (operation: () => Promise<unknown>) =>
+        operation()
+      ),
+      endSession: vi.fn(async () => undefined)
+    }));
+    vi.spyOn(mongoose, "startSession")
+      .mockResolvedValueOnce(sessions[0] as never)
+      .mockResolvedValueOnce(sessions[1] as never);
+    vi.spyOn(EmailCoordinationModel, "updateOne").mockImplementation(() => ({
+      session: vi.fn(),
+      exec: vi.fn().mockRejectedValue(
+        Object.assign(new Error("persistent E11000"), { code: 11000 })
+      )
+    }) as never);
+    let attempts = 0;
+
+    await expect(
+      createMongoRepository().runInTransaction(async (transaction) => {
+        attempts += 1;
+        await transaction.coordinateClientEmail("bounded@example.com");
+      })
+    ).rejects.toMatchObject({ code: 11000 });
+
+    expect(attempts).toBe(2);
+    expect(mongoose.startSession).toHaveBeenCalledTimes(2);
+    expect(sessions[0]!.endSession).toHaveBeenCalledOnce();
+    expect(sessions[1]!.endSession).toHaveBeenCalledOnce();
+  });
+
   it("writes the normalized email coordination record in the active session", async () => {
     const session = {} as never;
     const coordinationQuery = {
