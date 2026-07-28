@@ -4,7 +4,8 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "tsx watch src/dev.ts",
+    "dev": "tsx src/development/run.ts",
+    "dev:backend": "tsx watch src/dev.ts",
     "start": "node dist/server.js",
     "seed": "tsx src/seed/run.ts",
     "migrate:client-linking": "tsx src/migrations/client-email-project-linking.ts",

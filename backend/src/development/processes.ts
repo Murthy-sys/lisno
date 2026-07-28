@@ -1,0 +1,201 @@
+import { spawn, type ChildProcess } from "node:child_process";
+import { existsSync } from "node:fs";
+import path from "node:path";
+
+import { withDevelopmentCredentials } from "../config/development-env.js";
+
+export interface DevelopmentProcessSpec {
+  label: "backend" | "ocr-worker";
+  command: string;
+  args: string[];
+  cwd: string;
+  env: Record<string, string | undefined>;
+}
+
+export interface DevelopmentProcessOptions {
+  backendRoot: string;
+  environment?: Record<string, string | undefined>;
+  nodeExecutable?: string;
+  platform?: NodeJS.Platform;
+}
+
+interface SignalSource {
+  on(event: "SIGINT" | "SIGTERM", listener: () => void): unknown;
+  off(event: "SIGINT" | "SIGTERM", listener: () => void): unknown;
+}
+
+interface RunDevelopmentProcessesOptions {
+  specs: DevelopmentProcessSpec[];
+  pathExists?: (path: string) => boolean;
+  spawnProcess?: typeof spawn;
+  signalSource?: SignalSource;
+  waitForBackend?: (spec: DevelopmentProcessSpec) => Promise<void>;
+  writeError?: (message: string) => void;
+  writeOutput?: (message: string) => void;
+}
+
+export function createDevelopmentProcessSpecs({
+  backendRoot,
+  environment = process.env,
+  nodeExecutable = process.execPath,
+  platform = process.platform
+}: DevelopmentProcessOptions): DevelopmentProcessSpec[] {
+  const workerRoot = path.resolve(backendRoot, "../ocr-worker");
+  const workerPython = path.join(
+    workerRoot,
+    ".venv",
+    platform === "win32" ? "Scripts/python.exe" : "bin/python"
+  );
+  const credentials = withDevelopmentCredentials(environment);
+  const env = {
+    ...credentials,
+    OCR_API_BASE_URL:
+      credentials.OCR_API_BASE_URL ??
+      `http://127.0.0.1:${credentials.PORT ?? "3000"}/api/v1`
+  };
+
+  return [
+    {
+      label: "backend",
+      command: nodeExecutable,
+      args: [
+        path.join(backendRoot, "node_modules/tsx/dist/cli.mjs"),
+        "watch",
+        "src/dev.ts"
+      ],
+      cwd: backendRoot,
+      env
+    },
+    {
+      label: "ocr-worker",
+      command: workerPython,
+      args: ["-m", "lisno_ocr.worker"],
+      cwd: workerRoot,
+      env
+    }
+  ];
+}
+
+export function runDevelopmentProcesses({
+  specs,
+  pathExists = existsSync,
+  spawnProcess = spawn,
+  signalSource = process,
+  waitForBackend = waitForBackendHealth,
+  writeError = (message) => process.stderr.write(message),
+  writeOutput = (message) => process.stdout.write(message)
+}: RunDevelopmentProcessesOptions): Promise<number> {
+  const worker = specs.find((spec) => spec.label === "ocr-worker");
+  if (!worker || !pathExists(worker.command)) {
+    writeError(
+      [
+        "OCR worker environment is missing.",
+        "Set it up with:",
+        "  cd ../ocr-worker",
+        "  python3 -m venv .venv",
+        "  source .venv/bin/activate",
+        '  python -m pip install -e ".[test,model]"',
+        ""
+      ].join("\n")
+    );
+    return Promise.resolve(1);
+  }
+
+  writeOutput("Starting backend and OCR worker...\n");
+
+  return new Promise((resolve) => {
+    const liveChildren = new Set<ChildProcess>();
+    let requestedExitCode: number | undefined;
+    let settled = false;
+
+    const cleanup = () => {
+      signalSource.off("SIGINT", onInterrupt);
+      signalSource.off("SIGTERM", onInterrupt);
+    };
+    const finishIfStopped = () => {
+      if (settled || liveChildren.size > 0) return;
+      settled = true;
+      cleanup();
+      resolve(requestedExitCode ?? 1);
+    };
+    const requestShutdown = (exitCode: number) => {
+      requestedExitCode ??= exitCode;
+      for (const child of liveChildren) {
+        child.kill("SIGTERM");
+      }
+      finishIfStopped();
+    };
+    const onInterrupt = () => requestShutdown(0);
+
+    signalSource.on("SIGINT", onInterrupt);
+    signalSource.on("SIGTERM", onInterrupt);
+
+    const spawnSpec = (spec: DevelopmentProcessSpec) => {
+      try {
+        const child = spawnProcess(spec.command, spec.args, {
+          cwd: spec.cwd,
+          env: spec.env,
+          stdio: "inherit"
+        });
+        liveChildren.add(child);
+        child.once("error", () => {
+          liveChildren.delete(child);
+          requestShutdown(1);
+        });
+        child.once("exit", (code) => {
+          liveChildren.delete(child);
+          if (requestedExitCode === undefined) {
+            requestShutdown(code && code > 0 ? code : 1);
+          }
+          finishIfStopped();
+        });
+        return true;
+      } catch {
+        requestShutdown(1);
+        return false;
+      }
+    };
+
+    const backend = specs.find((spec) => spec.label === "backend");
+    if (!backend || !spawnSpec(backend)) {
+      finishIfStopped();
+      return;
+    }
+
+    void waitForBackend(backend).then(
+      () => {
+        if (requestedExitCode !== undefined) return;
+        writeOutput("Backend is ready; starting OCR worker.\n");
+        if (!spawnSpec(worker)) finishIfStopped();
+      },
+      (error: unknown) => {
+        writeError(
+          `Backend did not become ready: ${
+            error instanceof Error ? error.message : String(error)
+          }\n`
+        );
+        requestShutdown(1);
+      }
+    );
+  });
+}
+
+async function waitForBackendHealth(
+  spec: DevelopmentProcessSpec
+): Promise<void> {
+  const apiBaseUrl = spec.env.OCR_API_BASE_URL;
+  if (!apiBaseUrl) throw new Error("OCR_API_BASE_URL is not configured.");
+  const healthUrl = `${apiBaseUrl.replace(/\/+$/, "")}/health`;
+
+  for (let attempt = 0; attempt < 120; attempt += 1) {
+    try {
+      const response = await fetch(healthUrl);
+      if (response.ok) return;
+    } catch {
+      // The backend watcher may still be compiling or connecting to MongoDB.
+    }
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+
+  throw new Error(`timed out waiting for ${healthUrl}`);
+}

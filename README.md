@@ -39,29 +39,25 @@ development server, production `start` command, and seed command; Vite loads
 
 ## Start the application
 
-Use the same long `OCR_WORKER_TOKEN` for the backend and worker. The value below
-is an explicitly non-secret local-development example; replace it outside local
-development. Start services in this order:
+`npm run dev` starts the backend and OCR worker together with the same
+development-only `OCR_WORKER_TOKEN`. An explicitly configured token still takes
+precedence and must be replaced with a real secret outside local development.
+Start the application with:
 
 ```bash
 # Terminal 1
 cd backend
-OCR_WORKER_TOKEN="local-development-only-ocr-worker-token-123456" npm run dev
+npm run dev
 
 # Terminal 2
-cd ocr-worker
-source .venv/bin/activate
-export OCR_WORKER_TOKEN="local-development-only-ocr-worker-token-123456"
-python3 -m lisno_ocr.worker
-
-# Terminal 3
 cd frontend && npm run dev
 ```
 
-Check `GET http://127.0.0.1:3000/api/v1/health` before starting the worker.
-PaddleOCR may download and cache model files on its first real extraction, so
-the first job can take longer. See [ocr-worker/README.md](ocr-worker/README.md)
-for worker settings, supported formats, model-cache behavior, and recovery.
+One `Ctrl+C` stops both backend processes. If the worker virtual environment is
+missing, the command prints its setup steps. PaddleOCR may download and cache
+model files on its first real extraction, so the first job can take longer. See
+[ocr-worker/README.md](ocr-worker/README.md) for worker settings, supported
+formats, model-cache behavior, and recovery.
 
 ## Client signup and project linking
 
