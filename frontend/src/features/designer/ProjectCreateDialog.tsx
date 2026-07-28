@@ -230,9 +230,17 @@ export function ProjectCreateDialog({
             error={managersQuery.isError ? "Managers are unavailable." : undefined}
             onRetry={() => void managersQuery.refetch()}
             required
+            invalid={Boolean(fieldErrors.managerId)}
+            describedBy={
+              fieldErrors.managerId ? "project-manager-error" : undefined
+            }
             inputRef={(element) => { controlRefs.current.managerId = element; }}
           />
-          {fieldErrors.managerId ? <p className="field__error">{fieldErrors.managerId}</p> : null}
+          {fieldErrors.managerId ? (
+            <p id="project-manager-error" className="field__error">
+              {fieldErrors.managerId}
+            </p>
+          ) : null}
         </div>
         <FormField
           label="Assigned designer IDs"

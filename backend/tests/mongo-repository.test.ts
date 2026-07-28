@@ -8,6 +8,7 @@ import { DesignSectionRevisionModel } from "../src/models/DesignSectionRevision.
 import { DesignSourcePageModel } from "../src/models/DesignSourcePage.js";
 import { DesignVersionModel } from "../src/models/DesignVersion.js";
 import { DesignVersionSequenceModel } from "../src/models/DesignVersionSequence.js";
+import { EmailCoordinationModel } from "../src/models/EmailCoordination.js";
 import { EvaluationModel } from "../src/models/Evaluation.js";
 import { FloorModel } from "../src/models/Floor.js";
 import { ProjectModel } from "../src/models/Project.js";
@@ -127,6 +128,53 @@ afterEach(() => {
 });
 
 describe("Mongo repository contracts", () => {
+  it("writes the normalized email coordination record in the active session", async () => {
+    const session = {} as never;
+    const coordinationQuery = {
+      session: vi.fn(),
+      exec: vi.fn().mockResolvedValue({ acknowledged: true })
+    };
+    const update = vi
+      .spyOn(EmailCoordinationModel, "updateOne")
+      .mockReturnValueOnce(coordinationQuery as never);
+
+    await createMongoRepository(session).coordinateClientEmail(
+      "  CLIENT@Example.COM "
+    );
+
+    expect(update).toHaveBeenCalledWith(
+      { _id: "client@example.com" },
+      { $inc: { revision: 1 } },
+      { upsert: true }
+    );
+    expect(coordinationQuery.session).toHaveBeenCalledWith(session);
+  });
+
+  it("uses the active session for transactional account reads", async () => {
+    const session = {} as never;
+    const byIdQuery = {
+      session: vi.fn(),
+      lean: () => ({ exec: vi.fn().mockResolvedValue(null) })
+    };
+    const byEmailQuery = {
+      session: vi.fn(),
+      lean: () => ({ exec: vi.fn().mockResolvedValue(null) })
+    };
+    vi.spyOn(UserModel, "findById").mockReturnValueOnce({
+      select: () => byIdQuery
+    } as never);
+    vi.spyOn(UserModel, "findOne").mockReturnValueOnce({
+      select: () => byEmailQuery
+    } as never);
+    const repository = createMongoRepository(session);
+
+    await repository.findUserById("user-client");
+    await repository.findUserByEmail("client@example.com");
+
+    expect(byIdQuery.session).toHaveBeenCalledWith(session);
+    expect(byEmailQuery.session).toHaveBeenCalledWith(session);
+  });
+
   it("uses the normalized account email for Mongo user lookups", async () => {
     const findOne = vi.spyOn(UserModel, "findOne").mockReturnValueOnce({
       select: () => ({ lean: () => ({ exec: vi.fn().mockResolvedValue(null) }) })
@@ -227,6 +275,19 @@ describe("Mongo repository contracts", () => {
     expect(find).toHaveBeenCalledWith(
       expect.objectContaining({ active: true, role: "design_manager" })
     );
+  });
+
+  it("filters a design manager's Mongo projects only by accountable manager ID", async () => {
+    const find = vi.spyOn(ProjectModel, "find").mockReturnValueOnce({
+      sort: () => ({ lean: () => ({ exec: vi.fn().mockResolvedValue([]) }) })
+    } as never);
+    const manager = demoSeedData.users.find(
+      (user) => user.id === "user-manager-aarav"
+    )!;
+
+    await createMongoRepository().listProjectsForUser(manager);
+
+    expect(find).toHaveBeenCalledWith({ managerId: "user-manager-aarav" });
   });
 
   it("rejects a stale extraction completion with the current-lease filter", async () => {

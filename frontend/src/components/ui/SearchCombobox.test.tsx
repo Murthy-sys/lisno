@@ -118,6 +118,41 @@ describe("SearchCombobox", () => {
     expect(input).toHaveFocus();
   });
 
+  it("keeps the active option by stable key when results reorder at the same length", async () => {
+    const user = userEvent.setup();
+    const { rerender } = render(<ManagerCombobox />);
+    const input = screen.getByRole("combobox", { name: "Project manager" });
+    await user.click(input);
+    await user.keyboard("{ArrowDown}");
+    expect(input).toHaveAttribute(
+      "aria-activedescendant",
+      expect.stringContaining("manager-aarav")
+    );
+
+    rerender(<ManagerCombobox items={[...managers].reverse()} />);
+
+    expect(input).toHaveAttribute(
+      "aria-activedescendant",
+      expect.stringContaining("manager-aarav")
+    );
+  });
+
+  it("clears the selected option when editable text diverges from its label", async () => {
+    const user = userEvent.setup();
+    render(<ManagerCombobox />);
+    const input = screen.getByRole("combobox", { name: "Project manager" });
+    await user.click(input);
+    await user.keyboard("{ArrowDown}{Enter}");
+    expect(input).toHaveValue("Aarav Mehta");
+
+    await user.type(input, "x");
+    await user.click(input);
+
+    expect(
+      screen.getByRole("option", { name: /Aarav Mehta/i })
+    ).toHaveAttribute("aria-selected", "false");
+  });
+
   it("supports Escape and exposes loading, empty, and retryable error states", async () => {
     const user = userEvent.setup();
     const onRetry = vi.fn();

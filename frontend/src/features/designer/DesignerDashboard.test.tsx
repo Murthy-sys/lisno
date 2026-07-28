@@ -325,12 +325,16 @@ function installDashboardApi(options?: {
     if (url === "/api/v1/projects" && init?.method === "POST") {
       createBody = JSON.parse(String(init.body));
       if (options?.createFieldError) {
+        const message =
+          options.createFieldError === "managerId"
+            ? "Select an active design manager."
+            : "This email belongs to an internal account.";
         return Response.json(
           {
             error: {
               code: "INVALID_PROJECT",
               message: "Client email is unavailable.",
-              fields: { [options.createFieldError]: "This email belongs to an internal account." }
+              fields: { [options.createFieldError]: message }
             }
           },
           { status: 400 }
@@ -455,6 +459,16 @@ describe("DesignerDashboard", () => {
     fireEvent.change(within(dialog).getByLabelText("Planned end"), {
       target: { value: "2026-10-01T17:00" }
     });
+
+    await user.type(manager, "x");
+    await user.click(within(dialog).getByRole("button", { name: "Create project" }));
+    expect(api.getCreateBody()).toBeUndefined();
+    expect(within(dialog).getByRole("alert")).toHaveTextContent(
+      "Complete every required project, client, team, and schedule field."
+    );
+    await user.clear(manager);
+    await waitFor(() => expect(api.getManagerRequests()).toBeGreaterThan(1));
+    await user.click(within(dialog).getByRole("option", { name: /Meera Bose/i }));
     await user.click(within(dialog).getByRole("button", { name: "Create project" }));
 
     await waitFor(() =>
@@ -468,15 +482,15 @@ describe("DesignerDashboard", () => {
       clientEmail: "rhea@example.com",
       clientMobile: "+91 90000 00000",
       clientAddress: "12 Aurora Lane, Bengaluru",
-      managerId: "user-manager-aarav",
+      managerId: "user-manager-meera",
       assignedDesignerIds: [designer.id, "user-designer-kabir"],
       location: "Chennai"
     });
   });
 
-  it("keeps manager requests inside the open dialog, debounces search, and focuses API field errors", async () => {
+  it("keeps manager requests inside the open dialog and connects manager API field errors", async () => {
     tokenStorage.set("valid-token");
-    const api = installDashboardApi({ empty: true, createFieldError: "clientEmail" });
+    const api = installDashboardApi({ empty: true, createFieldError: "managerId" });
     const user = userEvent.setup();
     renderApp(["/designer"]);
     await screen.findByText("No projects yet");
@@ -499,8 +513,16 @@ describe("DesignerDashboard", () => {
     fireEvent.change(within(dialog).getByLabelText("Planned end"), { target: { value: "2026-10-01T17:00" } });
     await user.click(within(dialog).getByRole("button", { name: "Create project" }));
 
-    expect(await within(dialog).findByRole("alert")).toHaveTextContent("This email belongs to an internal account.");
-    expect(within(dialog).getByLabelText("Client email")).toHaveFocus();
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+      "Select an active design manager."
+    );
+    expect(manager).toHaveFocus();
+    expect(manager).toHaveAttribute("aria-invalid", "true");
+    const describedBy = manager.getAttribute("aria-describedby");
+    expect(describedBy).toBeTruthy();
+    expect(document.getElementById(describedBy!)).toHaveTextContent(
+      "Select an active design manager."
+    );
   });
 
   it("bounds KPI task reads and loads another page only on request", async () => {

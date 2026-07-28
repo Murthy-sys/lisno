@@ -50,6 +50,7 @@ interface MemorySnapshot {
 
 const snapshotReaders = new WeakMap<AppRepository, () => MemorySnapshot>();
 const mutationMethods = new Set<keyof AppRepository>([
+  "coordinateClientEmail",
   "createProject",
   "createUser",
   "linkUnclaimedProjectsToClient",
@@ -154,6 +155,10 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
       }
     },
 
+    async coordinateClientEmail(emailNormalized) {
+      normalizeEmail(emailNormalized);
+    },
+
     async findUserById(id) {
       return copyOrNull(state.users.find((user) => user.id === id));
     },
@@ -205,18 +210,6 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
     },
 
     async listProjectsForUser(user) {
-      const directReportIds =
-        user.role === "design_manager"
-          ? new Set(
-              state.users
-                .filter(
-                  (candidate) =>
-                    candidate.role === "designer" && candidate.managerId === user.id
-                )
-                .map((candidate) => candidate.id)
-            )
-          : new Set<string>();
-
       const projects = state.projects.filter((project) => {
         if (user.role === "design_head") return true;
         if (user.role === "client") return project.clientId === user.id;
@@ -226,10 +219,7 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
             project.assignedDesignerIds.includes(user.id)
           );
         }
-        return (
-          project.managerId === user.id ||
-          project.assignedDesignerIds.some((designerId) => directReportIds.has(designerId))
-        );
+        return project.managerId === user.id;
       });
 
       return clone([...projects].sort(byNameThenId));

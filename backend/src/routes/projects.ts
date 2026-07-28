@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 
+import { emailSchema } from "../domain/email.js";
 import { authenticate, authorizeRoles } from "../middleware/auth.js";
 import {
   paginatedEnvelope,
@@ -16,7 +17,7 @@ const projectSchema = z
   .object({
     name: z.string().trim().min(1),
     clientName: z.string().trim().min(1),
-    clientEmail: z.string().trim().min(1),
+    clientEmail: emailSchema,
     clientMobile: z.string().trim().min(1),
     clientAddress: z.string().trim().min(1),
     assignedDesignerIds: z.array(z.string().trim().min(1)).min(1),

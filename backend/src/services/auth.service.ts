@@ -130,6 +130,7 @@ export function createAuthService(
       let user: UserRecord;
       try {
         user = await repository.runInTransaction(async (transaction) => {
+          await transaction.coordinateClientEmail(emailNormalized);
           if (await transaction.findUserByEmail(emailNormalized)) {
             throw new AccountExistsError();
           }

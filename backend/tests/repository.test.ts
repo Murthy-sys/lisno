@@ -558,8 +558,7 @@ describe("memory repository", () => {
     await expect(repository.listProjectsForUser(manager!)).resolves.toMatchObject([
       { id: "project-aurora-studio" },
       { id: "project-aurora-villa" },
-      { id: "project-unclaimed-aurora-email" },
-      { id: "project-celeste-office" }
+      { id: "project-unclaimed-aurora-email" }
     ]);
     await expect(repository.listProjectsForUser(head!)).resolves.toHaveLength(4);
   });

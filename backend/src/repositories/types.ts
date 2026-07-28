@@ -448,6 +448,7 @@ export interface AppRepository {
   runInTransaction<T>(
     operation: (repository: AppRepository) => Promise<T>
   ): Promise<T>;
+  coordinateClientEmail(emailNormalized: string): Promise<void>;
   findUserById(id: string): Promise<UserRecord | null>;
   findUserByEmail(email: string): Promise<UserRecord | null>;
   createUser(input: NewUser): Promise<UserRecord>;

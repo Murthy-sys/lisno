@@ -197,15 +197,6 @@ export function createProjectService(
     async create(actor, input) {
       if (actor.role !== "designer") forbidden();
       const designer = await requireActor(repository, actor);
-      const existingClient = await repository.findUserByEmail(input.clientEmail);
-      if (existingClient && existingClient.role !== "client") {
-        throw new ApiError(
-          400,
-          "INVALID_PROJECT",
-          "Client email is unavailable.",
-          { clientEmail: "This email belongs to an internal account." }
-        );
-      }
       const manager = await repository.findUserById(input.managerId);
       if (!manager || !manager.active || manager.role !== "design_manager") {
         throw new ApiError(
@@ -244,28 +235,39 @@ export function createProjectService(
         );
       }
       const timestamp = clock().toISOString();
-      const projectInput: ProjectRecord = {
-        id: `project-${randomUUID()}`,
-        name: input.name,
-        clientId: existingClient?.id ?? null,
-        clientName: input.clientName,
-        clientEmail: input.clientEmail,
-        clientEmailNormalized: normalizeEmail(input.clientEmail),
-        clientMobile: input.clientMobile,
-        clientAddress: input.clientAddress,
-        initiatingDesignerId: actor.id,
-        assignedDesignerIds,
-        managerId: manager.id,
-        status: "planning",
-        location: input.location,
-        plannedStartAt: input.plannedStartAt,
-        plannedEndAt: input.plannedEndAt,
-        actualStartAt: null,
-        actualEndAt: null,
-        createdAt: timestamp,
-        updatedAt: timestamp
-      };
+      const emailNormalized = normalizeEmail(input.clientEmail);
       return repository.runInTransaction(async (transaction) => {
+        await transaction.coordinateClientEmail(emailNormalized);
+        const existingClient = await transaction.findUserByEmail(emailNormalized);
+        if (existingClient && existingClient.role !== "client") {
+          throw new ApiError(
+            400,
+            "INVALID_PROJECT",
+            "Client email is unavailable.",
+            { clientEmail: "This email belongs to an internal account." }
+          );
+        }
+        const projectInput: ProjectRecord = {
+          id: `project-${randomUUID()}`,
+          name: input.name,
+          clientId: existingClient?.id ?? null,
+          clientName: input.clientName,
+          clientEmail: input.clientEmail,
+          clientEmailNormalized: emailNormalized,
+          clientMobile: input.clientMobile,
+          clientAddress: input.clientAddress,
+          initiatingDesignerId: actor.id,
+          assignedDesignerIds,
+          managerId: manager.id,
+          status: "planning",
+          location: input.location,
+          plannedStartAt: input.plannedStartAt,
+          plannedEndAt: input.plannedEndAt,
+          actualStartAt: null,
+          actualEndAt: null,
+          createdAt: timestamp,
+          updatedAt: timestamp
+        };
         const project = await transaction.createProject(projectInput);
         await audit.append(
           {

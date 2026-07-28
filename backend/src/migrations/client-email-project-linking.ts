@@ -3,7 +3,7 @@ import "dotenv/config";
 import { pathToFileURL } from "node:url";
 import mongoose from "mongoose";
 import { loadEnvironment } from "../config/env.js";
-import { normalizeEmail } from "../domain/email.js";
+import { normalizeEmail, normalizedEmailSchema } from "../domain/email.js";
 import { ProjectModel } from "../models/Project.js";
 import { UserModel } from "../models/User.js";
 
@@ -41,13 +41,24 @@ export async function migrateClientEmailProjectLinking(
   ]);
   const clientsById = new Map<string, LegacyUser>();
   const usersByNormalizedEmail = new Map<string, LegacyUser[]>();
+  const invalidUserEmails: string[] = [];
   for (const user of users) {
     const id = String(user._id);
     clientsById.set(id, user);
-    const emailNormalized = normalizeEmail(user.email);
+    const parsedEmail = normalizedEmailSchema.safeParse(user.email);
+    if (!parsedEmail.success) {
+      invalidUserEmails.push(`${id} (${JSON.stringify(user.email)})`);
+      continue;
+    }
+    const emailNormalized = parsedEmail.data;
     const grouped = usersByNormalizedEmail.get(emailNormalized) ?? [];
     grouped.push(user);
     usersByNormalizedEmail.set(emailNormalized, grouped);
+  }
+  if (invalidUserEmails.length > 0) {
+    throw new Error(
+      `Cannot migrate client linking: invalid user emails: ${invalidUserEmails.join(", ")}`
+    );
   }
   const duplicateEmails = [...usersByNormalizedEmail.entries()]
     .filter(([, grouped]) => grouped.length > 1)
@@ -120,23 +131,43 @@ function missingSnapshotFields(
   );
 }
 
-async function main() {
-  const dryRun = process.argv.includes("--dry-run");
-  const env = loadEnvironment();
-  await mongoose.connect(env.MONGODB_URI);
+export interface ClientLinkingMigrationCommandDependencies {
+  argv?: string[];
+  loadEnvironment?: () => { MONGODB_URI: string };
+  connect?: (
+    uri: string,
+    options: { autoIndex: false }
+  ) => Promise<unknown>;
+  disconnect?: () => Promise<unknown>;
+  writeOutput?: (output: string) => void;
+}
+
+export async function runClientEmailProjectLinkingMigrationCommand(
+  dependencies: ClientLinkingMigrationCommandDependencies = {}
+) {
+  const dryRun = (dependencies.argv ?? process.argv.slice(2)).includes("--dry-run");
+  const env = (dependencies.loadEnvironment ?? loadEnvironment)();
+  const connect =
+    dependencies.connect ??
+    ((uri: string, options: { autoIndex: false }) =>
+      mongoose.connect(uri, options));
+  const disconnect = dependencies.disconnect ?? (() => mongoose.disconnect());
+  const writeOutput =
+    dependencies.writeOutput ?? ((output: string) => process.stdout.write(output));
+  await connect(env.MONGODB_URI, { autoIndex: false });
   try {
     const result = await migrateClientEmailProjectLinking({ dryRun });
-    process.stdout.write(
+    writeOutput(
       `${dryRun ? "Dry run: " : ""}${result.users} users, ${result.projects} projects, ${result.duplicateEmails.length} duplicate normalized emails.\n`
     );
   } finally {
-    await mongoose.disconnect();
+    await disconnect();
   }
 }
 
 const entrypoint = process.argv[1] ? pathToFileURL(process.argv[1]).href : "";
 if (import.meta.url === entrypoint) {
-  main().catch((error: unknown) => {
+  runClientEmailProjectLinkingMigrationCommand().catch((error: unknown) => {
     const message = error instanceof Error ? error.stack ?? error.message : String(error);
     process.stderr.write(`${message}\n`);
     process.exitCode = 1;

@@ -9,6 +9,7 @@ import { DesignSectionRevisionModel } from "../models/DesignSectionRevision.js";
 import { DesignSourcePageModel } from "../models/DesignSourcePage.js";
 import { DesignVersionModel } from "../models/DesignVersion.js";
 import { DesignVersionSequenceModel } from "../models/DesignVersionSequence.js";
+import { EmailCoordinationModel } from "../models/EmailCoordination.js";
 import { EvaluationModel } from "../models/Evaluation.js";
 import { FloorModel } from "../models/Floor.js";
 import { ProjectModel } from "../models/Project.js";
@@ -43,7 +44,7 @@ import {
 type PlainDocument = Record<string, any>;
 
 export function createMongoRepository(session?: ClientSession): AppRepository {
-  const projectFilterForUser = async (user: UserRecord) => {
+  const projectFilterForUser = (user: UserRecord) => {
     let filter: PlainDocument = {};
     if (user.role === "client") filter = { clientId: user.id };
     if (user.role === "designer") {
@@ -55,18 +56,7 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
       };
     }
     if (user.role === "design_manager") {
-      const directReportQuery = UserModel.find({
-        managerId: user.id,
-        role: "designer"
-      });
-      if (session) directReportQuery.session(session);
-      const directReports = await directReportQuery.distinct("_id").exec();
-      filter = {
-        $or: [
-          { managerId: user.id },
-          { assignedDesignerIds: { $in: directReports } }
-        ]
-      };
+      filter = { managerId: user.id };
     }
     return filter;
   };
@@ -91,16 +81,29 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
       }
     },
 
+    async coordinateClientEmail(emailNormalized) {
+      const query = EmailCoordinationModel.updateOne(
+        { _id: normalizeEmail(emailNormalized) },
+        { $inc: { revision: 1 } },
+        { upsert: true }
+      );
+      if (session) query.session(session);
+      await query.exec();
+    },
+
     async findUserById(id) {
-      const document = await UserModel.findById(id).select("+passwordHash").lean().exec();
+      const query = UserModel.findById(id).select("+passwordHash");
+      if (session) query.session(session);
+      const document = await query.lean().exec();
       return document ? mapUser(document) : null;
     },
 
     async findUserByEmail(email) {
-      const document = await UserModel.findOne({ emailNormalized: normalizeEmail(email) })
-        .select("+passwordHash")
-        .lean()
-        .exec();
+      const query = UserModel.findOne({
+        emailNormalized: normalizeEmail(email)
+      }).select("+passwordHash");
+      if (session) query.session(session);
+      const document = await query.lean().exec();
       return document ? mapUser(document) : null;
     },
 
@@ -149,7 +152,7 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
     },
 
     async listProjectsForUser(user) {
-      const filter = await projectFilterForUser(user);
+      const filter = projectFilterForUser(user);
       const documents = await ProjectModel.find(filter)
         .sort({ name: 1, _id: 1 })
         .lean()
@@ -171,7 +174,7 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
     },
 
     async pageProjectsForUser(user, pagination) {
-      const filter = await projectFilterForUser(user);
+      const filter = projectFilterForUser(user);
       const [documents, total] = await Promise.all([
         ProjectModel.find(filter)
           .sort({ name: 1, _id: 1 })

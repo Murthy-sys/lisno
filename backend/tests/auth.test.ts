@@ -68,6 +68,35 @@ function failSignupAuditWrites(base: AppRepository): AppRepository {
   });
 }
 
+function pauseUncoordinatedEmailLookup(base: AppRepository, email: string) {
+  let releaseLookup!: () => void;
+  let observedLookup!: () => void;
+  const released = new Promise<void>((resolve) => {
+    releaseLookup = resolve;
+  });
+  const observed = new Promise<void>((resolve) => {
+    observedLookup = resolve;
+  });
+  let armed = true;
+  const repository = new Proxy(base, {
+    get(target, property, receiver) {
+      if (property !== "findUserByEmail") {
+        return Reflect.get(target, property, receiver);
+      }
+      return async (candidate: string) => {
+        const user = await target.findUserByEmail(candidate);
+        if (armed && !user && candidate.trim().toLowerCase() === email) {
+          armed = false;
+          observedLookup();
+          await released;
+        }
+        return user;
+      };
+    }
+  });
+  return { repository, observed, releaseLookup };
+}
+
 function createRateLimitApp(input: {
   windowMs: number;
   maxAttempts: number;
@@ -451,6 +480,66 @@ describe("client signup API", () => {
 
     expect([first.status, second.status].sort()).toEqual([201, 409]);
     expect((await repository.listUsers()).filter((user) => user.emailNormalized === "duplicate@example.com")).toHaveLength(1);
+  });
+
+  it("links a project whose client lookup is forced to interleave with signup", async () => {
+    const base = createMemoryRepository(structuredClone(demoSeedData));
+    const interleaving = pauseUncoordinatedEmailLookup(
+      base,
+      "interleaved@example.com"
+    );
+    const app = createApp({
+      repository: interleaving.repository,
+      auth: { jwtSecret: JWT_SECRET, jwtExpiresInSeconds: 900 }
+    });
+    const projectRequest = Promise.resolve(
+      request(app)
+        .post("/api/v1/projects")
+        .set(
+          "Authorization",
+          `Bearer ${jwt.sign(
+            { id: "user-designer-ananya", role: "designer" },
+            JWT_SECRET,
+            { expiresIn: 900 }
+          )}`
+        )
+        .send({
+          name: "Interleaved project",
+          clientName: "Interleaved Client",
+          clientEmail: " Interleaved@Example.COM ",
+          clientMobile: "+91 90000 00000",
+          clientAddress: "12 Interleave Road",
+          assignedDesignerIds: ["user-designer-ananya"],
+          managerId: "user-manager-aarav",
+          location: "Bengaluru",
+          plannedStartAt: "2026-08-01T09:00:00.000Z",
+          plannedEndAt: "2026-10-01T17:00:00.000Z"
+        })
+    );
+    const firstOperation = await Promise.race([
+      interleaving.observed.then(() => "lookup" as const),
+      projectRequest.then(() => "project" as const)
+    ]);
+
+    let signupResponse;
+    if (firstOperation === "lookup") {
+      signupResponse = await request(app)
+        .post("/api/v1/auth/client-signup")
+        .send(signupBody({ email: "interleaved@example.com" }));
+      interleaving.releaseLookup();
+    } else {
+      signupResponse = await request(app)
+        .post("/api/v1/auth/client-signup")
+        .send(signupBody({ email: "interleaved@example.com" }));
+    }
+    const projectResponse = await projectRequest;
+
+    expect(projectResponse.status).toBe(201);
+    expect(signupResponse.status).toBe(201);
+    expect(await base.findProjectById(projectResponse.body.data.id)).toMatchObject({
+      clientId: signupResponse.body.data.user.id,
+      clientEmailNormalized: "interleaved@example.com"
+    });
   });
 
   it("throttles login and signup attempts until the configured fixed window expires", async () => {

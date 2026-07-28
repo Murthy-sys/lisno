@@ -134,4 +134,34 @@ describe("active manager directory", () => {
 
     expect(response.status).toBe(400);
   });
+
+  it("applies manager directory defaults and coerces numeric pagination", async () => {
+    const app = setup();
+    const defaults = await request(app)
+      .get("/api/v1/organization/managers")
+      .set("Authorization", bearer(users.designer))
+      .expect(200);
+    const coerced = await request(app)
+      .get("/api/v1/organization/managers?limit=1&offset=1")
+      .set("Authorization", bearer(users.designer))
+      .expect(200);
+
+    expect(defaults.body.data.pagination).toMatchObject({ limit: 20, offset: 0 });
+    expect(coerced.body.data.pagination).toMatchObject({ limit: 1, offset: 1 });
+  });
+
+  it.each([
+    ["unknown query keys", "search=&unknown=true", "unknown"],
+    ["a negative offset", "offset=-1", "offset"]
+  ])("rejects %s", async (_label, query, field) => {
+    const response = await request(setup())
+      .get(`/api/v1/organization/managers?${query}`)
+      .set("Authorization", bearer(users.designer));
+
+    expect(response.status).toBe(400);
+    expect(response.body.error).toMatchObject({
+      code: "VALIDATION_ERROR",
+      fields: { [field]: expect.any(String) }
+    });
+  });
 });

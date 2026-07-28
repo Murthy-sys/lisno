@@ -1,6 +1,7 @@
 import { Router, type RequestHandler } from "express";
 import { z } from "zod";
 
+import { normalizedEmailSchema } from "../domain/email.js";
 import { authenticate } from "../middleware/auth.js";
 import { ApiError } from "../middleware/errors.js";
 import { validateBody } from "../middleware/validate.js";
@@ -11,22 +12,14 @@ import {
 } from "../services/auth.service.js";
 
 const loginCredentialsSchema = z.object({
-  email: z
-    .string()
-    .trim()
-    .email("Enter a valid email address.")
-    .transform((email) => email.toLowerCase()),
+  email: normalizedEmailSchema,
   password: z.string().min(1, "Password is required.")
 });
 
 const clientSignupSchema = z
   .object({
     name: z.string().trim().min(1, "Name is required."),
-    email: z
-      .string()
-      .trim()
-      .email("Enter a valid email address.")
-      .transform((email) => email.toLowerCase()),
+    email: normalizedEmailSchema,
     mobile: z.string().trim().min(1, "Mobile is required."),
     address: z.string().trim().min(1, "Address is required."),
     password: z

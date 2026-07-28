@@ -92,6 +92,29 @@ function failAuditWrites(base: AppRepository): AppRepository {
 }
 
 describe("project workflows", () => {
+  it("does not grant a reporting manager project, design, or activity access to a cross-team assignment", async () => {
+    const seed = structuredClone(demoSeedData);
+    seed.projects.find(
+      (project) => project.id === "project-aurora-villa"
+    )!.managerId = "user-manager-meera";
+    const { app } = setup(seed);
+
+    for (const path of [
+      "/api/v1/projects/project-aurora-villa",
+      "/api/v1/projects/project-aurora-villa/design-versions",
+      "/api/v1/projects/project-aurora-villa/activity"
+    ]) {
+      await request(app)
+        .get(path)
+        .set("Authorization", bearer(users.managerAarav))
+        .expect(404);
+      await request(app)
+        .get(path)
+        .set("Authorization", bearer(users.managerMeera))
+        .expect(200);
+    }
+  });
+
   it("paginates projects with validated defaults, limits, totals, and unknown fields", async () => {
     const { app } = setup();
     const page = await request(app)
@@ -219,6 +242,24 @@ describe("project workflows", () => {
       clientId: null,
       clientEmail: "new-contact@example.com",
       clientEmailNormalized: "new-contact@example.com"
+    });
+  });
+
+  it("rejects an invalid project client email with a field error", async () => {
+    const { app } = setup();
+
+    const response = await request(app)
+      .post("/api/v1/projects")
+      .set("Authorization", bearer(users.ananya))
+      .send(projectInput({ clientEmail: "not-an-email" }));
+
+    expect(response.status).toBe(400);
+    expect(response.body).toEqual({
+      error: {
+        code: "VALIDATION_ERROR",
+        message: "Request validation failed.",
+        fields: { clientEmail: "Enter a valid email address." }
+      }
     });
   });
 
