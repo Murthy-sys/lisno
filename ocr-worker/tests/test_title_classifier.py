@@ -118,6 +118,26 @@ def test_preserves_configured_single_titles_containing_ampersands(
     ) == (DrawingTitle(line.box, label, 0.99),)
 
 
+def test_complete_ampersand_title_does_not_seed_segmented_overview():
+    lines = [
+        OcrLine(
+            (80, 100, 310, 132),
+            "Front Elevation & Living Room",
+            0.96,
+        ),
+        OcrLine((305, 100, 570, 132), "CEILING PLAN", 0.94),
+    ]
+
+    assert classify_drawing_titles(lines, DEFAULT_PLAN_TYPES) == (
+        DrawingTitle(
+            (80, 100, 310, 132),
+            "Front Elevation & Living Room",
+            0.96,
+        ),
+        DrawingTitle((305, 100, 570, 132), "CEILING PLAN", 0.94),
+    )
+
+
 @pytest.mark.parametrize(
     "continuation_box",
     [

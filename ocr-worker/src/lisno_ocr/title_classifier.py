@@ -410,7 +410,7 @@ def _segmented_overview_indices(
     ampersand_indices = tuple(
         index
         for index, text in enumerate(segment_texts)
-        if "&" in text
+        if _is_incomplete_ampersand_segment(text)
     )
     if not ampersand_indices:
         return frozenset()
@@ -507,6 +507,11 @@ def _segmented_overview_indices(
                     )
                 )
     return frozenset(excluded)
+
+
+def _is_incomplete_ampersand_segment(text: str) -> bool:
+    stripped = text.strip()
+    return stripped.startswith("&") or stripped.endswith("&")
 
 
 def _overview_spatial_cells(
