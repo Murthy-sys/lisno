@@ -63,19 +63,70 @@ describe("client email project linking migration", () => {
 
     await migrateClientEmailProjectLinking();
 
-    expect(updateProjects).toHaveBeenCalledWith([
-      expect.objectContaining({
-        updateOne: expect.objectContaining({
-          filter: { _id: "project-linked", clientId: "client-1" },
-          update: expect.objectContaining({
-            $set: expect.objectContaining({
-              clientId: "client-1",
-              clientMobile: "",
-              clientAddress: ""
+    expect(updateProjects).toHaveBeenCalledWith(
+      [
+        expect.objectContaining({
+          updateOne: expect.objectContaining({
+            filter: { _id: "project-linked", clientId: "client-1" },
+            update: expect.objectContaining({
+              $set: expect.objectContaining({
+                clientMobile: "",
+                clientAddress: ""
+              })
             })
           })
         })
-      })
-    ]);
+      ],
+      { timestamps: false }
+    );
+  });
+
+  it("does not rewrite migrated records or populated client snapshots on a second run", async () => {
+    const firstPassUser = {
+      _id: "client-1",
+      email: "Client@Example.COM",
+      name: "Current Client Name",
+      mobile: "9999999999",
+      address: "Current client address"
+    };
+    const firstPassProject = { _id: "project-linked", clientId: "client-1" };
+    const migratedUser = {
+      ...firstPassUser,
+      emailNormalized: "client@example.com",
+      updatedAt: new Date("2026-07-28T09:00:00.000Z")
+    };
+    const migratedProject = {
+      _id: "project-linked",
+      clientId: "client-1",
+      clientName: "Original snapshot name",
+      clientEmail: "original.snapshot@example.com",
+      clientEmailNormalized: "original.snapshot@example.com",
+      clientMobile: "1111111111",
+      clientAddress: "Original snapshot address",
+      updatedAt: new Date("2026-07-28T09:00:00.000Z")
+    };
+    const preservedProject = structuredClone(migratedProject);
+    vi.spyOn(UserModel, "find")
+      .mockReturnValueOnce(query([firstPassUser]) as never)
+      .mockReturnValueOnce(query([migratedUser]) as never);
+    vi.spyOn(ProjectModel, "find")
+      .mockReturnValueOnce(query([firstPassProject]) as never)
+      .mockReturnValueOnce(query([migratedProject]) as never);
+    const updateUsers = vi.spyOn(UserModel, "bulkWrite").mockResolvedValue({} as never);
+    const updateProjects = vi.spyOn(ProjectModel, "bulkWrite").mockResolvedValue({} as never);
+    vi.spyOn(UserModel, "syncIndexes").mockResolvedValue([] as never);
+    vi.spyOn(ProjectModel, "syncIndexes").mockResolvedValue([] as never);
+
+    await migrateClientEmailProjectLinking();
+    expect(updateUsers).toHaveBeenCalledOnce();
+    expect(updateProjects).toHaveBeenCalledOnce();
+
+    updateUsers.mockClear();
+    updateProjects.mockClear();
+    await migrateClientEmailProjectLinking();
+
+    expect(updateUsers).not.toHaveBeenCalled();
+    expect(updateProjects).not.toHaveBeenCalled();
+    expect(migratedProject).toEqual(preservedProject);
   });
 });

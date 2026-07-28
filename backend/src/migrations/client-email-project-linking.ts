@@ -11,6 +11,7 @@ type LegacyUser = {
   _id: unknown;
   name?: string;
   email: string;
+  emailNormalized?: string;
   mobile?: string | null;
   address?: string | null;
 };
@@ -60,42 +61,63 @@ export async function migrateClientEmailProjectLinking(
     );
   }
 
-  const userWrites = users.map((user) => ({
-    updateOne: {
-      filter: { _id: user._id },
-      update: {
-        $set: {
-          emailNormalized: normalizeEmail(user.email),
-          mobile: user.mobile ?? null,
-          address: user.address ?? null
-        }
-      }
-    }
-  }));
-  const projectWrites = projects.map((project) => {
-    const client = project.clientId ? clientsById.get(String(project.clientId)) : undefined;
-    const clientEmail = client?.email ?? project.clientEmail ?? "";
-    return {
-      updateOne: {
-        filter: { _id: project._id, clientId: project.clientId ?? null },
-        update: {
-          $set: {
-            clientId: project.clientId ?? null,
-            clientName: client?.name ?? project.clientName ?? "",
-            clientEmail,
-            clientEmailNormalized:
-              client ? normalizeEmail(client.email) : project.clientEmailNormalized ?? normalizeEmail(clientEmail),
-            clientMobile: client?.mobile ?? project.clientMobile ?? "",
-            clientAddress: client?.address ?? project.clientAddress ?? ""
-          }
-        }
-      }
-    };
+  const userWrites = users.flatMap((user) => {
+    const changes = changedFields(user, {
+      emailNormalized: normalizeEmail(user.email),
+      mobile: user.mobile ?? null,
+      address: user.address ?? null
+    });
+    return Object.keys(changes).length === 0
+      ? []
+      : [{ updateOne: { filter: { _id: user._id }, update: { $set: changes } } }];
   });
-  if (userWrites.length > 0) await UserModel.bulkWrite(userWrites);
-  if (projectWrites.length > 0) await ProjectModel.bulkWrite(projectWrites);
+  const projectWrites = projects.flatMap((project) => {
+    const client = project.clientId ? clientsById.get(String(project.clientId)) : undefined;
+    const snapshotEmail = project.clientEmail ?? client?.email ?? "";
+    const changes = missingSnapshotFields(project, {
+      clientName: client?.name ?? "",
+      clientEmail: snapshotEmail,
+      clientEmailNormalized: normalizeEmail(snapshotEmail),
+      clientMobile: client?.mobile ?? "",
+      clientAddress: client?.address ?? ""
+    });
+    return Object.keys(changes).length === 0
+      ? []
+      : [
+          {
+            updateOne: {
+              filter: { _id: project._id, clientId: project.clientId ?? null },
+              update: { $set: changes }
+            }
+          }
+        ];
+  });
+  if (userWrites.length > 0) {
+    await UserModel.bulkWrite(userWrites, { timestamps: false });
+  }
+  if (projectWrites.length > 0) {
+    await ProjectModel.bulkWrite(projectWrites, { timestamps: false });
+  }
   await Promise.all([UserModel.syncIndexes(), ProjectModel.syncIndexes()]);
   return result;
+}
+
+function changedFields(
+  current: Record<string, unknown>,
+  expected: Record<string, unknown>
+): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(expected).filter(([field, value]) => current[field] !== value)
+  );
+}
+
+function missingSnapshotFields(
+  project: LegacyProject,
+  expected: Record<string, string>
+): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(expected).filter(([field]) => project[field as keyof LegacyProject] == null)
+  );
 }
 
 async function main() {
