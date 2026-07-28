@@ -1,10 +1,13 @@
-import { screen, waitFor, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { useEffect, useState } from "react";
+import { QueryClient, QueryClientProvider, useQueryClient } from "@tanstack/react-query";
 import { describe, expect, it, vi } from "vitest";
 
 import { tokenStorage } from "../../api/client";
 import type { DesignSectionReviewData } from "../../api/types";
 import { renderWithQuery } from "../../test/render";
+import { clientKeys } from "./clientApi";
 import { DesignSectionReview } from "./DesignSectionReview";
 
 const revision = {
@@ -105,6 +108,23 @@ function getProgressStat(progress: HTMLElement, label: string) {
   return stat;
 }
 
+function ReviewDataHarness({ data }: { data: DesignSectionReviewData }) {
+  const [queryClient] = useState(() => new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } }
+  }));
+
+  return <QueryClientProvider client={queryClient}><CachedReview data={data} /></QueryClientProvider>;
+}
+
+function CachedReview({ data }: { data: DesignSectionReviewData }) {
+  const queryClient = useQueryClient();
+  useEffect(() => {
+    queryClient.setQueryData(clientKeys.designSections("project-1"), data);
+  }, [data, queryClient]);
+
+  return <DesignSectionReview projectId="project-1" mode="client" />;
+}
+
 describe("DesignSectionReview", () => {
   it("shows submitted revisions with a project-level source modal, history, and semantic progress", async () => {
     tokenStorage.set("client-token");
@@ -131,10 +151,14 @@ describe("DesignSectionReview", () => {
     expect(within(totalStat).getByText("2")).toBeVisible();
     expect(within(approvedStat).queryByText("0 approved")).not.toBeInTheDocument();
     expect(within(awaitingStat).queryByText("2 awaiting review")).not.toBeInTheDocument();
+    expect(screen.getAllByRole("article", { name: /review$/ })).toHaveLength(1);
     const card = screen.getByRole("article", { name: "Front elevation review" });
+    expect(screen.getByText("Plan 1 of 2")).toBeVisible();
+    const previous = screen.getByRole("button", { name: "Previous plan" });
+    const next = screen.getByRole("button", { name: "Next plan: Site plan" });
+    expect(previous).toBeDisabled();
     const thumbnail = await within(card).findByRole("button", { name: "Preview Front elevation" });
-    expect(thumbnail).toHaveClass("section-review-card__thumbnail");
-    expect(within(thumbnail).getByRole("img", { name: "Front elevation, revision 2" })).toHaveClass("section-review-card__thumbnail-image");
+    expect(thumbnail).toHaveClass("section-review-card__image-trigger");
     expect(within(card).getByText("Design version 3 · Section revision 2")).toBeVisible();
     expect(within(card).getByText("Revision 1 · Rejected")).toBeVisible();
     expect(within(card).getByText("Show the roof line.")).toBeVisible();
@@ -146,6 +170,10 @@ describe("DesignSectionReview", () => {
     await user.keyboard("{Escape}");
     expect(screen.queryByRole("dialog", { name: "Front elevation preview" })).not.toBeInTheDocument();
     expect(thumbnail).toHaveFocus();
+    await user.click(next);
+    expect(screen.getByRole("article", { name: "Site plan review" })).toBeVisible();
+    expect(screen.queryByRole("article", { name: "Front elevation review" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Next plan" })).toBeDisabled();
     expect(await screen.findAllByRole("button", { name: "View source image" })).toHaveLength(1);
     expect(screen.queryByText("View source page")).not.toBeInTheDocument();
     const sourceTrigger = screen.getByRole("button", { name: "View source image" });
@@ -161,6 +189,27 @@ describe("DesignSectionReview", () => {
     expect(screen.queryByRole("dialog", { name: "Project source image" })).not.toBeInTheDocument();
     expect(sourceTrigger).toHaveFocus();
     expect(screen.queryByText(/draft/i)).not.toBeInTheDocument();
+  });
+
+  it("prefers a submitted plan initially and preserves the selected plan across refreshed ordering", async () => {
+    const user = userEvent.setup();
+    const approvedFirstReview = structuredClone(review);
+    approvedFirstReview.sections[0]!.revision.reviewStatus = "approved";
+    approvedFirstReview.sections[0]!.history = [{ ...approvedFirstReview.sections[0]!.revision }];
+    installApi({ reviewData: approvedFirstReview });
+    const { rerender } = render(<ReviewDataHarness data={approvedFirstReview} />);
+
+    expect(await screen.findByRole("article", { name: "Site plan review" })).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Previous plan: Front elevation" }));
+    expect(screen.getByRole("article", { name: "Front elevation review" })).toBeVisible();
+
+    const refreshedReview = structuredClone(approvedFirstReview);
+    refreshedReview.sections.reverse();
+    rerender(<ReviewDataHarness data={refreshedReview} />);
+
+    expect(await screen.findByRole("article", { name: "Front elevation review" })).toBeVisible();
+    expect(screen.queryByRole("article", { name: "Site plan review" })).not.toBeInTheDocument();
+    expect(screen.getByText("Plan 2 of 2")).toBeVisible();
   });
 
   it("confirms approval, disables the card while pending, and refreshes progress", async () => {

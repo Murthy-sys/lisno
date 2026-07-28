@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useId, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { Image, X } from "lucide-react";
 
 import { ApiError } from "../../api/client";
@@ -21,6 +21,20 @@ export function DesignSectionReview({ projectId, mode }: { projectId: string; mo
   const [commentError, setCommentError] = useState("");
   const [sourceImageUrl, setSourceImageUrl] = useState<string>();
   const [sourcePreviewOpen, setSourcePreviewOpen] = useState(false);
+  const [activeSectionId, setActiveSectionId] = useState<string>();
+  const sections = review.data?.sections ?? [];
+  const preferredSection =
+    sections.find((section) => section.id === activeSectionId) ??
+    sections.find((section) => section.revision.reviewStatus === "submitted") ??
+    sections[0];
+  const activeIndex = preferredSection
+    ? sections.findIndex((section) => section.id === preferredSection.id)
+    : -1;
+
+  useEffect(() => {
+    if (activeSectionId !== preferredSection?.id) setActiveSectionId(preferredSection?.id);
+  }, [activeSectionId, preferredSection?.id]);
+
   const mutation = useMutation({
     mutationFn: ({ section, decision, comment: value }: { section: DesignSectionReviewItem; decision: "approved" | "rejected"; comment?: string }) =>
       decideDesignSection(section.revision.id, section.revision.revisionNumber, decision, value),
@@ -35,7 +49,7 @@ export function DesignSectionReview({ projectId, mode }: { projectId: string; mo
   if (review.isPending) return <section className="design-review"><h2>Design review</h2><p>Loading design sections…</p></section>;
   if (review.isError) return <section className="design-review"><h2>Design review</h2><p role="alert">We couldn't load the design review.</p><button type="button" onClick={() => void review.refetch()}>Try again</button></section>;
 
-  const { progress, sections } = review.data;
+  const { progress } = review.data;
   const projectSource = sections.reduce<DesignSectionReviewItem | undefined>((current, section) => {
     if (!section.sourcePageUrl || (current && current.versionNumber >= section.versionNumber)) return current;
     return section;
@@ -75,16 +89,21 @@ export function DesignSectionReview({ projectId, mode }: { projectId: string; mo
         <div className="design-review__stat design-review__stat--awaiting"><strong>{progress.awaitingReview}</strong><span>Awaiting review</span></div>
         <div className="design-review__stat design-review__stat--total"><strong>{progress.total}</strong><span>Total</span></div>
       </div>
-      {sections.length ? <div className="section-review-grid">{sections.map((section) => (
+      {preferredSection ? (
         <SectionReviewCard
-          key={section.id}
-          section={section}
+          section={preferredSection}
           mode={mode}
-          busy={mutation.isPending && choice?.section.id === section.id}
-          onApprove={() => { mutation.reset(); setChoice({ section, decision: "approved" }); }}
-          onReject={() => { mutation.reset(); setComment(""); setCommentError(""); setChoice({ section, decision: "rejected" }); }}
+          busy={mutation.isPending && choice?.section.id === preferredSection.id}
+          position={activeIndex + 1}
+          total={sections.length}
+          previousLabel={activeIndex > 0 ? sections[activeIndex - 1]?.label : undefined}
+          nextLabel={activeIndex < sections.length - 1 ? sections[activeIndex + 1]?.label : undefined}
+          onPrevious={() => setActiveSectionId(sections[activeIndex - 1]?.id)}
+          onNext={() => setActiveSectionId(sections[activeIndex + 1]?.id)}
+          onApprove={() => { mutation.reset(); setChoice({ section: preferredSection, decision: "approved" }); }}
+          onReject={() => { mutation.reset(); setComment(""); setCommentError(""); setChoice({ section: preferredSection, decision: "rejected" }); }}
         />
-      ))}</div> : <p>No submitted design sections are awaiting review.</p>}
+      ) : <p>No submitted design sections are awaiting review.</p>}
       {choice?.decision === "approved" ? (
         <Dialog title={`Approve ${choice.section.label}?`} description="This section revision will be locked after approval." busy={mutation.isPending} onClose={() => setChoice(undefined)}>
           {mutation.isError ? <p role="alert">{errorMessage(mutation.error)}</p> : null}
