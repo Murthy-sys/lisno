@@ -99,6 +99,12 @@ function installApi(options: { failList?: boolean; failDecision?: boolean } = {}
   });
 }
 
+function getProgressStat(progress: HTMLElement, label: string) {
+  const stat = within(progress).getByText(label).closest(".design-review__stat");
+  if (!(stat instanceof HTMLElement)) throw new Error(`Missing progress stat for ${label}.`);
+  return stat;
+}
+
 describe("DesignSectionReview", () => {
   it("shows submitted revisions with a project-level source modal, history, and semantic progress", async () => {
     tokenStorage.set("client-token");
@@ -110,13 +116,21 @@ describe("DesignSectionReview", () => {
     renderWithQuery(<DesignSectionReview projectId="project-1" mode="client" />);
     const user = userEvent.setup();
 
-    expect(await screen.findByText("0 approved")).toBeVisible();
-    expect(screen.getByText("2 awaiting review")).toBeVisible();
-    expect(screen.getByText("2 total")).toBeVisible();
-    expect(screen.getByText("0 approved").closest(".design-review__stat")).toHaveClass("design-review__stat--approved");
-    expect(screen.getByText("0 rejected").closest(".design-review__stat")).toHaveClass("design-review__stat--rejected");
-    expect(screen.getByText("2 awaiting review").closest(".design-review__stat")).toHaveClass("design-review__stat--awaiting");
-    expect(screen.getByText("2 total").closest(".design-review__stat")).toHaveClass("design-review__stat--total");
+    const progress = await screen.findByLabelText("0 approved, 0 rejected, 2 awaiting review, 2 total");
+    const approvedStat = getProgressStat(progress, "Approved");
+    const rejectedStat = getProgressStat(progress, "Rejected");
+    const awaitingStat = getProgressStat(progress, "Awaiting review");
+    const totalStat = getProgressStat(progress, "Total");
+    expect(approvedStat).toHaveClass("design-review__stat--approved");
+    expect(rejectedStat).toHaveClass("design-review__stat--rejected");
+    expect(awaitingStat).toHaveClass("design-review__stat--awaiting");
+    expect(totalStat).toHaveClass("design-review__stat--total");
+    expect(within(approvedStat).getByText("0")).toBeVisible();
+    expect(within(rejectedStat).getByText("0")).toBeVisible();
+    expect(within(awaitingStat).getByText("2")).toBeVisible();
+    expect(within(totalStat).getByText("2")).toBeVisible();
+    expect(within(approvedStat).queryByText("0 approved")).not.toBeInTheDocument();
+    expect(within(awaitingStat).queryByText("2 awaiting review")).not.toBeInTheDocument();
     const card = screen.getByRole("article", { name: "Front elevation review" });
     const thumbnail = await within(card).findByRole("button", { name: "Preview Front elevation" });
     expect(thumbnail).toHaveClass("section-review-card__thumbnail");
@@ -157,8 +171,9 @@ describe("DesignSectionReview", () => {
     await user.click(approve);
     const dialog = screen.getByRole("dialog", { name: "Approve Front elevation?" });
     await user.click(within(dialog).getByRole("button", { name: "Confirm approval" }));
-    expect(await screen.findByText("1 approved")).toBeVisible();
-    expect(screen.getByText("1 awaiting review")).toBeVisible();
+    const progress = await screen.findByLabelText("1 approved, 0 rejected, 1 awaiting review, 2 total");
+    expect(within(getProgressStat(progress, "Approved")).getByText("1")).toBeVisible();
+    expect(within(getProgressStat(progress, "Awaiting review")).getByText("1")).toBeVisible();
     expect(screen.queryByRole("button", { name: "Approve Front elevation" })).not.toBeInTheDocument();
   });
 

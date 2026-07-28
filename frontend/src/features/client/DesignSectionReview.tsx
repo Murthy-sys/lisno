@@ -70,10 +70,10 @@ export function DesignSectionReview({ projectId, mode }: { projectId: string; mo
         </button> : null}
       </header>
       <div className="design-review__progress" aria-label={`${progress.approved} approved, ${progress.rejected} rejected, ${progress.awaitingReview} awaiting review, ${progress.total} total`}>
-        <div className="design-review__stat design-review__stat--approved"><strong>{progress.approved} approved</strong><span>Approved</span></div>
-        <div className="design-review__stat design-review__stat--rejected"><strong>{progress.rejected} rejected</strong><span>Rejected</span></div>
-        <div className="design-review__stat design-review__stat--awaiting"><strong>{progress.awaitingReview} awaiting review</strong><span>Awaiting review</span></div>
-        <div className="design-review__stat design-review__stat--total"><strong>{progress.total} total</strong><span>Total</span></div>
+        <div className="design-review__stat design-review__stat--approved"><strong>{progress.approved}</strong><span>Approved</span></div>
+        <div className="design-review__stat design-review__stat--rejected"><strong>{progress.rejected}</strong><span>Rejected</span></div>
+        <div className="design-review__stat design-review__stat--awaiting"><strong>{progress.awaitingReview}</strong><span>Awaiting review</span></div>
+        <div className="design-review__stat design-review__stat--total"><strong>{progress.total}</strong><span>Total</span></div>
       </div>
       {sections.length ? <div className="section-review-grid">{sections.map((section) => (
         <SectionReviewCard
