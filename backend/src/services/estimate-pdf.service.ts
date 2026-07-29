@@ -60,7 +60,15 @@ const table = {
 
 const tableHeaderHeight = 24;
 const groupHeaderHeight = 22;
+const pageHeaderContentOffset = 52;
+const minimumRowHeight = 36;
+const rowVerticalPadding = 16;
+const oversizedRowReservation = 120;
 const pageInitializers = new WeakMap<PDFKit.PDFDocument, () => void>();
+const rowContinuationInitializers = new WeakMap<
+  PDFKit.PDFDocument,
+  () => void
+>();
 
 function safeFilenamePart(value: string): string {
   const part = value
@@ -151,7 +159,7 @@ function drawPageHeader(doc: PDFKit.PDFDocument, logo: Buffer): void {
     .moveTo(left, top + 38)
     .lineTo(left + width, top + 38)
     .stroke();
-  doc.y = top + 52;
+  doc.y = top + pageHeaderContentOffset;
 }
 
 function drawTableHeader(doc: PDFKit.PDFDocument): void {
@@ -207,8 +215,12 @@ function lineCellText(line: EstimatePdfLine) {
   };
 }
 
-function lineRowHeight(doc: PDFKit.PDFDocument, line: EstimatePdfLine): number {
-  const cells = lineCellText(line);
+type LineCellText = ReturnType<typeof lineCellText>;
+
+function measureLineCells(
+  doc: PDFKit.PDFDocument,
+  cells: LineCellText
+): number {
   doc.font("Helvetica").fontSize(9);
   const regularCellHeights = [
     doc.heightOfString(cells.description, {
@@ -224,44 +236,172 @@ function lineRowHeight(doc: PDFKit.PDFDocument, line: EstimatePdfLine): number {
   });
   const textHeight = Math.max(...regularCellHeights, totalHeight);
 
-  return Math.max(36, textHeight + 16);
+  return Math.max(minimumRowHeight, textHeight + rowVerticalPadding);
 }
 
-function drawLineRow(doc: PDFKit.PDFDocument, line: EstimatePdfLine): void {
-  const rowHeight = lineRowHeight(doc, line);
-  ensureSpace(doc, rowHeight);
+function lineRowHeight(doc: PDFKit.PDFDocument, line: EstimatePdfLine): number {
+  return measureLineCells(doc, lineCellText(line));
+}
 
+function measureLineCell(
+  doc: PDFKit.PDFDocument,
+  text: string,
+  width: number,
+  bold = false
+): number {
+  doc.font(bold ? "Helvetica-Bold" : "Helvetica").fontSize(9);
+  return doc.heightOfString(text, { width });
+}
+
+function takeTextFragment(
+  doc: PDFKit.PDFDocument,
+  text: string,
+  width: number,
+  maxHeight: number,
+  bold = false
+): { fragment: string; remaining: string } {
+  const normalized = text.trimStart();
+  if (!normalized) {
+    return { fragment: "", remaining: "" };
+  }
+  if (measureLineCell(doc, normalized, width, bold) <= maxHeight) {
+    return { fragment: normalized, remaining: "" };
+  }
+
+  const characters = Array.from(normalized);
+  let low = 1;
+  let high = characters.length;
+  let fittingLength = 1;
+  while (low <= high) {
+    const middle = Math.floor((low + high) / 2);
+    const candidate = characters.slice(0, middle).join("");
+    if (measureLineCell(doc, candidate, width, bold) <= maxHeight) {
+      fittingLength = middle;
+      low = middle + 1;
+    } else {
+      high = middle - 1;
+    }
+  }
+
+  let splitLength = fittingLength;
+  for (let index = fittingLength - 1; index > 0; index -= 1) {
+    if (
+      index >= Math.floor(fittingLength / 2) &&
+      /\s/u.test(characters[index])
+    ) {
+      splitLength = index;
+      break;
+    }
+  }
+  const fragment = characters.slice(0, splitLength).join("").trimEnd();
+  const remaining = characters.slice(splitLength).join("").trimStart();
+
+  return {
+    fragment: fragment || characters[0],
+    remaining: fragment ? remaining : characters.slice(1).join("").trimStart()
+  };
+}
+
+function splitLineCells(
+  doc: PDFKit.PDFDocument,
+  cells: LineCellText,
+  maxHeight: number
+): { fragment: LineCellText; remaining: LineCellText } {
+  const description = takeTextFragment(
+    doc,
+    cells.description,
+    table.description.width - 12,
+    maxHeight
+  );
+  const room = takeTextFragment(
+    doc,
+    cells.room,
+    table.room.width - 12,
+    maxHeight
+  );
+  const quantity = takeTextFragment(
+    doc,
+    cells.quantity,
+    table.quantity.width - 8,
+    maxHeight
+  );
+  const rate = takeTextFragment(
+    doc,
+    cells.rate,
+    table.rate.width - 8,
+    maxHeight
+  );
+  const total = takeTextFragment(
+    doc,
+    cells.total,
+    table.total.width - 10,
+    maxHeight,
+    true
+  );
+
+  return {
+    fragment: {
+      description: description.fragment,
+      room: room.fragment,
+      quantity: quantity.fragment,
+      rate: rate.fragment,
+      total: total.fragment
+    },
+    remaining: {
+      description: description.remaining,
+      room: room.remaining,
+      quantity: quantity.remaining,
+      rate: rate.remaining,
+      total: total.remaining
+    }
+  };
+}
+
+function drawLineRowFragment(
+  doc: PDFKit.PDFDocument,
+  cells: LineCellText,
+  rowHeight: number
+): void {
   const y = doc.y;
-  const cells = lineCellText(line);
+  const drawCell = (
+    text: string,
+    x: number,
+    width: number,
+    options?: { align?: "right"; bold?: boolean }
+  ) => {
+    if (!text) {
+      return;
+    }
+    doc
+      .font(options?.bold ? "Helvetica-Bold" : "Helvetica")
+      .fontSize(9)
+      .fillColor(colors.ink)
+      .text(text, x, y + 8, {
+        width,
+        height: rowHeight - rowVerticalPadding,
+        align: options?.align
+      });
+  };
 
-  doc
-    .font("Helvetica")
-    .fontSize(9)
-    .fillColor(colors.ink)
-    .text(cells.description, table.description.x + 6, y + 8, {
-      width: table.description.width - 12,
-      height: rowHeight - 12
-    })
-    .text(cells.room, table.room.x + 6, y + 8, {
-      width: table.room.width - 12,
-      height: rowHeight - 12
-    })
-    .text(cells.quantity, table.quantity.x + 4, y + 8, {
-      width: table.quantity.width - 8,
-      align: "right",
-      height: rowHeight - 12
-    })
-    .text(cells.rate, table.rate.x + 4, y + 8, {
-      width: table.rate.width - 8,
-      align: "right",
-      height: rowHeight - 12
-    })
-    .font("Helvetica-Bold")
-    .text(cells.total, table.total.x + 4, y + 8, {
-      width: table.total.width - 10,
-      align: "right",
-      height: rowHeight - 12
-    });
+  drawCell(
+    cells.description,
+    table.description.x + 6,
+    table.description.width - 12
+  );
+  drawCell(cells.room, table.room.x + 6, table.room.width - 12);
+  drawCell(
+    cells.quantity,
+    table.quantity.x + 4,
+    table.quantity.width - 8,
+    { align: "right" }
+  );
+  drawCell(cells.rate, table.rate.x + 4, table.rate.width - 8, {
+    align: "right"
+  });
+  drawCell(cells.total, table.total.x + 4, table.total.width - 10, {
+    align: "right",
+    bold: true
+  });
 
   doc
     .strokeColor(colors.line)
@@ -270,6 +410,32 @@ function drawLineRow(doc: PDFKit.PDFDocument, line: EstimatePdfLine): void {
     .lineTo(doc.page.width - doc.page.margins.right, y + rowHeight)
     .stroke();
   doc.y = y + rowHeight;
+}
+
+function drawLineRow(doc: PDFKit.PDFDocument, line: EstimatePdfLine): void {
+  let remaining = lineCellText(line);
+  let continuation = false;
+
+  while (Object.values(remaining).some(Boolean)) {
+    if (
+      continuation ||
+      contentBottom(doc) - doc.y < minimumRowHeight
+    ) {
+      addDocumentPage(doc);
+      rowContinuationInitializers.get(doc)?.();
+    }
+
+    const availableHeight = contentBottom(doc) - doc.y;
+    const maxTextHeight = availableHeight - rowVerticalPadding;
+    const split = splitLineCells(doc, remaining, maxTextHeight);
+    const rowHeight = Math.min(
+      availableHeight,
+      measureLineCells(doc, split.fragment)
+    );
+    drawLineRowFragment(doc, split.fragment, rowHeight);
+    remaining = split.remaining;
+    continuation = Object.values(remaining).some(Boolean);
+  }
 }
 
 function drawGroupHeader(doc: PDFKit.PDFDocument, label: string): void {
@@ -284,6 +450,26 @@ function drawGroupHeader(doc: PDFKit.PDFDocument, label: string): void {
       lineBreak: false
     });
   doc.y = y + groupHeaderHeight;
+}
+
+function maximumFreshRowHeight(doc: PDFKit.PDFDocument): number {
+  const freshRowY =
+    doc.page.margins.top +
+    pageHeaderContentOffset +
+    groupHeaderHeight +
+    tableHeaderHeight;
+  return contentBottom(doc) - freshRowY;
+}
+
+function rowReservation(
+  doc: PDFKit.PDFDocument,
+  line: EstimatePdfLine
+): number {
+  const rowHeight = lineRowHeight(doc, line);
+  const freshCapacity = maximumFreshRowHeight(doc);
+  return rowHeight <= freshCapacity
+    ? rowHeight
+    : Math.min(oversizedRowReservation, freshCapacity);
 }
 
 function groupedIncludedLines(input: EstimatePdfInput) {
@@ -303,6 +489,24 @@ function groupedIncludedLines(input: EstimatePdfInput) {
   return [...groups.values()];
 }
 
+interface OverviewField {
+  text: string;
+  font: "Helvetica" | "Helvetica-Bold";
+  fontSize: number;
+  color: string;
+  gapAfter: number;
+  maxHeight: number;
+}
+
+function measureOverviewField(
+  doc: PDFKit.PDFDocument,
+  field: OverviewField,
+  width: number
+): number {
+  doc.font(field.font).fontSize(field.fontSize);
+  return Math.min(doc.heightOfString(field.text, { width }), field.maxHeight);
+}
+
 function drawEstimateOverview(
   doc: PDFKit.PDFDocument,
   input: EstimatePdfInput,
@@ -310,58 +514,140 @@ function drawEstimateOverview(
 ): void {
   const left = doc.page.margins.left;
   const fullWidth = doc.page.width - left - doc.page.margins.right;
-  const overviewY = doc.y;
-
-  doc
-    .font("Helvetica-Bold")
-    .fontSize(20)
-    .fillColor(colors.ink)
-    .text(input.lead.projectName, left, overviewY, {
-      width: fullWidth * 0.63
-    });
-  doc
-    .font("Helvetica")
-    .fontSize(9.5)
-    .fillColor(colors.muted)
-    .text(input.lead.clientName, left, doc.y + 4, { width: fullWidth * 0.63 })
-    .text(input.lead.clientEmail, left, doc.y + 2, { width: fullWidth * 0.63 })
-    .text(input.lead.location, left, doc.y + 2, { width: fullWidth * 0.63 })
-    .text(statusLabel(input.propertyType), left, doc.y + 2, {
-      width: fullWidth * 0.63
-    });
-
+  const leftWidth = fullWidth * 0.63;
   const detailX = left + fullWidth * 0.65;
-  doc
-    .font("Helvetica")
-    .fontSize(8)
-    .fillColor(colors.muted)
-    .text("ESTIMATE", detailX, overviewY, { width: fullWidth * 0.35, align: "right" })
-    .font("Helvetica-Bold")
-    .fontSize(9)
-    .fillColor(colors.ink)
-    .text(`${input.id} / v${input.version}`, detailX, overviewY + 12, {
-      width: fullWidth * 0.35,
-      align: "right"
-    })
-    .font("Helvetica")
-    .fontSize(8)
-    .fillColor(colors.muted)
-    .text(statusLabel(input.status), detailX, overviewY + 28, {
-      width: fullWidth * 0.35,
-      align: "right"
-    })
-    .text(
-      generatedAt.toLocaleDateString("en-IN", {
+  const detailWidth = fullWidth * 0.35;
+  const generatedDate = generatedAt.toLocaleDateString("en-IN", {
         day: "2-digit",
         month: "short",
         year: "numeric",
         timeZone: "UTC"
-      }),
-      detailX,
-      overviewY + 40,
-      { width: fullWidth * 0.35, align: "right" }
-    );
-  doc.y = Math.max(doc.y, overviewY + 84);
+      });
+  const leftFields: OverviewField[] = [
+    {
+      text: input.lead.projectName,
+      font: "Helvetica-Bold",
+      fontSize: 20,
+      color: colors.ink,
+      gapAfter: 4,
+      maxHeight: 54
+    },
+    {
+      text: input.lead.clientName,
+      font: "Helvetica",
+      fontSize: 9.5,
+      color: colors.muted,
+      gapAfter: 2,
+      maxHeight: 22
+    },
+    {
+      text: input.lead.clientEmail,
+      font: "Helvetica",
+      fontSize: 9.5,
+      color: colors.muted,
+      gapAfter: 2,
+      maxHeight: 22
+    },
+    {
+      text: input.lead.location,
+      font: "Helvetica",
+      fontSize: 9.5,
+      color: colors.muted,
+      gapAfter: 2,
+      maxHeight: 22
+    },
+    {
+      text: statusLabel(input.propertyType),
+      font: "Helvetica",
+      fontSize: 9.5,
+      color: colors.muted,
+      gapAfter: 0,
+      maxHeight: 22
+    }
+  ];
+  const detailFields: OverviewField[] = [
+    {
+      text: "ESTIMATE",
+      font: "Helvetica",
+      fontSize: 8,
+      color: colors.muted,
+      gapAfter: 2,
+      maxHeight: 10
+    },
+    {
+      text: `${input.id} / v${input.version}`,
+      font: "Helvetica-Bold",
+      fontSize: 9,
+      color: colors.ink,
+      gapAfter: 4,
+      maxHeight: 22
+    },
+    {
+      text: statusLabel(input.status),
+      font: "Helvetica",
+      fontSize: 8,
+      color: colors.muted,
+      gapAfter: 2,
+      maxHeight: 18
+    },
+    {
+      text: generatedDate,
+      font: "Helvetica",
+      fontSize: 8,
+      color: colors.muted,
+      gapAfter: 0,
+      maxHeight: 10
+    }
+  ];
+  const leftHeights = leftFields.map((field) =>
+    measureOverviewField(doc, field, leftWidth)
+  );
+  const detailHeights = detailFields.map((field) =>
+    measureOverviewField(doc, field, detailWidth)
+  );
+  const blockHeight = (fields: OverviewField[], heights: number[]) =>
+    fields.reduce((height, field, index) => {
+      return height + heights[index] + field.gapAfter;
+    }, 0);
+  const overviewHeight = Math.max(
+    84,
+    blockHeight(leftFields, leftHeights),
+    blockHeight(detailFields, detailHeights)
+  );
+
+  ensureSpace(doc, overviewHeight);
+  const overviewY = doc.y;
+  let leftY = overviewY;
+  for (const [index, field] of leftFields.entries()) {
+    const height = leftHeights[index];
+    doc
+      .font(field.font)
+      .fontSize(field.fontSize)
+      .fillColor(field.color)
+      .text(field.text, left, leftY, {
+        width: leftWidth,
+        height,
+        ellipsis: true
+      });
+    leftY += height + field.gapAfter;
+  }
+
+  let detailY = overviewY;
+  for (const [index, field] of detailFields.entries()) {
+    const height = detailHeights[index];
+    doc
+      .font(field.font)
+      .fontSize(field.fontSize)
+      .fillColor(field.color)
+      .text(field.text, detailX, detailY, {
+        width: detailWidth,
+        height,
+        ellipsis: true,
+        align: "right"
+      });
+    detailY += height + field.gapAfter;
+  }
+  doc.y = overviewY + overviewHeight;
 }
 
 function drawTotals(doc: PDFKit.PDFDocument, input: EstimatePdfInput): void {
@@ -476,7 +762,11 @@ export function createEstimatePdfService(options?: {
       doc.y += 8;
 
       for (const group of groupedIncludedLines(input)) {
-        const firstRowHeight = lineRowHeight(doc, group.lines[0]);
+        rowContinuationInitializers.set(doc, () => {
+          drawGroupHeader(doc, `${group.label} (continued)`);
+          drawTableHeader(doc);
+        });
+        const firstRowHeight = rowReservation(doc, group.lines[0]);
         ensureSpace(doc, groupHeaderHeight + tableHeaderHeight + firstRowHeight);
         drawGroupHeader(doc, group.label);
         drawTableHeader(doc);
@@ -488,7 +778,7 @@ export function createEstimatePdfService(options?: {
           }
 
           const pageCount = doc.bufferedPageRange().count;
-          const rowHeight = lineRowHeight(doc, line);
+          const rowHeight = rowReservation(doc, line);
           ensureSpace(doc, groupHeaderHeight + tableHeaderHeight + rowHeight);
           if (doc.bufferedPageRange().count > pageCount) {
             drawGroupHeader(doc, `${group.label} (continued)`);
@@ -496,6 +786,7 @@ export function createEstimatePdfService(options?: {
           }
           drawLineRow(doc, line);
         }
+        rowContinuationInitializers.delete(doc);
         doc.y += 8;
       }
 

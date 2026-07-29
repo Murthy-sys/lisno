@@ -80,13 +80,25 @@ async function readPdf(bytes: Buffer) {
 }
 
 describe("estimate PDF catalogue", () => {
-  it("resolves every frontend estimate-builder row", () => {
-    const missingIds = estimateBuilderSections
-      .flatMap((section) => section.rows)
-      .map((row) => row.id)
-      .filter((id) => !estimatePdfCatalogue.has(id));
+  it("exactly matches every normalized frontend catalogue entry", () => {
+    const expectedEntries = estimateBuilderSections.flatMap((section) =>
+      section.rows.map((row) => [
+        row.id,
+        {
+          sectionId: section.id,
+          sectionLabel: section.label,
+          description: row.description.replaceAll("—", "-").replaceAll("–", "-")
+        }
+      ] as const)
+    );
+    const expectedIds = expectedEntries.map(([id]) => id);
 
-    expect(missingIds).toEqual([]);
+    expect(new Set(expectedIds).size).toBe(expectedIds.length);
+    expect(estimatePdfCatalogue.size).toBe(expectedEntries.length);
+    expect([...estimatePdfCatalogue.keys()].sort()).toEqual([...expectedIds].sort());
+    for (const [id, expected] of expectedEntries) {
+      expect(estimatePdfCatalogue.get(id)).toEqual(expected);
+    }
   });
 });
 
@@ -113,6 +125,9 @@ describe("estimate PDF service", () => {
     expect(pdf.text).toContain("Aurora Homes");
     expect(pdf.text).toContain("projects@aurorahomes.example");
     expect(pdf.text).toContain("Residential Apartment");
+    expect(pdf.text).toContain("estimate-pdf-1 / v3");
+    expect(pdf.text).toContain("Sent To Client");
+    expect(pdf.text).toContain("29 Jul 2026");
     expect(pdf.text).toContain("False ceiling - main area");
     expect(pdf.text).toContain("Living room");
     expect(pdf.text).toContain("INR 95");
@@ -128,6 +143,16 @@ describe("estimate PDF service", () => {
     expect(pdf.text).toContain("Page 1 of");
     expect(pdf.text).not.toContain("Floor finish");
     expect(pdf.text).not.toContain("Guest bedroom");
+  });
+
+  it("loads the backend logo asset when no logo override is provided", async () => {
+    const service = createEstimatePdfService({
+      now: () => new Date("2026-07-29T12:00:00.000Z")
+    });
+
+    const result = await service.generate(fixture);
+
+    expect(result.bytes.subarray(0, 5).toString()).toBe("%PDF-");
   });
 
   it("falls back to the estimate ID when the project name has no safe filename characters", async () => {
@@ -171,6 +196,85 @@ describe("estimate PDF service", () => {
     expect(compactText).toContain("squarefeetmeasuredonfinishedfloorarea");
     expect(compactText).toContain("INR1,23,45,67,89,012");
     expect(compactText).toContain("INR10,00,00,00,00,00,00,00,00,00,00,000");
+  });
+
+  it("bounds long overview fields before drawing the line-item table", async () => {
+    const repeatedProject = Array.from(
+      { length: 90 },
+      () => "Aurora exceptionally detailed residence"
+    ).join(" ");
+    const repeatedClient = Array.from(
+      { length: 70 },
+      () => "Aurora Homes and Extended Family"
+    ).join(" ");
+    const repeatedLocation = Array.from(
+      { length: 80 },
+      () => "Bengaluru Karnataka India"
+    ).join(" ");
+    const service = createEstimatePdfService({
+      now: () => new Date("2026-07-29T12:00:00.000Z"),
+      logoSvg: backendLogo
+    });
+
+    const result = await service.generate({
+      ...fixture,
+      lead: {
+        ...fixture.lead,
+        projectName: repeatedProject,
+        clientName: repeatedClient,
+        location: repeatedLocation
+      }
+    });
+    const pdf = await readPdf(result.bytes);
+
+    expect(pdf.pageCount).toBe(1);
+    expect(pdf.pageTexts[0]).toContain("Interior Estimate");
+    expect(pdf.pageTexts[0]).toContain("Description");
+    expect(pdf.pageTexts[0]).toContain("False ceiling - main area");
+    expect(pdf.pageTexts[0]).toContain("Final total");
+    expect(pdf.pageTexts[0]).toContain("Page 1 of 1");
+  });
+
+  it("splits an extreme single row across branded pages with repeated headings", async () => {
+    const specification = `${Array.from(
+      { length: 160 },
+      (_, index) => `handcrafted-detail-${index + 1}`
+    ).join(" ")} END-OF-SPECIFICATION`;
+    const roomName = `${Array.from(
+      { length: 100 },
+      (_, index) => `family-room-zone-${index + 1}`
+    ).join(" ")} END-OF-ROOM`;
+    const service = createEstimatePdfService({
+      now: () => new Date("2026-07-29T12:00:00.000Z"),
+      logoSvg: backendLogo
+    });
+
+    const result = await service.generate({
+      ...fixture,
+      lineItems: [
+        {
+          ...fixture.lineItems[0],
+          roomName,
+          specification
+        }
+      ]
+    });
+    const pdf = await readPdf(result.bytes);
+    const compactText = pdf.text.replaceAll(" ", "");
+
+    expect(pdf.pageCount).toBeGreaterThan(1);
+    expect(compactText.match(/handcrafted-detail-/g)?.length).toBe(160);
+    expect(compactText).toContain("END-OF-SPECIFICATION");
+    expect(compactText).toContain("END-OF-ROOM");
+    for (const pageText of pdf.pageTexts) {
+      expect(pageText).toContain("Interior Estimate");
+      if (pageText.includes("handcrafted-detail-") || pageText.includes("END-OF-ROOM")) {
+        expect(pageText).toContain("False Ceiling");
+        for (const heading of ["Description", "Room", "Qty", "Unit rate", "Line total"]) {
+          expect(pageText).toContain(heading);
+        }
+      }
+    }
   });
 
   it("paginates long estimates and repeats table structure on continued pages", async () => {
