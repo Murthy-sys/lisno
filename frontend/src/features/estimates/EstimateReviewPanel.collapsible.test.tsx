@@ -1,9 +1,12 @@
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { tokenStorage } from "../../api/client";
 import { renderApp } from "../../test/render";
+
+const stylesheet = readFileSync("src/styles/index.css", "utf8");
 
 const client = {
   id: "client-1",
@@ -60,7 +63,48 @@ function installClientApi() {
   });
 }
 
+function ruleBody(source: string, selector: string) {
+  const selectorIndex = source.indexOf(selector);
+  if (selectorIndex < 0) throw new Error(`Missing CSS rule: ${selector}`);
+  const openingBrace = source.indexOf("{", selectorIndex + selector.length);
+  if (openingBrace < 0) throw new Error(`Missing opening brace: ${selector}`);
+
+  let depth = 1;
+  for (let index = openingBrace + 1; index < source.length; index += 1) {
+    if (source[index] === "{") depth += 1;
+    if (source[index] === "}") depth -= 1;
+    if (depth === 0) return source.slice(openingBrace + 1, index);
+  }
+  throw new Error(`Missing closing brace: ${selector}`);
+}
+
 describe("EstimateReviewPanel client disclosures", () => {
+  it("stacks collapsed and expanded controls from the client card width before they collide", () => {
+    expect(ruleBody(stylesheet, ".estimate-review-card--client")).toMatch(
+      /container-type:\s*inline-size/
+    );
+
+    const narrowCardRules = ruleBody(stylesheet, "@container (max-width: 30rem)");
+    expect(ruleBody(
+      narrowCardRules,
+      ".estimate-review-card__client-header"
+    )).toContain('grid-template-areas: "heading" "total" "toggle"');
+    expect(ruleBody(
+      narrowCardRules,
+      ".estimate-review-card__client-header--expanded"
+    )).toContain('grid-template-areas: "heading" "total" "export" "toggle"');
+
+    const controlRule = ruleBody(
+      narrowCardRules,
+      ".estimate-review-card__export, .estimate-review-card__toggle"
+    );
+    expect(controlRule).toMatch(/width:\s*100%/);
+    const minimumHeightRem = Number(
+      controlRule.match(/min-height:\s*([\d.]+)rem/)?.[1]
+    );
+    expect(minimumHeightRem * 16).toBeGreaterThanOrEqual(44);
+  });
+
   it("keeps client estimate details collapsed until each project is opened independently", async () => {
     tokenStorage.set("client-token");
     installClientApi();
