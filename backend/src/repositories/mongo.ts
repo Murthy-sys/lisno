@@ -901,6 +901,46 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
       return document ? mapExtractionJob(document) : null;
     },
 
+    async findOldestClaimableExtractionJob(now) {
+      const query = DesignExtractionJobModel.findOne({
+        $or: [
+          { status: "queued" },
+          { status: "processing", leaseExpiresAt: { $lte: date(now) } }
+        ]
+      }).sort({ queuedAt: 1, _id: 1 });
+      if (session) query.session(session);
+      const document = await query.lean().exec();
+      return document ? mapExtractionJob(document) : null;
+    },
+
+    async claimExtractionJobById(id, now, leaseExpiresAt) {
+      const claimId = randomUUID();
+      const query = DesignExtractionJobModel.findOneAndUpdate(
+        {
+          _id: id,
+          $or: [
+            { status: "queued" },
+            { status: "processing", leaseExpiresAt: { $lte: date(now) } }
+          ]
+        },
+        {
+          $set: {
+            status: "processing",
+            startedAt: date(now),
+            leaseExpiresAt: date(leaseExpiresAt),
+            claimId,
+            failureCode: null,
+            failureMessage: null
+          },
+          $inc: { attemptCount: 1 }
+        },
+        { new: true, runValidators: true }
+      );
+      if (session) query.session(session);
+      const document = await query.lean().exec();
+      return document ? mapExtractionJob(document) : null;
+    },
+
     async renewExtractionJobLease(id, claimId, now, leaseExpiresAt) {
       const query = DesignExtractionJobModel.findOneAndUpdate(
         {

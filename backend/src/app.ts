@@ -1,4 +1,5 @@
 import express from "express";
+import mongoose from "mongoose";
 import path from "node:path";
 
 import { createAuthRateLimit } from "./middleware/auth-rate-limit.js";
@@ -52,6 +53,7 @@ export interface AppDependencies {
   ocrLeaseSeconds?: number;
   ocrConfidenceFloor?: number;
   ocrWorkerToken?: string;
+  enableEstimateDesignJobs?: boolean;
   corsOrigins?: readonly string[];
   authRateLimit?: { windowMs?: number; maxAttempts?: number; maxEntries?: number };
   estimatePdfService?: EstimatePdfService;
@@ -110,7 +112,10 @@ export function createApp(dependencies: AppDependencies) {
         clock,
         dependencies.ocrLeaseSeconds ?? 300,
         maxUploadBytes,
-        dependencies.ocrConfidenceFloor ?? 0.2
+        dependencies.ocrConfidenceFloor ?? 0.2,
+        dependencies.enableEstimateDesignJobs ?? mongoose.connection.readyState === 1
+          ? estimateDesignService
+          : undefined
       )
     : null;
 

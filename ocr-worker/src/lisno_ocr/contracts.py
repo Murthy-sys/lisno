@@ -118,6 +118,8 @@ class ClaimedJob:
     source_filename: str
     source_mime_type: str
     lease_duration_seconds: float
+    kind: Literal["project_design", "estimate_design"] = "project_design"
+    taxonomy: EstimateTaxonomy | None = None
 
 
 @dataclass(frozen=True, slots=True)

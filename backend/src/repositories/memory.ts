@@ -69,6 +69,7 @@ const mutationMethods = new Set<keyof AppRepository>([
   "updateDesignVersion",
   "enqueueExtractionJob",
   "claimExtractionJob",
+  "claimExtractionJobById",
   "renewExtractionJobLease",
   "completeExtractionJob",
   "failExtractionJob",
@@ -777,6 +778,53 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
         )[0]?.candidateIndex;
       if (index === undefined) return null;
 
+      const job = state.extractionJobs[index]!;
+      const claimed: DesignExtractionJobRecord = {
+        ...job,
+        status: "processing",
+        attemptCount: job.attemptCount + 1,
+        startedAt: now,
+        leaseExpiresAt,
+        claimId: nextId("extraction-claim"),
+        failureCode: null,
+        failureMessage: null,
+        updatedAt: now
+      };
+      state.extractionJobs[index] = claimed;
+      return clone(claimed);
+    },
+
+    async findOldestClaimableExtractionJob(now) {
+      const nowTime = new Date(now).getTime();
+      return copyOrNull(
+        state.extractionJobs
+          .filter(
+            (job) =>
+              job.status === "queued" ||
+              (job.status === "processing" &&
+                job.leaseExpiresAt !== null &&
+                new Date(job.leaseExpiresAt).getTime() <= nowTime)
+          )
+          .sort(
+            (left, right) =>
+              new Date(left.queuedAt).getTime() -
+                new Date(right.queuedAt).getTime() ||
+              left.id.localeCompare(right.id)
+          )[0]
+      );
+    },
+
+    async claimExtractionJobById(id, now, leaseExpiresAt) {
+      const nowTime = new Date(now).getTime();
+      const index = state.extractionJobs.findIndex(
+        (job) =>
+          job.id === id &&
+          (job.status === "queued" ||
+            (job.status === "processing" &&
+              job.leaseExpiresAt !== null &&
+              new Date(job.leaseExpiresAt).getTime() <= nowTime))
+      );
+      if (index < 0) return null;
       const job = state.extractionJobs[index]!;
       const claimed: DesignExtractionJobRecord = {
         ...job,

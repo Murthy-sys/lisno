@@ -5,10 +5,12 @@ import time
 
 from lisno_ocr.contracts import (
     ClaimedJob,
+    EstimateTaxonomy,
     InvalidSourceError,
     OcrError,
     PdfRenderError,
     ResultRejectedError,
+    TaxonomyTerm,
     WorkerSettings,
 )
 from lisno_ocr.layout import OcrLine, classify_heading
@@ -222,6 +224,100 @@ def test_api_claim_returns_metadata_without_downloading_source():
     assert claimed.claim_token == "claim-1"
     assert claimed.source_filename == "plan.pdf"
     assert claimed.lease_duration_seconds == 300
+
+
+def test_api_claim_parses_tagged_estimate_taxonomy_and_tags_completion():
+    requests = []
+
+    class EstimateApi(WorkerApi):
+        def _request_json(self, method, path, body=None, **_kwargs):
+            if path.endswith("/claim"):
+                return 200, {
+                    "data": {
+                        "kind": "estimate_design",
+                        "id": "estimate-job-1",
+                        "claimToken": "claim-1",
+                        "sourceUrl": "/source",
+                        "sourceFilename": "plan.pdf",
+                        "sourceMimeType": "application/pdf",
+                        "leaseDurationMs": 300000,
+                        "taxonomy": {
+                            "rooms": [
+                                {
+                                    "id": "room-living",
+                                    "label": "Living Room",
+                                    "aliases": ["living hall"],
+                                }
+                            ],
+                            "scopes": [
+                                {
+                                    "id": "FC",
+                                    "label": "False Ceiling",
+                                    "aliases": ["rcp"],
+                                }
+                            ],
+                        },
+                    }
+                }
+            requests.append((method, path, body))
+            return 200, {"data": {"status": "estimator_review"}}
+
+    api = EstimateApi(settings())
+    claimed = api.claim()
+    api.complete(claimed.id, [])
+
+    assert claimed.kind == "estimate_design"
+    assert claimed.taxonomy == EstimateTaxonomy(
+        rooms=(TaxonomyTerm("room-living", "Living Room", ("living hall",)),),
+        scopes=(TaxonomyTerm("FC", "False Ceiling", ("rcp",)),),
+    )
+    assert requests[0][2] == {
+        "kind": "estimate_design",
+        "resultId": requests[0][2]["resultId"],
+        "pages": [],
+    }
+
+
+def test_run_worker_constructs_estimate_extractor_with_claimed_taxonomy(
+    monkeypatch,
+):
+    taxonomy = EstimateTaxonomy(
+        rooms=(TaxonomyTerm("room-living", "Living Room", ()),),
+        scopes=(TaxonomyTerm("FC", "False Ceiling", ("ceiling plan",)),),
+    )
+    api = FakeApi([
+        ClaimedJob(
+            id="estimate-job-1",
+            claim_token="claim-1",
+            source_url="/source",
+            source_filename="plan.png",
+            source_mime_type="image/png",
+            lease_duration_seconds=0.06,
+            kind="estimate_design",
+            taxonomy=taxonomy,
+        )
+    ])
+    constructed = []
+
+    class RecordingExtractor:
+        def __init__(self, **kwargs):
+            constructed.append(kwargs)
+
+        def extract(self, source_path):
+            assert source_path == FIXTURE
+            return []
+
+    monkeypatch.setattr("lisno_ocr.worker.Extractor", RecordingExtractor)
+
+    run_worker(
+        settings(),
+        api=api,
+        sleep=lambda _seconds: None,
+        max_iterations=1,
+    )
+
+    assert constructed[0]["estimate_taxonomy"] == taxonomy
+    assert api.completed == [("estimate-job-1", [])]
 
 
 @pytest.mark.parametrize(
