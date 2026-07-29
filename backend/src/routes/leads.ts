@@ -6,6 +6,10 @@ import { paginatedEnvelope, paginationShape } from "../middleware/pagination.js"
 import { validateBody, validateQuery } from "../middleware/validate.js";
 import type { AuthService } from "../services/auth.service.js";
 import type { LeadService } from "../services/lead.service.js";
+import type {
+  EstimatePdfInput,
+  EstimatePdfService
+} from "../services/estimate-pdf.service.js";
 import { EstimateModel } from "../models/Estimate.js";
 import { LeadModel } from "../models/Lead.js";
 import { ProjectModel } from "../models/Project.js";
@@ -26,7 +30,17 @@ const estimateLineSchema = z.object({ catalogueId: z.string().min(1), roomName: 
 const estimateSchema = z.object({ propertyType: z.string().min(1), rooms: z.array(z.record(z.unknown())), scopes: z.array(z.string()), lineItems: z.array(estimateLineSchema) }).strict();
 const assignmentSchema = z.object({ designerId: z.string().trim().min(1) }).strict();
 const decisionSchema = z.object({ decision: z.enum(["approve", "request_changes"]), note: z.string().trim().max(1000).default("") }).strict();
-export function createLeadsRouter(auth: AuthService, leads: LeadService): Router {
+const clientVisibleEstimateStatuses = [
+  "sent_to_client",
+  "client_changes_requested",
+  "client_approved"
+] as const;
+
+export function createLeadsRouter(
+  auth: AuthService,
+  leads: LeadService,
+  estimatePdf: EstimatePdfService
+): Router {
   const router = Router(); const protectedRoute = authenticate(auth); const allowed = authorizeRoles("estimator_sales");
   router.get("/leads", protectedRoute, allowed, validateQuery(listSchema), async (req, res, next) => { try { const { limit, offset, search, stage } = res.locals.validatedQuery; const pagination = { limit, offset }; res.json({ data: paginatedEnvelope(await leads.page(req.authenticatedUser!, { search, stage }, pagination), pagination) }); } catch (error) { next(error); } });
   router.post("/leads", protectedRoute, allowed, validateBody(createSchema), async (req, res, next) => { try { res.status(201).json({ data: await leads.create(req.authenticatedUser!, req.body) }); } catch (error) { next(error); } });
@@ -86,6 +100,15 @@ export function createLeadsRouter(auth: AuthService, leads: LeadService): Router
     estimate.reviews.push({ actorId: req.authenticatedUser!.id, action: "submitted", note: "", occurredAt: new Date() });
     await estimate.save();
     res.json({ data: mapEstimate(estimate.toObject()) });
+  } catch (error) { next(error); } });
+
+  router.get("/estimates/:estimateId/pdf", protectedRoute, allowed, async (req, res, next) => { try {
+    const estimate = await EstimateModel.findOne({ _id: req.params.estimateId, ownerId: req.authenticatedUser!.id }).lean();
+    if (!estimate) throw estimateNotFound();
+    const lead = await LeadModel.findById(estimate.leadId).lean();
+    if (!lead) throw estimateNotFound();
+    const pdf = await estimatePdf.generate(toEstimatePdfInput(estimate, lead));
+    res.set("Content-Type", "application/pdf").set("Content-Disposition", `attachment; filename="${pdf.filename}"`).send(pdf.bytes);
   } catch (error) { next(error); } });
 
   router.get("/estimates/review-queue", protectedRoute, authorizeRoles("design_manager", "designer"), async (req, res, next) => { try {
@@ -148,6 +171,15 @@ export function createLeadsRouter(auth: AuthService, leads: LeadService): Router
     res.json({ data: estimates.map((estimate) => ({ ...mapEstimate(estimate), lead: byId.get(estimate.leadId) ?? null })) });
   } catch (error) { next(error); } });
 
+  router.get("/client/estimates/:estimateId/pdf", protectedRoute, authorizeRoles("client"), async (req, res, next) => { try {
+    const estimate = await EstimateModel.findOne({ _id: req.params.estimateId, status: { $in: clientVisibleEstimateStatuses } }).lean();
+    if (!estimate) throw estimateNotFound();
+    const lead = await LeadModel.findOne({ _id: estimate.leadId, clientEmail: { $regex: `^${escapeRegex(req.authenticatedUser!.email)}$`, $options: "i" } }).lean();
+    if (!lead) throw estimateNotFound();
+    const pdf = await estimatePdf.generate(toEstimatePdfInput(estimate, lead));
+    res.set("Content-Type", "application/pdf").set("Content-Disposition", `attachment; filename="${pdf.filename}"`).send(pdf.bytes);
+  } catch (error) { next(error); } });
+
   router.post("/client/estimates/:estimateId/decision", protectedRoute, authorizeRoles("client"), validateBody(decisionSchema), async (req, res, next) => { try {
     const estimate = await EstimateModel.findOne({ _id: req.params.estimateId, status: "sent_to_client" });
     if (!estimate) throw new ApiError(409, "ESTIMATE_NOT_REVIEWABLE", "This estimate is no longer awaiting your review.");
@@ -181,3 +213,39 @@ export function createLeadsRouter(auth: AuthService, leads: LeadService): Router
 }
 function mapEstimate(value: Record<string, unknown> | null) { if (!value) return null; return { ...value, id: value._id, _id: undefined }; }
 function escapeRegex(value: string) { return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
+function estimateNotFound() { return new ApiError(404, "ESTIMATE_NOT_FOUND", "Estimate not found."); }
+function toEstimatePdfInput(
+  estimate: {
+    _id: string;
+    version: number;
+    status: string;
+    propertyType: string;
+    subtotal: number;
+    gst: number;
+    total: number;
+    lineItems: EstimatePdfInput["lineItems"];
+  },
+  lead: {
+    clientName: string;
+    clientEmail: string;
+    projectName: string;
+    location: string;
+  }
+): EstimatePdfInput {
+  return {
+    id: estimate._id,
+    version: estimate.version,
+    status: estimate.status,
+    propertyType: estimate.propertyType,
+    subtotal: estimate.subtotal,
+    gst: estimate.gst,
+    total: estimate.total,
+    lineItems: estimate.lineItems,
+    lead: {
+      clientName: lead.clientName,
+      clientEmail: lead.clientEmail,
+      projectName: lead.projectName,
+      location: lead.location
+    }
+  };
+}
