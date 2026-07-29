@@ -10,7 +10,7 @@ Estimator/sales users may export every estimate they own, including drafts. Clie
 
 ### Estimator/sales
 
-Every saved estimate card includes an **Export as PDF** button. Drafts, estimates in approval, estimates sent to the client, change requests, and approved estimates are all exportable as long as the authenticated estimator/sales user owns the estimate.
+Every saved estimate card header includes an **Export as PDF** button. Drafts, estimates in approval, estimates sent to the client, change requests, and approved estimates are all exportable as long as the authenticated estimator/sales user owns the estimate.
 
 Selecting the button:
 
@@ -22,7 +22,7 @@ Selecting the button:
 
 ### Client
 
-Each expanded client estimate card includes an **Export as PDF** button. The export control is available for every estimate returned by the client estimate endpoint, including estimates awaiting a decision, change-requested estimates, and approved estimate history.
+Each client estimate card header includes an **Export as PDF** button while that card is expanded. It sits beside the expanded-state control rather than inside the line-item content. The export control is available for every estimate returned by the client estimate endpoint, including estimates awaiting a decision, change-requested estimates, and approved estimate history.
 
 Selecting the button follows the same authenticated, immediate-download behavior as the estimator/sales view. Collapsing the card hides its export control with the rest of the estimate details.
 
@@ -147,7 +147,7 @@ Filenames use lowercase safe characters and hyphens. Missing or unusual project 
 
 Add an estimate PDF download function to the existing estimate API modules. It reuses the authenticated blob-download support already used for design files and respects the filename returned through `Content-Disposition`.
 
-The estimator/sales saved-estimate card calls the sales endpoint. The client estimate card calls the client endpoint.
+The estimator/sales saved-estimate header calls the sales endpoint. The expanded client estimate header calls the client endpoint.
 
 Loading and errors are scoped by estimate ID so one export does not disable every card. Object URLs created for the download are revoked after use.
 
@@ -186,7 +186,7 @@ Use a deterministic generation date and representative estimate fixture.
 ### Frontend tests
 
 - Sales export is available on draft and submitted saved-estimate cards.
-- Client export is available only inside an expanded estimate card.
+- Client export is available in the estimate card header only while that card is expanded.
 - Each button requests the correct role-specific endpoint.
 - The authenticated blob is downloaded with the server-provided filename.
 - Per-estimate loading prevents duplicate clicks without disabling other cards.
