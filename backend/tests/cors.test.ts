@@ -12,14 +12,15 @@ const app = createApp({
 });
 
 describe("CORS", () => {
-  it("allows configured origins and completes their preflight requests", async () => {
+  it("allows configured origins to preflight estimate-saving PUT requests", async () => {
     const response = await request(app)
-      .options("/api/v1/health")
+      .options("/api/v1/leads/lead-1/estimate")
       .set("Origin", "http://localhost:5173")
-      .set("Access-Control-Request-Method", "POST");
+      .set("Access-Control-Request-Method", "PUT");
 
     expect(response.status).toBe(204);
     expect(response.headers["access-control-allow-origin"]).toBe("http://localhost:5173");
+    expect(response.headers["access-control-allow-methods"]).toContain("PUT");
     expect(response.headers.vary).toContain("Origin");
   });
 

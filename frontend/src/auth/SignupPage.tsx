@@ -6,6 +6,7 @@ import { z } from "zod";
 
 import { ApiError } from "../api/client";
 import type { ClientSignupInput } from "../api/types";
+import { BrandLogo } from "../components/ui/BrandLogo";
 import { useAuth } from "./AuthProvider";
 
 const signupSchema = z
@@ -130,7 +131,7 @@ export function SignupPage() {
     <main className="login-page">
       <section className="login-story" aria-label="Lisno client portal">
         <a href="#signup-form" className="skip-link">Skip to account creation</a>
-        <div className="brand brand--light"><span className="brand__mark" aria-hidden="true">L</span><span>LISNO</span></div>
+        <div className="brand brand--light"><BrandLogo light /></div>
         <div className="login-story__content">
           <p className="eyebrow">Your project, in view</p>
           <h2>Follow every design decision.</h2>
@@ -141,7 +142,7 @@ export function SignupPage() {
 
       <section className="login-panel" aria-labelledby="signup-title">
         <div className="login-card signup-card">
-          <div className="brand brand--mobile"><span className="brand__mark" aria-hidden="true">L</span><span>LISNO</span></div>
+          <div className="brand brand--mobile"><BrandLogo /></div>
           <p className="eyebrow">Client portal</p>
           <h1 id="signup-title">Create your client account</h1>
           <p className="login-card__intro">Use the email associated with your design project.</p>

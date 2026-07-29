@@ -7,6 +7,7 @@ import {
   decideEstimateAsClient,
   decideEstimateAsDesigner,
   estimateWorkflowKeys,
+  type EstimateQueueItem,
   getClientEstimates,
   getEstimateDesigners,
   getEstimateReviewQueue
@@ -61,23 +62,34 @@ export function EstimateReviewPanel() {
   if (queue.isPending) return <section className="estimate-review-panel"><h2>Estimate approvals</h2><p>Loading estimate queue…</p></section>;
   if (queue.isError) return <section className="estimate-review-panel"><h2>Estimate approvals</h2><p role="alert">Estimate queue is temporarily unavailable.</p></section>;
   if (!queue.data.length) return <section className="estimate-review-panel"><h2>Estimate approvals</h2><p className="inline-empty">Nothing needs your action right now.</p></section>;
+  const actionableCount = queue.data.filter((estimate) => canActOnEstimate(role, estimate.status)).length;
 
   return <section className="estimate-review-panel" aria-labelledby="estimate-review-title">
-    <header><div><p className="eyebrow">Commercial workflow</p><h2 id="estimate-review-title">{role === "client" ? "Estimates ready for you" : "Estimate approvals"}</h2></div><strong>{queue.data.length} awaiting action</strong></header>
-    <div className="estimate-review-grid">{queue.data.map((estimate) => <article className="estimate-review-card" key={estimate.id}>
+    <header><div><p className="eyebrow">Commercial workflow</p><h2 id="estimate-review-title">{role === "client" ? "Estimates ready for you" : "Estimate approvals"}</h2></div><strong>{actionableCount} awaiting action</strong></header>
+    <div className="estimate-review-grid">{queue.data.map((estimate) => {
+      const actionable = canActOnEstimate(role, estimate.status);
+      return <article className="estimate-review-card" key={estimate.id}>
       <div><p className="eyebrow">{estimate.lead?.location}</p><h3>{estimate.lead?.projectName}</h3><p>{estimate.lead?.clientName}</p></div>
       <strong className="estimate-review-card__total">{money(estimate.total)}</strong>
       <p>{estimate.lineItems.filter((item) => item.included).length} items · GST included</p>
       {role === "client" ? <ClientEstimateDetails estimate={estimate} /> : null}
-      {role === "design_manager" ? <label>Assign approval to<select value={designerByEstimate[estimate.id] ?? ""} onChange={(event) => setDesignerByEstimate((current) => ({ ...current, [estimate.id]: event.target.value }))}><option value="">Choose designer</option>{(designers.data ?? []).map((designer) => <option value={designer.id} key={designer.id}>{designer.name}</option>)}</select></label> : <label>Review note<textarea value={noteByEstimate[estimate.id] ?? ""} onChange={(event) => setNoteByEstimate((current) => ({ ...current, [estimate.id]: event.target.value }))} placeholder={role === "client" ? "Optional note for the Lisno team" : "Add approval context or requested corrections"} /></label>}
-      <div className="estimate-review-card__actions">
+      {!actionable && role === "client" ? <p className="estimate-notice">{estimate.status === "client_approved" ? "Estimate approved" : "Changes requested"}</p> : null}
+      {actionable && (role === "design_manager" ? <label>Assign approval to<select value={designerByEstimate[estimate.id] ?? ""} onChange={(event) => setDesignerByEstimate((current) => ({ ...current, [estimate.id]: event.target.value }))}><option value="">Choose designer</option>{(designers.data ?? []).map((designer) => <option value={designer.id} key={designer.id}>{designer.name}</option>)}</select></label> : <label>Review note<textarea value={noteByEstimate[estimate.id] ?? ""} onChange={(event) => setNoteByEstimate((current) => ({ ...current, [estimate.id]: event.target.value }))} placeholder={role === "client" ? "Optional note for the Lisno team" : "Add approval context or requested corrections"} /></label>)}
+      {actionable ? <div className="estimate-review-card__actions">
         {role === "design_manager"
           ? <button className="button button--primary" type="button" disabled={!designerByEstimate[estimate.id] || action.isPending} onClick={() => action.mutate({ id: estimate.id, action: "assign" })}>Assign designer</button>
           : <><button className="button button--secondary" type="button" disabled={action.isPending} onClick={() => action.mutate({ id: estimate.id, action: "changes" })}>Request changes</button><button className="button button--primary" type="button" disabled={action.isPending} onClick={() => action.mutate({ id: estimate.id, action: "approve" })}>{role === "client" ? "Approve estimate" : "Approve for client"}</button></>}
-      </div>
-    </article>)}</div>
+      </div> : null}
+    </article>;
+    })}</div>
     {action.isError ? <p role="alert">That action could not be completed. Refresh and try again.</p> : null}
   </section>;
+}
+
+function canActOnEstimate(role: string, status: EstimateQueueItem["status"]) {
+  if (role === "client") return status === "sent_to_client";
+  if (role === "design_manager") return status === "pending_manager_assignment";
+  return status === "pending_designer_approval";
 }
 
 function ClientEstimateDetails({ estimate }: { estimate: Awaited<ReturnType<typeof getClientEstimates>>[number] }) {

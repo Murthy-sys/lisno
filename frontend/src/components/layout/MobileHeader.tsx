@@ -2,6 +2,7 @@ import { Menu, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import type { PublicUser } from "../../api/types";
+import { BrandLogo } from "../ui/BrandLogo";
 import { Sidebar } from "./Sidebar";
 
 export function MobileHeader({
@@ -62,8 +63,7 @@ export function MobileHeader({
     <>
       <header className="mobile-header">
         <div className="brand">
-          <span className="brand__mark" aria-hidden="true">L</span>
-          <span>LISNO</span>
+          <BrandLogo />
         </div>
         <button
           ref={triggerRef}

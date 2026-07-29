@@ -27,6 +27,37 @@ const summaries = projects.map((project, index) => ({
 }));
 
 describe("ClientDashboard", () => {
+  it("shows an approved estimate as completed history without decision buttons", async () => {
+    tokenStorage.set("client-token");
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith("/api/v1/auth/me")) return Response.json({ data: client });
+      if (url.includes("/api/v1/client/project-summaries?")) return Response.json({ data: { items: [], pagination: { limit: 100, offset: 0, total: 0, hasMore: false } } });
+      if (url.endsWith("/api/v1/client/estimates")) return Response.json({ data: [{
+        id: "estimate-approved",
+        leadId: "lead-1",
+        propertyType: "2BHK",
+        rooms: [],
+        scopes: [],
+        lineItems: [],
+        subtotal: 100000,
+        gst: 18000,
+        total: 118000,
+        status: "client_approved",
+        approvalRequired: false,
+        projectId: "project-1",
+        lead: { _id: "lead-1", clientName: "Aurora Homes", clientEmail: "client@lisno.example", projectName: "Aurora Villa", location: "Bengaluru" }
+      }] });
+      throw new Error(`Unhandled request: ${url}`);
+    });
+
+    renderApp(["/client"]);
+
+    expect(await screen.findByText("Estimate approved")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Approve estimate" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Request changes" })).not.toBeInTheDocument();
+  });
+
   it("shows multiple client projects with their latest approved update and no internal metrics", async () => {
     tokenStorage.set("client-token");
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {

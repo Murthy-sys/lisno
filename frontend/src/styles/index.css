@@ -209,18 +209,15 @@
   color: white;
 }
 
-.brand__mark {
-  display: grid;
-  width: 2.25rem;
-  height: 2.25rem;
-  place-items: center;
-  border-radius: 0.7rem;
-  background: var(--color-lisno-violet);
-  box-shadow: 0 8px 24px rgb(8 14 37 / 25%);
-  color: white;
-  font-size: 1rem;
-  font-weight: 850;
-  letter-spacing: 0;
+.brand__logo {
+  display: block;
+  width: 6.875rem;
+  height: 1.875rem;
+  object-fit: contain;
+}
+
+.brand__logo--light {
+  filter: brightness(0) invert(1);
 }
 
 .eyebrow {

@@ -3,6 +3,7 @@ import { NavLink } from "react-router-dom";
 
 import type { PublicUser } from "../../api/types";
 import { roleHomePath } from "../../auth/ProtectedRoute";
+import { BrandLogo } from "../ui/BrandLogo";
 
 const roleLabels = {
   designer: "Designer",
@@ -33,8 +34,7 @@ export function Sidebar({
   return (
     <div className="sidebar__inner">
       <div className="brand brand--light sidebar__brand">
-        <span className="brand__mark" aria-hidden="true">L</span>
-        <span>LISNO</span>
+        <BrandLogo light />
       </div>
 
       <div className="sidebar__role">

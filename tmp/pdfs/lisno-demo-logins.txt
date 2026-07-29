@@ -1,0 +1,14 @@
+LISNO DEMO LOGINS
+=================
+
+Use the Estimator / Sales account to review the new lead workspace.
+
+Role                Email                       Password
+------------------  --------------------------  ----------------
+Estimator / Sales   sales@lisno.example          LisnoDemo2026!
+Designer            ananya@lisno.example         LisnoDemo2026!
+Design Manager      aarav@lisno.example          LisnoDemo2026!
+Client              client@aurora.example        LisnoDemo2026!
+
+These are local demo accounts for development and review only.
+Do not use them in production.

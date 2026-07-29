@@ -1,6 +1,6 @@
 import type { RequestHandler } from "express";
 
-const allowedMethods = "GET,HEAD,POST,PATCH,OPTIONS";
+const allowedMethods = "GET,HEAD,POST,PUT,PATCH,OPTIONS";
 const allowedHeaders = "Authorization,Content-Type";
 
 export function allowCors(origins: readonly string[]): RequestHandler {

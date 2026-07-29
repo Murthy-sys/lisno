@@ -5,6 +5,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { z } from "zod";
 
 import { ApiError } from "../api/client";
+import { BrandLogo } from "../components/ui/BrandLogo";
 import { roleHomePath } from "./ProtectedRoute";
 import { useAuth } from "./AuthProvider";
 
@@ -93,8 +94,7 @@ export function LoginPage() {
           Skip to sign in
         </a>
         <div className="brand brand--light">
-          <span className="brand__mark" aria-hidden="true">L</span>
-          <span>LISNO</span>
+          <BrandLogo light />
         </div>
         <div className="login-story__content">
           <p className="eyebrow">Design operations, in focus</p>
@@ -112,8 +112,7 @@ export function LoginPage() {
       <section className="login-panel" aria-labelledby="login-title">
         <div className="login-card">
           <div className="brand brand--mobile">
-            <span className="brand__mark" aria-hidden="true">L</span>
-            <span>LISNO</span>
+            <BrandLogo />
           </div>
           <p className="eyebrow">Welcome to Lisno</p>
           <h1 id="login-title">Welcome back</h1>
