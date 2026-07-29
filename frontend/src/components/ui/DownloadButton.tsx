@@ -1,4 +1,4 @@
-import { useState, type JSX } from "react";
+import { useEffect, useRef, useState, type JSX } from "react";
 import { Download } from "lucide-react";
 
 export interface DownloadButtonProps {
@@ -8,6 +8,12 @@ export interface DownloadButtonProps {
   getFile: () => Promise<{ blob: Blob; filename: string | undefined }>;
   className?: string;
   onBusyChange?: (busy: boolean) => void;
+}
+
+interface DownloadResource {
+  url: string;
+  anchor?: HTMLAnchorElement;
+  timeout?: number;
 }
 
 export function DownloadButton({
@@ -20,30 +26,56 @@ export function DownloadButton({
 }: DownloadButtonProps): JSX.Element {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const inFlightRef = useRef(false);
+  const mountedRef = useRef(true);
+  const resourceRef = useRef<DownloadResource | null>(null);
+
+  const cleanupResource = (resource: DownloadResource | null) => {
+    if (!resource) return;
+    if (resource.timeout !== undefined) window.clearTimeout(resource.timeout);
+    resource.anchor?.remove();
+    URL.revokeObjectURL(resource.url);
+    if (resourceRef.current === resource) resourceRef.current = null;
+  };
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      cleanupResource(resourceRef.current);
+    };
+  }, []);
 
   const download = async () => {
-    if (busy) return;
+    if (inFlightRef.current) return;
 
+    inFlightRef.current = true;
     setBusy(true);
     onBusyChange?.(true);
     setError(null);
+    let resource: DownloadResource | null = null;
     try {
       const { blob, filename } = await getFile();
+      if (!mountedRef.current) return;
       const url = URL.createObjectURL(blob);
+      resource = { url };
+      resourceRef.current = resource;
       const anchor = document.createElement("a");
+      resource.anchor = anchor;
       anchor.href = url;
       anchor.download = filename ?? fallbackFilename;
       document.body.append(anchor);
       anchor.click();
-      window.setTimeout(() => {
-        anchor.remove();
-        URL.revokeObjectURL(url);
-      }, 0);
+      resource.timeout = window.setTimeout(() => cleanupResource(resource), 0);
     } catch {
-      setError("PDF export failed. Try again.");
+      cleanupResource(resource);
+      if (mountedRef.current) setError("PDF export failed. Try again.");
     } finally {
-      setBusy(false);
-      onBusyChange?.(false);
+      inFlightRef.current = false;
+      if (mountedRef.current) {
+        setBusy(false);
+        onBusyChange?.(false);
+      }
     }
   };
 
