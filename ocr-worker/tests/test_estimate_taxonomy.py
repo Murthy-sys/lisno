@@ -81,6 +81,26 @@ def test_ambiguous_bedroom_match_never_selects_an_automatic_room_id():
     assert match.id is None
     assert match.ambiguous is True
     assert match.confidence >= 0.84
+    assert match.to_payload()["evidence"] == ["bedroom 1", "bedroom 2"]
+    assert all(isinstance(value, str) for value in match.to_payload()["evidence"])
+
+
+def test_fuzzy_matching_scans_bounded_windows_across_the_full_title():
+    taxonomy = EstimateTaxonomy(
+        rooms=(TaxonomyTerm("room-studio", "Studio Lounge", ()),),
+        scopes=(TaxonomyTerm("FC", "False Ceiling", ()),),
+    )
+    title = (
+        "alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu "
+        "studo lounge false cieling plan"
+    )
+
+    proposal = classify_estimate_drawing(title, taxonomy)
+
+    assert proposal.room.id == "room-studio"
+    assert proposal.room.confidence >= 0.84
+    assert proposal.scope.id == "FC"
+    assert proposal.scope.confidence >= 0.84
 
 
 def test_more_specific_exact_room_phrase_beats_a_generic_subphrase():

@@ -69,7 +69,7 @@ def match_taxonomy_term(
     )
     if len(ambiguous_candidates) > 1:
         evidence = tuple(
-            candidate[2]
+            candidate[3]
             for candidate in ambiguous_candidates
         )
         return CanonicalMatch(None, winning_score, evidence, True)
@@ -103,12 +103,16 @@ def _score_term(title: str, term: TaxonomyTerm) -> tuple[TaxonomyTerm, float, in
 def _phrase_similarity(title: str, phrase: str) -> tuple[float, int]:
     if _contains_phrase(title, phrase):
         return 1.0, len(phrase.split())
-    title_tokens = title.split()[:_MAX_MATCH_TOKENS]
+    title_tokens = title.split()
     phrase_tokens = phrase.split()[:_MAX_MATCH_TOKENS]
     if not title_tokens or not phrase_tokens:
         return 0.0, 0
     shortest = max(1, len(phrase_tokens) - 1)
-    longest = min(len(title_tokens), len(phrase_tokens) + 1)
+    longest = min(
+        len(title_tokens),
+        _MAX_MATCH_TOKENS,
+        len(phrase_tokens) + 1,
+    )
     return max(
         SequenceMatcher(None, " ".join(title_tokens[index:index + length]), phrase).ratio()
         for length in range(shortest, longest + 1)
