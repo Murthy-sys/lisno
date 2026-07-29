@@ -2,7 +2,7 @@ import type { Readable } from "node:stream";
 
 export interface SaveFileInput {
   data: Buffer;
-  extension: ".pdf" | ".png" | ".jpg" | ".webp";
+  extension: ".pdf" | ".png" | ".jpg" | ".webp" | ".tif" | ".heic";
 }
 
 export interface StoredFile {
@@ -16,3 +16,5 @@ export interface FileStorage {
   delete(reference: string): Promise<void>;
   open(reference: string): Promise<Readable>;
 }
+
+export type Storage = FileStorage;

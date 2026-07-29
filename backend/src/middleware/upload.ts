@@ -18,7 +18,13 @@ import type { SaveFileInput } from "../storage/storage.js";
 
 export interface ValidatedUpload extends SaveFileInput {
   originalFilename: string;
-  mimeType: "application/pdf" | "image/png" | "image/jpeg" | "image/webp";
+  mimeType:
+    | "application/pdf"
+    | "image/png"
+    | "image/jpeg"
+    | "image/webp"
+    | "image/tiff"
+    | "image/heic";
   sizeBytes: number;
 }
 
@@ -35,6 +41,9 @@ const allowedClaimedMimeTypes = new Set([
   "image/png",
   "image/jpeg",
   "image/webp",
+  "image/tiff",
+  "image/heic",
+  "image/heif",
   "application/octet-stream",
   // Busboy uses text/plain when a multipart file part omits Content-Type.
   "text/plain"
@@ -59,8 +68,8 @@ export function uploadSingleFile(maxUploadBytes: number): RequestHandler {
           new ApiError(
             415,
             "UNSUPPORTED_FILE_TYPE",
-            "Only PDF, PNG, JPEG, and WebP files are supported.",
-            { file: "Choose a PDF, PNG, JPEG, or WebP file." }
+            "Only PDF, PNG, JPEG, WebP, TIFF, and HEIC files are supported.",
+            { file: "Choose a PDF, PNG, JPEG, WebP, TIFF, or HEIC file." }
           )
         );
         return;
@@ -127,14 +136,14 @@ export function uploadSingleFile(maxUploadBytes: number): RequestHandler {
       if (
         !detected ||
         !contentIsValid ||
-        (!claimIsGeneric && detected.mimeType !== claimed)
+        (!claimIsGeneric && !claimMatchesDetected(claimed, detected.mimeType))
       ) {
         next(
           new ApiError(
             415,
             "UNSUPPORTED_FILE_TYPE",
             "The file contents do not match an allowed file type.",
-            { file: "Choose a valid PDF, PNG, JPEG, or WebP file." }
+            { file: "Choose a valid PDF, PNG, JPEG, WebP, TIFF, or HEIC file." }
           )
         );
         return;
@@ -186,7 +195,40 @@ function detectFileType(data: Buffer): Pick<
   ) {
     return { extension: ".webp", mimeType: "image/webp" };
   }
+  if (
+    data.length >= 4 &&
+    ((data[0] === 0x49 && data[1] === 0x49 && data[2] === 0x2a && data[3] === 0x00) ||
+      (data[0] === 0x4d && data[1] === 0x4d && data[2] === 0x00 && data[3] === 0x2a) ||
+      (data[0] === 0x49 && data[1] === 0x49 && data[2] === 0x2b && data[3] === 0x00) ||
+      (data[0] === 0x4d && data[1] === 0x4d && data[2] === 0x00 && data[3] === 0x2b))
+  ) {
+    return { extension: ".tif", mimeType: "image/tiff" };
+  }
+  if (isHeifFile(data)) {
+    return { extension: ".heic", mimeType: "image/heic" };
+  }
   return null;
+}
+
+function claimMatchesDetected(claimed: string, detected: ValidatedUpload["mimeType"]) {
+  return detected === claimed || (detected === "image/heic" && claimed === "image/heif");
+}
+
+function isHeifFile(data: Buffer) {
+  if (data.length < 16 || data.subarray(4, 8).toString("ascii") !== "ftyp") {
+    return false;
+  }
+  const boxSize = data.readUInt32BE(0);
+  if (boxSize !== 0 && (boxSize < 16 || boxSize > data.length)) return false;
+  const brandEnd = boxSize === 0 ? data.length : boxSize;
+  const heifBrands = new Set(["heic", "heix", "hevc", "hevx", "heim", "heis", "mif1", "msf1"]);
+  if (heifBrands.has(data.subarray(8, 12).toString("ascii"))) return true;
+  for (let offset = 16; offset + 4 <= brandEnd; offset += 4) {
+    if (heifBrands.has(data.subarray(offset, offset + 4).toString("ascii"))) {
+      return true;
+    }
+  }
+  return false;
 }
 
 export async function isValidPdfDocument(data: Buffer) {

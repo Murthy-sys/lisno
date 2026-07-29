@@ -32,6 +32,16 @@ const PNG = Buffer.from([
 // These include JPEG SOI/EOI and a RIFF/WebP header whose declared size matches.
 const JPEG = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01, 0x01, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0xff, 0xd9]);
 const WEBP = Buffer.from([0x52, 0x49, 0x46, 0x46, 0x16, 0x00, 0x00, 0x00, 0x57, 0x45, 0x42, 0x50, 0x56, 0x50, 0x38, 0x58, 0x0a, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
+const TIFF_LE = Buffer.from([0x49, 0x49, 0x2a, 0x00]);
+const TIFF_BE = Buffer.from([0x4d, 0x4d, 0x00, 0x2a]);
+const HEIC = Buffer.from([
+  0x00, 0x00, 0x00, 0x18,
+  0x66, 0x74, 0x79, 0x70,
+  0x68, 0x65, 0x69, 0x63,
+  0x00, 0x00, 0x00, 0x00,
+  0x68, 0x65, 0x69, 0x63,
+  0x6d, 0x69, 0x66, 0x31
+]);
 
 function rewriteXrefStream(
   data: Buffer,
@@ -333,6 +343,50 @@ describe("design-version uploads", () => {
     expect(webp.body.data.mimeType).toBe("image/webp");
     expect(mismatch.status).toBe(415);
     expect(mismatch.body.error.code).toBe("UNSUPPORTED_FILE_TYPE");
+  });
+
+  it.each([
+    ["little-endian TIFF", TIFF_LE, "drawing.tif", "image/tiff"],
+    ["big-endian TIFF", TIFF_BE, "drawing.tiff", "image/tiff"],
+    ["HEIC", HEIC, "drawing.heic", "image/heic"]
+  ])("accepts a valid %s signature", async (_kind, data, filename, mimeType) => {
+    const { app } = setup();
+
+    const response = await upload(
+      app,
+      users.ananya,
+      "task-furniture-layout",
+      data,
+      filename,
+      mimeType
+    );
+
+    expect(response.status).toBe(201);
+    expect(response.body.data.mimeType).toBe(
+      mimeType === "image/heic" ? "image/heic" : "image/tiff"
+    );
+  });
+
+  it("does not mistake an ISO BMFF minor version for a supported HEIF brand", async () => {
+    const { app } = setup();
+    const unsupportedBrand = Buffer.from([
+      0x00, 0x00, 0x00, 0x10,
+      0x66, 0x74, 0x79, 0x70,
+      0x61, 0x76, 0x69, 0x66,
+      0x68, 0x65, 0x69, 0x63
+    ]);
+
+    const response = await upload(
+      app,
+      users.ananya,
+      "task-furniture-layout",
+      unsupportedBrand,
+      "not-heic.heic",
+      "image/heic"
+    );
+
+    expect(response.status).toBe(415);
+    expect(response.body.error.code).toBe("UNSUPPORTED_FILE_TYPE");
   });
 
   it("accepts PDF and image magic bytes and allocates monotonic task versions", async () => {

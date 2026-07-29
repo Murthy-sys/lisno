@@ -12,6 +12,7 @@ import { createEvaluationsRouter } from "./routes/evaluations.js";
 import { createDesignVersionsRouter } from "./routes/design-versions.js";
 import { createDesignSectionsRouter } from "./routes/design-sections.js";
 import { createExtractionWorkerRouter } from "./routes/extraction-worker.js";
+import { createEstimateDesignsRouter } from "./routes/estimate-designs.js";
 import { healthRouter } from "./routes/health.js";
 import { createKpisRouter } from "./routes/kpis.js";
 import { createLeadsRouter } from "./routes/leads.js";
@@ -27,6 +28,7 @@ import { createEvaluationService } from "./services/evaluation.service.js";
 import { createDesignVersionService } from "./services/design-version.service.js";
 import { createDesignSectionService } from "./services/design-section.service.js";
 import { createExtractionWorkerService } from "./services/extraction-worker.service.js";
+import { createEstimateDesignService } from "./services/estimate-design.service.js";
 import { createHierarchyService } from "./services/hierarchy.service.js";
 import { createKpiService } from "./services/kpi.service.js";
 import { createLeadService } from "./services/lead.service.js";
@@ -95,6 +97,11 @@ export function createApp(dependencies: AppDependencies) {
     storage,
     clock
   );
+  const estimateDesignService = createEstimateDesignService({
+    storage,
+    maxUploadBytes,
+    now: clock
+  });
   const extractionWorkerService = dependencies.ocrWorkerToken
     ? createExtractionWorkerService(
         repository,
@@ -120,6 +127,10 @@ export function createApp(dependencies: AppDependencies) {
   app.use(express.json());
   app.use("/api/v1", healthRouter);
   app.use("/api/v1", createAuthRouter(authService, authRateLimit));
+  app.use(
+    "/api/v1",
+    createEstimateDesignsRouter(authService, estimateDesignService, maxUploadBytes)
+  );
   app.use("/api/v1", createProjectsRouter(authService, projectService));
   app.use(
     "/api/v1",
