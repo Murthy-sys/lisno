@@ -134,7 +134,7 @@ function EstimateReviewCard({
       <div className="estimate-review-card__client-header">
         <h3 id={headingId}>{estimate.lead?.projectName}</h3>
         <strong className="estimate-review-card__total">{money(estimate.total)}</strong>
-        <button className="estimate-review-card__toggle" type="button" aria-labelledby={headingId} aria-expanded={clientExpanded} aria-controls={detailsId} onClick={() => setClientExpanded((current) => !current)}><ChevronDown aria-hidden="true" /></button>
+        <button className="estimate-review-card__toggle" type="button" aria-labelledby={headingId} aria-expanded={clientExpanded} aria-controls={detailsId} onClick={() => setClientExpanded((current) => !current)}><span aria-hidden="true">{clientExpanded ? "Hide details" : "View estimate"}</span><ChevronDown aria-hidden="true" /></button>
       </div>
       {clientExpanded ? <div className="estimate-review-card__client-content" id={detailsId}>
         <p className="eyebrow">{estimate.lead?.location}</p>

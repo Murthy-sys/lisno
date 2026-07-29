@@ -56,10 +56,13 @@
 .estimate-review-card { display: grid; gap: .75rem; padding: 1rem; border: 1px solid #e4e1ef; border-radius: .85rem; background: #fbfaff; }
 .estimate-review-card--client { gap: 0; }
 .estimate-review-card__client-header { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: .75rem; }
-.estimate-review-card__toggle { display: inline-grid; place-items: center; }
+.estimate-review-card__client-header h3 { min-width: 0; overflow-wrap: anywhere; }
+.estimate-review-card__toggle { display: inline-flex; min-height: 2.75rem; align-items: center; justify-content: center; gap: .45rem; padding: .55rem .75rem; border: 1px solid #d7d1ea; border-radius: .65rem; background: #fff; color: #41368a; cursor: pointer; font-weight: 800; transition: background 160ms ease, border-color 160ms ease, box-shadow 160ms ease; }
+.estimate-review-card__toggle:hover { border-color: #a79bce; background: #f1effa; box-shadow: 0 4px 12px rgb(55 41 125 / 10%); }
+.estimate-review-card__toggle:focus-visible { outline: 3px solid #9d8fff; outline-offset: 2px; }
 .estimate-review-card__toggle svg { transition: transform 160ms ease; }
 .estimate-review-card__toggle[aria-expanded="true"] svg { transform: rotate(180deg); }
-.estimate-review-card__client-content { display: grid; gap: .75rem; padding-top: .75rem; }
+.estimate-review-card__client-content { display: grid; gap: .75rem; margin-top: .85rem; padding-top: .85rem; border-top: 1px solid #dedbea; }
 .estimate-review-card__total { color: #34277d; font-family: var(--font-display, Georgia, serif); font-size: 1.8rem; }
 .estimate-review-card label { display: grid; gap: .35rem; font-size: .84rem; font-weight: 800; }
 .estimate-review-card select, .estimate-review-card textarea { width: 100%; padding: .65rem; border: 1px solid #d8d4e8; border-radius: .55rem; background: #fff; font: inherit; }
@@ -95,7 +98,7 @@
 .client-estimate-totals span { display: flex; justify-content: space-between; gap: 1rem; }
 .client-estimate-totals span:last-child { padding-top: .4rem; border-top: 1px solid rgb(255 255 255 / 18%); color: #d8d0ff; font-size: .95rem; }
 @media (max-width: 900px) { .estimate-builder-layout { grid-template-columns: 1fr; }.estimate-room-sidebar { display: flex; overflow-x: auto; }.estimate-room-sidebar button { flex: 0 0 12rem; }.estimate-line { grid-template-columns: 1fr 1fr 5rem; }.estimate-line > span, .estimate-line > strong { justify-self: end; } }
-@media (max-width: 640px) { .estimate-line { grid-template-columns: 1fr 5rem; }.estimate-line label, .estimate-line select { grid-column: 1 / -1; }.estimate-review-card__client-header { gap: .5rem; }.client-estimate-line { grid-template-columns: 1fr auto; }.client-estimate-line > span:nth-child(2) { grid-column: 1 / -1; color: #6e768a; } }
+@media (max-width: 640px) { .estimate-line { grid-template-columns: 1fr 5rem; }.estimate-line label, .estimate-line select { grid-column: 1 / -1; }.estimate-review-card__client-header { grid-template-areas: "heading heading" "total toggle"; grid-template-columns: minmax(0, 1fr) auto; gap: .65rem .5rem; }.estimate-review-card__client-header h3 { grid-area: heading; }.estimate-review-card__total { grid-area: total; }.estimate-review-card__toggle { grid-area: toggle; }.client-estimate-line { grid-template-columns: 1fr auto; }.client-estimate-line > span:nth-child(2) { grid-column: 1 / -1; color: #6e768a; } }
 
 @layer base {
   :root {
