@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 from PIL import Image, ImageDraw, ImageFont
 
+from lisno_ocr.contracts import EstimateTaxonomy, InvalidSourceError, TaxonomyTerm
 from lisno_ocr.extractor import Extractor
 from lisno_ocr.settings import LayoutSettings
 from lisno_ocr.title_classifier import OcrLine, classify_drawing_titles
@@ -295,6 +296,92 @@ def test_renders_every_pdf_page_with_positive_pixel_dimensions():
     assert all(page.width > 0 and page.height > 0 for page in pages)
     assert all(page.image_base64 for page in pages)
     assert ocr.calls == 2
+
+
+def test_tiff_decode_failures_remain_classified_as_invalid_sources(tmp_path):
+    source = tmp_path / "oversized.tiff"
+    image = Image.new("RGB", (10, 10), "white")
+    try:
+        image.save(source, format="TIFF")
+    finally:
+        image.close()
+
+    with pytest.raises(InvalidSourceError, match="source image page is too large"):
+        Extractor(
+            ocr_engine=FakePaddleOCR3([]),
+            max_page_pixels=1,
+        ).extract(source)
+
+
+def test_multipage_tiff_respects_the_common_source_page_limit(tmp_path):
+    source = tmp_path / "two-pages.tiff"
+    first = Image.new("RGB", (10, 10), "white")
+    second = Image.new("RGB", (10, 10), "black")
+    try:
+        first.save(source, format="TIFF", save_all=True, append_images=[second])
+    finally:
+        first.close()
+        second.close()
+
+    with pytest.raises(InvalidSourceError, match="too many pages"):
+        Extractor(
+            ocr_engine=FakePaddleOCR3([]),
+            max_pdf_pages=1,
+        ).extract(source)
+
+
+def test_estimate_taxonomy_adds_a_proposal_for_every_multi_title_crop():
+    taxonomy = EstimateTaxonomy(
+        rooms=(TaxonomyTerm("room-living", "Living Room", ()),),
+        scopes=(
+            TaxonomyTerm("FL", "Flooring", ("floor plan",)),
+            TaxonomyTerm("WE", "Wall Elevation", ("front elevation",)),
+            TaxonomyTerm("FC", "False Ceiling", ("ceiling plan",)),
+            TaxonomyTerm("EL", "Electrical", ()),
+        ),
+    )
+    labels = [
+        ((34, 70, 285, 84), "Living Room Floor Plan", 0.95),
+        ((852, 160, 1070, 173), "Living Room Front Elevation", 0.96),
+        ((731, 609, 898, 627), "Living Room Ceiling Plan", 0.97),
+        ((1000, 611, 1236, 625), "Living Room Electrical Plan", 0.98),
+    ]
+    ocr = PageAwareFakePaddleOCR3([{
+        "rec_boxes": [box for box, _text, _score in labels],
+        "rec_texts": [text for _box, text, _score in labels],
+        "rec_scores": [score for _box, _text, score in labels],
+    }])
+
+    page = Extractor(
+        ocr_engine=ocr,
+        estimate_taxonomy=taxonomy,
+    ).extract(FIXTURES / "multi-room-scope-plan.png")[0]
+
+    assert [section.proposal.scope.id for section in page.sections] == [
+        "FL", "WE", "FC", "EL",
+    ]
+    assert all(section.proposal is not None for section in page.sections)
+    assert all(section.proposal.room.id == "room-living" for section in page.sections)
+    assert len({
+        (section.crop.x, section.crop.y, section.crop.width, section.crop.height)
+        for section in page.sections
+    }) == 4
+    payload = page.sections[2].to_payload()
+    assert payload["proposal"] == {
+        "detectedTitle": "Living Room Ceiling Plan",
+        "room": {
+            "id": "room-living",
+            "confidence": 1.0,
+            "evidence": ["living room"],
+            "ambiguous": False,
+        },
+        "scope": {
+            "id": "FC",
+            "confidence": 1.0,
+            "evidence": ["ceiling plan"],
+            "ambiguous": False,
+        },
+    }
 
 
 def test_extracts_exact_approved_blueprint_titles_in_page_order(tmp_path):

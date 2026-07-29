@@ -11,16 +11,19 @@ from typing import Any, Iterable
 
 import fitz
 import numpy as np
-from PIL import Image, UnidentifiedImageError
+from PIL import Image
 
 from .contracts import (
     Crop,
+    EstimateTaxonomy,
     ExtractedPage,
     ExtractedSection,
     InvalidSourceError,
     OcrError,
     PdfRenderError,
 )
+from .estimate_taxonomy import classify_estimate_drawing
+from .image_formats import ImageSourceError, open_source_pages
 from .settings import LayoutSettings
 from .title_classifier import OcrLine, classify_drawing_titles
 
@@ -43,7 +46,8 @@ class Extractor:
                  confidence_floor: float = 0.2, max_pdf_pages: int = 50,
                  max_page_pixels: int = 40_000_000,
                  max_output_bytes: int = 64_000_000,
-                 accepted_plan_types: Sequence[str] | None = None):
+                 accepted_plan_types: Sequence[str] | None = None,
+                 estimate_taxonomy: EstimateTaxonomy | None = None):
         classifier_settings = LayoutSettings.from_environment()
         self._ocr_engine = ocr_engine
         self._render_scale = render_scale
@@ -57,6 +61,7 @@ class Extractor:
             else classifier_settings.accepted_plan_types
         )
         self._accepted_room_types = classifier_settings.accepted_room_types
+        self._estimate_taxonomy = estimate_taxonomy
 
     def extract(self, source_path: str | Path) -> list[ExtractedPage]:
         path = Path(source_path)
@@ -65,19 +70,26 @@ class Extractor:
         suffix = path.suffix.lower()
         if suffix == ".pdf":
             images = self._render_pdf_pages(path)
-        elif suffix in {".png", ".jpg", ".jpeg", ".webp"}:
-            images = iter((self._open_image(path),))
+        elif suffix in {".png", ".jpg", ".jpeg", ".webp", ".tif", ".tiff", ".heic", ".heif"}:
+            images = open_source_pages(
+                path,
+                max_page_pixels=self._max_page_pixels,
+                max_pages=self._max_pdf_pages,
+            )
         else:
             raise InvalidSourceError("The extraction source type is unsupported.")
         pages: list[ExtractedPage] = []
         remaining = self._max_output_bytes
-        for page_number, image in enumerate(images, start=1):
-            try:
-                page, used = self._extract_page(image, page_number, remaining)
-                pages.append(page)
-                remaining -= used
-            finally:
-                image.close()
+        try:
+            for page_number, image in enumerate(images, start=1):
+                try:
+                    page, used = self._extract_page(image, page_number, remaining)
+                    pages.append(page)
+                    remaining -= used
+                finally:
+                    image.close()
+        except ImageSourceError as error:
+            raise InvalidSourceError(str(error)) from error
         return pages
 
     def _render_pdf_pages(self, path: Path) -> Iterator[Image.Image]:
@@ -112,22 +124,6 @@ class Extractor:
             raise PdfRenderError("A PDF page could not be rendered.") from error
         finally:
             document.close()
-
-    def _open_image(self, path: Path) -> Image.Image:
-        source: Image.Image | None = None
-        try:
-            source = Image.open(path)
-            if source.width * source.height > self._max_page_pixels:
-                source.close()
-                raise InvalidSourceError("The source image is too large.")
-            source.load()
-            converted = source.convert("RGB")
-            return converted
-        except (UnidentifiedImageError, OSError, ValueError) as error:
-            raise InvalidSourceError("The source image could not be decoded.") from error
-        finally:
-            if source is not None:
-                source.close()
 
     def _extract_page(
         self, image: Image.Image, page_number: int, remaining_bytes: int
@@ -267,6 +263,11 @@ class Extractor:
             confidence=float(confidence),
             crop=crop,
             image_base64=_png_base64(image.crop((left, top, right, bottom))),
+            proposal=(
+                classify_estimate_drawing(label, self._estimate_taxonomy)
+                if self._estimate_taxonomy is not None
+                else None
+            ),
         )
 
 
