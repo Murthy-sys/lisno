@@ -97,8 +97,17 @@ describe("collapsible client project cards", () => {
       name: /Aurora Villa/
     });
     const loftToggle = screen.getByRole("button", { name: /Cedar Loft/ });
+    const villaHeading = screen.getByRole("heading", {
+      name: "Aurora Villa",
+      level: 2
+    });
 
     expect(villaToggle).toHaveAttribute("aria-expanded", "false");
+    expect(villaToggle).toHaveAttribute(
+      "aria-controls",
+      "client-project-project-villa-details"
+    );
+    expect(villaToggle).not.toContainElement(villaHeading);
     expect(loftToggle).toHaveAttribute("aria-expanded", "false");
     expect(screen.queryByText("Villa floor plan.pdf")).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Open project" })).not.toBeInTheDocument();
@@ -108,7 +117,7 @@ describe("collapsible client project cards", () => {
     expect(villaToggle).toHaveAttribute("aria-expanded", "true");
     expect(loftToggle).toHaveAttribute("aria-expanded", "false");
     const villaPanel = document.getElementById(
-      villaToggle.getAttribute("aria-controls")!
+      "client-project-project-villa-details"
     )!;
     expect(villaPanel).toBeVisible();
     expect(within(villaPanel).getByText("Villa floor plan.pdf")).toBeVisible();

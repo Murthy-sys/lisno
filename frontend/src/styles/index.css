@@ -2305,16 +2305,23 @@
   padding: 0;
 }
 
+.client-project-card__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1.25rem 1.5rem;
+}
+
 .client-project-card__toggle {
   display: flex;
-  width: 100%;
   align-items: center;
   justify-content: space-between;
   gap: 1rem;
   border: 0;
   background: transparent;
   color: inherit;
-  padding: 1.25rem 1.5rem;
+  padding: 0;
   text-align: left;
   cursor: pointer;
 }
@@ -2378,6 +2385,7 @@
 }
 
 @media (max-width: 640px) {
+  .client-project-card__header,
   .client-project-card__toggle,
   .client-project-card__summary {
     align-items: flex-start;

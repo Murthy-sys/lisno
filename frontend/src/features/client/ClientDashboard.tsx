@@ -25,20 +25,23 @@ export function ClientDashboard() {
 function ClientProjectCard({ project, latest, loading, failed, onRetry }: { project: ClientProjectSummary; latest: ClientDesignVersion | undefined; loading: boolean; failed: boolean; onRetry: () => void }) {
   const [expanded, setExpanded] = useState(false);
   const detailsId = `client-project-${project.id}-details`;
+  const headingId = `client-project-${project.id}-heading`;
   const floorLabel = `${project.floorCount} ${project.floorCount === 1 ? "floor" : "floors"}`;
 
   return <article className="client-project-card">
-    <button type="button" className="client-project-card__toggle" aria-expanded={expanded} aria-controls={detailsId} onClick={() => setExpanded((current) => !current)}>
+    <div className="client-project-card__header">
       <span className="client-project-card__identity">
         <span className="eyebrow">{project.location}</span>
-        <h2>{project.name}</h2>
+        <h2 id={headingId}>{project.name}</h2>
       </span>
-      <span className="client-project-card__summary">
-        <strong>{project.progress}% complete</strong>
-        <span>{floorLabel}</span>
-        <ChevronDown aria-hidden="true" className={expanded ? "is-expanded" : undefined} />
-      </span>
-    </button>
+      <button type="button" className="client-project-card__toggle" aria-labelledby={headingId} aria-expanded={expanded} aria-controls={detailsId} onClick={() => setExpanded((current) => !current)}>
+        <span className="client-project-card__summary">
+          <strong>{project.progress}% complete</strong>
+          <span>{floorLabel}</span>
+          <ChevronDown aria-hidden="true" className={expanded ? "is-expanded" : undefined} />
+        </span>
+      </button>
+    </div>
 
     {expanded ? <div id={detailsId} className="client-project-card__details">
       <p>Expected completion: {formatDate(project.plannedEndAt)}</p>
