@@ -53,6 +53,10 @@ describe("ClientDashboard", () => {
 
     renderApp(["/client"]);
 
+    expect(await screen.findByText("Aurora Villa")).toBeVisible();
+    expect(screen.getByText("₹1,18,000")).toBeVisible();
+    expect(screen.queryByText("Estimate approved")).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Aurora Villa" }));
     expect(await screen.findByText("Estimate approved")).toBeVisible();
     expect(screen.queryByRole("button", { name: "Approve estimate" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Request changes" })).not.toBeInTheDocument();
