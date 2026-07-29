@@ -6,6 +6,24 @@ import { RepositoryConflictError } from "../src/repositories/types.js";
 import { demoSeedData } from "../src/seed/data.js";
 
 describe("memory repository", () => {
+  it("pages only an owner's matching leads and orders activities newest first", async () => {
+    const repository = createMemoryRepository(demoSeedData);
+    const base = {
+      ownerId: "user-estimator-sales", clientName: "Ramesh Nair", clientEmail: "ramesh@example.com", clientMobile: "9876500000",
+      projectName: "Prestige Lakeside", location: "Bengaluru", propertyType: "3BHK", budgetMin: 1_000_000, budgetMax: 1_400_000,
+      source: "Referral", stage: "negotiation" as const, nextAction: "Call client", nextActionAt: "2026-08-01T10:00:00.000Z",
+      builder: null, areaSqft: null, targetHandoverAt: null, notes: null, latestActivityAt: null,
+      createdAt: "2026-07-29T09:00:00.000Z", updatedAt: "2026-07-29T09:00:00.000Z"
+    };
+    await repository.createLead({ ...base, id: "lead-owned" });
+    await repository.createLead({ ...base, id: "lead-other", ownerId: "other-user", clientName: "Other Lead" });
+    await repository.appendLeadActivity({ id: "activity-first", leadId: "lead-owned", actorId: base.ownerId, type: "call", note: "First follow-up", occurredAt: "2026-07-29T09:30:00.000Z", createdAt: "2026-07-29T09:30:00.000Z" });
+    await repository.appendLeadActivity({ id: "activity-second", leadId: "lead-owned", actorId: base.ownerId, type: "note", note: "Second follow-up", occurredAt: "2026-07-29T10:00:00.000Z", createdAt: "2026-07-29T10:00:00.000Z" });
+
+    await expect(repository.pageLeadsForOwner(base.ownerId, { search: "nair", stage: "negotiation" }, { limit: 20, offset: 0 })).resolves.toMatchObject({ total: 1, items: [{ id: "lead-owned" }] });
+    await expect(repository.listLeadActivities("lead-owned")).resolves.toMatchObject([{ note: "Second follow-up" }, { note: "First follow-up" }]);
+  });
+
   it("normalizes account emails before identity lookup and project linking", async () => {
     const seed = structuredClone(demoSeedData);
     const client = seed.users.find((user) => user.id === "user-client-aurora")!;

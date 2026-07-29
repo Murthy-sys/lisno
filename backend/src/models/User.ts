@@ -11,7 +11,7 @@ const userSchema = new Schema(
     passwordHash: { type: String, required: true, select: false },
     role: {
       type: String,
-      enum: ["designer", "design_manager", "design_head", "client"],
+      enum: ["designer", "design_manager", "design_head", "estimator_sales", "client"],
       required: true
     },
     active: { type: Boolean, required: true, default: true },

@@ -8,6 +8,7 @@ const roleLabels = {
   designer: "Designer",
   design_manager: "Design manager",
   design_head: "Design head",
+  estimator_sales: "Estimator / Sales",
   client: "Client"
 } as const;
 

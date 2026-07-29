@@ -69,6 +69,73 @@ function installDesignerApi(
 }
 
 describe("protected role routing", () => {
+  it("opens the estimator sales workspace for an estimator sales session", async () => {
+    tokenStorage.set("sales-token");
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url === "/api/v1/auth/me") return Response.json({ data: { id: "user-estimator-sales", name: "Priya Sharma", email: "sales@lisno.example", role: "estimator_sales" } });
+      if (url.startsWith("/api/v1/leads?")) return Response.json({ data: { items: [], pagination: { limit: 20, offset: 0, total: 0, hasMore: false } } });
+      throw new Error(`Unhandled request: ${url}`);
+    });
+
+    const { router } = renderApp(["/estimator-sales"]);
+    expect(await screen.findByRole("heading", { name: "Lead workspace" })).toBeVisible();
+    expect(router.state.location.pathname).toBe("/estimator-sales");
+  });
+
+  it("opens estimate configuration from a lead-scoped estimator route", async () => {
+    tokenStorage.set("sales-token");
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url === "/api/v1/auth/me") return Response.json({ data: { id: "user-estimator-sales", name: "Priya Sharma", email: "sales@lisno.example", role: "estimator_sales" } });
+      if (url === "/api/v1/leads/lead-1") return Response.json({ data: { id: "lead-1", ownerId: "user-estimator-sales", clientName: "Test User", clientEmail: "test@example.com", clientMobile: "8500098088", projectName: "Test project", location: "Bangalore", propertyType: "2BHK", budgetMin: 1000000, budgetMax: 1500000, source: "Walk-in", stage: "estimate_in_progress", nextAction: "estimate", nextActionAt: "2026-07-29T10:00:00.000Z", builder: null, areaSqft: null, targetHandoverAt: null, notes: null, latestActivityAt: null, createdAt: "2026-07-29T10:00:00.000Z", updatedAt: "2026-07-29T10:00:00.000Z" } });
+      throw new Error(`Unhandled request: ${url}`);
+    });
+
+    const { router } = renderApp(["/estimator-sales/leads/lead-1/estimate"]);
+
+    expect(await screen.findByRole("heading", { name: /configure estimate/i })).toBeVisible();
+    expect(router.state.location.pathname).toBe("/estimator-sales/leads/lead-1/estimate");
+  });
+
+  it("continues from configured rooms to estimate item selection", async () => {
+    tokenStorage.set("sales-token");
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url === "/api/v1/auth/me") return Response.json({ data: { id: "user-estimator-sales", name: "Priya Sharma", email: "sales@lisno.example", role: "estimator_sales" } });
+      if (url === "/api/v1/leads/lead-1") return Response.json({ data: { id: "lead-1", ownerId: "user-estimator-sales", clientName: "Test User", clientEmail: "test@example.com", clientMobile: "8500098088", projectName: "Test project", location: "Bangalore", propertyType: "2BHK", budgetMin: 1000000, budgetMax: 1500000, source: "Walk-in", stage: "estimate_in_progress", nextAction: "estimate", nextActionAt: "2026-07-29T10:00:00.000Z", builder: null, areaSqft: null, targetHandoverAt: null, notes: null, latestActivityAt: null, createdAt: "2026-07-29T10:00:00.000Z", updatedAt: "2026-07-29T10:00:00.000Z" } });
+      throw new Error(`Unhandled request: ${url}`);
+    });
+    const user = userEvent.setup();
+    renderApp(["/estimator-sales/leads/lead-1/estimate"]);
+    await user.click(await screen.findByRole("button", { name: /master bedroom/i }));
+    await user.click(screen.getByRole("button", { name: /continue to item selection/i }));
+    expect(await screen.findByRole("heading", { name: /select estimate items/i })).toBeVisible();
+  });
+
+  it("restores saved rooms and selected estimate items when an estimator reopens an estimate", async () => {
+    tokenStorage.set("sales-token");
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url === "/api/v1/auth/me") return Response.json({ data: { id: "user-estimator-sales", name: "Priya Sharma", email: "sales@lisno.example", role: "estimator_sales" } });
+      if (url === "/api/v1/leads/lead-1") return Response.json({ data: { id: "lead-1", ownerId: "user-estimator-sales", clientName: "Test User", clientEmail: "test@example.com", clientMobile: "8500098088", projectName: "Test project", location: "Bangalore", propertyType: "2BHK", budgetMin: 1000000, budgetMax: 1500000, source: "Walk-in", stage: "estimate_in_progress", nextAction: "estimate", nextActionAt: "2026-07-29T10:00:00.000Z", builder: null, areaSqft: null, targetHandoverAt: null, notes: null, latestActivityAt: null, createdAt: "2026-07-29T10:00:00.000Z", updatedAt: "2026-07-29T10:00:00.000Z" } });
+      if (url === "/api/v1/leads/lead-1/estimate") return Response.json({ data: {
+        id: "estimate-1", status: "draft", approvalRequired: false, propertyType: "2BHK",
+        rooms: [{ id: "master-1", typeId: "master", label: "Master Bedroom", icon: "🛏️", sqft: 200, length: 10, width: 20 }],
+        scopes: ["FC"],
+        lineItems: [{ catalogueId: "FC01", roomName: "Master Bedroom", specification: "plain_gyp", unit: "sqft", rate: 95, quantity: 200, included: true }],
+        subtotal: 19000, gst: 3420, total: 22420
+      } });
+      throw new Error(`Unhandled request: ${url}`);
+    });
+
+    renderApp(["/estimator-sales/leads/lead-1/estimate"]);
+
+    expect(await screen.findByRole("heading", { name: /select estimate items/i })).toBeVisible();
+    expect(screen.getByRole("checkbox", { name: /FC01/i })).toBeChecked();
+    expect(screen.getByText("₹22,420")).toBeVisible();
+  });
+
   it("restores a persisted token through /auth/me before showing the role home", async () => {
     tokenStorage.set("restored-token");
     installDesignerApi((input, init) => {

@@ -31,6 +31,7 @@ import {
   getKpiTaskPage,
   reviewPeriod
 } from "./designerApi";
+import { EstimateReviewPanel } from "../estimates/EstimateReviewPanel";
 
 const statusLabels: Record<ProjectStatus, string> = {
   planning: "Planning",
@@ -132,6 +133,8 @@ export function DesignerDashboard() {
           New project
         </button>
       </header>
+
+      <EstimateReviewPanel />
 
       <section className="kpi-panel" aria-labelledby="kpi-title">
         <div className="kpi-panel__intro">

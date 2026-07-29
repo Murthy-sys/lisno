@@ -203,6 +203,7 @@ describe("authentication API", () => {
     ["designer", "ananya@lisno.example", "user-designer-ananya"],
     ["design_manager", "aarav@lisno.example", "user-manager-aarav"],
     ["design_head", "head@lisno.example", "user-head"],
+    ["estimator_sales", "sales@lisno.example", "user-estimator-sales"],
     ["client", "client@aurora.example", "user-client-aurora"]
   ] as const)("logs in the seeded %s account", async (role, email, id) => {
     const response = await request(createTestApp()).post("/api/v1/auth/login").send({

@@ -12,6 +12,8 @@ import { DesignVersionSequenceModel } from "../models/DesignVersionSequence.js";
 import { EmailCoordinationModel } from "../models/EmailCoordination.js";
 import { EvaluationModel } from "../models/Evaluation.js";
 import { FloorModel } from "../models/Floor.js";
+import { LeadModel } from "../models/Lead.js";
+import { LeadActivityModel } from "../models/LeadActivity.js";
 import { ProjectModel } from "../models/Project.js";
 import { TaskModel } from "../models/Task.js";
 import { TaskEventModel } from "../models/TaskEvent.js";
@@ -30,6 +32,8 @@ import {
   type DesignVersionRecord,
   type EvaluationRecord,
   type FloorRecord,
+  type LeadActivityRecord,
+  type LeadRecord,
   type ManagerTreeNode,
   type NewUser,
   type NewDesignExtractionJob,
@@ -164,6 +168,49 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
         .lean()
         .exec();
       return documents.map(mapUser);
+    },
+
+    async pageLeadsForOwner(ownerId, filters, pagination) {
+      const filter: PlainDocument = { ownerId };
+      if (filters.stage) filter.stage = filters.stage;
+      if (filters.search?.trim()) {
+        const search = new RegExp(escapeRegex(filters.search.trim()), "i");
+        filter.$or = [{ clientName: search }, { clientEmail: search }, { clientMobile: search }, { projectName: search }];
+      }
+      const [documents, total] = await Promise.all([
+        LeadModel.find(filter).sort({ updatedAt: -1, _id: -1 }).skip(pagination.offset).limit(pagination.limit).lean().exec(),
+        LeadModel.countDocuments(filter).exec()
+      ]);
+      return { items: documents.map(mapLead), total };
+    },
+
+    async findLeadById(id) {
+      const document = await LeadModel.findById(id).lean().exec();
+      return document ? mapLead(document) : null;
+    },
+
+    async createLead(input) {
+      const document = await createMongoDocument("Lead", () => createDocument(LeadModel, { ...leadForMongo(input), _id: input.id }, session));
+      return mapLead(document.toObject());
+    },
+
+    async updateLead(id, change) {
+      const update: PlainDocument = { ...leadChangeForMongo(change), updatedAt: new Date() };
+      const query = LeadModel.findByIdAndUpdate(id, { $set: update }, { new: true, runValidators: true }).lean();
+      if (session) query.session(session);
+      const document = await query.exec();
+      if (!document) throw new RepositoryNotFoundError(`Lead ${id} was not found.`);
+      return mapLead(document);
+    },
+
+    async appendLeadActivity(input) {
+      const document = await createMongoDocument("Lead activity", () => createDocument(LeadActivityModel, { ...leadActivityForMongo(input), _id: input.id }, session));
+      return mapLeadActivity(document.toObject());
+    },
+
+    async listLeadActivities(leadId) {
+      const documents = await LeadActivityModel.find({ leadId }).sort({ occurredAt: -1, _id: -1 }).lean().exec();
+      return documents.map(mapLeadActivity);
     },
 
     async listProjectsForUser(user) {
@@ -1625,6 +1672,22 @@ function mapProject(document: PlainDocument): ProjectRecord {
     createdAt: iso(document.createdAt),
     updatedAt: iso(document.updatedAt)
   };
+}
+
+function leadForMongo(input: LeadRecord): PlainDocument {
+  return { ...input, id: undefined, nextActionAt: date(input.nextActionAt), targetHandoverAt: input.targetHandoverAt ? date(input.targetHandoverAt) : null, latestActivityAt: input.latestActivityAt ? date(input.latestActivityAt) : null, createdAt: date(input.createdAt), updatedAt: date(input.updatedAt) };
+}
+function leadChangeForMongo(change: Record<string, unknown>): PlainDocument {
+  return { ...change, nextActionAt: change.nextActionAt ? date(change.nextActionAt as string) : undefined, targetHandoverAt: change.targetHandoverAt ? date(change.targetHandoverAt as string) : change.targetHandoverAt, latestActivityAt: change.latestActivityAt ? date(change.latestActivityAt as string) : change.latestActivityAt };
+}
+function leadActivityForMongo(input: LeadActivityRecord): PlainDocument {
+  return { ...input, id: undefined, occurredAt: date(input.occurredAt), createdAt: date(input.createdAt) };
+}
+function mapLead(document: PlainDocument): LeadRecord {
+  return { id: idOf(document), ownerId: document.ownerId, clientName: document.clientName, clientEmail: document.clientEmail, clientMobile: document.clientMobile, projectName: document.projectName, location: document.location, propertyType: document.propertyType, budgetMin: document.budgetMin ?? null, budgetMax: document.budgetMax ?? null, source: document.source, stage: document.stage, nextAction: document.nextAction, nextActionAt: iso(document.nextActionAt), builder: document.builder ?? null, areaSqft: document.areaSqft ?? null, targetHandoverAt: nullableIso(document.targetHandoverAt), notes: document.notes ?? null, latestActivityAt: nullableIso(document.latestActivityAt), createdAt: iso(document.createdAt), updatedAt: iso(document.updatedAt) };
+}
+function mapLeadActivity(document: PlainDocument): LeadActivityRecord {
+  return { id: idOf(document), leadId: document.leadId, actorId: document.actorId, type: document.type, note: document.note, occurredAt: iso(document.occurredAt), createdAt: iso(document.createdAt) };
 }
 
 function mapFloor(document: PlainDocument): FloorRecord {
