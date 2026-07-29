@@ -1,6 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { ChevronDown } from "lucide-react";
 import { useState } from "react";
 
+import type { Role } from "../../api/types";
 import { useAuth } from "../../auth/AuthProvider";
 import {
   assignEstimateDesigner,
@@ -66,22 +68,19 @@ export function EstimateReviewPanel() {
 
   return <section className="estimate-review-panel" aria-labelledby="estimate-review-title">
     <header><div><p className="eyebrow">Commercial workflow</p><h2 id="estimate-review-title">{role === "client" ? "Estimates ready for you" : "Estimate approvals"}</h2></div><strong>{actionableCount} awaiting action</strong></header>
-    <div className="estimate-review-grid">{queue.data.map((estimate) => {
-      const actionable = canActOnEstimate(role, estimate.status);
-      return <article className="estimate-review-card" key={estimate.id}>
-      <div><p className="eyebrow">{estimate.lead?.location}</p><h3>{estimate.lead?.projectName}</h3><p>{estimate.lead?.clientName}</p></div>
-      <strong className="estimate-review-card__total">{money(estimate.total)}</strong>
-      <p>{estimate.lineItems.filter((item) => item.included).length} items · GST included</p>
-      {role === "client" ? <ClientEstimateDetails estimate={estimate} /> : null}
-      {!actionable && role === "client" ? <p className="estimate-notice">{estimate.status === "client_approved" ? "Estimate approved" : "Changes requested"}</p> : null}
-      {actionable && (role === "design_manager" ? <label>Assign approval to<select value={designerByEstimate[estimate.id] ?? ""} onChange={(event) => setDesignerByEstimate((current) => ({ ...current, [estimate.id]: event.target.value }))}><option value="">Choose designer</option>{(designers.data ?? []).map((designer) => <option value={designer.id} key={designer.id}>{designer.name}</option>)}</select></label> : <label>Review note<textarea value={noteByEstimate[estimate.id] ?? ""} onChange={(event) => setNoteByEstimate((current) => ({ ...current, [estimate.id]: event.target.value }))} placeholder={role === "client" ? "Optional note for the Lisno team" : "Add approval context or requested corrections"} /></label>)}
-      {actionable ? <div className="estimate-review-card__actions">
-        {role === "design_manager"
-          ? <button className="button button--primary" type="button" disabled={!designerByEstimate[estimate.id] || action.isPending} onClick={() => action.mutate({ id: estimate.id, action: "assign" })}>Assign designer</button>
-          : <><button className="button button--secondary" type="button" disabled={action.isPending} onClick={() => action.mutate({ id: estimate.id, action: "changes" })}>Request changes</button><button className="button button--primary" type="button" disabled={action.isPending} onClick={() => action.mutate({ id: estimate.id, action: "approve" })}>{role === "client" ? "Approve estimate" : "Approve for client"}</button></>}
-      </div> : null}
-    </article>;
-    })}</div>
+    <div className="estimate-review-grid">{queue.data.map((estimate) => <EstimateReviewCard
+      actionable={canActOnEstimate(role, estimate.status)}
+      actionPending={action.isPending}
+      designers={designers.data ?? []}
+      estimate={estimate}
+      key={estimate.id}
+      note={noteByEstimate[estimate.id] ?? ""}
+      role={role}
+      selectedDesignerId={designerByEstimate[estimate.id] ?? ""}
+      onAction={(actionType) => action.mutate({ id: estimate.id, action: actionType })}
+      onDesignerChange={(designerId) => setDesignerByEstimate((current) => ({ ...current, [estimate.id]: designerId }))}
+      onNoteChange={(note) => setNoteByEstimate((current) => ({ ...current, [estimate.id]: note }))}
+    />)}</div>
     {action.isError ? <p role="alert">That action could not be completed. Refresh and try again.</p> : null}
   </section>;
 }
@@ -90,6 +89,70 @@ function canActOnEstimate(role: string, status: EstimateQueueItem["status"]) {
   if (role === "client") return status === "sent_to_client";
   if (role === "design_manager") return status === "pending_manager_assignment";
   return status === "pending_designer_approval";
+}
+
+function EstimateReviewCard({
+  estimate,
+  role,
+  actionable,
+  designers,
+  selectedDesignerId,
+  note,
+  actionPending,
+  onDesignerChange,
+  onNoteChange,
+  onAction
+}: {
+  estimate: EstimateQueueItem;
+  role: Role;
+  actionable: boolean;
+  designers: Awaited<ReturnType<typeof getEstimateDesigners>>;
+  selectedDesignerId: string;
+  note: string;
+  actionPending: boolean;
+  onDesignerChange: (designerId: string) => void;
+  onNoteChange: (note: string) => void;
+  onAction: (action: "assign" | "approve" | "changes") => void;
+}) {
+  const [clientExpanded, setClientExpanded] = useState(false);
+  const isClient = role === "client";
+  const detailsId = `client-estimate-${estimate.id}-details`;
+  const headingId = `client-estimate-${estimate.id}-title`;
+  const includedItemCount = estimate.lineItems.filter((item) => item.included).length;
+
+  const reviewControls = actionable ? <>
+    {role === "design_manager" ? <label>Assign approval to<select value={selectedDesignerId} onChange={(event) => onDesignerChange(event.target.value)}><option value="">Choose designer</option>{designers.map((designer) => <option value={designer.id} key={designer.id}>{designer.name}</option>)}</select></label> : <label>Review note<textarea value={note} onChange={(event) => onNoteChange(event.target.value)} placeholder={isClient ? "Optional note for the Lisno team" : "Add approval context or requested corrections"} /></label>}
+    <div className="estimate-review-card__actions">
+      {role === "design_manager"
+        ? <button className="button button--primary" type="button" disabled={!selectedDesignerId || actionPending} onClick={() => onAction("assign")}>Assign designer</button>
+        : <><button className="button button--secondary" type="button" disabled={actionPending} onClick={() => onAction("changes")}>Request changes</button><button className="button button--primary" type="button" disabled={actionPending} onClick={() => onAction("approve")}>{isClient ? "Approve estimate" : "Approve for client"}</button></>}
+    </div>
+  </> : null;
+
+  if (isClient) {
+    return <article className="estimate-review-card">
+      <div>
+        <h3 id={headingId}>{estimate.lead?.projectName}</h3>
+        <strong className="estimate-review-card__total">{money(estimate.total)}</strong>
+        <button type="button" aria-labelledby={headingId} aria-expanded={clientExpanded} aria-controls={detailsId} onClick={() => setClientExpanded((current) => !current)}><ChevronDown aria-hidden="true" /></button>
+      </div>
+      {clientExpanded ? <div id={detailsId}>
+        <p className="eyebrow">{estimate.lead?.location}</p>
+        <p>{estimate.lead?.clientName}</p>
+        <p>{includedItemCount} items · GST included</p>
+        <ClientEstimateDetails estimate={estimate} />
+        {!actionable ? <p className="estimate-notice">{estimate.status === "client_approved" ? "Estimate approved" : "Changes requested"}</p> : null}
+        {reviewControls}
+      </div> : null}
+    </article>;
+  }
+
+  return <article className="estimate-review-card">
+    <div><p className="eyebrow">{estimate.lead?.location}</p><h3>{estimate.lead?.projectName}</h3><p>{estimate.lead?.clientName}</p></div>
+    <strong className="estimate-review-card__total">{money(estimate.total)}</strong>
+    <p>{includedItemCount} items · GST included</p>
+    {reviewControls}
+  </article>;
 }
 
 function ClientEstimateDetails({ estimate }: { estimate: Awaited<ReturnType<typeof getClientEstimates>>[number] }) {
@@ -106,7 +169,7 @@ function ClientEstimateDetails({ estimate }: { estimate: Awaited<ReturnType<type
     <div className="client-estimate-sections">
       {groups.map((section) => <details className="client-estimate-section" open key={section.id}>
         <summary>
-          <h4>{section.icon} {section.label}</h4>
+          <h4><span aria-hidden="true">{section.icon}</span> {section.label}</h4>
           <strong>{money(section.items.reduce((sum, item) => sum + Math.round(item.quantity * item.rate), 0))}</strong>
         </summary>
         <div className="client-estimate-lines">
