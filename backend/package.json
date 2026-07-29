@@ -9,7 +9,7 @@
     "start": "node dist/server.js",
     "seed": "tsx src/seed/run.ts",
     "migrate:client-linking": "tsx src/migrations/client-email-project-linking.ts",
-    "build": "tsc",
+    "build": "tsc && node scripts/copy-static-assets.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },
@@ -21,6 +21,7 @@
     "mongoose": "^9.8.0",
     "multer": "^2.2.0",
     "pdf-lib": "^1.17.1",
+    "pdfkit": "^0.19.1",
     "sharp": "^0.35.3",
     "zod": "^3.24.4"
   },
@@ -29,7 +30,9 @@
     "@types/jsonwebtoken": "^9.0.10",
     "@types/multer": "^2.2.0",
     "@types/node": "^22.15.29",
+    "@types/pdfkit": "^0.17.6",
     "@types/supertest": "^6.0.2",
+    "pdfjs-dist": "4.10.38",
     "supertest": "^7.1.1",
     "tsx": "^4.19.4",
     "typescript": "^5.8.3",
