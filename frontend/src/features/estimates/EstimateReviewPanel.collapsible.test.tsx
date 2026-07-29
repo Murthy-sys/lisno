@@ -75,8 +75,11 @@ describe("EstimateReviewPanel client disclosures", () => {
     expect(within(villaCard).queryByText("Bengaluru")).not.toBeInTheDocument();
     expect(within(loftCard).queryByText("Mysuru")).not.toBeInTheDocument();
     expect(within(villaCard).queryByText("Aurora Homes")).not.toBeInTheDocument();
+    expect(within(loftCard).queryByText("Aurora Homes")).not.toBeInTheDocument();
     expect(within(villaCard).queryByText("1 items · GST included")).not.toBeInTheDocument();
+    expect(within(loftCard).queryByText("0 items · GST included")).not.toBeInTheDocument();
     expect(within(villaCard).queryByText("Review section-wise estimate")).not.toBeInTheDocument();
+    expect(within(loftCard).queryByText("Review section-wise estimate")).not.toBeInTheDocument();
     expect(screen.queryByText("Estimate approved")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Review note")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Approve estimate" })).not.toBeInTheDocument();
@@ -110,7 +113,9 @@ describe("EstimateReviewPanel client disclosures", () => {
     expect(villaToggle).toHaveAttribute("aria-expanded", "true");
     expect(loftToggle).toHaveAttribute("aria-expanded", "true");
     expect(within(loftPanel).getByText("Estimate approved")).toBeVisible();
+    expect(within(loftPanel).queryByLabelText("Review note")).not.toBeInTheDocument();
     expect(within(loftPanel).queryByRole("button", { name: "Approve estimate" })).not.toBeInTheDocument();
+    expect(within(loftPanel).queryByRole("button", { name: "Request changes" })).not.toBeInTheDocument();
 
     await user.click(villaToggle);
 
