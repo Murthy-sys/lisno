@@ -1,6 +1,6 @@
-import { screen, within } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { tokenStorage } from "../../api/client";
 import { renderApp } from "../../test/render";
@@ -45,6 +45,10 @@ const clientEstimates = [
   }
 ];
 
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
+
 function installClientApi() {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const url = String(input);
@@ -68,6 +72,8 @@ describe("EstimateReviewPanel client disclosures", () => {
     const loftHeading = screen.getByRole("heading", { name: "Cedar Loft", level: 3 });
     const villaCard = villaHeading.closest("article")!;
     const loftCard = loftHeading.closest("article")!;
+    const villaHeader = villaCard.querySelector<HTMLElement>(".estimate-review-card__client-header")!;
+    const loftHeader = loftCard.querySelector<HTMLElement>(".estimate-review-card__client-header")!;
     expect(villaHeading).toBeVisible();
     expect(loftHeading).toBeVisible();
     expect(within(villaCard).getAllByText("₹1,18,000")[0]).toBeVisible();
@@ -84,6 +90,7 @@ describe("EstimateReviewPanel client disclosures", () => {
     expect(screen.queryByLabelText("Review note")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Approve estimate" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Request changes" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Export as PDF" })).not.toBeInTheDocument();
 
     const villaToggle = screen.getByRole("button", { name: /Aurora Villa/ });
     const loftToggle = screen.getByRole("button", { name: /Cedar Loft/ });
@@ -105,6 +112,8 @@ describe("EstimateReviewPanel client disclosures", () => {
     expect(within(villaPanel).getByLabelText("Review note")).toBeVisible();
     expect(within(villaPanel).getByRole("button", { name: "Approve estimate" })).toBeVisible();
     expect(within(villaPanel).getByRole("button", { name: "Request changes" })).toBeVisible();
+    expect(within(villaHeader).getByRole("button", { name: "Export as PDF" })).toBeVisible();
+    expect(within(loftHeader).queryByRole("button", { name: "Export as PDF" })).not.toBeInTheDocument();
     expect(screen.queryByText("Estimate approved")).not.toBeInTheDocument();
 
     await user.click(loftToggle);
@@ -113,6 +122,7 @@ describe("EstimateReviewPanel client disclosures", () => {
     expect(villaToggle).toHaveAttribute("aria-expanded", "true");
     expect(loftToggle).toHaveAttribute("aria-expanded", "true");
     expect(within(loftPanel).getByText("Estimate approved")).toBeVisible();
+    expect(within(loftHeader).getByRole("button", { name: "Export as PDF" })).toBeVisible();
     expect(within(loftPanel).queryByLabelText("Review note")).not.toBeInTheDocument();
     expect(within(loftPanel).queryByRole("button", { name: "Approve estimate" })).not.toBeInTheDocument();
     expect(within(loftPanel).queryByRole("button", { name: "Request changes" })).not.toBeInTheDocument();
@@ -121,7 +131,60 @@ describe("EstimateReviewPanel client disclosures", () => {
 
     expect(villaToggle).toHaveAttribute("aria-expanded", "false");
     expect(document.getElementById("client-estimate-estimate-ready-details")).not.toBeInTheDocument();
+    expect(within(villaHeader).queryByRole("button", { name: "Export as PDF" })).not.toBeInTheDocument();
     expect(within(loftPanel).getByText("Estimate approved")).toBeVisible();
+  });
+
+  it("downloads an expanded estimate from the authenticated client endpoint without toggling it", async () => {
+    tokenStorage.set("client-token");
+    vi.stubGlobal("URL", {
+      createObjectURL: vi.fn(() => "blob:client-estimate"),
+      revokeObjectURL: vi.fn()
+    });
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith("/api/v1/auth/me")) return Response.json({ data: client });
+      if (url.includes("/api/v1/client/project-summaries?")) return Response.json({ data: { items: [], pagination: { limit: 100, offset: 0, total: 0, hasMore: false } } });
+      if (url.endsWith("/api/v1/client/latest-approved-versions")) return Response.json({ data: [] });
+      if (url.endsWith("/api/v1/client/estimates")) return Response.json({ data: clientEstimates });
+      if (url.endsWith("/api/v1/client/estimates/estimate-ready/pdf")) {
+        return new Response(new Blob(["pdf"], { type: "application/pdf" }));
+      }
+      throw new Error(`Unhandled request: ${url}`);
+    });
+    const user = userEvent.setup();
+
+    renderApp(["/client"]);
+
+    const villaHeading = await screen.findByRole("heading", {
+      name: "Aurora Villa",
+      level: 3
+    });
+    const villaCard = villaHeading.closest("article")!;
+    const villaToggle = within(villaCard).getByRole("button", {
+      name: /Aurora Villa/
+    });
+    await user.click(villaToggle);
+    await user.click(within(villaCard).getByRole("button", {
+      name: "Export as PDF"
+    }));
+
+    await waitFor(() => expect(fetchSpy).toHaveBeenCalledWith(
+      "/api/v1/client/estimates/estimate-ready/pdf",
+      expect.objectContaining({
+        method: "GET",
+        headers: expect.any(Headers)
+      })
+    ));
+    const pdfRequest = fetchSpy.mock.calls.find(
+      ([input]) => String(input) === "/api/v1/client/estimates/estimate-ready/pdf"
+    );
+    expect((pdfRequest?.[1]?.headers as Headers).get("Authorization")).toBe(
+      "Bearer client-token"
+    );
+    expect(villaToggle).toHaveAttribute("aria-expanded", "true");
+    expect(document.getElementById("client-estimate-estimate-ready-details")).toBeInTheDocument();
   });
 
   it("keeps manager estimate metadata and assignment immediately visible without a disclosure toggle", async () => {

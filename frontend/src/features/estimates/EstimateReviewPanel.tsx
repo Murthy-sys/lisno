@@ -4,10 +4,12 @@ import { useState } from "react";
 
 import type { Role } from "../../api/types";
 import { useAuth } from "../../auth/AuthProvider";
+import { DownloadButton } from "../../components/ui/DownloadButton";
 import {
   assignEstimateDesigner,
   decideEstimateAsClient,
   decideEstimateAsDesigner,
+  downloadClientEstimatePdf,
   estimateWorkflowKeys,
   type EstimateQueueItem,
   getClientEstimates,
@@ -131,9 +133,16 @@ function EstimateReviewCard({
 
   if (isClient) {
     return <article className="estimate-review-card estimate-review-card--client">
-      <div className="estimate-review-card__client-header">
+      <div className={`estimate-review-card__client-header${clientExpanded ? " estimate-review-card__client-header--expanded" : ""}`}>
         <h3 id={headingId}>{estimate.lead?.projectName}</h3>
         <strong className="estimate-review-card__total">{money(estimate.total)}</strong>
+        {clientExpanded ? <DownloadButton
+          className="button button--secondary estimate-review-card__export"
+          label="Export as PDF"
+          loadingLabel="Preparing PDF..."
+          fallbackFilename={`lisno-${estimate.id}.pdf`}
+          getFile={() => downloadClientEstimatePdf(estimate.id)}
+        /> : null}
         <button className="estimate-review-card__toggle" type="button" aria-labelledby={headingId} aria-expanded={clientExpanded} aria-controls={detailsId} onClick={() => setClientExpanded((current) => !current)}><span aria-hidden="true">{clientExpanded ? "Hide details" : "View estimate"}</span><ChevronDown aria-hidden="true" /></button>
       </div>
       {clientExpanded ? <div className="estimate-review-card__client-content" id={detailsId}>

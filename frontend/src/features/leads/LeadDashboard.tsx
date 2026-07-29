@@ -4,8 +4,14 @@ import { useState } from "react";
 
 import type { LeadStage } from "../../api/types";
 import { AsyncState } from "../../components/ui/AsyncState";
+import { DownloadButton } from "../../components/ui/DownloadButton";
 import { LeadCreateDialog } from "./LeadCreateDialog";
-import { getLeadPage, getSavedEstimates, leadKeys } from "./leadsApi";
+import {
+  downloadEstimatePdf,
+  getLeadPage,
+  getSavedEstimates,
+  leadKeys
+} from "./leadsApi";
 
 const labels: Record<LeadStage, string> = {
   new_lead: "New lead",
@@ -59,8 +65,17 @@ export function LeadDashboard() {
       {estimates.data?.length ? <div className="saved-estimate-grid">
         {estimates.data.map((estimate) => <article className="saved-estimate-card" key={estimate.id}>
           <div className="saved-estimate-card__top">
-            <span className="estimate-status">{estimate.status.replaceAll("_", " ")}</span>
-            <strong>{money(estimate.total)}</strong>
+            <div className="saved-estimate-card__summary">
+              <span className="estimate-status">{estimate.status.replaceAll("_", " ")}</span>
+              <strong>{money(estimate.total)}</strong>
+            </div>
+            <DownloadButton
+              className="button button--secondary saved-estimate-card__export"
+              label="Export as PDF"
+              loadingLabel="Preparing PDF..."
+              fallbackFilename={`lisno-${estimate.id}.pdf`}
+              getFile={() => downloadEstimatePdf(estimate.id)}
+            />
           </div>
           <h3>{estimate.lead?.projectName ?? "Saved estimate"}</h3>
           <dl>
