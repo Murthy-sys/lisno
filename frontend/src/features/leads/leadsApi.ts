@@ -21,3 +21,5 @@ export const getSavedEstimates = () => apiClient.get<SavedEstimate[]>("/estimate
 export const saveLeadEstimate = (id: string, input: EstimateDraftInput) => apiClient.put<EstimateDraft>(`/leads/${encodeURIComponent(id)}/estimate`, input);
 export const submitLeadEstimate = (id: string) => apiClient.post<EstimateDraft>(`/leads/${encodeURIComponent(id)}/estimate/submit`, {});
 export const sendEstimateToClient = (estimateId: string) => apiClient.post<EstimateDraft>(`/estimates/${encodeURIComponent(estimateId)}/send-client`, {});
+export const downloadEstimatePdf = (estimateId: string) =>
+  apiClient.getBlob(`/estimates/${encodeURIComponent(estimateId)}/pdf`);

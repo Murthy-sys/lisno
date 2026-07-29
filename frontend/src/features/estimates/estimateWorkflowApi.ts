@@ -48,3 +48,5 @@ export const decideEstimateAsClient = (
   `/client/estimates/${encodeURIComponent(estimateId)}/decision`,
   { decision, note }
 );
+export const downloadClientEstimatePdf = (estimateId: string) =>
+  apiClient.getBlob(`/client/estimates/${encodeURIComponent(estimateId)}/pdf`);
