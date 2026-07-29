@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 
+import mongoose from "mongoose";
 import { isEstimateDesignEditable, type EstimateDesignExtractionStatus } from "../domain/estimate-design.js";
 import { ApiError } from "../middleware/errors.js";
 import type { ValidatedUpload } from "../middleware/upload.js";
@@ -68,41 +69,16 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
 
       const uploadedAt = now();
       const uploadId = randomUUID();
-      let createdUpload = false;
       try {
-        await EstimateDesignUploadModel.create({
-          _id: uploadId,
-          estimateId: estimate._id,
-          leadId: estimate.leadId,
-          originalFilename: file.originalFilename,
-          storedFileReference: stored.reference,
-          mimeType: file.mimeType,
-          sizeBytes: file.sizeBytes,
-          uploaderId: user.id,
-          uploadedAt,
-          extractionStatus: "queued",
-          failureCode: null,
-          failureMessage: null
-        });
-        createdUpload = true;
-        await EstimateDesignExtractionJobModel.create({
-          _id: randomUUID(),
+        await persistUploadAndJob({
           uploadId,
-          status: "queued",
-          attemptCount: 0,
-          queuedAt: uploadedAt,
-          startedAt: null,
-          completedAt: null,
-          leaseExpiresAt: null,
-          claimId: null,
-          failureCode: null,
-          failureMessage: null,
-          workerResultId: null
+          estimate,
+          user,
+          file,
+          storedFileReference: stored.reference,
+          uploadedAt
         });
       } catch (error) {
-        if (createdUpload) {
-          await EstimateDesignUploadModel.deleteOne({ _id: uploadId }).catch(() => undefined);
-        }
         try {
           await input.storage.delete(stored.reference);
         } catch {
@@ -138,9 +114,9 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
       const revisions = await EstimateDesignRevisionModel.find({ drawingId: { $in: drawingIds } }).sort({ drawingId: 1, revisionNumber: 1 }).lean();
       return {
         uploads: uploads.map((upload) => uploadDto(upload)),
-        pages: pages.map(asDto),
-        drawings: drawings.map(asDto),
-        revisions: revisions.map(asDto)
+        pages: pages.map(sourcePageDto),
+        drawings: drawings.map(drawingDto),
+        revisions: revisions.map(revisionDto)
       };
     },
 
@@ -179,6 +155,60 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
   }
 }
 
+async function persistUploadAndJob(input: {
+  uploadId: string;
+  estimate: { _id: string; leadId: string };
+  user: AuthenticatedUser;
+  file: ValidatedUpload;
+  storedFileReference: string;
+  uploadedAt: Date;
+}) {
+  const session = await mongoose.startSession();
+  let completed = false;
+  try {
+    await session.withTransaction(async () => {
+      await EstimateDesignUploadModel.create(
+        [{
+          _id: input.uploadId,
+          estimateId: input.estimate._id,
+          leadId: input.estimate.leadId,
+          originalFilename: input.file.originalFilename,
+          storedFileReference: input.storedFileReference,
+          mimeType: input.file.mimeType,
+          sizeBytes: input.file.sizeBytes,
+          uploaderId: input.user.id,
+          uploadedAt: input.uploadedAt,
+          extractionStatus: "queued",
+          failureCode: null,
+          failureMessage: null
+        }],
+        { session }
+      );
+      await EstimateDesignExtractionJobModel.create(
+        [{
+          _id: randomUUID(),
+          uploadId: input.uploadId,
+          status: "queued",
+          attemptCount: 0,
+          queuedAt: input.uploadedAt,
+          startedAt: null,
+          completedAt: null,
+          leaseExpiresAt: null,
+          claimId: null,
+          failureCode: null,
+          failureMessage: null,
+          workerResultId: null
+        }],
+        { session }
+      );
+      completed = true;
+    });
+    if (!completed) throw new Error("MongoDB transaction did not complete.");
+  } finally {
+    await session.endSession().catch(() => undefined);
+  }
+}
+
 async function openStoredImage(storage: Storage, reference: string) {
   try {
     return await storage.open(reference);
@@ -211,7 +241,53 @@ function uploadDto(upload: Record<string, unknown>): EstimateDesignUploadDto {
   };
 }
 
-function asDto(value: Record<string, unknown>) {
-  const { _id, ...rest } = value;
-  return { id: String(_id), ...rest };
+function sourcePageDto(page: Record<string, unknown>) {
+  return {
+    id: String(page._id),
+    uploadId: String(page.uploadId),
+    pageNumber: Number(page.pageNumber),
+    width: Number(page.width),
+    height: Number(page.height)
+  };
+}
+
+function drawingDto(drawing: Record<string, unknown>) {
+  return {
+    id: String(drawing._id),
+    uploadId: String(drawing.uploadId),
+    sourcePageId: String(drawing.sourcePageId),
+    estimateId: String(drawing.estimateId),
+    active: Boolean(drawing.active),
+    verified: Boolean(drawing.verified),
+    roomId: drawing.roomId ?? null,
+    scopeSectionId: drawing.scopeSectionId ?? null,
+    detectedTitle: String(drawing.detectedTitle),
+    displayTitle: String(drawing.displayTitle),
+    source: String(drawing.source),
+    roomConfidence: drawing.roomConfidence ?? null,
+    scopeConfidence: drawing.scopeConfidence ?? null,
+    ocrConfidence: drawing.ocrConfidence ?? null,
+    roomEvidence: drawing.roomEvidence ?? [],
+    scopeEvidence: drawing.scopeEvidence ?? []
+  };
+}
+
+function revisionDto(revision: Record<string, unknown>) {
+  return {
+    id: String(revision._id),
+    drawingId: String(revision.drawingId),
+    revisionNumber: Number(revision.revisionNumber),
+    sourcePageId: String(revision.sourcePageId),
+    crop: revision.crop,
+    roomId: String(revision.roomId),
+    scopeSectionId: String(revision.scopeSectionId),
+    label: String(revision.label),
+    reviewStatus: String(revision.reviewStatus),
+    submittedAt: revision.submittedAt ?? null,
+    reviewerId: revision.reviewerId ?? null,
+    reviewedAt: revision.reviewedAt ?? null,
+    changeSummary: revision.changeSummary ?? null,
+    annotationLayerId: revision.annotationLayerId ?? null,
+    replacesRevisionId: revision.replacesRevisionId ?? null
+  };
 }

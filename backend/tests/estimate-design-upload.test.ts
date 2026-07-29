@@ -1,12 +1,16 @@
 import { Readable } from "node:stream";
 
 import jwt from "jsonwebtoken";
+import mongoose from "mongoose";
 import { PDFDocument } from "pdf-lib";
 import request from "supertest";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { createApp } from "../src/app.js";
 import { EstimateDesignExtractionJobModel } from "../src/models/EstimateDesignExtractionJob.js";
+import { EstimateDesignDrawingModel } from "../src/models/EstimateDesignDrawing.js";
+import { EstimateDesignRevisionModel } from "../src/models/EstimateDesignRevision.js";
+import { EstimateDesignSourcePageModel } from "../src/models/EstimateDesignSourcePage.js";
 import { EstimateDesignUploadModel } from "../src/models/EstimateDesignUpload.js";
 import { EstimateModel } from "../src/models/Estimate.js";
 import { LeadModel } from "../src/models/Lead.js";
@@ -77,10 +81,34 @@ function lean(value: unknown) {
   return { lean: vi.fn().mockResolvedValue(value) };
 }
 
+function sortedLean(value: unknown) {
+  return { sort: vi.fn().mockReturnValue(lean(value)) };
+}
+
 function setup(options: { maxUploadBytes?: number } = {}) {
   const storage = new TestStorage();
   const uploads: Array<Record<string, unknown>> = [];
   const jobs: Array<Record<string, unknown>> = [];
+  let stagedUploads: Array<Record<string, unknown>> = [];
+  let stagedJobs: Array<Record<string, unknown>> = [];
+  let transactionActive = false;
+  const session = {
+    withTransaction: vi.fn(async (operation: () => Promise<unknown>) => {
+      transactionActive = true;
+      try {
+        const result = await operation();
+        uploads.push(...stagedUploads);
+        jobs.push(...stagedJobs);
+        return result;
+      } finally {
+        stagedUploads = [];
+        stagedJobs = [];
+        transactionActive = false;
+      }
+    }),
+    endSession: vi.fn(async () => undefined)
+  };
+  vi.spyOn(mongoose, "startSession").mockResolvedValue(session as never);
   const estimate = {
     _id: "estimate-draft",
     leadId: "lead-aurora",
@@ -97,11 +125,13 @@ function setup(options: { maxUploadBytes?: number } = {}) {
     ownerId: "user-estimator-sales"
   }) as never);
   vi.spyOn(EstimateDesignUploadModel, "create").mockImplementation(async (input) => {
-    uploads.push(input as Record<string, unknown>);
+    const document = (Array.isArray(input) ? input[0] : input) as Record<string, unknown>;
+    (transactionActive ? stagedUploads : uploads).push(document);
     return input as never;
   });
   vi.spyOn(EstimateDesignExtractionJobModel, "create").mockImplementation(async (input) => {
-    jobs.push(input as Record<string, unknown>);
+    const document = (Array.isArray(input) ? input[0] : input) as Record<string, unknown>;
+    (transactionActive ? stagedJobs : jobs).push(document);
     return input as never;
   });
   vi.spyOn(EstimateDesignExtractionJobModel, "countDocuments").mockImplementation(async (query) =>
@@ -119,6 +149,7 @@ function setup(options: { maxUploadBytes?: number } = {}) {
     storage,
     uploads,
     jobs,
+    session,
     setEstimate(value: Record<string, unknown> | null) {
       vi.mocked(EstimateModel.findOne).mockReturnValue(lean(value) as never);
     }
@@ -156,7 +187,7 @@ describe("estimate design uploads", () => {
     ["TIFF", () => TIFF_LE, "plan.tif", "image/tiff"],
     ["HEIC", () => HEIC, "plan.heic", "image/heic"]
   ])("stores a valid %s signature and queues extraction", async (_kind, data, filename, contentType) => {
-    const { app } = setup();
+    const { app, session } = setup();
 
     const response = await upload(app, data(), filename, contentType);
 
@@ -169,6 +200,14 @@ describe("estimate design uploads", () => {
       uploadId: response.body.data.id,
       status: "queued"
     })).toBe(1);
+    expect(EstimateDesignUploadModel.create).toHaveBeenCalledWith(
+      [expect.objectContaining({ _id: response.body.data.id })],
+      { session }
+    );
+    expect(EstimateDesignExtractionJobModel.create).toHaveBeenCalledWith(
+      [expect.objectContaining({ uploadId: response.body.data.id, status: "queued" })],
+      { session }
+    );
   });
 
   it("returns the same non-leaking not-found response for foreign estimates", async () => {
@@ -225,19 +264,81 @@ describe("estimate design uploads", () => {
   });
 
   it("removes only its newly stored artifact when job persistence fails", async () => {
-    const { app, storage } = setup();
+    const { app, storage, uploads, jobs, session } = setup();
+    const deleteUpload = vi.spyOn(EstimateDesignUploadModel, "deleteOne");
     vi.mocked(EstimateDesignExtractionJobModel.create).mockRejectedValueOnce(
       new Error("simulated enqueue failure")
     );
-    vi.spyOn(EstimateDesignUploadModel, "deleteOne").mockResolvedValue({
-      acknowledged: true,
-      deletedCount: 1
-    } as never);
 
     const response = await upload(app, PNG, "plan.png", "image/png");
 
     expect(response.status).toBe(500);
     expect(storage.objects.size).toBe(0);
     expect(storage.deleted).toHaveLength(1);
+    expect(session.withTransaction).toHaveBeenCalledOnce();
+    expect(uploads).toEqual([]);
+    expect(jobs).toEqual([]);
+    expect(deleteUpload).not.toHaveBeenCalled();
+  });
+
+  it("does not expose stored object references from the estimator workspace", async () => {
+    const { app } = setup();
+    vi.spyOn(EstimateDesignUploadModel, "find").mockReturnValue(sortedLean([{
+      _id: "upload-1",
+      estimateId: "estimate-draft",
+      leadId: "lead-aurora",
+      originalFilename: "plan.png",
+      storedFileReference: "original-secret.png",
+      mimeType: "image/png",
+      sizeBytes: 8,
+      uploaderId: "user-estimator-sales",
+      uploadedAt: now(),
+      extractionStatus: "queued",
+      failureCode: null,
+      failureMessage: null
+    }]) as never);
+    vi.spyOn(EstimateDesignSourcePageModel, "find").mockReturnValue(sortedLean([{
+      _id: "page-1",
+      uploadId: "upload-1",
+      pageNumber: 1,
+      normalizedFileReference: "page-secret.png",
+      width: 1200,
+      height: 800
+    }]) as never);
+    vi.spyOn(EstimateDesignDrawingModel, "find").mockReturnValue(sortedLean([{
+      _id: "drawing-1",
+      estimateId: "estimate-draft",
+      uploadId: "upload-1",
+      sourcePageId: "page-1",
+      active: true,
+      verified: false,
+      roomId: null,
+      scopeSectionId: null,
+      detectedTitle: "Ceiling",
+      displayTitle: "Ceiling",
+      source: "ocr"
+    }]) as never);
+    vi.spyOn(EstimateDesignRevisionModel, "find").mockReturnValue(sortedLean([{
+      _id: "revision-1",
+      drawingId: "drawing-1",
+      revisionNumber: 1,
+      sourcePageId: "page-1",
+      crop: { x: 0, y: 0, width: 100, height: 100 },
+      croppedFileReference: "revision-secret.png",
+      roomId: "room-living",
+      scopeSectionId: "FC",
+      label: "Ceiling",
+      reviewStatus: "draft"
+    }]) as never);
+
+    const response = await request(app)
+      .get("/api/v1/estimates/estimate-draft/design-uploads")
+      .set("Authorization", bearer());
+
+    expect(response.status).toBe(200);
+    expect(response.body.data.uploads[0]).not.toHaveProperty("storedFileReference");
+    expect(response.body.data.pages[0]).not.toHaveProperty("normalizedFileReference");
+    expect(response.body.data.revisions[0]).not.toHaveProperty("croppedFileReference");
+    expect(JSON.stringify(response.body.data)).not.toContain("secret");
   });
 });
