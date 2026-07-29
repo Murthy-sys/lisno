@@ -224,19 +224,31 @@ def test_api_claim_returns_metadata_without_downloading_source():
     assert claimed.lease_duration_seconds == 300
 
 
-def test_download_uses_authoritative_mime_type_for_temporary_suffix():
+@pytest.mark.parametrize(
+    ("mime_type", "expected_suffix"),
+    [
+        ("image/webp", ".webp"),
+        ("image/tiff", ".tiff"),
+        ("image/heic", ".heic"),
+        ("image/heif", ".heif"),
+    ],
+)
+def test_download_uses_authoritative_mime_type_for_temporary_suffix(
+    mime_type,
+    expected_suffix,
+):
     claimed = ClaimedJob(
         id="job-1",
         claim_token="claim-1",
         source_url="/source",
         source_filename="wrong.pdf",
-        source_mime_type="image/webp",
+        source_mime_type=mime_type,
         lease_duration_seconds=300,
     )
 
     class DownloadApi(WorkerApi):
         def _download_source(self, _url, suffix, _claim):
-            assert suffix == ".webp"
+            assert suffix == expected_suffix
             return FIXTURE
 
     assert DownloadApi(settings()).download(claimed) == FIXTURE

@@ -72,6 +72,9 @@ class WorkerApi:
             "image/png": ".png",
             "image/jpeg": ".jpg",
             "image/webp": ".webp",
+            "image/tiff": ".tiff",
+            "image/heic": ".heic",
+            "image/heif": ".heif",
         }.get(claimed.source_mime_type, ".bin")
         return self._download_source(
             claimed.source_url,
