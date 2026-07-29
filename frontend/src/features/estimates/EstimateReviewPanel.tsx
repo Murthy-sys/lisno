@@ -130,13 +130,13 @@ function EstimateReviewCard({
   </> : null;
 
   if (isClient) {
-    return <article className="estimate-review-card">
-      <div>
+    return <article className="estimate-review-card estimate-review-card--client">
+      <div className="estimate-review-card__client-header">
         <h3 id={headingId}>{estimate.lead?.projectName}</h3>
         <strong className="estimate-review-card__total">{money(estimate.total)}</strong>
-        <button type="button" aria-labelledby={headingId} aria-expanded={clientExpanded} aria-controls={detailsId} onClick={() => setClientExpanded((current) => !current)}><ChevronDown aria-hidden="true" /></button>
+        <button className="estimate-review-card__toggle" type="button" aria-labelledby={headingId} aria-expanded={clientExpanded} aria-controls={detailsId} onClick={() => setClientExpanded((current) => !current)}><ChevronDown aria-hidden="true" /></button>
       </div>
-      {clientExpanded ? <div id={detailsId}>
+      {clientExpanded ? <div className="estimate-review-card__client-content" id={detailsId}>
         <p className="eyebrow">{estimate.lead?.location}</p>
         <p>{estimate.lead?.clientName}</p>
         <p>{includedItemCount} items · GST included</p>
