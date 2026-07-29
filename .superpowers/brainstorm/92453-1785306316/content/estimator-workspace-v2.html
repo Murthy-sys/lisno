@@ -1,0 +1,80 @@
+<h2>Estimator flow — configuration and catalogue selection</h2>
+<p class="subtitle">Revised to preserve the property, room, dimension, scope, and item-selection workflow from the attached HTML.</p>
+
+<div class="mockup">
+  <div class="mockup-header">Step 3 of 6 · Configure project</div>
+  <div class="mockup-body" style="background:#f6f5ff;padding:22px">
+    <div class="label">Property type</div>
+    <div style="display:flex;gap:7px;flex-wrap:wrap;margin:7px 0 18px">
+      <button class="mock-button">1BHK</button><button class="mock-button">2BHK</button>
+      <button class="mock-button" style="background:#5b58a0;color:white">3BHK</button>
+      <button class="mock-button">4BHK</button><button class="mock-button">Villa</button>
+      <button class="mock-button">Penthouse</button><button class="mock-button">Studio</button>
+      <button class="mock-button">Duplex</button>
+    </div>
+
+    <div class="label">Rooms</div>
+    <div style="display:flex;gap:7px;flex-wrap:wrap;margin:7px 0 13px">
+      <button class="mock-button">🛋 Living &amp; Dining</button>
+      <button class="mock-button" style="background:#5b58a0;color:white">🛏 Master Bedroom&nbsp; 1</button>
+      <button class="mock-button" style="background:#5b58a0;color:white">🛏 Bedroom 2&nbsp; 1</button>
+      <button class="mock-button">🍳 Kitchen</button>
+      <button class="mock-button">🚿 Master Bathroom</button>
+      <button class="mock-button">🌿 Balcony / Utility</button>
+      <button class="mock-button">✏ Custom Room</button>
+    </div>
+
+    <div style="background:white;border:1px solid #dedcf2;border-radius:10px;overflow:hidden;margin-bottom:18px">
+      <div style="display:grid;grid-template-columns:1fr 270px;padding:9px 14px;background:#eeedf8;font-size:11px;font-weight:800;color:#5b58a0"><span>ROOM</span><span>LENGTH × WIDTH</span></div>
+      <div style="display:grid;grid-template-columns:1fr 270px;align-items:center;padding:12px 14px;border-bottom:1px solid #eee">
+        <strong>🛏 Master Bedroom</strong><span><input class="mock-input" style="width:72px" placeholder="L ft"> × <input class="mock-input" style="width:72px" placeholder="W ft"> &nbsp; <b>200 sqft</b></span>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 270px;align-items:center;padding:12px 14px">
+        <strong>🛏 Bedroom 2</strong><span><input class="mock-input" style="width:72px" placeholder="L ft"> × <input class="mock-input" style="width:72px" placeholder="W ft"> &nbsp; <b>150 sqft</b></span>
+      </div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 250px;gap:14px">
+      <section style="background:white;border:1px solid #dedcf2;border-radius:10px;overflow:hidden">
+        <div style="padding:11px 14px;font-weight:800">Scope sections <small style="font-weight:400;color:#888">· prefilled from property and rooms</small></div>
+        <div style="padding:11px 14px;border-top:1px solid #eee;display:flex;justify-content:space-between"><span>🏛 <strong>False Ceiling</strong><br><small>Gypsum, POP, cove work</small></span><b style="color:#19b85b">● ON</b></div>
+        <div style="padding:11px 14px;border-top:1px solid #eee;display:flex;justify-content:space-between"><span>🪨 <strong>Flooring</strong><br><small>Tiles, wood, marble, skirting</small></span><b style="color:#19b85b">● ON</b></div>
+        <div style="padding:11px 14px;border-top:1px solid #eee;display:flex;justify-content:space-between"><span>🪵 <strong>Carpentry</strong><br><small>Modular, custom, wardrobes, kitchen</small></span><b style="color:#19b85b">● ON</b></div>
+        <div style="padding:11px 14px;border-top:1px solid #eee;display:flex;justify-content:space-between"><span>⚡ <strong>Electrical</strong><br><small>Points, LED, DB, spotlights</small></span><b style="color:#19b85b">● ON</b></div>
+        <div style="padding:11px 14px;border-top:1px solid #eee;display:flex;justify-content:space-between;opacity:.5"><span>🛋 <strong>Loose Furniture</strong><br><small>Client may source independently</small></span><b>○ OFF</b></div>
+      </section>
+      <aside style="background:#191735;color:white;border-radius:10px;padding:16px">
+        <div style="font-size:11px;opacity:.6">AUTOMATION PREVIEW</div>
+        <h3 style="color:white;margin:6px 0">2 rooms selected</h3>
+        <p style="font-size:11px;opacity:.75">Dimensions prefill measurable quantities. Enabled scope sections determine the catalogue shown next.</p>
+        <div style="padding:9px;background:rgba(255,255,255,.08);border-radius:7px;font-size:11px">Trades detected<br><strong>Carpenter · Electrician · Ceiling contractor</strong></div>
+        <button class="mock-button" style="width:100%;margin-top:14px;background:#6c54ff;color:white">Build estimate →</button>
+      </aside>
+    </div>
+  </div>
+</div>
+
+<div class="mockup" style="margin-top:20px">
+  <div class="mockup-header">Step 4 of 6 · Select catalogue items per room</div>
+  <div class="mockup-body" style="padding:0;background:#fafaff">
+    <div style="display:grid;grid-template-columns:180px 1fr;min-height:410px">
+      <aside style="background:#eeedf8;border-right:1px solid #d9d7ec">
+        <div style="padding:13px;background:#5b58a0;color:white"><strong>Bedroom 2</strong><br><small>150 sqft · 3 items</small></div>
+        <div style="padding:13px"><strong>Master Bedroom</strong><br><small>200 sqft · 0 items</small></div>
+      </aside>
+      <main>
+        <div style="display:grid;grid-template-columns:1fr 230px 70px 55px;padding:9px 13px;background:#25214d;color:white;font-size:10px;font-weight:800">
+          <span>ITEM / DESCRIPTION</span><span>SPECIFICATION</span><span>QTY</span><span>UNIT</span>
+        </div>
+        <div style="padding:8px 13px;background:#f2f0ff;color:#5b58a0;font-weight:800">🏛 False Ceiling</div>
+        <div style="display:grid;grid-template-columns:1fr 230px 70px 55px;gap:8px;padding:10px 13px;border-bottom:1px solid #eee"><span>☑ False ceiling — main area<br><small>₹180 per sqft</small></span><select class="mock-input"><option>Gypsum plain</option></select><input class="mock-input" value="150"><span>sqft</span></div>
+        <div style="display:grid;grid-template-columns:1fr 230px 70px 55px;gap:8px;padding:10px 13px;border-bottom:1px solid #eee"><span>☐ Cove / pelmet boxing<br><small>₹120 per rft</small></span><select class="mock-input"><option>POP cove 4"</option></select><input class="mock-input" value="49"><span>rft</span></div>
+        <div style="padding:8px 13px;background:#fff8ed;color:#a35b00;font-weight:800">🪵 Carpentry</div>
+        <div style="display:grid;grid-template-columns:1fr 230px 70px 55px;gap:8px;padding:10px 13px;border-bottom:1px solid #eee"><span>☑ Wardrobe<br><small>₹52,000 per lot</small></span><select class="mock-input"><option>Swing door — membrane</option></select><input class="mock-input" value="1"><span>lot</span></div>
+        <div style="display:grid;grid-template-columns:1fr 230px 70px 55px;gap:8px;padding:10px 13px"><span>☑ Wall panelling<br><small>₹320 per sqft</small></span><select class="mock-input"><option>Veneer + polish</option></select><input class="mock-input" value="1"><span>sqft</span></div>
+      </main>
+    </div>
+  </div>
+</div>
+
+<p class="subtitle" style="margin-top:16px">The implementation will add validation, autosave, keyboard support, responsive cards on small screens, and clear explanations for automatically calculated quantities.</p>

@@ -1,0 +1,117 @@
+<style>
+  .est-shell{background:#f7f6f2;border-radius:18px;overflow:hidden;color:#18213c;box-shadow:0 20px 60px rgba(24,33,60,.12)}
+  .est-top{background:#17203d;color:#fff;padding:18px 24px;display:flex;align-items:center;gap:18px}
+  .est-logo{font-family:Georgia,serif;font-size:22px;font-weight:700;letter-spacing:.08em}
+  .est-title{flex:1;border-left:1px solid rgba(255,255,255,.18);padding-left:18px}
+  .est-title small{display:block;opacity:.6;font-size:10px;margin-top:3px}
+  .save-pill{font-size:10px;background:rgba(255,255,255,.1);padding:7px 11px;border-radius:99px}
+  .est-body{display:grid;grid-template-columns:1fr 280px;gap:20px;padding:22px}
+  .flow-card{background:#fff;border:1px solid #e5e4ec;border-radius:16px;padding:20px;box-shadow:0 5px 20px rgba(24,33,60,.04)}
+  .stepper{display:grid;grid-template-columns:repeat(6,1fr);position:relative;margin:4px 0 26px}
+  .stepper:before{content:"";position:absolute;left:8%;right:8%;top:13px;height:2px;background:#e4e1f3}
+  .step{position:relative;text-align:center;font-size:9px;color:#9297a7}
+  .step i{display:grid;place-items:center;margin:0 auto 6px;width:27px;height:27px;border-radius:50%;background:#eeecf8;color:#716ca6;font-style:normal;font-weight:800;position:relative}
+  .step.done i{background:#dff8e9;color:#16824b}.step.active{color:#4e46a4;font-weight:800}.step.active i{background:#6356c7;color:white;box-shadow:0 0 0 5px #efedff}
+  .section-head{display:flex;align-items:end;justify-content:space-between;gap:14px;margin-bottom:14px}
+  .section-head h3{margin:0;font-family:Georgia,serif;font-size:23px;color:#17203d}
+  .section-head p{margin:4px 0 0;font-size:11px;color:#8a8fa0}
+  .choice-label{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.07em;color:#697089;margin:16px 0 8px}
+  .chips{display:flex;gap:7px;flex-wrap:wrap}
+  .chip{border:1.5px solid #dedbea;background:#fff;color:#313b55;border-radius:10px;padding:8px 12px;font-size:11px;font-weight:650}
+  .chip.on{background:#6258ad;color:#fff;border-color:#6258ad;box-shadow:0 5px 13px rgba(98,88,173,.22)}
+  .chip em{font-style:normal;background:rgba(255,255,255,.2);padding:1px 5px;border-radius:99px;margin-left:5px}
+  .room-grid{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-top:14px}
+  .room{border:1px solid #e1dfee;border-radius:12px;padding:12px;display:grid;grid-template-columns:1fr 70px 12px 70px;align-items:center;gap:8px}
+  .room strong{font-size:11px}.room small{display:block;color:#989cad;font-size:9px;margin-top:2px}
+  .dim{border:1px solid #dcd9e9;border-radius:8px;padding:7px;text-align:center;font-size:11px;background:#fafafd}
+  .scope-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+  .scope{border:1px solid #e2e0ec;border-radius:11px;padding:11px;display:flex;gap:8px;align-items:center;background:#fff}
+  .scope.off{opacity:.45}.scope span:first-child{font-size:17px}.scope b{font-size:10px;display:block}.scope small{font-size:8px;color:#999eae}.toggle{margin-left:auto;width:26px;height:15px;border-radius:20px;background:#1dbf67;position:relative}.toggle:after{content:"";position:absolute;width:11px;height:11px;border-radius:50%;background:#fff;right:2px;top:2px}.off .toggle{background:#c8cad4}.off .toggle:after{right:13px}
+  .summary{background:linear-gradient(165deg,#17203d,#292453);color:white;border-radius:16px;padding:18px;position:sticky;top:16px;align-self:start;box-shadow:0 16px 34px rgba(23,32,61,.22)}
+  .summary .ey{font-size:9px;letter-spacing:.12em;opacity:.55}.summary .amount{font-family:Georgia,serif;font-size:29px;margin:7px 0 3px}.summary .muted{font-size:9px;opacity:.6}
+  .sum-line{display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid rgba(255,255,255,.1);font-size:10px}
+  .route{padding:11px;border-radius:10px;background:rgba(255,255,255,.08);margin:13px 0;font-size:10px;line-height:1.5}
+  .route strong{display:block;color:#cdc5ff;margin-bottom:3px}.primary{width:100%;border:0;border-radius:10px;padding:11px;background:#7058ff;color:white;font-weight:800}
+  .note{font-size:9px;text-align:center;opacity:.55;margin-top:8px}
+  @media(max-width:800px){.est-body{grid-template-columns:1fr}.room-grid,.scope-grid{grid-template-columns:1fr}.step span{display:none}}
+</style>
+
+<h2>Refined estimator workspace</h2>
+<p class="subtitle">The reference workflow, redesigned with progressive disclosure and Lisno’s portal styling.</p>
+
+<div class="est-shell">
+  <header class="est-top">
+    <div class="est-logo">LISNO</div>
+    <div class="est-title"><strong>New residential estimate</strong><small>Ramesh &amp; Sunita Nair · Prestige Lakeside</small></div>
+    <div class="save-pill">✓ Saved just now</div>
+  </header>
+  <div class="est-body">
+    <main class="flow-card">
+      <div class="stepper">
+        <div class="step done"><i>✓</i><span>Client</span></div>
+        <div class="step done"><i>✓</i><span>Site files</span></div>
+        <div class="step active"><i>3</i><span>Configure</span></div>
+        <div class="step"><i>4</i><span>Items</span></div>
+        <div class="step"><i>5</i><span>Review</span></div>
+        <div class="step"><i>6</i><span>Send</span></div>
+      </div>
+
+      <div class="section-head">
+        <div><h3>Configure the home</h3><p>Choose the layout once. Lisno will prepare rooms, quantities, and relevant work categories.</p></div>
+        <span style="font-size:10px;color:#6258ad;font-weight:800">Step 3 of 6</span>
+      </div>
+
+      <div class="choice-label">Property type</div>
+      <div class="chips">
+        <button class="chip">1BHK</button><button class="chip">2BHK</button><button class="chip">2.5BHK</button>
+        <button class="chip on">3BHK</button><button class="chip">3.5BHK</button><button class="chip">4BHK</button>
+        <button class="chip">Villa</button><button class="chip">Penthouse</button><button class="chip">Duplex</button>
+      </div>
+
+      <div class="choice-label">Rooms in this project <span style="text-transform:none;letter-spacing:0;font-weight:400;color:#9a9dab">· suggested from 3BHK</span></div>
+      <div class="chips">
+        <button class="chip on">🛋 Living &amp; Dining <em>1</em></button>
+        <button class="chip on">🛏 Master Bedroom <em>1</em></button>
+        <button class="chip on">🛏 Bedroom <em>2</em></button>
+        <button class="chip on">🍳 Kitchen <em>1</em></button>
+        <button class="chip on">🚿 Bathroom <em>2</em></button>
+        <button class="chip">🌿 Balcony / Utility</button>
+        <button class="chip">＋ Custom room</button>
+      </div>
+
+      <div class="room-grid">
+        <div class="room"><span><strong>🛏 Master Bedroom</strong><small>Area calculated automatically</small></span><span class="dim">14 ft</span><span>×</span><span class="dim">12 ft</span></div>
+        <div class="room"><span><strong>🛏 Bedroom 2</strong><small>Area calculated automatically</small></span><span class="dim">12 ft</span><span>×</span><span class="dim">11 ft</span></div>
+      </div>
+
+      <div class="choice-label" style="margin-top:20px">Included work <span style="text-transform:none;letter-spacing:0;font-weight:400;color:#9a9dab">· switch off anything the client does not need</span></div>
+      <div class="scope-grid">
+        <div class="scope"><span>🏛</span><span><b>False ceiling</b><small>Gypsum, POP, cove</small></span><i class="toggle"></i></div>
+        <div class="scope"><span>🪨</span><span><b>Flooring</b><small>Tile, wood, marble</small></span><i class="toggle"></i></div>
+        <div class="scope"><span>🪵</span><span><b>Carpentry</b><small>Kitchen, wardrobe</small></span><i class="toggle"></i></div>
+        <div class="scope"><span>🎨</span><span><b>Painting</b><small>Paint, texture</small></span><i class="toggle"></i></div>
+        <div class="scope"><span>⚡</span><span><b>Electrical</b><small>Points, DB, lighting</small></span><i class="toggle"></i></div>
+        <div class="scope"><span>🚿</span><span><b>Civil &amp; plumbing</b><small>Wet work, sanitary</small></span><i class="toggle"></i></div>
+        <div class="scope off"><span>🛋</span><span><b>Loose furniture</b><small>Sofa, dining, mattress</small></span><i class="toggle"></i></div>
+      </div>
+    </main>
+
+    <aside class="summary">
+      <div class="ey">ESTIMATE PREVIEW</div>
+      <div class="amount">₹12.84 lakh</div>
+      <div class="muted">Live indicative total · final pricing follows</div>
+      <div class="sum-line"><span>Rooms selected</span><strong>7</strong></div>
+      <div class="sum-line"><span>Work categories</span><strong>6</strong></div>
+      <div class="sum-line"><span>Site files</span><strong style="color:#7ee2a7">3 ready</strong></div>
+      <div class="route"><strong>Approval route</strong>Currently below ₹15 lakh. The final estimate can go directly to the client. If the total crosses the threshold, design-manager review will be added automatically.</div>
+      <div class="route"><strong>Teams detected</strong>Carpentry · Electrical · Plumbing · Painting · Ceiling</div>
+      <button class="primary">Choose items &amp; finishes →</button>
+      <div class="note">You can return and change this configuration later.</div>
+    </aside>
+  </div>
+</div>
+
+<div class="section" style="margin-top:20px">
+  <h3>What changed</h3>
+  <p>The screen now reveals complexity gradually, groups rooms intelligently, keeps dimensions compact, replaces long toggle rows with scannable work cards, and keeps price, approval routing, documents, and detected teams visible in one sticky summary.</p>
+</div>
