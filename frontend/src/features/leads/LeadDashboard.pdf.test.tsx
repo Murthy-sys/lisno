@@ -175,7 +175,7 @@ describe("LeadDashboard estimate PDF export", () => {
     }));
 
     expect(await within(draftCard).findByRole("alert")).toHaveTextContent(
-      "PDF export failed. Try again."
+      "PDF export failed for Aurora Villa. Try again."
     );
     expect(within(sentCard).queryByRole("alert")).not.toBeInTheDocument();
     await waitFor(() => expect(within(draftCard).getByRole("button", {

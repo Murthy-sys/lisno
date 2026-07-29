@@ -73,6 +73,7 @@ export function LeadDashboard() {
               className="button button--secondary saved-estimate-card__export"
               label="Export as PDF"
               loadingLabel="Preparing PDF..."
+              errorMessage={`PDF export failed for ${estimate.lead?.projectName ?? "this estimate"}. Try again.`}
               fallbackFilename={`lisno-${estimate.id}.pdf`}
               getFile={() => downloadEstimatePdf(estimate.id)}
             />

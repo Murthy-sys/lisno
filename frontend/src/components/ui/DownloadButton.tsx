@@ -4,6 +4,7 @@ import { Download } from "lucide-react";
 export interface DownloadButtonProps {
   label: string;
   loadingLabel: string;
+  errorMessage: string;
   fallbackFilename: string;
   getFile: () => Promise<{ blob: Blob; filename: string | undefined }>;
   className?: string;
@@ -19,6 +20,7 @@ interface DownloadResource {
 export function DownloadButton({
   label,
   loadingLabel,
+  errorMessage,
   fallbackFilename,
   getFile,
   className,
@@ -69,7 +71,7 @@ export function DownloadButton({
       resource.timeout = window.setTimeout(() => cleanupResource(resource), 0);
     } catch {
       cleanupResource(resource);
-      if (mountedRef.current) setError("PDF export failed. Try again.");
+      if (mountedRef.current) setError(errorMessage);
     } finally {
       inFlightRef.current = false;
       if (mountedRef.current) {

@@ -74,11 +74,12 @@ afterEach(() => {
 });
 
 describe("estimate PDF download routes", () => {
-  it("exports a sales-owned draft PDF from persisted estimate and lead data", async () => {
+  it("exports a sales-owned non-draft PDF from persisted estimate and lead data", async () => {
     const { app, generate } = setup();
+    const readyEstimate = { ...estimate, status: "ready_for_client" };
     const findEstimate = vi
       .spyOn(EstimateModel, "findOne")
-      .mockReturnValue(lean(estimate) as never);
+      .mockReturnValue(lean(readyEstimate) as never);
     const findLead = vi
       .spyOn(LeadModel, "findById")
       .mockReturnValue(lean(lead) as never);
@@ -102,7 +103,7 @@ describe("estimate PDF download routes", () => {
     expect(generate).toHaveBeenCalledWith({
       id: "estimate-draft",
       version: 2,
-      status: "draft",
+      status: "ready_for_client",
       propertyType: "residential_apartment",
       subtotal: 9_500,
       gst: 1_710,
@@ -146,12 +147,14 @@ describe("estimate PDF download routes", () => {
     });
   });
 
-  it("exports a client-visible PDF only when the persisted lead email matches exactly", async () => {
+  it.each(["sent_to_client", "client_changes_requested", "client_approved"])(
+    "exports a %s client-visible PDF only when the persisted lead email matches exactly",
+    async (status) => {
     const { app, generate } = setup();
     const clientEstimate = {
       ...estimate,
       _id: "estimate-client-visible",
-      status: "sent_to_client"
+      status
     };
     const findEstimate = vi
       .spyOn(EstimateModel, "findOne")
@@ -182,9 +185,11 @@ describe("estimate PDF download routes", () => {
     expect(response.body.subarray(0, 5).toString()).toBe("%PDF-");
     expect(generate).toHaveBeenCalledWith(expect.objectContaining({
       id: "estimate-client-visible",
+      status,
       lead: expect.objectContaining({ clientEmail: "client@lisno.example" })
     }));
-  });
+    }
+  );
 
   it("hides draft, foreign-email, and missing client exports behind the same not-found response", async () => {
     const { app, generate } = setup();
@@ -215,6 +220,23 @@ describe("estimate PDF download routes", () => {
     expect(draft.body).toEqual(notFound);
     expect(foreign.body).toEqual(notFound);
     expect(missing.body).toEqual(notFound);
+    expect(generate).not.toHaveBeenCalled();
+  });
+
+  it("rejects cross-role access before either PDF route queries estimate data", async () => {
+    const { app, generate } = setup();
+    const findEstimate = vi.spyOn(EstimateModel, "findOne");
+
+    await request(app)
+      .get("/api/v1/estimates/estimate-draft/pdf")
+      .set("Authorization", auth("user-client-aurora", "client"))
+      .expect(403);
+    await request(app)
+      .get("/api/v1/client/estimates/estimate-client-visible/pdf")
+      .set("Authorization", auth("user-estimator-sales", "estimator_sales"))
+      .expect(403);
+
+    expect(findEstimate).not.toHaveBeenCalled();
     expect(generate).not.toHaveBeenCalled();
   });
 });

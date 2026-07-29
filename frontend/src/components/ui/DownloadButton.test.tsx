@@ -24,6 +24,7 @@ function renderDownloadButton(
       <DownloadButton
         label="Export as PDF"
         loadingLabel="Preparing PDF..."
+        errorMessage="PDF export failed for Aurora Villa. Try again."
         fallbackFilename="estimate.pdf"
         getFile={getFile}
       />
@@ -151,7 +152,9 @@ describe("DownloadButton", () => {
 
     await user.click(button);
 
-    expect(screen.getByRole("alert")).toHaveTextContent("PDF export failed. Try again.");
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "PDF export failed for Aurora Villa. Try again."
+    );
     expect(button).toBeEnabled();
     await user.click(button);
     await waitFor(() => expect(clickAnchor).toHaveBeenCalledOnce());
@@ -166,6 +169,7 @@ describe("DownloadButton", () => {
       <DownloadButton
         label="Export as PDF"
         loadingLabel="Preparing PDF..."
+        errorMessage="PDF export failed for Aurora Villa. Try again."
         fallbackFilename="estimate.pdf"
         getFile={vi.fn(() => pending.promise)}
         onBusyChange={onBusyChange}

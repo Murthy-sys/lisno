@@ -140,6 +140,7 @@ function EstimateReviewCard({
           className="button button--secondary estimate-review-card__export"
           label="Export as PDF"
           loadingLabel="Preparing PDF..."
+          errorMessage={`PDF export failed for ${estimate.lead?.projectName ?? "this estimate"}. Try again.`}
           fallbackFilename={`lisno-${estimate.id}.pdf`}
           getFile={() => downloadClientEstimatePdf(estimate.id)}
         /> : null}

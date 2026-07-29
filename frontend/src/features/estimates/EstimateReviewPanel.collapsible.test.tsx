@@ -231,6 +231,38 @@ describe("EstimateReviewPanel client disclosures", () => {
     expect(document.getElementById("client-estimate-estimate-ready-details")).toBeInTheDocument();
   });
 
+  it("identifies the expanded client estimate when its PDF export fails", async () => {
+    tokenStorage.set("client-token");
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith("/api/v1/auth/me")) return Response.json({ data: client });
+      if (url.includes("/api/v1/client/project-summaries?")) return Response.json({ data: { items: [], pagination: { limit: 100, offset: 0, total: 0, hasMore: false } } });
+      if (url.endsWith("/api/v1/client/latest-approved-versions")) return Response.json({ data: [] });
+      if (url.endsWith("/api/v1/client/estimates")) return Response.json({ data: clientEstimates });
+      if (url.endsWith("/api/v1/client/estimates/estimate-ready/pdf")) {
+        return Response.json(
+          { error: { code: "PDF_FAILED", message: "PDF failed" } },
+          { status: 500 }
+        );
+      }
+      throw new Error(`Unhandled request: ${url}`);
+    });
+    const user = userEvent.setup();
+
+    renderApp(["/client"]);
+
+    const villaCard = (await screen.findByRole("heading", {
+      name: "Aurora Villa",
+      level: 3
+    })).closest("article")!;
+    await user.click(within(villaCard).getByRole("button", { name: /Aurora Villa/ }));
+    await user.click(within(villaCard).getByRole("button", { name: "Export as PDF" }));
+
+    expect(await within(villaCard).findByRole("alert")).toHaveTextContent(
+      "PDF export failed for Aurora Villa. Try again."
+    );
+  });
+
   it("keeps manager estimate metadata and assignment immediately visible without a disclosure toggle", async () => {
     tokenStorage.set("manager-token");
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
