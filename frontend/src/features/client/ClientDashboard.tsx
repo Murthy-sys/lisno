@@ -1,4 +1,6 @@
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { ChevronDown } from "lucide-react";
 import { Link } from "react-router-dom";
 
 import type { ClientDesignVersion, ClientProjectSummary } from "../../api/types";
@@ -21,7 +23,29 @@ export function ClientDashboard() {
 }
 
 function ClientProjectCard({ project, latest, loading, failed, onRetry }: { project: ClientProjectSummary; latest: ClientDesignVersion | undefined; loading: boolean; failed: boolean; onRetry: () => void }) {
-  return <article className="client-project-card"><p className="eyebrow">{project.location}</p><h2>{project.name}</h2><p>Expected completion: {formatDate(project.plannedEndAt)}</p><p><strong>{project.progress}% complete</strong> · <span>{`${project.floorCount} ${project.floorCount === 1 ? "floor" : "floors"}`}</span></p><div className="client-project-card__update"><span>Latest approved update</span>{loading ? <strong>Loading approved plans…</strong> : failed ? <><strong>Latest approved update unavailable.</strong><button type="button" className="button button--secondary" onClick={onRetry}>Retry approved updates</button></> : latest ? <strong>{latest.originalFilename}</strong> : <strong>No approved plan available yet.</strong>}</div><Link className="button button--primary" to={`/client/projects/${project.id}`}>Open project</Link></article>;
+  const [expanded, setExpanded] = useState(false);
+  const detailsId = `client-project-${project.id}-details`;
+  const floorLabel = `${project.floorCount} ${project.floorCount === 1 ? "floor" : "floors"}`;
+
+  return <article className="client-project-card">
+    <button type="button" className="client-project-card__toggle" aria-expanded={expanded} aria-controls={detailsId} onClick={() => setExpanded((current) => !current)}>
+      <span className="client-project-card__identity">
+        <span className="eyebrow">{project.location}</span>
+        <h2>{project.name}</h2>
+      </span>
+      <span className="client-project-card__summary">
+        <strong>{project.progress}% complete</strong>
+        <span>{floorLabel}</span>
+        <ChevronDown aria-hidden="true" className={expanded ? "is-expanded" : undefined} />
+      </span>
+    </button>
+
+    {expanded ? <div id={detailsId} className="client-project-card__details">
+      <p>Expected completion: {formatDate(project.plannedEndAt)}</p>
+      <div className="client-project-card__update"><span>Latest approved update</span>{loading ? <strong>Loading approved plans…</strong> : failed ? <><strong>Latest approved update unavailable.</strong><button type="button" className="button button--secondary" onClick={onRetry}>Retry approved updates</button></> : latest ? <strong>{latest.originalFilename}</strong> : <strong>No approved plan available yet.</strong>}</div>
+      <Link className="button button--primary" to={`/client/projects/${project.id}`}>Open project</Link>
+    </div> : null}
+  </article>;
 }
 
 function latestForProject(versions: ClientDesignVersion[], projectId: string) {
