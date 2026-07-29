@@ -21,6 +21,9 @@ import { ManagementProjectWorkspace } from "../features/manager/ManagementProjec
 import { HeadDashboard } from "../features/head/HeadDashboard";
 import { ClientDashboard } from "../features/client/ClientDashboard";
 import { ClientProject } from "../features/client/ClientProject";
+import { LeadDashboard } from "../features/leads/LeadDashboard";
+import { LeadDetail } from "../features/leads/LeadDetail";
+import { LeadEstimateWorkspace } from "../features/leads/LeadEstimateWorkspace";
 
 const roleHomeContent: Record<
   Role,
@@ -47,6 +50,7 @@ const roleHomeContent: Record<
       "Manager teams, organization health, and evaluation coverage will live here.",
     status: "Ready for organization review"
   },
+  estimator_sales: { heading: "Estimator / Sales workspace", eyebrow: "Lead operations", description: "Your leads and estimates will live here.", status: "Ready for lead work" },
   client: {
     heading: "Client workspace",
     eyebrow: "My projects",
@@ -191,6 +195,12 @@ export function AppRoutes() {
         />
         <Route path="/head/designers/:designerId" element={<ProtectedRoute allowedRoles={["design_head"]}><DesignerDetail /></ProtectedRoute>} />
         <Route path="/head/projects/:projectId" element={<ProtectedRoute allowedRoles={["design_head"]}><ManagementProjectWorkspace /></ProtectedRoute>} />
+        <Route
+          path="/estimator-sales"
+          element={<ProtectedRoute allowedRoles={["estimator_sales"]}><LeadDashboard /></ProtectedRoute>}
+        />
+        <Route path="/estimator-sales/leads/:leadId" element={<ProtectedRoute allowedRoles={["estimator_sales"]}><LeadDetail /></ProtectedRoute>} />
+        <Route path="/estimator-sales/leads/:leadId/estimate" element={<ProtectedRoute allowedRoles={["estimator_sales"]}><LeadEstimateWorkspace /></ProtectedRoute>} />
         <Route
           path="/client"
           element={

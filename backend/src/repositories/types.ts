@@ -2,6 +2,19 @@ import type { Role, TaskStatus } from "../contracts/domain.js";
 
 export type ProjectStatus = "planning" | "active" | "on_hold" | "completed";
 
+export type LeadStage =
+  | "new_lead"
+  | "contacted"
+  | "site_visit"
+  | "design_meeting"
+  | "estimate_in_progress"
+  | "estimate_sent"
+  | "negotiation"
+  | "won"
+  | "lost";
+
+export type LeadActivityType = "call" | "whatsapp" | "meeting" | "email" | "note";
+
 export type DesignStageType =
   | "internal_kickoff"
   | "client_kickoff"
@@ -73,6 +86,49 @@ export interface ProjectRecord {
   createdAt: string;
   updatedAt: string;
 }
+
+export interface LeadRecord {
+  id: string;
+  ownerId: string;
+  clientName: string;
+  clientEmail: string;
+  clientMobile: string;
+  projectName: string;
+  location: string;
+  propertyType: string;
+  budgetMin: number | null;
+  budgetMax: number | null;
+  source: string;
+  stage: LeadStage;
+  nextAction: string;
+  nextActionAt: string;
+  builder: string | null;
+  areaSqft: number | null;
+  targetHandoverAt: string | null;
+  notes: string | null;
+  latestActivityAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface LeadActivityRecord {
+  id: string;
+  leadId: string;
+  actorId: string;
+  type: LeadActivityType;
+  note: string;
+  occurredAt: string;
+  createdAt: string;
+}
+
+export interface LeadFilters {
+  search?: string;
+  stage?: LeadStage;
+}
+
+export type NewLead = LeadRecord;
+export type LeadChange = Partial<Omit<LeadRecord, "id" | "ownerId" | "createdAt">>;
+export type NewLeadActivity = LeadActivityRecord;
 
 export interface FloorRecord {
   id: string;
@@ -408,6 +464,8 @@ export interface PageResult<T> {
 
 export interface SeedData {
   users: UserRecord[];
+  leads: LeadRecord[];
+  leadActivities: LeadActivityRecord[];
   projects: ProjectRecord[];
   floors: FloorRecord[];
   stages: DesignStageRecord[];
@@ -454,6 +512,12 @@ export interface AppRepository {
   createUser(input: NewUser): Promise<UserRecord>;
   listUsers(): Promise<UserRecord[]>;
   listUsersByIds(ids: string[]): Promise<UserRecord[]>;
+  pageLeadsForOwner(ownerId: string, filters: LeadFilters, pagination: PaginationInput): Promise<PageResult<LeadRecord>>;
+  findLeadById(id: string): Promise<LeadRecord | null>;
+  createLead(input: NewLead): Promise<LeadRecord>;
+  updateLead(id: string, change: LeadChange): Promise<LeadRecord>;
+  appendLeadActivity(input: NewLeadActivity): Promise<LeadActivityRecord>;
+  listLeadActivities(leadId: string): Promise<LeadActivityRecord[]>;
   listProjectsForUser(user: UserRecord): Promise<ProjectRecord[]>;
   listProjectsForDesignerIds(
     designerIds: string[],

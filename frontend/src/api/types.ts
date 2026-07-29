@@ -1,4 +1,9 @@
-export type Role = "designer" | "design_manager" | "design_head" | "client";
+export type Role =
+  | "designer"
+  | "design_manager"
+  | "design_head"
+  | "estimator_sales"
+  | "client";
 
 export interface PublicUser {
   id: string;
@@ -12,6 +17,11 @@ export interface AuthPayload {
   token: string;
   user: PublicUser;
 }
+
+export type LeadStage = "new_lead" | "contacted" | "site_visit" | "design_meeting" | "estimate_in_progress" | "estimate_sent" | "negotiation" | "won" | "lost";
+export type LeadActivityType = "call" | "whatsapp" | "meeting" | "email" | "note";
+export interface Lead { id: string; ownerId: string; clientName: string; clientEmail: string; clientMobile: string; projectName: string; location: string; propertyType: string; budgetMin: number | null; budgetMax: number | null; source: string; stage: LeadStage; nextAction: string; nextActionAt: string; builder: string | null; areaSqft: number | null; targetHandoverAt: string | null; notes: string | null; latestActivityAt: string | null; createdAt: string; updatedAt: string; }
+export interface LeadActivity { id: string; leadId: string; actorId: string; type: LeadActivityType; note: string; occurredAt: string; createdAt: string; }
 
 export interface ClientSignupInput {
   name: string;

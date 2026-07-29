@@ -12,7 +12,13 @@ import {
 import { createAuditService, type AuditService } from "./audit.service.js";
 import { systemClock, type Clock } from "./workflow.js";
 
-const roleSchema = z.enum(["designer", "design_manager", "design_head", "client"]);
+const roleSchema = z.enum([
+  "designer",
+  "design_manager",
+  "design_head",
+  "estimator_sales",
+  "client"
+]);
 const tokenPayloadSchema = z
   .object({
     id: z.string().min(1),

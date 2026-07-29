@@ -17,6 +17,8 @@ import {
   type DesignVersionRecord,
   type EvaluationRecord,
   type FloorRecord,
+  type LeadActivityRecord,
+  type LeadRecord,
   type ManagerTreeNode,
   type NewUser,
   type ProjectHierarchy,
@@ -52,6 +54,9 @@ const snapshotReaders = new WeakMap<AppRepository, () => MemorySnapshot>();
 const mutationMethods = new Set<keyof AppRepository>([
   "coordinateClientEmail",
   "createProject",
+  "createLead",
+  "updateLead",
+  "appendLeadActivity",
   "createUser",
   "linkUnclaimedProjectsToClient",
   "createFloor",
@@ -207,6 +212,48 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
       return clone(
         state.users.filter((user) => selected.has(user.id)).sort(byNameThenId)
       );
+    },
+
+    async pageLeadsForOwner(ownerId, filters, pagination) {
+      const search = filters.search?.trim().toLowerCase();
+      const leads = state.leads
+        .filter((lead) => lead.ownerId === ownerId)
+        .filter((lead) => !filters.stage || lead.stage === filters.stage)
+        .filter((lead) => !search || [lead.clientName, lead.clientEmail, lead.clientMobile, lead.projectName]
+          .some((value) => value.toLowerCase().includes(search)))
+        .sort((left, right) => byDateThenId("updatedAt", right, left));
+      return paginate(clone(leads), pagination);
+    },
+
+    async findLeadById(id) {
+      return copyOrNull(state.leads.find((lead) => lead.id === id));
+    },
+
+    async createLead(input) {
+      ensureUniqueId(state.leads, input.id, "Lead");
+      const record: LeadRecord = clone(input);
+      state.leads.push(record);
+      return clone(record);
+    },
+
+    async updateLead(id, change) {
+      const lead = state.leads.find((candidate) => candidate.id === id);
+      if (!lead) throw new RepositoryNotFoundError(`Lead ${id} was not found.`);
+      Object.assign(lead, clone(change));
+      return clone(lead);
+    },
+
+    async appendLeadActivity(input) {
+      ensureUniqueId(state.leadActivities, input.id, "Lead activity");
+      const record: LeadActivityRecord = clone(input);
+      state.leadActivities.push(record);
+      return clone(record);
+    },
+
+    async listLeadActivities(leadId) {
+      return clone(state.leadActivities
+        .filter((activity) => activity.leadId === leadId)
+        .sort((left, right) => byDateThenId("occurredAt", right, left)));
     },
 
     async listProjectsForUser(user) {

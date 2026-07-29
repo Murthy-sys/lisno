@@ -181,6 +181,13 @@ const users: UserRecord[] = [
     authorizedClientIds: ["user-client-celeste"]
   }),
   user({
+    id: "user-estimator-sales",
+    name: "Priya Sharma",
+    email: "sales@lisno.example",
+    role: "estimator_sales",
+    title: "Estimator / Sales"
+  }),
+  user({
     id: "user-designer-vikram",
     name: "Vikram Nair",
     email: "vikram@lisno.example",
@@ -430,6 +437,8 @@ const tasks: TaskRecord[] = [
 
 export const demoSeedData: SeedData = {
   users,
+  leads: [],
+  leadActivities: [],
   projects,
   floors,
   stages,

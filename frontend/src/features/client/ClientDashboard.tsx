@@ -4,6 +4,7 @@ import { Link } from "react-router-dom";
 import type { ClientDesignVersion, ClientProjectSummary } from "../../api/types";
 import { AsyncState } from "../../components/ui/AsyncState";
 import { getClientLatestApprovedVersions, getClientProjectSummaries, clientKeys } from "./clientApi";
+import { EstimateReviewPanel } from "../estimates/EstimateReviewPanel";
 
 export function ClientDashboard() {
   const projectsQuery = useQuery({ queryKey: clientKeys.projects, queryFn: getClientProjectSummaries });
@@ -14,6 +15,7 @@ export function ClientDashboard() {
 
   return <section className="client-page" aria-labelledby="client-dashboard-title">
     <header className="workspace-header"><div><p className="eyebrow">Client portal</p><h1 id="client-dashboard-title">Your design plans</h1><p>Follow your projects and view plans once they are approved for sharing.</p></div></header>
+    <EstimateReviewPanel />
     {projects.length ? <div className="client-project-grid">{projects.map((project) => <ClientProjectCard key={project.id} project={project} latest={latestForProject(latestQuery.data ?? [], project.id)} loading={latestQuery.isPending} failed={latestQuery.isError} onRetry={() => void latestQuery.refetch()} />)}</div> : <div className="project-empty"><div><h2>No projects have been shared with you yet.</h2><p>When your design team begins a project for this account, it will appear here.</p></div></div>}
   </section>;
 }

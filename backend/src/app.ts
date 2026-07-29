@@ -14,6 +14,7 @@ import { createDesignSectionsRouter } from "./routes/design-sections.js";
 import { createExtractionWorkerRouter } from "./routes/extraction-worker.js";
 import { healthRouter } from "./routes/health.js";
 import { createKpisRouter } from "./routes/kpis.js";
+import { createLeadsRouter } from "./routes/leads.js";
 import { createOrganizationRouter } from "./routes/organization.js";
 import { createProjectsRouter } from "./routes/projects.js";
 import { createTasksRouter } from "./routes/tasks.js";
@@ -28,6 +29,7 @@ import { createDesignSectionService } from "./services/design-section.service.js
 import { createExtractionWorkerService } from "./services/extraction-worker.service.js";
 import { createHierarchyService } from "./services/hierarchy.service.js";
 import { createKpiService } from "./services/kpi.service.js";
+import { createLeadService } from "./services/lead.service.js";
 import { createProjectActivityService } from "./services/project-activity.service.js";
 import { createProjectService } from "./services/project.service.js";
 import { createTaskService } from "./services/task.service.js";
@@ -69,6 +71,7 @@ export function createApp(dependencies: AppDependencies) {
   });
   const projectActivityService = createProjectActivityService(repository);
   const projectService = createProjectService(repository, auditService, clock);
+  const leadService = createLeadService(repository, auditService, clock);
   const taskService = createTaskService(repository, auditService, clock);
   const hierarchyService = createHierarchyService(repository, clock);
   const kpiService = createKpiService(repository, clock);
@@ -111,6 +114,7 @@ export function createApp(dependencies: AppDependencies) {
   app.use("/api/v1", healthRouter);
   app.use("/api/v1", createAuthRouter(authService, authRateLimit));
   app.use("/api/v1", createProjectsRouter(authService, projectService));
+  app.use("/api/v1", createLeadsRouter(authService, leadService));
   app.use("/api/v1", createTasksRouter(authService, taskService));
   app.use("/api/v1", createOrganizationRouter(authService, hierarchyService));
   app.use("/api/v1", createKpisRouter(authService, kpiService));
