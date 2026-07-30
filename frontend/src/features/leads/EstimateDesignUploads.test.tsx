@@ -219,7 +219,7 @@ describe("EstimateDesignUploads", () => {
     vi.stubGlobal("XMLHttpRequest", FakeXMLHttpRequest);
 
     const user = userEvent.setup();
-    renderWithQuery(<EstimateDesignUploads estimateId="estimate-1" rooms={rooms} scopes={scopes} />);
+    renderWithQuery(<EstimateDesignUploads estimateId="estimate-1" rooms={rooms} scopes={scopes} items={[]} />);
     const file = new File(["%PDF-1.7"], "kitchen-plan.pdf", { type: "application/pdf" });
 
     await user.upload(await screen.findByLabelText("Design plan file"), file);
@@ -252,7 +252,7 @@ describe("EstimateDesignUploads", () => {
     vi.stubGlobal("XMLHttpRequest", FakeXMLHttpRequest);
 
     const user = userEvent.setup();
-    renderWithQuery(<EstimateDesignUploads estimateId="estimate-1" rooms={rooms} scopes={scopes} />);
+    renderWithQuery(<EstimateDesignUploads estimateId="estimate-1" rooms={rooms} scopes={scopes} items={[]} />);
     const file = new File(["failed upload"], "failed-plan.pdf", { type: "application/pdf" });
     await user.upload(await screen.findByLabelText("Design plan file"), file);
     await user.click(screen.getByRole("button", { name: "Upload design plan" }));
@@ -280,7 +280,7 @@ describe("EstimateDesignUploads", () => {
     });
 
     const user = userEvent.setup();
-    renderWithQuery(<EstimateDesignUploads estimateId="estimate-1" rooms={rooms} scopes={scopes} />);
+    renderWithQuery(<EstimateDesignUploads estimateId="estimate-1" rooms={rooms} scopes={scopes} items={[]} />);
     await user.click(await screen.findByRole("button", { name: "Retry extraction" }));
 
     expect(screen.getByRole("button", { name: "Retrying extraction…" })).toBeDisabled();
@@ -301,7 +301,7 @@ describe("EstimateDesignUploads", () => {
     });
 
     const user = userEvent.setup();
-    renderWithQuery(<EstimateDesignUploads estimateId="estimate-1" rooms={rooms} scopes={scopes} />);
+    renderWithQuery(<EstimateDesignUploads estimateId="estimate-1" rooms={rooms} scopes={scopes} items={[]} />);
 
     const placement = await screen.findByRole("region", { name: "Needs placement" });
     expect(within(placement).getByText("Bedroom electrical")).toBeVisible();
@@ -339,7 +339,7 @@ describe("EstimateDesignUploads", () => {
     FakeXMLHttpRequest.instances = [];
     vi.stubGlobal("XMLHttpRequest", FakeXMLHttpRequest);
     const user = userEvent.setup();
-    renderWithQuery(<EstimateDesignUploads estimateId="estimate-1" rooms={rooms} scopes={scopes} />);
+    renderWithQuery(<EstimateDesignUploads estimateId="estimate-1" rooms={rooms} scopes={scopes} items={[]} />);
     const file = new File(["%PDF-1.7"], "plan.pdf", { type: "application/pdf" });
     await user.upload(await screen.findByLabelText("Design plan file"), file);
     await user.click(screen.getByRole("button", { name: "Upload design plan" }));
@@ -374,7 +374,7 @@ describe("EstimateDesignUploads", () => {
     });
 
     const user = userEvent.setup();
-    renderWithQuery(<EstimateDesignUploads estimateId="estimate-1" rooms={rooms} scopes={scopes} />);
+    renderWithQuery(<EstimateDesignUploads estimateId="estimate-1" rooms={rooms} scopes={scopes} items={[]} />);
     await user.click(await screen.findByRole("button", { name: "Retry extraction" }));
     expect(screen.getByRole("button", { name: "Retrying extraction…" })).toBeDisabled();
     queued = true;
@@ -433,6 +433,7 @@ describe("EstimateDesignUploads", () => {
       estimateId="estimate-1"
       rooms={[{ id: "room-living", label: "Living Room" }]}
       scopes={[{ id: "FC", label: "False Ceiling" }]}
+      items={[]}
     />);
 
     expect(await screen.findByText("retryable.pdf")).toBeVisible();
@@ -580,7 +581,7 @@ describe("EstimateDesignUploads", () => {
     });
 
     const user = userEvent.setup();
-    renderWithQuery(<EstimateDesignUploads estimateId="estimate-1" rooms={rooms} scopes={scopes} />);
+    renderWithQuery(<EstimateDesignUploads estimateId="estimate-1" rooms={rooms} scopes={scopes} items={[]} />);
     await user.click(await screen.findByRole("button", { name: "More actions for Living review" }));
     await user.click(screen.getByRole("menuitem", { name: "Verify drawing" }));
     expect(screen.getByRole("checkbox", { name: "Mark drawing verified" })).toBeChecked();
@@ -628,7 +629,7 @@ describe("EstimateDesignUploads", () => {
     });
 
     const user = userEvent.setup();
-    renderWithQuery(<EstimateDesignUploads estimateId="estimate-1" rooms={rooms} scopes={scopes} />);
+    renderWithQuery(<EstimateDesignUploads estimateId="estimate-1" rooms={rooms} scopes={scopes} items={[]} />);
     await user.click(await screen.findByRole("button", { name: "More actions for Remove me" }));
     await user.click(screen.getByRole("menuitem", { name: "Remove drawing" }));
     const remove = await vi.waitFor(() => {
@@ -658,7 +659,7 @@ describe("EstimateDesignUploads", () => {
     });
 
     const user = userEvent.setup();
-    renderWithQuery(<EstimateDesignUploads estimateId="estimate-1" rooms={rooms} scopes={scopes} />);
+    renderWithQuery(<EstimateDesignUploads estimateId="estimate-1" rooms={rooms} scopes={scopes} items={[]} />);
     await user.click(await screen.findByRole("button", { name: "Retry extraction" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("The extraction could not be retried.");
     expect(screen.getByRole("button", { name: "Retry extraction" })).toBeEnabled();
@@ -689,7 +690,7 @@ describe("EstimateDesignUploads", () => {
       throw new Error(`Unexpected request: ${url}`);
     });
     const user = userEvent.setup();
-    renderWithQuery(<EstimateDesignUploads estimateId="estimate-1" rooms={rooms} scopes={scopes} />);
+    renderWithQuery(<EstimateDesignUploads estimateId="estimate-1" rooms={rooms} scopes={scopes} items={[]} />);
     await user.click(await screen.findByRole("button", { name: `More actions for ${replacementDrawing.displayTitle}` }));
     await user.click(screen.getByRole("menuitem", { name: "Upload replacement" }));
     const file = new File(["replacement"], "changed.pdf", { type: "application/pdf" });
@@ -817,7 +818,7 @@ describe("EstimateDesignUploads", () => {
     const user = userEvent.setup();
 
     renderWithQuery(
-      <EstimateDesignUploads estimateId="estimate-1" rooms={rooms} scopes={scopes} />
+      <EstimateDesignUploads estimateId="estimate-1" rooms={rooms} scopes={scopes} items={[]} />
     );
     const row = await screen.findByRole("article", {
       name: "Living lighting detail drawing"

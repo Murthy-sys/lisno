@@ -43,7 +43,7 @@ interface EstimateDesignUploadsProps {
   estimateId: string;
   rooms: EstimateDesignPlacementOption[];
   scopes: EstimateDesignPlacementOption[];
-  items?: EstimateDesignItemOption[];
+  items: EstimateDesignItemOption[];
 }
 
 type DrawingSelection = { drawing: EstimateDesignDrawing; revision: EstimateDesignRevision };
@@ -75,7 +75,7 @@ function formatBytes(bytes: number) {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
-export function EstimateDesignUploads({ estimateId, rooms, scopes, items = [] }: EstimateDesignUploadsProps) {
+export function EstimateDesignUploads({ estimateId, rooms, scopes, items }: EstimateDesignUploadsProps) {
   const client = useQueryClient();
   const [file, setFile] = useState<File>();
   const [uploadProgress, setUploadProgress] = useState<number>();

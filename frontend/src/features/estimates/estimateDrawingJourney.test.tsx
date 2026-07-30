@@ -550,6 +550,7 @@ describe("estimate drawing review journey", () => {
         estimateId="estimate-journey"
         rooms={rooms}
         scopes={scopes}
+        items={[]}
       />,
     );
     const requestedRow = await screen.findByRole("article", {
