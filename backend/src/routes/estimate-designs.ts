@@ -17,14 +17,28 @@ const cropSchema = z.object({
   height: z.number().int().positive()
 }).strict();
 
-const editDrawingSchema = z.object({
+const estimateItemAssignmentSchema = z.object({
+  version: z.number().int().positive(),
+  roomId: z.string().trim().min(1).max(128),
+  catalogueId: z.string().trim().min(1).max(64)
+}).strict();
+const editDrawingBase = z.object({
   version: z.number().int().positive(),
   displayTitle: z.string().trim().min(1).max(500).optional(),
-  roomId: z.string().trim().min(1).max(128).optional(),
-  scopeSectionId: z.string().trim().min(1).max(64).optional(),
   crop: cropSchema.optional(),
   verified: z.boolean().optional()
-}).strict().refine(
+});
+const editDrawingSchema = z.union([
+  editDrawingBase.extend({
+    roomId: z.string().trim().min(1).max(128),
+    catalogueId: z.string().trim().min(1).max(64)
+  }).strict(),
+  editDrawingBase.extend({
+    roomId: z.string().trim().min(1).max(128),
+    scopeSectionId: z.string().trim().min(1).max(64)
+  }).strict(),
+  editDrawingBase.strict()
+]).refine(
   (value) => Object.keys(value).some((key) => key !== "version"),
   { message: "Provide at least one drawing change." }
 );
@@ -54,12 +68,20 @@ const replacementBodySchema = z.object({
   version: z.coerce.number().int().positive()
 }).strict();
 const removeDrawingSchema = z.object({ version: z.number().int().positive() }).strict();
-const createManualDrawingSchema = z.object({
+const createManualDrawingBase = z.object({
   displayTitle: z.string().trim().min(1).max(500),
-  roomId: z.string().trim().min(1).max(128),
-  scopeSectionId: z.string().trim().min(1).max(64),
   crop: cropSchema
-}).strict();
+});
+const createManualDrawingSchema = z.union([
+  createManualDrawingBase.extend({
+    roomId: z.string().trim().min(1).max(128),
+    catalogueId: z.string().trim().min(1).max(64)
+  }).strict(),
+  createManualDrawingBase.extend({
+    roomId: z.string().trim().min(1).max(128),
+    scopeSectionId: z.string().trim().min(1).max(64)
+  }).strict()
+]);
 
 export function createEstimateDesignsRouter(
   authService: AuthService,
@@ -180,6 +202,25 @@ export function createEstimateDesignsRouter(
       try {
         response.json({
           data: await estimateDesigns.editDrawing(
+            request.authenticatedUser!,
+            request.params.drawingId as string,
+            request.body
+          )
+        });
+      } catch (error) {
+        next(error);
+      }
+    }
+  );
+  router.put(
+    "/estimate-design-drawings/:drawingId/estimate-item",
+    protectedRoute,
+    estimatorOnly,
+    validateBody(estimateItemAssignmentSchema),
+    async (request, response, next) => {
+      try {
+        response.json({
+          data: await estimateDesigns.assignEstimateItem(
             request.authenticatedUser!,
             request.params.drawingId as string,
             request.body

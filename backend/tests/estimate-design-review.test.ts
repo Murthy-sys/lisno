@@ -191,6 +191,8 @@ function setup(maxUploadBytes = 10_000_000) {
       verified: true,
       roomId: "room-living",
       scopeSectionId: "FC",
+      catalogueId: "FC01",
+      mappingStatus: "auto_mapped",
       detectedTitle: "Living ceiling",
       displayTitle: "Living ceiling",
       source: "ocr"
@@ -204,6 +206,8 @@ function setup(maxUploadBytes = 10_000_000) {
       verified: true,
       roomId: "room-living",
       scopeSectionId: "FC",
+      catalogueId: "FC01",
+      mappingStatus: "auto_mapped",
       detectedTitle: "Living detail",
       displayTitle: "Living detail",
       source: "ocr"
@@ -219,6 +223,8 @@ function setup(maxUploadBytes = 10_000_000) {
       croppedFileReference: "drawing-1.png",
       roomId: "room-living",
       scopeSectionId: "FC",
+      catalogueId: "FC01",
+      mappingStatus: "auto_mapped",
       label: "Living ceiling",
       reviewStatus: "submitted",
       submittedAt: NOW,
@@ -238,6 +244,8 @@ function setup(maxUploadBytes = 10_000_000) {
       croppedFileReference: "drawing-2.png",
       roomId: "room-living",
       scopeSectionId: "FC",
+      catalogueId: "FC01",
+      mappingStatus: "auto_mapped",
       label: "Living detail",
       reviewStatus: "submitted",
       submittedAt: NOW,
@@ -538,6 +546,7 @@ describe("estimate drawing client review", () => {
       sourcePageId: "page-hidden-draft",
       roomId: "room-hidden",
       scopeSectionId: "EL",
+      catalogueId: "EL01",
       label: "Hidden draft title",
       reviewStatus: "draft",
       replacesRevisionId: "revision-2"
@@ -546,6 +555,7 @@ describe("estimate drawing client review", () => {
       sourcePageId: "page-hidden-draft",
       roomId: "room-hidden",
       scopeSectionId: "EL",
+      catalogueId: "EL01",
       displayTitle: "Hidden draft title",
       verified: false
     });

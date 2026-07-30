@@ -9,7 +9,9 @@ import {
 } from "../domain/estimate-design.js";
 import {
   assertEstimateDesignMapping,
+  assignEstimateItem as resolveEstimateItemAssignment,
   autoMapDrawingTitle,
+  InvalidEstimateDesignAssignmentError,
   mappingContextForEstimate
 } from "../domain/estimate-design-mapping.js";
 import { normalizeEmail } from "../domain/email.js";
@@ -126,21 +128,38 @@ export interface EstimateWorkerResult {
   }>;
 }
 
-export interface EditEstimateDrawingInput {
+type EditEstimateDrawingBase = {
   version: number;
   displayTitle?: string;
-  roomId?: string;
-  scopeSectionId?: string;
   crop?: CropRect;
   verified?: boolean;
-}
+};
 
-export interface CreateManualEstimateDrawingInput {
-  displayTitle: string;
+export type ExactMappingChange = {
+  roomId: string;
+  catalogueId: string;
+};
+
+export type LegacyMappingChange = {
   roomId: string;
   scopeSectionId: string;
-  crop: CropRect;
+};
+
+export type DeprecatedMappingChange = ExactMappingChange | LegacyMappingChange;
+
+export type EditEstimateDrawingInput = EditEstimateDrawingBase & (
+  | DeprecatedMappingChange
+  | { roomId?: never; catalogueId?: never; scopeSectionId?: never }
+);
+
+export interface AssignEstimateItemInput extends ExactMappingChange {
+  version: number;
 }
+
+export type CreateManualEstimateDrawingInput = {
+  displayTitle: string;
+  crop: CropRect;
+} & DeprecatedMappingChange;
 
 export interface SaveAnnotationDraftInput {
   version: number;
@@ -193,6 +212,11 @@ export interface EstimateDesignService {
     user: AuthenticatedUser,
     pageId: string,
     input: CreateManualEstimateDrawingInput
+  ): Promise<Record<string, unknown>>;
+  assignEstimateItem(
+    user: AuthenticatedUser,
+    drawingId: string,
+    input: AssignEstimateItemInput
   ): Promise<Record<string, unknown>>;
   editDrawing(user: AuthenticatedUser, drawingId: string, change: EditEstimateDrawingInput): Promise<Record<string, unknown>>;
   retryUpload(user: AuthenticatedUser, uploadId: string): Promise<EstimateDesignUploadDto>;
@@ -667,24 +691,7 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
         });
         references.push(stored.reference);
         const pageId = randomUUID();
-        const revision = {
-          _id: randomUUID(),
-          drawingId,
-          revisionNumber: replacement.version + 1,
-          sourcePageId: pageId,
-          crop: { x: 0, y: 0, width: metadata.width!, height: metadata.height! },
-          croppedFileReference: stored.reference,
-          ...mappingDto(latest),
-          label: String(latest.label),
-          reviewStatus: "draft",
-          submittedAt: null,
-          reviewerId: null,
-          reviewedAt: null,
-          changeSummary: null,
-          annotationLayerId: null,
-          annotations: null,
-          replacesRevisionId: latest._id
-        };
+        let revision: Record<string, any> | null = null;
         await withMongoTransaction(async (session) => {
           const currentDrawing = await EstimateDesignDrawingModel.findById(drawingId)
             .session(session)
@@ -708,6 +715,24 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
           ) {
             staleReplacement();
           }
+          revision = {
+            _id: randomUUID(),
+            drawingId,
+            revisionNumber: replacement.version + 1,
+            sourcePageId: pageId,
+            crop: { x: 0, y: 0, width: metadata.width!, height: metadata.height! },
+            croppedFileReference: stored.reference,
+            ...mappingSnapshot(currentDrawing),
+            label: String(current.label),
+            reviewStatus: "draft",
+            submittedAt: null,
+            reviewerId: null,
+            reviewedAt: null,
+            changeSummary: null,
+            annotationLayerId: null,
+            annotations: null,
+            replacesRevisionId: current._id
+          };
           await advanceDesignLifecycle(currentEstimate, session);
           await EstimateDesignSourcePageModel.create([{
             _id: pageId,
@@ -749,7 +774,7 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
         });
         return {
           ...drawingDto({ ...drawing, sourcePageId: pageId, verified: false }),
-          revision: revisionDto(revision)
+          revision: revisionDto(revision!)
         };
       } catch (error) {
         await cleanupReferences(input.storage, references);
@@ -1224,11 +1249,7 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
       if (!upload) throw estimateNotFound();
       const estimate = await requireOwnedEstimate(user, String(upload.estimateId));
       requireManualDrawingState(upload);
-      validateMapping(
-        manualInput.roomId,
-        manualInput.scopeSectionId,
-        taxonomyForEstimate(estimate)
-      );
+      resolveDeprecatedMapping(manualInput, estimate);
       if (
         !cropIsWithinPage(
           manualInput.crop,
@@ -1281,11 +1302,7 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
           );
           requireManualDrawingState(currentUpload);
           await guardDesignLifecycle(currentEstimate, session);
-          validateMapping(
-            manualInput.roomId,
-            manualInput.scopeSectionId,
-            taxonomyForEstimate(currentEstimate)
-          );
+          const mapping = resolveDeprecatedMapping(manualInput, currentEstimate);
           if (
             !cropIsWithinPage(
               manualInput.crop,
@@ -1308,7 +1325,7 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
             estimateId: currentUpload.estimateId,
             active: true,
             verified: true,
-            ...miscMapping(),
+            ...mapping,
             detectedTitle: displayTitle,
             displayTitle,
             source: "manual",
@@ -1325,7 +1342,7 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
             sourcePageId: currentPage._id,
             crop: { ...manualInput.crop },
             croppedFileReference: generatedReference,
-            ...miscMapping(),
+            ...mapping,
             label: displayTitle,
             reviewStatus: "draft",
             submittedAt: null,
@@ -1387,8 +1404,7 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
               sourcePageId: String(currentPage._id),
               revisionId,
               revisionNumber: 1,
-              roomId: manualInput.roomId,
-              scopeSectionId: manualInput.scopeSectionId,
+              ...mapping,
               crop: { ...manualInput.crop }
             }
           });
@@ -1414,6 +1430,112 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
       };
     },
 
+    async assignEstimateItem(user, drawingId, assignment) {
+      const drawing = await EstimateDesignDrawingModel.findById(drawingId).lean();
+      if (!drawing) throw estimateNotFound();
+      const estimate = await requireOwnedEstimate(user, String(drawing.estimateId));
+      const latest = await EstimateDesignRevisionModel.findOne({ drawingId })
+        .sort({ revisionNumber: -1 })
+        .lean();
+      if (!latest) throw estimateNotFound();
+      if (!estimateAllowsDrawingEdit(String(estimate.status), latest)) drawingLocked();
+      if (!drawing.active || !["draft", "changes_requested"].includes(String(latest.reviewStatus))) drawingLocked();
+      if (Number(latest.revisionNumber) !== assignment.version) staleDrawing();
+      resolveExactMapping(assignment, estimate);
+
+      let savedDrawing: Record<string, any> | null = null;
+      let savedRevision: Record<string, any> | null = null;
+      await withMongoTransaction(async (session) => {
+        const currentDrawing = await EstimateDesignDrawingModel.findById(drawingId)
+          .session(session)
+          .lean();
+        if (!currentDrawing) throw estimateNotFound();
+        const currentEstimate = await requireOwnedEstimate(user, String(currentDrawing.estimateId), session);
+        const currentUpload = await EstimateDesignUploadModel.findById(currentDrawing.uploadId).session(session).lean();
+        const currentJob = await EstimateDesignExtractionJobModel.findOne({ uploadId: currentDrawing.uploadId })
+          .session(session)
+          .lean();
+        const current = await EstimateDesignRevisionModel.findOne({ drawingId })
+          .sort({ revisionNumber: -1 })
+          .session(session)
+          .lean();
+        if (
+          !currentDrawing.active ||
+          !currentUpload ||
+          !currentJob ||
+          String(currentUpload.estimateId) !== String(currentDrawing.estimateId) ||
+          String(currentUpload.extractionStatus) !== "estimator_review" ||
+          String(currentJob.status) !== "estimator_review" ||
+          !current ||
+          Number(current.revisionNumber) !== assignment.version ||
+          !estimateAllowsDrawingEdit(String(currentEstimate.status), current) ||
+          !["draft", "changes_requested"].includes(String(current.reviewStatus))
+        ) {
+          drawingLocked();
+        }
+        await guardDesignLifecycle(currentEstimate, session);
+        const mapping = resolveExactMapping(assignment, currentEstimate);
+        const revision = {
+          _id: randomUUID(),
+          drawingId,
+          revisionNumber: Number(current.revisionNumber) + 1,
+          sourcePageId: current.sourcePageId,
+          crop: { ...current.crop },
+          croppedFileReference: current.croppedFileReference,
+          ...mapping,
+          label: String(currentDrawing.displayTitle),
+          reviewStatus: "draft",
+          submittedAt: null,
+          reviewerId: null,
+          reviewedAt: null,
+          changeSummary: null,
+          annotationLayerId: null,
+          annotations: null,
+          replacementUploadId: null,
+          replacesRevisionId: current._id
+        };
+        const guarded = await EstimateDesignRevisionModel.updateOne(
+          {
+            _id: current._id,
+            drawingId,
+            revisionNumber: assignment.version,
+            reviewStatus: { $in: ["draft", "changes_requested"] }
+          },
+          { $set: { reviewStatus: current.reviewStatus }, $currentDate: { updatedAt: true } },
+          { session }
+        );
+        if (guarded.matchedCount !== 1) staleDrawing();
+        await EstimateDesignRevisionModel.create([revision], { session });
+        const updated = await EstimateDesignDrawingModel.updateOne(
+          {
+            _id: drawingId,
+            active: true,
+            roomId: currentDrawing.roomId ?? null,
+            scopeSectionId: currentDrawing.scopeSectionId ?? null,
+            catalogueId: currentDrawing.catalogueId ?? null,
+            mappingStatus: currentDrawing.mappingStatus ?? "misc",
+            verified: Boolean(currentDrawing.verified)
+          },
+          { $set: mapping },
+          { session, runValidators: true }
+        );
+        if (updated.matchedCount !== 1) staleDrawing();
+        await appendEstimateDesignAudit(input.audit, session, {
+          actorId: user.id,
+          action: "estimate_design_item_assigned",
+          entityType: "estimate_design_drawing",
+          entityId: drawingId,
+          occurredAt: now().toISOString(),
+          oldValues: { ...mappingSnapshot(currentDrawing), revisionNumber: Number(current.revisionNumber) },
+          newValues: { ...mapping, revisionNumber: Number(revision.revisionNumber) }
+        });
+        savedDrawing = { ...currentDrawing, ...mapping };
+        savedRevision = revision;
+      });
+      if (!savedDrawing || !savedRevision) throw new Error("Estimate item assignment transaction did not complete.");
+      return { ...drawingDto(savedDrawing), revision: revisionDto(savedRevision) };
+    },
+
     async editDrawing(user, drawingId, change) {
       const drawing = await EstimateDesignDrawingModel.findById(drawingId).lean();
       if (!drawing) throw estimateNotFound();
@@ -1431,10 +1553,9 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
       if (Number(latest.revisionNumber) !== change.version) {
         throw new ApiError(409, "STALE_ESTIMATE_DRAWING", "The drawing changed before this update.");
       }
-      const taxonomy = taxonomyForEstimate(estimate);
-      const roomId = change.roomId ?? drawing.roomId ?? null;
-      const scopeSectionId = change.scopeSectionId ?? drawing.scopeSectionId ?? null;
-      validateMapping(roomId, scopeSectionId, taxonomy);
+      if (hasMappingChange(change)) {
+        resolveDeprecatedMapping(change as DeprecatedMappingChange, estimate);
+      }
       const verified = change.verified ?? Boolean(drawing.verified);
       const page = await EstimateDesignSourcePageModel.findById(drawing.sourcePageId).lean();
       if (!page) throw estimateNotFound();
@@ -1509,11 +1630,9 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
             drawingLocked();
           }
           await guardDesignLifecycle(currentEstimate, session);
-          const currentTaxonomy = taxonomyForEstimate(currentEstimate);
-          const currentRoomId = change.roomId ?? currentDrawing.roomId ?? null;
-          const currentScopeSectionId =
-            change.scopeSectionId ?? currentDrawing.scopeSectionId ?? null;
-          validateMapping(currentRoomId, currentScopeSectionId, currentTaxonomy);
+          const mapping = hasMappingChange(change)
+            ? resolveDeprecatedMapping(change as DeprecatedMappingChange, currentEstimate)
+            : mappingSnapshot(currentDrawing);
           const currentVerified = change.verified ?? Boolean(currentDrawing.verified);
           const currentPage = await EstimateDesignSourcePageModel.findById(
             currentDrawing.sourcePageId
@@ -1538,11 +1657,6 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
           const currentDisplayTitle =
             change.displayTitle?.replace(/\s+/g, " ").trim() ??
             String(currentDrawing.displayTitle);
-          const mapping = mappingDto({
-            ...currentDrawing,
-            roomId: currentRoomId,
-            scopeSectionId: currentScopeSectionId
-          });
           const revision = {
             _id: randomUUID(),
             drawingId,
@@ -1593,6 +1707,8 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
               displayTitle: currentDrawing.displayTitle,
               roomId: currentDrawing.roomId ?? null,
               scopeSectionId: currentDrawing.scopeSectionId ?? null,
+              catalogueId: currentDrawing.catalogueId ?? null,
+              mappingStatus: currentDrawing.mappingStatus ?? "misc",
               verified: Boolean(currentDrawing.verified)
             },
             {
@@ -2360,7 +2476,7 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
           sourcePageId: pageId,
           crop: { x: 0, y: 0, width: page.width, height: page.height },
           croppedFileReference: stored.reference,
-          ...mappingDto(current),
+          ...mappingSnapshot(drawing),
           label: String(current.label),
           reviewStatus: "draft",
           submittedAt: null,
@@ -2712,6 +2828,60 @@ function mappingDto(record: Record<string, unknown>) {
       mappingStatus: "misc" as const
     };
   }
+}
+
+function mappingSnapshot(record: Record<string, unknown>) {
+  return {
+    roomId: record.roomId ?? null,
+    scopeSectionId: record.scopeSectionId ?? null,
+    catalogueId: record.catalogueId ?? null,
+    mappingStatus: record.mappingStatus ?? "misc"
+  };
+}
+
+function resolveExactMapping(
+  assignment: ExactMappingChange,
+  estimate: Record<string, unknown>
+) {
+  try {
+    return resolveEstimateItemAssignment(assignment, mappingContextForEstimate(estimate));
+  } catch (error) {
+    if (error instanceof InvalidEstimateDesignAssignmentError) {
+      throw new ApiError(
+        400,
+        "INVALID_ESTIMATE_DESIGN_ASSIGNMENT",
+        "The selected estimate item is not included for this room."
+      );
+    }
+    throw error;
+  }
+}
+
+function resolveDeprecatedMapping(
+  change: DeprecatedMappingChange,
+  estimate: Record<string, unknown>
+) {
+  if ("catalogueId" in change) return resolveExactMapping(change, estimate);
+  const candidates = mappingContextForEstimate(estimate).candidates.filter(
+    (candidate) =>
+      candidate.roomId === change.roomId &&
+      candidate.scopeSectionId === change.scopeSectionId
+  );
+  if (candidates.length !== 1) {
+    throw new ApiError(
+      409,
+      "EXACT_ESTIMATE_ITEM_REQUIRED",
+      "Refresh and select the exact included estimate item before saving this drawing."
+    );
+  }
+  return resolveExactMapping(
+    { roomId: candidates[0]!.roomId, catalogueId: candidates[0]!.catalogueId },
+    estimate
+  );
+}
+
+function hasMappingChange(change: EditEstimateDrawingInput): boolean {
+  return typeof change.roomId === "string";
 }
 
 function assertMappingIdentifiers(mapping: Record<string, unknown>) {

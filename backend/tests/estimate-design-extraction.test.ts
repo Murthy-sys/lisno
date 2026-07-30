@@ -980,6 +980,67 @@ describe("estimate design extraction and estimator verification", () => {
     });
   });
 
+  it("atomically assigns an exact included estimate item and preserves verification", async () => {
+    const { app, drawings, revisions, auditEvents } = setup();
+    const leased = await claim(app);
+    const body = completeBody();
+    body.pages[0]!.sections[0] = {
+      ...body.pages[0]!.sections[0]!,
+      label: "TV UNIT",
+      proposal: {
+        detectedTitle: "TV UNIT",
+        room: { id: null, confidence: 0.5, evidence: [], ambiguous: true },
+        scope: { id: null, confidence: 0.5, evidence: [], ambiguous: true }
+      }
+    };
+    await complete(app, leased.body.data.claimToken, body);
+    const drawing = drawings.find((item) => item.detectedTitle === "TV UNIT")!;
+    drawing.verified = true;
+
+    const response = await owner(
+      request(app).put(`/api/v1/estimate-design-drawings/${drawing._id}/estimate-item`)
+    ).send({ version: 1, roomId: "room-bedroom-1", catalogueId: "CA01" });
+
+    expect(response.status).toBe(200);
+    expect(response.body.data).toMatchObject({
+      verified: true,
+      roomId: "room-bedroom-1",
+      catalogueId: "CA01",
+      scopeSectionId: "CA",
+      mappingStatus: "estimator_assigned",
+      revision: {
+        revisionNumber: 2,
+        roomId: "room-bedroom-1",
+        catalogueId: "CA01",
+        scopeSectionId: "CA",
+        mappingStatus: "estimator_assigned",
+        reviewStatus: "draft"
+      }
+    });
+    expect(revisions.filter((item) => item.drawingId === drawing._id)).toHaveLength(2);
+    expect(auditEvents).toContainEqual(expect.objectContaining({
+      action: "estimate_design_item_assigned",
+      entityId: drawing._id
+    }));
+  });
+
+  it.each([
+    { version: 1, roomId: "room-bedroom-1", catalogueId: "CA02" },
+    { version: 1, roomId: "room-bedroom-1", catalogueId: "CA01", scopeSectionId: "FC" }
+  ])("rejects an excluded item or client-authored scope without writes", async (body) => {
+    const { app, drawings, revisions } = setup();
+    const leased = await claim(app);
+    await complete(app, leased.body.data.claimToken);
+    const before = structuredClone({ drawings, revisions });
+
+    const response = await owner(
+      request(app).put(`/api/v1/estimate-design-drawings/${drawings[0]!._id}/estimate-item`)
+    ).send(body);
+
+    expect(response.status).toBe(400);
+    expect({ drawings, revisions }).toEqual(before);
+  });
+
   it("lets the estimator crop a missing drawing from an owned normalized source page", async () => {
     const {
       app,
@@ -1000,7 +1061,7 @@ describe("estimate design extraction and estimator verification", () => {
     ).send({
       displayTitle: "Living wardrobe",
       roomId: "room-bedroom-1",
-      scopeSectionId: "FC",
+      catalogueId: "CA01",
       crop: { x: 10, y: 15, width: 30, height: 20 }
     });
 
@@ -1009,10 +1070,10 @@ describe("estimate design extraction and estimator verification", () => {
       source: "manual",
       active: true,
       verified: true,
-      roomId: null,
-      scopeSectionId: null,
-      catalogueId: null,
-      mappingStatus: "misc",
+      roomId: "room-bedroom-1",
+      scopeSectionId: "CA",
+      catalogueId: "CA01",
+      mappingStatus: "estimator_assigned",
       displayTitle: "Living wardrobe",
       revision: {
         revisionNumber: 1,
@@ -1037,13 +1098,54 @@ describe("estimate design extraction and estimator verification", () => {
     }));
   });
 
+  it("accepts a unique legacy room/scope manual request and rejects ambiguous legacy candidates", async () => {
+    const { app, estimates, pages, drawings, revisions } = setup();
+    const leased = await claim(app);
+    await complete(app, leased.body.data.claimToken);
+    const endpoint = `/api/v1/estimate-design-source-pages/${pages[0]!._id}/drawings`;
+    const legacy = {
+      displayTitle: "Bedroom TV unit",
+      roomId: "room-bedroom-1",
+      scopeSectionId: "CA",
+      crop: { x: 10, y: 15, width: 30, height: 20 }
+    };
+
+    const unique = await owner(request(app).post(endpoint)).send(legacy);
+    expect(unique.status).toBe(201);
+    expect(unique.body.data).toMatchObject({
+      roomId: "room-bedroom-1",
+      catalogueId: "CA01",
+      scopeSectionId: "CA",
+      mappingStatus: "estimator_assigned"
+    });
+
+    estimates[0]!.lineItems.push({
+      catalogueId: "CA04",
+      roomName: "Bedroom 1",
+      specification: "panel",
+      unit: "lot",
+      rate: 1,
+      quantity: 1,
+      included: true,
+      amount: 1
+    });
+    const before = structuredClone({ drawings, revisions });
+    const ambiguous = await owner(request(app).post(endpoint)).send({
+      ...legacy,
+      displayTitle: "Ambiguous bedroom item"
+    });
+    expect(ambiguous.status).toBe(409);
+    expect(ambiguous.body.error.code).toBe("EXACT_ESTIMATE_ITEM_REQUIRED");
+    expect({ drawings, revisions }).toEqual(before);
+  });
+
   it.each([
     [
       "unknown room",
       {
         displayTitle: "Missing drawing",
         roomId: "room-foreign",
-        scopeSectionId: "FC",
+        catalogueId: "CA01",
         crop: { x: 0, y: 0, width: 20, height: 10 }
       }
     ],
@@ -1052,7 +1154,7 @@ describe("estimate design extraction and estimator verification", () => {
       {
         displayTitle: "Missing drawing",
         roomId: "room-bedroom-1",
-        scopeSectionId: "PA",
+        catalogueId: "CA02",
         crop: { x: 0, y: 0, width: 20, height: 10 }
       }
     ],
@@ -1061,7 +1163,7 @@ describe("estimate design extraction and estimator verification", () => {
       {
         displayTitle: "Missing drawing",
         roomId: "room-bedroom-1",
-        scopeSectionId: "FC",
+        catalogueId: "CA01",
         crop: { x: 90, y: 0, width: 20, height: 10 }
       }
     ]
@@ -1124,7 +1226,7 @@ describe("estimate design extraction and estimator verification", () => {
     ).send({
       displayTitle: "Manually recovered drawing",
       roomId: "room-bedroom-1",
-      scopeSectionId: "FC",
+      catalogueId: "CA01",
       crop: { x: 0, y: 0, width: 20, height: 10 }
     });
 
@@ -1342,7 +1444,7 @@ describe("estimate design extraction and estimator verification", () => {
       version: 1,
       displayTitle: "Living Room RCP",
       roomId: "room-bedroom-1",
-      scopeSectionId: "FC",
+      catalogueId: "CA01",
       crop: { x: 10, y: 10, width: 20, height: 10 },
       verified: true
     });
@@ -1350,10 +1452,10 @@ describe("estimate design extraction and estimator verification", () => {
     expect(response.status).toBe(200);
     expect(response.body.data).toMatchObject({
       displayTitle: "Living Room RCP",
-      roomId: null,
-      scopeSectionId: null,
-      catalogueId: null,
-      mappingStatus: "misc",
+      roomId: "room-bedroom-1",
+      scopeSectionId: "CA",
+      catalogueId: "CA01",
+      mappingStatus: "estimator_assigned",
       verified: true,
       revision: { revisionNumber: 2, reviewStatus: "draft" }
     });
@@ -1407,7 +1509,7 @@ describe("estimate design extraction and estimator verification", () => {
     ).send({
       version: 1,
       roomId: "room-bedroom-1",
-      scopeSectionId: "FC",
+      catalogueId: "CA01",
       verified: true
     });
     expect(corrected.status).toBe(200);
