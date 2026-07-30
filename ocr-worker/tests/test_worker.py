@@ -1,7 +1,9 @@
+import signal
+import threading
+import time
 from pathlib import Path
 
 import pytest
-import time
 
 from lisno_ocr.contracts import (
     ClaimedJob,
@@ -447,6 +449,47 @@ def test_worker_reports_an_extraction_that_runs_past_its_processing_deadline():
     assert api.completed == []
     assert api.failed[0][1].code == "OCR_FAILED"
     assert api.failed[0][1].message == "The extraction exceeded its processing time limit."
+
+
+def test_worker_interrupts_an_extractor_that_blocks_past_its_processing_deadline():
+    api = FakeApi([job()])
+    entered_extraction = threading.Event()
+    release_extraction = threading.Event()
+    original_handler = signal.getsignal(signal.SIGALRM)
+
+    class BlockingExtractor:
+        def extract(self, source_path, *, mode, deadline):
+            assert source_path == FIXTURE
+            assert mode == "project_design"
+            entered_extraction.set()
+            release_extraction.wait(0.25)
+            return []
+
+    limited_settings = WorkerSettings(
+        api_base_url="http://backend.example/api/v1",
+        worker_token="worker-token-with-at-least-32-characters",
+        poll_seconds=2.5,
+        request_timeout_seconds=30,
+        max_processing_seconds=0.02,
+    )
+    started = time.monotonic()
+    try:
+        run_worker(
+            limited_settings,
+            api=api,
+            extractor=BlockingExtractor(),
+            sleep=lambda _seconds: None,
+            max_iterations=1,
+        )
+    finally:
+        release_extraction.set()
+
+    assert entered_extraction.is_set()
+    assert time.monotonic() - started < 0.15
+    assert api.completed == []
+    assert api.failed[0][1].code == "OCR_FAILED"
+    assert api.failed[0][1].message == "The extraction exceeded its processing time limit."
+    assert signal.getsignal(signal.SIGALRM) == original_handler
 
 
 def test_worker_reports_bounded_failure_without_a_traceback():

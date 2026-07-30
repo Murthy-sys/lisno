@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 import json
 import os
+import signal
 import tempfile
 import threading
 import time
 from pathlib import Path
-from typing import Any, Callable, Protocol, Sequence
+from typing import Any, Callable, Iterator, Protocol, Sequence
 from urllib.error import HTTPError, URLError
 from urllib.parse import urljoin
 from urllib.request import Request, urlopen
@@ -313,10 +315,68 @@ def _extract_before_deadline(
 ) -> list[ExtractedPage]:
     if time.monotonic() >= deadline:
         raise OcrError("The extraction exceeded its processing time limit.")
-    pages = page_extractor.extract(source_path, mode=mode, deadline=deadline)
+    with _interrupt_at_deadline(deadline):
+        pages = page_extractor.extract(source_path, mode=mode, deadline=deadline)
     if time.monotonic() >= deadline:
         raise OcrError("The extraction exceeded its processing time limit.")
     return pages
+
+
+@contextmanager
+def _interrupt_at_deadline(deadline: float) -> Iterator[None]:
+    """Interrupt extraction on supported main-thread platforms.
+
+    An active SIGALRM timer belongs to another caller, so leave it untouched and
+    rely on the extractors' cooperative monotonic checks in that case.
+    """
+    if time.monotonic() >= deadline:
+        raise OcrError("The extraction exceeded its processing time limit.")
+    setitimer = getattr(signal, "setitimer", None)
+    getitimer = getattr(signal, "getitimer", None)
+    sigalrm = getattr(signal, "SIGALRM", None)
+    itimer_real = getattr(signal, "ITIMER_REAL", None)
+    if (
+        not callable(setitimer)
+        or not callable(getitimer)
+        or sigalrm is None
+        or itimer_real is None
+        or threading.current_thread() is not threading.main_thread()
+    ):
+        yield
+        return
+    try:
+        existing_delay, existing_interval = getitimer(itimer_real)
+    except (OSError, ValueError):
+        yield
+        return
+    if existing_delay > 0 or existing_interval > 0:
+        yield
+        return
+    previous_handler = signal.getsignal(sigalrm)
+
+    def interrupt(_signum: int, _frame: object) -> None:
+        raise OcrError("The extraction exceeded its processing time limit.")
+
+    handler_installed = False
+    try:
+        try:
+            signal.signal(sigalrm, interrupt)
+            handler_installed = True
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise OcrError("The extraction exceeded its processing time limit.")
+            setitimer(itimer_real, remaining)
+        except (OSError, ValueError):
+            if handler_installed:
+                signal.signal(sigalrm, previous_handler)
+                handler_installed = False
+        yield
+    finally:
+        if handler_installed:
+            try:
+                setitimer(itimer_real, 0.0)
+            finally:
+                signal.signal(sigalrm, previous_handler)
 
 
 def _report_failure_with_retry(
