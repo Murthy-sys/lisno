@@ -6,7 +6,7 @@ export const estimateDesignExtractionJobSchema = new Schema({
   uploadId: { type: String, ref: "EstimateDesignUpload", required: true, immutable: true },
   status: { type: String, required: true, enum: estimateDesignExtractionStatuses },
   attemptCount: { type: Number, required: true, min: 0 },
-  queuedAt: { type: Date, required: true, immutable: true },
+  queuedAt: { type: Date, required: true },
   startedAt: { type: Date, default: null },
   completedAt: { type: Date, default: null },
   leaseExpiresAt: { type: Date, default: null },

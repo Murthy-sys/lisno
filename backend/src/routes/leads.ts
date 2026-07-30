@@ -11,6 +11,7 @@ import type {
   EstimatePdfService
 } from "../services/estimate-pdf.service.js";
 import type { EstimateDesignService } from "../services/estimate-design.service.js";
+import type { AuditService } from "../services/audit.service.js";
 import mongoose from "mongoose";
 import { EstimateModel } from "../models/Estimate.js";
 import { LeadModel } from "../models/Lead.js";
@@ -42,7 +43,8 @@ export function createLeadsRouter(
   auth: AuthService,
   leads: LeadService,
   estimatePdf: EstimatePdfService,
-  estimateDesigns: EstimateDesignService
+  estimateDesigns: EstimateDesignService,
+  audit: AuditService
 ): Router {
   const router = Router(); const protectedRoute = authenticate(auth); const allowed = authorizeRoles("estimator_sales");
   router.get("/leads", protectedRoute, allowed, validateQuery(listSchema), async (req, res, next) => { try { const { limit, offset, search, stage } = res.locals.validatedQuery; const pagination = { limit, offset }; res.json({ data: paginatedEnvelope(await leads.page(req.authenticatedUser!, { search, stage }, pagination), pagination) }); } catch (error) { next(error); } });
@@ -236,6 +238,18 @@ export function createLeadsRouter(
           { session }
         );
         requireMatchedEstimate(updated);
+        await audit.appendInMongoTransaction({
+          actorId: req.authenticatedUser!.id,
+          action: "estimate_design_final_changes_requested",
+          entityType: "estimate",
+          entityId: String(estimate._id),
+          occurredAt: occurredAt.toISOString(),
+          oldValues: { status: "sent_to_client" },
+          newValues: {
+            status: "client_changes_requested",
+            noteLength: req.body.note.length
+          }
+        }, session);
         responseEstimate = {
           ...estimate,
           status: "client_changes_requested",
@@ -343,6 +357,19 @@ export function createLeadsRouter(
         { session }
       );
       if (leadUpdated.matchedCount !== 1) throw estimateNotFound();
+      await audit.appendInMongoTransaction({
+        actorId: req.authenticatedUser!.id,
+        action: "estimate_design_final_approved",
+        entityType: "estimate",
+        entityId: String(estimate._id),
+        occurredAt: occurredAt.toISOString(),
+        oldValues: { status: "sent_to_client" },
+        newValues: {
+          status: "client_approved",
+          projectId,
+          approvedDrawingCount: readiness.approved
+        }
+      }, session);
       responseEstimate = {
         ...estimate,
         status: "client_approved",

@@ -54,6 +54,12 @@ const replacementBodySchema = z.object({
   version: z.coerce.number().int().positive()
 }).strict();
 const removeDrawingSchema = z.object({ version: z.number().int().positive() }).strict();
+const createManualDrawingSchema = z.object({
+  displayTitle: z.string().trim().min(1).max(500),
+  roomId: z.string().trim().min(1).max(128),
+  scopeSectionId: z.string().trim().min(1).max(64),
+  crop: cropSchema
+}).strict();
 
 export function createEstimateDesignsRouter(
   authService: AuthService,
@@ -90,6 +96,25 @@ export function createEstimateDesignsRouter(
   });
 
   router.get("/estimate-design-source-pages/:pageId/image", protectedRoute, estimatorOnly, streamImage((user, id) => estimateDesigns.sourceImage(user, id)));
+  router.post(
+    "/estimate-design-source-pages/:pageId/drawings",
+    protectedRoute,
+    estimatorOnly,
+    validateBody(createManualDrawingSchema),
+    async (request, response, next) => {
+      try {
+        response.status(201).json({
+          data: await estimateDesigns.createManualDrawing(
+            request.authenticatedUser!,
+            request.params.pageId as string,
+            request.body
+          )
+        });
+      } catch (error) {
+        next(error);
+      }
+    }
+  );
   router.get("/estimate-design-revisions/:revisionId/image", protectedRoute, streamImage((user, id) => estimateDesigns.revisionImage(user, id)));
   router.get(
     "/client/estimates/:estimateId/design-drawings",

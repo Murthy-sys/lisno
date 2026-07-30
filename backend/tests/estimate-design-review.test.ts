@@ -17,11 +17,13 @@ import { EstimateDesignExtractionJobModel } from "../src/models/EstimateDesignEx
 import { EstimateDesignRevisionModel } from "../src/models/EstimateDesignRevision.js";
 import { EstimateDesignSourcePageModel } from "../src/models/EstimateDesignSourcePage.js";
 import { EstimateDesignUploadModel } from "../src/models/EstimateDesignUpload.js";
+import { AuditEventModel } from "../src/models/AuditEvent.js";
 import { EstimateModel } from "../src/models/Estimate.js";
 import { LeadModel } from "../src/models/Lead.js";
 import { createMemoryRepository } from "../src/repositories/memory.js";
 import { demoSeedData } from "../src/seed/data.js";
 import { createEstimateDesignService } from "../src/services/estimate-design.service.js";
+import { createAuditService } from "../src/services/audit.service.js";
 
 const SECRET = "estimate-design-review-secret-at-least-32-characters";
 const NOW = new Date("2026-07-30T14:00:00.000Z");
@@ -97,8 +99,8 @@ function auth(id: string, role: string) {
 
 const annotations = (): AnnotationDocumentV1 => ({
   schemaVersion: 1,
-  imageWidth: 1000,
-  imageHeight: 800,
+  imageWidth: 50,
+  imageHeight: 80,
   elements: [{
     id: "note-1",
     type: "text",
@@ -130,6 +132,11 @@ function minimalTiff(width: number, height: number) {
 
 function setup(maxUploadBytes = 10_000_000) {
   const storage = new TestStorage();
+  vi.spyOn(AuditEventModel, "create").mockImplementation(async (input) =>
+    (input as Array<Record<string, any>>).map((event) => ({
+      toObject: () => ({ ...event, id: event._id })
+    })) as never
+  );
   storage.objects.set("drawing-1.png", PNG);
   storage.objects.set("drawing-2.png", PNG);
   const estimates: Array<Record<string, any>> = [{
@@ -243,6 +250,7 @@ function setup(maxUploadBytes = 10_000_000) {
     }
   ];
   const drafts: Array<Record<string, any>> = [];
+  const auditEvents: Array<Record<string, any>> = [];
   const snapshots = () => structuredClone({
     estimates,
     uploads,
@@ -276,6 +284,13 @@ function setup(maxUploadBytes = 10_000_000) {
     endSession: vi.fn(async () => undefined)
   };
   vi.spyOn(mongoose, "startSession").mockResolvedValue(session as never);
+  vi.spyOn(AuditEventModel, "create").mockImplementation(async (input) => {
+    const events = structuredClone(input as Array<Record<string, any>>);
+    auditEvents.push(...events);
+    return events.map((event) => ({
+      toObject: () => ({ ...event, id: event._id })
+    })) as never;
+  });
   vi.spyOn(EstimateModel, "findById").mockImplementation((id) =>
     query(estimates.find((item) => item._id === id) ?? null) as never
   );
@@ -311,6 +326,14 @@ function setup(maxUploadBytes = 10_000_000) {
   vi.spyOn(EstimateDesignExtractionJobModel, "findOne").mockImplementation((filter) =>
     query(jobs.find((item) => matches(item, filter as never)) ?? null) as never
   );
+  vi.spyOn(EstimateDesignExtractionJobModel, "findById").mockImplementation((id) =>
+    query(jobs.find((item) => item._id === id) ?? null) as never
+  );
+  vi.spyOn(EstimateDesignExtractionJobModel, "findOneAndUpdate").mockImplementation((filter, update) => {
+    const item = jobs.find((candidate) => matches(candidate, filter as never)) ?? null;
+    if (item) applyUpdate(item, update as never);
+    return query(item) as never;
+  });
   vi.spyOn(EstimateDesignExtractionJobModel, "updateOne").mockImplementation(async (filter, update) => {
     const item = jobs.find((candidate) => matches(candidate, filter as never));
     if (item) applyUpdate(item, update as never);
@@ -413,10 +436,23 @@ function setup(maxUploadBytes = 10_000_000) {
   });
   const service = createEstimateDesignService({
     storage,
+    audit: createAuditService(createMemoryRepository(demoSeedData)),
     maxUploadBytes,
     now: () => new Date(NOW)
   });
-  return { app, service, storage, estimates, uploads, jobs, pages, drawings, revisions, drafts };
+  return {
+    app,
+    service,
+    storage,
+    estimates,
+    uploads,
+    jobs,
+    pages,
+    drawings,
+    revisions,
+    drafts,
+    auditEvents
+  };
 }
 
 beforeAll(async () => {
@@ -556,6 +592,23 @@ describe("estimate drawing client review", () => {
       .expect(403);
   });
 
+  it("rejects annotation drafts whose dimensions do not match the reviewed crop", async () => {
+    const { app, drafts, revisions } = setup();
+
+    const response = await request(app)
+      .put("/api/v1/client/estimate-design-revisions/revision-1/annotation-draft")
+      .set("Authorization", auth("user-client-aurora", "client"))
+      .send({
+        version: 0,
+        annotations: { ...annotations(), imageWidth: 1000 }
+      });
+
+    expect(response.status).toBe(400);
+    expect(response.body.error.code).toBe("INVALID_ANNOTATION_DIMENSIONS");
+    expect(revisions[0]!.reviewStatus).toBe("submitted");
+    expect(drafts).toEqual([]);
+  });
+
   it("does not recreate a draft when the submitted revision locks concurrently", async () => {
     const { app, revisions, drafts } = setup();
     vi.mocked(EstimateDesignRevisionModel.updateOne).mockImplementationOnce(
@@ -673,6 +726,29 @@ describe("estimate drawing client review", () => {
     }));
   });
 
+  it("rejects change requests whose annotation dimensions do not match the reviewed crop", async () => {
+    const { app, drafts, revisions } = setup();
+
+    const response = await request(app)
+      .post("/api/v1/client/estimate-design-revisions/revision-1/decision")
+      .set("Authorization", auth("user-client-aurora", "client"))
+      .send({
+        version: 1,
+        decision: "request_changes",
+        summary: "Extend the detail.",
+        annotations: { ...annotations(), imageHeight: 800 }
+      });
+
+    expect(response.status).toBe(400);
+    expect(response.body.error.code).toBe("INVALID_ANNOTATION_DIMENSIONS");
+    expect(revisions[0]).toMatchObject({
+      reviewStatus: "submitted",
+      changeSummary: null,
+      annotations: null
+    });
+    expect(drafts).toEqual([]);
+  });
+
   it("makes equivalent change-request retries idempotent and conflicts on differences", async () => {
     const { app } = setup();
     const client = auth("user-client-aurora", "client");
@@ -765,7 +841,7 @@ describe("estimate drawing client review", () => {
   });
 
   it("rejects synchronous replacement images above the worker-equivalent pixel limit", async () => {
-    const { service, revisions, uploads, jobs } = setup();
+    const { service, revisions, uploads, jobs, auditEvents } = setup();
     revisions[1]!.reviewStatus = "changes_requested";
     uploads[0]!.extractionStatus = "changes_requested";
     jobs[0]!.status = "changes_requested";
@@ -906,6 +982,90 @@ describe("estimate drawing client review", () => {
       extractionStatus: "queued"
     });
     expect(jobs.at(-1)).toMatchObject({ status: "queued" });
+    expect(auditEvents).toContainEqual(expect.objectContaining({
+      action: "estimate_design_replacement_queued",
+      entityId: "estimate-1"
+    }));
+  });
+
+  it("re-reserves a failed queued replacement so retry can complete the exact rejected revision", async () => {
+    const { service, estimates, revisions, uploads, jobs } = setup();
+    estimates[0]!.status = "client_changes_requested";
+    revisions[1]!.reviewStatus = "changes_requested";
+    uploads[0]!.extractionStatus = "changes_requested";
+    jobs[0]!.status = "changes_requested";
+    const estimator = {
+      id: "user-estimator-sales",
+      name: "Sales",
+      email: "sales@lisno.example",
+      role: "estimator_sales" as const
+    };
+
+    const queued = await service.replaceDrawing(estimator, "drawing-2", {
+      version: 1,
+      file: {
+        data: Buffer.from("%PDF-1.7 queued replacement"),
+        extension: ".pdf",
+        originalFilename: "replacement.pdf",
+        mimeType: "application/pdf",
+        sizeBytes: 27
+      }
+    });
+    const replacementUploadId = String(
+      (queued as { upload: { id: string } }).upload.id
+    );
+    const replacementJob = jobs.find(
+      (item) => item.uploadId === replacementUploadId
+    )!;
+    const firstClaim = await service.claimWorkerJob(
+      replacementJob._id,
+      "2026-07-30T14:00:01.000Z",
+      "2026-07-30T14:05:01.000Z"
+    );
+    expect(firstClaim).toMatchObject({ id: replacementJob._id });
+
+    await service.failWorkerJob(
+      replacementJob._id,
+      (firstClaim as { claimId: string }).claimId,
+      "2026-07-30T14:00:02.000Z",
+      "OCR_FAILED",
+      "OCR failed."
+    );
+    expect(revisions[1]!.replacementUploadId).toBeNull();
+
+    await service.retryUpload(estimator, replacementUploadId);
+    expect(revisions[1]!.replacementUploadId).toBe(replacementUploadId);
+
+    const retryClaim = await service.claimWorkerJob(
+      replacementJob._id,
+      "2026-07-30T14:00:03.000Z",
+      "2026-07-30T14:05:03.000Z"
+    );
+    await service.completeWorkerJob(
+      replacementJob._id,
+      (retryClaim as { claimId: string }).claimId,
+      "2026-07-30T14:00:04.000Z",
+      {
+        resultId: "replacement-result-after-retry",
+        pages: [{
+          pageNumber: 1,
+          width: 100,
+          height: 80,
+          imageBase64: PNG.toString("base64"),
+          sections: []
+        }]
+      }
+    );
+
+    expect(revisions.filter((item) => item.drawingId === "drawing-2").at(-1))
+      .toMatchObject({
+        revisionNumber: 2,
+        reviewStatus: "draft",
+        replacesRevisionId: "revision-2"
+      });
+    expect(uploads.find((item) => item._id === replacementUploadId))
+      .toMatchObject({ extractionStatus: "estimator_review" });
+    expect(replacementJob).toMatchObject({ status: "estimator_review" });
   });
 
   it("submits both the original aggregate and a queued replacement upload", async () => {

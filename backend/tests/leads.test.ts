@@ -10,6 +10,7 @@ import { EstimateModel } from "../src/models/Estimate.js";
 import { LeadModel } from "../src/models/Lead.js";
 import { ProjectModel } from "../src/models/Project.js";
 import { UserModel } from "../src/models/User.js";
+import { AuditEventModel } from "../src/models/AuditEvent.js";
 import { createMemoryRepository } from "../src/repositories/memory.js";
 import { demoSeedData } from "../src/seed/data.js";
 
@@ -175,6 +176,12 @@ describe("estimate final drawing approval gate", () => {
       estimate.status = "client_approved";
       return { matchedCount: 1, modifiedCount: 1 } as never;
     });
+    const auditCreate = vi.spyOn(AuditEventModel, "create")
+      .mockImplementation(async (events) =>
+        (events as Array<Record<string, any>>).map((event) => ({
+          toObject: () => ({ ...event, id: event._id })
+        })) as never
+      );
 
     const response = await request(app)
       .post("/api/v1/client/estimates/estimate-no-drawings/decision")
@@ -184,6 +191,21 @@ describe("estimate final drawing approval gate", () => {
     expect(response.status).toBe(200);
     expect(response.body.data.status).toBe("client_approved");
     expect(ProjectModel.create).toHaveBeenCalledOnce();
+    expect(auditCreate).toHaveBeenCalledWith(
+      [expect.objectContaining({
+        action: "estimate_design_final_approved",
+        entityId: "estimate-no-drawings",
+        newValues: expect.objectContaining({
+          status: "client_approved",
+          approvedDrawingCount: 0
+        })
+      })],
+      { session }
+    );
+    const auditPayload = JSON.stringify(auditCreate.mock.calls[0]?.[0]);
+    expect(auditPayload).not.toContain("imageBase64");
+    expect(auditPayload).not.toContain("storedFileReference");
+    expect(auditPayload).not.toContain("croppedFileReference");
     expect(EstimateModel.updateOne).toHaveBeenCalledWith(
       expect.objectContaining({
         _id: "estimate-no-drawings",

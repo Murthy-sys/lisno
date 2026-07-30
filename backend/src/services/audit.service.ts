@@ -6,6 +6,9 @@ import type {
   PageResult,
   PaginationInput
 } from "../repositories/types.js";
+import type { ClientSession } from "mongoose";
+import { randomUUID } from "node:crypto";
+import { AuditEventModel } from "../models/AuditEvent.js";
 import type { PublicUser } from "./auth.service.js";
 import { forbidden, requireActor } from "./workflow.js";
 
@@ -24,6 +27,10 @@ export interface AuditService {
   append(
     input: AuditWrite,
     transactionRepository?: AppRepository
+  ): Promise<AuditEventRecord>;
+  appendInMongoTransaction(
+    input: AuditWrite,
+    session: ClientSession
   ): Promise<AuditEventRecord>;
   list(
     actor: PublicUser,
@@ -51,6 +58,29 @@ export function createAuditService(repository: AppRepository): AuditService {
         newValues: input.newValues ?? {},
         reason: input.reason ?? null
       });
+    },
+
+    async appendInMongoTransaction(input, session) {
+      const [document] = await AuditEventModel.create(
+        [{
+          _id: `audit-${randomUUID()}`,
+          actorId: input.actorId,
+          action: input.action,
+          entityType: input.entityType,
+          entityId: input.entityId,
+          occurredAt: input.occurredAt,
+          oldValues: input.oldValues ?? {},
+          newValues: input.newValues ?? {},
+          reason: input.reason ?? null
+        }],
+        { session }
+      );
+      if (!document) throw new Error("Audit event transaction did not complete.");
+      const value = document.toObject() as Record<string, unknown>;
+      return {
+        ...value,
+        id: String(value._id)
+      } as unknown as AuditEventRecord;
     },
 
     async list(actor, filters, pagination) {

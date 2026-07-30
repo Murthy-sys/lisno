@@ -5,6 +5,7 @@ import request from "supertest";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { createApp } from "../src/app.js";
+import { AuditEventModel } from "../src/models/AuditEvent.js";
 import { EstimateDesignAnnotationDraftModel } from "../src/models/EstimateDesignAnnotationDraft.js";
 import { EstimateDesignDrawingModel } from "../src/models/EstimateDesignDrawing.js";
 import { EstimateDesignExtractionJobModel } from "../src/models/EstimateDesignExtractionJob.js";
@@ -172,6 +173,7 @@ function setupEstimateDrawingJourneyModels() {
   const revisions: Array<Record<string, any>> = [];
   const drafts: Array<Record<string, any>> = [];
   const projects: Array<Record<string, any>> = [];
+  const auditEvents: Array<Record<string, any>> = [];
   const session = {
     withTransaction: vi.fn(async (operation: () => Promise<unknown>) =>
       operation()
@@ -179,6 +181,13 @@ function setupEstimateDrawingJourneyModels() {
     endSession: vi.fn(async () => undefined)
   };
   vi.spyOn(mongoose, "startSession").mockResolvedValue(session as never);
+  vi.spyOn(AuditEventModel, "create").mockImplementation(async (input) => {
+    const events = structuredClone(input as Array<Record<string, any>>);
+    auditEvents.push(...events);
+    return events.map((event) => ({
+      toObject: () => ({ ...event, id: event._id })
+    })) as never;
+  });
 
   vi.spyOn(EstimateModel, "findById").mockImplementation((id) =>
     modelQuery(estimates.find((record) => record._id === id) ?? null) as never
@@ -348,7 +357,18 @@ function setupEstimateDrawingJourneyModels() {
     return input as never;
   });
 
-  return { estimates, leads, uploads, jobs, pages, drawings, revisions, drafts, projects };
+  return {
+    estimates,
+    leads,
+    uploads,
+    jobs,
+    pages,
+    drawings,
+    revisions,
+    drafts,
+    projects,
+    auditEvents
+  };
 }
 
 afterEach(() => vi.restoreAllMocks());
@@ -1251,5 +1271,26 @@ describe("complete cross-role journey", () => {
         replacesRevisionId: replacement.body.data.revision.id
       })
     ]));
+    const auditActions = state.auditEvents.map((event) => event.action);
+    expect(auditActions).toEqual(expect.arrayContaining([
+      "estimate_design_uploaded",
+      "estimate_design_extraction_claimed",
+      "estimate_design_extraction_completed",
+      "estimate_design_mapping_corrected",
+      "estimate_design_verified",
+      "estimate_design_drawings_submitted",
+      "estimate_design_annotation_draft_saved",
+      "estimate_design_drawing_approved",
+      "estimate_design_changes_requested",
+      "estimate_design_replacement_created",
+      "estimate_design_final_approved"
+    ]));
+    const serializedAudit = JSON.stringify(state.auditEvents);
+    expect(serializedAudit).not.toContain("estimate-review.pdf");
+    expect(serializedAudit).not.toContain("bedroom-flooring-v2.png");
+    expect(serializedAudit).not.toContain("mark-bedroom-floor");
+    expect(serializedAudit).not.toContain(
+      "Align the flooring boundary with the doorway."
+    );
   });
 });

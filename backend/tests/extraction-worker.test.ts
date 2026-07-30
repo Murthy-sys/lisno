@@ -1,11 +1,13 @@
 import { Readable } from "node:stream";
 
 import jwt from "jsonwebtoken";
+import mongoose from "mongoose";
 import request from "supertest";
 import sharp from "sharp";
 import { describe, expect, it, vi } from "vitest";
 
 import { createApp } from "../src/app.js";
+import { AuditEventModel } from "../src/models/AuditEvent.js";
 import { EstimateDesignExtractionJobModel } from "../src/models/EstimateDesignExtractionJob.js";
 import { EstimateDesignUploadModel } from "../src/models/EstimateDesignUpload.js";
 import { EstimateModel } from "../src/models/Estimate.js";
@@ -95,10 +97,16 @@ async function setup(
     leaseExpiresAt: null,
     claimId: null
   } : null;
-  const estimateQuery = (value: unknown) => ({
-    sort: vi.fn(),
-    lean: vi.fn(async () => value)
-  });
+  const estimateQuery = (value: unknown) => {
+    const result = {
+      sort: vi.fn(),
+      session: vi.fn(),
+      lean: vi.fn(async () => value)
+    };
+    result.sort.mockReturnValue(result);
+    result.session.mockReturnValue(result);
+    return result;
+  };
   vi.spyOn(EstimateDesignExtractionJobModel, "findOne")
     .mockImplementation(() => {
       const result = estimateQuery(estimateJob?.status === "queued" ? estimateJob : null);
@@ -106,6 +114,18 @@ async function setup(
       return result as never;
     });
   if (estimateJob) {
+    const session = {
+      withTransaction: vi.fn(async (operation: () => Promise<unknown>) =>
+        operation()
+      ),
+      endSession: vi.fn(async () => undefined)
+    };
+    vi.spyOn(mongoose, "startSession").mockResolvedValue(session as never);
+    vi.spyOn(AuditEventModel, "create").mockImplementation(async (input) =>
+      (input as Array<Record<string, any>>).map((event) => ({
+        toObject: () => ({ ...event, id: event._id })
+      })) as never
+    );
     vi.spyOn(EstimateDesignExtractionJobModel, "findOneAndUpdate")
       .mockImplementation((_filter, update) => {
         Object.assign(estimateJob, update.$set);
@@ -114,26 +134,30 @@ async function setup(
         result.sort.mockReturnValue(result);
         return result as never;
       });
-    vi.spyOn(EstimateDesignUploadModel, "findById").mockReturnValue({
-      lean: vi.fn(async () => ({
+    vi.spyOn(EstimateDesignUploadModel, "findById").mockReturnValue(
+      estimateQuery({
         _id: "estimate-upload-oldest",
         estimateId: "estimate-oldest",
+        uploaderId: "user-estimator-sales",
         storedFileReference: "estimate-source.pdf",
         originalFilename: "estimate-oldest.pdf",
         mimeType: "application/pdf",
-        sizeBytes: 42
-      }))
-    } as never);
+        sizeBytes: 42,
+        extractionStatus: "queued"
+      }) as never
+    );
     vi.spyOn(EstimateDesignUploadModel, "updateOne").mockResolvedValue({
       matchedCount: 1
     } as never);
-    vi.spyOn(EstimateModel, "findById").mockReturnValue({
-      lean: vi.fn(async () => ({
+    vi.spyOn(EstimateModel, "findById").mockReturnValue(
+      estimateQuery({
         _id: "estimate-oldest",
+        status: "draft",
+        designFrozenAt: null,
         rooms: [{ id: "room-living", label: "Living Room", aliases: [] }],
         scopes: ["FC"]
-      }))
-    } as never);
+      }) as never
+    );
   }
   let claimAttempts = 0;
   const appRepository = projectClaimLosses > 0

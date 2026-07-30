@@ -20,6 +20,7 @@ import { EstimateDesignUploadModel } from "../models/EstimateDesignUpload.js";
 import { EstimateModel } from "../models/Estimate.js";
 import { LeadModel } from "../models/Lead.js";
 import type { PublicUser as AuthenticatedUser } from "./auth.service.js";
+import type { AuditService, AuditWrite } from "./audit.service.js";
 import type { Storage } from "../storage/storage.js";
 import type { CropRect } from "../repositories/types.js";
 
@@ -39,6 +40,7 @@ const frozenEstimateJobFailure = {
 
 export interface CreateEstimateDesignServiceInput {
   storage: Storage;
+  audit: AuditService;
   maxUploadBytes: number;
   now?: () => Date;
 }
@@ -55,6 +57,7 @@ export interface EstimateDesignUploadDto {
   extractionStatus: EstimateDesignExtractionStatus;
   failureCode: string | null;
   failureMessage: string | null;
+  canRetry: boolean;
 }
 
 export interface EstimateDesignWorkspaceDto {
@@ -127,6 +130,13 @@ export interface EditEstimateDrawingInput {
   verified?: boolean;
 }
 
+export interface CreateManualEstimateDrawingInput {
+  displayTitle: string;
+  roomId: string;
+  scopeSectionId: string;
+  crop: CropRect;
+}
+
 export interface SaveAnnotationDraftInput {
   version: number;
   annotations: AnnotationDocumentV1;
@@ -174,6 +184,11 @@ export interface EstimateDesignService {
   renewWorkerLease(jobId: string, claimToken: string, now: string, leaseExpiresAt: string): Promise<EstimateWorkerJobRecord | null>;
   completeWorkerJob(jobId: string, claimToken: string, processedAt: string, result: EstimateWorkerResult): Promise<EstimateWorkerJobRecord>;
   failWorkerJob(jobId: string, claimToken: string, failedAt: string, code: string, message: string): Promise<EstimateWorkerJobRecord | null>;
+  createManualDrawing(
+    user: AuthenticatedUser,
+    pageId: string,
+    input: CreateManualEstimateDrawingInput
+  ): Promise<Record<string, unknown>>;
   editDrawing(user: AuthenticatedUser, drawingId: string, change: EditEstimateDrawingInput): Promise<Record<string, unknown>>;
   retryUpload(user: AuthenticatedUser, uploadId: string): Promise<EstimateDesignUploadDto>;
   removeDrawing(user: AuthenticatedUser, drawingId: string, version: number): Promise<{ id: string; active: false }>;
@@ -253,7 +268,8 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
           user,
           file,
           storedFileReference: stored.reference,
-          uploadedAt
+          uploadedAt,
+          audit: input.audit
         });
       } catch (error) {
         try {
@@ -275,7 +291,8 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
         uploadedAt: uploadedAt.toISOString(),
         extractionStatus: "queued",
         failureCode: null,
-        failureMessage: null
+        failureMessage: null,
+        canRetry: false
       };
     },
 
@@ -290,7 +307,11 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
       const drawingIds = drawings.map((drawing) => drawing._id);
       const revisions = await EstimateDesignRevisionModel.find({ drawingId: { $in: drawingIds } }).sort({ drawingId: 1, revisionNumber: 1 }).lean();
       return {
-        uploads: uploads.map((upload) => uploadDto(upload)),
+        uploads: await Promise.all(
+          uploads.map(async (upload) =>
+            uploadDto(upload, await canRetryUpload(upload))
+          )
+        ),
         pages: pages.map(sourcePageDto),
         drawings: drawings.map(drawingDto),
         revisions: revisions.map(revisionDto)
@@ -343,7 +364,7 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
         _id: { $in: [...uploadIds] }
       }).sort({ uploadedAt: -1, _id: -1 }).lean();
       return {
-        uploads: uploads.map(uploadDto),
+        uploads: uploads.map((upload) => uploadDto(upload)),
         pages: [...pages.values()],
         drawings: visibleDrawings,
         revisions,
@@ -352,11 +373,13 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
     },
 
     async saveAnnotationDraft(user, revisionId, draftInput) {
-      await requireClientRevision(user, revisionId);
+      const initial = await requireClientRevision(user, revisionId);
+      requireAnnotationDimensions(initial.revision, draftInput.annotations);
       let draft: Record<string, any> | null = null;
       try {
         await withMongoTransaction(async (session) => {
           const current = await requireClientRevision(user, revisionId, session);
+          requireAnnotationDimensions(current.revision, draftInput.annotations);
           if (current.revision.reviewStatus !== "submitted") drawingLocked();
           await advanceDesignLifecycle(current.estimate, session);
           const guarded = await EstimateDesignRevisionModel.updateOne(
@@ -400,6 +423,20 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
             }
           ).lean();
           if (!draft) staleAnnotation();
+          await appendEstimateDesignAudit(input.audit, session, {
+            actorId: user.id,
+            action: "estimate_design_annotation_draft_saved",
+            entityType: "estimate_design_revision",
+            entityId: revisionId,
+            occurredAt: now().toISOString(),
+            newValues: {
+              revisionNumber: Number(current.revision.revisionNumber),
+              draftVersion: Number(draft.version),
+              elementCount: draftInput.annotations.elements.length,
+              imageWidth: draftInput.annotations.imageWidth,
+              imageHeight: draftInput.annotations.imageHeight
+            }
+          });
         });
       } catch (error) {
         if (
@@ -419,6 +456,9 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
     async decideDrawing(user, revisionId, decision) {
       const initial = await requireClientRevision(user, revisionId);
       if (Number(initial.revision.revisionNumber) !== decision.version) staleDrawing();
+      if (decision.decision === "request_changes") {
+        requireAnnotationDimensions(initial.revision, decision.annotations);
+      }
       if (
         decision.decision === "approve" &&
         initial.revision.reviewStatus === "approved" &&
@@ -448,6 +488,9 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
       await withMongoTransaction(async (session) => {
         const current = await requireClientRevision(user, revisionId, session);
         if (Number(current.revision.revisionNumber) !== decision.version) staleDrawing();
+        if (decision.decision === "request_changes") {
+          requireAnnotationDimensions(current.revision, decision.annotations);
+        }
         if (
           decision.decision === "approve" &&
           current.revision.reviewStatus === "approved" &&
@@ -519,6 +562,28 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
             session
           );
         }
+        await appendEstimateDesignAudit(input.audit, session, {
+          actorId: user.id,
+          action: decision.decision === "approve"
+            ? "estimate_design_drawing_approved"
+            : "estimate_design_changes_requested",
+          entityType: "estimate_design_revision",
+          entityId: revisionId,
+          occurredAt: reviewedAt.toISOString(),
+          oldValues: {
+            reviewStatus: "submitted"
+          },
+          newValues: {
+            reviewStatus: update.reviewStatus,
+            revisionNumber: Number(current.revision.revisionNumber),
+            ...(decision.decision === "request_changes"
+              ? {
+                  summaryLength: decision.summary.trim().length,
+                  annotationCount: decision.annotations.elements.length
+                }
+              : {})
+          }
+        });
         saved = { ...current.revision, ...update };
       });
       if (!saved) throw new Error("Estimate drawing decision did not complete.");
@@ -660,6 +725,23 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
             String(currentDrawing.estimateId),
             session
           );
+          await appendEstimateDesignAudit(input.audit, session, {
+            actorId: user.id,
+            action: "estimate_design_replacement_created",
+            entityType: "estimate_design_drawing",
+            entityId: drawingId,
+            occurredAt: now().toISOString(),
+            oldValues: {
+              revisionNumber: Number(current.revisionNumber),
+              reviewStatus: String(current.reviewStatus)
+            },
+            newValues: {
+              revisionId: String(revision._id),
+              revisionNumber: Number(revision.revisionNumber),
+              width: Number(metadata.width),
+              height: Number(metadata.height)
+            }
+          });
         });
         return {
           ...drawingDto({ ...drawing, sourcePageId: pageId, verified: false }),
@@ -711,78 +793,95 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
 
     async claimWorkerJob(id, at, leaseExpiresAt) {
       const claimId = randomUUID();
-      const job = await EstimateDesignExtractionJobModel.findOneAndUpdate(
-        { _id: id, ...claimableJobFilter(at) },
-        {
-          $set: {
-            status: "processing",
-            startedAt: new Date(at),
-            leaseExpiresAt: new Date(leaseExpiresAt),
-            claimId,
-            failureCode: null,
-            failureMessage: null
+      let outcome:
+        | ClaimedEstimateWorkerJob
+        | CancelledEstimateWorkerJobClaim
+        | null = null;
+      await withMongoTransaction(async (session) => {
+        const job = await EstimateDesignExtractionJobModel.findOneAndUpdate(
+          { _id: id, ...claimableJobFilter(at) },
+          {
+            $set: {
+              status: "processing",
+              startedAt: new Date(at),
+              leaseExpiresAt: new Date(leaseExpiresAt),
+              claimId,
+              failureCode: null,
+              failureMessage: null
+            },
+            $inc: { attemptCount: 1 }
           },
-          $inc: { attemptCount: 1 }
-        },
-        { new: true, runValidators: true }
-      ).lean();
-      if (!job) return null;
-      const upload = await EstimateDesignUploadModel.findById(job.uploadId).lean();
-      const estimate = upload
-        ? await EstimateModel.findById(upload.estimateId).lean()
-        : null;
-      if (!upload || !estimate) {
-        throw new ApiError(500, "EXTRACTION_JOB_INVALID", "The extraction job source is unavailable.");
-      }
-      if (estimateDesignIsFrozen(estimate)) {
-        await withMongoTransaction(async (session) => {
-          const currentJob = await EstimateDesignExtractionJobModel.findById(job._id)
-            .session(session)
-            .lean();
-          const currentUpload = await EstimateDesignUploadModel.findById(upload._id)
-            .session(session)
-            .lean();
-          const currentEstimate = currentUpload
-            ? await EstimateModel.findById(currentUpload.estimateId)
-                .session(session)
-                .lean()
-            : null;
-          if (!currentJob || !currentUpload || !currentEstimate) {
-            throw new ApiError(
-              500,
-              "EXTRACTION_JOB_INVALID",
-              "The extraction job source is unavailable."
-            );
-          }
-          if (!estimateDesignIsFrozen(currentEstimate)) {
-            extractionStateConflict();
-          }
+          { new: true, runValidators: true, session }
+        ).lean();
+        if (!job) return;
+        const upload = await EstimateDesignUploadModel.findById(job.uploadId)
+          .session(session)
+          .lean();
+        const estimate = upload
+          ? await EstimateModel.findById(upload.estimateId)
+              .session(session)
+              .lean()
+          : null;
+        if (!upload || !estimate) {
+          throw new ApiError(
+            500,
+            "EXTRACTION_JOB_INVALID",
+            "The extraction job source is unavailable."
+          );
+        }
+        if (estimateDesignIsFrozen(estimate)) {
           await terminallyCancelFrozenWorkerJob(
-            currentJob,
-            currentUpload,
+            job,
+            upload,
             claimId,
             at,
             session
           );
+          outcome = { cancelled: true };
+          return;
+        }
+        const uploadUpdated = await EstimateDesignUploadModel.updateOne(
+          {
+            _id: upload._id,
+            estimateId: upload.estimateId,
+            extractionStatus: { $in: ["queued", "processing"] }
+          },
+          {
+            $set: {
+              extractionStatus: "processing",
+              failureCode: null,
+              failureMessage: null
+            }
+          },
+          { session }
+        );
+        requireMatchedTransition(uploadUpdated, extractionStateConflict);
+        await appendEstimateDesignAudit(input.audit, session, {
+          actorId: "system-estimate-ocr-worker",
+          action: "estimate_design_extraction_claimed",
+          entityType: "estimate",
+          entityId: String(upload.estimateId),
+          occurredAt: new Date(at).toISOString(),
+          newValues: {
+            uploadId: String(upload._id),
+            jobId: String(job._id),
+            attemptCount: Number(job.attemptCount)
+          }
         });
-        return { cancelled: true };
-      }
-      await EstimateDesignUploadModel.updateOne(
-        { _id: upload._id },
-        { $set: { extractionStatus: "processing", failureCode: null, failureMessage: null } }
-      );
-      return {
-        ...workerJobDto(job),
-        claimId,
-        upload: {
-          id: String(upload._id),
-          storedFileReference: String(upload.storedFileReference),
-          originalFilename: String(upload.originalFilename),
-          mimeType: String(upload.mimeType),
-          sizeBytes: Number(upload.sizeBytes)
-        },
-        taxonomy: taxonomyForEstimate(estimate)
-      };
+        outcome = {
+          ...workerJobDto(job),
+          claimId,
+          upload: {
+            id: String(upload._id),
+            storedFileReference: String(upload.storedFileReference),
+            originalFilename: String(upload.originalFilename),
+            mimeType: String(upload.mimeType),
+            sizeBytes: Number(upload.sizeBytes)
+          },
+          taxonomy: taxonomyForEstimate(estimate)
+        };
+      });
+      return outcome;
     },
 
     async workerSource(jobId, claimToken, at) {
@@ -991,6 +1090,19 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
             { session }
           );
           requireTransition(uploadUpdated, extractionStateConflict);
+          await appendEstimateDesignAudit(input.audit, session, {
+            actorId: "system-estimate-ocr-worker",
+            action: "estimate_design_extraction_completed",
+            entityType: "estimate",
+            entityId: String(currentUpload.estimateId),
+            occurredAt: new Date(processedAt).toISOString(),
+            newValues: {
+              uploadId: String(currentUpload._id),
+              workerResultId: result.resultId,
+              pageCount: pageDocuments.length,
+              drawingCount: drawingDocuments.length
+            }
+          });
           completedJob = {
             ...currentJob,
             status: "estimator_review",
@@ -1092,8 +1204,218 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
           );
           requireMatchedTransition(released, extractionStateConflict);
         }
+        await appendEstimateDesignAudit(input.audit, session, {
+          actorId: "system-estimate-ocr-worker",
+          action: "estimate_design_extraction_failed",
+          entityType: "estimate",
+          entityId: String(currentUpload.estimateId),
+          occurredAt: new Date(failedAt).toISOString(),
+          newValues: {
+            uploadId: String(currentUpload._id),
+            failureCode: code
+          }
+        });
       });
       return workerJobDto(failed!);
+    },
+
+    async createManualDrawing(user, pageId, manualInput) {
+      const page = await EstimateDesignSourcePageModel.findById(pageId).lean();
+      if (!page) throw estimateNotFound();
+      const upload = await EstimateDesignUploadModel.findById(page.uploadId).lean();
+      if (!upload) throw estimateNotFound();
+      const estimate = await requireOwnedEstimate(user, String(upload.estimateId));
+      requireManualDrawingState(upload);
+      validateMapping(
+        manualInput.roomId,
+        manualInput.scopeSectionId,
+        taxonomyForEstimate(estimate)
+      );
+      if (
+        !cropIsWithinPage(
+          manualInput.crop,
+          Number(page.width),
+          Number(page.height)
+        )
+      ) {
+        invalidManualCrop();
+      }
+
+      let generatedReference: string | null = null;
+      let savedDrawing: Record<string, any> | null = null;
+      let savedRevision: Record<string, any> | null = null;
+      try {
+        const source = await input.storage.read(String(page.normalizedFileReference));
+        const image = await sharp(source)
+          .extract({
+            left: manualInput.crop.x,
+            top: manualInput.crop.y,
+            width: manualInput.crop.width,
+            height: manualInput.crop.height
+          })
+          .png()
+          .toBuffer();
+        const stored = await input.storage.saveGenerated({
+          data: image,
+          extension: ".png"
+        });
+        generatedReference = stored.reference;
+
+        await withMongoTransaction(async (session) => {
+          const currentPage = await EstimateDesignSourcePageModel.findById(pageId)
+            .session(session)
+            .lean();
+          if (!currentPage) throw estimateNotFound();
+          const currentUpload = await EstimateDesignUploadModel.findById(
+            currentPage.uploadId
+          ).session(session).lean();
+          if (
+            !currentUpload ||
+            String(currentUpload._id) !== String(upload._id) ||
+            String(currentUpload.estimateId) !== String(upload.estimateId)
+          ) {
+            extractionStateConflict();
+          }
+          const currentEstimate = await requireOwnedEstimate(
+            user,
+            String(currentUpload.estimateId),
+            session
+          );
+          requireManualDrawingState(currentUpload);
+          await guardDesignLifecycle(currentEstimate, session);
+          validateMapping(
+            manualInput.roomId,
+            manualInput.scopeSectionId,
+            taxonomyForEstimate(currentEstimate)
+          );
+          if (
+            !cropIsWithinPage(
+              manualInput.crop,
+              Number(currentPage.width),
+              Number(currentPage.height)
+            )
+          ) {
+            invalidManualCrop();
+          }
+
+          const drawingId = randomUUID();
+          const revisionId = randomUUID();
+          const displayTitle = manualInput.displayTitle
+            .replace(/\s+/g, " ")
+            .trim();
+          savedDrawing = {
+            _id: drawingId,
+            uploadId: currentUpload._id,
+            sourcePageId: currentPage._id,
+            estimateId: currentUpload.estimateId,
+            active: true,
+            verified: true,
+            roomId: manualInput.roomId,
+            scopeSectionId: manualInput.scopeSectionId,
+            detectedTitle: displayTitle,
+            displayTitle,
+            source: "manual",
+            roomConfidence: null,
+            scopeConfidence: null,
+            ocrConfidence: null,
+            roomEvidence: [],
+            scopeEvidence: []
+          };
+          savedRevision = {
+            _id: revisionId,
+            drawingId,
+            revisionNumber: 1,
+            sourcePageId: currentPage._id,
+            crop: { ...manualInput.crop },
+            croppedFileReference: generatedReference,
+            roomId: manualInput.roomId,
+            scopeSectionId: manualInput.scopeSectionId,
+            label: displayTitle,
+            reviewStatus: "draft",
+            submittedAt: null,
+            reviewerId: null,
+            reviewedAt: null,
+            changeSummary: null,
+            annotationLayerId: null,
+            annotations: null,
+            replacementUploadId: null,
+            replacesRevisionId: null
+          };
+          await EstimateDesignDrawingModel.create([savedDrawing], { session });
+          await EstimateDesignRevisionModel.create([savedRevision], { session });
+
+          if (currentUpload.extractionStatus === "processing_failed") {
+            const uploadRecovered = await EstimateDesignUploadModel.updateOne(
+              {
+                _id: currentUpload._id,
+                estimateId: currentUpload.estimateId,
+                extractionStatus: "processing_failed"
+              },
+              {
+                $set: {
+                  extractionStatus: "estimator_review",
+                  failureCode: null,
+                  failureMessage: null
+                }
+              },
+              { session }
+            );
+            requireTransition(uploadRecovered, extractionStateConflict);
+            const jobRecovered = await EstimateDesignExtractionJobModel.updateOne(
+              {
+                uploadId: currentUpload._id,
+                status: "processing_failed"
+              },
+              {
+                $set: {
+                  status: "estimator_review",
+                  failureCode: null,
+                  failureMessage: null,
+                  claimId: null,
+                  leaseExpiresAt: null
+                }
+              },
+              { session }
+            );
+            requireTransition(jobRecovered, extractionStateConflict);
+          }
+          await appendEstimateDesignAudit(input.audit, session, {
+            actorId: user.id,
+            action: "estimate_design_manual_drawing_created",
+            entityType: "estimate_design_drawing",
+            entityId: drawingId,
+            occurredAt: now().toISOString(),
+            newValues: {
+              estimateId: String(currentUpload.estimateId),
+              uploadId: String(currentUpload._id),
+              sourcePageId: String(currentPage._id),
+              revisionId,
+              revisionNumber: 1,
+              roomId: manualInput.roomId,
+              scopeSectionId: manualInput.scopeSectionId,
+              crop: { ...manualInput.crop }
+            }
+          });
+        });
+      } catch (error) {
+        if (generatedReference) {
+          await cleanupReferences(input.storage, [generatedReference]);
+          throw error;
+        }
+        if (error instanceof ApiError) throw error;
+        throw new ApiError(
+          503,
+          "FILE_STORAGE_ERROR",
+          "The manual drawing crop could not be stored."
+        );
+      }
+      if (!savedDrawing || !savedRevision) {
+        throw new Error("Manual drawing transaction did not complete.");
+      }
+      return {
+        ...drawingDto(savedDrawing),
+        revision: revisionDto(savedRevision)
+      };
     },
 
     async editDrawing(user, drawingId, change) {
@@ -1263,6 +1585,13 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
           );
           if (guarded.matchedCount !== 1) staleDrawing();
           await EstimateDesignRevisionModel.create([revision], { session });
+          const mappingCorrected =
+            String(currentDrawing.displayTitle) !== currentDisplayTitle ||
+            (currentDrawing.roomId ?? null) !== currentRoomId ||
+            (currentDrawing.scopeSectionId ?? null) !== currentScopeSectionId;
+          const cropCorrected = !sameCrop(current.crop, currentCrop);
+          const newlyVerified =
+            !Boolean(currentDrawing.verified) && currentVerified;
           const updated = await EstimateDesignDrawingModel.updateOne(
             {
               _id: drawingId,
@@ -1285,6 +1614,60 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
             { session }
           );
           if (updated.matchedCount !== 1) staleDrawing();
+          if (mappingCorrected) {
+            await appendEstimateDesignAudit(input.audit, session, {
+              actorId: user.id,
+              action: "estimate_design_mapping_corrected",
+              entityType: "estimate_design_drawing",
+              entityId: drawingId,
+              occurredAt: now().toISOString(),
+              oldValues: {
+                displayTitle: String(currentDrawing.displayTitle),
+                roomId: currentDrawing.roomId ?? null,
+                scopeSectionId: currentDrawing.scopeSectionId ?? null,
+                revisionNumber: Number(current.revisionNumber)
+              },
+              newValues: {
+                displayTitle: currentDisplayTitle,
+                roomId: currentRoomId,
+                scopeSectionId: currentScopeSectionId,
+                revisionNumber: Number(revision.revisionNumber)
+              }
+            });
+          }
+          if (cropCorrected) {
+            await appendEstimateDesignAudit(input.audit, session, {
+              actorId: user.id,
+              action: "estimate_design_crop_corrected",
+              entityType: "estimate_design_drawing",
+              entityId: drawingId,
+              occurredAt: now().toISOString(),
+              oldValues: {
+                crop: { ...current.crop },
+                revisionNumber: Number(current.revisionNumber)
+              },
+              newValues: {
+                crop: currentCrop,
+                revisionNumber: Number(revision.revisionNumber)
+              }
+            });
+          }
+          if (newlyVerified) {
+            await appendEstimateDesignAudit(input.audit, session, {
+              actorId: user.id,
+              action: "estimate_design_verified",
+              entityType: "estimate_design_drawing",
+              entityId: drawingId,
+              occurredAt: now().toISOString(),
+              oldValues: { verified: false },
+              newValues: {
+                verified: true,
+                revisionNumber: Number(revision.revisionNumber),
+                roomId: currentRoomId,
+                scopeSectionId: currentScopeSectionId
+              }
+            });
+          }
           savedDrawing = {
             ...currentDrawing,
             displayTitle: currentDisplayTitle,
@@ -1331,6 +1714,20 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
           extractionStateConflict();
         }
         await guardDesignLifecycle(estimate, session);
+        if (currentUpload.replacesRevisionId) {
+          const reserved = await EstimateDesignRevisionModel.updateOne(
+            {
+              _id: currentUpload.replacesRevisionId,
+              drawingId: currentUpload.replacementDrawingId,
+              revisionNumber: currentUpload.replacementVersion,
+              reviewStatus: "changes_requested",
+              replacementUploadId: { $in: [null] }
+            },
+            { $set: { replacementUploadId: currentUpload._id } },
+            { session }
+          );
+          requireMatchedTransition(reserved, staleReplacement);
+        }
         const resetJob = await EstimateDesignExtractionJobModel.updateOne(
           { _id: job._id, uploadId, status: "processing_failed" },
           { $set: { status: "queued", queuedAt, startedAt: null, completedAt: null, leaseExpiresAt: null, claimId: null, failureCode: null, failureMessage: null, workerResultId: null } },
@@ -1343,6 +1740,22 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
           { session }
         );
         requireTransition(resetUpload, extractionStateConflict);
+        await appendEstimateDesignAudit(input.audit, session, {
+          actorId: user.id,
+          action: "estimate_design_upload_retried",
+          entityType: "estimate",
+          entityId: String(currentUpload.estimateId),
+          occurredAt: queuedAt.toISOString(),
+          oldValues: {
+            extractionStatus: "processing_failed"
+          },
+          newValues: {
+            extractionStatus: "queued",
+            uploadId,
+            jobId: String(job._id),
+            replacement: Boolean(currentUpload.replacesRevisionId)
+          }
+        });
         saved = { ...currentUpload, extractionStatus: "queued", failureCode: null, failureMessage: null };
       });
       if (!saved) throw new Error("Estimate upload retry did not complete.");
@@ -1371,6 +1784,18 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
           { session }
         );
         requireTransition(removed, staleDrawing);
+        await appendEstimateDesignAudit(input.audit, session, {
+          actorId: user.id,
+          action: "estimate_design_drawing_removed",
+          entityType: "estimate_design_drawing",
+          entityId: drawingId,
+          occurredAt: now().toISOString(),
+          oldValues: {
+            active: true,
+            revisionNumber: Number(currentRevision.revisionNumber)
+          },
+          newValues: { active: false }
+        });
       });
       return { id: drawingId, active: false };
     },
@@ -1549,11 +1974,47 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
           );
           requireTransition(jobUpdated, extractionStateConflict);
         }
+        await appendEstimateDesignAudit(input.audit, session, {
+          actorId: user.id,
+          action: "estimate_design_drawings_submitted",
+          entityType: "estimate",
+          entityId: estimateId,
+          occurredAt: submittedAt.toISOString(),
+          newValues: {
+            submittedCount: revisionIds.length,
+            activeDrawingCount: drawings.length,
+            uploadCount: uploadStates.length
+          }
+        });
         submittedCount = revisionIds.length;
       });
       return { submittedCount };
     }
   };
+
+  async function canRetryUpload(upload: Record<string, any>) {
+    if (String(upload.extractionStatus) !== "processing_failed") return false;
+    const job = await EstimateDesignExtractionJobModel.findOne({
+      uploadId: upload._id
+    }).lean();
+    if (!job || String(job.status) !== "processing_failed") return false;
+    if (!upload.replacesRevisionId) return true;
+    if (!upload.replacementDrawingId || !upload.replacementVersion) return false;
+    const drawing = await EstimateDesignDrawingModel.findById(
+      upload.replacementDrawingId
+    ).lean();
+    if (!drawing || !drawing.active) return false;
+    const latest = await EstimateDesignRevisionModel.findOne({
+      drawingId: drawing._id
+    }).sort({ revisionNumber: -1 }).lean();
+    return Boolean(
+      latest &&
+      String(latest._id) === String(upload.replacesRevisionId) &&
+      Number(latest.revisionNumber) === Number(upload.replacementVersion) &&
+      String(latest.reviewStatus) === "changes_requested" &&
+      latest.replacementUploadId == null
+    );
+  }
 
   async function requireOwnedEstimate(
     user: AuthenticatedUser,
@@ -1781,6 +2242,7 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
         file,
         storedFileReference: stored.reference,
         uploadedAt,
+        audit: input.audit,
         drawingId: String(drawing._id),
         revisionId: String(revision._id),
         version: Number(revision.revisionNumber)
@@ -1810,7 +2272,8 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
         uploadedAt,
         extractionStatus: "queued",
         failureCode: null,
-        failureMessage: null
+        failureMessage: null,
+        canRetry: false
       })
     };
   }
@@ -1964,6 +2427,25 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
           String(drawing.estimateId),
           session
         );
+        await appendEstimateDesignAudit(input.audit, session, {
+          actorId: "system-estimate-ocr-worker",
+          action: "estimate_design_replacement_created",
+          entityType: "estimate_design_drawing",
+          entityId: String(drawing._id),
+          occurredAt: new Date(processedAt).toISOString(),
+          oldValues: {
+            revisionNumber: Number(current.revisionNumber),
+            reviewStatus: String(current.reviewStatus)
+          },
+          newValues: {
+            uploadId: String(currentUpload._id),
+            workerResultId: resultId,
+            revisionId,
+            revisionNumber: Number(current.revisionNumber) + 1,
+            width: page.width,
+            height: page.height
+          }
+        });
         completedJob = {
           ...currentJob,
           status: "estimator_review",
@@ -1992,6 +2474,7 @@ async function persistUploadAndJob(input: {
   file: ValidatedUpload;
   storedFileReference: string;
   uploadedAt: Date;
+  audit: AuditService;
   replacement?: { drawingId: string; revisionId: string; version: number };
 }) {
   const session = await mongoose.startSession();
@@ -2041,6 +2524,27 @@ async function persistUploadAndJob(input: {
         }],
         { session }
       );
+      await appendEstimateDesignAudit(input.audit, session, {
+        actorId: input.user.id,
+        action: input.replacement
+          ? "estimate_design_replacement_queued"
+          : "estimate_design_uploaded",
+        entityType: "estimate",
+        entityId: input.estimate._id,
+        occurredAt: input.uploadedAt.toISOString(),
+        newValues: {
+          uploadId: input.uploadId,
+          sizeBytes: input.file.sizeBytes,
+          mimeType: input.file.mimeType,
+          ...(input.replacement
+            ? {
+                drawingId: input.replacement.drawingId,
+                replacesRevisionId: input.replacement.revisionId,
+                replacementVersion: input.replacement.version
+              }
+            : {})
+        }
+      });
       completed = true;
     });
     if (!completed) throw new Error("MongoDB transaction did not complete.");
@@ -2056,6 +2560,7 @@ async function persistReplacementUploadAndJob(input: {
   file: ValidatedUpload;
   storedFileReference: string;
   uploadedAt: Date;
+  audit: AuditService;
   drawingId: string;
   revisionId: string;
   version: number;
@@ -2134,6 +2639,21 @@ async function persistReplacementUploadAndJob(input: {
         failureMessage: null,
         workerResultId: null
       }], { session });
+      await appendEstimateDesignAudit(input.audit, session, {
+        actorId: input.user.id,
+        action: "estimate_design_replacement_queued",
+        entityType: "estimate",
+        entityId: String(estimate._id),
+        occurredAt: input.uploadedAt.toISOString(),
+        newValues: {
+          uploadId: input.uploadId,
+          drawingId: String(drawing._id),
+          replacesRevisionId: String(latest._id),
+          replacementVersion: Number(latest.revisionNumber),
+          sizeBytes: input.file.sizeBytes,
+          mimeType: input.file.mimeType
+        }
+      });
     });
   } finally {
     await session.endSession().catch(() => undefined);
@@ -2156,7 +2676,10 @@ function forbidden(): never {
   throw new ApiError(403, "FORBIDDEN", "You are not authorized to perform this action.");
 }
 
-function uploadDto(upload: Record<string, unknown>): EstimateDesignUploadDto {
+function uploadDto(
+  upload: Record<string, unknown>,
+  canRetry = false
+): EstimateDesignUploadDto {
   return {
     id: String(upload._id),
     estimateId: String(upload.estimateId),
@@ -2168,7 +2691,8 @@ function uploadDto(upload: Record<string, unknown>): EstimateDesignUploadDto {
     uploadedAt: new Date(String(upload.uploadedAt)).toISOString(),
     extractionStatus: upload.extractionStatus as EstimateDesignExtractionStatus,
     failureCode: upload.failureCode === null ? null : String(upload.failureCode),
-    failureMessage: upload.failureMessage === null ? null : String(upload.failureMessage)
+    failureMessage: upload.failureMessage === null ? null : String(upload.failureMessage),
+    canRetry
   };
 }
 
@@ -2310,6 +2834,50 @@ function requireEstimateClaim(job: Record<string, any>, claimToken: string, now:
   ) {
     staleClaim();
   }
+}
+
+function requireAnnotationDimensions(
+  revision: Record<string, any>,
+  annotations: AnnotationDocumentV1
+) {
+  const expectedWidth = Number(revision.crop?.width);
+  const expectedHeight = Number(revision.crop?.height);
+  if (
+    annotations.imageWidth !== expectedWidth ||
+    annotations.imageHeight !== expectedHeight
+  ) {
+    throw new ApiError(
+      400,
+      "INVALID_ANNOTATION_DIMENSIONS",
+      "Annotation dimensions must match the reviewed drawing crop.",
+      {
+        imageWidth: `Use the reviewed crop width (${expectedWidth}).`,
+        imageHeight: `Use the reviewed crop height (${expectedHeight}).`
+      }
+    );
+  }
+}
+
+function requireManualDrawingState(upload: Record<string, any>) {
+  if (
+    !["estimator_review", "processing_failed"].includes(
+      String(upload.extractionStatus)
+    )
+  ) {
+    throw new ApiError(
+      409,
+      "ESTIMATE_DRAWING_LOCKED",
+      "Manual drawings can only be added while reviewing retained source pages."
+    );
+  }
+}
+
+function invalidManualCrop(): never {
+  throw new ApiError(
+    400,
+    "INVALID_MANUAL_CROP",
+    "Drawing crops must remain within their source page."
+  );
 }
 
 function staleClaim(): never {
@@ -2633,8 +3201,25 @@ function cropIsWithinPage(crop: CropRect, width: number, height: number) {
   );
 }
 
+function sameCrop(left: CropRect, right: CropRect) {
+  return (
+    Number(left.x) === Number(right.x) &&
+    Number(left.y) === Number(right.y) &&
+    Number(left.width) === Number(right.width) &&
+    Number(left.height) === Number(right.height)
+  );
+}
+
 function invalidWorkerResult(message: string): never {
   throw new ApiError(400, "INVALID_WORKER_RESULT", message);
+}
+
+function appendEstimateDesignAudit(
+  audit: AuditService,
+  session: mongoose.ClientSession,
+  event: AuditWrite
+) {
+  return audit.appendInMongoTransaction(event, session);
 }
 
 async function withMongoTransaction(operation: (session: mongoose.ClientSession) => Promise<void>) {

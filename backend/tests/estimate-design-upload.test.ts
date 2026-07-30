@@ -7,6 +7,7 @@ import request from "supertest";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { createApp } from "../src/app.js";
+import { AuditEventModel } from "../src/models/AuditEvent.js";
 import { EstimateDesignExtractionJobModel } from "../src/models/EstimateDesignExtractionJob.js";
 import { EstimateDesignDrawingModel } from "../src/models/EstimateDesignDrawing.js";
 import { EstimateDesignRevisionModel } from "../src/models/EstimateDesignRevision.js";
@@ -114,6 +115,11 @@ function setup(options: { maxUploadBytes?: number } = {}) {
     endSession: vi.fn(async () => undefined)
   };
   vi.spyOn(mongoose, "startSession").mockResolvedValue(session as never);
+  vi.spyOn(AuditEventModel, "create").mockImplementation(async (input) =>
+    (input as Array<Record<string, any>>).map((event) => ({
+      toObject: () => ({ ...event, id: event._id })
+    })) as never
+  );
   const estimate = {
     _id: "estimate-draft",
     leadId: "lead-aurora",

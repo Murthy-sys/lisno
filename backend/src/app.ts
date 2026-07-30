@@ -101,6 +101,7 @@ export function createApp(dependencies: AppDependencies) {
   );
   const estimateDesignService = createEstimateDesignService({
     storage,
+    audit: auditService,
     maxUploadBytes,
     now: clock
   });
@@ -144,7 +145,8 @@ export function createApp(dependencies: AppDependencies) {
       authService,
       leadService,
       estimatePdfService,
-      estimateDesignService
+      estimateDesignService,
+      auditService
     )
   );
   app.use("/api/v1", createTasksRouter(authService, taskService));

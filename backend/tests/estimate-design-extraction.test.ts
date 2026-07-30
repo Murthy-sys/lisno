@@ -7,6 +7,7 @@ import sharp from "sharp";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { createApp } from "../src/app.js";
+import { AuditEventModel } from "../src/models/AuditEvent.js";
 import { EstimateDesignDrawingModel } from "../src/models/EstimateDesignDrawing.js";
 import { EstimateDesignExtractionJobModel } from "../src/models/EstimateDesignExtractionJob.js";
 import { EstimateDesignRevisionModel } from "../src/models/EstimateDesignRevision.js";
@@ -152,6 +153,7 @@ function setup() {
   const pages: Array<Record<string, any>> = [];
   const drawings: Array<Record<string, any>> = [];
   const revisions: Array<Record<string, any>> = [];
+  const auditEvents: Array<Record<string, any>> = [];
   const runTransaction = async (operation: () => Promise<unknown>) => {
     const snapshots = {
       estimates: structuredClone(estimates),
@@ -178,6 +180,13 @@ function setup() {
     endSession: vi.fn(async () => undefined)
   };
   vi.spyOn(mongoose, "startSession").mockResolvedValue(session as never);
+  vi.spyOn(AuditEventModel, "create").mockImplementation(async (input) => {
+    const events = structuredClone(input as Array<Record<string, any>>);
+    auditEvents.push(...events);
+    return events.map((event) => ({
+      toObject: () => ({ ...event, id: event._id })
+    })) as never;
+  });
   vi.spyOn(EstimateModel, "findById").mockImplementation((id) =>
     query(estimates.find((item) => item._id === id) ?? null) as never
   );
@@ -319,6 +328,7 @@ function setup() {
     pages,
     drawings,
     revisions,
+    auditEvents,
     session,
     runTransaction
   };
@@ -407,8 +417,25 @@ beforeAll(async () => {
 afterEach(() => vi.restoreAllMocks());
 
 describe("estimate design extraction and estimator verification", () => {
+  it("allows a retry to receive a new queue-order timestamp", () => {
+    const originalQueuedAt = new Date("2026-07-30T11:00:00.000Z");
+    const retriedAt = new Date("2026-07-30T12:00:00.000Z");
+    const job = EstimateDesignExtractionJobModel.hydrate({
+      _id: "estimate-job-retry-order",
+      uploadId: "upload-retry-order",
+      status: "processing_failed",
+      attemptCount: 1,
+      queuedAt: originalQueuedAt
+    });
+
+    job.queuedAt = retriedAt;
+
+    expect(job.queuedAt).toEqual(retriedAt);
+    expect(job.isModified("queuedAt")).toBe(true);
+  });
+
   it("retries only an owned failed estimate upload and atomically resets its job", async () => {
-    const { app, uploads, jobs } = setup();
+    const { app, uploads, jobs, auditEvents } = setup();
     Object.assign(uploads[0]!, { extractionStatus: "processing_failed", failureCode: "OCR_FAILED", failureMessage: "OCR failed." });
     Object.assign(jobs[0]!, { status: "processing_failed", completedAt: NOW, failureCode: "OCR_FAILED", failureMessage: "OCR failed." });
 
@@ -417,6 +444,41 @@ describe("estimate design extraction and estimator verification", () => {
     expect(retried.status).toBe(200);
     expect(retried.body.data).toMatchObject({ id: "upload-1", extractionStatus: "queued", failureCode: null, failureMessage: null });
     expect(jobs[0]).toMatchObject({ status: "queued", claimId: null, leaseExpiresAt: null, completedAt: null, failureCode: null, failureMessage: null });
+    expect(auditEvents).toContainEqual(expect.objectContaining({
+      action: "estimate_design_upload_retried"
+    }));
+  });
+
+  it("rolls back a retry when its transaction-coupled audit write fails", async () => {
+    const { app, uploads, jobs } = setup();
+    Object.assign(uploads[0]!, {
+      extractionStatus: "processing_failed",
+      failureCode: "OCR_FAILED",
+      failureMessage: "OCR failed."
+    });
+    Object.assign(jobs[0]!, {
+      status: "processing_failed",
+      completedAt: NOW,
+      failureCode: "OCR_FAILED",
+      failureMessage: "OCR failed."
+    });
+    vi.mocked(AuditEventModel.create).mockRejectedValueOnce(
+      new Error("audit unavailable")
+    );
+
+    const response = await owner(
+      request(app).post("/api/v1/estimate-design-uploads/upload-1/retry")
+    ).send();
+
+    expect(response.status).toBe(500);
+    expect(uploads[0]).toMatchObject({
+      extractionStatus: "processing_failed",
+      failureCode: "OCR_FAILED"
+    });
+    expect(jobs[0]).toMatchObject({
+      status: "processing_failed",
+      failureCode: "OCR_FAILED"
+    });
   });
 
   it("does not leak or retry a non-owned estimate upload", async () => {
@@ -433,7 +495,7 @@ describe("estimate design extraction and estimator verification", () => {
   });
 
   it("soft-removes an owned unverified draft drawing with its current revision", async () => {
-    const { app, drawings, revisions } = setup();
+    const { app, drawings, revisions, auditEvents } = setup();
     const leased = await claim(app);
     await complete(app, leased.body.data.claimToken);
     const drawing = drawings[0]!;
@@ -445,6 +507,10 @@ describe("estimate design extraction and estimator verification", () => {
     expect(removed.body.data).toEqual({ id: drawing._id, active: false });
     expect(drawing.active).toBe(false);
     expect(revisions.filter((revision) => revision.drawingId === drawing._id)).toHaveLength(1);
+    expect(auditEvents).toContainEqual(expect.objectContaining({
+      action: "estimate_design_drawing_removed",
+      entityId: drawing._id
+    }));
   });
 
   it("leases only the oldest claimable job across both job collections", async () => {
@@ -546,7 +612,7 @@ describe("estimate design extraction and estimator verification", () => {
   );
 
   it("claims the estimate taxonomy and atomically publishes every proposed drawing", async () => {
-    const { app, uploads, pages, drawings, revisions } = setup();
+    const { app, uploads, pages, drawings, revisions, auditEvents } = setup();
 
     const leased = await claim(app);
 
@@ -582,6 +648,171 @@ describe("estimate design extraction and estimator verification", () => {
       Object.isFrozen(revision.crop) === false
     )).toBe(true);
     expect(uploads[0]!.extractionStatus).toBe("estimator_review");
+    expect(auditEvents.map((event) => event.action)).toEqual(
+      expect.arrayContaining([
+        "estimate_design_extraction_claimed",
+        "estimate_design_extraction_completed"
+      ])
+    );
+  });
+
+  it("lets the estimator crop a missing drawing from an owned normalized source page", async () => {
+    const {
+      app,
+      storage,
+      pages,
+      drawings,
+      revisions,
+      auditEvents
+    } = setup();
+    const leased = await claim(app);
+    await complete(app, leased.body.data.claimToken);
+    const page = pages[0]!;
+
+    const response = await owner(
+      request(app).post(
+        `/api/v1/estimate-design-source-pages/${page._id}/drawings`
+      )
+    ).send({
+      displayTitle: "Living wardrobe",
+      roomId: "room-living",
+      scopeSectionId: "FC",
+      crop: { x: 10, y: 15, width: 30, height: 20 }
+    });
+
+    expect(response.status).toBe(201);
+    expect(response.body.data).toMatchObject({
+      source: "manual",
+      active: true,
+      verified: true,
+      roomId: "room-living",
+      scopeSectionId: "FC",
+      displayTitle: "Living wardrobe",
+      revision: {
+        revisionNumber: 1,
+        sourcePageId: page._id,
+        crop: { x: 10, y: 15, width: 30, height: 20 },
+        reviewStatus: "draft"
+      }
+    });
+    const created = drawings.find(
+      (drawing) => drawing.displayTitle === "Living wardrobe"
+    )!;
+    const revision = revisions.find(
+      (candidate) => candidate.drawingId === created._id
+    )!;
+    const metadata = await sharp(
+      await storage.read(revision.croppedFileReference)
+    ).metadata();
+    expect(metadata).toMatchObject({ width: 30, height: 20, format: "png" });
+    expect(auditEvents).toContainEqual(expect.objectContaining({
+      action: "estimate_design_manual_drawing_created",
+      entityId: created._id
+    }));
+  });
+
+  it.each([
+    [
+      "unknown room",
+      {
+        displayTitle: "Missing drawing",
+        roomId: "room-foreign",
+        scopeSectionId: "FC",
+        crop: { x: 0, y: 0, width: 20, height: 10 }
+      }
+    ],
+    [
+      "disabled scope",
+      {
+        displayTitle: "Missing drawing",
+        roomId: "room-living",
+        scopeSectionId: "PA",
+        crop: { x: 0, y: 0, width: 20, height: 10 }
+      }
+    ],
+    [
+      "out-of-bounds crop",
+      {
+        displayTitle: "Missing drawing",
+        roomId: "room-living",
+        scopeSectionId: "FC",
+        crop: { x: 90, y: 0, width: 20, height: 10 }
+      }
+    ]
+  ])("rejects a manual drawing with %s without partial publication", async (_case, body) => {
+    const { app, pages, drawings, revisions } = setup();
+    const leased = await claim(app);
+    await complete(app, leased.body.data.claimToken);
+    const drawingCount = drawings.length;
+    const revisionCount = revisions.length;
+
+    const response = await owner(
+      request(app).post(
+        `/api/v1/estimate-design-source-pages/${pages[0]!._id}/drawings`
+      )
+    ).send(body);
+
+    expect(response.status).toBe(400);
+    expect(drawings).toHaveLength(drawingCount);
+    expect(revisions).toHaveLength(revisionCount);
+  });
+
+  it("returns not found for a guessed manual-crop source page", async () => {
+    const { app, drawings, revisions } = setup();
+
+    const response = await owner(
+      request(app).post(
+        "/api/v1/estimate-design-source-pages/page-foreign/drawings"
+      )
+    ).send({
+      displayTitle: "Missing drawing",
+      roomId: "room-living",
+      scopeSectionId: "FC",
+      crop: { x: 0, y: 0, width: 20, height: 10 }
+    });
+
+    expect(response.status).toBe(404);
+    expect(drawings).toEqual([]);
+    expect(revisions).toEqual([]);
+  });
+
+  it("recovers a failed extraction with retained normalized pages through a manual crop", async () => {
+    const { app, pages, uploads, jobs } = setup();
+    const leased = await claim(app);
+    await complete(app, leased.body.data.claimToken);
+    Object.assign(uploads[0]!, {
+      extractionStatus: "processing_failed",
+      failureCode: "OCR_FAILED",
+      failureMessage: "OCR failed."
+    });
+    Object.assign(jobs[0]!, {
+      status: "processing_failed",
+      failureCode: "OCR_FAILED",
+      failureMessage: "OCR failed."
+    });
+
+    const response = await owner(
+      request(app).post(
+        `/api/v1/estimate-design-source-pages/${pages[0]!._id}/drawings`
+      )
+    ).send({
+      displayTitle: "Manually recovered drawing",
+      roomId: "room-living",
+      scopeSectionId: "FC",
+      crop: { x: 0, y: 0, width: 20, height: 10 }
+    });
+
+    expect(response.status).toBe(201);
+    expect(uploads[0]).toMatchObject({
+      extractionStatus: "estimator_review",
+      failureCode: null,
+      failureMessage: null
+    });
+    expect(jobs[0]).toMatchObject({
+      status: "estimator_review",
+      failureCode: null,
+      failureMessage: null
+    });
   });
 
   it.each([
