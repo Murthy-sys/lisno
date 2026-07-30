@@ -134,10 +134,32 @@ function setup() {
     designLifecycleVersion: 0,
     designFrozenAt: null,
     rooms: [
-      { id: "room-living", label: "Living Room", aliases: ["living hall"] },
-      { id: "room-bed", label: "Bedroom", aliases: ["bed room"] }
+      { id: "room-bedroom-1", label: "Bedroom 1", aliases: ["bed 1"] },
+      { id: "room-bedroom-2", label: "Bedroom 2", aliases: ["bed 2"] }
     ],
-    scopes: ["FC", "EL"]
+    scopes: ["CA", "FC", "EL"],
+    lineItems: [
+      {
+        catalogueId: "CA01",
+        roomName: "Bedroom 1",
+        specification: "BWR ply + veneer + polish",
+        unit: "lot",
+        rate: 32_000,
+        quantity: 1,
+        included: true,
+        amount: 32_000
+      },
+      {
+        catalogueId: "CA01",
+        roomName: "Bedroom 2",
+        specification: "MDF + PU paint",
+        unit: "lot",
+        rate: 32_000,
+        quantity: 1,
+        included: true,
+        amount: 32_000
+      }
+    ]
   }];
   const uploads: Array<Record<string, any>> = [{
     _id: "upload-1",
@@ -418,6 +440,13 @@ async function complete(
   return worker(request(app).post("/api/v1/internal/extraction-jobs/estimate-job-1/complete"))
     .set("X-Extraction-Claim-Token", claimToken)
     .send(body);
+}
+
+async function verifyDrawings(app: ReturnType<typeof createApp>, drawings: Array<Record<string, any>>) {
+  const responses = await Promise.all(drawings.map((drawing) => owner(
+    request(app).patch(`/api/v1/estimate-design-drawings/${drawing._id}`)
+  ).send({ version: 1, verified: true })));
+  expect(responses.every((response) => response.status === 200)).toBe(true);
 }
 
 beforeAll(async () => {
@@ -807,11 +836,12 @@ describe("estimate design extraction and estimator verification", () => {
       sourceMimeType: "application/pdf",
       taxonomy: {
         rooms: [
-          { id: "room-living", label: "Living Room", aliases: ["living hall"] },
-          { id: "room-bed", label: "Bedroom", aliases: ["bed room"] }
+          { id: "room-bedroom-1", label: "Bedroom 1", aliases: ["bed 1"] },
+          { id: "room-bedroom-2", label: "Bedroom 2", aliases: ["bed 2"] }
         ],
         scopes: [
           { id: "FC", label: "False Ceiling" },
+          { id: "CA", label: "Carpentry" },
           { id: "EL", label: "Electrical" }
         ]
       }
@@ -839,6 +869,117 @@ describe("estimate design extraction and estimator verification", () => {
     );
   });
 
+  it("maps from the canonical title and persisted included item, not worker scope", async () => {
+    const { app, drawings, revisions } = setup();
+    const leased = await claim(app);
+    const body = completeBody();
+    body.pages[0]!.sections = [{
+      ...body.pages[0]!.sections[0]!,
+      label: "TV UNIT - BEDROOM 1",
+      proposal: {
+        detectedTitle: "TV UNIT - BEDROOM 1",
+        room: {
+          id: "worker-room-that-does-not-exist",
+          confidence: 0.99,
+          evidence: ["worker guess"],
+          ambiguous: false
+        },
+        scope: {
+          id: "FC",
+          confidence: 0.99,
+          evidence: ["worker guess"],
+          ambiguous: false
+        }
+      }
+    }];
+
+    const response = await complete(app, leased.body.data.claimToken, body);
+
+    expect(response.status).toBe(200);
+    expect(drawings[0]).toMatchObject({
+      verified: false,
+      roomId: "room-bedroom-1",
+      catalogueId: "CA01",
+      scopeSectionId: "CA",
+      mappingStatus: "auto_mapped"
+    });
+    expect(revisions[0]).toMatchObject({
+      roomId: "room-bedroom-1",
+      catalogueId: "CA01",
+      scopeSectionId: "CA",
+      mappingStatus: "auto_mapped"
+    });
+  });
+
+  it("completes extraction with a true-null Misc mapping when title mapping is ambiguous", async () => {
+    const { app, jobs, drawings, revisions } = setup();
+    const leased = await claim(app);
+    const body = completeBody();
+    body.pages[0]!.sections = [{
+      ...body.pages[0]!.sections[0]!,
+      label: "TV UNIT",
+      proposal: {
+        detectedTitle: "TV UNIT",
+        room: { id: null, confidence: 0.2, evidence: [], ambiguous: true },
+        scope: { id: null, confidence: 0.2, evidence: [], ambiguous: true }
+      }
+    }];
+
+    const response = await complete(app, leased.body.data.claimToken, body);
+
+    expect(response.status).toBe(200);
+    expect(jobs[0]).toMatchObject({ status: "estimator_review" });
+    expect(drawings[0]).toMatchObject({
+      verified: false,
+      roomId: null,
+      catalogueId: null,
+      scopeSectionId: null,
+      mappingStatus: "misc"
+    });
+    expect(revisions[0]).toMatchObject({
+      roomId: null,
+      catalogueId: null,
+      scopeSectionId: null,
+      mappingStatus: "misc"
+    });
+  });
+
+  it("completes an unidentified drawing as nonempty Misc for estimator correction", async () => {
+    const { app, jobs, drawings, revisions } = setup();
+    const leased = await claim(app);
+    const body = completeBody();
+    body.pages[0]!.sections = [{
+      ...body.pages[0]!.sections[0]!,
+      label: "Unidentified drawing — page 1",
+      confidence: 0,
+      proposal: {
+        detectedTitle: "Unidentified drawing — page 1",
+        room: { id: null, confidence: 0, evidence: [], ambiguous: true },
+        scope: { id: null, confidence: 0, evidence: [], ambiguous: true }
+      }
+    }];
+
+    const response = await complete(app, leased.body.data.claimToken, body);
+
+    expect(response.status).toBe(200);
+    expect(jobs[0]).toMatchObject({ status: "estimator_review" });
+    expect(drawings[0]).toMatchObject({
+      verified: false,
+      detectedTitle: "Unidentified drawing — page 1",
+      displayTitle: "Unidentified drawing — page 1",
+      roomId: null,
+      catalogueId: null,
+      scopeSectionId: null,
+      mappingStatus: "misc"
+    });
+    expect(revisions[0]).toMatchObject({
+      roomId: null,
+      catalogueId: null,
+      scopeSectionId: null,
+      mappingStatus: "misc"
+    });
+  });
+
   it("lets the estimator crop a missing drawing from an owned normalized source page", async () => {
     const {
       app,
@@ -858,7 +999,7 @@ describe("estimate design extraction and estimator verification", () => {
       )
     ).send({
       displayTitle: "Living wardrobe",
-      roomId: "room-living",
+      roomId: "room-bedroom-1",
       scopeSectionId: "FC",
       crop: { x: 10, y: 15, width: 30, height: 20 }
     });
@@ -910,7 +1051,7 @@ describe("estimate design extraction and estimator verification", () => {
       "disabled scope",
       {
         displayTitle: "Missing drawing",
-        roomId: "room-living",
+        roomId: "room-bedroom-1",
         scopeSectionId: "PA",
         crop: { x: 0, y: 0, width: 20, height: 10 }
       }
@@ -919,7 +1060,7 @@ describe("estimate design extraction and estimator verification", () => {
       "out-of-bounds crop",
       {
         displayTitle: "Missing drawing",
-        roomId: "room-living",
+        roomId: "room-bedroom-1",
         scopeSectionId: "FC",
         crop: { x: 90, y: 0, width: 20, height: 10 }
       }
@@ -951,7 +1092,7 @@ describe("estimate design extraction and estimator verification", () => {
       )
     ).send({
       displayTitle: "Missing drawing",
-      roomId: "room-living",
+      roomId: "room-bedroom-1",
       scopeSectionId: "FC",
       crop: { x: 0, y: 0, width: 20, height: 10 }
     });
@@ -982,7 +1123,7 @@ describe("estimate design extraction and estimator verification", () => {
       )
     ).send({
       displayTitle: "Manually recovered drawing",
-      roomId: "room-living",
+      roomId: "room-bedroom-1",
       scopeSectionId: "FC",
       crop: { x: 0, y: 0, width: 20, height: 10 }
     });
@@ -1001,12 +1142,6 @@ describe("estimate design extraction and estimator verification", () => {
   });
 
   it.each([
-    ["unknown room", (body: ReturnType<typeof completeBody>) => {
-      body.pages[0]!.sections[0]!.proposal.room.id = "room-foreign";
-    }],
-    ["disabled scope", (body: ReturnType<typeof completeBody>) => {
-      body.pages[0]!.sections[0]!.proposal.scope.id = "PA";
-    }],
     ["out-of-bounds crop", (body: ReturnType<typeof completeBody>) => {
       body.pages[0]!.sections[0]!.crop.x = 90;
     }],
@@ -1037,6 +1172,23 @@ describe("estimate design extraction and estimator verification", () => {
     const response = await complete(app, "wrong-claim");
 
     expect(response.status).toBe(409);
+    expect(pages).toEqual([]);
+    expect(drawings).toEqual([]);
+    expect(revisions).toEqual([]);
+  });
+
+  it("conflicts completion when included estimate lines change after preflight", async () => {
+    const { app, estimates, pages, drawings, revisions, session, runTransaction } = setup();
+    const leased = await claim(app);
+    session.withTransaction.mockImplementationOnce(async (operation) => {
+      estimates[0]!.lineItems[0]!.included = false;
+      return runTransaction(operation);
+    });
+
+    const response = await complete(app, leased.body.data.claimToken);
+
+    expect(response.status).toBe(409);
+    expect(response.body.error.code).toBe("ESTIMATE_EXTRACTION_STATE_CONFLICT");
     expect(pages).toEqual([]);
     expect(drawings).toEqual([]);
     expect(revisions).toEqual([]);
@@ -1189,7 +1341,7 @@ describe("estimate design extraction and estimator verification", () => {
     ).send({
       version: 1,
       displayTitle: "Living Room RCP",
-      roomId: "room-living",
+      roomId: "room-bedroom-1",
       scopeSectionId: "FC",
       crop: { x: 10, y: 10, width: 20, height: 10 },
       verified: true
@@ -1242,6 +1394,7 @@ describe("estimate design extraction and estimator verification", () => {
     );
     body.pages[0]!.sections[0] = uncertainProposal;
     await complete(app, leased.body.data.claimToken, body);
+    await verifyDrawings(app, drawings.filter((drawing) => drawing.detectedTitle !== "Uncertain ceiling"));
 
     const blocked = await owner(
       request(app).post("/api/v1/estimates/estimate-1/design-drawings/submit")
@@ -1253,7 +1406,7 @@ describe("estimate design extraction and estimator verification", () => {
       request(app).patch(`/api/v1/estimate-design-drawings/${uncertain._id}`)
     ).send({
       version: 1,
-      roomId: "room-living",
+      roomId: "room-bedroom-1",
       scopeSectionId: "FC",
       verified: true
     });
@@ -1270,9 +1423,10 @@ describe("estimate design extraction and estimator verification", () => {
   it.each(["upload", "job"] as const)(
     "rolls back submission when the required %s transition no longer matches",
     async (transition) => {
-      const { app, uploads, jobs, revisions } = setup();
+      const { app, uploads, jobs, drawings, revisions } = setup();
       const leased = await claim(app);
       await complete(app, leased.body.data.claimToken);
+      await verifyDrawings(app, drawings);
       const before = structuredClone(revisions);
       const result = {
         acknowledged: true,
@@ -1303,6 +1457,7 @@ describe("estimate design extraction and estimator verification", () => {
     const { app, drawings, revisions, uploads, jobs, session, runTransaction } = setup();
     const leased = await claim(app);
     await complete(app, leased.body.data.claimToken);
+    await verifyDrawings(app, drawings);
     const drawing = drawings[0]!;
     const editReachedTransaction = deferred();
     const allowEditTransaction = deferred();
@@ -1315,7 +1470,7 @@ describe("estimate design extraction and estimator verification", () => {
     const editPromise = owner(
       request(app).patch(`/api/v1/estimate-design-drawings/${drawing._id}`)
     )
-      .send({ version: 1, displayTitle: "Late edit" })
+      .send({ version: 2, displayTitle: "Late edit" })
       .then((response) => response);
     await editReachedTransaction.promise;
 
@@ -1328,9 +1483,9 @@ describe("estimate design extraction and estimator verification", () => {
     expect(submitted.status).toBe(200);
     expect(edited.status).toBe(409);
     expect(edited.body.error.code).toBe("ESTIMATE_DRAWING_LOCKED");
-    expect(revisions.filter((item) => item.drawingId === drawing._id)).toHaveLength(1);
-    expect(revisions.find((item) => item.drawingId === drawing._id))
-      .toMatchObject({ revisionNumber: 1, reviewStatus: "submitted" });
+    expect(revisions.filter((item) => item.drawingId === drawing._id)).toHaveLength(2);
+    expect(revisions.find((item) => item.drawingId === drawing._id && item.revisionNumber === 2))
+      .toMatchObject({ revisionNumber: 2, reviewStatus: "submitted" });
     expect(uploads[0]).toMatchObject({ extractionStatus: "submitted" });
     expect(jobs[0]).toMatchObject({ status: "submitted" });
   });
@@ -1339,6 +1494,7 @@ describe("estimate design extraction and estimator verification", () => {
     const { app, drawings, revisions, uploads, jobs, session, runTransaction } = setup();
     const leased = await claim(app);
     await complete(app, leased.body.data.claimToken);
+    await verifyDrawings(app, drawings);
     const drawing = drawings[0]!;
     const submitReachedTransaction = deferred();
     const allowSubmitTransaction = deferred();
@@ -1357,7 +1513,7 @@ describe("estimate design extraction and estimator verification", () => {
 
     const edited = await owner(
       request(app).patch(`/api/v1/estimate-design-drawings/${drawing._id}`)
-    ).send({ version: 1, displayTitle: "Concurrent verified edit" });
+    ).send({ version: 2, displayTitle: "Concurrent verified edit" });
     allowSubmitTransaction.resolve();
     const submitted = await submitPromise;
 
@@ -1368,9 +1524,9 @@ describe("estimate design extraction and estimator verification", () => {
     expect(submitted.status).toBe(409);
     expect(submitted.body.error.code).toBe("STALE_ESTIMATE_DRAWING");
     expect(drawing.verified).toBe(true);
-    expect(drawingRevisions).toHaveLength(2);
-    expect(drawingRevisions[1]).toMatchObject({
-      revisionNumber: 2,
+    expect(drawingRevisions).toHaveLength(3);
+    expect(drawingRevisions[2]).toMatchObject({
+      revisionNumber: 3,
       reviewStatus: "draft"
     });
     expect(uploads[0]).toMatchObject({ extractionStatus: "estimator_review" });

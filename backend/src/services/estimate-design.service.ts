@@ -7,7 +7,11 @@ import {
   type AnnotationDocumentV1,
   type EstimateDesignExtractionStatus
 } from "../domain/estimate-design.js";
-import { assertEstimateDesignMapping } from "../domain/estimate-design-mapping.js";
+import {
+  assertEstimateDesignMapping,
+  autoMapDrawingTitle,
+  mappingContextForEstimate
+} from "../domain/estimate-design-mapping.js";
 import { normalizeEmail } from "../domain/email.js";
 import { estimateScopeCatalogue } from "../domain/estimate-scope-catalogue.js";
 import { ApiError } from "../middleware/errors.js";
@@ -926,7 +930,8 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
         : null;
       if (!upload || !estimate) throw estimateNotFound();
       const taxonomy = taxonomyForEstimate(estimate);
-      const normalized = await normalizeEstimateResult(result, taxonomy, input.maxUploadBytes);
+      const mappingContext = mappingContextForEstimate(estimate);
+      const normalized = await normalizeEstimateResult(result, input.maxUploadBytes);
       if (upload.replacementDrawingId) {
         if (normalized.pages.length !== 1) {
           invalidWorkerResult("A replacement must contain exactly one drawing image.");
@@ -964,15 +969,9 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
             references.push(storedCrop.reference);
             const drawingId = randomUUID();
             const revisionId = randomUUID();
-            const roomId = section.proposal.room.id;
-            const scopeSectionId = section.proposal.scope.id;
-            const verified = Boolean(
-              roomId &&
-              scopeSectionId &&
-              !section.proposal.room.ambiguous &&
-              !section.proposal.scope.ambiguous &&
-              section.proposal.room.confidence >= 0.84 &&
-              section.proposal.scope.confidence >= 0.84
+            const { mapping } = autoMapDrawingTitle(
+              section.proposal.detectedTitle,
+              mappingContext
             );
             drawingDocuments.push({
               _id: drawingId,
@@ -980,8 +979,8 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
               sourcePageId: pageId,
               estimateId: upload.estimateId,
               active: true,
-              verified,
-              ...miscMapping(),
+              verified: false,
+              ...mapping,
               detectedTitle: section.proposal.detectedTitle,
               displayTitle: section.label,
               source: "ocr",
@@ -998,7 +997,7 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
               sourcePageId: pageId,
               crop: { ...section.crop },
               croppedFileReference: storedCrop.reference,
-              ...miscMapping(),
+              ...mapping,
               label: section.label,
               reviewStatus: "draft",
               submittedAt: null,
@@ -1031,7 +1030,8 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
             .lean();
           if (
             !currentEstimate ||
-            JSON.stringify(taxonomyForEstimate(currentEstimate)) !== JSON.stringify(taxonomy)
+            JSON.stringify(taxonomyForEstimate(currentEstimate)) !== JSON.stringify(taxonomy) ||
+            JSON.stringify(mappingContextForEstimate(currentEstimate)) !== JSON.stringify(mappingContext)
           ) {
             extractionStateConflict();
           }
@@ -3112,7 +3112,6 @@ function validateMapping(
 
 async function normalizeEstimateResult(
   result: EstimateWorkerResult,
-  taxonomy: EstimateTaxonomyDto,
   maxImageBytes: number
 ) {
   const pageNumbers = new Set<number>();
@@ -3147,7 +3146,6 @@ async function normalizeEstimateResult(
       if (!cropIsWithinPage(section.crop, page.width, page.height)) {
         invalidWorkerResult("Drawing crops must remain within their source page.");
       }
-      validateMapping(section.proposal.room.id, section.proposal.scope.id, taxonomy);
       const cropImage = decodeBase64(section.imageBase64, maxImageBytes);
       await validatePng(cropImage, section.crop.width, section.crop.height);
       totalBytes += cropImage.length;
