@@ -222,7 +222,13 @@ describe("estimate design uploads", () => {
       { session }
     );
     expect(EstimateDesignExtractionJobModel.create).toHaveBeenCalledWith(
-      [expect.objectContaining({ uploadId: response.body.data.id, status: "queued" })],
+      [expect.objectContaining({
+        uploadId: response.body.data.id,
+        status: "queued",
+        attemptCount: 0,
+        claimGeneration: 0,
+        nextAttemptAt: expect.any(Date)
+      })],
       { session }
     );
   });

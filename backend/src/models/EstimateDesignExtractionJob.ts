@@ -7,6 +7,15 @@ export const estimateDesignExtractionJobSchema = new Schema({
   status: { type: String, required: true, enum: estimateDesignExtractionStatuses },
   attemptCount: { type: Number, required: true, min: 0 },
   queuedAt: { type: Date, required: true },
+  nextAttemptAt: {
+    type: Date,
+    default: function (this: { status?: string; queuedAt?: Date }) {
+      return this.status === "queued"
+        ? (this.queuedAt ?? new Date())
+        : null;
+    }
+  },
+  claimGeneration: { type: Number, required: true, default: 0, min: 0 },
   startedAt: { type: Date, default: null },
   completedAt: { type: Date, default: null },
   leaseExpiresAt: { type: Date, default: null },
@@ -17,6 +26,12 @@ export const estimateDesignExtractionJobSchema = new Schema({
 }, { timestamps: true, versionKey: false });
 
 estimateDesignExtractionJobSchema.index({ uploadId: 1 }, { unique: true });
-estimateDesignExtractionJobSchema.index({ status: 1, leaseExpiresAt: 1, queuedAt: 1 });
+estimateDesignExtractionJobSchema.index({
+  status: 1,
+  nextAttemptAt: 1,
+  leaseExpiresAt: 1,
+  queuedAt: 1,
+  _id: 1
+});
 
 export const EstimateDesignExtractionJobModel = models.EstimateDesignExtractionJob ?? model("EstimateDesignExtractionJob", estimateDesignExtractionJobSchema);

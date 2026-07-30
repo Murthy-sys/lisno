@@ -117,6 +117,8 @@ describe("memory repository", () => {
       status: "changes_requested",
       attemptCount: 1,
       queuedAt: "2026-07-27T09:00:00.000Z",
+      nextAttemptAt: null,
+      claimGeneration: 1,
       startedAt: "2026-07-27T09:01:00.000Z",
       completedAt: "2026-07-27T09:02:00.000Z",
       leaseExpiresAt: null,
@@ -208,6 +210,8 @@ describe("memory repository", () => {
       status: "queued",
       attemptCount: 0,
       queuedAt: "2026-07-27T10:00:00.000Z",
+      nextAttemptAt: "2026-07-27T10:00:00.000Z",
+      claimGeneration: 0,
       startedAt: null,
       completedAt: null,
       leaseExpiresAt: null,
@@ -235,6 +239,26 @@ describe("memory repository", () => {
     ).toBe(2);
   });
 
+  it("defaults a queued extraction job's next attempt to its queue time", async () => {
+    const repository = createMemoryRepository(demoSeedData);
+
+    await expect(repository.enqueueExtractionJob({
+      id: "job-scheduled",
+      designVersionId: "version-scheduled",
+      status: "queued",
+      attemptCount: 0,
+      queuedAt: "2026-07-30T10:00:00.000Z",
+      startedAt: null,
+      completedAt: null,
+      leaseExpiresAt: null,
+      failureCode: null,
+      failureMessage: null,
+      claimGeneration: 0
+    })).resolves.toMatchObject({
+      nextAttemptAt: "2026-07-30T10:00:00.000Z"
+    });
+  });
+
   it("replaces a worker draft idempotently without duplicating pages or sections", async () => {
     const repository = createMemoryRepository(demoSeedData);
     await repository.enqueueExtractionJob({
@@ -243,6 +267,8 @@ describe("memory repository", () => {
       status: "queued",
       attemptCount: 0,
       queuedAt: "2026-07-27T10:00:00.000Z",
+      nextAttemptAt: "2026-07-27T10:00:00.000Z",
+      claimGeneration: 0,
       startedAt: null,
       completedAt: null,
       leaseExpiresAt: null,
@@ -371,6 +397,8 @@ describe("memory repository", () => {
       status: "queued",
       attemptCount: 0,
       queuedAt: "2026-07-27T10:00:00.000Z",
+      nextAttemptAt: "2026-07-27T10:00:00.000Z",
+      claimGeneration: 0,
       startedAt: null,
       completedAt: null,
       leaseExpiresAt: null,
@@ -467,6 +495,8 @@ describe("memory repository", () => {
       status: "queued",
       attemptCount: 0,
       queuedAt: "2026-07-27T10:00:00.000Z",
+      nextAttemptAt: "2026-07-27T10:00:00.000Z",
+      claimGeneration: 0,
       startedAt: null,
       completedAt: null,
       leaseExpiresAt: null,

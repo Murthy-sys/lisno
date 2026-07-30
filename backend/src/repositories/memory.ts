@@ -750,6 +750,14 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
       const createdAt = input.createdAt ?? input.queuedAt;
       const job: DesignExtractionJobRecord = {
         ...clone(input),
+        nextAttemptAt:
+          input.nextAttemptAt === null || input.nextAttemptAt === undefined
+            ? (input.status === "queued" ? input.queuedAt : null)
+            : input.nextAttemptAt,
+        claimGeneration:
+          Number.isSafeInteger(input.claimGeneration) && input.claimGeneration >= 0
+            ? input.claimGeneration
+            : 0,
         claimId: input.claimId ?? null,
         workerResultId: input.workerResultId ?? null,
         createdAt,

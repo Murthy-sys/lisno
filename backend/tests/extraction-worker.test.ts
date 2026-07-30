@@ -82,6 +82,8 @@ async function setup(
     status: "queued",
     attemptCount: 0,
     queuedAt: TEST_NOW,
+    nextAttemptAt: TEST_NOW,
+    claimGeneration: 0,
     startedAt: null,
     completedAt: null,
     leaseExpiresAt: null,
@@ -94,6 +96,8 @@ async function setup(
     status: "queued",
     attemptCount: 0,
     queuedAt: new Date(estimateQueuedAt),
+    nextAttemptAt: new Date(estimateQueuedAt),
+    claimGeneration: 0,
     leaseExpiresAt: null,
     claimId: null
   } : null;

@@ -52,6 +52,8 @@ function reviewSeed(): SeedData {
     status: "submitted",
     attemptCount: 1,
     queuedAt: NOW,
+    nextAttemptAt: null,
+    claimGeneration: 1,
     startedAt: NOW,
     completedAt: NOW,
     leaseExpiresAt: null,

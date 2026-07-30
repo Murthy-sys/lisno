@@ -2,6 +2,10 @@ import express from "express";
 import mongoose from "mongoose";
 import path from "node:path";
 
+import {
+  defaultExtractionRetryPolicy,
+  type ExtractionRetryPolicy
+} from "./domain/extraction-lifecycle.js";
 import { createAuthRateLimit } from "./middleware/auth-rate-limit.js";
 import { allowCors } from "./middleware/cors.js";
 import { errorHandler, notFoundHandler } from "./middleware/errors.js";
@@ -51,6 +55,7 @@ export interface AppDependencies {
   storage?: FileStorage;
   maxUploadBytes?: number;
   ocrLeaseSeconds?: number;
+  ocrRetryPolicy?: ExtractionRetryPolicy;
   ocrConfidenceFloor?: number;
   ocrWorkerToken?: string;
   enableEstimateDesignJobs?: boolean;
@@ -67,6 +72,8 @@ export function createApp(dependencies: AppDependencies) {
     dependencies.storage ??
     createLocalStorage(path.resolve(process.cwd(), "uploads"));
   const maxUploadBytes = dependencies.maxUploadBytes ?? 25 * 1024 * 1024;
+  const ocrRetryPolicy =
+    dependencies.ocrRetryPolicy ?? defaultExtractionRetryPolicy;
   const auditService = createAuditService(repository);
   const authService = createAuthService(repository, dependencies.auth, {
     auditService,
@@ -103,6 +110,7 @@ export function createApp(dependencies: AppDependencies) {
     storage,
     audit: auditService,
     maxUploadBytes,
+    ocrRetryPolicy,
     now: clock
   });
   const extractionWorkerService = dependencies.ocrWorkerToken
@@ -116,7 +124,8 @@ export function createApp(dependencies: AppDependencies) {
         dependencies.ocrConfidenceFloor ?? 0.2,
         dependencies.enableEstimateDesignJobs ?? mongoose.connection.readyState === 1
           ? estimateDesignService
-          : undefined
+          : undefined,
+        ocrRetryPolicy
       )
     : null;
 

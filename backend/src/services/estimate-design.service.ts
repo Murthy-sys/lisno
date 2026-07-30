@@ -15,6 +15,7 @@ import {
   mappingContextForEstimate
 } from "../domain/estimate-design-mapping.js";
 import { normalizeEmail } from "../domain/email.js";
+import type { ExtractionRetryPolicy } from "../domain/extraction-lifecycle.js";
 import { estimateScopeCatalogue } from "../domain/estimate-scope-catalogue.js";
 import { ApiError } from "../middleware/errors.js";
 import type { ValidatedUpload } from "../middleware/upload.js";
@@ -49,6 +50,7 @@ export interface CreateEstimateDesignServiceInput {
   storage: Storage;
   audit: AuditService;
   maxUploadBytes: number;
+  ocrRetryPolicy?: ExtractionRetryPolicy;
   now?: () => Date;
 }
 
@@ -85,6 +87,8 @@ export interface EstimateWorkerJobRecord {
   status: EstimateDesignExtractionStatus;
   attemptCount: number;
   queuedAt: string;
+  nextAttemptAt: string | null;
+  claimGeneration: number;
   leaseExpiresAt: string | null;
   claimId: string | null;
 }
@@ -2621,6 +2625,8 @@ async function persistUploadAndJob(input: {
           status: "queued",
           attemptCount: 0,
           queuedAt: input.uploadedAt,
+          nextAttemptAt: input.uploadedAt,
+          claimGeneration: 0,
           startedAt: null,
           completedAt: null,
           leaseExpiresAt: null,
@@ -2738,6 +2744,8 @@ async function persistReplacementUploadAndJob(input: {
         status: "queued",
         attemptCount: 0,
         queuedAt: input.uploadedAt,
+        nextAttemptAt: input.uploadedAt,
+        claimGeneration: 0,
         startedAt: null,
         completedAt: null,
         leaseExpiresAt: null,
@@ -2994,6 +3002,14 @@ function workerJobDto(job: Record<string, any>): EstimateWorkerJobRecord {
     status: job.status as EstimateDesignExtractionStatus,
     attemptCount: Number(job.attemptCount),
     queuedAt: new Date(job.queuedAt).toISOString(),
+    nextAttemptAt:
+      job.nextAttemptAt === null || job.nextAttemptAt === undefined
+        ? (job.status === "queued" ? new Date(job.queuedAt).toISOString() : null)
+        : new Date(job.nextAttemptAt).toISOString(),
+    claimGeneration:
+      Number.isSafeInteger(job.claimGeneration) && job.claimGeneration >= 0
+        ? job.claimGeneration
+        : 0,
     leaseExpiresAt: job.leaseExpiresAt ? new Date(job.leaseExpiresAt).toISOString() : null,
     claimId: job.claimId === null || job.claimId === undefined ? null : String(job.claimId)
   };

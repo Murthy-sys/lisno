@@ -15,6 +15,11 @@ Copy `.env.example` to `.env` and configure:
 - `OCR_WORKER_TOKEN`, shared only with the Python worker and never exposed to
   browser code;
 - `OCR_LEASE_SECONDS` (default 300) and `OCR_CONFIDENCE_FLOOR` (default 0.2).
+- `OCR_MAX_ATTEMPTS` (default 5), `OCR_RETRY_INITIAL_SECONDS` (default 30),
+  and `OCR_RETRY_MAX_SECONDS` (default 900) use seconds. The maximum delay
+  must not be below the initial delay. Queued retries are eligible only at
+  `nextAttemptAt`, terminal jobs have no next attempt, and a manual retry
+  resets a failed job for a new attempt.
 
 The backend accepts PDF, PNG, JPEG/JPG, WebP, TIFF/TIF, and HEIC/HEIF estimate
 uploads only when the claimed type matches the file signature. Stored originals,

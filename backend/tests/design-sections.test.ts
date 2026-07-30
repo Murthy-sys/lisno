@@ -52,6 +52,8 @@ function sectionSeed(status: "designer_review" | "processing_failed" = "designer
     status,
     attemptCount: 1,
     queuedAt: NOW,
+    nextAttemptAt: status === "queued" ? NOW : null,
+    claimGeneration: 1,
     startedAt: NOW,
     completedAt: NOW,
     leaseExpiresAt: null,

@@ -181,6 +181,8 @@ function setup() {
     status: "queued",
     attemptCount: 0,
     queuedAt: new Date("2026-07-30T11:00:00.000Z"),
+    nextAttemptAt: new Date("2026-07-30T11:00:00.000Z"),
+    claimGeneration: 0,
     startedAt: null,
     completedAt: null,
     leaseExpiresAt: null,
@@ -637,7 +639,9 @@ describe("estimate design extraction and estimator verification", () => {
       uploadId: "upload-retry-order",
       status: "processing_failed",
       attemptCount: 1,
-      queuedAt: originalQueuedAt
+      queuedAt: originalQueuedAt,
+      nextAttemptAt: null,
+      claimGeneration: 1
     });
 
     job.queuedAt = retriedAt;
@@ -733,6 +737,8 @@ describe("estimate design extraction and estimator verification", () => {
       status: "queued",
       attemptCount: 0,
       queuedAt: "2026-07-30T10:00:00.000Z",
+      nextAttemptAt: "2026-07-30T10:00:00.000Z",
+      claimGeneration: 0,
       startedAt: null,
       completedAt: null,
       leaseExpiresAt: null,
@@ -787,6 +793,8 @@ describe("estimate design extraction and estimator verification", () => {
         status: "queued",
         attemptCount: 0,
         queuedAt: "2026-07-30T11:30:00.000Z",
+        nextAttemptAt: "2026-07-30T11:30:00.000Z",
+        claimGeneration: 0,
         startedAt: null,
         completedAt: null,
         leaseExpiresAt: null,
@@ -1805,6 +1813,8 @@ describe("estimate design extraction and estimator verification", () => {
       status: "queued",
       attemptCount: 0,
       queuedAt: "2026-07-30T11:30:00.000Z",
+      nextAttemptAt: "2026-07-30T11:30:00.000Z",
+      claimGeneration: 0,
       startedAt: null,
       completedAt: null,
       leaseExpiresAt: null,

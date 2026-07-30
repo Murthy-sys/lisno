@@ -1858,6 +1858,15 @@ function mapExtractionJob(document: PlainDocument): DesignExtractionJobRecord {
     status: document.status,
     attemptCount: document.attemptCount,
     queuedAt: iso(document.queuedAt),
+    nextAttemptAt:
+      document.nextAttemptAt === null || document.nextAttemptAt === undefined
+        ? (document.status === "queued" ? iso(document.queuedAt) : null)
+        : iso(document.nextAttemptAt),
+    claimGeneration:
+      Number.isSafeInteger(document.claimGeneration) &&
+      document.claimGeneration >= 0
+        ? document.claimGeneration
+        : 0,
     startedAt: nullableIso(document.startedAt),
     completedAt: nullableIso(document.completedAt),
     leaseExpiresAt: nullableIso(document.leaseExpiresAt),
@@ -2047,6 +2056,15 @@ function extractionJobForMongo(input: NewDesignExtractionJob): PlainDocument {
     _id: input.id,
     id: undefined,
     queuedAt: date(input.queuedAt),
+    nextAttemptAt:
+      input.nextAttemptAt === null
+        ? null
+        : input.nextAttemptAt !== undefined
+          ? date(input.nextAttemptAt)
+          : input.status === "queued"
+            ? date(input.queuedAt)
+            : null,
+    claimGeneration: input.claimGeneration ?? 0,
     startedAt: input.startedAt ? date(input.startedAt) : null,
     completedAt: input.completedAt ? date(input.completedAt) : null,
     leaseExpiresAt: input.leaseExpiresAt ? date(input.leaseExpiresAt) : null,

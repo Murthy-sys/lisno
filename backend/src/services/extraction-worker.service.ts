@@ -3,6 +3,10 @@ import { randomUUID } from "node:crypto";
 import sharp from "sharp";
 import { ApiError } from "../middleware/errors.js";
 import {
+  defaultExtractionRetryPolicy,
+  type ExtractionRetryPolicy
+} from "../domain/extraction-lifecycle.js";
+import {
   RepositoryConflictError,
   RepositoryNotFoundError,
   type AppRepository,
@@ -125,7 +129,8 @@ export function createExtractionWorkerService(
   leaseSeconds: number,
   maxImageBytes: number,
   confidenceFloor: number,
-  estimateDesigns?: EstimateDesignService
+  estimateDesigns?: EstimateDesignService,
+  _ocrRetryPolicy: ExtractionRetryPolicy = defaultExtractionRetryPolicy
 ): ExtractionWorkerService {
   return {
     async claim() {
@@ -276,6 +281,8 @@ export function createExtractionWorkerService(
             status: renewed.status as DesignExtractionJobRecord["status"],
             attemptCount: renewed.attemptCount,
             queuedAt: renewed.queuedAt,
+            nextAttemptAt: renewed.nextAttemptAt,
+            claimGeneration: renewed.claimGeneration,
             startedAt: null,
             completedAt: null,
             leaseExpiresAt: renewed.leaseExpiresAt,
@@ -447,6 +454,8 @@ export function createExtractionWorkerService(
           status: failed.status as DesignExtractionJobRecord["status"],
           attemptCount: failed.attemptCount,
           queuedAt: failed.queuedAt,
+          nextAttemptAt: failed.nextAttemptAt,
+          claimGeneration: failed.claimGeneration,
           startedAt: null,
           completedAt: failedAt,
           leaseExpiresAt: null,
