@@ -1,9 +1,20 @@
 import { Readable } from "node:stream";
+import mongoose from "mongoose";
 import { PDFDocument } from "pdf-lib";
 import request from "supertest";
-import { beforeAll, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { createApp } from "../src/app.js";
+import { EstimateDesignAnnotationDraftModel } from "../src/models/EstimateDesignAnnotationDraft.js";
+import { EstimateDesignDrawingModel } from "../src/models/EstimateDesignDrawing.js";
+import { EstimateDesignExtractionJobModel } from "../src/models/EstimateDesignExtractionJob.js";
+import { EstimateDesignRevisionModel } from "../src/models/EstimateDesignRevision.js";
+import { EstimateDesignSourcePageModel } from "../src/models/EstimateDesignSourcePage.js";
+import { EstimateDesignUploadModel } from "../src/models/EstimateDesignUpload.js";
+import { EstimateModel } from "../src/models/Estimate.js";
+import { LeadModel } from "../src/models/Lead.js";
+import { ProjectModel } from "../src/models/Project.js";
+import { UserModel } from "../src/models/User.js";
 import { createMemoryRepository } from "../src/repositories/memory.js";
 import { demoSeedData } from "../src/seed/data.js";
 
@@ -44,6 +55,303 @@ class JourneyStorage {
   }
   async open(reference: string) { const data = this.files.get(reference); if (!data) throw new Error("missing file"); return Readable.from(data); }
 }
+
+function modelQuery<T>(value: T) {
+  const result: Record<string, any> = {
+    sort: vi.fn(),
+    select: vi.fn(),
+    session: vi.fn(),
+    lean: vi.fn(async () => value),
+    exec: vi.fn(async () => value)
+  };
+  result.sort.mockReturnValue(result);
+  result.select.mockReturnValue(result);
+  result.session.mockReturnValue(result);
+  result.then = (
+    resolve: (resolved: T) => unknown,
+    reject: (error: unknown) => unknown
+  ) => Promise.resolve(value).then(resolve, reject);
+  return result;
+}
+
+function modelMatches(
+  record: Record<string, any>,
+  filter: Record<string, any>
+): boolean {
+  if (
+    filter.$or &&
+    !filter.$or.some((branch: Record<string, any>) =>
+      modelMatches(record, branch)
+    )
+  ) {
+    return false;
+  }
+  for (const [key, expected] of Object.entries(filter)) {
+    if (key === "$or") continue;
+    const actual = record[key];
+    if (expected && typeof expected === "object" && !(expected instanceof Date)) {
+      if ("$in" in expected && !expected.$in.includes(actual)) return false;
+      if ("$gt" in expected && !(new Date(actual) > expected.$gt)) return false;
+      continue;
+    }
+    if (actual !== expected) return false;
+  }
+  return true;
+}
+
+function applyModelUpdate(
+  record: Record<string, any>,
+  update: Record<string, any>
+) {
+  Object.assign(record, update.$set ?? {});
+  for (const [key, amount] of Object.entries(update.$inc ?? {})) {
+    record[key] = Number(record[key] ?? 0) + Number(amount);
+  }
+  for (const [key, value] of Object.entries(update.$push ?? {})) {
+    const additions =
+      value && typeof value === "object" && "$each" in value
+        ? value.$each
+        : [value];
+    record[key] ??= [];
+    record[key].push(...additions);
+  }
+  for (const key of Object.keys(update.$currentDate ?? {})) {
+    record[key] = new Date("2026-07-30T15:00:00.000Z");
+  }
+}
+
+function setupEstimateDrawingJourneyModels() {
+  const estimates: Array<Record<string, any>> = [{
+    _id: "estimate-journey",
+    leadId: "lead-journey",
+    ownerId: "user-estimator-sales",
+    status: "draft",
+    version: 1,
+    designLifecycleVersion: 0,
+    designFrozenAt: null,
+    assignedDesignerId: "user-designer-ananya",
+    rooms: [
+      { id: "room-living", label: "Living Room", aliases: ["living hall"] },
+      { id: "room-bedroom", label: "Bedroom", aliases: ["bed room"] }
+    ],
+    scopes: ["FC", "EL", "WE", "FL"],
+    lineItems: [{
+      catalogueId: "FC",
+      roomName: "Living Room",
+      specification: "False ceiling",
+      unit: "sqft",
+      rate: 100,
+      quantity: 10,
+      included: true,
+      amount: 1000
+    }],
+    total: 1180,
+    reviews: [],
+    notifications: [],
+    async save() {
+      return this;
+    },
+    toObject() {
+      return { ...this };
+    }
+  }];
+  const leads: Array<Record<string, any>> = [{
+    _id: "lead-journey",
+    ownerId: "user-estimator-sales",
+    clientName: "Rhea Kapoor",
+    clientEmail: "client@aurora.example",
+    clientMobile: "+91 90000 00000",
+    projectName: "Estimate Drawing Journey",
+    location: "Bengaluru",
+    stage: "estimate_in_progress"
+  }];
+  const uploads: Array<Record<string, any>> = [];
+  const jobs: Array<Record<string, any>> = [];
+  const pages: Array<Record<string, any>> = [];
+  const drawings: Array<Record<string, any>> = [];
+  const revisions: Array<Record<string, any>> = [];
+  const drafts: Array<Record<string, any>> = [];
+  const projects: Array<Record<string, any>> = [];
+  const session = {
+    withTransaction: vi.fn(async (operation: () => Promise<unknown>) =>
+      operation()
+    ),
+    endSession: vi.fn(async () => undefined)
+  };
+  vi.spyOn(mongoose, "startSession").mockResolvedValue(session as never);
+
+  vi.spyOn(EstimateModel, "findById").mockImplementation((id) =>
+    modelQuery(estimates.find((record) => record._id === id) ?? null) as never
+  );
+  vi.spyOn(EstimateModel, "findOne").mockImplementation((filter) =>
+    modelQuery(
+      estimates.find((record) => modelMatches(record, filter as never)) ?? null
+    ) as never
+  );
+  vi.spyOn(EstimateModel, "updateOne").mockImplementation(async (filter, update) => {
+    const record = estimates.find((item) => modelMatches(item, filter as never));
+    if (record) applyModelUpdate(record, update as never);
+    return { matchedCount: record ? 1 : 0, modifiedCount: record ? 1 : 0 } as never;
+  });
+  vi.spyOn(LeadModel, "findById").mockImplementation((id) =>
+    modelQuery(leads.find((record) => record._id === id) ?? null) as never
+  );
+  vi.spyOn(LeadModel, "findOne").mockImplementation((filter) =>
+    modelQuery(
+      leads.find((record) => modelMatches(record, filter as never)) ?? null
+    ) as never
+  );
+  vi.spyOn(LeadModel, "updateOne").mockImplementation(async (filter, update) => {
+    const record = leads.find((item) => modelMatches(item, filter as never));
+    if (record) applyModelUpdate(record, update as never);
+    return { matchedCount: record ? 1 : 0, modifiedCount: record ? 1 : 0 } as never;
+  });
+
+  vi.spyOn(EstimateDesignUploadModel, "create").mockImplementation(async (input) => {
+    uploads.push(...(input as Array<Record<string, any>>));
+    return input as never;
+  });
+  vi.spyOn(EstimateDesignUploadModel, "findById").mockImplementation((id) =>
+    modelQuery(uploads.find((record) => record._id === id) ?? null) as never
+  );
+  vi.spyOn(EstimateDesignUploadModel, "find").mockImplementation((filter) =>
+    modelQuery(uploads.filter((record) => modelMatches(record, filter as never))) as never
+  );
+  vi.spyOn(EstimateDesignUploadModel, "updateOne").mockImplementation(async (filter, update) => {
+    const record = uploads.find((item) => modelMatches(item, filter as never));
+    if (record) applyModelUpdate(record, update as never);
+    return { matchedCount: record ? 1 : 0, modifiedCount: record ? 1 : 0 } as never;
+  });
+
+  vi.spyOn(EstimateDesignExtractionJobModel, "create").mockImplementation(async (input) => {
+    jobs.push(...(input as Array<Record<string, any>>));
+    return input as never;
+  });
+  vi.spyOn(EstimateDesignExtractionJobModel, "findById").mockImplementation((id) =>
+    modelQuery(jobs.find((record) => record._id === id) ?? null) as never
+  );
+  vi.spyOn(EstimateDesignExtractionJobModel, "findOne").mockImplementation((filter) =>
+    modelQuery(
+      jobs.find((record) => modelMatches(record, filter as never)) ?? null
+    ) as never
+  );
+  vi.spyOn(EstimateDesignExtractionJobModel, "findOneAndUpdate").mockImplementation((filter, update) => {
+    const record = jobs.find((item) => modelMatches(item, filter as never)) ?? null;
+    if (record) applyModelUpdate(record, update as never);
+    return modelQuery(record) as never;
+  });
+  vi.spyOn(EstimateDesignExtractionJobModel, "updateOne").mockImplementation(async (filter, update) => {
+    const record = jobs.find((item) => modelMatches(item, filter as never));
+    if (record) applyModelUpdate(record, update as never);
+    return { matchedCount: record ? 1 : 0, modifiedCount: record ? 1 : 0 } as never;
+  });
+
+  vi.spyOn(EstimateDesignSourcePageModel, "create").mockImplementation(async (input) => {
+    pages.push(...(input as Array<Record<string, any>>));
+    return input as never;
+  });
+  vi.spyOn(EstimateDesignSourcePageModel, "findById").mockImplementation((id) =>
+    modelQuery(pages.find((record) => record._id === id) ?? null) as never
+  );
+  vi.spyOn(EstimateDesignSourcePageModel, "find").mockImplementation((filter) =>
+    modelQuery(pages.filter((record) => modelMatches(record, filter as never))) as never
+  );
+
+  vi.spyOn(EstimateDesignDrawingModel, "create").mockImplementation(async (input) => {
+    drawings.push(...(input as Array<Record<string, any>>));
+    return input as never;
+  });
+  vi.spyOn(EstimateDesignDrawingModel, "findById").mockImplementation((id) =>
+    modelQuery(drawings.find((record) => record._id === id) ?? null) as never
+  );
+  vi.spyOn(EstimateDesignDrawingModel, "find").mockImplementation((filter) =>
+    modelQuery(drawings.filter((record) => modelMatches(record, filter as never))) as never
+  );
+  vi.spyOn(EstimateDesignDrawingModel, "updateOne").mockImplementation(async (filter, update) => {
+    const record = drawings.find((item) => modelMatches(item, filter as never));
+    if (record) applyModelUpdate(record, update as never);
+    return { matchedCount: record ? 1 : 0, modifiedCount: record ? 1 : 0 } as never;
+  });
+
+  vi.spyOn(EstimateDesignRevisionModel, "create").mockImplementation(async (input) => {
+    revisions.push(...(input as Array<Record<string, any>>));
+    return input as never;
+  });
+  vi.spyOn(EstimateDesignRevisionModel, "findById").mockImplementation((id) =>
+    modelQuery(revisions.find((record) => record._id === id) ?? null) as never
+  );
+  vi.spyOn(EstimateDesignRevisionModel, "find").mockImplementation((filter) =>
+    modelQuery(revisions.filter((record) => modelMatches(record, filter as never))) as never
+  );
+  vi.spyOn(EstimateDesignRevisionModel, "findOne").mockImplementation((filter) => {
+    const candidates = revisions
+      .filter((record) => modelMatches(record, filter as never))
+      .sort((left, right) => right.revisionNumber - left.revisionNumber);
+    return modelQuery(candidates[0] ?? null) as never;
+  });
+  vi.spyOn(EstimateDesignRevisionModel, "updateOne").mockImplementation(async (filter, update) => {
+    const record = revisions.find((item) => modelMatches(item, filter as never));
+    if (record) applyModelUpdate(record, update as never);
+    return { matchedCount: record ? 1 : 0, modifiedCount: record ? 1 : 0 } as never;
+  });
+  vi.spyOn(EstimateDesignRevisionModel, "updateMany").mockImplementation(async (filter, update) => {
+    const matched = revisions.filter((record) => modelMatches(record, filter as never));
+    matched.forEach((record) => applyModelUpdate(record, update as never));
+    return { matchedCount: matched.length, modifiedCount: matched.length } as never;
+  });
+
+  vi.spyOn(EstimateDesignAnnotationDraftModel, "findOne").mockImplementation((filter) =>
+    modelQuery(drafts.find((record) => modelMatches(record, filter as never)) ?? null) as never
+  );
+  vi.spyOn(EstimateDesignAnnotationDraftModel, "findOneAndUpdate").mockImplementation((filter, update) => {
+    let record = drafts.find((item) => modelMatches(item, filter as never));
+    if (!record && filter.version === 0) {
+      record = {
+        _id: update.$setOnInsert._id,
+        revisionId: filter.revisionId,
+        clientId: filter.clientId,
+        version: 0
+      };
+      drafts.push(record);
+    }
+    if (record) applyModelUpdate(record, update as never);
+    return modelQuery(record ?? null) as never;
+  });
+  vi.spyOn(EstimateDesignAnnotationDraftModel, "deleteOne").mockImplementation(async (filter) => {
+    const index = drafts.findIndex((record) => modelMatches(record, filter as never));
+    if (index >= 0) drafts.splice(index, 1);
+    return { deletedCount: index >= 0 ? 1 : 0 } as never;
+  });
+
+  const team = new Map([
+    ["user-designer-ananya", {
+      _id: "user-designer-ananya",
+      name: "Ananya Rao",
+      email: "ananya@lisno.example",
+      role: "designer",
+      active: true,
+      managerId: "user-manager-aarav"
+    }],
+    ["user-manager-aarav", {
+      _id: "user-manager-aarav",
+      name: "Aarav Mehta",
+      email: "aarav@lisno.example",
+      role: "design_manager",
+      active: true
+    }]
+  ]);
+  vi.spyOn(UserModel, "findById").mockImplementation((id) =>
+    modelQuery(team.get(String(id)) ?? null) as never
+  );
+  vi.spyOn(ProjectModel, "create").mockImplementation(async (input) => {
+    projects.push(...(input as Array<Record<string, any>>));
+    return input as never;
+  });
+
+  return { estimates, leads, uploads, jobs, pages, drawings, revisions, drafts, projects };
+}
+
+afterEach(() => vi.restoreAllMocks());
 
 describe("complete cross-role journey", () => {
   it("links every unclaimed mixed-case client project through upload, review, and revision history", async () => {
@@ -629,5 +937,319 @@ describe("complete cross-role journey", () => {
     const latest = await request(app).get("/api/v1/client/latest-approved-versions").set("Authorization", client);
     const latestClientVersionIds = latest.body.data.map((version: { id: string }) => version.id);
     expect(latestClientVersionIds).not.toContain(celesteVersion.body.data.id);
+  });
+
+  it("moves estimate drawings from OCR correction through annotated replacement into project creation", async () => {
+    const state = setupEstimateDrawingJourneyModels();
+    const seed = structuredClone(demoSeedData);
+    seed.leads.push({
+      id: "lead-journey",
+      ownerId: "user-estimator-sales",
+      clientName: "Rhea Kapoor",
+      clientEmail: "client@aurora.example",
+      clientMobile: "+91 90000 00000",
+      projectName: "Estimate Drawing Journey",
+      location: "Bengaluru",
+      propertyType: "Apartment",
+      budgetMin: null,
+      budgetMax: null,
+      source: "Referral",
+      stage: "estimate_in_progress",
+      nextAction: "prepare estimate",
+      nextActionAt: "2026-07-30T15:00:00.000Z",
+      builder: null,
+      areaSqft: null,
+      targetHandoverAt: null,
+      notes: null,
+      latestActivityAt: null,
+      createdAt: "2026-07-30T12:00:00.000Z",
+      updatedAt: "2026-07-30T12:00:00.000Z"
+    });
+    const storage = new JourneyStorage();
+    const app = createApp({
+      repository: createMemoryRepository(seed),
+      storage,
+      auth: {
+        jwtSecret: "journey-secret-that-is-at-least-thirty-two-characters",
+        jwtExpiresInSeconds: 900
+      },
+      clock: () => new Date("2026-07-30T15:00:00.000Z"),
+      ocrWorkerToken: workerToken,
+      enableEstimateDesignJobs: true
+    });
+    const login = async (email: string) => {
+      const response = await request(app)
+        .post("/api/v1/auth/login")
+        .send({ email, password })
+        .expect(200);
+      return `Bearer ${response.body.data.token}`;
+    };
+    const estimator = await login("sales@lisno.example");
+    const client = await login("client@aurora.example");
+
+    const uploaded = await request(app)
+      .post("/api/v1/estimates/estimate-journey/design-uploads")
+      .set("Authorization", estimator)
+      .attach("file", PDF, {
+        filename: "estimate-review.pdf",
+        contentType: "application/pdf"
+      })
+      .expect(201);
+    const job = state.jobs.find((item) => item.uploadId === uploaded.body.data.id)!;
+
+    const claim = await request(app)
+      .post("/api/v1/internal/extraction-jobs/claim")
+      .set("Authorization", `Bearer ${workerToken}`)
+      .send()
+      .expect(200);
+    expect(claim.body.data).toMatchObject({
+      id: job._id,
+      kind: "estimate_design",
+      taxonomy: {
+        rooms: expect.arrayContaining([
+          expect.objectContaining({ id: "room-living" }),
+          expect.objectContaining({ id: "room-bedroom" })
+        ]),
+        scopes: expect.arrayContaining([
+          expect.objectContaining({ id: "FC" }),
+          expect.objectContaining({ id: "FL" })
+        ])
+      }
+    });
+
+    await request(app)
+      .post(`/api/v1/internal/extraction-jobs/${job._id}/complete`)
+      .set("Authorization", `Bearer ${workerToken}`)
+      .set("X-Extraction-Claim-Token", claim.body.data.claimToken)
+      .send({
+        kind: "estimate_design",
+        resultId: "estimate-review-result",
+        pages: [{
+          pageNumber: 1,
+          width: 2,
+          height: 2,
+          imageBase64: PNG.toString("base64"),
+          sections: [
+            {
+              label: "Living Room False Ceiling",
+              confidence: 0.98,
+              crop: { x: 0, y: 0, width: 1, height: 1 },
+              imageBase64: CROP_PNG.toString("base64"),
+              proposal: {
+                detectedTitle: "Living Room False Ceiling",
+                room: {
+                  id: "room-living",
+                  confidence: 1,
+                  evidence: ["living room"],
+                  ambiguous: false
+                },
+                scope: {
+                  id: "FC",
+                  confidence: 1,
+                  evidence: ["false ceiling"],
+                  ambiguous: false
+                }
+              }
+            },
+            {
+              label: "Bedroom Floorimg",
+              confidence: 0.91,
+              crop: { x: 1, y: 0, width: 1, height: 1 },
+              imageBase64: CROP_PNG.toString("base64"),
+              proposal: {
+                detectedTitle: "Bedroom Floorimg",
+                room: {
+                  id: null,
+                  confidence: 0.88,
+                  evidence: ["bedroom"],
+                  ambiguous: true
+                },
+                scope: {
+                  id: "FL",
+                  confidence: 0.88,
+                  evidence: ["flooring"],
+                  ambiguous: false
+                }
+              }
+            }
+          ]
+        }]
+      })
+      .expect(200);
+
+    const estimatorWorkspace = await request(app)
+      .get("/api/v1/estimates/estimate-journey/design-uploads")
+      .set("Authorization", estimator)
+      .expect(200);
+    const living = estimatorWorkspace.body.data.drawings.find(
+      (drawing: { detectedTitle: string }) =>
+        drawing.detectedTitle === "Living Room False Ceiling"
+    );
+    const bedroom = estimatorWorkspace.body.data.drawings.find(
+      (drawing: { detectedTitle: string }) =>
+        drawing.detectedTitle === "Bedroom Floorimg"
+    );
+    expect(living).toMatchObject({
+      roomId: "room-living",
+      scopeSectionId: "FC",
+      verified: true
+    });
+    expect(bedroom).toMatchObject({
+      roomId: null,
+      scopeSectionId: "FL",
+      verified: false
+    });
+
+    const corrected = await request(app)
+      .patch(`/api/v1/estimate-design-drawings/${bedroom.id}`)
+      .set("Authorization", estimator)
+      .send({
+        version: 1,
+        displayTitle: "Bedroom Flooring",
+        roomId: "room-bedroom",
+        scopeSectionId: "FL",
+        verified: true
+      })
+      .expect(200);
+    expect(corrected.body.data).toMatchObject({
+      roomId: "room-bedroom",
+      scopeSectionId: "FL",
+      verified: true,
+      revision: { revisionNumber: 2, label: "Bedroom Flooring" }
+    });
+
+    await request(app)
+      .post("/api/v1/estimates/estimate-journey/design-drawings/submit")
+      .set("Authorization", estimator)
+      .send()
+      .expect(200);
+    await request(app)
+      .post("/api/v1/leads/lead-journey/estimate/submit")
+      .set("Authorization", estimator)
+      .send()
+      .expect(200);
+
+    const clientWorkspace = await request(app)
+      .get("/api/v1/client/estimates/estimate-journey/design-drawings")
+      .set("Authorization", client)
+      .expect(200);
+    const livingRevision = clientWorkspace.body.data.revisions.find(
+      (revision: { drawingId: string }) => revision.drawingId === living.id
+    );
+    const bedroomRevision = clientWorkspace.body.data.revisions.find(
+      (revision: { drawingId: string; revisionNumber: number }) =>
+        revision.drawingId === bedroom.id && revision.revisionNumber === 2
+    );
+    const annotations = {
+      schemaVersion: 1,
+      imageWidth: 1,
+      imageHeight: 1,
+      elements: [{
+        id: "mark-bedroom-floor",
+        type: "rectangle",
+        x: 0.1,
+        y: 0.1,
+        width: 0.4,
+        height: 0.4,
+        color: "#ef4444",
+        strokeWidth: 2
+      }]
+    };
+
+    await request(app)
+      .put(`/api/v1/client/estimate-design-revisions/${bedroomRevision.id}/annotation-draft`)
+      .set("Authorization", client)
+      .send({ version: 0, annotations })
+      .expect(200);
+    await request(app)
+      .post(`/api/v1/client/estimate-design-revisions/${livingRevision.id}/decision`)
+      .set("Authorization", client)
+      .send({ version: 1, decision: "approve" })
+      .expect(200);
+    await request(app)
+      .post(`/api/v1/client/estimate-design-revisions/${bedroomRevision.id}/decision`)
+      .set("Authorization", client)
+      .send({
+        version: 2,
+        decision: "request_changes",
+        summary: "Align the flooring boundary with the doorway.",
+        annotations
+      })
+      .expect(200);
+
+    const replacement = await request(app)
+      .post(`/api/v1/estimate-design-drawings/${bedroom.id}/replacement`)
+      .set("Authorization", estimator)
+      .field("version", "2")
+      .attach("file", PNG, {
+        filename: "bedroom-flooring-v2.png",
+        contentType: "image/png"
+      })
+      .expect(201);
+    expect(replacement.body.data.revision).toMatchObject({
+      revisionNumber: 3,
+      reviewStatus: "draft",
+      replacesRevisionId: bedroomRevision.id
+    });
+
+    await request(app)
+      .patch(`/api/v1/estimate-design-drawings/${bedroom.id}`)
+      .set("Authorization", estimator)
+      .send({ version: 3, verified: true })
+      .expect(200);
+    await request(app)
+      .post("/api/v1/estimates/estimate-journey/design-drawings/submit")
+      .set("Authorization", estimator)
+      .send()
+      .expect(200);
+
+    const replacementRevision = state.revisions
+      .filter((revision) => revision.drawingId === bedroom.id)
+      .sort((left, right) => right.revisionNumber - left.revisionNumber)[0]!;
+    await request(app)
+      .post(`/api/v1/client/estimate-design-revisions/${replacementRevision._id}/decision`)
+      .set("Authorization", client)
+      .send({
+        version: replacementRevision.revisionNumber,
+        decision: "approve"
+      })
+      .expect(200);
+
+    const finalApproval = await request(app)
+      .post("/api/v1/client/estimates/estimate-journey/decision")
+      .set("Authorization", client)
+      .send({ decision: "approve", note: "" })
+      .expect(200);
+
+    expect(finalApproval.body.data).toMatchObject({
+      status: "client_approved",
+      projectId: expect.stringMatching(/^project-/)
+    });
+    expect(state.projects).toContainEqual(expect.objectContaining({
+      _id: finalApproval.body.data.projectId,
+      name: "Estimate Drawing Journey",
+      clientId: "user-client-aurora",
+      managerId: "user-manager-aarav"
+    }));
+    expect(
+      state.revisions.filter((revision) => revision.drawingId === bedroom.id)
+    ).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        _id: bedroomRevision.id,
+        reviewStatus: "changes_requested",
+        changeSummary: "Align the flooring boundary with the doorway.",
+        annotations
+      }),
+      expect.objectContaining({
+        _id: replacement.body.data.revision.id,
+        reviewStatus: "draft",
+        replacesRevisionId: bedroomRevision.id
+      }),
+      expect.objectContaining({
+        _id: replacementRevision._id,
+        reviewStatus: "approved",
+        replacesRevisionId: replacement.body.data.revision.id
+      })
+    ]));
   });
 });

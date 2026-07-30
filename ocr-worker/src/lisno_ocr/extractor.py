@@ -25,11 +25,12 @@ from .contracts import (
 from .estimate_taxonomy import classify_estimate_drawing
 from .image_formats import ImageSourceError, open_source_pages
 from .settings import LayoutSettings
-from .title_classifier import OcrLine, classify_drawing_titles
+from .title_classifier import DrawingTitle, OcrLine, classify_drawing_titles
 
 
 _MAX_CLASSIFIER_LINES = 2_000
 _MAX_DRAWING_REGIONS = 2_000
+_AUTOMATIC_MATCH_CONFIDENCE = 0.84
 _TEXT_DENSE_REGION_LINE_COUNT = 5
 _TEXT_DENSE_REGION_AREA_RATIO = 0.12
 _RESERVED_REGION_PHRASES = (
@@ -145,6 +146,12 @@ class Extractor:
             self._accepted_plan_types,
             self._accepted_room_types,
         )
+        if self._estimate_taxonomy is not None:
+            titles = _with_estimate_taxonomy_titles(
+                titles,
+                eligible_lines,
+                self._estimate_taxonomy,
+            )
         title_boxes = tuple(title.box for title in titles)
         association_lines = tuple(
             line
@@ -269,6 +276,33 @@ class Extractor:
                 else None
             ),
         )
+
+
+def _with_estimate_taxonomy_titles(
+    classified: Sequence[DrawingTitle],
+    lines: Sequence[OcrLine],
+    taxonomy: EstimateTaxonomy,
+) -> tuple[DrawingTitle, ...]:
+    titles = list(classified)
+    existing_boxes = {title.box for title in titles}
+    for line in lines:
+        if line.box in existing_boxes:
+            continue
+        proposal = classify_estimate_drawing(line.text, taxonomy)
+        if (
+            proposal.room.confidence < _AUTOMATIC_MATCH_CONFIDENCE
+            or proposal.scope.confidence < _AUTOMATIC_MATCH_CONFIDENCE
+        ):
+            continue
+        titles.append(
+            DrawingTitle(
+                line.box,
+                " ".join(line.text.split()),
+                float(line.confidence),
+            )
+        )
+        existing_boxes.add(line.box)
+    return tuple(sorted(titles, key=lambda title: (title.box[1], title.box[0])))
 
 
 def _parse_predict_results(

@@ -19,6 +19,12 @@ python -m pip install -e ".[test,model]"
 The `model` extra installs PaddleOCR and PaddlePaddle. To run contract tests
 without the OCR runtime or model downloads, install only `-e ".[test]"`.
 
+`pillow-heif` is installed in the base worker environment. Deploy with a
+compatible prebuilt wheel that supplies native HEIF support, or install the
+platform libheif compiler/runtime prerequisites before building it. There is no
+pure-Python HEIC/HEIF decoder fallback. Verify decoding on the exact production
+Python and operating-system image.
+
 PaddleOCR downloads model files on the first real inference and reuses its local
 cache afterward. That first run can be much slower and needs network access and
 disk space. Warm the cache as the same operating-system user that runs the
@@ -76,14 +82,16 @@ production environments.
 
 ## Inputs and processing
 
-Supported uploads are multi-page PDF, PNG, JPEG, and WebP. PDFs are rendered in
-page order; images are decoded directly. Worker results contain PNG page images,
-PNG crops, one-based page numbers, pixel dimensions, confidence values, and
-bounded pixel crops. Only configured plan families and directional elevation
-titles seed proposals. Legends, notes, key plans, dimensions, symbols,
-standalone room labels, material callouts, sections, details, diagrams, and
-schedules are excluded before title matching. OCR labels and crops are proposals
-a designer must verify. At most 2,000 confidence-eligible OCR lines reach title
+Supported uploads are multi-page PDF, PNG, JPEG/JPG, WebP, TIFF/TIF, and
+HEIC/HEIF. PDFs are rendered in page order; TIFF pages and HEIC/HEIF images are
+decoded into normalized RGB pages. Worker results contain PNG page images, PNG
+crops, one-based page numbers, pixel dimensions, confidence values, and bounded
+pixel crops. Only configured plan families, directional elevation titles, or
+titles that meet both estimate room and scope taxonomy thresholds seed
+proposals. Legends, notes, key plans, dimensions, symbols, standalone room
+labels, material callouts, sections, details, diagrams, and schedules are
+excluded before title matching. OCR labels and crops are proposals an estimator
+must verify. At most 2,000 confidence-eligible OCR lines reach title
 classification and at most 500 accepted titles reach crop encoding per page.
 
 Common PaddleOCR title variants are normalized before classification. This
@@ -105,9 +113,12 @@ curl http://127.0.0.1:3000/api/v1/health
 
 The worker has no listening HTTP port. Monitor its process and backend extraction
 status. `processing_failed` exposes a bounded safe failure code and message. The
-original remains available, so the designer can retry or manually add sections.
-Failed callbacks use bounded retry; lease expiry lets another worker reclaim an
-abandoned job. Repeated `INVALID_SOURCE` indicates missing/unreadable storage,
+original remains available, so estimator/sales can safely retry the failed
+upload or manually correct/add a room, scope, title, and crop. Retry resets the
+existing failed upload/job pair; claim tokens, result IDs, transactions, and
+lease guards prevent stale or duplicate publication. Failed callbacks use
+bounded retry; lease expiry lets another worker reclaim an abandoned job.
+Repeated `INVALID_SOURCE` indicates missing/unreadable storage,
 `PDF_RENDER_FAILED` or `OCR_FAILED` indicates decoding/model trouble, and
 `RESULT_REJECTED` indicates a backend contract or bounds rejection.
 
