@@ -12,6 +12,9 @@ const estimateDesignUploadSchema = new Schema({
   uploaderId: { type: String, ref: "User", required: true, immutable: true },
   uploadedAt: { type: Date, required: true, immutable: true },
   extractionStatus: { type: String, required: true, enum: estimateDesignExtractionStatuses },
+  replacementDrawingId: { type: String, ref: "EstimateDesignDrawing", default: null, immutable: true },
+  replacesRevisionId: { type: String, ref: "EstimateDesignRevision", default: null, immutable: true },
+  replacementVersion: { type: Number, default: null, min: 1, immutable: true },
   failureCode: { type: String, default: null, maxlength: 64 },
   failureMessage: { type: String, default: null, maxlength: 500 }
 }, { timestamps: true, versionKey: false });

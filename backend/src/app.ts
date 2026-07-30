@@ -129,7 +129,8 @@ export function createApp(dependencies: AppDependencies) {
       )
     );
   }
-  app.use(express.json());
+  // Annotation documents are capped at 256 KiB by their domain schema.
+  app.use(express.json({ limit: "300kb" }));
   app.use("/api/v1", healthRouter);
   app.use("/api/v1", createAuthRouter(authService, authRateLimit));
   app.use(
@@ -139,7 +140,12 @@ export function createApp(dependencies: AppDependencies) {
   app.use("/api/v1", createProjectsRouter(authService, projectService));
   app.use(
     "/api/v1",
-    createLeadsRouter(authService, leadService, estimatePdfService)
+    createLeadsRouter(
+      authService,
+      leadService,
+      estimatePdfService,
+      estimateDesignService
+    )
   );
   app.use("/api/v1", createTasksRouter(authService, taskService));
   app.use("/api/v1", createOrganizationRouter(authService, hierarchyService));

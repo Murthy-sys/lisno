@@ -1,12 +1,18 @@
 import { randomUUID } from "node:crypto";
 
 import mongoose from "mongoose";
-import sharp from "sharp";
-import { isEstimateDesignEditable, type EstimateDesignExtractionStatus } from "../domain/estimate-design.js";
+import sharp, { type Metadata } from "sharp";
+import {
+  isEstimateDesignEditable,
+  type AnnotationDocumentV1,
+  type EstimateDesignExtractionStatus
+} from "../domain/estimate-design.js";
+import { normalizeEmail } from "../domain/email.js";
 import { estimateScopeCatalogue } from "../domain/estimate-scope-catalogue.js";
 import { ApiError } from "../middleware/errors.js";
 import type { ValidatedUpload } from "../middleware/upload.js";
 import { EstimateDesignDrawingModel } from "../models/EstimateDesignDrawing.js";
+import { EstimateDesignAnnotationDraftModel } from "../models/EstimateDesignAnnotationDraft.js";
 import { EstimateDesignExtractionJobModel } from "../models/EstimateDesignExtractionJob.js";
 import { EstimateDesignRevisionModel } from "../models/EstimateDesignRevision.js";
 import { EstimateDesignSourcePageModel } from "../models/EstimateDesignSourcePage.js";
@@ -103,6 +109,33 @@ export interface EditEstimateDrawingInput {
   verified?: boolean;
 }
 
+export interface SaveAnnotationDraftInput {
+  version: number;
+  annotations: AnnotationDocumentV1;
+}
+
+export type DrawingDecisionInput =
+  | { version: number; decision: "approve" }
+  | {
+      version: number;
+      decision: "request_changes";
+      summary: string;
+      annotations: AnnotationDocumentV1;
+    };
+
+export interface ReplaceDrawingInput {
+  version: number;
+  file: ValidatedUpload;
+}
+
+export interface EstimateDesignApprovalReadiness {
+  ready: boolean;
+  total: number;
+  approved: number;
+  awaitingReview: number;
+  changesRequested: number;
+}
+
 export interface EstimateDesignService {
   upload(user: AuthenticatedUser, estimateId: string, file: ValidatedUpload): Promise<EstimateDesignUploadDto>;
   listEstimator(user: AuthenticatedUser, estimateId: string): Promise<EstimateDesignWorkspaceDto>;
@@ -121,10 +154,55 @@ export interface EstimateDesignService {
   failWorkerJob(jobId: string, claimToken: string, failedAt: string, code: string, message: string): Promise<EstimateWorkerJobRecord | null>;
   editDrawing(user: AuthenticatedUser, drawingId: string, change: EditEstimateDrawingInput): Promise<Record<string, unknown>>;
   submitDrawings(user: AuthenticatedUser, estimateId: string): Promise<{ submittedCount: number }>;
+  listClient(user: AuthenticatedUser, estimateId: string): Promise<EstimateDesignWorkspaceDto & {
+    readiness: EstimateDesignApprovalReadiness;
+  }>;
+  saveAnnotationDraft(user: AuthenticatedUser, revisionId: string, input: SaveAnnotationDraftInput): Promise<Record<string, unknown>>;
+  decideDrawing(user: AuthenticatedUser, revisionId: string, input: DrawingDecisionInput): Promise<Record<string, unknown>>;
+  replaceDrawing(user: AuthenticatedUser, drawingId: string, input: ReplaceDrawingInput): Promise<Record<string, unknown>>;
+  approvalReadiness(
+    user: AuthenticatedUser,
+    estimateId: string,
+    session?: mongoose.ClientSession
+  ): Promise<EstimateDesignApprovalReadiness>;
 }
 
 export function createEstimateDesignService(input: CreateEstimateDesignServiceInput): EstimateDesignService {
   const now = input.now ?? (() => new Date());
+  const calculateApprovalReadiness = async (
+    user: AuthenticatedUser,
+    estimateId: string,
+    session?: mongoose.ClientSession
+  ): Promise<EstimateDesignApprovalReadiness> => {
+    await requireClientEstimate(user, estimateId, session);
+    const drawingQuery = EstimateDesignDrawingModel.find({
+      estimateId,
+      active: true
+    }).sort({ _id: 1 });
+    if (session) drawingQuery.session(session);
+    const drawings = await drawingQuery.lean();
+    let approved = 0;
+    let awaitingReview = 0;
+    let changesRequested = 0;
+    for (const drawing of drawings) {
+      const revisionQuery = EstimateDesignRevisionModel.findOne({
+        drawingId: drawing._id
+      }).sort({ revisionNumber: -1 });
+      if (session) revisionQuery.session(session);
+      const revision = await revisionQuery.lean();
+      if (revision?.reviewStatus === "approved") approved += 1;
+      else if (revision?.reviewStatus === "changes_requested") changesRequested += 1;
+      else awaitingReview += 1;
+    }
+    const total = drawings.length;
+    return {
+      ready: total === 0 || approved === total,
+      total,
+      approved,
+      awaitingReview,
+      changesRequested
+    };
+  };
 
   return {
     async upload(user, estimateId, file) {
@@ -195,6 +273,345 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
       };
     },
 
+    async listClient(user, estimateId) {
+      await requireClientEstimate(user, estimateId);
+      const drawings = await EstimateDesignDrawingModel.find({
+        estimateId,
+        active: true
+      }).sort({ _id: 1 }).lean();
+      const visibleDrawings: Array<Record<string, unknown>> = [];
+      const revisions: Array<Record<string, unknown>> = [];
+      const pages = new Map<string, Record<string, unknown>>();
+      const uploadIds = new Set<string>();
+      for (const drawing of drawings) {
+        const history = await EstimateDesignRevisionModel.find({
+          drawingId: drawing._id
+        }).sort({ revisionNumber: 1 }).lean();
+        const visibleHistory = history.filter((revision) =>
+          ["submitted", "approved", "changes_requested"].includes(
+            String(revision.reviewStatus)
+          )
+        );
+        const latest = visibleHistory.at(-1);
+        if (!latest) {
+          continue;
+        }
+        visibleDrawings.push(drawingDto(drawing));
+        const draft = latest.reviewStatus === "submitted"
+          ? await EstimateDesignAnnotationDraftModel.findOne({
+              revisionId: latest._id,
+              clientId: user.id
+            }).lean()
+          : null;
+        revisions.push(...visibleHistory.map((revision) => ({
+          ...revisionDto(revision),
+          annotationDraft:
+            String(revision._id) === String(latest._id) && draft
+              ? annotationDraftDto(draft)
+              : null
+        })));
+        uploadIds.add(String(drawing.uploadId));
+        const page = await EstimateDesignSourcePageModel.findById(latest.sourcePageId).lean();
+        if (page) pages.set(String(page._id), sourcePageDto(page));
+      }
+      const uploads = await EstimateDesignUploadModel.find({
+        _id: { $in: [...uploadIds] }
+      }).sort({ uploadedAt: -1, _id: -1 }).lean();
+      return {
+        uploads: uploads.map(uploadDto),
+        pages: [...pages.values()],
+        drawings: visibleDrawings,
+        revisions,
+        readiness: await calculateApprovalReadiness(user, estimateId)
+      };
+    },
+
+    async saveAnnotationDraft(user, revisionId, draftInput) {
+      await requireClientRevision(user, revisionId);
+      let draft: Record<string, any> | null = null;
+      try {
+        await withMongoTransaction(async (session) => {
+          const current = await requireClientRevision(user, revisionId, session);
+          if (current.revision.reviewStatus !== "submitted") drawingLocked();
+          const guarded = await EstimateDesignRevisionModel.updateOne(
+            {
+              _id: revisionId,
+              drawingId: current.drawing._id,
+              revisionNumber: current.revision.revisionNumber,
+              reviewStatus: "submitted"
+            },
+            {
+              $set: { reviewStatus: "submitted" },
+              $currentDate: { updatedAt: true }
+            },
+            { session }
+          );
+          requireMatchedTransition(guarded, staleAnnotation);
+          if (draftInput.version === 0) {
+            const existing = await EstimateDesignAnnotationDraftModel.findOne({
+              revisionId,
+              clientId: user.id
+            }).session(session).lean();
+            if (existing) staleAnnotation();
+          }
+          draft = await EstimateDesignAnnotationDraftModel.findOneAndUpdate(
+            {
+              revisionId,
+              clientId: user.id,
+              version: draftInput.version
+            },
+            {
+              $setOnInsert: { _id: randomUUID(), revisionId, clientId: user.id },
+              $set: { annotations: draftInput.annotations },
+              $inc: { version: 1 }
+            },
+            {
+              new: true,
+              upsert: draftInput.version === 0,
+              runValidators: true,
+              setDefaultsOnInsert: true,
+              session
+            }
+          ).lean();
+          if (!draft) staleAnnotation();
+        });
+      } catch (error) {
+        if (
+          typeof error === "object" &&
+          error !== null &&
+          "code" in error &&
+          error.code === 11000
+        ) {
+          staleAnnotation();
+        }
+        throw error;
+      }
+      if (!draft) throw new Error("Annotation draft transaction did not complete.");
+      return annotationDraftDto(draft);
+    },
+
+    async decideDrawing(user, revisionId, decision) {
+      const initial = await requireClientRevision(user, revisionId);
+      if (Number(initial.revision.revisionNumber) !== decision.version) staleDrawing();
+      if (
+        decision.decision === "approve" &&
+        initial.revision.reviewStatus === "approved" &&
+        String(initial.revision.reviewerId) === user.id
+      ) {
+        return revisionDto(initial.revision);
+      }
+      if (initial.revision.reviewStatus !== "submitted") drawingLocked();
+      if (
+        decision.decision === "request_changes" &&
+        (!decision.summary.trim() || decision.annotations.elements.length === 0)
+      ) {
+        throw new ApiError(
+          400,
+          "VALIDATION_ERROR",
+          "A change request needs a summary and at least one annotation.",
+          { annotations: "Add a marking or text note." }
+        );
+      }
+      let saved: Record<string, any> | null = null;
+      await withMongoTransaction(async (session) => {
+        const current = await requireClientRevision(user, revisionId, session);
+        if (Number(current.revision.revisionNumber) !== decision.version) staleDrawing();
+        if (
+          decision.decision === "approve" &&
+          current.revision.reviewStatus === "approved" &&
+          String(current.revision.reviewerId) === user.id
+        ) {
+          saved = current.revision;
+          return;
+        }
+        if (current.revision.reviewStatus !== "submitted") drawingLocked();
+        const reviewedAt = now();
+        const update = decision.decision === "approve"
+          ? {
+              reviewStatus: "approved",
+              reviewerId: user.id,
+              reviewedAt,
+              changeSummary: null,
+              annotations: null
+            }
+          : {
+              reviewStatus: "changes_requested",
+              reviewerId: user.id,
+              reviewedAt,
+              changeSummary: decision.summary,
+              annotations: decision.annotations
+            };
+        const changed = await EstimateDesignRevisionModel.updateOne(
+          {
+            _id: revisionId,
+            drawingId: current.drawing._id,
+            revisionNumber: decision.version,
+            reviewStatus: "submitted"
+          },
+          { $set: update },
+          { session, runValidators: true }
+        );
+        requireMatchedTransition(changed, staleDrawing);
+        const draftDeletion = EstimateDesignAnnotationDraftModel.deleteOne({
+          revisionId,
+          clientId: user.id
+        });
+        if ("session" in draftDeletion && typeof draftDeletion.session === "function") {
+          draftDeletion.session(session);
+        }
+        await draftDeletion;
+        const aggregate = await refreshUploadReviewStatus(
+          String(current.drawing.uploadId),
+          String(current.drawing.estimateId),
+          session
+        );
+        const sourcePage = await EstimateDesignSourcePageModel.findById(
+          current.revision.sourcePageId
+        ).session(session).lean();
+        if (
+          sourcePage &&
+          String(sourcePage.uploadId) !== String(current.drawing.uploadId)
+        ) {
+          await mirrorUploadReviewStatus(
+            String(sourcePage.uploadId),
+            String(current.drawing.estimateId),
+            aggregate,
+            session
+          );
+        }
+        saved = { ...current.revision, ...update };
+      });
+      if (!saved) throw new Error("Estimate drawing decision did not complete.");
+      return revisionDto(saved);
+    },
+
+    async replaceDrawing(user, drawingId, replacement) {
+      const drawing = await EstimateDesignDrawingModel.findById(drawingId).lean();
+      if (!drawing) throw estimateNotFound();
+      const estimate = await requireOwnedEstimate(user, String(drawing.estimateId));
+      if (estimate.status === "client_approved") drawingLocked();
+      const latest = await EstimateDesignRevisionModel.findOne({ drawingId })
+        .sort({ revisionNumber: -1 })
+        .lean();
+      if (
+        !latest ||
+        latest.reviewStatus !== "changes_requested" ||
+        Number(latest.revisionNumber) !== replacement.version ||
+        Boolean(latest.replacementUploadId)
+      ) {
+        staleReplacement();
+      }
+      if (replacement.file.sizeBytes > input.maxUploadBytes) {
+        throw new ApiError(413, "FILE_TOO_LARGE", "The uploaded file exceeds the configured size limit.");
+      }
+      if (
+        replacement.file.mimeType === "application/pdf" ||
+        replacement.file.mimeType === "image/heic"
+      ) {
+        return queueReplacement(user, estimate, drawing, latest, replacement.file);
+      }
+      let normalized: Buffer;
+      let metadata: Metadata;
+      try {
+        const image = sharp(replacement.file.data, { pages: 1, failOn: "error" });
+        metadata = await image.metadata();
+        if ((metadata.pages ?? 1) !== 1 || !metadata.width || !metadata.height) {
+          throw new ApiError(
+            400,
+            "INVALID_REPLACEMENT_IMAGE",
+            "A replacement must contain exactly one drawing image."
+          );
+        }
+        normalized = await image.png().toBuffer();
+      } catch (error) {
+        if (error instanceof ApiError) throw error;
+        throw new ApiError(
+          415,
+          "UNSUPPORTED_FILE_TYPE",
+          "The replacement image could not be decoded."
+        );
+      }
+      const references: string[] = [];
+      try {
+        const stored = await input.storage.saveGenerated({
+          data: normalized,
+          extension: ".png"
+        });
+        references.push(stored.reference);
+        const pageId = randomUUID();
+        const revision = {
+          _id: randomUUID(),
+          drawingId,
+          revisionNumber: replacement.version + 1,
+          sourcePageId: pageId,
+          crop: { x: 0, y: 0, width: metadata.width!, height: metadata.height! },
+          croppedFileReference: stored.reference,
+          roomId: String(latest.roomId),
+          scopeSectionId: String(latest.scopeSectionId),
+          label: String(latest.label),
+          reviewStatus: "draft",
+          submittedAt: null,
+          reviewerId: null,
+          reviewedAt: null,
+          changeSummary: null,
+          annotationLayerId: null,
+          annotations: null,
+          replacesRevisionId: latest._id
+        };
+        await withMongoTransaction(async (session) => {
+          const currentDrawing = await EstimateDesignDrawingModel.findById(drawingId)
+            .session(session)
+            .lean();
+          if (!currentDrawing) throw estimateNotFound();
+          await requireOwnedEstimate(user, String(currentDrawing.estimateId), session);
+          const current = await EstimateDesignRevisionModel.findOne({ drawingId })
+            .sort({ revisionNumber: -1 })
+            .session(session)
+            .lean();
+          if (
+            !current ||
+            String(current._id) !== String(latest._id) ||
+            Number(current.revisionNumber) !== replacement.version ||
+            current.reviewStatus !== "changes_requested" ||
+            Boolean(current.replacementUploadId)
+          ) {
+            staleReplacement();
+          }
+          await EstimateDesignSourcePageModel.create([{
+            _id: pageId,
+            uploadId: currentDrawing.uploadId,
+            pageNumber: await nextPageNumber(String(currentDrawing.uploadId), session),
+            normalizedFileReference: stored.reference,
+            width: metadata.width,
+            height: metadata.height
+          }], { session });
+          await EstimateDesignRevisionModel.create([revision], { session });
+          const drawingUpdated = await EstimateDesignDrawingModel.updateOne(
+            { _id: drawingId, active: true, verified: Boolean(currentDrawing.verified) },
+            { $set: { sourcePageId: pageId, verified: false } },
+            { session }
+          );
+          requireMatchedTransition(drawingUpdated, staleReplacement);
+          await transitionUploadForReplacement(
+            String(currentDrawing.uploadId),
+            String(currentDrawing.estimateId),
+            session
+          );
+        });
+        return {
+          ...drawingDto({ ...drawing, sourcePageId: pageId, verified: false }),
+          revision: revisionDto(revision)
+        };
+      } catch (error) {
+        await cleanupReferences(input.storage, references);
+        throw error;
+      }
+    },
+
+    approvalReadiness(user, estimateId, session) {
+      return calculateApprovalReadiness(user, estimateId, session);
+    },
+
     async sourceImage(user, pageId) {
       const page = await EstimateDesignSourcePageModel.findById(pageId).lean();
       if (!page) throw estimateNotFound();
@@ -209,7 +626,16 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
       if (!revision) throw estimateNotFound();
       const drawing = await EstimateDesignDrawingModel.findById(revision.drawingId).lean();
       if (!drawing) throw estimateNotFound();
-      await requireOwnedEstimate(user, drawing.estimateId);
+      if (user.role === "estimator_sales") {
+        await requireOwnedEstimate(user, String(drawing.estimateId));
+      } else if (
+        user.role === "client" &&
+        ["submitted", "approved", "changes_requested"].includes(String(revision.reviewStatus))
+      ) {
+        await requireClientEstimate(user, String(drawing.estimateId));
+      } else {
+        throw estimateNotFound();
+      }
       return openStoredImage(input.storage, revision.croppedFileReference);
     },
 
@@ -306,6 +732,19 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
       if (!upload || !estimate) throw estimateNotFound();
       const taxonomy = taxonomyForEstimate(estimate);
       const normalized = await normalizeEstimateResult(result, taxonomy, input.maxUploadBytes);
+      if (upload.replacementDrawingId) {
+        if (normalized.pages.length !== 1) {
+          invalidWorkerResult("A replacement must contain exactly one drawing image.");
+        }
+        return completeQueuedReplacement(
+          job,
+          upload,
+          claimToken,
+          processedAt,
+          result.resultId,
+          normalized.pages[0]!
+        );
+      }
       const references: string[] = [];
       try {
         const pageDocuments: Array<Record<string, unknown>> = [];
@@ -514,6 +953,18 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
           { session }
         );
         requireTransition(uploadUpdated, extractionStateConflict);
+        if (currentUpload.replacesRevisionId) {
+          const released = await EstimateDesignRevisionModel.updateOne(
+            {
+              _id: currentUpload.replacesRevisionId,
+              replacementUploadId: currentUpload._id,
+              reviewStatus: "changes_requested"
+            },
+            { $set: { replacementUploadId: null } },
+            { session }
+          );
+          requireMatchedTransition(released, extractionStateConflict);
+        }
       });
       return workerJobDto(failed!);
     },
@@ -522,13 +973,13 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
       const drawing = await EstimateDesignDrawingModel.findById(drawingId).lean();
       if (!drawing) throw estimateNotFound();
       const estimate = await requireOwnedEstimate(user, drawing.estimateId);
-      if (!isEstimateDesignEditable(estimate.status)) {
-        throw new ApiError(409, "ESTIMATE_DESIGN_LOCKED", "This estimate design is read-only.");
-      }
       const latest = await EstimateDesignRevisionModel.findOne({ drawingId })
         .sort({ revisionNumber: -1 })
         .lean();
       if (!latest) throw estimateNotFound();
+      if (!estimateAllowsDrawingEdit(String(estimate.status), latest)) {
+        throw new ApiError(409, "ESTIMATE_DESIGN_LOCKED", "This estimate design is read-only.");
+      }
       if (latest.reviewStatus === "approved" || latest.reviewStatus === "submitted") {
         throw new ApiError(409, "ESTIMATE_DRAWING_LOCKED", "This drawing revision is read-only.");
       }
@@ -580,7 +1031,7 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
             String(currentDrawing.estimateId),
             session
           );
-          if (!isEstimateDesignEditable(currentEstimate.status) || !currentDrawing.active) {
+          if (!currentDrawing.active) {
             drawingLocked();
           }
           const currentUpload = await EstimateDesignUploadModel.findById(
@@ -608,6 +1059,9 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
             .lean();
           if (!current || Number(current.revisionNumber) !== change.version) {
             staleDrawing();
+          }
+          if (!estimateAllowsDrawingEdit(String(currentEstimate.status), current)) {
+            drawingLocked();
           }
           if (!["draft", "changes_requested"].includes(String(current.reviewStatus))) {
             drawingLocked();
@@ -757,7 +1211,12 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
       let submittedCount = 0;
       await withMongoTransaction(async (session) => {
         const estimate = await requireOwnedEstimate(user, estimateId, session);
-        if (!isEstimateDesignEditable(estimate.status)) {
+        if (
+          !isEstimateDesignEditable(estimate.status) &&
+          !["sent_to_client", "client_changes_requested"].includes(
+            String(estimate.status)
+          )
+        ) {
           throw new ApiError(
             409,
             "ESTIMATE_DESIGN_LOCKED",
@@ -816,19 +1275,33 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
             drawing.scopeSectionId ?? null,
             taxonomy
           );
+          if (!revision || revision.reviewStatus === "changes_requested") {
+            unverifiedDrawings();
+          }
           if (
-            !drawing.verified ||
-            !revision ||
-            !["draft", "changes_requested"].includes(
-              String(revision.reviewStatus)
-            )
+            revision.reviewStatus !== "approved" &&
+            (!drawing.verified || revision.reviewStatus !== "draft")
           ) {
             unverifiedDrawings();
           }
         }
-        const uploadIds = [
-          ...new Set(drawings.map((drawing) => String(drawing.uploadId)))
-        ];
+        const draftLatest = latest.filter(
+          (revision): revision is Record<string, any> =>
+            Boolean(revision && revision.reviewStatus === "draft")
+        );
+        if (draftLatest.length === 0) unverifiedDrawings();
+        const uploadIdSet = new Set<string>();
+        for (let index = 0; index < drawings.length; index += 1) {
+          const revision = latest[index];
+          if (revision?.reviewStatus !== "draft") continue;
+          uploadIdSet.add(String(drawings[index]!.uploadId));
+          const sourcePage = await EstimateDesignSourcePageModel.findById(
+            revision.sourcePageId
+          ).session(session).lean();
+          if (!sourcePage) throw estimateNotFound();
+          uploadIdSet.add(String(sourcePage.uploadId));
+        }
+        const uploadIds = [...uploadIdSet];
         const uploadStates: Array<{
           upload: Record<string, any>;
           job: Record<string, any>;
@@ -853,9 +1326,9 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
           }
           uploadStates.push({ upload, job });
         }
-        const revisionIds = latest.map((revision) => revision!._id);
+        const revisionIds = draftLatest.map((revision) => revision._id);
         const updated = await EstimateDesignRevisionModel.updateMany(
-          { _id: { $in: revisionIds }, reviewStatus: { $in: ["draft", "changes_requested"] } },
+          { _id: { $in: revisionIds }, reviewStatus: { $in: ["draft"] } },
           { $set: { reviewStatus: "submitted", submittedAt } },
           { session }
         );
@@ -916,6 +1389,370 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
     }
     return estimate;
   }
+
+  async function requireClientEstimate(
+    user: AuthenticatedUser,
+    estimateId: string,
+    session?: mongoose.ClientSession
+  ) {
+    if (user.role !== "client") forbidden();
+    const estimateQuery = EstimateModel.findById(estimateId);
+    if (session) estimateQuery.session(session);
+    const estimate = await estimateQuery.lean();
+    if (
+      !estimate ||
+      !["sent_to_client", "client_changes_requested", "client_approved"].includes(
+        String(estimate.status)
+      )
+    ) {
+      throw estimateNotFound();
+    }
+    const leadQuery = LeadModel.findById(estimate.leadId);
+    if (session) leadQuery.session(session);
+    const lead = await leadQuery.lean();
+    if (
+      !lead ||
+      normalizeEmail(String(lead.clientEmail)) !== normalizeEmail(user.email)
+    ) {
+      throw estimateNotFound();
+    }
+    return { estimate, lead };
+  }
+
+  async function requireClientRevision(
+    user: AuthenticatedUser,
+    revisionId: string,
+    session?: mongoose.ClientSession
+  ) {
+    if (user.role !== "client") forbidden();
+    const revisionQuery = EstimateDesignRevisionModel.findById(revisionId);
+    if (session) revisionQuery.session(session);
+    const revision = await revisionQuery.lean();
+    if (!revision) throw estimateNotFound();
+    const drawingQuery = EstimateDesignDrawingModel.findById(revision.drawingId);
+    if (session) drawingQuery.session(session);
+    const drawing = await drawingQuery.lean();
+    if (!drawing || !drawing.active) throw estimateNotFound();
+    await requireClientEstimate(user, String(drawing.estimateId), session);
+    const latestQuery = EstimateDesignRevisionModel.findOne({
+      drawingId: drawing._id
+    }).sort({ revisionNumber: -1 });
+    if (session) latestQuery.session(session);
+    const latest = await latestQuery.lean();
+    if (!latest || String(latest._id) !== revisionId) throw estimateNotFound();
+    return { revision, drawing };
+  }
+
+  async function refreshUploadReviewStatus(
+    uploadId: string,
+    estimateId: string,
+    session: mongoose.ClientSession
+  ) {
+    const drawings = await EstimateDesignDrawingModel.find({
+      uploadId,
+      estimateId,
+      active: true
+    }).session(session).lean();
+    const statuses: string[] = [];
+    for (const drawing of drawings) {
+      const latest = await EstimateDesignRevisionModel.findOne({
+        drawingId: drawing._id
+      }).sort({ revisionNumber: -1 }).session(session).lean();
+      if (latest) statuses.push(String(latest.reviewStatus));
+    }
+    const aggregate = statuses.length > 0 && statuses.every((status) => status === "approved")
+      ? "approved"
+      : statuses.includes("changes_requested")
+        ? "changes_requested"
+        : "submitted";
+    const upload = await EstimateDesignUploadModel.updateOne(
+      {
+        _id: uploadId,
+        estimateId,
+        extractionStatus: { $in: ["submitted", "changes_requested", "approved"] }
+      },
+      { $set: { extractionStatus: aggregate } },
+      { session }
+    );
+    requireMatchedTransition(upload, extractionStateConflict);
+    const job = await EstimateDesignExtractionJobModel.updateOne(
+      {
+        uploadId,
+        status: { $in: ["submitted", "changes_requested", "approved"] }
+      },
+      { $set: { status: aggregate } },
+      { session }
+    );
+    requireMatchedTransition(job, extractionStateConflict);
+    return aggregate;
+  }
+
+  async function mirrorUploadReviewStatus(
+    uploadId: string,
+    estimateId: string,
+    aggregate: "submitted" | "changes_requested" | "approved",
+    session: mongoose.ClientSession
+  ) {
+    const upload = await EstimateDesignUploadModel.updateOne(
+      {
+        _id: uploadId,
+        estimateId,
+        extractionStatus: {
+          $in: ["estimator_review", "submitted", "changes_requested", "approved"]
+        }
+      },
+      { $set: { extractionStatus: aggregate } },
+      { session }
+    );
+    requireMatchedTransition(upload, extractionStateConflict);
+    const job = await EstimateDesignExtractionJobModel.updateOne(
+      {
+        uploadId,
+        status: {
+          $in: ["estimator_review", "submitted", "changes_requested", "approved"]
+        }
+      },
+      { $set: { status: aggregate } },
+      { session }
+    );
+    requireMatchedTransition(job, extractionStateConflict);
+  }
+
+  async function transitionUploadForReplacement(
+    uploadId: string,
+    estimateId: string,
+    session: mongoose.ClientSession
+  ) {
+    const upload = await EstimateDesignUploadModel.updateOne(
+      { _id: uploadId, estimateId, extractionStatus: "changes_requested" },
+      { $set: { extractionStatus: "estimator_review" } },
+      { session }
+    );
+    requireTransition(upload, staleReplacement);
+    const job = await EstimateDesignExtractionJobModel.updateOne(
+      { uploadId, status: "changes_requested" },
+      { $set: { status: "estimator_review" } },
+      { session }
+    );
+    requireTransition(job, staleReplacement);
+  }
+
+  async function nextPageNumber(
+    uploadId: string,
+    session: mongoose.ClientSession
+  ) {
+    const pages = await EstimateDesignSourcePageModel.find({ uploadId })
+      .sort({ pageNumber: -1 })
+      .session(session)
+      .lean();
+    return pages.reduce(
+      (maximum, page) => Math.max(maximum, Number(page.pageNumber)),
+      0
+    ) + 1;
+  }
+
+  async function queueReplacement(
+    user: AuthenticatedUser,
+    estimate: Record<string, any> & { _id: string; leadId: string },
+    drawing: Record<string, any>,
+    revision: Record<string, any>,
+    file: ValidatedUpload
+  ) {
+    let stored: { reference: string };
+    try {
+      stored = await input.storage.save({ data: file.data, extension: file.extension });
+    } catch {
+      throw new ApiError(503, "FILE_STORAGE_ERROR", "The replacement file could not be stored.");
+    }
+    const uploadId = randomUUID();
+    const uploadedAt = now();
+    try {
+      await persistReplacementUploadAndJob({
+        uploadId,
+        estimate,
+        user,
+        file,
+        storedFileReference: stored.reference,
+        uploadedAt,
+        drawingId: String(drawing._id),
+        revisionId: String(revision._id),
+        version: Number(revision.revisionNumber)
+      });
+    } catch (error) {
+      await cleanupReferences(input.storage, [stored.reference]);
+      if (
+        typeof error === "object" &&
+        error !== null &&
+        "code" in error &&
+        error.code === 11000
+      ) {
+        staleReplacement();
+      }
+      throw error;
+    }
+    return {
+      queued: true,
+      upload: uploadDto({
+        _id: uploadId,
+        estimateId: estimate._id,
+        leadId: estimate.leadId,
+        originalFilename: file.originalFilename,
+        mimeType: file.mimeType,
+        sizeBytes: file.sizeBytes,
+        uploaderId: user.id,
+        uploadedAt,
+        extractionStatus: "queued",
+        failureCode: null,
+        failureMessage: null
+      })
+    };
+  }
+
+  async function completeQueuedReplacement(
+    job: Record<string, any>,
+    upload: Record<string, any>,
+    claimToken: string,
+    processedAt: string,
+    resultId: string,
+    page: {
+      pageNumber: number;
+      width: number;
+      height: number;
+      image: Buffer;
+    }
+  ) {
+    const stored = await saveGeneratedImage(input.storage, page.image);
+    const pageId = randomUUID();
+    const revisionId = randomUUID();
+    try {
+      await withMongoTransaction(async (session) => {
+        const currentJob = await EstimateDesignExtractionJobModel.findById(job._id)
+          .session(session)
+          .lean();
+        if (!currentJob) throw estimateNotFound();
+        requireEstimateClaim(currentJob, claimToken, processedAt);
+        const currentUpload = await EstimateDesignUploadModel.findById(upload._id)
+          .session(session)
+          .lean();
+        if (
+          !currentUpload ||
+          currentUpload.extractionStatus !== "processing" ||
+          String(currentUpload.replacementDrawingId) !==
+            String(upload.replacementDrawingId) ||
+          String(currentUpload.replacesRevisionId) !==
+            String(upload.replacesRevisionId) ||
+          Number(currentUpload.replacementVersion) !==
+            Number(upload.replacementVersion)
+        ) {
+          extractionStateConflict();
+        }
+        const drawing = await EstimateDesignDrawingModel.findById(
+          currentUpload.replacementDrawingId
+        ).session(session).lean();
+        if (
+          !drawing ||
+          !drawing.active ||
+          String(drawing.estimateId) !== String(currentUpload.estimateId)
+        ) {
+          staleReplacement();
+        }
+        const current = await EstimateDesignRevisionModel.findOne({
+          drawingId: drawing._id
+        }).sort({ revisionNumber: -1 }).session(session).lean();
+        if (
+          !current ||
+          String(current._id) !== String(currentUpload.replacesRevisionId) ||
+          Number(current.revisionNumber) !==
+            Number(currentUpload.replacementVersion) ||
+          current.reviewStatus !== "changes_requested"
+          || String(current.replacementUploadId) !== String(currentUpload._id)
+        ) {
+          staleReplacement();
+        }
+        await EstimateDesignSourcePageModel.create([{
+          _id: pageId,
+          uploadId: currentUpload._id,
+          pageNumber: 1,
+          normalizedFileReference: stored.reference,
+          width: page.width,
+          height: page.height
+        }], { session });
+        await EstimateDesignRevisionModel.create([{
+          _id: revisionId,
+          drawingId: drawing._id,
+          revisionNumber: Number(current.revisionNumber) + 1,
+          sourcePageId: pageId,
+          crop: { x: 0, y: 0, width: page.width, height: page.height },
+          croppedFileReference: stored.reference,
+          roomId: String(current.roomId),
+          scopeSectionId: String(current.scopeSectionId),
+          label: String(current.label),
+          reviewStatus: "draft",
+          submittedAt: null,
+          reviewerId: null,
+          reviewedAt: null,
+          changeSummary: null,
+          annotationLayerId: null,
+          annotations: null,
+          replacesRevisionId: current._id
+        }], { session });
+        const drawingUpdated = await EstimateDesignDrawingModel.updateOne(
+          { _id: drawing._id, active: true, verified: Boolean(drawing.verified) },
+          { $set: { sourcePageId: pageId, verified: false } },
+          { session }
+        );
+        requireMatchedTransition(drawingUpdated, staleReplacement);
+        const completed = await EstimateDesignExtractionJobModel.updateOne(
+          {
+            _id: currentJob._id,
+            uploadId: currentUpload._id,
+            status: "processing",
+            claimId: claimToken,
+            leaseExpiresAt: { $gt: new Date(processedAt) }
+          },
+          {
+            $set: {
+              status: "estimator_review",
+              completedAt: new Date(processedAt),
+              leaseExpiresAt: null,
+              claimId: null,
+              failureCode: null,
+              failureMessage: null,
+              workerResultId: resultId
+            }
+          },
+          { session }
+        );
+        requireTransition(completed, staleClaim);
+        const replacementUpload = await EstimateDesignUploadModel.updateOne(
+          {
+            _id: currentUpload._id,
+            estimateId: currentUpload.estimateId,
+            extractionStatus: "processing"
+          },
+          { $set: { extractionStatus: "estimator_review" } },
+          { session }
+        );
+        requireTransition(replacementUpload, extractionStateConflict);
+        await transitionUploadForReplacement(
+          String(drawing.uploadId),
+          String(drawing.estimateId),
+          session
+        );
+      });
+      return workerJobDto({
+        ...job,
+        status: "estimator_review",
+        completedAt: new Date(processedAt),
+        leaseExpiresAt: null,
+        claimId: null,
+        workerResultId: resultId
+      });
+    } catch (error) {
+      await cleanupReferences(input.storage, [stored.reference]);
+      throw error;
+    }
+  }
 }
 
 async function persistUploadAndJob(input: {
@@ -925,6 +1762,7 @@ async function persistUploadAndJob(input: {
   file: ValidatedUpload;
   storedFileReference: string;
   uploadedAt: Date;
+  replacement?: { drawingId: string; revisionId: string; version: number };
 }) {
   const session = await mongoose.startSession();
   let completed = false;
@@ -942,6 +1780,9 @@ async function persistUploadAndJob(input: {
           uploaderId: input.user.id,
           uploadedAt: input.uploadedAt,
           extractionStatus: "queued",
+          replacementDrawingId: input.replacement?.drawingId ?? null,
+          replacesRevisionId: input.replacement?.revisionId ?? null,
+          replacementVersion: input.replacement?.version ?? null,
           failureCode: null,
           failureMessage: null
         }],
@@ -967,6 +1808,96 @@ async function persistUploadAndJob(input: {
       completed = true;
     });
     if (!completed) throw new Error("MongoDB transaction did not complete.");
+  } finally {
+    await session.endSession().catch(() => undefined);
+  }
+}
+
+async function persistReplacementUploadAndJob(input: {
+  uploadId: string;
+  estimate: { _id: string; leadId: string };
+  user: AuthenticatedUser;
+  file: ValidatedUpload;
+  storedFileReference: string;
+  uploadedAt: Date;
+  drawingId: string;
+  revisionId: string;
+  version: number;
+}) {
+  const session = await mongoose.startSession();
+  try {
+    await session.withTransaction(async () => {
+      const drawing = await EstimateDesignDrawingModel.findById(input.drawingId)
+        .session(session)
+        .lean();
+      const estimate = drawing
+        ? await EstimateModel.findOne({
+            _id: drawing.estimateId,
+            ownerId: input.user.id
+          }).session(session).lean()
+        : null;
+      const latest = drawing
+        ? await EstimateDesignRevisionModel.findOne({
+            drawingId: drawing._id
+          }).sort({ revisionNumber: -1 }).session(session).lean()
+        : null;
+      if (
+        input.user.role !== "estimator_sales" ||
+        !drawing ||
+        !drawing.active ||
+        !estimate ||
+        String(estimate._id) !== String(input.estimate._id) ||
+        !latest ||
+        String(latest._id) !== input.revisionId ||
+        Number(latest.revisionNumber) !== input.version ||
+        latest.reviewStatus !== "changes_requested"
+      ) {
+        staleReplacement();
+      }
+      const reserved = await EstimateDesignRevisionModel.updateOne(
+        {
+          _id: latest._id,
+          drawingId: drawing._id,
+          revisionNumber: input.version,
+          reviewStatus: "changes_requested",
+          replacementUploadId: { $in: [null] }
+        },
+        { $set: { replacementUploadId: input.uploadId } },
+        { session }
+      );
+      requireMatchedTransition(reserved, staleReplacement);
+      await EstimateDesignUploadModel.create([{
+        _id: input.uploadId,
+        estimateId: estimate._id,
+        leadId: estimate.leadId,
+        originalFilename: input.file.originalFilename,
+        storedFileReference: input.storedFileReference,
+        mimeType: input.file.mimeType,
+        sizeBytes: input.file.sizeBytes,
+        uploaderId: input.user.id,
+        uploadedAt: input.uploadedAt,
+        extractionStatus: "queued",
+        replacementDrawingId: drawing._id,
+        replacesRevisionId: latest._id,
+        replacementVersion: latest.revisionNumber,
+        failureCode: null,
+        failureMessage: null
+      }], { session });
+      await EstimateDesignExtractionJobModel.create([{
+        _id: randomUUID(),
+        uploadId: input.uploadId,
+        status: "queued",
+        attemptCount: 0,
+        queuedAt: input.uploadedAt,
+        startedAt: null,
+        completedAt: null,
+        leaseExpiresAt: null,
+        claimId: null,
+        failureCode: null,
+        failureMessage: null,
+        workerResultId: null
+      }], { session });
+    });
   } finally {
     await session.endSession().catch(() => undefined);
   }
@@ -1051,7 +1982,18 @@ function revisionDto(revision: Record<string, unknown>) {
     reviewedAt: revision.reviewedAt ?? null,
     changeSummary: revision.changeSummary ?? null,
     annotationLayerId: revision.annotationLayerId ?? null,
+    annotations: revision.annotations ?? null,
+    replacementUploadId: revision.replacementUploadId ?? null,
     replacesRevisionId: revision.replacesRevisionId ?? null
+  };
+}
+
+function annotationDraftDto(draft: Record<string, unknown>) {
+  return {
+    id: String(draft._id),
+    revisionId: String(draft.revisionId),
+    version: Number(draft.version),
+    annotations: draft.annotations
   };
 }
 
@@ -1141,11 +2083,41 @@ function staleDrawing(): never {
   );
 }
 
+function staleAnnotation(): never {
+  throw new ApiError(
+    409,
+    "STALE_ESTIMATE_ANNOTATION",
+    "The annotation draft changed before this update."
+  );
+}
+
+function staleReplacement(): never {
+  throw new ApiError(
+    409,
+    "STALE_ESTIMATE_DRAWING",
+    "The drawing changed before this replacement."
+  );
+}
+
 function drawingLocked(): never {
   throw new ApiError(
     409,
     "ESTIMATE_DRAWING_LOCKED",
     "This drawing revision is read-only."
+  );
+}
+
+function estimateAllowsDrawingEdit(
+  estimateStatus: string,
+  revision: Record<string, any>
+) {
+  return (
+    isEstimateDesignEditable(estimateStatus) ||
+    (
+      ["sent_to_client", "client_changes_requested"].includes(estimateStatus) &&
+      revision.reviewStatus === "draft" &&
+      Boolean(revision.replacesRevisionId)
+    )
   );
 }
 
@@ -1162,6 +2134,13 @@ function requireTransition(
   conflict: () => never
 ) {
   if (result.matchedCount !== 1 || result.modifiedCount !== 1) conflict();
+}
+
+function requireMatchedTransition(
+  result: { matchedCount: number },
+  conflict: () => never
+) {
+  if (result.matchedCount !== 1) conflict();
 }
 
 function validateMapping(

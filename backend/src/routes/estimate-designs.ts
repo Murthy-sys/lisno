@@ -6,6 +6,7 @@ import { z } from "zod";
 import { authenticate, authorizeRoles } from "../middleware/auth.js";
 import { uploadSingleFile } from "../middleware/upload.js";
 import { validateBody } from "../middleware/validate.js";
+import { annotationDocumentSchema } from "../domain/estimate-design.js";
 import type { AuthService } from "../services/auth.service.js";
 import type { EstimateDesignService } from "../services/estimate-design.service.js";
 
@@ -27,6 +28,31 @@ const editDrawingSchema = z.object({
   (value) => Object.keys(value).some((key) => key !== "version"),
   { message: "Provide at least one drawing change." }
 );
+const annotationDraftSchema = z.object({
+  version: z.number().int().nonnegative(),
+  annotations: annotationDocumentSchema
+}).strict();
+const drawingDecisionSchema = z.discriminatedUnion("decision", [
+  z.object({
+    version: z.number().int().positive(),
+    decision: z.literal("approve")
+  }).strict(),
+  z.object({
+    version: z.number().int().positive(),
+    decision: z.literal("request_changes"),
+    summary: z.string().min(1).max(1_000).refine(
+      (value) => value.trim().length > 0,
+      { message: "A change summary is required." }
+    ),
+    annotations: annotationDocumentSchema.refine(
+      (value) => value.elements.length > 0,
+      { message: "Add at least one annotation or text note." }
+    )
+  }).strict()
+]);
+const replacementBodySchema = z.object({
+  version: z.coerce.number().int().positive()
+}).strict();
 
 export function createEstimateDesignsRouter(
   authService: AuthService,
@@ -60,7 +86,62 @@ export function createEstimateDesignsRouter(
   });
 
   router.get("/estimate-design-source-pages/:pageId/image", protectedRoute, estimatorOnly, streamImage((user, id) => estimateDesigns.sourceImage(user, id)));
-  router.get("/estimate-design-revisions/:revisionId/image", protectedRoute, estimatorOnly, streamImage((user, id) => estimateDesigns.revisionImage(user, id)));
+  router.get("/estimate-design-revisions/:revisionId/image", protectedRoute, streamImage((user, id) => estimateDesigns.revisionImage(user, id)));
+  router.get(
+    "/client/estimates/:estimateId/design-drawings",
+    protectedRoute,
+    authorizeRoles("client"),
+    async (request, response, next) => {
+      try {
+        response.json({
+          data: await estimateDesigns.listClient(
+            request.authenticatedUser!,
+            request.params.estimateId as string
+          )
+        });
+      } catch (error) {
+        next(error);
+      }
+    }
+  );
+  router.put(
+    "/client/estimate-design-revisions/:revisionId/annotation-draft",
+    protectedRoute,
+    authorizeRoles("client"),
+    validateBody(annotationDraftSchema),
+    async (request, response, next) => {
+      try {
+        response.json({
+          data: await estimateDesigns.saveAnnotationDraft(
+            request.authenticatedUser!,
+            request.params.revisionId as string,
+            request.body
+          )
+        });
+      } catch (error) {
+        next(error);
+      }
+    }
+  );
+  router.post(
+    "/client/estimate-design-revisions/:revisionId/decision",
+    protectedRoute,
+    authorizeRoles("client"),
+    validateBody(drawingDecisionSchema),
+    async (request, response, next) => {
+      try {
+        response.json({
+          data: await estimateDesigns.decideDrawing(
+            request.authenticatedUser!,
+            request.params.revisionId as string,
+            request.body
+          )
+        });
+      } catch (error) {
+        next(error);
+      }
+    }
+  );
   router.patch(
     "/estimate-design-drawings/:drawingId",
     protectedRoute,
@@ -73,6 +154,26 @@ export function createEstimateDesignsRouter(
             request.authenticatedUser!,
             request.params.drawingId as string,
             request.body
+          )
+        });
+      } catch (error) {
+        next(error);
+      }
+    }
+  );
+  router.post(
+    "/estimate-design-drawings/:drawingId/replacement",
+    protectedRoute,
+    estimatorOnly,
+    uploadSingleFile(maxUploadBytes, 1),
+    validateBody(replacementBodySchema),
+    async (request, response, next) => {
+      try {
+        response.status(201).json({
+          data: await estimateDesigns.replaceDrawing(
+            request.authenticatedUser!,
+            request.params.drawingId as string,
+            { version: request.body.version, file: request.validatedUpload! }
           )
         });
       } catch (error) {

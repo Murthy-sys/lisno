@@ -23,6 +23,8 @@ export const estimateDesignRevisionSchema = new Schema({
   reviewedAt: { type: Date, default: null },
   changeSummary: { type: String, default: null, maxlength: 1_000 },
   annotationLayerId: { type: String, ref: "EstimateDesignAnnotationDraft", default: null },
+  annotations: { type: Schema.Types.Mixed, default: null },
+  replacementUploadId: { type: String, ref: "EstimateDesignUpload", default: null },
   replacesRevisionId: { type: String, ref: "EstimateDesignRevision", default: null, immutable: true }
 }, { timestamps: true, versionKey: false });
 

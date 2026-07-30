@@ -20,67 +20,88 @@ export const estimateDesignReviewStatuses = [
   "changes_requested"
 ] as const;
 
+const normalizedCoordinate = z.number().finite().min(0).max(1);
+const annotationBase = {
+  id: z.string().min(1).max(128),
+  color: z.string().regex(/^#[0-9a-fA-F]{6}$/),
+  strokeWidth: z.number().finite().min(1).max(24)
+};
+const boundedShape = <T extends z.ZodRawShape>(shape: T) =>
+  z.object({ ...annotationBase, ...shape }).strict();
+
+export const annotationElementSchema = z.discriminatedUnion("type", [
+  boundedShape({
+    type: z.literal("ellipse"),
+    x: normalizedCoordinate,
+    y: normalizedCoordinate,
+    width: normalizedCoordinate.gt(0),
+    height: normalizedCoordinate.gt(0)
+  }),
+  boundedShape({
+    type: z.literal("rectangle"),
+    x: normalizedCoordinate,
+    y: normalizedCoordinate,
+    width: normalizedCoordinate.gt(0),
+    height: normalizedCoordinate.gt(0)
+  }),
+  z.object({
+    ...annotationBase,
+    type: z.literal("arrow"),
+    x1: normalizedCoordinate,
+    y1: normalizedCoordinate,
+    x2: normalizedCoordinate,
+    y2: normalizedCoordinate
+  }).strict(),
+  z.object({
+    ...annotationBase,
+    type: z.literal("freehand"),
+    points: z.array(z.object({
+      x: normalizedCoordinate,
+      y: normalizedCoordinate
+    }).strict()).min(2).max(5_000)
+  }).strict(),
+  z.object({
+    ...annotationBase,
+    type: z.literal("text"),
+    x: normalizedCoordinate,
+    y: normalizedCoordinate,
+    text: z.string().min(1).max(500).refine((value) => value.trim().length > 0, {
+      message: "Text notes must contain visible text."
+    })
+  }).strict()
+]);
+
 export const annotationDocumentSchema = z
   .object({
-    version: z.literal(1),
-    elements: z
-      .array(
-        z.discriminatedUnion("type", [
-          z.object({
-            id: z.string().min(1).max(128),
-            type: z.literal("ellipse"),
-            x: z.number().min(0).max(1),
-            y: z.number().min(0).max(1),
-            width: z.number().min(0).max(1),
-            height: z.number().min(0).max(1),
-            color: z.string().regex(/^#[0-9a-fA-F]{6}$/),
-            strokeWidth: z.number().min(1).max(24)
-          }).strict(),
-          z.object({
-            id: z.string().min(1).max(128),
-            type: z.literal("rectangle"),
-            x: z.number().min(0).max(1),
-            y: z.number().min(0).max(1),
-            width: z.number().min(0).max(1),
-            height: z.number().min(0).max(1),
-            color: z.string().regex(/^#[0-9a-fA-F]{6}$/),
-            strokeWidth: z.number().min(1).max(24)
-          }).strict(),
-          z.object({
-            id: z.string().min(1).max(128),
-            type: z.literal("arrow"),
-            x1: z.number().min(0).max(1),
-            y1: z.number().min(0).max(1),
-            x2: z.number().min(0).max(1),
-            y2: z.number().min(0).max(1),
-            color: z.string().regex(/^#[0-9a-fA-F]{6}$/),
-            strokeWidth: z.number().min(1).max(24)
-          }).strict(),
-          z.object({
-            id: z.string().min(1).max(128),
-            type: z.literal("freehand"),
-            points: z.array(z.object({
-              x: z.number().min(0).max(1),
-              y: z.number().min(0).max(1)
-            }).strict()).min(1).max(5_000),
-            color: z.string().regex(/^#[0-9a-fA-F]{6}$/),
-            strokeWidth: z.number().min(1).max(24)
-          }).strict(),
-          z.object({
-            id: z.string().min(1).max(128),
-            type: z.literal("text"),
-            x: z.number().min(0).max(1),
-            y: z.number().min(0).max(1),
-            text: z.string().trim().min(1).max(500),
-            color: z.string().regex(/^#[0-9a-fA-F]{6}$/),
-            strokeWidth: z.number().min(1).max(24)
-          }).strict()
-        ])
-      )
-      .max(200)
+    schemaVersion: z.literal(1),
+    imageWidth: z.number().int().positive().max(100_000),
+    imageHeight: z.number().int().positive().max(100_000),
+    elements: z.array(annotationElementSchema).max(200)
   })
   .strict()
   .superRefine((value, context) => {
+    value.elements.forEach((element, index) => {
+      if (
+        (element.type === "ellipse" || element.type === "rectangle") &&
+        element.x + element.width > 1
+      ) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["elements", index, "width"],
+          message: "The annotation must remain within the image."
+        });
+      }
+      if (
+        (element.type === "ellipse" || element.type === "rectangle") &&
+        element.y + element.height > 1
+      ) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["elements", index, "height"],
+          message: "The annotation must remain within the image."
+        });
+      }
+    });
     const pointCount = value.elements.reduce(
       (count, element) => count + (element.type === "freehand" ? element.points.length : 0),
       0

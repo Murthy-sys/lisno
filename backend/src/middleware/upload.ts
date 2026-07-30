@@ -54,13 +54,16 @@ const MAX_XREF_INDEX_VALUES = 4_096;
 const MAX_DECODED_XREF_BYTES = 32 * 1024 * 1024;
 const MAX_XREF_DICTIONARY_BYTES = 256 * 1024;
 
-export function uploadSingleFile(maxUploadBytes: number): RequestHandler {
+export function uploadSingleFile(
+  maxUploadBytes: number,
+  maxFields = 0
+): RequestHandler {
   const parse = multer({
     storage: multer.memoryStorage(),
     limits: {
       fileSize: maxUploadBytes,
       files: 1,
-      fields: 0
+      fields: maxFields
     },
     fileFilter: (_request, file, callback) => {
       if (!allowedClaimedMimeTypes.has(file.mimetype.toLowerCase())) {
