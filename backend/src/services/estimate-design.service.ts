@@ -1049,9 +1049,9 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
             return;
           }
           await guardDesignLifecycle(currentEstimate, session);
-          if (pageDocuments.length) await EstimateDesignSourcePageModel.create(pageDocuments, { session });
-          if (drawingDocuments.length) await EstimateDesignDrawingModel.create(drawingDocuments, { session });
-          if (revisionDocuments.length) await EstimateDesignRevisionModel.create(revisionDocuments, { session });
+          if (pageDocuments.length) await EstimateDesignSourcePageModel.create(pageDocuments, { session, ordered: true });
+          if (drawingDocuments.length) await EstimateDesignDrawingModel.create(drawingDocuments, { session, ordered: true });
+          if (revisionDocuments.length) await EstimateDesignRevisionModel.create(revisionDocuments, { session, ordered: true });
           const completed = await EstimateDesignExtractionJobModel.updateOne(
             {
               _id: jobId,

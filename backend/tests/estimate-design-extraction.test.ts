@@ -106,6 +106,23 @@ function deferred() {
   return { promise, resolve };
 }
 
+function transactionDocuments(
+  input: unknown,
+  options: unknown
+): Array<Record<string, any>> {
+  const documents = input as Array<Record<string, any>>;
+  if (
+    documents.length > 1 &&
+    (options as { session?: unknown } | undefined)?.session &&
+    !(options as { ordered?: boolean } | undefined)?.ordered
+  ) {
+    throw new mongoose.Error(
+      "Cannot call create() with a session and multiple documents unless ordered: true is set"
+    );
+  }
+  return documents;
+}
+
 function setup() {
   const storage = new TestStorage();
   storage.objects.set("original-plan.pdf", Buffer.from("%PDF-1.7\nestimate"));
@@ -235,16 +252,17 @@ function setup() {
       modifiedCount: record ? 1 : 0
     } as never;
   });
-  vi.spyOn(EstimateDesignSourcePageModel, "create").mockImplementation(async (input) => {
-    pages.push(...(input as Array<Record<string, any>>));
+  vi.spyOn(EstimateDesignSourcePageModel, "create").mockImplementation(async (input, options) => {
+    const documents = transactionDocuments(input, options);
+    pages.push(...documents);
     return input as never;
   });
   vi.spyOn(EstimateDesignSourcePageModel, "find").mockReturnValue(query(pages) as never);
   vi.spyOn(EstimateDesignSourcePageModel, "findById").mockImplementation((id) =>
     query(pages.find((item) => item._id === id) ?? null) as never
   );
-  vi.spyOn(EstimateDesignDrawingModel, "create").mockImplementation(async (input) => {
-    drawings.push(...(input as Array<Record<string, any>>));
+  vi.spyOn(EstimateDesignDrawingModel, "create").mockImplementation(async (input, options) => {
+    drawings.push(...transactionDocuments(input, options));
     return input as never;
   });
   vi.spyOn(EstimateDesignDrawingModel, "find").mockImplementation((filter) =>
@@ -265,8 +283,8 @@ function setup() {
       modifiedCount: record ? 1 : 0
     } as never;
   });
-  vi.spyOn(EstimateDesignRevisionModel, "create").mockImplementation(async (input) => {
-    revisions.push(...(input as Array<Record<string, any>>));
+  vi.spyOn(EstimateDesignRevisionModel, "create").mockImplementation(async (input, options) => {
+    revisions.push(...transactionDocuments(input, options));
     return input as never;
   });
   vi.spyOn(EstimateDesignRevisionModel, "find").mockImplementation((filter) =>
@@ -417,6 +435,23 @@ beforeAll(async () => {
 afterEach(() => vi.restoreAllMocks());
 
 describe("estimate design extraction and estimator verification", () => {
+  it("keeps unresolved room and scope mappings available for estimator review", async () => {
+    const revision = new EstimateDesignRevisionModel({
+      _id: "unresolved-revision",
+      drawingId: "unresolved-drawing",
+      revisionNumber: 1,
+      sourcePageId: "unresolved-page",
+      crop: { x: 0, y: 0, width: 100, height: 80 },
+      croppedFileReference: "unresolved.png",
+      roomId: "",
+      scopeSectionId: "",
+      label: "TV UNIT",
+      reviewStatus: "draft"
+    });
+
+    await expect(revision.validate()).resolves.toBeUndefined();
+  });
+
   it("allows a retry to receive a new queue-order timestamp", () => {
     const originalQueuedAt = new Date("2026-07-30T11:00:00.000Z");
     const retriedAt = new Date("2026-07-30T12:00:00.000Z");
