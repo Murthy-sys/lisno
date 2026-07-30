@@ -110,6 +110,11 @@ layout plans, plus directional elevations (front, rear/back, side, left, and
 right). A supported title may include a controlled floor, room, residence, or
 project qualifier.
 
+For estimate-design PDFs, the worker first reads the lower title block. When a
+page has a recognized `TITLE` value, it emits exactly one proposal whose crop is
+the full rendered page. Untitled PDF pages, and every supported image format,
+continue through the regular OCR and drawing-region extraction fallback.
+
 The worker explicitly excludes legends, notes and directives, key/vicinity
 plans and location maps, dimensions and symbols, material/finish specifications,
 cross sections, details, diagrams, schedules, and unsupported drawing types.

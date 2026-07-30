@@ -984,6 +984,48 @@ def test_pdf_dimension_budget_downscales_before_pixmap_allocation(monkeypatch, t
     assert 1.0 < scales[0] < 2.0
 
 
+def test_pdf_dimension_budget_keeps_default_scale_at_exact_pixel_limit(
+    monkeypatch, tmp_path
+):
+    class Rect:
+        width = 500
+        height = 500
+
+    scales = []
+
+    class Pixmap:
+        width = 1
+        height = 1
+        samples = b"\xff\xff\xff"
+
+    class Page:
+        rect = Rect()
+
+        def get_pixmap(self, *, matrix, alpha):
+            assert alpha is False
+            scales.append(matrix.a)
+            return Pixmap()
+
+    class Document:
+        page_count = 1
+
+        def __iter__(self):
+            return iter([Page()])
+
+        def close(self):
+            pass
+
+    source = tmp_path / "exactly-at-budget.pdf"
+    source.write_bytes(b"%PDF")
+    monkeypatch.setattr("lisno_ocr.extractor.fitz.open", lambda _path: Document())
+
+    Extractor(
+        ocr_engine=FakePaddleOCR3([]), max_page_pixels=1_000_000
+    ).extract(source)
+
+    assert scales == [2.0]
+
+
 def test_pdf_dimension_budget_rejects_before_pixmap_when_one_x_is_unsafe(
     monkeypatch, tmp_path
 ):

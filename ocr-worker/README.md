@@ -94,6 +94,12 @@ excluded before title matching. OCR labels and crops are proposals an estimator
 must verify. At most 2,000 confidence-eligible OCR lines reach title
 classification and at most 500 accepted titles reach crop encoding per page.
 
+For an estimate-design PDF page with a recognized lower title-block `TITLE`
+value, the worker OCRs that band first and emits one full-page drawing proposal
+for the page. PDF pages without a recognized title block, and all supported
+image formats, retain the regular full-page OCR and drawing-region extraction
+fallback.
+
 Common PaddleOCR title variants are normalized before classification. This
 includes compact drawing prefixes and punctuation (for example,
 `B.SIDE ELEVATION(LEFT）`), missing word boundaries
