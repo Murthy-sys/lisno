@@ -163,3 +163,23 @@ Both exit 0; build has only the existing chunk-size warning.
 - Upload and replacement accept lists include `image/heif` and `.heif`.
 - Replacement response typing preserves both backend outcomes; query invalidation
   and queued/processing polling handle the queued-upload branch.
+
+## Fix round 2 — CORS and replacement contracts
+
+RED: `backend/tests/cors.test.ts` initially failed because the configured
+method list omitted `DELETE` from a configured-origin OPTIONS response.
+
+GREEN:
+
+```text
+backend npm test -- --run tests/cors.test.ts: 3/3 passed
+backend npm run typecheck: passed
+frontend focused Task 5 tests: 3/3 passed
+frontend typecheck and build: passed
+```
+
+The CORS contract now explicitly includes DELETE while retaining the configured
+origin allow-list behavior. Replacement responses are typed as either an
+immediate drawing/revision result or the exact queued wrapper
+`{ queued: true, upload }`; the UI invalidates/re-polls the workspace and
+announces which branch completed.

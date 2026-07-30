@@ -631,4 +631,9 @@ export interface EstimateDesignDrawingUpdate extends EstimateDesignDrawing {
   revision: EstimateDesignRevision;
 }
 
-export type EstimateDesignReplacementResult = EstimateDesignDrawingUpdate | EstimateDesignUpload;
+export interface EstimateDesignQueuedReplacement {
+  queued: true;
+  upload: EstimateDesignUpload;
+}
+
+export type EstimateDesignReplacementResult = EstimateDesignDrawingUpdate | EstimateDesignQueuedReplacement;

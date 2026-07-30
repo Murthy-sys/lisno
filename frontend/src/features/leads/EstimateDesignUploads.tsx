@@ -60,6 +60,7 @@ export function EstimateDesignUploads({ estimateId, rooms, scopes }: EstimateDes
   const [replacement, setReplacement] = useState<File>();
   const [verifyOnOpen, setVerifyOnOpen] = useState(false);
   const [formError, setFormError] = useState("");
+  const [actionNotice, setActionNotice] = useState("");
 
   const workspace = useQuery({
     queryKey: estimateDesignKeys.workspace(estimateId),
@@ -86,8 +87,9 @@ export function EstimateDesignUploads({ estimateId, rooms, scopes }: EstimateDes
   const replace = useMutation({
     mutationFn: ({ drawing, revision, file: nextFile }: DrawingSelection & { file: File }) =>
       replaceEstimateDrawing(drawing.id, revision.revisionNumber, nextFile),
-    onSuccess: () => {
+    onSuccess: (result) => {
       closeDialog();
+      setActionNotice("queued" in result ? "Replacement queued for extraction." : "Replacement drawing created.");
       void client.invalidateQueries({ queryKey: estimateDesignKeys.workspace(estimateId) });
     }
   });
@@ -158,6 +160,7 @@ export function EstimateDesignUploads({ estimateId, rooms, scopes }: EstimateDes
       </header>
       {upload.isError ? <p role="alert" className="estimate-design-uploads__error">The plan could not be uploaded. Try the selected file again.</p> : null}
       {formError ? <p role="alert" className="estimate-design-uploads__error">{formError}</p> : null}
+      {actionNotice ? <p role="status" className="estimate-notice">{actionNotice}</p> : null}
       {workspace.isPending ? <p role="status">Loading design plans…</p> : null}
       {workspace.isError ? <p role="alert">We couldn't load design plans. <button type="button" className="secondary-button" onClick={() => void workspace.refetch()}>Try again</button></p> : null}
       {workspace.data ? <>

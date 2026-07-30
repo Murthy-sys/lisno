@@ -24,6 +24,17 @@ describe("CORS", () => {
     expect(response.headers.vary).toContain("Origin");
   });
 
+  it("allows configured origins to preflight estimate drawing DELETE requests", async () => {
+    const response = await request(app)
+      .options("/api/v1/estimate-design-drawings/drawing-1")
+      .set("Origin", "https://lisno.example")
+      .set("Access-Control-Request-Method", "DELETE");
+
+    expect(response.status).toBe(204);
+    expect(response.headers["access-control-allow-origin"]).toBe("https://lisno.example");
+    expect(response.headers["access-control-allow-methods"]).toContain("DELETE");
+  });
+
   it("does not grant CORS access to an origin outside the parsed allow-list", async () => {
     const response = await request(app)
       .get("/api/v1/health")
