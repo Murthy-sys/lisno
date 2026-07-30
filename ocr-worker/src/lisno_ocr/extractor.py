@@ -39,6 +39,7 @@ _MAX_DRAWING_REGIONS = 2_000
 _AUTOMATIC_MATCH_CONFIDENCE = 0.84
 _TEXT_DENSE_REGION_LINE_COUNT = 5
 _TEXT_DENSE_REGION_AREA_RATIO = 0.12
+_MIN_PDF_RENDER_SCALE = 1.0
 _RESERVED_REGION_PHRASES = (
     "general notes",
     "legend",
@@ -117,13 +118,15 @@ class Extractor:
         if document.page_count > self._max_pdf_pages:
             document.close()
             raise PdfRenderError("The PDF contains too many pages.")
-        matrix = fitz.Matrix(self._render_scale, self._render_scale)
         try:
             for page in document:
-                expected_width = int(round(page.rect.width * self._render_scale))
-                expected_height = int(round(page.rect.height * self._render_scale))
-                if expected_width * expected_height > self._max_page_pixels:
-                    raise PdfRenderError("A rendered PDF page is too large.")
+                scale = _pdf_render_scale(
+                    page.rect.width,
+                    page.rect.height,
+                    self._render_scale,
+                    self._max_page_pixels,
+                )
+                matrix = fitz.Matrix(scale, scale)
                 pixmap = page.get_pixmap(matrix=matrix, alpha=False)
                 try:
                     image = Image.frombytes(
@@ -349,6 +352,36 @@ class Extractor:
                 else None
             ),
         )
+
+
+def _pdf_render_scale(
+    width: float,
+    height: float,
+    default_scale: float,
+    max_page_pixels: int,
+) -> float:
+    if width <= 0 or height <= 0 or default_scale <= 0:
+        raise PdfRenderError("A rendered PDF page has invalid dimensions.")
+    if _scaled_page_pixels(width, height, default_scale) <= max_page_pixels:
+        return default_scale
+
+    minimum_scale = min(_MIN_PDF_RENDER_SCALE, default_scale)
+    if _scaled_page_pixels(width, height, minimum_scale) > max_page_pixels:
+        raise PdfRenderError("A rendered PDF page is too large.")
+
+    lower = minimum_scale
+    upper = default_scale
+    for _ in range(60):
+        candidate = (lower + upper) / 2
+        if _scaled_page_pixels(width, height, candidate) <= max_page_pixels:
+            lower = candidate
+        else:
+            upper = candidate
+    return lower
+
+
+def _scaled_page_pixels(width: float, height: float, scale: float) -> int:
+    return math.ceil(width * scale) * math.ceil(height * scale)
 
 
 def _with_estimate_taxonomy_titles(

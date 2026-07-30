@@ -9,6 +9,7 @@ from lisno_ocr.contracts import (
     EstimateTaxonomy,
     InvalidSourceError,
     OcrError,
+    PdfRenderError,
     TaxonomyTerm,
 )
 from lisno_ocr.extractor import Extractor
@@ -941,16 +942,25 @@ def test_output_budget_stops_before_encoding_later_candidates(monkeypatch):
     assert encoded == 2  # page + first crop; second crop never encoded
 
 
-def test_pdf_dimension_budget_rejects_before_pixmap_allocation(monkeypatch, tmp_path):
+def test_pdf_dimension_budget_downscales_before_pixmap_allocation(monkeypatch, tmp_path):
     class Rect:
-        width = 10_000
-        height = 10_000
+        width = 700
+        height = 700
+
+    scales = []
+
+    class Pixmap:
+        width = 1
+        height = 1
+        samples = b"\xff\xff\xff"
 
     class Page:
         rect = Rect()
 
-        def get_pixmap(self, **_kwargs):
-            raise AssertionError("oversized page must not allocate a pixmap")
+        def get_pixmap(self, *, matrix, alpha):
+            assert alpha is False
+            scales.append(matrix.a)
+            return Pixmap()
 
     class Document:
         page_count = 1
@@ -965,7 +975,42 @@ def test_pdf_dimension_budget_rejects_before_pixmap_allocation(monkeypatch, tmp_
     source.write_bytes(b"%PDF")
     monkeypatch.setattr("lisno_ocr.extractor.fitz.open", lambda _path: Document())
 
-    with pytest.raises(Exception, match="page is too large"):
+    pages = Extractor(
+        ocr_engine=FakePaddleOCR3([]), max_page_pixels=1_000_000
+    ).extract(source)
+
+    assert [page.page_number for page in pages] == [1]
+    assert len(scales) == 1
+    assert 1.0 < scales[0] < 2.0
+
+
+def test_pdf_dimension_budget_rejects_before_pixmap_when_one_x_is_unsafe(
+    monkeypatch, tmp_path
+):
+    class Rect:
+        width = 10_000
+        height = 10_000
+
+    class Page:
+        rect = Rect()
+
+        def get_pixmap(self, **_kwargs):
+            raise AssertionError("irreducibly oversized page must not allocate a pixmap")
+
+    class Document:
+        page_count = 1
+
+        def __iter__(self):
+            return iter([Page()])
+
+        def close(self):
+            pass
+
+    source = tmp_path / "irreducibly-large.pdf"
+    source.write_bytes(b"%PDF")
+    monkeypatch.setattr("lisno_ocr.extractor.fitz.open", lambda _path: Document())
+
+    with pytest.raises(PdfRenderError, match="page is too large"):
         Extractor(ocr_engine=FakePaddleOCR3([]), max_page_pixels=1_000).extract(source)
 
 
