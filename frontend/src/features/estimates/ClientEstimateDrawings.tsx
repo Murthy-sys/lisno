@@ -190,7 +190,9 @@ export function ClientEstimateDrawings({
         >
           <h5>Misc</h5>
           <p>
-            This {group.drawings.length === 1 ? "drawing was" : "drawings were"} submitted without an estimate-item assignment.
+            {group.drawings.length === 1
+              ? "This drawing was submitted without an estimate-item assignment."
+              : "These drawings were submitted without an estimate-item assignment."}
           </p>
           {group.drawings.map(renderDrawing)}
         </section>

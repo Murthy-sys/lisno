@@ -89,7 +89,7 @@ function drawing(
     roomId,
     scopeSectionId,
     catalogueId: "FC01",
-    mappingStatus: "mapped" as const,
+    mappingStatus: "auto_mapped" as const,
     detectedTitle: title,
     displayTitle: title,
     source: "ocr",
@@ -119,7 +119,7 @@ function revision(
     roomId,
     scopeSectionId,
     catalogueId: "FC01",
-    mappingStatus: "mapped" as const,
+    mappingStatus: "auto_mapped" as const,
     label,
     reviewStatus,
     submittedAt: "2026-07-30T00:00:00.000Z",
@@ -421,6 +421,99 @@ describe("client estimate drawings", () => {
     expect(within(misc).getByRole("button", {
       name: "Approve Unassigned TV detail"
     })).toBeEnabled();
+  });
+
+  it("uses the exact plural copy for multiple client Misc drawings", async () => {
+    const miscDrawings = [
+      {
+        ...drawing("drawing-misc-one", "Unassigned TV detail", "", ""),
+        roomId: null,
+        scopeSectionId: null,
+        catalogueId: null,
+        mappingStatus: "misc" as const
+      },
+      {
+        ...drawing("drawing-misc-two", "Unassigned profile detail", "", ""),
+        roomId: null,
+        scopeSectionId: null,
+        catalogueId: null,
+        mappingStatus: "misc" as const
+      }
+    ];
+    const miscRevisions = [
+      {
+        ...revision(
+          "revision-misc-one",
+          "drawing-misc-one",
+          "Unassigned TV detail",
+          "",
+          "",
+          "submitted"
+        ),
+        roomId: null,
+        scopeSectionId: null,
+        catalogueId: null,
+        mappingStatus: "misc" as const
+      },
+      {
+        ...revision(
+          "revision-misc-two",
+          "drawing-misc-two",
+          "Unassigned profile detail",
+          "",
+          "",
+          "submitted"
+        ),
+        roomId: null,
+        scopeSectionId: null,
+        catalogueId: null,
+        mappingStatus: "misc" as const
+      }
+    ];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      const common = commonResponse(url);
+      if (common) return common;
+      if (url.endsWith("/api/v1/client/estimates")) {
+        return json([estimate("estimate-a", "Aurora Villa")]);
+      }
+      if (url.endsWith(
+        "/api/v1/client/estimates/estimate-a/design-drawings"
+      )) {
+        return json({
+          uploads: [],
+          pages: [page],
+          drawings: miscDrawings,
+          revisions: miscRevisions,
+          readiness: {
+            ready: false,
+            total: 2,
+            approved: 0,
+            awaitingReview: 2,
+            changesRequested: 0
+          }
+        });
+      }
+      if (url.includes("/estimate-design-revisions/")) {
+        return new Response(new Blob(["image"], { type: "image/png" }));
+      }
+      throw new Error(`Unhandled request: ${url}`);
+    });
+
+    const user = userEvent.setup();
+    renderApp(["/client"]);
+    const card = (await screen.findByRole("heading", {
+      name: "Aurora Villa",
+      level: 3
+    })).closest("article")!;
+    await user.click(within(card).getByRole("button", { name: /Aurora Villa/ }));
+
+    const misc = await within(card).findByRole("region", {
+      name: "Misc drawings"
+    });
+    expect(misc).toHaveTextContent(
+      "These drawings were submitted without an estimate-item assignment."
+    );
   });
 
   it("saves a draft without deciding the drawing and submits one marked change request independently", async () => {
