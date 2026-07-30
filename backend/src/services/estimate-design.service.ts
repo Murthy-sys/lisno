@@ -2701,6 +2701,7 @@ function mappingDto(record: Record<string, unknown>) {
     mappingStatus: record.mappingStatus ?? "misc"
   };
   try {
+    assertMappingIdentifiers(candidate);
     assertEstimateDesignMapping(candidate);
     return candidate;
   } catch {
@@ -2710,6 +2711,22 @@ function mappingDto(record: Record<string, unknown>) {
       catalogueId: null,
       mappingStatus: "misc" as const
     };
+  }
+}
+
+function assertMappingIdentifiers(mapping: Record<string, unknown>) {
+  for (const key of ["roomId", "scopeSectionId", "catalogueId"] as const) {
+    const value = mapping[key];
+    if (
+      value !== null &&
+      (
+        typeof value !== "string" ||
+        value.trim().length === 0 ||
+        ["null", "undefined"].includes(value.trim().toLowerCase())
+      )
+    ) {
+      throw new TypeError("Mapping identifiers must be a real identifier or null.");
+    }
   }
 }
 

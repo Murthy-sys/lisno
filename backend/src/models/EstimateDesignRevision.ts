@@ -32,6 +32,28 @@ const nullableMappingIdentifier = () => ({
   }
 });
 
+function mappingKeysIn(value: unknown): boolean {
+  if (typeof value === "string") return mappingKeys.includes(value as typeof mappingKeys[number]);
+  if (Array.isArray(value)) return value.some((item) => mappingKeysIn(item));
+  if (!value || typeof value !== "object") return false;
+  return mappingKeys.some((key) => key in value);
+}
+
+function updateOperatorTouchesMapping(operator: string, value: unknown) {
+  if (operator === "$rename" && value && typeof value === "object" && !Array.isArray(value)) {
+    return mappingKeysIn(value) || Object.values(value).some((target) => mappingKeysIn(target));
+  }
+  return mappingKeysIn(value);
+}
+
+function updateTouchesMapping(update: Record<string, unknown>) {
+  return Object.entries(update).some(([operator, value]) =>
+    operator.startsWith("$")
+      ? updateOperatorTouchesMapping(operator, value)
+      : mappingKeys.includes(operator as typeof mappingKeys[number])
+  );
+}
+
 export const estimateDesignRevisionSchema = new Schema({
   _id: { type: String, required: true, immutable: true },
   drawingId: { type: String, ref: "EstimateDesignDrawing", required: true, immutable: true },
@@ -74,18 +96,10 @@ function rejectRevisionMappingUpdate(this: mongoose.Query<unknown, unknown>) {
   const update = this.getUpdate();
   const touchesMapping = Array.isArray(update)
     ? update.some((stage) => {
-      const value = stage as Record<string, Record<string, unknown> | string[]>;
-      return mappingKeys.some((key) =>
-        key in (value.$set ?? {}) ||
-        key in (value.$addFields ?? {}) ||
-        (Array.isArray(value.$unset) && value.$unset.includes(key))
-      );
+      const value = stage as Record<string, unknown>;
+      return updateTouchesMapping(value) || "$replaceRoot" in value || "$replaceWith" in value;
     })
-    : mappingKeys.some((key) =>
-      key in ((update?.$set ?? {}) as Record<string, unknown>) ||
-      key in ((update?.$unset ?? {}) as Record<string, unknown>) ||
-      key in ((update ?? {}) as Record<string, unknown>)
-    );
+    : updateTouchesMapping((update ?? {}) as Record<string, unknown>);
   if (touchesMapping) throw new Error("Revision mapping snapshots are immutable.");
 }
 

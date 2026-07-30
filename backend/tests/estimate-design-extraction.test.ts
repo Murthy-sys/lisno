@@ -542,6 +542,24 @@ describe("estimate design extraction and estimator verification", () => {
     ).rejects.toThrow("Mapping identifiers must be a real identifier or null.");
   });
 
+  it.each([
+    ["$rename", { $rename: { roomId: "legacyRoomId" } }],
+    ["$setOnInsert", { $setOnInsert: { roomId: "room-bedroom-1" } }],
+    ["pipeline $unset string", [{ $unset: "roomId" }]]
+  ])("rejects drawing mapping changes through %s", async (_operation, update) => {
+    await expect(
+      EstimateDesignDrawingModel.updateOne(
+        { _id: "drawing-misc" },
+        update as never,
+        update instanceof Array ? { updatePipeline: true } : undefined
+      )
+    ).rejects.toThrow(
+      update instanceof Array
+        ? "Pipeline updates cannot change mapping fields."
+        : "Mapping updates must set the complete tuple."
+    );
+  });
+
   it("rejects every revision mapping update", async () => {
     await expect(
       EstimateDesignRevisionModel.updateOne(
@@ -562,6 +580,20 @@ describe("estimate design extraction and estimator verification", () => {
         { _id: "revision-misc" },
         { $set: { roomId: "room-bedroom-1" } },
         { runValidators: true }
+      )
+    ).rejects.toThrow("Revision mapping snapshots are immutable.");
+  });
+
+  it.each([
+    ["$rename", { $rename: { roomId: "legacyRoomId" } }],
+    ["$setOnInsert", { $setOnInsert: { roomId: "room-bedroom-1" } }],
+    ["pipeline $unset string", [{ $unset: "roomId" }]]
+  ])("rejects revision mapping changes through %s", async (_operation, update) => {
+    await expect(
+      EstimateDesignRevisionModel.updateOne(
+        { _id: "revision-misc" },
+        update as never,
+        update instanceof Array ? { updatePipeline: true } : undefined
       )
     ).rejects.toThrow("Revision mapping snapshots are immutable.");
   });

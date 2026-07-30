@@ -42,6 +42,28 @@ function assertMappingIdentifiers(mapping: Record<string, unknown>) {
   }
 }
 
+function mappingKeysIn(value: unknown): boolean {
+  if (typeof value === "string") return mappingKeys.includes(value as typeof mappingKeys[number]);
+  if (Array.isArray(value)) return value.some((item) => mappingKeysIn(item));
+  if (!value || typeof value !== "object") return false;
+  return mappingKeys.some((key) => key in value);
+}
+
+function updateOperatorTouchesMapping(operator: string, value: unknown) {
+  if (operator === "$rename" && value && typeof value === "object" && !Array.isArray(value)) {
+    return mappingKeysIn(value) || Object.values(value).some((target) => mappingKeysIn(target));
+  }
+  return mappingKeysIn(value);
+}
+
+function updateTouchesMapping(update: Record<string, unknown>) {
+  return Object.entries(update).some(([operator, value]) =>
+    operator.startsWith("$")
+      ? updateOperatorTouchesMapping(operator, value)
+      : mappingKeys.includes(operator as typeof mappingKeys[number])
+  );
+}
+
 const estimateDesignDrawingSchema = new Schema({
   _id: { type: String, required: true, immutable: true },
   uploadId: { type: String, ref: "EstimateDesignUpload", required: true, immutable: true },
@@ -81,12 +103,8 @@ function validateMappingUpdate(this: mongoose.Query<unknown, unknown>) {
   const update = this.getUpdate();
   if (Array.isArray(update)) {
     const touchesMapping = update.some((stage) => {
-      const value = stage as Record<string, Record<string, unknown> | string[]>;
-      return mappingKeys.some((key) =>
-        key in (value.$set ?? {}) ||
-        key in (value.$addFields ?? {}) ||
-        (Array.isArray(value.$unset) && value.$unset.includes(key))
-      );
+      const value = stage as Record<string, unknown>;
+      return updateTouchesMapping(value) || "$replaceRoot" in value || "$replaceWith" in value;
     });
     if (touchesMapping) throw new Error("Pipeline updates cannot change mapping fields.");
     return;
@@ -94,9 +112,20 @@ function validateMappingUpdate(this: mongoose.Query<unknown, unknown>) {
   const set = (update?.$set ?? {}) as Record<string, unknown>;
   const unset = (update?.$unset ?? {}) as Record<string, unknown>;
   const direct = (update ?? {}) as Record<string, unknown>;
-  const touchesMapping = mappingKeys.some((key) => key in set || key in unset || key in direct);
+  const touchesMapping = updateTouchesMapping(direct);
   if (!touchesMapping) return;
-  if (mappingKeys.some((key) => key in unset) || !mappingKeys.every((key) => key in set)) {
+  const hasNonSetMappingMutation = Object.entries(direct).some(([operator, value]) =>
+    operator !== "$set" && (
+      operator.startsWith("$")
+        ? updateOperatorTouchesMapping(operator, value)
+        : mappingKeys.includes(operator as typeof mappingKeys[number])
+    )
+  );
+  if (
+    hasNonSetMappingMutation ||
+    mappingKeys.some((key) => key in unset) ||
+    !mappingKeys.every((key) => key in set)
+  ) {
     throw new Error("Mapping updates must set the complete tuple.");
   }
   assertMappingIdentifiers(set);

@@ -424,4 +424,54 @@ describe("estimate design uploads", () => {
       mappingStatus: "misc"
     });
   });
+
+  it("does not serialize legacy mapping sentinels as mapped identifiers", async () => {
+    const { app } = setup();
+    vi.spyOn(EstimateDesignUploadModel, "find").mockReturnValue(sortedLean([]) as never);
+    vi.spyOn(EstimateDesignSourcePageModel, "find").mockReturnValue(sortedLean([]) as never);
+    vi.spyOn(EstimateDesignDrawingModel, "find").mockReturnValue(sortedLean([{
+      _id: "sentinel-drawing",
+      estimateId: "estimate-draft",
+      uploadId: "upload-1",
+      sourcePageId: "page-1",
+      active: true,
+      verified: false,
+      roomId: "null",
+      scopeSectionId: "undefined",
+      catalogueId: "FC01",
+      mappingStatus: "auto_mapped",
+      detectedTitle: "Ceiling",
+      displayTitle: "Ceiling",
+      source: "ocr"
+    }]) as never);
+    vi.spyOn(EstimateDesignRevisionModel, "find").mockReturnValue(sortedLean([{
+      _id: "sentinel-revision",
+      drawingId: "sentinel-drawing",
+      revisionNumber: 1,
+      sourcePageId: "page-1",
+      crop: { x: 0, y: 0, width: 100, height: 100 },
+      croppedFileReference: "revision-secret.png",
+      roomId: "room-living",
+      scopeSectionId: "FC",
+      catalogueId: "null",
+      mappingStatus: "estimator_assigned",
+      label: "Ceiling",
+      reviewStatus: "draft"
+    }]) as never);
+
+    const response = await request(app)
+      .get("/api/v1/estimates/estimate-draft/design-uploads")
+      .set("Authorization", bearer());
+
+    expect(response.status).toBe(200);
+    for (const record of [response.body.data.drawings[0], response.body.data.revisions[0]]) {
+      expect(record).toMatchObject({
+        roomId: null,
+        scopeSectionId: null,
+        catalogueId: null,
+        mappingStatus: "misc"
+      });
+    }
+    expect(JSON.stringify(response.body.data)).not.toMatch(/"(?:roomId|scopeSectionId|catalogueId)":"(?:null|undefined)"/);
+  });
 });
