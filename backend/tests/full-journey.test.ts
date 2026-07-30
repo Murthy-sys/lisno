@@ -137,7 +137,7 @@ function setupEstimateDrawingJourneyModels() {
     ],
     scopes: ["FC", "EL", "WE", "FL"],
     lineItems: [{
-      catalogueId: "FC",
+      catalogueId: "FC01",
       roomName: "Living Room",
       specification: "False ceiling",
       unit: "sqft",
@@ -1085,7 +1085,7 @@ describe("complete cross-role journey", () => {
                   ambiguous: true
                 },
                 scope: {
-                  id: "FL",
+                  id: null,
                   confidence: 0.88,
                   evidence: ["flooring"],
                   ambiguous: false
@@ -1112,12 +1112,48 @@ describe("complete cross-role journey", () => {
     expect(living).toMatchObject({
       roomId: "room-living",
       scopeSectionId: "FC",
-      verified: true
+      catalogueId: "FC01",
+      mappingStatus: "auto_mapped",
+      verified: false
     });
     expect(bedroom).toMatchObject({
       roomId: null,
-      scopeSectionId: "FL",
+      scopeSectionId: null,
+      catalogueId: null,
+      mappingStatus: "misc",
       verified: false
+    });
+
+    Object.assign(state.drawings.find(
+      (drawing) => drawing._id === living.id
+    )!, { verified: true });
+
+    const blocked = await request(app)
+      .post("/api/v1/estimates/estimate-journey/design-drawings/submit")
+      .set("Authorization", estimator)
+      .send();
+    expect(blocked.status).toBe(409);
+    expect(blocked.body.error.code).toBe("ESTIMATE_DRAWINGS_UNVERIFIED");
+
+    const persistedMiscDrawing = state.drawings.find(
+      (drawing) => drawing._id === bedroom.id
+    )!;
+    const persistedMiscRevision = state.revisions.find(
+      (revision) =>
+        revision.drawingId === bedroom.id && revision.revisionNumber === 1
+    )!;
+    Object.assign(persistedMiscDrawing, {
+      roomId: null,
+      scopeSectionId: null,
+      catalogueId: null,
+      mappingStatus: "misc",
+      verified: false
+    });
+    Object.assign(persistedMiscRevision, {
+      roomId: null,
+      scopeSectionId: null,
+      catalogueId: null,
+      mappingStatus: "misc"
     });
 
     const corrected = await request(app)
@@ -1125,24 +1161,32 @@ describe("complete cross-role journey", () => {
       .set("Authorization", estimator)
       .send({
         version: 1,
-        displayTitle: "Bedroom Flooring",
-        roomId: "room-bedroom",
-        scopeSectionId: "FL",
+        displayTitle: "TV UNIT",
         verified: true
       })
       .expect(200);
     expect(corrected.body.data).toMatchObject({
-      roomId: "room-bedroom",
-      scopeSectionId: "FL",
+      roomId: null,
+      scopeSectionId: null,
+      catalogueId: null,
+      mappingStatus: "misc",
       verified: true,
-      revision: { revisionNumber: 2, label: "Bedroom Flooring" }
+      revision: {
+        revisionNumber: 2,
+        label: "TV UNIT",
+        roomId: null,
+        scopeSectionId: null,
+        catalogueId: null,
+        mappingStatus: "misc"
+      }
     });
 
-    await request(app)
+    const submitted = await request(app)
       .post("/api/v1/estimates/estimate-journey/design-drawings/submit")
       .set("Authorization", estimator)
       .send()
       .expect(200);
+    expect(submitted.status).toBe(200);
     await request(app)
       .post("/api/v1/leads/lead-journey/estimate/submit")
       .set("Authorization", estimator)
@@ -1153,6 +1197,16 @@ describe("complete cross-role journey", () => {
       .get("/api/v1/client/estimates/estimate-journey/design-drawings")
       .set("Authorization", client)
       .expect(200);
+    expect(clientWorkspace.status).toBe(200);
+    expect(clientWorkspace.body.data.drawings).toContainEqual(
+      expect.objectContaining({
+        verified: true,
+        roomId: null,
+        scopeSectionId: null,
+        catalogueId: null,
+        mappingStatus: "misc"
+      })
+    );
     const livingRevision = clientWorkspace.body.data.revisions.find(
       (revision: { drawingId: string }) => revision.drawingId === living.id
     );

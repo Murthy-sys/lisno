@@ -53,6 +53,8 @@ const livingDrawing = {
   verified: true,
   roomId: "room-living",
   scopeSectionId: "FC",
+  catalogueId: "FC01",
+  mappingStatus: "auto_mapped" as const,
   detectedTitle: "LIVING ROOM — FALSE-CEILING PLAN",
   displayTitle: "Living Room False Ceiling",
   source: "ocr" as const,
@@ -80,8 +82,8 @@ function revision(
   id: string,
   drawingId: string,
   label: string,
-  roomId: string,
-  scopeSectionId: string,
+  roomId: string | null,
+  scopeSectionId: string | null,
   revisionNumber: number,
   reviewStatus: "submitted" | "approved" | "changes_requested" | "draft",
   changes: Partial<Record<string, unknown>> = {},
@@ -94,6 +96,8 @@ function revision(
     crop: { x: 0, y: 0, width: 1_000, height: 800 },
     roomId,
     scopeSectionId,
+    catalogueId: "FC01",
+    mappingStatus: "auto_mapped" as const,
     label,
     reviewStatus,
     submittedAt: reviewStatus === "draft" ? null : "2026-07-30T12:00:00.000Z",
@@ -167,6 +171,40 @@ const bedroomResubmitted = {
 };
 const bedroomApproved = {
   ...bedroomResubmitted,
+  reviewStatus: "approved" as const,
+  reviewerId: "client-1",
+  reviewedAt: "2026-07-30T15:00:00.000Z",
+};
+const miscDrawing = {
+  ...livingDrawing,
+  id: "drawing-misc",
+  verified: true,
+  roomId: null,
+  scopeSectionId: null,
+  catalogueId: null,
+  mappingStatus: "misc" as const,
+  detectedTitle: "TV UNIT",
+  displayTitle: "TV UNIT",
+  roomConfidence: null,
+  scopeConfidence: null,
+  roomEvidence: [],
+  scopeEvidence: [],
+};
+const miscSubmitted = revision(
+  "revision-misc-1",
+  miscDrawing.id,
+  miscDrawing.displayTitle,
+  null,
+  null,
+  1,
+  "submitted",
+  {
+    catalogueId: null,
+    mappingStatus: "misc" as const,
+  },
+);
+const miscApproved = {
+  ...miscSubmitted,
   reviewStatus: "approved" as const,
   reviewerId: "client-1",
   reviewedAt: "2026-07-30T15:00:00.000Z",
@@ -282,6 +320,7 @@ describe("estimate drawing review journey", () => {
       | "requested"
       | "replacement_submitted"
       | "replacement_approved"
+      | "misc_approved"
       | "estimate_approved" = "submitted";
     const clientFetch = vi.spyOn(globalThis, "fetch").mockImplementation(
       async (input, init) => {
@@ -486,8 +525,6 @@ describe("estimate drawing review journey", () => {
         expect(JSON.parse(String(init.body))).toEqual({
           version: 2,
           displayTitle: "Bedroom Flooring",
-          roomId: "room-bedroom",
-          scopeSectionId: "FL",
           crop: { x: 0, y: 0, width: 1_000, height: 800 },
           verified: true,
         });
@@ -527,14 +564,15 @@ describe("estimate drawing review journey", () => {
           drawings: [{
             ...bedroomDrawing,
             verified: replacementVerified || !replaced,
-          }],
+          }, miscDrawing],
           revisions: replaced
             ? [
                 bedroomRequested,
                 bedroomReplacement,
                 ...(replacementVerified ? [latestBedroom] : []),
+                miscSubmitted,
               ]
-            : [bedroomRequested],
+            : [bedroomRequested, miscSubmitted],
         });
       }
       if (
@@ -556,6 +594,10 @@ describe("estimate drawing review journey", () => {
     const requestedRow = await screen.findByRole("article", {
       name: "Bedroom Flooring drawing",
     });
+    const miscGroup = await screen.findByRole("region", {
+      name: "Misc drawings",
+    });
+    expect(within(miscGroup).getByText("TV UNIT")).toBeVisible();
     expect(within(requestedRow).getByText(
       "Align the flooring boundary with the doorway.",
     )).toBeVisible();
@@ -601,13 +643,17 @@ describe("estimate drawing review journey", () => {
     }));
     await user.click(screen.getByRole("menuitem", { name: "Verify drawing" }));
     expect(screen.getByRole("checkbox", {
-      name: "Mark mapping verified",
+      name: "Mark drawing verified",
     })).toBeChecked();
     await user.click(screen.getByRole("button", { name: "Verify drawing" }));
-    expect(await screen.findByText("All drawings are verified.")).toBeVisible();
-    await user.click(screen.getByRole("button", {
+    expect(await screen.findByText(
+      "1 verified Misc drawing can be submitted without assignment.",
+    )).toBeVisible();
+    const submitDrawings = screen.getByRole("button", {
       name: "Submit drawings to client",
-    }));
+    });
+    expect(submitDrawings).toBeEnabled();
+    await user.click(submitDrawings);
     await waitFor(() => expect(replacementSubmitted).toBe(true));
     expect(estimatorRequests.some(({ url, init }) =>
       url.endsWith("/api/v1/estimate-design-drawings/drawing-bedroom") &&
@@ -667,19 +713,20 @@ describe("estimate drawing review journey", () => {
             clientPhase === "estimate_approved" ? "approved" : "submitted",
           )],
           pages: [page],
-          drawings: [livingDrawing, bedroomDrawing],
+          drawings: [livingDrawing, bedroomDrawing, miscDrawing],
           revisions: [
             livingApproved,
             bedroomRequested,
             clientPhase === "replacement_submitted"
               ? bedroomResubmitted
               : bedroomApproved,
+            clientPhase === "misc_approved" ? miscApproved : miscSubmitted,
           ],
           readiness: {
-            ready: clientPhase !== "replacement_submitted",
-            total: 2,
-            approved: clientPhase === "replacement_submitted" ? 1 : 2,
-            awaitingReview: clientPhase === "replacement_submitted" ? 1 : 0,
+            ready: clientPhase === "misc_approved" || clientPhase === "estimate_approved",
+            total: 3,
+            approved: clientPhase === "replacement_submitted" ? 1 : clientPhase === "misc_approved" || clientPhase === "estimate_approved" ? 3 : 2,
+            awaitingReview: clientPhase === "misc_approved" || clientPhase === "estimate_approved" ? 0 : 1,
             changesRequested: 0,
           },
         });
@@ -696,6 +743,19 @@ describe("estimate drawing review journey", () => {
         });
         clientPhase = "replacement_approved";
         return json(bedroomApproved);
+      }
+      if (
+        url.endsWith(
+          "/api/v1/client/estimate-design-revisions/revision-misc-1/decision",
+        ) &&
+        init?.method === "POST"
+      ) {
+        expect(JSON.parse(String(init.body))).toEqual({
+          version: 1,
+          decision: "approve",
+        });
+        clientPhase = "misc_approved";
+        return json(miscApproved);
       }
       if (
         url.endsWith(
@@ -729,6 +789,16 @@ describe("estimate drawing review journey", () => {
     const approvedBedroom = await within(approvedCard).findByRole("article", {
       name: "Bedroom Flooring drawing",
     });
+    const clientMisc = await within(approvedCard).findByRole("region", {
+      name: "Misc drawings",
+    });
+    expect(within(clientMisc).getByRole("article", {
+      name: "TV UNIT drawing",
+    })).toBeVisible();
+    const approveMisc = within(clientMisc).getByRole("button", {
+      name: "Approve TV UNIT",
+    });
+    expect(approveMisc).toBeEnabled();
     expect(within(approvedBedroom).getByText(
       "Awaiting client review",
     )).toBeVisible();
@@ -740,9 +810,10 @@ describe("estimate drawing review journey", () => {
       name: "Approve Bedroom Flooring",
     }));
     expect(within(approvedBedroom).getByText("Approved")).toBeVisible();
+    await user.click(approveMisc);
     await waitFor(() => expect(estimateApproval).toBeEnabled());
     expect(within(approvedCard).getByText(
-      "2 of 2 drawings approved.",
+      "3 of 3 drawings approved.",
     )).toBeVisible();
     await user.click(estimateApproval);
     expect(await within(approvedCard).findByText(
@@ -755,6 +826,11 @@ describe("estimate drawing review journey", () => {
     expect(approvalRequests.some(({ url, init }) =>
       url.endsWith(
         "/api/v1/client/estimate-design-revisions/revision-bedroom-3/decision",
+      ) && init?.method === "POST"
+    )).toBe(true);
+    expect(approvalRequests.some(({ url, init }) =>
+      url.endsWith(
+        "/api/v1/client/estimate-design-revisions/revision-misc-1/decision",
       ) && init?.method === "POST"
     )).toBe(true);
     expect(approvalRequests.some(({ url, init }) =>
