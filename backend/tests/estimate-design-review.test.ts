@@ -850,6 +850,59 @@ describe("estimate drawing client review", () => {
       .toMatchObject({ revisionNumber: 3, reviewStatus: "submitted" });
   });
 
+  it.each([
+    [
+      "a mapped tuple",
+      {
+        roomId: "room-living",
+        scopeSectionId: "FC",
+        catalogueId: "FC01",
+        mappingStatus: "auto_mapped"
+      },
+      {
+        roomId: "room-living",
+        scopeSectionId: "FC",
+        catalogueId: "FC01",
+        mappingStatus: "auto_mapped"
+      }
+    ],
+    [
+      "a true-null Misc tuple",
+      {
+        roomId: null,
+        scopeSectionId: null,
+        catalogueId: null,
+        mappingStatus: "misc"
+      },
+      {
+        roomId: null,
+        scopeSectionId: null,
+        catalogueId: null,
+        mappingStatus: "misc"
+      }
+    ]
+  ] as const)("preserves %s on a synchronous replacement", async (_label, storedMapping, expectedMapping) => {
+    const { app, drawings, revisions, uploads, jobs } = setup();
+    Object.assign(drawings[1]!, storedMapping);
+    Object.assign(revisions[1]!, storedMapping, { reviewStatus: "changes_requested" });
+    uploads[0]!.extractionStatus = "changes_requested";
+    jobs[0]!.status = "changes_requested";
+
+    const response = await request(app)
+      .post("/api/v1/estimate-design-drawings/drawing-2/replacement")
+      .set("Authorization", auth("user-estimator-sales", "estimator_sales"))
+      .attach("file", PNG, { filename: "replacement.png", contentType: "image/png" })
+      .field("version", "1");
+
+    expect(response.status, JSON.stringify(response.body)).toBe(201);
+    expect(response.body.data.revision).toMatchObject(expectedMapping);
+    const replacement = revisions.filter((item) => item.drawingId === "drawing-2").at(-1)!;
+    expect(replacement).toMatchObject(expectedMapping);
+    expect(replacement.roomId).not.toBe("null");
+    expect(replacement.scopeSectionId).not.toBe("null");
+    expect(replacement.catalogueId).not.toBe("null");
+  });
+
   it("rejects synchronous replacement images above the worker-equivalent pixel limit", async () => {
     const { service, revisions, uploads, jobs } = setup();
     revisions[1]!.reviewStatus = "changes_requested";
@@ -1076,6 +1129,94 @@ describe("estimate drawing client review", () => {
     expect(uploads.find((item) => item._id === replacementUploadId))
       .toMatchObject({ extractionStatus: "estimator_review" });
     expect(replacementJob).toMatchObject({ status: "estimator_review" });
+  });
+
+  it.each([
+    [
+      "a mapped tuple",
+      {
+        roomId: "room-living",
+        scopeSectionId: "FC",
+        catalogueId: "FC01",
+        mappingStatus: "auto_mapped"
+      },
+      {
+        roomId: "room-living",
+        scopeSectionId: "FC",
+        catalogueId: "FC01",
+        mappingStatus: "auto_mapped"
+      }
+    ],
+    [
+      "a true-null Misc tuple",
+      {
+        roomId: null,
+        scopeSectionId: null,
+        catalogueId: null,
+        mappingStatus: "misc"
+      },
+      {
+        roomId: null,
+        scopeSectionId: null,
+        catalogueId: null,
+        mappingStatus: "misc"
+      }
+    ]
+  ] as const)("preserves %s when queued replacement completion creates its revision", async (
+    _label,
+    storedMapping,
+    expectedMapping
+  ) => {
+    const { service, drawings, revisions, uploads, jobs } = setup();
+    Object.assign(drawings[1]!, storedMapping);
+    Object.assign(revisions[1]!, storedMapping, { reviewStatus: "changes_requested" });
+    uploads[0]!.extractionStatus = "changes_requested";
+    jobs[0]!.status = "changes_requested";
+    const estimator = {
+      id: "user-estimator-sales",
+      name: "Sales",
+      email: "sales@lisno.example",
+      role: "estimator_sales" as const
+    };
+
+    const queued = await service.replaceDrawing(estimator, "drawing-2", {
+      version: 1,
+      file: {
+        data: Buffer.from("%PDF-1.7 queued replacement"),
+        extension: ".pdf",
+        originalFilename: "replacement.pdf",
+        mimeType: "application/pdf",
+        sizeBytes: 27
+      }
+    });
+    const uploadId = String((queued as { upload: { id: string } }).upload.id);
+    const replacementJob = jobs.find((item) => item.uploadId === uploadId)!;
+    const claimed = await service.claimWorkerJob(
+      replacementJob._id,
+      "2026-07-30T14:00:01.000Z",
+      "2026-07-30T14:05:01.000Z"
+    );
+    await service.completeWorkerJob(
+      replacementJob._id,
+      (claimed as { claimId: string }).claimId,
+      "2026-07-30T14:00:02.000Z",
+      {
+        resultId: "queued-replacement-result",
+        pages: [{
+          pageNumber: 1,
+          width: 100,
+          height: 80,
+          imageBase64: PNG.toString("base64"),
+          sections: []
+        }]
+      }
+    );
+
+    const replacement = revisions.filter((item) => item.drawingId === "drawing-2").at(-1)!;
+    expect(replacement).toMatchObject(expectedMapping);
+    expect(replacement.roomId).not.toBe("null");
+    expect(replacement.scopeSectionId).not.toBe("null");
+    expect(replacement.catalogueId).not.toBe("null");
   });
 
   it("submits both the original aggregate and a queued replacement upload", async () => {
