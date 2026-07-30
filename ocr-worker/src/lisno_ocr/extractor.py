@@ -7,7 +7,8 @@ from collections.abc import Iterator
 from io import BytesIO
 import math
 from pathlib import Path
-from typing import Any, Iterable
+import time
+from typing import Any, Iterable, Literal
 
 import fitz
 import numpy as np
@@ -71,14 +72,21 @@ class Extractor:
         self._accepted_room_types = classifier_settings.accepted_room_types
         self._estimate_taxonomy = estimate_taxonomy
 
-    def extract(self, source_path: str | Path) -> list[ExtractedPage]:
+    def extract(
+        self,
+        source_path: str | Path,
+        *,
+        mode: Literal["project_design", "estimate_design"] = "project_design",
+        deadline: float | None = None,
+    ) -> list[ExtractedPage]:
+        _require_processing_time(deadline)
         path = Path(source_path)
         if not path.is_file():
             raise InvalidSourceError("The extraction source does not exist.")
         suffix = path.suffix.lower()
         if suffix == ".pdf":
-            images = self._render_pdf_pages(path)
-            use_title_block_fast_path = True
+            images = self._render_pdf_pages(path, deadline=deadline)
+            use_title_block_fast_path = mode == "estimate_design"
         elif suffix in {".png", ".jpg", ".jpeg", ".webp", ".tif", ".tiff", ".heic", ".heif"}:
             images = open_source_pages(
                 path,
@@ -93,11 +101,13 @@ class Extractor:
         try:
             for page_number, image in enumerate(images, start=1):
                 try:
+                    _require_processing_time(deadline)
                     page, used = self._extract_page(
                         image,
                         page_number,
                         remaining,
                         use_title_block_fast_path=use_title_block_fast_path,
+                        deadline=deadline,
                     )
                     pages.append(page)
                     remaining -= used
@@ -107,7 +117,10 @@ class Extractor:
             raise InvalidSourceError(str(error)) from error
         return pages
 
-    def _render_pdf_pages(self, path: Path) -> Iterator[Image.Image]:
+    def _render_pdf_pages(
+        self, path: Path, *, deadline: float | None = None
+    ) -> Iterator[Image.Image]:
+        _require_processing_time(deadline)
         try:
             document = fitz.open(path)
         except Exception as error:
@@ -120,6 +133,7 @@ class Extractor:
             raise PdfRenderError("The PDF contains too many pages.")
         try:
             for page in document:
+                _require_processing_time(deadline)
                 scale = _pdf_render_scale(
                     page.rect.width,
                     page.rect.height,
@@ -134,8 +148,9 @@ class Extractor:
                     )
                 finally:
                     del pixmap
+                _require_processing_time(deadline)
                 yield image
-        except PdfRenderError:
+        except (PdfRenderError, OcrError):
             raise
         except Exception as error:
             raise PdfRenderError("A PDF page could not be rendered.") from error
@@ -148,14 +163,17 @@ class Extractor:
         page_number: int,
         remaining_bytes: int,
         use_title_block_fast_path: bool = False,
+        deadline: float | None = None,
     ) -> tuple[ExtractedPage, int]:
+        _require_processing_time(deadline)
         if use_title_block_fast_path:
             title_block_page = self._extract_title_block_page(
-                image, page_number, remaining_bytes
+                image, page_number, remaining_bytes, deadline=deadline
             )
             if title_block_page is not None:
                 return title_block_page
-        recognized = self._recognize(image)
+        recognized = self._recognize(image, deadline=deadline)
+        _require_processing_time(deadline)
         regions = _drawing_regions(
             image, [box for box, _, _ in recognized]
         )
@@ -192,11 +210,14 @@ class Extractor:
             )
             for region in regions
         }
+        _require_processing_time(deadline)
         page_base64 = _png_base64(image)
+        _require_processing_time(deadline)
         used = _decoded_base64_size(page_base64)
         _require_budget(used, remaining_bytes)
         sections: list[ExtractedSection] = []
         for title in titles:
+            _require_processing_time(deadline)
             if len(sections) >= 500:
                 break
             section = self._section_for_label(
@@ -206,6 +227,7 @@ class Extractor:
                 title.confidence,
                 regions,
                 region_penalties,
+                deadline=deadline,
             )
             section_bytes = _decoded_base64_size(section.image_base64)
             _require_budget(used + section_bytes, remaining_bytes)
@@ -220,16 +242,23 @@ class Extractor:
         ), used
 
     def _extract_title_block_page(
-        self, image: Image.Image, page_number: int, remaining_bytes: int
+        self,
+        image: Image.Image,
+        page_number: int,
+        remaining_bytes: int,
+        *,
+        deadline: float | None = None,
     ) -> tuple[ExtractedPage, int] | None:
+        _require_processing_time(deadline)
         lower_band_top = title_block_top(image.height)
         title_block_image = image.crop(
             (0, lower_band_top, image.width, image.height)
         )
         try:
-            local_lines = self._recognize(title_block_image)
+            local_lines = self._recognize(title_block_image, deadline=deadline)
         finally:
             title_block_image.close()
+        _require_processing_time(deadline)
         recognized = [
             (
                 (left, top + lower_band_top, right, bottom + lower_band_top),
@@ -245,7 +274,9 @@ class Extractor:
         if candidate is None:
             return None
         label, confidence = candidate
+        _require_processing_time(deadline)
         page_base64 = _png_base64(image)
+        _require_processing_time(deadline)
         # The page image is encoded once, but appears in both the page and
         # full-page section payload fields.
         used = _decoded_base64_size(page_base64) * 2
@@ -270,15 +301,18 @@ class Extractor:
         ), used
 
     def _recognize(
-        self, image: Image.Image
+        self, image: Image.Image, *, deadline: float | None = None
     ) -> list[tuple[tuple[int, int, int, int], str, float]]:
         try:
+            _require_processing_time(deadline)
             engine = self._engine()
             predict = getattr(engine, "predict", None)
             if callable(predict):
                 raw = predict(input=np.asarray(image))
+                _require_processing_time(deadline)
                 return list(_parse_predict_results(raw))
             raw = engine.ocr(np.asarray(image), cls=True)
+            _require_processing_time(deadline)
             return list(_parse_legacy_ocr_lines(raw))
         except OcrError:
             raise
@@ -312,7 +346,10 @@ class Extractor:
             tuple[int, int, int, int],
             tuple[int, int, float],
         ],
+        *,
+        deadline: float | None = None,
     ) -> ExtractedSection:
+        _require_processing_time(deadline)
         candidate_regions = regions or [(0, 0, image.width, image.height)]
         drawing_regions = [
             region
@@ -341,17 +378,25 @@ class Extractor:
             width=right - left,
             height=bottom - top,
         )
+        _require_processing_time(deadline)
+        image_base64 = _png_base64(image.crop((left, top, right, bottom)))
+        _require_processing_time(deadline)
         return ExtractedSection(
             label=" ".join(label.split()),
             confidence=float(confidence),
             crop=crop,
-            image_base64=_png_base64(image.crop((left, top, right, bottom))),
+            image_base64=image_base64,
             proposal=(
                 classify_estimate_drawing(label, self._estimate_taxonomy)
                 if self._estimate_taxonomy is not None
                 else None
             ),
         )
+
+
+def _require_processing_time(deadline: float | None) -> None:
+    if deadline is not None and time.monotonic() >= deadline:
+        raise OcrError("The extraction exceeded its processing time limit.")
 
 
 def _pdf_render_scale(

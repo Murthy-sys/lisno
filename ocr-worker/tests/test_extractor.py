@@ -1,6 +1,7 @@
 import base64
 import io
 from pathlib import Path
+import time
 
 import pytest
 from PIL import Image, ImageDraw, ImageFont
@@ -301,7 +302,7 @@ def test_renders_every_pdf_page_with_positive_pixel_dimensions():
     assert [page.page_number for page in pages] == [1, 2]
     assert all(page.width > 0 and page.height > 0 for page in pages)
     assert all(page.image_base64 for page in pages)
-    assert ocr.calls == 4
+    assert ocr.calls == 2
 
 
 def test_pdf_title_blocks_emit_one_full_page_section_and_preserve_taxonomy(tmp_path):
@@ -335,7 +336,7 @@ def test_pdf_title_blocks_emit_one_full_page_section_and_preserve_taxonomy(tmp_p
         ocr_engine=ocr,
         render_scale=1,
         estimate_taxonomy=taxonomy,
-    ).extract(source)
+    ).extract(source, mode="estimate_design")
 
     assert [[section.label for section in page.sections] for page in pages] == [
         ["Living Room Flooring"],
@@ -407,7 +408,9 @@ def test_pdf_without_a_true_title_field_falls_back_to_existing_region_extraction
         },
     ])
 
-    page = Extractor(ocr_engine=ocr, render_scale=1).extract(source)[0]
+    page = Extractor(ocr_engine=ocr, render_scale=1).extract(
+        source, mode="estimate_design"
+    )[0]
 
     assert [section.label for section in page.sections] == ["Front Elevation"]
     assert page.sections[0].crop.to_payload() != {
@@ -443,7 +446,58 @@ def test_pdf_title_block_fast_path_accounts_for_both_serialized_image_fields(
             ocr_engine=ocr,
             render_scale=1,
             max_output_bytes=59,
-        ).extract(source)
+        ).extract(source, mode="estimate_design")
+
+
+def test_project_design_pdf_keeps_multi_panel_region_extraction_despite_title_block(
+    tmp_path,
+):
+    source = tmp_path / "project-design.pdf"
+    image = Image.new("RGB", (900, 700), "white")
+    try:
+        draw = ImageDraw.Draw(image)
+        draw.rectangle((60, 80, 400, 450), outline="black", width=4)
+        draw.rectangle((500, 80, 840, 450), outline="black", width=4)
+        image.save(source, format="PDF")
+    finally:
+        image.close()
+
+    ocr = PageAwareFakePaddleOCR3([{
+        "rec_boxes": [
+            (90, 100, 280, 130),
+            (530, 100, 760, 130),
+            (50, 620, 370, 648),
+        ],
+        "rec_texts": [
+            "Floor Plan",
+            "Front Elevation",
+            "TITLE : TV UNIT",
+        ],
+        "rec_scores": [0.98, 0.98, 0.99],
+    }])
+
+    page = Extractor(ocr_engine=ocr, render_scale=1).extract(
+        source, mode="project_design"
+    )[0]
+
+    assert [section.label for section in page.sections] == [
+        "Floor Plan",
+        "Front Elevation",
+    ]
+    assert all(
+        section.crop.to_payload()
+        != {"x": 0, "y": 0, "width": page.width, "height": page.height}
+        for section in page.sections
+    )
+    assert ocr.calls == 1
+
+
+def test_rejects_an_extraction_deadline_that_has_already_expired():
+    with pytest.raises(OcrError, match="processing time limit"):
+        Extractor(ocr_engine=FakePaddleOCR3([])).extract(
+            FIXTURES / "labeled-plan.png",
+            deadline=time.monotonic() - 1,
+        )
 
 
 def test_tiff_decode_failures_remain_classified_as_invalid_sources(tmp_path):
@@ -595,11 +649,7 @@ def test_extracts_exact_approved_blueprint_titles_in_page_order(tmp_path):
 
     pages = Extractor(
         ocr_engine=PageAwareFakePaddleOCR3(
-            [
-                result
-                for page_result in page_results
-                for result in (page_result, page_result)
-            ]
+            page_results
         ),
         render_scale=1,
     ).extract(source)

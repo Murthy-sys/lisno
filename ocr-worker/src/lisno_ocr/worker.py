@@ -37,7 +37,13 @@ class Api(Protocol):
 
 
 class PageExtractor(Protocol):
-    def extract(self, source_path: str | Path) -> list[ExtractedPage]: ...
+    def extract(
+        self,
+        source_path: str | Path,
+        *,
+        mode: str = "project_design",
+        deadline: float | None = None,
+    ) -> list[ExtractedPage]: ...
 
 
 class WorkerApi:
@@ -232,6 +238,7 @@ def run_worker(
             sleep(settings.poll_seconds)
             continue
         source_path: Path | None = None
+        extraction_deadline = time.monotonic() + settings.max_processing_seconds
         stop_heartbeat = threading.Event()
         heartbeat = threading.Thread(
             target=_heartbeat_loop,
@@ -239,7 +246,7 @@ def run_worker(
                 worker_api,
                 claimed.id,
                 claimed.lease_duration_seconds,
-                settings.max_processing_seconds,
+                extraction_deadline,
                 stop_heartbeat,
             ),
             daemon=True,
@@ -255,7 +262,13 @@ def run_worker(
                 estimate_taxonomy=claimed.taxonomy,
             )
             worker_api.complete(
-                claimed.id, page_extractor.extract(source_path)
+                claimed.id,
+                _extract_before_deadline(
+                    page_extractor,
+                    source_path,
+                    mode=claimed.kind,
+                    deadline=extraction_deadline,
+                ),
             )
         except Exception as error:
             _report_failure_with_retry(
@@ -275,10 +288,9 @@ def _heartbeat_loop(
     api: Api,
     job_id: str,
     lease_duration_seconds: float,
-    max_processing_seconds: float,
+    deadline: float,
     stop: threading.Event,
 ) -> None:
-    deadline = time.monotonic() + max_processing_seconds
     lease_duration = lease_duration_seconds
     while time.monotonic() < deadline:
         interval = max(0.01, min(60.0, lease_duration * 0.4))
@@ -290,6 +302,21 @@ def _heartbeat_loop(
             # Completion/failure remains claim-token guarded; a transient heartbeat
             # outage must not terminate the polling process.
             continue
+
+
+def _extract_before_deadline(
+    page_extractor: PageExtractor,
+    source_path: Path,
+    *,
+    mode: str,
+    deadline: float,
+) -> list[ExtractedPage]:
+    if time.monotonic() >= deadline:
+        raise OcrError("The extraction exceeded its processing time limit.")
+    pages = page_extractor.extract(source_path, mode=mode, deadline=deadline)
+    if time.monotonic() >= deadline:
+        raise OcrError("The extraction exceeded its processing time limit.")
+    return pages
 
 
 def _report_failure_with_retry(

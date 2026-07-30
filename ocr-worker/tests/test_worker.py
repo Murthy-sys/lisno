@@ -76,7 +76,7 @@ class FakeExtractor:
         self.pages = pages or []
         self.error = error
 
-    def extract(self, source_path):
+    def extract(self, source_path, *, mode="project_design", deadline=None):
         assert source_path == FIXTURE
         if self.error:
             raise self.error
@@ -87,7 +87,7 @@ class ScriptedExtractor:
     def __init__(self, results):
         self.results = list(results)
 
-    def extract(self, source_path):
+    def extract(self, source_path, *, mode="project_design", deadline=None):
         assert source_path == FIXTURE
         result = self.results.pop(0)
         if isinstance(result, Exception):
@@ -303,8 +303,10 @@ def test_run_worker_constructs_estimate_extractor_with_claimed_taxonomy(
         def __init__(self, **kwargs):
             constructed.append(kwargs)
 
-        def extract(self, source_path):
+        def extract(self, source_path, *, mode, deadline):
             assert source_path == FIXTURE
+            assert mode == "estimate_design"
+            assert deadline is not None
             return []
 
     monkeypatch.setattr("lisno_ocr.worker.Extractor", RecordingExtractor)
@@ -318,6 +320,33 @@ def test_run_worker_constructs_estimate_extractor_with_claimed_taxonomy(
 
     assert constructed[0]["estimate_taxonomy"] == taxonomy
     assert api.completed == [("estimate-job-1", [])]
+
+
+def test_run_worker_passes_the_claimed_job_kind_to_the_extractor(monkeypatch):
+    api = FakeApi([job()])
+    constructed = []
+
+    class RecordingExtractor:
+        def __init__(self, **kwargs):
+            constructed.append(kwargs)
+
+        def extract(self, source_path, *, mode, deadline):
+            assert source_path == FIXTURE
+            assert mode == "project_design"
+            assert deadline is not None
+            return []
+
+    monkeypatch.setattr("lisno_ocr.worker.Extractor", RecordingExtractor)
+
+    run_worker(
+        settings(),
+        api=api,
+        sleep=lambda _seconds: None,
+        max_iterations=1,
+    )
+
+    assert constructed[0]["estimate_taxonomy"] is None
+    assert api.completed == [("job-1", [])]
 
 
 @pytest.mark.parametrize(
@@ -372,7 +401,7 @@ def test_short_authoritative_lease_heartbeats_before_expiry_without_worker_lease
     api = FakeApi([job()])
 
     class SlowExtractor:
-        def extract(self, _source):
+        def extract(self, _source, *, mode="project_design", deadline=None):
             time.sleep(0.04)
             return []
 
@@ -385,6 +414,39 @@ def test_short_authoritative_lease_heartbeats_before_expiry_without_worker_lease
     )
 
     assert api.heartbeats
+
+
+def test_worker_reports_an_extraction_that_runs_past_its_processing_deadline():
+    api = FakeApi([job()])
+    observed = []
+
+    class SlowExtractor:
+        def extract(self, source_path, *, mode, deadline):
+            assert source_path == FIXTURE
+            observed.append((mode, deadline))
+            time.sleep(0.02)
+            return []
+
+    limited_settings = WorkerSettings(
+        api_base_url="http://backend.example/api/v1",
+        worker_token="worker-token-with-at-least-32-characters",
+        poll_seconds=2.5,
+        request_timeout_seconds=30,
+        max_processing_seconds=0.001,
+    )
+
+    run_worker(
+        limited_settings,
+        api=api,
+        extractor=SlowExtractor(),
+        sleep=lambda _seconds: None,
+        max_iterations=1,
+    )
+
+    assert observed[0][0] == "project_design"
+    assert api.completed == []
+    assert api.failed[0][1].code == "OCR_FAILED"
+    assert api.failed[0][1].message == "The extraction exceeded its processing time limit."
 
 
 def test_worker_reports_bounded_failure_without_a_traceback():
