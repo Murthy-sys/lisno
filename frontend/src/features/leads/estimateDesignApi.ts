@@ -23,12 +23,17 @@ export const getEstimateDesignWorkspace = (estimateId: string) =>
     `/estimates/${encodeURIComponent(estimateId)}/design-uploads`
   );
 
-export function uploadEstimateDesign(estimateId: string, file: File): Promise<EstimateDesignUpload> {
+export function uploadEstimateDesign(
+  estimateId: string,
+  file: File,
+  onProgress: (percent: number) => void = () => {}
+): Promise<EstimateDesignUpload> {
   const body = new FormData();
   body.append("file", file);
-  return apiClient.postMultipart<EstimateDesignUpload>(
+  return apiClient.postMultipartWithProgress<EstimateDesignUpload>(
     `/estimates/${encodeURIComponent(estimateId)}/design-uploads`,
-    body
+    body,
+    onProgress
   );
 }
 

@@ -79,6 +79,22 @@ async function parseApiError(response: Response): Promise<ApiError> {
   );
 }
 
+function parseXhrApiError(status: number, responseText: string): ApiError {
+  let body: ApiErrorBody | undefined;
+  try {
+    body = JSON.parse(responseText) as ApiErrorBody;
+  } catch {
+    // Non-JSON errors are normalized at this boundary.
+  }
+
+  return new ApiError(
+    status,
+    body?.error?.code ?? "REQUEST_FAILED",
+    body?.error?.message ?? "The request could not be completed.",
+    body?.error?.fields
+  );
+}
+
 function buildHeaders(
   headers: HeadersInit | undefined,
   hasJsonBody: boolean,
@@ -171,6 +187,58 @@ export const apiClient = {
     }, requestToken);
     const envelope = (await response.json()) as ApiResponse<T>;
     return envelope.data;
+  },
+  postMultipartWithProgress<T>(
+    path: string,
+    body: FormData,
+    onProgress: (percent: number) => void
+  ): Promise<T> {
+    const requestToken = tokenStorage.get();
+    const url = resolveApiUrl(API_BASE_URL, path);
+
+    return new Promise<T>((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open("POST", url);
+
+      const headers = buildHeaders(undefined, false, requestToken);
+      headers.forEach((value, name) => xhr.setRequestHeader(name, value));
+
+      xhr.upload.onprogress = (event) => {
+        if (!event.lengthComputable || event.total <= 0) return;
+        onProgress(Math.min(100, Math.max(0, Math.round((event.loaded / event.total) * 100))));
+      };
+
+      xhr.onload = () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          try {
+            resolve((JSON.parse(xhr.responseText) as ApiResponse<T>).data);
+          } catch {
+            reject(new ApiError(xhr.status, "REQUEST_FAILED", "The request could not be completed."));
+          }
+          return;
+        }
+
+        const error = parseXhrApiError(xhr.status, xhr.responseText);
+        if (
+          xhr.status === 401 &&
+          requestToken !== null &&
+          tokenStorage.get() === requestToken
+        ) {
+          tokenStorage.clear();
+          window.dispatchEvent(
+            new CustomEvent("lisno:unauthorized", {
+              detail: { token: requestToken }
+            })
+          );
+        }
+        reject(error);
+      };
+
+      xhr.onerror = xhr.onabort = () => {
+        reject(new ApiError(0, "REQUEST_FAILED", "The request could not be completed."));
+      };
+      xhr.send(body);
+    });
   },
   async getBlob(
     path: string

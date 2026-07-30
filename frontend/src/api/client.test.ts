@@ -1,5 +1,5 @@
 import { http, HttpResponse } from "msw";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   ApiError,
@@ -9,6 +9,48 @@ import {
   type PaginatedData
 } from "./client";
 import { server } from "../test/server";
+
+class FakeXMLHttpRequest {
+  static instances: FakeXMLHttpRequest[] = [];
+
+  status = 0;
+  responseText = "";
+  onload: (() => void) | null = null;
+  onerror: (() => void) | null = null;
+  onabort: (() => void) | null = null;
+  upload = { onprogress: null as ((event: ProgressEvent) => void) | null };
+  readonly headers = new Map<string, string>();
+  method = "";
+  url = "";
+  sentBody: Document | XMLHttpRequestBodyInit | null = null;
+
+  constructor() {
+    FakeXMLHttpRequest.instances.push(this);
+  }
+
+  open(method: string, url: string): void {
+    this.method = method;
+    this.url = url;
+  }
+
+  setRequestHeader(name: string, value: string): void {
+    this.headers.set(name, value);
+  }
+
+  send(body: Document | XMLHttpRequestBodyInit | null): void {
+    this.sentBody = body;
+  }
+}
+
+function installFakeXMLHttpRequest(): typeof FakeXMLHttpRequest {
+  FakeXMLHttpRequest.instances = [];
+  vi.stubGlobal("XMLHttpRequest", FakeXMLHttpRequest);
+  return FakeXMLHttpRequest;
+}
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 describe("apiClient", () => {
   it("unwraps JSON data and attaches the persisted bearer token", async () => {
@@ -145,6 +187,78 @@ describe("apiClient", () => {
     await expect(
       apiClient.postMultipart<{ id: string }>("/design-versions", body)
     ).resolves.toEqual({ id: "version-1" });
+  });
+
+  it("reports clamped integer multipart upload progress and unwraps its response", async () => {
+    tokenStorage.set("upload-token");
+    const XMLHttpRequest = installFakeXMLHttpRequest();
+    const body = new FormData();
+    const progress = vi.fn();
+    const upload = apiClient.postMultipartWithProgress<{ id: string }>(
+      "/design-versions",
+      body,
+      progress
+    );
+    const xhr = XMLHttpRequest.instances[0];
+
+    expect(xhr.method).toBe("POST");
+    expect(xhr.url).toBe("/api/v1/design-versions");
+    expect(xhr.sentBody).toBe(body);
+    expect(xhr.headers.get("authorization")).toBe("Bearer upload-token");
+    expect(xhr.headers.get("accept")).toBe("application/json");
+    expect(xhr.headers.has("content-type")).toBe(false);
+
+    xhr.upload.onprogress?.({ lengthComputable: true, loaded: 2, total: 3 } as ProgressEvent);
+    xhr.upload.onprogress?.({ lengthComputable: true, loaded: 23, total: 20 } as ProgressEvent);
+    xhr.upload.onprogress?.({ lengthComputable: true, loaded: -1, total: 20 } as ProgressEvent);
+    xhr.status = 201;
+    xhr.responseText = JSON.stringify({ data: { id: "version-1" } });
+    xhr.onload?.();
+
+    await expect(upload).resolves.toEqual({ id: "version-1" });
+    expect(progress).toHaveBeenNthCalledWith(1, 67);
+    expect(progress).toHaveBeenNthCalledWith(2, 100);
+    expect(progress).toHaveBeenNthCalledWith(3, 0);
+  });
+
+  it("rejects failed multipart responses as ApiError and announces current unauthorized tokens", async () => {
+    tokenStorage.set("expired-token");
+    const XMLHttpRequest = installFakeXMLHttpRequest();
+    const listener = vi.fn();
+    window.addEventListener("lisno:unauthorized", listener);
+    const upload = apiClient.postMultipartWithProgress("/design-versions", new FormData(), vi.fn());
+    const xhr = XMLHttpRequest.instances[0];
+
+    xhr.status = 401;
+    xhr.responseText = JSON.stringify({
+      error: { code: "TOKEN_EXPIRED", message: "Session expired." }
+    });
+    xhr.onload?.();
+
+    const error = await upload.catch((caught) => caught);
+
+    expect(error).toBeInstanceOf(ApiError);
+    expect(error).toMatchObject({
+      status: 401,
+      code: "TOKEN_EXPIRED",
+      message: "Session expired."
+    });
+    expect(tokenStorage.get()).toBeNull();
+    expect(listener).toHaveBeenCalledOnce();
+    window.removeEventListener("lisno:unauthorized", listener);
+  });
+
+  it("rejects multipart uploads when XHR errors or is aborted", async () => {
+    const XMLHttpRequest = installFakeXMLHttpRequest();
+    const errored = apiClient.postMultipartWithProgress("/design-versions", new FormData(), vi.fn());
+    XMLHttpRequest.instances[0].onerror?.();
+
+    await expect(errored).rejects.toBeInstanceOf(ApiError);
+
+    const aborted = apiClient.postMultipartWithProgress("/design-versions", new FormData(), vi.fn());
+    XMLHttpRequest.instances[1].onabort?.();
+
+    await expect(aborted).rejects.toBeInstanceOf(ApiError);
   });
 
   it("returns authenticated downloads with the server filename", async () => {
