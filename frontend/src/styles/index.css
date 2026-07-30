@@ -116,6 +116,7 @@
 .client-estimate-drawings > header > p { color: #606a82; font-size: .82rem; font-weight: 700; text-align: right; }
 .client-estimate-drawings__group { display: grid; gap: .35rem; padding: .65rem; border: 1px solid #e8e5f1; border-radius: .65rem; }
 .client-estimate-drawings__group h5 { margin: 0; color: #41368a; font-size: .82rem; }
+.client-estimate-drawings__group--misc { border-color: #e6c97c; background: #fffaf0; color: #72684f; }
 .client-estimate-drawing { display: grid; grid-template-columns: 40px minmax(8rem, 1fr) auto auto auto; align-items: center; gap: .55rem; min-height: 3.5rem; padding-top: .4rem; border-top: 1px solid #efedf5; }
 .client-estimate-drawing__thumbnail { width: 40px; height: 40px; border-radius: .4rem; background: #e9e7f1; object-fit: cover; }
 .client-estimate-drawing__metadata { display: grid; min-width: 0; gap: .08rem; }

@@ -22,6 +22,18 @@ export interface ClientEstimateDrawingOption {
   label: string;
 }
 
+type ClientDrawingGroup =
+  | {
+      kind: "mapped";
+      room: ClientEstimateDrawingOption;
+      scope: ClientEstimateDrawingOption;
+      drawings: EstimateDesignDrawing[];
+    }
+  | {
+      kind: "misc";
+      drawings: EstimateDesignDrawing[];
+    };
+
 interface ClientEstimateDrawingsProps {
   estimateId: string;
   rooms: ClientEstimateDrawingOption[];
@@ -89,20 +101,34 @@ export function ClientEstimateDrawings({
     () => latestRevisions(workspace?.revisions ?? []),
     [workspace?.revisions]
   );
-  const groups = useMemo(() => {
-    const drawings = new Map<string, EstimateDesignDrawing[]>();
+  const groups = useMemo<ClientDrawingGroup[]>(() => {
+    const mapped = new Map<string, EstimateDesignDrawing[]>();
+    const misc: EstimateDesignDrawing[] = [];
     for (const drawing of workspace?.drawings ?? []) {
       if (!drawing.active || !latest.has(drawing.id)) continue;
-      const key = `${drawing.roomId ?? ""}\u0000${drawing.scopeSectionId ?? ""}`;
-      drawings.set(key, [...(drawings.get(key) ?? []), drawing]);
+      if (
+        drawing.mappingStatus === "misc" ||
+        drawing.roomId === null ||
+        drawing.scopeSectionId === null ||
+        drawing.catalogueId === null
+      ) {
+        misc.push(drawing);
+        continue;
+      }
+      const key = `${drawing.roomId}\u0000${drawing.scopeSectionId}`;
+      mapped.set(key, [...(mapped.get(key) ?? []), drawing]);
     }
-    return rooms.flatMap((room) =>
-      scopes.map((scope) => ({
-        room,
-        scope,
-        drawings: drawings.get(`${room.id}\u0000${scope.id}`) ?? []
-      }))
-    ).filter((group) => group.drawings.length > 0);
+    const resolved = rooms.flatMap((room) =>
+      scopes.flatMap((scope) => {
+        const drawings = mapped.get(`${room.id}\u0000${scope.id}`) ?? [];
+        return drawings.length
+          ? [{ kind: "mapped" as const, room, scope, drawings }]
+          : [];
+      })
+    );
+    return misc.length
+      ? [...resolved, { kind: "misc" as const, drawings: misc }]
+      : resolved;
   }, [latest, rooms, scopes, workspace?.drawings]);
 
   if (isPending) {
@@ -121,6 +147,21 @@ export function ClientEstimateDrawings({
   }
   if (!workspace) return null;
 
+  const renderDrawing = (drawing: EstimateDesignDrawing) => {
+    const revision = latest.get(drawing.id)!;
+    const page = workspace.pages.find((item) => item.id === revision.sourcePageId);
+    return (
+      <ClientDrawingRow
+        canReview={canReview}
+        drawing={drawing}
+        estimateId={estimateId}
+        key={drawing.id}
+        page={page}
+        revision={revision}
+      />
+    );
+  };
+
   return (
     <section className="client-estimate-drawings" aria-labelledby={`client-estimate-${estimateId}-drawings-title`}>
       <header>
@@ -132,27 +173,26 @@ export function ClientEstimateDrawings({
           {drawingReadinessText(workspace.readiness)}
         </p>
       </header>
-      {groups.length ? groups.map((group) => (
+      {groups.length ? groups.map((group) => group.kind === "mapped" ? (
         <section
           className="client-estimate-drawings__group"
           aria-label={`${group.room.label}, ${group.scope.label} drawings`}
           key={`${group.room.id}:${group.scope.id}`}
         >
           <h5>{group.room.label} <span aria-hidden="true">→</span> {group.scope.label}</h5>
-          {group.drawings.map((drawing) => {
-            const revision = latest.get(drawing.id)!;
-            const page = workspace.pages.find((item) => item.id === revision.sourcePageId);
-            return (
-              <ClientDrawingRow
-                canReview={canReview}
-                drawing={drawing}
-                estimateId={estimateId}
-                key={drawing.id}
-                page={page}
-                revision={revision}
-              />
-            );
-          })}
+          {group.drawings.map(renderDrawing)}
+        </section>
+      ) : (
+        <section
+          className="client-estimate-drawings__group client-estimate-drawings__group--misc"
+          aria-label="Misc drawings"
+          key="misc"
+        >
+          <h5>Misc</h5>
+          <p>
+            This {group.drawings.length === 1 ? "drawing was" : "drawings were"} submitted without an estimate-item assignment.
+          </p>
+          {group.drawings.map(renderDrawing)}
         </section>
       )) : <p className="inline-empty">No drawings have been submitted for this estimate.</p>}
     </section>
