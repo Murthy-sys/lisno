@@ -12,6 +12,7 @@ _TITLE_FIELD = re.compile(
 )
 
 OcrLineTuple = tuple[tuple[int, int, int, int], str, float]
+PdfWordTuple = tuple[float, float, float, float, str, int, int, int]
 
 
 def title_block_top(image_height: int) -> int:
@@ -49,3 +50,54 @@ def extract_title_block_candidate(
     if len(unique_candidates) != 1:
         return None
     return max(candidates, key=lambda candidate: candidate[1])
+
+
+def extract_pdf_title_block_candidate(
+    words: Sequence[PdfWordTuple], page_width: float, page_height: float
+) -> tuple[str, float] | None:
+    """Read the canonical title field from a PDF's embedded text layer."""
+    lower_band_top = page_height * _LOWER_TITLE_BLOCK_START
+    lower_words = [
+        word
+        for word in words
+        if (word[1] + word[3]) / 2 >= lower_band_top
+    ]
+    candidates: list[str] = []
+    for marker in lower_words:
+        marker_text = unicodedata.normalize("NFKC", marker[4]).strip()
+        if marker_text.casefold().rstrip(":") != "title":
+            continue
+        baseline = (marker[1] + marker[3]) / 2
+        field_end = page_width * 0.265
+        value_words = [
+            word
+            for word in lower_words
+            if word[0] > marker[2]
+            and word[0] < field_end
+            and abs(((word[1] + word[3]) / 2) - baseline)
+            <= max(6.0, marker[3] - marker[1])
+            and word[4].strip() != ":"
+        ]
+        value_words.sort(key=lambda word: word[0])
+        value_parts: list[str] = []
+        for word in value_words:
+            text = word[4].strip()
+            if text.casefold().strip(":") in {
+                "designed",
+                "disined",
+                "date",
+                "project",
+                "checked",
+                "handover",
+                "client",
+            }:
+                break
+            value_parts.append(text)
+        value = " ".join(value_parts).lstrip(": ").strip()
+        if value:
+            candidates.append(value)
+
+    unique = {" ".join(value.casefold().split()) for value in candidates}
+    if len(unique) != 1:
+        return None
+    return candidates[0], 1.0

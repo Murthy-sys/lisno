@@ -3,10 +3,12 @@ import io
 from pathlib import Path
 import time
 
+import fitz
 import pytest
 from PIL import Image, ImageDraw, ImageFont
 
 from lisno_ocr.contracts import (
+    Crop,
     EstimateTaxonomy,
     InvalidSourceError,
     OcrError,
@@ -77,6 +79,34 @@ SUPPLIED_BLUEPRINT_OCR = [
     ((801, 997, 896, 1011), "LED DOWN LIGHT", 0.976708173751831),
     ((995, 997, 1063, 1011), "CEILING FAN", 0.9604941606521606),
 ]
+
+
+def test_estimate_pdf_uses_embedded_title_text_without_starting_ocr(tmp_path):
+    source = tmp_path / "text-layer-title.pdf"
+    document = fitz.open()
+    page = document.new_page(width=1191, height=842)
+    page.insert_text((33, 735), "TITLE :")
+    page.insert_text((68, 735), "TV UNIT")
+    page.insert_text((318, 735), "DISINED BY : JITHESH K")
+    document.save(source)
+    document.close()
+
+    class OcrMustNotStart:
+        def predict(self, **_kwargs):
+            raise AssertionError("embedded PDF title should bypass OCR")
+
+    pages = Extractor(
+        ocr_engine=OcrMustNotStart(),
+        render_scale=1,
+        estimate_taxonomy=EstimateTaxonomy((), ()),
+    ).extract(source, mode="estimate_design")
+
+    assert len(pages) == 1
+    assert len(pages[0].sections) == 1
+    assert pages[0].sections[0].label == "TV UNIT"
+    assert pages[0].sections[0].crop == Crop(
+        x=0, y=0, width=pages[0].width, height=pages[0].height
+    )
 
 
 def _write_representative_blueprint_pdf(tmp_path):

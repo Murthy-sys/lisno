@@ -26,7 +26,11 @@ from .contracts import (
 from .estimate_taxonomy import classify_estimate_drawing
 from .image_formats import ImageSourceError, open_source_pages
 from .settings import LayoutSettings
-from .title_block import extract_title_block_candidate, title_block_top
+from .title_block import (
+    extract_pdf_title_block_candidate,
+    extract_title_block_candidate,
+    title_block_top,
+)
 from .title_classifier import (
     DrawingTitle,
     OcrLine,
@@ -85,6 +89,11 @@ class Extractor:
             raise InvalidSourceError("The extraction source does not exist.")
         suffix = path.suffix.lower()
         if suffix == ".pdf":
+            title_candidates = (
+                self._pdf_title_candidates(path)
+                if mode == "estimate_design"
+                else ()
+            )
             images = self._render_pdf_pages(path, deadline=deadline)
             use_title_block_fast_path = mode == "estimate_design"
         elif suffix in {".png", ".jpg", ".jpeg", ".webp", ".tif", ".tiff", ".heic", ".heif"}:
@@ -94,6 +103,7 @@ class Extractor:
                 max_pages=self._max_pdf_pages,
             )
             use_title_block_fast_path = False
+            title_candidates = ()
         else:
             raise InvalidSourceError("The extraction source type is unsupported.")
         pages: list[ExtractedPage] = []
@@ -107,6 +117,11 @@ class Extractor:
                         page_number,
                         remaining,
                         use_title_block_fast_path=use_title_block_fast_path,
+                        title_block_candidate=(
+                            title_candidates[page_number - 1]
+                            if page_number <= len(title_candidates)
+                            else None
+                        ),
                         deadline=deadline,
                     )
                     pages.append(page)
@@ -116,6 +131,21 @@ class Extractor:
         except ImageSourceError as error:
             raise InvalidSourceError(str(error)) from error
         return pages
+
+    def _pdf_title_candidates(
+        self, path: Path
+    ) -> tuple[tuple[str, float] | None, ...]:
+        try:
+            with fitz.open(path) as document:
+                return tuple(
+                    extract_pdf_title_block_candidate(
+                        page.get_text("words"), page.rect.width, page.rect.height
+                    )
+                    for page in document
+                )
+        except Exception:
+            # Scanned PDFs and malformed text layers retain the OCR fallback.
+            return ()
 
     def _render_pdf_pages(
         self, path: Path, *, deadline: float | None = None
@@ -163,12 +193,17 @@ class Extractor:
         page_number: int,
         remaining_bytes: int,
         use_title_block_fast_path: bool = False,
+        title_block_candidate: tuple[str, float] | None = None,
         deadline: float | None = None,
     ) -> tuple[ExtractedPage, int]:
         _require_processing_time(deadline)
         if use_title_block_fast_path:
             title_block_page = self._extract_title_block_page(
-                image, page_number, remaining_bytes, deadline=deadline
+                image,
+                page_number,
+                remaining_bytes,
+                candidate=title_block_candidate,
+                deadline=deadline,
             )
             if title_block_page is not None:
                 return title_block_page
@@ -247,30 +282,34 @@ class Extractor:
         page_number: int,
         remaining_bytes: int,
         *,
+        candidate: tuple[str, float] | None = None,
         deadline: float | None = None,
     ) -> tuple[ExtractedPage, int] | None:
         _require_processing_time(deadline)
-        lower_band_top = title_block_top(image.height)
-        title_block_image = image.crop(
-            (0, lower_band_top, image.width, image.height)
-        )
-        try:
-            local_lines = self._recognize(title_block_image, deadline=deadline)
-        finally:
-            title_block_image.close()
-        _require_processing_time(deadline)
-        recognized = [
-            (
-                (left, top + lower_band_top, right, bottom + lower_band_top),
-                label,
-                confidence,
+        if candidate is None:
+            lower_band_top = title_block_top(image.height)
+            title_block_image = image.crop(
+                (0, lower_band_top, image.width, image.height)
             )
-            for (left, top, right, bottom), label, confidence in local_lines
-            if label and confidence >= self._confidence_floor
-        ]
-        candidate = extract_title_block_candidate(
-            recognized, image.width, image.height
-        )
+            try:
+                local_lines = self._recognize(
+                    title_block_image, deadline=deadline
+                )
+            finally:
+                title_block_image.close()
+            _require_processing_time(deadline)
+            recognized = [
+                (
+                    (left, top + lower_band_top, right, bottom + lower_band_top),
+                    label,
+                    confidence,
+                )
+                for (left, top, right, bottom), label, confidence in local_lines
+                if label and confidence >= self._confidence_floor
+            ]
+            candidate = extract_title_block_candidate(
+                recognized, image.width, image.height
+            )
         if candidate is None:
             return None
         label, confidence = candidate
