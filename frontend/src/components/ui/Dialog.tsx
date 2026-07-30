@@ -15,6 +15,27 @@ const focusableSelector = [
   "[tabindex]:not([tabindex='-1'])"
 ].join(",");
 
+let bodyScrollLockOwners = 0;
+let bodyOverflowBeforeFirstLock = "";
+
+function acquireBodyScrollLock() {
+  if (bodyScrollLockOwners === 0) {
+    bodyOverflowBeforeFirstLock = document.body.style.overflow;
+  }
+  bodyScrollLockOwners += 1;
+  document.body.style.overflow = "hidden";
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    bodyScrollLockOwners = Math.max(0, bodyScrollLockOwners - 1);
+    if (bodyScrollLockOwners === 0) {
+      document.body.style.overflow = bodyOverflowBeforeFirstLock;
+      bodyOverflowBeforeFirstLock = "";
+    }
+  };
+}
+
 export function Dialog({
   title,
   eyebrow = "Designer workflow",
@@ -50,8 +71,7 @@ export function Dialog({
       document.activeElement instanceof HTMLElement
         ? document.activeElement
         : null;
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
+    const releaseBodyScrollLock = acquireBodyScrollLock();
 
     const focusFirst = window.setTimeout(() => {
       const initial = dialogRef.current?.querySelector<HTMLElement>(
@@ -92,7 +112,7 @@ export function Dialog({
     return () => {
       window.clearTimeout(focusFirst);
       document.removeEventListener("keydown", handleKeyDown);
-      document.body.style.overflow = previousOverflow;
+      releaseBodyScrollLock();
       restoreFocusRef.current?.focus();
     };
   }, []);
