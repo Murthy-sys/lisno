@@ -326,8 +326,8 @@ def _extract_before_deadline(
 def _interrupt_at_deadline(deadline: float) -> Iterator[None]:
     """Interrupt extraction on supported main-thread platforms.
 
-    An active SIGALRM timer belongs to another caller, so leave it untouched and
-    rely on the extractors' cooperative monotonic checks in that case.
+    Existing SIGALRM state is suspended during extraction and restored with its
+    elapsed delay accounted for before control returns to the caller.
     """
     if time.monotonic() >= deadline:
         raise OcrError("The extraction exceeded its processing time limit.")
@@ -345,17 +345,29 @@ def _interrupt_at_deadline(deadline: float) -> Iterator[None]:
         yield
         return
     try:
-        existing_delay, existing_interval = getitimer(itimer_real)
+        previous_delay, previous_interval = getitimer(itimer_real)
     except (OSError, ValueError):
         yield
         return
-    if existing_delay > 0 or existing_interval > 0:
-        yield
-        return
     previous_handler = signal.getsignal(sigalrm)
+    ownership_started_at = time.monotonic()
 
     def interrupt(_signum: int, _frame: object) -> None:
         raise OcrError("The extraction exceeded its processing time limit.")
+
+    def restore_previous_timer() -> None:
+        elapsed = time.monotonic() - ownership_started_at
+        if previous_delay <= 0:
+            restored_delay = 0.0
+        elif previous_interval <= 0:
+            restored_delay = max(0.0, previous_delay - elapsed)
+        elif elapsed < previous_delay:
+            restored_delay = previous_delay - elapsed
+        else:
+            restored_delay = previous_interval - (
+                (elapsed - previous_delay) % previous_interval
+            )
+        setitimer(itimer_real, restored_delay, previous_interval)
 
     handler_installed = False
     try:
@@ -368,15 +380,24 @@ def _interrupt_at_deadline(deadline: float) -> Iterator[None]:
             setitimer(itimer_real, remaining)
         except (OSError, ValueError):
             if handler_installed:
-                signal.signal(sigalrm, previous_handler)
-                handler_installed = False
+                try:
+                    setitimer(itimer_real, 0.0)
+                finally:
+                    try:
+                        signal.signal(sigalrm, previous_handler)
+                    finally:
+                        restore_previous_timer()
+                    handler_installed = False
         yield
     finally:
         if handler_installed:
             try:
                 setitimer(itimer_real, 0.0)
             finally:
-                signal.signal(sigalrm, previous_handler)
+                try:
+                    signal.signal(sigalrm, previous_handler)
+                finally:
+                    restore_previous_timer()
 
 
 def _report_failure_with_retry(

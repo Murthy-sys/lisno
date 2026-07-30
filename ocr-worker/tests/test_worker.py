@@ -492,6 +492,54 @@ def test_worker_interrupts_an_extractor_that_blocks_past_its_processing_deadline
     assert signal.getsignal(signal.SIGALRM) == original_handler
 
 
+def test_worker_interrupts_with_an_existing_alarm_and_restores_it_afterward():
+    api = FakeApi([job()])
+    original_handler = signal.getsignal(signal.SIGALRM)
+    original_timer = signal.getitimer(signal.ITIMER_REAL)
+
+    def prior_alarm_handler(_signum, _frame):
+        raise AssertionError("The prior alarm must not fire during extraction.")
+
+    class BlockingExtractor:
+        def extract(self, _source_path, *, mode, deadline):
+            assert mode == "project_design"
+            threading.Event().wait(0.25)
+            return []
+
+    limited_settings = WorkerSettings(
+        api_base_url="http://backend.example/api/v1",
+        worker_token="worker-token-with-at-least-32-characters",
+        poll_seconds=2.5,
+        request_timeout_seconds=30,
+        max_processing_seconds=0.02,
+    )
+    signal.signal(signal.SIGALRM, prior_alarm_handler)
+    signal.setitimer(signal.ITIMER_REAL, 1.0, 0.5)
+    started = time.monotonic()
+    try:
+        run_worker(
+            limited_settings,
+            api=api,
+            extractor=BlockingExtractor(),
+            sleep=lambda _seconds: None,
+            max_iterations=1,
+        )
+        restored_delay, restored_interval = signal.getitimer(signal.ITIMER_REAL)
+        restored_handler = signal.getsignal(signal.SIGALRM)
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0.0)
+        signal.signal(signal.SIGALRM, original_handler)
+        if original_timer[0] > 0 or original_timer[1] > 0:
+            signal.setitimer(signal.ITIMER_REAL, *original_timer)
+
+    assert time.monotonic() - started < 0.15
+    assert api.completed == []
+    assert api.failed[0][1].code == "OCR_FAILED"
+    assert restored_handler == prior_alarm_handler
+    assert 0.8 < restored_delay < 1.0
+    assert restored_interval == pytest.approx(0.5)
+
+
 def test_worker_reports_bounded_failure_without_a_traceback():
     api = FakeApi([job()])
 
