@@ -4,7 +4,10 @@ import type { AnnotationDocumentV1 } from "../../api/types";
 import { Dialog } from "../ui/Dialog";
 import { AnnotationOverlay, ImageAnnotationEditor } from "./ImageAnnotationEditor";
 import { ProtectedImage } from "./ProtectedImage";
-import type { ViewTransform } from "./annotationGeometry";
+import {
+  isAnnotationDocumentWithinByteLimit,
+  type ViewTransform
+} from "./annotationGeometry";
 
 export interface EstimateDrawingPreviewDialogProps {
   title: string;
@@ -74,6 +77,10 @@ export function EstimateDrawingPreviewDialog({
 
   async function saveDraft() {
     if (!onSaveDraft) return;
+    if (!isAnnotationDocumentWithinByteLimit(document)) {
+      setError("Annotations exceed the 256 KiB limit. Remove or shorten markings before saving.");
+      return;
+    }
     setBusy("save");
     setError("");
     try {
@@ -92,6 +99,10 @@ export function EstimateDrawingPreviewDialog({
       !summary.trim() ||
       document.elements.length === 0
     ) return;
+    if (!isAnnotationDocumentWithinByteLimit(document)) {
+      setError("Annotations exceed the 256 KiB limit. Remove or shorten markings before submitting.");
+      return;
+    }
     setBusy("submit");
     setError("");
     try {
@@ -106,14 +117,16 @@ export function EstimateDrawingPreviewDialog({
   }
 
   return (
-    <Dialog
-      title={`${title} preview`}
-      eyebrow={canAnnotate ? "Drawing review" : "Drawing preview"}
-      description={canAnnotate ? "Mark the drawing or add a text note before requesting changes." : "Client markings are shown as a read-only overlay."}
-      onClose={requestClose}
-      busy={busy !== undefined}
-    >
-      <div className="estimate-drawing-preview-dialog">
+    <>
+      <Dialog
+        title={`${title} preview`}
+        eyebrow={canAnnotate ? "Drawing review" : "Drawing preview"}
+        description={canAnnotate ? "Mark the drawing or add a text note before requesting changes." : "Client markings are shown as a read-only overlay."}
+        onClose={requestClose}
+        busy={busy !== undefined}
+        contentInert={confirmClose}
+      >
+        <div className="estimate-drawing-preview-dialog">
         <ProtectedImage
           source={imageUrl}
           alt={`${title} protected drawing`}
@@ -189,23 +202,29 @@ export function EstimateDrawingPreviewDialog({
             ) : null}
           </aside>
         </div>
-      </div>
+        </div>
+      </Dialog>
       {confirmClose ? (
-        <div
-          className="annotation-close-confirmation"
+        <Dialog
+          title="Discard unsaved annotations?"
+          eyebrow="Unsaved drawing review"
+          description="Your unsaved markings and change summary will be lost."
           role="alertdialog"
-          aria-modal="true"
-          aria-labelledby="annotation-close-title"
-          aria-describedby="annotation-close-description"
+          onClose={() => setConfirmClose(false)}
+          showCloseButton={false}
         >
-          <h3 id="annotation-close-title">Discard unsaved annotations?</h3>
-          <p id="annotation-close-description">Your unsaved markings and change summary will be lost.</p>
-          <div>
-            <button type="button" autoFocus onClick={() => setConfirmClose(false)}>Keep editing</button>
+          <div className="annotation-close-confirmation">
+            <button
+              type="button"
+              data-dialog-initial-focus
+              onClick={() => setConfirmClose(false)}
+            >
+              Keep editing
+            </button>
             <button type="button" onClick={onClose}>Discard changes</button>
           </div>
-        </div>
+        </Dialog>
       ) : null}
-    </Dialog>
+    </>
   );
 }

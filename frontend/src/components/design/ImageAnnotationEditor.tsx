@@ -17,6 +17,7 @@ import {
   hitTestElements,
   makeArrow,
   makeBoundedShape,
+  isAnnotationDocumentWithinByteLimit,
   moveElement,
   removeElement,
   resizeShape,
@@ -118,14 +119,24 @@ function renderElement(
   imageWidth: number,
   imageHeight: number,
   selected: boolean,
-  markerId: string
+  markerId: string,
+  interaction?: {
+    onFocus: () => void;
+    onKeyDown: (event: ReactKeyboardEvent<SVGElement>) => void;
+  }
 ) {
   const shared = {
     "aria-label": annotationLabel(element),
     "data-selected": selected ? "true" : "false",
     stroke: element.color,
     strokeWidth: element.strokeWidth,
-    vectorEffect: "non-scaling-stroke" as const
+    vectorEffect: "non-scaling-stroke" as const,
+    ...(interaction ? {
+      role: "button" as const,
+      tabIndex: 0,
+      onFocus: interaction.onFocus,
+      onKeyDown: interaction.onKeyDown
+    } : {})
   };
   if (element.type === "rectangle") {
     return (
@@ -242,6 +253,7 @@ export function ImageAnnotationEditor({
   const [draftElement, setDraftElement] = useState<AnnotationElement>();
   const [textDraft, setTextDraft] = useState<{ point: AnnotationPoint; text: string }>();
   const [announcement, setAnnouncement] = useState("");
+  const [activeResizeHandle, setActiveResizeHandle] = useState<ResizeHandle>();
   const operationRef = useRef<EditorOperation | undefined>(undefined);
   const undoRef = useRef<AnnotationDocumentV1[]>([]);
   const redoRef = useRef<AnnotationDocumentV1[]>([]);
@@ -267,11 +279,16 @@ export function ImageAnnotationEditor({
   }
 
   function commit(next: AnnotationDocumentV1, message: string) {
+    if (!isAnnotationDocumentWithinByteLimit(next)) {
+      setAnnouncement("Annotation payload must be 256 KiB or smaller. Remove or shorten annotations.");
+      return false;
+    }
     undoRef.current = [...undoRef.current.slice(-99), valueRef.current];
     redoRef.current = [];
     valueRef.current = next;
     onChange(next);
     setAnnouncement(message);
+    return true;
   }
 
   function pointFromEvent(event: ReactPointerEvent<SVGElement>) {
@@ -401,8 +418,9 @@ export function ImageAnnotationEditor({
       setAnnouncement("Annotation limit reached");
       return;
     }
-    commit(addElement(valueRef.current, created), `Added ${operation.tool} annotation`);
-    setSelectedId(created.id);
+    if (commit(addElement(valueRef.current, created), `Added ${operation.tool} annotation`)) {
+      setSelectedId(created.id);
+    }
   }
 
   function startResize(
@@ -413,6 +431,115 @@ export function ImageAnnotationEditor({
     event.stopPropagation();
     event.currentTarget.ownerSVGElement?.setPointerCapture?.(event.pointerId);
     operationRef.current = { kind: "resize", original: element, handle };
+  }
+
+  function elementKeyDown(
+    event: ReactKeyboardEvent<SVGElement>,
+    element: AnnotationElement
+  ) {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      event.stopPropagation();
+      setSelectedId(element.id);
+      setAnnouncement(`Selected ${element.type} annotation`);
+      return;
+    }
+    const directions: Record<string, AnnotationPoint> = {
+      ArrowLeft: { x: -1, y: 0 },
+      ArrowRight: { x: 1, y: 0 },
+      ArrowUp: { x: 0, y: -1 },
+      ArrowDown: { x: 0, y: 1 }
+    };
+    const direction = directions[event.key];
+    if (!direction) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const step = event.shiftKey ? 0.025 : 0.005;
+    const moved = moveElement(element, {
+      x: direction.x * step,
+      y: direction.y * step
+    });
+    setSelectedId(element.id);
+    commit(updateElement(valueRef.current, moved), `Moved ${element.type} annotation`);
+  }
+
+  function resizeHandleKeyDown(
+    event: ReactKeyboardEvent<SVGCircleElement>,
+    element: Extract<AnnotationElement, { type: "rectangle" | "ellipse" }>,
+    handle: ResizeHandle
+  ) {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      event.stopPropagation();
+      setActiveResizeHandle((current) => current === handle ? undefined : handle);
+      setAnnouncement(`Resize ${handle} handle ${activeResizeHandle === handle ? "released" : "active"}`);
+      return;
+    }
+    if (event.key === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
+      setActiveResizeHandle(undefined);
+      setAnnouncement("Resize handle released");
+      return;
+    }
+    const directions: Record<string, AnnotationPoint> = {
+      ArrowLeft: { x: -1, y: 0 },
+      ArrowRight: { x: 1, y: 0 },
+      ArrowUp: { x: 0, y: -1 },
+      ArrowDown: { x: 0, y: 1 }
+    };
+    const direction = directions[event.key];
+    if (!direction) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const step = event.shiftKey ? 0.025 : 0.005;
+    const point = handlePoint(element, handle);
+    const resized = resizeShape(element, handle, {
+      x: point.x + direction.x * step,
+      y: point.y + direction.y * step
+    });
+    commit(updateElement(valueRef.current, resized), `Resized ${element.type} annotation`);
+  }
+
+  function createWithKeyboard() {
+    if (tool === "select") return;
+    if (tool === "text") {
+      setTextDraft({ point: { x: 0.5, y: 0.5 }, text: "" });
+      return;
+    }
+    if (valueRef.current.elements.length >= 200) {
+      setAnnouncement("Annotation limit reached");
+      return;
+    }
+    const base = { ...ANNOTATION_BASE, id: nextId() };
+    let created: AnnotationElement;
+    if (tool === "rectangle" || tool === "ellipse") {
+      created = makeBoundedShape(
+        tool,
+        { x: 0.4, y: 0.4 },
+        { x: 0.6, y: 0.6 },
+        base
+      );
+    } else if (tool === "arrow") {
+      created = makeArrow({ x: 0.4, y: 0.5 }, { x: 0.6, y: 0.5 }, base);
+    } else {
+      const usedPoints = valueRef.current.elements.reduce(
+        (count, element) => count + (element.type === "freehand" ? element.points.length : 0),
+        0
+      );
+      if (5_000 - usedPoints < 3) {
+        setAnnouncement("Freehand point limit reached");
+        return;
+      }
+      created = {
+        ...base,
+        type: "freehand",
+        points: [{ x: 0.4, y: 0.5 }, { x: 0.5, y: 0.45 }, { x: 0.6, y: 0.5 }]
+      };
+    }
+    if (commit(addElement(valueRef.current, created), `Added ${tool} annotation`)) {
+      setSelectedId(created.id);
+    }
   }
 
   function undo() {
@@ -442,6 +569,11 @@ export function ImageAnnotationEditor({
 
   function keyDown(event: ReactKeyboardEvent<SVGSVGElement>) {
     if (readOnly) return;
+    if (event.key === "Enter" && tool !== "select") {
+      event.preventDefault();
+      createWithKeyboard();
+      return;
+    }
     if (event.key === "Escape") {
       operationRef.current = undefined;
       setDraftElement(undefined);
@@ -466,9 +598,10 @@ export function ImageAnnotationEditor({
       y: textDraft.point.y,
       text: textDraft.text.trim().slice(0, 500)
     };
-    commit(addElement(valueRef.current, created), "Added text annotation");
-    setSelectedId(created.id);
-    setTextDraft(undefined);
+    if (commit(addElement(valueRef.current, created), "Added text annotation")) {
+      setSelectedId(created.id);
+      setTextDraft(undefined);
+    }
   }
 
   return (
@@ -510,7 +643,20 @@ export function ImageAnnotationEditor({
           </defs>
           <image href={imageSource} width={imageWidth} height={imageHeight} preserveAspectRatio="xMidYMid meet" />
           {renderedElements.map((element) =>
-            renderElement(element, imageWidth, imageHeight, element.id === selectedId, markerId)
+            renderElement(
+              element,
+              imageWidth,
+              imageHeight,
+              element.id === selectedId,
+              markerId,
+              readOnly ? undefined : {
+                onFocus: () => {
+                  setSelectedId(element.id);
+                  setActiveResizeHandle(undefined);
+                },
+                onKeyDown: (event) => elementKeyDown(event, element)
+              }
+            )
           )}
           {!readOnly && selected && (selected.type === "rectangle" || selected.type === "ellipse")
             ? resizeHandles.map((handle) => {
@@ -521,6 +667,7 @@ export function ImageAnnotationEditor({
                     role="button"
                     tabIndex={0}
                     aria-label={`Resize ${handle}`}
+                    aria-pressed={activeResizeHandle === handle}
                     cx={point.x * imageWidth}
                     cy={point.y * imageHeight}
                     r={6}
@@ -528,6 +675,7 @@ export function ImageAnnotationEditor({
                     stroke="#ef4444"
                     vectorEffect="non-scaling-stroke"
                     onPointerDown={(event) => startResize(event, selected, handle)}
+                    onKeyDown={(event) => resizeHandleKeyDown(event, selected, handle)}
                   />
                 );
               })

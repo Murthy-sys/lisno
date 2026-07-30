@@ -3318,32 +3318,18 @@
 }
 
 .annotation-text-dialog form > div,
-.annotation-close-confirmation > div {
+.annotation-close-confirmation {
   display: flex;
   justify-content: flex-end;
   gap: 0.5rem;
 }
 
 .annotation-close-confirmation {
-  position: fixed;
-  z-index: 80;
-  top: 50%;
-  left: 50%;
-  width: min(90vw, 28rem);
-  translate: -50% -50%;
-  border: 1px solid #d9dce7;
-  border-radius: 1rem;
   padding: 1.2rem;
-  background: #fff;
-  box-shadow: 0 1.5rem 7rem 2rem rgb(10 15 31 / 55%);
 }
 
-.annotation-close-confirmation h3 {
-  margin: 0;
-}
-
-.annotation-close-confirmation p {
-  color: var(--color-lisno-muted);
+.modal:has(.annotation-close-confirmation) {
+  width: min(90vw, 28rem);
 }
 
 @media (max-width: 48rem) {

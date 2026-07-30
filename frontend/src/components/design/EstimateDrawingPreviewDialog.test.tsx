@@ -30,6 +30,27 @@ const markedDocument: AnnotationDocumentV1 = {
   }]
 };
 
+function makeOversizedDocument(): AnnotationDocumentV1 {
+  return {
+    ...emptyDocument,
+    elements: [{
+      id: "full-path",
+      type: "freehand",
+      points: Array.from({ length: 5_000 }, () => ({ x: 0.123456, y: 0.654321 })),
+      color: "#ef4444",
+      strokeWidth: 2
+    }, ...Array.from({ length: 120 }, (_, index) => ({
+      id: `note-${index}`,
+      type: "text" as const,
+      x: 0.25,
+      y: 0.75,
+      text: "😀".repeat(250),
+      color: "#ef4444",
+      strokeWidth: 2
+    }))]
+  };
+}
+
 function previewProps(overrides: Partial<EstimateDrawingPreviewDialogProps> = {}) {
   return {
     title: "Ground floor plan",
@@ -166,13 +187,40 @@ describe("EstimateDrawingPreviewDialog", () => {
     await userEvent.click(within(preview).getByRole("button", { name: "Close Ground floor plan preview" }));
     const confirmation = screen.getByRole("alertdialog", { name: "Discard unsaved annotations?" });
     expect(onClose).not.toHaveBeenCalled();
+    expect(preview).toHaveAttribute("inert");
     await userEvent.click(within(confirmation).getByRole("button", { name: "Keep editing" }));
     expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    expect(preview).not.toHaveAttribute("inert");
+    expect(within(preview).getByRole("button", { name: "Close Ground floor plan preview" })).toHaveFocus();
     expect(screen.getByText("Shift this door")).toBeVisible();
 
     await userEvent.click(within(preview).getByRole("button", { name: "Close Ground floor plan preview" }));
     await userEvent.click(screen.getByRole("button", { name: "Discard changes" }));
     expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it("contains confirmation focus and uses Escape to continue editing", async () => {
+    render(<EstimateDrawingPreviewDialog {...previewProps()} />);
+    await addTextNote();
+    const preview = screen.getByRole("dialog", { name: "Ground floor plan preview" });
+    const close = within(preview).getByRole("button", { name: "Close Ground floor plan preview" });
+    await userEvent.click(close);
+    const confirmation = screen.getByRole("alertdialog", { name: "Discard unsaved annotations?" });
+    const keepEditing = within(confirmation).getByRole("button", { name: "Keep editing" });
+    const discard = within(confirmation).getByRole("button", { name: "Discard changes" });
+
+    await waitFor(() => expect(keepEditing).toHaveFocus());
+    discard.focus();
+    fireEvent.keyDown(document, { key: "Tab" });
+    expect(keepEditing).toHaveFocus();
+    keepEditing.focus();
+    fireEvent.keyDown(document, { key: "Tab", shiftKey: true });
+    expect(discard).toHaveFocus();
+
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.queryByRole("alertdialog", { name: "Discard unsaved annotations?" })).not.toBeInTheDocument();
+    expect(preview).not.toHaveAttribute("inert");
+    expect(close).toHaveFocus();
   });
 
   it("saves a draft and submits a summary with the current annotation document", async () => {
@@ -201,6 +249,24 @@ describe("EstimateDrawingPreviewDialog", () => {
       expect.objectContaining({ schemaVersion: 1 }),
       "Please shift the highlighted door."
     );
+  });
+
+  it("blocks persistence callbacks when annotations exceed the UTF-8 payload limit", async () => {
+    const annotations = makeOversizedDocument();
+    const onSaveDraft = vi.fn();
+    const onSubmitChangeRequest = vi.fn();
+    expect(new TextEncoder().encode(JSON.stringify(annotations)).byteLength).toBeGreaterThan(256 * 1024);
+    render(
+      <EstimateDrawingPreviewDialog
+        {...previewProps({ annotations, onSaveDraft, onSubmitChangeRequest })}
+      />
+    );
+    await userEvent.type(screen.getByLabelText("Change summary"), "Please update the marked areas.");
+    await userEvent.click(screen.getByRole("button", { name: "Submit change request" }));
+
+    expect(onSaveDraft).not.toHaveBeenCalled();
+    expect(onSubmitChangeRequest).not.toHaveBeenCalled();
+    expect(screen.getByRole("alert")).toHaveTextContent("Annotations exceed the 256 KiB limit");
   });
 
   it("has no automated accessibility violations in the editable preview", async () => {

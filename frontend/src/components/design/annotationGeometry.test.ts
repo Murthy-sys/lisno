@@ -13,6 +13,8 @@ import {
   normalizedToViewport,
   removeElement,
   resizeShape,
+  annotationDocumentByteLength,
+  isAnnotationDocumentWithinByteLimit,
   simplifyFreehand,
   updateElement,
   viewportToNormalized,
@@ -20,6 +22,56 @@ import {
 } from "./annotationGeometry";
 
 const base = { id: "shape-1", color: "#ef4444", strokeWidth: 2 };
+const MAX_ANNOTATION_BYTES = 256 * 1024;
+
+function makeByteBoundaryDocument(): AnnotationDocumentV1 {
+  let document: AnnotationDocumentV1 = {
+    schemaVersion: 1,
+    imageWidth: 1000,
+    imageHeight: 800,
+    elements: [{
+      ...base,
+      id: "path",
+      type: "freehand",
+      points: Array.from({ length: 5_000 }, () => ({ x: 0.123456, y: 0.654321 }))
+    }]
+  };
+  while (document.elements.length < 199) {
+    const id = `note-${document.elements.length}`;
+    const emptyCandidate: AnnotationDocumentV1 = {
+      ...document,
+      elements: [...document.elements, {
+        ...base,
+        id,
+        type: "text",
+        x: 0.25,
+        y: 0.75,
+        text: ""
+      }]
+    };
+    const emptyBytes = new TextEncoder().encode(JSON.stringify(emptyCandidate)).byteLength;
+    const remaining = MAX_ANNOTATION_BYTES - emptyBytes;
+    if (remaining < 1) break;
+    const emojiCount = Math.min(250, Math.floor(remaining / 4));
+    const asciiCount = Math.min(500 - emojiCount * 2, remaining - emojiCount * 4);
+    const text = `${"😀".repeat(emojiCount)}${"x".repeat(asciiCount)}`;
+    const candidate: AnnotationDocumentV1 = {
+      ...document,
+      elements: [...document.elements, {
+        ...base,
+        id,
+        type: "text",
+        x: 0.25,
+        y: 0.75,
+        text
+      }]
+    };
+    if (new TextEncoder().encode(JSON.stringify(candidate)).byteLength > MAX_ANNOTATION_BYTES) break;
+    document = candidate;
+    if (text.length < 500) break;
+  }
+  return document;
+}
 
 function expectNormalized(element: AnnotationElement) {
   const numbers =
@@ -209,5 +261,34 @@ describe("annotation geometry", () => {
     expect(removed.elements).toEqual([]);
     expect(added).not.toBe(original);
     expect(changed.elements).not.toBe(added.elements);
+  });
+
+  it("measures UTF-8 JSON bytes exactly and accepts a mixed document at the 256 KiB boundary", () => {
+    const document = makeByteBoundaryDocument();
+    const expectedBytes = new TextEncoder().encode(JSON.stringify(document)).byteLength;
+
+    expect(expectedBytes).toBe(MAX_ANNOTATION_BYTES);
+    expect(annotationDocumentByteLength(document)).toBe(expectedBytes);
+    expect(isAnnotationDocumentWithinByteLimit(document)).toBe(true);
+    expect(document.elements.some((element) => element.type === "freehand")).toBe(true);
+    expect(document.elements.some((element) => element.type === "text" && element.text.includes("😀"))).toBe(true);
+  });
+
+  it("rejects an otherwise bounded mixed document above 256 KiB", () => {
+    const boundary = makeByteBoundaryDocument();
+    const overLimit: AnnotationDocumentV1 = {
+      ...boundary,
+      elements: [...boundary.elements, {
+        ...base,
+        id: "over-limit-note",
+        type: "text",
+        x: 0.5,
+        y: 0.5,
+        text: "x"
+      }]
+    };
+
+    expect(new TextEncoder().encode(JSON.stringify(overLimit)).byteLength).toBeGreaterThan(MAX_ANNOTATION_BYTES);
+    expect(isAnnotationDocumentWithinByteLimit(overLimit)).toBe(false);
   });
 });

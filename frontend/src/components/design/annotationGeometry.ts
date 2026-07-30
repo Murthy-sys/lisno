@@ -32,6 +32,15 @@ type ElementBase = Pick<AnnotationElement, "id" | "color" | "strokeWidth">;
 
 const DEFAULT_TRANSFORM: ViewTransform = { zoom: 1, panX: 0, panY: 0 };
 const MIN_SHAPE_SIZE = 0.001;
+export const MAX_ANNOTATION_DOCUMENT_BYTES = 256 * 1024;
+
+export function annotationDocumentByteLength(document: AnnotationDocumentV1) {
+  return new TextEncoder().encode(JSON.stringify(document)).byteLength;
+}
+
+export function isAnnotationDocumentWithinByteLimit(document: AnnotationDocumentV1) {
+  return annotationDocumentByteLength(document) <= MAX_ANNOTATION_DOCUMENT_BYTES;
+}
 
 function round(value: number) {
   return Math.round(value * 1_000_000) / 1_000_000;

@@ -21,7 +21,10 @@ export function Dialog({
   description,
   onClose,
   children,
-  busy = false
+  busy = false,
+  role = "dialog",
+  contentInert = false,
+  showCloseButton = true
 }: {
   title: string;
   eyebrow?: string;
@@ -29,6 +32,9 @@ export function Dialog({
   onClose: () => void;
   children: ReactNode;
   busy?: boolean;
+  role?: "dialog" | "alertdialog";
+  contentInert?: boolean;
+  showCloseButton?: boolean;
 }) {
   const titleId = useId();
   const descriptionId = useId();
@@ -103,11 +109,12 @@ export function Dialog({
       <div
         ref={dialogRef}
         className="modal"
-        role="dialog"
+        role={role}
         aria-modal="true"
         aria-labelledby={titleId}
         aria-describedby={description ? descriptionId : undefined}
         tabIndex={-1}
+        inert={contentInert ? true : undefined}
       >
         <header className="modal__header">
           <div>
@@ -115,15 +122,17 @@ export function Dialog({
             <h2 id={titleId}>{title}</h2>
             {description ? <p id={descriptionId}>{description}</p> : null}
           </div>
-          <button
-            type="button"
-            className="icon-button"
-            aria-label={`Close ${title}`}
-            onClick={onClose}
-            disabled={busy}
-          >
-            <X aria-hidden="true" />
-          </button>
+          {showCloseButton ? (
+            <button
+              type="button"
+              className="icon-button"
+              aria-label={`Close ${title}`}
+              onClick={onClose}
+              disabled={busy}
+            >
+              <X aria-hidden="true" />
+            </button>
+          ) : null}
         </header>
         {children}
       </div>

@@ -15,6 +15,47 @@ const emptyDocument: AnnotationDocumentV1 = {
   imageHeight: 800,
   elements: []
 };
+const MAX_ANNOTATION_BYTES = 256 * 1024;
+
+function makeByteBoundaryDocument(): AnnotationDocumentV1 {
+  let document: AnnotationDocumentV1 = {
+    ...emptyDocument,
+    elements: [{
+      id: "full-path",
+      type: "freehand",
+      points: Array.from({ length: 5_000 }, () => ({ x: 0.123456, y: 0.654321 })),
+      color: "#ef4444",
+      strokeWidth: 2
+    }]
+  };
+  while (document.elements.length < 199) {
+    const id = `note-${document.elements.length}`;
+    const next = (text: string): AnnotationDocumentV1 => ({
+      ...document,
+      elements: [...document.elements, {
+        id,
+        type: "text",
+        x: 0.25,
+        y: 0.75,
+        text,
+        color: "#ef4444",
+        strokeWidth: 2
+      }]
+    });
+    const remaining =
+      MAX_ANNOTATION_BYTES -
+      new TextEncoder().encode(JSON.stringify(next(""))).byteLength;
+    if (remaining < 1) break;
+    const emojiCount = Math.min(250, Math.floor(remaining / 4));
+    const asciiCount = Math.min(500 - emojiCount * 2, remaining - emojiCount * 4);
+    const text = `${"😀".repeat(emojiCount)}${"x".repeat(asciiCount)}`;
+    const candidate = next(text);
+    if (new TextEncoder().encode(JSON.stringify(candidate)).byteLength > MAX_ANNOTATION_BYTES) break;
+    document = candidate;
+    if (text.length < 500) break;
+  }
+  return document;
+}
 
 beforeEach(() => {
   vi.stubGlobal("PointerEvent", MouseEvent);
@@ -182,6 +223,126 @@ describe("ImageAnnotationEditor", () => {
     });
   });
 
+  it("focuses and selects an existing annotation, then moves it with bounded keyboard steps", async () => {
+    const onDocument = vi.fn();
+    const initial: AnnotationDocumentV1 = {
+      ...emptyDocument,
+      elements: [{
+        id: "keyboard-box",
+        type: "rectangle",
+        x: 0.2,
+        y: 0.2,
+        width: 0.2,
+        height: 0.2,
+        color: "#ef4444",
+        strokeWidth: 3
+      }]
+    };
+    render(<EditorHarness initial={initial} onDocument={onDocument} />);
+    const annotation = screen.getByRole("button", { name: "Rectangle annotation" });
+
+    expect(annotation).toHaveAttribute("tabindex", "0");
+    annotation.focus();
+    fireEvent.focus(annotation);
+    expect(annotation).toHaveFocus();
+    expect(annotation).toHaveAttribute("data-selected", "true");
+    await userEvent.keyboard("{ArrowRight}");
+    expect(onDocument.mock.lastCall?.[0].elements[0]).toMatchObject({ x: 0.205, y: 0.2 });
+    await userEvent.keyboard("{Shift>}{ArrowDown}{/Shift}");
+    expect(onDocument.mock.lastCall?.[0].elements[0]).toMatchObject({ x: 0.205, y: 0.225 });
+
+    await userEvent.keyboard("{Shift>}{ArrowLeft}{/Shift}");
+    await userEvent.keyboard("{Shift>}{ArrowLeft}{/Shift}");
+    await userEvent.keyboard("{Shift>}{ArrowLeft}{/Shift}");
+    await userEvent.keyboard("{Shift>}{ArrowLeft}{/Shift}");
+    await userEvent.keyboard("{Shift>}{ArrowLeft}{/Shift}");
+    await userEvent.keyboard("{Shift>}{ArrowLeft}{/Shift}");
+    await userEvent.keyboard("{Shift>}{ArrowLeft}{/Shift}");
+    await userEvent.keyboard("{Shift>}{ArrowLeft}{/Shift}");
+    await userEvent.keyboard("{Shift>}{ArrowLeft}{/Shift}");
+    expect(onDocument.mock.lastCall?.[0].elements[0]).toMatchObject({ x: 0 });
+  });
+
+  it("activates a resize handle and resizes with arrow keys", async () => {
+    const onDocument = vi.fn();
+    const initial: AnnotationDocumentV1 = {
+      ...emptyDocument,
+      elements: [{
+        id: "keyboard-box",
+        type: "rectangle",
+        x: 0.2,
+        y: 0.2,
+        width: 0.2,
+        height: 0.2,
+        color: "#ef4444",
+        strokeWidth: 3
+      }]
+    };
+    render(<EditorHarness initial={initial} onDocument={onDocument} />);
+    const annotation = screen.getByRole("button", { name: "Rectangle annotation" });
+    annotation.focus();
+    fireEvent.focus(annotation);
+    const handle = screen.getByRole("button", { name: "Resize south-east" });
+
+    handle.focus();
+    await userEvent.keyboard(" ");
+    expect(handle).toHaveAttribute("aria-pressed", "true");
+    await userEvent.keyboard("{ArrowRight}");
+    expect(onDocument.mock.lastCall?.[0].elements[0]).toMatchObject({ width: 0.205, height: 0.2 });
+    await userEvent.keyboard("{Shift>}{ArrowDown}{/Shift}");
+    expect(onDocument.mock.lastCall?.[0].elements[0]).toMatchObject({ width: 0.205, height: 0.225 });
+    await userEvent.keyboard("{Escape}");
+    expect(handle).toHaveAttribute("aria-pressed", "false");
+  });
+
+  it.each([
+    ["Ellipse", "Ellipse annotation"],
+    ["Rectangle", "Rectangle annotation"],
+    ["Arrow", "Arrow annotation"],
+    ["Freehand", "Freehand annotation"]
+  ] as const)("creates a default %s at the viewport center using only the keyboard", async (toolName, annotationName) => {
+    const onDocument = vi.fn();
+    render(<EditorHarness onDocument={onDocument} />);
+    const tool = screen.getByRole("button", { name: toolName });
+    const canvas = screen.getByRole("img", { name: "Drawing annotation canvas" });
+
+    tool.focus();
+    await userEvent.keyboard("{Enter}");
+    canvas.focus();
+    await userEvent.keyboard("{Enter}");
+
+    expect(onDocument).toHaveBeenCalledOnce();
+    expect(screen.getByRole("button", { name: annotationName })).toBeVisible();
+    const element = onDocument.mock.lastCall?.[0].elements[0];
+    if (element.type === "rectangle" || element.type === "ellipse") {
+      expect(element).toMatchObject({ x: 0.4, y: 0.4, width: 0.2, height: 0.2 });
+    }
+  });
+
+  it("opens and submits the text-note flow using only the keyboard", async () => {
+    const onDocument = vi.fn();
+    render(<EditorHarness onDocument={onDocument} />);
+    const textTool = screen.getByRole("button", { name: "Text" });
+    const canvas = screen.getByRole("img", { name: "Drawing annotation canvas" });
+    textTool.focus();
+    await userEvent.keyboard("{Enter}");
+    canvas.focus();
+    await userEvent.keyboard("{Enter}");
+
+    const dialog = screen.getByRole("dialog", { name: "Add text note" });
+    await userEvent.type(within(dialog).getByLabelText("Text note"), "Keyboard note");
+    const add = within(dialog).getByRole("button", { name: "Add note" });
+    add.focus();
+    await userEvent.keyboard("{Enter}");
+
+    expect(onDocument.mock.lastCall?.[0].elements[0]).toMatchObject({
+      type: "text",
+      x: 0.5,
+      y: 0.5,
+      text: "Keyboard note"
+    });
+  });
+
   it("undoes, redoes, deletes by keyboard, and announces each change", async () => {
     const user = userEvent.setup();
     render(<EditorHarness />);
@@ -245,6 +406,25 @@ describe("ImageAnnotationEditor", () => {
 
     expect(onDocument).not.toHaveBeenCalled();
     expect(screen.getByRole("status")).toHaveTextContent("Freehand point limit reached");
+  });
+
+  it("blocks a commit whose UTF-8 JSON payload would exceed 256 KiB", async () => {
+    const onDocument = vi.fn();
+    const initial = makeByteBoundaryDocument();
+    expect(new TextEncoder().encode(JSON.stringify(initial)).byteLength).toBe(MAX_ANNOTATION_BYTES);
+    render(<EditorHarness initial={initial} onDocument={onDocument} />);
+    const canvas = screen.getByTestId("annotation-canvas") as unknown as SVGSVGElement;
+    canvasRect(canvas);
+
+    await userEvent.click(screen.getByRole("button", { name: "Text" }));
+    fireEvent.pointerDown(canvas, { pointerId: 9, clientX: 500, clientY: 400 });
+    const dialog = screen.getByRole("dialog", { name: "Add text note" });
+    await userEvent.type(within(dialog).getByLabelText("Text note"), "x");
+    await userEvent.click(within(dialog).getByRole("button", { name: "Add note" }));
+
+    expect(onDocument).not.toHaveBeenCalled();
+    expect(screen.getByRole("status")).toHaveTextContent("Annotation payload must be 256 KiB or smaller");
+    expect(screen.getByRole("dialog", { name: "Add text note" })).toBeVisible();
   });
 
   it("renders immutable overlays without mounting editing controls in read-only mode", () => {
