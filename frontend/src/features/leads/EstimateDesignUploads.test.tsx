@@ -62,12 +62,90 @@ const drawings = [
 ];
 const response = (data: unknown, status = 200) => Response.json({ data }, { status });
 
+class FakeXMLHttpRequest {
+  static instances: FakeXMLHttpRequest[] = [];
+
+  status = 0;
+  responseText = "";
+  onload: (() => void) | null = null;
+  onerror: (() => void) | null = null;
+  onabort: (() => void) | null = null;
+  upload = { onprogress: null as ((event: ProgressEvent) => void) | null };
+  method = "";
+  url = "";
+  sentBody: XMLHttpRequestBodyInit | Document | null = null;
+
+  constructor() {
+    FakeXMLHttpRequest.instances.push(this);
+  }
+
+  open(method: string, url: string): void {
+    this.method = method;
+    this.url = url;
+  }
+  setRequestHeader(): void {}
+  send(body: XMLHttpRequestBodyInit | Document | null): void {
+    this.sentBody = body;
+  }
+}
+
 afterEach(() => {
   vi.useRealTimers();
+  vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
 
 describe("EstimateDesignUploads", () => {
+  it("shows the selected design file and keeps its upload progress visible until the request settles", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      if (String(input).endsWith("/estimates/estimate-1/design-uploads")) {
+        return response({ uploads: [], pages: [], drawings: [], revisions: [] });
+      }
+      throw new Error(`Unexpected request: ${input}`);
+    });
+    FakeXMLHttpRequest.instances = [];
+    vi.stubGlobal("XMLHttpRequest", FakeXMLHttpRequest);
+
+    const user = userEvent.setup();
+    renderWithQuery(<EstimateDesignUploads estimateId="estimate-1" rooms={rooms} scopes={scopes} />);
+    const file = new File(["%PDF-1.7"], "kitchen-plan.pdf", { type: "application/pdf" });
+
+    await user.upload(await screen.findByLabelText("Design plan file"), file);
+
+    expect(screen.getByText("kitchen-plan.pdf")).toBeVisible();
+    expect(screen.getByText("8 B")).toBeVisible();
+    expect(screen.getByText("Choose file")).toBeVisible();
+
+    await user.click(screen.getByRole("button", { name: "Upload design plan" }));
+    const xhr = FakeXMLHttpRequest.instances[0]!;
+    xhr.upload.onprogress?.({ lengthComputable: true, loaded: 3, total: 4 } as ProgressEvent);
+
+    await waitFor(() => expect(screen.getByRole("progressbar", { name: "Uploading design plan" })).toHaveAttribute("aria-valuenow", "75"));
+
+    xhr.status = 201;
+    xhr.responseText = JSON.stringify({ data: { id: "upload-1" } });
+    xhr.onload?.();
+
+    await waitFor(() => expect(screen.queryByRole("progressbar", { name: "Uploading design plan" })).not.toBeInTheDocument());
+  });
+
+  it("identifies a retried extraction while preserving the extraction failure message", async () => {
+    const failedUpload = { id: "upload-failed", estimateId: "estimate-1", leadId: "lead-1", originalFilename: "failed.pdf", mimeType: "application/pdf", sizeBytes: 12, uploaderId: "user-1", uploadedAt: "2026-07-30T00:00:00.000Z", extractionStatus: "processing_failed", failureCode: "OCR_FAILED", failureMessage: "Could not read plan", canRetry: true };
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+      const url = String(input);
+      if (url.endsWith("/estimate-design-uploads/upload-failed/retry")) return new Promise<Response>(() => {});
+      if (url.endsWith("/estimates/estimate-1/design-uploads")) return Promise.resolve(response({ uploads: [failedUpload], pages: [], drawings: [], revisions: [] }));
+      throw new Error(`Unexpected request: ${url}`);
+    });
+
+    const user = userEvent.setup();
+    renderWithQuery(<EstimateDesignUploads estimateId="estimate-1" rooms={rooms} scopes={scopes} />);
+    await user.click(await screen.findByRole("button", { name: "Retry extraction" }));
+
+    expect(screen.getByRole("button", { name: "Retrying extraction…" })).toBeDisabled();
+    expect(screen.getByText("Could not read plan")).toBeVisible();
+  });
+
   it("keeps duplicate drawings in their stable room and scope group and leaves ambiguous drawings visible for placement", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = String(input);
@@ -116,25 +194,27 @@ describe("EstimateDesignUploads", () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const url = String(input);
       requests.push({ url, init });
-      if (url.endsWith("/estimates/estimate-1/design-uploads") && init?.method === "POST") {
-        return response({ id: "upload-1", estimateId: "estimate-1", leadId: "lead-1", originalFilename: "plan.pdf", mimeType: "application/pdf", sizeBytes: 12, uploaderId: "user-1", uploadedAt: "2026-07-30T00:00:00.000Z", extractionStatus: "queued", failureCode: null, failureMessage: null }, 201);
-      }
       if (url.endsWith("/estimates/estimate-1/design-uploads")) {
         const status = states[Math.min(getCount++, states.length - 1)]!;
         return response({ uploads: [{ id: "upload-1", estimateId: "estimate-1", leadId: "lead-1", originalFilename: "plan.pdf", mimeType: "application/pdf", sizeBytes: 12, uploaderId: "user-1", uploadedAt: "2026-07-30T00:00:00.000Z", extractionStatus: status, failureCode: null, failureMessage: null }], pages: [], drawings: [], revisions: [] });
       }
       throw new Error(`Unexpected request: ${url}`);
     });
+    FakeXMLHttpRequest.instances = [];
+    vi.stubGlobal("XMLHttpRequest", FakeXMLHttpRequest);
     const user = userEvent.setup();
     renderWithQuery(<EstimateDesignUploads estimateId="estimate-1" rooms={rooms} scopes={scopes} />);
     const file = new File(["%PDF-1.7"], "plan.pdf", { type: "application/pdf" });
     await user.upload(await screen.findByLabelText("Design plan file"), file);
     await user.click(screen.getByRole("button", { name: "Upload design plan" }));
+    const post = FakeXMLHttpRequest.instances[0]!;
+    post.status = 201;
+    post.responseText = JSON.stringify({ data: { id: "upload-1", estimateId: "estimate-1", leadId: "lead-1", originalFilename: "plan.pdf", mimeType: "application/pdf", sizeBytes: 12, uploaderId: "user-1", uploadedAt: "2026-07-30T00:00:00.000Z", extractionStatus: "queued", failureCode: null, failureMessage: null } });
+    post.onload?.();
 
     expect(await screen.findByText("Ready for estimator review", {}, { timeout: 8_000 })).toBeVisible();
-    const post = requests.find((request) => request.init?.method === "POST")!;
-    expect(post.init?.body).toBeInstanceOf(FormData);
-    expect(new Headers(post.init?.headers).has("Content-Type")).toBe(false);
+    expect(post.method).toBe("POST");
+    expect(post.sentBody).toBeInstanceOf(FormData);
     const terminalRequests = getCount;
     await new Promise((resolve) => window.setTimeout(resolve, 1_200));
     expect(getCount).toBe(terminalRequests);
@@ -160,7 +240,7 @@ describe("EstimateDesignUploads", () => {
     const user = userEvent.setup();
     renderWithQuery(<EstimateDesignUploads estimateId="estimate-1" rooms={rooms} scopes={scopes} />);
     await user.click(await screen.findByRole("button", { name: "Retry extraction" }));
-    expect(screen.getByRole("button", { name: "Retrying…" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Retrying extraction…" })).toBeDisabled();
     queued = true;
     resolveRetry!(response({ ...failedUpload, extractionStatus: "queued", failureCode: null, failureMessage: null }));
 
