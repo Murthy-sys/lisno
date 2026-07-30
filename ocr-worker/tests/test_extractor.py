@@ -295,6 +295,121 @@ def test_renders_every_pdf_page_with_positive_pixel_dimensions():
     assert [page.page_number for page in pages] == [1, 2]
     assert all(page.width > 0 and page.height > 0 for page in pages)
     assert all(page.image_base64 for page in pages)
+    assert ocr.calls == 4
+
+
+def test_pdf_title_blocks_emit_one_full_page_section_and_preserve_taxonomy(tmp_path):
+    source = tmp_path / "title-blocks.pdf"
+    first = Image.new("RGB", (900, 700), "white")
+    second = Image.new("RGB", (900, 700), "white")
+    try:
+        first.save(source, format="PDF", save_all=True, append_images=[second])
+    finally:
+        first.close()
+        second.close()
+
+    taxonomy = EstimateTaxonomy(
+        rooms=(TaxonomyTerm("room-living", "Living Room", ()),),
+        scopes=(TaxonomyTerm("FL", "Flooring", ()),),
+    )
+    ocr = PageAwareFakePaddleOCR3([
+        {
+            "rec_boxes": [(50, 20, 370, 48)],
+            "rec_texts": ["TITLE : Living Room Flooring"],
+            "rec_scores": [0.97],
+        },
+        {
+            "rec_boxes": [(50, 20, 370, 48)],
+            "rec_texts": ["TITLE : TV UNIT"],
+            "rec_scores": [0.96],
+        },
+    ])
+
+    pages = Extractor(
+        ocr_engine=ocr,
+        render_scale=1,
+        estimate_taxonomy=taxonomy,
+    ).extract(source)
+
+    assert [[section.label for section in page.sections] for page in pages] == [
+        ["Living Room Flooring"],
+        ["TV UNIT"],
+    ]
+    assert [
+        section.crop.to_payload()
+        for page in pages
+        for section in page.sections
+    ] == [
+        {"x": 0, "y": 0, "width": pages[0].width, "height": pages[0].height},
+        {"x": 0, "y": 0, "width": pages[1].width, "height": pages[1].height},
+    ]
+    assert [
+        section.proposal.to_payload() if section.proposal else None
+        for page in pages
+        for section in page.sections
+    ] == [
+        {
+            "detectedTitle": "Living Room Flooring",
+            "room": {
+                "id": "room-living",
+                "confidence": 1.0,
+                "evidence": ["living room"],
+                "ambiguous": False,
+            },
+            "scope": {
+                "id": "FL",
+                "confidence": 1.0,
+                "evidence": ["flooring"],
+                "ambiguous": False,
+            },
+        },
+        {
+            "detectedTitle": "TV UNIT",
+            "room": {"id": None, "confidence": 0.0, "evidence": [], "ambiguous": False},
+            "scope": {"id": None, "confidence": 0.0, "evidence": [], "ambiguous": False},
+        },
+    ]
+    assert all(
+        section.image_base64 == page.image_base64
+        for page in pages
+        for section in page.sections
+    )
+    assert ocr.calls == 2
+
+
+def test_pdf_without_a_title_block_falls_back_to_existing_region_extraction(tmp_path):
+    source = tmp_path / "no-title-block.pdf"
+    image = Image.new("RGB", (900, 700), "white")
+    try:
+        ImageDraw.Draw(image).rectangle(
+            (80, 120, 420, 420), outline="black", width=4
+        )
+        image.save(source, format="PDF")
+    finally:
+        image.close()
+
+    ocr = PageAwareFakePaddleOCR3([
+        {
+            "rec_boxes": [(50, 20, 250, 48)],
+            "rec_texts": ["MATERIAL : TV UNIT"],
+            "rec_scores": [0.99],
+        },
+        {
+            "rec_boxes": [(50, 50, 270, 78)],
+            "rec_texts": ["Front Elevation"],
+            "rec_scores": [0.97],
+        },
+    ])
+
+    page = Extractor(ocr_engine=ocr, render_scale=1).extract(source)[0]
+
+    assert [section.label for section in page.sections] == ["Front Elevation"]
+    assert page.sections[0].crop.to_payload() != {
+        "x": 0,
+        "y": 0,
+        "width": page.width,
+        "height": page.height,
+    }
     assert ocr.calls == 2
 
 
@@ -446,7 +561,14 @@ def test_extracts_exact_approved_blueprint_titles_in_page_order(tmp_path):
     )
 
     pages = Extractor(
-        ocr_engine=PageAwareFakePaddleOCR3(page_results), render_scale=1
+        ocr_engine=PageAwareFakePaddleOCR3(
+            [
+                result
+                for page_result in page_results
+                for result in (page_result, page_result)
+            ]
+        ),
+        render_scale=1,
     ).extract(source)
 
     assert [[section.label for section in page.sections] for page in pages] == [

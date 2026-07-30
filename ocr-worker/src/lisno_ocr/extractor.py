@@ -25,6 +25,7 @@ from .contracts import (
 from .estimate_taxonomy import classify_estimate_drawing
 from .image_formats import ImageSourceError, open_source_pages
 from .settings import LayoutSettings
+from .title_block import extract_title_block_candidate, title_block_top
 from .title_classifier import (
     DrawingTitle,
     OcrLine,
@@ -76,12 +77,14 @@ class Extractor:
         suffix = path.suffix.lower()
         if suffix == ".pdf":
             images = self._render_pdf_pages(path)
+            use_title_block_fast_path = True
         elif suffix in {".png", ".jpg", ".jpeg", ".webp", ".tif", ".tiff", ".heic", ".heif"}:
             images = open_source_pages(
                 path,
                 max_page_pixels=self._max_page_pixels,
                 max_pages=self._max_pdf_pages,
             )
+            use_title_block_fast_path = False
         else:
             raise InvalidSourceError("The extraction source type is unsupported.")
         pages: list[ExtractedPage] = []
@@ -89,7 +92,12 @@ class Extractor:
         try:
             for page_number, image in enumerate(images, start=1):
                 try:
-                    page, used = self._extract_page(image, page_number, remaining)
+                    page, used = self._extract_page(
+                        image,
+                        page_number,
+                        remaining,
+                        use_title_block_fast_path=use_title_block_fast_path,
+                    )
                     pages.append(page)
                     remaining -= used
                 finally:
@@ -132,8 +140,18 @@ class Extractor:
             document.close()
 
     def _extract_page(
-        self, image: Image.Image, page_number: int, remaining_bytes: int
+        self,
+        image: Image.Image,
+        page_number: int,
+        remaining_bytes: int,
+        use_title_block_fast_path: bool = False,
     ) -> tuple[ExtractedPage, int]:
+        if use_title_block_fast_path:
+            title_block_page = self._extract_title_block_page(
+                image, page_number, remaining_bytes
+            )
+            if title_block_page is not None:
+                return title_block_page
         recognized = self._recognize(image)
         regions = _drawing_regions(
             image, [box for box, _, _ in recognized]
@@ -196,6 +214,54 @@ class Extractor:
             height=image.height,
             image_base64=page_base64,
             sections=tuple(sections),
+        ), used
+
+    def _extract_title_block_page(
+        self, image: Image.Image, page_number: int, remaining_bytes: int
+    ) -> tuple[ExtractedPage, int] | None:
+        lower_band_top = title_block_top(image.height)
+        title_block_image = image.crop(
+            (0, lower_band_top, image.width, image.height)
+        )
+        try:
+            local_lines = self._recognize(title_block_image)
+        finally:
+            title_block_image.close()
+        recognized = [
+            (
+                (left, top + lower_band_top, right, bottom + lower_band_top),
+                label,
+                confidence,
+            )
+            for (left, top, right, bottom), label, confidence in local_lines
+            if label and confidence >= self._confidence_floor
+        ]
+        candidate = extract_title_block_candidate(
+            recognized, image.width, image.height
+        )
+        if candidate is None:
+            return None
+        label, confidence = candidate
+        page_base64 = _png_base64(image)
+        used = _decoded_base64_size(page_base64)
+        _require_budget(used, remaining_bytes)
+        section = ExtractedSection(
+            label=" ".join(label.split()),
+            confidence=confidence,
+            crop=Crop(x=0, y=0, width=image.width, height=image.height),
+            image_base64=page_base64,
+            proposal=(
+                classify_estimate_drawing(label, self._estimate_taxonomy)
+                if self._estimate_taxonomy is not None
+                else None
+            ),
+        )
+        return ExtractedPage(
+            page_number=page_number,
+            width=image.width,
+            height=image.height,
+            image_base64=page_base64,
+            sections=(section,),
         ), used
 
     def _recognize(
