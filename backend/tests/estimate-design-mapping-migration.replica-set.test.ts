@@ -26,6 +26,17 @@ async function insertEstimate(id: string) {
   });
 }
 
+async function insertAmbiguousEstimate(id: string) {
+  await EstimateModel.collection.insertOne({
+    _id: id, leadId: `lead-${id}`, ownerId: "owner-real", rooms: [{ id: "bed-1", label: "Bedroom 1", aliases: [] }, { id: "bed-2", label: "Bedroom 2", aliases: [] }], scopes: ["CA"],
+    lineItems: [
+      { catalogueId: "CA01", roomName: "Bedroom 1", specification: "fixture", unit: "nos", rate: 1, quantity: 1, included: true, amount: 1 },
+      { catalogueId: "CA01", roomName: "Bedroom 2", specification: "fixture", unit: "nos", rate: 1, quantity: 1, included: true, amount: 1 }
+    ],
+    propertyType: "apartment", createdAt: new Date(), updatedAt: new Date("2026-07-30T00:00:00.000Z")
+  });
+}
+
 describe("estimate design mapping migration replica set", () => {
   it("repairs raw legacy BSON once without changing live Mongoose immutability", async () => {
     await replica.clear();
@@ -58,6 +69,46 @@ describe("estimate design mapping migration replica set", () => {
       conflicts: [{ recordId: "drawing-cas", reason: "concurrent_change" }]
     });
     await expect(EstimateDesignDrawingModel.collection.findOne({ _id: "drawing-cas" })).resolves.toMatchObject({ mappingStatus: "estimator_assigned" });
+  });
+
+  it("resolves explicit all-null Misc tuples and keeps ambiguous or invalid BSON tuples literally null", async () => {
+    await replica.clear();
+    await insertAmbiguousEstimate("estimate-null-tuples");
+    const misc = { roomId: null, scopeSectionId: null, catalogueId: null, mappingStatus: "misc" };
+    await EstimateDesignDrawingModel.collection.insertMany([
+      { _id: "drawing-null-unique", estimateId: "estimate-null-tuples", detectedTitle: "TV UNIT - BEDROOM 1", ...misc },
+      { _id: "drawing-null-ambiguous", estimateId: "estimate-null-tuples", detectedTitle: "TV UNIT", ...misc },
+      { _id: "drawing-invalid", estimateId: "estimate-null-tuples", detectedTitle: "TV UNIT", roomId: "bed-1", scopeSectionId: "CA", catalogueId: "CA02" }
+    ]);
+    await EstimateDesignRevisionModel.collection.insertMany([
+      { _id: "revision-null-unique", drawingId: "drawing-null-unique", label: "TV UNIT - BEDROOM 1", ...misc },
+      { _id: "revision-null-ambiguous", drawingId: "drawing-null-ambiguous", label: "TV UNIT", ...misc },
+      { _id: "revision-invalid", drawingId: "drawing-invalid", label: "TV UNIT", roomId: "bed-1", scopeSectionId: "CA", catalogueId: "CA02" }
+    ]);
+
+    await expect(migrateEstimateDesignMappings()).resolves.toMatchObject({
+      drawingsChanged: 2,
+      revisionsChanged: 2,
+      autoMapped: 2,
+      misc: 2,
+      conflictCount: 4
+    });
+    for (const id of ["drawing-null-ambiguous", "drawing-invalid"]) {
+      const raw = await EstimateDesignDrawingModel.collection.findOne({ _id: id });
+      expect(raw?.roomId).toBeNull();
+      expect(raw?.scopeSectionId).toBeNull();
+      expect(raw?.catalogueId).toBeNull();
+      expect(raw?.mappingStatus).toBe("misc");
+    }
+    for (const id of ["revision-null-ambiguous", "revision-invalid"]) {
+      const raw = await EstimateDesignRevisionModel.collection.findOne({ _id: id });
+      expect(raw?.roomId).toBeNull();
+      expect(raw?.scopeSectionId).toBeNull();
+      expect(raw?.catalogueId).toBeNull();
+      expect(raw?.mappingStatus).toBe("misc");
+    }
+    await expect(EstimateDesignRevisionModel.updateOne({ _id: "revision-invalid" }, { $set: { roomId: "bed-1" } })).rejects.toThrow("immutable");
+    await expect(migrateEstimateDesignMappings()).resolves.toMatchObject({ drawingsChanged: 0, revisionsChanged: 0 });
   });
 
   it("skips a stale mapping plan when the estimate context version changes", async () => {

@@ -164,15 +164,6 @@ function mappingForLegacyRecord(record: LegacyRecord, title: string, context: Es
     return unresolvedLegacyMapping(title, "invalid_legacy_mapping");
   }
 
-  // A complete current Misc tuple is already an explicit human/system decision.
-  // Only legacy all-null records (whose status is absent or invalid) are title-resolved.
-  if (
-    record.mappingStatus === "misc" &&
-    identifierFields.every((field) => Object.hasOwn(record, field) && record[field] === null)
-  ) {
-    return { mapping: { roomId: null, scopeSectionId: null, catalogueId: null, mappingStatus: "misc" }, conflict: null };
-  }
-
   const resolution = autoMapDrawingTitle(title, context);
   if (resolution.reason === "unique") return { mapping: resolution.mapping, conflict: null };
   return {
@@ -298,7 +289,10 @@ async function flushMigrationBatch(
   }
   if (current.length === 0) return;
   if (report.dryRun) {
-    current.forEach((write) => countCompletedWrite(report, write));
+    current.forEach((write) => {
+      if (write.conflict) addConflict(report, write, write.conflict);
+      countCompletedWrite(report, write);
+    });
     return;
   }
   for (const write of current) assertEstimateDesignMapping(write.target);
@@ -311,8 +305,12 @@ async function flushMigrationBatch(
   const stored = await collection.find({ _id: { $in: current.map((write) => write.id) } } as never).toArray() as LegacyRecord[];
   const storedById = new Map(stored.map((record) => [String(record._id), record]));
   for (const write of current) {
-    if (targetMatches(storedById.get(String(write.id)) ?? {}, write.target)) countCompletedWrite(report, write);
-    else addConflict(report, write, { title: write.title, reason: "concurrent_change", candidateKeys: [] });
+    if (targetMatches(storedById.get(String(write.id)) ?? {}, write.target)) {
+      if (write.conflict) addConflict(report, write, write.conflict);
+      countCompletedWrite(report, write);
+    } else {
+      addConflict(report, write, { title: write.title, reason: "concurrent_change", candidateKeys: [] });
+    }
   }
 }
 
@@ -349,7 +347,7 @@ async function processDrawingBatch(records: LegacyRecord[], report: EstimateDesi
     const resolution = estimate ? mappingForLegacyRecord(record, title, estimate.context) : trueNullMisc(title, "missing_estimate");
     const write = plan(record, "drawing", title, resolution, estimateId || undefined, estimate?.version);
     if (write) writes.push(write);
-    if (resolution.conflict) addConflict(report, { recordKind: "drawing", id: record._id, title }, resolution.conflict);
+    else if (resolution.conflict) addConflict(report, { recordKind: "drawing", id: record._id, title }, resolution.conflict);
   }
   await flushMigrationBatch(EstimateDesignDrawingModel.collection, writes, report);
 }
@@ -370,7 +368,7 @@ async function processRevisionBatch(records: LegacyRecord[], report: EstimateDes
     const resolution = estimate ? mappingForLegacyRecord(record, title, estimate.context) : trueNullMisc(title, "missing_estimate");
     const write = plan(record, "revision", title, resolution, estimateId || undefined, estimate?.version);
     if (write) writes.push(write);
-    if (resolution.conflict) addConflict(report, { recordKind: "revision", id: record._id, title }, resolution.conflict);
+    else if (resolution.conflict) addConflict(report, { recordKind: "revision", id: record._id, title }, resolution.conflict);
   }
   await flushMigrationBatch(EstimateDesignRevisionModel.collection, writes, report);
 }

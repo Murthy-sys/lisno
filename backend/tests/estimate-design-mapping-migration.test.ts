@@ -140,7 +140,7 @@ describe("estimate design mapping migration", () => {
   it("preserves a coherent manual tuple, repairs invalid legacy tuples, and is idempotent", async () => {
     const drawings = [
       { _id: "manual", estimateId: "estimate-1", detectedTitle: "Site note", roomId: "bed-1", scopeSectionId: "CA", catalogueId: "CA01" },
-      { _id: "invalid", estimateId: "estimate-1", detectedTitle: "TV UNIT - BEDROOM 1", roomId: "bed-1", scopeSectionId: "CA", catalogueId: "CA02" }
+      { _id: "invalid", estimateId: "estimate-1", detectedTitle: "TV UNIT", roomId: "bed-1", scopeSectionId: "CA", catalogueId: "CA02" }
     ];
     installMutableState(drawings, []);
 
@@ -207,6 +207,57 @@ describe("estimate design mapping migration", () => {
       unresolvedCount: 1,
       conflicts: [{ recordId: "absent-title", reason: "invalid_legacy_mapping", candidateKeys: [] }]
     });
+  });
+
+  it("treats an explicit all-null Misc tuple as legacy and title-resolves drawing and revision snapshots", async () => {
+    const drawings = [{
+      _id: "explicit-misc-drawing", estimateId: "estimate-1", detectedTitle: "TV UNIT - BEDROOM 1",
+      roomId: null, scopeSectionId: null, catalogueId: null, mappingStatus: "misc"
+    }];
+    const revisions = [{
+      _id: "explicit-misc-revision", drawingId: "explicit-misc-drawing", label: "TV UNIT - BEDROOM 1",
+      roomId: null, scopeSectionId: null, catalogueId: null, mappingStatus: "misc"
+    }];
+    installMutableState(drawings, revisions);
+
+    await expect(migrateEstimateDesignMappings()).resolves.toMatchObject({
+      drawingsChanged: 1,
+      revisionsChanged: 1,
+      autoMapped: 2,
+      misc: 0,
+      conflictCount: 0
+    });
+    expect(drawings[0]).toMatchObject({ roomId: "bed-1", scopeSectionId: "CA", catalogueId: "CA01", mappingStatus: "auto_mapped" });
+    expect(revisions[0]).toMatchObject({ roomId: "bed-1", scopeSectionId: "CA", catalogueId: "CA01", mappingStatus: "auto_mapped" });
+    await expect(migrateEstimateDesignMappings()).resolves.toMatchObject({ drawingsChanged: 0, revisionsChanged: 0 });
+  });
+
+  it("replaces planned mapping conflicts with a concurrent-change conflict", async () => {
+    const drawings = [{ _id: "invalid-race", estimateId: "estimate-1", detectedTitle: "TV UNIT", roomId: "bed-1", scopeSectionId: "CA", catalogueId: "CA02" }];
+    installMutableState(drawings, [], {
+      beforeDrawingWrite: () => Object.assign(drawings[0]!, { roomId: "bed-1", scopeSectionId: "CA", catalogueId: "CA01", mappingStatus: "estimator_assigned" })
+    });
+    await expect(migrateEstimateDesignMappings()).resolves.toMatchObject({
+      conflictCount: 1,
+      unresolvedCount: 1,
+      conflictsTruncated: false,
+      conflicts: [{ recordId: "invalid-race", reason: "concurrent_change" }]
+    });
+  });
+
+  it("replaces planned ambiguity details with exact capped estimate-change conflicts", async () => {
+    const drawings = Array.from({ length: 1_001 }, (_, index) => ({ _id: `context-ambiguous-${index}`, estimateId: "estimate-1", detectedTitle: "TV UNIT" }));
+    const originalUpdatedAt = estimates[0]!.updatedAt as Date;
+    installMutableState(drawings, [], {
+      beforeEstimateRecheck: () => { estimates[0]!.updatedAt = new Date((estimates[0]!.updatedAt as Date).getTime() + 1); }
+    });
+    const report = await migrateEstimateDesignMappings({ batchSize: 1000 });
+    expect(report.conflictCount).toBe(1_001);
+    expect(report.unresolvedCount).toBe(1_001);
+    expect(report.conflictsTruncated).toBe(true);
+    expect(report.conflicts).toHaveLength(1_000);
+    expect(report.conflicts.every((conflict) => conflict.reason === "estimate_changed")).toBe(true);
+    estimates[0]!.updatedAt = originalUpdatedAt;
   });
 
   it("streams and flushes records in the configured bounded batch size", async () => {
