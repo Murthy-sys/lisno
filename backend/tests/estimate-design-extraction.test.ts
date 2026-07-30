@@ -443,6 +443,68 @@ describe("estimate design extraction and estimator verification", () => {
     });
   });
 
+  it.each(["queued", "expired processing"] as const)(
+    "terminally cancels a frozen %s estimate job and continues to later project work",
+    async (initialState) => {
+      const {
+        app,
+        repository,
+        storage,
+        estimates,
+        uploads,
+        jobs
+      } = setup();
+      estimates[0]!.status = "client_approved";
+      estimates[0]!.designLifecycleVersion = 1;
+      estimates[0]!.designFrozenAt = NOW;
+      if (initialState === "expired processing") {
+        jobs[0]!.status = "processing";
+        jobs[0]!.claimId = "expired-claim";
+        jobs[0]!.leaseExpiresAt = new Date("2026-07-30T11:59:00.000Z");
+        uploads[0]!.extractionStatus = "processing";
+      }
+      await repository.enqueueExtractionJob({
+        id: "later-project-job",
+        designVersionId: "version-aurora-plan-1",
+        status: "queued",
+        attemptCount: 0,
+        queuedAt: "2026-07-30T11:30:00.000Z",
+        startedAt: null,
+        completedAt: null,
+        leaseExpiresAt: null,
+        failureCode: null,
+        failureMessage: null
+      });
+
+      const claimed = await claim(app);
+
+      expect(claimed.status).toBe(200);
+      expect(claimed.body.data).toMatchObject({
+        kind: "project_design",
+        id: "later-project-job"
+      });
+      expect(jobs[0]).toMatchObject({
+        status: "processing_failed",
+        claimId: null,
+        leaseExpiresAt: null,
+        failureCode: "ESTIMATE_DESIGN_FROZEN",
+        failureMessage: "Estimate design was finalized before extraction completed."
+      });
+      expect(uploads[0]).toMatchObject({
+        extractionStatus: "processing_failed",
+        failureCode: "ESTIMATE_DESIGN_FROZEN",
+        failureMessage: "Estimate design was finalized before extraction completed."
+      });
+      expect(storage.objects.get("original-plan.pdf")).toEqual(
+        Buffer.from("%PDF-1.7\nestimate")
+      );
+
+      const noMoreWork = await claim(app);
+      expect(noMoreWork.status).toBe(204);
+      expect(jobs[0]!.attemptCount).toBe(1);
+    }
+  );
+
   it("claims the estimate taxonomy and atomically publishes every proposed drawing", async () => {
     const { app, uploads, pages, drawings, revisions } = setup();
 
@@ -857,9 +919,11 @@ describe("estimate design extraction and estimator verification", () => {
     expect(jobs[0]).toMatchObject({ status: "estimator_review" });
   });
 
-  it("rejects worker publication that reaches its transaction after final approval freezes design", async () => {
+  it("terminally cancels worker publication that reaches its transaction after final approval freezes design", async () => {
     const {
       app,
+      repository,
+      storage,
       estimates,
       pages,
       drawings,
@@ -879,12 +943,44 @@ describe("estimate design extraction and estimator verification", () => {
 
     const response = await complete(app, leased.body.data.claimToken);
 
-    expect(response.status).toBe(409);
-    expect(response.body.error.code).toBe("ESTIMATE_DESIGN_LIFECYCLE_CONFLICT");
+    expect(response.status).toBe(200);
+    expect(response.body.data).toMatchObject({
+      id: "estimate-job-1",
+      status: "processing_failed"
+    });
     expect(pages).toEqual([]);
     expect(drawings).toEqual([]);
     expect(revisions).toEqual([]);
-    expect(uploads[0]).toMatchObject({ extractionStatus: "processing" });
-    expect(jobs[0]).toMatchObject({ status: "processing" });
+    expect(uploads[0]).toMatchObject({
+      extractionStatus: "processing_failed",
+      failureCode: "ESTIMATE_DESIGN_FROZEN"
+    });
+    expect(jobs[0]).toMatchObject({
+      status: "processing_failed",
+      claimId: null,
+      leaseExpiresAt: null,
+      failureCode: "ESTIMATE_DESIGN_FROZEN"
+    });
+    expect([...storage.objects.keys()]).toEqual(["original-plan.pdf"]);
+
+    await repository.enqueueExtractionJob({
+      id: "project-after-frozen-estimate",
+      designVersionId: "version-aurora-plan-1",
+      status: "queued",
+      attemptCount: 0,
+      queuedAt: "2026-07-30T11:30:00.000Z",
+      startedAt: null,
+      completedAt: null,
+      leaseExpiresAt: null,
+      failureCode: null,
+      failureMessage: null
+    });
+    const later = await claim(app);
+    expect(later.status).toBe(200);
+    expect(later.body.data).toMatchObject({
+      kind: "project_design",
+      id: "project-after-frozen-estimate"
+    });
+    expect(jobs[0]!.attemptCount).toBe(1);
   });
 });

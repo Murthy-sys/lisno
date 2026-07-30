@@ -133,7 +133,8 @@ export function createExtractionWorkerService(
       const leaseExpiresAt = new Date(
         now.getTime() + leaseSeconds * 1000
       ).toISOString();
-      for (let attempt = 0; attempt < maxClaimContentionRescans; attempt += 1) {
+      let contentionRescans = 0;
+      while (contentionRescans < maxClaimContentionRescans) {
         const at = now.toISOString();
         const [projectCandidate, estimateCandidate] = await Promise.all([
           repository.findOldestClaimableExtractionJob(at),
@@ -155,7 +156,11 @@ export function createExtractionWorkerService(
             at,
             leaseExpiresAt
           );
-          if (!job) continue;
+          if (!job) {
+            contentionRescans += 1;
+            continue;
+          }
+          if ("cancelled" in job) continue;
           const sourceUrl =
             `/api/v1/internal/extraction-jobs/${encodeURIComponent(job.id)}/source`;
           return {
@@ -176,7 +181,10 @@ export function createExtractionWorkerService(
           at,
           leaseExpiresAt
         );
-        if (!job) continue;
+        if (!job) {
+          contentionRescans += 1;
+          continue;
+        }
         const version = await repository.findDesignVersionById(job.designVersionId);
         if (!version || !job.claimId) {
           throw new ApiError(

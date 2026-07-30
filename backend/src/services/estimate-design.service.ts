@@ -32,6 +32,10 @@ const mutableDesignEstimateStatuses = [
   "sent_to_client",
   "client_changes_requested"
 ] as const;
+const frozenEstimateJobFailure = {
+  code: "ESTIMATE_DESIGN_FROZEN",
+  message: "Estimate design was finalized before extraction completed."
+} as const;
 
 export interface CreateEstimateDesignServiceInput {
   storage: Storage;
@@ -85,6 +89,10 @@ export interface ClaimedEstimateWorkerJob extends EstimateWorkerJobRecord {
     sizeBytes: number;
   };
   taxonomy: EstimateTaxonomyDto;
+}
+
+export interface CancelledEstimateWorkerJobClaim {
+  cancelled: true;
 }
 
 export interface EstimateWorkerProposal {
@@ -152,7 +160,11 @@ export interface EstimateDesignService {
   sourceImage(user: AuthenticatedUser, pageId: string): Promise<NodeJS.ReadableStream>;
   revisionImage(user: AuthenticatedUser, revisionId: string): Promise<NodeJS.ReadableStream>;
   findOldestClaimableWorkerJob(now: string): Promise<EstimateWorkerJobRecord | null>;
-  claimWorkerJob(id: string, now: string, leaseExpiresAt: string): Promise<ClaimedEstimateWorkerJob | null>;
+  claimWorkerJob(
+    id: string,
+    now: string,
+    leaseExpiresAt: string
+  ): Promise<ClaimedEstimateWorkerJob | CancelledEstimateWorkerJobClaim | null>;
   workerSource(jobId: string, claimToken: string, now: string): Promise<{
     reference: string;
     filename: string;
@@ -720,6 +732,39 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
       if (!upload || !estimate) {
         throw new ApiError(500, "EXTRACTION_JOB_INVALID", "The extraction job source is unavailable.");
       }
+      if (estimateDesignIsFrozen(estimate)) {
+        await withMongoTransaction(async (session) => {
+          const currentJob = await EstimateDesignExtractionJobModel.findById(job._id)
+            .session(session)
+            .lean();
+          const currentUpload = await EstimateDesignUploadModel.findById(upload._id)
+            .session(session)
+            .lean();
+          const currentEstimate = currentUpload
+            ? await EstimateModel.findById(currentUpload.estimateId)
+                .session(session)
+                .lean()
+            : null;
+          if (!currentJob || !currentUpload || !currentEstimate) {
+            throw new ApiError(
+              500,
+              "EXTRACTION_JOB_INVALID",
+              "The extraction job source is unavailable."
+            );
+          }
+          if (!estimateDesignIsFrozen(currentEstimate)) {
+            extractionStateConflict();
+          }
+          await terminallyCancelFrozenWorkerJob(
+            currentJob,
+            currentUpload,
+            claimId,
+            at,
+            session
+          );
+        });
+        return { cancelled: true };
+      }
       await EstimateDesignUploadModel.updateOne(
         { _id: upload._id },
         { $set: { extractionStatus: "processing", failureCode: null, failureMessage: null } }
@@ -799,6 +844,8 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
         const pageDocuments: Array<Record<string, unknown>> = [];
         const drawingDocuments: Array<Record<string, unknown>> = [];
         const revisionDocuments: Array<Record<string, unknown>> = [];
+        let completedJob: Record<string, any> | null = null;
+        let cancelled = false;
         for (const page of normalized.pages) {
           const storedPage = await saveGeneratedImage(input.storage, page.image);
           references.push(storedPage.reference);
@@ -889,6 +936,17 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
           ) {
             extractionStateConflict();
           }
+          if (estimateDesignIsFrozen(currentEstimate)) {
+            completedJob = await terminallyCancelFrozenWorkerJob(
+              currentJob,
+              currentUpload,
+              claimToken,
+              processedAt,
+              session
+            );
+            cancelled = true;
+            return;
+          }
           await guardDesignLifecycle(currentEstimate, session);
           if (pageDocuments.length) await EstimateDesignSourcePageModel.create(pageDocuments, { session });
           if (drawingDocuments.length) await EstimateDesignDrawingModel.create(drawingDocuments, { session });
@@ -931,18 +989,20 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
             { session }
           );
           requireTransition(uploadUpdated, extractionStateConflict);
-        });
-        return {
-          ...workerJobDto({
-            ...job,
+          completedJob = {
+            ...currentJob,
             status: "estimator_review",
             completedAt: new Date(processedAt),
             leaseExpiresAt: null,
             claimId: null,
             workerResultId: result.resultId
-          }),
-          claimId: null
-        };
+          };
+        });
+        if (!completedJob) {
+          throw new Error("Estimate extraction completion transaction did not complete.");
+        }
+        if (cancelled) await cleanupReferences(input.storage, references);
+        return workerJobDto(completedJob);
       } catch (error) {
         await cleanupReferences(input.storage, references);
         throw error;
@@ -970,6 +1030,16 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
           currentUpload.estimateId
         ).session(session).lean();
         if (!currentEstimate) throw estimateNotFound();
+        if (estimateDesignIsFrozen(currentEstimate)) {
+          failed = await terminallyCancelFrozenWorkerJob(
+            currentJob,
+            currentUpload,
+            claimToken,
+            failedAt,
+            session
+          );
+          return;
+        }
         await guardDesignLifecycle(currentEstimate, session);
         failed = await EstimateDesignExtractionJobModel.findOneAndUpdate(
           {
@@ -1699,6 +1769,8 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
     const stored = await saveGeneratedImage(input.storage, page.image);
     const pageId = randomUUID();
     const revisionId = randomUUID();
+    let completedJob: Record<string, any> | null = null;
+    let cancelled = false;
     try {
       await withMongoTransaction(async (session) => {
         const currentJob = await EstimateDesignExtractionJobModel.findById(job._id)
@@ -1725,6 +1797,17 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
           currentUpload.estimateId
         ).session(session).lean();
         if (!currentEstimate) throw estimateNotFound();
+        if (estimateDesignIsFrozen(currentEstimate)) {
+          completedJob = await terminallyCancelFrozenWorkerJob(
+            currentJob,
+            currentUpload,
+            claimToken,
+            processedAt,
+            session
+          );
+          cancelled = true;
+          return;
+        }
         const drawing = await EstimateDesignDrawingModel.findById(
           currentUpload.replacementDrawingId
         ).session(session).lean();
@@ -1819,15 +1902,20 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
           String(drawing.estimateId),
           session
         );
+        completedJob = {
+          ...currentJob,
+          status: "estimator_review",
+          completedAt: new Date(processedAt),
+          leaseExpiresAt: null,
+          claimId: null,
+          workerResultId: resultId
+        };
       });
-      return workerJobDto({
-        ...job,
-        status: "estimator_review",
-        completedAt: new Date(processedAt),
-        leaseExpiresAt: null,
-        claimId: null,
-        workerResultId: resultId
-      });
+      if (!completedJob) {
+        throw new Error("Estimate replacement completion transaction did not complete.");
+      }
+      if (cancelled) await cleanupReferences(input.storage, [stored.reference]);
+      return workerJobDto(completedJob);
     } catch (error) {
       await cleanupReferences(input.storage, [stored.reference]);
       throw error;
@@ -2256,6 +2344,58 @@ function requireMatchedTransition(
 
 function lifecycleVersionFilter(version: number) {
   return version === 0 ? { $in: [0, null] } : version;
+}
+
+function estimateDesignIsFrozen(estimate: Record<string, any>) {
+  return Boolean(estimate.designFrozenAt) || estimate.status === "client_approved";
+}
+
+async function terminallyCancelFrozenWorkerJob(
+  job: Record<string, any>,
+  upload: Record<string, any>,
+  claimToken: string,
+  cancelledAt: string,
+  session: mongoose.ClientSession
+) {
+  const cancelled = await EstimateDesignExtractionJobModel.findOneAndUpdate(
+    {
+      _id: job._id,
+      uploadId: upload._id,
+      status: "processing",
+      claimId: claimToken,
+      leaseExpiresAt: { $gt: new Date(cancelledAt) }
+    },
+    {
+      $set: {
+        status: "processing_failed",
+        completedAt: new Date(cancelledAt),
+        leaseExpiresAt: null,
+        claimId: null,
+        failureCode: frozenEstimateJobFailure.code,
+        failureMessage: frozenEstimateJobFailure.message,
+        workerResultId: null
+      }
+    },
+    { new: true, runValidators: true, session }
+  ).lean();
+  if (!cancelled) staleClaim();
+  const uploadUpdated = await EstimateDesignUploadModel.updateOne(
+    {
+      _id: upload._id,
+      estimateId: upload.estimateId,
+      extractionStatus: { $in: ["queued", "processing"] }
+    },
+    {
+      $set: {
+        extractionStatus: "processing_failed",
+        failureCode: frozenEstimateJobFailure.code,
+        failureMessage: frozenEstimateJobFailure.message
+      }
+    },
+    { session }
+  );
+  requireTransition(uploadUpdated, extractionStateConflict);
+  return cancelled;
 }
 
 async function guardDesignLifecycle(
