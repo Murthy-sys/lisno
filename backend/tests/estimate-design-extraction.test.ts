@@ -75,15 +75,34 @@ function applyUpdate(record: Record<string, unknown>, update: Record<string, any
 }
 
 function matches(record: Record<string, any>, filter: Record<string, any>) {
-  if (filter._id !== undefined && record._id !== filter._id) return false;
-  if (filter.uploadId !== undefined && record.uploadId !== filter.uploadId) return false;
-  if (filter.status !== undefined && record.status !== filter.status) return false;
-  if (filter.claimId !== undefined && record.claimId !== filter.claimId) return false;
-  if (filter.leaseExpiresAt?.$gt && !(new Date(record.leaseExpiresAt) > filter.leaseExpiresAt.$gt)) return false;
   if (filter.$or) {
-    return filter.$or.some((branch: Record<string, any>) => matches(record, branch));
+    if (!filter.$or.some((branch: Record<string, any>) => matches(record, branch))) {
+      return false;
+    }
+  }
+  for (const [key, expected] of Object.entries(filter)) {
+    if (key === "$or") continue;
+    const actual = record[key];
+    if (expected && typeof expected === "object") {
+      if ("$in" in expected && !(expected.$in as unknown[]).includes(actual)) return false;
+      if ("$gt" in expected && !(new Date(actual) > expected.$gt)) return false;
+      continue;
+    }
+    if (actual !== expected) return false;
   }
   return true;
+}
+
+function restore(target: Array<Record<string, any>>, snapshot: Array<Record<string, any>>) {
+  target.splice(0, target.length, ...structuredClone(snapshot));
+}
+
+function deferred() {
+  let resolve!: () => void;
+  const promise = new Promise<void>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
 }
 
 function setup() {
@@ -131,20 +150,27 @@ function setup() {
   const pages: Array<Record<string, any>> = [];
   const drawings: Array<Record<string, any>> = [];
   const revisions: Array<Record<string, any>> = [];
+  const runTransaction = async (operation: () => Promise<unknown>) => {
+    const snapshots = {
+      uploads: structuredClone(uploads),
+      jobs: structuredClone(jobs),
+      pages: structuredClone(pages),
+      drawings: structuredClone(drawings),
+      revisions: structuredClone(revisions)
+    };
+    try {
+      return await operation();
+    } catch (error) {
+      restore(uploads, snapshots.uploads);
+      restore(jobs, snapshots.jobs);
+      restore(pages, snapshots.pages);
+      restore(drawings, snapshots.drawings);
+      restore(revisions, snapshots.revisions);
+      throw error;
+    }
+  };
   const session = {
-    withTransaction: vi.fn(async (operation: () => Promise<unknown>) => {
-      const pageCount = pages.length;
-      const drawingCount = drawings.length;
-      const revisionCount = revisions.length;
-      try {
-        return await operation();
-      } catch (error) {
-        pages.splice(pageCount);
-        drawings.splice(drawingCount);
-        revisions.splice(revisionCount);
-        throw error;
-      }
-    }),
+    withTransaction: vi.fn(runTransaction),
     endSession: vi.fn(async () => undefined)
   };
   vi.spyOn(mongoose, "startSession").mockResolvedValue(session as never);
@@ -161,7 +187,10 @@ function setup() {
   vi.spyOn(EstimateDesignUploadModel, "updateOne").mockImplementation(async (filter, update) => {
     const record = uploads.find((item) => matches(item, filter as never));
     if (record) applyUpdate(record, update as never);
-    return { matchedCount: record ? 1 : 0 } as never;
+    return {
+      matchedCount: record ? 1 : 0,
+      modifiedCount: record ? 1 : 0
+    } as never;
   });
   vi.spyOn(EstimateDesignExtractionJobModel, "findOne").mockImplementation((filter) => {
     const record = jobs
@@ -180,7 +209,10 @@ function setup() {
   vi.spyOn(EstimateDesignExtractionJobModel, "updateOne").mockImplementation(async (filter, update) => {
     const record = jobs.find((item) => matches(item, filter as never));
     if (record) applyUpdate(record, update as never);
-    return { matchedCount: record ? 1 : 0 } as never;
+    return {
+      matchedCount: record ? 1 : 0,
+      modifiedCount: record ? 1 : 0
+    } as never;
   });
   vi.spyOn(EstimateDesignSourcePageModel, "create").mockImplementation(async (input) => {
     pages.push(...(input as Array<Record<string, any>>));
@@ -197,6 +229,7 @@ function setup() {
   vi.spyOn(EstimateDesignDrawingModel, "find").mockImplementation((filter) =>
     query(drawings.filter((item) =>
       (filter.estimateId === undefined || item.estimateId === filter.estimateId) &&
+      (filter.active === undefined || item.active === filter.active) &&
       (filter._id?.$in === undefined || filter._id.$in.includes(item._id))
     )) as never
   );
@@ -206,7 +239,10 @@ function setup() {
   vi.spyOn(EstimateDesignDrawingModel, "updateOne").mockImplementation(async (filter, update) => {
     const record = drawings.find((item) => matches(item, filter as never));
     if (record) applyUpdate(record, update as never);
-    return { matchedCount: record ? 1 : 0 } as never;
+    return {
+      matchedCount: record ? 1 : 0,
+      modifiedCount: record ? 1 : 0
+    } as never;
   });
   vi.spyOn(EstimateDesignRevisionModel, "create").mockImplementation(async (input) => {
     revisions.push(...(input as Array<Record<string, any>>));
@@ -227,18 +263,28 @@ function setup() {
   vi.spyOn(EstimateDesignRevisionModel, "findById").mockImplementation((id) =>
     query(revisions.find((item) => item._id === id) ?? null) as never
   );
+  vi.spyOn(EstimateDesignRevisionModel, "updateOne").mockImplementation(async (filter, update) => {
+    const record = revisions.find((item) => matches(item, filter as never));
+    if (record) applyUpdate(record, update as never);
+    return {
+      matchedCount: record ? 1 : 0,
+      modifiedCount: record ? 1 : 0
+    } as never;
+  });
   vi.spyOn(EstimateDesignRevisionModel, "updateMany").mockImplementation(async (filter, update) => {
+    let matchedCount = 0;
     let modifiedCount = 0;
     for (const revision of revisions) {
       if (
         filter._id?.$in.includes(revision._id) &&
         filter.reviewStatus?.$in.includes(revision.reviewStatus)
       ) {
+        matchedCount += 1;
         applyUpdate(revision, update as never);
         modifiedCount += 1;
       }
     }
-    return { modifiedCount } as never;
+    return { matchedCount, modifiedCount } as never;
   });
 
   const repository = createMemoryRepository(structuredClone(demoSeedData));
@@ -261,7 +307,8 @@ function setup() {
     pages,
     drawings,
     revisions,
-    session
+    session,
+    runTransaction
   };
 }
 
@@ -546,6 +593,61 @@ describe("estimate design extraction and estimator verification", () => {
     });
   });
 
+  it("rolls back completion when the upload transition no longer matches", async () => {
+    const { app, jobs, uploads, pages, drawings, revisions } = setup();
+    const leased = await claim(app);
+    vi.mocked(EstimateDesignUploadModel.updateOne).mockResolvedValueOnce({
+      acknowledged: true,
+      matchedCount: 0,
+      modifiedCount: 0,
+      upsertedCount: 0,
+      upsertedId: null
+    });
+
+    const response = await complete(app, leased.body.data.claimToken);
+
+    expect(response.status).toBe(409);
+    expect(response.body.error.code).toBe("ESTIMATE_EXTRACTION_STATE_CONFLICT");
+    expect(pages).toEqual([]);
+    expect(drawings).toEqual([]);
+    expect(revisions).toEqual([]);
+    expect(jobs[0]).toMatchObject({
+      status: "processing",
+      claimId: leased.body.data.claimToken
+    });
+    expect(uploads[0]).toMatchObject({ extractionStatus: "processing" });
+  });
+
+  it("rolls back failure when the upload transition no longer matches", async () => {
+    const { app, jobs, uploads } = setup();
+    const leased = await claim(app);
+    vi.mocked(EstimateDesignUploadModel.updateOne).mockResolvedValueOnce({
+      acknowledged: true,
+      matchedCount: 0,
+      modifiedCount: 0,
+      upsertedCount: 0,
+      upsertedId: null
+    });
+
+    const response = await worker(
+      request(app).post("/api/v1/internal/extraction-jobs/estimate-job-1/fail")
+    )
+      .set("X-Extraction-Claim-Token", leased.body.data.claimToken)
+      .send({ code: "OCR_FAILED", message: "OCR engine failed." });
+
+    expect(response.status).toBe(409);
+    expect(response.body.error.code).toBe("ESTIMATE_EXTRACTION_STATE_CONFLICT");
+    expect(jobs[0]).toMatchObject({
+      status: "processing",
+      claimId: leased.body.data.claimToken,
+      failureCode: null
+    });
+    expect(uploads[0]).toMatchObject({
+      extractionStatus: "processing",
+      failureCode: null
+    });
+  });
+
   it("creates a new immutable draft revision for estimator corrections", async () => {
     const { app, drawings, revisions } = setup();
     const leased = await claim(app);
@@ -631,5 +733,115 @@ describe("estimate design extraction and estimator verification", () => {
     expect(submitted.status).toBe(200);
     expect(submitted.body.data).toMatchObject({ submittedCount: 4 });
     expect(jobs[0]).toMatchObject({ status: "submitted" });
+  });
+
+  it.each(["upload", "job"] as const)(
+    "rolls back submission when the required %s transition no longer matches",
+    async (transition) => {
+      const { app, uploads, jobs, revisions } = setup();
+      const leased = await claim(app);
+      await complete(app, leased.body.data.claimToken);
+      const before = structuredClone(revisions);
+      const result = {
+        acknowledged: true,
+        matchedCount: 0,
+        modifiedCount: 0,
+        upsertedCount: 0,
+        upsertedId: null
+      };
+      if (transition === "upload") {
+        vi.mocked(EstimateDesignUploadModel.updateOne).mockResolvedValueOnce(result);
+      } else {
+        vi.mocked(EstimateDesignExtractionJobModel.updateOne).mockResolvedValueOnce(result);
+      }
+
+      const response = await owner(
+        request(app).post("/api/v1/estimates/estimate-1/design-drawings/submit")
+      ).send();
+
+      expect(response.status).toBe(409);
+      expect(response.body.error.code).toBe("ESTIMATE_EXTRACTION_STATE_CONFLICT");
+      expect(revisions).toEqual(before);
+      expect(uploads[0]).toMatchObject({ extractionStatus: "estimator_review" });
+      expect(jobs[0]).toMatchObject({ status: "estimator_review" });
+    }
+  );
+
+  it("rejects an edit that reaches its transaction after submission commits", async () => {
+    const { app, drawings, revisions, uploads, jobs, session, runTransaction } = setup();
+    const leased = await claim(app);
+    await complete(app, leased.body.data.claimToken);
+    const drawing = drawings[0]!;
+    const editReachedTransaction = deferred();
+    const allowEditTransaction = deferred();
+    session.withTransaction.mockImplementationOnce(async (operation) => {
+      editReachedTransaction.resolve();
+      await allowEditTransaction.promise;
+      return runTransaction(operation);
+    });
+
+    const editPromise = owner(
+      request(app).patch(`/api/v1/estimate-design-drawings/${drawing._id}`)
+    )
+      .send({ version: 1, displayTitle: "Late edit" })
+      .then((response) => response);
+    await editReachedTransaction.promise;
+
+    const submitted = await owner(
+      request(app).post("/api/v1/estimates/estimate-1/design-drawings/submit")
+    ).send();
+    allowEditTransaction.resolve();
+    const edited = await editPromise;
+
+    expect(submitted.status).toBe(200);
+    expect(edited.status).toBe(409);
+    expect(edited.body.error.code).toBe("ESTIMATE_DRAWING_LOCKED");
+    expect(revisions.filter((item) => item.drawingId === drawing._id)).toHaveLength(1);
+    expect(revisions.find((item) => item.drawingId === drawing._id))
+      .toMatchObject({ revisionNumber: 1, reviewStatus: "submitted" });
+    expect(uploads[0]).toMatchObject({ extractionStatus: "submitted" });
+    expect(jobs[0]).toMatchObject({ status: "submitted" });
+  });
+
+  it("rejects submission when a verified edit commits after submit preflight", async () => {
+    const { app, drawings, revisions, uploads, jobs, session, runTransaction } = setup();
+    const leased = await claim(app);
+    await complete(app, leased.body.data.claimToken);
+    const drawing = drawings[0]!;
+    const submitReachedTransaction = deferred();
+    const allowSubmitTransaction = deferred();
+    session.withTransaction.mockImplementationOnce(async (operation) => {
+      submitReachedTransaction.resolve();
+      await allowSubmitTransaction.promise;
+      return runTransaction(operation);
+    });
+
+    const submitPromise = owner(
+      request(app).post("/api/v1/estimates/estimate-1/design-drawings/submit")
+    )
+      .send()
+      .then((response) => response);
+    await submitReachedTransaction.promise;
+
+    const edited = await owner(
+      request(app).patch(`/api/v1/estimate-design-drawings/${drawing._id}`)
+    ).send({ version: 1, displayTitle: "Concurrent verified edit" });
+    allowSubmitTransaction.resolve();
+    const submitted = await submitPromise;
+
+    const drawingRevisions = revisions
+      .filter((item) => item.drawingId === drawing._id)
+      .sort((left, right) => left.revisionNumber - right.revisionNumber);
+    expect(edited.status).toBe(200);
+    expect(submitted.status).toBe(409);
+    expect(submitted.body.error.code).toBe("STALE_ESTIMATE_DRAWING");
+    expect(drawing.verified).toBe(true);
+    expect(drawingRevisions).toHaveLength(2);
+    expect(drawingRevisions[1]).toMatchObject({
+      revisionNumber: 2,
+      reviewStatus: "draft"
+    });
+    expect(uploads[0]).toMatchObject({ extractionStatus: "estimator_review" });
+    expect(jobs[0]).toMatchObject({ status: "estimator_review" });
   });
 });

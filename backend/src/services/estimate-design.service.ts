@@ -377,6 +377,30 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
           }
         }
         await withMongoTransaction(async (session) => {
+          const currentJob = await EstimateDesignExtractionJobModel.findById(jobId)
+            .session(session)
+            .lean();
+          if (!currentJob) throw estimateNotFound();
+          requireEstimateClaim(currentJob, claimToken, processedAt);
+          const currentUpload = await EstimateDesignUploadModel.findById(currentJob.uploadId)
+            .session(session)
+            .lean();
+          if (
+            !currentUpload ||
+            String(currentUpload._id) !== String(upload._id) ||
+            String(currentUpload.extractionStatus) !== "processing"
+          ) {
+            extractionStateConflict();
+          }
+          const currentEstimate = await EstimateModel.findById(currentUpload.estimateId)
+            .session(session)
+            .lean();
+          if (
+            !currentEstimate ||
+            JSON.stringify(taxonomyForEstimate(currentEstimate)) !== JSON.stringify(taxonomy)
+          ) {
+            extractionStateConflict();
+          }
           if (pageDocuments.length) await EstimateDesignSourcePageModel.create(pageDocuments, { session });
           if (drawingDocuments.length) await EstimateDesignDrawingModel.create(drawingDocuments, { session });
           if (revisionDocuments.length) await EstimateDesignRevisionModel.create(revisionDocuments, { session });
@@ -385,6 +409,7 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
               _id: jobId,
               status: "processing",
               claimId: claimToken,
+              uploadId: currentUpload._id,
               leaseExpiresAt: { $gt: new Date(processedAt) }
             },
             {
@@ -400,9 +425,13 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
             },
             { session }
           );
-          if (completed.matchedCount !== 1) staleClaim();
-          await EstimateDesignUploadModel.updateOne(
-            { _id: upload._id },
+          requireTransition(completed, staleClaim);
+          const uploadUpdated = await EstimateDesignUploadModel.updateOne(
+            {
+              _id: currentUpload._id,
+              estimateId: currentUpload.estimateId,
+              extractionStatus: "processing"
+            },
             {
               $set: {
                 extractionStatus: "estimator_review",
@@ -412,6 +441,7 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
             },
             { session }
           );
+          requireTransition(uploadUpdated, extractionStateConflict);
         });
         return {
           ...workerJobDto({
@@ -436,9 +466,21 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
       requireEstimateClaim(job, claimToken, failedAt);
       let failed: Record<string, any> | null = null;
       await withMongoTransaction(async (session) => {
+        const currentJob = await EstimateDesignExtractionJobModel.findById(jobId)
+          .session(session)
+          .lean();
+        if (!currentJob) throw estimateNotFound();
+        requireEstimateClaim(currentJob, claimToken, failedAt);
+        const currentUpload = await EstimateDesignUploadModel.findById(currentJob.uploadId)
+          .session(session)
+          .lean();
+        if (!currentUpload || String(currentUpload.extractionStatus) !== "processing") {
+          extractionStateConflict();
+        }
         failed = await EstimateDesignExtractionJobModel.findOneAndUpdate(
           {
             _id: jobId,
+            uploadId: currentUpload._id,
             status: "processing",
             claimId: claimToken,
             leaseExpiresAt: { $gt: new Date(failedAt) }
@@ -456,8 +498,12 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
           { new: true, runValidators: true, session }
         ).lean();
         if (!failed) staleClaim();
-        await EstimateDesignUploadModel.updateOne(
-          { _id: job.uploadId },
+        const uploadUpdated = await EstimateDesignUploadModel.updateOne(
+          {
+            _id: currentUpload._id,
+            estimateId: currentUpload.estimateId,
+            extractionStatus: "processing"
+          },
           {
             $set: {
               extractionStatus: "processing_failed",
@@ -467,6 +513,7 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
           },
           { session }
         );
+        requireTransition(uploadUpdated, extractionStateConflict);
       });
       return workerJobDto(failed!);
     },
@@ -520,124 +567,344 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
           throw new ApiError(503, "FILE_STORAGE_ERROR", "The corrected crop could not be stored.");
         }
       }
-      const revision = {
-        _id: randomUUID(),
-        drawingId,
-        revisionNumber: change.version + 1,
-        sourcePageId: drawing.sourcePageId,
-        crop,
-        croppedFileReference,
-        roomId: roomId ?? "",
-        scopeSectionId: scopeSectionId ?? "",
-        label: displayTitle,
-        reviewStatus: "draft",
-        submittedAt: null,
-        reviewerId: null,
-        reviewedAt: null,
-        changeSummary: null,
-        annotationLayerId: null,
-        replacesRevisionId: latest._id
-      };
+      let savedDrawing: Record<string, any> | null = null;
+      let savedRevision: Record<string, any> | null = null;
       try {
         await withMongoTransaction(async (session) => {
+          const currentDrawing = await EstimateDesignDrawingModel.findById(drawingId)
+            .session(session)
+            .lean();
+          if (!currentDrawing) throw estimateNotFound();
+          const currentEstimate = await requireOwnedEstimate(
+            user,
+            String(currentDrawing.estimateId),
+            session
+          );
+          if (!isEstimateDesignEditable(currentEstimate.status) || !currentDrawing.active) {
+            drawingLocked();
+          }
+          const currentUpload = await EstimateDesignUploadModel.findById(
+            currentDrawing.uploadId
+          )
+            .session(session)
+            .lean();
+          const currentJob = await EstimateDesignExtractionJobModel.findOne({
+            uploadId: currentDrawing.uploadId
+          })
+            .session(session)
+            .lean();
+          if (
+            !currentUpload ||
+            !currentJob ||
+            String(currentUpload.estimateId) !== String(currentDrawing.estimateId) ||
+            String(currentUpload.extractionStatus) !== "estimator_review" ||
+            String(currentJob.status) !== "estimator_review"
+          ) {
+            drawingLocked();
+          }
           const current = await EstimateDesignRevisionModel.findOne({ drawingId })
             .sort({ revisionNumber: -1 })
             .session(session)
             .lean();
           if (!current || Number(current.revisionNumber) !== change.version) {
-            throw new ApiError(409, "STALE_ESTIMATE_DRAWING", "The drawing changed before this update.");
+            staleDrawing();
           }
+          if (!["draft", "changes_requested"].includes(String(current.reviewStatus))) {
+            drawingLocked();
+          }
+          const currentTaxonomy = taxonomyForEstimate(currentEstimate);
+          const currentRoomId = change.roomId ?? currentDrawing.roomId ?? null;
+          const currentScopeSectionId =
+            change.scopeSectionId ?? currentDrawing.scopeSectionId ?? null;
+          validateMapping(currentRoomId, currentScopeSectionId, currentTaxonomy);
+          const currentVerified = change.verified ?? Boolean(currentDrawing.verified);
+          if (currentVerified && (!currentRoomId || !currentScopeSectionId)) {
+            throw new ApiError(
+              400,
+              "INVALID_ESTIMATE_MAPPING",
+              "Verified drawings require a room and enabled scope."
+            );
+          }
+          const currentPage = await EstimateDesignSourcePageModel.findById(
+            currentDrawing.sourcePageId
+          )
+            .session(session)
+            .lean();
+          if (!currentPage) throw estimateNotFound();
+          const currentCrop = change.crop ? { ...change.crop } : { ...current.crop };
+          if (
+            !cropIsWithinPage(
+              currentCrop,
+              Number(currentPage.width),
+              Number(currentPage.height)
+            )
+          ) {
+            throw new ApiError(
+              400,
+              "INVALID_WORKER_RESULT",
+              "Drawing crops must remain within their source page."
+            );
+          }
+          const currentDisplayTitle =
+            change.displayTitle?.replace(/\s+/g, " ").trim() ??
+            String(currentDrawing.displayTitle);
+          const revision = {
+            _id: randomUUID(),
+            drawingId,
+            revisionNumber: change.version + 1,
+            sourcePageId: currentDrawing.sourcePageId,
+            crop: currentCrop,
+            croppedFileReference,
+            roomId: currentRoomId ?? "",
+            scopeSectionId: currentScopeSectionId ?? "",
+            label: currentDisplayTitle,
+            reviewStatus: "draft",
+            submittedAt: null,
+            reviewerId: null,
+            reviewedAt: null,
+            changeSummary: null,
+            annotationLayerId: null,
+            replacesRevisionId: current._id
+          };
+          const guarded = await EstimateDesignRevisionModel.updateOne(
+            {
+              _id: current._id,
+              drawingId,
+              revisionNumber: change.version,
+              reviewStatus: { $in: ["draft", "changes_requested"] }
+            },
+            {
+              $set: { reviewStatus: current.reviewStatus },
+              $currentDate: { updatedAt: true }
+            },
+            { session }
+          );
+          if (guarded.matchedCount !== 1) staleDrawing();
           await EstimateDesignRevisionModel.create([revision], { session });
           const updated = await EstimateDesignDrawingModel.updateOne(
-            { _id: drawingId },
+            {
+              _id: drawingId,
+              active: true,
+              uploadId: currentDrawing.uploadId,
+              sourcePageId: currentDrawing.sourcePageId,
+              displayTitle: currentDrawing.displayTitle,
+              roomId: currentDrawing.roomId ?? null,
+              scopeSectionId: currentDrawing.scopeSectionId ?? null,
+              verified: Boolean(currentDrawing.verified)
+            },
             {
               $set: {
-                displayTitle,
-                roomId,
-                scopeSectionId,
-                verified
+                displayTitle: currentDisplayTitle,
+                roomId: currentRoomId,
+                scopeSectionId: currentScopeSectionId,
+                verified: currentVerified
               }
             },
             { session }
           );
-          if (updated.matchedCount !== 1) throw estimateNotFound();
+          if (updated.matchedCount !== 1) staleDrawing();
+          savedDrawing = {
+            ...currentDrawing,
+            displayTitle: currentDisplayTitle,
+            roomId: currentRoomId,
+            scopeSectionId: currentScopeSectionId,
+            verified: currentVerified
+          };
+          savedRevision = revision;
         });
       } catch (error) {
         if (generatedReference) await cleanupReferences(input.storage, [generatedReference]);
+        if (
+          typeof error === "object" &&
+          error !== null &&
+          "code" in error &&
+          error.code === 11000
+        ) {
+          staleDrawing();
+        }
         throw error;
       }
+      if (!savedDrawing || !savedRevision) {
+        throw new Error("Estimate drawing transaction did not complete.");
+      }
       return {
-        ...drawingDto({
-          ...drawing,
-          displayTitle,
-          roomId,
-          scopeSectionId,
-          verified
-        }),
-        revision: revisionDto(revision)
+        ...drawingDto(savedDrawing),
+        revision: revisionDto(savedRevision)
       };
     },
 
     async submitDrawings(user, estimateId) {
-      const estimate = await requireOwnedEstimate(user, estimateId);
-      if (!isEstimateDesignEditable(estimate.status)) {
-        throw new ApiError(409, "ESTIMATE_DESIGN_LOCKED", "This estimate design is read-only.");
-      }
-      const taxonomy = taxonomyForEstimate(estimate);
-      const drawings = await EstimateDesignDrawingModel.find({ estimateId, active: true })
+      const submittedAt = now();
+      await requireOwnedEstimate(user, estimateId);
+      const requestDrawings = await EstimateDesignDrawingModel.find({
+        estimateId,
+        active: true
+      })
         .sort({ _id: 1 })
         .lean();
-      if (drawings.length === 0) {
-        throw new ApiError(409, "ESTIMATE_DRAWINGS_EMPTY", "Add at least one drawing before submitting.");
-      }
-      const latest = await Promise.all(drawings.map((drawing) =>
-        EstimateDesignRevisionModel.findOne({ drawingId: drawing._id })
+      const requestRevisionIds = new Map<string, string | null>();
+      for (const drawing of requestDrawings) {
+        const revision = await EstimateDesignRevisionModel.findOne({
+          drawingId: drawing._id
+        })
           .sort({ revisionNumber: -1 })
-          .lean()
-      ));
-      for (let index = 0; index < drawings.length; index += 1) {
-        const drawing = drawings[index]!;
-        const revision = latest[index];
-        validateMapping(drawing.roomId ?? null, drawing.scopeSectionId ?? null, taxonomy);
-        if (!drawing.verified || !revision || !["draft", "changes_requested"].includes(String(revision.reviewStatus))) {
+          .lean();
+        requestRevisionIds.set(
+          String(drawing._id),
+          revision ? String(revision._id) : null
+        );
+      }
+      let submittedCount = 0;
+      await withMongoTransaction(async (session) => {
+        const estimate = await requireOwnedEstimate(user, estimateId, session);
+        if (!isEstimateDesignEditable(estimate.status)) {
           throw new ApiError(
             409,
-            "ESTIMATE_DRAWINGS_UNVERIFIED",
-            "Verify every active drawing before submitting."
+            "ESTIMATE_DESIGN_LOCKED",
+            "This estimate design is read-only."
           );
         }
-      }
-      const submittedAt = now();
-      const revisionIds = latest.map((revision) => revision!._id);
-      await withMongoTransaction(async (session) => {
+        const taxonomy = taxonomyForEstimate(estimate);
+        const drawings = await EstimateDesignDrawingModel.find({
+          estimateId,
+          active: true
+        })
+          .sort({ _id: 1 })
+          .session(session)
+          .lean();
+        if (drawings.length === 0) {
+          throw new ApiError(
+            409,
+            "ESTIMATE_DRAWINGS_EMPTY",
+            "Add at least one drawing before submitting."
+          );
+        }
+        if (
+          drawings.length !== requestDrawings.length ||
+          drawings.some(
+            (drawing, index) =>
+              String(drawing._id) !== String(requestDrawings[index]?._id)
+          )
+        ) {
+          staleDrawing();
+        }
+        const latest: Array<Record<string, any> | null> = [];
+        for (const drawing of drawings) {
+          latest.push(
+            await EstimateDesignRevisionModel.findOne({
+              drawingId: drawing._id
+            })
+              .sort({ revisionNumber: -1 })
+              .session(session)
+              .lean()
+          );
+        }
+        if (
+          latest.some(
+            (revision, index) =>
+              (revision ? String(revision._id) : null) !==
+              requestRevisionIds.get(String(drawings[index]!._id))
+          )
+        ) {
+          staleDrawing();
+        }
+        for (let index = 0; index < drawings.length; index += 1) {
+          const drawing = drawings[index]!;
+          const revision = latest[index];
+          validateMapping(
+            drawing.roomId ?? null,
+            drawing.scopeSectionId ?? null,
+            taxonomy
+          );
+          if (
+            !drawing.verified ||
+            !revision ||
+            !["draft", "changes_requested"].includes(
+              String(revision.reviewStatus)
+            )
+          ) {
+            unverifiedDrawings();
+          }
+        }
+        const uploadIds = [
+          ...new Set(drawings.map((drawing) => String(drawing.uploadId)))
+        ];
+        const uploadStates: Array<{
+          upload: Record<string, any>;
+          job: Record<string, any>;
+        }> = [];
+        for (const uploadId of uploadIds) {
+          const upload = await EstimateDesignUploadModel.findById(uploadId)
+            .session(session)
+            .lean();
+          const job = await EstimateDesignExtractionJobModel.findOne({
+            uploadId
+          })
+            .session(session)
+            .lean();
+          if (
+            !upload ||
+            !job ||
+            String(upload.estimateId) !== estimateId ||
+            String(upload.extractionStatus) !== "estimator_review" ||
+            String(job.status) !== "estimator_review"
+          ) {
+            extractionStateConflict();
+          }
+          uploadStates.push({ upload, job });
+        }
+        const revisionIds = latest.map((revision) => revision!._id);
         const updated = await EstimateDesignRevisionModel.updateMany(
           { _id: { $in: revisionIds }, reviewStatus: { $in: ["draft", "changes_requested"] } },
           { $set: { reviewStatus: "submitted", submittedAt } },
           { session }
         );
-        if (updated.modifiedCount !== revisionIds.length) {
-          throw new ApiError(409, "STALE_ESTIMATE_DRAWING", "A drawing changed before submission.");
+        if (
+          updated.matchedCount !== revisionIds.length ||
+          updated.modifiedCount !== revisionIds.length
+        ) {
+          staleDrawing();
         }
-        for (const uploadId of new Set(drawings.map((drawing) => String(drawing.uploadId)))) {
-          await EstimateDesignUploadModel.updateOne(
-            { _id: uploadId },
+        for (const { upload, job } of uploadStates) {
+          const uploadUpdated = await EstimateDesignUploadModel.updateOne(
+            {
+              _id: upload._id,
+              estimateId,
+              extractionStatus: "estimator_review"
+            },
             { $set: { extractionStatus: "submitted" } },
             { session }
           );
-          await EstimateDesignExtractionJobModel.updateOne(
-            { uploadId, status: "estimator_review" },
+          requireTransition(uploadUpdated, extractionStateConflict);
+          const jobUpdated = await EstimateDesignExtractionJobModel.updateOne(
+            {
+              _id: job._id,
+              uploadId: upload._id,
+              status: "estimator_review"
+            },
             { $set: { status: "submitted" } },
             { session }
           );
+          requireTransition(jobUpdated, extractionStateConflict);
         }
+        submittedCount = revisionIds.length;
       });
-      return { submittedCount: revisionIds.length };
+      return { submittedCount };
     }
   };
 
-  async function requireOwnedEstimate(user: AuthenticatedUser, estimateId: string) {
+  async function requireOwnedEstimate(
+    user: AuthenticatedUser,
+    estimateId: string,
+    session?: mongoose.ClientSession
+  ) {
     if (user.role !== "estimator_sales") forbidden();
-    const estimate = await EstimateModel.findOne({ _id: estimateId, ownerId: user.id }).lean();
+    const estimateQuery = EstimateModel.findOne({
+      _id: estimateId,
+      ownerId: user.id
+    });
+    if (session) estimateQuery.session(session);
+    const estimate = await estimateQuery.lean();
     if (!estimate) throw estimateNotFound();
     return estimate;
   }
@@ -856,6 +1123,45 @@ function staleClaim(): never {
     "STALE_EXTRACTION_CLAIM",
     "The extraction job claim is no longer current."
   );
+}
+
+function extractionStateConflict(): never {
+  throw new ApiError(
+    409,
+    "ESTIMATE_EXTRACTION_STATE_CONFLICT",
+    "The estimate extraction state changed before this transition."
+  );
+}
+
+function staleDrawing(): never {
+  throw new ApiError(
+    409,
+    "STALE_ESTIMATE_DRAWING",
+    "A drawing changed before this update."
+  );
+}
+
+function drawingLocked(): never {
+  throw new ApiError(
+    409,
+    "ESTIMATE_DRAWING_LOCKED",
+    "This drawing revision is read-only."
+  );
+}
+
+function unverifiedDrawings(): never {
+  throw new ApiError(
+    409,
+    "ESTIMATE_DRAWINGS_UNVERIFIED",
+    "Verify every active drawing before submitting."
+  );
+}
+
+function requireTransition(
+  result: { matchedCount: number; modifiedCount: number },
+  conflict: () => never
+) {
+  if (result.matchedCount !== 1 || result.modifiedCount !== 1) conflict();
 }
 
 function validateMapping(

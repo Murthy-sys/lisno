@@ -25,6 +25,8 @@ export const workerFailureCodes = [
   "RESULT_REJECTED"
 ] as const;
 
+const maxClaimContentionRescans = 64;
+
 export type WorkerFailureCode = (typeof workerFailureCodes)[number];
 
 export interface WorkerSectionResult {
@@ -131,7 +133,7 @@ export function createExtractionWorkerService(
       const leaseExpiresAt = new Date(
         now.getTime() + leaseSeconds * 1000
       ).toISOString();
-      for (let attempt = 0; attempt < 3; attempt += 1) {
+      for (let attempt = 0; attempt < maxClaimContentionRescans; attempt += 1) {
         const at = now.toISOString();
         const [projectCandidate, estimateCandidate] = await Promise.all([
           repository.findOldestClaimableExtractionJob(at),
@@ -202,7 +204,11 @@ export function createExtractionWorkerService(
           }
         };
       }
-      return null;
+      throw new ApiError(
+        503,
+        "EXTRACTION_CLAIM_CONTENTION",
+        "Extraction work is available, but another worker is currently claiming it."
+      );
     },
 
     async downloadSource(jobId, claimToken) {

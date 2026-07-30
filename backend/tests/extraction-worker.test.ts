@@ -66,7 +66,11 @@ function binaryParser(
   response.on("error", callback);
 }
 
-async function setup(ocrLeaseSeconds = 300, estimateQueuedAt?: string) {
+async function setup(
+  ocrLeaseSeconds = 300,
+  estimateQueuedAt?: string,
+  projectClaimLosses = 0
+) {
   vi.restoreAllMocks();
   const repository = createMemoryRepository(structuredClone(demoSeedData));
   const storage = new TestStorage();
@@ -131,8 +135,23 @@ async function setup(ocrLeaseSeconds = 300, estimateQueuedAt?: string) {
       }))
     } as never);
   }
+  let claimAttempts = 0;
+  const appRepository = projectClaimLosses > 0
+    ? new Proxy(repository, {
+        get(target, property, receiver) {
+          if (property !== "claimExtractionJobById") {
+            return Reflect.get(target, property, receiver);
+          }
+          return async (...args: Parameters<AppRepository["claimExtractionJobById"]>) => {
+            claimAttempts += 1;
+            if (claimAttempts <= projectClaimLosses) return null;
+            return target.claimExtractionJobById(...args);
+          };
+        }
+      })
+    : repository;
   const app = createApp({
-    repository,
+    repository: appRepository,
     auth: { jwtSecret: JWT_SECRET, jwtExpiresInSeconds: 900 },
     clock: () => new Date(TEST_NOW),
     storage,
@@ -141,7 +160,13 @@ async function setup(ocrLeaseSeconds = 300, estimateQueuedAt?: string) {
     enableEstimateDesignJobs: Boolean(estimateQueuedAt),
     maxUploadBytes: 10_000
   });
-  return { app, repository, storage, estimateJob };
+  return {
+    app,
+    repository,
+    storage,
+    estimateJob,
+    claimAttempts: () => claimAttempts
+  };
 }
 
 async function claim(app: ReturnType<typeof createApp>) {
@@ -264,6 +289,20 @@ describe("OCR extraction worker contract", () => {
       id: "job-1",
       attemptCount: 1
     });
+  });
+
+  it("rescans the backlog after repeated compare-and-set claim losses", async () => {
+    const { app, claimAttempts } = await setup(300, undefined, 3);
+
+    const response = await claim(app);
+
+    expect(response.status).toBe(200);
+    expect(response.body.data).toMatchObject({
+      kind: "project_design",
+      id: "job-1",
+      attemptCount: 1
+    });
+    expect(claimAttempts()).toBe(4);
   });
 
   it("renews only the current extraction lease", async () => {
