@@ -141,7 +141,7 @@ describe("EstimateDesignUploads", () => {
   }, 10_000);
 
   it("retries a failed extraction through the retry endpoint and enters the queued polling state", async () => {
-    const failedUpload = { id: "upload-failed", estimateId: "estimate-1", leadId: "lead-1", originalFilename: "failed.pdf", mimeType: "application/pdf", sizeBytes: 12, uploaderId: "user-1", uploadedAt: "2026-07-30T00:00:00.000Z", extractionStatus: "processing_failed", failureCode: "OCR_FAILED", failureMessage: "Could not read plan" };
+    const failedUpload = { id: "upload-failed", estimateId: "estimate-1", leadId: "lead-1", originalFilename: "failed.pdf", mimeType: "application/pdf", sizeBytes: 12, uploaderId: "user-1", uploadedAt: "2026-07-30T00:00:00.000Z", extractionStatus: "processing_failed", failureCode: "OCR_FAILED", failureMessage: "Could not read plan", canRetry: true };
     let queued = false;
     let resolveRetry: (value: Response) => void;
     const requests: Array<{ url: string; init?: RequestInit }> = [];
@@ -168,6 +168,170 @@ describe("EstimateDesignUploads", () => {
     const retry = requests.find((request) => request.url.endsWith("/estimate-design-uploads/upload-failed/retry"))!;
     expect(retry.init?.method).toBe("POST");
     expect(retry.init?.body).toBeUndefined();
+  });
+
+  it("offers Retry only for failed uploads whose exact work can still be reserved", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith("/estimates/estimate-1/design-uploads")) {
+        return response({
+        uploads: [
+          {
+            id: "upload-retryable",
+            estimateId: "estimate-1",
+            leadId: "lead-1",
+            originalFilename: "retryable.pdf",
+            mimeType: "application/pdf",
+            sizeBytes: 12,
+            uploaderId: "user-1",
+            uploadedAt: "2026-07-30T00:00:00.000Z",
+            extractionStatus: "processing_failed",
+            failureCode: "OCR_FAILED",
+            failureMessage: "OCR failed.",
+            canRetry: true
+          },
+          {
+            id: "upload-stale",
+            estimateId: "estimate-1",
+            leadId: "lead-1",
+            originalFilename: "stale-replacement.pdf",
+            mimeType: "application/pdf",
+            sizeBytes: 12,
+            uploaderId: "user-1",
+            uploadedAt: "2026-07-30T00:00:01.000Z",
+            extractionStatus: "processing_failed",
+            failureCode: "OCR_FAILED",
+            failureMessage: "OCR failed.",
+            canRetry: false
+          }
+        ],
+        pages: [],
+        drawings: [],
+        revisions: []
+        });
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+
+    renderWithQuery(<EstimateDesignUploads
+      estimateId="estimate-1"
+      rooms={[{ id: "room-living", label: "Living Room" }]}
+      scopes={[{ id: "FC", label: "False Ceiling" }]}
+    />);
+
+    expect(await screen.findByText("retryable.pdf")).toBeVisible();
+    expect(screen.getByText("stale-replacement.pdf")).toBeVisible();
+    expect(screen.getAllByRole("button", { name: "Retry extraction" })).toHaveLength(1);
+  });
+
+  it("creates a missing drawing from a stable source page, mapping, and bounded crop", async () => {
+    const requests: Array<{ url: string; init?: RequestInit }> = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      requests.push({ url, init });
+      if (
+        url.endsWith("/estimate-design-source-pages/page-1/image") &&
+        init?.method !== "POST"
+      ) {
+        return new Response(new Blob(["image"], { type: "image/png" }));
+      }
+      if (
+        url.endsWith("/estimate-design-source-pages/page-1/drawings") &&
+        init?.method === "POST"
+      ) {
+        const body = JSON.parse(String(init.body));
+        return response({
+          id: "drawing-manual",
+          uploadId: "upload-1",
+          sourcePageId: "page-1",
+          estimateId: "estimate-1",
+          active: true,
+          verified: true,
+          roomId: body.roomId,
+          scopeSectionId: body.scopeSectionId,
+          detectedTitle: body.displayTitle,
+          displayTitle: body.displayTitle,
+          source: "manual",
+          roomConfidence: null,
+          scopeConfidence: null,
+          ocrConfidence: null,
+          roomEvidence: [],
+          scopeEvidence: [],
+          revision: {
+            ...revisions[0],
+            id: "revision-manual",
+            drawingId: "drawing-manual",
+            crop: body.crop
+          }
+        }, 201);
+      }
+      if (url.endsWith("/estimates/estimate-1/design-uploads")) {
+        return response({
+          uploads: [{
+            id: "upload-1",
+            estimateId: "estimate-1",
+            leadId: "lead-1",
+            originalFilename: "plan.pdf",
+            mimeType: "application/pdf",
+            sizeBytes: 12,
+            uploaderId: "user-1",
+            uploadedAt: "2026-07-30T00:00:00.000Z",
+            extractionStatus: "estimator_review",
+            failureCode: null,
+            failureMessage: null,
+            canRetry: false
+          }],
+          pages: [page],
+          drawings: [],
+          revisions: []
+        });
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+
+    const user = userEvent.setup();
+    renderWithQuery(
+      <EstimateDesignUploads
+        estimateId="estimate-1"
+        rooms={rooms}
+        scopes={scopes}
+      />
+    );
+
+    await user.click(await screen.findByRole("button", {
+      name: "Add missing drawing"
+    }));
+    const dialog = screen.getByRole("dialog", { name: "Add missing drawing" });
+    await user.type(within(dialog).getByLabelText("Drawing title"), "Living wardrobe");
+    await user.selectOptions(within(dialog).getByLabelText("Room"), "room-living");
+    await user.selectOptions(within(dialog).getByLabelText("Scope section"), "FC");
+    const save = within(dialog).getByRole("button", { name: "Add drawing" });
+
+    await user.clear(within(dialog).getByLabelText("Crop width"));
+    expect(save).toBeDisabled();
+    await user.type(within(dialog).getByLabelText("Crop width"), "300");
+    await user.clear(within(dialog).getByLabelText("Crop height"));
+    await user.type(within(dialog).getByLabelText("Crop height"), "200");
+    await user.clear(within(dialog).getByLabelText("Crop x coordinate"));
+    await user.type(within(dialog).getByLabelText("Crop x coordinate"), "10");
+    await user.clear(within(dialog).getByLabelText("Crop y coordinate"));
+    await user.type(within(dialog).getByLabelText("Crop y coordinate"), "15");
+    await user.click(save);
+
+    const post = await vi.waitFor(() => {
+      const found = requests.find((entry) =>
+        entry.url.endsWith("/estimate-design-source-pages/page-1/drawings") &&
+        entry.init?.method === "POST"
+      );
+      expect(found).toBeDefined();
+      return found!;
+    });
+    expect(JSON.parse(String(post.init?.body))).toEqual({
+      displayTitle: "Living wardrobe",
+      roomId: "room-living",
+      scopeSectionId: "FC",
+      crop: { x: 10, y: 15, width: 300, height: 200 }
+    });
   });
 
   it("verifies a drawing, sends its complete mapping, and submits the refreshed workspace", async () => {
@@ -267,7 +431,7 @@ describe("EstimateDesignUploads", () => {
         return Response.json({ error: { code: "ACTION_FAILED", message: "Try again" } }, { status: 500 });
       }
       if (url.endsWith("/estimates/estimate-1/design-uploads")) return response({
-        uploads: [{ id: "upload-error", estimateId: "estimate-1", leadId: "lead-1", originalFilename: "error.pdf", mimeType: "application/pdf", sizeBytes: 12, uploaderId: "user-1", uploadedAt: "2026-07-30T00:00:00.000Z", extractionStatus: "processing_failed", failureCode: "OCR_FAILED", failureMessage: "Could not read plan" }],
+        uploads: [{ id: "upload-error", estimateId: "estimate-1", leadId: "lead-1", originalFilename: "error.pdf", mimeType: "application/pdf", sizeBytes: 12, uploaderId: "user-1", uploadedAt: "2026-07-30T00:00:00.000Z", extractionStatus: "processing_failed", failureCode: "OCR_FAILED", failureMessage: "Could not read plan", canRetry: true }],
         pages: [page], drawings: [removable], revisions: [removableRevision]
       });
       throw new Error(`Unexpected request: ${url}`);

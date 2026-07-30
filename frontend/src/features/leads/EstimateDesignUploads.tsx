@@ -1,14 +1,22 @@
 import { useCallback, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import type { CropRect, EstimateDesignDrawing, EstimateDesignRevision } from "../../api/types";
+import type {
+  CropRect,
+  EstimateDesignDrawing,
+  EstimateDesignRevision,
+  EstimateDesignSourcePage
+} from "../../api/types";
+import { CropEditor, cropIsValid } from "../../components/design/CropEditor";
 import { EstimateDrawingPreviewDialog } from "../../components/design/EstimateDrawingPreviewDialog";
 import { Dialog } from "../../components/ui/Dialog";
 import { EstimateDrawingRow } from "./EstimateDrawingRow";
 import {
+  createManualEstimateDrawing,
   editEstimateDrawing,
   estimateDesignKeys,
   estimateDesignRevisionImageUrl,
+  estimateDesignSourcePageImageUrl,
   getEstimateDesignWorkspace,
   replaceEstimateDrawing,
   removeEstimateDrawing,
@@ -60,6 +68,7 @@ export function EstimateDesignUploads({ estimateId, rooms, scopes }: EstimateDes
   const [verifyOnOpen, setVerifyOnOpen] = useState(false);
   const [formError, setFormError] = useState("");
   const [actionNotice, setActionNotice] = useState("");
+  const [manualOpen, setManualOpen] = useState(false);
   const [focusRevision, setFocusRevision] = useState<{
     drawingId: string;
     revisionNumber: number;
@@ -105,6 +114,22 @@ export function EstimateDesignUploads({ estimateId, rooms, scopes }: EstimateDes
     }
   });
   const retry = useMutation({ mutationFn: retryEstimateDesignUpload, onSuccess: () => void client.invalidateQueries({ queryKey: estimateDesignKeys.workspace(estimateId) }) });
+  const createManual = useMutation({
+    mutationFn: ({
+      pageId,
+      input
+    }: {
+      pageId: string;
+      input: Parameters<typeof createManualEstimateDrawing>[1];
+    }) => createManualEstimateDrawing(pageId, input),
+    onSuccess: () => {
+      setManualOpen(false);
+      setActionNotice("Missing drawing added for estimator review.");
+      void client.invalidateQueries({
+        queryKey: estimateDesignKeys.workspace(estimateId)
+      });
+    }
+  });
   const remove = useMutation({ mutationFn: ({ drawing, revision }: DrawingSelection) => removeEstimateDrawing(drawing.id, revision.revisionNumber), onSuccess: () => void client.invalidateQueries({ queryKey: estimateDesignKeys.workspace(estimateId) }) });
   const submit = useMutation({
     mutationFn: () => submitEstimateDrawings(estimateId),
@@ -183,7 +208,8 @@ export function EstimateDesignUploads({ estimateId, rooms, scopes }: EstimateDes
       {workspace.isPending ? <p role="status">Loading design plans…</p> : null}
       {workspace.isError ? <p role="alert">We couldn't load design plans. <button type="button" className="secondary-button" onClick={() => void workspace.refetch()}>Try again</button></p> : null}
       {workspace.data ? <>
-        {workspace.data.uploads.length ? <ul className="estimate-design-uploads__status-list" aria-label="Design upload status">{workspace.data.uploads.map((item) => <li key={item.id}><span>{item.originalFilename}</span><strong>{statusLabel(item.extractionStatus)}</strong>{item.failureMessage ? <small>{item.failureMessage}</small> : null}{item.extractionStatus === "processing_failed" ? <button type="button" className="secondary-button" disabled={retry.isPending} onClick={() => retry.mutate(item.id)}>{retry.isPending ? "Retrying…" : "Retry extraction"}</button> : null}</li>)}</ul> : <p className="estimate-design-uploads__empty">Upload a PDF or plan image to extract drawings for this estimate.</p>}
+        {workspace.data.uploads.length ? <ul className="estimate-design-uploads__status-list" aria-label="Design upload status">{workspace.data.uploads.map((item) => <li key={item.id}><span>{item.originalFilename}</span><strong>{statusLabel(item.extractionStatus)}</strong>{item.failureMessage ? <small>{item.failureMessage}</small> : null}{item.extractionStatus === "processing_failed" && item.canRetry ? <button type="button" className="secondary-button" disabled={retry.isPending} onClick={() => retry.mutate(item.id)}>{retry.isPending ? "Retrying…" : "Retry extraction"}</button> : null}</li>)}</ul> : <p className="estimate-design-uploads__empty">Upload a PDF or plan image to extract drawings for this estimate.</p>}
+        {workspace.data.pages.length ? <button type="button" className="secondary-button" onClick={() => setManualOpen(true)}>Add missing drawing</button> : null}
         {unresolved.length ? <section className="estimate-design-uploads__placement" aria-label="Needs placement"><header><h3>Needs placement</h3><p>These extracted drawings need a verified room and scope before client submission.</p></header>{unresolved.map((drawing) => row(drawing, drawing.roomId ? rooms.find((room) => room.id === drawing.roomId)?.label ?? "Unknown room" : "Unassigned room", drawing.scopeSectionId ? scopes.find((scope) => scope.id === drawing.scopeSectionId)?.label ?? "Unknown scope" : "Unassigned scope"))}</section> : null}
         {rooms.flatMap((room) => scopes.map((scope) => ({ room, scope, drawings: grouped.get(`${room.id}\u0000${scope.id}`) ?? [] }))).filter((group) => group.drawings.length).map((group) => <section className="estimate-design-uploads__group" aria-label={`${group.room.label}, ${group.scope.label} drawings`} key={`${group.room.id}:${group.scope.id}`}><h3>{group.room.label} <span>→</span> {group.scope.label}</h3>{group.drawings.map((drawing) => row(drawing, group.room.label, group.scope.label))}</section>)}
         {activeDrawings.length ? <footer className="estimate-design-uploads__footer"><span>{unresolved.length ? `${unresolved.length} drawing${unresolved.length === 1 ? "" : "s"} need verification.` : "All drawings are verified."}</span><button type="button" className="button button--primary" disabled={!readyToSubmit || submit.isPending} onClick={() => submit.mutate()}>{submit.isPending ? "Submitting…" : "Submit drawings to client"}</button></footer> : null}
@@ -193,6 +219,15 @@ export function EstimateDesignUploads({ estimateId, rooms, scopes }: EstimateDes
       {selection && mode === "correct" ? <CorrectionDialog selection={selection} defaultVerified={verifyOnOpen} rooms={rooms} scopes={scopes} page={workspace.data?.pages.find((page) => page.id === selection.revision.sourcePageId) ?? workspace.data?.pages.find((page) => page.id === selection.drawing.sourcePageId)} busy={correct.isPending} error={correct.isError ? "The correction was not saved." : ""} onSubmit={(input) => correct.mutate({ ...selection, input })} onClose={closeDialog} /> : null}
       {selection && mode === "history" ? <HistoryDialog revisions={(workspace.data?.revisions ?? []).filter((revision) => revision.drawingId === selection.drawing.id)} onClose={closeDialog} /> : null}
       {selection && mode === "replace" ? <ReplacementDialog file={replacement} busy={replace.isPending} error={replace.isError ? "The replacement was not uploaded." : ""} onChange={setReplacement} onSubmit={() => replacement && replace.mutate({ ...selection, file: replacement })} onClose={closeDialog} /> : null}
+      {manualOpen && workspace.data?.pages.length ? <ManualDrawingDialog
+        pages={workspace.data.pages}
+        rooms={rooms}
+        scopes={scopes}
+        busy={createManual.isPending}
+        error={createManual.isError ? "The missing drawing could not be added." : ""}
+        onSubmit={(pageId, input) => createManual.mutate({ pageId, input })}
+        onClose={() => setManualOpen(false)}
+      /> : null}
     </section>
   );
 }
@@ -231,4 +266,146 @@ function HistoryDialog({ revisions, onClose }: { revisions: EstimateDesignRevisi
 
 function ReplacementDialog({ file, busy, error, onChange, onSubmit, onClose }: { file?: File; busy: boolean; error: string; onChange: (file: File | undefined) => void; onSubmit: () => void; onClose: () => void }) {
   return <Dialog title="Upload replacement" eyebrow="Client-requested change" onClose={onClose} busy={busy}><form className="estimate-drawing-replacement" onSubmit={(event) => { event.preventDefault(); onSubmit(); }}><label>Replacement drawing file<input aria-label="Replacement drawing file" type="file" accept="application/pdf,image/png,image/jpeg,image/webp,image/tiff,image/heic,image/heif,.heif" onChange={(event) => onChange(event.target.files?.[0])} /></label>{error ? <p role="alert">{error}</p> : null}<div><button type="button" className="secondary-button" onClick={onClose}>Cancel</button><button type="submit" className="button button--primary" disabled={!file || busy}>{busy ? "Uploading…" : "Upload replacement"}</button></div></form></Dialog>;
+}
+
+function ManualDrawingDialog({
+  pages,
+  rooms,
+  scopes,
+  busy,
+  error,
+  onSubmit,
+  onClose
+}: {
+  pages: EstimateDesignSourcePage[];
+  rooms: EstimateDesignPlacementOption[];
+  scopes: EstimateDesignPlacementOption[];
+  busy: boolean;
+  error: string;
+  onSubmit: (
+    pageId: string,
+    input: Parameters<typeof createManualEstimateDrawing>[1]
+  ) => void;
+  onClose: () => void;
+}) {
+  const firstPage = pages[0]!;
+  const [pageId, setPageId] = useState(firstPage.id);
+  const [displayTitle, setDisplayTitle] = useState("");
+  const [roomId, setRoomId] = useState("");
+  const [scopeSectionId, setScopeSectionId] = useState("");
+  const [crop, setCrop] = useState<CropRect>({
+    x: 0,
+    y: 0,
+    width: firstPage.width,
+    height: firstPage.height
+  });
+  const page = pages.find((candidate) => candidate.id === pageId) ?? firstPage;
+  const cropPage = {
+    ...page,
+    imageUrl: estimateDesignSourcePageImageUrl(page.id)
+  };
+  const valid =
+    displayTitle.trim().length > 0 &&
+    Boolean(roomId) &&
+    Boolean(scopeSectionId) &&
+    cropIsValid(crop, cropPage);
+
+  return (
+    <Dialog
+      title="Add missing drawing"
+      eyebrow="Manual source-page crop"
+      onClose={onClose}
+      busy={busy}
+    >
+      <form
+        className="estimate-drawing-correction"
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (!valid) return;
+          onSubmit(page.id, {
+            displayTitle,
+            roomId,
+            scopeSectionId,
+            crop
+          });
+        }}
+      >
+        <label>
+          Source page
+          <select
+            value={page.id}
+            onChange={(event) => {
+              const next = pages.find(
+                (candidate) => candidate.id === event.target.value
+              );
+              if (!next) return;
+              setPageId(next.id);
+              setCrop({
+                x: 0,
+                y: 0,
+                width: next.width,
+                height: next.height
+              });
+            }}
+          >
+            {pages.map((candidate) => (
+              <option value={candidate.id} key={candidate.id}>
+                Page {candidate.pageNumber}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Drawing title
+          <input
+            value={displayTitle}
+            onChange={(event) => setDisplayTitle(event.target.value)}
+          />
+        </label>
+        <label>
+          Room
+          <select
+            value={roomId}
+            onChange={(event) => setRoomId(event.target.value)}
+          >
+            <option value="">Choose room</option>
+            {rooms.map((room) => (
+              <option value={room.id} key={room.id}>{room.label}</option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Scope section
+          <select
+            value={scopeSectionId}
+            onChange={(event) => setScopeSectionId(event.target.value)}
+          >
+            <option value="">Choose scope</option>
+            {scopes.map((scope) => (
+              <option value={scope.id} key={scope.id}>{scope.label}</option>
+            ))}
+          </select>
+        </label>
+        <CropEditor
+          label={displayTitle.trim() || "Missing drawing"}
+          crop={crop}
+          page={cropPage}
+          onChange={setCrop}
+        />
+        {error ? <p role="alert">{error}</p> : null}
+        <div className="estimate-drawing-correction__actions">
+          <button type="button" className="secondary-button" onClick={onClose}>
+            Cancel
+          </button>
+          <button
+            type="submit"
+            className="button button--primary"
+            disabled={!valid || busy}
+          >
+            {busy ? "Adding…" : "Add drawing"}
+          </button>
+        </div>
+      </form>
+    </Dialog>
+  );
 }

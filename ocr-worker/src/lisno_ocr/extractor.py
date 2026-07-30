@@ -294,10 +294,10 @@ def _with_estimate_taxonomy_titles(
         if line.box in existing_boxes or is_excluded_drawing_title(line.text):
             continue
         proposal = classify_estimate_drawing(line.text, taxonomy)
-        if (
-            proposal.room.confidence < _AUTOMATIC_MATCH_CONFIDENCE
-            or proposal.scope.confidence < _AUTOMATIC_MATCH_CONFIDENCE
-        ):
+        if max(
+            proposal.room.confidence,
+            proposal.scope.confidence,
+        ) < _AUTOMATIC_MATCH_CONFIDENCE:
             continue
         titles.append(
             DrawingTitle(

@@ -622,6 +622,7 @@ export interface EstimateDesignUpload {
   extractionStatus: EstimateDesignExtractionStatus;
   failureCode: string | null;
   failureMessage: string | null;
+  canRetry: boolean;
 }
 
 export interface EstimateDesignSourcePage {

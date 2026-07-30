@@ -841,7 +841,7 @@ describe("estimate drawing client review", () => {
   });
 
   it("rejects synchronous replacement images above the worker-equivalent pixel limit", async () => {
-    const { service, revisions, uploads, jobs, auditEvents } = setup();
+    const { service, revisions, uploads, jobs } = setup();
     revisions[1]!.reviewStatus = "changes_requested";
     uploads[0]!.extractionStatus = "changes_requested";
     jobs[0]!.status = "changes_requested";
@@ -949,7 +949,7 @@ describe("estimate drawing client review", () => {
     mimeType,
     extension
   ) => {
-    const { service, revisions, uploads, jobs } = setup();
+    const { service, revisions, uploads, jobs, auditEvents } = setup();
     revisions[1]!.reviewStatus = "changes_requested";
     uploads[0]!.extractionStatus = "changes_requested";
     jobs[0]!.status = "changes_requested";

@@ -201,11 +201,18 @@ function ClientDrawingRow({
     })
   });
   const canAnnotate = canReview && revision.reviewStatus === "submitted";
-  const annotations = revision.annotationDraft?.annotations ??
-    revision.annotations ?? {
+  const storedAnnotations = revision.annotationDraft?.annotations ??
+    revision.annotations;
+  const annotations: AnnotationDocumentV1 = storedAnnotations
+    ? {
+        ...storedAnnotations,
+        imageWidth: revision.crop.width,
+        imageHeight: revision.crop.height
+      }
+    : {
       schemaVersion: 1,
-      imageWidth: page?.width ?? revision.crop.width,
-      imageHeight: page?.height ?? revision.crop.height,
+      imageWidth: revision.crop.width,
+      imageHeight: revision.crop.height,
       elements: []
     };
   const previewLabel = revision.reviewStatus === "changes_requested"

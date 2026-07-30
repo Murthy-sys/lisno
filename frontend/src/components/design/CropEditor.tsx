@@ -1,10 +1,15 @@
 import type { CropRect, DesignSourcePage } from "../../api/types";
 import { ProtectedImage } from "./ProtectedImage";
 
+type CropEditorPage = Pick<
+  DesignSourcePage,
+  "pageNumber" | "width" | "height" | "imageUrl"
+>;
+
 interface CropEditorProps {
   label: string;
   crop: CropRect;
-  page: DesignSourcePage;
+  page: CropEditorPage;
   onChange: (crop: CropRect) => void;
 }
 
@@ -15,7 +20,7 @@ const coordinates: Array<{ key: keyof CropRect; label: string; min: number }> = 
   { key: "height", label: "Crop height", min: 1 }
 ];
 
-export function cropIsValid(crop: CropRect, page: DesignSourcePage) {
+export function cropIsValid(crop: CropRect, page: CropEditorPage) {
   return crop.x >= 0 && crop.y >= 0 && crop.width > 0 && crop.height > 0 &&
     crop.x + crop.width <= page.width && crop.y + crop.height <= page.height;
 }

@@ -342,8 +342,14 @@ describe("client estimate drawings", () => {
   });
 
   it("saves a draft without deciding the drawing and submits one marked change request independently", async () => {
-    let currentRevisions = revisions.map((item) =>
-      item.id === "revision-electrical"
+    let currentRevisions = revisions.map((item) => {
+      if (item.id === "revision-living") {
+        return {
+          ...item,
+          crop: { x: 100, y: 50, width: 400, height: 300 }
+        };
+      }
+      return item.id === "revision-electrical"
         ? revision(
             "revision-electrical",
             "drawing-electrical",
@@ -352,8 +358,8 @@ describe("client estimate drawings", () => {
             "EL",
             "submitted"
           )
-        : item
-    );
+        : item;
+    });
     const requests: Array<{ url: string; body?: unknown }> = [];
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const url = String(input);
@@ -429,6 +435,8 @@ describe("client estimate drawings", () => {
       version: 0,
       annotations: expect.objectContaining({
         schemaVersion: 1,
+        imageWidth: 400,
+        imageHeight: 300,
         elements: [expect.objectContaining({ type: "text", text: "Shift this door" })]
       })
     }));
@@ -443,6 +451,8 @@ describe("client estimate drawings", () => {
       decision: "request_changes",
       summary: "Shift the door left.",
       annotations: expect.objectContaining({
+        imageWidth: 400,
+        imageHeight: 300,
         elements: [expect.objectContaining({ type: "text", text: "Shift this door" })]
       })
     }));

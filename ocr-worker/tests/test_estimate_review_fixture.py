@@ -41,8 +41,8 @@ EXPECTED_MANIFEST = (
         "detectedTitle": "Bedroom Wall Elevation",
         "crop": {"x": 114, "y": 484, "width": 432, "height": 352},
         "roomId": "room-bedroom",
-        "scopeId": "WE",
-        "confidenceClass": "exact",
+        "scopeId": None,
+        "confidenceClass": "uncertain",
     },
     {
         "detectedTitle": "Bedroom Floorimg",
@@ -77,13 +77,18 @@ def _taxonomy():
                 ("RCP", "reflected ceiling plan", "ceiling plan"),
             ),
             TaxonomyTerm("EL", "Electrical", ()),
-            TaxonomyTerm("WE", "Wall Elevation", ()),
             TaxonomyTerm("FL", "Flooring", ()),
+            TaxonomyTerm("LF", "Loose Furniture", ()),
+            TaxonomyTerm("CA", "Carpentry", ()),
+            TaxonomyTerm("CV", "Civil Work", ()),
+            TaxonomyTerm("PA", "Painting", ()),
         ),
     )
 
 
 def _confidence_class(proposal):
+    if proposal.room.id is None or proposal.scope.id is None:
+        return "uncertain"
     if proposal.room.confidence < 1 or proposal.scope.confidence < 1:
         return "bounded-fuzzy"
     canonical_evidence = {

@@ -384,6 +384,33 @@ def test_estimate_taxonomy_adds_a_proposal_for_every_multi_title_crop():
     }
 
 
+def test_estimate_taxonomy_preserves_room_matched_titles_with_uncertain_scope():
+    taxonomy = EstimateTaxonomy(
+        rooms=(TaxonomyTerm("room-bedroom", "Bedroom", ()),),
+        scopes=(
+            TaxonomyTerm("FC", "False Ceiling", ("ceiling plan",)),
+            TaxonomyTerm("FL", "Flooring", ("floor plan",)),
+            TaxonomyTerm("CA", "Carpentry", ()),
+            TaxonomyTerm("EL", "Electrical", ()),
+        ),
+    )
+    ocr = PageAwareFakePaddleOCR3([{
+        "rec_boxes": [(34, 70, 285, 84)],
+        "rec_texts": ["Bedroom Wardrobe"],
+        "rec_scores": [0.98],
+    }])
+
+    page = Extractor(
+        ocr_engine=ocr,
+        estimate_taxonomy=taxonomy,
+    ).extract(FIXTURES / "multi-room-scope-plan.png")[0]
+
+    assert len(page.sections) == 1
+    assert page.sections[0].proposal.room.id == "room-bedroom"
+    assert page.sections[0].proposal.scope.id is None
+    assert page.sections[0].proposal.scope.confidence == 0
+
+
 @pytest.mark.parametrize(
     "label",
     [

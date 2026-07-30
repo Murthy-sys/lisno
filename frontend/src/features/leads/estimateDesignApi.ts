@@ -47,6 +47,19 @@ export const editEstimateDrawing = (
   input
 );
 
+export const createManualEstimateDrawing = (
+  pageId: string,
+  input: {
+    displayTitle: string;
+    roomId: string;
+    scopeSectionId: string;
+    crop: CropRect;
+  }
+) => apiClient.post<EstimateDesignDrawingUpdate>(
+  `/estimate-design-source-pages/${encodeURIComponent(pageId)}/drawings`,
+  input
+);
+
 export function replaceEstimateDrawing(drawingId: string, version: number, file: File) {
   const body = new FormData();
   body.append("version", String(version));
