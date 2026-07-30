@@ -633,15 +633,25 @@ export interface EstimateDesignSourcePage {
   height: number;
 }
 
-export interface EstimateDesignDrawing {
+export type EstimateDesignMappingStatus =
+  | "auto_mapped"
+  | "estimator_assigned"
+  | "misc";
+
+export interface EstimateDesignMappingFields {
+  roomId: string | null;
+  scopeSectionId: string | null;
+  catalogueId: string | null;
+  mappingStatus: EstimateDesignMappingStatus;
+}
+
+export interface EstimateDesignDrawing extends EstimateDesignMappingFields {
   id: string;
   uploadId: string;
   sourcePageId: string;
   estimateId: string;
   active: boolean;
   verified: boolean;
-  roomId: string | null;
-  scopeSectionId: string | null;
   detectedTitle: string;
   displayTitle: string;
   source: "ocr" | "manual";
@@ -652,14 +662,12 @@ export interface EstimateDesignDrawing {
   scopeEvidence: Array<{ value: string }>;
 }
 
-export interface EstimateDesignRevision {
+export interface EstimateDesignRevision extends EstimateDesignMappingFields {
   id: string;
   drawingId: string;
   revisionNumber: number;
   sourcePageId: string;
   crop: CropRect;
-  roomId: string;
-  scopeSectionId: string;
   label: string;
   reviewStatus: EstimateDrawingReviewStatus;
   submittedAt: string | null;

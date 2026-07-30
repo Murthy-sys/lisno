@@ -7,6 +7,7 @@ import {
   type AnnotationDocumentV1,
   type EstimateDesignExtractionStatus
 } from "../domain/estimate-design.js";
+import { assertEstimateDesignMapping } from "../domain/estimate-design-mapping.js";
 import { normalizeEmail } from "../domain/email.js";
 import { estimateScopeCatalogue } from "../domain/estimate-scope-catalogue.js";
 import { ApiError } from "../middleware/errors.js";
@@ -669,8 +670,7 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
           sourcePageId: pageId,
           crop: { x: 0, y: 0, width: metadata.width!, height: metadata.height! },
           croppedFileReference: stored.reference,
-          roomId: String(latest.roomId),
-          scopeSectionId: String(latest.scopeSectionId),
+          ...mappingDto(latest),
           label: String(latest.label),
           reviewStatus: "draft",
           submittedAt: null,
@@ -981,8 +981,7 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
               estimateId: upload.estimateId,
               active: true,
               verified,
-              roomId,
-              scopeSectionId,
+              ...miscMapping(),
               detectedTitle: section.proposal.detectedTitle,
               displayTitle: section.label,
               source: "ocr",
@@ -999,8 +998,7 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
               sourcePageId: pageId,
               crop: { ...section.crop },
               croppedFileReference: storedCrop.reference,
-              roomId: roomId ?? "",
-              scopeSectionId: scopeSectionId ?? "",
+              ...miscMapping(),
               label: section.label,
               reviewStatus: "draft",
               submittedAt: null,
@@ -1310,8 +1308,7 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
             estimateId: currentUpload.estimateId,
             active: true,
             verified: true,
-            roomId: manualInput.roomId,
-            scopeSectionId: manualInput.scopeSectionId,
+            ...miscMapping(),
             detectedTitle: displayTitle,
             displayTitle,
             source: "manual",
@@ -1328,8 +1325,7 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
             sourcePageId: currentPage._id,
             crop: { ...manualInput.crop },
             croppedFileReference: generatedReference,
-            roomId: manualInput.roomId,
-            scopeSectionId: manualInput.scopeSectionId,
+            ...miscMapping(),
             label: displayTitle,
             reviewStatus: "draft",
             submittedAt: null,
@@ -1440,9 +1436,6 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
       const scopeSectionId = change.scopeSectionId ?? drawing.scopeSectionId ?? null;
       validateMapping(roomId, scopeSectionId, taxonomy);
       const verified = change.verified ?? Boolean(drawing.verified);
-      if (verified && (!roomId || !scopeSectionId)) {
-        throw new ApiError(400, "INVALID_ESTIMATE_MAPPING", "Verified drawings require a room and enabled scope.");
-      }
       const page = await EstimateDesignSourcePageModel.findById(drawing.sourcePageId).lean();
       if (!page) throw estimateNotFound();
       const crop = change.crop ? { ...change.crop } : { ...latest.crop };
@@ -1522,13 +1515,6 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
             change.scopeSectionId ?? currentDrawing.scopeSectionId ?? null;
           validateMapping(currentRoomId, currentScopeSectionId, currentTaxonomy);
           const currentVerified = change.verified ?? Boolean(currentDrawing.verified);
-          if (currentVerified && (!currentRoomId || !currentScopeSectionId)) {
-            throw new ApiError(
-              400,
-              "INVALID_ESTIMATE_MAPPING",
-              "Verified drawings require a room and enabled scope."
-            );
-          }
           const currentPage = await EstimateDesignSourcePageModel.findById(
             currentDrawing.sourcePageId
           )
@@ -1552,6 +1538,11 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
           const currentDisplayTitle =
             change.displayTitle?.replace(/\s+/g, " ").trim() ??
             String(currentDrawing.displayTitle);
+          const mapping = mappingDto({
+            ...currentDrawing,
+            roomId: currentRoomId,
+            scopeSectionId: currentScopeSectionId
+          });
           const revision = {
             _id: randomUUID(),
             drawingId,
@@ -1559,8 +1550,7 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
             sourcePageId: currentDrawing.sourcePageId,
             crop: currentCrop,
             croppedFileReference,
-            roomId: currentRoomId ?? "",
-            scopeSectionId: currentScopeSectionId ?? "",
+            ...mapping,
             label: currentDisplayTitle,
             reviewStatus: "draft",
             submittedAt: null,
@@ -1587,8 +1577,10 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
           await EstimateDesignRevisionModel.create([revision], { session });
           const mappingCorrected =
             String(currentDrawing.displayTitle) !== currentDisplayTitle ||
-            (currentDrawing.roomId ?? null) !== currentRoomId ||
-            (currentDrawing.scopeSectionId ?? null) !== currentScopeSectionId;
+            (currentDrawing.roomId ?? null) !== mapping.roomId ||
+            (currentDrawing.scopeSectionId ?? null) !== mapping.scopeSectionId ||
+            (currentDrawing.catalogueId ?? null) !== mapping.catalogueId ||
+            (currentDrawing.mappingStatus ?? "misc") !== mapping.mappingStatus;
           const cropCorrected = !sameCrop(current.crop, currentCrop);
           const newlyVerified =
             !Boolean(currentDrawing.verified) && currentVerified;
@@ -1606,8 +1598,7 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
             {
               $set: {
                 displayTitle: currentDisplayTitle,
-                roomId: currentRoomId,
-                scopeSectionId: currentScopeSectionId,
+                ...mapping,
                 verified: currentVerified
               }
             },
@@ -1629,8 +1620,7 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
               },
               newValues: {
                 displayTitle: currentDisplayTitle,
-                roomId: currentRoomId,
-                scopeSectionId: currentScopeSectionId,
+                ...mapping,
                 revisionNumber: Number(revision.revisionNumber)
               }
             });
@@ -1663,16 +1653,14 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
               newValues: {
                 verified: true,
                 revisionNumber: Number(revision.revisionNumber),
-                roomId: currentRoomId,
-                scopeSectionId: currentScopeSectionId
+                ...mapping
               }
             });
           }
           savedDrawing = {
             ...currentDrawing,
             displayTitle: currentDisplayTitle,
-            roomId: currentRoomId,
-            scopeSectionId: currentScopeSectionId,
+            ...mapping,
             verified: currentVerified
           };
           savedRevision = revision;
@@ -2372,8 +2360,7 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
           sourcePageId: pageId,
           crop: { x: 0, y: 0, width: page.width, height: page.height },
           croppedFileReference: stored.reference,
-          roomId: String(current.roomId),
-          scopeSectionId: String(current.scopeSectionId),
+          ...mappingDto(current),
           label: String(current.label),
           reviewStatus: "draft",
           submittedAt: null,
@@ -2706,6 +2693,35 @@ function sourcePageDto(page: Record<string, unknown>) {
   };
 }
 
+function mappingDto(record: Record<string, unknown>) {
+  const candidate: Record<string, unknown> = {
+    roomId: record.roomId ?? null,
+    scopeSectionId: record.scopeSectionId ?? null,
+    catalogueId: record.catalogueId ?? null,
+    mappingStatus: record.mappingStatus ?? "misc"
+  };
+  try {
+    assertEstimateDesignMapping(candidate);
+    return candidate;
+  } catch {
+    return {
+      roomId: null,
+      scopeSectionId: null,
+      catalogueId: null,
+      mappingStatus: "misc" as const
+    };
+  }
+}
+
+function miscMapping() {
+  return {
+    roomId: null,
+    scopeSectionId: null,
+    catalogueId: null,
+    mappingStatus: "misc" as const
+  };
+}
+
 function drawingDto(drawing: Record<string, unknown>) {
   return {
     id: String(drawing._id),
@@ -2714,8 +2730,7 @@ function drawingDto(drawing: Record<string, unknown>) {
     estimateId: String(drawing.estimateId),
     active: Boolean(drawing.active),
     verified: Boolean(drawing.verified),
-    roomId: drawing.roomId ?? null,
-    scopeSectionId: drawing.scopeSectionId ?? null,
+    ...mappingDto(drawing),
     detectedTitle: String(drawing.detectedTitle),
     displayTitle: String(drawing.displayTitle),
     source: String(drawing.source),
@@ -2737,8 +2752,7 @@ function clientDrawingDto(
     uploadId: String(page.uploadId),
     sourcePageId: String(revision.sourcePageId),
     verified: true,
-    roomId: revision.roomId ?? null,
-    scopeSectionId: revision.scopeSectionId ?? null,
+    ...mappingDto(revision),
     displayTitle: String(revision.label)
   };
 }
@@ -2750,8 +2764,7 @@ function revisionDto(revision: Record<string, unknown>) {
     revisionNumber: Number(revision.revisionNumber),
     sourcePageId: String(revision.sourcePageId),
     crop: revision.crop,
-    roomId: String(revision.roomId),
-    scopeSectionId: String(revision.scopeSectionId),
+    ...mappingDto(revision),
     label: String(revision.label),
     reviewStatus: String(revision.reviewStatus),
     submittedAt: revision.submittedAt ?? null,

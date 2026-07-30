@@ -331,6 +331,8 @@ describe("estimate design uploads", () => {
       verified: false,
       roomId: null,
       scopeSectionId: null,
+      catalogueId: null,
+      mappingStatus: "misc",
       detectedTitle: "Ceiling",
       displayTitle: "Ceiling",
       source: "ocr"
@@ -338,6 +340,62 @@ describe("estimate design uploads", () => {
     vi.spyOn(EstimateDesignRevisionModel, "find").mockReturnValue(sortedLean([{
       _id: "revision-1",
       drawingId: "drawing-1",
+      revisionNumber: 1,
+      sourcePageId: "page-1",
+      crop: { x: 0, y: 0, width: 100, height: 100 },
+      croppedFileReference: "revision-secret.png",
+      roomId: null,
+      scopeSectionId: null,
+      catalogueId: null,
+      mappingStatus: "misc",
+      label: "Ceiling",
+      reviewStatus: "draft"
+    }]) as never);
+
+    const response = await request(app)
+      .get("/api/v1/estimates/estimate-draft/design-uploads")
+      .set("Authorization", bearer());
+
+    expect(response.status).toBe(200);
+    expect(response.body.data.uploads[0]).not.toHaveProperty("storedFileReference");
+    expect(response.body.data.pages[0]).not.toHaveProperty("normalizedFileReference");
+    expect(response.body.data.revisions[0]).not.toHaveProperty("croppedFileReference");
+    expect(JSON.stringify(response.body.data)).not.toContain("secret");
+    expect(response.body.data.drawings[0]).toMatchObject({
+      roomId: null,
+      scopeSectionId: null,
+      catalogueId: null,
+      mappingStatus: "misc"
+    });
+    expect(response.body.data.revisions[0]).toMatchObject({
+      roomId: null,
+      scopeSectionId: null,
+      catalogueId: null,
+      mappingStatus: "misc"
+    });
+    expect(JSON.stringify(response.body.data)).not.toMatch(/"(?:roomId|scopeSectionId|catalogueId)":"(?:|null|undefined)"/);
+  });
+
+  it("collapses incoherent legacy mappings to the null Misc tuple in workspace DTOs", async () => {
+    const { app } = setup();
+    vi.spyOn(EstimateDesignUploadModel, "find").mockReturnValue(sortedLean([]) as never);
+    vi.spyOn(EstimateDesignSourcePageModel, "find").mockReturnValue(sortedLean([]) as never);
+    vi.spyOn(EstimateDesignDrawingModel, "find").mockReturnValue(sortedLean([{
+      _id: "legacy-drawing",
+      estimateId: "estimate-draft",
+      uploadId: "upload-1",
+      sourcePageId: "page-1",
+      active: true,
+      verified: false,
+      roomId: "room-living",
+      scopeSectionId: "FC",
+      detectedTitle: "Ceiling",
+      displayTitle: "Ceiling",
+      source: "ocr"
+    }]) as never);
+    vi.spyOn(EstimateDesignRevisionModel, "find").mockReturnValue(sortedLean([{
+      _id: "legacy-revision",
+      drawingId: "legacy-drawing",
       revisionNumber: 1,
       sourcePageId: "page-1",
       crop: { x: 0, y: 0, width: 100, height: 100 },
@@ -353,9 +411,17 @@ describe("estimate design uploads", () => {
       .set("Authorization", bearer());
 
     expect(response.status).toBe(200);
-    expect(response.body.data.uploads[0]).not.toHaveProperty("storedFileReference");
-    expect(response.body.data.pages[0]).not.toHaveProperty("normalizedFileReference");
-    expect(response.body.data.revisions[0]).not.toHaveProperty("croppedFileReference");
-    expect(JSON.stringify(response.body.data)).not.toContain("secret");
+    expect(response.body.data.drawings[0]).toMatchObject({
+      roomId: null,
+      scopeSectionId: null,
+      catalogueId: null,
+      mappingStatus: "misc"
+    });
+    expect(response.body.data.revisions[0]).toMatchObject({
+      roomId: null,
+      scopeSectionId: null,
+      catalogueId: null,
+      mappingStatus: "misc"
+    });
   });
 });

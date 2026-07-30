@@ -1,6 +1,46 @@
+import mongoose from "mongoose";
+import { assertEstimateDesignMapping, estimateDesignMappingStatuses } from "../domain/estimate-design-mapping.js";
 import { model, models, Schema } from "./mongoose.js";
 
 const evidenceSchema = new Schema({ value: { type: String, required: true, maxlength: 500 } }, { _id: false, strict: "throw" });
+
+const mappingKeys = [
+  "roomId",
+  "scopeSectionId",
+  "catalogueId",
+  "mappingStatus"
+] as const;
+
+const nullableMappingIdentifier = () => ({
+  type: String,
+  default: null,
+  validate: {
+    validator: (value: unknown) =>
+      value === null ||
+      (
+        typeof value === "string" &&
+        value.trim().length > 0 &&
+        !["null", "undefined"].includes(value.trim().toLowerCase())
+      ),
+    message: "Mapping identifiers must be a real identifier or null."
+  }
+});
+
+function assertMappingIdentifiers(mapping: Record<string, unknown>) {
+  for (const key of ["roomId", "scopeSectionId", "catalogueId"] as const) {
+    const value = mapping[key];
+    if (
+      value !== null &&
+      (
+        typeof value !== "string" ||
+        value.trim().length === 0 ||
+        ["null", "undefined"].includes(value.trim().toLowerCase())
+      )
+    ) {
+      throw new TypeError("Mapping identifiers must be a real identifier or null.");
+    }
+  }
+}
 
 const estimateDesignDrawingSchema = new Schema({
   _id: { type: String, required: true, immutable: true },
@@ -9,8 +49,15 @@ const estimateDesignDrawingSchema = new Schema({
   estimateId: { type: String, ref: "Estimate", required: true, immutable: true },
   active: { type: Boolean, required: true, default: true },
   verified: { type: Boolean, required: true, default: false },
-  roomId: { type: String, default: null },
-  scopeSectionId: { type: String, default: null },
+  roomId: nullableMappingIdentifier(),
+  scopeSectionId: nullableMappingIdentifier(),
+  catalogueId: nullableMappingIdentifier(),
+  mappingStatus: {
+    type: String,
+    required: true,
+    enum: estimateDesignMappingStatuses,
+    default: "misc"
+  },
   detectedTitle: { type: String, required: true, maxlength: 500 },
   displayTitle: { type: String, required: true, trim: true, minlength: 1, maxlength: 500 },
   source: { type: String, required: true, enum: ["ocr", "manual"] },
@@ -20,6 +67,43 @@ const estimateDesignDrawingSchema = new Schema({
   roomEvidence: { type: [evidenceSchema], default: [] },
   scopeEvidence: { type: [evidenceSchema], default: [] }
 }, { timestamps: true, versionKey: false });
+
+estimateDesignDrawingSchema.pre("validate", function () {
+  assertEstimateDesignMapping({
+    roomId: this.roomId,
+    scopeSectionId: this.scopeSectionId,
+    catalogueId: this.catalogueId,
+    mappingStatus: this.mappingStatus
+  });
+});
+
+function validateMappingUpdate(this: mongoose.Query<unknown, unknown>) {
+  const update = this.getUpdate();
+  if (Array.isArray(update)) {
+    const touchesMapping = update.some((stage) => {
+      const value = stage as Record<string, Record<string, unknown> | string[]>;
+      return mappingKeys.some((key) =>
+        key in (value.$set ?? {}) ||
+        key in (value.$addFields ?? {}) ||
+        (Array.isArray(value.$unset) && value.$unset.includes(key))
+      );
+    });
+    if (touchesMapping) throw new Error("Pipeline updates cannot change mapping fields.");
+    return;
+  }
+  const set = (update?.$set ?? {}) as Record<string, unknown>;
+  const unset = (update?.$unset ?? {}) as Record<string, unknown>;
+  const direct = (update ?? {}) as Record<string, unknown>;
+  const touchesMapping = mappingKeys.some((key) => key in set || key in unset || key in direct);
+  if (!touchesMapping) return;
+  if (mappingKeys.some((key) => key in unset) || !mappingKeys.every((key) => key in set)) {
+    throw new Error("Mapping updates must set the complete tuple.");
+  }
+  assertMappingIdentifiers(set);
+  assertEstimateDesignMapping(set);
+}
+
+estimateDesignDrawingSchema.pre(["updateOne", "updateMany", "findOneAndUpdate"], validateMappingUpdate);
 
 estimateDesignDrawingSchema.index({ estimateId: 1, active: 1, _id: 1 });
 estimateDesignDrawingSchema.index({ uploadId: 1, sourcePageId: 1 });

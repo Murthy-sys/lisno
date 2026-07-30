@@ -435,21 +435,135 @@ beforeAll(async () => {
 afterEach(() => vi.restoreAllMocks());
 
 describe("estimate design extraction and estimator verification", () => {
-  it("keeps unresolved room and scope mappings available for estimator review", async () => {
+  it("stores unresolved drawing and revision mappings as actual nulls", async () => {
+    const drawing = new EstimateDesignDrawingModel({
+      _id: "drawing-misc",
+      uploadId: "upload-1",
+      sourcePageId: "page-1",
+      estimateId: "estimate-1",
+      active: true,
+      verified: true,
+      roomId: null,
+      scopeSectionId: null,
+      catalogueId: null,
+      mappingStatus: "misc",
+      detectedTitle: "TV UNIT",
+      displayTitle: "TV UNIT",
+      source: "ocr"
+    });
     const revision = new EstimateDesignRevisionModel({
-      _id: "unresolved-revision",
-      drawingId: "unresolved-drawing",
+      _id: "revision-misc",
+      drawingId: "drawing-misc",
       revisionNumber: 1,
-      sourcePageId: "unresolved-page",
+      sourcePageId: "page-1",
       crop: { x: 0, y: 0, width: 100, height: 80 },
-      croppedFileReference: "unresolved.png",
-      roomId: "",
-      scopeSectionId: "",
+      croppedFileReference: "misc.png",
+      roomId: null,
+      scopeSectionId: null,
+      catalogueId: null,
+      mappingStatus: "misc",
       label: "TV UNIT",
       reviewStatus: "draft"
     });
 
+    await expect(drawing.validate()).resolves.toBeUndefined();
     await expect(revision.validate()).resolves.toBeUndefined();
+    expect(drawing.toObject()).toMatchObject({
+      roomId: null,
+      scopeSectionId: null,
+      catalogueId: null,
+      mappingStatus: "misc"
+    });
+    expect(revision.toObject()).toMatchObject({
+      roomId: null,
+      scopeSectionId: null,
+      catalogueId: null,
+      mappingStatus: "misc"
+    });
+  });
+
+  it.each(["", "null", "undefined"])(
+    "rejects the legacy %s mapping sentinel on live writes",
+    async (sentinel) => {
+      const drawing = new EstimateDesignDrawingModel({
+        _id: `drawing-${sentinel || "empty"}`,
+        uploadId: "upload-1",
+        sourcePageId: "page-1",
+        estimateId: "estimate-1",
+        active: true,
+        verified: false,
+        roomId: sentinel,
+        scopeSectionId: null,
+        catalogueId: null,
+        mappingStatus: "misc",
+        detectedTitle: "Unknown",
+        displayTitle: "Unknown",
+        source: "ocr"
+      });
+
+      await expect(drawing.validate()).rejects.toThrow();
+    }
+  );
+
+  it("rejects partial and incoherent live drawing mapping updates", async () => {
+    await expect(
+      EstimateDesignDrawingModel.updateOne(
+        { _id: "drawing-misc" },
+        { $set: { roomId: "room-bedroom-1" } },
+        { runValidators: true }
+      )
+    ).rejects.toThrow("Mapping updates must set the complete tuple.");
+    await expect(
+      EstimateDesignDrawingModel.updateOne(
+        { _id: "drawing-misc" },
+        {
+          $set: {
+            roomId: "room-bedroom-1",
+            scopeSectionId: "FC",
+            catalogueId: "FC01",
+            mappingStatus: "misc"
+          }
+        },
+        { runValidators: true }
+      )
+    ).rejects.toThrow("Estimate design mapping must have either all-null Misc fields or all-present mapped fields.");
+    await expect(
+      EstimateDesignDrawingModel.updateOne(
+        { _id: "drawing-misc" },
+        {
+          $set: {
+            roomId: "null",
+            scopeSectionId: "FC",
+            catalogueId: "FC01",
+            mappingStatus: "auto_mapped"
+          }
+        }
+      )
+    ).rejects.toThrow("Mapping identifiers must be a real identifier or null.");
+  });
+
+  it("rejects every revision mapping update", async () => {
+    await expect(
+      EstimateDesignRevisionModel.updateOne(
+        { _id: "revision-misc" },
+        {
+          $set: {
+            roomId: "room-bedroom-1",
+            scopeSectionId: "FC",
+            catalogueId: "FC01",
+            mappingStatus: "estimator_assigned"
+          }
+        },
+        { runValidators: true }
+      )
+    ).rejects.toThrow("Revision mapping snapshots are immutable.");
+    await expect(
+      EstimateDesignRevisionModel.findOneAndUpdate(
+        { _id: "revision-misc" },
+        { $set: { roomId: "room-bedroom-1" } },
+        { runValidators: true }
+      )
+    ).rejects.toThrow("Revision mapping snapshots are immutable.");
   });
 
   it("allows a retry to receive a new queue-order timestamp", () => {
@@ -720,8 +834,10 @@ describe("estimate design extraction and estimator verification", () => {
       source: "manual",
       active: true,
       verified: true,
-      roomId: "room-living",
-      scopeSectionId: "FC",
+      roomId: null,
+      scopeSectionId: null,
+      catalogueId: null,
+      mappingStatus: "misc",
       displayTitle: "Living wardrobe",
       revision: {
         revisionNumber: 1,
@@ -1048,8 +1164,10 @@ describe("estimate design extraction and estimator verification", () => {
     expect(response.status).toBe(200);
     expect(response.body.data).toMatchObject({
       displayTitle: "Living Room RCP",
-      roomId: "room-living",
-      scopeSectionId: "FC",
+      roomId: null,
+      scopeSectionId: null,
+      catalogueId: null,
+      mappingStatus: "misc",
       verified: true,
       revision: { revisionNumber: 2, reviewStatus: "draft" }
     });
