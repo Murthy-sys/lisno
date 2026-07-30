@@ -78,7 +78,12 @@ function bearer() {
 }
 
 function lean(value: unknown) {
-  return { lean: vi.fn().mockResolvedValue(value) };
+  const result = {
+    session: vi.fn(),
+    lean: vi.fn().mockResolvedValue(value)
+  };
+  result.session.mockReturnValue(result);
+  return result;
 }
 
 function sortedLean(value: unknown) {
@@ -113,12 +118,18 @@ function setup(options: { maxUploadBytes?: number } = {}) {
     _id: "estimate-draft",
     leadId: "lead-aurora",
     ownerId: "user-estimator-sales",
-    status: "draft"
+    status: "draft",
+    designLifecycleVersion: 0,
+    designFrozenAt: null
   };
 
   vi.spyOn(EstimateModel, "findOne").mockImplementation((query) => {
     const value = query._id === "estimate-draft" ? estimate : null;
     return lean(value) as never;
+  });
+  vi.spyOn(EstimateModel, "updateOne").mockImplementation(async (_filter, update) => {
+    estimate.designLifecycleVersion += Number(update.$inc?.designLifecycleVersion ?? 0);
+    return { matchedCount: 1, modifiedCount: 1 } as never;
   });
   vi.spyOn(LeadModel, "findOne").mockReturnValue(lean({
     _id: "lead-aurora",

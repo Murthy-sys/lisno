@@ -26,6 +26,8 @@ import { createEstimateDesignService } from "../src/services/estimate-design.ser
 const SECRET = "estimate-design-review-secret-at-least-32-characters";
 const NOW = new Date("2026-07-30T14:00:00.000Z");
 let PNG: Buffer;
+let NOISY_JPEG: Buffer;
+let NOISY_PNG: Buffer;
 
 class TestStorage {
   private sequence = 0;
@@ -108,7 +110,25 @@ const annotations = (): AnnotationDocumentV1 => ({
   }]
 });
 
-function setup() {
+function minimalTiff(width: number, height: number) {
+  const value = Buffer.alloc(8 + 2 + 2 * 12 + 4);
+  value.write("II", 0, "ascii");
+  value.writeUInt16LE(42, 2);
+  value.writeUInt32LE(8, 4);
+  value.writeUInt16LE(2, 8);
+  value.writeUInt16LE(256, 10);
+  value.writeUInt16LE(4, 12);
+  value.writeUInt32LE(1, 14);
+  value.writeUInt32LE(width, 18);
+  value.writeUInt16LE(257, 22);
+  value.writeUInt16LE(4, 24);
+  value.writeUInt32LE(1, 26);
+  value.writeUInt32LE(height, 30);
+  value.writeUInt32LE(0, 34);
+  return value;
+}
+
+function setup(maxUploadBytes = 10_000_000) {
   const storage = new TestStorage();
   storage.objects.set("drawing-1.png", PNG);
   storage.objects.set("drawing-2.png", PNG);
@@ -117,6 +137,8 @@ function setup() {
     leadId: "lead-1",
     ownerId: "user-estimator-sales",
     status: "sent_to_client",
+    designLifecycleVersion: 0,
+    designFrozenAt: null,
     rooms: [{ id: "room-living", label: "Living Room" }],
     scopes: ["FC"]
   }];
@@ -221,9 +243,18 @@ function setup() {
     }
   ];
   const drafts: Array<Record<string, any>> = [];
-  const snapshots = () => structuredClone({ uploads, jobs, pages, drawings, revisions, drafts });
+  const snapshots = () => structuredClone({
+    estimates,
+    uploads,
+    jobs,
+    pages,
+    drawings,
+    revisions,
+    drafts
+  });
   const restore = (snapshot: ReturnType<typeof snapshots>) => {
     for (const [target, source] of [
+      [estimates, snapshot.estimates],
       [uploads, snapshot.uploads],
       [jobs, snapshot.jobs],
       [pages, snapshot.pages],
@@ -251,6 +282,11 @@ function setup() {
   vi.spyOn(EstimateModel, "findOne").mockImplementation((filter) =>
     query(estimates.find((item) => matches(item, filter as never)) ?? null) as never
   );
+  vi.spyOn(EstimateModel, "updateOne").mockImplementation(async (filter, update) => {
+    const item = estimates.find((candidate) => matches(candidate, filter as never));
+    if (item) applyUpdate(item, update as never);
+    return { matchedCount: item ? 1 : 0, modifiedCount: item ? 1 : 0 } as never;
+  });
   vi.spyOn(LeadModel, "findById").mockImplementation((id) =>
     query(leads.find((item) => item._id === id) ?? null) as never
   );
@@ -373,11 +409,11 @@ function setup() {
     auth: { jwtSecret: SECRET, jwtExpiresInSeconds: 900 },
     clock: () => new Date(NOW),
     storage,
-    maxUploadBytes: 10_000_000
+    maxUploadBytes
   });
   const service = createEstimateDesignService({
     storage,
-    maxUploadBytes: 10_000_000,
+    maxUploadBytes,
     now: () => new Date(NOW)
   });
   return { app, service, storage, estimates, uploads, jobs, pages, drawings, revisions, drafts };
@@ -387,6 +423,14 @@ beforeAll(async () => {
   PNG = await sharp({
     create: { width: 100, height: 80, channels: 3, background: "#ffffff" }
   }).png().toBuffer();
+  const noise = Buffer.alloc(128 * 128 * 3);
+  for (let index = 0; index < noise.length; index += 1) {
+    noise[index] = (index * 73 + 41) % 256;
+  }
+  NOISY_JPEG = await sharp(noise, {
+    raw: { width: 128, height: 128, channels: 3 }
+  }).jpeg({ quality: 35 }).toBuffer();
+  NOISY_PNG = await sharp(NOISY_JPEG).png().toBuffer();
 });
 
 afterEach(() => vi.restoreAllMocks());
@@ -440,6 +484,54 @@ describe("estimate drawing client review", () => {
     expect(hidden.body.error.code).toBe("ESTIMATE_NOT_FOUND");
   });
 
+  it("builds client drawing metadata from the latest visible revision, not a hidden draft", async () => {
+    const { app, pages, drawings, revisions } = setup();
+    revisions[1]!.reviewStatus = "changes_requested";
+    pages.push({
+      _id: "page-hidden-draft",
+      uploadId: "upload-hidden",
+      pageNumber: 1,
+      normalizedFileReference: "hidden.png",
+      width: 120,
+      height: 90
+    });
+    revisions.push({
+      ...structuredClone(revisions[1]!),
+      _id: "revision-hidden-draft",
+      revisionNumber: 2,
+      sourcePageId: "page-hidden-draft",
+      roomId: "room-hidden",
+      scopeSectionId: "EL",
+      label: "Hidden draft title",
+      reviewStatus: "draft",
+      replacesRevisionId: "revision-2"
+    });
+    Object.assign(drawings[1]!, {
+      sourcePageId: "page-hidden-draft",
+      roomId: "room-hidden",
+      scopeSectionId: "EL",
+      displayTitle: "Hidden draft title",
+      verified: false
+    });
+
+    const response = await request(app)
+      .get("/api/v1/client/estimates/estimate-1/design-drawings")
+      .set("Authorization", auth("user-client-aurora", "client"));
+
+    expect(response.status).toBe(200);
+    expect(response.body.data.drawings).toContainEqual(expect.objectContaining({
+      id: "drawing-2",
+      sourcePageId: "page-1",
+      roomId: "room-living",
+      scopeSectionId: "FC",
+      displayTitle: "Living detail",
+      verified: true
+    }));
+    expect(response.body.data.pages).not.toContainEqual(
+      expect.objectContaining({ id: "page-hidden-draft" })
+    );
+  });
+
   it("saves drafts optimistically for clients and forbids estimator writes", async () => {
     const { app, drafts, revisions } = setup();
     const first = await request(app)
@@ -483,6 +575,62 @@ describe("estimate drawing client review", () => {
     expect(drafts).toEqual([]);
   });
 
+  it("rejects a late annotation save after final approval freezes the lifecycle", async () => {
+    const { app, estimates, drafts } = setup();
+    vi.mocked(EstimateModel.updateOne).mockImplementationOnce(async () => {
+      estimates[0]!.status = "client_approved";
+      estimates[0]!.designLifecycleVersion = 1;
+      estimates[0]!.designFrozenAt = NOW;
+      return { matchedCount: 0, modifiedCount: 0 } as never;
+    });
+
+    const response = await request(app)
+      .put("/api/v1/client/estimate-design-revisions/revision-1/annotation-draft")
+      .set("Authorization", auth("user-client-aurora", "client"))
+      .send({ version: 0, annotations: annotations() });
+
+    expect(response.status).toBe(409);
+    expect(response.body.error.code).toBe("ESTIMATE_DESIGN_LIFECYCLE_CONFLICT");
+    expect(drafts).toEqual([]);
+  });
+
+  it("returns not found for guessed hidden draft revision mutations", async () => {
+    const { app, revisions } = setup();
+    revisions.push({
+      ...structuredClone(revisions[0]!),
+      _id: "revision-hidden",
+      revisionNumber: 2,
+      reviewStatus: "draft",
+      replacesRevisionId: "revision-1"
+    });
+    const client = auth("user-client-aurora", "client");
+    const attempts = [
+      request(app)
+        .put("/api/v1/client/estimate-design-revisions/revision-hidden/annotation-draft")
+        .set("Authorization", client)
+        .send({ version: 0, annotations: annotations() }),
+      request(app)
+        .post("/api/v1/client/estimate-design-revisions/revision-hidden/decision")
+        .set("Authorization", client)
+        .send({ version: 2, decision: "approve" }),
+      request(app)
+        .post("/api/v1/client/estimate-design-revisions/revision-hidden/decision")
+        .set("Authorization", client)
+        .send({
+          version: 2,
+          decision: "request_changes",
+          summary: "Change it",
+          annotations: annotations()
+        })
+    ];
+
+    for (const attempt of attempts) {
+      const response = await attempt;
+      expect(response.status).toBe(404);
+      expect(response.body.error.code).toBe("ESTIMATE_NOT_FOUND");
+    }
+  });
+
   it("copies a change request into immutable history and updates aggregate state", async () => {
     const { app, drafts, revisions, uploads } = setup();
     await request(app)
@@ -523,6 +671,34 @@ describe("estimate drawing client review", () => {
       id: "revision-2",
       annotations: annotations()
     }));
+  });
+
+  it("makes equivalent change-request retries idempotent and conflicts on differences", async () => {
+    const { app } = setup();
+    const client = auth("user-client-aurora", "client");
+    const body = {
+      version: 1,
+      decision: "request_changes",
+      summary: "Extend the detail.",
+      annotations: annotations()
+    };
+    const first = await request(app)
+      .post("/api/v1/client/estimate-design-revisions/revision-2/decision")
+      .set("Authorization", client)
+      .send(body);
+    const same = await request(app)
+      .post("/api/v1/client/estimate-design-revisions/revision-2/decision")
+      .set("Authorization", client)
+      .send(body);
+    const different = await request(app)
+      .post("/api/v1/client/estimate-design-revisions/revision-2/decision")
+      .set("Authorization", client)
+      .send({ ...body, summary: "A different request." });
+
+    expect(first.status).toBe(200);
+    expect(same.status).toBe(200);
+    expect(same.body.data).toEqual(first.body.data);
+    expect(different.status).toBe(409);
   });
 
   it("requires a summary and either a marking or text note for change requests", async () => {
@@ -586,6 +762,88 @@ describe("estimate drawing client review", () => {
       .toMatchObject({ reviewStatus: "draft" });
     expect(revisions.filter((item) => item.drawingId === "drawing-2").at(-1))
       .toMatchObject({ revisionNumber: 3, reviewStatus: "submitted" });
+  });
+
+  it("rejects synchronous replacement images above the worker-equivalent pixel limit", async () => {
+    const { service, revisions, uploads, jobs } = setup();
+    revisions[1]!.reviewStatus = "changes_requested";
+    uploads[0]!.extractionStatus = "changes_requested";
+    jobs[0]!.status = "changes_requested";
+    const oversizedTiff = minimalTiff(10_000, 5_000);
+
+    await expect(service.replaceDrawing({
+      id: "user-estimator-sales",
+      name: "Sales",
+      email: "sales@lisno.example",
+      role: "estimator_sales"
+    }, "drawing-2", {
+      version: 1,
+      file: {
+        data: oversizedTiff,
+        extension: ".tif",
+        originalFilename: "oversized.tif",
+        mimeType: "image/tiff",
+        sizeBytes: oversizedTiff.length
+      }
+    })).rejects.toMatchObject({
+      status: 400,
+      code: "INVALID_REPLACEMENT_IMAGE"
+    });
+  });
+
+  it("rejects pathological dimensions even below the total pixel limit", async () => {
+    const { service, revisions, uploads, jobs } = setup();
+    revisions[1]!.reviewStatus = "changes_requested";
+    uploads[0]!.extractionStatus = "changes_requested";
+    jobs[0]!.status = "changes_requested";
+    const oversizedTiff = minimalTiff(50_000, 1);
+
+    await expect(service.replaceDrawing({
+      id: "user-estimator-sales",
+      name: "Sales",
+      email: "sales@lisno.example",
+      role: "estimator_sales"
+    }, "drawing-2", {
+      version: 1,
+      file: {
+        data: oversizedTiff,
+        extension: ".tif",
+        originalFilename: "wide.tif",
+        mimeType: "image/tiff",
+        sizeBytes: oversizedTiff.length
+      }
+    })).rejects.toMatchObject({
+      status: 400,
+      code: "INVALID_REPLACEMENT_IMAGE"
+    });
+  });
+
+  it("rejects normalized replacement output above the configured byte limit", async () => {
+    expect(NOISY_PNG.length).toBeGreaterThan(NOISY_JPEG.length);
+    const maximumBytes = Math.floor((NOISY_JPEG.length + NOISY_PNG.length) / 2);
+    const { service, revisions, uploads, jobs } = setup(maximumBytes);
+    revisions[1]!.reviewStatus = "changes_requested";
+    uploads[0]!.extractionStatus = "changes_requested";
+    jobs[0]!.status = "changes_requested";
+
+    await expect(service.replaceDrawing({
+      id: "user-estimator-sales",
+      name: "Sales",
+      email: "sales@lisno.example",
+      role: "estimator_sales"
+    }, "drawing-2", {
+      version: 1,
+      file: {
+        data: NOISY_JPEG,
+        extension: ".jpg",
+        originalFilename: "noise.jpg",
+        mimeType: "image/jpeg",
+        sizeBytes: NOISY_JPEG.length
+      }
+    })).rejects.toMatchObject({
+      status: 400,
+      code: "INVALID_REPLACEMENT_IMAGE"
+    });
   });
 
   it("reports readiness from active latest revisions", async () => {

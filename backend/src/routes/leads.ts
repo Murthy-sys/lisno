@@ -219,14 +219,18 @@ export function createLeadsRouter(
           {
             _id: estimate._id,
             status: "sent_to_client",
-            version: estimate.version
+            version: estimate.version,
+            designLifecycleVersion: lifecycleVersionFilter(
+              Number(estimate.designLifecycleVersion ?? 0)
+            ),
+            designFrozenAt: { $in: [null] }
           },
           {
             $set: {
               status: "client_changes_requested",
               clientDecisionAt: occurredAt
             },
-            $inc: { version: 1 },
+            $inc: { version: 1, designLifecycleVersion: 1 },
             $push: { reviews: review }
           },
           { session }
@@ -236,6 +240,8 @@ export function createLeadsRouter(
           ...estimate,
           status: "client_changes_requested",
           version: Number(estimate.version) + 1,
+          designLifecycleVersion:
+            Number(estimate.designLifecycleVersion ?? 0) + 1,
           clientDecisionAt: occurredAt,
           reviews: [...(estimate.reviews ?? []), review]
         };
@@ -303,15 +309,20 @@ export function createLeadsRouter(
         {
           _id: estimate._id,
           status: "sent_to_client",
-          version: estimate.version
+          version: estimate.version,
+          designLifecycleVersion: lifecycleVersionFilter(
+            Number(estimate.designLifecycleVersion ?? 0)
+          ),
+          designFrozenAt: { $in: [null] }
         },
         {
           $set: {
             status: "client_approved",
             projectId,
-            clientDecisionAt: occurredAt
+            clientDecisionAt: occurredAt,
+            designFrozenAt: occurredAt
           },
-          $inc: { version: 1 },
+          $inc: { version: 1, designLifecycleVersion: 1 },
           $push: {
             reviews: review,
             notifications: { $each: recipients }
@@ -336,6 +347,9 @@ export function createLeadsRouter(
         ...estimate,
         status: "client_approved",
         version: Number(estimate.version) + 1,
+        designLifecycleVersion:
+          Number(estimate.designLifecycleVersion ?? 0) + 1,
+        designFrozenAt: occurredAt,
         projectId,
         clientDecisionAt: occurredAt,
         reviews: [...(estimate.reviews ?? []), review],
@@ -358,6 +372,9 @@ function requireMatchedEstimate(result: { matchedCount: number }) {
       "This estimate is no longer awaiting your review."
     );
   }
+}
+function lifecycleVersionFilter(version: number) {
+  return version === 0 ? { $in: [0, null] } : version;
 }
 async function withMongoTransaction<T>(
   operation: (session: mongoose.ClientSession) => Promise<T>

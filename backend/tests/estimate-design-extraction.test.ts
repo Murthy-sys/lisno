@@ -113,6 +113,8 @@ function setup() {
     leadId: "lead-1",
     ownerId: "user-estimator-sales",
     status: "draft",
+    designLifecycleVersion: 0,
+    designFrozenAt: null,
     rooms: [
       { id: "room-living", label: "Living Room", aliases: ["living hall"] },
       { id: "room-bed", label: "Bedroom", aliases: ["bed room"] }
@@ -152,6 +154,7 @@ function setup() {
   const revisions: Array<Record<string, any>> = [];
   const runTransaction = async (operation: () => Promise<unknown>) => {
     const snapshots = {
+      estimates: structuredClone(estimates),
       uploads: structuredClone(uploads),
       jobs: structuredClone(jobs),
       pages: structuredClone(pages),
@@ -161,6 +164,7 @@ function setup() {
     try {
       return await operation();
     } catch (error) {
+      restore(estimates, snapshots.estimates);
       restore(uploads, snapshots.uploads);
       restore(jobs, snapshots.jobs);
       restore(pages, snapshots.pages);
@@ -180,6 +184,14 @@ function setup() {
   vi.spyOn(EstimateModel, "findOne").mockImplementation((filter) =>
     query(estimates.find((item) => item._id === filter._id && item.ownerId === filter.ownerId) ?? null) as never
   );
+  vi.spyOn(EstimateModel, "updateOne").mockImplementation(async (filter, update) => {
+    const record = estimates.find((item) => matches(item, filter as never));
+    if (record) applyUpdate(record, update as never);
+    return {
+      matchedCount: record ? 1 : 0,
+      modifiedCount: record ? 1 : 0
+    } as never;
+  });
   vi.spyOn(EstimateDesignUploadModel, "findById").mockImplementation((id) =>
     query(uploads.find((item) => item._id === id) ?? null) as never
   );
@@ -843,5 +855,36 @@ describe("estimate design extraction and estimator verification", () => {
     });
     expect(uploads[0]).toMatchObject({ extractionStatus: "estimator_review" });
     expect(jobs[0]).toMatchObject({ status: "estimator_review" });
+  });
+
+  it("rejects worker publication that reaches its transaction after final approval freezes design", async () => {
+    const {
+      app,
+      estimates,
+      pages,
+      drawings,
+      revisions,
+      uploads,
+      jobs,
+      session,
+      runTransaction
+    } = setup();
+    const leased = await claim(app);
+    session.withTransaction.mockImplementationOnce(async (operation) => {
+      estimates[0]!.status = "client_approved";
+      estimates[0]!.designLifecycleVersion = 1;
+      estimates[0]!.designFrozenAt = NOW;
+      return runTransaction(operation);
+    });
+
+    const response = await complete(app, leased.body.data.claimToken);
+
+    expect(response.status).toBe(409);
+    expect(response.body.error.code).toBe("ESTIMATE_DESIGN_LIFECYCLE_CONFLICT");
+    expect(pages).toEqual([]);
+    expect(drawings).toEqual([]);
+    expect(revisions).toEqual([]);
+    expect(uploads[0]).toMatchObject({ extractionStatus: "processing" });
+    expect(jobs[0]).toMatchObject({ status: "processing" });
   });
 });

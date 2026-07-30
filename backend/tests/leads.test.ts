@@ -69,6 +69,8 @@ describe("estimate final drawing approval gate", () => {
       ownerId: "user-estimator-sales",
       version: 4,
       status: "sent_to_client",
+      designLifecycleVersion: 0,
+      designFrozenAt: null,
       assignedDesignerId: "designer-1",
       reviews: [],
       notifications: [],
@@ -127,6 +129,8 @@ describe("estimate final drawing approval gate", () => {
       ownerId: "user-estimator-sales",
       version: 2,
       status: "sent_to_client",
+      designLifecycleVersion: 0,
+      designFrozenAt: null,
       assignedDesignerId: "designer-1",
       reviews: [],
       notifications: [],
@@ -180,6 +184,21 @@ describe("estimate final drawing approval gate", () => {
     expect(response.status).toBe(200);
     expect(response.body.data.status).toBe("client_approved");
     expect(ProjectModel.create).toHaveBeenCalledOnce();
+    expect(EstimateModel.updateOne).toHaveBeenCalledWith(
+      expect.objectContaining({
+        _id: "estimate-no-drawings",
+        designLifecycleVersion: { $in: [0, null] },
+        designFrozenAt: { $in: [null] }
+      }),
+      expect.objectContaining({
+        $set: expect.objectContaining({
+          status: "client_approved",
+          designFrozenAt: expect.any(Date)
+        }),
+        $inc: expect.objectContaining({ designLifecycleVersion: 1 })
+      }),
+      expect.any(Object)
+    );
   });
 
   it("returns the same not-found response for a foreign locked estimate", async () => {
@@ -187,7 +206,9 @@ describe("estimate final drawing approval gate", () => {
       _id: "estimate-foreign-locked",
       leadId: "lead-foreign",
       version: 3,
-      status: "client_approved"
+      status: "client_approved",
+      designLifecycleVersion: 1,
+      designFrozenAt: new Date("2026-07-30T14:00:00.000Z")
     };
     const lead = {
       _id: "lead-foreign",

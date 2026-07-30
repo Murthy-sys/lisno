@@ -23,6 +23,9 @@ const estimateNotificationSchema = new Schema({
 const estimateSchema = new Schema({
   _id: { type: String, required: true }, leadId: { type: String, ref: "Lead", required: true, unique: true }, ownerId: { type: String, ref: "User", required: true },
   version: { type: Number, required: true, default: 1 },
+  designLifecycleVersion: { type: Number, required: true, default: 0, min: 0 },
+  designFrozenAt: { type: Date, default: null },
+  designLifecycleUpdatedAt: { type: Date, default: null },
   status: {
     type: String,
     enum: ["draft", "pending_manager_assignment", "pending_designer_approval", "designer_changes_requested", "ready_for_client", "sent_to_client", "client_changes_requested", "client_approved"],
