@@ -1,4 +1,4 @@
-import { screen, within } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -334,5 +334,169 @@ describe("EstimateDesignUploads", () => {
     await replaceThroughUi(true);
     expect(await screen.findByRole("status")).toHaveTextContent("Replacement queued for extraction.");
     expect(await screen.findByText("Queued")).toBeVisible();
+  });
+
+  it("shows immutable client feedback and preserves history through a section-specific replacement retry", async () => {
+    Object.defineProperty(URL, "createObjectURL", {
+      configurable: true,
+      value: vi.fn(() => "blob:estimator-marked-preview")
+    });
+    Object.defineProperty(URL, "revokeObjectURL", {
+      configurable: true,
+      value: vi.fn()
+    });
+    const marked = {
+      schemaVersion: 1 as const,
+      imageWidth: 800,
+      imageHeight: 600,
+      elements: [{
+        id: "client-note",
+        type: "text" as const,
+        x: 0.25,
+        y: 0.4,
+        text: "Shift the light point",
+        color: "#ef4444",
+        strokeWidth: 2
+      }]
+    };
+    const replacementDrawing = {
+      ...drawings[0],
+      id: "drawing-client-change",
+      displayTitle: "Living lighting detail"
+    };
+    const oldRevision = {
+      ...revisions[0],
+      id: "revision-client-change",
+      drawingId: replacementDrawing.id,
+      label: replacementDrawing.displayTitle,
+      reviewStatus: "changes_requested" as const,
+      changeSummary: "Move the light point toward the window.",
+      annotations: marked
+    };
+    const newRevision = {
+      ...oldRevision,
+      id: "revision-client-change-2",
+      revisionNumber: 2,
+      reviewStatus: "draft" as const,
+      changeSummary: null,
+      annotations: null,
+      replacesRevisionId: oldRevision.id
+    };
+    let attempts = 0;
+    let replaced = false;
+    const requests: Array<{ url: string; init?: RequestInit }> = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      requests.push({ url, init });
+      if (url.includes("/estimate-design-revisions/") && url.endsWith("/image")) {
+        return new Response(new Blob(["image"], { type: "image/png" }));
+      }
+      if (
+        url.endsWith(`/estimate-design-drawings/${replacementDrawing.id}/replacement`) &&
+        init?.method === "POST"
+      ) {
+        attempts += 1;
+        if (attempts === 1) {
+          return Response.json({
+            error: { code: "FILE_STORAGE_ERROR", message: "Temporary storage failure." }
+          }, { status: 503 });
+        }
+        replaced = true;
+        return response({
+          ...replacementDrawing,
+          verified: false,
+          revision: newRevision
+        }, 201);
+      }
+      if (url.endsWith("/estimates/estimate-1/design-uploads")) {
+        return response({
+          uploads: [{
+            id: "upload-1",
+            estimateId: "estimate-1",
+            leadId: "lead-1",
+            originalFilename: "plan.pdf",
+            mimeType: "application/pdf",
+            sizeBytes: 12,
+            uploaderId: "user-1",
+            uploadedAt: "2026-07-30T00:00:00.000Z",
+            extractionStatus: replaced ? "estimator_review" : "changes_requested",
+            failureCode: null,
+            failureMessage: null
+          }],
+          pages: [page],
+          drawings: [{ ...replacementDrawing, verified: !replaced }],
+          revisions: replaced ? [oldRevision, newRevision] : [oldRevision]
+        });
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    const user = userEvent.setup();
+
+    renderWithQuery(
+      <EstimateDesignUploads estimateId="estimate-1" rooms={rooms} scopes={scopes} />
+    );
+    const row = await screen.findByRole("article", {
+      name: "Living lighting detail drawing"
+    });
+    expect(within(row).getByText("Move the light point toward the window.")).toBeVisible();
+    await user.click(within(row).getByRole("button", { name: "Preview" }));
+    await waitFor(() =>
+      expect(document.querySelector("svg image")).toHaveAttribute(
+        "href",
+        "blob:estimator-marked-preview"
+      )
+    );
+    expect(screen.getByText("Shift the light point")).toBeVisible();
+    expect(screen.queryByRole("toolbar", { name: "Annotation tools" })).not.toBeInTheDocument();
+    await user.click(within(screen.getByRole("dialog", {
+      name: "Living lighting detail preview"
+    })).getByRole("button", {
+      name: "Close Living lighting detail preview"
+    }));
+
+    await user.click(within(row).getByRole("button", {
+      name: "More actions for Living lighting detail"
+    }));
+    await user.click(screen.getByRole("menuitem", { name: "Upload replacement" }));
+    const fileInput = screen.getByLabelText<HTMLInputElement>("Replacement drawing file");
+    const file = new File(["replacement"], "changed.png", { type: "image/png" });
+    await user.upload(fileInput, file);
+    await user.click(screen.getByRole("button", { name: "Upload replacement" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "The replacement was not uploaded."
+    );
+    expect(fileInput.files?.[0]?.name).toBe("changed.png");
+    expect(within(row).getByText("Changes requested")).toBeVisible();
+
+    await user.click(screen.getByRole("button", { name: "Upload replacement" }));
+    const replacementPosts = requests.filter((entry) =>
+      entry.url.endsWith(
+        `/estimate-design-drawings/${replacementDrawing.id}/replacement`
+      )
+    );
+    expect(replacementPosts).toHaveLength(2);
+    for (const request of replacementPosts) {
+      const body = request.init?.body as FormData;
+      expect(body.get("version")).toBe("1");
+      expect((body.get("file") as File).name).toBe("changed.png");
+    }
+
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "Revision 2 awaits verification."
+    );
+    const replacementRow = await screen.findByRole("article", {
+      name: "Living lighting detail drawing"
+    });
+    expect(replacementRow).toHaveFocus();
+    expect(within(replacementRow).getByText("Needs review")).toBeVisible();
+    await user.click(within(replacementRow).getByRole("button", {
+      name: "More actions for Living lighting detail"
+    }));
+    await user.click(screen.getByRole("menuitem", { name: "History" }));
+    const history = screen.getByRole("dialog", { name: "Drawing history" });
+    expect(within(history).getByText(/Revision 2 · draft/)).toBeVisible();
+    expect(within(history).getByText(/Revision 1 · changes requested/)).toBeVisible();
+    expect(within(history).getByText("Move the light point toward the window.")).toBeVisible();
   });
 });

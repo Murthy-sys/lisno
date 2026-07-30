@@ -1,9 +1,9 @@
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import type { CropRect, EstimateDesignDrawing, EstimateDesignRevision } from "../../api/types";
+import { EstimateDrawingPreviewDialog } from "../../components/design/EstimateDrawingPreviewDialog";
 import { Dialog } from "../../components/ui/Dialog";
-import { ProtectedImage } from "../../components/design/ProtectedImage";
 import { EstimateDrawingRow } from "./EstimateDrawingRow";
 import {
   editEstimateDrawing,
@@ -56,11 +56,14 @@ export function EstimateDesignUploads({ estimateId, rooms, scopes }: EstimateDes
   const [file, setFile] = useState<File>();
   const [selection, setSelection] = useState<DrawingSelection>();
   const [mode, setMode] = useState<"preview" | "correct" | "history" | "replace">();
-  const [previewSource, setPreviewSource] = useState<string>();
   const [replacement, setReplacement] = useState<File>();
   const [verifyOnOpen, setVerifyOnOpen] = useState(false);
   const [formError, setFormError] = useState("");
   const [actionNotice, setActionNotice] = useState("");
+  const [focusRevision, setFocusRevision] = useState<{
+    drawingId: string;
+    revisionNumber: number;
+  }>();
 
   const workspace = useQuery({
     queryKey: estimateDesignKeys.workspace(estimateId),
@@ -87,10 +90,18 @@ export function EstimateDesignUploads({ estimateId, rooms, scopes }: EstimateDes
   const replace = useMutation({
     mutationFn: ({ drawing, revision, file: nextFile }: DrawingSelection & { file: File }) =>
       replaceEstimateDrawing(drawing.id, revision.revisionNumber, nextFile),
-    onSuccess: (result) => {
+    onSuccess: async (result, input) => {
       closeDialog();
-      setActionNotice("queued" in result ? "Replacement queued for extraction." : "Replacement drawing created.");
-      void client.invalidateQueries({ queryKey: estimateDesignKeys.workspace(estimateId) });
+      if ("queued" in result) {
+        setActionNotice("Replacement queued for extraction.");
+      } else {
+        setFocusRevision({
+          drawingId: input.drawing.id,
+          revisionNumber: result.revision.revisionNumber
+        });
+        setActionNotice(`Replacement drawing created. Revision ${result.revision.revisionNumber} awaits verification.`);
+      }
+      await client.invalidateQueries({ queryKey: estimateDesignKeys.workspace(estimateId) });
     }
   });
   const retry = useMutation({ mutationFn: retryEstimateDesignUpload, onSuccess: () => void client.invalidateQueries({ queryKey: estimateDesignKeys.workspace(estimateId) }) });
@@ -116,7 +127,6 @@ export function EstimateDesignUploads({ estimateId, rooms, scopes }: EstimateDes
   const closeDialog = () => {
     setMode(undefined);
     setSelection(undefined);
-    setPreviewSource(undefined);
     setReplacement(undefined);
     setFormError("");
     setVerifyOnOpen(false);
@@ -127,6 +137,7 @@ export function EstimateDesignUploads({ estimateId, rooms, scopes }: EstimateDes
     setFormError("");
     setVerifyOnOpen(verify);
   };
+  const clearDrawingFocus = useCallback(() => setFocusRevision(undefined), []);
   const row = (drawing: EstimateDesignDrawing, roomLabel: string, scopeLabel: string) => {
     const revision = latest.get(drawing.id)!;
     return <EstimateDrawingRow
@@ -136,6 +147,12 @@ export function EstimateDesignUploads({ estimateId, rooms, scopes }: EstimateDes
       scopeLabel={scopeLabel}
       revisionId={revision.id}
       reviewStatus={revision.reviewStatus}
+      changeSummary={revision.changeSummary}
+      focusOnRender={
+        focusRevision?.drawingId === drawing.id &&
+        focusRevision.revisionNumber === revision.revisionNumber
+      }
+      onFocused={clearDrawingFocus}
       needsCorrection={!drawing.roomId || !drawing.scopeSectionId || !roomIds.has(drawing.roomId) || !scopeIds.has(drawing.scopeSectionId)}
       onPreview={() => open({ drawing, revision }, "preview")}
       onCorrect={() => open({ drawing, revision }, "correct")}
@@ -172,7 +189,7 @@ export function EstimateDesignUploads({ estimateId, rooms, scopes }: EstimateDes
         {activeDrawings.length ? <footer className="estimate-design-uploads__footer"><span>{unresolved.length ? `${unresolved.length} drawing${unresolved.length === 1 ? "" : "s"} need verification.` : "All drawings are verified."}</span><button type="button" className="button button--primary" disabled={!readyToSubmit || submit.isPending} onClick={() => submit.mutate()}>{submit.isPending ? "Submitting…" : "Submit drawings to client"}</button></footer> : null}
         {submit.isError ? <p role="alert" className="estimate-design-uploads__error">The drawings could not be submitted. Verify every active drawing and try again.</p> : null}
       </> : null}
-      {selection && mode === "preview" ? <PreviewDialog selection={selection} source={previewSource} onSourceChange={setPreviewSource} onClose={closeDialog} /> : null}
+      {selection && mode === "preview" ? <PreviewDialog selection={selection} onClose={closeDialog} /> : null}
       {selection && mode === "correct" ? <CorrectionDialog selection={selection} defaultVerified={verifyOnOpen} rooms={rooms} scopes={scopes} page={workspace.data?.pages.find((page) => page.id === selection.revision.sourcePageId) ?? workspace.data?.pages.find((page) => page.id === selection.drawing.sourcePageId)} busy={correct.isPending} error={correct.isError ? "The correction was not saved." : ""} onSubmit={(input) => correct.mutate({ ...selection, input })} onClose={closeDialog} /> : null}
       {selection && mode === "history" ? <HistoryDialog revisions={(workspace.data?.revisions ?? []).filter((revision) => revision.drawingId === selection.drawing.id)} onClose={closeDialog} /> : null}
       {selection && mode === "replace" ? <ReplacementDialog file={replacement} busy={replace.isPending} error={replace.isError ? "The replacement was not uploaded." : ""} onChange={setReplacement} onSubmit={() => replacement && replace.mutate({ ...selection, file: replacement })} onClose={closeDialog} /> : null}
@@ -180,8 +197,22 @@ export function EstimateDesignUploads({ estimateId, rooms, scopes }: EstimateDes
   );
 }
 
-function PreviewDialog({ selection, source, onSourceChange, onClose }: { selection: DrawingSelection; source?: string; onSourceChange: (source: string | undefined) => void; onClose: () => void }) {
-  return <Dialog title={`${selection.drawing.displayTitle} preview`} eyebrow="Extracted drawing" onClose={onClose}><div className="estimate-design-preview">{source ? <img src={source} alt={`Full preview of ${selection.drawing.displayTitle}`} /> : <ProtectedImage source={estimateDesignRevisionImageUrl(selection.revision.id)} alt={`Full preview of ${selection.drawing.displayTitle}`} onSourceChange={onSourceChange} />}</div></Dialog>;
+function PreviewDialog({ selection, onClose }: { selection: DrawingSelection; onClose: () => void }) {
+  const annotations = selection.revision.annotations ?? {
+    schemaVersion: 1 as const,
+    imageWidth: selection.revision.crop.width,
+    imageHeight: selection.revision.crop.height,
+    elements: []
+  };
+  return <EstimateDrawingPreviewDialog
+    title={selection.drawing.displayTitle}
+    imageUrl={estimateDesignRevisionImageUrl(selection.revision.id)}
+    imageWidth={annotations.imageWidth}
+    imageHeight={annotations.imageHeight}
+    annotations={annotations}
+    canAnnotate={false}
+    onClose={onClose}
+  />;
 }
 
 function CorrectionDialog({ selection, defaultVerified, rooms, scopes, page, busy, error, onSubmit, onClose }: { selection: DrawingSelection; defaultVerified: boolean; rooms: EstimateDesignPlacementOption[]; scopes: EstimateDesignPlacementOption[]; page?: { width: number; height: number }; busy: boolean; error: string; onSubmit: (input: DrawingChange) => void; onClose: () => void }) {

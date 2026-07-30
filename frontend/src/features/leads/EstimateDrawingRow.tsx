@@ -1,4 +1,4 @@
-import { useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 
 import { ProtectedImage } from "../../components/design/ProtectedImage";
 import type { EstimateDesignDrawing } from "../../api/types";
@@ -12,6 +12,9 @@ export interface EstimateDrawingRowProps {
   onCorrect: () => void;
   onReplace: () => void;
   onHistory: () => void;
+  changeSummary?: string | null;
+  focusOnRender?: boolean;
+  onFocused?: () => void;
 }
 
 type EstimateDrawingRowWithRevisionProps = EstimateDrawingRowProps & {
@@ -30,6 +33,9 @@ export function EstimateDrawingRow({
   onCorrect,
   onReplace,
   onHistory,
+  changeSummary,
+  focusOnRender = false,
+  onFocused,
   revisionId,
   reviewStatus = "draft",
   onVerify,
@@ -37,6 +43,7 @@ export function EstimateDrawingRow({
   needsCorrection = false
 }: EstimateDrawingRowWithRevisionProps) {
   const [menuOpen, setMenuOpen] = useState(false);
+  const rowRef = useRef<HTMLElement>(null);
   const menuId = useId();
   const status = reviewStatus === "changes_requested" ? "Changes requested"
     : reviewStatus === "approved" ? "Approved"
@@ -45,8 +52,19 @@ export function EstimateDrawingRow({
   const correctionAvailable = reviewStatus === "draft" || reviewStatus === "changes_requested";
   const unverified = !drawing.verified || needsCorrection;
 
+  useEffect(() => {
+    if (!focusOnRender) return;
+    rowRef.current?.focus();
+    onFocused?.();
+  }, [focusOnRender, onFocused]);
+
   return (
-    <article className="estimate-drawing-row" aria-label={`${drawing.displayTitle} drawing`}>
+    <article
+      ref={rowRef}
+      className="estimate-drawing-row"
+      aria-label={`${drawing.displayTitle} drawing`}
+      tabIndex={focusOnRender ? -1 : undefined}
+    >
       <ProtectedImage
         source={estimateDesignRevisionImageUrl(revisionId ?? drawing.id)}
         alt={`${drawing.displayTitle} thumbnail`}
@@ -55,6 +73,7 @@ export function EstimateDrawingRow({
       <div className="estimate-drawing-row__metadata">
         <strong>{drawing.displayTitle}</strong>
         <small>{roomLabel} · {scopeLabel}</small>
+        {changeSummary ? <small className="estimate-drawing-row__change-summary">{changeSummary}</small> : null}
       </div>
       <span className={`estimate-drawing-row__status estimate-drawing-row__status--${drawing.verified ? "verified" : "review"}`}>{status}</span>
       <button type="button" className="secondary-button estimate-drawing-row__preview" onClick={onPreview}>Preview</button>

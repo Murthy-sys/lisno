@@ -671,11 +671,36 @@ export interface EstimateDesignRevision {
   replacesRevisionId: string | null;
 }
 
+export interface EstimateDesignAnnotationDraft {
+  id: string;
+  revisionId: string;
+  version: number;
+  annotations: AnnotationDocumentV1;
+}
+
+export interface EstimateDesignClientRevision extends EstimateDesignRevision {
+  annotationDraft: EstimateDesignAnnotationDraft | null;
+}
+
+export interface EstimateDesignApprovalReadiness {
+  ready: boolean;
+  total: number;
+  approved: number;
+  awaitingReview: number;
+  changesRequested: number;
+}
+
 export interface EstimateDesignWorkspace {
   uploads: EstimateDesignUpload[];
   pages: EstimateDesignSourcePage[];
   drawings: EstimateDesignDrawing[];
   revisions: EstimateDesignRevision[];
+}
+
+export interface EstimateDesignClientWorkspace
+  extends Omit<EstimateDesignWorkspace, "revisions"> {
+  revisions: EstimateDesignClientRevision[];
+  readiness: EstimateDesignApprovalReadiness;
 }
 
 export interface EstimateDesignDrawingUpdate extends EstimateDesignDrawing {
