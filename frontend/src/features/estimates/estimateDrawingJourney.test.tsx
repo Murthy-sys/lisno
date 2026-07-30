@@ -69,6 +69,7 @@ const bedroomDrawing = {
   id: "drawing-bedroom",
   roomId: "room-bedroom",
   scopeSectionId: "FL",
+  catalogueId: "FL01",
   detectedTitle: "Bedroom Floorimg",
   displayTitle: "Bedroom Flooring",
   roomConfidence: 0.88,
@@ -78,16 +79,28 @@ const bedroomDrawing = {
   scopeEvidence: [{ value: "flooring" }],
 };
 
+type JourneyMapping = {
+  roomId: string | null;
+  scopeSectionId: string | null;
+  catalogueId: string | null;
+  mappingStatus: "auto_mapped" | "misc";
+};
+
 function revision(
   id: string,
   drawingId: string,
   label: string,
-  roomId: string | null,
-  scopeSectionId: string | null,
+  mapping: JourneyMapping,
   revisionNumber: number,
   reviewStatus: "submitted" | "approved" | "changes_requested" | "draft",
   changes: Partial<Record<string, unknown>> = {},
 ) {
+  const {
+    roomId,
+    scopeSectionId,
+    catalogueId,
+    mappingStatus,
+  } = mapping;
   return {
     id,
     drawingId,
@@ -96,8 +109,8 @@ function revision(
     crop: { x: 0, y: 0, width: 1_000, height: 800 },
     roomId,
     scopeSectionId,
-    catalogueId: "FC01",
-    mappingStatus: "auto_mapped" as const,
+    catalogueId,
+    mappingStatus,
     label,
     reviewStatus,
     submittedAt: reviewStatus === "draft" ? null : "2026-07-30T12:00:00.000Z",
@@ -121,8 +134,7 @@ const livingApproved = revision(
   "revision-living",
   livingDrawing.id,
   livingDrawing.displayTitle,
-  livingDrawing.roomId,
-  livingDrawing.scopeSectionId,
+  livingDrawing,
   1,
   "approved",
 );
@@ -130,8 +142,7 @@ const bedroomSubmitted = revision(
   "revision-bedroom-1",
   bedroomDrawing.id,
   bedroomDrawing.displayTitle,
-  bedroomDrawing.roomId,
-  bedroomDrawing.scopeSectionId,
+  bedroomDrawing,
   1,
   "submitted",
 );
@@ -148,8 +159,7 @@ const bedroomReplacement = revision(
   "revision-bedroom-2",
   bedroomDrawing.id,
   bedroomDrawing.displayTitle,
-  bedroomDrawing.roomId,
-  bedroomDrawing.scopeSectionId,
+  bedroomDrawing,
   2,
   "draft",
   { replacesRevisionId: bedroomRequested.id },
@@ -158,8 +168,7 @@ const bedroomVerified = revision(
   "revision-bedroom-3",
   bedroomDrawing.id,
   bedroomDrawing.displayTitle,
-  bedroomDrawing.roomId,
-  bedroomDrawing.scopeSectionId,
+  bedroomDrawing,
   3,
   "draft",
   { replacesRevisionId: bedroomReplacement.id },
@@ -190,19 +199,19 @@ const miscDrawing = {
   roomEvidence: [],
   scopeEvidence: [],
 };
-const miscSubmitted = revision(
+const miscDraft = revision(
   "revision-misc-1",
   miscDrawing.id,
   miscDrawing.displayTitle,
-  null,
-  null,
+  miscDrawing,
   1,
-  "submitted",
-  {
-    catalogueId: null,
-    mappingStatus: "misc" as const,
-  },
+  "draft",
 );
+const miscSubmitted = {
+  ...miscDraft,
+  reviewStatus: "submitted" as const,
+  submittedAt: "2026-07-30T14:00:00.000Z",
+};
 const miscApproved = {
   ...miscSubmitted,
   reviewStatus: "approved" as const,
@@ -248,18 +257,29 @@ function estimate(status: "sent_to_client" | "client_approved") {
     propertyType: "Apartment",
     rooms,
     scopes: ["FC", "FL"],
-    lineItems: [{
-      catalogueId: "FC01",
-      roomName: "Living Room",
-      specification: "plain_gyp",
-      unit: "sqft",
-      rate: 95,
-      quantity: 100,
-      included: true,
-    }],
-    subtotal: 9_500,
-    gst: 1_710,
-    total: 11_210,
+    lineItems: [
+      {
+        catalogueId: "FC01",
+        roomName: "Living Room",
+        specification: "plain_gyp",
+        unit: "sqft",
+        rate: 95,
+        quantity: 100,
+        included: true,
+      },
+      {
+        catalogueId: "FL01",
+        roomName: "Bedroom",
+        specification: "vitrified_tile",
+        unit: "sqft",
+        rate: 120,
+        quantity: 100,
+        included: true,
+      },
+    ],
+    subtotal: 21_500,
+    gst: 3_870,
+    total: 25_370,
     status,
     approvalRequired: false,
     projectId: status === "client_approved" ? "project-journey" : null,
@@ -305,6 +325,39 @@ afterEach(() => {
 
 describe("estimate drawing review journey", () => {
   it("keeps placement, tools, immutable replacement history, and read-only approval in one journey", async () => {
+    const savedEstimate = estimate("sent_to_client");
+    const mappedFixtureGroups = [
+      { drawing: livingDrawing, revisions: [livingApproved] },
+      {
+        drawing: bedroomDrawing,
+        revisions: [
+          bedroomSubmitted,
+          bedroomRequested,
+          bedroomReplacement,
+          bedroomVerified,
+          bedroomResubmitted,
+          bedroomApproved,
+        ],
+      },
+    ];
+    for (const { drawing, revisions } of mappedFixtureGroups) {
+      const room = rooms.find((candidate) => candidate.id === drawing.roomId);
+      expect(room).toBeDefined();
+      expect(savedEstimate.lineItems).toContainEqual(expect.objectContaining({
+        catalogueId: drawing.catalogueId,
+        roomName: room!.label,
+        included: true,
+      }));
+      expect(drawing.scopeSectionId).toBe(drawing.catalogueId.slice(0, 2));
+      for (const currentRevision of revisions) {
+        expect(currentRevision).toMatchObject({
+          roomId: drawing.roomId,
+          scopeSectionId: drawing.scopeSectionId,
+          catalogueId: drawing.catalogueId,
+          mappingStatus: drawing.mappingStatus,
+        });
+      }
+    }
     expect(cssRule(".estimate-drawing-row__thumbnail")).toMatch(
       /width:\s*40px;\s*height:\s*40px/,
     );
@@ -498,6 +551,8 @@ describe("estimate drawing review journey", () => {
     let replaced = false;
     let replacementVerified = false;
     let replacementSubmitted = false;
+    let estimatorReturnedDraftMisc = false;
+    let estimatorReturnedSubmittedMisc = false;
     const estimatorRequests: Array<{ url: string; init?: RequestInit }> = [];
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const url = String(input);
@@ -542,6 +597,8 @@ describe("estimate drawing review journey", () => {
         init?.method === "POST"
       ) {
         expect(init.body).toBeUndefined();
+        expect(estimatorReturnedDraftMisc).toBe(true);
+        expect(replacementSubmitted).toBe(false);
         replacementSubmitted = true;
         clientPhase = "replacement_submitted";
         return json({ submittedCount: 1 });
@@ -552,6 +609,13 @@ describe("estimate drawing review journey", () => {
         const latestBedroom = replacementVerified
           ? (replacementSubmitted ? bedroomResubmitted : bedroomVerified)
           : bedroomReplacement;
+        const latestMisc = replacementSubmitted ? miscSubmitted : miscDraft;
+        if (replacementSubmitted) {
+          estimatorReturnedSubmittedMisc = true;
+        } else {
+          expect(latestMisc.reviewStatus).toBe("draft");
+          estimatorReturnedDraftMisc = true;
+        }
         return json({
           uploads: [upload(
             replacementSubmitted
@@ -570,9 +634,9 @@ describe("estimate drawing review journey", () => {
                 bedroomRequested,
                 bedroomReplacement,
                 ...(replacementVerified ? [latestBedroom] : []),
-                miscSubmitted,
+                latestMisc,
               ]
-            : [bedroomRequested, miscSubmitted],
+            : [bedroomRequested, latestMisc],
         });
       }
       if (
@@ -653,8 +717,11 @@ describe("estimate drawing review journey", () => {
       name: "Submit drawings to client",
     });
     expect(submitDrawings).toBeEnabled();
+    expect(estimatorReturnedDraftMisc).toBe(true);
+    expect(replacementSubmitted).toBe(false);
     await user.click(submitDrawings);
     await waitFor(() => expect(replacementSubmitted).toBe(true));
+    await waitFor(() => expect(estimatorReturnedSubmittedMisc).toBe(true));
     expect(estimatorRequests.some(({ url, init }) =>
       url.endsWith("/api/v1/estimate-design-drawings/drawing-bedroom") &&
       init?.method === "PATCH"
@@ -708,6 +775,7 @@ describe("estimate drawing review journey", () => {
           "/api/v1/client/estimates/estimate-journey/design-drawings",
         )
       ) {
+        expect(replacementSubmitted).toBe(true);
         return json({
           uploads: [upload(
             clientPhase === "estimate_approved" ? "approved" : "submitted",
