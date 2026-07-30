@@ -129,6 +129,35 @@ describe("EstimateDesignUploads", () => {
     await waitFor(() => expect(screen.queryByRole("progressbar", { name: "Uploading design plan" })).not.toBeInTheDocument());
   });
 
+  it("retains the selected file details after a non-successful upload while clearing progress", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      if (String(input).endsWith("/estimates/estimate-1/design-uploads")) {
+        return response({ uploads: [], pages: [], drawings: [], revisions: [] });
+      }
+      throw new Error(`Unexpected request: ${input}`);
+    });
+    FakeXMLHttpRequest.instances = [];
+    vi.stubGlobal("XMLHttpRequest", FakeXMLHttpRequest);
+
+    const user = userEvent.setup();
+    renderWithQuery(<EstimateDesignUploads estimateId="estimate-1" rooms={rooms} scopes={scopes} />);
+    const file = new File(["failed upload"], "failed-plan.pdf", { type: "application/pdf" });
+    await user.upload(await screen.findByLabelText("Design plan file"), file);
+    await user.click(screen.getByRole("button", { name: "Upload design plan" }));
+    const xhr = FakeXMLHttpRequest.instances[0]!;
+    xhr.upload.onprogress?.({ lengthComputable: true, loaded: 6, total: 12 } as ProgressEvent);
+    await waitFor(() => expect(screen.getByRole("progressbar", { name: "Uploading design plan" })).toHaveAttribute("aria-valuenow", "50"));
+
+    xhr.status = 422;
+    xhr.responseText = JSON.stringify({ error: { code: "INVALID_FILE", message: "Choose another plan." } });
+    xhr.onload?.();
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("The plan could not be uploaded.");
+    expect(screen.getByText("failed-plan.pdf")).toBeVisible();
+    expect(screen.getByText("13 B")).toBeVisible();
+    expect(screen.queryByRole("progressbar", { name: "Uploading design plan" })).not.toBeInTheDocument();
+  });
+
   it("identifies a retried extraction while preserving the extraction failure message", async () => {
     const failedUpload = { id: "upload-failed", estimateId: "estimate-1", leadId: "lead-1", originalFilename: "failed.pdf", mimeType: "application/pdf", sizeBytes: 12, uploaderId: "user-1", uploadedAt: "2026-07-30T00:00:00.000Z", extractionStatus: "processing_failed", failureCode: "OCR_FAILED", failureMessage: "Could not read plan", canRetry: true };
     vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
