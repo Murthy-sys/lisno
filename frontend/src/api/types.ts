@@ -547,3 +547,86 @@ export interface DesignSectionDecisionResult {
   extractionStatus: ExtractionStatus;
   progress: DesignSectionReviewProgress;
 }
+
+export type EstimateDesignExtractionStatus =
+  | "queued"
+  | "processing"
+  | "estimator_review"
+  | "processing_failed"
+  | "submitted"
+  | "changes_requested"
+  | "approved";
+
+export type EstimateDrawingReviewStatus = "draft" | "submitted" | "approved" | "changes_requested";
+
+export interface EstimateDesignUpload {
+  id: string;
+  estimateId: string;
+  leadId: string;
+  originalFilename: string;
+  mimeType: "application/pdf" | "image/png" | "image/jpeg" | "image/webp" | "image/tiff" | "image/heic";
+  sizeBytes: number;
+  uploaderId: string;
+  uploadedAt: string;
+  extractionStatus: EstimateDesignExtractionStatus;
+  failureCode: string | null;
+  failureMessage: string | null;
+}
+
+export interface EstimateDesignSourcePage {
+  id: string;
+  uploadId: string;
+  pageNumber: number;
+  width: number;
+  height: number;
+}
+
+export interface EstimateDesignDrawing {
+  id: string;
+  uploadId: string;
+  sourcePageId: string;
+  estimateId: string;
+  active: boolean;
+  verified: boolean;
+  roomId: string | null;
+  scopeSectionId: string | null;
+  detectedTitle: string;
+  displayTitle: string;
+  source: "ocr" | "manual";
+  roomConfidence: number | null;
+  scopeConfidence: number | null;
+  ocrConfidence: number | null;
+  roomEvidence: Array<{ value: string }>;
+  scopeEvidence: Array<{ value: string }>;
+}
+
+export interface EstimateDesignRevision {
+  id: string;
+  drawingId: string;
+  revisionNumber: number;
+  sourcePageId: string;
+  crop: CropRect;
+  roomId: string;
+  scopeSectionId: string;
+  label: string;
+  reviewStatus: EstimateDrawingReviewStatus;
+  submittedAt: string | null;
+  reviewerId: string | null;
+  reviewedAt: string | null;
+  changeSummary: string | null;
+  annotationLayerId: string | null;
+  annotations: unknown | null;
+  replacementUploadId: string | null;
+  replacesRevisionId: string | null;
+}
+
+export interface EstimateDesignWorkspace {
+  uploads: EstimateDesignUpload[];
+  pages: EstimateDesignSourcePage[];
+  drawings: EstimateDesignDrawing[];
+  revisions: EstimateDesignRevision[];
+}
+
+export interface EstimateDesignDrawingUpdate extends EstimateDesignDrawing {
+  revision: EstimateDesignRevision;
+}

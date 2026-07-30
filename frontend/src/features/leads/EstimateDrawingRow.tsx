@@ -1,0 +1,77 @@
+import { useId, useState } from "react";
+
+import { ProtectedImage } from "../../components/design/ProtectedImage";
+import type { EstimateDesignDrawing } from "../../api/types";
+import { estimateDesignRevisionImageUrl } from "./estimateDesignApi";
+
+export interface EstimateDrawingRowProps {
+  drawing: EstimateDesignDrawing;
+  roomLabel: string;
+  scopeLabel: string;
+  onPreview: () => void;
+  onCorrect: () => void;
+  onReplace: () => void;
+  onHistory: () => void;
+}
+
+type EstimateDrawingRowWithRevisionProps = EstimateDrawingRowProps & {
+  revisionId?: string;
+  reviewStatus?: "draft" | "submitted" | "approved" | "changes_requested";
+};
+
+export function EstimateDrawingRow({
+  drawing,
+  roomLabel,
+  scopeLabel,
+  onPreview,
+  onCorrect,
+  onReplace,
+  onHistory,
+  revisionId,
+  reviewStatus = "draft"
+}: EstimateDrawingRowWithRevisionProps) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuId = useId();
+  const status = reviewStatus === "changes_requested" ? "Changes requested"
+    : reviewStatus === "approved" ? "Approved"
+      : reviewStatus === "submitted" ? "Awaiting client review"
+        : drawing.verified ? "Ready for client" : "Needs review";
+  const correctionAvailable = reviewStatus === "draft" || reviewStatus === "changes_requested";
+
+  return (
+    <article className="estimate-drawing-row" aria-label={`${drawing.displayTitle} drawing`}>
+      <ProtectedImage
+        source={estimateDesignRevisionImageUrl(revisionId ?? drawing.id)}
+        alt={`${drawing.displayTitle} thumbnail`}
+        className="estimate-drawing-row__thumbnail"
+      />
+      <div className="estimate-drawing-row__metadata">
+        <strong>{drawing.displayTitle}</strong>
+        <small>{roomLabel} · {scopeLabel}</small>
+      </div>
+      <span className={`estimate-drawing-row__status estimate-drawing-row__status--${drawing.verified ? "verified" : "review"}`}>{status}</span>
+      <button type="button" className="secondary-button estimate-drawing-row__preview" onClick={onPreview}>Preview</button>
+      <div className="estimate-drawing-row__menu-wrap">
+        <button
+          type="button"
+          className="secondary-button estimate-drawing-row__menu-trigger"
+          aria-label={`More actions for ${drawing.displayTitle}`}
+          aria-haspopup="menu"
+          aria-expanded={menuOpen}
+          aria-controls={menuId}
+          onClick={() => setMenuOpen((open) => !open)}
+        >
+          More
+        </button>
+        {menuOpen ? (
+          <div id={menuId} className="estimate-drawing-row__menu" role="menu" aria-label={`${drawing.displayTitle} actions`}>
+            {correctionAvailable && !drawing.verified ? <button type="button" role="menuitem" onClick={() => { setMenuOpen(false); onCorrect(); }}>Correct mapping or crop</button> : null}
+            {correctionAvailable && !drawing.verified ? <button type="button" role="menuitem" onClick={() => { setMenuOpen(false); onCorrect(); }}>Verify drawing</button> : null}
+            {reviewStatus === "changes_requested" ? <button type="button" role="menuitem" onClick={() => { setMenuOpen(false); onReplace(); }}>Upload replacement</button> : null}
+            <button type="button" role="menuitem" onClick={() => { setMenuOpen(false); onHistory(); }}>History</button>
+          </div>
+        ) : null}
+      </div>
+    </article>
+  );
+}
