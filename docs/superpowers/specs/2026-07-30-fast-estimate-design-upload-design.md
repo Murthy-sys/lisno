@@ -25,6 +25,20 @@ failure, the selected file remains available for another attempt and the existin
 error treatment is shown. A successful upload clears the selection and continues
 to poll the existing extraction workspace.
 
+## Upload and recovery controls
+
+The native file input must not appear as an unstyled browser control. The upload
+form presents a labeled `Choose file` button, the selected filename and file size,
+and a separate primary `Upload design plan` action. The filename wraps safely on
+small screens and the controls remain keyboard-accessible through the underlying
+file input.
+
+Failed extractions retain a visually distinct `Retry extraction` button beside
+the failure status. It uses the existing secondary-button visual language while
+making its recovery purpose clear, includes a pending `Retrying extraction…`
+state, and remains usable on mobile layouts. The failure message remains visible
+above the retry action.
+
 ## Extraction states
 
 After the upload API succeeds, the UI uses the persisted upload state to show a
@@ -84,6 +98,8 @@ work. It does not merely increase timeouts or remove safety limits.
 
 - Multipart upload tests verify byte-progress updates, successful completion,
   duplicate-submission prevention, and error cleanup.
+- UI tests verify the selected filename, accessible choose-file control, and
+  styled retry action remain available in ready, uploading, and failed states.
 - Worker tests verify title-band OCR produces one full-page proposal for each
   supplied-page fixture and preserves taxonomy proposals.
 - Worker tests verify missing title-block text reaches the current fallback path.
