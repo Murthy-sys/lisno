@@ -27,3 +27,8 @@
 ## Concern
 
 The plan's literal focused-test command uses `frontend/src/api/client.test.ts`; from the `frontend` package directory Vitest expects `src/api/client.test.ts`, while the literal path reports no test files. The equivalent package-relative command above was used for all verification.
+
+## Follow-up coverage fix
+
+- Added an XHR-specific stale-token `401` regression test: after a request begins with token A, replacing storage with token B before the XHR response leaves token B intact and emits no `lisno:unauthorized` event.
+- Verification: `npm test -- --run src/api/client.test.ts` (from `frontend`) — passed: 1 test file, 14 tests.

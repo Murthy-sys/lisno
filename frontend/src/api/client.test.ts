@@ -248,6 +248,27 @@ describe("apiClient", () => {
     window.removeEventListener("lisno:unauthorized", listener);
   });
 
+  it("ignores a stale unauthorized multipart response after the request token was replaced", async () => {
+    tokenStorage.set("token-a");
+    const XMLHttpRequest = installFakeXMLHttpRequest();
+    const listener = vi.fn();
+    window.addEventListener("lisno:unauthorized", listener);
+    const upload = apiClient.postMultipartWithProgress("/design-versions", new FormData(), vi.fn());
+    const xhr = XMLHttpRequest.instances[0];
+
+    tokenStorage.set("token-b");
+    xhr.status = 401;
+    xhr.responseText = JSON.stringify({
+      error: { code: "TOKEN_EXPIRED", message: "Session expired." }
+    });
+    xhr.onload?.();
+
+    await expect(upload).rejects.toMatchObject({ status: 401 });
+    expect(tokenStorage.get()).toBe("token-b");
+    expect(listener).not.toHaveBeenCalled();
+    window.removeEventListener("lisno:unauthorized", listener);
+  });
+
   it("rejects multipart uploads when XHR errors or is aborted", async () => {
     const XMLHttpRequest = installFakeXMLHttpRequest();
     const errored = apiClient.postMultipartWithProgress("/design-versions", new FormData(), vi.fn());
