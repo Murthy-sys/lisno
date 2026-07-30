@@ -102,12 +102,7 @@ estimateDesignDrawingSchema.pre("validate", function () {
 function validateMappingUpdate(this: mongoose.Query<unknown, unknown>) {
   const update = this.getUpdate();
   if (Array.isArray(update)) {
-    const touchesMapping = update.some((stage) => {
-      const value = stage as Record<string, unknown>;
-      return updateTouchesMapping(value) || "$replaceRoot" in value || "$replaceWith" in value;
-    });
-    if (touchesMapping) throw new Error("Pipeline updates cannot change mapping fields.");
-    return;
+    throw new Error("Pipeline updates cannot change mapping fields.");
   }
   const set = (update?.$set ?? {}) as Record<string, unknown>;
   const unset = (update?.$unset ?? {}) as Record<string, unknown>;

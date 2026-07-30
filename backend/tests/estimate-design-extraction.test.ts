@@ -545,7 +545,8 @@ describe("estimate design extraction and estimator verification", () => {
   it.each([
     ["$rename", { $rename: { roomId: "legacyRoomId" } }],
     ["$setOnInsert", { $setOnInsert: { roomId: "room-bedroom-1" } }],
-    ["pipeline $unset string", [{ $unset: "roomId" }]]
+    ["pipeline $unset string", [{ $unset: "roomId" }]],
+    ["pipeline $project inclusion", [{ $project: { active: 1 } }]]
   ])("rejects drawing mapping changes through %s", async (_operation, update) => {
     await expect(
       EstimateDesignDrawingModel.updateOne(
@@ -587,7 +588,8 @@ describe("estimate design extraction and estimator verification", () => {
   it.each([
     ["$rename", { $rename: { roomId: "legacyRoomId" } }],
     ["$setOnInsert", { $setOnInsert: { roomId: "room-bedroom-1" } }],
-    ["pipeline $unset string", [{ $unset: "roomId" }]]
+    ["pipeline $unset string", [{ $unset: "roomId" }]],
+    ["pipeline $project inclusion", [{ $project: { active: 1 } }]]
   ])("rejects revision mapping changes through %s", async (_operation, update) => {
     await expect(
       EstimateDesignRevisionModel.updateOne(

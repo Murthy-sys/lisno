@@ -94,12 +94,10 @@ estimateDesignRevisionSchema.pre("validate", function () {
 
 function rejectRevisionMappingUpdate(this: mongoose.Query<unknown, unknown>) {
   const update = this.getUpdate();
-  const touchesMapping = Array.isArray(update)
-    ? update.some((stage) => {
-      const value = stage as Record<string, unknown>;
-      return updateTouchesMapping(value) || "$replaceRoot" in value || "$replaceWith" in value;
-    })
-    : updateTouchesMapping((update ?? {}) as Record<string, unknown>);
+  if (Array.isArray(update)) {
+    throw new Error("Revision mapping snapshots are immutable.");
+  }
+  const touchesMapping = updateTouchesMapping((update ?? {}) as Record<string, unknown>);
   if (touchesMapping) throw new Error("Revision mapping snapshots are immutable.");
 }
 
