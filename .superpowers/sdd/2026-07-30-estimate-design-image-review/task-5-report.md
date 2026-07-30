@@ -183,3 +183,56 @@ origin allow-list behavior. Replacement responses are typed as either an
 immediate drawing/revision result or the exact queued wrapper
 `{ queued: true, upload }`; the UI invalidates/re-polls the workspace and
 announces which branch completed.
+
+## Fix round 3 — rendered estimator action coverage
+
+### RED / missing behavior
+
+Before this round, the frontend test file contained three tests and none drove
+the Retry, Remove, Verify, Submit, or replacement actions through the rendered
+UI and `fetch` boundary. In particular, rejected retry and removal mutations
+left the operator without a visible error message; the new failure interaction
+test failed until those alerts were added.
+
+### GREEN
+
+```text
+frontend: npm test -- --run src/features/leads/EstimateDesignUploads.test.tsx
+Test Files  1 passed (1)
+Tests       8 passed (8)
+
+frontend: npm run typecheck
+tsc -b --pretty false  # exit 0
+
+frontend: npm run build
+vite build             # exit 0
+```
+
+The production build retains only the existing Vite chunk-size warning.
+
+### Interaction contract exercised
+
+- Retry asserts the `POST /estimate-design-uploads/:id/retry` request has no
+  body, renders `Retrying…` while pending, and refreshes into queued polling.
+- Verify asserts the versioned PATCH URL and complete JSON mapping/crop body,
+  renders the verified workspace state, then submits with a bodyless POST.
+- Remove asserts the versioned DELETE JSON body, and its successful workspace
+  refresh removes the row. Failed retry/remove actions retain usable controls
+  and render actionable alerts.
+- Immediate replacement asserts the multipart `version` and `file` fields,
+  shows its success notice, and refreshes the replacement drawing state.
+- Queued replacement asserts the exact queued wrapper route response produces
+  the queued notice and the queued workspace/polling branch.
+
+### Files changed
+
+- `frontend/src/features/leads/EstimateDesignUploads.test.tsx`
+- `frontend/src/features/leads/EstimateDesignUploads.tsx`
+
+### Self-review
+
+The tests use complete workspace DTO-shaped fixtures, user-event interactions,
+and the production API client rather than implementation/source assertions.
+The only production change is two semantic error alerts for actual mutation
+failures that the interaction suite exposed. Existing query invalidation
+remains the single source of refreshed drawing and upload state.

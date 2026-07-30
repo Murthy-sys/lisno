@@ -159,6 +159,8 @@ export function EstimateDesignUploads({ estimateId, rooms, scopes }: EstimateDes
         </form>
       </header>
       {upload.isError ? <p role="alert" className="estimate-design-uploads__error">The plan could not be uploaded. Try the selected file again.</p> : null}
+      {retry.isError ? <p role="alert" className="estimate-design-uploads__error">The extraction could not be retried. Try again shortly.</p> : null}
+      {remove.isError ? <p role="alert" className="estimate-design-uploads__error">The drawing could not be removed. Refresh and try again.</p> : null}
       {formError ? <p role="alert" className="estimate-design-uploads__error">{formError}</p> : null}
       {actionNotice ? <p role="status" className="estimate-notice">{actionNotice}</p> : null}
       {workspace.isPending ? <p role="status">Loading design plans…</p> : null}

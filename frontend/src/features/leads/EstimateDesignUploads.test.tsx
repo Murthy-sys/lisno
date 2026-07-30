@@ -62,7 +62,10 @@ const drawings = [
 ];
 const response = (data: unknown, status = 200) => Response.json({ data }, { status });
 
-afterEach(() => vi.useRealTimers());
+afterEach(() => {
+  vi.useRealTimers();
+  vi.restoreAllMocks();
+});
 
 describe("EstimateDesignUploads", () => {
   it("keeps duplicate drawings in their stable room and scope group and leaves ambiguous drawings visible for placement", async () => {
@@ -136,4 +139,200 @@ describe("EstimateDesignUploads", () => {
     await new Promise((resolve) => window.setTimeout(resolve, 1_200));
     expect(getCount).toBe(terminalRequests);
   }, 10_000);
+
+  it("retries a failed extraction through the retry endpoint and enters the queued polling state", async () => {
+    const failedUpload = { id: "upload-failed", estimateId: "estimate-1", leadId: "lead-1", originalFilename: "failed.pdf", mimeType: "application/pdf", sizeBytes: 12, uploaderId: "user-1", uploadedAt: "2026-07-30T00:00:00.000Z", extractionStatus: "processing_failed", failureCode: "OCR_FAILED", failureMessage: "Could not read plan" };
+    let queued = false;
+    let resolveRetry: (value: Response) => void;
+    const requests: Array<{ url: string; init?: RequestInit }> = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+      const url = String(input);
+      requests.push({ url, init });
+      if (url.endsWith("/estimate-design-uploads/upload-failed/retry")) {
+        return new Promise<Response>((resolve) => { resolveRetry = resolve; });
+      }
+      if (url.endsWith("/estimates/estimate-1/design-uploads")) {
+        return Promise.resolve(response({ uploads: [{ ...failedUpload, extractionStatus: queued ? "queued" : "processing_failed" }], pages: [], drawings: [], revisions: [] }));
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+
+    const user = userEvent.setup();
+    renderWithQuery(<EstimateDesignUploads estimateId="estimate-1" rooms={rooms} scopes={scopes} />);
+    await user.click(await screen.findByRole("button", { name: "Retry extraction" }));
+    expect(screen.getByRole("button", { name: "Retrying…" })).toBeDisabled();
+    queued = true;
+    resolveRetry!(response({ ...failedUpload, extractionStatus: "queued", failureCode: null, failureMessage: null }));
+
+    expect(await screen.findByText("Queued")).toBeVisible();
+    const retry = requests.find((request) => request.url.endsWith("/estimate-design-uploads/upload-failed/retry"))!;
+    expect(retry.init?.method).toBe("POST");
+    expect(retry.init?.body).toBeUndefined();
+  });
+
+  it("verifies a drawing, sends its complete mapping, and submits the refreshed workspace", async () => {
+    const unverified = { ...drawings[0], id: "drawing-review", displayTitle: "Living review", verified: false };
+    const reviewRevision = { ...revisions[0], id: "revision-review", drawingId: unverified.id, label: unverified.displayTitle };
+    let verified = false;
+    const requests: Array<{ url: string; init?: RequestInit }> = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      requests.push({ url, init });
+      if (url.endsWith("/estimate-design-revisions/revision-review/image")) return new Response(new Blob(["image"], { type: "image/png" }));
+      if (url.endsWith("/estimate-design-drawings/drawing-review") && init?.method === "PATCH") {
+        verified = true;
+        return response({ ...unverified, verified: true, revision: { ...reviewRevision, revisionNumber: 2 } });
+      }
+      if (url.endsWith("/estimates/estimate-1/design-drawings/submit")) {
+        return response({ submittedCount: 1 });
+      }
+      if (url.endsWith("/estimates/estimate-1/design-uploads")) {
+        return response({
+          uploads: [{ id: "upload-1", estimateId: "estimate-1", leadId: "lead-1", originalFilename: "plan.pdf", mimeType: "application/pdf", sizeBytes: 12, uploaderId: "user-1", uploadedAt: "2026-07-30T00:00:00.000Z", extractionStatus: "estimator_review", failureCode: null, failureMessage: null }],
+          pages: [page], drawings: [{ ...unverified, verified }], revisions: [{ ...reviewRevision, revisionNumber: verified ? 2 : 1 }]
+        });
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+
+    const user = userEvent.setup();
+    renderWithQuery(<EstimateDesignUploads estimateId="estimate-1" rooms={rooms} scopes={scopes} />);
+    await user.click(await screen.findByRole("button", { name: "More actions for Living review" }));
+    await user.click(screen.getByRole("menuitem", { name: "Verify drawing" }));
+    expect(screen.getByRole("checkbox", { name: "Mark mapping verified" })).toBeChecked();
+    await user.click(screen.getByRole("button", { name: "Verify drawing" }));
+
+    const patch = await vi.waitFor(() => {
+      const request = requests.find((entry) => entry.init?.method === "PATCH");
+      expect(request).toBeDefined();
+      return request!;
+    });
+    expect(patch.url).toContain("/estimate-design-drawings/drawing-review");
+    expect(JSON.parse(String(patch.init?.body))).toEqual({
+      version: 1, displayTitle: "Living review", roomId: "room-living", scopeSectionId: "FC",
+      crop: { x: 0, y: 0, width: 400, height: 300 }, verified: true
+    });
+    expect(await screen.findByText("All drawings are verified.")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Submit drawings to client" }));
+    const submit = await vi.waitFor(() => {
+      const request = requests.find((entry) => entry.url.endsWith("/estimates/estimate-1/design-drawings/submit"));
+      expect(request).toBeDefined();
+      return request!;
+    });
+    expect(submit.init?.method).toBe("POST");
+    expect(submit.init?.body).toBeUndefined();
+  });
+
+  it("removes an unverified draft through the versioned delete endpoint and refreshes the drawing list", async () => {
+    const removable = { ...drawings[0], id: "drawing-remove", displayTitle: "Remove me", verified: false };
+    const removableRevision = { ...revisions[0], id: "revision-remove", drawingId: removable.id };
+    let removed = false;
+    const requests: Array<{ url: string; init?: RequestInit }> = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      requests.push({ url, init });
+      if (url.endsWith("/estimate-design-revisions/revision-remove/image")) return new Response(new Blob(["image"], { type: "image/png" }));
+      if (url.endsWith("/estimate-design-drawings/drawing-remove") && init?.method === "DELETE") {
+        removed = true;
+        return response({ id: removable.id, active: false });
+      }
+      if (url.endsWith("/estimates/estimate-1/design-uploads")) return response({
+        uploads: [{ id: "upload-1", estimateId: "estimate-1", leadId: "lead-1", originalFilename: "plan.pdf", mimeType: "application/pdf", sizeBytes: 12, uploaderId: "user-1", uploadedAt: "2026-07-30T00:00:00.000Z", extractionStatus: "estimator_review", failureCode: null, failureMessage: null }],
+        pages: [page], drawings: removed ? [] : [removable], revisions: removed ? [] : [removableRevision]
+      });
+      throw new Error(`Unexpected request: ${url}`);
+    });
+
+    const user = userEvent.setup();
+    renderWithQuery(<EstimateDesignUploads estimateId="estimate-1" rooms={rooms} scopes={scopes} />);
+    await user.click(await screen.findByRole("button", { name: "More actions for Remove me" }));
+    await user.click(screen.getByRole("menuitem", { name: "Remove drawing" }));
+    const remove = await vi.waitFor(() => {
+      const request = requests.find((entry) => entry.init?.method === "DELETE");
+      expect(request).toBeDefined();
+      return request!;
+    });
+    expect(remove.url).toContain("/estimate-design-drawings/drawing-remove");
+    expect(JSON.parse(String(remove.init?.body))).toEqual({ version: 1 });
+    await vi.waitFor(() => expect(screen.queryByRole("article", { name: "Remove me drawing" })).not.toBeInTheDocument());
+  });
+
+  it("keeps retry and removal controls usable and explains failed actions", async () => {
+    const removable = { ...drawings[0], id: "drawing-error", displayTitle: "Error drawing", verified: false };
+    const removableRevision = { ...revisions[0], id: "revision-error", drawingId: removable.id };
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.endsWith("/estimate-design-revisions/revision-error/image")) return new Response(new Blob(["image"], { type: "image/png" }));
+      if (url.endsWith("/estimate-design-uploads/upload-error/retry") || (url.endsWith("/estimate-design-drawings/drawing-error") && init?.method === "DELETE")) {
+        return Response.json({ error: { code: "ACTION_FAILED", message: "Try again" } }, { status: 500 });
+      }
+      if (url.endsWith("/estimates/estimate-1/design-uploads")) return response({
+        uploads: [{ id: "upload-error", estimateId: "estimate-1", leadId: "lead-1", originalFilename: "error.pdf", mimeType: "application/pdf", sizeBytes: 12, uploaderId: "user-1", uploadedAt: "2026-07-30T00:00:00.000Z", extractionStatus: "processing_failed", failureCode: "OCR_FAILED", failureMessage: "Could not read plan" }],
+        pages: [page], drawings: [removable], revisions: [removableRevision]
+      });
+      throw new Error(`Unexpected request: ${url}`);
+    });
+
+    const user = userEvent.setup();
+    renderWithQuery(<EstimateDesignUploads estimateId="estimate-1" rooms={rooms} scopes={scopes} />);
+    await user.click(await screen.findByRole("button", { name: "Retry extraction" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("The extraction could not be retried.");
+    expect(screen.getByRole("button", { name: "Retry extraction" })).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: "More actions for Error drawing" }));
+    await user.click(screen.getByRole("menuitem", { name: "Remove drawing" }));
+    expect(await screen.findByText("The drawing could not be removed. Refresh and try again.")).toBeVisible();
+    expect(screen.getByRole("button", { name: "More actions for Error drawing" })).toBeEnabled();
+  });
+
+  async function replaceThroughUi(queued: boolean) {
+    const replacementDrawing = { ...drawings[0], id: queued ? "drawing-queued" : "drawing-immediate", displayTitle: queued ? "Queued replacement" : "Immediate replacement" };
+    const replacementRevision = { ...revisions[0], id: queued ? "revision-queued" : "revision-immediate", drawingId: replacementDrawing.id, reviewStatus: "changes_requested" as const };
+    const replacementUpload = { id: "replacement-upload", estimateId: "estimate-1", leadId: "lead-1", originalFilename: "changed.pdf", mimeType: "application/pdf", sizeBytes: 14, uploaderId: "user-1", uploadedAt: "2026-07-30T00:00:00.000Z", extractionStatus: "queued" as const, failureCode: null, failureMessage: null };
+    let replaced = false;
+    const requests: Array<{ url: string; init?: RequestInit }> = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      requests.push({ url, init });
+      if (url.includes("/estimate-design-revisions/") && url.endsWith("/image")) return new Response(new Blob(["image"], { type: "image/png" }));
+      if (url.endsWith(`/estimate-design-drawings/${replacementDrawing.id}/replacement`)) {
+        replaced = true;
+        return response(queued ? { queued: true, upload: replacementUpload } : { ...replacementDrawing, displayTitle: "Replacement complete", revision: { ...replacementRevision, revisionNumber: 2, reviewStatus: "draft" } });
+      }
+      if (url.endsWith("/estimates/estimate-1/design-uploads")) return response({
+        uploads: queued && replaced ? [replacementUpload] : [{ id: "upload-1", estimateId: "estimate-1", leadId: "lead-1", originalFilename: "plan.pdf", mimeType: "application/pdf", sizeBytes: 12, uploaderId: "user-1", uploadedAt: "2026-07-30T00:00:00.000Z", extractionStatus: "estimator_review", failureCode: null, failureMessage: null }],
+        pages: [page], drawings: [{ ...replacementDrawing, displayTitle: !queued && replaced ? "Replacement complete" : replacementDrawing.displayTitle }], revisions: [{ ...replacementRevision, revisionNumber: !queued && replaced ? 2 : 1, reviewStatus: !queued && replaced ? "draft" : "changes_requested" }]
+      });
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    const user = userEvent.setup();
+    renderWithQuery(<EstimateDesignUploads estimateId="estimate-1" rooms={rooms} scopes={scopes} />);
+    await user.click(await screen.findByRole("button", { name: `More actions for ${replacementDrawing.displayTitle}` }));
+    await user.click(screen.getByRole("menuitem", { name: "Upload replacement" }));
+    const file = new File(["replacement"], "changed.pdf", { type: "application/pdf" });
+    await user.upload(screen.getByLabelText("Replacement drawing file"), file);
+    await user.click(screen.getByRole("button", { name: "Upload replacement" }));
+    const post = await vi.waitFor(() => {
+      const request = requests.find((entry) => entry.url.endsWith(`/estimate-design-drawings/${replacementDrawing.id}/replacement`));
+      expect(request).toBeDefined();
+      return request!;
+    });
+    expect(post.init?.method).toBe("POST");
+    expect(post.init?.body).toBeInstanceOf(FormData);
+    const form = post.init?.body as FormData;
+    expect(form.get("version")).toBe("1");
+    expect((form.get("file") as File).name).toBe("changed.pdf");
+    return { queued, replacementDrawing };
+  }
+
+  it("updates the rendered drawing after an immediate replacement response", async () => {
+    await replaceThroughUi(false);
+    expect(await screen.findByRole("status")).toHaveTextContent("Replacement drawing created.");
+    expect(await screen.findByText("Replacement complete")).toBeVisible();
+  });
+
+  it("shows the queued replacement notice and enters the queued polling branch", async () => {
+    await replaceThroughUi(true);
+    expect(await screen.findByRole("status")).toHaveTextContent("Replacement queued for extraction.");
+    expect(await screen.findByText("Queued")).toBeVisible();
+  });
 });
