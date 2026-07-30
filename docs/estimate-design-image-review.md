@@ -77,6 +77,14 @@ every active latest revision before final estimate approval creates the
 project. Individually approved drawings and all drawings after final estimate
 approval are read-only.
 
+## Estimate drawing mapping
+
+Backend exact-title aliases and included estimate lines are authoritative.
+When that pair is included, `TV UNIT - BEDROOM 1` maps to Bedroom 1 / `CA01` /
+Carpentry. `TV UNIT` remains Misc when `CA01` is included in multiple rooms.
+Assigning an item is optional for submission, but verifying every active drawing
+is required. Clients see submitted unresolved drawings under Misc.
+
 ## Verification
 
 ```bash

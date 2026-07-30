@@ -102,6 +102,22 @@ The migration is safe to rerun after it succeeds because it writes only missing
 or changed compatibility fields. Do not run `npm run seed` as part of the
 migration; the seed command resets demo-domain data.
 
+### Estimate design mapping migration
+
+Back up production first; operators must verify that the archive exists and is
+restorable before the write run:
+
+```bash
+mongodump --uri="$MONGODB_URI" --archive="lisno-before-estimate-design-mapping.archive.gz" --gzip
+cd backend
+npm run migrate:estimate-design-mapping -- --dry-run
+npm run migrate:estimate-design-mapping
+npm run migrate:estimate-design-mapping -- --dry-run
+```
+
+Review every `conflicts` entry in the JSON report. The final dry run must report
+`drawingsChanged: 0` and `revisionsChanged: 0`. Do not run `npm run seed`.
+
 ## Drawing-title extraction
 
 OCR creates application-internal `section` records only for supported drawing

@@ -41,3 +41,20 @@ behavior.
 See [the workflow runbook](../docs/estimate-design-image-review.md) and
 [the worker README](../ocr-worker/README.md) for supported formats, native HEIF
 requirements, processing limits, and verification commands.
+
+### Estimate design mapping migration
+
+Back up production first and verify the archive exists and is restorable before
+the write command:
+
+```bash
+mongodump --uri="$MONGODB_URI" --archive="lisno-before-estimate-design-mapping.archive.gz" --gzip
+cd backend
+npm run migrate:estimate-design-mapping -- --dry-run
+npm run migrate:estimate-design-mapping
+npm run migrate:estimate-design-mapping -- --dry-run
+```
+
+The command prints one JSON report. Review every `conflicts` entry; the final
+dry run must report `drawingsChanged: 0` and `revisionsChanged: 0`. Do not run
+`npm run seed` for this operation.
