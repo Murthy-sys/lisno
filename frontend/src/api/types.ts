@@ -630,3 +630,5 @@ export interface EstimateDesignWorkspace {
 export interface EstimateDesignDrawingUpdate extends EstimateDesignDrawing {
   revision: EstimateDesignRevision;
 }
+
+export type EstimateDesignReplacementResult = EstimateDesignDrawingUpdate | EstimateDesignUpload;

@@ -175,6 +175,8 @@ export interface EstimateDesignService {
   completeWorkerJob(jobId: string, claimToken: string, processedAt: string, result: EstimateWorkerResult): Promise<EstimateWorkerJobRecord>;
   failWorkerJob(jobId: string, claimToken: string, failedAt: string, code: string, message: string): Promise<EstimateWorkerJobRecord | null>;
   editDrawing(user: AuthenticatedUser, drawingId: string, change: EditEstimateDrawingInput): Promise<Record<string, unknown>>;
+  retryUpload(user: AuthenticatedUser, uploadId: string): Promise<EstimateDesignUploadDto>;
+  removeDrawing(user: AuthenticatedUser, drawingId: string, version: number): Promise<{ id: string; active: false }>;
   submitDrawings(user: AuthenticatedUser, estimateId: string): Promise<{ submittedCount: number }>;
   listClient(user: AuthenticatedUser, estimateId: string): Promise<EstimateDesignWorkspaceDto & {
     readiness: EstimateDesignApprovalReadiness;
@@ -1311,6 +1313,66 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
         ...drawingDto(savedDrawing),
         revision: revisionDto(savedRevision)
       };
+    },
+
+    async retryUpload(user, uploadId) {
+      const upload = await EstimateDesignUploadModel.findById(uploadId).lean();
+      if (!upload) throw estimateNotFound();
+      await requireOwnedEditableEstimate(user, String(upload.estimateId));
+      const queuedAt = now();
+      let saved: Record<string, any> | null = null;
+      await withMongoTransaction(async (session) => {
+        const currentUpload = await EstimateDesignUploadModel.findById(uploadId).session(session).lean();
+        if (!currentUpload) throw estimateNotFound();
+        const estimate = await requireOwnedEstimate(user, String(currentUpload.estimateId), session);
+        if (!isEstimateDesignEditable(estimate.status)) drawingLocked();
+        const job = await EstimateDesignExtractionJobModel.findOne({ uploadId }).session(session).lean();
+        if (!job || currentUpload.extractionStatus !== "processing_failed" || job.status !== "processing_failed") {
+          extractionStateConflict();
+        }
+        await guardDesignLifecycle(estimate, session);
+        const resetJob = await EstimateDesignExtractionJobModel.updateOne(
+          { _id: job._id, uploadId, status: "processing_failed" },
+          { $set: { status: "queued", queuedAt, startedAt: null, completedAt: null, leaseExpiresAt: null, claimId: null, failureCode: null, failureMessage: null, workerResultId: null } },
+          { session }
+        );
+        requireTransition(resetJob, extractionStateConflict);
+        const resetUpload = await EstimateDesignUploadModel.updateOne(
+          { _id: uploadId, estimateId: currentUpload.estimateId, extractionStatus: "processing_failed" },
+          { $set: { extractionStatus: "queued", failureCode: null, failureMessage: null } },
+          { session }
+        );
+        requireTransition(resetUpload, extractionStateConflict);
+        saved = { ...currentUpload, extractionStatus: "queued", failureCode: null, failureMessage: null };
+      });
+      if (!saved) throw new Error("Estimate upload retry did not complete.");
+      return uploadDto(saved);
+    },
+
+    async removeDrawing(user, drawingId, version) {
+      const drawing = await EstimateDesignDrawingModel.findById(drawingId).lean();
+      if (!drawing) throw estimateNotFound();
+      await requireOwnedEditableEstimate(user, String(drawing.estimateId));
+      const latest = await EstimateDesignRevisionModel.findOne({ drawingId }).sort({ revisionNumber: -1 }).lean();
+      if (!latest || !drawing.active || drawing.verified || latest.reviewStatus !== "draft" || Number(latest.revisionNumber) !== version) {
+        drawingLocked();
+      }
+      await withMongoTransaction(async (session) => {
+        const currentDrawing = await EstimateDesignDrawingModel.findById(drawingId).session(session).lean();
+        if (!currentDrawing) throw estimateNotFound();
+        const estimate = await requireOwnedEstimate(user, String(currentDrawing.estimateId), session);
+        if (!isEstimateDesignEditable(estimate.status)) drawingLocked();
+        const currentRevision = await EstimateDesignRevisionModel.findOne({ drawingId }).sort({ revisionNumber: -1 }).session(session).lean();
+        if (!currentRevision || !currentDrawing.active || currentDrawing.verified || currentRevision.reviewStatus !== "draft" || Number(currentRevision.revisionNumber) !== version) drawingLocked();
+        await guardDesignLifecycle(estimate, session);
+        const removed = await EstimateDesignDrawingModel.updateOne(
+          { _id: drawingId, estimateId: currentDrawing.estimateId, active: true, verified: false },
+          { $set: { active: false } },
+          { session }
+        );
+        requireTransition(removed, staleDrawing);
+      });
+      return { id: drawingId, active: false };
     },
 
     async submitDrawings(user, estimateId) {

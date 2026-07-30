@@ -17,6 +17,9 @@ export interface EstimateDrawingRowProps {
 type EstimateDrawingRowWithRevisionProps = EstimateDrawingRowProps & {
   revisionId?: string;
   reviewStatus?: "draft" | "submitted" | "approved" | "changes_requested";
+  onVerify?: () => void;
+  onRemove?: () => void;
+  needsCorrection?: boolean;
 };
 
 export function EstimateDrawingRow({
@@ -28,7 +31,10 @@ export function EstimateDrawingRow({
   onReplace,
   onHistory,
   revisionId,
-  reviewStatus = "draft"
+  reviewStatus = "draft",
+  onVerify,
+  onRemove,
+  needsCorrection = false
 }: EstimateDrawingRowWithRevisionProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuId = useId();
@@ -37,6 +43,7 @@ export function EstimateDrawingRow({
       : reviewStatus === "submitted" ? "Awaiting client review"
         : drawing.verified ? "Ready for client" : "Needs review";
   const correctionAvailable = reviewStatus === "draft" || reviewStatus === "changes_requested";
+  const unverified = !drawing.verified || needsCorrection;
 
   return (
     <article className="estimate-drawing-row" aria-label={`${drawing.displayTitle} drawing`}>
@@ -65,8 +72,9 @@ export function EstimateDrawingRow({
         </button>
         {menuOpen ? (
           <div id={menuId} className="estimate-drawing-row__menu" role="menu" aria-label={`${drawing.displayTitle} actions`}>
-            {correctionAvailable && !drawing.verified ? <button type="button" role="menuitem" onClick={() => { setMenuOpen(false); onCorrect(); }}>Correct mapping or crop</button> : null}
-            {correctionAvailable && !drawing.verified ? <button type="button" role="menuitem" onClick={() => { setMenuOpen(false); onCorrect(); }}>Verify drawing</button> : null}
+            {correctionAvailable && unverified ? <button type="button" role="menuitem" onClick={() => { setMenuOpen(false); onCorrect(); }}>Correct mapping or crop</button> : null}
+            {correctionAvailable && unverified ? <button type="button" role="menuitem" onClick={() => { setMenuOpen(false); (onVerify ?? onCorrect)(); }}>Verify drawing</button> : null}
+            {correctionAvailable && !drawing.verified && onRemove ? <button type="button" role="menuitem" onClick={() => { setMenuOpen(false); onRemove(); }}>Remove drawing</button> : null}
             {reviewStatus === "changes_requested" ? <button type="button" role="menuitem" onClick={() => { setMenuOpen(false); onReplace(); }}>Upload replacement</button> : null}
             <button type="button" role="menuitem" onClick={() => { setMenuOpen(false); onHistory(); }}>History</button>
           </div>

@@ -54,7 +54,7 @@ const drawings = [
   },
   {
     id: "drawing-ambiguous", uploadId: "upload-1", sourcePageId: "page-1", estimateId: "estimate-1",
-    active: true, verified: false, roomId: null, scopeSectionId: "EL",
+    active: true, verified: true, roomId: "room-retired", scopeSectionId: "EL",
     detectedTitle: "Bedroom electrical", displayTitle: "Bedroom electrical", source: "ocr",
     roomConfidence: 0.4, scopeConfidence: 0.96, ocrConfidence: 0.89,
     roomEvidence: [], scopeEvidence: [{ value: "electrical" }]
@@ -87,6 +87,7 @@ describe("EstimateDesignUploads", () => {
     expect(within(scope).getByText("Living ceiling")).toBeVisible();
     expect(within(scope).getByText("Living detail")).toBeVisible();
     expect(within(scope).getAllByRole("button", { name: /Preview/ })).toHaveLength(2);
+    expect(screen.getByRole("button", { name: "Submit drawings to client" })).toBeDisabled();
     expect(within(scope).getByRole("img", { name: "Living ceiling thumbnail" })).toHaveClass("estimate-drawing-row__thumbnail");
 
     const livingMenu = within(scope).getByRole("button", { name: "More actions for Living ceiling" });

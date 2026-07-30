@@ -407,6 +407,46 @@ beforeAll(async () => {
 afterEach(() => vi.restoreAllMocks());
 
 describe("estimate design extraction and estimator verification", () => {
+  it("retries only an owned failed estimate upload and atomically resets its job", async () => {
+    const { app, uploads, jobs } = setup();
+    Object.assign(uploads[0]!, { extractionStatus: "processing_failed", failureCode: "OCR_FAILED", failureMessage: "OCR failed." });
+    Object.assign(jobs[0]!, { status: "processing_failed", completedAt: NOW, failureCode: "OCR_FAILED", failureMessage: "OCR failed." });
+
+    const retried = await owner(request(app).post("/api/v1/estimate-design-uploads/upload-1/retry")).send();
+
+    expect(retried.status).toBe(200);
+    expect(retried.body.data).toMatchObject({ id: "upload-1", extractionStatus: "queued", failureCode: null, failureMessage: null });
+    expect(jobs[0]).toMatchObject({ status: "queued", claimId: null, leaseExpiresAt: null, completedAt: null, failureCode: null, failureMessage: null });
+  });
+
+  it("does not leak or retry a non-owned estimate upload", async () => {
+    const { app, uploads, jobs } = setup();
+    Object.assign(uploads[0]!, { extractionStatus: "processing_failed" });
+    Object.assign(jobs[0]!, { status: "processing_failed" });
+    const stranger = request(app).post("/api/v1/estimate-design-uploads/upload-1/retry").set(
+      "Authorization",
+      `Bearer ${jwt.sign({ id: "user-designer-vikram", role: "designer" }, SECRET, { expiresIn: 900 })}`
+    );
+
+    await stranger.expect(403);
+    expect(uploads[0]!.extractionStatus).toBe("processing_failed");
+  });
+
+  it("soft-removes an owned unverified draft drawing with its current revision", async () => {
+    const { app, drawings, revisions } = setup();
+    const leased = await claim(app);
+    await complete(app, leased.body.data.claimToken);
+    const drawing = drawings[0]!;
+    drawing.verified = false;
+
+    const removed = await owner(request(app).delete(`/api/v1/estimate-design-drawings/${drawing._id}`)).send({ version: 1 });
+
+    expect(removed.status).toBe(200);
+    expect(removed.body.data).toEqual({ id: drawing._id, active: false });
+    expect(drawing.active).toBe(false);
+    expect(revisions.filter((revision) => revision.drawingId === drawing._id)).toHaveLength(1);
+  });
+
   it("leases only the oldest claimable job across both job collections", async () => {
     const { app, repository, jobs } = setup();
     await repository.enqueueExtractionJob({

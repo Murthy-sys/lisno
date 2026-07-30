@@ -2,6 +2,7 @@ import { apiClient } from "../../api/client";
 import type {
   CropRect,
   EstimateDesignDrawingUpdate,
+  EstimateDesignReplacementResult,
   EstimateDesignUpload,
   EstimateDesignWorkspace
 } from "../../api/types";
@@ -44,11 +45,20 @@ export function replaceEstimateDrawing(drawingId: string, version: number, file:
   const body = new FormData();
   body.append("version", String(version));
   body.append("file", file);
-  return apiClient.postMultipart<EstimateDesignDrawingUpdate>(
+  return apiClient.postMultipart<EstimateDesignReplacementResult>(
     `/estimate-design-drawings/${encodeURIComponent(drawingId)}/replacement`,
     body
   );
 }
+
+export const retryEstimateDesignUpload = (uploadId: string) => apiClient.post<EstimateDesignUpload>(
+  `/estimate-design-uploads/${encodeURIComponent(uploadId)}/retry`
+);
+
+export const removeEstimateDrawing = (drawingId: string, version: number) => apiClient.delete<{ id: string; active: false }>(
+  `/estimate-design-drawings/${encodeURIComponent(drawingId)}`,
+  { version }
+);
 
 export const submitEstimateDrawings = (estimateId: string) =>
   apiClient.post<{ submittedCount: number }>(

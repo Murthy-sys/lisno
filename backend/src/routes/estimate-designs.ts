@@ -53,6 +53,7 @@ const drawingDecisionSchema = z.discriminatedUnion("decision", [
 const replacementBodySchema = z.object({
   version: z.coerce.number().int().positive()
 }).strict();
+const removeDrawingSchema = z.object({ version: z.number().int().positive() }).strict();
 
 export function createEstimateDesignsRouter(
   authService: AuthService,
@@ -83,6 +84,9 @@ export function createEstimateDesignsRouter(
     } catch (error) {
       next(error);
     }
+  });
+  router.post("/estimate-design-uploads/:uploadId/retry", protectedRoute, estimatorOnly, async (request, response, next) => {
+    try { response.json({ data: await estimateDesigns.retryUpload(request.authenticatedUser!, request.params.uploadId as string) }); } catch (error) { next(error); }
   });
 
   router.get("/estimate-design-source-pages/:pageId/image", protectedRoute, estimatorOnly, streamImage((user, id) => estimateDesigns.sourceImage(user, id)));
@@ -159,6 +163,15 @@ export function createEstimateDesignsRouter(
       } catch (error) {
         next(error);
       }
+    }
+  );
+  router.delete(
+    "/estimate-design-drawings/:drawingId",
+    protectedRoute,
+    estimatorOnly,
+    validateBody(removeDrawingSchema),
+    async (request, response, next) => {
+      try { response.json({ data: await estimateDesigns.removeDrawing(request.authenticatedUser!, request.params.drawingId as string, request.body.version) }); } catch (error) { next(error); }
     }
   );
   router.post(

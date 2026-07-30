@@ -109,3 +109,57 @@ remove drawing, or manual drawing/crop creation endpoints. Per task direction,
 this frontend does not present unsupported actions or invent requests for them.
 The UI is organized around a workspace API boundary and row action callbacks so
 those actions can be added once the corresponding backend routes are delivered.
+
+## Fix round 1 — review findings
+
+### RED / root cause
+
+- A verified drawing with a no-longer-configured room ID was considered resolved
+  because the UI checked only `verified` and null IDs. It therefore disappeared
+  from both groups and Needs placement.
+- The initial public API had no retry or soft-remove routes.
+- The Verify menu reused the correction dialog without changing its local
+  verification value.
+
+### Added API surface
+
+| Boundary | Route | Result |
+| --- | --- | --- |
+| retry failed extraction | `POST /estimate-design-uploads/:uploadId/retry` | reset queued `EstimateDesignUpload` |
+| remove unverified draft | `DELETE /estimate-design-drawings/:drawingId` `{ version }` | `{ id, active: false }` |
+| replacement | existing replacement route | typed union of immediate drawing/revision or queued upload |
+
+Retry is owner/role guarded and atomically resets only a failed matching upload
+and job. Removal is owner/role/lifecycle/version guarded, limited to an active,
+unverified draft, and only soft-deactivates the drawing; revision history is not
+altered.
+
+### GREEN verification
+
+```text
+backend: npm test -- --run tests/estimate-design-extraction.test.ts
+Test Files  1 passed (1)
+Tests      26 passed (26)
+
+backend: npm run typecheck
+tsc --noEmit  # exit 0
+
+frontend: VITE_API_URL=/api/v1 npm test -- --run src/features/leads/EstimateDesignUploads.test.tsx src/features/leads/LeadEstimateWorkspace.test.tsx
+Test Files  2 passed (2)
+Tests       3 passed (3)
+
+frontend: npm run typecheck
+frontend: VITE_API_URL=/api/v1 npm run build
+Both exit 0; build has only the existing chunk-size warning.
+```
+
+### Additional self-review
+
+- Unknown or removed room/scope IDs are now explicitly unresolved, remain in
+  Needs placement, provide correction affordances, and block submission.
+- Failed uploads expose Retry; draft unverified rows expose Remove; Verify
+  opens with verification selected and submits `verified: true` unless the user
+  deliberately changes it.
+- Upload and replacement accept lists include `image/heif` and `.heif`.
+- Replacement response typing preserves both backend outcomes; query invalidation
+  and queued/processing polling handle the queued-upload branch.
