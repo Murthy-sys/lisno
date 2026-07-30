@@ -1041,6 +1041,46 @@ describe("estimate design extraction and estimator verification", () => {
     expect({ drawings, revisions }).toEqual(before);
   });
 
+  it("rejects a cross-room exact item pair without writes", async () => {
+    const { app, estimates, drawings, revisions } = setup();
+    const leased = await claim(app);
+    await complete(app, leased.body.data.claimToken);
+    estimates[0]!.lineItems.push({
+      catalogueId: "CA02",
+      roomName: "Bedroom 2",
+      specification: "wardrobe",
+      unit: "lot",
+      rate: 1,
+      quantity: 1,
+      included: true,
+      amount: 1
+    });
+    const before = structuredClone({ drawings, revisions });
+
+    const response = await owner(
+      request(app).put(`/api/v1/estimate-design-drawings/${drawings[0]!._id}/estimate-item`)
+    ).send({ version: 1, roomId: "room-bedroom-1", catalogueId: "CA02" });
+
+    expect(response.status).toBe(400);
+    expect(response.body.error.code).toBe("INVALID_ESTIMATE_DESIGN_ASSIGNMENT");
+    expect({ drawings, revisions }).toEqual(before);
+  });
+
+  it("reports a stale exact assignment before evaluating a lifecycle lock", async () => {
+    const { app, estimates, drawings, revisions } = setup();
+    const leased = await claim(app);
+    await complete(app, leased.body.data.claimToken);
+    estimates[0]!.status = "sent_to_client";
+    revisions.find((revision) => revision.drawingId === drawings[0]!._id)!.reviewStatus = "changes_requested";
+
+    const response = await owner(
+      request(app).put(`/api/v1/estimate-design-drawings/${drawings[0]!._id}/estimate-item`)
+    ).send({ version: 2, roomId: "room-bedroom-1", catalogueId: "CA01" });
+
+    expect(response.status).toBe(409);
+    expect(response.body.error.code).toBe("STALE_ESTIMATE_DRAWING");
+  });
+
   it("lets the estimator crop a missing drawing from an owned normalized source page", async () => {
     const {
       app,
@@ -1134,6 +1174,42 @@ describe("estimate design extraction and estimator verification", () => {
       ...legacy,
       displayTitle: "Ambiguous bedroom item"
     });
+    expect(ambiguous.status).toBe(409);
+    expect(ambiguous.body.error.code).toBe("EXACT_ESTIMATE_ITEM_REQUIRED");
+    expect({ drawings, revisions }).toEqual(before);
+  });
+
+  it("resolves legacy PATCH mappings uniquely and rejects ambiguous pairs without selecting by order", async () => {
+    const { app, estimates, drawings, revisions } = setup();
+    const leased = await claim(app);
+    await complete(app, leased.body.data.claimToken);
+    const drawing = drawings[0]!;
+
+    const unique = await owner(
+      request(app).patch(`/api/v1/estimate-design-drawings/${drawing._id}`)
+    ).send({ version: 1, roomId: "room-bedroom-1", scopeSectionId: "CA" });
+    expect(unique.status).toBe(200);
+    expect(unique.body.data).toMatchObject({
+      roomId: "room-bedroom-1",
+      scopeSectionId: "CA",
+      catalogueId: "CA01",
+      mappingStatus: "estimator_assigned"
+    });
+
+    estimates[0]!.lineItems.push({
+      catalogueId: "CA04",
+      roomName: "Bedroom 1",
+      specification: "panel",
+      unit: "lot",
+      rate: 1,
+      quantity: 1,
+      included: true,
+      amount: 1
+    });
+    const before = structuredClone({ drawings, revisions });
+    const ambiguous = await owner(
+      request(app).patch(`/api/v1/estimate-design-drawings/${drawing._id}`)
+    ).send({ version: 2, roomId: "room-bedroom-1", scopeSectionId: "CA" });
     expect(ambiguous.status).toBe(409);
     expect(ambiguous.body.error.code).toBe("EXACT_ESTIMATE_ITEM_REQUIRED");
     expect({ drawings, revisions }).toEqual(before);
@@ -1433,7 +1509,7 @@ describe("estimate design extraction and estimator verification", () => {
   });
 
   it("creates a new immutable draft revision for estimator corrections", async () => {
-    const { app, drawings, revisions } = setup();
+    const { app, drawings, revisions, auditEvents } = setup();
     const leased = await claim(app);
     await complete(app, leased.body.data.claimToken);
     const drawing = drawings[0]!;
@@ -1463,6 +1539,22 @@ describe("estimate design extraction and estimator verification", () => {
       .toHaveLength(2);
     expect(revisions.find((revision) => revision.revisionNumber === 1)?.crop)
       .toEqual({ x: 5, y: 6, width: 20, height: 10 });
+    expect(auditEvents).toContainEqual(expect.objectContaining({
+      action: "estimate_design_mapping_corrected",
+      entityId: drawing._id,
+      oldValues: expect.objectContaining({
+        roomId: "room-bedroom-1",
+        scopeSectionId: "CA",
+        catalogueId: "CA01",
+        mappingStatus: "estimator_assigned"
+      }),
+      newValues: expect.objectContaining({
+        roomId: "room-bedroom-1",
+        scopeSectionId: "CA",
+        catalogueId: "CA01",
+        mappingStatus: "estimator_assigned"
+      })
+    }));
   });
 
   it("rejects stale corrections and edits to approved drawings", async () => {

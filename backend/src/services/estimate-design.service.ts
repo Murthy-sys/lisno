@@ -1438,9 +1438,9 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
         .sort({ revisionNumber: -1 })
         .lean();
       if (!latest) throw estimateNotFound();
+      if (Number(latest.revisionNumber) !== assignment.version) staleDrawing();
       if (!estimateAllowsDrawingEdit(String(estimate.status), latest)) drawingLocked();
       if (!drawing.active || !["draft", "changes_requested"].includes(String(latest.reviewStatus))) drawingLocked();
-      if (Number(latest.revisionNumber) !== assignment.version) staleDrawing();
       resolveExactMapping(assignment, estimate);
 
       let savedDrawing: Record<string, any> | null = null;
@@ -1459,6 +1459,9 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
           .sort({ revisionNumber: -1 })
           .session(session)
           .lean();
+        if (!current || Number(current.revisionNumber) !== assignment.version) {
+          staleDrawing();
+        }
         if (
           !currentDrawing.active ||
           !currentUpload ||
@@ -1466,8 +1469,6 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
           String(currentUpload.estimateId) !== String(currentDrawing.estimateId) ||
           String(currentUpload.extractionStatus) !== "estimator_review" ||
           String(currentJob.status) !== "estimator_review" ||
-          !current ||
-          Number(current.revisionNumber) !== assignment.version ||
           !estimateAllowsDrawingEdit(String(currentEstimate.status), current) ||
           !["draft", "changes_requested"].includes(String(current.reviewStatus))
         ) {
@@ -1730,8 +1731,7 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
               occurredAt: now().toISOString(),
               oldValues: {
                 displayTitle: String(currentDrawing.displayTitle),
-                roomId: currentDrawing.roomId ?? null,
-                scopeSectionId: currentDrawing.scopeSectionId ?? null,
+                ...mappingSnapshot(currentDrawing),
                 revisionNumber: Number(current.revisionNumber)
               },
               newValues: {
