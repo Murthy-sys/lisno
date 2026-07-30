@@ -43,6 +43,13 @@ def test_rejects_title_markers_without_a_value(text):
     assert extract_title_block(lines, image_width=1_000, image_height=1_000) is None
 
 
+@pytest.mark.parametrize("text", ["TITLE NO", "TITLE NUMBER", "TITLE-CODE"])
+def test_requires_a_colon_after_the_title_field_marker(text):
+    lines = [((80, 840, 390, 880), text, 0.98)]
+
+    assert extract_title_block(lines, image_width=1_000, image_height=1_000) is None
+
+
 def test_rejects_title_markers_outside_the_lower_band():
     lines = [
         ((80, 300, 390, 340), "TITLE : TV UNIT", 0.98),

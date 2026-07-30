@@ -5,7 +5,12 @@ from pathlib import Path
 import pytest
 from PIL import Image, ImageDraw, ImageFont
 
-from lisno_ocr.contracts import EstimateTaxonomy, InvalidSourceError, TaxonomyTerm
+from lisno_ocr.contracts import (
+    EstimateTaxonomy,
+    InvalidSourceError,
+    OcrError,
+    TaxonomyTerm,
+)
 from lisno_ocr.extractor import Extractor
 from lisno_ocr.settings import LayoutSettings
 from lisno_ocr.title_classifier import OcrLine, classify_drawing_titles
@@ -377,7 +382,7 @@ def test_pdf_title_blocks_emit_one_full_page_section_and_preserve_taxonomy(tmp_p
     assert ocr.calls == 2
 
 
-def test_pdf_without_a_title_block_falls_back_to_existing_region_extraction(tmp_path):
+def test_pdf_without_a_true_title_field_falls_back_to_existing_region_extraction(tmp_path):
     source = tmp_path / "no-title-block.pdf"
     image = Image.new("RGB", (900, 700), "white")
     try:
@@ -391,7 +396,7 @@ def test_pdf_without_a_title_block_falls_back_to_existing_region_extraction(tmp_
     ocr = PageAwareFakePaddleOCR3([
         {
             "rec_boxes": [(50, 20, 250, 48)],
-            "rec_texts": ["MATERIAL : TV UNIT"],
+            "rec_texts": ["TITLE NUMBER"],
             "rec_scores": [0.99],
         },
         {
@@ -411,6 +416,33 @@ def test_pdf_without_a_title_block_falls_back_to_existing_region_extraction(tmp_
         "height": page.height,
     }
     assert ocr.calls == 2
+
+
+def test_pdf_title_block_fast_path_accounts_for_both_serialized_image_fields(
+    monkeypatch, tmp_path
+):
+    source = tmp_path / "title-block.pdf"
+    image = Image.new("RGB", (900, 700), "white")
+    try:
+        image.save(source, format="PDF")
+    finally:
+        image.close()
+
+    ocr = PageAwareFakePaddleOCR3([{
+        "rec_boxes": [(50, 20, 370, 48)],
+        "rec_texts": ["TITLE : TV UNIT"],
+        "rec_scores": [0.97],
+    }])
+    from lisno_ocr import extractor as module
+
+    monkeypatch.setattr(module, "_png_base64", lambda _image: "A" * 40)
+
+    with pytest.raises(OcrError, match="output is too large"):
+        Extractor(
+            ocr_engine=ocr,
+            render_scale=1,
+            max_output_bytes=59,
+        ).extract(source)
 
 
 def test_tiff_decode_failures_remain_classified_as_invalid_sources(tmp_path):

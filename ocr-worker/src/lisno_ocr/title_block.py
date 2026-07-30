@@ -6,7 +6,10 @@ from collections.abc import Sequence
 
 
 _LOWER_TITLE_BLOCK_START = 0.70
-_TITLE_MARKER = re.compile(r"^\s*title\b", re.IGNORECASE)
+_TITLE_FIELD = re.compile(
+    r"^\s*title\s*:\s*(?P<value>\S(?:.*\S)?)\s*$",
+    re.IGNORECASE,
+)
 
 OcrLineTuple = tuple[tuple[int, int, int, int], str, float]
 
@@ -33,12 +36,10 @@ def extract_title_block_candidate(
     for box, text, confidence in lines:
         if (box[1] + box[3]) / 2 < lower_band_top:
             continue
-        match = _TITLE_MARKER.match(unicodedata.normalize("NFKC", text))
+        match = _TITLE_FIELD.match(unicodedata.normalize("NFKC", text))
         if match is None:
             continue
-        value = match.string[match.end():].strip()
-        if value.startswith(":"):
-            value = value[1:].strip()
+        value = match.group("value")
         if value:
             candidates.append((value, float(confidence)))
 

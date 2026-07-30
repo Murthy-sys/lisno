@@ -243,7 +243,9 @@ class Extractor:
             return None
         label, confidence = candidate
         page_base64 = _png_base64(image)
-        used = _decoded_base64_size(page_base64)
+        # The page image is encoded once, but appears in both the page and
+        # full-page section payload fields.
+        used = _decoded_base64_size(page_base64) * 2
         _require_budget(used, remaining_bytes)
         section = ExtractedSection(
             label=" ".join(label.split()),
