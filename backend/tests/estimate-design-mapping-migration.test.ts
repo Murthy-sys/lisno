@@ -182,6 +182,7 @@ describe("estimate design mapping migration", () => {
       conflicts: [{ recordId: "context-race", reason: "estimate_changed" }]
     });
     expect(drawings[0]).toMatchObject({ roomId: "", scopeSectionId: "", catalogueId: "" });
+    expect(drawings[0]).not.toHaveProperty("estimateDesignMappingMigrationVersion");
     estimates[0]!.updatedAt = originalUpdatedAt;
   });
 
@@ -229,7 +230,67 @@ describe("estimate design mapping migration", () => {
     });
     expect(drawings[0]).toMatchObject({ roomId: "bed-1", scopeSectionId: "CA", catalogueId: "CA01", mappingStatus: "auto_mapped" });
     expect(revisions[0]).toMatchObject({ roomId: "bed-1", scopeSectionId: "CA", catalogueId: "CA01", mappingStatus: "auto_mapped" });
+    expect(drawings[0]).toMatchObject({ estimateDesignMappingMigrationVersion: 1 });
+    expect(revisions[0]).toMatchObject({ estimateDesignMappingMigrationVersion: 1 });
     await expect(migrateEstimateDesignMappings()).resolves.toMatchObject({ drawingsChanged: 0, revisionsChanged: 0 });
+  });
+
+  it("marks invalid unique-title legacy tuples so the true-null Misc repair stays idempotent", async () => {
+    const drawings = [{
+      _id: "invalid-unique-drawing", estimateId: "estimate-1", detectedTitle: "TV UNIT - BEDROOM 1",
+      roomId: "bed-1", scopeSectionId: "CA", catalogueId: "CA02"
+    }];
+    const revisions = [{
+      _id: "invalid-unique-revision", drawingId: "invalid-unique-drawing", label: "TV UNIT - BEDROOM 1",
+      roomId: "bed-1", scopeSectionId: "CA", catalogueId: "CA02"
+    }];
+    installMutableState(drawings, revisions);
+
+    await expect(migrateEstimateDesignMappings()).resolves.toMatchObject({
+      drawingsChanged: 1,
+      revisionsChanged: 1,
+      misc: 2,
+      conflictCount: 2,
+      conflicts: [
+        { recordId: "invalid-unique-drawing", reason: "invalid_legacy_mapping" },
+        { recordId: "invalid-unique-revision", reason: "invalid_legacy_mapping" }
+      ]
+    });
+    for (const record of [...drawings, ...revisions]) {
+      expect(record).toMatchObject({ roomId: null, scopeSectionId: null, catalogueId: null, mappingStatus: "misc", estimateDesignMappingMigrationVersion: 1 });
+    }
+    await expect(migrateEstimateDesignMappings()).resolves.toMatchObject({ drawingsChanged: 0, revisionsChanged: 0, conflictCount: 0 });
+  });
+
+  it("does not trust or overwrite an incoherent tuple carrying the current migration marker", async () => {
+    const drawings = [{
+      _id: "incoherent-marker", estimateId: "estimate-1", detectedTitle: "TV UNIT - BEDROOM 1",
+      roomId: "bed-1", scopeSectionId: null, catalogueId: "CA01", mappingStatus: "misc", estimateDesignMappingMigrationVersion: 1
+    }];
+    installState(drawings, []);
+    const bulkWrite = vi.spyOn(EstimateDesignDrawingModel.collection, "bulkWrite");
+    await expect(migrateEstimateDesignMappings()).resolves.toMatchObject({
+      drawingsChanged: 0,
+      conflictCount: 1,
+      conflicts: [{ recordId: "incoherent-marker", reason: "invalid_legacy_mapping" }]
+    });
+    expect(bulkWrite).not.toHaveBeenCalled();
+    expect(drawings[0]).toMatchObject({ roomId: "bed-1", scopeSectionId: null, catalogueId: "CA01", mappingStatus: "misc", estimateDesignMappingMigrationVersion: 1 });
+  });
+
+  it("does not count a mapping write when post-write marker verification fails", async () => {
+    const drawings = [{ _id: "marker-race", estimateId: "estimate-1", detectedTitle: "TV UNIT - BEDROOM 1", roomId: "", scopeSectionId: "", catalogueId: "" }];
+    installMutableState(drawings, []);
+    vi.mocked(EstimateDesignDrawingModel.collection.bulkWrite).mockImplementation(async (operations: Array<{ updateOne: { update: { $set: LegacyRecord } } }>) => {
+      Object.assign(drawings[0]!, operations[0]!.updateOne.update.$set);
+      delete drawings[0]!.estimateDesignMappingMigrationVersion;
+      return {} as never;
+    });
+    await expect(migrateEstimateDesignMappings()).resolves.toMatchObject({
+      drawingsChanged: 0,
+      conflictCount: 1,
+      conflicts: [{ recordId: "marker-race", reason: "concurrent_change" }]
+    });
   });
 
   it("replaces planned mapping conflicts with a concurrent-change conflict", async () => {

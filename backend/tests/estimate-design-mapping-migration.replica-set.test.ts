@@ -60,6 +60,7 @@ describe("estimate design mapping migration replica set", () => {
     await EstimateDesignDrawingModel.collection.insertOne({ _id: "drawing-cas", estimateId: "estimate-cas", detectedTitle: "TV UNIT - BEDROOM 1", roomId: "", scopeSectionId: "", catalogueId: "" });
     const rawBulkWrite = EstimateDesignDrawingModel.collection.bulkWrite.bind(EstimateDesignDrawingModel.collection);
     vi.spyOn(EstimateDesignDrawingModel.collection, "bulkWrite").mockImplementation(async (operations, options) => {
+      expect(operations[0]?.updateOne.filter.estimateDesignMappingMigrationVersion).toEqual({ $exists: false });
       await EstimateDesignDrawingModel.collection.updateOne({ _id: "drawing-cas" }, { $set: { roomId: "bed-1", scopeSectionId: "CA", catalogueId: "CA01", mappingStatus: "estimator_assigned" } });
       return rawBulkWrite(operations, options);
     });
@@ -69,6 +70,24 @@ describe("estimate design mapping migration replica set", () => {
       conflicts: [{ recordId: "drawing-cas", reason: "concurrent_change" }]
     });
     await expect(EstimateDesignDrawingModel.collection.findOne({ _id: "drawing-cas" })).resolves.toMatchObject({ mappingStatus: "estimator_assigned" });
+  });
+
+  it("marks invalid unique-title drawing and revision repairs so their Misc tuples remain idempotent", async () => {
+    await replica.clear();
+    await insertEstimate("estimate-invalid-unique");
+    await EstimateDesignDrawingModel.collection.insertOne({ _id: "drawing-invalid-unique", estimateId: "estimate-invalid-unique", detectedTitle: "TV UNIT - BEDROOM 1", roomId: "bed-1", scopeSectionId: "CA", catalogueId: "CA02" });
+    await EstimateDesignRevisionModel.collection.insertOne({ _id: "revision-invalid-unique", drawingId: "drawing-invalid-unique", label: "TV UNIT - BEDROOM 1", roomId: "bed-1", scopeSectionId: "CA", catalogueId: "CA02" });
+
+    await expect(migrateEstimateDesignMappings()).resolves.toMatchObject({ drawingsChanged: 1, revisionsChanged: 1, misc: 2, conflictCount: 2 });
+    for (const [collection, id] of [[EstimateDesignDrawingModel.collection, "drawing-invalid-unique"], [EstimateDesignRevisionModel.collection, "revision-invalid-unique"]] as const) {
+      const raw = await collection.findOne({ _id: id });
+      expect(raw?.roomId).toBeNull();
+      expect(raw?.scopeSectionId).toBeNull();
+      expect(raw?.catalogueId).toBeNull();
+      expect(raw?.mappingStatus).toBe("misc");
+      expect(raw?.estimateDesignMappingMigrationVersion).toBe(1);
+    }
+    await expect(migrateEstimateDesignMappings()).resolves.toMatchObject({ drawingsChanged: 0, revisionsChanged: 0, conflictCount: 0 });
   });
 
   it("resolves explicit all-null Misc tuples and keeps ambiguous or invalid BSON tuples literally null", async () => {

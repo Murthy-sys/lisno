@@ -16,6 +16,12 @@ import { EstimateDesignRevisionModel } from "../models/EstimateDesignRevision.js
 
 const mappingFields = ["roomId", "scopeSectionId", "catalogueId", "mappingStatus"] as const;
 const identifierFields = ["roomId", "scopeSectionId", "catalogueId"] as const;
+// This private raw-BSON marker distinguishes a migration-produced Misc tuple
+// from an indistinguishable pre-migration all-null legacy tuple. It is never
+// part of application schemas, DTOs, or runtime mapping behavior.
+const migrationMarkerField = "estimateDesignMappingMigrationVersion";
+const migrationVersion = 1;
+const migrationCasFields = [...mappingFields, migrationMarkerField] as const;
 const legacyNullSentinels = new Set(["", "null", "undefined"]);
 const conflictDetailLimit = 1_000;
 
@@ -76,6 +82,7 @@ type PlannedMappingWrite = {
 type MappingResolution = {
   mapping: EstimateDesignMapping;
   conflict: Omit<EstimateDesignMappingMigrationConflict, "recordKind" | "recordId"> | null;
+  skipWrite?: boolean;
 };
 
 function emptyReport(dryRun: boolean): EstimateDesignMappingMigrationReport {
@@ -113,6 +120,11 @@ function unresolvedLegacyMapping(
 }
 
 function mappingForLegacyRecord(record: LegacyRecord, title: string, context: EstimateMappingContext): MappingResolution {
+  if (record[migrationMarkerField] === migrationVersion) {
+    const finalized = coherentStoredMapping(record);
+    if (finalized) return { mapping: finalized, conflict: null, skipWrite: true };
+    return { ...unresolvedLegacyMapping(title, "invalid_legacy_mapping"), skipWrite: true };
+  }
   const roomId = normalizeLegacyMappingIdentifier(record.roomId);
   const scopeSectionId = normalizeLegacyMappingIdentifier(record.scopeSectionId);
   const catalogueId = normalizeLegacyMappingIdentifier(record.catalogueId);
@@ -201,7 +213,7 @@ function countNormalizedIdentifiers(record: LegacyRecord) {
 }
 
 function exactOriginalMappingFilter(original: LegacyRecord) {
-  return Object.fromEntries(mappingFields.map((field) => [
+  return Object.fromEntries(migrationCasFields.map((field) => [
     field,
     Object.hasOwn(original, field)
       ? { $exists: true, $eq: original[field] }
@@ -210,7 +222,18 @@ function exactOriginalMappingFilter(original: LegacyRecord) {
 }
 
 function targetMatches(record: LegacyRecord, target: EstimateDesignMapping) {
-  return mappingFields.every((field) => Object.hasOwn(record, field) && record[field] === target[field]);
+  return mappingFields.every((field) => Object.hasOwn(record, field) && record[field] === target[field]) &&
+    record[migrationMarkerField] === migrationVersion;
+}
+
+function coherentStoredMapping(record: LegacyRecord): EstimateDesignMapping | null {
+  const mapping = Object.fromEntries(mappingFields.map((field) => [field, record[field]]));
+  try {
+    assertEstimateDesignMapping(mapping);
+    return mapping as EstimateDesignMapping;
+  } catch {
+    return null;
+  }
 }
 
 function estimateVersion(estimate: LegacyRecord): EstimateContextVersion {
@@ -299,7 +322,7 @@ async function flushMigrationBatch(
   await collection.bulkWrite(current.map((write) => ({
     updateOne: {
       filter: { _id: write.id, ...exactOriginalMappingFilter(write.original) },
-      update: { $set: write.target }
+      update: { $set: { ...write.target, [migrationMarkerField]: migrationVersion } }
     }
   })) as never, { ordered: false });
   const stored = await collection.find({ _id: { $in: current.map((write) => write.id) } } as never).toArray() as LegacyRecord[];
@@ -322,12 +345,13 @@ function plan(
   contextEstimateId?: string,
   contextVersion?: EstimateContextVersion
 ): PlannedMappingWrite | null {
+  if (resolution.skipWrite) return null;
   if (valuesMatchTarget(record, resolution.mapping)) return null;
   return {
     id: record._id,
     recordKind,
     title,
-    original: Object.fromEntries(mappingFields.filter((field) => Object.hasOwn(record, field)).map((field) => [field, record[field]])),
+    original: Object.fromEntries(migrationCasFields.filter((field) => Object.hasOwn(record, field)).map((field) => [field, record[field]])),
     target: resolution.mapping,
     contextEstimateId,
     contextVersion,
