@@ -12,6 +12,7 @@ export interface EstimateDrawingRowProps {
   onCorrect: () => void;
   onReplace: () => void;
   onHistory: () => void;
+  onAssignItem?: () => void;
   changeSummary?: string | null;
   focusOnRender?: boolean;
   onFocused?: () => void;
@@ -33,6 +34,7 @@ export function EstimateDrawingRow({
   onCorrect,
   onReplace,
   onHistory,
+  onAssignItem,
   changeSummary,
   focusOnRender = false,
   onFocused,
@@ -93,6 +95,7 @@ export function EstimateDrawingRow({
           <div id={menuId} className="estimate-drawing-row__menu" role="menu" aria-label={`${drawing.displayTitle} actions`}>
             {correctionAvailable && unverified ? <button type="button" role="menuitem" onClick={() => { setMenuOpen(false); onCorrect(); }}>Correct mapping or crop</button> : null}
             {correctionAvailable && unverified ? <button type="button" role="menuitem" onClick={() => { setMenuOpen(false); (onVerify ?? onCorrect)(); }}>Verify drawing</button> : null}
+            {correctionAvailable && onAssignItem ? <button type="button" role="menuitem" onClick={() => { setMenuOpen(false); onAssignItem(); }}>{drawing.mappingStatus === "misc" ? "Assign estimate item" : "Change estimate item"}</button> : null}
             {correctionAvailable && !drawing.verified && onRemove ? <button type="button" role="menuitem" onClick={() => { setMenuOpen(false); onRemove(); }}>Remove drawing</button> : null}
             {reviewStatus === "changes_requested" ? <button type="button" role="menuitem" onClick={() => { setMenuOpen(false); onReplace(); }}>Upload replacement</button> : null}
             <button type="button" role="menuitem" onClick={() => { setMenuOpen(false); onHistory(); }}>History</button>

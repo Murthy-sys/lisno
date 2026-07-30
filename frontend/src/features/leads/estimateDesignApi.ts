@@ -52,12 +52,24 @@ export const editEstimateDrawing = (
   input
 );
 
+export const assignEstimateDrawingItem = (
+  drawingId: string,
+  input: {
+    version: number;
+    roomId: string;
+    catalogueId: string;
+  }
+) => apiClient.put<EstimateDesignDrawingUpdate>(
+  `/estimate-design-drawings/${encodeURIComponent(drawingId)}/estimate-item`,
+  input
+);
+
 export const createManualEstimateDrawing = (
   pageId: string,
   input: {
     displayTitle: string;
     roomId: string;
-    scopeSectionId: string;
+    catalogueId: string;
     crop: CropRect;
   }
 ) => apiClient.post<EstimateDesignDrawingUpdate>(

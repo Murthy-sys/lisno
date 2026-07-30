@@ -14,6 +14,7 @@ import { ProgressBar } from "../../components/ui/ProgressBar";
 import { EstimateDrawingRow } from "./EstimateDrawingRow";
 import {
   createManualEstimateDrawing,
+  assignEstimateDrawingItem,
   editEstimateDrawing,
   estimateDesignKeys,
   estimateDesignRevisionImageUrl,
@@ -31,10 +32,18 @@ export interface EstimateDesignPlacementOption {
   label: string;
 }
 
+export interface EstimateDesignItemOption {
+  roomId: string;
+  catalogueId: string;
+  label: string;
+  scopeLabel: string;
+}
+
 interface EstimateDesignUploadsProps {
   estimateId: string;
   rooms: EstimateDesignPlacementOption[];
   scopes: EstimateDesignPlacementOption[];
+  items?: EstimateDesignItemOption[];
 }
 
 type DrawingSelection = { drawing: EstimateDesignDrawing; revision: EstimateDesignRevision };
@@ -66,12 +75,12 @@ function formatBytes(bytes: number) {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
-export function EstimateDesignUploads({ estimateId, rooms, scopes }: EstimateDesignUploadsProps) {
+export function EstimateDesignUploads({ estimateId, rooms, scopes, items = [] }: EstimateDesignUploadsProps) {
   const client = useQueryClient();
   const [file, setFile] = useState<File>();
   const [uploadProgress, setUploadProgress] = useState<number>();
   const [selection, setSelection] = useState<DrawingSelection>();
-  const [mode, setMode] = useState<"preview" | "correct" | "history" | "replace">();
+  const [mode, setMode] = useState<"preview" | "correct" | "assign" | "history" | "replace">();
   const [replacement, setReplacement] = useState<File>();
   const [verifyOnOpen, setVerifyOnOpen] = useState(false);
   const [formError, setFormError] = useState("");
@@ -102,6 +111,19 @@ export function EstimateDesignUploads({ estimateId, rooms, scopes }: EstimateDes
       editEstimateDrawing(drawing.id, { ...input, version: revision.revisionNumber }),
     onSuccess: () => {
       closeDialog();
+      void client.invalidateQueries({ queryKey: estimateDesignKeys.workspace(estimateId) });
+    }
+  });
+  const assign = useMutation({
+    mutationFn: ({ drawing, revision, input }: DrawingSelection & {
+      input: { roomId: string; catalogueId: string };
+    }) => assignEstimateDrawingItem(drawing.id, {
+      version: revision.revisionNumber,
+      ...input
+    }),
+    onSuccess: () => {
+      closeDialog();
+      setActionNotice("Estimate item assigned.");
       void client.invalidateQueries({ queryKey: estimateDesignKeys.workspace(estimateId) });
     }
   });
@@ -149,10 +171,18 @@ export function EstimateDesignUploads({ estimateId, rooms, scopes }: EstimateDes
   const activeDrawings = (workspace.data?.drawings ?? []).filter((drawing) => drawing.active && latest.has(drawing.id));
   const roomIds = new Set(rooms.map((room) => room.id));
   const scopeIds = new Set(scopes.map((scope) => scope.id));
-  const unresolved = activeDrawings.filter((drawing) => !drawing.verified || !drawing.roomId || !drawing.scopeSectionId || !roomIds.has(drawing.roomId) || !scopeIds.has(drawing.scopeSectionId));
+  const miscDrawings = activeDrawings.filter((drawing) => drawing.mappingStatus === "misc");
+  const unverifiedDrawings = activeDrawings.filter((drawing) => !drawing.verified);
+  const hasCompleteMapping = (drawing: EstimateDesignDrawing) =>
+    Boolean(drawing.roomId && drawing.scopeSectionId && drawing.catalogueId);
+  const placementDrawings = activeDrawings.filter((drawing) =>
+    drawing.mappingStatus !== "misc" && (!hasCompleteMapping(drawing) || !roomIds.has(drawing.roomId!) || !scopeIds.has(drawing.scopeSectionId!))
+  );
   const grouped = useMemo(() => {
     const result = new Map<string, EstimateDesignDrawing[]>();
-    activeDrawings.filter((drawing) => drawing.verified && drawing.roomId && drawing.scopeSectionId).forEach((drawing) => {
+    activeDrawings.filter((drawing) =>
+      drawing.mappingStatus !== "misc" && hasCompleteMapping(drawing)
+    ).forEach((drawing) => {
       const key = `${drawing.roomId}\u0000${drawing.scopeSectionId}`;
       result.set(key, [...(result.get(key) ?? []), drawing]);
     });
@@ -187,16 +217,17 @@ export function EstimateDesignUploads({ estimateId, rooms, scopes }: EstimateDes
         focusRevision.revisionNumber === revision.revisionNumber
       }
       onFocused={clearDrawingFocus}
-      needsCorrection={!drawing.roomId || !drawing.scopeSectionId || !roomIds.has(drawing.roomId) || !scopeIds.has(drawing.scopeSectionId)}
+      needsCorrection={false}
       onPreview={() => open({ drawing, revision }, "preview")}
       onCorrect={() => open({ drawing, revision }, "correct")}
       onVerify={() => open({ drawing, revision }, "correct", true)}
+      onAssignItem={() => open({ drawing, revision }, "assign")}
       onRemove={() => remove.mutate({ drawing, revision })}
       onReplace={() => open({ drawing, revision }, "replace")}
       onHistory={() => open({ drawing, revision }, "history")}
     />;
   };
-  const readyToSubmit = activeDrawings.length > 0 && unresolved.length === 0 &&
+  const readyToSubmit = activeDrawings.length > 0 && unverifiedDrawings.length === 0 &&
     workspace.data?.uploads.every((upload) => upload.extractionStatus === "estimator_review" || upload.extractionStatus === "approved");
 
   return (
@@ -221,19 +252,21 @@ export function EstimateDesignUploads({ estimateId, rooms, scopes }: EstimateDes
       {workspace.data ? <>
         {workspace.data.uploads.length ? <ul className="estimate-design-uploads__status-list" aria-label="Design upload status">{workspace.data.uploads.map((item) => <li key={item.id}><span>{item.originalFilename}</span><strong>{statusLabel(item.extractionStatus)}</strong>{item.failureMessage ? <small>{item.failureMessage}</small> : null}{item.extractionStatus === "processing_failed" && item.canRetry ? <button type="button" className="secondary-button estimate-design-uploads__retry" disabled={retry.isPending} onClick={() => retry.mutate(item.id)}>{retry.isPending ? "Retrying extraction…" : "Retry extraction"}</button> : null}</li>)}</ul> : <p className="estimate-design-uploads__empty">Upload a PDF or plan image to extract drawings for this estimate.</p>}
         {workspace.data.pages.length ? <button type="button" className="secondary-button" onClick={() => setManualOpen(true)}>Add missing drawing</button> : null}
-        {unresolved.length ? <section className="estimate-design-uploads__placement" aria-label="Needs placement"><header><h3>Needs placement</h3><p>These extracted drawings need a verified room and scope before client submission.</p></header>{unresolved.map((drawing) => row(drawing, drawing.roomId ? rooms.find((room) => room.id === drawing.roomId)?.label ?? "Unknown room" : "Unassigned room", drawing.scopeSectionId ? scopes.find((scope) => scope.id === drawing.scopeSectionId)?.label ?? "Unknown scope" : "Unassigned scope"))}</section> : null}
+        {placementDrawings.length ? <section className="estimate-design-uploads__placement" aria-label="Needs placement"><header><h3>Needs placement</h3><p>These extracted drawings need a complete estimate item assignment.</p></header>{placementDrawings.map((drawing) => row(drawing, drawing.roomId ? rooms.find((room) => room.id === drawing.roomId)?.label ?? "Unknown room" : "Unassigned room", drawing.scopeSectionId ? scopes.find((scope) => scope.id === drawing.scopeSectionId)?.label ?? "Unknown scope" : "Unassigned scope"))}</section> : null}
+        {miscDrawings.length ? <section className="estimate-design-uploads__misc" aria-label="Misc drawings"><header><h3>Misc</h3><p>No exact estimate item is assigned. You can still submit after verifying the drawing.</p></header>{miscDrawings.map((drawing) => row(drawing, "Misc", "Unassigned item"))}</section> : null}
         {rooms.flatMap((room) => scopes.map((scope) => ({ room, scope, drawings: grouped.get(`${room.id}\u0000${scope.id}`) ?? [] }))).filter((group) => group.drawings.length).map((group) => <section className="estimate-design-uploads__group" aria-label={`${group.room.label}, ${group.scope.label} drawings`} key={`${group.room.id}:${group.scope.id}`}><h3>{group.room.label} <span>→</span> {group.scope.label}</h3>{group.drawings.map((drawing) => row(drawing, group.room.label, group.scope.label))}</section>)}
-        {activeDrawings.length ? <footer className="estimate-design-uploads__footer"><span>{unresolved.length ? `${unresolved.length} drawing${unresolved.length === 1 ? "" : "s"} need verification.` : "All drawings are verified."}</span><button type="button" className="button button--primary" disabled={!readyToSubmit || submit.isPending} onClick={() => submit.mutate()}>{submit.isPending ? "Submitting…" : "Submit drawings to client"}</button></footer> : null}
+        {activeDrawings.length ? <footer className="estimate-design-uploads__footer"><span>{unverifiedDrawings.length ? `${unverifiedDrawings.length} drawing${unverifiedDrawings.length === 1 ? "" : "s"} still need visual verification.` : miscDrawings.length ? `${miscDrawings.length} verified Misc drawing${miscDrawings.length === 1 ? "" : "s"} can be submitted without assignment.` : "All drawings are verified and assigned."}</span><button type="button" className="button button--primary" disabled={!readyToSubmit || submit.isPending} onClick={() => submit.mutate()}>{submit.isPending ? "Submitting…" : "Submit drawings to client"}</button></footer> : null}
         {submit.isError ? <p role="alert" className="estimate-design-uploads__error">The drawings could not be submitted. Verify every active drawing and try again.</p> : null}
       </> : null}
       {selection && mode === "preview" ? <PreviewDialog selection={selection} onClose={closeDialog} /> : null}
-      {selection && mode === "correct" ? <CorrectionDialog selection={selection} defaultVerified={verifyOnOpen} rooms={rooms} scopes={scopes} page={workspace.data?.pages.find((page) => page.id === selection.revision.sourcePageId) ?? workspace.data?.pages.find((page) => page.id === selection.drawing.sourcePageId)} busy={correct.isPending} error={correct.isError ? "The correction was not saved." : ""} onSubmit={(input) => correct.mutate({ ...selection, input })} onClose={closeDialog} /> : null}
+      {selection && mode === "correct" ? <CorrectionDialog selection={selection} defaultVerified={verifyOnOpen} page={workspace.data?.pages.find((page) => page.id === selection.revision.sourcePageId) ?? workspace.data?.pages.find((page) => page.id === selection.drawing.sourcePageId)} busy={correct.isPending} error={correct.isError ? "The correction was not saved." : ""} onSubmit={(input) => correct.mutate({ ...selection, input })} onClose={closeDialog} /> : null}
+      {selection && mode === "assign" ? <EstimateItemAssignmentDialog selection={selection} rooms={rooms} items={items} busy={assign.isPending} error={assign.isError ? "The estimate item was not assigned." : ""} onSubmit={(input) => assign.mutate({ ...selection, input })} onClose={closeDialog} /> : null}
       {selection && mode === "history" ? <HistoryDialog revisions={(workspace.data?.revisions ?? []).filter((revision) => revision.drawingId === selection.drawing.id)} onClose={closeDialog} /> : null}
       {selection && mode === "replace" ? <ReplacementDialog file={replacement} busy={replace.isPending} error={replace.isError ? "The replacement was not uploaded." : ""} onChange={setReplacement} onSubmit={() => replacement && replace.mutate({ ...selection, file: replacement })} onClose={closeDialog} /> : null}
       {manualOpen && workspace.data?.pages.length ? <ManualDrawingDialog
         pages={workspace.data.pages}
         rooms={rooms}
-        scopes={scopes}
+        items={items}
         busy={createManual.isPending}
         error={createManual.isError ? "The missing drawing could not be added." : ""}
         onSubmit={(pageId, input) => createManual.mutate({ pageId, input })}
@@ -261,14 +294,20 @@ function PreviewDialog({ selection, onClose }: { selection: DrawingSelection; on
   />;
 }
 
-function CorrectionDialog({ selection, defaultVerified, rooms, scopes, page, busy, error, onSubmit, onClose }: { selection: DrawingSelection; defaultVerified: boolean; rooms: EstimateDesignPlacementOption[]; scopes: EstimateDesignPlacementOption[]; page?: { width: number; height: number }; busy: boolean; error: string; onSubmit: (input: DrawingChange) => void; onClose: () => void }) {
+function CorrectionDialog({ selection, defaultVerified, page, busy, error, onSubmit, onClose }: { selection: DrawingSelection; defaultVerified: boolean; page?: { width: number; height: number }; busy: boolean; error: string; onSubmit: (input: DrawingChange) => void; onClose: () => void }) {
   const [title, setTitle] = useState(selection.drawing.displayTitle);
-  const [roomId, setRoomId] = useState(selection.drawing.roomId ?? "");
-  const [scopeSectionId, setScopeSectionId] = useState(selection.drawing.scopeSectionId ?? "");
   const [verified, setVerified] = useState(selection.drawing.verified || defaultVerified);
   const [crop, setCrop] = useState(selection.revision.crop);
   const [validation, setValidation] = useState("");
-  return <Dialog title={`${defaultVerified ? "Verify" : "Correct"} ${selection.drawing.displayTitle}`} eyebrow="Drawing placement" onClose={onClose} busy={busy}><form className="estimate-drawing-correction" onSubmit={(event) => { event.preventDefault(); if (!title.trim() || !roomId || !scopeSectionId) { setValidation("Choose a room and scope and provide a drawing title."); return; } if (!page || !cropIsWithinPage(crop, page)) { setValidation("Crop boundaries must remain inside the source page."); return; } onSubmit({ displayTitle: title, roomId, scopeSectionId, crop, verified }); }}><label>Drawing title<input value={title} onChange={(event) => setTitle(event.target.value)} /></label><label>Room<select value={roomId} onChange={(event) => setRoomId(event.target.value)}><option value="">Choose room</option>{rooms.map((room) => <option value={room.id} key={room.id}>{room.label}</option>)}</select></label><label>Scope section<select value={scopeSectionId} onChange={(event) => setScopeSectionId(event.target.value)}><option value="">Choose scope</option>{scopes.map((scope) => <option value={scope.id} key={scope.id}>{scope.label}</option>)}</select></label><fieldset><legend>Crop boundaries</legend><div className="estimate-drawing-correction__crop">{(["x", "y", "width", "height"] as const).map((key) => <label key={key}>{key}<input aria-label={`Crop ${key}`} type="number" min={key === "width" || key === "height" ? 1 : 0} value={crop[key]} onChange={(event) => setCrop((current) => ({ ...current, [key]: Number(event.target.value) || 0 }))} /></label>)}</div></fieldset><label className="estimate-drawing-correction__verify"><input type="checkbox" checked={verified} onChange={(event) => setVerified(event.target.checked)} /> Mark mapping verified</label>{validation || error ? <p role="alert">{validation || error}</p> : null}<div className="estimate-drawing-correction__actions"><button type="button" className="secondary-button" onClick={onClose}>Cancel</button><button type="submit" className="button button--primary" disabled={busy}>{busy ? "Saving…" : defaultVerified ? "Verify drawing" : "Save drawing"}</button></div></form></Dialog>;
+  return <Dialog title={`${defaultVerified ? "Verify" : "Correct"} ${selection.drawing.displayTitle}`} eyebrow="Drawing correction" onClose={onClose} busy={busy}><form className="estimate-drawing-correction" onSubmit={(event) => { event.preventDefault(); if (!title.trim()) { setValidation("Provide a drawing title."); return; } if (!page || !cropIsWithinPage(crop, page)) { setValidation("Crop boundaries must remain inside the source page."); return; } onSubmit({ displayTitle: title, crop, verified }); }}><label>Drawing title<input value={title} onChange={(event) => setTitle(event.target.value)} /></label><fieldset><legend>Crop boundaries</legend><div className="estimate-drawing-correction__crop">{(["x", "y", "width", "height"] as const).map((key) => <label key={key}>{key}<input aria-label={`Crop ${key}`} type="number" min={key === "width" || key === "height" ? 1 : 0} value={crop[key]} onChange={(event) => setCrop((current) => ({ ...current, [key]: Number(event.target.value) || 0 }))} /></label>)}</div></fieldset><label className="estimate-drawing-correction__verify"><input type="checkbox" checked={verified} onChange={(event) => setVerified(event.target.checked)} /> Mark drawing verified</label>{validation || error ? <p role="alert">{validation || error}</p> : null}<div className="estimate-drawing-correction__actions"><button type="button" className="secondary-button" onClick={onClose}>Cancel</button><button type="submit" className="button button--primary" disabled={busy}>{busy ? "Saving…" : defaultVerified ? "Verify drawing" : "Save drawing"}</button></div></form></Dialog>;
+}
+
+function EstimateItemAssignmentDialog({ selection, rooms, items, busy, error, onSubmit, onClose }: { selection: DrawingSelection; rooms: EstimateDesignPlacementOption[]; items: EstimateDesignItemOption[]; busy: boolean; error: string; onSubmit: (input: { roomId: string; catalogueId: string }) => void; onClose: () => void }) {
+  const [roomId, setRoomId] = useState(selection.drawing.roomId ?? "");
+  const [catalogueId, setCatalogueId] = useState(selection.drawing.catalogueId ?? "");
+  const roomItems = items.filter((item) => item.roomId === roomId);
+  const selected = roomItems.find((item) => item.catalogueId === catalogueId);
+  return <Dialog title={`Assign ${selection.drawing.displayTitle}`} eyebrow="Exact estimate item" onClose={onClose} busy={busy}><form className="estimate-drawing-assignment" onSubmit={(event) => { event.preventDefault(); if (roomId && selected) onSubmit({ roomId, catalogueId }); }}><label>Room<select value={roomId} onChange={(event) => { setRoomId(event.target.value); setCatalogueId(""); }}><option value="">Choose room</option>{rooms.map((room) => <option value={room.id} key={room.id}>{room.label}</option>)}</select></label><label>Exact estimate item<select value={catalogueId} disabled={!roomId} onChange={(event) => setCatalogueId(event.target.value)}><option value="">Choose included item</option>{roomItems.map((item) => <option value={item.catalogueId} key={`${item.roomId}:${item.catalogueId}`}>{item.label} · {item.scopeLabel}</option>)}</select></label>{error ? <p role="alert">{error}</p> : null}<div className="estimate-drawing-correction__actions"><button type="button" className="secondary-button" onClick={onClose}>Cancel</button><button type="submit" className="button button--primary" disabled={!selected || busy}>{busy ? "Assigning…" : "Assign item"}</button></div></form></Dialog>;
 }
 
 function HistoryDialog({ revisions, onClose }: { revisions: EstimateDesignRevision[]; onClose: () => void }) {
@@ -282,7 +321,7 @@ function ReplacementDialog({ file, busy, error, onChange, onSubmit, onClose }: {
 function ManualDrawingDialog({
   pages,
   rooms,
-  scopes,
+  items,
   busy,
   error,
   onSubmit,
@@ -290,7 +329,7 @@ function ManualDrawingDialog({
 }: {
   pages: EstimateDesignSourcePage[];
   rooms: EstimateDesignPlacementOption[];
-  scopes: EstimateDesignPlacementOption[];
+  items: EstimateDesignItemOption[];
   busy: boolean;
   error: string;
   onSubmit: (
@@ -303,7 +342,7 @@ function ManualDrawingDialog({
   const [pageId, setPageId] = useState(firstPage.id);
   const [displayTitle, setDisplayTitle] = useState("");
   const [roomId, setRoomId] = useState("");
-  const [scopeSectionId, setScopeSectionId] = useState("");
+  const [catalogueId, setCatalogueId] = useState("");
   const [crop, setCrop] = useState<CropRect>({
     x: 0,
     y: 0,
@@ -311,6 +350,7 @@ function ManualDrawingDialog({
     height: firstPage.height
   });
   const page = pages.find((candidate) => candidate.id === pageId) ?? firstPage;
+  const roomItems = items.filter((item) => item.roomId === roomId);
   const cropPage = {
     ...page,
     imageUrl: estimateDesignSourcePageImageUrl(page.id)
@@ -318,7 +358,7 @@ function ManualDrawingDialog({
   const valid =
     displayTitle.trim().length > 0 &&
     Boolean(roomId) &&
-    Boolean(scopeSectionId) &&
+    Boolean(roomItems.find((item) => item.catalogueId === catalogueId)) &&
     cropIsValid(crop, cropPage);
 
   return (
@@ -336,7 +376,7 @@ function ManualDrawingDialog({
           onSubmit(page.id, {
             displayTitle,
             roomId,
-            scopeSectionId,
+            catalogueId,
             crop
           });
         }}
@@ -377,7 +417,7 @@ function ManualDrawingDialog({
           Room
           <select
             value={roomId}
-            onChange={(event) => setRoomId(event.target.value)}
+            onChange={(event) => { setRoomId(event.target.value); setCatalogueId(""); }}
           >
             <option value="">Choose room</option>
             {rooms.map((room) => (
@@ -386,14 +426,15 @@ function ManualDrawingDialog({
           </select>
         </label>
         <label>
-          Scope section
+          Exact estimate item
           <select
-            value={scopeSectionId}
-            onChange={(event) => setScopeSectionId(event.target.value)}
+            value={catalogueId}
+            disabled={!roomId}
+            onChange={(event) => setCatalogueId(event.target.value)}
           >
-            <option value="">Choose scope</option>
-            {scopes.map((scope) => (
-              <option value={scope.id} key={scope.id}>{scope.label}</option>
+            <option value="">Choose included item</option>
+            {roomItems.map((item) => (
+              <option value={item.catalogueId} key={`${item.roomId}:${item.catalogueId}`}>{item.label} · {item.scopeLabel}</option>
             ))}
           </select>
         </label>

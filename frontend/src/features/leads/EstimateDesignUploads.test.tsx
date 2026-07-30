@@ -18,21 +18,21 @@ const revisions = [
   {
     id: "revision-1", drawingId: "drawing-living", revisionNumber: 1,
     sourcePageId: "page-1", crop: { x: 0, y: 0, width: 400, height: 300 },
-    roomId: "room-living", scopeSectionId: "FC", label: "Living ceiling", reviewStatus: "draft",
+    roomId: "room-living", scopeSectionId: "FC", catalogueId: "FC01", mappingStatus: "auto_mapped", label: "Living ceiling", reviewStatus: "draft",
     submittedAt: null, reviewerId: null, reviewedAt: null, changeSummary: null,
     annotationLayerId: null, annotations: null, replacementUploadId: null, replacesRevisionId: null
   },
   {
     id: "revision-2", drawingId: "drawing-duplicate", revisionNumber: 1,
     sourcePageId: "page-1", crop: { x: 400, y: 0, width: 400, height: 300 },
-    roomId: "room-living", scopeSectionId: "FC", label: "Living detail", reviewStatus: "draft",
+    roomId: "room-living", scopeSectionId: "FC", catalogueId: "FC01", mappingStatus: "auto_mapped", label: "Living detail", reviewStatus: "draft",
     submittedAt: null, reviewerId: null, reviewedAt: null, changeSummary: null,
     annotationLayerId: null, annotations: null, replacementUploadId: null, replacesRevisionId: null
   },
   {
     id: "revision-3", drawingId: "drawing-ambiguous", revisionNumber: 1,
     sourcePageId: "page-1", crop: { x: 0, y: 300, width: 400, height: 300 },
-    roomId: "", scopeSectionId: "EL", label: "Bedroom electrical", reviewStatus: "draft",
+    roomId: "", scopeSectionId: "EL", catalogueId: null, mappingStatus: "auto_mapped", label: "Bedroom electrical", reviewStatus: "draft",
     submittedAt: null, reviewerId: null, reviewedAt: null, changeSummary: null,
     annotationLayerId: null, annotations: null, replacementUploadId: null, replacesRevisionId: null
   }
@@ -40,21 +40,21 @@ const revisions = [
 const drawings = [
   {
     id: "drawing-living", uploadId: "upload-1", sourcePageId: "page-1", estimateId: "estimate-1",
-    active: true, verified: true, roomId: "room-living", scopeSectionId: "FC",
+    active: true, verified: true, roomId: "room-living", scopeSectionId: "FC", catalogueId: "FC01", mappingStatus: "auto_mapped",
     detectedTitle: "Living ceiling", displayTitle: "Living ceiling", source: "ocr",
     roomConfidence: 0.98, scopeConfidence: 0.98, ocrConfidence: 0.98,
     roomEvidence: [{ value: "living" }], scopeEvidence: [{ value: "ceiling" }]
   },
   {
     id: "drawing-duplicate", uploadId: "upload-1", sourcePageId: "page-1", estimateId: "estimate-1",
-    active: true, verified: true, roomId: "room-living", scopeSectionId: "FC",
+    active: true, verified: true, roomId: "room-living", scopeSectionId: "FC", catalogueId: "FC01", mappingStatus: "auto_mapped",
     detectedTitle: "Living detail", displayTitle: "Living detail", source: "ocr",
     roomConfidence: 0.97, scopeConfidence: 0.94, ocrConfidence: 0.96,
     roomEvidence: [{ value: "living" }], scopeEvidence: [{ value: "ceiling" }]
   },
   {
     id: "drawing-ambiguous", uploadId: "upload-1", sourcePageId: "page-1", estimateId: "estimate-1",
-    active: true, verified: true, roomId: "room-retired", scopeSectionId: "EL",
+    active: true, verified: true, roomId: "room-retired", scopeSectionId: "EL", catalogueId: "EL01", mappingStatus: "auto_mapped",
     detectedTitle: "Bedroom electrical", displayTitle: "Bedroom electrical", source: "ocr",
     roomConfidence: 0.4, scopeConfidence: 0.96, ocrConfidence: 0.89,
     roomEvidence: [], scopeEvidence: [{ value: "electrical" }]
@@ -96,6 +96,118 @@ afterEach(() => {
 });
 
 describe("EstimateDesignUploads", () => {
+  it("shows verified Misc, assigns an exact item without scope, and does not block submit", async () => {
+    const miscDrawing = {
+      ...drawings[0],
+      id: "drawing-misc",
+      displayTitle: "TV UNIT",
+      verified: true,
+      roomId: null,
+      scopeSectionId: null,
+      catalogueId: null,
+      mappingStatus: "misc" as const
+    };
+    const miscRevision = {
+      ...revisions[0],
+      id: "revision-misc",
+      drawingId: "drawing-misc",
+      label: "TV UNIT",
+      roomId: null,
+      scopeSectionId: null,
+      catalogueId: null,
+      mappingStatus: "misc" as const
+    };
+    let assigned = false;
+    const requests: Array<{ url: string; init?: RequestInit }> = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      requests.push({ url, init });
+      if (url.endsWith("/estimate-design-drawings/drawing-misc/estimate-item")) {
+        assigned = true;
+        return response({
+          ...miscDrawing,
+          roomId: "room-bedroom",
+          catalogueId: "CA01",
+          scopeSectionId: "CA",
+          mappingStatus: "estimator_assigned",
+          revision: {
+            ...miscRevision,
+            revisionNumber: 2,
+            roomId: "room-bedroom",
+            catalogueId: "CA01",
+            scopeSectionId: "CA",
+            mappingStatus: "estimator_assigned"
+          }
+        });
+      }
+      if (url.endsWith("/estimates/estimate-1/design-drawings/submit")) {
+        return response({ submittedCount: 1 });
+      }
+      if (url.endsWith("/estimates/estimate-1/design-uploads")) {
+        return response({
+          uploads: [{
+            id: "upload-1", estimateId: "estimate-1", leadId: "lead-1",
+            originalFilename: "plan.pdf", mimeType: "application/pdf", sizeBytes: 12,
+            uploaderId: "user-1", uploadedAt: "2026-07-30T00:00:00.000Z",
+            extractionStatus: "estimator_review", failureCode: null, failureMessage: null,
+            canRetry: false
+          }],
+          pages: [page],
+          drawings: assigned ? [{
+            ...miscDrawing, roomId: "room-bedroom", catalogueId: "CA01",
+            scopeSectionId: "CA", mappingStatus: "estimator_assigned"
+          }] : [miscDrawing],
+          revisions: assigned ? [{
+            ...miscRevision, revisionNumber: 2, roomId: "room-bedroom", catalogueId: "CA01",
+            scopeSectionId: "CA", mappingStatus: "estimator_assigned"
+          }] : [miscRevision]
+        });
+      }
+      if (url.includes("/estimate-design-revisions/")) {
+        return new Response(new Blob(["image"], { type: "image/png" }));
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+
+    const user = userEvent.setup();
+    renderWithQuery(<EstimateDesignUploads
+      estimateId="estimate-1"
+      rooms={rooms}
+      scopes={[...scopes, { id: "CA", label: "Carpentry" }]}
+      items={[
+        { roomId: "room-bedroom", catalogueId: "CA01", label: "CA01 · TV unit", scopeLabel: "Carpentry" },
+        { roomId: "room-bedroom", catalogueId: "CA02", label: "CA02 · Study unit", scopeLabel: "Carpentry" }
+      ]}
+    />);
+
+    const misc = await screen.findByRole("region", { name: "Misc drawings" });
+    expect(misc).toHaveTextContent(
+      "No exact estimate item is assigned. You can still submit after verifying the drawing."
+    );
+    expect(screen.getByRole("button", { name: "Submit drawings to client" })).toBeEnabled();
+
+    await user.click(within(misc).getByRole("button", { name: "More actions for TV UNIT" }));
+    await user.click(screen.getByRole("menuitem", { name: "Assign estimate item" }));
+    await user.selectOptions(screen.getByLabelText("Room"), "room-bedroom");
+    await user.selectOptions(screen.getByLabelText("Exact estimate item"), "CA01");
+    await user.click(screen.getByRole("button", { name: "Assign item" }));
+
+    const put = await vi.waitFor(() => {
+      const found = requests.find((entry) =>
+        entry.url.endsWith("/estimate-design-drawings/drawing-misc/estimate-item")
+      );
+      expect(found).toBeDefined();
+      return found!;
+    });
+    expect(JSON.parse(String(put.init?.body))).toEqual({
+      version: 1, roomId: "room-bedroom", catalogueId: "CA01"
+    });
+    expect(JSON.parse(String(put.init?.body))).not.toHaveProperty("scopeSectionId");
+    expect(await screen.findByRole("region", {
+      name: "Bedroom, Carpentry drawings"
+    })).toBeVisible();
+  });
+
   it("shows the selected design file and keeps its upload progress visible until the request settles", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       if (String(input).endsWith("/estimates/estimate-1/design-uploads")) {
@@ -175,7 +287,7 @@ describe("EstimateDesignUploads", () => {
     expect(screen.getByText("Could not read plan")).toBeVisible();
   });
 
-  it("keeps duplicate drawings in their stable room and scope group and leaves ambiguous drawings visible for placement", async () => {
+  it("keeps duplicate drawings in their stable room and scope group while verified placement gaps do not block submit", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = String(input);
       if (url.endsWith("/estimates/estimate-1/design-uploads")) {
@@ -197,7 +309,7 @@ describe("EstimateDesignUploads", () => {
     expect(within(scope).getByText("Living ceiling")).toBeVisible();
     expect(within(scope).getByText("Living detail")).toBeVisible();
     expect(within(scope).getAllByRole("button", { name: /Preview/ })).toHaveLength(2);
-    expect(screen.getByRole("button", { name: "Submit drawings to client" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Submit drawings to client" })).toBeEnabled();
     expect(within(scope).getByRole("img", { name: "Living ceiling thumbnail" })).toHaveClass("estimate-drawing-row__thumbnail");
 
     const livingMenu = within(scope).getByRole("button", { name: "More actions for Living ceiling" });
@@ -208,12 +320,7 @@ describe("EstimateDesignUploads", () => {
 
     const ambiguousMenu = within(placement).getByRole("button", { name: "More actions for Bedroom electrical" });
     await user.click(ambiguousMenu);
-    await user.click(screen.getByRole("menuitem", { name: "Correct mapping or crop" }));
-    await user.selectOptions(screen.getByLabelText("Room"), "room-bedroom");
-    await user.clear(screen.getByLabelText("Crop x"));
-    await user.type(screen.getByLabelText("Crop x"), "800");
-    await user.click(screen.getByRole("button", { name: "Save drawing" }));
-    expect(screen.getByRole("alert")).toHaveTextContent("Crop boundaries must remain inside the source page.");
+    expect(within(placement).getByRole("menuitem", { name: "Change estimate item" })).toBeVisible();
   });
 
   it("uploads through multipart, polls while queued or processing, and stops once review is ready", async () => {
@@ -333,7 +440,7 @@ describe("EstimateDesignUploads", () => {
     expect(screen.getAllByRole("button", { name: "Retry extraction" })).toHaveLength(1);
   });
 
-  it("creates a missing drawing from a stable source page, mapping, and bounded crop", async () => {
+  it("creates a missing drawing from a stable source page, exact item, and bounded crop", async () => {
     const requests: Array<{ url: string; init?: RequestInit }> = [];
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const url = String(input);
@@ -404,6 +511,10 @@ describe("EstimateDesignUploads", () => {
         estimateId="estimate-1"
         rooms={rooms}
         scopes={scopes}
+        items={[
+          { roomId: "room-living", catalogueId: "FC01", label: "FC01 · Ceiling", scopeLabel: "False Ceiling" },
+          { roomId: "room-living", catalogueId: "FC02", label: "FC02 · Cove", scopeLabel: "False Ceiling" }
+        ]}
       />
     );
 
@@ -413,7 +524,7 @@ describe("EstimateDesignUploads", () => {
     const dialog = screen.getByRole("dialog", { name: "Add missing drawing" });
     await user.type(within(dialog).getByLabelText("Drawing title"), "Living wardrobe");
     await user.selectOptions(within(dialog).getByLabelText("Room"), "room-living");
-    await user.selectOptions(within(dialog).getByLabelText("Scope section"), "FC");
+    await user.selectOptions(within(dialog).getByLabelText("Exact estimate item"), "FC01");
     const save = within(dialog).getByRole("button", { name: "Add drawing" });
 
     await user.clear(within(dialog).getByLabelText("Crop width"));
@@ -438,12 +549,12 @@ describe("EstimateDesignUploads", () => {
     expect(JSON.parse(String(post.init?.body))).toEqual({
       displayTitle: "Living wardrobe",
       roomId: "room-living",
-      scopeSectionId: "FC",
+      catalogueId: "FC01",
       crop: { x: 10, y: 15, width: 300, height: 200 }
     });
   });
 
-  it("verifies a drawing, sends its complete mapping, and submits the refreshed workspace", async () => {
+  it("verifies a drawing without changing its item assignment and submits the refreshed workspace", async () => {
     const unverified = { ...drawings[0], id: "drawing-review", displayTitle: "Living review", verified: false };
     const reviewRevision = { ...revisions[0], id: "revision-review", drawingId: unverified.id, label: unverified.displayTitle };
     let verified = false;
@@ -472,7 +583,7 @@ describe("EstimateDesignUploads", () => {
     renderWithQuery(<EstimateDesignUploads estimateId="estimate-1" rooms={rooms} scopes={scopes} />);
     await user.click(await screen.findByRole("button", { name: "More actions for Living review" }));
     await user.click(screen.getByRole("menuitem", { name: "Verify drawing" }));
-    expect(screen.getByRole("checkbox", { name: "Mark mapping verified" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Mark drawing verified" })).toBeChecked();
     await user.click(screen.getByRole("button", { name: "Verify drawing" }));
 
     const patch = await vi.waitFor(() => {
@@ -482,10 +593,10 @@ describe("EstimateDesignUploads", () => {
     });
     expect(patch.url).toContain("/estimate-design-drawings/drawing-review");
     expect(JSON.parse(String(patch.init?.body))).toEqual({
-      version: 1, displayTitle: "Living review", roomId: "room-living", scopeSectionId: "FC",
+      version: 1, displayTitle: "Living review",
       crop: { x: 0, y: 0, width: 400, height: 300 }, verified: true
     });
-    expect(await screen.findByText("All drawings are verified.")).toBeVisible();
+    expect(await screen.findByText("All drawings are verified and assigned.")).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Submit drawings to client" }));
     const submit = await vi.waitFor(() => {
       const request = requests.find((entry) => entry.url.endsWith("/estimates/estimate-1/design-drawings/submit"));
