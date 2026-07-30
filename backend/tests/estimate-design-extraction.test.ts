@@ -1575,36 +1575,41 @@ describe("estimate design extraction and estimator verification", () => {
     expect(approved.status).toBe(409);
   });
 
-  it("requires explicit verification before submitting an ambiguous drawing", async () => {
-    const { app, drawings, jobs } = setup();
+  it("blocks an unverified Misc drawing but submits it after independent verification", async () => {
+    const { app, drawings, revisions, jobs } = setup();
     const leased = await claim(app);
     const body = completeBody();
-    const { pageNumber: _ignored, ...uncertainProposal } = proposal(
-      1,
-      "Uncertain ceiling",
-      null,
-      "FC",
-      0.5
-    );
-    body.pages[0]!.sections[0] = uncertainProposal;
+    body.pages[0]!.sections[0] = {
+      ...body.pages[0]!.sections[0]!,
+      label: "TV UNIT",
+      proposal: {
+        detectedTitle: "TV UNIT",
+        room: { id: null, confidence: 0.5, evidence: [], ambiguous: true },
+        scope: { id: null, confidence: 0.5, evidence: [], ambiguous: true }
+      }
+    };
     await complete(app, leased.body.data.claimToken, body);
-    await verifyDrawings(app, drawings.filter((drawing) => drawing.detectedTitle !== "Uncertain ceiling"));
+    const misc = drawings.find((item) => item.detectedTitle === "TV UNIT")!;
 
     const blocked = await owner(
       request(app).post("/api/v1/estimates/estimate-1/design-drawings/submit")
     ).send();
     expect(blocked.status).toBe(409);
+    expect(blocked.body.error.code).toBe("ESTIMATE_DRAWINGS_UNVERIFIED");
 
-    const uncertain = drawings.find((drawing) => drawing.detectedTitle === "Uncertain ceiling")!;
-    const corrected = await owner(
-      request(app).patch(`/api/v1/estimate-design-drawings/${uncertain._id}`)
-    ).send({
-      version: 1,
-      roomId: "room-bedroom-1",
-      catalogueId: "CA01",
-      verified: true
+    const verified = await owner(
+      request(app).patch(`/api/v1/estimate-design-drawings/${misc._id}`)
+    ).send({ version: 1, verified: true });
+    expect(verified.status).toBe(200);
+    expect(verified.body.data).toMatchObject({
+      verified: true,
+      roomId: null,
+      catalogueId: null,
+      scopeSectionId: null,
+      mappingStatus: "misc"
     });
-    expect(corrected.status).toBe(200);
+
+    for (const drawing of drawings) drawing.verified = true;
 
     const submitted = await owner(
       request(app).post("/api/v1/estimates/estimate-1/design-drawings/submit")
@@ -1612,6 +1617,29 @@ describe("estimate design extraction and estimator verification", () => {
     expect(submitted.status).toBe(200);
     expect(submitted.body.data).toMatchObject({ submittedCount: 4 });
     expect(jobs[0]).toMatchObject({ status: "submitted" });
+    expect(revisions.filter((item) => item.drawingId === misc._id).at(-1))
+      .toMatchObject({
+        roomId: null,
+        catalogueId: null,
+        scopeSectionId: null,
+        mappingStatus: "misc",
+        reviewStatus: "submitted"
+      });
+  });
+
+  it("requires verification even when the current revision is approved", async () => {
+    const { app, drawings, revisions } = setup();
+    const leased = await claim(app);
+    await complete(app, leased.body.data.claimToken);
+    await verifyDrawings(app, drawings.filter((drawing) => drawing._id !== drawings[0]!._id));
+    revisions.find((revision) => revision.drawingId === drawings[0]!._id)!.reviewStatus = "approved";
+
+    const response = await owner(
+      request(app).post("/api/v1/estimates/estimate-1/design-drawings/submit")
+    ).send();
+
+    expect(response.status).toBe(409);
+    expect(response.body.error.code).toBe("ESTIMATE_DRAWINGS_UNVERIFIED");
   });
 
   it.each(["upload", "job"] as const)(

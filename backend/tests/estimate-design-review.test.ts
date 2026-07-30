@@ -571,11 +571,56 @@ describe("estimate drawing client review", () => {
       roomId: "room-living",
       scopeSectionId: "FC",
       displayTitle: "Living detail",
-      verified: true
+      verified: false
     }));
     expect(response.body.data.pages).not.toContainEqual(
       expect.objectContaining({ id: "page-hidden-draft" })
     );
+  });
+
+  it("exposes a submitted Misc drawing with true-null revision mapping", async () => {
+    const { app, drawings, revisions } = setup();
+    Object.assign(drawings[0]!, {
+      roomId: null,
+      scopeSectionId: null,
+      catalogueId: null,
+      mappingStatus: "misc",
+      verified: true
+    });
+    Object.assign(revisions[0]!, {
+      roomId: null,
+      scopeSectionId: null,
+      catalogueId: null,
+      mappingStatus: "misc",
+      reviewStatus: "submitted"
+    });
+
+    const response = await request(app)
+      .get("/api/v1/client/estimates/estimate-1/design-drawings")
+      .set("Authorization", auth("user-client-aurora", "client"));
+
+    expect(response.status).toBe(200);
+    expect(response.body.data.drawings[0]).toMatchObject({
+      roomId: null,
+      scopeSectionId: null,
+      catalogueId: null,
+      mappingStatus: "misc",
+      verified: true
+    });
+    expect(JSON.stringify(response.body.data.drawings[0])).not.toContain(':""');
+  });
+
+  it("keeps client verification independent from a visible revision status", async () => {
+    const { app, drawings, revisions } = setup();
+    drawings[0]!.verified = false;
+    revisions[0]!.reviewStatus = "submitted";
+
+    const response = await request(app)
+      .get("/api/v1/client/estimates/estimate-1/design-drawings")
+      .set("Authorization", auth("user-client-aurora", "client"));
+
+    expect(response.status).toBe(200);
+    expect(response.body.data.drawings[0]).toMatchObject({ verified: false });
   });
 
   it("saves drafts optimistically for clients and forbids estimator writes", async () => {

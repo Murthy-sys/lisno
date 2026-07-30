@@ -1634,6 +1634,7 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
           const mapping = hasMappingChange(change)
             ? resolveDeprecatedMapping(change as DeprecatedMappingChange, currentEstimate)
             : mappingSnapshot(currentDrawing);
+          assertEstimateDesignMapping(mapping);
           const currentVerified = change.verified ?? Boolean(currentDrawing.verified);
           const currentPage = await EstimateDesignSourcePageModel.findById(
             currentDrawing.sourcePageId
@@ -1940,7 +1941,6 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
             "This estimate design is read-only."
           );
         }
-        const taxonomy = taxonomyForEstimate(estimate);
         const drawings = await EstimateDesignDrawingModel.find({
           estimateId,
           active: true
@@ -1987,17 +1987,21 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
         for (let index = 0; index < drawings.length; index += 1) {
           const drawing = drawings[index]!;
           const revision = latest[index];
-          validateMapping(
-            drawing.roomId ?? null,
-            drawing.scopeSectionId ?? null,
-            taxonomy
-          );
+          assertEstimateDesignMapping({
+            roomId: drawing.roomId ?? null,
+            scopeSectionId: drawing.scopeSectionId ?? null,
+            catalogueId: drawing.catalogueId ?? null,
+            mappingStatus: drawing.mappingStatus ?? "misc"
+          });
+          if (!drawing.verified) {
+            unverifiedDrawings();
+          }
           if (!revision || revision.reviewStatus === "changes_requested") {
             unverifiedDrawings();
           }
           if (
             revision.reviewStatus !== "approved" &&
-            (!drawing.verified || revision.reviewStatus !== "draft")
+            revision.reviewStatus !== "draft"
           ) {
             unverifiedDrawings();
           }
@@ -2938,7 +2942,7 @@ function clientDrawingDto(
     ...drawingDto(drawing),
     uploadId: String(page.uploadId),
     sourcePageId: String(revision.sourcePageId),
-    verified: true,
+    verified: Boolean(drawing.verified),
     ...mappingDto(revision),
     displayTitle: String(revision.label)
   };
@@ -3261,23 +3265,6 @@ function equivalentChangeRequest(
     revision.changeSummary === decision.summary &&
     JSON.stringify(revision.annotations) === JSON.stringify(decision.annotations)
   );
-}
-
-function validateMapping(
-  roomId: unknown,
-  scopeSectionId: unknown,
-  taxonomy: EstimateTaxonomyDto
-) {
-  if (roomId !== null && roomId !== undefined && !taxonomy.rooms.some((room) => room.id === roomId)) {
-    throw new ApiError(400, "INVALID_ESTIMATE_MAPPING", "The proposed room is not configured on this estimate.");
-  }
-  if (
-    scopeSectionId !== null &&
-    scopeSectionId !== undefined &&
-    !taxonomy.scopes.some((scope) => scope.id === scopeSectionId)
-  ) {
-    throw new ApiError(400, "INVALID_ESTIMATE_MAPPING", "The proposed scope is not enabled on this estimate.");
-  }
 }
 
 async function normalizeEstimateResult(
