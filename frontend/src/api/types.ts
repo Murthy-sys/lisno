@@ -559,6 +559,57 @@ export type EstimateDesignExtractionStatus =
 
 export type EstimateDrawingReviewStatus = "draft" | "submitted" | "approved" | "changes_requested";
 
+export interface AnnotationElementBase {
+  id: string;
+  color: string;
+  strokeWidth: number;
+}
+
+export interface AnnotationPoint {
+  x: number;
+  y: number;
+}
+
+export type AnnotationElement =
+  | (AnnotationElementBase & {
+      type: "ellipse";
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+    })
+  | (AnnotationElementBase & {
+      type: "rectangle";
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+    })
+  | (AnnotationElementBase & {
+      type: "arrow";
+      x1: number;
+      y1: number;
+      x2: number;
+      y2: number;
+    })
+  | (AnnotationElementBase & {
+      type: "freehand";
+      points: AnnotationPoint[];
+    })
+  | (AnnotationElementBase & {
+      type: "text";
+      x: number;
+      y: number;
+      text: string;
+    });
+
+export interface AnnotationDocumentV1 {
+  schemaVersion: 1;
+  imageWidth: number;
+  imageHeight: number;
+  elements: AnnotationElement[];
+}
+
 export interface EstimateDesignUpload {
   id: string;
   estimateId: string;
@@ -615,7 +666,7 @@ export interface EstimateDesignRevision {
   reviewedAt: string | null;
   changeSummary: string | null;
   annotationLayerId: string | null;
-  annotations: unknown | null;
+  annotations: AnnotationDocumentV1 | null;
   replacementUploadId: string | null;
   replacesRevisionId: string | null;
 }

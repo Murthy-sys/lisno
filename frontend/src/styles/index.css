@@ -3141,6 +3141,260 @@
   }
 }
 
+.modal:has(.estimate-drawing-preview-dialog) {
+  width: min(96vw, 84rem);
+  max-height: 94vh;
+}
+
+.estimate-drawing-preview-dialog {
+  position: relative;
+  padding: 1rem;
+}
+
+.estimate-drawing-preview-dialog__loader {
+  display: block;
+  width: 100%;
+  min-height: 18rem;
+  object-fit: contain;
+  border-radius: 0.85rem;
+  background: #eef0f5;
+}
+
+.estimate-drawing-preview-dialog__loader--ready {
+  display: none;
+}
+
+.estimate-drawing-preview-dialog__layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(13rem, 17rem);
+  gap: 1rem;
+  align-items: start;
+}
+
+.estimate-drawing-preview-dialog__canvas {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid #d8dce7;
+  border-radius: 0.85rem;
+  background: #202634;
+}
+
+.estimate-drawing-preview-dialog__controls,
+.estimate-drawing-preview-dialog__review-actions {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.estimate-drawing-preview-dialog__view-toolbar {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.45rem;
+}
+
+.estimate-drawing-preview-dialog__view-toolbar button,
+.annotation-toolbar button {
+  min-height: 2.75rem;
+  border: 1px solid #d7d9e2;
+  border-radius: 0.65rem;
+  padding: 0.55rem 0.7rem;
+  background: #fff;
+  color: var(--color-lisno-navy);
+  font: inherit;
+  font-size: 0.76rem;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.estimate-drawing-preview-dialog__view-toolbar button:hover:not(:disabled),
+.annotation-toolbar button:hover:not(:disabled),
+.annotation-toolbar button[aria-pressed="true"] {
+  border-color: #7057ff;
+  background: #efedff;
+  color: #5140bd;
+}
+
+.estimate-drawing-preview-dialog__view-toolbar button:disabled,
+.annotation-toolbar button:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
+.estimate-drawing-preview-dialog__controls output {
+  color: var(--color-lisno-muted);
+  font-size: 0.76rem;
+  font-weight: 750;
+}
+
+.estimate-drawing-preview-dialog__review-actions {
+  border-top: 1px solid #e0e2e9;
+  padding-top: 0.75rem;
+}
+
+.estimate-drawing-preview-dialog__review-actions label {
+  display: grid;
+  gap: 0.35rem;
+  color: var(--color-lisno-navy);
+  font-size: 0.76rem;
+  font-weight: 750;
+}
+
+.estimate-drawing-preview-dialog__review-actions textarea {
+  min-height: 6.5rem;
+  resize: vertical;
+  border: 1px solid #cfd3df;
+  border-radius: 0.65rem;
+  padding: 0.7rem;
+  font: inherit;
+  font-weight: 500;
+}
+
+.annotation-editor {
+  display: grid;
+  grid-template-columns: minmax(7.5rem, 9rem) minmax(0, 1fr);
+  min-width: 0;
+}
+
+.annotation-editor--read-only,
+.annotation-overlay {
+  display: block;
+}
+
+.annotation-toolbar {
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  overflow-y: auto;
+  max-height: 70vh;
+  padding: 0.65rem;
+  background: #f6f5fb;
+}
+
+.annotation-editor__viewport,
+.annotation-overlay {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.annotation-editor__canvas {
+  display: block;
+  width: 100%;
+  max-height: 70vh;
+  background: #202634;
+  touch-action: none;
+  user-select: none;
+}
+
+.annotation-editor__canvas [data-selected="true"] {
+  filter: drop-shadow(0 0 3px rgb(255 255 255 / 95%));
+}
+
+.annotation-editor__canvas circle[role="button"] {
+  cursor: nwse-resize;
+}
+
+.annotation-text-dialog {
+  z-index: 75;
+  width: min(90vw, 25rem);
+  border: 0;
+  border-radius: 0.85rem;
+  padding: 1rem;
+  box-shadow: 0 1.5rem 5rem rgb(10 15 31 / 35%);
+}
+
+.annotation-text-dialog form,
+.annotation-text-dialog label {
+  display: grid;
+  gap: 0.65rem;
+}
+
+.annotation-text-dialog h3 {
+  margin: 0;
+}
+
+.annotation-text-dialog textarea {
+  min-height: 7rem;
+  resize: vertical;
+}
+
+.annotation-text-dialog form > div,
+.annotation-close-confirmation > div {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+
+.annotation-close-confirmation {
+  position: fixed;
+  z-index: 80;
+  top: 50%;
+  left: 50%;
+  width: min(90vw, 28rem);
+  translate: -50% -50%;
+  border: 1px solid #d9dce7;
+  border-radius: 1rem;
+  padding: 1.2rem;
+  background: #fff;
+  box-shadow: 0 1.5rem 7rem 2rem rgb(10 15 31 / 55%);
+}
+
+.annotation-close-confirmation h3 {
+  margin: 0;
+}
+
+.annotation-close-confirmation p {
+  color: var(--color-lisno-muted);
+}
+
+@media (max-width: 48rem) {
+  .modal:has(.estimate-drawing-preview-dialog) {
+    max-height: 96svh;
+  }
+
+  .estimate-drawing-preview-dialog {
+    padding: 0.65rem;
+  }
+
+  .estimate-drawing-preview-dialog__layout {
+    grid-template-columns: 1fr;
+  }
+
+  .annotation-editor {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .annotation-editor__viewport {
+    order: 1;
+  }
+
+  .annotation-toolbar {
+    position: sticky;
+    z-index: 5;
+    bottom: 0;
+    order: 2;
+    flex-direction: row;
+    max-height: none;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    padding-bottom: max(0.65rem, env(safe-area-inset-bottom));
+  }
+
+  .annotation-toolbar button {
+    flex: 0 0 auto;
+  }
+
+  .estimate-drawing-preview-dialog__view-toolbar {
+    display: flex;
+    overflow-x: auto;
+    padding-bottom: 0.25rem;
+  }
+
+  .estimate-drawing-preview-dialog__view-toolbar button {
+    flex: 0 0 auto;
+  }
+}
+
 /* Client project theme: aligned with the navy and violet sidebar palette. */
 .client-page--project[data-theme="sidebar"] {
   background: #f3f2ff;
