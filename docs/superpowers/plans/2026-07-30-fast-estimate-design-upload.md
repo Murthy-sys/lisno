@@ -1,329 +1,153 @@
-# Fast Estimate Design Upload Implementation Plan
+# Fast Estimate Design Upload and Extraction Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (- [ ]) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Provide byte-accurate design upload progress and rapidly extract one complete, correctly mapped drawing per page from title-block PDFs.
+**Goal:** Add truthful upload progress and a title-block optimized, one-full-page-per-PDF-page extraction path for large estimate design PDFs without changing estimate mapping, annotations, revisions, or client review.
 
-**Architecture:** The frontend adds an XHR-backed multipart transport that emits actual upload bytes while retaining existing authentication and API errors. The worker recognizes the lower TITLE field, creates a one full-page proposal with the existing taxonomy mapping, and falls back to current panel extraction for non-standard PDFs. Rendering derives the largest scale allowed by the pixel budget.
+**Architecture:** Add an XHR multipart request helper that reports byte progress to the existing React Query mutation. Extend the worker with a bounded title-block OCR adapter that emits one full-page proposal per eligible PDF page, while preserving the current extractor as fallback. Adapt PDF rendering scale to the configured pixel budget and polish the choose-file/retry controls using existing design-system primitives.
 
-**Tech Stack:** React 19, TanStack Query, TypeScript, Vitest, Testing Library, XMLHttpRequest, Python 3.11, Pillow, PyMuPDF, PaddleOCR, pytest.
+**Tech Stack:** React 19, TanStack Query, TypeScript, Vitest, Testing Library, existing `ProgressBar`, Python 3.11, Pillow, PyMuPDF, NumPy, PaddleOCR, pytest.
 
 ## Global Constraints
 
-- Use actual transferred bytes for the upload percentage; never simulate progress.
-- Keep the transfer bar until the upload HTTP request succeeds or fails.
-- Keep OCR progress indeterminate until durable backend progress events exist.
-- Keep existing taxonomy mapping, revisions, crop annotations, and client approval APIs.
-- A recognized title-block page produces one complete-page drawing with all details, legends, title block, dimensions, and material schedules.
-- Non-title-block and non-PDF extraction uses the current fallback behavior.
-- Keep maximum page, pixel, output-byte, and processing-time bounds.
+- Preserve existing title normalization, estimate taxonomy mapping, revision, crop annotation, and client approval contracts.
+- Full-page drawing output must retain title blocks, legends, material schedules, dimensions, notes, and all other page details.
+- Upload progress must report actual transferred bytes and remain visible until the API settles.
+- OCR progress must remain indeterminate unless the worker contract gains durable progress events; never display a fabricated percentage.
+- Keep configured page-count, pixel, output-byte, and processing-time safety limits.
+- Non-title-block PDFs and image uploads must continue through the existing extraction behavior.
 
 ---
 
-## File structure
-
-- frontend/src/api/client.ts: authenticated XHR multipart implementation.
-- frontend/src/api/client.test.ts: transport behavior.
-- frontend/src/features/leads/estimateDesignApi.ts: typed design-upload adapter.
-- frontend/src/features/leads/EstimateDesignUploads.tsx: upload state and extraction UI.
-- frontend/src/features/leads/EstimateDesignUploads.test.tsx: accessible UI behavior.
-- frontend/src/styles/index.css: upload and retry presentation.
-- ocr-worker/src/lisno_ocr/extractor.py: title-band fast path and adaptive rendering.
-- ocr-worker/tests/test_extractor.py: deterministic worker coverage.
-
-### Task 1: Authenticated multipart byte-progress transport
+### Task 1: Add a progress-aware multipart API helper
 
 **Files:**
-- Modify: frontend/src/api/client.ts
-- Create: frontend/src/api/client.test.ts
-- Modify: frontend/src/features/leads/estimateDesignApi.ts
+- Modify: `frontend/src/api/client.ts`
+- Modify: `frontend/src/features/leads/estimateDesignApi.ts`
+- Test: `frontend/src/api/client.test.ts` (extend the existing API-client suite if present)
 
 **Interfaces:**
-- Produces apiClient.postMultipartWithProgress<T>(path, body, onProgress): Promise<T>.
-- Produces uploadEstimateDesign(estimateId, file, onProgress?): Promise<EstimateDesignUpload>.
-- Uses resolveApiUrl, tokenStorage, ApiError, buildHeaders, and the existing { data: T } envelope.
+- Add `postMultipartWithProgress<T>(path: string, body: FormData, onProgress: (percent: number) => void): Promise<T>` to `apiClient`.
+- The helper must use `XMLHttpRequest`, resolve the same `{ data: T }` envelope as `postMultipart`, apply the stored bearer token and `Accept: application/json`, and preserve the existing unauthorized-event behavior for 401 responses.
 
-- [ ] **Step 1: Write failing client transport tests**
+- [ ] **Step 1: Write the failing tests.** Stub `XMLHttpRequest` and assert that `upload.onprogress` converts `loaded / total` to a clamped integer percentage, success parses the API envelope, non-2xx responses reject with `ApiError`, and an aborted/error request rejects.
+- [ ] **Step 2: Run the focused client tests to verify they fail.**
 
-~~~
-it("reports real XHR upload percentages and resolves the API envelope", async () => {
-  const progress: number[] = [];
-  const request = apiClient.postMultipartWithProgress(
-    "/estimates/estimate-1/design-uploads", new FormData(), (value) => progress.push(value)
-  );
-  xhr.upload.onprogress?.({ lengthComputable: true, loaded: 25, total: 100 } as ProgressEvent);
-  xhr.complete(201, JSON.stringify({ data: { id: "upload-1" } }));
-  await expect(request).resolves.toEqual({ id: "upload-1" });
-  expect(progress).toEqual([25]);
-  expect(xhr.headers.Authorization).toBe("Bearer token");
-});
+Run: `npm test -- --run frontend/src/api/client.test.ts`
 
-it("normalizes an XHR API failure without reporting uncomputable progress", async () => {
-  const progress = vi.fn();
-  const request = apiClient.postMultipartWithProgress("/uploads", new FormData(), progress);
-  xhr.upload.onprogress?.({ lengthComputable: false, loaded: 0, total: 0 } as ProgressEvent);
-  xhr.complete(413, JSON.stringify({ error: { code: "FILE_TOO_LARGE", message: "Too large" } }));
-  await expect(request).rejects.toMatchObject({ code: "FILE_TOO_LARGE", message: "Too large" });
-  expect(progress).not.toHaveBeenCalled();
-});
-~~~
+Expected: FAIL because `postMultipartWithProgress` is not defined.
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [ ] **Step 3: Implement the minimal XHR helper.** Reuse `resolveApiUrl`, `tokenStorage`, `buildHeaders`, and `ApiError`; do not set `Content-Type` manually so the browser supplies the multipart boundary.
+- [ ] **Step 4: Run the focused tests to verify they pass.**
+- [ ] **Step 5: Commit.**
 
-Run: cd frontend && npm test -- client.test.ts
-
-Expected: FAIL because postMultipartWithProgress does not exist.
-
-- [ ] **Step 3: Implement the minimal XHR transport**
-
-~~~
-postMultipartWithProgress<T>(path, body, onProgress) {
-  const requestToken = tokenStorage.get();
-  return new Promise<T>((resolve, reject) => {
-    const xhr = new XMLHttpRequest();
-    xhr.open("POST", resolveApiUrl(API_BASE_URL, path));
-    for (const [name, value] of buildHeaders(undefined, false, requestToken)) xhr.setRequestHeader(name, value);
-    xhr.upload.onprogress = (event) => {
-      if (event.lengthComputable && event.total > 0) onProgress(Math.round(event.loaded / event.total * 100));
-    };
-    xhr.onload = () => {
-      const payload = JSON.parse(xhr.responseText || "{}");
-      if (xhr.status >= 200 && xhr.status < 300) resolve(payload.data as T);
-      else reject(new ApiError(xhr.status, payload.error?.code ?? "REQUEST_FAILED", payload.error?.message ?? "The request could not be completed."));
-    };
-    xhr.onerror = () => reject(new ApiError(0, "NETWORK_ERROR", "The request could not be completed."));
-    xhr.send(body);
-  });
-}
-~~~
-
-Move the existing authenticated-401 token-clear behavior into a shared response-status helper used by fetch and XHR. Do not set Content-Type for FormData. In estimateDesignApi.ts pass the optional callback through to this new method.
-
-- [ ] **Step 4: Run focused frontend tests**
-
-Run: cd frontend && npm test -- client.test.ts
-
-Expected: PASS for headers, percentage, JSON success, API failure, and network failure.
-
-- [ ] **Step 5: Commit**
-
-~~~
-git add frontend/src/api/client.ts frontend/src/api/client.test.ts frontend/src/features/leads/estimateDesignApi.ts
+```bash
+git add frontend/src/api/client.ts frontend/src/api/client.test.ts
 git commit -m "feat: report multipart upload progress"
-~~~
+```
 
-### Task 2: Polished design upload and recovery controls
-
-**Files:**
-- Modify: frontend/src/features/leads/EstimateDesignUploads.tsx
-- Modify: frontend/src/features/leads/EstimateDesignUploads.test.tsx
-- Modify: frontend/src/styles/index.css
-
-**Interfaces:**
-- Consumes uploadEstimateDesign with its progress callback and ProgressBar.
-- Produces accessible controls named Choose design plan file, Upload progress, and Retry extraction.
-
-- [ ] **Step 1: Write failing UI tests**
-
-~~~
-it("shows selected file and byte progress until the upload API resolves", async () => {
-  await user.upload(screen.getByLabelText("Choose design plan file"),
-    new File(["pdf"], "Bedroom 1 TV Unit.pdf", { type: "application/pdf" }));
-  expect(screen.getByText("Bedroom 1 TV Unit.pdf")).toBeVisible();
-  await user.click(screen.getByRole("button", { name: "Upload design plan" }));
-  xhr.emitUploadProgress(50, 100);
-  expect(screen.getByRole("progressbar", { name: "Upload progress" })).toHaveAttribute("aria-valuenow", "50");
-  xhr.complete(201, JSON.stringify({ data: queuedUpload }));
-  await waitFor(() => expect(screen.queryByRole("progressbar", { name: "Upload progress" })).not.toBeInTheDocument());
-});
-
-it("keeps selected file after upload failure and gives failed extraction a recovery button", async () => {
-  xhr.complete(413, JSON.stringify({ error: { code: "FILE_TOO_LARGE", message: "Too large" } }));
-  expect(await screen.findByRole("alert")).toHaveTextContent("The plan could not be uploaded");
-  expect(screen.getByText("Bedroom 1 TV Unit.pdf")).toBeVisible();
-  expect(screen.getByRole("button", { name: "Retry extraction" })).toBeVisible();
-});
-~~~
-
-- [ ] **Step 2: Run the workspace test to verify it fails**
-
-Run: cd frontend && npm test -- EstimateDesignUploads.test.tsx
-
-Expected: FAIL because neither the selected-file summary nor Upload progress exists.
-
-- [ ] **Step 3: Implement the state and markup**
-
-~~~
-const [uploadProgress, setUploadProgress] = useState<number | undefined>();
-const upload = useMutation({
-  mutationFn: (nextFile: File) => uploadEstimateDesign(estimateId, nextFile, setUploadProgress),
-  onMutate: () => setUploadProgress(0),
-  onSettled: () => setUploadProgress(undefined),
-  onSuccess: () => { setFile(undefined); void client.invalidateQueries({ queryKey: estimateDesignKeys.workspace(estimateId) }); }
-});
-~~~
-
-Replace the visible native input with a label styled as a Choose file button and retain the real input as an sr-only, label-associated input. Show file.name and a formatted byte size. Render ProgressBar with value uploadProgress and label Upload progress. For queued and processing persisted uploads, add an indeterminate ProgressBar labeled Extracting drawings; never attach a numeric OCR percentage. Change the pending retry copy to Retrying extraction….
-
-- [ ] **Step 4: Add responsive CSS**
-
-~~~
-.estimate-design-uploads__selected-file { min-width: 0; overflow-wrap: anywhere; color: #515b73; }
-.estimate-design-uploads__progress { display: grid; gap: .35rem; width: min(100%, 22rem); font-size: .82rem; color: #4b3f99; }
-.estimate-design-uploads__status-list .secondary-button { justify-self: start; margin-top: .25rem; }
-@media (max-width: 640px) {
-  .estimate-design-uploads__choose-file,
-  .estimate-design-uploads__header .button { width: 100%; }
-}
-~~~
-
-- [ ] **Step 5: Run the workspace test to verify it passes**
-
-Run: cd frontend && npm test -- EstimateDesignUploads.test.tsx
-
-Expected: PASS for selected file, progress, cleanup, extraction stage, failure, and retry behavior.
-
-- [ ] **Step 6: Commit**
-
-~~~
-git add frontend/src/features/leads/EstimateDesignUploads.tsx frontend/src/features/leads/EstimateDesignUploads.test.tsx frontend/src/styles/index.css
-git commit -m "feat: show estimate design upload progress"
-~~~
-
-### Task 3: One whole-page title-block extraction
+### Task 2: Integrate upload progress and polished file/retry controls
 
 **Files:**
-- Modify: ocr-worker/src/lisno_ocr/extractor.py
-- Modify: ocr-worker/tests/test_extractor.py
+- Modify: `frontend/src/features/leads/estimateDesignApi.ts`
+- Modify: `frontend/src/features/leads/EstimateDesignUploads.tsx`
+- Modify: `frontend/src/styles/index.css`
+- Test: `frontend/src/features/leads/EstimateDesignUploads.test.tsx`
 
 **Interfaces:**
-- Produces Extractor._title_block_section(image, page_number, remaining_bytes) -> tuple[ExtractedPage, int] | None.
-- Uses classify_estimate_drawing and EstimateTaxonomy unchanged.
-- Produces a full-page Crop(0, 0, image.width, image.height) and exactly one section when a lower TITLE field is recognized.
+- Change `uploadEstimateDesign` to accept `(estimateId: string, file: File, onProgress?: (percent: number) => void)` and call the progress-aware helper.
+- Maintain `upload.isPending` as the request lock; add local `uploadProgress: number | undefined` that is set to 0 on submit, updated from XHR, and cleared only after success or failure.
 
-- [ ] **Step 1: Write failing deterministic worker tests**
+- [ ] **Step 1: Write failing component tests.** Add tests that select a PDF and see a `Choose file` control plus filename/size, invoke the XHR progress callback and observe an accessible progressbar value, keep the progressbar until the mocked API settles, and show `Retrying extraction…` with the failure message during retry.
+- [ ] **Step 2: Run the focused component tests to verify they fail.**
 
-~~~
-def test_title_block_page_creates_one_full_page_section_with_taxonomy_match():
-    page = Extractor(ocr_engine=ocr, estimate_taxonomy=taxonomy).extract(image_path)[0]
-    assert [(item.label, item.crop.to_payload()) for item in page.sections] == [
-        ("TV UNIT - BEDROOM 1", {"x": 0, "y": 0, "width": 1000, "height": 800})
-    ]
-    assert page.sections[0].proposal.room.id == "bedroom-1"
-    assert page.sections[0].proposal.scope.id == "tv-unit"
+Run: `npm test -- --run frontend/src/features/leads/EstimateDesignUploads.test.tsx`
 
-def test_missing_title_block_keeps_current_full_page_ocr_fallback(monkeypatch):
-    monkeypatch.setattr(Extractor, "_extract_page", fallback_extract_page)
-    Extractor(ocr_engine=no_title_ocr).extract(image_path)
-    assert fallback_extract_page.called is True
-~~~
+Expected: FAIL because the component still renders the native input/button path and does not expose upload progress.
 
-Use a fake OCR response containing TITLE : TV UNIT - BEDROOM 1 within the bottom 16% of the test image and realistic room/scope taxonomy records.
+- [ ] **Step 3: Implement the UI integration.** Keep the real input visually hidden but label it with a styled `Choose file` button; render the selected filename and byte size; render `ProgressBar value={uploadProgress} label="Uploading design plan"` while the request is active; retain the selected file on failure; and show the existing queued/processing status after API success.
+- [ ] **Step 4: Polish responsive styles.** Add focused `.estimate-design-uploads__file-picker`, filename, progress, and retry styles using existing color tokens and button classes. Ensure wrapping and full-width stacking at the existing mobile breakpoint, and preserve keyboard focus outlines.
+- [ ] **Step 5: Run focused component tests and frontend typecheck.**
+- [ ] **Step 6: Commit.**
 
-- [ ] **Step 2: Run the focused worker tests to verify they fail**
+```bash
+git add frontend/src/api/client.ts frontend/src/features/leads/estimateDesignApi.ts frontend/src/features/leads/EstimateDesignUploads.tsx frontend/src/features/leads/EstimateDesignUploads.test.tsx frontend/src/styles/index.css
+git commit -m "feat: add design upload progress and recovery controls"
+```
 
-Run: cd ocr-worker && .venv/bin/python -m pytest tests/test_extractor.py -k "title_block_page or missing_title_block" -q
-
-Expected: FAIL because title-band extraction does not exist.
-
-- [ ] **Step 3: Implement the fast path**
-
-~~~
-_TITLE_BAND_TOP_RATIO = 0.84
-_TITLE_FIELD = re.compile(r"\btitle\s*:\s*(.+)", re.IGNORECASE)
-
-def _title_block_label(self, image):
-    band = image.crop((0, round(image.height * _TITLE_BAND_TOP_RATIO), image.width, image.height))
-    try:
-        lines = self._recognize(band)
-    finally:
-        band.close()
-    text = " ".join(label for _box, label, _score in sorted(lines, key=lambda line: (line[0][1], line[0][0])))
-    match = _TITLE_FIELD.search(text)
-    return None if not match else _clean_title_value(match.group(1), lines)
-~~~
-
-Clean title values at the earliest metadata boundary: DESIGNED BY, DATE, PROJECT CODE, CHECKED BY, PROJECT, CLIENT, or HANDOVER DATE. Run this only for PDF-rendered pages before the existing _extract_page. On a valid title, encode the image once for the source page and use the complete image rectangle for the one extracted section. Use classify_estimate_drawing for a supplied taxonomy; otherwise leave proposal absent. A missing or blank TITLE result must call existing _extract_page unchanged.
-
-- [ ] **Step 4: Run the fast-path and fallback tests to verify they pass**
-
-Run: cd ocr-worker && .venv/bin/python -m pytest tests/test_extractor.py -k "title_block_page or missing_title_block or estimate_taxonomy" -q
-
-Expected: PASS with one full-page result, unchanged taxonomy data, and fallback behavior.
-
-- [ ] **Step 5: Commit**
-
-~~~
-git add ocr-worker/src/lisno_ocr/extractor.py ocr-worker/tests/test_extractor.py
-git commit -m "feat: fast-path title block design extraction"
-~~~
-
-### Task 4: Adaptive page rendering within safe bounds
+### Task 3: Add title-block extraction primitives
 
 **Files:**
-- Modify: ocr-worker/src/lisno_ocr/extractor.py
-- Modify: ocr-worker/tests/test_extractor.py
+- Modify: `ocr-worker/src/lisno_ocr/extractor.py`
+- Create: `ocr-worker/src/lisno_ocr/title_block.py`
+- Test: `ocr-worker/tests/test_title_block.py`
+- Test: `ocr-worker/tests/test_extractor.py`
 
 **Interfaces:**
-- Produces Extractor._safe_render_scale(page) -> float.
-- Uses min(render_scale, sqrt(max_page_pixels / page_area)).
-- Retains post-render pixel checking, page count, output byte budget, and deadline controls.
+- Create `extract_title_block(lines, image_width, image_height) -> str | None` in `title_block.py`; it accepts normalized OCR line tuples and searches the configured lower title-block band for `TITLE`/`TITLE :` followed by a non-empty value.
+- Add an extractor mode that receives a page image and returns one `ExtractedSection` whose crop is `(0, 0, image.width, image.height)` and whose label is the title-block value.
 
-- [ ] **Step 1: Write failing oversized-render test**
+- [ ] **Step 1: Write failing title-block tests.** Cover `TITLE : TV UNIT` near the bottom, normalized punctuation/spacing, unrelated plan/elevation/material labels, missing title, and a title outside the lower band.
+- [ ] **Step 2: Run `pytest tests/test_title_block.py -q` and verify the expected failures.**
+- [ ] **Step 3: Implement bounded title-block parsing.** Use page-relative lower-band coordinates, normalize OCR punctuation without changing the returned display title, and reject blank/ambiguous candidates.
+- [ ] **Step 4: Run the title-block tests and verify they pass.**
+- [ ] **Step 5: Add a failing extractor test with a two-page synthetic PDF and mocked OCR results.** Assert one full-page section per page, exact title labels, full-page crop bounds, and preserved estimate taxonomy proposal data.
+- [ ] **Step 6: Run the focused extractor test and verify it fails for the current multi-panel behavior.**
+- [ ] **Step 7: Implement the title-block fast path.** OCR the title-block band only for eligible PDFs, bypass full-sheet region association when a title is found, encode the already-rendered full page once, and emit one section. Route pages with no recognized title through the existing extractor path.
+- [ ] **Step 8: Run focused OCR tests and commit.**
 
-~~~
-def test_pdf_renderer_downscales_an_oversized_page_before_pixmap_allocation(monkeypatch, tmp_path):
-    calls = []
-    class Rect: width = 10_000; height = 10_000
-    class Page:
-        rect = Rect()
-        def get_pixmap(self, *, matrix, alpha):
-            calls.append((matrix.a, alpha))
-            return Pixmap(width=1_000, height=1_000, samples=b"\xff" * 3_000_000)
-    monkeypatch.setattr("lisno_ocr.extractor.fitz.open", lambda _path: Document([Page()]))
-    list(Extractor(ocr_engine=FakePaddleOCR3([]), max_page_pixels=1_000_000)._render_pdf_pages(tmp_path / "large.pdf"))
-    assert calls == [(0.01, False)]
-~~~
+```bash
+git add ocr-worker/src/lisno_ocr/title_block.py ocr-worker/src/lisno_ocr/extractor.py ocr-worker/tests/test_title_block.py ocr-worker/tests/test_extractor.py
+git commit -m "feat: optimize titled PDF extraction"
+```
 
-- [ ] **Step 2: Run the render test to verify it fails**
+### Task 4: Make PDF rendering adaptive within safety limits
 
-Run: cd ocr-worker && .venv/bin/python -m pytest tests/test_extractor.py -k "downscales_an_oversized_page" -q
+**Files:**
+- Modify: `ocr-worker/src/lisno_ocr/extractor.py`
+- Modify: `ocr-worker/tests/test_extractor.py`
+- Modify: `ocr-worker/src/lisno_ocr/contracts.py` only if a new bounded setting is required by the implementation
 
-Expected: FAIL because current rendering rejects before get_pixmap.
+**Interfaces:**
+- `_render_pdf_pages` must compute a page scale no greater than the configured default and reduce it when `width * height` at the default scale exceeds `max_page_pixels`.
+- It must still reject a page when the minimum safe scale cannot produce a positive, useful image within the configured budget, with a classifiable `PdfRenderError`.
 
-- [ ] **Step 3: Implement adaptive scale**
+- [ ] **Step 1: Replace the current rejection-only test with a failing downscale test.** Mock a page whose default 2× dimensions exceed the budget; assert `get_pixmap` receives a reduced matrix and extraction proceeds.
+- [ ] **Step 2: Run the focused test and verify it fails because the current implementation raises before allocating a pixmap.**
+- [ ] **Step 3: Implement the scale calculation and retain page-count, output-byte, and processing safety guards.**
+- [ ] **Step 4: Add a test for an irreducibly oversized page that still raises `PdfRenderError` before unsafe allocation.**
+- [ ] **Step 5: Run all OCR tests.**
 
-~~~
-page_area = page.rect.width * page.rect.height
-if page_area <= 0:
-    raise PdfRenderError("A PDF page has invalid dimensions.")
-scale = min(self._render_scale, math.sqrt(self._max_page_pixels / page_area))
-pixmap = page.get_pixmap(matrix=fitz.Matrix(scale, scale), alpha=False)
-if pixmap.width * pixmap.height > self._max_page_pixels:
-    raise PdfRenderError("A rendered PDF page is too large.")
-~~~
+Run: `cd ocr-worker && .venv/bin/python -m pytest -m 'not model'`
 
-- [ ] **Step 4: Verify focused and full regression suites**
+- [ ] **Step 6: Commit.**
 
-Run:
+```bash
+git add ocr-worker/src/lisno_ocr/extractor.py ocr-worker/tests/test_extractor.py ocr-worker/src/lisno_ocr/contracts.py
+git commit -m "feat: adapt PDF rendering to safe page budgets"
+```
 
-~~~
-cd ocr-worker && .venv/bin/python -m pytest -m "not model"
-cd ../frontend && npm test -- client.test.ts EstimateDesignUploads.test.tsx
-~~~
+### Task 5: End-to-end regression verification and documentation
 
-Expected: PASS. Confirm the model smoke separately with .venv/bin/python -m pytest -m model tests/test_extractor.py -q when its model cache is available.
+**Files:**
+- Modify: `ocr-worker/README.md`
+- Modify: `README.md` if local setup instructions need the progress/fast-path behavior documented
+- Test: existing frontend, backend, and OCR suites
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 1: Document that titled estimate PDFs use title-block OCR and emit one full-page drawing per page, while other formats retain fallback extraction.**
+- [ ] **Step 2: Run frontend tests.**
 
-~~~
-git add ocr-worker/src/lisno_ocr/extractor.py ocr-worker/tests/test_extractor.py
-git commit -m "fix: adapt large estimate PDF rendering"
-~~~
+Run: `npm test -- --run`
 
-## Plan self-review
+- [ ] **Step 3: Run backend tests and typecheck.**
 
-- Tasks 1-2 cover byte progress, polished choose-file and retry controls, and indeterminate extraction states.
-- Task 3 covers single title-block detection, one full-page output, taxonomy mapping, and fallback behavior.
-- Task 4 covers large-page runtime safety without disabling limits.
-- The plan introduces every function and callback before a later task consumes it.
+Run: `npm test -- --run` from `backend`, then `npm run typecheck` from `backend`.
+
+- [ ] **Step 4: Run OCR non-model tests and the model smoke if the PaddleOCR cache is available.**
+- [ ] **Step 5: Run `git diff --check` and inspect the final status.**
+- [ ] **Step 6: Commit documentation and verification updates.**
+
+```bash
+git add README.md ocr-worker/README.md
+git commit -m "docs: describe fast estimate PDF extraction"
+```
