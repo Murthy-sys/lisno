@@ -26,6 +26,7 @@ import {
   ClientEstimateDrawings,
   clientDrawingReadinessId
 } from "./ClientEstimateDrawings";
+import { clientKeys } from "../client/clientApi";
 
 const money = (value: number) => `₹${value.toLocaleString("en-IN")}`;
 const catalogue = new Map<string, { description: string; sectionId: string; sectionLabel: string; icon: string }>();
@@ -73,6 +74,11 @@ export function EstimateReviewPanel() {
         await queryClient.invalidateQueries({
           queryKey: estimateDesignKeys.clientWorkspace(input.id)
         });
+        if (input.action === "approve") {
+          await queryClient.invalidateQueries({
+            queryKey: clientKeys.projects
+          });
+        }
       }
     },
     onError: async (_, input) => {

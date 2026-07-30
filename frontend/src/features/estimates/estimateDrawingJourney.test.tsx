@@ -150,12 +150,41 @@ const bedroomReplacement = revision(
   "draft",
   { replacesRevisionId: bedroomRequested.id },
 );
-const bedroomApproved = {
-  ...bedroomReplacement,
-  reviewStatus: "approved" as const,
+const bedroomVerified = revision(
+  "revision-bedroom-3",
+  bedroomDrawing.id,
+  bedroomDrawing.displayTitle,
+  bedroomDrawing.roomId,
+  bedroomDrawing.scopeSectionId,
+  3,
+  "draft",
+  { replacesRevisionId: bedroomReplacement.id },
+);
+const bedroomResubmitted = {
+  ...bedroomVerified,
+  reviewStatus: "submitted" as const,
   submittedAt: "2026-07-30T14:00:00.000Z",
+};
+const bedroomApproved = {
+  ...bedroomResubmitted,
+  reviewStatus: "approved" as const,
   reviewerId: "client-1",
   reviewedAt: "2026-07-30T15:00:00.000Z",
+};
+
+const createdProject = {
+  id: "project-journey",
+  name: "Estimate Drawing Journey",
+  status: "planning",
+  location: "Bengaluru",
+  plannedStartAt: "2026-08-01T00:00:00.000Z",
+  plannedEndAt: "2026-11-01T00:00:00.000Z",
+  actualStartAt: null,
+  actualEndAt: null,
+  createdAt: "2026-07-30T16:00:00.000Z",
+  updatedAt: "2026-07-30T16:00:00.000Z",
+  progress: 0,
+  floorCount: 1,
 };
 
 function upload(extractionStatus: string) {
@@ -248,7 +277,12 @@ describe("estimate drawing review journey", () => {
       /\.annotation-toolbar\s*\{[\s\S]*position:\s*sticky;[\s\S]*bottom:\s*0;/,
     );
 
-    let clientPhase: "submitted" | "requested" | "approved" = "submitted";
+    let clientPhase:
+      | "submitted"
+      | "requested"
+      | "replacement_submitted"
+      | "replacement_approved"
+      | "estimate_approved" = "submitted";
     const clientFetch = vi.spyOn(globalThis, "fetch").mockImplementation(
       async (input, init) => {
         const url = String(input);
@@ -269,7 +303,11 @@ describe("estimate drawing review journey", () => {
         if (url.endsWith("/api/v1/client/latest-approved-versions")) return json([]);
         if (url.endsWith("/api/v1/client/estimates")) {
           return json([
-            estimate(clientPhase === "approved" ? "client_approved" : "sent_to_client"),
+            estimate(
+              clientPhase === "estimate_approved"
+                ? "client_approved"
+                : "sent_to_client",
+            ),
           ]);
         }
         if (
@@ -279,31 +317,19 @@ describe("estimate drawing review journey", () => {
         ) {
           const bedroom = clientPhase === "submitted"
             ? bedroomSubmitted
-            : clientPhase === "requested"
-              ? bedroomRequested
-              : bedroomApproved;
+            : bedroomRequested;
           return json({
-            uploads: [upload(clientPhase === "approved" ? "approved" : clientPhase)],
+            uploads: [upload(clientPhase)],
             pages: [page],
             drawings: [livingDrawing, bedroomDrawing],
-            revisions: clientPhase === "approved"
-              ? [livingApproved, bedroomRequested, bedroomApproved]
-              : [livingApproved, bedroom],
-            readiness: clientPhase === "approved"
-              ? {
-                  ready: true,
-                  total: 2,
-                  approved: 2,
-                  awaitingReview: 0,
-                  changesRequested: 0,
-                }
-              : {
-                  ready: false,
-                  total: 2,
-                  approved: 1,
-                  awaitingReview: clientPhase === "submitted" ? 1 : 0,
-                  changesRequested: clientPhase === "requested" ? 1 : 0,
-                },
+            revisions: [livingApproved, bedroom],
+            readiness: {
+              ready: false,
+              total: 2,
+              approved: 1,
+              awaitingReview: clientPhase === "submitted" ? 1 : 0,
+              changesRequested: clientPhase === "requested" ? 1 : 0,
+            },
           });
         }
         if (
@@ -431,8 +457,12 @@ describe("estimate drawing review journey", () => {
     clientFetch.mockRestore();
 
     let replaced = false;
+    let replacementVerified = false;
+    let replacementSubmitted = false;
+    const estimatorRequests: Array<{ url: string; init?: RequestInit }> = [];
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const url = String(input);
+      estimatorRequests.push({ url, init });
       if (
         url.endsWith(
           "/api/v1/estimate-design-drawings/drawing-bedroom/replacement",
@@ -450,14 +480,60 @@ describe("estimate drawing review journey", () => {
         }, 201);
       }
       if (
+        url.endsWith("/api/v1/estimate-design-drawings/drawing-bedroom") &&
+        init?.method === "PATCH"
+      ) {
+        expect(JSON.parse(String(init.body))).toEqual({
+          version: 2,
+          displayTitle: "Bedroom Flooring",
+          roomId: "room-bedroom",
+          scopeSectionId: "FL",
+          crop: { x: 0, y: 0, width: 1_000, height: 800 },
+          verified: true,
+        });
+        replacementVerified = true;
+        return json({
+          ...bedroomDrawing,
+          verified: true,
+          revision: bedroomVerified,
+        });
+      }
+      if (
+        url.endsWith(
+          "/api/v1/estimates/estimate-journey/design-drawings/submit",
+        ) &&
+        init?.method === "POST"
+      ) {
+        expect(init.body).toBeUndefined();
+        replacementSubmitted = true;
+        clientPhase = "replacement_submitted";
+        return json({ submittedCount: 1 });
+      }
+      if (
         url.endsWith("/api/v1/estimates/estimate-journey/design-uploads")
       ) {
+        const latestBedroom = replacementVerified
+          ? (replacementSubmitted ? bedroomResubmitted : bedroomVerified)
+          : bedroomReplacement;
         return json({
-          uploads: [upload(replaced ? "estimator_review" : "changes_requested")],
+          uploads: [upload(
+            replacementSubmitted
+              ? "submitted"
+              : replaced
+                ? "estimator_review"
+                : "changes_requested",
+          )],
           pages: [page],
-          drawings: [{ ...bedroomDrawing, verified: !replaced }],
+          drawings: [{
+            ...bedroomDrawing,
+            verified: replacementVerified || !replaced,
+          }],
           revisions: replaced
-            ? [bedroomRequested, bedroomReplacement]
+            ? [
+                bedroomRequested,
+                bedroomReplacement,
+                ...(replacementVerified ? [latestBedroom] : []),
+              ]
             : [bedroomRequested],
         });
       }
@@ -516,12 +592,38 @@ describe("estimate drawing review journey", () => {
     expect(within(history).getByText(
       "Align the flooring boundary with the doorway.",
     )).toBeVisible();
+    await user.click(within(history).getByRole("button", {
+      name: "Close Drawing history",
+    }));
+    await user.click(within(replacementRow).getByRole("button", {
+      name: "More actions for Bedroom Flooring",
+    }));
+    await user.click(screen.getByRole("menuitem", { name: "Verify drawing" }));
+    expect(screen.getByRole("checkbox", {
+      name: "Mark mapping verified",
+    })).toBeChecked();
+    await user.click(screen.getByRole("button", { name: "Verify drawing" }));
+    expect(await screen.findByText("All drawings are verified.")).toBeVisible();
+    await user.click(screen.getByRole("button", {
+      name: "Submit drawings to client",
+    }));
+    await waitFor(() => expect(replacementSubmitted).toBe(true));
+    expect(estimatorRequests.some(({ url, init }) =>
+      url.endsWith("/api/v1/estimate-design-drawings/drawing-bedroom") &&
+      init?.method === "PATCH"
+    )).toBe(true);
+    expect(estimatorRequests.some(({ url, init }) =>
+      url.endsWith(
+        "/api/v1/estimates/estimate-journey/design-drawings/submit",
+      ) && init?.method === "POST"
+    )).toBe(true);
     estimator.unmount();
     vi.restoreAllMocks();
 
-    clientPhase = "approved";
-    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const approvalRequests: Array<{ url: string; init?: RequestInit }> = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const url = String(input);
+      approvalRequests.push({ url, init });
       if (url.endsWith("/api/v1/auth/me")) {
         return json({
           id: "client-1",
@@ -531,14 +633,28 @@ describe("estimate drawing review journey", () => {
         });
       }
       if (url.includes("/api/v1/client/project-summaries?")) {
+        const projects = clientPhase === "estimate_approved"
+          ? [createdProject]
+          : [];
         return json({
-          items: [],
-          pagination: { limit: 100, offset: 0, total: 0, hasMore: false },
+          items: projects,
+          pagination: {
+            limit: 100,
+            offset: 0,
+            total: projects.length,
+            hasMore: false,
+          },
         });
       }
       if (url.endsWith("/api/v1/client/latest-approved-versions")) return json([]);
       if (url.endsWith("/api/v1/client/estimates")) {
-        return json([estimate("client_approved")]);
+        return json([
+          estimate(
+            clientPhase === "estimate_approved"
+              ? "client_approved"
+              : "sent_to_client",
+          ),
+        ]);
       }
       if (
         url.endsWith(
@@ -546,18 +662,52 @@ describe("estimate drawing review journey", () => {
         )
       ) {
         return json({
-          uploads: [upload("approved")],
+          uploads: [upload(
+            clientPhase === "estimate_approved" ? "approved" : "submitted",
+          )],
           pages: [page],
           drawings: [livingDrawing, bedroomDrawing],
-          revisions: [livingApproved, bedroomRequested, bedroomApproved],
+          revisions: [
+            livingApproved,
+            bedroomRequested,
+            clientPhase === "replacement_submitted"
+              ? bedroomResubmitted
+              : bedroomApproved,
+          ],
           readiness: {
-            ready: true,
+            ready: clientPhase !== "replacement_submitted",
             total: 2,
-            approved: 2,
-            awaitingReview: 0,
+            approved: clientPhase === "replacement_submitted" ? 1 : 2,
+            awaitingReview: clientPhase === "replacement_submitted" ? 1 : 0,
             changesRequested: 0,
           },
         });
+      }
+      if (
+        url.endsWith(
+          "/api/v1/client/estimate-design-revisions/revision-bedroom-3/decision",
+        ) &&
+        init?.method === "POST"
+      ) {
+        expect(JSON.parse(String(init.body))).toEqual({
+          version: 3,
+          decision: "approve",
+        });
+        clientPhase = "replacement_approved";
+        return json(bedroomApproved);
+      }
+      if (
+        url.endsWith(
+          "/api/v1/client/estimates/estimate-journey/decision",
+        ) &&
+        init?.method === "POST"
+      ) {
+        expect(JSON.parse(String(init.body))).toEqual({
+          decision: "approve",
+          note: "",
+        });
+        clientPhase = "estimate_approved";
+        return json(estimate("client_approved"));
       }
       if (
         url.includes("/api/v1/estimate-design-revisions/") &&
@@ -578,7 +728,38 @@ describe("estimate drawing review journey", () => {
     const approvedBedroom = await within(approvedCard).findByRole("article", {
       name: "Bedroom Flooring drawing",
     });
+    expect(within(approvedBedroom).getByText(
+      "Awaiting client review",
+    )).toBeVisible();
+    const estimateApproval = within(approvedCard).getByRole("button", {
+      name: "Approve estimate",
+    });
+    expect(estimateApproval).toBeDisabled();
+    await user.click(within(approvedBedroom).getByRole("button", {
+      name: "Approve Bedroom Flooring",
+    }));
     expect(within(approvedBedroom).getByText("Approved")).toBeVisible();
+    await waitFor(() => expect(estimateApproval).toBeEnabled());
+    expect(within(approvedCard).getByText(
+      "2 of 2 drawings approved.",
+    )).toBeVisible();
+    await user.click(estimateApproval);
+    expect(await within(approvedCard).findByText(
+      "Estimate approved",
+    )).toBeVisible();
+    expect(await screen.findByRole("heading", {
+      name: "Estimate Drawing Journey",
+      level: 2,
+    })).toBeVisible();
+    expect(approvalRequests.some(({ url, init }) =>
+      url.endsWith(
+        "/api/v1/client/estimate-design-revisions/revision-bedroom-3/decision",
+      ) && init?.method === "POST"
+    )).toBe(true);
+    expect(approvalRequests.some(({ url, init }) =>
+      url.endsWith("/api/v1/client/estimates/estimate-journey/decision") &&
+      init?.method === "POST"
+    )).toBe(true);
     await user.click(within(approvedBedroom).getByRole("button", {
       name: "Preview Bedroom Flooring",
     }));

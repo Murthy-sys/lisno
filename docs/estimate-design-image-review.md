@@ -92,6 +92,12 @@ npm run typecheck
 VITE_API_URL=/api/v1 npm run build
 ```
 
+Manual desktop and 320 px visual verification requires the in-app browser
+surface. No browser session was available for the Task 8 verification run, so
+no screenshots were produced and no manual visual pass is claimed. Repeat that
+check in an in-app browser before treating the responsive screenshot review as
+complete.
+
 The deterministic acceptance sheet is
 `ocr-worker/tests/fixtures/estimate-review-sheet.png`. Its contract test records
 literal crops, stable room/scope IDs, and exact, alias, or bounded-fuzzy

@@ -25,7 +25,12 @@ from .contracts import (
 from .estimate_taxonomy import classify_estimate_drawing
 from .image_formats import ImageSourceError, open_source_pages
 from .settings import LayoutSettings
-from .title_classifier import DrawingTitle, OcrLine, classify_drawing_titles
+from .title_classifier import (
+    DrawingTitle,
+    OcrLine,
+    classify_drawing_titles,
+    is_excluded_drawing_title,
+)
 
 
 _MAX_CLASSIFIER_LINES = 2_000
@@ -286,7 +291,7 @@ def _with_estimate_taxonomy_titles(
     titles = list(classified)
     existing_boxes = {title.box for title in titles}
     for line in lines:
-        if line.box in existing_boxes:
+        if line.box in existing_boxes or is_excluded_drawing_title(line.text):
             continue
         proposal = classify_estimate_drawing(line.text, taxonomy)
         if (

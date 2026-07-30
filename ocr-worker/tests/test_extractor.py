@@ -384,6 +384,35 @@ def test_estimate_taxonomy_adds_a_proposal_for_every_multi_title_crop():
     }
 
 
+@pytest.mark.parametrize(
+    "label",
+    [
+        "Living Room Flooring Schedule",
+        "Living Room Flooring Notes",
+        "Living Room Flooring Legend",
+        "Living Room Flooring Details",
+        "Living Room Teak Flooring",
+    ],
+)
+def test_estimate_taxonomy_preserves_drawing_title_exclusions(label):
+    taxonomy = EstimateTaxonomy(
+        rooms=(TaxonomyTerm("room-living", "Living Room", ()),),
+        scopes=(TaxonomyTerm("FL", "Flooring", ()),),
+    )
+    ocr = PageAwareFakePaddleOCR3([{
+        "rec_boxes": [(34, 70, 285, 84)],
+        "rec_texts": [label],
+        "rec_scores": [0.99],
+    }])
+
+    page = Extractor(
+        ocr_engine=ocr,
+        estimate_taxonomy=taxonomy,
+    ).extract(FIXTURES / "multi-room-scope-plan.png")[0]
+
+    assert page.sections == ()
+
+
 def test_extracts_exact_approved_blueprint_titles_in_page_order(tmp_path):
     source, page_results, expected_regions, dash_regions = (
         _write_representative_blueprint_pdf(tmp_path)
