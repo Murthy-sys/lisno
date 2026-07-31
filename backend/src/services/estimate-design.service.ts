@@ -132,6 +132,8 @@ export interface EstimateWorkerResult {
   }>;
 }
 
+type EstimateResultMode = "ordinary" | "replacement";
+
 type EditEstimateDrawingBase = {
   version: number;
   displayTitle?: string;
@@ -960,7 +962,13 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
       if (!upload || !estimate) throw estimateNotFound();
       const taxonomy = taxonomyForEstimate(estimate);
       const mappingContext = mappingContextForEstimate(estimate);
-      const normalized = await normalizeEstimateResult(result, input.maxUploadBytes);
+      const resultMode: EstimateResultMode =
+        upload.replacementDrawingId ? "replacement" : "ordinary";
+      const normalized = await normalizeEstimateResult(
+        result,
+        input.maxUploadBytes,
+        resultMode
+      );
       if (upload.replacementDrawingId) {
         if (normalized.pages.length !== 1) {
           invalidWorkerResult("A replacement must contain exactly one drawing image.");
@@ -982,6 +990,7 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
         let completedJob: Record<string, any> | null = null;
         let cancelled = false;
         for (const page of normalized.pages) {
+          const section = page.sections[0]!;
           const storedPage = await saveGeneratedImage(input.storage, page.image);
           references.push(storedPage.reference);
           const pageId = randomUUID();
@@ -993,50 +1002,46 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
             width: page.width,
             height: page.height
           });
-          for (const section of page.sections) {
-            const storedCrop = await saveGeneratedImage(input.storage, section.image);
-            references.push(storedCrop.reference);
-            const drawingId = randomUUID();
-            const revisionId = randomUUID();
-            const { mapping } = autoMapDrawingTitle(
-              section.proposal.detectedTitle,
-              mappingContext
-            );
-            drawingDocuments.push({
-              _id: drawingId,
-              uploadId: upload._id,
-              sourcePageId: pageId,
-              estimateId: upload.estimateId,
-              active: true,
-              verified: false,
-              ...mapping,
-              detectedTitle: section.proposal.detectedTitle,
-              displayTitle: section.label,
-              source: "ocr",
-              roomConfidence: section.proposal.room.confidence,
-              scopeConfidence: section.proposal.scope.confidence,
-              ocrConfidence: section.confidence,
-              roomEvidence: section.proposal.room.evidence.map((value) => ({ value })),
-              scopeEvidence: section.proposal.scope.evidence.map((value) => ({ value }))
-            });
-            revisionDocuments.push({
-              _id: revisionId,
-              drawingId,
-              revisionNumber: 1,
-              sourcePageId: pageId,
-              crop: { ...section.crop },
-              croppedFileReference: storedCrop.reference,
-              ...mapping,
-              label: section.label,
-              reviewStatus: "draft",
-              submittedAt: null,
-              reviewerId: null,
-              reviewedAt: null,
-              changeSummary: null,
-              annotationLayerId: null,
-              replacesRevisionId: null
-            });
-          }
+          const drawingId = randomUUID();
+          const revisionId = randomUUID();
+          const { mapping } = autoMapDrawingTitle(
+            section.proposal.detectedTitle,
+            mappingContext
+          );
+          drawingDocuments.push({
+            _id: drawingId,
+            uploadId: upload._id,
+            sourcePageId: pageId,
+            estimateId: upload.estimateId,
+            active: true,
+            verified: false,
+            ...mapping,
+            detectedTitle: section.proposal.detectedTitle,
+            displayTitle: section.label,
+            source: "ocr",
+            roomConfidence: section.proposal.room.confidence,
+            scopeConfidence: section.proposal.scope.confidence,
+            ocrConfidence: section.confidence,
+            roomEvidence: section.proposal.room.evidence.map((value) => ({ value })),
+            scopeEvidence: section.proposal.scope.evidence.map((value) => ({ value }))
+          });
+          revisionDocuments.push({
+            _id: revisionId,
+            drawingId,
+            revisionNumber: 1,
+            sourcePageId: pageId,
+            crop: { ...section.crop },
+            croppedFileReference: storedPage.reference,
+            ...mapping,
+            label: section.label,
+            reviewStatus: "draft",
+            submittedAt: null,
+            reviewerId: null,
+            reviewedAt: null,
+            changeSummary: null,
+            annotationLayerId: null,
+            replacesRevisionId: null
+          });
         }
         await withMongoTransaction(async (session) => {
           const currentJob = await EstimateDesignExtractionJobModel.findById(jobId)
@@ -3285,7 +3290,8 @@ function equivalentChangeRequest(
 
 async function normalizeEstimateResult(
   result: EstimateWorkerResult,
-  maxImageBytes: number
+  maxImageBytes: number,
+  mode: EstimateResultMode
 ) {
   const pageNumbers = new Set<number>();
   let totalBytes = 0;
@@ -3302,7 +3308,19 @@ async function normalizeEstimateResult(
       proposal: EstimateWorkerProposal;
     }>;
   }> = [];
-  for (const page of result.pages) {
+  for (const [index, page] of result.pages.entries()) {
+    if (mode === "ordinary") {
+      if (page.pageNumber !== index + 1) {
+        invalidWorkerResult(
+          "Estimate page numbers must be contiguous starting at 1."
+        );
+      }
+      if (page.sections.length !== 1) {
+        invalidWorkerResult(
+          "Each estimate page must contain exactly one full-page drawing."
+        );
+      }
+    }
     if (pageNumbers.has(page.pageNumber)) invalidWorkerResult("Page numbers must be unique.");
     pageNumbers.add(page.pageNumber);
     if (pageNumbers.size > 50 || page.width * page.height > 40_000_000) {
@@ -3321,6 +3339,29 @@ async function normalizeEstimateResult(
       }
       const cropImage = decodeBase64(section.imageBase64, maxImageBytes);
       await validatePng(cropImage, section.crop.width, section.crop.height);
+      if (mode === "ordinary") {
+        const fullPageCrop = {
+          x: 0,
+          y: 0,
+          width: page.width,
+          height: page.height
+        };
+        if (
+          section.crop.x !== fullPageCrop.x ||
+          section.crop.y !== fullPageCrop.y ||
+          section.crop.width !== fullPageCrop.width ||
+          section.crop.height !== fullPageCrop.height
+        ) {
+          invalidWorkerResult(
+            "Estimate drawings must use the complete source page."
+          );
+        }
+        if (!cropImage.equals(image)) {
+          invalidWorkerResult(
+            "Estimate drawing image bytes must equal the source page image."
+          );
+        }
+      }
       totalBytes += cropImage.length;
       sections.push({
         label,

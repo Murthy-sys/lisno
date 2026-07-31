@@ -1044,17 +1044,17 @@ describe("complete cross-role journey", () => {
       .send({
         kind: "estimate_design",
         resultId: "estimate-review-result",
-        pages: [{
-          pageNumber: 1,
-          width: 2,
-          height: 2,
-          imageBase64: PNG.toString("base64"),
-          sections: [
-            {
+        pages: [
+          {
+            pageNumber: 1,
+            width: 2,
+            height: 2,
+            imageBase64: PNG.toString("base64"),
+            sections: [{
               label: "Living Room False Ceiling",
               confidence: 0.98,
-              crop: { x: 0, y: 0, width: 1, height: 1 },
-              imageBase64: CROP_PNG.toString("base64"),
+              crop: { x: 0, y: 0, width: 2, height: 2 },
+              imageBase64: PNG.toString("base64"),
               proposal: {
                 detectedTitle: "Living Room False Ceiling",
                 room: {
@@ -1070,12 +1070,18 @@ describe("complete cross-role journey", () => {
                   ambiguous: false
                 }
               }
-            },
-            {
+            }]
+          },
+          {
+            pageNumber: 2,
+            width: 2,
+            height: 2,
+            imageBase64: PNG.toString("base64"),
+            sections: [{
               label: "Bedroom Floorimg",
               confidence: 0.91,
-              crop: { x: 1, y: 0, width: 1, height: 1 },
-              imageBase64: CROP_PNG.toString("base64"),
+              crop: { x: 0, y: 0, width: 2, height: 2 },
+              imageBase64: PNG.toString("base64"),
               proposal: {
                 detectedTitle: "Bedroom Floorimg",
                 room: {
@@ -1091,9 +1097,9 @@ describe("complete cross-role journey", () => {
                   ambiguous: false
                 }
               }
-            }
-          ]
-        }]
+            }]
+          }
+        ]
       })
       .expect(200);
 
@@ -1216,8 +1222,8 @@ describe("complete cross-role journey", () => {
     );
     const annotations = {
       schemaVersion: 1,
-      imageWidth: 1,
-      imageHeight: 1,
+      imageWidth: 2,
+      imageHeight: 2,
       elements: [{
         id: "mark-bedroom-floor",
         type: "rectangle",

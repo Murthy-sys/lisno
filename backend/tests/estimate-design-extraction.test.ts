@@ -22,7 +22,7 @@ const WORKER_TOKEN = "estimate-worker-token-with-at-least-32-characters";
 const NOW = new Date("2026-07-30T12:00:00.000Z");
 let PAGE_ONE: Buffer;
 let PAGE_TWO: Buffer;
-let CROP: Buffer;
+let PAGE_IMAGES: Buffer[];
 
 class TestStorage {
   private sequence = 0;
@@ -391,46 +391,51 @@ async function claim(app: ReturnType<typeof createApp>) {
   return worker(request(app).post("/api/v1/internal/extraction-jobs/claim")).send();
 }
 
-function proposal(
+function estimatePage(
   pageNumber: number,
-  label: string,
-  roomId: string | null,
-  scopeId: string | null,
-  confidence = 0.95
+  image: Buffer,
+  label = `Drawing ${pageNumber}`
 ) {
   return {
-    label,
-    confidence,
-    crop: { x: 5, y: 6, width: 20, height: 10 },
-    imageBase64: CROP.toString("base64"),
-    proposal: {
-      detectedTitle: label,
-      room: { id: roomId, confidence, evidence: [label], ambiguous: roomId === null },
-      scope: { id: scopeId, confidence, evidence: [label], ambiguous: scopeId === null }
-    },
-    pageNumber
+    pageNumber,
+    width: 100,
+    height: 80,
+    imageBase64: image.toString("base64"),
+    sections: [{
+      label,
+      confidence: 0.95,
+      crop: { x: 0, y: 0, width: 100, height: 80 },
+      imageBase64: image.toString("base64"),
+      proposal: {
+        detectedTitle: label,
+        room: {
+          id: null,
+          confidence: 0,
+          evidence: [],
+          ambiguous: false
+        },
+        scope: {
+          id: null,
+          confidence: 0,
+          evidence: [],
+          ambiguous: false
+        }
+      }
+    }]
   };
 }
 
-function completeBody() {
-  const proposals = [
-    proposal(1, "Living false ceiling", "room-living", "FC"),
-    proposal(1, "Living electrical", "room-living", "EL"),
-    proposal(2, "Bedroom false ceiling", "room-bed", "FC"),
-    proposal(2, "Bedroom electrical", "room-bed", "EL")
-  ];
+function completeBody(pageCount = 4) {
   return {
     kind: "estimate_design",
     resultId: "estimate-result-1",
-    pages: [1, 2].map((pageNumber) => ({
-      pageNumber,
-      width: 100,
-      height: 80,
-      imageBase64: (pageNumber === 1 ? PAGE_ONE : PAGE_TWO).toString("base64"),
-      sections: proposals
-        .filter((item) => item.pageNumber === pageNumber)
-        .map(({ pageNumber: _ignored, ...item }) => item)
-    }))
+    pages: Array.from(
+      { length: pageCount },
+      (_, index) => estimatePage(
+        index + 1,
+        PAGE_IMAGES[index % PAGE_IMAGES.length]!
+      )
+    )
   };
 }
 
@@ -458,9 +463,7 @@ beforeAll(async () => {
   PAGE_TWO = await sharp({
     create: { width: 100, height: 80, channels: 3, background: "#eeeeee" }
   }).png().toBuffer();
-  CROP = await sharp({
-    create: { width: 20, height: 10, channels: 3, background: "#dddddd" }
-  }).png().toBuffer();
+  PAGE_IMAGES = [PAGE_ONE, PAGE_TWO];
 });
 
 afterEach(() => vi.restoreAllMocks());
@@ -831,7 +834,7 @@ describe("estimate design extraction and estimator verification", () => {
     }
   );
 
-  it("claims the estimate taxonomy and atomically publishes every proposed drawing", async () => {
+  it("claims the estimate taxonomy and atomically publishes every full-page drawing", async () => {
     const { app, uploads, pages, drawings, revisions, auditEvents } = setup();
 
     const leased = await claim(app);
@@ -859,7 +862,7 @@ describe("estimate design extraction and estimator verification", () => {
     const response = await complete(app, leased.body.data.claimToken);
 
     expect(response.status).toBe(200);
-    expect(pages).toHaveLength(2);
+    expect(pages).toHaveLength(4);
     expect(drawings).toHaveLength(4);
     expect(drawings.every((drawing) => drawing.active)).toBe(true);
     expect(revisions).toHaveLength(4);
@@ -875,6 +878,44 @@ describe("estimate design extraction and estimator verification", () => {
         "estimate_design_extraction_completed"
       ])
     );
+  });
+
+  it("publishes six full-page results as six pages, drawings, revisions, and six stored images", async () => {
+    const { app, pages, drawings, revisions, storage } = setup();
+    const leased = await claim(app);
+
+    const response = await complete(
+      app,
+      leased.body.data.claimToken,
+      completeBody(6)
+    );
+
+    expect(response.status).toBe(200);
+    expect(pages.map((page) => page.pageNumber)).toEqual([1, 2, 3, 4, 5, 6]);
+    expect(drawings).toHaveLength(6);
+    expect(revisions).toHaveLength(6);
+    expect(revisions.every((revision) =>
+      revision.crop.x === 0 &&
+      revision.crop.y === 0 &&
+      revision.crop.width === 100 &&
+      revision.crop.height === 80
+    )).toBe(true);
+    expect([...storage.objects.keys()]).toHaveLength(7);
+    expect(revisions.map((revision) => revision.croppedFileReference))
+      .toEqual(pages.map((page) => page.normalizedFileReference));
+  });
+
+  it("does not impose a six-page backend cap", async () => {
+    const { app, pages, drawings, revisions } = setup();
+    const leased = await claim(app);
+    const response = await complete(
+      app,
+      leased.body.data.claimToken,
+      completeBody(7)
+    );
+
+    expect(response.status).toBe(200);
+    expect([pages.length, drawings.length, revisions.length]).toEqual([7, 7, 7]);
   });
 
   it("maps from the canonical title and persisted included item, not worker scope", async () => {
@@ -984,6 +1025,105 @@ describe("estimate design extraction and estimator verification", () => {
       roomId: null,
       catalogueId: null,
       scopeSectionId: null,
+      mappingStatus: "misc"
+    });
+  });
+
+  it("publishes every unidentified full page with a true-null Misc mapping", async () => {
+    const { app, drawings, revisions } = setup();
+    const leased = await claim(app);
+    const body = completeBody(6);
+    body.pages.forEach((page, index) => {
+      const title = `Unidentified drawing — page ${index + 1}`;
+      page.sections[0] = {
+        ...page.sections[0]!,
+        label: title,
+        confidence: 0,
+        proposal: {
+          detectedTitle: title,
+          room: { id: null, confidence: 0, evidence: [], ambiguous: false },
+          scope: { id: null, confidence: 0, evidence: [], ambiguous: false }
+        }
+      };
+    });
+
+    const response = await complete(app, leased.body.data.claimToken, body);
+
+    expect(response.status).toBe(200);
+    expect(drawings).toHaveLength(6);
+    expect(revisions).toHaveLength(6);
+    for (const artifact of [...drawings, ...revisions]) {
+      expect(artifact).toMatchObject({
+        roomId: null,
+        scopeSectionId: null,
+        catalogueId: null,
+        mappingStatus: "misc"
+      });
+    }
+  });
+
+  it("maps repeated uniquely resolvable titles to the same complete tuple", async () => {
+    const { app, drawings, revisions } = setup();
+    const leased = await claim(app);
+    const body = completeBody(2);
+    for (const page of body.pages) {
+      page.sections[0] = {
+        ...page.sections[0]!,
+        label: "TV UNIT BEDROOM 1",
+        proposal: {
+          ...page.sections[0]!.proposal,
+          detectedTitle: "TV UNIT BEDROOM 1"
+        }
+      };
+    }
+
+    const response = await complete(app, leased.body.data.claimToken, body);
+
+    expect(response.status).toBe(200);
+    expect(drawings).toHaveLength(2);
+    expect(revisions).toHaveLength(2);
+    for (const artifact of [...drawings, ...revisions]) {
+      expect(artifact).toMatchObject({
+        roomId: "room-bedroom-1",
+        scopeSectionId: "CA",
+        catalogueId: "CA01",
+        mappingStatus: "auto_mapped"
+      });
+    }
+  });
+
+  it.each([
+    "Unidentified drawing — page 1",
+    "SHEET WITH NO ESTIMATE ITEM",
+    "TV UNIT"
+  ])("publishes unresolved title %s as one true-null Misc drawing", async (title) => {
+    const { app, drawings, revisions } = setup();
+    const leased = await claim(app);
+    const body = completeBody(1);
+    body.pages[0]!.sections[0] = {
+      ...body.pages[0]!.sections[0]!,
+      label: title,
+      proposal: {
+        ...body.pages[0]!.sections[0]!.proposal,
+        detectedTitle: title
+      }
+    };
+
+    const response = await complete(app, leased.body.data.claimToken, body);
+
+    expect(response.status).toBe(200);
+    expect(drawings).toHaveLength(1);
+    expect(revisions).toHaveLength(1);
+    expect(drawings[0]).toMatchObject({
+      roomId: null,
+      scopeSectionId: null,
+      catalogueId: null,
+      mappingStatus: "misc"
+    });
+    expect(revisions[0]).toMatchObject({
+      roomId: null,
+      scopeSectionId: null,
+      catalogueId: null,
       mappingStatus: "misc"
     });
   });
@@ -1328,6 +1468,40 @@ describe("estimate design extraction and estimator verification", () => {
   });
 
   it.each([
+    ["non-contiguous page numbers", (body: ReturnType<typeof completeBody>) => {
+      body.pages[1]!.pageNumber = 3;
+    }],
+    ["zero sections", (body: ReturnType<typeof completeBody>) => {
+      body.pages[0]!.sections = [];
+    }],
+    ["multiple sections", (body: ReturnType<typeof completeBody>) => {
+      body.pages[0]!.sections.push(
+        structuredClone(body.pages[0]!.sections[0]!)
+      );
+    }],
+    ["partial crop", (body: ReturnType<typeof completeBody>) => {
+      body.pages[0]!.sections[0]!.crop.width = 99;
+    }],
+    ["different section bytes", (body: ReturnType<typeof completeBody>) => {
+      body.pages[0]!.sections[0]!.imageBase64 =
+        PAGE_IMAGES[1]!.toString("base64");
+    }]
+  ])("rejects %s before publishing artifacts", async (_name, mutate) => {
+    const { app, pages, drawings, revisions, storage } = setup();
+    const leased = await claim(app);
+    const body = completeBody(2);
+    mutate(body);
+
+    const response = await complete(app, leased.body.data.claimToken, body);
+
+    expect(response.status, JSON.stringify(response.body)).toBe(400);
+    expect(pages).toEqual([]);
+    expect(drawings).toEqual([]);
+    expect(revisions).toEqual([]);
+    expect([...storage.objects.keys()]).toEqual(["original-plan.pdf"]);
+  });
+
+  it.each([
     ["out-of-bounds crop", (body: ReturnType<typeof completeBody>) => {
       body.pages[0]!.sections[0]!.crop.x = 90;
     }],
@@ -1337,7 +1511,7 @@ describe("estimate design extraction and estimator verification", () => {
     ["oversized output", (body: ReturnType<typeof completeBody>) => {
       body.pages[0]!.imageBase64 = Buffer.alloc(10_000_001).toString("base64");
     }]
-  ])("rejects %s without partial publication", async (_case, mutate) => {
+  ])("rejects legacy malformed case %s without partial publication", async (_case, mutate) => {
     const { app, pages, drawings, revisions } = setup();
     const leased = await claim(app);
     const body = completeBody();
@@ -1451,7 +1625,7 @@ describe("estimate design extraction and estimator verification", () => {
 
     expect(response.status).toBe(500);
     expect([...storage.objects.keys()]).toEqual(["original-plan.pdf"]);
-    expect(storage.deleted).toHaveLength(6);
+    expect(storage.deleted).toHaveLength(4);
     expect(pages).toEqual([]);
     expect(drawings).toEqual([]);
     expect(revisions).toEqual([]);
@@ -1546,7 +1720,7 @@ describe("estimate design extraction and estimator verification", () => {
     expect(revisions.filter((revision) => revision.drawingId === drawing._id))
       .toHaveLength(2);
     expect(revisions.find((revision) => revision.revisionNumber === 1)?.crop)
-      .toEqual({ x: 5, y: 6, width: 20, height: 10 });
+      .toEqual({ x: 0, y: 0, width: 100, height: 80 });
     expect(auditEvents).toContainEqual(expect.objectContaining({
       action: "estimate_design_mapping_corrected",
       entityId: drawing._id,
