@@ -13,6 +13,9 @@
 - Six pages is the required regression fixture, not an extraction limit.
 - Preserve `OCR_MAX_PDF_PAGES` and the existing configured page, pixel, output-byte, and processing-time limits.
 - Every accepted `estimate_design` source page produces exactly one full-page section.
+- Strict one-section/full-page publication applies to ordinary estimate
+  uploads; queued single-drawing replacements retain their existing
+  page-image/empty-sections contract.
 - `project_design` keeps its existing multi-region behavior.
 - Embedded PDF title text is first choice; fallback OCR is restricted to the title band.
 - Missing or unusable title text produces `Unidentified drawing — page <n>` with confidence `0` and null worker room/scope suggestions.
@@ -40,6 +43,9 @@
 - Modify `backend/src/services/estimate-design.service.ts`: validate ordinary estimate completion shape, reuse page artifacts, and remove verification/assignment submission gates.
 - Modify `backend/tests/estimate-design-extraction.test.ts`: cover six-page publication, seventh-page compatibility, atomic malformed-result rejection, Misc persistence, and permissive submission.
 - Modify `backend/tests/estimate-design-review.test.ts` only if a submission/client fixture needs the permissive state.
+- Modify `backend/tests/full-journey.test.ts`: replace legacy multi-section
+  estimate completion with one full-page section per source page and remove
+  the obsolete unverified-submission block.
 - Modify `frontend/src/features/leads/EstimateDesignUploads.tsx`: keep the submit button free of disabled conditions, group resolved drawings, label unresolved drawings Miscellaneous, and update temporary-policy copy.
 - Modify `frontend/src/features/leads/EstimateDesignUploads.test.tsx`: render six unverified mapped/Misc drawings, prove repeated titles share one section, and prove submission remains enabled while in flight.
 - Modify `frontend/src/features/estimates/ClientEstimateDrawings.tsx`: label true-null `misc` drawings Miscellaneous.
@@ -370,6 +376,7 @@ git commit -m "feat: emit one full-page estimate drawing per page"
 **Files:**
 - Modify: `backend/src/services/estimate-design.service.ts`
 - Modify: `backend/tests/estimate-design-extraction.test.ts`
+- Modify: `backend/tests/full-journey.test.ts`
 
 **Interfaces:**
 - Consumes: ordinary estimate worker results from Task 1.
@@ -425,7 +432,7 @@ function estimatePage(
   };
 }
 
-function completeBody(pageCount = 2) {
+function completeBody(pageCount = 4) {
   return {
     kind: "estimate_design" as const,
     resultId: "estimate-result-1",
@@ -438,6 +445,11 @@ function completeBody(pageCount = 2) {
 ```
 
 Update existing assertions that expected two sections per page to expect one drawing and revision per page.
+
+In `backend/tests/full-journey.test.ts`, replace its one-page/two-section
+ordinary estimate result with two pages. Each page must have one full-page
+section whose image bytes equal that page’s image bytes. Preserve the two
+consumer-visible drawings and the remainder of the journey.
 
 - [ ] **Step 2: Add six-page publication and seventh-page compatibility tests**
 
@@ -688,7 +700,7 @@ Expected: PASS, including the seventh-page compatibility guard.
 - [ ] **Step 9: Commit backend publication**
 
 ```bash
-git add backend/src/services/estimate-design.service.ts backend/tests/estimate-design-extraction.test.ts
+git add backend/src/services/estimate-design.service.ts backend/tests/estimate-design-extraction.test.ts backend/tests/full-journey.test.ts
 git commit -m "feat: validate full-page estimate extraction results"
 ```
 
@@ -700,10 +712,12 @@ git commit -m "feat: validate full-page estimate extraction results"
 - Modify: `backend/src/services/estimate-design.service.ts`
 - Modify: `backend/tests/estimate-design-extraction.test.ts`
 - Modify: `backend/tests/estimate-design-review.test.ts` only if a client fixture needs adjustment.
+- Modify: `backend/tests/full-journey.test.ts`
 - Modify: `frontend/src/features/leads/EstimateDesignUploads.tsx`
 - Modify: `frontend/src/features/leads/EstimateDesignUploads.test.tsx`
 - Modify: `frontend/src/features/estimates/ClientEstimateDrawings.tsx`
 - Modify: `frontend/src/features/estimates/ClientEstimateDrawings.test.tsx`
+- Modify: `frontend/src/features/estimates/estimateDrawingJourney.test.tsx`
 
 **Interfaces:**
 - Consumes: coherent mapped or true-null Misc active drawings from Task 2.
@@ -786,6 +800,11 @@ Keep and explicitly assert:
 - incoherent mapping tuple is rejected;
 - ownership and lifecycle checks still fail closed;
 - stale request/transaction revision identity rolls back.
+
+Update `backend/tests/full-journey.test.ts` so the first estimator submit of
+the newly extracted unverified drawings succeeds. Delete the obsolete
+`ESTIMATE_DRAWINGS_UNVERIFIED` phase, but keep the later client visibility,
+review, replacement, and final lifecycle assertions.
 
 Run RED:
 
@@ -881,7 +900,9 @@ Update reader-facing copy:
 In `ClientEstimateDrawings.tsx`, keep the persisted/API
 `mappingStatus: "misc"` value but change the group accessible name and heading
 to `Miscellaneous drawings` and `Miscellaneous`. Update the existing client
-group tests accordingly.
+group tests accordingly. Make the same reader-facing expectation changes in
+`frontend/src/features/estimates/estimateDrawingJourney.test.tsx`; internal
+`misc` variable names and CSS classes remain unchanged.
 
 Do not change upload progress, polling, retry, selected-file, assignment,
 correction, preview, replacement, history, or client review behavior.
@@ -894,7 +915,7 @@ npm test -- --run tests/estimate-design-extraction.test.ts tests/estimate-design
 npm run typecheck
 
 cd ../frontend
-npm test -- --run src/features/leads/EstimateDesignUploads.test.tsx src/features/estimates/ClientEstimateDrawings.test.tsx
+npm test -- --run src/features/leads/EstimateDesignUploads.test.tsx src/features/estimates/ClientEstimateDrawings.test.tsx src/features/estimates/estimateDrawingJourney.test.tsx
 npm run typecheck
 ```
 
@@ -903,7 +924,7 @@ Expected: PASS; no verification or mapping assignment blocks submission.
 - [ ] **Step 6: Commit permissive submission**
 
 ```bash
-git add backend/src/services/estimate-design.service.ts backend/tests/estimate-design-extraction.test.ts backend/tests/estimate-design-review.test.ts frontend/src/features/leads/EstimateDesignUploads.tsx frontend/src/features/leads/EstimateDesignUploads.test.tsx frontend/src/features/estimates/ClientEstimateDrawings.tsx frontend/src/features/estimates/ClientEstimateDrawings.test.tsx
+git add backend/src/services/estimate-design.service.ts backend/tests/estimate-design-extraction.test.ts backend/tests/estimate-design-review.test.ts backend/tests/full-journey.test.ts frontend/src/features/leads/EstimateDesignUploads.tsx frontend/src/features/leads/EstimateDesignUploads.test.tsx frontend/src/features/estimates/ClientEstimateDrawings.tsx frontend/src/features/estimates/ClientEstimateDrawings.test.tsx frontend/src/features/estimates/estimateDrawingJourney.test.tsx
 git commit -m "feat: allow permissive estimate drawing submission"
 ```
 

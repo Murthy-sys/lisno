@@ -64,7 +64,7 @@ production hardening remains explicitly pending.
 
 ### Backend publication invariant
 
-For estimate-design completion, the backend accepts only:
+For ordinary estimate-design upload completion, the backend accepts only:
 
 - one or more contiguous pages within the existing configured limit;
 - exactly one section per page;
@@ -79,6 +79,9 @@ with `N` pages commits exactly:
 - `N` immutable first revisions.
 
 Project-design extraction keeps its existing multi-section behavior and is outside this change.
+Queued single-drawing replacement completion keeps its existing page-image
+contract, including its current empty-sections payload, and is not subjected
+to the ordinary-upload section-shape rules.
 
 ## Submission behavior
 
