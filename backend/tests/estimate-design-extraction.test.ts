@@ -1831,6 +1831,8 @@ describe("estimate design extraction and estimator verification", () => {
     await complete(app, leased.body.data.claimToken, completeBody(2));
     uploads[0]!.extractionStatus = "processing";
     jobs[0]!.status = "processing";
+    jobs[0]!.claimId = "active-processing-claim";
+    jobs[0]!.leaseExpiresAt = new Date("2026-07-30T12:05:00.000Z");
 
     const submitted = await owner(
       request(app).post("/api/v1/estimates/estimate-1/design-drawings/submit")
@@ -1843,7 +1845,51 @@ describe("estimate design extraction and estimator verification", () => {
       (revision) => revision.reviewStatus === "submitted"
     )).toBe(true);
     expect(uploads[0]).toMatchObject({ extractionStatus: "processing" });
-    expect(jobs[0]).toMatchObject({ status: "processing" });
+    expect(jobs[0]).toMatchObject({
+      status: "processing",
+      claimId: "active-processing-claim",
+      leaseExpiresAt: new Date("2026-07-30T12:05:00.000Z")
+    });
+  });
+
+  it("submits when extraction becomes processing before the transaction without cancelling its claim", async () => {
+    const {
+      app,
+      revisions,
+      uploads,
+      jobs,
+      session,
+      runTransaction
+    } = setup();
+    const leased = await claim(app);
+    await complete(app, leased.body.data.claimToken, completeBody(2));
+    uploads[0]!.extractionStatus = "queued";
+    jobs[0]!.status = "queued";
+    jobs[0]!.claimId = null;
+    jobs[0]!.leaseExpiresAt = null;
+    session.withTransaction.mockImplementationOnce(async (operation) => {
+      uploads[0]!.extractionStatus = "processing";
+      jobs[0]!.status = "processing";
+      jobs[0]!.claimId = "new-processing-claim";
+      jobs[0]!.leaseExpiresAt = new Date("2026-07-30T12:05:00.000Z");
+      return runTransaction(operation);
+    });
+
+    const submitted = await owner(
+      request(app).post("/api/v1/estimates/estimate-1/design-drawings/submit")
+    ).send();
+
+    expect(submitted.status).toBe(200);
+    expect(submitted.body.data).toEqual({ submittedCount: 2 });
+    expect(revisions.every(
+      (revision) => revision.reviewStatus === "submitted"
+    )).toBe(true);
+    expect(uploads[0]).toMatchObject({ extractionStatus: "processing" });
+    expect(jobs[0]).toMatchObject({
+      status: "processing",
+      claimId: "new-processing-claim",
+      leaseExpiresAt: new Date("2026-07-30T12:05:00.000Z")
+    });
   });
 
   it("returns zero on a safe repeat without overwriting submitted revisions", async () => {

@@ -474,6 +474,36 @@ def test_six_page_estimate_pdf_opens_once_and_emits_one_full_page_drawing(
     )
 
 
+def test_estimate_pdf_does_not_expand_title_geometry_to_far_same_line_text(
+    tmp_path,
+):
+    source = tmp_path / "far-title-value.pdf"
+    document = fitz.open()
+    try:
+        page = document.new_page(width=1191, height=842)
+        page.insert_text((700, 780), "TITLE :")
+        page.insert_text((1100, 780), "UNRELATED")
+        document.save(source)
+    finally:
+        document.close()
+
+    class EmptyTitleBandOcr:
+        def predict(self, **_kwargs):
+            return [{
+                "rec_boxes": [],
+                "rec_texts": [],
+                "rec_scores": [],
+            }]
+
+    page = Extractor(
+        ocr_engine=EmptyTitleBandOcr(),
+        render_scale=1,
+        estimate_taxonomy=EstimateTaxonomy((), ()),
+    ).extract(source, mode="estimate_design")[0]
+
+    assert page.sections[0].label == "Unidentified drawing — page 1"
+
+
 def test_six_page_estimate_pdf_without_titles_emits_unidentified_drawings(
     monkeypatch,
     tmp_path,
