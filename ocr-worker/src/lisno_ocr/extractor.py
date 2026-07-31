@@ -15,7 +15,9 @@ import numpy as np
 from PIL import Image
 
 from .contracts import (
+    CanonicalMatch,
     Crop,
+    EstimateDrawingProposal,
     EstimateTaxonomy,
     ExtractedPage,
     ExtractedSection,
@@ -88,22 +90,16 @@ class Extractor:
         if not path.is_file():
             raise InvalidSourceError("The extraction source does not exist.")
         suffix = path.suffix.lower()
+        if suffix == ".pdf" and mode == "estimate_design":
+            return self._extract_estimate_pdf(path, deadline=deadline)
         if suffix == ".pdf":
-            title_candidates = (
-                self._pdf_title_candidates(path)
-                if mode == "estimate_design"
-                else ()
-            )
             images = self._render_pdf_pages(path, deadline=deadline)
-            use_title_block_fast_path = mode == "estimate_design"
         elif suffix in {".png", ".jpg", ".jpeg", ".webp", ".tif", ".tiff", ".heic", ".heif"}:
             images = open_source_pages(
                 path,
                 max_page_pixels=self._max_page_pixels,
                 max_pages=self._max_pdf_pages,
             )
-            use_title_block_fast_path = False
-            title_candidates = ()
         else:
             raise InvalidSourceError("The extraction source type is unsupported.")
         pages: list[ExtractedPage] = []
@@ -112,18 +108,21 @@ class Extractor:
             for page_number, image in enumerate(images, start=1):
                 try:
                     _require_processing_time(deadline)
-                    page, used = self._extract_page(
-                        image,
-                        page_number,
-                        remaining,
-                        use_title_block_fast_path=use_title_block_fast_path,
-                        title_block_candidate=(
-                            title_candidates[page_number - 1]
-                            if page_number <= len(title_candidates)
-                            else None
-                        ),
-                        deadline=deadline,
-                    )
+                    if mode == "estimate_design":
+                        page, used = self._extract_estimate_page(
+                            image,
+                            page_number,
+                            remaining,
+                            embedded_title=None,
+                            deadline=deadline,
+                        )
+                    else:
+                        page, used = self._extract_page(
+                            image,
+                            page_number,
+                            remaining,
+                            deadline=deadline,
+                        )
                     pages.append(page)
                     remaining -= used
                 finally:
@@ -132,20 +131,64 @@ class Extractor:
             raise InvalidSourceError(str(error)) from error
         return pages
 
-    def _pdf_title_candidates(
-        self, path: Path
-    ) -> tuple[tuple[str, float] | None, ...]:
+    def _extract_estimate_pdf(
+        self,
+        path: Path,
+        *,
+        deadline: float | None,
+    ) -> list[ExtractedPage]:
+        _require_processing_time(deadline)
         try:
-            with fitz.open(path) as document:
-                return tuple(
-                    extract_pdf_title_block_candidate(
-                        page.get_text("words"), page.rect.width, page.rect.height
+            document = fitz.open(path)
+        except Exception as error:
+            raise PdfRenderError("The PDF could not be opened.") from error
+        if document.page_count < 1:
+            document.close()
+            raise PdfRenderError("The PDF contains no pages.")
+        if document.page_count > self._max_pdf_pages:
+            document.close()
+            raise PdfRenderError("The PDF contains too many pages.")
+
+        pages: list[ExtractedPage] = []
+        remaining = self._max_output_bytes
+        try:
+            for page_number, pdf_page in enumerate(document, start=1):
+                _require_processing_time(deadline)
+                try:
+                    words = pdf_page.get_text("words")
+                    embedded_title = extract_pdf_title_block_candidate(
+                        words,
+                        pdf_page.rect.width,
+                        pdf_page.rect.height,
                     )
-                    for page in document
-                )
-        except Exception:
-            # Scanned PDFs and malformed text layers retain the OCR fallback.
-            return ()
+                    if embedded_title is None:
+                        embedded_title = extract_pdf_title_block_candidate(
+                            words,
+                            pdf_page.rect.width * 4,
+                            pdf_page.rect.height,
+                        )
+                except Exception:
+                    embedded_title = None
+                image = self._render_pdf_page(pdf_page, deadline=deadline)
+                try:
+                    extracted_page, used = self._extract_estimate_page(
+                        image,
+                        page_number,
+                        remaining,
+                        embedded_title=embedded_title,
+                        deadline=deadline,
+                    )
+                    pages.append(extracted_page)
+                    remaining -= used
+                finally:
+                    image.close()
+        except (PdfRenderError, OcrError):
+            raise
+        except Exception as error:
+            raise PdfRenderError("A PDF page could not be rendered.") from error
+        finally:
+            document.close()
+        return pages
 
     def _render_pdf_pages(
         self, path: Path, *, deadline: float | None = None
@@ -164,20 +207,7 @@ class Extractor:
         try:
             for page in document:
                 _require_processing_time(deadline)
-                scale = _pdf_render_scale(
-                    page.rect.width,
-                    page.rect.height,
-                    self._render_scale,
-                    self._max_page_pixels,
-                )
-                matrix = fitz.Matrix(scale, scale)
-                pixmap = page.get_pixmap(matrix=matrix, alpha=False)
-                try:
-                    image = Image.frombytes(
-                        "RGB", (pixmap.width, pixmap.height), pixmap.samples
-                    )
-                finally:
-                    del pixmap
+                image = self._render_pdf_page(page, deadline=deadline)
                 _require_processing_time(deadline)
                 yield image
         except (PdfRenderError, OcrError):
@@ -187,26 +217,39 @@ class Extractor:
         finally:
             document.close()
 
+    def _render_pdf_page(
+        self,
+        page: fitz.Page,
+        *,
+        deadline: float | None,
+    ) -> Image.Image:
+        scale = _pdf_render_scale(
+            page.rect.width,
+            page.rect.height,
+            self._render_scale,
+            self._max_page_pixels,
+        )
+        pixmap = page.get_pixmap(
+            matrix=fitz.Matrix(scale, scale),
+            alpha=False,
+        )
+        try:
+            return Image.frombytes(
+                "RGB",
+                (pixmap.width, pixmap.height),
+                pixmap.samples,
+            )
+        finally:
+            del pixmap
+
     def _extract_page(
         self,
         image: Image.Image,
         page_number: int,
         remaining_bytes: int,
-        use_title_block_fast_path: bool = False,
-        title_block_candidate: tuple[str, float] | None = None,
         deadline: float | None = None,
     ) -> tuple[ExtractedPage, int]:
         _require_processing_time(deadline)
-        if use_title_block_fast_path:
-            title_block_page = self._extract_title_block_page(
-                image,
-                page_number,
-                remaining_bytes,
-                candidate=title_block_candidate,
-                deadline=deadline,
-            )
-            if title_block_page is not None:
-                return title_block_page
         recognized = self._recognize(image, deadline=deadline)
         _require_processing_time(deadline)
         regions = _drawing_regions(
@@ -276,43 +319,48 @@ class Extractor:
             sections=tuple(sections),
         ), used
 
-    def _extract_title_block_page(
+    def _bounded_estimate_title(
+        self,
+        image: Image.Image,
+        *,
+        embedded_title: tuple[str, float] | None,
+        deadline: float | None,
+    ) -> tuple[str, float] | None:
+        _require_processing_time(deadline)
+        if embedded_title is not None:
+            return embedded_title
+        top = title_block_top(image.height)
+        band = image.crop((0, top, image.width, image.height))
+        try:
+            local_lines = self._recognize(band, deadline=deadline)
+        finally:
+            band.close()
+        recognized = [
+            ((left, y1 + top, right, y2 + top), label, confidence)
+            for (left, y1, right, y2), label, confidence in local_lines
+            if label and confidence >= self._confidence_floor
+        ]
+        return extract_title_block_candidate(recognized, image.width, image.height)
+
+    def _extract_estimate_page(
         self,
         image: Image.Image,
         page_number: int,
         remaining_bytes: int,
         *,
-        candidate: tuple[str, float] | None = None,
-        deadline: float | None = None,
-    ) -> tuple[ExtractedPage, int] | None:
-        _require_processing_time(deadline)
+        embedded_title: tuple[str, float] | None,
+        deadline: float | None,
+    ) -> tuple[ExtractedPage, int]:
+        candidate = self._bounded_estimate_title(
+            image,
+            embedded_title=embedded_title,
+            deadline=deadline,
+        )
         if candidate is None:
-            lower_band_top = title_block_top(image.height)
-            title_block_image = image.crop(
-                (0, lower_band_top, image.width, image.height)
-            )
-            try:
-                local_lines = self._recognize(
-                    title_block_image, deadline=deadline
-                )
-            finally:
-                title_block_image.close()
-            _require_processing_time(deadline)
-            recognized = [
-                (
-                    (left, top + lower_band_top, right, bottom + lower_band_top),
-                    label,
-                    confidence,
-                )
-                for (left, top, right, bottom), label, confidence in local_lines
-                if label and confidence >= self._confidence_floor
-            ]
-            candidate = extract_title_block_candidate(
-                recognized, image.width, image.height
-            )
-        if candidate is None:
-            return None
-        label, confidence = candidate
+            title = f"Unidentified drawing — page {page_number}"
+            confidence = 0.0
+        else:
+            title, confidence = candidate
         _require_processing_time(deadline)
         page_base64 = _png_base64(image)
         _require_processing_time(deadline)
@@ -321,15 +369,11 @@ class Extractor:
         used = _decoded_base64_size(page_base64) * 2
         _require_budget(used, remaining_bytes)
         section = ExtractedSection(
-            label=" ".join(label.split()),
+            label=" ".join(title.split()),
             confidence=confidence,
             crop=Crop(x=0, y=0, width=image.width, height=image.height),
             image_base64=page_base64,
-            proposal=(
-                classify_estimate_drawing(label, self._estimate_taxonomy)
-                if self._estimate_taxonomy is not None
-                else None
-            ),
+            proposal=_estimate_proposal(title, self._estimate_taxonomy),
         )
         return ExtractedPage(
             page_number=page_number,
@@ -431,6 +475,16 @@ class Extractor:
                 else None
             ),
         )
+
+
+def _estimate_proposal(
+    title: str,
+    taxonomy: EstimateTaxonomy | None,
+) -> EstimateDrawingProposal:
+    if taxonomy is not None:
+        return classify_estimate_drawing(title, taxonomy)
+    empty = CanonicalMatch(None, 0.0, (), False)
+    return EstimateDrawingProposal(title, empty, empty)
 
 
 def _require_processing_time(deadline: float | None) -> None:

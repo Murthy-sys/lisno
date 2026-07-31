@@ -81,6 +81,30 @@ SUPPLIED_BLUEPRINT_OCR = [
 ]
 
 
+def write_estimate_pdf(
+    tmp_path: Path,
+    titles: list[str | None],
+    *,
+    filename: str = "estimate.pdf",
+) -> Path:
+    source = tmp_path / filename
+    document = fitz.open()
+    try:
+        for title in titles:
+            page = document.new_page(width=1191, height=842)
+            if title is not None:
+                page.insert_text((700, 780), f"TITLE : {title}")
+        document.save(source)
+    finally:
+        document.close()
+    return source
+
+
+class OcrMustNotStart:
+    def predict(self, **_kwargs):
+        raise AssertionError("embedded title text must bypass OCR")
+
+
 def test_estimate_pdf_uses_embedded_title_text_without_starting_ocr(tmp_path):
     source = tmp_path / "text-layer-title.pdf"
     document = fitz.open()
@@ -414,42 +438,117 @@ def test_pdf_title_blocks_emit_one_full_page_section_and_preserve_taxonomy(tmp_p
     assert ocr.calls == 2
 
 
-def test_pdf_without_a_true_title_field_falls_back_to_existing_region_extraction(tmp_path):
-    source = tmp_path / "no-title-block.pdf"
-    image = Image.new("RGB", (900, 700), "white")
-    try:
-        ImageDraw.Draw(image).rectangle(
-            (80, 120, 420, 420), outline="black", width=4
-        )
-        image.save(source, format="PDF")
-    finally:
-        image.close()
+def test_six_page_estimate_pdf_opens_once_and_emits_one_full_page_drawing(
+    monkeypatch,
+    tmp_path,
+):
+    source = write_estimate_pdf(
+        tmp_path,
+        [f"Drawing {number}" for number in range(1, 7)],
+    )
 
-    ocr = PageAwareFakePaddleOCR3([
-        {
-            "rec_boxes": [(50, 20, 250, 48)],
-            "rec_texts": ["TITLE NUMBER"],
-            "rec_scores": [0.99],
-        },
-        {
-            "rec_boxes": [(50, 50, 270, 78)],
-            "rec_texts": ["Front Elevation"],
-            "rec_scores": [0.97],
-        },
-    ])
+    from lisno_ocr import extractor as module
+    actual_open = module.fitz.open
+    opens = 0
 
-    page = Extractor(ocr_engine=ocr, render_scale=1).extract(
-        source, mode="estimate_design"
-    )[0]
+    def counted_open(*args, **kwargs):
+        nonlocal opens
+        opens += 1
+        return actual_open(*args, **kwargs)
 
-    assert [section.label for section in page.sections] == ["Front Elevation"]
-    assert page.sections[0].crop.to_payload() != {
-        "x": 0,
-        "y": 0,
-        "width": page.width,
-        "height": page.height,
-    }
-    assert ocr.calls == 2
+    monkeypatch.setattr(module.fitz, "open", counted_open)
+    pages = Extractor(
+        ocr_engine=OcrMustNotStart(),
+        render_scale=1,
+        estimate_taxonomy=EstimateTaxonomy((), ()),
+    ).extract(source, mode="estimate_design")
+
+    assert opens == 1
+    assert [page.page_number for page in pages] == [1, 2, 3, 4, 5, 6]
+    assert all(len(page.sections) == 1 for page in pages)
+    assert all(
+        section.crop == Crop(0, 0, page.width, page.height)
+        and section.image_base64 == page.image_base64
+        for page in pages
+        for section in page.sections
+    )
+
+
+def test_six_page_estimate_pdf_without_titles_emits_unidentified_drawings(
+    monkeypatch,
+    tmp_path,
+):
+    source = write_estimate_pdf(tmp_path, [None] * 6)
+
+    class EmptyTitleBandOcr:
+        def __init__(self):
+            self.heights: list[int] = []
+
+        def predict(self, input):
+            self.heights.append(input.shape[0])
+            return [{
+                "rec_boxes": [],
+                "rec_texts": [],
+                "rec_scores": [],
+            }]
+
+    from lisno_ocr import extractor as module
+    monkeypatch.setattr(
+        module,
+        "_drawing_regions",
+        lambda *_args, **_kwargs: pytest.fail(
+            "estimate extraction must not enter region detection"
+        ),
+    )
+    ocr = EmptyTitleBandOcr()
+    pages = Extractor(
+        ocr_engine=ocr,
+        render_scale=1,
+        estimate_taxonomy=EstimateTaxonomy((), ()),
+    ).extract(source, mode="estimate_design")
+
+    assert [page.page_number for page in pages] == [1, 2, 3, 4, 5, 6]
+    assert [
+        section.label
+        for page in pages
+        for section in page.sections
+    ] == [
+        f"Unidentified drawing — page {number}"
+        for number in range(1, 7)
+    ]
+    assert all(
+        section.confidence == 0
+        and section.crop == Crop(0, 0, page.width, page.height)
+        and section.image_base64 == page.image_base64
+        and section.proposal is not None
+        and section.proposal.room.id is None
+        and section.proposal.scope.id is None
+        for page in pages
+        for section in page.sections
+    )
+    assert ocr.heights
+    assert all(
+        height < page.height
+        for height, page in zip(ocr.heights, pages, strict=True)
+    )
+
+
+def test_estimate_pdf_processes_page_seven_when_the_configured_limit_allows_it(
+    tmp_path,
+):
+    source = write_estimate_pdf(
+        tmp_path,
+        [f"Drawing {number}" for number in range(1, 8)],
+    )
+    pages = Extractor(
+        ocr_engine=OcrMustNotStart(),
+        render_scale=1,
+        max_pdf_pages=7,
+        estimate_taxonomy=EstimateTaxonomy((), ()),
+    ).extract(source, mode="estimate_design")
+
+    assert [page.page_number for page in pages] == list(range(1, 8))
+    assert all(len(page.sections) == 1 for page in pages)
 
 
 def test_pdf_title_block_fast_path_accounts_for_both_serialized_image_fields(
