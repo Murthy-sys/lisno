@@ -161,12 +161,6 @@ class Extractor:
                         pdf_page.rect.width,
                         pdf_page.rect.height,
                     )
-                    if embedded_title is None:
-                        embedded_title = extract_pdf_title_block_candidate(
-                            words,
-                            pdf_page.rect.width * 4,
-                            pdf_page.rect.height,
-                        )
                 except Exception:
                     embedded_title = None
                 image = self._render_pdf_page(pdf_page, deadline=deadline)
@@ -359,8 +353,10 @@ class Extractor:
         if candidate is None:
             title = f"Unidentified drawing — page {page_number}"
             confidence = 0.0
+            proposal = _empty_estimate_proposal(title)
         else:
             title, confidence = candidate
+            proposal = _estimate_proposal(title, self._estimate_taxonomy)
         _require_processing_time(deadline)
         page_base64 = _png_base64(image)
         _require_processing_time(deadline)
@@ -373,7 +369,7 @@ class Extractor:
             confidence=confidence,
             crop=Crop(x=0, y=0, width=image.width, height=image.height),
             image_base64=page_base64,
-            proposal=_estimate_proposal(title, self._estimate_taxonomy),
+            proposal=proposal,
         )
         return ExtractedPage(
             page_number=page_number,
@@ -483,6 +479,10 @@ def _estimate_proposal(
 ) -> EstimateDrawingProposal:
     if taxonomy is not None:
         return classify_estimate_drawing(title, taxonomy)
+    return _empty_estimate_proposal(title)
+
+
+def _empty_estimate_proposal(title: str) -> EstimateDrawingProposal:
     empty = CanonicalMatch(None, 0.0, (), False)
     return EstimateDrawingProposal(title, empty, empty)
 

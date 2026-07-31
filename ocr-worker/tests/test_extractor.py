@@ -93,7 +93,7 @@ def write_estimate_pdf(
         for title in titles:
             page = document.new_page(width=1191, height=842)
             if title is not None:
-                page.insert_text((700, 780), f"TITLE : {title}")
+                page.insert_text((24, 780), f"TITLE : {title}")
         document.save(source)
     finally:
         document.close()
@@ -474,6 +474,33 @@ def test_six_page_estimate_pdf_opens_once_and_emits_one_full_page_drawing(
     )
 
 
+def test_estimate_pdf_does_not_expand_the_embedded_title_field_geometry(tmp_path):
+    source = tmp_path / "distant-title-marker.pdf"
+    document = fitz.open()
+    try:
+        page = document.new_page(width=1191, height=842)
+        page.insert_text((700, 780), "TITLE : Unrelated lower-band text")
+        document.save(source)
+    finally:
+        document.close()
+
+    class EmptyTitleBandOcr:
+        def predict(self, **_kwargs):
+            return [{
+                "rec_boxes": [],
+                "rec_texts": [],
+                "rec_scores": [],
+            }]
+
+    page = Extractor(
+        ocr_engine=EmptyTitleBandOcr(),
+        render_scale=1,
+        estimate_taxonomy=EstimateTaxonomy((), ()),
+    ).extract(source, mode="estimate_design")[0]
+
+    assert page.sections[0].label == "Unidentified drawing — page 1"
+
+
 def test_six_page_estimate_pdf_without_titles_emits_unidentified_drawings(
     monkeypatch,
     tmp_path,
@@ -531,6 +558,33 @@ def test_six_page_estimate_pdf_without_titles_emits_unidentified_drawings(
         height < page.height
         for height, page in zip(ocr.heights, pages, strict=True)
     )
+
+
+def test_unidentified_estimate_drawing_ignores_matching_taxonomy_terms(tmp_path):
+    source = write_estimate_pdf(tmp_path, [None])
+
+    class EmptyTitleBandOcr:
+        def predict(self, **_kwargs):
+            return [{
+                "rec_boxes": [],
+                "rec_texts": [],
+                "rec_scores": [],
+            }]
+
+    taxonomy = EstimateTaxonomy(
+        rooms=(TaxonomyTerm("room-unidentified", "Unidentified Drawing", ()),),
+        scopes=(TaxonomyTerm("scope-unidentified", "Unidentified Drawing", ()),),
+    )
+    page = Extractor(
+        ocr_engine=EmptyTitleBandOcr(),
+        render_scale=1,
+        estimate_taxonomy=taxonomy,
+    ).extract(source, mode="estimate_design")[0]
+
+    assert page.sections[0].label == "Unidentified drawing — page 1"
+    assert page.sections[0].proposal is not None
+    assert page.sections[0].proposal.room.id is None
+    assert page.sections[0].proposal.scope.id is None
 
 
 def test_estimate_pdf_processes_page_seven_when_the_configured_limit_allows_it(
