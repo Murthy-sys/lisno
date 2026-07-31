@@ -1758,7 +1758,7 @@ describe("estimate design extraction and estimator verification", () => {
   });
 
   it("submits unverified mapped and true-null Misc draft drawings", async () => {
-    const { app, drawings, revisions, jobs } = setup();
+    const { app, drawings, revisions, uploads, jobs } = setup();
     const leased = await claim(app);
     const body = completeBody(2);
     Object.assign(body.pages[0]!.sections[0]!, {
@@ -1812,6 +1812,7 @@ describe("estimate design extraction and estimator verification", () => {
     ).send();
     expect(submitted.status).toBe(200);
     expect(submitted.body.data).toEqual({ submittedCount: 2 });
+    expect(uploads[0]).toMatchObject({ extractionStatus: "submitted" });
     expect(jobs[0]).toMatchObject({ status: "submitted" });
     expect(revisions).toEqual(expect.arrayContaining([
       expect.objectContaining({
@@ -1822,6 +1823,27 @@ describe("estimate design extraction and estimator verification", () => {
         reviewStatus: "submitted"
       })
     ]));
+  });
+
+  it("submits draft drawings without changing a processing upload or job", async () => {
+    const { app, drawings, revisions, uploads, jobs } = setup();
+    const leased = await claim(app);
+    await complete(app, leased.body.data.claimToken, completeBody(2));
+    uploads[0]!.extractionStatus = "processing";
+    jobs[0]!.status = "processing";
+
+    const submitted = await owner(
+      request(app).post("/api/v1/estimates/estimate-1/design-drawings/submit")
+    ).send();
+
+    expect(submitted.status).toBe(200);
+    expect(submitted.body.data).toEqual({ submittedCount: 2 });
+    expect(drawings.every((drawing) => drawing.verified === false)).toBe(true);
+    expect(revisions.every(
+      (revision) => revision.reviewStatus === "submitted"
+    )).toBe(true);
+    expect(uploads[0]).toMatchObject({ extractionStatus: "processing" });
+    expect(jobs[0]).toMatchObject({ status: "processing" });
   });
 
   it("returns zero on a safe repeat without overwriting submitted revisions", async () => {

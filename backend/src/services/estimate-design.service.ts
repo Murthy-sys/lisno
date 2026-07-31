@@ -2026,7 +2026,7 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
           uploadIdSet.add(String(sourcePage.uploadId));
         }
         const uploadIds = [...uploadIdSet];
-        const uploadStates: Array<{
+        const readyUploadStates: Array<{
           upload: Record<string, any>;
           job: Record<string, any>;
         }> = [];
@@ -2042,13 +2042,16 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
           if (
             !upload ||
             !job ||
-            String(upload.estimateId) !== estimateId ||
-            String(upload.extractionStatus) !== "estimator_review" ||
-            String(job.status) !== "estimator_review"
+            String(upload.estimateId) !== estimateId
           ) {
             extractionStateConflict();
           }
-          uploadStates.push({ upload, job });
+          if (
+            String(upload.extractionStatus) === "estimator_review" &&
+            String(job.status) === "estimator_review"
+          ) {
+            readyUploadStates.push({ upload, job });
+          }
         }
         await guardDesignLifecycle(estimate, session);
         const revisionIds = draftLatest.map((revision) => revision._id);
@@ -2063,7 +2066,7 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
         ) {
           staleDrawing();
         }
-        for (const { upload, job } of uploadStates) {
+        for (const { upload, job } of readyUploadStates) {
           const uploadUpdated = await EstimateDesignUploadModel.updateOne(
             {
               _id: upload._id,
@@ -2094,7 +2097,7 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
           newValues: {
             submittedCount: revisionIds.length,
             activeDrawingCount: drawings.length,
-            uploadCount: uploadStates.length
+            uploadCount: readyUploadStates.length
           }
         });
         submittedCount = revisionIds.length;
