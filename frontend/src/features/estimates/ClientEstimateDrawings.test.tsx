@@ -406,10 +406,10 @@ describe("client estimate drawings", () => {
     await user.click(within(card).getByRole("button", { name: /Aurora Villa/ }));
 
     const misc = await within(card).findByRole("region", {
-      name: "Misc drawings"
+      name: "Miscellaneous drawings"
     });
     expect(within(misc).getByRole("heading", {
-      name: "Misc",
+      name: "Miscellaneous",
       level: 5
     })).toBeVisible();
     expect(misc).toHaveTextContent(
@@ -509,7 +509,7 @@ describe("client estimate drawings", () => {
     await user.click(within(card).getByRole("button", { name: /Aurora Villa/ }));
 
     const misc = await within(card).findByRole("region", {
-      name: "Misc drawings"
+      name: "Miscellaneous drawings"
     });
     expect(misc).toHaveTextContent(
       "These drawings were submitted without an estimate-item assignment."

@@ -185,10 +185,10 @@ export function ClientEstimateDrawings({
       ) : (
         <section
           className="client-estimate-drawings__group client-estimate-drawings__group--misc"
-          aria-label="Misc drawings"
+          aria-label="Miscellaneous drawings"
           key="misc"
         >
-          <h5>Misc</h5>
+          <h5>Miscellaneous</h5>
           <p>
             {group.drawings.length === 1
               ? "This drawing was submitted without an estimate-item assignment."

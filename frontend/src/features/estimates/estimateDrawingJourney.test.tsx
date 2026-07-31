@@ -659,7 +659,7 @@ describe("estimate drawing review journey", () => {
       name: "Bedroom Flooring drawing",
     });
     const miscGroup = await screen.findByRole("region", {
-      name: "Misc drawings",
+      name: "Miscellaneous drawings",
     });
     expect(within(miscGroup).getByText("TV UNIT")).toBeVisible();
     expect(within(requestedRow).getByText(
@@ -711,7 +711,7 @@ describe("estimate drawing review journey", () => {
     })).toBeChecked();
     await user.click(screen.getByRole("button", { name: "Verify drawing" }));
     expect(await screen.findByText(
-      "1 verified Misc drawing can be submitted without assignment.",
+      "1 verified Miscellaneous drawing can be submitted without assignment.",
     )).toBeVisible();
     const submitDrawings = screen.getByRole("button", {
       name: "Submit drawings to client",
@@ -858,7 +858,7 @@ describe("estimate drawing review journey", () => {
       name: "Bedroom Flooring drawing",
     });
     const clientMisc = await within(approvedCard).findByRole("region", {
-      name: "Misc drawings",
+      name: "Miscellaneous drawings",
     });
     expect(within(clientMisc).getByRole("article", {
       name: "TV UNIT drawing",

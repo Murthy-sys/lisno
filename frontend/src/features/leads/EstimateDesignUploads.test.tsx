@@ -180,10 +180,15 @@ describe("EstimateDesignUploads", () => {
       ]}
     />);
 
-    const misc = await screen.findByRole("region", { name: "Misc drawings" });
+    const misc = await screen.findByRole("region", {
+      name: "Miscellaneous drawings"
+    });
     expect(misc).toHaveTextContent(
-      "No exact estimate item is assigned. You can still submit after verifying the drawing."
+      "No exact estimate item is assigned. You can still submit this drawing."
     );
+    expect(screen.getByText(
+      "1 verified Miscellaneous drawing can be submitted without assignment."
+    )).toBeVisible();
     expect(screen.getByRole("button", { name: "Submit drawings to client" })).toBeEnabled();
 
     await user.click(within(misc).getByRole("button", { name: "More actions for TV UNIT" }));
@@ -287,40 +292,207 @@ describe("EstimateDesignUploads", () => {
     expect(screen.getByText("Could not read plan")).toBeVisible();
   });
 
-  it("keeps duplicate drawings in their stable room and scope group while verified placement gaps do not block submit", async () => {
-    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
-      const url = String(input);
-      if (url.endsWith("/estimates/estimate-1/design-uploads")) {
-        return response({
-          uploads: [{ id: "upload-1", estimateId: "estimate-1", leadId: "lead-1", originalFilename: "plan.pdf", mimeType: "application/pdf", sizeBytes: 12, uploaderId: "user-1", uploadedAt: "2026-07-30T00:00:00.000Z", extractionStatus: "estimator_review", failureCode: null, failureMessage: null }],
-          pages: [page], drawings, revisions
-        });
+  it("renders six extracted rows and keeps submission enabled while processing and pending", async () => {
+    const sixPages = Array.from({ length: 6 }, (_, index) => ({
+      ...page,
+      id: `page-${index + 1}`,
+      pageNumber: index + 1
+    }));
+    const rowDefinitions = [
+      {
+        title: "TV UNIT - BEDROOM 1",
+        roomId: "room-bedroom-1",
+        scopeSectionId: "CA",
+        catalogueId: "CA01",
+        mappingStatus: "auto_mapped" as const
+      },
+      {
+        title: "TV UNIT - BEDROOM 1",
+        roomId: "room-bedroom-1",
+        scopeSectionId: "CA",
+        catalogueId: "CA01",
+        mappingStatus: "auto_mapped" as const
+      },
+      {
+        title: "Living Room False Ceiling",
+        roomId: "room-living",
+        scopeSectionId: "FC",
+        catalogueId: "FC01",
+        mappingStatus: "auto_mapped" as const
+      },
+      {
+        title: "Bedroom 1 Electrical Plan",
+        roomId: "room-bedroom-1",
+        scopeSectionId: "EL",
+        catalogueId: "EL01",
+        mappingStatus: "auto_mapped" as const
+      },
+      {
+        title: "Unidentified drawing — page 5",
+        roomId: null,
+        scopeSectionId: null,
+        catalogueId: null,
+        mappingStatus: "misc" as const
+      },
+      {
+        title: "Unidentified drawing — page 6",
+        roomId: null,
+        scopeSectionId: null,
+        catalogueId: null,
+        mappingStatus: "misc" as const
       }
-      if (url.includes("/estimate-design-revisions/")) return new Response(new Blob(["image"], { type: "image/png" }));
+    ];
+    const sixDrawings = rowDefinitions.map((definition, index) => ({
+      ...drawings[0],
+      id: `drawing-${index + 1}`,
+      sourcePageId: `page-${index + 1}`,
+      active: true,
+      verified: false,
+      roomId: definition.roomId,
+      scopeSectionId: definition.scopeSectionId,
+      catalogueId: definition.catalogueId,
+      mappingStatus: definition.mappingStatus,
+      detectedTitle: definition.title,
+      displayTitle: definition.title
+    }));
+    const sixRevisions = rowDefinitions.map((definition, index) => ({
+      ...revisions[0],
+      id: `revision-${index + 1}`,
+      drawingId: `drawing-${index + 1}`,
+      sourcePageId: `page-${index + 1}`,
+      roomId: definition.roomId,
+      scopeSectionId: definition.scopeSectionId,
+      catalogueId: definition.catalogueId,
+      mappingStatus: definition.mappingStatus,
+      label: definition.title,
+      reviewStatus: "draft" as const
+    }));
+    let settleSubmission!: (response: Response) => void;
+    const pendingSubmission = new Promise<Response>((resolve) => {
+      settleSubmission = resolve;
+    });
+    vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+      const url = String(input);
+      if (
+        url.endsWith("/estimates/estimate-1/design-drawings/submit") &&
+        init?.method === "POST"
+      ) {
+        return pendingSubmission;
+      }
+      if (url.endsWith("/estimates/estimate-1/design-uploads")) {
+        return Promise.resolve(response({
+          uploads: [{
+            id: "upload-1",
+            estimateId: "estimate-1",
+            leadId: "lead-1",
+            originalFilename: "six-page-plan.pdf",
+            mimeType: "application/pdf",
+            sizeBytes: 12,
+            uploaderId: "user-1",
+            uploadedAt: "2026-07-30T00:00:00.000Z",
+            extractionStatus: "processing",
+            failureCode: null,
+            failureMessage: null
+          }],
+          pages: sixPages,
+          drawings: sixDrawings,
+          revisions: sixRevisions
+        }));
+      }
+      if (url.includes("/estimate-design-revisions/")) {
+        return Promise.resolve(
+          new Response(new Blob(["image"], { type: "image/png" }))
+        );
+      }
       throw new Error(`Unexpected request: ${url}`);
     });
 
     const user = userEvent.setup();
-    renderWithQuery(<EstimateDesignUploads estimateId="estimate-1" rooms={rooms} scopes={scopes} items={[]} />);
+    renderWithQuery(
+      <EstimateDesignUploads
+        estimateId="estimate-1"
+        rooms={[
+          { id: "room-bedroom-1", label: "Bedroom 1" },
+          { id: "room-living", label: "Living Room" }
+        ]}
+        scopes={[
+          { id: "CA", label: "Carpentry" },
+          { id: "FC", label: "False Ceiling" },
+          { id: "EL", label: "Electrical" }
+        ]}
+        items={[]}
+      />
+    );
 
-    const placement = await screen.findByRole("region", { name: "Needs placement" });
-    expect(within(placement).getByText("Bedroom electrical")).toBeVisible();
-    const scope = screen.getByRole("region", { name: "Living Room, False Ceiling drawings" });
-    expect(within(scope).getByText("Living ceiling")).toBeVisible();
-    expect(within(scope).getByText("Living detail")).toBeVisible();
-    expect(within(scope).getAllByRole("button", { name: /Preview/ })).toHaveLength(2);
-    expect(screen.getByRole("button", { name: "Submit drawings to client" })).toBeEnabled();
-    expect(within(scope).getByRole("img", { name: "Living ceiling thumbnail" })).toHaveClass("estimate-drawing-row__thumbnail");
+    const bedroomCarpentry = await screen.findByRole("region", {
+      name: "Bedroom 1, Carpentry drawings"
+    });
+    expect(within(bedroomCarpentry).getAllByRole("article", {
+      name: "TV UNIT - BEDROOM 1 drawing"
+    })).toHaveLength(2);
+    expect(await screen.findAllByRole("article", {
+      name: /drawing$/i
+    })).toHaveLength(6);
+    const misc = screen.getByRole("region", {
+      name: "Miscellaneous drawings"
+    });
+    expect(within(misc).getByRole("heading", {
+      name: "Miscellaneous"
+    })).toBeVisible();
+    for (const miscRow of within(misc).getAllByRole("article")) {
+      expect(miscRow).toHaveTextContent("Miscellaneous · Unassigned item");
+    }
+    expect(screen.queryByRole("region", {
+      name: "Needs placement"
+    })).not.toBeInTheDocument();
 
-    const livingMenu = within(scope).getByRole("button", { name: "More actions for Living ceiling" });
-    livingMenu.focus();
-    await user.keyboard("{Enter}");
-    expect(screen.getByRole("menu", { name: "Living ceiling actions" })).toBeVisible();
-    expect(within(scope).getByRole("button", { name: "More actions for Living detail" })).toHaveAttribute("aria-expanded", "false");
+    const mappedActions = within(bedroomCarpentry).getAllByRole("button", {
+      name: "More actions for TV UNIT - BEDROOM 1"
+    })[0]!;
+    await user.click(mappedActions);
+    expect(screen.getByRole("menuitem", {
+      name: "Verify drawing"
+    })).toBeVisible();
+    expect(screen.getByRole("menuitem", {
+      name: "Change estimate item"
+    })).toBeVisible();
+    await user.click(mappedActions);
+    await user.click(within(misc).getByRole("button", {
+      name: "More actions for Unidentified drawing — page 5"
+    }));
+    expect(screen.getByRole("menuitem", {
+      name: "Assign estimate item"
+    })).toBeVisible();
 
-    const ambiguousMenu = within(placement).getByRole("button", { name: "More actions for Bedroom electrical" });
-    await user.click(ambiguousMenu);
-    expect(within(placement).getByRole("menuitem", { name: "Change estimate item" })).toBeVisible();
+    const submit = screen.getByRole("button", {
+      name: "Submit drawings to client"
+    });
+    expect(submit).toBeEnabled();
+    expect(submit).not.toHaveAttribute("disabled");
+    expect(submit).not.toHaveAttribute("aria-disabled");
+    await user.click(submit);
+
+    const pendingButton = screen.getByRole("button", {
+      name: "Submitting…"
+    });
+    expect(pendingButton).toBeEnabled();
+    expect(pendingButton).not.toHaveAttribute("disabled");
+    expect(pendingButton).not.toHaveAttribute("aria-disabled");
+
+    expect(screen.getByText(
+      "Extracted drawings remain private until they are submitted to the client."
+    )).toBeVisible();
+    expect(misc).toHaveTextContent("No exact estimate item is assigned.");
+    expect(screen.getByText(
+      "6 drawings can be submitted now. Verification is optional for this milestone."
+    )).toBeVisible();
+
+    settleSubmission(Response.json({
+      error: { code: "SUBMISSION_FAILED", message: "Try again." }
+    }, { status: 500 }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "The drawings could not be submitted. Try again."
+    );
   });
 
   it("uploads through multipart, polls while queued or processing, and stops once review is ready", async () => {

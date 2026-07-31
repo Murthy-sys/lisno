@@ -1130,69 +1130,12 @@ describe("complete cross-role journey", () => {
       verified: false
     });
 
-    Object.assign(state.drawings.find(
-      (drawing) => drawing._id === living.id
-    )!, { verified: true });
-
-    const blocked = await request(app)
-      .post("/api/v1/estimates/estimate-journey/design-drawings/submit")
-      .set("Authorization", estimator)
-      .send();
-    expect(blocked.status).toBe(409);
-    expect(blocked.body.error.code).toBe("ESTIMATE_DRAWINGS_UNVERIFIED");
-
-    const persistedMiscDrawing = state.drawings.find(
-      (drawing) => drawing._id === bedroom.id
-    )!;
-    const persistedMiscRevision = state.revisions.find(
-      (revision) =>
-        revision.drawingId === bedroom.id && revision.revisionNumber === 1
-    )!;
-    Object.assign(persistedMiscDrawing, {
-      roomId: null,
-      scopeSectionId: null,
-      catalogueId: null,
-      mappingStatus: "misc",
-      verified: false
-    });
-    Object.assign(persistedMiscRevision, {
-      roomId: null,
-      scopeSectionId: null,
-      catalogueId: null,
-      mappingStatus: "misc"
-    });
-
-    const corrected = await request(app)
-      .patch(`/api/v1/estimate-design-drawings/${bedroom.id}`)
-      .set("Authorization", estimator)
-      .send({
-        version: 1,
-        displayTitle: "TV UNIT",
-        verified: true
-      })
-      .expect(200);
-    expect(corrected.body.data).toMatchObject({
-      roomId: null,
-      scopeSectionId: null,
-      catalogueId: null,
-      mappingStatus: "misc",
-      verified: true,
-      revision: {
-        revisionNumber: 2,
-        label: "TV UNIT",
-        roomId: null,
-        scopeSectionId: null,
-        catalogueId: null,
-        mappingStatus: "misc"
-      }
-    });
-
     const submitted = await request(app)
       .post("/api/v1/estimates/estimate-journey/design-drawings/submit")
       .set("Authorization", estimator)
       .send()
       .expect(200);
-    expect(submitted.status).toBe(200);
+    expect(submitted.body.data).toEqual({ submittedCount: 2 });
     await request(app)
       .post("/api/v1/leads/lead-journey/estimate/submit")
       .set("Authorization", estimator)
@@ -1206,7 +1149,7 @@ describe("complete cross-role journey", () => {
     expect(clientWorkspace.status).toBe(200);
     expect(clientWorkspace.body.data.drawings).toContainEqual(
       expect.objectContaining({
-        verified: true,
+        verified: false,
         roomId: null,
         scopeSectionId: null,
         catalogueId: null,
@@ -1218,7 +1161,7 @@ describe("complete cross-role journey", () => {
     );
     const bedroomRevision = clientWorkspace.body.data.revisions.find(
       (revision: { drawingId: string; revisionNumber: number }) =>
-        revision.drawingId === bedroom.id && revision.revisionNumber === 2
+        revision.drawingId === bedroom.id && revision.revisionNumber === 1
     );
     const annotations = {
       schemaVersion: 1,
@@ -1250,7 +1193,7 @@ describe("complete cross-role journey", () => {
       .post(`/api/v1/client/estimate-design-revisions/${bedroomRevision.id}/decision`)
       .set("Authorization", client)
       .send({
-        version: 2,
+        version: 1,
         decision: "request_changes",
         summary: "Align the flooring boundary with the doorway.",
         annotations
@@ -1260,14 +1203,14 @@ describe("complete cross-role journey", () => {
     const replacement = await request(app)
       .post(`/api/v1/estimate-design-drawings/${bedroom.id}/replacement`)
       .set("Authorization", estimator)
-      .field("version", "2")
+      .field("version", "1")
       .attach("file", PNG, {
         filename: "bedroom-flooring-v2.png",
         contentType: "image/png"
       })
       .expect(201);
     expect(replacement.body.data.revision).toMatchObject({
-      revisionNumber: 3,
+      revisionNumber: 2,
       reviewStatus: "draft",
       replacesRevisionId: bedroomRevision.id
     });
@@ -1275,7 +1218,7 @@ describe("complete cross-role journey", () => {
     await request(app)
       .patch(`/api/v1/estimate-design-drawings/${bedroom.id}`)
       .set("Authorization", estimator)
-      .send({ version: 3, verified: true })
+      .send({ version: 2, verified: true })
       .expect(200);
     await request(app)
       .post("/api/v1/estimates/estimate-journey/design-drawings/submit")
@@ -1336,7 +1279,6 @@ describe("complete cross-role journey", () => {
       "estimate_design_uploaded",
       "estimate_design_extraction_claimed",
       "estimate_design_extraction_completed",
-      "estimate_design_mapping_corrected",
       "estimate_design_verified",
       "estimate_design_drawings_submitted",
       "estimate_design_annotation_draft_saved",

@@ -1757,71 +1757,165 @@ describe("estimate design extraction and estimator verification", () => {
     expect(approved.status).toBe(409);
   });
 
-  it("blocks an unverified Misc drawing but submits it after independent verification", async () => {
+  it("submits unverified mapped and true-null Misc draft drawings", async () => {
     const { app, drawings, revisions, jobs } = setup();
     const leased = await claim(app);
-    const body = completeBody();
-    body.pages[0]!.sections[0] = {
-      ...body.pages[0]!.sections[0]!,
-      label: "TV UNIT",
+    const body = completeBody(2);
+    Object.assign(body.pages[0]!.sections[0]!, {
+      label: "TV UNIT - BEDROOM 1",
       proposal: {
-        detectedTitle: "TV UNIT",
-        room: { id: null, confidence: 0.5, evidence: [], ambiguous: true },
-        scope: { id: null, confidence: 0.5, evidence: [], ambiguous: true }
+        detectedTitle: "TV UNIT - BEDROOM 1",
+        room: {
+          id: "room-bedroom-1",
+          confidence: 0.99,
+          evidence: ["bedroom 1"],
+          ambiguous: false
+        },
+        scope: {
+          id: "CA",
+          confidence: 0.99,
+          evidence: ["TV UNIT"],
+          ambiguous: false
+        }
       }
-    };
-    await complete(app, leased.body.data.claimToken, body);
-    const misc = drawings.find((item) => item.detectedTitle === "TV UNIT")!;
-
-    const blocked = await owner(
-      request(app).post("/api/v1/estimates/estimate-1/design-drawings/submit")
-    ).send();
-    expect(blocked.status).toBe(409);
-    expect(blocked.body.error.code).toBe("ESTIMATE_DRAWINGS_UNVERIFIED");
-
-    const verified = await owner(
-      request(app).patch(`/api/v1/estimate-design-drawings/${misc._id}`)
-    ).send({ version: 1, verified: true });
-    expect(verified.status).toBe(200);
-    expect(verified.body.data).toMatchObject({
-      verified: true,
-      roomId: null,
-      catalogueId: null,
-      scopeSectionId: null,
-      mappingStatus: "misc"
+    });
+    const unidentified = "Unidentified drawing — page 2";
+    Object.assign(body.pages[1]!.sections[0]!, {
+      label: unidentified,
+      confidence: 0,
+      proposal: {
+        detectedTitle: unidentified,
+        room: {
+          id: null,
+          confidence: 0,
+          evidence: [],
+          ambiguous: false
+        },
+        scope: {
+          id: null,
+          confidence: 0,
+          evidence: [],
+          ambiguous: false
+        }
+      }
     });
 
-    for (const drawing of drawings) drawing.verified = true;
+    expect((await complete(
+      app,
+      leased.body.data.claimToken,
+      body
+    )).status).toBe(200);
+    expect(drawings.every((drawing) => drawing.verified === false)).toBe(true);
 
     const submitted = await owner(
       request(app).post("/api/v1/estimates/estimate-1/design-drawings/submit")
     ).send();
     expect(submitted.status).toBe(200);
-    expect(submitted.body.data).toMatchObject({ submittedCount: 4 });
+    expect(submitted.body.data).toEqual({ submittedCount: 2 });
     expect(jobs[0]).toMatchObject({ status: "submitted" });
-    expect(revisions.filter((item) => item.drawingId === misc._id).at(-1))
-      .toMatchObject({
+    expect(revisions).toEqual(expect.arrayContaining([
+      expect.objectContaining({
         roomId: null,
-        catalogueId: null,
         scopeSectionId: null,
+        catalogueId: null,
         mappingStatus: "misc",
         reviewStatus: "submitted"
-      });
+      })
+    ]));
   });
 
-  it("requires verification even when the current revision is approved", async () => {
+  it("returns zero on a safe repeat without overwriting submitted revisions", async () => {
+    const { app, revisions } = setup();
+    const leased = await claim(app);
+    await complete(app, leased.body.data.claimToken, completeBody(2));
+
+    const first = await owner(
+      request(app).post("/api/v1/estimates/estimate-1/design-drawings/submit")
+    ).send();
+    expect(first.status).toBe(200);
+
+    const repeated = await owner(
+      request(app).post("/api/v1/estimates/estimate-1/design-drawings/submit")
+    ).send();
+
+    expect(repeated.status).toBe(200);
+    expect(repeated.body.data).toEqual({ submittedCount: 0 });
+    expect(revisions.every((revision) => revision.reviewStatus === "submitted"))
+      .toBe(true);
+  });
+
+  it("rejects submission when active drawings have no current revision", async () => {
     const { app, drawings, revisions } = setup();
     const leased = await claim(app);
-    await complete(app, leased.body.data.claimToken);
-    await verifyDrawings(app, drawings.filter((drawing) => drawing._id !== drawings[0]!._id));
-    revisions.find((revision) => revision.drawingId === drawings[0]!._id)!.reviewStatus = "approved";
+    await complete(app, leased.body.data.claimToken, completeBody(2));
+    const missingRevisionDrawingId = drawings[1]!._id;
+    revisions.splice(
+      revisions.findIndex((revision) =>
+        revision.drawingId === missingRevisionDrawingId
+      ),
+      1
+    );
 
     const response = await owner(
       request(app).post("/api/v1/estimates/estimate-1/design-drawings/submit")
     ).send();
 
     expect(response.status).toBe(409);
-    expect(response.body.error.code).toBe("ESTIMATE_DRAWINGS_UNVERIFIED");
+    expect(response.body.error.code).toBe("ESTIMATE_DRAWINGS_INCOMPLETE");
+  });
+
+  it("rejects empty, incoherent, unowned, and locked submissions", async () => {
+    const emptySetup = setup();
+    const empty = await owner(
+      request(emptySetup.app).post(
+        "/api/v1/estimates/estimate-1/design-drawings/submit"
+      )
+    ).send();
+    expect(empty.status).toBe(409);
+    expect(empty.body.error.code).toBe("ESTIMATE_DRAWINGS_EMPTY");
+
+    const incoherentSetup = setup();
+    const leased = await claim(incoherentSetup.app);
+    await complete(
+      incoherentSetup.app,
+      leased.body.data.claimToken,
+      completeBody(2)
+    );
+    Object.assign(incoherentSetup.drawings[0]!, {
+      roomId: "room-bedroom-1",
+      scopeSectionId: null,
+      catalogueId: null,
+      mappingStatus: "auto_mapped"
+    });
+    const incoherent = await owner(
+      request(incoherentSetup.app).post(
+        "/api/v1/estimates/estimate-1/design-drawings/submit"
+      )
+    ).send();
+    expect(incoherent.status).toBe(500);
+    expect(incoherent.body.error.code).toBe("INTERNAL_ERROR");
+    expect(incoherentSetup.revisions.every(
+      (revision) => revision.reviewStatus === "draft"
+    )).toBe(true);
+
+    incoherentSetup.estimates[0]!.ownerId = "user-other-estimator";
+    const foreignOwner = await owner(
+      request(incoherentSetup.app).post(
+        "/api/v1/estimates/estimate-1/design-drawings/submit"
+      )
+    ).send();
+    expect(foreignOwner.status).toBe(404);
+    expect(foreignOwner.body.error.code).toBe("ESTIMATE_NOT_FOUND");
+
+    incoherentSetup.estimates[0]!.ownerId = "user-estimator-sales";
+    incoherentSetup.estimates[0]!.status = "client_approved";
+    const locked = await owner(
+      request(incoherentSetup.app).post(
+        "/api/v1/estimates/estimate-1/design-drawings/submit"
+      )
+    ).send();
+    expect(locked.status).toBe(409);
+    expect(locked.body.error.code).toBe("ESTIMATE_DESIGN_LOCKED");
   });
 
   it.each(["upload", "job"] as const)(

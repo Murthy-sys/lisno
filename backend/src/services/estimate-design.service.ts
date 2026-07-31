@@ -2002,24 +2002,18 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
             catalogueId: drawing.catalogueId ?? null,
             mappingStatus: drawing.mappingStatus ?? "misc"
           });
-          if (!drawing.verified) {
-            unverifiedDrawings();
-          }
-          if (!revision || revision.reviewStatus === "changes_requested") {
-            unverifiedDrawings();
-          }
-          if (
-            revision.reviewStatus !== "approved" &&
-            revision.reviewStatus !== "draft"
-          ) {
-            unverifiedDrawings();
+          if (!revision) {
+            throw new ApiError(
+              409,
+              "ESTIMATE_DRAWINGS_INCOMPLETE",
+              "Every active drawing requires a current revision before submission."
+            );
           }
         }
         const draftLatest = latest.filter(
           (revision): revision is Record<string, any> =>
             Boolean(revision && revision.reviewStatus === "draft")
         );
-        if (draftLatest.length === 0) unverifiedDrawings();
         const uploadIdSet = new Set<string>();
         for (let index = 0; index < drawings.length; index += 1) {
           const revision = latest[index];
@@ -3172,14 +3166,6 @@ function estimateAllowsDrawingEdit(
       revision.reviewStatus === "draft" &&
       Boolean(revision.replacesRevisionId)
     )
-  );
-}
-
-function unverifiedDrawings(): never {
-  throw new ApiError(
-    409,
-    "ESTIMATE_DRAWINGS_UNVERIFIED",
-    "Verify every active drawing before submitting."
   );
 }
 
