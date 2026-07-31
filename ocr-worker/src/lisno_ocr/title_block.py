@@ -68,7 +68,7 @@ def extract_pdf_title_block_candidate(
         if marker_text.casefold().rstrip(":") != "title":
             continue
         baseline = (marker[1] + marker[3]) / 2
-        field_end = page_width * 0.265
+        field_end = min(page_width, marker[2] + page_width * 0.265)
         value_words = [
             word
             for word in lower_words

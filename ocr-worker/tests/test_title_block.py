@@ -1,6 +1,9 @@
 import pytest
 
-from lisno_ocr.title_block import extract_title_block
+from lisno_ocr.title_block import (
+    extract_pdf_title_block_candidate,
+    extract_title_block,
+)
 
 
 def test_extracts_title_value_from_the_lower_title_block_band():
@@ -65,3 +68,17 @@ def test_rejects_ambiguous_title_block_values():
     ]
 
     assert extract_title_block(lines, image_width=1_000, image_height=1_000) is None
+
+
+def test_extracts_embedded_pdf_title_relative_to_a_right_side_marker():
+    words = [
+        (700.0, 760.0, 728.0, 780.0, "TITLE", 0, 0, 0),
+        (732.0, 760.0, 736.0, 780.0, ":", 0, 0, 1),
+        (740.0, 760.0, 788.0, 780.0, "TV UNIT", 0, 0, 2),
+    ]
+
+    assert extract_pdf_title_block_candidate(
+        words,
+        page_width=1_191,
+        page_height=842,
+    ) == ("TV UNIT", 1.0)
