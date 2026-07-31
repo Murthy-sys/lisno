@@ -1825,12 +1825,22 @@ describe("estimate design extraction and estimator verification", () => {
     ]));
   });
 
-  it("submits draft drawings without changing a processing upload or job", async () => {
-    const { app, drawings, revisions, uploads, jobs } = setup();
+  it("submits draft drawings from a captured processing upload and job state", async () => {
+    const {
+      app,
+      drawings,
+      revisions,
+      uploads,
+      jobs,
+      estimates,
+      auditEvents
+    } = setup();
     const leased = await claim(app);
     await complete(app, leased.body.data.claimToken, completeBody(2));
     uploads[0]!.extractionStatus = "processing";
     jobs[0]!.status = "processing";
+    jobs[0]!.claimId = "active-processing-claim";
+    jobs[0]!.leaseExpiresAt = new Date("2026-07-30T12:05:00.000Z");
 
     const submitted = await owner(
       request(app).post("/api/v1/estimates/estimate-1/design-drawings/submit")
@@ -1842,7 +1852,83 @@ describe("estimate design extraction and estimator verification", () => {
     expect(revisions.every(
       (revision) => revision.reviewStatus === "submitted"
     )).toBe(true);
-    expect(uploads[0]).toMatchObject({ extractionStatus: "processing" });
+    expect(uploads[0]).toMatchObject({ extractionStatus: "submitted" });
+    expect(jobs[0]).toMatchObject({
+      status: "submitted",
+      claimId: null,
+      leaseExpiresAt: null,
+      completedAt: NOW
+    });
+    expect(estimates[0]).toMatchObject({
+      status: "draft",
+      designLifecycleVersion: 2,
+      designFrozenAt: null
+    });
+    expect(auditEvents).toContainEqual(expect.objectContaining({
+      action: "estimate_design_drawings_submitted",
+      entityId: "estimate-1",
+      newValues: {
+        submittedCount: 2,
+        activeDrawingCount: 2,
+        uploadCount: 1
+      }
+    }));
+    expect(EstimateDesignUploadModel.updateOne).toHaveBeenLastCalledWith(
+      {
+        _id: "upload-1",
+        estimateId: "estimate-1",
+        extractionStatus: "processing"
+      },
+      { $set: { extractionStatus: "submitted" } },
+      expect.objectContaining({ session: expect.anything() })
+    );
+    expect(EstimateDesignExtractionJobModel.updateOne).toHaveBeenLastCalledWith(
+      {
+        _id: "estimate-job-1",
+        uploadId: "upload-1",
+        status: "processing"
+      },
+      {
+        $set: {
+          status: "submitted",
+          claimId: null,
+          leaseExpiresAt: null
+        }
+      },
+      expect.objectContaining({ session: expect.anything() })
+    );
+  });
+
+  it("rolls back when a captured processing upload changes before the transaction", async () => {
+    const {
+      app,
+      revisions,
+      uploads,
+      jobs,
+      session,
+      runTransaction
+    } = setup();
+    const leased = await claim(app);
+    await complete(app, leased.body.data.claimToken, completeBody(2));
+    uploads[0]!.extractionStatus = "processing";
+    jobs[0]!.status = "processing";
+    session.withTransaction.mockImplementationOnce(async (operation) => {
+      uploads[0]!.extractionStatus = "queued";
+      return runTransaction(operation);
+    });
+
+    const submitted = await owner(
+      request(app).post("/api/v1/estimates/estimate-1/design-drawings/submit")
+    ).send();
+
+    expect(submitted.status).toBe(409);
+    expect(submitted.body.error.code).toBe(
+      "ESTIMATE_EXTRACTION_STATE_CONFLICT"
+    );
+    expect(revisions.every(
+      (revision) => revision.reviewStatus === "draft"
+    )).toBe(true);
+    expect(uploads[0]).toMatchObject({ extractionStatus: "queued" });
     expect(jobs[0]).toMatchObject({ status: "processing" });
   });
 
