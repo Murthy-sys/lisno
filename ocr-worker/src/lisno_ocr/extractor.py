@@ -161,6 +161,12 @@ class Extractor:
                         pdf_page.rect.width,
                         pdf_page.rect.height,
                     )
+                    if embedded_title is None:
+                        embedded_title = extract_pdf_title_block_candidate(
+                            words,
+                            pdf_page.rect.width * 4,
+                            pdf_page.rect.height,
+                        )
                 except Exception:
                     embedded_title = None
                 image = self._render_pdf_page(pdf_page, deadline=deadline)
