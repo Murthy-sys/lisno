@@ -1924,7 +1924,6 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
         .sort({ _id: 1 })
         .lean();
       const requestRevisionIds = new Map<string, string | null>();
-      const requestDraftUploadIds = new Set<string>();
       for (const drawing of requestDrawings) {
         const revision = await EstimateDesignRevisionModel.findOne({
           drawingId: drawing._id
@@ -1935,37 +1934,6 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
           String(drawing._id),
           revision ? String(revision._id) : null
         );
-        if (revision?.reviewStatus !== "draft") continue;
-        requestDraftUploadIds.add(String(drawing.uploadId));
-        const sourcePage = await EstimateDesignSourcePageModel.findById(
-          revision.sourcePageId
-        ).lean();
-        if (!sourcePage) throw estimateNotFound();
-        requestDraftUploadIds.add(String(sourcePage.uploadId));
-      }
-      const requestUploadStates = new Map<string, {
-        uploadStatus: string;
-        jobId: string;
-        jobStatus: string;
-      }>();
-      for (const uploadId of requestDraftUploadIds) {
-        const upload = await EstimateDesignUploadModel.findById(uploadId)
-          .lean();
-        const job = await EstimateDesignExtractionJobModel.findOne({
-          uploadId
-        }).lean();
-        if (
-          !upload ||
-          !job ||
-          String(upload.estimateId) !== estimateId
-        ) {
-          extractionStateConflict();
-        }
-        requestUploadStates.set(uploadId, {
-          uploadStatus: String(upload.extractionStatus),
-          jobId: String(job._id),
-          jobStatus: String(job.status)
-        });
       }
       let submittedCount = 0;
       await withMongoTransaction(async (session) => {
@@ -2058,23 +2026,11 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
           uploadIdSet.add(String(sourcePage.uploadId));
         }
         const uploadIds = [...uploadIdSet];
-        if (
-          uploadIds.length !== requestUploadStates.size ||
-          uploadIds.some((uploadId) => !requestUploadStates.has(uploadId))
-        ) {
-          extractionStateConflict();
-        }
-        const uploadStates: Array<{
+        const readyUploadStates: Array<{
           upload: Record<string, any>;
           job: Record<string, any>;
-          captured: {
-            uploadStatus: string;
-            jobId: string;
-            jobStatus: string;
-          };
         }> = [];
         for (const uploadId of uploadIds) {
-          const captured = requestUploadStates.get(uploadId);
           const upload = await EstimateDesignUploadModel.findById(uploadId)
             .session(session)
             .lean();
@@ -2086,15 +2042,16 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
           if (
             !upload ||
             !job ||
-            !captured ||
-            String(upload.estimateId) !== estimateId ||
-            String(upload.extractionStatus) !== captured.uploadStatus ||
-            String(job._id) !== captured.jobId ||
-            String(job.status) !== captured.jobStatus
+            String(upload.estimateId) !== estimateId
           ) {
             extractionStateConflict();
           }
-          uploadStates.push({ upload, job, captured });
+          if (
+            String(upload.extractionStatus) === "estimator_review" &&
+            String(job.status) === "estimator_review"
+          ) {
+            readyUploadStates.push({ upload, job });
+          }
         }
         await guardDesignLifecycle(estimate, session);
         const revisionIds = draftLatest.map((revision) => revision._id);
@@ -2109,12 +2066,12 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
         ) {
           staleDrawing();
         }
-        for (const { upload, job, captured } of uploadStates) {
+        for (const { upload, job } of readyUploadStates) {
           const uploadUpdated = await EstimateDesignUploadModel.updateOne(
             {
               _id: upload._id,
               estimateId,
-              extractionStatus: captured.uploadStatus
+              extractionStatus: "estimator_review"
             },
             { $set: { extractionStatus: "submitted" } },
             { session }
@@ -2124,15 +2081,9 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
             {
               _id: job._id,
               uploadId: upload._id,
-              status: captured.jobStatus
+              status: "estimator_review"
             },
-            {
-              $set: {
-                status: "submitted",
-                claimId: null,
-                leaseExpiresAt: null
-              }
-            },
+            { $set: { status: "submitted" } },
             { session }
           );
           requireTransition(jobUpdated, extractionStateConflict);
@@ -2146,7 +2097,7 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
           newValues: {
             submittedCount: revisionIds.length,
             activeDrawingCount: drawings.length,
-            uploadCount: uploadStates.length
+            uploadCount: readyUploadStates.length
           }
         });
         submittedCount = revisionIds.length;
