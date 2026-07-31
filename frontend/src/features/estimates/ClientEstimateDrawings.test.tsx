@@ -2,7 +2,10 @@ import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { AnnotationDocumentV1 } from "../../api/types";
+import type {
+  AnnotationDocumentV1,
+  EstimateDesignClientRevision
+} from "../../api/types";
 import { tokenStorage } from "../../api/client";
 import { renderApp } from "../../test/render";
 
@@ -154,7 +157,7 @@ const revisions = [
 ];
 
 function workspace(
-  nextRevisions = revisions,
+  nextRevisions: EstimateDesignClientRevision[] = revisions,
   readiness = {
     ready: false,
     total: 3,
@@ -516,7 +519,7 @@ describe("client estimate drawings", () => {
     );
   });
 
-  it("saves a draft without deciding the drawing and submits one marked change request independently", async () => {
+  it("restores a saved annotation draft after the estimate workspace remounts and submits one marked change request independently", async () => {
     let currentRevisions = revisions.map((item) => {
       if (item.id === "revision-living") {
         return {
@@ -536,6 +539,8 @@ describe("client estimate drawings", () => {
         : item;
     });
     const requests: Array<{ url: string; body?: unknown }> = [];
+    let savedDraft: AnnotationDocumentV1 | null = null;
+    let draftVersion = 0;
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const url = String(input);
       const common = commonResponse(url);
@@ -548,7 +553,21 @@ describe("client estimate drawings", () => {
         const changesRequested = currentRevisions.filter(
           (item) => item.reviewStatus === "changes_requested"
         ).length;
-        return json(workspace(currentRevisions, {
+        return json(workspace(currentRevisions.map((item) =>
+          item.id === "revision-living"
+            ? {
+                ...item,
+                annotationDraft: savedDraft
+                  ? {
+                      id: "draft-revision-living",
+                      revisionId: "revision-living",
+                      version: draftVersion,
+                      annotations: savedDraft
+                    }
+                  : null
+              }
+            : item
+        ), {
           ready: approved === currentRevisions.length,
           total: currentRevisions.length,
           approved,
@@ -561,12 +580,15 @@ describe("client estimate drawings", () => {
       }
       if (url.endsWith("/api/v1/client/estimate-design-revisions/revision-living/annotation-draft")) {
         const body = JSON.parse(String(init?.body));
+        expect(body.version).toBe(draftVersion);
         requests.push({ url, body });
+        savedDraft = body.annotations;
+        draftVersion += 1;
         return json({
-          id: "draft-1",
+          id: "draft-revision-living",
           revisionId: "revision-living",
-          version: 1,
-          annotations: body.annotations
+          version: draftVersion,
+          annotations: savedDraft
         });
       }
       if (url.endsWith("/api/v1/client/estimate-design-revisions/revision-living/decision")) {
@@ -618,21 +640,58 @@ describe("client estimate drawings", () => {
     expect(within(livingRow).getByText("Awaiting client review")).toBeVisible();
     expect(within(electricalRow).getByText("Awaiting client review")).toBeVisible();
 
+    await user.click(within(screen.getByRole("dialog", {
+      name: "Living ceiling preview"
+    })).getByRole("button", {
+      name: "Close Living ceiling preview"
+    }));
+    await user.click(within(card).getByRole("button", { name: /Aurora Villa/ }));
+    await user.click(within(card).getByRole("button", { name: /Aurora Villa/ }));
+
+    const restoredLivingRow = await within(card).findByRole("article", {
+      name: "Living ceiling drawing"
+    });
+    const restoredElectricalRow = within(card).getByRole("article", {
+      name: "Bedroom electrical drawing"
+    });
+    await user.click(within(restoredLivingRow).getByRole("button", {
+      name: "Preview Living ceiling"
+    }));
+    await waitForCanvas();
+    expect(within(screen.getByRole("dialog", {
+      name: "Living ceiling preview"
+    })).getByText("Shift this door")).toBeVisible();
+
+    await addTextNote();
+    await user.click(screen.getByRole("button", { name: "Save draft" }));
+    await waitFor(() => expect(requests[1]?.body).toEqual({
+      version: 1,
+      annotations: expect.objectContaining({
+        elements: [
+          expect.objectContaining({ type: "text", text: "Shift this door" }),
+          expect.objectContaining({ type: "text", text: "Shift this door" })
+        ]
+      })
+    }));
+
     await user.type(screen.getByLabelText("Change summary"), "Shift the door left.");
     await user.click(screen.getByRole("button", { name: "Submit change request" }));
 
-    await waitFor(() => expect(requests[1]?.body).toEqual({
+    await waitFor(() => expect(requests[2]?.body).toEqual({
       version: 1,
       decision: "request_changes",
       summary: "Shift the door left.",
       annotations: expect.objectContaining({
         imageWidth: 400,
         imageHeight: 300,
-        elements: [expect.objectContaining({ type: "text", text: "Shift this door" })]
+        elements: [
+          expect.objectContaining({ type: "text", text: "Shift this door" }),
+          expect.objectContaining({ type: "text", text: "Shift this door" })
+        ]
       })
     }));
     expect(await within(card).findByText("Changes requested")).toBeVisible();
-    expect(within(electricalRow).getByText("Awaiting client review")).toBeVisible();
+    expect(within(restoredElectricalRow).getByText("Awaiting client review")).toBeVisible();
   });
 
   it("keeps an in-flight drawing approval scoped to its own row", async () => {
