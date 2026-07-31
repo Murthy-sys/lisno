@@ -1842,6 +1842,19 @@ describe("estimate design extraction and estimator verification", () => {
     expect(repeated.body.data).toEqual({ submittedCount: 0 });
     expect(revisions.every((revision) => revision.reviewStatus === "submitted"))
       .toBe(true);
+
+    revisions[0]!.reviewStatus = "approved";
+    revisions[1]!.reviewStatus = "changes_requested";
+    const nonDraftRepeat = await owner(
+      request(app).post("/api/v1/estimates/estimate-1/design-drawings/submit")
+    ).send();
+
+    expect(nonDraftRepeat.status).toBe(200);
+    expect(nonDraftRepeat.body.data).toEqual({ submittedCount: 0 });
+    expect(revisions.map((revision) => revision.reviewStatus)).toEqual([
+      "approved",
+      "changes_requested"
+    ]);
   });
 
   it("rejects submission when active drawings have no current revision", async () => {
