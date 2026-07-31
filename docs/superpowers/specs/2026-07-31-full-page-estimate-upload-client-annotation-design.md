@@ -23,6 +23,9 @@ production hardening remains explicitly pending.
   seven and later remain supported when they are within the configured limit.
 - The worker opens the PDF once and processes every page in order.
 - Every estimate page produces exactly one section and therefore one drawing.
+- The extractor has no dropped or `unmapped` page outcome: every successfully
+  rendered page is returned to the backend even when its title cannot be
+  resolved.
 - The section crop is the complete rendered page:
   - `x = 0`
   - `y = 0`
@@ -47,7 +50,17 @@ production hardening remains explicitly pending.
   - `catalogueId: null`
   - `mappingStatus: "misc"`
 - Identified titles continue through the existing backend-owned deterministic estimate-item resolver. They are not forced into Misc.
-- Missing, ambiguous, or unmatched mapping never fails extraction.
+- A unique title match uses the resolved estimate-item tuple. Repeated pages
+  with the same normalized title use that same tuple and therefore appear in
+  the same room/scope section.
+- Missing, ambiguous, or unmatched mapping never fails extraction and never
+  drops a drawing. The backend stores that drawing with the same true-null
+  `misc` tuple, and the estimator/sales review UI shows it under
+  **Miscellaneous** for later verification or assignment.
+- `misc` is the only unresolved persisted state. No user-visible `unmapped`
+  bucket or status is introduced.
+- The API/database value remains `mappingStatus: "misc"`; estimator and client
+  interfaces label that group **Miscellaneous**.
 
 ### Backend publication invariant
 
@@ -73,6 +86,8 @@ This milestone intentionally makes estimator submission permissive.
 
 - The estimator submit button is enabled whenever at least one active drawing exists and a submit request is not already running.
 - `verified`, `mappingStatus`, room assignment, and catalogue assignment do not block submission.
+- Estimator/sales users may still verify and assign Misc drawings before
+  submission, but those actions remain optional for this milestone.
 - The backend accepts coherent mapped or true-null Misc drawings without requiring `drawing.verified === true`.
 - Submission still enforces:
   - authenticated estimator ownership;
@@ -86,7 +101,8 @@ This permissive rule is temporary and will be revisited in a later production-ha
 ## Client review and annotations
 
 - Submitted mapped drawings remain grouped by room and scope.
-- Submitted unidentified or otherwise unresolved drawings appear under the existing client `Misc` group.
+- Submitted unidentified or otherwise unresolved drawings appear under the
+  client **Miscellaneous** group.
 - The client can open the full-page preview for every drawing.
 - Annotation drafts are saved through the versioned public annotation endpoint.
 - A successful save is visible after query refresh or component remount.
@@ -119,8 +135,13 @@ This permissive rule is temporary and will be revisited in a later production-ha
 6. Render six estimator drawing rows and assert submit is enabled without verification or assignment.
 7. Process a seventh page when the configured page limit permits it, protecting
    against an accidental six-page cap.
-8. Submit true-null Misc drawings and assert the client receives them.
-9. Save a client annotation draft, refresh the workspace, and assert the annotation is restored.
+8. Resolve repeated identical titles to the same estimate tuple and render
+   those drawings in one estimator section.
+9. Persist absent, ambiguous, and unmatched titles as true-null Misc drawings;
+   assert every source page still has one drawing and there is no unmapped
+   bucket.
+10. Submit true-null Misc drawings and assert the client receives them.
+11. Save a client annotation draft, refresh the workspace, and assert the annotation is restored.
 
 ## Deferred work
 
