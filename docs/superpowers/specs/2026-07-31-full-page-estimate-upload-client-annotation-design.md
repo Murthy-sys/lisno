@@ -1,22 +1,26 @@
-# Six-Page Estimate Upload and Client Annotation Design
+# Full-Page Estimate Upload and Client Annotation Design
 
 ## Goal
 
 Deliver a deliberately limited, reliable milestone:
 
-- an estimator can upload an estimate-design PDF containing one through six pages;
+- an estimator can upload an estimate-design PDF within the existing configured page limit;
 - extraction creates exactly one full-page drawing for every PDF page;
 - a missing or unusable title never fails extraction and is stored as Misc;
 - the estimator can submit extracted drawings without first verifying or assigning them;
 - the client can preview every submitted drawing and save annotations.
 
-Larger PDFs and broader production hardening remain explicitly pending.
+Six pages is the required regression fixture, not an extraction limit. Broader
+production hardening remains explicitly pending.
 
 ## Supported contract
 
 ### Upload and extraction
 
-- Estimate-design PDFs containing one through six pages are the supported milestone.
+- Estimate-design PDFs retain the existing configured page limit
+  (`OCR_MAX_PDF_PAGES`, currently 50 by default).
+- Six pages is the minimum production-representative acceptance fixture; page
+  seven and later remain supported when they are within the configured limit.
 - The worker opens the PDF once and processes every page in order.
 - Every estimate page produces exactly one section and therefore one drawing.
 - The section crop is the complete rendered page:
@@ -25,7 +29,8 @@ Larger PDFs and broader production hardening remain explicitly pending.
   - `width = page.width`
   - `height = page.height`
 - The section image is the same normalized image as the rendered page. Estimate extraction never invokes the legacy multi-region crop fallback.
-- PDFs above six pages are outside this milestone and must return a clear unsupported-page-count failure rather than partially publishing drawings.
+- PDFs above the configured safety limit retain the existing clear
+  too-many-pages failure and publish no drawings.
 
 ### Title handling and mapping
 
@@ -48,16 +53,17 @@ Larger PDFs and broader production hardening remain explicitly pending.
 
 For estimate-design completion, the backend accepts only:
 
-- one through six contiguous pages;
+- one or more contiguous pages within the existing configured limit;
 - exactly one section per page;
 - a section crop equal to that page’s full dimensions;
 - section image bytes equal to that page’s normalized image.
 
-Malformed estimate results are rejected before publication. A valid six-page result commits exactly:
+Malformed estimate results are rejected before publication. A valid result
+with `N` pages commits exactly:
 
-- six source pages;
-- six active drawings;
-- six immutable first revisions.
+- `N` source pages;
+- `N` active drawings;
+- `N` immutable first revisions.
 
 Project-design extraction keeps its existing multi-section behavior and is outside this change.
 
@@ -96,7 +102,8 @@ This permissive rule is temporary and will be revisited in a later production-ha
 
 - One missing page title: extraction succeeds and the page becomes Misc.
 - One ambiguous title: extraction succeeds and the page becomes Misc.
-- PDF above six pages: extraction fails with an allowlisted unsupported-page-count message and publishes nothing.
+- PDF above the configured safety limit: extraction fails with the existing
+  allowlisted too-many-pages message and publishes nothing.
 - Invalid worker page/section shape: backend rejects the complete request and publishes nothing.
 - Upload API failure: the selected file and retry action remain visible.
 - Annotation save conflict: the existing version-conflict message is shown and no annotation state is silently overwritten.
@@ -107,10 +114,13 @@ This permissive rule is temporary and will be revisited in a later production-ha
 2. Assert pages `1..6`, one full-page section per page, identical page/section image, and no multi-region fallback.
 3. Generate a six-page no-title PDF and assert deterministic unidentified titles and Misc-compatible proposals.
 4. Complete a six-page backend result and assert six pages, drawings, and revisions.
-5. Reject zero/multiple sections, non-full-page crops, mismatched images, and more than six estimate pages.
+5. Reject zero/multiple sections, non-full-page crops, mismatched images, and
+   non-contiguous page numbers.
 6. Render six estimator drawing rows and assert submit is enabled without verification or assignment.
-7. Submit true-null Misc drawings and assert the client receives them.
-8. Save a client annotation draft, refresh the workspace, and assert the annotation is restored.
+7. Process a seventh page when the configured page limit permits it, protecting
+   against an accidental six-page cap.
+8. Submit true-null Misc drawings and assert the client receives them.
+9. Save a client annotation draft, refresh the workspace, and assert the annotation is restored.
 
 ## Deferred work
 
@@ -119,7 +129,7 @@ All work outside this milestone will be listed in an ordered pending-tasks docum
 - replay-safe and idempotent completion;
 - poison-job retry scheduling and attempt limits;
 - worker transport reconciliation;
-- PDFs above six pages and general bounded extraction;
+- broader extraction memory, transport, and bulk-write bounds;
 - bulk-write optimization;
 - production object storage and reconciliation;
 - structured logging, readiness, probes, and operational rollout gates;
