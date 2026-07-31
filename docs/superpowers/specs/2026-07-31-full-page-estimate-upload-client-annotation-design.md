@@ -84,7 +84,9 @@ Project-design extraction keeps its existing multi-section behavior and is outsi
 
 This milestone intentionally makes estimator submission permissive.
 
-- The estimator submit button is enabled whenever at least one active drawing exists and a submit request is not already running.
+- Whenever the estimator submit button is rendered, it has no `disabled`
+  condition. Verification, mapping, upload status, and an in-flight submit do
+  not disable it for this milestone.
 - `verified`, `mappingStatus`, room assignment, and catalogue assignment do not block submission.
 - Estimator/sales users may still verify and assign Misc drawings before
   submission, but those actions remain optional for this milestone.

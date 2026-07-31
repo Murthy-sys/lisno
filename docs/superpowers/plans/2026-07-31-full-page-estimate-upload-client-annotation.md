@@ -18,7 +18,15 @@
 - Missing or unusable title text produces `Unidentified drawing — page <n>` with confidence `0` and null worker room/scope suggestions.
 - Every unidentified page persists as the true-null `misc` mapping tuple.
 - Identified titles keep the existing backend-owned deterministic mapping resolver.
+- Repeated pages with the same uniquely resolvable normalized title receive the
+  same estimate-item tuple and render in the same room/scope group.
+- Missing, ambiguous, and unmatched titles always persist with the true-null
+  `misc` tuple; no page is dropped and no separate `unmapped` state is exposed.
+- Estimator and client interfaces label `mappingStatus: "misc"` as
+  **Miscellaneous**.
 - Estimator submission is not blocked by `verified`, mapping status, room assignment, or catalogue assignment.
+- Whenever rendered, the estimator submit button has no `disabled` condition,
+  including while submission is in flight.
 - Submission still requires authentication, ownership, an allowed estimate lifecycle, active drawings, coherent mapping tuples, and a current immutable revision.
 - Real multipart upload percentage and status polling remain unchanged; do not invent extraction percentage.
 - No idempotent completion, poison retry, transport reconciliation, bulk-write, S3, logging, readiness, or general resource-bound work is implemented in this plan.
@@ -32,9 +40,10 @@
 - Modify `backend/src/services/estimate-design.service.ts`: validate ordinary estimate completion shape, reuse page artifacts, and remove verification/assignment submission gates.
 - Modify `backend/tests/estimate-design-extraction.test.ts`: cover six-page publication, seventh-page compatibility, atomic malformed-result rejection, Misc persistence, and permissive submission.
 - Modify `backend/tests/estimate-design-review.test.ts` only if a submission/client fixture needs the permissive state.
-- Modify `frontend/src/features/leads/EstimateDesignUploads.tsx`: enable submit whenever active drawings exist and update temporary-policy copy.
-- Modify `frontend/src/features/leads/EstimateDesignUploads.test.tsx`: render six unverified/Misc drawings and prove submission remains enabled.
-- Modify `frontend/src/features/estimates/ClientEstimateDrawings.test.tsx`: persist an annotation draft in the request mock and prove it is restored after refresh/remount.
+- Modify `frontend/src/features/leads/EstimateDesignUploads.tsx`: keep the submit button free of disabled conditions, group resolved drawings, label unresolved drawings Miscellaneous, and update temporary-policy copy.
+- Modify `frontend/src/features/leads/EstimateDesignUploads.test.tsx`: render six unverified mapped/Misc drawings, prove repeated titles share one section, and prove submission remains enabled while in flight.
+- Modify `frontend/src/features/estimates/ClientEstimateDrawings.tsx`: label true-null `misc` drawings Miscellaneous.
+- Modify `frontend/src/features/estimates/ClientEstimateDrawings.test.tsx`: verify the Miscellaneous group, persist an annotation draft in the request mock, and prove it is restored after refresh/remount.
 - Create `docs/estimate-design-extraction-pending.md`: ordered deferred production-hardening backlog.
 
 ---
@@ -94,6 +103,11 @@ def write_estimate_pdf(
     return source
 
 
+class OcrMustNotStart:
+    def predict(self, **_kwargs):
+        raise AssertionError("embedded title text must bypass OCR")
+
+
 def test_six_page_estimate_pdf_opens_once_and_emits_one_full_page_drawing(
     monkeypatch,
     tmp_path,
@@ -102,10 +116,6 @@ def test_six_page_estimate_pdf_opens_once_and_emits_one_full_page_drawing(
         tmp_path,
         [f"Drawing {number}" for number in range(1, 7)],
     )
-
-    class OcrMustNotStart:
-        def predict(self, **_kwargs):
-            raise AssertionError("embedded title text must bypass OCR")
 
     from lisno_ocr import extractor as module
     actual_open = module.fitz.open
@@ -432,8 +442,8 @@ Update existing assertions that expected two sections per page to expect one dra
 - [ ] **Step 2: Add six-page publication and seventh-page compatibility tests**
 
 ```ts
-it("publishes six full-page results as six pages, drawings, and revisions", async () => {
-  const { app, pages, drawings, revisions } = setup();
+it("publishes six full-page results as six pages, drawings, revisions, and six stored images", async () => {
+  const { app, pages, drawings, revisions, storage } = setup();
   const leased = await claim(app);
 
   const response = await complete(
@@ -452,6 +462,9 @@ it("publishes six full-page results as six pages, drawings, and revisions", asyn
     revision.crop.width === 100 &&
     revision.crop.height === 80
   )).toBe(true);
+  expect([...storage.objects.keys()]).toHaveLength(7);
+  expect(revisions.map((revision) => revision.croppedFileReference))
+    .toEqual(pages.map((page) => page.normalizedFileReference));
 });
 
 it("does not impose a six-page backend cap", async () => {
@@ -621,7 +634,48 @@ with confidence `0` and null proposals. Assert every drawing and revision contai
 
 The current backend resolver should make this GREEN after the full-page fixture is accepted. If it fails, fix only the resolver input/persistence path; do not introduce a sentinel ID.
 
-- [ ] **Step 7: Run focused tests and typecheck**
+- [ ] **Step 7: Prove repeated matches group together and every unresolved title becomes Misc**
+
+Add one ordinary completion test with two pages whose normalized title is
+`TV UNIT BEDROOM 1`. The fixture has exactly one included candidate for that
+room/item pair. Assert both drawing and revision tuples equal:
+
+```ts
+{
+  roomId: "room-bedroom-1",
+  scopeSectionId: "CA",
+  catalogueId: "CA01",
+  mappingStatus: "auto_mapped"
+}
+```
+
+Also keep/add literal cases for:
+
+```ts
+[
+  "Unidentified drawing — page 1",
+  "SHEET WITH NO ESTIMATE ITEM",
+  "TV UNIT"
+]
+```
+
+The first is missing, the second is unmatched, and the third is ambiguous
+between Bedroom 1 and Bedroom 2. Each completion must succeed, create exactly
+one drawing for its page, and persist both drawing and revision as:
+
+```ts
+{
+  roomId: null,
+  scopeSectionId: null,
+  catalogueId: null,
+  mappingStatus: "misc"
+}
+```
+
+Do not add an `unmapped` status, sentinel identifier, dropped-page filter, or
+worker-suggestion override.
+
+- [ ] **Step 8: Run focused tests and typecheck**
 
 ```bash
 cd backend
@@ -631,7 +685,7 @@ npm run typecheck
 
 Expected: PASS, including the seventh-page compatibility guard.
 
-- [ ] **Step 8: Commit backend publication**
+- [ ] **Step 9: Commit backend publication**
 
 ```bash
 git add backend/src/services/estimate-design.service.ts backend/tests/estimate-design-extraction.test.ts
@@ -648,17 +702,26 @@ git commit -m "feat: validate full-page estimate extraction results"
 - Modify: `backend/tests/estimate-design-review.test.ts` only if a client fixture needs adjustment.
 - Modify: `frontend/src/features/leads/EstimateDesignUploads.tsx`
 - Modify: `frontend/src/features/leads/EstimateDesignUploads.test.tsx`
+- Modify: `frontend/src/features/estimates/ClientEstimateDrawings.tsx`
+- Modify: `frontend/src/features/estimates/ClientEstimateDrawings.test.tsx`
 
 **Interfaces:**
 - Consumes: coherent mapped or true-null Misc active drawings from Task 2.
 - Produces: submission that ignores verification/assignment while preserving ownership, lifecycle, mapping, current-revision, and transactional guards.
-- Frontend submit eligibility:
+- Frontend button contract:
 
-```ts
-const readyToSubmit = activeDrawings.length > 0;
+```tsx
+<button
+  type="button"
+  className="button button--primary"
+  onClick={() => submit.mutate()}
+>
+  {submit.isPending ? "Submitting…" : "Submit drawings to client"}
+</button>
 ```
 
-- The submit button additionally disables while `submit.isPending`.
+There is no `disabled` prop and no `readyToSubmit` gate. The existing footer
+may still render only when active drawings exist.
 
 - [ ] **Step 1: Add a failing backend permissive-submission test**
 
@@ -759,11 +822,24 @@ Only current `draft` revisions transition to `submitted`. Existing submitted, ap
 
 Remove `if (draftLatest.length === 0) unverifiedDrawings();`. Build upload/job transitions only from current draft revisions.
 
-- [ ] **Step 3: Add a failing six-row frontend submission test**
+- [ ] **Step 3: Add a failing six-row grouping and submission test**
 
-In `frontend/src/features/leads/EstimateDesignUploads.test.tsx`, create six pages, six active unverified Misc drawings, and six draft revisions. Mock one upload as `processing` to prove upload readiness does not disable a button once active drawings exist:
+In `frontend/src/features/leads/EstimateDesignUploads.test.tsx`, create six
+pages, six active unverified drawings, and six draft revisions:
+
+- pages 1 and 2 use the identical title `TV UNIT - BEDROOM 1` and the identical
+  complete `auto_mapped` tuple;
+- pages 3 and 4 use other complete mapped tuples;
+- pages 5 and 6 use the true-null `misc` tuple.
+
+Mock one upload as `processing` to prove upload readiness does not disable the
+button once rows exist. Assert the repeated-title rows appear in the same
+`Bedroom 1, Carpentry drawings` region and unresolved rows appear in:
 
 ```tsx
+expect(await screen.findByRole("region", {
+  name: "Miscellaneous drawings"
+})).toHaveTextContent("No exact estimate item is assigned.");
 expect(await screen.findAllByRole("article", {
   name: /drawing$/i
 })).toHaveLength(6);
@@ -772,7 +848,9 @@ expect(screen.getByRole("button", {
 })).toBeEnabled();
 ```
 
-Click the button and assert the POST request occurs. Keep the existing pending-state test so a duplicate click is disabled while the mutation is running.
+Click the button, leave the POST unresolved, and assert the same button
+(`Submitting…`) remains enabled and has no `disabled` attribute. The test must
+not require or assert prevention of a second click.
 
 Run RED:
 
@@ -781,30 +859,32 @@ cd frontend
 npm test -- --run src/features/leads/EstimateDesignUploads.test.tsx
 ```
 
-Expected: the current `readyToSubmit` requires zero unverified drawings and terminal upload readiness.
+Expected: the current `readyToSubmit` requires zero unverified drawings and
+terminal upload readiness, and `submit.isPending` disables the button.
 
 - [ ] **Step 4: Make the UI policy explicitly permissive**
 
-In `EstimateDesignUploads.tsx`:
-
-```ts
-const readyToSubmit = activeDrawings.length > 0;
-```
-
-Keep:
-
-```tsx
-disabled={!readyToSubmit || submit.isPending}
-```
+In `EstimateDesignUploads.tsx`, delete `readyToSubmit` and remove the
+`disabled` prop from the submit button. Do not replace it with an
+`aria-disabled` condition or a pending-state click guard.
 
 Update reader-facing copy:
 
 - Header: `Extracted drawings remain private until they are submitted to the client.`
-- Misc: `No exact estimate item is assigned. You can still submit this drawing.`
+- Miscellaneous section accessible name: `Miscellaneous drawings`
+- Miscellaneous heading: `Miscellaneous`
+- Miscellaneous row labels: `Miscellaneous` and `Unassigned item`
+- Miscellaneous copy: `No exact estimate item is assigned. You can still submit this drawing.`
 - Footer with unverified drawings: `<count> drawing(s) can be submitted now. Verification is optional for this milestone.`
 - Submission error: `The drawings could not be submitted. Try again.`
 
-Do not change upload progress, polling, retry, selected-file, assignment, correction, preview, replacement, or history behavior.
+In `ClientEstimateDrawings.tsx`, keep the persisted/API
+`mappingStatus: "misc"` value but change the group accessible name and heading
+to `Miscellaneous drawings` and `Miscellaneous`. Update the existing client
+group tests accordingly.
+
+Do not change upload progress, polling, retry, selected-file, assignment,
+correction, preview, replacement, history, or client review behavior.
 
 - [ ] **Step 5: Run backend/frontend focused suites and typechecks**
 
@@ -814,7 +894,7 @@ npm test -- --run tests/estimate-design-extraction.test.ts tests/estimate-design
 npm run typecheck
 
 cd ../frontend
-npm test -- --run src/features/leads/EstimateDesignUploads.test.tsx
+npm test -- --run src/features/leads/EstimateDesignUploads.test.tsx src/features/estimates/ClientEstimateDrawings.test.tsx
 npm run typecheck
 ```
 
@@ -823,7 +903,7 @@ Expected: PASS; no verification or mapping assignment blocks submission.
 - [ ] **Step 6: Commit permissive submission**
 
 ```bash
-git add backend/src/services/estimate-design.service.ts backend/tests/estimate-design-extraction.test.ts backend/tests/estimate-design-review.test.ts frontend/src/features/leads/EstimateDesignUploads.tsx frontend/src/features/leads/EstimateDesignUploads.test.tsx
+git add backend/src/services/estimate-design.service.ts backend/tests/estimate-design-extraction.test.ts backend/tests/estimate-design-review.test.ts frontend/src/features/leads/EstimateDesignUploads.tsx frontend/src/features/leads/EstimateDesignUploads.test.tsx frontend/src/features/estimates/ClientEstimateDrawings.tsx frontend/src/features/estimates/ClientEstimateDrawings.test.tsx
 git commit -m "feat: allow permissive estimate drawing submission"
 ```
 
@@ -952,7 +1032,7 @@ Create `docs/estimate-design-extraction-pending.md` with:
 
 - [x] One full-page drawing for every accepted estimate source page.
 - [x] Six-page regression coverage without a six-page product limit.
-- [x] Unidentified pages persist under Misc.
+- [x] Missing, ambiguous, and unmatched pages persist under Miscellaneous.
 - [x] Estimator submission is temporarily permissive.
 - [x] Client annotation drafts save and restore.
 
@@ -1038,8 +1118,12 @@ git commit -m "docs: record deferred extraction hardening"
 - A titleless accepted page becomes `Unidentified drawing — page <n>` and true-null Misc.
 - Region detection is never entered for estimate extraction.
 - Malformed ordinary estimate completion publishes nothing.
-- The estimator submit button is enabled with any active drawing, including unverified Misc.
+- Whenever rendered, the estimator submit button has no disabled condition,
+  including for unverified Miscellaneous drawings and an in-flight submit.
 - Backend submission accepts unverified mapped and Misc draft drawings.
+- Repeated uniquely matched titles use the same estimate tuple and estimator
+  section; absent, ambiguous, and unmatched titles are never dropped and
+  appear under Miscellaneous.
 - The client saves an annotation draft and sees it after refresh/remount.
 - Upload transfer percentage, extraction status polling, retry, preview, assignment, replacement, and history remain functional.
 - All deferred production work is recorded in `docs/estimate-design-extraction-pending.md`.
