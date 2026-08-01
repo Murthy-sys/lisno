@@ -24,8 +24,8 @@ an update query uses `{ new: true }`.
 - Treat an impossible fuzzy-match window as "no taxonomy match", not an error.
 - Ensure mapping/classification failures never discard an otherwise valid
   full-page drawing.
-- Reserve `PDF_RENDER_FAILED` for actual PDF open, rasterization, or pixel
-  conversion failures.
+- Reserve `PDF_RENDER_FAILED` for PDF source validation, opening, page
+  dimension validation, rasterization, or pixel conversion failures.
 - Keep UI errors bounded and safe while logging actionable diagnostics
   server-side.
 - Remove the repeated Mongoose deprecation warnings.
@@ -65,7 +65,7 @@ classification is advisory.
 When an unexpected exception occurs while constructing a page's estimate
 proposal:
 
-1. Log the exception traceback with the page number and
+1. Log a redacted exception-chain summary with the page number and
    `stage=estimate_classification`.
 2. Preserve the detected title.
 3. Emit an empty room/scope proposal with zero confidence.
@@ -78,27 +78,37 @@ classification failed.
 
 ### 3. Correct the PDF error boundary
 
-Only these operations may produce `PdfRenderError`:
+Only these PDF source/render operations may produce `PdfRenderError`:
 
 - opening the PDF;
+- validating that the PDF has at least one page and remains within the
+  configured page-count safety budget;
 - validating page dimensions against the pixel budget;
 - creating the PyMuPDF pixmap;
 - converting pixmap samples to a Pillow image.
+
+Empty-document and over-budget page-count failures intentionally retain their
+existing `PDF_RENDER_FAILED` code for backward compatibility; the safety
+budgets themselves do not change.
 
 The renderer will attach the one-based page number to safe render failures.
 The broad wrapper around title extraction, classification, image encoding, and
 page assembly will be removed.
 
 Known extraction errors retain their existing failure codes. Unexpected
-non-render exceptions are logged with their chained traceback and are reported
-to the UI as the generic safe `OCR_FAILED` message, never as a fabricated PDF
-render failure.
+non-render exceptions are logged with their redacted exception-chain summary
+and are reported to the UI as the generic safe `OCR_FAILED` message, never as
+a fabricated PDF render failure.
 
 ### 4. Add worker diagnostics without exposing private data
 
 The worker will use Python logging and emit structured, single-line lifecycle
-events, plus a chained traceback when an exception causes failure. Lifecycle
-events cover:
+events, plus a redacted exception-chain summary when an exception causes
+failure. The summary contains only exception class names and bounded,
+sanitized code-basename/function/line locations. It never formats exception
+messages, source lines, or traceback locals, so exception text cannot leak
+claim tokens, authorization headers, source bytes, image payloads, or taxonomy
+contents. Lifecycle events cover:
 
 - job claimed/started;
 - job completed, including page count and duration;
@@ -106,9 +116,10 @@ events cover:
   class;
 - failure-callback retry exhaustion.
 
-Logs must not include claim tokens, authorization headers, source bytes, image
-payloads, or taxonomy contents. The backend/UI failure contract remains the
-bounded safe code and message.
+The same redacted formatter is used for advisory-classification and
+failure-callback errors. Raw `logger.exception()` / `exc_info` output is not
+used on these paths. The backend/UI failure contract remains the bounded safe
+code and message.
 
 ### 5. Remove Mongoose 9 deprecations
 
@@ -161,10 +172,16 @@ Implementation will follow red-green TDD.
   production-shaped taxonomy emits every full-page section.
 - A forced taxonomy-classification exception retains the detected title and
   emits an empty proposal instead of failing extraction.
+- Redacted exception summaries retain exception classes, cause-chain classes,
+  and bounded function/line locations while omitting protected values present
+  in exception messages.
+- A forced PDF-open failure remains `PDF_RENDER_FAILED`.
 - A forced pixmap failure remains `PDF_RENDER_FAILED` and identifies the page.
+- A forced Pillow pixel-conversion failure remains `PDF_RENDER_FAILED` and
+  identifies the page.
 - A non-render processing exception is not classified as a PDF render failure.
-- Worker failure logging contains correlation metadata and a traceback but no
-  claim token.
+- Worker failure logging contains correlation metadata and redacted
+  exception-chain locations but no claim token or other protected sentinel.
 
 ### Backend regressions
 
