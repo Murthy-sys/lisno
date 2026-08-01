@@ -1,11 +1,16 @@
 import { Readable } from "node:stream";
 
 import jwt from "jsonwebtoken";
+import mongoose from "mongoose";
 import request from "supertest";
 import sharp from "sharp";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { createApp } from "../src/app.js";
+import { AuditEventModel } from "../src/models/AuditEvent.js";
+import { EstimateDesignExtractionJobModel } from "../src/models/EstimateDesignExtractionJob.js";
+import { EstimateDesignUploadModel } from "../src/models/EstimateDesignUpload.js";
+import { EstimateModel } from "../src/models/Estimate.js";
 import { createMemoryRepository } from "../src/repositories/memory.js";
 import type { AppRepository } from "../src/repositories/types.js";
 import { demoSeedData } from "../src/seed/data.js";
@@ -63,7 +68,12 @@ function binaryParser(
   response.on("error", callback);
 }
 
-async function setup(ocrLeaseSeconds = 300) {
+async function setup(
+  ocrLeaseSeconds = 300,
+  estimateQueuedAt?: string,
+  projectClaimLosses = 0
+) {
+  vi.restoreAllMocks();
   const repository = createMemoryRepository(structuredClone(demoSeedData));
   const storage = new TestStorage();
   await repository.enqueueExtractionJob({
@@ -72,22 +82,119 @@ async function setup(ocrLeaseSeconds = 300) {
     status: "queued",
     attemptCount: 0,
     queuedAt: TEST_NOW,
+    nextAttemptAt: TEST_NOW,
+    claimGeneration: 0,
     startedAt: null,
     completedAt: null,
     leaseExpiresAt: null,
     failureCode: null,
     failureMessage: null
   });
+  const estimateJob: Record<string, any> | null = estimateQueuedAt ? {
+    _id: "estimate-job-oldest",
+    uploadId: "estimate-upload-oldest",
+    status: "queued",
+    attemptCount: 0,
+    queuedAt: new Date(estimateQueuedAt),
+    nextAttemptAt: new Date(estimateQueuedAt),
+    claimGeneration: 0,
+    leaseExpiresAt: null,
+    claimId: null
+  } : null;
+  const estimateQuery = (value: unknown) => {
+    const result = {
+      sort: vi.fn(),
+      session: vi.fn(),
+      lean: vi.fn(async () => value)
+    };
+    result.sort.mockReturnValue(result);
+    result.session.mockReturnValue(result);
+    return result;
+  };
+  vi.spyOn(EstimateDesignExtractionJobModel, "findOne")
+    .mockImplementation(() => {
+      const result = estimateQuery(estimateJob?.status === "queued" ? estimateJob : null);
+      result.sort.mockReturnValue(result);
+      return result as never;
+    });
+  if (estimateJob) {
+    const session = {
+      withTransaction: vi.fn(async (operation: () => Promise<unknown>) =>
+        operation()
+      ),
+      endSession: vi.fn(async () => undefined)
+    };
+    vi.spyOn(mongoose, "startSession").mockResolvedValue(session as never);
+    vi.spyOn(AuditEventModel, "create").mockImplementation(async (input) =>
+      (input as Array<Record<string, any>>).map((event) => ({
+        toObject: () => ({ ...event, id: event._id })
+      })) as never
+    );
+    vi.spyOn(EstimateDesignExtractionJobModel, "findOneAndUpdate")
+      .mockImplementation((_filter, update) => {
+        Object.assign(estimateJob, update.$set);
+        estimateJob.attemptCount += update.$inc.attemptCount;
+        const result = estimateQuery(estimateJob);
+        result.sort.mockReturnValue(result);
+        return result as never;
+      });
+    vi.spyOn(EstimateDesignUploadModel, "findById").mockReturnValue(
+      estimateQuery({
+        _id: "estimate-upload-oldest",
+        estimateId: "estimate-oldest",
+        uploaderId: "user-estimator-sales",
+        storedFileReference: "estimate-source.pdf",
+        originalFilename: "estimate-oldest.pdf",
+        mimeType: "application/pdf",
+        sizeBytes: 42,
+        extractionStatus: "queued"
+      }) as never
+    );
+    vi.spyOn(EstimateDesignUploadModel, "updateOne").mockResolvedValue({
+      matchedCount: 1
+    } as never);
+    vi.spyOn(EstimateModel, "findById").mockReturnValue(
+      estimateQuery({
+        _id: "estimate-oldest",
+        status: "draft",
+        designFrozenAt: null,
+        rooms: [{ id: "room-living", label: "Living Room", aliases: [] }],
+        scopes: ["FC"]
+      }) as never
+    );
+  }
+  let claimAttempts = 0;
+  const appRepository = projectClaimLosses > 0
+    ? new Proxy(repository, {
+        get(target, property, receiver) {
+          if (property !== "claimExtractionJobById") {
+            return Reflect.get(target, property, receiver);
+          }
+          return async (...args: Parameters<AppRepository["claimExtractionJobById"]>) => {
+            claimAttempts += 1;
+            if (claimAttempts <= projectClaimLosses) return null;
+            return target.claimExtractionJobById(...args);
+          };
+        }
+      })
+    : repository;
   const app = createApp({
-    repository,
+    repository: appRepository,
     auth: { jwtSecret: JWT_SECRET, jwtExpiresInSeconds: 900 },
     clock: () => new Date(TEST_NOW),
     storage,
     ocrLeaseSeconds,
     ocrWorkerToken: WORKER_TOKEN,
+    enableEstimateDesignJobs: Boolean(estimateQueuedAt),
     maxUploadBytes: 10_000
   });
-  return { app, repository, storage };
+  return {
+    app,
+    repository,
+    storage,
+    estimateJob,
+    claimAttempts: () => claimAttempts
+  };
 }
 
 async function claim(app: ReturnType<typeof createApp>) {
@@ -147,6 +254,7 @@ describe("OCR extraction worker contract", () => {
     const empty = [first, second].find((response) => response.status === 204);
 
     expect(claimed?.body.data).toMatchObject({
+      kind: "project_design",
       id: "job-1",
       designVersionId: "version-aurora-plan-1",
       attemptCount: 1,
@@ -181,6 +289,48 @@ describe("OCR extraction worker contract", () => {
       .set("Authorization", `Bearer ${WORKER_TOKEN}`)
       .set("X-Extraction-Claim-Token", "stale-token")
       .expect(409);
+  });
+
+  it("leases only the oldest claimable record across project and estimate queues", async () => {
+    const { app, repository, estimateJob } = await setup(
+      300,
+      "2026-07-27T09:59:00.000Z"
+    );
+
+    const first = await claim(app);
+
+    expect(EstimateDesignExtractionJobModel.findOne).toHaveBeenCalled();
+    expect(estimateJob?.status).toBe("processing");
+    expect(first.status).toBe(200);
+    expect(first.body.data).toMatchObject({
+      kind: "estimate_design",
+      id: "estimate-job-oldest"
+    });
+    expect(await repository.findExtractionJobById("job-1")).toMatchObject({
+      status: "queued",
+      attemptCount: 0
+    });
+
+    const second = await claim(app);
+    expect(second.body.data).toMatchObject({
+      kind: "project_design",
+      id: "job-1",
+      attemptCount: 1
+    });
+  });
+
+  it("rescans the backlog after repeated compare-and-set claim losses", async () => {
+    const { app, claimAttempts } = await setup(300, undefined, 3);
+
+    const response = await claim(app);
+
+    expect(response.status).toBe(200);
+    expect(response.body.data).toMatchObject({
+      kind: "project_design",
+      id: "job-1",
+      attemptCount: 1
+    });
+    expect(claimAttempts()).toBe(4);
   });
 
   it("renews only the current extraction lease", async () => {

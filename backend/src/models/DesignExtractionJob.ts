@@ -19,6 +19,15 @@ const designExtractionJobSchema = new Schema(
     },
     attemptCount: { type: Number, required: true, min: 0 },
     queuedAt: { type: Date, required: true },
+    nextAttemptAt: {
+      type: Date,
+      default: function (this: { status?: string; queuedAt?: Date }) {
+        return this.status === "queued"
+          ? (this.queuedAt ?? new Date())
+          : null;
+      }
+    },
+    claimGeneration: { type: Number, required: true, default: 0, min: 0 },
     startedAt: { type: Date, default: null },
     completedAt: { type: Date, default: null },
     leaseExpiresAt: { type: Date, default: null },
@@ -31,7 +40,13 @@ const designExtractionJobSchema = new Schema(
 );
 
 designExtractionJobSchema.index({ designVersionId: 1 }, { unique: true });
-designExtractionJobSchema.index({ status: 1, leaseExpiresAt: 1, queuedAt: 1 });
+designExtractionJobSchema.index({
+  status: 1,
+  nextAttemptAt: 1,
+  leaseExpiresAt: 1,
+  queuedAt: 1,
+  _id: 1
+});
 
 export const DesignExtractionJobModel =
   models.DesignExtractionJob ?? model("DesignExtractionJob", designExtractionJobSchema);

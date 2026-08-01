@@ -1,14 +1,18 @@
+import signal
+import threading
+import time
 from pathlib import Path
 
 import pytest
-import time
 
 from lisno_ocr.contracts import (
     ClaimedJob,
+    EstimateTaxonomy,
     InvalidSourceError,
     OcrError,
     PdfRenderError,
     ResultRejectedError,
+    TaxonomyTerm,
     WorkerSettings,
 )
 from lisno_ocr.layout import OcrLine, classify_heading
@@ -74,7 +78,7 @@ class FakeExtractor:
         self.pages = pages or []
         self.error = error
 
-    def extract(self, source_path):
+    def extract(self, source_path, *, mode="project_design", deadline=None):
         assert source_path == FIXTURE
         if self.error:
             raise self.error
@@ -85,7 +89,7 @@ class ScriptedExtractor:
     def __init__(self, results):
         self.results = list(results)
 
-    def extract(self, source_path):
+    def extract(self, source_path, *, mode="project_design", deadline=None):
         assert source_path == FIXTURE
         result = self.results.pop(0)
         if isinstance(result, Exception):
@@ -224,19 +228,154 @@ def test_api_claim_returns_metadata_without_downloading_source():
     assert claimed.lease_duration_seconds == 300
 
 
-def test_download_uses_authoritative_mime_type_for_temporary_suffix():
+def test_api_claim_parses_tagged_estimate_taxonomy_and_tags_completion():
+    requests = []
+
+    class EstimateApi(WorkerApi):
+        def _request_json(self, method, path, body=None, **_kwargs):
+            if path.endswith("/claim"):
+                return 200, {
+                    "data": {
+                        "kind": "estimate_design",
+                        "id": "estimate-job-1",
+                        "claimToken": "claim-1",
+                        "sourceUrl": "/source",
+                        "sourceFilename": "plan.pdf",
+                        "sourceMimeType": "application/pdf",
+                        "leaseDurationMs": 300000,
+                        "taxonomy": {
+                            "rooms": [
+                                {
+                                    "id": "room-living",
+                                    "label": "Living Room",
+                                    "aliases": ["living hall"],
+                                }
+                            ],
+                            "scopes": [
+                                {
+                                    "id": "FC",
+                                    "label": "False Ceiling",
+                                    "aliases": ["rcp"],
+                                }
+                            ],
+                        },
+                    }
+                }
+            requests.append((method, path, body))
+            return 200, {"data": {"status": "estimator_review"}}
+
+    api = EstimateApi(settings())
+    claimed = api.claim()
+    api.complete(claimed.id, [])
+
+    assert claimed.kind == "estimate_design"
+    assert claimed.taxonomy == EstimateTaxonomy(
+        rooms=(TaxonomyTerm("room-living", "Living Room", ("living hall",)),),
+        scopes=(TaxonomyTerm("FC", "False Ceiling", ("rcp",)),),
+    )
+    assert requests[0][2] == {
+        "kind": "estimate_design",
+        "resultId": requests[0][2]["resultId"],
+        "pages": [],
+    }
+
+
+def test_run_worker_constructs_estimate_extractor_with_claimed_taxonomy(
+    monkeypatch,
+):
+    taxonomy = EstimateTaxonomy(
+        rooms=(TaxonomyTerm("room-living", "Living Room", ()),),
+        scopes=(TaxonomyTerm("FC", "False Ceiling", ("ceiling plan",)),),
+    )
+    api = FakeApi([
+        ClaimedJob(
+            id="estimate-job-1",
+            claim_token="claim-1",
+            source_url="/source",
+            source_filename="plan.png",
+            source_mime_type="image/png",
+            lease_duration_seconds=0.06,
+            kind="estimate_design",
+            taxonomy=taxonomy,
+        )
+    ])
+    constructed = []
+
+    class RecordingExtractor:
+        def __init__(self, **kwargs):
+            constructed.append(kwargs)
+
+        def extract(self, source_path, *, mode, deadline):
+            assert source_path == FIXTURE
+            assert mode == "estimate_design"
+            assert deadline is not None
+            return []
+
+    monkeypatch.setattr("lisno_ocr.worker.Extractor", RecordingExtractor)
+
+    run_worker(
+        settings(),
+        api=api,
+        sleep=lambda _seconds: None,
+        max_iterations=1,
+    )
+
+    assert constructed[0]["estimate_taxonomy"] == taxonomy
+    assert api.completed == [("estimate-job-1", [])]
+
+
+def test_run_worker_passes_the_claimed_job_kind_to_the_extractor(monkeypatch):
+    api = FakeApi([job()])
+    constructed = []
+
+    class RecordingExtractor:
+        def __init__(self, **kwargs):
+            constructed.append(kwargs)
+
+        def extract(self, source_path, *, mode, deadline):
+            assert source_path == FIXTURE
+            assert mode == "project_design"
+            assert deadline is not None
+            return []
+
+    monkeypatch.setattr("lisno_ocr.worker.Extractor", RecordingExtractor)
+
+    run_worker(
+        settings(),
+        api=api,
+        sleep=lambda _seconds: None,
+        max_iterations=1,
+    )
+
+    assert constructed[0]["estimate_taxonomy"] is None
+    assert api.completed == [("job-1", [])]
+
+
+@pytest.mark.parametrize(
+    ("mime_type", "expected_suffix"),
+    [
+        ("image/webp", ".webp"),
+        ("image/tiff", ".tiff"),
+        ("image/heic", ".heic"),
+        ("image/heif", ".heif"),
+    ],
+)
+def test_download_uses_authoritative_mime_type_for_temporary_suffix(
+    mime_type,
+    expected_suffix,
+):
     claimed = ClaimedJob(
         id="job-1",
         claim_token="claim-1",
         source_url="/source",
         source_filename="wrong.pdf",
-        source_mime_type="image/webp",
+        source_mime_type=mime_type,
         lease_duration_seconds=300,
     )
 
     class DownloadApi(WorkerApi):
         def _download_source(self, _url, suffix, _claim):
-            assert suffix == ".webp"
+            assert suffix == expected_suffix
             return FIXTURE
 
     assert DownloadApi(settings()).download(claimed) == FIXTURE
@@ -264,7 +403,7 @@ def test_short_authoritative_lease_heartbeats_before_expiry_without_worker_lease
     api = FakeApi([job()])
 
     class SlowExtractor:
-        def extract(self, _source):
+        def extract(self, _source, *, mode="project_design", deadline=None):
             time.sleep(0.04)
             return []
 
@@ -277,6 +416,128 @@ def test_short_authoritative_lease_heartbeats_before_expiry_without_worker_lease
     )
 
     assert api.heartbeats
+
+
+def test_worker_reports_an_extraction_that_runs_past_its_processing_deadline():
+    api = FakeApi([job()])
+    observed = []
+
+    class SlowExtractor:
+        def extract(self, source_path, *, mode, deadline):
+            assert source_path == FIXTURE
+            observed.append((mode, deadline))
+            time.sleep(0.02)
+            return []
+
+    limited_settings = WorkerSettings(
+        api_base_url="http://backend.example/api/v1",
+        worker_token="worker-token-with-at-least-32-characters",
+        poll_seconds=2.5,
+        request_timeout_seconds=30,
+        max_processing_seconds=0.001,
+    )
+
+    run_worker(
+        limited_settings,
+        api=api,
+        extractor=SlowExtractor(),
+        sleep=lambda _seconds: None,
+        max_iterations=1,
+    )
+
+    assert observed[0][0] == "project_design"
+    assert api.completed == []
+    assert api.failed[0][1].code == "OCR_FAILED"
+    assert api.failed[0][1].message == "The extraction exceeded its processing time limit."
+
+
+def test_worker_interrupts_an_extractor_that_blocks_past_its_processing_deadline():
+    api = FakeApi([job()])
+    entered_extraction = threading.Event()
+    release_extraction = threading.Event()
+    original_handler = signal.getsignal(signal.SIGALRM)
+
+    class BlockingExtractor:
+        def extract(self, source_path, *, mode, deadline):
+            assert source_path == FIXTURE
+            assert mode == "project_design"
+            entered_extraction.set()
+            release_extraction.wait(0.25)
+            return []
+
+    limited_settings = WorkerSettings(
+        api_base_url="http://backend.example/api/v1",
+        worker_token="worker-token-with-at-least-32-characters",
+        poll_seconds=2.5,
+        request_timeout_seconds=30,
+        max_processing_seconds=0.02,
+    )
+    started = time.monotonic()
+    try:
+        run_worker(
+            limited_settings,
+            api=api,
+            extractor=BlockingExtractor(),
+            sleep=lambda _seconds: None,
+            max_iterations=1,
+        )
+    finally:
+        release_extraction.set()
+
+    assert entered_extraction.is_set()
+    assert time.monotonic() - started < 0.15
+    assert api.completed == []
+    assert api.failed[0][1].code == "OCR_FAILED"
+    assert api.failed[0][1].message == "The extraction exceeded its processing time limit."
+    assert signal.getsignal(signal.SIGALRM) == original_handler
+
+
+def test_worker_interrupts_with_an_existing_alarm_and_restores_it_afterward():
+    api = FakeApi([job()])
+    original_handler = signal.getsignal(signal.SIGALRM)
+    original_timer = signal.getitimer(signal.ITIMER_REAL)
+
+    def prior_alarm_handler(_signum, _frame):
+        raise AssertionError("The prior alarm must not fire during extraction.")
+
+    class BlockingExtractor:
+        def extract(self, _source_path, *, mode, deadline):
+            assert mode == "project_design"
+            threading.Event().wait(0.25)
+            return []
+
+    limited_settings = WorkerSettings(
+        api_base_url="http://backend.example/api/v1",
+        worker_token="worker-token-with-at-least-32-characters",
+        poll_seconds=2.5,
+        request_timeout_seconds=30,
+        max_processing_seconds=0.02,
+    )
+    signal.signal(signal.SIGALRM, prior_alarm_handler)
+    signal.setitimer(signal.ITIMER_REAL, 1.0, 0.5)
+    started = time.monotonic()
+    try:
+        run_worker(
+            limited_settings,
+            api=api,
+            extractor=BlockingExtractor(),
+            sleep=lambda _seconds: None,
+            max_iterations=1,
+        )
+        restored_delay, restored_interval = signal.getitimer(signal.ITIMER_REAL)
+        restored_handler = signal.getsignal(signal.SIGALRM)
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0.0)
+        signal.signal(signal.SIGALRM, original_handler)
+        if original_timer[0] > 0 or original_timer[1] > 0:
+            signal.setitimer(signal.ITIMER_REAL, *original_timer)
+
+    assert time.monotonic() - started < 0.15
+    assert api.completed == []
+    assert api.failed[0][1].code == "OCR_FAILED"
+    assert restored_handler == prior_alarm_handler
+    assert 0.8 < restored_delay < 1.0
+    assert restored_interval == pytest.approx(0.5)
 
 
 def test_worker_reports_bounded_failure_without_a_traceback():

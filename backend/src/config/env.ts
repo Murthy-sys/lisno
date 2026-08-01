@@ -19,8 +19,19 @@ const environmentSchema = z.object({
   UPLOADS_DIR: z.string().default("uploads"),
   MAX_UPLOAD_MB: z.coerce.number().positive().default(25),
   OCR_LEASE_SECONDS: z.coerce.number().int().positive().default(300),
+  OCR_MAX_ATTEMPTS: z.coerce.number().int().positive().default(5),
+  OCR_RETRY_INITIAL_SECONDS: z.coerce.number().positive().default(30),
+  OCR_RETRY_MAX_SECONDS: z.coerce.number().positive().default(900),
   OCR_CONFIDENCE_FLOOR: z.coerce.number().min(0).max(1).default(0.2),
   OCR_WORKER_TOKEN: z.string().min(32)
+}).superRefine((environment, context) => {
+  if (environment.OCR_RETRY_MAX_SECONDS < environment.OCR_RETRY_INITIAL_SECONDS) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["OCR_RETRY_MAX_SECONDS"],
+      message: "OCR_RETRY_MAX_SECONDS must be at least OCR_RETRY_INITIAL_SECONDS."
+    });
+  }
 });
 
 export const loadEnvironment = (

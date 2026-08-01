@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronDown } from "lucide-react";
 import { useState } from "react";
 
+import { ApiError } from "../../api/client";
 import type { Role } from "../../api/types";
 import { useAuth } from "../../auth/AuthProvider";
 import { DownloadButton } from "../../components/ui/DownloadButton";
@@ -17,6 +18,15 @@ import {
   getEstimateReviewQueue
 } from "./estimateWorkflowApi";
 import { estimateBuilderSections } from "../leads/estimateBuilderCatalogue";
+import {
+  estimateDesignKeys,
+  getClientEstimateDrawings
+} from "../leads/estimateDesignApi";
+import {
+  ClientEstimateDrawings,
+  clientDrawingReadinessId
+} from "./ClientEstimateDrawings";
+import { clientKeys } from "../client/clientApi";
 
 const money = (value: number) => `₹${value.toLocaleString("en-IN")}`;
 const catalogue = new Map<string, { description: string; sectionId: string; sectionLabel: string; icon: string }>();
@@ -56,10 +66,27 @@ export function EstimateReviewPanel() {
         ? decideEstimateAsClient(input.id, decision, note)
         : decideEstimateAsDesigner(input.id, decision, note);
     },
-    onSuccess: async () => {
+    onSuccess: async (_, input) => {
       await queryClient.invalidateQueries({
         queryKey: role === "client" ? estimateWorkflowKeys.client : estimateWorkflowKeys.reviewQueue
       });
+      if (role === "client") {
+        await queryClient.invalidateQueries({
+          queryKey: estimateDesignKeys.clientWorkspace(input.id)
+        });
+        if (input.action === "approve") {
+          await queryClient.invalidateQueries({
+            queryKey: clientKeys.projects
+          });
+        }
+      }
+    },
+    onError: async (_, input) => {
+      if (role === "client" && input.action === "approve") {
+        await queryClient.invalidateQueries({
+          queryKey: estimateDesignKeys.clientWorkspace(input.id)
+        });
+      }
     }
   });
 
@@ -72,7 +99,10 @@ export function EstimateReviewPanel() {
     <header><div><p className="eyebrow">Commercial workflow</p><h2 id="estimate-review-title">{role === "client" ? "Estimates ready for you" : "Estimate approvals"}</h2></div><strong>{actionableCount} awaiting action</strong></header>
     <div className="estimate-review-grid">{queue.data.map((estimate) => <EstimateReviewCard
       actionable={canActOnEstimate(role, estimate.status)}
-      actionPending={action.isPending}
+      actionError={action.isError && action.variables?.id === estimate.id
+        ? action.error
+        : null}
+      actionPending={action.isPending && action.variables?.id === estimate.id}
       designers={designers.data ?? []}
       estimate={estimate}
       key={estimate.id}
@@ -83,7 +113,7 @@ export function EstimateReviewPanel() {
       onDesignerChange={(designerId) => setDesignerByEstimate((current) => ({ ...current, [estimate.id]: designerId }))}
       onNoteChange={(note) => setNoteByEstimate((current) => ({ ...current, [estimate.id]: note }))}
     />)}</div>
-    {action.isError ? <p role="alert">That action could not be completed. Refresh and try again.</p> : null}
+    {role !== "client" && action.isError ? <p role="alert">That action could not be completed. Refresh and try again.</p> : null}
   </section>;
 }
 
@@ -100,6 +130,7 @@ function EstimateReviewCard({
   designers,
   selectedDesignerId,
   note,
+  actionError,
   actionPending,
   onDesignerChange,
   onNoteChange,
@@ -111,6 +142,7 @@ function EstimateReviewCard({
   designers: Awaited<ReturnType<typeof getEstimateDesigners>>;
   selectedDesignerId: string;
   note: string;
+  actionError: Error | null;
   actionPending: boolean;
   onDesignerChange: (designerId: string) => void;
   onNoteChange: (note: string) => void;
@@ -121,14 +153,31 @@ function EstimateReviewCard({
   const detailsId = `client-estimate-${estimate.id}-details`;
   const headingId = `client-estimate-${estimate.id}-title`;
   const includedItemCount = estimate.lineItems.filter((item) => item.included).length;
+  const drawingWorkspace = useQuery({
+    queryKey: estimateDesignKeys.clientWorkspace(estimate.id),
+    queryFn: () => getClientEstimateDrawings(estimate.id),
+    enabled: isClient && clientExpanded
+  });
+  const roomOptions = estimate.rooms.flatMap((room) => {
+    const id = typeof room.id === "string" ? room.id : "";
+    const label = typeof room.label === "string" ? room.label : "";
+    return id && label ? [{ id, label }] : [];
+  });
+  const scopeOptions = estimate.scopes.map((id) => ({
+    id,
+    label: estimateBuilderSections.find((section) => section.id === id)?.label ?? id
+  }));
+  const clientApprovalBlocked = isClient &&
+    drawingWorkspace.data?.readiness.ready !== true;
 
   const reviewControls = actionable ? <>
     {role === "design_manager" ? <label>Assign approval to<select value={selectedDesignerId} onChange={(event) => onDesignerChange(event.target.value)}><option value="">Choose designer</option>{designers.map((designer) => <option value={designer.id} key={designer.id}>{designer.name}</option>)}</select></label> : <label>Review note<textarea value={note} onChange={(event) => onNoteChange(event.target.value)} placeholder={isClient ? "Optional note for the Lisno team" : "Add approval context or requested corrections"} /></label>}
     <div className="estimate-review-card__actions">
       {role === "design_manager"
         ? <button className="button button--primary" type="button" disabled={!selectedDesignerId || actionPending} onClick={() => onAction("assign")}>Assign designer</button>
-        : <><button className="button button--secondary" type="button" disabled={actionPending} onClick={() => onAction("changes")}>Request changes</button><button className="button button--primary" type="button" disabled={actionPending} onClick={() => onAction("approve")}>{isClient ? "Approve estimate" : "Approve for client"}</button></>}
+        : <><button className="button button--secondary" type="button" disabled={actionPending} onClick={() => onAction("changes")}>Request changes</button><button className="button button--primary" type="button" aria-describedby={isClient ? clientDrawingReadinessId(estimate.id) : undefined} disabled={actionPending || clientApprovalBlocked} onClick={() => onAction("approve")}>{isClient ? "Approve estimate" : "Approve for client"}</button></>}
     </div>
+    {actionError ? <p role="alert">{actionError instanceof ApiError ? actionError.message : "That action could not be completed. Refresh and try again."}</p> : null}
   </> : null;
 
   if (isClient) {
@@ -151,6 +200,15 @@ function EstimateReviewCard({
         <p>{estimate.lead?.clientName}</p>
         <p>{includedItemCount} items · GST included</p>
         <ClientEstimateDetails estimate={estimate} />
+        <ClientEstimateDrawings
+          estimateId={estimate.id}
+          rooms={roomOptions}
+          scopes={scopeOptions}
+          workspace={drawingWorkspace.data}
+          isPending={drawingWorkspace.isPending}
+          isError={drawingWorkspace.isError}
+          canReview={actionable}
+        />
         {!actionable ? <p className="estimate-notice">{estimate.status === "client_approved" ? "Estimate approved" : "Changes requested"}</p> : null}
         {reviewControls}
       </div> : null}

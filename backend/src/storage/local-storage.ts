@@ -10,7 +10,7 @@ import type {
 } from "./storage.js";
 
 const safeReference =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.(?:pdf|png|jpg|webp)$/i;
+  /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.(?:pdf|png|jpg|webp|tif|heic)$/i;
 
 export function createLocalStorage(rootDirectory: string): FileStorage {
   const root = path.resolve(rootDirectory);

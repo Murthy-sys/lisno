@@ -276,6 +276,12 @@ def classify_drawing_titles(
     return tuple(deduplicated)
 
 
+def is_excluded_drawing_title(text: str) -> bool:
+    """Return whether title text matches the classifier's non-drawing taxonomy."""
+    prepared = _prepare_ocr_title(text, {})
+    return _is_excluded(_comparison_text(prepared))
+
+
 def _normalized_plan_types(accepted_plan_types: Sequence[str]) -> tuple[str, ...]:
     normalized = tuple(
         value

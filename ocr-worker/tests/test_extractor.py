@@ -1,10 +1,20 @@
 import base64
 import io
 from pathlib import Path
+import time
 
+import fitz
 import pytest
 from PIL import Image, ImageDraw, ImageFont
 
+from lisno_ocr.contracts import (
+    Crop,
+    EstimateTaxonomy,
+    InvalidSourceError,
+    OcrError,
+    PdfRenderError,
+    TaxonomyTerm,
+)
 from lisno_ocr.extractor import Extractor
 from lisno_ocr.settings import LayoutSettings
 from lisno_ocr.title_classifier import OcrLine, classify_drawing_titles
@@ -69,6 +79,58 @@ SUPPLIED_BLUEPRINT_OCR = [
     ((801, 997, 896, 1011), "LED DOWN LIGHT", 0.976708173751831),
     ((995, 997, 1063, 1011), "CEILING FAN", 0.9604941606521606),
 ]
+
+
+def write_estimate_pdf(
+    tmp_path: Path,
+    titles: list[str | None],
+    *,
+    filename: str = "estimate.pdf",
+) -> Path:
+    source = tmp_path / filename
+    document = fitz.open()
+    try:
+        for title in titles:
+            page = document.new_page(width=1191, height=842)
+            if title is not None:
+                page.insert_text((700, 780), f"TITLE : {title}")
+        document.save(source)
+    finally:
+        document.close()
+    return source
+
+
+class OcrMustNotStart:
+    def predict(self, **_kwargs):
+        raise AssertionError("embedded title text must bypass OCR")
+
+
+def test_estimate_pdf_uses_embedded_title_text_without_starting_ocr(tmp_path):
+    source = tmp_path / "text-layer-title.pdf"
+    document = fitz.open()
+    page = document.new_page(width=1191, height=842)
+    page.insert_text((33, 735), "TITLE :")
+    page.insert_text((68, 735), "TV UNIT")
+    page.insert_text((318, 735), "DISINED BY : JITHESH K")
+    document.save(source)
+    document.close()
+
+    class OcrMustNotStart:
+        def predict(self, **_kwargs):
+            raise AssertionError("embedded PDF title should bypass OCR")
+
+    pages = Extractor(
+        ocr_engine=OcrMustNotStart(),
+        render_scale=1,
+        estimate_taxonomy=EstimateTaxonomy((), ()),
+    ).extract(source, mode="estimate_design")
+
+    assert len(pages) == 1
+    assert len(pages[0].sections) == 1
+    assert pages[0].sections[0].label == "TV UNIT"
+    assert pages[0].sections[0].crop == Crop(
+        x=0, y=0, width=pages[0].width, height=pages[0].height
+    )
 
 
 def _write_representative_blueprint_pdf(tmp_path):
@@ -297,13 +359,485 @@ def test_renders_every_pdf_page_with_positive_pixel_dimensions():
     assert ocr.calls == 2
 
 
+def test_pdf_title_blocks_emit_one_full_page_section_and_preserve_taxonomy(tmp_path):
+    source = tmp_path / "title-blocks.pdf"
+    first = Image.new("RGB", (900, 700), "white")
+    second = Image.new("RGB", (900, 700), "white")
+    try:
+        first.save(source, format="PDF", save_all=True, append_images=[second])
+    finally:
+        first.close()
+        second.close()
+
+    taxonomy = EstimateTaxonomy(
+        rooms=(TaxonomyTerm("room-living", "Living Room", ()),),
+        scopes=(TaxonomyTerm("FL", "Flooring", ()),),
+    )
+    ocr = PageAwareFakePaddleOCR3([
+        {
+            "rec_boxes": [(50, 20, 370, 48)],
+            "rec_texts": ["TITLE : Living Room Flooring"],
+            "rec_scores": [0.97],
+        },
+        {
+            "rec_boxes": [(50, 20, 370, 48)],
+            "rec_texts": ["TITLE : TV UNIT"],
+            "rec_scores": [0.96],
+        },
+    ])
+
+    pages = Extractor(
+        ocr_engine=ocr,
+        render_scale=1,
+        estimate_taxonomy=taxonomy,
+    ).extract(source, mode="estimate_design")
+
+    assert [[section.label for section in page.sections] for page in pages] == [
+        ["Living Room Flooring"],
+        ["TV UNIT"],
+    ]
+    assert [
+        section.crop.to_payload()
+        for page in pages
+        for section in page.sections
+    ] == [
+        {"x": 0, "y": 0, "width": pages[0].width, "height": pages[0].height},
+        {"x": 0, "y": 0, "width": pages[1].width, "height": pages[1].height},
+    ]
+    assert [
+        section.proposal.to_payload() if section.proposal else None
+        for page in pages
+        for section in page.sections
+    ] == [
+        {
+            "detectedTitle": "Living Room Flooring",
+            "room": {
+                "id": "room-living",
+                "confidence": 1.0,
+                "evidence": ["living room"],
+                "ambiguous": False,
+            },
+            "scope": {
+                "id": "FL",
+                "confidence": 1.0,
+                "evidence": ["flooring"],
+                "ambiguous": False,
+            },
+        },
+        {
+            "detectedTitle": "TV UNIT",
+            "room": {"id": None, "confidence": 0.0, "evidence": [], "ambiguous": False},
+            "scope": {"id": None, "confidence": 0.0, "evidence": [], "ambiguous": False},
+        },
+    ]
+    assert all(
+        section.image_base64 == page.image_base64
+        for page in pages
+        for section in page.sections
+    )
+    assert ocr.calls == 2
+
+
+def test_six_page_estimate_pdf_opens_once_and_emits_one_full_page_drawing(
+    monkeypatch,
+    tmp_path,
+):
+    source = write_estimate_pdf(
+        tmp_path,
+        [f"Drawing {number}" for number in range(1, 7)],
+    )
+
+    from lisno_ocr import extractor as module
+    actual_open = module.fitz.open
+    opens = 0
+
+    def counted_open(*args, **kwargs):
+        nonlocal opens
+        opens += 1
+        return actual_open(*args, **kwargs)
+
+    monkeypatch.setattr(module.fitz, "open", counted_open)
+    pages = Extractor(
+        ocr_engine=OcrMustNotStart(),
+        render_scale=1,
+        estimate_taxonomy=EstimateTaxonomy((), ()),
+    ).extract(source, mode="estimate_design")
+
+    assert opens == 1
+    assert [page.page_number for page in pages] == [1, 2, 3, 4, 5, 6]
+    assert all(len(page.sections) == 1 for page in pages)
+    assert all(
+        section.crop == Crop(0, 0, page.width, page.height)
+        and section.image_base64 == page.image_base64
+        for page in pages
+        for section in page.sections
+    )
+
+
+def test_estimate_pdf_does_not_expand_title_geometry_to_far_same_line_text(
+    tmp_path,
+):
+    source = tmp_path / "far-title-value.pdf"
+    document = fitz.open()
+    try:
+        page = document.new_page(width=1191, height=842)
+        page.insert_text((700, 780), "TITLE :")
+        page.insert_text((1100, 780), "UNRELATED")
+        document.save(source)
+    finally:
+        document.close()
+
+    class EmptyTitleBandOcr:
+        def predict(self, **_kwargs):
+            return [{
+                "rec_boxes": [],
+                "rec_texts": [],
+                "rec_scores": [],
+            }]
+
+    page = Extractor(
+        ocr_engine=EmptyTitleBandOcr(),
+        render_scale=1,
+        estimate_taxonomy=EstimateTaxonomy((), ()),
+    ).extract(source, mode="estimate_design")[0]
+
+    assert page.sections[0].label == "Unidentified drawing — page 1"
+
+
+def test_six_page_estimate_pdf_without_titles_emits_unidentified_drawings(
+    monkeypatch,
+    tmp_path,
+):
+    source = write_estimate_pdf(tmp_path, [None] * 6)
+
+    class EmptyTitleBandOcr:
+        def __init__(self):
+            self.heights: list[int] = []
+
+        def predict(self, input):
+            self.heights.append(input.shape[0])
+            return [{
+                "rec_boxes": [],
+                "rec_texts": [],
+                "rec_scores": [],
+            }]
+
+    from lisno_ocr import extractor as module
+    monkeypatch.setattr(
+        module,
+        "_drawing_regions",
+        lambda *_args, **_kwargs: pytest.fail(
+            "estimate extraction must not enter region detection"
+        ),
+    )
+    ocr = EmptyTitleBandOcr()
+    pages = Extractor(
+        ocr_engine=ocr,
+        render_scale=1,
+        estimate_taxonomy=EstimateTaxonomy((), ()),
+    ).extract(source, mode="estimate_design")
+
+    assert [page.page_number for page in pages] == [1, 2, 3, 4, 5, 6]
+    assert [
+        section.label
+        for page in pages
+        for section in page.sections
+    ] == [
+        f"Unidentified drawing — page {number}"
+        for number in range(1, 7)
+    ]
+    assert all(
+        section.confidence == 0
+        and section.crop == Crop(0, 0, page.width, page.height)
+        and section.image_base64 == page.image_base64
+        and section.proposal is not None
+        and section.proposal.room.id is None
+        and section.proposal.scope.id is None
+        for page in pages
+        for section in page.sections
+    )
+    assert ocr.heights
+    assert all(
+        height < page.height
+        for height, page in zip(ocr.heights, pages, strict=True)
+    )
+
+
+def test_unidentified_estimate_drawing_ignores_matching_taxonomy_terms(tmp_path):
+    source = write_estimate_pdf(tmp_path, [None])
+
+    class EmptyTitleBandOcr:
+        def predict(self, **_kwargs):
+            return [{
+                "rec_boxes": [],
+                "rec_texts": [],
+                "rec_scores": [],
+            }]
+
+    taxonomy = EstimateTaxonomy(
+        rooms=(TaxonomyTerm("room-unidentified", "Unidentified Drawing", ()),),
+        scopes=(TaxonomyTerm("scope-unidentified", "Unidentified Drawing", ()),),
+    )
+    page = Extractor(
+        ocr_engine=EmptyTitleBandOcr(),
+        render_scale=1,
+        estimate_taxonomy=taxonomy,
+    ).extract(source, mode="estimate_design")[0]
+
+    assert page.sections[0].label == "Unidentified drawing — page 1"
+    assert page.sections[0].proposal is not None
+    assert page.sections[0].proposal.room.id is None
+    assert page.sections[0].proposal.scope.id is None
+
+
+def test_estimate_pdf_processes_page_seven_when_the_configured_limit_allows_it(
+    tmp_path,
+):
+    source = write_estimate_pdf(
+        tmp_path,
+        [f"Drawing {number}" for number in range(1, 8)],
+    )
+    pages = Extractor(
+        ocr_engine=OcrMustNotStart(),
+        render_scale=1,
+        max_pdf_pages=7,
+        estimate_taxonomy=EstimateTaxonomy((), ()),
+    ).extract(source, mode="estimate_design")
+
+    assert [page.page_number for page in pages] == list(range(1, 8))
+    assert all(len(page.sections) == 1 for page in pages)
+
+
+def test_pdf_title_block_fast_path_accounts_for_both_serialized_image_fields(
+    monkeypatch, tmp_path
+):
+    source = tmp_path / "title-block.pdf"
+    image = Image.new("RGB", (900, 700), "white")
+    try:
+        image.save(source, format="PDF")
+    finally:
+        image.close()
+
+    ocr = PageAwareFakePaddleOCR3([{
+        "rec_boxes": [(50, 20, 370, 48)],
+        "rec_texts": ["TITLE : TV UNIT"],
+        "rec_scores": [0.97],
+    }])
+    from lisno_ocr import extractor as module
+
+    monkeypatch.setattr(module, "_png_base64", lambda _image: "A" * 40)
+
+    with pytest.raises(OcrError, match="output is too large"):
+        Extractor(
+            ocr_engine=ocr,
+            render_scale=1,
+            max_output_bytes=59,
+        ).extract(source, mode="estimate_design")
+
+
+def test_project_design_pdf_keeps_multi_panel_region_extraction_despite_title_block(
+    tmp_path,
+):
+    source = tmp_path / "project-design.pdf"
+    image = Image.new("RGB", (900, 700), "white")
+    try:
+        draw = ImageDraw.Draw(image)
+        draw.rectangle((60, 80, 400, 450), outline="black", width=4)
+        draw.rectangle((500, 80, 840, 450), outline="black", width=4)
+        image.save(source, format="PDF")
+    finally:
+        image.close()
+
+    ocr = PageAwareFakePaddleOCR3([{
+        "rec_boxes": [
+            (90, 100, 280, 130),
+            (530, 100, 760, 130),
+            (50, 620, 370, 648),
+        ],
+        "rec_texts": [
+            "Floor Plan",
+            "Front Elevation",
+            "TITLE : TV UNIT",
+        ],
+        "rec_scores": [0.98, 0.98, 0.99],
+    }])
+
+    page = Extractor(ocr_engine=ocr, render_scale=1).extract(
+        source, mode="project_design"
+    )[0]
+
+    assert [section.label for section in page.sections] == [
+        "Floor Plan",
+        "Front Elevation",
+    ]
+    assert all(
+        section.crop.to_payload()
+        != {"x": 0, "y": 0, "width": page.width, "height": page.height}
+        for section in page.sections
+    )
+    assert ocr.calls == 1
+
+
+def test_rejects_an_extraction_deadline_that_has_already_expired():
+    with pytest.raises(OcrError, match="processing time limit"):
+        Extractor(ocr_engine=FakePaddleOCR3([])).extract(
+            FIXTURES / "labeled-plan.png",
+            deadline=time.monotonic() - 1,
+        )
+
+
+def test_tiff_decode_failures_remain_classified_as_invalid_sources(tmp_path):
+    source = tmp_path / "oversized.tiff"
+    image = Image.new("RGB", (10, 10), "white")
+    try:
+        image.save(source, format="TIFF")
+    finally:
+        image.close()
+
+    with pytest.raises(InvalidSourceError, match="source image page is too large"):
+        Extractor(
+            ocr_engine=FakePaddleOCR3([]),
+            max_page_pixels=1,
+        ).extract(source)
+
+
+def test_multipage_tiff_respects_the_common_source_page_limit(tmp_path):
+    source = tmp_path / "two-pages.tiff"
+    first = Image.new("RGB", (10, 10), "white")
+    second = Image.new("RGB", (10, 10), "black")
+    try:
+        first.save(source, format="TIFF", save_all=True, append_images=[second])
+    finally:
+        first.close()
+        second.close()
+
+    with pytest.raises(InvalidSourceError, match="too many pages"):
+        Extractor(
+            ocr_engine=FakePaddleOCR3([]),
+            max_pdf_pages=1,
+        ).extract(source)
+
+
+def test_estimate_taxonomy_adds_a_proposal_for_every_multi_title_crop():
+    taxonomy = EstimateTaxonomy(
+        rooms=(TaxonomyTerm("room-living", "Living Room", ()),),
+        scopes=(
+            TaxonomyTerm("FL", "Flooring", ("floor plan",)),
+            TaxonomyTerm("WE", "Wall Elevation", ("front elevation",)),
+            TaxonomyTerm("FC", "False Ceiling", ("ceiling plan",)),
+            TaxonomyTerm("EL", "Electrical", ()),
+        ),
+    )
+    labels = [
+        ((34, 70, 285, 84), "Living Room Floor Plan", 0.95),
+        ((852, 160, 1070, 173), "Living Room Front Elevation", 0.96),
+        ((731, 609, 898, 627), "Living Room Ceiling Plan", 0.97),
+        ((1000, 611, 1236, 625), "Living Room Electrical Plan", 0.98),
+    ]
+    ocr = PageAwareFakePaddleOCR3([{
+        "rec_boxes": [box for box, _text, _score in labels],
+        "rec_texts": [text for _box, text, _score in labels],
+        "rec_scores": [score for _box, _text, score in labels],
+    }])
+
+    page = Extractor(
+        ocr_engine=ocr,
+        estimate_taxonomy=taxonomy,
+    ).extract(FIXTURES / "multi-room-scope-plan.png")[0]
+
+    assert [section.proposal.scope.id for section in page.sections] == [
+        "FL", "WE", "FC", "EL",
+    ]
+    assert all(section.proposal is not None for section in page.sections)
+    assert all(section.proposal.room.id == "room-living" for section in page.sections)
+    assert len({
+        (section.crop.x, section.crop.y, section.crop.width, section.crop.height)
+        for section in page.sections
+    }) == 4
+    payload = page.sections[2].to_payload()
+    assert payload["proposal"] == {
+        "detectedTitle": "Living Room Ceiling Plan",
+        "room": {
+            "id": "room-living",
+            "confidence": 1.0,
+            "evidence": ["living room"],
+            "ambiguous": False,
+        },
+        "scope": {
+            "id": "FC",
+            "confidence": 1.0,
+            "evidence": ["ceiling plan"],
+            "ambiguous": False,
+        },
+    }
+
+
+def test_estimate_taxonomy_preserves_room_matched_titles_with_uncertain_scope():
+    taxonomy = EstimateTaxonomy(
+        rooms=(TaxonomyTerm("room-bedroom", "Bedroom", ()),),
+        scopes=(
+            TaxonomyTerm("FC", "False Ceiling", ("ceiling plan",)),
+            TaxonomyTerm("FL", "Flooring", ("floor plan",)),
+            TaxonomyTerm("CA", "Carpentry", ()),
+            TaxonomyTerm("EL", "Electrical", ()),
+        ),
+    )
+    ocr = PageAwareFakePaddleOCR3([{
+        "rec_boxes": [(34, 70, 285, 84)],
+        "rec_texts": ["Bedroom Wardrobe"],
+        "rec_scores": [0.98],
+    }])
+
+    page = Extractor(
+        ocr_engine=ocr,
+        estimate_taxonomy=taxonomy,
+    ).extract(FIXTURES / "multi-room-scope-plan.png")[0]
+
+    assert len(page.sections) == 1
+    assert page.sections[0].proposal.room.id == "room-bedroom"
+    assert page.sections[0].proposal.scope.id is None
+    assert page.sections[0].proposal.scope.confidence == 0
+
+
+@pytest.mark.parametrize(
+    "label",
+    [
+        "Living Room Flooring Schedule",
+        "Living Room Flooring Notes",
+        "Living Room Flooring Legend",
+        "Living Room Flooring Details",
+        "Living Room Teak Flooring",
+    ],
+)
+def test_estimate_taxonomy_preserves_drawing_title_exclusions(label):
+    taxonomy = EstimateTaxonomy(
+        rooms=(TaxonomyTerm("room-living", "Living Room", ()),),
+        scopes=(TaxonomyTerm("FL", "Flooring", ()),),
+    )
+    ocr = PageAwareFakePaddleOCR3([{
+        "rec_boxes": [(34, 70, 285, 84)],
+        "rec_texts": [label],
+        "rec_scores": [0.99],
+    }])
+
+    page = Extractor(
+        ocr_engine=ocr,
+        estimate_taxonomy=taxonomy,
+    ).extract(FIXTURES / "multi-room-scope-plan.png")[0]
+
+    assert page.sections == ()
+
+
 def test_extracts_exact_approved_blueprint_titles_in_page_order(tmp_path):
     source, page_results, expected_regions, dash_regions = (
         _write_representative_blueprint_pdf(tmp_path)
     )
 
     pages = Extractor(
-        ocr_engine=PageAwareFakePaddleOCR3(page_results), render_scale=1
+        ocr_engine=PageAwareFakePaddleOCR3(
+            page_results
+        ),
+        render_scale=1,
     ).extract(source)
 
     assert [[section.label for section in page.sections] for page in pages] == [
@@ -644,16 +1178,25 @@ def test_output_budget_stops_before_encoding_later_candidates(monkeypatch):
     assert encoded == 2  # page + first crop; second crop never encoded
 
 
-def test_pdf_dimension_budget_rejects_before_pixmap_allocation(monkeypatch, tmp_path):
+def test_pdf_dimension_budget_downscales_before_pixmap_allocation(monkeypatch, tmp_path):
     class Rect:
-        width = 10_000
-        height = 10_000
+        width = 700
+        height = 700
+
+    scales = []
+
+    class Pixmap:
+        width = 1
+        height = 1
+        samples = b"\xff\xff\xff"
 
     class Page:
         rect = Rect()
 
-        def get_pixmap(self, **_kwargs):
-            raise AssertionError("oversized page must not allocate a pixmap")
+        def get_pixmap(self, *, matrix, alpha):
+            assert alpha is False
+            scales.append(matrix.a)
+            return Pixmap()
 
     class Document:
         page_count = 1
@@ -668,7 +1211,84 @@ def test_pdf_dimension_budget_rejects_before_pixmap_allocation(monkeypatch, tmp_
     source.write_bytes(b"%PDF")
     monkeypatch.setattr("lisno_ocr.extractor.fitz.open", lambda _path: Document())
 
-    with pytest.raises(Exception, match="page is too large"):
+    pages = Extractor(
+        ocr_engine=FakePaddleOCR3([]), max_page_pixels=1_000_000
+    ).extract(source)
+
+    assert [page.page_number for page in pages] == [1]
+    assert len(scales) == 1
+    assert 1.0 < scales[0] < 2.0
+
+
+def test_pdf_dimension_budget_keeps_default_scale_at_exact_pixel_limit(
+    monkeypatch, tmp_path
+):
+    class Rect:
+        width = 500
+        height = 500
+
+    scales = []
+
+    class Pixmap:
+        width = 1
+        height = 1
+        samples = b"\xff\xff\xff"
+
+    class Page:
+        rect = Rect()
+
+        def get_pixmap(self, *, matrix, alpha):
+            assert alpha is False
+            scales.append(matrix.a)
+            return Pixmap()
+
+    class Document:
+        page_count = 1
+
+        def __iter__(self):
+            return iter([Page()])
+
+        def close(self):
+            pass
+
+    source = tmp_path / "exactly-at-budget.pdf"
+    source.write_bytes(b"%PDF")
+    monkeypatch.setattr("lisno_ocr.extractor.fitz.open", lambda _path: Document())
+
+    Extractor(
+        ocr_engine=FakePaddleOCR3([]), max_page_pixels=1_000_000
+    ).extract(source)
+
+    assert scales == [2.0]
+
+
+def test_pdf_dimension_budget_rejects_before_pixmap_when_one_x_is_unsafe(
+    monkeypatch, tmp_path
+):
+    class Rect:
+        width = 10_000
+        height = 10_000
+
+    class Page:
+        rect = Rect()
+
+        def get_pixmap(self, **_kwargs):
+            raise AssertionError("irreducibly oversized page must not allocate a pixmap")
+
+    class Document:
+        page_count = 1
+
+        def __iter__(self):
+            return iter([Page()])
+
+        def close(self):
+            pass
+
+    source = tmp_path / "irreducibly-large.pdf"
+    source.write_bytes(b"%PDF")
+    monkeypatch.setattr("lisno_ocr.extractor.fitz.open", lambda _path: Document())
+
+    with pytest.raises(PdfRenderError, match="page is too large"):
         Extractor(ocr_engine=FakePaddleOCR3([]), max_page_pixels=1_000).extract(source)
 
 

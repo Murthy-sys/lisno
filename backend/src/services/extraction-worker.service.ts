@@ -3,6 +3,10 @@ import { randomUUID } from "node:crypto";
 import sharp from "sharp";
 import { ApiError } from "../middleware/errors.js";
 import {
+  defaultExtractionRetryPolicy,
+  type ExtractionRetryPolicy
+} from "../domain/extraction-lifecycle.js";
+import {
   RepositoryConflictError,
   RepositoryNotFoundError,
   type AppRepository,
@@ -12,6 +16,10 @@ import {
 } from "../repositories/types.js";
 import type { FileStorage } from "../storage/storage.js";
 import type { AuditService } from "./audit.service.js";
+import type {
+  EstimateDesignService,
+  EstimateWorkerResult
+} from "./estimate-design.service.js";
 import type { Clock } from "./workflow.js";
 
 export const workerFailureCodes = [
@@ -20,6 +28,8 @@ export const workerFailureCodes = [
   "INVALID_SOURCE",
   "RESULT_REJECTED"
 ] as const;
+
+const maxClaimContentionRescans = 64;
 
 export type WorkerFailureCode = (typeof workerFailureCodes)[number];
 
@@ -39,11 +49,13 @@ export interface WorkerPageResult {
 }
 
 export interface WorkerExtractionResult {
+  kind?: "project_design";
   resultId: string;
   pages: WorkerPageResult[];
 }
 
-export interface ClaimedExtractionJob {
+export interface ClaimedProjectExtractionJob {
+  kind: "project_design";
   id: string;
   designVersionId: string;
   attemptCount: number;
@@ -58,6 +70,26 @@ export interface ClaimedExtractionJob {
     sizeBytes: number;
   };
 }
+
+export interface ClaimedEstimateExtractionJob {
+  kind: "estimate_design";
+  id: string;
+  attemptCount: number;
+  claimToken: string;
+  leaseExpiresAt: string;
+  leaseDurationMs: number;
+  sourceUrl: string;
+  sourceFilename: string;
+  sourceMimeType: string;
+  taxonomy: {
+    rooms: Array<{ id: string; label: string; aliases: string[] }>;
+    scopes: Array<{ id: string; label: string; aliases: string[] }>;
+  };
+}
+
+export type ClaimedExtractionJob =
+  | ClaimedProjectExtractionJob
+  | ClaimedEstimateExtractionJob;
 
 export interface WorkerSourceDownload {
   stream: NodeJS.ReadableStream;
@@ -79,8 +111,8 @@ export interface ExtractionWorkerService {
   complete(
     jobId: string,
     claimToken: string,
-    result: WorkerExtractionResult
-  ): Promise<DesignExtractionJobRecord>;
+    result: WorkerExtractionResult | ({ kind: "estimate_design" } & EstimateWorkerResult)
+  ): Promise<{ id: string; status: string }>;
   fail(
     jobId: string,
     claimToken: string,
@@ -96,7 +128,9 @@ export function createExtractionWorkerService(
   clock: Clock,
   leaseSeconds: number,
   maxImageBytes: number,
-  confidenceFloor: number
+  confidenceFloor: number,
+  estimateDesigns?: EstimateDesignService,
+  _ocrRetryPolicy: ExtractionRetryPolicy = defaultExtractionRetryPolicy
 ): ExtractionWorkerService {
   return {
     async claim() {
@@ -104,50 +138,112 @@ export function createExtractionWorkerService(
       const leaseExpiresAt = new Date(
         now.getTime() + leaseSeconds * 1000
       ).toISOString();
-      const job = await repository.claimExtractionJob(
-        now.toISOString(),
-        leaseExpiresAt
-      );
-      if (!job) return null;
-      const version = await repository.findDesignVersionById(job.designVersionId);
-      if (!version || !job.claimId) {
-        throw new ApiError(
-          500,
-          "EXTRACTION_JOB_INVALID",
-          "The extraction job source is unavailable."
-        );
-      }
-      const sourceUrl =
-        `/api/v1/internal/extraction-jobs/${encodeURIComponent(job.id)}/source`;
-      return {
-        id: job.id,
-        designVersionId: job.designVersionId,
-        attemptCount: job.attemptCount,
-        claimToken: job.claimId,
-        leaseExpiresAt,
-        leaseDurationMs: leaseSeconds * 1000,
-        sourceUrl,
-        source: {
-          url: sourceUrl,
-          filename: version.originalFilename,
-          mimeType: version.mimeType,
-          sizeBytes: version.sizeBytes
+      let contentionRescans = 0;
+      while (contentionRescans < maxClaimContentionRescans) {
+        const at = now.toISOString();
+        const [projectCandidate, estimateCandidate] = await Promise.all([
+          repository.findOldestClaimableExtractionJob(at),
+          estimateDesigns?.findOldestClaimableWorkerJob(at) ?? null
+        ]);
+        if (!projectCandidate && !estimateCandidate) return null;
+        const chooseEstimate =
+          estimateCandidate !== null &&
+          (projectCandidate === null ||
+            compareQueued(
+              estimateCandidate.queuedAt,
+              estimateCandidate.id,
+              projectCandidate.queuedAt,
+              projectCandidate.id
+            ) < 0);
+        if (chooseEstimate) {
+          const job = await estimateDesigns!.claimWorkerJob(
+            estimateCandidate.id,
+            at,
+            leaseExpiresAt
+          );
+          if (!job) {
+            contentionRescans += 1;
+            continue;
+          }
+          if ("cancelled" in job) continue;
+          const sourceUrl =
+            `/api/v1/internal/extraction-jobs/${encodeURIComponent(job.id)}/source`;
+          return {
+            kind: "estimate_design",
+            id: job.id,
+            attemptCount: job.attemptCount,
+            claimToken: job.claimId,
+            leaseExpiresAt,
+            leaseDurationMs: leaseSeconds * 1000,
+            sourceUrl,
+            sourceFilename: job.upload.originalFilename,
+            sourceMimeType: job.upload.mimeType,
+            taxonomy: job.taxonomy
+          };
         }
-      };
+        const job = await repository.claimExtractionJobById(
+          projectCandidate!.id,
+          at,
+          leaseExpiresAt
+        );
+        if (!job) {
+          contentionRescans += 1;
+          continue;
+        }
+        const version = await repository.findDesignVersionById(job.designVersionId);
+        if (!version || !job.claimId) {
+          throw new ApiError(
+            500,
+            "EXTRACTION_JOB_INVALID",
+            "The extraction job source is unavailable."
+          );
+        }
+        const sourceUrl =
+          `/api/v1/internal/extraction-jobs/${encodeURIComponent(job.id)}/source`;
+        return {
+          kind: "project_design",
+          id: job.id,
+          designVersionId: job.designVersionId,
+          attemptCount: job.attemptCount,
+          claimToken: job.claimId,
+          leaseExpiresAt,
+          leaseDurationMs: leaseSeconds * 1000,
+          sourceUrl,
+          source: {
+            url: sourceUrl,
+            filename: version.originalFilename,
+            mimeType: version.mimeType,
+            sizeBytes: version.sizeBytes
+          }
+        };
+      }
+      throw new ApiError(
+        503,
+        "EXTRACTION_CLAIM_CONTENTION",
+        "Extraction work is available, but another worker is currently claiming it."
+      );
     },
 
     async downloadSource(jobId, claimToken) {
       const now = clock().toISOString();
-      const job = await requireJob(repository, jobId);
-      requireCurrentClaim(job, claimToken, now);
-      const version = await repository.findDesignVersionById(job.designVersionId);
-      if (!version) {
-        throw new ApiError(
-          404,
-          "NOT_FOUND",
-          "The requested resource was not found."
-        );
+      const projectJob = await repository.findExtractionJobById(jobId);
+      if (!projectJob) {
+        const source = await estimateDesigns?.workerSource(jobId, claimToken, now);
+        if (!source) notFound();
+        try {
+          return {
+            stream: await storage.open(source.reference),
+            filename: source.filename,
+            mimeType: source.mimeType,
+            sizeBytes: source.sizeBytes
+          };
+        } catch {
+          throw new ApiError(503, "FILE_STORAGE_ERROR", "The extraction source could not be opened.");
+        }
       }
+      requireCurrentClaim(projectJob, claimToken, now);
+      const version = await repository.findDesignVersionById(projectJob.designVersionId);
+      if (!version) notFound();
       try {
         return {
           stream: await storage.open(version.storedFileReference),
@@ -169,6 +265,37 @@ export function createExtractionWorkerService(
       const leaseExpiresAt = new Date(
         now.getTime() + leaseSeconds * 1000
       ).toISOString();
+      const projectJob = await repository.findExtractionJobById(jobId);
+      if (!projectJob) {
+        const renewed = await estimateDesigns?.renewWorkerLease(
+          jobId,
+          claimToken,
+          now.toISOString(),
+          leaseExpiresAt
+        );
+        if (!renewed) notFound();
+        return {
+          job: {
+            id: renewed.id,
+            designVersionId: renewed.uploadId,
+            status: renewed.status as DesignExtractionJobRecord["status"],
+            attemptCount: renewed.attemptCount,
+            queuedAt: renewed.queuedAt,
+            nextAttemptAt: renewed.nextAttemptAt,
+            claimGeneration: renewed.claimGeneration,
+            startedAt: null,
+            completedAt: null,
+            leaseExpiresAt: renewed.leaseExpiresAt,
+            failureCode: null,
+            failureMessage: null,
+            claimId: renewed.claimId,
+            workerResultId: null,
+            createdAt: renewed.queuedAt,
+            updatedAt: now.toISOString()
+          },
+          leaseDurationMs: leaseSeconds * 1000
+        };
+      }
       try {
         const job = await repository.renewExtractionJobLease(
           jobId,
@@ -184,6 +311,22 @@ export function createExtractionWorkerService(
 
     async complete(jobId, claimToken, result) {
       const processedAt = clock().toISOString();
+      if (result.kind === "estimate_design") {
+        if (!estimateDesigns) {
+          throw new ApiError(
+            400,
+            "INVALID_EXTRACTION_RESULT",
+            "Estimate extraction jobs are unavailable."
+          );
+        }
+        const completed = await estimateDesigns.completeWorkerJob(
+          jobId,
+          claimToken,
+          processedAt,
+          result
+        );
+        return { id: completed.id, status: completed.status };
+      }
       const job = await requireJob(repository, jobId);
       requireCurrentClaim(job, claimToken, processedAt);
       const version = await repository.findDesignVersionById(job.designVersionId);
@@ -295,6 +438,35 @@ export function createExtractionWorkerService(
 
     async fail(jobId, claimToken, code, message) {
       const failedAt = clock().toISOString();
+      const projectJob = await repository.findExtractionJobById(jobId);
+      if (!projectJob) {
+        const failed = await estimateDesigns?.failWorkerJob(
+          jobId,
+          claimToken,
+          failedAt,
+          code,
+          message
+        );
+        if (!failed) notFound();
+        return {
+          id: failed.id,
+          designVersionId: failed.uploadId,
+          status: failed.status as DesignExtractionJobRecord["status"],
+          attemptCount: failed.attemptCount,
+          queuedAt: failed.queuedAt,
+          nextAttemptAt: failed.nextAttemptAt,
+          claimGeneration: failed.claimGeneration,
+          startedAt: null,
+          completedAt: failedAt,
+          leaseExpiresAt: null,
+          failureCode: code,
+          failureMessage: message,
+          claimId: null,
+          workerResultId: null,
+          createdAt: failed.queuedAt,
+          updatedAt: failedAt
+        };
+      }
       try {
         return await repository.runInTransaction(async (transaction) => {
           const failed = await transaction.failExtractionJob(
@@ -322,6 +494,22 @@ export function createExtractionWorkerService(
       }
     }
   };
+}
+
+function compareQueued(
+  leftTime: string,
+  leftId: string,
+  rightTime: string,
+  rightId: string
+) {
+  return (
+    new Date(leftTime).getTime() - new Date(rightTime).getTime() ||
+    leftId.localeCompare(rightId)
+  );
+}
+
+function notFound(): never {
+  throw new ApiError(404, "NOT_FOUND", "The requested resource was not found.");
 }
 
 async function requireJob(repository: AppRepository, jobId: string) {

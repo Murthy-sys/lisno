@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 import json
 import os
+import signal
 import tempfile
 import threading
 import time
 from pathlib import Path
-from typing import Any, Callable, Protocol, Sequence
+from typing import Any, Callable, Iterator, Protocol, Sequence
 from urllib.error import HTTPError, URLError
 from urllib.parse import urljoin
 from urllib.request import Request, urlopen
@@ -14,11 +16,13 @@ from uuid import uuid4
 
 from .contracts import (
     ClaimedJob,
+    EstimateTaxonomy,
     ExtractedPage,
     InvalidSourceError,
     OcrError,
     PdfRenderError,
     ResultRejectedError,
+    TaxonomyTerm,
     WorkerFailure,
     WorkerSettings,
 )
@@ -35,13 +39,20 @@ class Api(Protocol):
 
 
 class PageExtractor(Protocol):
-    def extract(self, source_path: str | Path) -> list[ExtractedPage]: ...
+    def extract(
+        self,
+        source_path: str | Path,
+        *,
+        mode: str = "project_design",
+        deadline: float | None = None,
+    ) -> list[ExtractedPage]: ...
 
 
 class WorkerApi:
     def __init__(self, settings: WorkerSettings):
         self._settings = settings
         self._claim_tokens: dict[str, str] = {}
+        self._claim_kinds: dict[str, str] = {}
 
     def claim(self) -> ClaimedJob | None:
         status, payload = self._request_json(
@@ -53,10 +64,20 @@ class WorkerApi:
         job_id = _required_string(data, "id")
         claim_token = _required_string(data, "claimToken")
         source_url = _required_string(data, "sourceUrl")
-        filename = str(data.get("source", {}).get("filename", "source"))
-        mime_type = _required_string(data.get("source", {}), "mimeType")
+        kind = data.get("kind", "project_design")
+        if kind not in ("project_design", "estimate_design"):
+            raise ResultRejectedError("The backend worker response used an unknown job kind.")
+        if kind == "estimate_design":
+            filename = _required_string(data, "sourceFilename")
+            mime_type = _required_string(data, "sourceMimeType")
+            taxonomy = _estimate_taxonomy(data.get("taxonomy"))
+        else:
+            filename = str(data.get("source", {}).get("filename", "source"))
+            mime_type = _required_string(data.get("source", {}), "mimeType")
+            taxonomy = None
         lease_duration_ms = _required_positive_number(data, "leaseDurationMs")
         self._claim_tokens[job_id] = claim_token
+        self._claim_kinds[job_id] = kind
         return ClaimedJob(
             id=job_id,
             claim_token=claim_token,
@@ -64,6 +85,8 @@ class WorkerApi:
             source_filename=filename,
             source_mime_type=mime_type,
             lease_duration_seconds=lease_duration_ms / 1000,
+            kind=kind,
+            taxonomy=taxonomy,
         )
 
     def download(self, claimed: ClaimedJob) -> Path:
@@ -72,6 +95,9 @@ class WorkerApi:
             "image/png": ".png",
             "image/jpeg": ".jpg",
             "image/webp": ".webp",
+            "image/tiff": ".tiff",
+            "image/heic": ".heic",
+            "image/heif": ".heif",
         }.get(claimed.source_mime_type, ".bin")
         return self._download_source(
             claimed.source_url,
@@ -90,6 +116,8 @@ class WorkerApi:
             "resultId": str(uuid4()),
             "pages": [page.to_payload() for page in pages],
         }
+        if self._claim_kinds.get(job_id) == "estimate_design":
+            result["kind"] = "estimate_design"
         self._request_json(
             "POST",
             f"/internal/extraction-jobs/{job_id}/complete",
@@ -97,6 +125,7 @@ class WorkerApi:
             claim_token=self._claim_tokens.get(job_id),
         )
         self._claim_tokens.pop(job_id, None)
+        self._claim_kinds.pop(job_id, None)
 
     def fail(self, job_id: str, failure: WorkerFailure) -> None:
         self._request_json(
@@ -106,6 +135,7 @@ class WorkerApi:
             claim_token=self._claim_tokens.get(job_id),
         )
         self._claim_tokens.pop(job_id, None)
+        self._claim_kinds.pop(job_id, None)
 
     def heartbeat(self, job_id: str) -> float:
         _status, payload = self._request_json(
@@ -202,12 +232,6 @@ def run_worker(
     max_iterations: int | None = None,
 ) -> None:
     worker_api = api or WorkerApi(settings)
-    page_extractor = extractor or Extractor(
-        confidence_floor=settings.confidence_floor,
-        max_pdf_pages=settings.max_pdf_pages,
-        max_page_pixels=settings.max_page_pixels,
-        max_output_bytes=settings.max_output_bytes,
-    )
     iterations = 0
     while max_iterations is None or iterations < max_iterations:
         iterations += 1
@@ -216,6 +240,7 @@ def run_worker(
             sleep(settings.poll_seconds)
             continue
         source_path: Path | None = None
+        extraction_deadline = time.monotonic() + settings.max_processing_seconds
         stop_heartbeat = threading.Event()
         heartbeat = threading.Thread(
             target=_heartbeat_loop,
@@ -223,7 +248,7 @@ def run_worker(
                 worker_api,
                 claimed.id,
                 claimed.lease_duration_seconds,
-                settings.max_processing_seconds,
+                extraction_deadline,
                 stop_heartbeat,
             ),
             daemon=True,
@@ -231,8 +256,21 @@ def run_worker(
         heartbeat.start()
         try:
             source_path = worker_api.download(claimed)
+            page_extractor = extractor or Extractor(
+                confidence_floor=settings.confidence_floor,
+                max_pdf_pages=settings.max_pdf_pages,
+                max_page_pixels=settings.max_page_pixels,
+                max_output_bytes=settings.max_output_bytes,
+                estimate_taxonomy=claimed.taxonomy,
+            )
             worker_api.complete(
-                claimed.id, page_extractor.extract(source_path)
+                claimed.id,
+                _extract_before_deadline(
+                    page_extractor,
+                    source_path,
+                    mode=claimed.kind,
+                    deadline=extraction_deadline,
+                ),
             )
         except Exception as error:
             _report_failure_with_retry(
@@ -252,10 +290,9 @@ def _heartbeat_loop(
     api: Api,
     job_id: str,
     lease_duration_seconds: float,
-    max_processing_seconds: float,
+    deadline: float,
     stop: threading.Event,
 ) -> None:
-    deadline = time.monotonic() + max_processing_seconds
     lease_duration = lease_duration_seconds
     while time.monotonic() < deadline:
         interval = max(0.01, min(60.0, lease_duration * 0.4))
@@ -267,6 +304,100 @@ def _heartbeat_loop(
             # Completion/failure remains claim-token guarded; a transient heartbeat
             # outage must not terminate the polling process.
             continue
+
+
+def _extract_before_deadline(
+    page_extractor: PageExtractor,
+    source_path: Path,
+    *,
+    mode: str,
+    deadline: float,
+) -> list[ExtractedPage]:
+    if time.monotonic() >= deadline:
+        raise OcrError("The extraction exceeded its processing time limit.")
+    with _interrupt_at_deadline(deadline):
+        pages = page_extractor.extract(source_path, mode=mode, deadline=deadline)
+    if time.monotonic() >= deadline:
+        raise OcrError("The extraction exceeded its processing time limit.")
+    return pages
+
+
+@contextmanager
+def _interrupt_at_deadline(deadline: float) -> Iterator[None]:
+    """Interrupt extraction on supported main-thread platforms.
+
+    Existing SIGALRM state is suspended during extraction and restored with its
+    elapsed delay accounted for before control returns to the caller.
+    """
+    if time.monotonic() >= deadline:
+        raise OcrError("The extraction exceeded its processing time limit.")
+    setitimer = getattr(signal, "setitimer", None)
+    getitimer = getattr(signal, "getitimer", None)
+    sigalrm = getattr(signal, "SIGALRM", None)
+    itimer_real = getattr(signal, "ITIMER_REAL", None)
+    if (
+        not callable(setitimer)
+        or not callable(getitimer)
+        or sigalrm is None
+        or itimer_real is None
+        or threading.current_thread() is not threading.main_thread()
+    ):
+        yield
+        return
+    try:
+        previous_delay, previous_interval = getitimer(itimer_real)
+    except (OSError, ValueError):
+        yield
+        return
+    previous_handler = signal.getsignal(sigalrm)
+    ownership_started_at = time.monotonic()
+
+    def interrupt(_signum: int, _frame: object) -> None:
+        raise OcrError("The extraction exceeded its processing time limit.")
+
+    def restore_previous_timer() -> None:
+        elapsed = time.monotonic() - ownership_started_at
+        if previous_delay <= 0:
+            restored_delay = 0.0
+        elif previous_interval <= 0:
+            restored_delay = max(0.0, previous_delay - elapsed)
+        elif elapsed < previous_delay:
+            restored_delay = previous_delay - elapsed
+        else:
+            restored_delay = previous_interval - (
+                (elapsed - previous_delay) % previous_interval
+            )
+        setitimer(itimer_real, restored_delay, previous_interval)
+
+    handler_installed = False
+    try:
+        try:
+            signal.signal(sigalrm, interrupt)
+            handler_installed = True
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise OcrError("The extraction exceeded its processing time limit.")
+            setitimer(itimer_real, remaining)
+        except (OSError, ValueError):
+            if handler_installed:
+                try:
+                    setitimer(itimer_real, 0.0)
+                finally:
+                    try:
+                        signal.signal(sigalrm, previous_handler)
+                    finally:
+                        restore_previous_timer()
+                    handler_installed = False
+        yield
+    finally:
+        if handler_installed:
+            try:
+                setitimer(itimer_real, 0.0)
+            finally:
+                try:
+                    signal.signal(sigalrm, previous_handler)
+                finally:
+                    restore_previous_timer()
 
 
 def _report_failure_with_retry(
@@ -324,6 +455,37 @@ def _required_positive_number(data: dict[str, Any], field: str) -> float:
             f"The backend worker response omitted {field}."
         )
     return float(value)
+
+
+def _estimate_taxonomy(value: Any) -> EstimateTaxonomy:
+    if not isinstance(value, dict):
+        raise ResultRejectedError("The backend worker response omitted taxonomy.")
+
+    def terms(field: str) -> tuple[TaxonomyTerm, ...]:
+        raw = value.get(field)
+        if not isinstance(raw, list):
+            raise ResultRejectedError(
+                f"The backend worker response omitted taxonomy.{field}."
+            )
+        parsed = []
+        for item in raw:
+            if not isinstance(item, dict):
+                raise ResultRejectedError("The backend worker taxonomy is invalid.")
+            aliases = item.get("aliases")
+            if not isinstance(aliases, list) or not all(
+                isinstance(alias, str) and alias for alias in aliases
+            ):
+                raise ResultRejectedError("The backend worker taxonomy is invalid.")
+            parsed.append(
+                TaxonomyTerm(
+                    id=_required_string(item, "id"),
+                    label=_required_string(item, "label"),
+                    aliases=tuple(aliases),
+                )
+            )
+        return tuple(parsed)
+
+    return EstimateTaxonomy(rooms=terms("rooms"), scopes=terms("scopes"))
 
 
 def main() -> None:

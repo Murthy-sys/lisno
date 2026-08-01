@@ -15,13 +15,37 @@ const focusableSelector = [
   "[tabindex]:not([tabindex='-1'])"
 ].join(",");
 
+let bodyScrollLockOwners = 0;
+let bodyOverflowBeforeFirstLock = "";
+
+function acquireBodyScrollLock() {
+  if (bodyScrollLockOwners === 0) {
+    bodyOverflowBeforeFirstLock = document.body.style.overflow;
+  }
+  bodyScrollLockOwners += 1;
+  document.body.style.overflow = "hidden";
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    bodyScrollLockOwners = Math.max(0, bodyScrollLockOwners - 1);
+    if (bodyScrollLockOwners === 0) {
+      document.body.style.overflow = bodyOverflowBeforeFirstLock;
+      bodyOverflowBeforeFirstLock = "";
+    }
+  };
+}
+
 export function Dialog({
   title,
   eyebrow = "Designer workflow",
   description,
   onClose,
   children,
-  busy = false
+  busy = false,
+  role = "dialog",
+  contentInert = false,
+  showCloseButton = true
 }: {
   title: string;
   eyebrow?: string;
@@ -29,6 +53,9 @@ export function Dialog({
   onClose: () => void;
   children: ReactNode;
   busy?: boolean;
+  role?: "dialog" | "alertdialog";
+  contentInert?: boolean;
+  showCloseButton?: boolean;
 }) {
   const titleId = useId();
   const descriptionId = useId();
@@ -44,8 +71,7 @@ export function Dialog({
       document.activeElement instanceof HTMLElement
         ? document.activeElement
         : null;
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
+    const releaseBodyScrollLock = acquireBodyScrollLock();
 
     const focusFirst = window.setTimeout(() => {
       const initial = dialogRef.current?.querySelector<HTMLElement>(
@@ -86,7 +112,7 @@ export function Dialog({
     return () => {
       window.clearTimeout(focusFirst);
       document.removeEventListener("keydown", handleKeyDown);
-      document.body.style.overflow = previousOverflow;
+      releaseBodyScrollLock();
       restoreFocusRef.current?.focus();
     };
   }, []);
@@ -103,11 +129,12 @@ export function Dialog({
       <div
         ref={dialogRef}
         className="modal"
-        role="dialog"
+        role={role}
         aria-modal="true"
         aria-labelledby={titleId}
         aria-describedby={description ? descriptionId : undefined}
         tabIndex={-1}
+        inert={contentInert ? true : undefined}
       >
         <header className="modal__header">
           <div>
@@ -115,15 +142,17 @@ export function Dialog({
             <h2 id={titleId}>{title}</h2>
             {description ? <p id={descriptionId}>{description}</p> : null}
           </div>
-          <button
-            type="button"
-            className="icon-button"
-            aria-label={`Close ${title}`}
-            onClick={onClose}
-            disabled={busy}
-          >
-            <X aria-hidden="true" />
-          </button>
+          {showCloseButton ? (
+            <button
+              type="button"
+              className="icon-button"
+              aria-label={`Close ${title}`}
+              onClick={onClose}
+              disabled={busy}
+            >
+              <X aria-hidden="true" />
+            </button>
+          ) : null}
         </header>
         {children}
       </div>

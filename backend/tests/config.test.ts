@@ -79,6 +79,25 @@ describe("environment authentication configuration", () => {
     ).toThrow();
   });
 
+  it("loads the bounded extraction retry policy defaults", () => {
+    const env = loadEnvironment({
+      JWT_SECRET: "config-jwt-secret-with-at-least-32-characters",
+      OCR_WORKER_TOKEN: "config-worker-token-with-at-least-32-characters"
+    });
+    expect(env.OCR_MAX_ATTEMPTS).toBe(5);
+    expect(env.OCR_RETRY_INITIAL_SECONDS).toBe(30);
+    expect(env.OCR_RETRY_MAX_SECONDS).toBe(900);
+  });
+
+  it("rejects an extraction retry cap below its initial delay", () => {
+    expect(() => loadEnvironment({
+      JWT_SECRET: "config-jwt-secret-with-at-least-32-characters",
+      OCR_WORKER_TOKEN: "config-worker-token-with-at-least-32-characters",
+      OCR_RETRY_INITIAL_SECONDS: "60",
+      OCR_RETRY_MAX_SECONDS: "30"
+    })).toThrow("OCR_RETRY_MAX_SECONDS");
+  });
+
   it("loads a bounded OCR confidence floor and defaults it to 0.2", () => {
     expect(loadEnvironment({
       JWT_SECRET: "config-jwt-secret-with-at-least-32-characters",

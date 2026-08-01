@@ -51,6 +51,11 @@ export async function startServer(
       storage: createLocalStorage(env.UPLOADS_DIR),
       maxUploadBytes: Math.floor(env.MAX_UPLOAD_MB * 1024 * 1024),
       ocrLeaseSeconds: env.OCR_LEASE_SECONDS,
+      ocrRetryPolicy: {
+        maxAttempts: env.OCR_MAX_ATTEMPTS,
+        initialDelayMs: env.OCR_RETRY_INITIAL_SECONDS * 1000,
+        maxDelayMs: env.OCR_RETRY_MAX_SECONDS * 1000
+      },
       ocrConfidenceFloor: env.OCR_CONFIDENCE_FLOOR,
       ocrWorkerToken: env.OCR_WORKER_TOKEN
     });

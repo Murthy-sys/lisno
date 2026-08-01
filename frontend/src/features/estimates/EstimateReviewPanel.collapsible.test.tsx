@@ -47,6 +47,19 @@ const clientEstimates = [
     lead: { _id: "lead-loft", clientName: "Aurora Homes", clientEmail: "client@lisno.example", projectName: "Cedar Loft", location: "Mysuru" }
   }
 ];
+const emptyDrawingWorkspace = {
+  uploads: [],
+  pages: [],
+  drawings: [],
+  revisions: [],
+  readiness: {
+    ready: true,
+    total: 0,
+    approved: 0,
+    awaitingReview: 0,
+    changesRequested: 0
+  }
+};
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -59,6 +72,9 @@ function installClientApi() {
     if (url.includes("/api/v1/client/project-summaries?")) return Response.json({ data: { items: [], pagination: { limit: 100, offset: 0, total: 0, hasMore: false } } });
     if (url.endsWith("/api/v1/client/latest-approved-versions")) return Response.json({ data: [] });
     if (url.endsWith("/api/v1/client/estimates")) return Response.json({ data: clientEstimates });
+    if (url.includes("/api/v1/client/estimates/") && url.endsWith("/design-drawings")) {
+      return Response.json({ data: emptyDrawingWorkspace });
+    }
     throw new Error(`Unhandled request: ${url}`);
   });
 }
@@ -103,6 +119,15 @@ describe("EstimateReviewPanel client disclosures", () => {
       controlRule.match(/min-height:\s*([\d.]+)rem/)?.[1]
     );
     expect(minimumHeightRem * 16).toBeGreaterThanOrEqual(44);
+  });
+
+  it("uses compact 40 by 40 drawing thumbnails inside an expanded estimate", () => {
+    const thumbnailRule = ruleBody(
+      stylesheet,
+      ".client-estimate-drawing__thumbnail"
+    );
+    expect(thumbnailRule).toMatch(/width:\s*40px/);
+    expect(thumbnailRule).toMatch(/height:\s*40px/);
   });
 
   it("keeps client estimate details collapsed until each project is opened independently", async () => {
@@ -192,6 +217,9 @@ describe("EstimateReviewPanel client disclosures", () => {
       if (url.includes("/api/v1/client/project-summaries?")) return Response.json({ data: { items: [], pagination: { limit: 100, offset: 0, total: 0, hasMore: false } } });
       if (url.endsWith("/api/v1/client/latest-approved-versions")) return Response.json({ data: [] });
       if (url.endsWith("/api/v1/client/estimates")) return Response.json({ data: clientEstimates });
+      if (url.includes("/api/v1/client/estimates/") && url.endsWith("/design-drawings")) {
+        return Response.json({ data: emptyDrawingWorkspace });
+      }
       if (url.endsWith("/api/v1/client/estimates/estimate-ready/pdf")) {
         return new Response(new Blob(["pdf"], { type: "application/pdf" }));
       }
@@ -239,6 +267,9 @@ describe("EstimateReviewPanel client disclosures", () => {
       if (url.includes("/api/v1/client/project-summaries?")) return Response.json({ data: { items: [], pagination: { limit: 100, offset: 0, total: 0, hasMore: false } } });
       if (url.endsWith("/api/v1/client/latest-approved-versions")) return Response.json({ data: [] });
       if (url.endsWith("/api/v1/client/estimates")) return Response.json({ data: clientEstimates });
+      if (url.includes("/api/v1/client/estimates/") && url.endsWith("/design-drawings")) {
+        return Response.json({ data: emptyDrawingWorkspace });
+      }
       if (url.endsWith("/api/v1/client/estimates/estimate-ready/pdf")) {
         return Response.json(
           { error: { code: "PDF_FAILED", message: "PDF failed" } },

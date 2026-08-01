@@ -10,6 +10,9 @@ import type {
   EstimatePdfInput,
   EstimatePdfService
 } from "../services/estimate-pdf.service.js";
+import type { EstimateDesignService } from "../services/estimate-design.service.js";
+import type { AuditService } from "../services/audit.service.js";
+import mongoose from "mongoose";
 import { EstimateModel } from "../models/Estimate.js";
 import { LeadModel } from "../models/Lead.js";
 import { ProjectModel } from "../models/Project.js";
@@ -39,7 +42,9 @@ const clientVisibleEstimateStatuses = [
 export function createLeadsRouter(
   auth: AuthService,
   leads: LeadService,
-  estimatePdf: EstimatePdfService
+  estimatePdf: EstimatePdfService,
+  estimateDesigns: EstimateDesignService,
+  audit: AuditService
 ): Router {
   const router = Router(); const protectedRoute = authenticate(auth); const allowed = authorizeRoles("estimator_sales");
   router.get("/leads", protectedRoute, allowed, validateQuery(listSchema), async (req, res, next) => { try { const { limit, offset, search, stage } = res.locals.validatedQuery; const pagination = { limit, offset }; res.json({ data: paginatedEnvelope(await leads.page(req.authenticatedUser!, { search, stage }, pagination), pagination) }); } catch (error) { next(error); } });
@@ -181,39 +186,237 @@ export function createLeadsRouter(
   } catch (error) { next(error); } });
 
   router.post("/client/estimates/:estimateId/decision", protectedRoute, authorizeRoles("client"), validateBody(decisionSchema), async (req, res, next) => { try {
-    const estimate = await EstimateModel.findOne({ _id: req.params.estimateId, status: "sent_to_client" });
-    if (!estimate) throw new ApiError(409, "ESTIMATE_NOT_REVIEWABLE", "This estimate is no longer awaiting your review.");
-    const lead = await LeadModel.findOne({ _id: estimate.leadId, clientEmail: { $regex: `^${escapeRegex(req.authenticatedUser!.email)}$`, $options: "i" } }).lean();
-    if (!lead) throw new ApiError(404, "ESTIMATE_NOT_FOUND", "Estimate not found.");
-    estimate.clientDecisionAt = new Date();
-    estimate.reviews.push({ actorId: req.authenticatedUser!.id, action: req.body.decision === "approve" ? "client_approved" : "client_changes_requested", note: req.body.note, occurredAt: new Date() });
-    if (req.body.decision === "request_changes") {
-      estimate.status = "client_changes_requested";
-      await estimate.save();
-      return res.json({ data: mapEstimate(estimate.toObject()) });
-    }
-    const assigned = estimate.assignedDesignerId
-      ? await UserModel.findById(estimate.assignedDesignerId).lean()
-      : await UserModel.findOne({ role: "designer", active: true }).sort({ createdAt: 1 }).lean();
-    const manager = assigned?.managerId
-      ? await UserModel.findById(assigned.managerId).lean()
-      : await UserModel.findOne({ role: "design_manager", active: true }).sort({ createdAt: 1 }).lean();
-    if (!assigned || !manager) throw new ApiError(409, "PROJECT_TEAM_REQUIRED", "A design manager must configure an active project team.");
-    const now = new Date(); const plannedEndAt = new Date(now); plannedEndAt.setDate(plannedEndAt.getDate() + 90);
-    const projectId = `project-${randomUUID()}`;
-    await ProjectModel.create({ _id: projectId, name: lead.projectName, clientId: req.authenticatedUser!.id, clientName: lead.clientName, clientEmail: lead.clientEmail, clientEmailNormalized: normalizeEmail(lead.clientEmail), clientMobile: lead.clientMobile, clientAddress: lead.location, initiatingDesignerId: assigned._id, assignedDesignerIds: [assigned._id], managerId: manager._id, status: "planning", location: lead.location, plannedStartAt: now, plannedEndAt });
-    estimate.status = "client_approved"; estimate.projectId = projectId;
-    const recipients = [assigned, manager].map((user) => ({ recipientEmail: user.email, recipientRole: user.role, event: "project_kickoff_created", status: "queued" as const, queuedAt: new Date() }));
-    estimate.notifications.push(...recipients);
-    await estimate.save();
-    await LeadModel.updateOne({ _id: lead._id }, { $set: { stage: "won", nextAction: "project kickoff", nextActionAt: new Date() } });
-    res.json({ data: mapEstimate(estimate.toObject()) });
+    let responseEstimate: Record<string, any> | null = null;
+    await withMongoTransaction(async (session) => {
+      const estimate = await EstimateModel.findOne({
+        _id: req.params.estimateId
+      }).session(session).lean();
+      if (!estimate) throw estimateNotFound();
+      const lead = await LeadModel.findById(estimate.leadId).session(session).lean();
+      if (
+        !lead ||
+        normalizeEmail(lead.clientEmail) !==
+          normalizeEmail(req.authenticatedUser!.email)
+      ) {
+        throw estimateNotFound();
+      }
+      if (estimate.status !== "sent_to_client") {
+        throw new ApiError(
+          409,
+          "ESTIMATE_NOT_REVIEWABLE",
+          "This estimate is no longer awaiting your review."
+        );
+      }
+      const occurredAt = new Date();
+      const review = {
+        actorId: req.authenticatedUser!.id,
+        action: req.body.decision === "approve"
+          ? "client_approved"
+          : "client_changes_requested",
+        note: req.body.note,
+        occurredAt
+      };
+      if (req.body.decision === "request_changes") {
+        const updated = await EstimateModel.updateOne(
+          {
+            _id: estimate._id,
+            status: "sent_to_client",
+            version: estimate.version,
+            designLifecycleVersion: lifecycleVersionFilter(
+              Number(estimate.designLifecycleVersion ?? 0)
+            ),
+            designFrozenAt: { $in: [null] }
+          },
+          {
+            $set: {
+              status: "client_changes_requested",
+              clientDecisionAt: occurredAt
+            },
+            $inc: { version: 1, designLifecycleVersion: 1 },
+            $push: { reviews: review }
+          },
+          { session }
+        );
+        requireMatchedEstimate(updated);
+        await audit.appendInMongoTransaction({
+          actorId: req.authenticatedUser!.id,
+          action: "estimate_design_final_changes_requested",
+          entityType: "estimate",
+          entityId: String(estimate._id),
+          occurredAt: occurredAt.toISOString(),
+          oldValues: { status: "sent_to_client" },
+          newValues: {
+            status: "client_changes_requested",
+            noteLength: req.body.note.length
+          }
+        }, session);
+        responseEstimate = {
+          ...estimate,
+          status: "client_changes_requested",
+          version: Number(estimate.version) + 1,
+          designLifecycleVersion:
+            Number(estimate.designLifecycleVersion ?? 0) + 1,
+          clientDecisionAt: occurredAt,
+          reviews: [...(estimate.reviews ?? []), review]
+        };
+        return;
+      }
+      const readiness = await estimateDesigns.approvalReadiness(
+        req.authenticatedUser!,
+        String(estimate._id),
+        session
+      );
+      if (!readiness.ready) {
+        throw new ApiError(
+          409,
+          "ESTIMATE_DRAWINGS_UNRESOLVED",
+          "Every submitted drawing must be approved before approving the estimate."
+        );
+      }
+      const assigned = estimate.assignedDesignerId
+        ? await UserModel.findById(estimate.assignedDesignerId).session(session).lean()
+        : await UserModel.findOne({ role: "designer", active: true })
+            .sort({ createdAt: 1 })
+            .session(session)
+            .lean();
+      const manager = assigned?.managerId
+        ? await UserModel.findById(assigned.managerId).session(session).lean()
+        : await UserModel.findOne({ role: "design_manager", active: true })
+            .sort({ createdAt: 1 })
+            .session(session)
+            .lean();
+      if (!assigned || !manager) {
+        throw new ApiError(
+          409,
+          "PROJECT_TEAM_REQUIRED",
+          "A design manager must configure an active project team."
+        );
+      }
+      const plannedEndAt = new Date(occurredAt);
+      plannedEndAt.setDate(plannedEndAt.getDate() + 90);
+      const projectId = `project-${randomUUID()}`;
+      await ProjectModel.create([{
+        _id: projectId,
+        name: lead.projectName,
+        clientId: req.authenticatedUser!.id,
+        clientName: lead.clientName,
+        clientEmail: lead.clientEmail,
+        clientEmailNormalized: normalizeEmail(lead.clientEmail),
+        clientMobile: lead.clientMobile,
+        clientAddress: lead.location,
+        initiatingDesignerId: assigned._id,
+        assignedDesignerIds: [assigned._id],
+        managerId: manager._id,
+        status: "planning",
+        location: lead.location,
+        plannedStartAt: occurredAt,
+        plannedEndAt
+      }], { session });
+      const recipients = [assigned, manager].map((user) => ({
+        recipientEmail: user.email,
+        recipientRole: user.role,
+        event: "project_kickoff_created",
+        status: "queued" as const,
+        queuedAt: occurredAt
+      }));
+      const updated = await EstimateModel.updateOne(
+        {
+          _id: estimate._id,
+          status: "sent_to_client",
+          version: estimate.version,
+          designLifecycleVersion: lifecycleVersionFilter(
+            Number(estimate.designLifecycleVersion ?? 0)
+          ),
+          designFrozenAt: { $in: [null] }
+        },
+        {
+          $set: {
+            status: "client_approved",
+            projectId,
+            clientDecisionAt: occurredAt,
+            designFrozenAt: occurredAt
+          },
+          $inc: { version: 1, designLifecycleVersion: 1 },
+          $push: {
+            reviews: review,
+            notifications: { $each: recipients }
+          }
+        },
+        { session }
+      );
+      requireMatchedEstimate(updated);
+      const leadUpdated = await LeadModel.updateOne(
+        { _id: lead._id, clientEmail: lead.clientEmail },
+        {
+          $set: {
+            stage: "won",
+            nextAction: "project kickoff",
+            nextActionAt: occurredAt
+          }
+        },
+        { session }
+      );
+      if (leadUpdated.matchedCount !== 1) throw estimateNotFound();
+      await audit.appendInMongoTransaction({
+        actorId: req.authenticatedUser!.id,
+        action: "estimate_design_final_approved",
+        entityType: "estimate",
+        entityId: String(estimate._id),
+        occurredAt: occurredAt.toISOString(),
+        oldValues: { status: "sent_to_client" },
+        newValues: {
+          status: "client_approved",
+          projectId,
+          approvedDrawingCount: readiness.approved
+        }
+      }, session);
+      responseEstimate = {
+        ...estimate,
+        status: "client_approved",
+        version: Number(estimate.version) + 1,
+        designLifecycleVersion:
+          Number(estimate.designLifecycleVersion ?? 0) + 1,
+        designFrozenAt: occurredAt,
+        projectId,
+        clientDecisionAt: occurredAt,
+        reviews: [...(estimate.reviews ?? []), review],
+        notifications: [...(estimate.notifications ?? []), ...recipients]
+      };
+    });
+    if (!responseEstimate) throw new Error("Estimate decision transaction did not complete.");
+    res.json({ data: mapEstimate(responseEstimate) });
   } catch (error) { next(error); } });
   return router;
 }
 function mapEstimate(value: Record<string, unknown> | null) { if (!value) return null; return { ...value, id: value._id, _id: undefined }; }
 function escapeRegex(value: string) { return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
 function estimateNotFound() { return new ApiError(404, "ESTIMATE_NOT_FOUND", "Estimate not found."); }
+function requireMatchedEstimate(result: { matchedCount: number }) {
+  if (result.matchedCount !== 1) {
+    throw new ApiError(
+      409,
+      "ESTIMATE_NOT_REVIEWABLE",
+      "This estimate is no longer awaiting your review."
+    );
+  }
+}
+function lifecycleVersionFilter(version: number) {
+  return version === 0 ? { $in: [0, null] } : version;
+}
+async function withMongoTransaction<T>(
+  operation: (session: mongoose.ClientSession) => Promise<T>
+) {
+  const session = await mongoose.startSession();
+  try {
+    let result!: T;
+    await session.withTransaction(async () => {
+      result = await operation(session);
+    });
+    return result;
+  } finally {
+    await session.endSession().catch(() => undefined);
+  }
+}
 function toEstimatePdfInput(
   estimate: {
     _id: string;

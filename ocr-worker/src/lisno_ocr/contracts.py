@@ -30,19 +30,66 @@ class Crop:
 
 
 @dataclass(frozen=True, slots=True)
+class TaxonomyTerm:
+    id: str
+    label: str
+    aliases: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class EstimateTaxonomy:
+    rooms: tuple[TaxonomyTerm, ...]
+    scopes: tuple[TaxonomyTerm, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class CanonicalMatch:
+    id: str | None
+    confidence: float
+    evidence: tuple[str, ...]
+    ambiguous: bool
+
+    def to_payload(self) -> dict[str, object]:
+        return {
+            "id": self.id,
+            "confidence": self.confidence,
+            "evidence": list(self.evidence),
+            "ambiguous": self.ambiguous,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class EstimateDrawingProposal:
+    detected_title: str
+    room: CanonicalMatch
+    scope: CanonicalMatch
+
+    def to_payload(self) -> dict[str, object]:
+        return {
+            "detectedTitle": self.detected_title,
+            "room": self.room.to_payload(),
+            "scope": self.scope.to_payload(),
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class ExtractedSection:
     label: str
     confidence: float
     crop: Crop
     image_base64: str
+    proposal: EstimateDrawingProposal | None = None
 
     def to_payload(self) -> dict[str, object]:
-        return {
+        payload: dict[str, object] = {
             "label": self.label,
             "confidence": self.confidence,
             "crop": self.crop.to_payload(),
             "imageBase64": self.image_base64,
         }
+        if self.proposal is not None:
+            payload["proposal"] = self.proposal.to_payload()
+        return payload
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,6 +118,8 @@ class ClaimedJob:
     source_filename: str
     source_mime_type: str
     lease_duration_seconds: float
+    kind: Literal["project_design", "estimate_design"] = "project_design"
+    taxonomy: EstimateTaxonomy | None = None
 
 
 @dataclass(frozen=True, slots=True)

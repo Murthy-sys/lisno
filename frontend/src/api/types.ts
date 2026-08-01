@@ -547,3 +547,178 @@ export interface DesignSectionDecisionResult {
   extractionStatus: ExtractionStatus;
   progress: DesignSectionReviewProgress;
 }
+
+export type EstimateDesignExtractionStatus =
+  | "queued"
+  | "processing"
+  | "estimator_review"
+  | "processing_failed"
+  | "submitted"
+  | "changes_requested"
+  | "approved";
+
+export type EstimateDrawingReviewStatus = "draft" | "submitted" | "approved" | "changes_requested";
+
+export interface AnnotationElementBase {
+  id: string;
+  color: string;
+  strokeWidth: number;
+}
+
+export interface AnnotationPoint {
+  x: number;
+  y: number;
+}
+
+export type AnnotationElement =
+  | (AnnotationElementBase & {
+      type: "ellipse";
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+    })
+  | (AnnotationElementBase & {
+      type: "rectangle";
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+    })
+  | (AnnotationElementBase & {
+      type: "arrow";
+      x1: number;
+      y1: number;
+      x2: number;
+      y2: number;
+    })
+  | (AnnotationElementBase & {
+      type: "freehand";
+      points: AnnotationPoint[];
+    })
+  | (AnnotationElementBase & {
+      type: "text";
+      x: number;
+      y: number;
+      text: string;
+    });
+
+export interface AnnotationDocumentV1 {
+  schemaVersion: 1;
+  imageWidth: number;
+  imageHeight: number;
+  elements: AnnotationElement[];
+}
+
+export interface EstimateDesignUpload {
+  id: string;
+  estimateId: string;
+  leadId: string;
+  originalFilename: string;
+  mimeType: "application/pdf" | "image/png" | "image/jpeg" | "image/webp" | "image/tiff" | "image/heic";
+  sizeBytes: number;
+  uploaderId: string;
+  uploadedAt: string;
+  extractionStatus: EstimateDesignExtractionStatus;
+  failureCode: string | null;
+  failureMessage: string | null;
+  canRetry: boolean;
+}
+
+export interface EstimateDesignSourcePage {
+  id: string;
+  uploadId: string;
+  pageNumber: number;
+  width: number;
+  height: number;
+}
+
+export type EstimateDesignMappingStatus =
+  | "auto_mapped"
+  | "estimator_assigned"
+  | "misc";
+
+export interface EstimateDesignMappingFields {
+  roomId: string | null;
+  scopeSectionId: string | null;
+  catalogueId: string | null;
+  mappingStatus: EstimateDesignMappingStatus;
+}
+
+export interface EstimateDesignDrawing extends EstimateDesignMappingFields {
+  id: string;
+  uploadId: string;
+  sourcePageId: string;
+  estimateId: string;
+  active: boolean;
+  verified: boolean;
+  detectedTitle: string;
+  displayTitle: string;
+  source: "ocr" | "manual";
+  roomConfidence: number | null;
+  scopeConfidence: number | null;
+  ocrConfidence: number | null;
+  roomEvidence: Array<{ value: string }>;
+  scopeEvidence: Array<{ value: string }>;
+}
+
+export interface EstimateDesignRevision extends EstimateDesignMappingFields {
+  id: string;
+  drawingId: string;
+  revisionNumber: number;
+  sourcePageId: string;
+  crop: CropRect;
+  label: string;
+  reviewStatus: EstimateDrawingReviewStatus;
+  submittedAt: string | null;
+  reviewerId: string | null;
+  reviewedAt: string | null;
+  changeSummary: string | null;
+  annotationLayerId: string | null;
+  annotations: AnnotationDocumentV1 | null;
+  replacementUploadId: string | null;
+  replacesRevisionId: string | null;
+}
+
+export interface EstimateDesignAnnotationDraft {
+  id: string;
+  revisionId: string;
+  version: number;
+  annotations: AnnotationDocumentV1;
+}
+
+export interface EstimateDesignClientRevision extends EstimateDesignRevision {
+  annotationDraft: EstimateDesignAnnotationDraft | null;
+}
+
+export interface EstimateDesignApprovalReadiness {
+  ready: boolean;
+  total: number;
+  approved: number;
+  awaitingReview: number;
+  changesRequested: number;
+}
+
+export interface EstimateDesignWorkspace {
+  uploads: EstimateDesignUpload[];
+  pages: EstimateDesignSourcePage[];
+  drawings: EstimateDesignDrawing[];
+  revisions: EstimateDesignRevision[];
+}
+
+export interface EstimateDesignClientWorkspace
+  extends Omit<EstimateDesignWorkspace, "revisions"> {
+  revisions: EstimateDesignClientRevision[];
+  readiness: EstimateDesignApprovalReadiness;
+}
+
+export interface EstimateDesignDrawingUpdate extends EstimateDesignDrawing {
+  revision: EstimateDesignRevision;
+}
+
+export interface EstimateDesignQueuedReplacement {
+  queued: true;
+  upload: EstimateDesignUpload;
+}
+
+export type EstimateDesignReplacementResult = EstimateDesignDrawingUpdate | EstimateDesignQueuedReplacement;

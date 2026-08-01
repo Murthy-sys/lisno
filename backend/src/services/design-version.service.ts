@@ -148,6 +148,8 @@ export function createDesignVersionService(
             status: "queued",
             attemptCount: 0,
             queuedAt: uploadedAt,
+            nextAttemptAt: uploadedAt,
+            claimGeneration: 0,
             startedAt: null,
             completedAt: null,
             leaseExpiresAt: null,

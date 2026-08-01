@@ -901,6 +901,46 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
       return document ? mapExtractionJob(document) : null;
     },
 
+    async findOldestClaimableExtractionJob(now) {
+      const query = DesignExtractionJobModel.findOne({
+        $or: [
+          { status: "queued" },
+          { status: "processing", leaseExpiresAt: { $lte: date(now) } }
+        ]
+      }).sort({ queuedAt: 1, _id: 1 });
+      if (session) query.session(session);
+      const document = await query.lean().exec();
+      return document ? mapExtractionJob(document) : null;
+    },
+
+    async claimExtractionJobById(id, now, leaseExpiresAt) {
+      const claimId = randomUUID();
+      const query = DesignExtractionJobModel.findOneAndUpdate(
+        {
+          _id: id,
+          $or: [
+            { status: "queued" },
+            { status: "processing", leaseExpiresAt: { $lte: date(now) } }
+          ]
+        },
+        {
+          $set: {
+            status: "processing",
+            startedAt: date(now),
+            leaseExpiresAt: date(leaseExpiresAt),
+            claimId,
+            failureCode: null,
+            failureMessage: null
+          },
+          $inc: { attemptCount: 1 }
+        },
+        { new: true, runValidators: true }
+      );
+      if (session) query.session(session);
+      const document = await query.lean().exec();
+      return document ? mapExtractionJob(document) : null;
+    },
+
     async renewExtractionJobLease(id, claimId, now, leaseExpiresAt) {
       const query = DesignExtractionJobModel.findOneAndUpdate(
         {
@@ -1818,6 +1858,15 @@ function mapExtractionJob(document: PlainDocument): DesignExtractionJobRecord {
     status: document.status,
     attemptCount: document.attemptCount,
     queuedAt: iso(document.queuedAt),
+    nextAttemptAt:
+      document.nextAttemptAt === null || document.nextAttemptAt === undefined
+        ? (document.status === "queued" ? iso(document.queuedAt) : null)
+        : iso(document.nextAttemptAt),
+    claimGeneration:
+      Number.isSafeInteger(document.claimGeneration) &&
+      document.claimGeneration >= 0
+        ? document.claimGeneration
+        : 0,
     startedAt: nullableIso(document.startedAt),
     completedAt: nullableIso(document.completedAt),
     leaseExpiresAt: nullableIso(document.leaseExpiresAt),
@@ -2007,6 +2056,15 @@ function extractionJobForMongo(input: NewDesignExtractionJob): PlainDocument {
     _id: input.id,
     id: undefined,
     queuedAt: date(input.queuedAt),
+    nextAttemptAt:
+      input.nextAttemptAt === null
+        ? null
+        : input.nextAttemptAt !== undefined
+          ? date(input.nextAttemptAt)
+          : input.status === "queued"
+            ? date(input.queuedAt)
+            : null,
+    claimGeneration: input.claimGeneration ?? 0,
     startedAt: input.startedAt ? date(input.startedAt) : null,
     completedAt: input.completedAt ? date(input.completedAt) : null,
     leaseExpiresAt: input.leaseExpiresAt ? date(input.leaseExpiresAt) : null,

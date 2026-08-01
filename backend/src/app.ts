@@ -1,6 +1,11 @@
 import express from "express";
+import mongoose from "mongoose";
 import path from "node:path";
 
+import {
+  defaultExtractionRetryPolicy,
+  type ExtractionRetryPolicy
+} from "./domain/extraction-lifecycle.js";
 import { createAuthRateLimit } from "./middleware/auth-rate-limit.js";
 import { allowCors } from "./middleware/cors.js";
 import { errorHandler, notFoundHandler } from "./middleware/errors.js";
@@ -12,6 +17,7 @@ import { createEvaluationsRouter } from "./routes/evaluations.js";
 import { createDesignVersionsRouter } from "./routes/design-versions.js";
 import { createDesignSectionsRouter } from "./routes/design-sections.js";
 import { createExtractionWorkerRouter } from "./routes/extraction-worker.js";
+import { createEstimateDesignsRouter } from "./routes/estimate-designs.js";
 import { healthRouter } from "./routes/health.js";
 import { createKpisRouter } from "./routes/kpis.js";
 import { createLeadsRouter } from "./routes/leads.js";
@@ -27,6 +33,7 @@ import { createEvaluationService } from "./services/evaluation.service.js";
 import { createDesignVersionService } from "./services/design-version.service.js";
 import { createDesignSectionService } from "./services/design-section.service.js";
 import { createExtractionWorkerService } from "./services/extraction-worker.service.js";
+import { createEstimateDesignService } from "./services/estimate-design.service.js";
 import { createHierarchyService } from "./services/hierarchy.service.js";
 import { createKpiService } from "./services/kpi.service.js";
 import { createLeadService } from "./services/lead.service.js";
@@ -48,8 +55,10 @@ export interface AppDependencies {
   storage?: FileStorage;
   maxUploadBytes?: number;
   ocrLeaseSeconds?: number;
+  ocrRetryPolicy?: ExtractionRetryPolicy;
   ocrConfidenceFloor?: number;
   ocrWorkerToken?: string;
+  enableEstimateDesignJobs?: boolean;
   corsOrigins?: readonly string[];
   authRateLimit?: { windowMs?: number; maxAttempts?: number; maxEntries?: number };
   estimatePdfService?: EstimatePdfService;
@@ -63,6 +72,8 @@ export function createApp(dependencies: AppDependencies) {
     dependencies.storage ??
     createLocalStorage(path.resolve(process.cwd(), "uploads"));
   const maxUploadBytes = dependencies.maxUploadBytes ?? 25 * 1024 * 1024;
+  const ocrRetryPolicy =
+    dependencies.ocrRetryPolicy ?? defaultExtractionRetryPolicy;
   const auditService = createAuditService(repository);
   const authService = createAuthService(repository, dependencies.auth, {
     auditService,
@@ -95,6 +106,13 @@ export function createApp(dependencies: AppDependencies) {
     storage,
     clock
   );
+  const estimateDesignService = createEstimateDesignService({
+    storage,
+    audit: auditService,
+    maxUploadBytes,
+    ocrRetryPolicy,
+    now: clock
+  });
   const extractionWorkerService = dependencies.ocrWorkerToken
     ? createExtractionWorkerService(
         repository,
@@ -103,7 +121,11 @@ export function createApp(dependencies: AppDependencies) {
         clock,
         dependencies.ocrLeaseSeconds ?? 300,
         maxUploadBytes,
-        dependencies.ocrConfidenceFloor ?? 0.2
+        dependencies.ocrConfidenceFloor ?? 0.2,
+        dependencies.enableEstimateDesignJobs ?? mongoose.connection.readyState === 1
+          ? estimateDesignService
+          : undefined,
+        ocrRetryPolicy
       )
     : null;
 
@@ -117,13 +139,24 @@ export function createApp(dependencies: AppDependencies) {
       )
     );
   }
-  app.use(express.json());
+  // Annotation documents are capped at 256 KiB by their domain schema.
+  app.use(express.json({ limit: "300kb" }));
   app.use("/api/v1", healthRouter);
   app.use("/api/v1", createAuthRouter(authService, authRateLimit));
+  app.use(
+    "/api/v1",
+    createEstimateDesignsRouter(authService, estimateDesignService, maxUploadBytes)
+  );
   app.use("/api/v1", createProjectsRouter(authService, projectService));
   app.use(
     "/api/v1",
-    createLeadsRouter(authService, leadService, estimatePdfService)
+    createLeadsRouter(
+      authService,
+      leadService,
+      estimatePdfService,
+      estimateDesignService,
+      auditService
+    )
   );
   app.use("/api/v1", createTasksRouter(authService, taskService));
   app.use("/api/v1", createOrganizationRouter(authService, hierarchyService));

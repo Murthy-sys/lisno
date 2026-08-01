@@ -272,6 +272,8 @@ export interface DesignExtractionJobRecord {
   status: ExtractionStatus;
   attemptCount: number;
   queuedAt: string;
+  nextAttemptAt: string | null;
+  claimGeneration: number;
   startedAt: string | null;
   completedAt: string | null;
   leaseExpiresAt: string | null;
@@ -285,8 +287,9 @@ export interface DesignExtractionJobRecord {
 
 export type NewDesignExtractionJob = Omit<
   DesignExtractionJobRecord,
-  "claimId" | "workerResultId" | "createdAt" | "updatedAt"
+  "nextAttemptAt" | "claimId" | "workerResultId" | "createdAt" | "updatedAt"
 > & {
+  nextAttemptAt?: string | null;
   claimId?: string | null;
   workerResultId?: string | null;
   createdAt?: string;
@@ -622,6 +625,14 @@ export interface AppRepository {
   ): Promise<DesignVersionRecord>;
   enqueueExtractionJob(input: NewDesignExtractionJob): Promise<DesignExtractionJobRecord>;
   claimExtractionJob(
+    now: string,
+    leaseExpiresAt: string
+  ): Promise<DesignExtractionJobRecord | null>;
+  findOldestClaimableExtractionJob(
+    now: string
+  ): Promise<DesignExtractionJobRecord | null>;
+  claimExtractionJobById(
+    id: string,
     now: string,
     leaseExpiresAt: string
   ): Promise<DesignExtractionJobRecord | null>;

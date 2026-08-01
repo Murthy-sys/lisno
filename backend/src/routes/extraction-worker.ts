@@ -39,12 +39,51 @@ const pageSchema = z
   })
   .strict();
 
-const completionSchema = z
+const projectCompletionSchema = z
   .object({
+    kind: z.literal("project_design").optional(),
     resultId: z.string().trim().min(1).max(200),
     pages: z.array(pageSchema).min(1).max(100)
   })
   .strict();
+
+const canonicalMatchSchema = z.object({
+  id: z.string().trim().min(1).max(128).nullable(),
+  confidence: z.number().min(0).max(1),
+  evidence: z.array(z.string().trim().min(1).max(500)).max(20),
+  ambiguous: z.boolean()
+}).strict();
+
+const estimateSectionSchema = z.object({
+  label: z.string().min(1).max(500),
+  confidence: z.number().min(0).max(1),
+  crop: cropSchema,
+  imageBase64: z.string().min(1),
+  proposal: z.object({
+    detectedTitle: z.string().trim().min(1).max(500),
+    room: canonicalMatchSchema,
+    scope: canonicalMatchSchema
+  }).strict()
+}).strict();
+
+const estimatePageSchema = z.object({
+  pageNumber: z.number().int().positive(),
+  width: z.number().int().positive().max(100_000),
+  height: z.number().int().positive().max(100_000),
+  imageBase64: z.string().min(1),
+  sections: z.array(estimateSectionSchema).max(500)
+}).strict();
+
+const estimateCompletionSchema = z.object({
+  kind: z.literal("estimate_design"),
+  resultId: z.string().trim().min(1).max(200),
+  pages: z.array(estimatePageSchema).min(1).max(50)
+}).strict();
+
+const completionSchema = z.union([
+  projectCompletionSchema,
+  estimateCompletionSchema
+]);
 
 const failureSchema = z
   .object({
