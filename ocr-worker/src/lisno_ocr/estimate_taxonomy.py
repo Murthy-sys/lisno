@@ -107,7 +107,7 @@ def _phrase_similarity(title: str, phrase: str) -> tuple[float, int]:
     phrase_tokens = phrase.split()[:_MAX_MATCH_TOKENS]
     if not title_tokens or not phrase_tokens:
         return 0.0, 0
-    shortest = max(1, len(phrase_tokens) - 1)
+    shortest = min(len(title_tokens), max(1, len(phrase_tokens) - 1))
     longest = min(
         len(title_tokens),
         _MAX_MATCH_TOKENS,

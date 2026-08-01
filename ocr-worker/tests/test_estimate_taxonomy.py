@@ -114,3 +114,19 @@ def test_more_specific_exact_room_phrase_beats_a_generic_subphrase():
     assert match.id == "room-master-bedroom"
     assert match.confidence == 1.0
     assert match.ambiguous is False
+
+
+def test_short_title_does_not_crash_when_taxonomy_alias_is_longer():
+    terms = (
+        TaxonomyTerm(
+            "room-living",
+            "Living and Dining Room",
+            ("combined living and dining room",),
+        ),
+    )
+
+    match = match_taxonomy_term("A-101", terms)
+
+    assert match.id is None
+    assert match.confidence == 0.0
+    assert match.ambiguous is False
