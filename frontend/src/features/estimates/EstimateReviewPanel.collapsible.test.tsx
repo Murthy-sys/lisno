@@ -45,6 +45,21 @@ const clientEstimates = [
     approvalRequired: false,
     projectId: "project-loft",
     lead: { _id: "lead-loft", clientName: "Aurora Homes", clientEmail: "client@lisno.example", projectName: "Cedar Loft", location: "Mysuru" }
+  },
+  {
+    id: "estimate-changes",
+    leadId: "lead-penthouse",
+    propertyType: "4BHK",
+    rooms: [],
+    scopes: [],
+    lineItems: [],
+    subtotal: 300000,
+    gst: 54000,
+    total: 354000,
+    status: "client_changes_requested",
+    approvalRequired: true,
+    projectId: "project-penthouse",
+    lead: { _id: "lead-penthouse", clientName: "Aurora Homes", clientEmail: "client@lisno.example", projectName: "Harbor Penthouse", location: "Kochi" }
   }
 ];
 const emptyDrawingWorkspace = {
@@ -86,6 +101,9 @@ function installClientApi() {
     }
     if (url.includes("/api/v1/client/estimates/") && url.endsWith("/plan-review")) {
       return Response.json({ data: planWorkspace });
+    }
+    if ((url.includes("/api/v1/client/estimate-plan-pages/") && (url.endsWith("/thumbnail") || url.endsWith("/current-image"))) || url.endsWith("/plan-page-1") || url.endsWith("/plan-thumb-1")) {
+      return new Response(new Blob(["image"], { type: "image/png" }), { headers: { "Content-Type": "image/png" } });
     }
     throw new Error(`Unhandled request: ${url}`);
   });
@@ -153,10 +171,11 @@ describe("EstimateReviewPanel client disclosures", () => {
     expect(contentRule).toMatch(/overflow:\s*hidden/);
 
     const navigationRule = ruleBody(stylesheet, ".client-plan-nav");
-    expect(navigationRule).not.toMatch(/position:\s*sticky/);
+    expect(navigationRule).toMatch(/position:\s*sticky/);
+    expect(navigationRule).toMatch(/top:\s*1rem/);
 
     const railRule = ruleBody(stylesheet, ".client-estimate-workspace__rail");
-    expect(railRule).toMatch(/position:\s*sticky/);
+    expect(railRule).not.toMatch(/position:\s*sticky/);
     expect(railRule).toMatch(/grid-column:\s*2/);
     expect(railRule).toMatch(/min-height:\s*calc\(100vh\s*-\s*2rem\)/);
 
@@ -177,6 +196,7 @@ describe("EstimateReviewPanel client disclosures", () => {
     const mobileRailRule = ruleBody(mobileRules, ".client-estimate-workspace__rail");
     expect(mobileRailRule).toMatch(/position:\s*static/);
     expect(mobileRailRule).toMatch(/min-height:\s*0/);
+    expect(ruleBody(mobileRules, ".client-plan-nav")).toMatch(/position:\s*static/);
   });
 
   it("renders Ask Lisno as a sibling at the bottom of the design-tools rail", async () => {
@@ -188,6 +208,32 @@ describe("EstimateReviewPanel client disclosures", () => {
     const fullDesign = within(rail).getByRole("region", { name: "Full design plan" });
     expect(within(rail).getByRole("button", { name: "Ask Lisno" })).toBeDisabled();
     expect(within(fullDesign).queryByRole("button", { name: "Ask Lisno" })).not.toBeInTheDocument();
+  });
+
+  it("keeps full-design annotations editable after an earlier client change request", async () => {
+    tokenStorage.set("client-token");
+    installClientApi();
+    Object.defineProperty(URL, "createObjectURL", { configurable: true, value: vi.fn(() => "blob:plan-page") });
+    Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: vi.fn() });
+    renderApp(["/client"]);
+    await userEvent.click(await screen.findByRole("button", { name: /Harbor Penthouse/i }));
+    await userEvent.click(await screen.findByRole("button", { name: "Preview design page 1" }));
+
+    expect(await screen.findByText("Mark the drawing or add a text note before requesting changes.")).toBeVisible();
+    expect(await screen.findByRole("img", { name: "Design page 1 protected drawing" })).toBeVisible();
+    expect(await screen.findByRole("toolbar", { name: "Annotation tools" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Save as draft" })).toBeVisible();
+  });
+
+  it("keeps full-design annotations read-only after estimate approval", async () => {
+    tokenStorage.set("client-token");
+    installClientApi();
+    renderApp(["/client"]);
+    await userEvent.click(await screen.findByRole("button", { name: /Cedar Loft/i }));
+    await userEvent.click(await screen.findByRole("button", { name: "Preview design page 1" }));
+
+    expect(await screen.findByText("Client markings are shown as a read-only overlay.")).toBeVisible();
+    expect(screen.queryByRole("toolbar", { name: "Annotation tools" })).not.toBeInTheDocument();
   });
 
   it("keeps client estimate details collapsed until each project is opened independently", async () => {

@@ -131,6 +131,10 @@ function canActOnEstimate(role: string, status: EstimateQueueItem["status"]) {
   return status === "pending_designer_approval";
 }
 
+function canReviewDesign(role: Role, status: EstimateQueueItem["status"]) {
+  return role === "client" && (status === "sent_to_client" || status === "client_changes_requested");
+}
+
 function EstimateReviewCard({
   estimate,
   role,
@@ -226,7 +230,7 @@ function EstimateReviewCard({
               workspace={drawingWorkspace.data}
               isPending={drawingWorkspace.isPending}
               isError={drawingWorkspace.isError}
-              canReview={actionable}
+              canReview={canReviewDesign(role, estimate.status)}
               planWorkspace={planWorkspace.data}
             />
             {!actionable ? <p className="estimate-notice">{estimate.status === "client_approved" ? "Estimate approved" : "Changes requested"}</p> : null}
@@ -246,7 +250,7 @@ function EstimateReviewCard({
         {selectedPlanPage ? (
           <ClientPlanPageReview
             page={selectedPlanPage}
-            canReview={actionable}
+            canReview={canReviewDesign(role, estimate.status)}
             onClose={() => setSelectedPlanPage(undefined)}
             saveDraft={async (annotations) => {
               await saveClientPlanDraft(selectedPlanPage.id, selectedPlanPage.annotationDraft?.version ?? 0, annotations);

@@ -27,7 +27,7 @@ describe("ClientPlanPageReview", () => {
     fireEvent.pointerMove(canvas, { pointerId: 1, clientX: 300, clientY: 300 });
     fireEvent.pointerUp(canvas, { pointerId: 1, clientX: 300, clientY: 300 });
     await userEvent.type(screen.getByLabelText("Change summary"), "Lower this ceiling");
-    await userEvent.click(screen.getByRole("button", { name: "Save draft" }));
+    await userEvent.click(screen.getByRole("button", { name: "Save as draft" }));
     expect(saveDraft).toHaveBeenCalledWith(expect.objectContaining({ imageWidth: 1000, imageHeight: 800 }));
     await userEvent.click(screen.getByRole("button", { name: "Submit change request" }));
     const confirmation = await screen.findByRole("dialog", { name: "Confirm affected drawings" });

@@ -329,7 +329,7 @@ describe("client estimate drawings", () => {
     }));
     await waitForCanvas();
     expect(screen.queryByRole("toolbar", { name: "Annotation tools" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Save draft" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Save as draft" })).not.toBeInTheDocument();
     await user.click(within(screen.getByRole("dialog", {
       name: "Living detail preview"
     })).getByRole("button", {
@@ -626,7 +626,7 @@ describe("client estimate drawings", () => {
       name: "Preview Living ceiling"
     }));
     await addTextNote();
-    await user.click(screen.getByRole("button", { name: "Save draft" }));
+    await user.click(screen.getByRole("button", { name: "Save as draft" }));
 
     await waitFor(() => expect(requests[0]?.body).toEqual({
       version: 0,
@@ -663,7 +663,7 @@ describe("client estimate drawings", () => {
     })).getByText("Shift this door")).toBeVisible();
 
     await addTextNote();
-    await user.click(screen.getByRole("button", { name: "Save draft" }));
+    await user.click(screen.getByRole("button", { name: "Save as draft" }));
     await waitFor(() => expect(requests[1]?.body).toEqual({
       version: 1,
       annotations: expect.objectContaining({

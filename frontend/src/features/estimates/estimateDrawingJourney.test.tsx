@@ -919,7 +919,7 @@ describe("estimate drawing review journey", () => {
       screen.queryByRole("toolbar", { name: "Annotation tools" }),
     ).not.toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: "Save draft" }),
+      screen.queryByRole("button", { name: "Save as draft" }),
     ).not.toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: "Submit change request" }),

@@ -170,7 +170,7 @@ export function EstimateDrawingPreviewDialog({
                   onClick={() => void saveDraft()}
                   disabled={!onSaveDraft || busy !== undefined || !annotationsDirty}
                 >
-                  {busy === "save" ? "Saving…" : "Save draft"}
+                  {busy === "save" ? "Saving…" : "Save as draft"}
                 </button>
                 <button
                   type="button"

@@ -174,7 +174,7 @@ describe("EstimateDrawingPreviewDialog", () => {
       expect(screen.queryByRole("toolbar", { name: "Annotation tools" })).not.toBeInTheDocument();
       expect(container.querySelector(".annotation-editor")).not.toBeInTheDocument();
       expect(container.querySelector(".annotation-overlay")).toBeInTheDocument();
-      expect(screen.queryByRole("button", { name: "Save draft" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Save as draft" })).not.toBeInTheDocument();
       expect(screen.getByRole("button", { name: "Zoom in" })).toBeVisible();
     }
   );
@@ -235,7 +235,7 @@ describe("EstimateDrawingPreviewDialog", () => {
     );
     await addTextNote();
 
-    await user.click(screen.getByRole("button", { name: "Save draft" }));
+    await user.click(screen.getByRole("button", { name: "Save as draft" }));
     await waitFor(() => expect(onSaveDraft).toHaveBeenCalledOnce());
     expect(onSaveDraft.mock.calls[0]![0].elements[0]).toMatchObject({
       type: "text",

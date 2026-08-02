@@ -3379,8 +3379,6 @@
   grid-column: 2;
   grid-row: 1;
   gap: 1rem;
-  position: sticky;
-  top: 1rem;
   min-height: calc(100vh - 2rem);
   margin: 0;
 }
@@ -3388,6 +3386,8 @@
 .client-plan-nav {
   display: grid;
   gap: 0.75rem;
+  position: sticky;
+  top: 1rem;
   padding: 0.9rem;
   border: 1px solid #dedaf7;
   border-radius: 1rem;
@@ -3426,7 +3426,7 @@
 
 .client-plan-nav__page {
   display: grid;
-  grid-template-columns: 40px minmax(0, 1fr);
+  grid-template-columns: 40px minmax(0, 1fr) auto;
   align-items: center;
   gap: 0.6rem;
   min-height: 3.5rem;
@@ -3438,7 +3438,7 @@
   background: #fff;
 }
 
-.client-plan-nav__page[aria-current="page"] {
+.client-plan-nav__page:has(> button[aria-current="page"]) {
   border-color: #7259e8;
   box-shadow: 0 0 0 2px rgb(114 89 232 / 15%);
 }
@@ -3459,9 +3459,19 @@
   object-fit: cover;
 }
 
-.client-plan-nav__page span {
+.client-plan-nav__page-meta {
   display: grid;
   gap: 0.2rem;
+}
+
+.client-plan-nav__page > button {
+  min-height: 2.75rem;
+  padding: 0.35rem 0.55rem;
+  border: 0;
+  border-radius: 0.55rem;
+  color: #5b42d6;
+  font-weight: 800;
+  background: #f0edff;
 }
 
 .client-plan-nav__page small {
@@ -3618,6 +3628,10 @@
     position: static;
     min-height: 0;
     order: -1;
+  }
+
+  .client-plan-nav {
+    position: static;
   }
 }
 

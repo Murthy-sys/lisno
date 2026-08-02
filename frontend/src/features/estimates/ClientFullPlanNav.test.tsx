@@ -24,13 +24,13 @@ describe("ClientFullPlanNav", () => {
     Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: vi.fn() });
     const onSelect = vi.fn();
     render(<ClientFullPlanNav workspace={workspace} selectedPageId="page-1" onSelectPage={onSelect} />);
-    expect(screen.getAllByRole("button", { name: /open design page/i })).toHaveLength(6);
+    expect(screen.getAllByRole("button", { name: /preview design page/i })).toHaveLength(6);
     expect(screen.getByText("6 pages")).toBeVisible();
-    expect(screen.getByRole("button", { name: "Open design page 1" })).toHaveAttribute("aria-current", "page");
+    expect(screen.getByRole("button", { name: "Preview design page 1" })).toHaveAttribute("aria-current", "page");
     expect(screen.getByText("Changes requested")).toBeVisible();
     expect(screen.queryByRole("button", { name: "Ask Lisno" })).not.toBeInTheDocument();
     expect(screen.getAllByText("Design pages").length).toBeGreaterThan(0);
-    await userEvent.click(screen.getByRole("button", { name: "Open design page 4" }));
+    await userEvent.click(screen.getByRole("button", { name: "Preview design page 4" }));
     expect(onSelect).toHaveBeenCalledWith(workspace.pages[3]);
   });
 
