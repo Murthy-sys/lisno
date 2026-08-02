@@ -20,7 +20,10 @@ The client UI uses the commercial estimate `actionable` flag to enable design an
 
 ## Full Design Actions
 
-- The complete Full Design page tile opens the protected full-page design; it does not display a separate visible `Preview` button.
+- Full Design represents each original uploaded plan as one entry, not as one card per rendered page.
+- The entry shows the original uploaded filename, file type, and total page count in upload order.
+- Clicking the uploaded-plan entry opens the complete protected plan viewer. Page navigation lives inside that viewer and preserves the original page order.
+- Annotations are stored against the selected source page while the client experiences the upload as one complete plan.
 - Extracted individual drawing rows retain their existing explicit `Preview` action beside review status and Approve.
 - `Preview` uses the standard Lisno secondary button treatment for every extracted drawing row, including mapped Design Drawing Review groups and Miscellaneous; it must not render as plain text.
 - The annotation modal exposes `Save as draft` while annotation is permitted. Saving does not submit or notify staff.
@@ -48,7 +51,9 @@ The client UI uses the commercial estimate `actionable` flag to enable design an
 
 - A workflow test proves annotations and `Save as draft` remain available for `client_changes_requested`.
 - A workflow test proves annotations are read-only for `client_approved`.
-- A component test proves a Full Design page tile selects the correct page without a separate visible Preview label.
+- A backend DTO test proves the client plan workspace exposes the original upload filename, MIME type, and ordered page count.
+- A component test proves one uploaded plan entry is rendered for a six-page upload and opens page 1 in the complete-plan viewer.
+- A viewer test proves all pages remain navigable in original order and selecting a page annotates that source page.
 - An editor test proves Rectangle is initially active and the first drag creates a visible annotation.
 - A modal test proves the first drag enables `Save as draft`.
 - A toolbar test proves Select is absent.
