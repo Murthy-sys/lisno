@@ -133,6 +133,12 @@ describe("EstimateReviewPanel client disclosures", () => {
   it("keeps the full uploaded design in a sticky right sidebar on desktop", () => {
     const workspaceRule = ruleBody(stylesheet, ".client-estimate-workspace");
     expect(workspaceRule).toMatch(/grid-template-columns:\s*minmax\(0,\s*1fr\)\s+18rem/);
+    expect(workspaceRule).toMatch(/min-width:\s*0/);
+    expect(workspaceRule).toMatch(/width:\s*100%/);
+
+    const contentRule = ruleBody(stylesheet, ".estimate-review-card__client-content");
+    expect(contentRule).toMatch(/min-width:\s*0/);
+    expect(contentRule).toMatch(/overflow:\s*hidden/);
 
     const navigationRule = ruleBody(stylesheet, ".client-plan-nav");
     expect(navigationRule).toMatch(/position:\s*sticky/);

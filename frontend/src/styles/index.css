@@ -73,7 +73,7 @@
 .estimate-review-card__toggle:focus-visible { outline: 3px solid #9d8fff; outline-offset: 2px; }
 .estimate-review-card__toggle svg { transition: transform 160ms ease; }
 .estimate-review-card__toggle[aria-expanded="true"] svg { transform: rotate(180deg); }
-.estimate-review-card__client-content { display: grid; gap: .75rem; margin-top: .85rem; padding-top: .85rem; border-top: 1px solid #dedbea; }
+.estimate-review-card__client-content { display: grid; min-width: 0; overflow: hidden; gap: .75rem; margin-top: .85rem; padding-top: .85rem; border-top: 1px solid #dedbea; }
 .estimate-review-card__total { color: #34277d; font-family: var(--font-display, Georgia, serif); font-size: 1.8rem; }
 .estimate-review-card label { display: grid; gap: .35rem; font-size: .84rem; font-weight: 800; }
 .estimate-review-card select, .estimate-review-card textarea { width: 100%; padding: .65rem; border: 1px solid #d8d4e8; border-radius: .55rem; background: #fff; font: inherit; }
@@ -119,6 +119,10 @@
 .client-estimate-drawings__group--misc { border-color: #e6c97c; background: #fffaf0; color: #72684f; }
 .client-estimate-drawing { display: grid; grid-template-columns: 40px minmax(8rem, 1fr) auto auto auto; align-items: center; gap: .55rem; min-height: 3.5rem; padding-top: .4rem; border-top: 1px solid #efedf5; }
 .client-estimate-drawing__thumbnail { width: 40px; height: 40px; border-radius: .4rem; background: #e9e7f1; object-fit: cover; }
+.protected-image-fallback { display: grid; place-items: center; overflow: hidden; color: #77718f; background: #e9e7f1; }
+.protected-image-fallback svg { width: min(55%, 1.5rem); height: min(55%, 1.5rem); }
+.protected-image-fallback--loading { animation: protected-image-pulse 1.2s ease-in-out infinite alternate; }
+@keyframes protected-image-pulse { to { opacity: .55; } }
 .client-estimate-drawing__metadata { display: grid; min-width: 0; gap: .08rem; }
 .client-estimate-drawing__metadata strong, .client-estimate-drawing__metadata small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .client-estimate-drawing__metadata small { color: #8a4d1b; font-size: .75rem; }
@@ -3358,6 +3362,8 @@
   display: grid;
   grid-template-columns: minmax(0, 1fr) 18rem;
   align-items: start;
+  width: 100%;
+  min-width: 0;
   gap: 1rem;
 }
 

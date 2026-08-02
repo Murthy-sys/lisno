@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { ImageOff } from "lucide-react";
 
 import { apiClient } from "../../api/client";
 
@@ -44,15 +45,36 @@ export function ProtectedImage({
     };
   }, [source]);
 
+  if (failed) {
+    return (
+      <span
+        aria-label={`${alt} preview unavailable`}
+        className={`${className ?? ""} protected-image-fallback`.trim()}
+        data-revision={dataRevision}
+        role="status"
+      >
+        <ImageOff aria-hidden="true" />
+      </span>
+    );
+  }
+
+  if (!imageSource) {
+    return (
+      <span
+        aria-label={alt}
+        className={`${className ?? ""} protected-image-fallback protected-image-fallback--loading`.trim()}
+        data-revision={dataRevision}
+        role="img"
+      />
+    );
+  }
+
   return (
-    <>
       <img
         src={imageSource}
         alt={alt}
         className={className}
         data-revision={dataRevision}
       />
-      {failed ? <span role="status">Preview unavailable.</span> : null}
-    </>
   );
 }
