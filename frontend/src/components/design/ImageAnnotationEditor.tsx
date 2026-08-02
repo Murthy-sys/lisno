@@ -248,7 +248,7 @@ export function ImageAnnotationEditor({
   onChange,
   viewTransform = DEFAULT_TRANSFORM
 }: ImageAnnotationEditorProps) {
-  const [tool, setTool] = useState<AnnotationTool>("select");
+  const [tool, setTool] = useState<AnnotationTool>("rectangle");
   const [selectedId, setSelectedId] = useState<string>();
   const [draftElement, setDraftElement] = useState<AnnotationElement>();
   const [textDraft, setTextDraft] = useState<{ point: AnnotationPoint; text: string }>();
@@ -608,9 +608,11 @@ export function ImageAnnotationEditor({
     <div
       className={`annotation-editor${readOnly ? " annotation-editor--read-only" : ""}`}
       data-annotation-drawing={!readOnly && tool !== "select" ? "true" : "false"}
+      data-active-tool={tool}
     >
       {!readOnly ? (
         <div className="annotation-toolbar" role="toolbar" aria-label="Annotation tools">
+          <p className="annotation-toolbar__hint">Choose a tool, then drag on the drawing.</p>
           {tools.map((item) => (
             <button
               key={item.tool}

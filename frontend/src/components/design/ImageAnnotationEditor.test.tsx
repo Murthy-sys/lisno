@@ -111,6 +111,20 @@ function draw(canvas: SVGSVGElement, start: [number, number], end: [number, numb
 }
 
 describe("ImageAnnotationEditor", () => {
+  it("starts with Rectangle ready and creates a mark on the first drag", () => {
+    const onDocument = vi.fn();
+    render(<EditorHarness onDocument={onDocument} />);
+    const canvas = screen.getByTestId("annotation-canvas") as unknown as SVGSVGElement;
+    canvasRect(canvas);
+
+    expect(screen.getByRole("button", { name: "Rectangle" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByText("Choose a tool, then drag on the drawing.")).toBeVisible();
+    draw(canvas, [100, 100], [300, 300]);
+
+    expect(onDocument.mock.lastCall?.[0].elements[0]).toMatchObject({ type: "rectangle" });
+    expect(screen.getByLabelText("Rectangle annotation")).toBeVisible();
+  });
+
   it.each([
     ["Ellipse", "ellipse"],
     ["Rectangle", "rectangle"],
@@ -200,6 +214,7 @@ describe("ImageAnnotationEditor", () => {
     render(<EditorHarness initial={initial} onDocument={onDocument} />);
     const canvas = screen.getByTestId("annotation-canvas") as unknown as SVGSVGElement;
     canvasRect(canvas);
+    fireEvent.click(screen.getByRole("button", { name: "Select" }));
 
     fireEvent.pointerDown(canvas, { pointerId: 1, clientX: 300, clientY: 240 });
     fireEvent.pointerUp(canvas, { pointerId: 1, clientX: 300, clientY: 240 });

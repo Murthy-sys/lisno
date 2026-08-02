@@ -13,7 +13,7 @@ The implementation places estimate content and a dedicated design-tools rail in 
 
 ## Focused region evidence
 
-Browser-rendered evidence is unavailable. Automated regression coverage verifies the desktop column, sticky Full Design card, independent launcher, explicit Preview controls, unobstructed page list, and mobile flow rules. Workflow coverage proves annotations and Save as draft remain available after an earlier client change request and become read-only after approval.
+Browser-rendered evidence is unavailable. Automated regression coverage verifies the desktop column, stretched sticky containing rail, sticky Full Design card, independent launcher, unobstructed page list, and mobile flow rules. Workflow coverage proves annotations and Save as draft remain available after an earlier client change request and become read-only after approval. Pointer coverage proves Rectangle is initially active and the first drag creates a mark and enables Save as draft.
 
 ## Findings
 
@@ -29,7 +29,7 @@ Browser-rendered evidence is unavailable. Automated regression coverage verifies
 - Spacing and layout rhythm: sticky Full Design, bottom Ask Lisno alignment, and mobile flow rules covered by automated regression tests; browser verification blocked.
 - Colors and visual tokens: existing Lisno tokens retained; browser verification blocked.
 - Image quality and asset fidelity: original PDF restored; six full pages and twenty extracted images reconstructed at their existing references and dimensions.
-- Copy and content: page rows expose `Preview`; the annotation modal exposes `Save as draft` and `Submit change request`; the separate launcher shows `Ask Lisno` and `Coming soon`.
+- Copy and content: extracted drawing rows retain `Preview`; Full Design tiles open directly without visible Preview copy; the annotation modal exposes `Save as draft` and `Submit change request`; the toolbar explains how to draw.
 
 ## Comparison history
 
@@ -47,6 +47,8 @@ Browser-rendered evidence is unavailable. Automated regression coverage verifies
 - [x] Keep Full Design independently sticky on desktop.
 - [x] Keep annotations editable for `client_changes_requested` and read-only for `client_approved`.
 - [x] Expose explicit Preview and Save as draft actions.
+- [x] Default editable annotation dialogs to Rectangle so the first drag marks the drawing.
+- [x] Stretch the right rail across the full estimate content height so sticky positioning has a valid scroll range.
 - [x] Restore full-page and extracted-image files referenced by MongoDB.
 - [x] Pass frontend tests, typecheck, and production build.
 - [ ] Capture authenticated desktop and mobile screenshots after browser reload.

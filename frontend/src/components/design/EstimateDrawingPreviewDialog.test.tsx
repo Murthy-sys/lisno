@@ -125,6 +125,19 @@ async function addTextNote() {
 }
 
 describe("EstimateDrawingPreviewDialog", () => {
+  it("enables Save as draft after the first default rectangle drag", async () => {
+    render(<EstimateDrawingPreviewDialog {...previewProps()} />);
+    const canvas = await waitForProtectedCanvas();
+    vi.spyOn(canvas, "getBoundingClientRect").mockReturnValue({ left: 0, top: 0, width: 1000, height: 800, right: 1000, bottom: 800, x: 0, y: 0, toJSON: () => ({}) });
+    expect(screen.getByRole("button", { name: "Save as draft" })).toBeDisabled();
+
+    fireEvent.pointerDown(canvas, { pointerId: 1, clientX: 100, clientY: 100 });
+    fireEvent.pointerMove(canvas, { pointerId: 1, clientX: 300, clientY: 300 });
+    fireEvent.pointerUp(canvas, { pointerId: 1, clientX: 300, clientY: 300 });
+
+    expect(screen.getByRole("button", { name: "Save as draft" })).toBeEnabled();
+  });
+
   it("traps focus and restores it to the opener when a clean preview closes", async () => {
     const user = userEvent.setup();
     render(<ModalHarness />);

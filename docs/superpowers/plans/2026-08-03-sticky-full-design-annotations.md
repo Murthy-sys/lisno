@@ -127,3 +127,66 @@ git add frontend/src docs/superpowers/plans/2026-08-03-sticky-full-design-annota
 git commit -m "fix: restore full design annotations"
 git push origin feature/ocr_improvements
 ```
+
+### Task 4: Correct action placement and immediate drawing
+
+**Files:**
+- Modify: `frontend/src/features/estimates/ClientFullPlanNav.tsx`
+- Modify: `frontend/src/features/estimates/ClientFullPlanNav.test.tsx`
+- Modify: `frontend/src/components/design/ImageAnnotationEditor.tsx`
+- Modify: `frontend/src/components/design/ImageAnnotationEditor.test.tsx`
+- Modify: `frontend/src/components/design/EstimateDrawingPreviewDialog.tsx`
+- Modify: `frontend/src/components/design/EstimateDrawingPreviewDialog.test.tsx`
+- Modify: `frontend/src/styles/index.css`
+
+**Interfaces:**
+- Full Design tiles continue to invoke `onSelectPage(page)` without visible Preview copy.
+- Extracted drawing rows retain their existing `Preview` buttons unchanged.
+- `ImageAnnotationEditor` starts with `tool === "rectangle"` in editable mode.
+
+- [x] **Step 1: Write failing placement and pointer tests**
+
+Assert Full Design contains no visible `Preview` text, clicking its page tile selects the page, Rectangle is initially pressed, the instruction is visible, and the first pointer drag creates a rectangle that enables `Save as draft`.
+
+- [x] **Step 2: Run focused tests and verify RED**
+
+Run: `VITE_API_URL=/api/v1 npm test -- --run src/features/estimates/ClientFullPlanNav.test.tsx src/components/design/ImageAnnotationEditor.test.tsx src/components/design/EstimateDrawingPreviewDialog.test.tsx`
+
+Expected: failures show the extra Full Design Preview label and Select as the initial tool.
+
+- [x] **Step 3: Implement corrected placement and default tool**
+
+Restore each Full Design tile as the page-selection button with an accessible name such as `Open design page 1`, remove visible Preview copy, initialize `tool` to `rectangle`, add `Choose a tool, then drag on the drawing.`, and expose the active tool through `data-active-tool` for cursor styling.
+
+- [x] **Step 4: Run focused tests and verify GREEN**
+
+Run the three focused files and expect all tests to pass.
+
+### Task 5: Give sticky Full Design the complete scroll range
+
+**Files:**
+- Modify: `frontend/src/styles/index.css`
+- Modify: `frontend/src/features/estimates/EstimateReviewPanel.collapsible.test.tsx`
+- Modify: `design-qa.md`
+
+**Interfaces:**
+- `.client-estimate-workspace__rail` stretches to the grid row's full content height.
+- `.client-plan-nav` remains `position: sticky; top: 1rem`.
+
+- [x] **Step 1: Write a failing rail-height regression assertion**
+
+Assert `.client-estimate-workspace__rail` contains `align-self: stretch` and does not use a fixed viewport-height containing block.
+
+- [x] **Step 2: Run the CSS test and verify RED**
+
+Run the collapsible panel test; expect failure because the rail currently inherits `align-items: start` and ends after one viewport.
+
+- [x] **Step 3: Stretch the rail and preserve mobile flow**
+
+Add `align-self: stretch` to the desktop rail. Keep Full Design sticky and Ask Lisno bottom-aligned with `margin-top: auto`. On mobile, reset `align-self: auto` and keep Full Design static.
+
+- [x] **Step 4: Run full verification and push without merging**
+
+Run: `VITE_API_URL=/api/v1 npm test && npm run typecheck && npm run build`
+
+Then commit with `fix: make full design annotations usable` and push `feature/ocr_improvements`.

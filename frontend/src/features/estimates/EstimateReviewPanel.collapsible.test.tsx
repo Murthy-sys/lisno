@@ -177,6 +177,7 @@ describe("EstimateReviewPanel client disclosures", () => {
     const railRule = ruleBody(stylesheet, ".client-estimate-workspace__rail");
     expect(railRule).not.toMatch(/position:\s*sticky/);
     expect(railRule).toMatch(/grid-column:\s*2/);
+    expect(railRule).toMatch(/align-self:\s*stretch/);
     expect(railRule).toMatch(/min-height:\s*calc\(100vh\s*-\s*2rem\)/);
 
     const launcherRule = ruleBody(stylesheet, ".ask-lisno-launcher");
@@ -217,7 +218,7 @@ describe("EstimateReviewPanel client disclosures", () => {
     Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: vi.fn() });
     renderApp(["/client"]);
     await userEvent.click(await screen.findByRole("button", { name: /Harbor Penthouse/i }));
-    await userEvent.click(await screen.findByRole("button", { name: "Preview design page 1" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Open design page 1" }));
 
     expect(await screen.findByText("Mark the drawing or add a text note before requesting changes.")).toBeVisible();
     expect(await screen.findByRole("img", { name: "Design page 1 protected drawing" })).toBeVisible();
@@ -230,7 +231,7 @@ describe("EstimateReviewPanel client disclosures", () => {
     installClientApi();
     renderApp(["/client"]);
     await userEvent.click(await screen.findByRole("button", { name: /Cedar Loft/i }));
-    await userEvent.click(await screen.findByRole("button", { name: "Preview design page 1" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Open design page 1" }));
 
     expect(await screen.findByText("Client markings are shown as a read-only overlay.")).toBeVisible();
     expect(screen.queryByRole("toolbar", { name: "Annotation tools" })).not.toBeInTheDocument();

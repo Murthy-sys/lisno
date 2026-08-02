@@ -20,19 +20,17 @@ export function ClientFullPlanNav({
   const content = (
     <div className="client-plan-nav__pages">
         {workspace.pages.slice().sort((left, right) => left.pageNumber - right.pageNumber).map((page) => (
-          <div
+          <button
+            type="button"
             className="client-plan-nav__page"
+            aria-label={`Open design page ${page.pageNumber}`}
+            aria-current={selectedPageId === page.id ? "page" : undefined}
+            onClick={() => onSelectPage(page)}
             key={page.id}
           >
             <LazyPlanThumbnail source={page.thumbnailUrl} />
             <span className="client-plan-nav__page-meta"><strong>Page {page.pageNumber}</strong><small>{statusLabel(page.status)}</small></span>
-            <button
-              type="button"
-              aria-label={`Preview design page ${page.pageNumber}`}
-              aria-current={selectedPageId === page.id ? "page" : undefined}
-              onClick={() => onSelectPage(page)}
-            >Preview</button>
-          </div>
+          </button>
         ))}
     </div>
   );
