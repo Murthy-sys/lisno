@@ -29,15 +29,17 @@ The client UI uses the commercial estimate `actionable` flag to enable design an
 ## Annotation Interaction
 
 - `Rectangle` is the initial active tool whenever an editable annotation modal opens, so the first drag creates a visible mark.
-- `Select` remains available for selecting, moving, resizing, and deleting existing markings.
+- `Select` is not displayed in the annotation toolbar.
 - Editable dialogs show the concise instruction `Choose a tool, then drag on the drawing.`
 - The canvas uses a crosshair cursor while Ellipse, Rectangle, Arrow, Freehand, or Text is active and a selection cursor while Select is active.
 - Pointer drawing must continue working after zoom changes and must enable `Save as draft` as soon as the annotation document becomes dirty.
+- `Save as draft` uses the standard Lisno secondary button treatment with the same full-width control geometry as `Submit change request`; it must not render as plain text.
 
 ## Sticky Right Rail
 
 - Full Design itself owns desktop sticky positioning at the top of the right rail.
-- Ask Lisno remains a separate sibling aligned to the bottom of the right-side area.
+- No ancestor between Full Design and the page scrolling viewport may use scrolling overflow that blocks sticky positioning. Content clipping uses `overflow: clip`, not `hidden` or `auto`.
+- Ask Lisno is rendered once for the complete client page as a fixed bottom-right floating chat launcher. It is not rendered inside an estimate, project, Full Design card, or right rail.
 - Sticky positioning must not introduce a clipped nested page list; every uploaded page remains reachable through document scrolling.
 - At widths of 760px or less, Full Design and Ask Lisno return to normal document flow.
 
@@ -48,6 +50,9 @@ The client UI uses the commercial estimate `actionable` flag to enable design an
 - A component test proves a Full Design page tile selects the correct page without a separate visible Preview label.
 - An editor test proves Rectangle is initially active and the first drag creates a visible annotation.
 - A modal test proves the first drag enables `Save as draft`.
+- A toolbar test proves Select is absent.
+- A CSS test proves Save as draft uses the standard button classes and the sticky ancestor does not use `overflow: hidden`.
+- A page test proves exactly one Ask Lisno launcher exists outside every estimate card.
 - CSS regression coverage proves `.client-plan-nav` owns sticky positioning on desktop and returns to static positioning on mobile.
 - Run the complete frontend test, typecheck, and production build suites.
 - Visual QA must confirm the sticky card, all uploaded pages, Preview controls, and annotation toolbar without overlap.
