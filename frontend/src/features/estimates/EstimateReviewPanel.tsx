@@ -210,31 +210,35 @@ function EstimateReviewCard({
         <button className="estimate-review-card__toggle" type="button" aria-labelledby={headingId} aria-expanded={clientExpanded} aria-controls={detailsId} onClick={() => setClientExpanded((current) => !current)}><span aria-hidden="true">{clientExpanded ? "Hide details" : "View estimate"}</span><ChevronDown aria-hidden="true" /></button>
       </div>
       {clientExpanded ? <div className="estimate-review-card__client-content" id={detailsId}>
-        <p className="eyebrow">{estimate.lead?.location}</p>
-        <p>{estimate.lead?.clientName}</p>
-        <p>{includedItemCount} items · GST included</p>
-        <ClientEstimateDetails estimate={estimate} />
-        {planWorkspace.data?.pages.length ? (
-          <ClientFullPlanNav
-            workspace={planWorkspace.data}
-            selectedPageId={selectedPlanPage?.id}
-            onSelectPage={setSelectedPlanPage}
-          />
-        ) : null}
-        {planWorkspace.isPending ? <p role="status">Loading full design pages…</p> : null}
-        {planWorkspace.isError ? <p className="inline-empty">No full design pages are available for this estimate.</p> : null}
-        <ClientEstimateDrawings
-          estimateId={estimate.id}
-          rooms={roomOptions}
-          scopes={scopeOptions}
-          workspace={drawingWorkspace.data}
-          isPending={drawingWorkspace.isPending}
-          isError={drawingWorkspace.isError}
-          canReview={actionable}
-          planWorkspace={planWorkspace.data}
-        />
-        {!actionable ? <p className="estimate-notice">{estimate.status === "client_approved" ? "Estimate approved" : "Changes requested"}</p> : null}
-        {reviewControls}
+        <div className="client-estimate-workspace">
+          <div className="client-estimate-workspace__main">
+            <p className="eyebrow">{estimate.lead?.location}</p>
+            <p>{estimate.lead?.clientName}</p>
+            <p>{includedItemCount} items · GST included</p>
+            <ClientEstimateDetails estimate={estimate} />
+            {planWorkspace.isPending ? <p role="status">Loading full design pages…</p> : null}
+            {planWorkspace.isError ? <p className="inline-empty">No full design pages are available for this estimate.</p> : null}
+            <ClientEstimateDrawings
+              estimateId={estimate.id}
+              rooms={roomOptions}
+              scopes={scopeOptions}
+              workspace={drawingWorkspace.data}
+              isPending={drawingWorkspace.isPending}
+              isError={drawingWorkspace.isError}
+              canReview={actionable}
+              planWorkspace={planWorkspace.data}
+            />
+            {!actionable ? <p className="estimate-notice">{estimate.status === "client_approved" ? "Estimate approved" : "Changes requested"}</p> : null}
+            {reviewControls}
+          </div>
+          {planWorkspace.data?.pages.length ? (
+            <ClientFullPlanNav
+              workspace={planWorkspace.data}
+              selectedPageId={selectedPlanPage?.id}
+              onSelectPage={setSelectedPlanPage}
+            />
+          ) : null}
+        </div>
         {selectedPlanPage ? (
           <ClientPlanPageReview
             page={selectedPlanPage}

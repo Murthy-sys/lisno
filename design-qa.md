@@ -1,38 +1,49 @@
-# Design QA
+# Design QA — Client full-plan sidebar recovery
 
-## Deterministic review matrix
+- Source visual truth: user-provided browser screenshot in this conversation.
+- Implementation screenshot: unavailable because no in-app browser session is connected.
+- Intended viewport: desktop, approximately 2048 × 1152 CSS pixels at device scale 1.
+- State: client estimate expanded with a six-page uploaded plan and extracted drawings.
+- Source dimensions: 2048 × 1152 pixels as supplied.
+- Implementation dimensions: unavailable; density normalization could not be performed.
 
-The prior API and Vite readiness checks returned HTTP 200. The current backend
-bootstrap additionally requires a successful Mongo replica-set connection
-before it listens. The browser-control runtime reported that no browser binding
-was available in this execution environment, so viewport screenshots could
-not be captured here. The matrix below is the prepared review plan; automated
-accessibility coverage was run in its place.
+## Full-view comparison evidence
 
-| Viewport | Routes reviewed | Interactions covered | Result |
-| --- | --- | --- | --- |
-| 1440 × 900 | `/login`, `/designer`, `/manager`, `/head`, `/client` | Sign-in fields, named navigation, project cards, manager/head expansion, client approved-plan actions | Prepared; screenshot review blocked by unavailable browser binding. |
-| 390 × 844 | `/login`, `/designer`, `/manager`, `/head`, `/client` | Mobile navigation, keyboard focus, disclosure controls, project cards, client plan actions | Prepared; screenshot review blocked by unavailable browser binding. |
+The source screenshot shows the full-design navigator incorrectly flowing below the estimate in the first content column. The implementation now places the estimate content and full-design navigator in an explicit two-column grid (`minmax(0, 1fr) 18rem`) and makes the second column sticky. At widths of 760px or less it becomes a one-column drawer.
 
-## Accessibility checks
+## Focused region evidence
 
-- Login fields have visible labels and the password visibility control has a
-  pressed state and keyboard activation.
-- Every role home exposes a named primary navigation landmark and a main
-  content landmark.
-- Progress controls carry text labels; risk/status labels pair text with their
-  color.
-- The workspace smoke test opens disclosure controls, verifies an upload
-  dialog's focus and Escape restoration, exercises the mobile navigation, and
-  runs `axe-core` for login, each role home, and each open interactive state
-  (with color-contrast disabled because JSDOM cannot calculate rendered
-  contrast).
-- Client content excludes draft/internal versions, KPI, and evaluation data.
+Browser-rendered evidence is unavailable. Automated CSS regression coverage verifies the desktop column, sticky placement, and mobile collapse rules. Recovered source assets were validated directly as a six-page PDF and 2382 × 1684 PNG page/revision images.
 
-## Evidence
+## Findings
 
-Automated role-home and interaction accessibility smoke test:
-`frontend/src/test/accessibility.test.tsx`.
-Automated cross-role journey (including draft/internal and cross-client denial):
-`backend/tests/full-journey.test.ts`.
-Final commands and test totals are recorded in the Task 11 report.
+- [P1] Browser comparison unavailable.
+  - Location: expanded client estimate and full-design sidebar.
+  - Evidence: no browser runtime is connected, so the corrected implementation cannot be captured at the same authenticated state and viewport.
+  - Impact: typography, precise spacing, image rendering, and interaction polish cannot receive final visual sign-off here.
+  - Fix: reload the client page in the user's browser and capture the expanded estimate at desktop and mobile widths.
+
+## Required fidelity surfaces
+
+- Fonts and typography: unchanged; browser verification blocked.
+- Spacing and layout rhythm: desktop and mobile grid rules covered by automated regression test; browser verification blocked.
+- Colors and visual tokens: existing Lisno tokens retained; browser verification blocked.
+- Image quality and asset fidelity: original PDF restored; six full pages and twenty extracted images reconstructed at their existing references and dimensions.
+- Copy and content: unchanged.
+
+## Comparison history
+
+- Initial evidence: navigator appeared below the estimate with a large empty region; both page and extracted-image previews reported unavailable.
+- Fixes: introduced an explicit right-sidebar layout and restored the missing protected assets from the matching original PDF without changing database IDs.
+- Post-fix visual evidence: blocked because no in-app browser session is connected.
+
+## Implementation checklist
+
+- [x] Place full plan in the desktop right column.
+- [x] Keep the plan navigator sticky while reviewing estimate content.
+- [x] Collapse to a single-column drawer on small screens.
+- [x] Restore full-page and extracted-image files referenced by MongoDB.
+- [x] Pass frontend tests, typecheck, and production build.
+- [ ] Capture authenticated desktop and mobile screenshots after browser reload.
+
+final result: blocked

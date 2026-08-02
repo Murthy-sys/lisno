@@ -130,6 +130,23 @@ describe("EstimateReviewPanel client disclosures", () => {
     expect(thumbnailRule).toMatch(/height:\s*40px/);
   });
 
+  it("keeps the full uploaded design in a sticky right sidebar on desktop", () => {
+    const workspaceRule = ruleBody(stylesheet, ".client-estimate-workspace");
+    expect(workspaceRule).toMatch(/grid-template-columns:\s*minmax\(0,\s*1fr\)\s+18rem/);
+
+    const navigationRule = ruleBody(stylesheet, ".client-plan-nav");
+    expect(navigationRule).toMatch(/position:\s*sticky/);
+    expect(navigationRule).toMatch(/grid-column:\s*2/);
+
+    const mobileRules = ruleBody(
+      stylesheet.slice(stylesheet.lastIndexOf("@media (max-width: 760px)")),
+      "@media (max-width: 760px)"
+    );
+    expect(ruleBody(mobileRules, ".client-estimate-workspace")).toMatch(
+      /grid-template-columns:\s*minmax\(0,\s*1fr\)/
+    );
+  });
+
   it("keeps client estimate details collapsed until each project is opened independently", async () => {
     tokenStorage.set("client-token");
     installClientApi();

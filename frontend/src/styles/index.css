@@ -3354,10 +3354,29 @@
   cursor: grabbing;
 }
 
+.client-estimate-workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 18rem;
+  align-items: start;
+  gap: 1rem;
+}
+
+.client-estimate-workspace__main {
+  display: grid;
+  min-width: 0;
+  gap: 0.75rem;
+}
+
 .client-plan-nav {
   display: grid;
+  grid-column: 2;
+  grid-row: 1;
   gap: 0.75rem;
-  margin: 1rem 0;
+  position: sticky;
+  top: 1rem;
+  max-height: calc(100vh - 2rem);
+  overflow: hidden;
+  margin: 0;
   padding: 0.9rem;
   border: 1px solid #dedaf7;
   border-radius: 1rem;
@@ -3525,20 +3544,30 @@
 }
 
 @media (min-width: 64rem) {
-  .client-plan-nav {
-    position: sticky;
-    top: 1rem;
-    float: right;
-    width: min(19rem, 32%);
-    margin: 0 0 1rem 1rem;
-  }
-
   .client-plan-nav__pages {
     grid-template-columns: 1fr;
   }
 
   .plan-request-workspace__layout {
     grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 760px) {
+  .client-estimate-workspace {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .client-estimate-workspace__main,
+  .client-plan-nav {
+    grid-column: 1;
+  }
+
+  .client-plan-nav {
+    grid-row: auto;
+    position: static;
+    max-height: none;
+    order: -1;
   }
 }
 
