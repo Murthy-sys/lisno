@@ -18,6 +18,7 @@ import { createDesignVersionsRouter } from "./routes/design-versions.js";
 import { createDesignSectionsRouter } from "./routes/design-sections.js";
 import { createExtractionWorkerRouter } from "./routes/extraction-worker.js";
 import { createEstimateDesignsRouter } from "./routes/estimate-designs.js";
+import { createEstimatePlanReviewRouter } from "./routes/estimate-plan-review.js";
 import { healthRouter } from "./routes/health.js";
 import { createKpisRouter } from "./routes/kpis.js";
 import { createLeadsRouter } from "./routes/leads.js";
@@ -34,6 +35,7 @@ import { createDesignVersionService } from "./services/design-version.service.js
 import { createDesignSectionService } from "./services/design-section.service.js";
 import { createExtractionWorkerService } from "./services/extraction-worker.service.js";
 import { createEstimateDesignService } from "./services/estimate-design.service.js";
+import { createEstimatePlanReviewService } from "./services/estimate-plan-review.service.js";
 import { createHierarchyService } from "./services/hierarchy.service.js";
 import { createKpiService } from "./services/kpi.service.js";
 import { createLeadService } from "./services/lead.service.js";
@@ -113,6 +115,12 @@ export function createApp(dependencies: AppDependencies) {
     ocrRetryPolicy,
     now: clock
   });
+  const estimatePlanReviewService = createEstimatePlanReviewService({
+    estimateDesigns: estimateDesignService,
+    storage,
+    audit: auditService,
+    now: clock
+  });
   const extractionWorkerService = dependencies.ocrWorkerToken
     ? createExtractionWorkerService(
         repository,
@@ -147,6 +155,7 @@ export function createApp(dependencies: AppDependencies) {
     "/api/v1",
     createEstimateDesignsRouter(authService, estimateDesignService, maxUploadBytes)
   );
+  app.use("/api/v1", createEstimatePlanReviewRouter(authService, estimatePlanReviewService));
   app.use("/api/v1", createProjectsRouter(authService, projectService));
   app.use(
     "/api/v1",

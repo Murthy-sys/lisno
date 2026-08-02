@@ -712,6 +712,44 @@ export interface EstimateDesignClientWorkspace
   readiness: EstimateDesignApprovalReadiness;
 }
 
+export type EstimatePlanPageStatus = "awaiting_review" | "changes_requested" | "revised" | "approved";
+
+export interface EstimatePlanAnnotationDraft {
+  id: string;
+  sourcePageId: string;
+  version: number;
+  annotations: AnnotationDocumentV1;
+}
+
+export interface EstimatePlanPage {
+  id: string;
+  uploadId: string;
+  pageNumber: number;
+  width: number;
+  height: number;
+  currentRevisionId: string;
+  status: EstimatePlanPageStatus;
+  thumbnailUrl: string;
+  currentImageUrl: string;
+  annotationDraft: EstimatePlanAnnotationDraft | null;
+}
+
+export interface EstimatePlanChangeRequest {
+  id: string;
+  sourcePageId: string;
+  version: number;
+  summary: string;
+  annotations: AnnotationDocumentV1;
+  targets: Array<{ drawingId: string; requestedRevisionId: string; status: "open" | "replacement_submitted" | "approved" | "resolved"; resolvedByRevisionId: string | null }>;
+  unassigned: boolean;
+  status: "open" | "resolved";
+}
+
+export interface EstimatePlanClientWorkspace {
+  pages: EstimatePlanPage[];
+  openRequests: EstimatePlanChangeRequest[];
+}
+
 export interface EstimateDesignDrawingUpdate extends EstimateDesignDrawing {
   revision: EstimateDesignRevision;
 }

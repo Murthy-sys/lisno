@@ -9,6 +9,9 @@ import type {
   EstimateDesignRevision,
   EstimateDesignUpload,
   EstimateDesignWorkspace
+  ,EstimatePlanAnnotationDraft
+  ,EstimatePlanChangeRequest
+  ,EstimatePlanClientWorkspace
 } from "../../api/types";
 
 export const estimateDesignKeys = {
@@ -137,3 +140,23 @@ export const estimateDesignSourcePageImageUrl = (pageId: string) =>
 
 export const estimateDesignRevisionImageUrl = (revisionId: string) =>
   `/estimate-design-revisions/${encodeURIComponent(revisionId)}/image`;
+
+export const getClientPlanWorkspace = (estimateId: string) =>
+  apiClient.get<EstimatePlanClientWorkspace>(`/client/estimates/${encodeURIComponent(estimateId)}/plan-review`);
+
+export const clientPlanThumbnailUrl = (pageId: string) =>
+  `/client/estimate-plan-pages/${encodeURIComponent(pageId)}/thumbnail`;
+
+export const clientPlanCurrentImageUrl = (pageId: string) =>
+  `/client/estimate-plan-pages/${encodeURIComponent(pageId)}/current-image`;
+
+export const saveClientPlanDraft = (pageId: string, version: number, annotations: AnnotationDocumentV1) =>
+  apiClient.put<EstimatePlanAnnotationDraft>(`/client/estimate-plan-pages/${encodeURIComponent(pageId)}/annotation-draft`, { version, annotations });
+
+export const previewClientPlanTargets = (pageId: string, annotations: AnnotationDocumentV1) =>
+  apiClient.post<{ pageRevisionNumber: number; targets: Array<{ drawingId: string; title: string; reason: "anchor_inside" | "area_overlap" }>; snapshotToken: string }>(`/client/estimate-plan-pages/${encodeURIComponent(pageId)}/target-preview`, { annotations });
+
+export const submitClientPlanChangeRequest = (pageId: string, input: {
+  version: number; summary: string; annotations: AnnotationDocumentV1;
+  targetDrawingIds: string[]; snapshotToken: string; idempotencyKey: string;
+}) => apiClient.post<EstimatePlanChangeRequest>(`/client/estimate-plan-pages/${encodeURIComponent(pageId)}/change-requests`, input);
