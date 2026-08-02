@@ -8,10 +8,12 @@ import type {
   EstimateDesignReplacementResult,
   EstimateDesignRevision,
   EstimateDesignUpload,
-  EstimateDesignWorkspace
-  ,EstimatePlanAnnotationDraft
-  ,EstimatePlanChangeRequest
-  ,EstimatePlanClientWorkspace
+  EstimateDesignWorkspace,
+  EstimatePlanAnnotationDraft,
+  EstimatePlanChangeRequest,
+  EstimatePlanChangeRequestDetail,
+  EstimatePlanChangeRequestQueueItem,
+  EstimatePlanClientWorkspace
 } from "../../api/types";
 
 export const estimateDesignKeys = {
@@ -160,3 +162,20 @@ export const submitClientPlanChangeRequest = (pageId: string, input: {
   version: number; summary: string; annotations: AnnotationDocumentV1;
   targetDrawingIds: string[]; snapshotToken: string; idempotencyKey: string;
 }) => apiClient.post<EstimatePlanChangeRequest>(`/client/estimate-plan-pages/${encodeURIComponent(pageId)}/change-requests`, input);
+
+export const getEstimatePlanChangeRequests = (filters: { estimateId?: string; status?: "open" | "resolved" } = {}) => {
+  const query = new URLSearchParams();
+  if (filters.estimateId) query.set("estimateId", filters.estimateId);
+  if (filters.status) query.set("status", filters.status);
+  const suffix = query.size ? `?${query.toString()}` : "";
+  return apiClient.get<EstimatePlanChangeRequestQueueItem[]>(`/estimate-plan-change-requests${suffix}`);
+};
+
+export const getEstimatePlanChangeRequest = (requestId: string) =>
+  apiClient.get<EstimatePlanChangeRequestDetail>(`/estimate-plan-change-requests/${encodeURIComponent(requestId)}`);
+
+export const updateEstimatePlanRequestTargets = (requestId: string, input: { version: number; targetDrawingIds: string[] }) =>
+  apiClient.put<EstimatePlanChangeRequestDetail>(`/estimate-plan-change-requests/${encodeURIComponent(requestId)}/targets`, input);
+
+export const resolveEstimatePlanPageRequest = (requestId: string, input: { version: number; note: string }) =>
+  apiClient.post<EstimatePlanChangeRequestDetail>(`/estimate-plan-change-requests/${encodeURIComponent(requestId)}/resolve-page`, input);

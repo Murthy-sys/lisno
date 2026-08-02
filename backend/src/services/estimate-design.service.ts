@@ -34,6 +34,7 @@ import type { Storage } from "../storage/storage.js";
 import type { CropRect } from "../repositories/types.js";
 import {
   advancePlanPageForDrawingRevision,
+  approvePlanTargetsForDrawingRevision,
   ensureEstimatePlanReviewCollections
 } from "./estimate-plan-review.service.js";
 
@@ -582,6 +583,9 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
           { session, runValidators: true }
         );
         requireMatchedTransition(changed, staleDrawing);
+        if (decision.decision === "approve" && mongoose.connection.readyState === 1) {
+          await approvePlanTargetsForDrawingRevision(revisionId, session);
+        }
         const draftDeletion = EstimateDesignAnnotationDraftModel.deleteOne({
           revisionId,
           clientId: user.id

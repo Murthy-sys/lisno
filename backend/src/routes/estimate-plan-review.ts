@@ -24,6 +24,14 @@ const requestSchema = z.object({
   snapshotToken: z.string().length(64),
   idempotencyKey: z.string().trim().min(1).max(128)
 }).strict();
+const targetSchema = z.object({
+  version: z.number().int().positive(),
+  targetDrawingIds: z.array(z.string().trim().min(1)).min(1).max(50)
+}).strict();
+const resolvePageSchema = z.object({
+  version: z.number().int().positive(),
+  note: z.string().trim().min(1).max(1_000)
+}).strict();
 
 export function createEstimatePlanReviewRouter(auth: AuthService, plans: EstimatePlanReviewService) {
   const router = Router();
@@ -42,6 +50,26 @@ export function createEstimatePlanReviewRouter(auth: AuthService, plans: Estimat
   router.post("/client/estimate-plan-pages/:pageId/change-requests", ...clientOnly, validateBody(requestSchema), async (request, response, next) => {
     try { response.status(201).json({ data: await plans.submitRequest(request.authenticatedUser!, request.params.pageId as string, request.body) }); } catch (error) { next(error); }
   });
+  const staffOnly = [authenticate(auth), authorizeRoles("estimator_sales", "designer", "design_manager", "design_head")] as const;
+  router.get("/estimate-plan-change-requests", ...staffOnly, async (request, response, next) => {
+    try {
+      const filters: { estimateId?: string; status?: "open" | "resolved" } = {
+        ...(typeof request.query.estimateId === "string" ? { estimateId: request.query.estimateId } : {}),
+        ...(request.query.status === "open" || request.query.status === "resolved" ? { status: request.query.status } : {})
+      };
+      response.json({ data: await plans.listStaff(request.authenticatedUser!, filters) });
+    } catch (error) { next(error); }
+  });
+  router.get("/estimate-plan-change-requests/:requestId", ...staffOnly, async (request, response, next) => {
+    try { response.json({ data: await plans.getStaff(request.authenticatedUser!, request.params.requestId as string) }); } catch (error) { next(error); }
+  });
+  router.put("/estimate-plan-change-requests/:requestId/targets", ...staffOnly, validateBody(targetSchema), async (request, response, next) => {
+    try { response.json({ data: await plans.updateTargets(request.authenticatedUser!, request.params.requestId as string, request.body) }); } catch (error) { next(error); }
+  });
+  router.post("/estimate-plan-change-requests/:requestId/resolve-page", ...staffOnly, validateBody(resolvePageSchema), async (request, response, next) => {
+    try { response.json({ data: await plans.resolvePage(request.authenticatedUser!, request.params.requestId as string, request.body) }); } catch (error) { next(error); }
+  });
+  router.get("/estimate-plan-pages/:pageId/current-image", ...staffOnly, stream((user, pageId) => plans.staffPageImage(user, pageId)));
   return router;
 }
 

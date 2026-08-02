@@ -11,9 +11,11 @@ import { EstimateDesignDrawingModel } from "../models/EstimateDesignDrawing.js";
 import { EstimateDesignRevisionModel } from "../models/EstimateDesignRevision.js";
 import { EstimateDesignSourcePageModel } from "../models/EstimateDesignSourcePage.js";
 import { EstimateDesignUploadModel } from "../models/EstimateDesignUpload.js";
+import { EstimateModel } from "../models/Estimate.js";
 import { EstimatePlanAnnotationDraftModel } from "../models/EstimatePlanAnnotationDraft.js";
 import { EstimatePlanChangeRequestModel } from "../models/EstimatePlanChangeRequest.js";
 import { EstimatePlanPageRevisionModel } from "../models/EstimatePlanPageRevision.js";
+import { UserModel } from "../models/User.js";
 import type { Storage } from "../storage/storage.js";
 import type { PublicUser as AuthenticatedUser } from "./auth.service.js";
 import type { AuditService } from "./audit.service.js";
@@ -41,6 +43,16 @@ export interface SubmitPlanRequestInput {
   targetDrawingIds: string[];
   snapshotToken: string;
   idempotencyKey: string;
+}
+
+export interface UpdatePlanTargetsInput {
+  version: number;
+  targetDrawingIds: string[];
+}
+
+export interface ResolvePlanPageInput {
+  version: number;
+  note: string;
 }
 
 function conflict(message: string) {
@@ -136,6 +148,29 @@ export async function ensureEstimatePlanReviewCollections() {
   ]);
 }
 
+export async function approvePlanTargetsForDrawingRevision(
+  revisionId: string,
+  session: mongoose.ClientSession
+) {
+  const requests = await EstimatePlanChangeRequestModel.find({
+    status: "open",
+    targets: { $elemMatch: { resolvedByRevisionId: revisionId, status: "replacement_submitted" } }
+  }).session(session);
+  for (const request of requests) {
+    let changed = false;
+    for (const target of request.targets) {
+      if (dtoId(target.resolvedByRevisionId) === revisionId && target.status === "replacement_submitted") {
+        target.status = "approved";
+        changed = true;
+      }
+    }
+    if (!changed) continue;
+    request.version += 1;
+    request.status = request.targets.every((target: Record<string, any>) => target.status === "approved" || target.status === "resolved") ? "resolved" : "open";
+    await request.save({ session });
+  }
+}
+
 export function createEstimatePlanReviewService(input: CreateEstimatePlanReviewServiceInput) {
   const now = input.now ?? (() => new Date());
 
@@ -146,6 +181,34 @@ export function createEstimatePlanReviewService(input: CreateEstimatePlanReviewS
     if (!upload) throw notFound();
     await input.estimateDesigns.listClient(user, dtoId(upload.estimateId));
     return { page, estimateId: dtoId(upload.estimateId) };
+  }
+
+  function requireStaffRole(user: AuthenticatedUser) {
+    if (!["estimator_sales", "designer", "design_manager", "design_head"].includes(user.role)) {
+      throw new ApiError(403, "FORBIDDEN", "You do not have access to plan change requests.");
+    }
+  }
+
+  async function requireStaffEstimate(user: AuthenticatedUser, estimateId: string, session?: mongoose.ClientSession) {
+    requireStaffRole(user);
+    const query = EstimateModel.findById(estimateId);
+    if (session) query.session(session);
+    const estimate = await query.lean();
+    if (!estimate) throw notFound();
+    const allowed = user.role === "estimator_sales"
+      ? dtoId(estimate.ownerId) === user.id
+      : [estimate.assignedDesignerId, estimate.assignedManagerId].filter(Boolean).map(dtoId).includes(user.id);
+    if (!allowed) throw new ApiError(403, "FORBIDDEN", "You are not assigned to this estimate.");
+    return estimate;
+  }
+
+  async function requireStaffRequest(user: AuthenticatedUser, requestId: string, session?: mongoose.ClientSession) {
+    const query = EstimatePlanChangeRequestModel.findById(requestId);
+    if (session) query.session(session);
+    const request = await query;
+    if (!request) throw new ApiError(404, "PLAN_REQUEST_NOT_FOUND", "The plan change request was not found.");
+    await requireStaffEstimate(user, dtoId(request.estimateId), session);
+    return request;
   }
 
   async function latestDrawingRows(estimateId: string, pageId: string, session?: mongoose.ClientSession) {
@@ -271,6 +334,59 @@ export function createEstimatePlanReviewService(input: CreateEstimatePlanReviewS
   }
 
   return {
+    async listStaff(user: AuthenticatedUser, filters: { estimateId?: string; status?: "open" | "resolved" }) {
+      requireStaffRole(user);
+      const estimateFilter = user.role === "estimator_sales"
+        ? { ownerId: user.id }
+        : { $or: [{ assignedDesignerId: user.id }, { assignedManagerId: user.id }] };
+      const estimates = await EstimateModel.find(estimateFilter).select({ _id: 1 }).lean();
+      const estimateIds = estimates.map((estimate) => dtoId(estimate._id));
+      const query: Record<string, any> = { estimateId: filters.estimateId ? { $in: estimateIds.filter((id) => id === filters.estimateId) } : { $in: estimateIds } };
+      if (filters.status) query.status = filters.status;
+      const requests = await EstimatePlanChangeRequestModel.find(query).sort({ createdAt: 1, _id: 1 }).lean();
+      return requests.map(requestQueueDto);
+    },
+
+    async getStaff(user: AuthenticatedUser, requestId: string) {
+      const request = await requireStaffRequest(user, requestId);
+      return { ...requestDto(request.toObject()), currentImageUrl: `/estimate-plan-pages/${encodeURIComponent(dtoId(request.sourcePageId))}/current-image` };
+    },
+
+    async updateTargets(user: AuthenticatedUser, requestId: string, change: UpdatePlanTargetsInput) {
+      const ids = [...new Set(change.targetDrawingIds)].sort();
+      if (ids.length === 0 || ids.length > 50) throw new ApiError(400, "INVALID_PLAN_TARGETS", "Select one or more drawings.");
+      return mongoose.connection.transaction(async (session) => {
+        const request = await requireStaffRequest(user, requestId, session);
+        if (request.version !== change.version || request.status !== "open") throw conflict("The plan request changed. Refresh and try again.");
+        const drawings = await EstimateDesignDrawingModel.find({ _id: { $in: ids }, sourcePageId: request.sourcePageId, estimateId: request.estimateId, active: true }).session(session).lean();
+        if (drawings.length !== ids.length) throw new ApiError(400, "INVALID_PLAN_TARGETS", "Every target must be an active drawing on this page.");
+        const targets = [];
+        for (const drawing of drawings.sort((left, right) => dtoId(left._id).localeCompare(dtoId(right._id)))) {
+          const revision = await EstimateDesignRevisionModel.findOne({ drawingId: drawing._id }).sort({ revisionNumber: -1 }).session(session).lean();
+          if (!revision) throw new ApiError(400, "INVALID_PLAN_TARGETS", "Every target must have a drawing revision.");
+          targets.push({ drawingId: dtoId(drawing._id), requestedRevisionId: dtoId(revision._id), status: "open", resolvedByRevisionId: null });
+        }
+        request.set({ targets, unassigned: false, unassignedResolved: false, resolutionNote: null, status: "open", version: request.version + 1 });
+        await request.save({ session });
+        await input.audit.appendInMongoTransaction({ actorId: user.id, action: "estimate_plan_targets_linked", entityType: "estimate_plan_change_request", entityId: requestId, occurredAt: now().toISOString(), newValues: { estimateId: dtoId(request.estimateId), sourcePageId: dtoId(request.sourcePageId), drawingIds: ids } }, session);
+        return requestDto(request.toObject());
+      });
+    },
+
+    async resolvePage(user: AuthenticatedUser, requestId: string, change: ResolvePlanPageInput) {
+      const note = change.note.trim();
+      if (!note || note.length > 1_000) throw new ApiError(400, "INVALID_RESOLUTION_NOTE", "Add a resolution note of 1,000 characters or fewer.");
+      return mongoose.connection.transaction(async (session) => {
+        const request = await requireStaffRequest(user, requestId, session);
+        if (request.version !== change.version || request.status !== "open") throw conflict("The plan request changed. Refresh and try again.");
+        if (!request.unassigned) throw new ApiError(400, "PLAN_REQUEST_HAS_TARGETS", "Drawing-targeted feedback must be resolved through its drawing revisions.");
+        request.set({ unassignedResolved: true, resolutionNote: note, status: "resolved", version: request.version + 1 });
+        await request.save({ session });
+        await input.audit.appendInMongoTransaction({ actorId: user.id, action: "estimate_plan_page_resolved", entityType: "estimate_plan_change_request", entityId: requestId, occurredAt: now().toISOString(), newValues: { estimateId: dtoId(request.estimateId), sourcePageId: dtoId(request.sourcePageId), noteLength: note.length } }, session);
+        return requestDto(request.toObject());
+      });
+    },
+
     async listClient(user: AuthenticatedUser, estimateId: string) {
       const rows = await pageRows(user, estimateId);
       const drafts = await EstimatePlanAnnotationDraftModel.find({ clientId: user.id, sourcePageId: { $in: rows.map((row) => row.page._id) } }).lean();
@@ -297,6 +413,16 @@ export function createEstimatePlanReviewService(input: CreateEstimatePlanReviewS
         ? await sharp(bytes, { limitInputPixels: 40_000_000 }).resize({ width: 160, height: 120, fit: "inside", withoutEnlargement: true }).png().toBuffer()
         : bytes;
       return Readable.from(output);
+    },
+
+    async staffPageImage(user: AuthenticatedUser, pageId: string) {
+      const page = await EstimateDesignSourcePageModel.findById(pageId).lean();
+      if (!page) throw notFound();
+      const upload = await EstimateDesignUploadModel.findById(page.uploadId).lean();
+      if (!upload) throw notFound();
+      await requireStaffEstimate(user, dtoId(upload.estimateId));
+      const revision = await bootstrapPageRevision(dtoId(upload.estimateId), pageId);
+      return Readable.from(await renderPageRevision(revision));
     },
 
     advanceForDrawingRevision,
@@ -346,6 +472,23 @@ export function createEstimatePlanReviewService(input: CreateEstimatePlanReviewS
           targets: selected.map((drawingId) => ({ drawingId, requestedRevisionId: revisionByDrawing.get(drawingId), status: "open", resolvedByRevisionId: null })),
           unassigned: selected.length === 0, unassignedResolved: false, status: "open"
         }], { session });
+        const estimate = await EstimateModel.findById(estimateId).session(session).lean();
+        if (estimate) {
+          const recipientIds = [estimate.ownerId, estimate.assignedManagerId, estimate.assignedDesignerId]
+            .filter(Boolean).map(dtoId);
+          const recipients = await UserModel.find({ _id: { $in: recipientIds }, active: true }).session(session).lean();
+          for (const recipient of recipients) {
+            const dedupeKey = `estimate_plan_changes_requested:${dtoId(created!._id)}:${dtoId(recipient._id)}`;
+            await EstimateModel.updateOne(
+              { _id: estimateId, "notifications.dedupeKey": { $ne: dedupeKey } },
+              {
+                $set: { status: "client_changes_requested" },
+                $push: { notifications: { dedupeKey, recipientEmail: recipient.email, recipientRole: recipient.role, event: "estimate_plan_changes_requested", status: "queued", queuedAt: now() } }
+              },
+              { session }
+            );
+          }
+        }
         await input.audit.appendInMongoTransaction({ actorId: user.id, action: "estimate_plan_changes_requested", entityType: "estimate_plan_change_request", entityId: dtoId(created!._id), occurredAt: now().toISOString(), newValues: { estimateId, sourcePageId: pageId, targetCount: selected.length, unassigned: selected.length === 0, annotationCount: request.annotations.elements.length } }, session);
         return created!.toObject();
       });
@@ -363,6 +506,18 @@ function requestDto(request: Record<string, any>) {
     id: dtoId(request._id), sourcePageId: dtoId(request.sourcePageId), version: Number(request.version),
     summary: String(request.summary), annotations: request.annotations,
     targets: request.targets.map((target: Record<string, any>) => ({ drawingId: dtoId(target.drawingId), requestedRevisionId: dtoId(target.requestedRevisionId), status: String(target.status), resolvedByRevisionId: target.resolvedByRevisionId ? dtoId(target.resolvedByRevisionId) : null })),
-    unassigned: Boolean(request.unassigned), status: String(request.status)
+    unassigned: Boolean(request.unassigned), status: String(request.status),
+    resolutionNote: request.resolutionNote ? String(request.resolutionNote) : null
+  };
+}
+
+function requestQueueDto(request: Record<string, any>) {
+  return {
+    id: dtoId(request._id), estimateId: dtoId(request.estimateId), uploadId: dtoId(request.uploadId),
+    sourcePageId: dtoId(request.sourcePageId), clientId: dtoId(request.clientId), version: Number(request.version),
+    summary: String(request.summary), status: String(request.status), unassigned: Boolean(request.unassigned),
+    targetCount: request.targets.length,
+    targets: request.targets.map((target: Record<string, any>) => ({ drawingId: dtoId(target.drawingId), status: String(target.status) })),
+    createdAt: request.createdAt instanceof Date ? request.createdAt.toISOString() : String(request.createdAt)
   };
 }

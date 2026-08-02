@@ -22,6 +22,7 @@ export const estimatePlanChangeRequestSchema = new Schema({
   targets: { type: [targetSchema], required: true },
   unassigned: { type: Boolean, required: true },
   unassignedResolved: { type: Boolean, default: false },
+  resolutionNote: { type: String, trim: true, maxlength: 1_000, default: null },
   status: { type: String, enum: ["open", "resolved"], required: true }
 }, { timestamps: true, versionKey: false, strict: "throw" });
 

@@ -1,5 +1,6 @@
 import { Readable } from "node:stream";
 
+import mongoose from "mongoose";
 import sharp from "sharp";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -9,7 +10,7 @@ import { EstimateDesignSourcePageModel } from "../src/models/EstimateDesignSourc
 import { EstimateDesignUploadModel } from "../src/models/EstimateDesignUpload.js";
 import { EstimatePlanChangeRequestModel } from "../src/models/EstimatePlanChangeRequest.js";
 import { EstimatePlanPageRevisionModel } from "../src/models/EstimatePlanPageRevision.js";
-import { createEstimatePlanReviewService } from "../src/services/estimate-plan-review.service.js";
+import { approvePlanTargetsForDrawingRevision, createEstimatePlanReviewService } from "../src/services/estimate-plan-review.service.js";
 import { startMongoReplicaSet } from "./helpers/mongo-replica-set.js";
 
 let replica: Awaited<ReturnType<typeof startMongoReplicaSet>>;
@@ -101,6 +102,10 @@ describe("estimate plan selective composition", () => {
     const request = await EstimatePlanChangeRequestModel.findById("request-a").lean();
     expect(request!.version).toBe(2);
     expect(request!.targets[0]).toMatchObject({ status: "replacement_submitted", resolvedByRevisionId: "revision-a2" });
+    await mongoose.connection.transaction((session) => approvePlanTargetsForDrawingRevision("revision-a2", session));
+    const approvedRequest = await EstimatePlanChangeRequestModel.findById("request-a").lean();
+    expect(approvedRequest).toMatchObject({ version: 3, status: "resolved" });
+    expect(approvedRequest!.targets[0]).toMatchObject({ status: "approved", resolvedByRevisionId: "revision-a2" });
     const rendered = await pixels(await streamBytes(await api.pageImage(client, "page-1")));
     expect([...rendered.data.subarray(0, 3)]).toEqual([0, 128, 0]);
   });

@@ -750,6 +750,26 @@ export interface EstimatePlanClientWorkspace {
   openRequests: EstimatePlanChangeRequest[];
 }
 
+export interface EstimatePlanChangeRequestQueueItem {
+  id: string;
+  estimateId: string;
+  uploadId: string;
+  sourcePageId: string;
+  clientId: string;
+  version: number;
+  summary: string;
+  status: "open" | "resolved";
+  unassigned: boolean;
+  targetCount: number;
+  targets: Array<{ drawingId: string; status: "open" | "replacement_submitted" | "approved" | "resolved" }>;
+  createdAt: string;
+}
+
+export interface EstimatePlanChangeRequestDetail extends EstimatePlanChangeRequest {
+  currentImageUrl: string;
+  resolutionNote: string | null;
+}
+
 export interface EstimateDesignDrawingUpdate extends EstimateDesignDrawing {
   revision: EstimateDesignRevision;
 }

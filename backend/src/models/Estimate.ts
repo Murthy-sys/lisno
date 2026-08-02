@@ -13,6 +13,7 @@ const estimateReviewSchema = new Schema({
 }, { _id: false });
 
 const estimateNotificationSchema = new Schema({
+  dedupeKey: { type: String, default: null },
   recipientEmail: { type: String, required: true },
   recipientRole: { type: String, required: true },
   event: { type: String, required: true },

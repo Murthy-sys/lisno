@@ -1,11 +1,13 @@
 import { beforeAll, afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { EstimateDesignDrawingModel } from "../src/models/EstimateDesignDrawing.js";
+import { EstimateModel } from "../src/models/Estimate.js";
 import { EstimateDesignRevisionModel } from "../src/models/EstimateDesignRevision.js";
 import { EstimateDesignSourcePageModel } from "../src/models/EstimateDesignSourcePage.js";
 import { EstimateDesignUploadModel } from "../src/models/EstimateDesignUpload.js";
 import { EstimatePlanChangeRequestModel } from "../src/models/EstimatePlanChangeRequest.js";
 import { EstimatePlanPageRevisionModel } from "../src/models/EstimatePlanPageRevision.js";
+import { UserModel } from "../src/models/User.js";
 import { createEstimatePlanReviewService } from "../src/services/estimate-plan-review.service.js";
 import { startMongoReplicaSet } from "./helpers/mongo-replica-set.js";
 
@@ -31,6 +33,8 @@ beforeAll(async () => { replica = await startMongoReplicaSet(); });
 afterAll(async () => { await replica.stop(); });
 beforeEach(async () => {
   await replica.clear();
+  await UserModel.create({ _id: "owner-1", name: "Owner", email: "owner@example.com", emailNormalized: "owner@example.com", passwordHash: "hash", role: "estimator_sales", active: true });
+  await EstimateModel.create({ _id: "estimate-1", leadId: "lead-1", ownerId: "owner-1", status: "sent_to_client", propertyType: "apartment" });
   await EstimateDesignUploadModel.create({ _id: "upload-1", estimateId: "estimate-1", leadId: "lead-1", originalFilename: "plan.pdf", storedFileReference: "source.pdf", mimeType: "application/pdf", sizeBytes: 100, uploaderId: "estimator-1", uploadedAt: new Date(), extractionStatus: "submitted" });
   await EstimateDesignSourcePageModel.create({ _id: "page-1", uploadId: "upload-1", pageNumber: 1, normalizedFileReference: "base.png", width: 1000, height: 500 });
   await EstimateDesignDrawingModel.create([
@@ -75,6 +79,11 @@ describe("client estimate plan review service", () => {
     const replay = await api.submitRequest(client, "page-1", input);
     expect(replay.id).toBe(first.id);
     expect(await EstimatePlanChangeRequestModel.countDocuments()).toBe(1);
+    const estimate = await EstimateModel.findById("estimate-1").lean();
+    expect(estimate!.notifications).toEqual([expect.objectContaining({
+      recipientEmail: "owner@example.com", event: "estimate_plan_changes_requested", status: "queued"
+    })]);
+    expect(JSON.stringify(estimate!.notifications)).not.toContain("base.png");
   });
 
   it("preserves non-overlapping annotations as unassigned feedback", async () => {
