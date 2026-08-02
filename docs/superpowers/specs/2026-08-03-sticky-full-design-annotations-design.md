@@ -22,6 +22,7 @@ The client UI uses the commercial estimate `actionable` flag to enable design an
 
 - The complete Full Design page tile opens the protected full-page design; it does not display a separate visible `Preview` button.
 - Extracted individual drawing rows retain their existing explicit `Preview` action beside review status and Approve.
+- `Preview` uses the standard Lisno secondary button treatment for every extracted drawing row, including mapped Design Drawing Review groups and Miscellaneous; it must not render as plain text.
 - The annotation modal exposes `Save as draft` while annotation is permitted. Saving does not submit or notify staff.
 - `Submit change request` remains a separate final action and requires markings plus a change summary.
 - Submitted change requests continue mapping annotations to affected extracted drawings through the existing preview-target flow.
@@ -52,6 +53,7 @@ The client UI uses the commercial estimate `actionable` flag to enable design an
 - A modal test proves the first drag enables `Save as draft`.
 - A toolbar test proves Select is absent.
 - A CSS test proves Save as draft uses the standard button classes and the sticky ancestor does not use `overflow: hidden`.
+- A drawing-row test proves Preview uses the standard secondary button classes in both mapped and Miscellaneous groups.
 - A page test proves exactly one Ask Lisno launcher exists outside every estimate card.
 - CSS regression coverage proves `.client-plan-nav` owns sticky positioning on desktop and returns to static positioning on mobile.
 - Run the complete frontend test, typecheck, and production build suites.
