@@ -18,7 +18,7 @@ const workspace: EstimatePlanClientWorkspace = {
 };
 
 describe("ClientFullPlanNav", () => {
-  it("renders ordered compact pages, selection, mobile drawer, and Ask Lisno last", async () => {
+  it("renders ordered compact pages and selection without owning the Ask Lisno launcher", async () => {
     vi.spyOn(apiClient, "getBlob").mockResolvedValue({ blob: new Blob(["image"], { type: "image/png" }), filename: "page.png" });
     Object.defineProperty(URL, "createObjectURL", { configurable: true, value: vi.fn(() => "blob:thumb") });
     Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: vi.fn() });
@@ -28,8 +28,7 @@ describe("ClientFullPlanNav", () => {
     expect(screen.getByText("6 pages")).toBeVisible();
     expect(screen.getByRole("button", { name: "Open design page 1" })).toHaveAttribute("aria-current", "page");
     expect(screen.getByText("Changes requested")).toBeVisible();
-    expect(screen.getByText("Ask Lisno — coming soon")).toBeVisible();
-    expect(screen.getByRole("button", { name: "Ask Lisno" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Ask Lisno" })).not.toBeInTheDocument();
     expect(screen.getAllByText("Design pages").length).toBeGreaterThan(0);
     await userEvent.click(screen.getByRole("button", { name: "Open design page 4" }));
     expect(onSelect).toHaveBeenCalledWith(workspace.pages[3]);

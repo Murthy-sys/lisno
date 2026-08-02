@@ -60,6 +60,15 @@ const emptyDrawingWorkspace = {
     changesRequested: 0
   }
 };
+const planWorkspace = {
+  pages: [{
+    id: "plan-page-1", uploadId: "upload-1", pageNumber: 1,
+    width: 1000, height: 800, currentRevisionId: "manifest-1",
+    status: "awaiting_review", thumbnailUrl: "/plan-thumb-1",
+    currentImageUrl: "/plan-page-1", annotationDraft: null
+  }],
+  openRequests: []
+};
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -74,6 +83,9 @@ function installClientApi() {
     if (url.endsWith("/api/v1/client/estimates")) return Response.json({ data: clientEstimates });
     if (url.includes("/api/v1/client/estimates/") && url.endsWith("/design-drawings")) {
       return Response.json({ data: emptyDrawingWorkspace });
+    }
+    if (url.includes("/api/v1/client/estimates/") && url.endsWith("/plan-review")) {
+      return Response.json({ data: planWorkspace });
     }
     throw new Error(`Unhandled request: ${url}`);
   });
@@ -141,8 +153,15 @@ describe("EstimateReviewPanel client disclosures", () => {
     expect(contentRule).toMatch(/overflow:\s*hidden/);
 
     const navigationRule = ruleBody(stylesheet, ".client-plan-nav");
-    expect(navigationRule).toMatch(/position:\s*sticky/);
-    expect(navigationRule).toMatch(/grid-column:\s*2/);
+    expect(navigationRule).not.toMatch(/position:\s*sticky/);
+
+    const railRule = ruleBody(stylesheet, ".client-estimate-workspace__rail");
+    expect(railRule).toMatch(/position:\s*sticky/);
+    expect(railRule).toMatch(/grid-column:\s*2/);
+    expect(railRule).toMatch(/min-height:\s*calc\(100vh\s*-\s*2rem\)/);
+
+    const launcherRule = ruleBody(stylesheet, ".ask-lisno-launcher");
+    expect(launcherRule).toMatch(/margin-top:\s*auto/);
 
     const pageListRule = ruleBody(stylesheet, ".client-plan-nav__pages");
     expect(pageListRule).toMatch(/max-height:\s*none/);
@@ -155,6 +174,20 @@ describe("EstimateReviewPanel client disclosures", () => {
     expect(ruleBody(mobileRules, ".client-estimate-workspace")).toMatch(
       /grid-template-columns:\s*minmax\(0,\s*1fr\)/
     );
+    const mobileRailRule = ruleBody(mobileRules, ".client-estimate-workspace__rail");
+    expect(mobileRailRule).toMatch(/position:\s*static/);
+    expect(mobileRailRule).toMatch(/min-height:\s*0/);
+  });
+
+  it("renders Ask Lisno as a sibling at the bottom of the design-tools rail", async () => {
+    tokenStorage.set("client-token");
+    installClientApi();
+    await userEvent.click((renderApp(["/client"]), await screen.findByRole("button", { name: /Aurora Villa/i })));
+
+    const rail = await screen.findByRole("complementary", { name: "Design tools" });
+    const fullDesign = within(rail).getByRole("region", { name: "Full design plan" });
+    expect(within(rail).getByRole("button", { name: "Ask Lisno" })).toBeDisabled();
+    expect(within(fullDesign).queryByRole("button", { name: "Ask Lisno" })).not.toBeInTheDocument();
   });
 
   it("keeps client estimate details collapsed until each project is opened independently", async () => {

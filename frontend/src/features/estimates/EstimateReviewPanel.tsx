@@ -33,6 +33,7 @@ import {
 import { clientKeys } from "../client/clientApi";
 import type { EstimatePlanPage } from "../../api/types";
 import { ClientFullPlanNav } from "./ClientFullPlanNav";
+import { AskLisnoLauncher } from "./AskLisnoLauncher";
 import { ClientPlanPageReview } from "./ClientPlanPageReview";
 
 const money = (value: number) => `₹${value.toLocaleString("en-IN")}`;
@@ -232,11 +233,14 @@ function EstimateReviewCard({
             {reviewControls}
           </div>
           {planWorkspace.data?.pages.length ? (
-            <ClientFullPlanNav
-              workspace={planWorkspace.data}
-              selectedPageId={selectedPlanPage?.id}
-              onSelectPage={setSelectedPlanPage}
-            />
+            <aside className="client-estimate-workspace__rail" aria-label="Design tools">
+              <ClientFullPlanNav
+                workspace={planWorkspace.data}
+                selectedPageId={selectedPlanPage?.id}
+                onSelectPage={setSelectedPlanPage}
+              />
+              <AskLisnoLauncher />
+            </aside>
           ) : null}
         </div>
         {selectedPlanPage ? (

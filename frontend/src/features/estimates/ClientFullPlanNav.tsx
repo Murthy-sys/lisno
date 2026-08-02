@@ -18,8 +18,7 @@ export function ClientFullPlanNav({
   onSelectPage: (page: EstimatePlanPage) => void;
 }) {
   const content = (
-    <>
-      <div className="client-plan-nav__pages">
+    <div className="client-plan-nav__pages">
         {workspace.pages.slice().sort((left, right) => left.pageNumber - right.pageNumber).map((page) => (
           <button
             type="button"
@@ -33,19 +32,13 @@ export function ClientFullPlanNav({
             <span><strong>Page {page.pageNumber}</strong><small>{statusLabel(page.status)}</small></span>
           </button>
         ))}
-      </div>
-      <div className="client-plan-nav__ask">
-        <strong>Ask Lisno — coming soon</strong>
-        <input aria-label="Ask Lisno question" placeholder="Ask about this design" disabled />
-        <button type="button" aria-label="Ask Lisno" disabled>Ask</button>
-      </div>
-    </>
+    </div>
   );
   return (
-    <aside className="client-plan-nav" aria-label="Full design plan">
+    <section className="client-plan-nav" aria-label="Full design plan">
       <header><div><p className="eyebrow">Full design</p><h4>Design pages</h4></div><small>{workspace.pages.length} pages</small></header>
       <details className="client-plan-nav__drawer" open><summary>Design pages · {workspace.pages.length}</summary>{content}</details>
-    </aside>
+    </section>
   );
 }
 
