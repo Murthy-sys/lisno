@@ -20,7 +20,9 @@ export const estimateDesignKeys = {
   all: ["estimate-designs"] as const,
   workspace: (estimateId: string) => [...estimateDesignKeys.all, estimateId] as const,
   clientWorkspace: (estimateId: string) =>
-    ["client", "estimate-designs", estimateId] as const
+    ["client", "estimate-designs", estimateId] as const,
+  clientPlanWorkspace: (estimateId: string) =>
+    ["client", "estimate-plan-review", estimateId] as const
 };
 
 export const getEstimateDesignWorkspace = (estimateId: string) =>

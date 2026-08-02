@@ -20,13 +20,20 @@ import {
 import { estimateBuilderSections } from "../leads/estimateBuilderCatalogue";
 import {
   estimateDesignKeys,
-  getClientEstimateDrawings
+  getClientEstimateDrawings,
+  getClientPlanWorkspace,
+  previewClientPlanTargets,
+  saveClientPlanDraft,
+  submitClientPlanChangeRequest
 } from "../leads/estimateDesignApi";
 import {
   ClientEstimateDrawings,
   clientDrawingReadinessId
 } from "./ClientEstimateDrawings";
 import { clientKeys } from "../client/clientApi";
+import type { EstimatePlanPage } from "../../api/types";
+import { ClientFullPlanNav } from "./ClientFullPlanNav";
+import { ClientPlanPageReview } from "./ClientPlanPageReview";
 
 const money = (value: number) => `₹${value.toLocaleString("en-IN")}`;
 const catalogue = new Map<string, { description: string; sectionId: string; sectionLabel: string; icon: string }>();
@@ -148,7 +155,9 @@ function EstimateReviewCard({
   onNoteChange: (note: string) => void;
   onAction: (action: "assign" | "approve" | "changes") => void;
 }) {
+  const queryClient = useQueryClient();
   const [clientExpanded, setClientExpanded] = useState(false);
+  const [selectedPlanPage, setSelectedPlanPage] = useState<EstimatePlanPage>();
   const isClient = role === "client";
   const detailsId = `client-estimate-${estimate.id}-details`;
   const headingId = `client-estimate-${estimate.id}-title`;
@@ -156,6 +165,11 @@ function EstimateReviewCard({
   const drawingWorkspace = useQuery({
     queryKey: estimateDesignKeys.clientWorkspace(estimate.id),
     queryFn: () => getClientEstimateDrawings(estimate.id),
+    enabled: isClient && clientExpanded
+  });
+  const planWorkspace = useQuery({
+    queryKey: estimateDesignKeys.clientPlanWorkspace(estimate.id),
+    queryFn: () => getClientPlanWorkspace(estimate.id),
     enabled: isClient && clientExpanded
   });
   const roomOptions = estimate.rooms.flatMap((room) => {
@@ -200,6 +214,15 @@ function EstimateReviewCard({
         <p>{estimate.lead?.clientName}</p>
         <p>{includedItemCount} items · GST included</p>
         <ClientEstimateDetails estimate={estimate} />
+        {planWorkspace.data?.pages.length ? (
+          <ClientFullPlanNav
+            workspace={planWorkspace.data}
+            selectedPageId={selectedPlanPage?.id}
+            onSelectPage={setSelectedPlanPage}
+          />
+        ) : null}
+        {planWorkspace.isPending ? <p role="status">Loading full design pages…</p> : null}
+        {planWorkspace.isError ? <p className="inline-empty">No full design pages are available for this estimate.</p> : null}
         <ClientEstimateDrawings
           estimateId={estimate.id}
           rooms={roomOptions}
@@ -208,9 +231,29 @@ function EstimateReviewCard({
           isPending={drawingWorkspace.isPending}
           isError={drawingWorkspace.isError}
           canReview={actionable}
+          planWorkspace={planWorkspace.data}
         />
         {!actionable ? <p className="estimate-notice">{estimate.status === "client_approved" ? "Estimate approved" : "Changes requested"}</p> : null}
         {reviewControls}
+        {selectedPlanPage ? (
+          <ClientPlanPageReview
+            page={selectedPlanPage}
+            canReview={actionable}
+            onClose={() => setSelectedPlanPage(undefined)}
+            saveDraft={async (annotations) => {
+              await saveClientPlanDraft(selectedPlanPage.id, selectedPlanPage.annotationDraft?.version ?? 0, annotations);
+              await queryClient.invalidateQueries({ queryKey: estimateDesignKeys.clientPlanWorkspace(estimate.id) });
+            }}
+            previewTargets={(annotations) => previewClientPlanTargets(selectedPlanPage.id, annotations)}
+            submitRequest={async (input) => {
+              await submitClientPlanChangeRequest(selectedPlanPage.id, input);
+              await Promise.all([
+                queryClient.invalidateQueries({ queryKey: estimateDesignKeys.clientPlanWorkspace(estimate.id) }),
+                queryClient.invalidateQueries({ queryKey: estimateDesignKeys.clientWorkspace(estimate.id) })
+              ]);
+            }}
+          />
+        ) : null}
       </div> : null}
     </article>;
   }

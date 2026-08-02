@@ -3354,6 +3354,112 @@
   cursor: grabbing;
 }
 
+.client-plan-nav {
+  display: grid;
+  gap: 0.75rem;
+  margin: 1rem 0;
+  padding: 0.9rem;
+  border: 1px solid #dedaf7;
+  border-radius: 1rem;
+  background: #faf9ff;
+}
+
+.client-plan-nav header h4,
+.client-plan-nav header p {
+  margin: 0;
+}
+
+.client-plan-nav__drawer > summary {
+  display: none;
+}
+
+.client-plan-nav__pages {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(10rem, 1fr));
+  gap: 0.5rem;
+  max-height: 18rem;
+  overflow-y: auto;
+}
+
+.client-plan-nav__page {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr);
+  align-items: center;
+  gap: 0.6rem;
+  min-height: 3.5rem;
+  border: 1px solid #dedaf7;
+  border-radius: 0.7rem;
+  padding: 0.4rem;
+  text-align: left;
+  color: #27304a;
+  background: #fff;
+}
+
+.client-plan-nav__page[aria-current="page"] {
+  border-color: #7259e8;
+  box-shadow: 0 0 0 2px rgb(114 89 232 / 15%);
+}
+
+.client-plan-nav__thumbnail {
+  width: 40px;
+  height: 40px;
+  border-radius: 0.4rem;
+  object-fit: cover;
+  background: #e9e7f6;
+}
+
+.client-plan-nav__page span,
+.client-plan-nav__ask {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.client-plan-nav__page small {
+  color: #697089;
+}
+
+.client-plan-nav__ask {
+  grid-template-columns: minmax(0, 1fr) auto;
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid #dedaf7;
+}
+
+.client-plan-nav__ask strong {
+  grid-column: 1 / -1;
+}
+
+.client-plan-nav__ask input,
+.client-plan-nav__ask button {
+  min-height: 2.75rem;
+}
+
+.client-plan-targets {
+  display: grid;
+  gap: 0.75rem;
+  padding: 1rem;
+}
+
+.client-plan-targets label {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+}
+
+@media (min-width: 64rem) {
+  .client-plan-nav {
+    position: sticky;
+    top: 1rem;
+    float: right;
+    width: min(19rem, 32%);
+    margin: 0 0 1rem 1rem;
+  }
+
+  .client-plan-nav__pages {
+    grid-template-columns: 1fr;
+  }
+}
+
 .annotation-text-dialog {
   z-index: 75;
   width: min(90vw, 25rem);
@@ -3449,6 +3555,21 @@
 
   .map-viewport__toolbar button {
     flex: 0 0 auto;
+  }
+
+  .client-plan-nav > header {
+    display: none;
+  }
+
+  .client-plan-nav__drawer > summary {
+    display: list-item;
+    min-height: 2.75rem;
+    font-weight: 700;
+  }
+
+  .client-plan-nav__pages {
+    grid-template-columns: 1fr;
+    max-height: 15rem;
   }
 }
 

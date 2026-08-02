@@ -6,10 +6,12 @@ import type {
   EstimateDesignClientRevision,
   EstimateDesignClientWorkspace,
   EstimateDesignDrawing,
-  EstimateDesignSourcePage
+  EstimateDesignSourcePage,
+  EstimatePlanClientWorkspace
 } from "../../api/types";
 import { EstimateDrawingPreviewDialog } from "../../components/design/EstimateDrawingPreviewDialog";
 import { ProtectedImage } from "../../components/design/ProtectedImage";
+import { projectAnnotationToCrop } from "../../components/design/planGeometry";
 import {
   decideClientDrawing,
   estimateDesignKeys,
@@ -42,6 +44,7 @@ interface ClientEstimateDrawingsProps {
   isPending: boolean;
   isError: boolean;
   canReview: boolean;
+  planWorkspace?: EstimatePlanClientWorkspace;
 }
 
 function latestRevisions(revisions: EstimateDesignClientRevision[]) {
@@ -95,7 +98,8 @@ export function ClientEstimateDrawings({
   workspace,
   isPending,
   isError,
-  canReview
+  canReview,
+  planWorkspace
 }: ClientEstimateDrawingsProps) {
   const latest = useMemo(
     () => latestRevisions(workspace?.revisions ?? []),
@@ -158,6 +162,7 @@ export function ClientEstimateDrawings({
         key={drawing.id}
         page={page}
         revision={revision}
+        sharedAnnotations={sharedPlanAnnotations(drawing.id, revision, workspace, planWorkspace)}
       />
     );
   };
@@ -206,13 +211,15 @@ function ClientDrawingRow({
   drawing,
   revision,
   page,
-  canReview
+  canReview,
+  sharedAnnotations
 }: {
   estimateId: string;
   drawing: EstimateDesignDrawing;
   revision: EstimateDesignClientRevision;
   page: EstimateDesignSourcePage | undefined;
   canReview: boolean;
+  sharedAnnotations: AnnotationDocumentV1["elements"];
 }) {
   const queryClient = useQueryClient();
   const [previewOpen, setPreviewOpen] = useState(false);
@@ -255,8 +262,11 @@ function ClientDrawingRow({
       schemaVersion: 1,
       imageWidth: revision.crop.width,
       imageHeight: revision.crop.height,
-      elements: []
+        elements: sharedAnnotations
     };
+  if (storedAnnotations && sharedAnnotations.length) {
+    annotations.elements = [...annotations.elements, ...sharedAnnotations];
+  }
   const previewLabel = revision.reviewStatus === "changes_requested"
     ? `Review changes for ${drawing.displayTitle}`
     : `Preview ${drawing.displayTitle}`;
@@ -336,4 +346,26 @@ function ClientDrawingRow({
       ) : null}
     </>
   );
+}
+
+function sharedPlanAnnotations(
+  drawingId: string,
+  currentRevision: EstimateDesignClientRevision,
+  drawingWorkspace: EstimateDesignClientWorkspace,
+  planWorkspace?: EstimatePlanClientWorkspace
+) {
+  if (!planWorkspace) return [];
+  const projected: AnnotationDocumentV1["elements"] = [];
+  for (const request of planWorkspace.openRequests) {
+    const target = request.targets.find((item) => item.drawingId === drawingId);
+    if (!target) continue;
+    const sourceRevision = drawingWorkspace.revisions.find((item) => item.id === target.requestedRevisionId) ?? currentRevision;
+    const page = planWorkspace.pages.find((item) => item.id === request.sourcePageId);
+    if (!page) continue;
+    for (const element of request.annotations.elements) {
+      const result = projectAnnotationToCrop(element, sourceRevision.crop, { width: page.width, height: page.height });
+      if (result) projected.push({ ...result, id: `${request.id}:${result.id}` });
+    }
+  }
+  return projected;
 }
