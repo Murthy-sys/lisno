@@ -25,12 +25,17 @@ import { EstimateDesignExtractionJobModel } from "../models/EstimateDesignExtrac
 import { EstimateDesignRevisionModel } from "../models/EstimateDesignRevision.js";
 import { EstimateDesignSourcePageModel } from "../models/EstimateDesignSourcePage.js";
 import { EstimateDesignUploadModel } from "../models/EstimateDesignUpload.js";
+import { EstimatePlanChangeRequestModel } from "../models/EstimatePlanChangeRequest.js";
 import { EstimateModel } from "../models/Estimate.js";
 import { LeadModel } from "../models/Lead.js";
 import type { PublicUser as AuthenticatedUser } from "./auth.service.js";
 import type { AuditService, AuditWrite } from "./audit.service.js";
 import type { Storage } from "../storage/storage.js";
 import type { CropRect } from "../repositories/types.js";
+import {
+  advancePlanPageForDrawingRevision,
+  ensureEstimatePlanReviewCollections
+} from "./estimate-plan-review.service.js";
 
 const mutableDesignEstimateStatuses = [
   "draft",
@@ -269,8 +274,15 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
       else awaitingReview += 1;
     }
     const total = drawings.length;
+    const unresolvedPlanFeedback = mongoose.connection.readyState === 1
+      ? await (() => {
+          const query = EstimatePlanChangeRequestModel.countDocuments({ estimateId, status: "open" });
+          if (session) query.session(session);
+          return query.exec();
+        })()
+      : 0;
     return {
-      ready: total === 0 || approved === total,
+      ready: (total === 0 || approved === total) && unresolvedPlanFeedback === 0,
       total,
       approved,
       awaitingReview,
@@ -698,6 +710,8 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
         references.push(stored.reference);
         const pageId = randomUUID();
         let revision: Record<string, any> | null = null;
+        const persistPlanRevision = mongoose.connection.readyState === 1;
+        if (persistPlanRevision) await ensureEstimatePlanReviewCollections();
         await withMongoTransaction(async (session) => {
           const currentDrawing = await EstimateDesignDrawingModel.findById(drawingId)
             .session(session)
@@ -749,6 +763,9 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
             height: metadata.height
           }], { session });
           await EstimateDesignRevisionModel.create([revision], { session });
+          if (persistPlanRevision) {
+            await advancePlanPageForDrawingRevision(String(revision._id), user.id, session);
+          }
           const drawingUpdated = await EstimateDesignDrawingModel.updateOne(
             { _id: drawingId, active: true, verified: Boolean(currentDrawing.verified) },
             { $set: { sourcePageId: pageId, verified: false } },
@@ -2411,6 +2428,8 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
     let completedJob: Record<string, any> | null = null;
     let cancelled = false;
     try {
+      const persistPlanRevision = mongoose.connection.readyState === 1;
+      if (persistPlanRevision) await ensureEstimatePlanReviewCollections();
       await withMongoTransaction(async (session) => {
         const currentJob = await EstimateDesignExtractionJobModel.findById(job._id)
           .session(session)
@@ -2497,6 +2516,9 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
           annotations: null,
           replacesRevisionId: current._id
         }], { session });
+        if (persistPlanRevision) {
+          await advancePlanPageForDrawingRevision(revisionId, "system-estimate-ocr-worker", session);
+        }
         const drawingUpdated = await EstimateDesignDrawingModel.updateOne(
           { _id: drawing._id, active: true, verified: Boolean(drawing.verified) },
           { $set: { sourcePageId: pageId, verified: false } },

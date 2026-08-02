@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { Readable } from "node:stream";
 
 import mongoose from "mongoose";
-import sharp from "sharp";
+import sharp, { type OverlayOptions } from "sharp";
 
 import { annotationDocumentSchema, type AnnotationDocumentV1 } from "../domain/estimate-design.js";
 import { detectAnnotationTargets } from "../domain/estimate-plan-review.js";
@@ -55,6 +55,87 @@ function dtoId(value: unknown) {
   return String(value);
 }
 
+export async function advancePlanPageForDrawingRevision(
+  revisionId: string,
+  createdBy: string,
+  session: mongoose.ClientSession
+) {
+  const replacement = await EstimateDesignRevisionModel.findById(revisionId).session(session).lean();
+  if (!replacement) throw new ApiError(404, "DESIGN_REVISION_NOT_FOUND", "The drawing revision was not found.");
+  const drawing = await EstimateDesignDrawingModel.findById(replacement.drawingId).session(session).lean();
+  if (!drawing) throw new ApiError(404, "DESIGN_DRAWING_NOT_FOUND", "The drawing was not found.");
+  const replaced = replacement.replacesRevisionId
+    ? await EstimateDesignRevisionModel.findById(replacement.replacesRevisionId).session(session).lean()
+    : null;
+  const pageId = dtoId(replaced?.sourcePageId ?? replacement.sourcePageId);
+  let current = await EstimatePlanPageRevisionModel.findOne({ sourcePageId: pageId })
+    .sort({ revisionNumber: -1 }).session(session).lean();
+
+  if (!current) {
+    const page = await EstimateDesignSourcePageModel.findById(pageId).session(session).lean();
+    if (!page) throw notFound();
+    const drawings = await EstimateDesignDrawingModel.find({ estimateId: drawing.estimateId, sourcePageId: pageId, active: true })
+      .sort({ _id: 1 }).session(session).lean();
+    const patches = [];
+    for (const candidate of drawings) {
+      const latest = dtoId(candidate._id) === dtoId(drawing._id)
+        ? replacement
+        : await EstimateDesignRevisionModel.findOne({ drawingId: candidate._id }).sort({ revisionNumber: -1 }).session(session).lean();
+      if (!latest) continue;
+      const crop = dtoId(candidate._id) === dtoId(drawing._id) && replaced ? replaced.crop : latest.crop;
+      patches.push({ drawingId: dtoId(candidate._id), drawingRevisionId: dtoId(latest._id), crop: { ...crop } });
+    }
+    patches.sort((left, right) =>
+      Number(right.crop.width) * Number(right.crop.height) - Number(left.crop.width) * Number(left.crop.height) ||
+      left.drawingId.localeCompare(right.drawingId)
+    );
+    const [created] = await EstimatePlanPageRevisionModel.create([{
+      _id: `plan-page-revision-${randomUUID()}`, estimateId: dtoId(drawing.estimateId), sourcePageId: pageId,
+      revisionNumber: 1, basePageReference: page.normalizedFileReference, status: "revised",
+      patches: patches.map((patch, order) => ({ ...patch, order })), previousRevisionId: null, createdBy
+    }], { session });
+    current = created!.toObject();
+  } else {
+    const existing = current.patches.find((patch: Record<string, any>) => dtoId(patch.drawingId) === dtoId(drawing._id));
+    if (!existing || dtoId(existing.drawingRevisionId) !== revisionId) {
+      const patches = current.patches.map((patch: Record<string, any>) => ({
+        drawingId: dtoId(patch.drawingId),
+        drawingRevisionId: dtoId(patch.drawingId) === dtoId(drawing._id) ? revisionId : dtoId(patch.drawingRevisionId),
+        crop: { ...patch.crop }, order: Number(patch.order)
+      }));
+      if (!existing) patches.push({ drawingId: dtoId(drawing._id), drawingRevisionId: revisionId, crop: { ...(replaced?.crop ?? replacement.crop) }, order: patches.length });
+      const [created] = await EstimatePlanPageRevisionModel.create([{
+        _id: `plan-page-revision-${randomUUID()}`, estimateId: dtoId(drawing.estimateId), sourcePageId: pageId,
+        revisionNumber: Number(current.revisionNumber) + 1, basePageReference: current.basePageReference,
+        status: "revised", patches, previousRevisionId: current._id, createdBy
+      }], { session });
+      current = created!.toObject();
+    }
+  }
+
+  const requests = await EstimatePlanChangeRequestModel.find({
+    estimateId: drawing.estimateId,
+    status: "open",
+    targets: { $elemMatch: { drawingId: drawing._id, status: "open" } }
+  }).session(session);
+  for (const request of requests) {
+    const target = request.targets.find((value: Record<string, any>) => dtoId(value.drawingId) === dtoId(drawing._id) && value.status === "open");
+    if (!target) continue;
+    target.status = "replacement_submitted";
+    target.resolvedByRevisionId = revisionId;
+    request.version += 1;
+    await request.save({ session });
+  }
+  return current;
+}
+
+export async function ensureEstimatePlanReviewCollections() {
+  await Promise.all([
+    EstimatePlanPageRevisionModel.createCollection(),
+    EstimatePlanChangeRequestModel.createCollection()
+  ]);
+}
+
 export function createEstimatePlanReviewService(input: CreateEstimatePlanReviewServiceInput) {
   const now = input.now ?? (() => new Date());
 
@@ -84,6 +165,7 @@ export function createEstimatePlanReviewService(input: CreateEstimatePlanReviewS
   async function bootstrapPageRevision(estimateId: string, pageId: string) {
     const existing = await EstimatePlanPageRevisionModel.findOne({ sourcePageId: pageId }).sort({ revisionNumber: -1 }).lean();
     if (existing) return existing;
+    await ensureEstimatePlanReviewCollections();
     try {
       return await mongoose.connection.transaction(async (session) => {
         const current = await EstimatePlanPageRevisionModel.findOne({ sourcePageId: pageId }).sort({ revisionNumber: -1 }).session(session).lean();
@@ -144,6 +226,50 @@ export function createEstimatePlanReviewService(input: CreateEstimatePlanReviewS
     return { pageRevisionNumber: Number(revision.revisionNumber), targets, snapshotToken };
   }
 
+  async function renderPageRevision(revision: Record<string, any>) {
+    const base = await input.storage.read(String(revision.basePageReference));
+    const layers: OverlayOptions[] = [];
+    const patches = [...revision.patches].sort((left: Record<string, any>, right: Record<string, any>) =>
+      Number(left.order) - Number(right.order)
+    );
+    for (const patch of patches) {
+      const drawingRevision = await EstimateDesignRevisionModel.findById(patch.drawingRevisionId).lean();
+      if (!drawingRevision) throw new ApiError(409, "PLAN_PATCH_MISSING", "A drawing used by this plan revision no longer exists.");
+      const patchBytes = await input.storage.read(String(drawingRevision.croppedFileReference));
+      const normalizedPatch = await sharp(patchBytes, { limitInputPixels: 40_000_000 })
+        .resize({ width: Number(patch.crop.width), height: Number(patch.crop.height), fit: "fill" })
+        .png().toBuffer();
+      layers.push({ input: normalizedPatch, left: Number(patch.crop.x), top: Number(patch.crop.y) });
+    }
+    return sharp(base, { limitInputPixels: 40_000_000 }).composite(layers).png().toBuffer();
+  }
+
+  async function advanceForDrawingRevision(revisionId: string, createdBy = "system:design-replacement") {
+    const replacement = await EstimateDesignRevisionModel.findById(revisionId).lean();
+    if (!replacement) throw new ApiError(404, "DESIGN_REVISION_NOT_FOUND", "The drawing revision was not found.");
+    const drawing = await EstimateDesignDrawingModel.findById(replacement.drawingId).lean();
+    if (!drawing) throw new ApiError(404, "DESIGN_DRAWING_NOT_FOUND", "The drawing was not found.");
+    const estimateId = dtoId(drawing.estimateId);
+    const replaced = replacement.replacesRevisionId
+      ? await EstimateDesignRevisionModel.findById(replacement.replacesRevisionId).lean()
+      : null;
+    const pageId = dtoId(replaced?.sourcePageId ?? replacement.sourcePageId);
+    await bootstrapPageRevision(estimateId, pageId);
+
+    try {
+      return await mongoose.connection.transaction((session) =>
+        advancePlanPageForDrawingRevision(revisionId, createdBy, session)
+      );
+    } catch (error: any) {
+      if (error?.code === 11000) {
+        const winner = await EstimatePlanPageRevisionModel.findOne({ sourcePageId: pageId }).sort({ revisionNumber: -1 }).lean();
+        const patch = winner?.patches.find((value: Record<string, any>) => dtoId(value.drawingId) === dtoId(drawing._id));
+        if (winner && patch && dtoId(patch.drawingRevisionId) === revisionId) return winner;
+      }
+      throw error;
+    }
+  }
+
   return {
     async listClient(user: AuthenticatedUser, estimateId: string) {
       const rows = await pageRows(user, estimateId);
@@ -166,12 +292,14 @@ export function createEstimatePlanReviewService(input: CreateEstimatePlanReviewS
     async pageImage(user: AuthenticatedUser, pageId: string, thumbnail = false) {
       const { estimateId } = await requirePage(user, pageId);
       const revision = await bootstrapPageRevision(estimateId, pageId);
-      const bytes = await input.storage.read(String(revision.basePageReference));
+      const bytes = await renderPageRevision(revision);
       const output = thumbnail
         ? await sharp(bytes, { limitInputPixels: 40_000_000 }).resize({ width: 160, height: 120, fit: "inside", withoutEnlargement: true }).png().toBuffer()
         : bytes;
       return Readable.from(output);
     },
+
+    advanceForDrawingRevision,
 
     async saveDraft(user: AuthenticatedUser, pageId: string, draft: SavePlanDraftInput) {
       await requirePage(user, pageId);
