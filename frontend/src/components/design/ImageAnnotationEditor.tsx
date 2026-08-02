@@ -605,7 +605,10 @@ export function ImageAnnotationEditor({
   }
 
   return (
-    <div className={`annotation-editor${readOnly ? " annotation-editor--read-only" : ""}`}>
+    <div
+      className={`annotation-editor${readOnly ? " annotation-editor--read-only" : ""}`}
+      data-annotation-drawing={!readOnly && tool !== "select" ? "true" : "false"}
+    >
       {!readOnly ? (
         <div className="annotation-toolbar" role="toolbar" aria-label="Annotation tools">
           {tools.map((item) => (

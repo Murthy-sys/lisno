@@ -505,7 +505,8 @@ describe("estimate drawing review journey", () => {
     ]) {
       expect(within(tools).getByRole("button", { name: tool })).toBeVisible();
     }
-    expect(screen.getByRole("toolbar", { name: "Zoom and pan" })).toBeVisible();
+    expect(screen.getByRole("toolbar", { name: "Zoom controls" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: /pan/i })).not.toBeInTheDocument();
 
     const canvas = screen.getByRole("img", {
       name: "Drawing annotation canvas",

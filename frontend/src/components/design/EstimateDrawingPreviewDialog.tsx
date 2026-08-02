@@ -8,6 +8,7 @@ import {
   isAnnotationDocumentWithinByteLimit,
   type ViewTransform
 } from "./annotationGeometry";
+import { MapViewport } from "./MapViewport";
 
 export interface EstimateDrawingPreviewDialogProps {
   title: string;
@@ -23,8 +24,6 @@ export interface EstimateDrawingPreviewDialogProps {
     summary: string
   ) => void | Promise<void>;
 }
-
-const DEFAULT_VIEW: ViewTransform = { zoom: 1, panX: 0, panY: 0 };
 
 function fingerprint(document: AnnotationDocumentV1) {
   return JSON.stringify(document);
@@ -45,7 +44,6 @@ export function EstimateDrawingPreviewDialog({
   const [document, setDocument] = useState(annotations);
   const [savedFingerprint, setSavedFingerprint] = useState(() => fingerprint(annotations));
   const [summary, setSummary] = useState("");
-  const [viewTransform, setViewTransform] = useState(DEFAULT_VIEW);
   const [confirmClose, setConfirmClose] = useState(false);
   const [busy, setBusy] = useState<"save" | "submit">();
   const [error, setError] = useState("");
@@ -58,21 +56,6 @@ export function EstimateDrawingPreviewDialog({
       return;
     }
     onClose();
-  }
-
-  function zoomBy(amount: number) {
-    setViewTransform((current) => ({
-      ...current,
-      zoom: Math.max(1, Math.min(4, Math.round((current.zoom + amount) * 100) / 100))
-    }));
-  }
-
-  function panBy(x: number, y: number) {
-    setViewTransform((current) => ({
-      ...current,
-      panX: Math.max(-0.5, Math.min(0.5, current.panX + x)),
-      panY: Math.max(-0.5, Math.min(0.5, current.panY + y))
-    }));
   }
 
   async function saveDraft() {
@@ -136,40 +119,39 @@ export function EstimateDrawingPreviewDialog({
         <div className="estimate-drawing-preview-dialog__layout">
           <div className="estimate-drawing-preview-dialog__canvas">
             {imageSource ? (
-              canAnnotate ? (
-                <ImageAnnotationEditor
-                  imageSource={imageSource}
-                  imageWidth={imageWidth}
-                  imageHeight={imageHeight}
-                  value={document}
-                  readOnly={false}
-                  onChange={setDocument}
-                  viewTransform={viewTransform}
-                />
-              ) : (
-                <AnnotationOverlay
-                  imageSource={imageSource}
-                  imageWidth={imageWidth}
-                  imageHeight={imageHeight}
-                  value={document}
-                  viewTransform={viewTransform}
-                />
-              )
+              <MapViewport ariaLabel={`${title} map view`}>
+                {(mapView) => {
+                  const viewTransform: ViewTransform = {
+                    zoom: mapView.scale,
+                    panX: mapView.translateX / Math.max(1, imageWidth),
+                    panY: mapView.translateY / Math.max(1, imageHeight)
+                  };
+                  return canAnnotate ? (
+                    <ImageAnnotationEditor
+                      imageSource={imageSource}
+                      imageWidth={imageWidth}
+                      imageHeight={imageHeight}
+                      value={document}
+                      readOnly={false}
+                      onChange={setDocument}
+                      viewTransform={viewTransform}
+                    />
+                  ) : (
+                    <AnnotationOverlay
+                      imageSource={imageSource}
+                      imageWidth={imageWidth}
+                      imageHeight={imageHeight}
+                      value={document}
+                      viewTransform={viewTransform}
+                    />
+                  );
+                }}
+              </MapViewport>
             ) : (
               <p role="status">Loading protected drawing…</p>
             )}
           </div>
           <aside className="estimate-drawing-preview-dialog__controls" aria-label="Drawing view controls">
-            <div className="estimate-drawing-preview-dialog__view-toolbar" role="toolbar" aria-label="Zoom and pan">
-              <button type="button" onClick={() => zoomBy(0.25)} disabled={viewTransform.zoom >= 4}>Zoom in</button>
-              <button type="button" onClick={() => zoomBy(-0.25)} disabled={viewTransform.zoom <= 1}>Zoom out</button>
-              <button type="button" onClick={() => panBy(-0.05, 0)}>Pan left</button>
-              <button type="button" onClick={() => panBy(0.05, 0)}>Pan right</button>
-              <button type="button" onClick={() => panBy(0, -0.05)}>Pan up</button>
-              <button type="button" onClick={() => panBy(0, 0.05)}>Pan down</button>
-              <button type="button" onClick={() => setViewTransform(DEFAULT_VIEW)}>Reset view</button>
-            </div>
-            <output aria-live="polite">{Math.round(viewTransform.zoom * 100)}% zoom</output>
             {canAnnotate ? (
               <div className="estimate-drawing-preview-dialog__review-actions">
                 <label>

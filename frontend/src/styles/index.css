@@ -3310,6 +3310,50 @@
   cursor: nwse-resize;
 }
 
+.map-viewport {
+  display: grid;
+  min-width: 0;
+  overflow: hidden;
+  border-radius: 0.75rem;
+  background: #202634;
+}
+
+.map-viewport__toolbar {
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.5rem;
+  color: #fff;
+  background: rgb(15 23 42 / 92%);
+}
+
+.map-viewport__toolbar button {
+  min-width: 2.75rem;
+  min-height: 2.75rem;
+  border: 1px solid rgb(255 255 255 / 24%);
+  border-radius: 0.55rem;
+  color: inherit;
+  background: rgb(255 255 255 / 10%);
+}
+
+.map-viewport__toolbar [role="status"] {
+  margin-left: auto;
+  white-space: nowrap;
+  font-size: 0.82rem;
+}
+
+.map-viewport__surface {
+  min-width: 0;
+  overflow: hidden;
+  cursor: grab;
+  touch-action: none;
+}
+
+.map-viewport__surface:active {
+  cursor: grabbing;
+}
+
 .annotation-text-dialog {
   z-index: 75;
   width: min(90vw, 25rem);
@@ -3394,6 +3438,16 @@
   }
 
   .estimate-drawing-preview-dialog__view-toolbar button {
+    flex: 0 0 auto;
+  }
+
+  .map-viewport__toolbar {
+    position: sticky;
+    top: 0;
+    overflow-x: auto;
+  }
+
+  .map-viewport__toolbar button {
     flex: 0 0 auto;
   }
 }

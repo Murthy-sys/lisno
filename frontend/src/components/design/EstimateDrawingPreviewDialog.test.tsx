@@ -152,7 +152,8 @@ describe("EstimateDrawingPreviewDialog", () => {
     const initialViewBox = canvas.getAttribute("viewBox");
     await userEvent.click(screen.getByRole("button", { name: "Zoom in" }));
     expect(canvas.getAttribute("viewBox")).not.toBe(initialViewBox);
-    await userEvent.click(screen.getByRole("button", { name: "Pan right" }));
+    expect(screen.queryByRole("button", { name: /pan/i })).not.toBeInTheDocument();
+    fireEvent.wheel(screen.getByTestId("map-viewport-surface"), { deltaY: -100, clientX: 100, clientY: 100 });
     expect(apiClient.getBlob).toHaveBeenCalledTimes(1);
 
     unmount();
