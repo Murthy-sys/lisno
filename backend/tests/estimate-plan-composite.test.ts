@@ -109,6 +109,30 @@ describe("estimate plan selective composition", () => {
     const rendered = await pixels(await streamBytes(await api.pageImage(client, "page-1")));
     expect([...rendered.data.subarray(0, 3)]).toEqual([0, 128, 0]);
   });
+
+  it("renders a legacy replacement manifest whose crop exceeds the base page", async () => {
+    const storage = new Storage();
+    const oversized = await sharp({ create: { width: 110, height: 60, channels: 3, background: "green" } }).png().toBuffer();
+    storage.values.set("base.png", base);
+    storage.values.set("oversized.png", oversized);
+    await EstimateDesignRevisionModel.create({
+      _id: "revision-a2", drawingId: "drawing-a", revisionNumber: 2,
+      sourcePageId: "replacement-page", crop: { x: 0, y: 0, width: 110, height: 60 },
+      croppedFileReference: "oversized.png", roomId: null, scopeSectionId: null,
+      catalogueId: null, mappingStatus: "misc", label: "A", reviewStatus: "submitted",
+      replacesRevisionId: "revision-a1"
+    });
+    await EstimatePlanPageRevisionModel.create({
+      _id: "legacy-manifest", estimateId: "estimate-1", sourcePageId: "page-1",
+      revisionNumber: 1, basePageReference: "base.png", status: "awaiting_review",
+      patches: [{ drawingId: "drawing-a", drawingRevisionId: "revision-a2", crop: { x: 0, y: 0, width: 110, height: 60 }, order: 0 }],
+      previousRevisionId: null, createdBy: "system:plan-review"
+    });
+
+    const rendered = await pixels(await streamBytes(await createService(storage).pageImage(client, "page-1")));
+    expect(rendered.info).toMatchObject({ width: 100, height: 50 });
+    expect([...rendered.data.subarray(0, 3)]).toEqual([0, 128, 0]);
+  });
 });
 
 async function streamBytes(stream: NodeJS.ReadableStream) {

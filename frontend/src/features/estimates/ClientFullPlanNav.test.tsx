@@ -25,6 +25,7 @@ describe("ClientFullPlanNav", () => {
     const onSelect = vi.fn();
     render(<ClientFullPlanNav workspace={workspace} selectedPageId="page-1" onSelectPage={onSelect} />);
     expect(screen.getAllByRole("button", { name: /open design page/i })).toHaveLength(6);
+    expect(screen.getByText("6 pages")).toBeVisible();
     expect(screen.getByRole("button", { name: "Open design page 1" })).toHaveAttribute("aria-current", "page");
     expect(screen.getByText("Changes requested")).toBeVisible();
     expect(screen.getByText("Ask Lisno — coming soon")).toBeVisible();

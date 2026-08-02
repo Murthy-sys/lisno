@@ -291,6 +291,12 @@ export function createEstimatePlanReviewService(input: CreateEstimatePlanReviewS
 
   async function renderPageRevision(revision: Record<string, any>) {
     const base = await input.storage.read(String(revision.basePageReference));
+    const baseMetadata = await sharp(base, { limitInputPixels: 40_000_000 }).metadata();
+    const baseWidth = Number(baseMetadata.width);
+    const baseHeight = Number(baseMetadata.height);
+    if (!baseWidth || !baseHeight) {
+      throw new ApiError(409, "PLAN_BASE_INVALID", "The source page dimensions could not be read.");
+    }
     const layers: OverlayOptions[] = [];
     const patches = [...revision.patches].sort((left: Record<string, any>, right: Record<string, any>) =>
       Number(left.order) - Number(right.order)
@@ -299,10 +305,15 @@ export function createEstimatePlanReviewService(input: CreateEstimatePlanReviewS
       const drawingRevision = await EstimateDesignRevisionModel.findById(patch.drawingRevisionId).lean();
       if (!drawingRevision) throw new ApiError(409, "PLAN_PATCH_MISSING", "A drawing used by this plan revision no longer exists.");
       const patchBytes = await input.storage.read(String(drawingRevision.croppedFileReference));
+      const left = Math.max(0, Math.min(Math.floor(Number(patch.crop.x)), baseWidth - 1));
+      const top = Math.max(0, Math.min(Math.floor(Number(patch.crop.y)), baseHeight - 1));
+      const width = Math.min(Math.floor(Number(patch.crop.width)), baseWidth - left);
+      const height = Math.min(Math.floor(Number(patch.crop.height)), baseHeight - top);
+      if (width <= 0 || height <= 0) continue;
       const normalizedPatch = await sharp(patchBytes, { limitInputPixels: 40_000_000 })
-        .resize({ width: Number(patch.crop.width), height: Number(patch.crop.height), fit: "fill" })
+        .resize({ width, height, fit: "fill" })
         .png().toBuffer();
-      layers.push({ input: normalizedPatch, left: Number(patch.crop.x), top: Number(patch.crop.y) });
+      layers.push({ input: normalizedPatch, left, top });
     }
     return sharp(base, { limitInputPixels: 40_000_000 }).composite(layers).png().toBuffer();
   }

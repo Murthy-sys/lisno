@@ -144,6 +144,10 @@ describe("EstimateReviewPanel client disclosures", () => {
     expect(navigationRule).toMatch(/position:\s*sticky/);
     expect(navigationRule).toMatch(/grid-column:\s*2/);
 
+    const pageListRule = ruleBody(stylesheet, ".client-plan-nav__pages");
+    expect(pageListRule).toMatch(/max-height:\s*none/);
+    expect(pageListRule).toMatch(/overflow:\s*visible/);
+
     const mobileRules = ruleBody(
       stylesheet.slice(stylesheet.lastIndexOf("@media (max-width: 760px)")),
       "@media (max-width: 760px)"

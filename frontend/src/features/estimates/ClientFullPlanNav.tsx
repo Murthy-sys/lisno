@@ -43,8 +43,8 @@ export function ClientFullPlanNav({
   );
   return (
     <aside className="client-plan-nav" aria-label="Full design plan">
-      <header><p className="eyebrow">Full design</p><h4>Design pages</h4></header>
-      <details className="client-plan-nav__drawer" open><summary>Design pages</summary>{content}</details>
+      <header><div><p className="eyebrow">Full design</p><h4>Design pages</h4></div><small>{workspace.pages.length} pages</small></header>
+      <details className="client-plan-nav__drawer" open><summary>Design pages · {workspace.pages.length}</summary>{content}</details>
     </aside>
   );
 }
