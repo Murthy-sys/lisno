@@ -768,6 +768,8 @@ export interface EstimatePlanChangeRequestQueueItem {
 export interface EstimatePlanChangeRequestDetail extends EstimatePlanChangeRequest {
   currentImageUrl: string;
   resolutionNote: string | null;
+  drawingTargets: Array<{ drawingId: string; title: string; latestRevisionId: string; latestRevisionNumber: number; status: "open" | "replacement_submitted" | "approved" | "resolved" }>;
+  drawingCandidates: Array<{ drawingId: string; title: string; latestRevisionId: string; latestRevisionNumber: number; status: "open" | "replacement_submitted" | "approved" | "resolved" | null }>;
 }
 
 export interface EstimateDesignDrawingUpdate extends EstimateDesignDrawing {

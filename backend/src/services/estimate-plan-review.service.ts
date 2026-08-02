@@ -349,7 +349,27 @@ export function createEstimatePlanReviewService(input: CreateEstimatePlanReviewS
 
     async getStaff(user: AuthenticatedUser, requestId: string) {
       const request = await requireStaffRequest(user, requestId);
-      return { ...requestDto(request.toObject()), currentImageUrl: `/estimate-plan-pages/${encodeURIComponent(dtoId(request.sourcePageId))}/current-image` };
+      const drawings = await EstimateDesignDrawingModel.find({ estimateId: request.estimateId, sourcePageId: request.sourcePageId, active: true }).sort({ _id: 1 }).lean();
+      const requestTargetByDrawing = new Map<string, Record<string, any>>(
+        request.targets.map((target: Record<string, any>) => [dtoId(target.drawingId), target])
+      );
+      const drawingCandidates = [];
+      for (const drawing of drawings) {
+        const latest = await EstimateDesignRevisionModel.findOne({ drawingId: drawing._id }).sort({ revisionNumber: -1 }).lean();
+        if (!latest) continue;
+        const target = requestTargetByDrawing.get(dtoId(drawing._id));
+        drawingCandidates.push({
+          drawingId: dtoId(drawing._id), title: String(drawing.displayTitle),
+          latestRevisionId: dtoId(latest._id), latestRevisionNumber: Number(latest.revisionNumber),
+          status: target ? String(target.status) : null
+        });
+      }
+      return {
+        ...requestDto(request.toObject()),
+        currentImageUrl: `/estimate-plan-pages/${encodeURIComponent(dtoId(request.sourcePageId))}/current-image`,
+        drawingTargets: drawingCandidates.filter((candidate) => candidate.status !== null),
+        drawingCandidates
+      };
     },
 
     async updateTargets(user: AuthenticatedUser, requestId: string, change: UpdatePlanTargetsInput) {

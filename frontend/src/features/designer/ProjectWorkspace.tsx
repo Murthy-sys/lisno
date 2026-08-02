@@ -25,6 +25,7 @@ import { ProgressBar } from "../../components/ui/ProgressBar";
 import { StatusBadge } from "../../components/ui/StatusBadge";
 import { designerKeys } from "./designerApi";
 import { DesignUploadsWorkspace } from "./DesignUploadsWorkspace";
+import { EstimatePlanChangeRequests } from "../leads/EstimatePlanChangeRequests";
 import {
   ProjectStructureDialog,
   type StructureAction
@@ -56,6 +57,7 @@ export function ProjectWorkspace() {
   const [structureAction, setStructureAction] =
     useState<StructureAction | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [planRequestsOpen, setPlanRequestsOpen] = useState(false);
 
   const projectQuery = useQuery({
     queryKey: designerKeys.project(projectId),
@@ -142,6 +144,11 @@ export function ProjectWorkspace() {
           </strong>
         </div>
       </div>
+
+      <details className="project-plan-requests" open={planRequestsOpen} onToggle={(event) => setPlanRequestsOpen(event.currentTarget.open)}>
+        <summary>Client plan change requests</summary>
+        {planRequestsOpen ? <EstimatePlanChangeRequests /> : null}
+      </details>
 
       <section className="project-structure" aria-labelledby="structure-title">
         <div className="section-heading">
