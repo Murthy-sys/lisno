@@ -27,6 +27,42 @@ export interface DrawingTargetMatch {
   reason: "anchor_inside" | "area_overlap";
 }
 
+export const planRequestTargetStatuses = [
+  "open",
+  "replacement_submitted",
+  "approved",
+  "resolved"
+] as const;
+export type PlanRequestTargetStatus = typeof planRequestTargetStatuses[number];
+export type PlanRequestStatus = "open" | "resolved";
+
+const allowedTargetTransitions: Record<PlanRequestTargetStatus, readonly PlanRequestTargetStatus[]> = {
+  open: ["replacement_submitted", "resolved"],
+  replacement_submitted: ["open", "approved"],
+  approved: [],
+  resolved: []
+};
+
+export function requirePlanRequestTransition(
+  from: PlanRequestTargetStatus,
+  to: PlanRequestTargetStatus
+) {
+  if (!allowedTargetTransitions[from].includes(to)) {
+    throw new Error(`Invalid plan request target transition from ${from} to ${to}.`);
+  }
+}
+
+export function derivePlanRequestStatus(
+  targetStatuses: readonly PlanRequestTargetStatus[],
+  unassigned: boolean,
+  unassignedResolved = false
+): PlanRequestStatus {
+  if (unassigned) return unassignedResolved ? "resolved" : "open";
+  return targetStatuses.length > 0 && targetStatuses.every((status) =>
+    status === "approved" || status === "resolved"
+  ) ? "resolved" : "open";
+}
+
 type AnnotationElementV1 = AnnotationDocumentV1["elements"][number];
 
 const MATERIAL_OVERLAP = 0.15;
