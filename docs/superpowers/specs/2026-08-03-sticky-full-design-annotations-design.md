@@ -20,11 +20,19 @@ The client UI uses the commercial estimate `actionable` flag to enable design an
 
 ## Full Design Actions
 
-- Every page row exposes a visible `Preview` button rather than relying only on an implicit whole-row action.
-- Preview opens the protected full-page design in the existing annotation modal.
-- The modal exposes `Save as draft` while annotation is permitted. Saving does not submit or notify staff.
+- The complete Full Design page tile opens the protected full-page design; it does not display a separate visible `Preview` button.
+- Extracted individual drawing rows retain their existing explicit `Preview` action beside review status and Approve.
+- The annotation modal exposes `Save as draft` while annotation is permitted. Saving does not submit or notify staff.
 - `Submit change request` remains a separate final action and requires markings plus a change summary.
 - Submitted change requests continue mapping annotations to affected extracted drawings through the existing preview-target flow.
+
+## Annotation Interaction
+
+- `Rectangle` is the initial active tool whenever an editable annotation modal opens, so the first drag creates a visible mark.
+- `Select` remains available for selecting, moving, resizing, and deleting existing markings.
+- Editable dialogs show the concise instruction `Choose a tool, then drag on the drawing.`
+- The canvas uses a crosshair cursor while Ellipse, Rectangle, Arrow, Freehand, or Text is active and a selection cursor while Select is active.
+- Pointer drawing must continue working after zoom changes and must enable `Save as draft` as soon as the annotation document becomes dirty.
 
 ## Sticky Right Rail
 
@@ -37,7 +45,9 @@ The client UI uses the commercial estimate `actionable` flag to enable design an
 
 - A workflow test proves annotations and `Save as draft` remain available for `client_changes_requested`.
 - A workflow test proves annotations are read-only for `client_approved`.
-- A component test proves every Full Design page exposes `Preview` and still selects the correct page.
+- A component test proves a Full Design page tile selects the correct page without a separate visible Preview label.
+- An editor test proves Rectangle is initially active and the first drag creates a visible annotation.
+- A modal test proves the first drag enables `Save as draft`.
 - CSS regression coverage proves `.client-plan-nav` owns sticky positioning on desktop and returns to static positioning on mobile.
 - Run the complete frontend test, typecheck, and production build suites.
 - Visual QA must confirm the sticky card, all uploaded pages, Preview controls, and annotation toolbar without overlap.
