@@ -11,12 +11,14 @@ import type {
 } from "../../api/types";
 import { EstimateDrawingPreviewDialog } from "../../components/design/EstimateDrawingPreviewDialog";
 import { ProtectedImage } from "../../components/design/ProtectedImage";
-import { projectAnnotationToCrop } from "../../components/design/planGeometry";
+import { projectAnnotationToCrop, projectAnnotationToPage } from "../../components/design/planGeometry";
 import {
   decideClientDrawing,
   estimateDesignKeys,
   estimateDesignRevisionImageUrl,
-  saveClientDrawingAnnotationDraft
+  previewClientPlanTargets,
+  saveClientDrawingAnnotationDraft,
+  submitClientPlanChangeRequest
 } from "../leads/estimateDesignApi";
 
 export interface ClientEstimateDrawingOption {
@@ -161,6 +163,7 @@ export function ClientEstimateDrawings({
         estimateId={estimateId}
         key={drawing.id}
         page={page}
+        planPage={planWorkspace?.pages.find((item) => item.id === revision.sourcePageId)}
         revision={revision}
         sharedAnnotations={sharedPlanAnnotations(drawing.id, revision, workspace, planWorkspace)}
       />
@@ -211,6 +214,7 @@ function ClientDrawingRow({
   drawing,
   revision,
   page,
+  planPage,
   canReview,
   sharedAnnotations
 }: {
@@ -218,6 +222,7 @@ function ClientDrawingRow({
   drawing: EstimateDesignDrawing;
   revision: EstimateDesignClientRevision;
   page: EstimateDesignSourcePage | undefined;
+  planPage: EstimatePlanClientWorkspace["pages"][number] | undefined;
   canReview: boolean;
   sharedAnnotations: AnnotationDocumentV1["elements"];
 }) {
@@ -248,6 +253,37 @@ function ClientDrawingRow({
     onSuccess: () => queryClient.invalidateQueries({
       queryKey: estimateDesignKeys.clientWorkspace(estimateId)
     })
+  });
+  const planRequest = useMutation({
+    mutationFn: async ({ document, summary }: { document: AnnotationDocumentV1; summary: string }) => {
+      if (!planPage) throw new Error("The source plan page is unavailable.");
+      const pageAnnotations: AnnotationDocumentV1 = {
+        schemaVersion: 1,
+        imageWidth: planPage.width,
+        imageHeight: planPage.height,
+        elements: document.elements.map((element) =>
+          projectAnnotationToPage(element, revision.crop, planPage)
+        )
+      };
+      const preview = await previewClientPlanTargets(planPage.id, pageAnnotations);
+      if (!preview.targets.some((target) => target.drawingId === drawing.id)) {
+        throw new Error("The annotation no longer overlaps this drawing. Refresh and try again.");
+      }
+      return submitClientPlanChangeRequest(planPage.id, {
+        version: preview.pageRevisionNumber,
+        summary,
+        annotations: pageAnnotations,
+        targetDrawingIds: [drawing.id],
+        snapshotToken: preview.snapshotToken,
+        idempotencyKey: crypto.randomUUID()
+      });
+    },
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: estimateDesignKeys.clientWorkspace(estimateId) }),
+        queryClient.invalidateQueries({ queryKey: estimateDesignKeys.clientPlanWorkspace(estimateId) })
+      ]);
+    }
   });
   const canAnnotate = canReview && revision.reviewStatus === "submitted";
   const storedAnnotations = revision.annotationDraft?.annotations ??
@@ -311,7 +347,7 @@ function ClientDrawingRow({
             {decision.isPending ? "Approving…" : "Approve"}
           </button>
         ) : null}
-        {decision.isError ? (
+        {decision.isError || planRequest.isError ? (
           <p role="alert" className="client-estimate-drawing__error">
             The drawing decision could not be saved. Refresh and try again.
           </p>
@@ -333,12 +369,16 @@ function ClientDrawingRow({
             : undefined}
           onSubmitChangeRequest={canAnnotate
             ? async (document, summary) => {
-                await decision.mutateAsync({
-                  version: revision.revisionNumber,
-                  decision: "request_changes",
-                  summary,
-                  annotations: document
-                });
+                if (planPage) {
+                  await planRequest.mutateAsync({ document, summary });
+                } else {
+                  await decision.mutateAsync({
+                    version: revision.revisionNumber,
+                    decision: "request_changes",
+                    summary,
+                    annotations: document
+                  });
+                }
                 setPreviewOpen(false);
               }
             : undefined}

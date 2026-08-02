@@ -492,6 +492,23 @@ export function createEstimatePlanReviewService(input: CreateEstimatePlanReviewS
           targets: selected.map((drawingId) => ({ drawingId, requestedRevisionId: revisionByDrawing.get(drawingId), status: "open", resolvedByRevisionId: null })),
           unassigned: selected.length === 0, unassignedResolved: false, status: "open"
         }], { session });
+        const requestedRevisionIds = selected
+          .map((drawingId) => revisionByDrawing.get(drawingId))
+          .filter((revisionId): revisionId is string => Boolean(revisionId));
+        if (requestedRevisionIds.length) {
+          await EstimateDesignRevisionModel.updateMany(
+            { _id: { $in: requestedRevisionIds }, reviewStatus: { $in: ["submitted", "approved"] } },
+            {
+              $set: {
+                reviewStatus: "changes_requested",
+                reviewerId: user.id,
+                reviewedAt: now(),
+                changeSummary: request.summary.trim()
+              }
+            },
+            { session }
+          );
+        }
         const estimate = await EstimateModel.findById(estimateId).session(session).lean();
         if (estimate) {
           const recipientIds = [estimate.ownerId, estimate.assignedManagerId, estimate.assignedDesignerId]

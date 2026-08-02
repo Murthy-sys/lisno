@@ -79,6 +79,8 @@ describe("client estimate plan review service", () => {
     const replay = await api.submitRequest(client, "page-1", input);
     expect(replay.id).toBe(first.id);
     expect(await EstimatePlanChangeRequestModel.countDocuments()).toBe(1);
+    expect((await EstimateDesignRevisionModel.findById("revision-a").lean())!.reviewStatus).toBe("changes_requested");
+    expect((await EstimateDesignRevisionModel.findById("revision-b").lean())!.reviewStatus).toBe("submitted");
     const estimate = await EstimateModel.findById("estimate-1").lean();
     expect(estimate!.notifications).toEqual([expect.objectContaining({
       recipientEmail: "owner@example.com", event: "estimate_plan_changes_requested", status: "queued"

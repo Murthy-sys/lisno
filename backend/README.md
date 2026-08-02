@@ -1,5 +1,7 @@
 # Lisno backend
 
+See [Full-plan design review](../docs/estimate-full-plan-review.md) for the synchronized client/staff plan workflow, recovery, and demo checklist.
+
 The backend owns estimate authorization, immutable design artifacts, OCR job
 leases, drawing/revision state, client decisions, and final project creation.
 MongoDB must run as a replica set because upload publication, drawing review,
