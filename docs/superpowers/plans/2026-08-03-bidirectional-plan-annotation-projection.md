@@ -227,7 +227,7 @@ git commit -m "fix: project drawing annotations into full plan"
 - Consumes: canonical upload filter, shared annotation projection, and existing `advanceForDrawingRevision` patch composition.
 - Produces: regression evidence for the complete client-to-staff-to-client path.
 
-- [ ] **Step 1: Add a targeted replacement image assertion**
+- [x] **Step 1: Add a targeted replacement image assertion**
 
 In the composite test, retain two original patches, replace drawing A, and assert:
 
@@ -239,11 +239,11 @@ expect(next.patches).toEqual([
 expect(await EstimatePlanPageRevisionModel.distinct("sourcePageId")).toEqual(["page-1"]);
 ```
 
-- [ ] **Step 2: Add the client journey assertion**
+- [x] **Step 2: Add the client journey assertion**
 
 Exercise an extracted annotation request, refresh plan and drawing workspaces, assert the mark is visible in Full Design on the original page, upload the targeted replacement, then assert the replacement revision image is used while the original plan still exposes the same page IDs and count.
 
-- [ ] **Step 3: Run focused end-to-end tests**
+- [x] **Step 3: Run focused end-to-end tests**
 
 Run backend: `npm test -- --run tests/estimate-plan-composite.test.ts tests/estimate-plan-review-client.test.ts`
 
@@ -251,7 +251,7 @@ Run frontend: `VITE_API_URL=/api/v1 npm test -- --run src/features/estimates/est
 
 Expected: all focused tests pass.
 
-- [ ] **Step 4: Run complete verification**
+- [x] **Step 4: Run complete verification**
 
 Backend:
 
@@ -271,7 +271,7 @@ npm run build
 
 Expected: zero failures and successful production builds.
 
-- [ ] **Step 5: Mark this plan complete, commit, and push the feature branch**
+- [x] **Step 5: Mark this plan complete, commit, and push the feature branch**
 
 ```bash
 git add backend frontend docs/superpowers/plans/2026-08-03-bidirectional-plan-annotation-projection.md

@@ -92,12 +92,17 @@ describe("estimate plan selective composition", () => {
       targets: [{ drawingId: "drawing-a", requestedRevisionId: "revision-a1", status: "open", resolvedByRevisionId: null }],
       unassigned: false, unassignedResolved: false, status: "open"
     });
-    await EstimateDesignRevisionModel.create({ _id: "revision-a2", drawingId: "drawing-a", revisionNumber: 2, sourcePageId: "page-1", crop: { x: 0, y: 0, width: 40, height: 50 }, croppedFileReference: "a2.png", roomId: null, scopeSectionId: null, catalogueId: null, mappingStatus: "misc", label: "A", reviewStatus: "submitted", replacesRevisionId: "revision-a1" });
+    await EstimateDesignRevisionModel.create({ _id: "revision-a2", drawingId: "drawing-a", revisionNumber: 2, sourcePageId: "replacement-page", crop: { x: 0, y: 0, width: 80, height: 100 }, croppedFileReference: "a2.png", roomId: null, scopeSectionId: null, catalogueId: null, mappingStatus: "misc", label: "A", reviewStatus: "submitted", replacesRevisionId: "revision-a1" });
     await api.advanceForDrawingRevision("revision-a2");
     const manifests = await EstimatePlanPageRevisionModel.find({ sourcePageId: "page-1" }).sort({ revisionNumber: 1 }).lean();
     expect(manifests).toHaveLength(2);
     expect(manifests[0]!.patches.map((patch: any) => patch.drawingRevisionId)).toEqual(["revision-a1", "revision-b1"]);
     expect(manifests[1]!.patches.map((patch: any) => patch.drawingRevisionId)).toEqual(["revision-a2", "revision-b1"]);
+    expect(manifests[1]!.patches).toEqual([
+      expect.objectContaining({ drawingId: "drawing-a", drawingRevisionId: "revision-a2", crop: { x: 0, y: 0, width: 40, height: 50 } }),
+      expect.objectContaining({ drawingId: "drawing-b", drawingRevisionId: "revision-b1", crop: { x: 60, y: 0, width: 40, height: 50 } })
+    ]);
+    expect(await EstimatePlanPageRevisionModel.distinct("sourcePageId")).toEqual(["page-1"]);
     expect((await EstimateDesignRevisionModel.findById("revision-b1").lean())!.reviewStatus).toBe("approved");
     const request = await EstimatePlanChangeRequestModel.findById("request-a").lean();
     expect(request!.version).toBe(2);

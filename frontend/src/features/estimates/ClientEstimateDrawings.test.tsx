@@ -282,6 +282,29 @@ describe("client estimate drawings", () => {
     expect(projectDrawingAnnotationsToPage(planPage, drawingWorkspace, submitted)).toEqual([
       expect.objectContaining({ id: "request:request-1:crop-note", x: 0.4, y: 0.3125 })
     ]);
+
+    const replacementRevision = {
+      ...draftRevision,
+      id: "revision-living-2",
+      revisionNumber: 2,
+      sourcePageId: "replacement-page",
+      crop: { x: 0, y: 0, width: 800, height: 600 },
+      replacesRevisionId: "revision-living",
+      annotationDraft: {
+        ...draftRevision.annotationDraft,
+        id: "draft-2",
+        revisionId: "revision-living-2",
+        annotations: { ...draftRevision.annotationDraft.annotations, imageWidth: 800, imageHeight: 600 }
+      }
+    };
+    const replacementWorkspace = {
+      ...drawingWorkspace,
+      pages: [...drawingWorkspace.pages, { ...page, id: "replacement-page", uploadId: "replacement-upload", width: 800, height: 600 }],
+      revisions: [{ ...draftRevision, annotationDraft: null }, replacementRevision]
+    };
+    expect(projectDrawingAnnotationsToPage(planPage, replacementWorkspace, planWorkspace)).toEqual([
+      expect.objectContaining({ id: "drawing:revision-living-2:crop-note", x: 0.4, y: 0.3125 })
+    ]);
   });
 
   it("loads drawings only inside the matching expanded estimate and keeps preview expansion state", async () => {
