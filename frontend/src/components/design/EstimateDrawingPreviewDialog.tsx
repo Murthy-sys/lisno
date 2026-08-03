@@ -18,11 +18,18 @@ export interface EstimateDrawingPreviewDialogProps {
   annotations: AnnotationDocumentV1;
   sharedAnnotations?: AnnotationDocumentV1["elements"];
   sharedComments?: SharedChangeRequestComment[];
+  editableRequest?: EditableChangeRequest;
   canAnnotate: boolean;
   navigation?: ReactNode;
   onClose: () => void;
   onSaveDraft?: (document: AnnotationDocumentV1) => void | Promise<void>;
   onSubmitChangeRequest?: (
+    document: AnnotationDocumentV1,
+    summary: string
+  ) => void | Promise<void>;
+  onUpdateChangeRequest?: (
+    requestId: string,
+    version: number,
     document: AnnotationDocumentV1,
     summary: string
   ) => void | Promise<void>;
@@ -33,6 +40,12 @@ export interface SharedChangeRequestComment {
   summary: string;
   status: string;
   source: "plan" | "drawing";
+}
+
+export interface EditableChangeRequest {
+  id: string;
+  version: number;
+  summary: string;
 }
 
 function fingerprint(document: AnnotationDocumentV1) {
@@ -47,24 +60,28 @@ export function EstimateDrawingPreviewDialog({
   annotations,
   sharedAnnotations = [],
   sharedComments = [],
+  editableRequest,
   canAnnotate,
   navigation,
   onClose,
   onSaveDraft,
-  onSubmitChangeRequest
+  onSubmitChangeRequest,
+  onUpdateChangeRequest
 }: EstimateDrawingPreviewDialogProps) {
   const [imageSource, setImageSource] = useState<string>();
   const [document, setDocument] = useState(annotations);
   const [savedFingerprint, setSavedFingerprint] = useState(() => fingerprint(annotations));
-  const [summary, setSummary] = useState("");
+  const [summary, setSummary] = useState(editableRequest?.summary ?? "");
+  const [savedSummary, setSavedSummary] = useState(editableRequest?.summary.trim() ?? "");
   const [confirmClose, setConfirmClose] = useState(false);
   const [busy, setBusy] = useState<"save" | "submit">();
   const [error, setError] = useState("");
   const annotationsDirty = fingerprint(document) !== savedFingerprint;
-  const dirty = annotationsDirty || summary.trim().length > 0;
+  const summaryDirty = summary.trim() !== savedSummary;
+  const dirty = annotationsDirty || summaryDirty;
   const requestHistory = [...new Map(sharedComments
     .map((comment) => ({ ...comment, summary: comment.summary.trim() }))
-    .filter((comment) => comment.summary)
+    .filter((comment) => comment.summary && comment.id !== editableRequest?.id)
     .map((comment) => [comment.id, comment])).values()];
 
   function requestClose() {
@@ -111,6 +128,25 @@ export function EstimateDrawingPreviewDialog({
       setSummary("");
     } catch {
       setError("The change request could not be submitted. Try again.");
+    } finally {
+      setBusy(undefined);
+    }
+  }
+
+  async function updateChangeRequest() {
+    if (!editableRequest || !onUpdateChangeRequest || !summary.trim() || document.elements.length === 0 || !dirty) return;
+    if (!isAnnotationDocumentWithinByteLimit(document)) {
+      setError("Annotations exceed the 256 KiB limit. Remove or shorten markings before submitting.");
+      return;
+    }
+    setBusy("submit");
+    setError("");
+    try {
+      await onUpdateChangeRequest(editableRequest.id, editableRequest.version, document, summary.trim());
+      setSavedFingerprint(fingerprint(document));
+      setSavedSummary(summary.trim());
+    } catch {
+      setError("The change request changed or could not be updated. Refresh and try again.");
     } finally {
       setBusy(undefined);
     }
@@ -207,10 +243,12 @@ export function EstimateDrawingPreviewDialog({
                 <button
                   type="button"
                   className="button button--primary"
-                  onClick={() => void submitChangeRequest()}
-                  disabled={!onSubmitChangeRequest || busy !== undefined || !summary.trim() || document.elements.length === 0}
+                  onClick={() => void (editableRequest ? updateChangeRequest() : submitChangeRequest())}
+                  disabled={editableRequest
+                    ? !onUpdateChangeRequest || busy !== undefined || !summary.trim() || document.elements.length === 0 || !dirty
+                    : !onSubmitChangeRequest || busy !== undefined || !summary.trim() || document.elements.length === 0}
                 >
-                  {busy === "submit" ? "Submitting…" : "Submit change request"}
+                  {busy === "submit" ? (editableRequest ? "Updating…" : "Submitting…") : (editableRequest ? "Update change request" : "Submit change request")}
                 </button>
               </div>
             ) : null}

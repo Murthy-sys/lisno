@@ -78,27 +78,27 @@ git commit -m "feat: update one open client plan request"
 - Adds: `EstimateDrawingPreviewDialogProps.editableRequest` and `onUpdateChangeRequest`.
 - Adds: `updateClientPlanChangeRequest(requestId, input)`.
 
-- [ ] **Step 1: Write a failing client edit-mode test**
+- [x] **Step 1: Write a failing client edit-mode test**
 
 Render an editable request and assert its summary prefills Change summary, Requested changes history is hidden for that request, the primary button reads Update change request, and the update callback receives the same request ID/version plus edited summary and annotations. Assert no create callback fires.
 
-- [ ] **Step 2: Run the dialog test and verify RED**
+- [x] **Step 2: Run the dialog test and verify RED**
 
 Run: `VITE_API_URL=/api/v1 npm test -- --run src/components/design/EstimateDrawingPreviewDialog.test.tsx`
 
 Expected: FAIL because editable request mode does not exist.
 
-- [ ] **Step 3: Implement edit mode**
+- [x] **Step 3: Implement edit mode**
 
 Initialize summary from `editableRequest.summary`, exclude its ID from read-only history, change the primary action copy/callback, keep draft persistence independent, and surface stale updates through the existing error region.
 
-- [ ] **Step 4: Run the dialog test and verify GREEN**
+- [x] **Step 4: Run the dialog test and verify GREEN**
 
 Run: `VITE_API_URL=/api/v1 npm test -- --run src/components/design/EstimateDrawingPreviewDialog.test.tsx`
 
 Expected: all dialog tests pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add frontend/src/components/design/EstimateDrawingPreviewDialog.tsx frontend/src/components/design/EstimateDrawingPreviewDialog.test.tsx frontend/src/features/leads/estimateDesignApi.ts

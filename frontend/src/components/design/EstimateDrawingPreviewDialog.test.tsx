@@ -147,6 +147,29 @@ describe("EstimateDrawingPreviewDialog", () => {
     expect(JSON.stringify(onSubmitChangeRequest.mock.calls[0])).not.toContain("Move the cabinet left");
   });
 
+  it("edits one existing client request instead of offering another submission", async () => {
+    const onSubmitChangeRequest = vi.fn();
+    const onUpdateChangeRequest = vi.fn();
+    render(<EstimateDrawingPreviewDialog {...previewProps({
+      annotations: markedDocument,
+      editableRequest: { id: "request-1", version: 3, summary: "Move the cabinet left" },
+      sharedComments: [{ id: "request-1", summary: "Move the cabinet left", status: "open", source: "plan" }],
+      onSubmitChangeRequest,
+      onUpdateChangeRequest
+    })} />);
+
+    expect(screen.queryByText("Requested changes")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Submit change request" })).not.toBeInTheDocument();
+    const summary = screen.getByLabelText("Change summary");
+    expect(summary).toHaveValue("Move the cabinet left");
+    await userEvent.clear(summary);
+    await userEvent.type(summary, "Use the revised cabinet width");
+    await userEvent.click(screen.getByRole("button", { name: "Update change request" }));
+
+    expect(onUpdateChangeRequest).toHaveBeenCalledWith("request-1", 3, markedDocument, "Use the revised cabinet width");
+    expect(onSubmitChangeRequest).not.toHaveBeenCalled();
+  });
+
   it("renders projected annotations read-only without persisting them in the editable draft", async () => {
     const onSaveDraft = vi.fn();
     render(<EstimateDrawingPreviewDialog {...previewProps({

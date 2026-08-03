@@ -165,6 +165,12 @@ export const submitClientPlanChangeRequest = (pageId: string, input: {
   targetDrawingIds: string[]; snapshotToken: string; idempotencyKey: string;
 }) => apiClient.post<EstimatePlanChangeRequest>(`/client/estimate-plan-pages/${encodeURIComponent(pageId)}/change-requests`, input);
 
+export const updateClientPlanChangeRequest = (requestId: string, input: {
+  version: number;
+  summary: string;
+  annotations: AnnotationDocumentV1;
+}) => apiClient.put<EstimatePlanChangeRequest>(`/client/estimate-plan-change-requests/${encodeURIComponent(requestId)}`, input);
+
 export const getEstimatePlanChangeRequests = (filters: { estimateId?: string; status?: "open" | "resolved" } = {}) => {
   const query = new URLSearchParams();
   if (filters.estimateId) query.set("estimateId", filters.estimateId);
