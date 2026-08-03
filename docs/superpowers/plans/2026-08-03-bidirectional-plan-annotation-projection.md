@@ -30,7 +30,7 @@
 - Consumes: `EstimateDesignUpload.replacementDrawingId` and `EstimateDesignUpload.replacesRevisionId`.
 - Produces: `pageRows(user, estimateId)` containing only original uploads and their source pages.
 
-- [ ] **Step 1: Write the failing six-page regression test**
+- [x] **Step 1: Write the failing six-page regression test**
 
 Create six original source pages plus one completed replacement upload/source page, then assert:
 
@@ -43,13 +43,13 @@ expect(workspace.pages.map((page) => page.id)).toEqual([
 expect(workspace.pages).not.toContainEqual(expect.objectContaining({ id: "replacement-page" }));
 ```
 
-- [ ] **Step 2: Run the backend tests and verify RED**
+- [x] **Step 2: Run the backend tests and verify RED**
 
 Run: `npm test -- --run tests/estimate-plan-review-client.test.ts tests/estimate-plan-composite.test.ts`
 
 Expected: the plan-review test reports seven pages or a second upload because `pageRows` currently queries every estimate upload.
 
-- [ ] **Step 3: Filter canonical uploads at the query boundary**
+- [x] **Step 3: Filter canonical uploads at the query boundary**
 
 Change the upload query used by `pageRows` to:
 
@@ -63,13 +63,13 @@ const uploads = await EstimateDesignUploadModel.find({
 
 Do not filter source pages after querying; deriving them only from canonical upload IDs prevents replacement assets from leaking into flat pages or upload groups.
 
-- [ ] **Step 4: Run the focused backend tests and verify GREEN**
+- [x] **Step 4: Run the focused backend tests and verify GREEN**
 
 Run: `npm test -- --run tests/estimate-plan-review-client.test.ts tests/estimate-plan-composite.test.ts`
 
 Expected: all focused tests pass, including selective patch preservation.
 
-- [ ] **Step 5: Commit the canonical-page fix**
+- [x] **Step 5: Commit the canonical-page fix**
 
 ```bash
 git add backend/src/services/estimate-plan-review.service.ts backend/tests/estimate-plan-review-client.test.ts backend/tests/estimate-plan-composite.test.ts

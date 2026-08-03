@@ -269,7 +269,11 @@ export function createEstimatePlanReviewService(input: CreateEstimatePlanReviewS
 
   async function pageRows(user: AuthenticatedUser, estimateId: string) {
     await input.estimateDesigns.listClient(user, estimateId);
-    const uploads = await EstimateDesignUploadModel.find({ estimateId }).sort({ uploadedAt: 1, _id: 1 }).lean();
+    const uploads = await EstimateDesignUploadModel.find({
+      estimateId,
+      replacementDrawingId: null,
+      replacesRevisionId: null
+    }).sort({ uploadedAt: 1, _id: 1 }).lean();
     const uploadOrder = new Map(uploads.map((upload, index) => [dtoId(upload._id), index]));
     const pages = await EstimateDesignSourcePageModel.find({ uploadId: { $in: uploads.map((upload) => upload._id) } }).lean();
     pages.sort((left, right) =>

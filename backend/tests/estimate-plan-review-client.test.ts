@@ -49,15 +49,41 @@ beforeEach(async () => {
 
 describe("client estimate plan review service", () => {
   it("bootstraps one immutable page manifest and returns protected DTOs", async () => {
+    await EstimateDesignSourcePageModel.create(Array.from({ length: 5 }, (_, index) => ({
+      _id: `page-${index + 2}`,
+      uploadId: "upload-1",
+      pageNumber: index + 2,
+      normalizedFileReference: `base-${index + 2}.png`,
+      width: 1000,
+      height: 500
+    })));
+    await EstimateDesignUploadModel.create({
+      _id: "replacement-upload",
+      estimateId: "estimate-1",
+      leadId: "lead-1",
+      originalFilename: "replacement.png",
+      storedFileReference: "replacement.png",
+      mimeType: "image/png",
+      sizeBytes: 100,
+      uploaderId: "estimator-1",
+      uploadedAt: new Date("2026-08-03T11:00:00.000Z"),
+      extractionStatus: "submitted",
+      replacementDrawingId: "drawing-a",
+      replacesRevisionId: "revision-a",
+      replacementVersion: 1
+    });
+    await EstimateDesignSourcePageModel.create({ _id: "replacement-page", uploadId: "replacement-upload", pageNumber: 1, normalizedFileReference: "replacement.png", width: 400, height: 300 });
     const workspace = await service().listClient(client, "estimate-1");
     expect(workspace.uploads).toEqual([{
       id: "upload-1",
       originalFilename: "plan.pdf",
       mimeType: "application/pdf",
-      pageCount: 1,
-      pages: [expect.objectContaining({ id: "page-1", pageNumber: 1 })]
+      pageCount: 6,
+      pages: expect.arrayContaining([expect.objectContaining({ id: "page-1", pageNumber: 1 }), expect.objectContaining({ id: "page-6", pageNumber: 6 })])
     }]);
-    expect(workspace.pages).toEqual([expect.objectContaining({ id: "page-1", currentRevisionId: expect.any(String), thumbnailUrl: "/client/estimate-plan-pages/page-1/thumbnail" })]);
+    expect(workspace.pages.map((page) => page.id)).toEqual(["page-1", "page-2", "page-3", "page-4", "page-5", "page-6"]);
+    expect(workspace.pages).not.toContainEqual(expect.objectContaining({ id: "replacement-page" }));
+    expect(workspace.pages[0]).toEqual(expect.objectContaining({ id: "page-1", currentRevisionId: expect.any(String), thumbnailUrl: "/client/estimate-plan-pages/page-1/thumbnail" }));
     expect(JSON.stringify(workspace)).not.toContain("base.png");
     expect(await EstimatePlanPageRevisionModel.countDocuments({ sourcePageId: "page-1" })).toBe(1);
   });
