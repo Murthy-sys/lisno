@@ -29,17 +29,17 @@
 - Produces: `SharedChangeRequestComment` and `EstimateDrawingPreviewDialogProps.sharedComments?: SharedChangeRequestComment[]`.
 - Guarantees: callbacks continue receiving only `(AnnotationDocumentV1)` or `(AnnotationDocumentV1, newSummary)`.
 
-- [ ] **Step 1: Write a failing dialog test**
+- [x] **Step 1: Write a failing dialog test**
 
 Render two identical `sharedComments` entries with ID `request-1`, assert `Requested changes` and the summary appear once, assert Change summary remains empty, then save and submit and assert neither callback payload contains the historical summary.
 
-- [ ] **Step 2: Run the dialog test and verify RED**
+- [x] **Step 2: Run the dialog test and verify RED**
 
 Run: `VITE_API_URL=/api/v1 npm test -- --run src/components/design/EstimateDrawingPreviewDialog.test.tsx`
 
 Expected: FAIL because `sharedComments` is not supported.
 
-- [ ] **Step 3: Add the read-only history**
+- [x] **Step 3: Add the read-only history**
 
 Export:
 
@@ -54,13 +54,13 @@ export interface SharedChangeRequestComment {
 
 Normalize by trimming summaries, dropping blanks, and retaining the first item for each ID. Render the list above the editable Change summary control under a `Requested changes` heading. Do not add it to component state.
 
-- [ ] **Step 4: Run the dialog test and verify GREEN**
+- [x] **Step 4: Run the dialog test and verify GREEN**
 
 Run: `VITE_API_URL=/api/v1 npm test -- --run src/components/design/EstimateDrawingPreviewDialog.test.tsx`
 
 Expected: all dialog tests pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add frontend/src/components/design/EstimateDrawingPreviewDialog.tsx frontend/src/components/design/EstimateDrawingPreviewDialog.test.tsx frontend/src/styles/index.css

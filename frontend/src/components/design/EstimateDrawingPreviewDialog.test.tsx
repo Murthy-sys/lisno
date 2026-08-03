@@ -125,6 +125,28 @@ async function addTextNote() {
 }
 
 describe("EstimateDrawingPreviewDialog", () => {
+  it("shows deduplicated request history without prefilling or resubmitting it", async () => {
+    const onSubmitChangeRequest = vi.fn();
+    render(<EstimateDrawingPreviewDialog {...previewProps({
+      annotations: markedDocument,
+      sharedComments: [
+        { id: "request-1", summary: "Move the cabinet left", status: "open", source: "plan" },
+        { id: "request-1", summary: "Move the cabinet left", status: "open", source: "plan" },
+        { id: "request-blank", summary: "   ", status: "open", source: "drawing" }
+      ],
+      onSubmitChangeRequest
+    })} />);
+
+    expect(screen.getByRole("heading", { name: "Requested changes" })).toBeVisible();
+    expect(screen.getAllByText("Move the cabinet left")).toHaveLength(1);
+    expect(screen.getByLabelText("Change summary")).toHaveValue("");
+
+    await userEvent.type(screen.getByLabelText("Change summary"), "Use the revised width");
+    await userEvent.click(screen.getByRole("button", { name: "Submit change request" }));
+    expect(onSubmitChangeRequest).toHaveBeenCalledWith(markedDocument, "Use the revised width");
+    expect(JSON.stringify(onSubmitChangeRequest.mock.calls[0])).not.toContain("Move the cabinet left");
+  });
+
   it("renders projected annotations read-only without persisting them in the editable draft", async () => {
     const onSaveDraft = vi.fn();
     render(<EstimateDrawingPreviewDialog {...previewProps({

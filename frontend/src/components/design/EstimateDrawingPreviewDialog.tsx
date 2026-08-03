@@ -17,6 +17,7 @@ export interface EstimateDrawingPreviewDialogProps {
   imageHeight: number;
   annotations: AnnotationDocumentV1;
   sharedAnnotations?: AnnotationDocumentV1["elements"];
+  sharedComments?: SharedChangeRequestComment[];
   canAnnotate: boolean;
   navigation?: ReactNode;
   onClose: () => void;
@@ -25,6 +26,13 @@ export interface EstimateDrawingPreviewDialogProps {
     document: AnnotationDocumentV1,
     summary: string
   ) => void | Promise<void>;
+}
+
+export interface SharedChangeRequestComment {
+  id: string;
+  summary: string;
+  status: string;
+  source: "plan" | "drawing";
 }
 
 function fingerprint(document: AnnotationDocumentV1) {
@@ -38,6 +46,7 @@ export function EstimateDrawingPreviewDialog({
   imageHeight,
   annotations,
   sharedAnnotations = [],
+  sharedComments = [],
   canAnnotate,
   navigation,
   onClose,
@@ -53,6 +62,10 @@ export function EstimateDrawingPreviewDialog({
   const [error, setError] = useState("");
   const annotationsDirty = fingerprint(document) !== savedFingerprint;
   const dirty = annotationsDirty || summary.trim().length > 0;
+  const requestHistory = [...new Map(sharedComments
+    .map((comment) => ({ ...comment, summary: comment.summary.trim() }))
+    .filter((comment) => comment.summary)
+    .map((comment) => [comment.id, comment])).values()];
 
   function requestClose() {
     if (dirty) {
@@ -158,6 +171,19 @@ export function EstimateDrawingPreviewDialog({
             )}
           </div>
           <aside className="estimate-drawing-preview-dialog__controls" aria-label="Drawing view controls">
+            {requestHistory.length ? (
+              <section className="estimate-drawing-preview-dialog__request-history" aria-labelledby="drawing-request-history-title">
+                <h3 id="drawing-request-history-title">Requested changes</h3>
+                <ul>
+                  {requestHistory.map((comment) => (
+                    <li key={comment.id}>
+                      <p>{comment.summary}</p>
+                      <small>{comment.status.replaceAll("_", " ")}</small>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            ) : null}
             {canAnnotate ? (
               <div className="estimate-drawing-preview-dialog__review-actions">
                 <label>
