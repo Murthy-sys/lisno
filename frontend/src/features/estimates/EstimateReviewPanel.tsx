@@ -29,7 +29,8 @@ import {
 import {
   ClientEstimateDrawings,
   clientDrawingReadinessId,
-  projectDrawingAnnotationsToPage
+  projectDrawingAnnotationsToPage,
+  projectDrawingCommentsToPage
 } from "./ClientEstimateDrawings";
 import { clientKeys } from "../client/clientApi";
 import type { EstimatePlanPage } from "../../api/types";
@@ -254,6 +255,9 @@ function EstimateReviewCard({
             page={selectedPlanPage}
             sharedAnnotations={drawingWorkspace.data && planWorkspace.data
               ? projectDrawingAnnotationsToPage(selectedPlanPage, drawingWorkspace.data, planWorkspace.data)
+              : []}
+            sharedComments={drawingWorkspace.data && planWorkspace.data
+              ? projectDrawingCommentsToPage(selectedPlanPage, drawingWorkspace.data, planWorkspace.data)
               : []}
             pages={planWorkspace.data?.uploads.find((upload) => upload.id === selectedPlanPage.uploadId)?.pages ?? [selectedPlanPage]}
             onSelectPage={setSelectedPlanPage}

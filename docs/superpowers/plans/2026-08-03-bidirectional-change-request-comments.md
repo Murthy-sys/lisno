@@ -82,7 +82,7 @@ git commit -m "feat: show mapped request comments in previews"
 - Produces: drawing-specific shared plan comments derived from `openRequests[].targets`.
 - Consumes: `EstimateDrawingPreviewDialog.sharedComments`.
 
-- [ ] **Step 1: Write failing projection tests**
+- [x] **Step 1: Write failing projection tests**
 
 Assert that:
 
@@ -92,27 +92,27 @@ projectDrawingCommentsToPage(page, drawingWorkspace, planWorkspace)
 
 returns the targeted plan request once plus the latest placed drawing revision's nonblank `changeSummary`, and that a replacement revision resolves to the original page. In a drawing preview test, assert a page request targeting that drawing appears under Requested changes while a request targeting another drawing does not.
 
-- [ ] **Step 2: Run focused tests and verify RED**
+- [x] **Step 2: Run focused tests and verify RED**
 
 Run: `VITE_API_URL=/api/v1 npm test -- --run src/features/estimates/ClientEstimateDrawings.test.tsx src/features/estimates/ClientPlanPageReview.test.tsx src/features/estimates/EstimateReviewPanel.collapsible.test.tsx`
 
 Expected: FAIL because comment projection and prop wiring do not exist.
 
-- [ ] **Step 3: Implement page-side projection**
+- [x] **Step 3: Implement page-side projection**
 
 Add `projectDrawingCommentsToPage`. Include page `openRequests` as `{ id: request.id, summary, status, source: "plan" }`. For active latest drawing revisions canonically placed on the page, include nonblank `changeSummary` as `{ id: `drawing:${revision.id}`, summary, status: revision.reviewStatus, source: "drawing" }`. Deduplicate by ID.
 
-- [ ] **Step 4: Implement extracted-side projection and wiring**
+- [x] **Step 4: Implement extracted-side projection and wiring**
 
 Derive plan comments only from requests containing a target with the current `drawingId`. Pass them to `ClientDrawingRow`, then `EstimateDrawingPreviewDialog`. Add `sharedComments` to `ClientPlanPageReview` and pass page-projected comments from `EstimateReviewPanel`.
 
-- [ ] **Step 5: Run focused tests and verify GREEN**
+- [x] **Step 5: Run focused tests and verify GREEN**
 
 Run: `VITE_API_URL=/api/v1 npm test -- --run src/features/estimates/ClientEstimateDrawings.test.tsx src/features/estimates/ClientPlanPageReview.test.tsx src/features/estimates/EstimateReviewPanel.collapsible.test.tsx`
 
 Expected: all focused tests pass with bidirectional mapped comments and replacement ancestry.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add frontend/src/features/estimates/ClientEstimateDrawings.tsx frontend/src/features/estimates/ClientEstimateDrawings.test.tsx frontend/src/features/estimates/ClientPlanPageReview.tsx frontend/src/features/estimates/ClientPlanPageReview.test.tsx frontend/src/features/estimates/EstimateReviewPanel.tsx frontend/src/features/estimates/EstimateReviewPanel.collapsible.test.tsx

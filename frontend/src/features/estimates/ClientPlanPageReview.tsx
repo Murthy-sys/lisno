@@ -1,7 +1,10 @@
 import { useState } from "react";
 
 import type { AnnotationDocumentV1, EstimatePlanPage } from "../../api/types";
-import { EstimateDrawingPreviewDialog } from "../../components/design/EstimateDrawingPreviewDialog";
+import {
+  EstimateDrawingPreviewDialog,
+  type SharedChangeRequestComment
+} from "../../components/design/EstimateDrawingPreviewDialog";
 import { Dialog } from "../../components/ui/Dialog";
 
 type TargetPreview = {
@@ -13,6 +16,7 @@ type TargetPreview = {
 export function ClientPlanPageReview({
   page,
   sharedAnnotations = [],
+  sharedComments = [],
   pages = [page],
   onSelectPage,
   canReview,
@@ -23,6 +27,7 @@ export function ClientPlanPageReview({
 }: {
   page: EstimatePlanPage;
   sharedAnnotations?: AnnotationDocumentV1["elements"];
+  sharedComments?: SharedChangeRequestComment[];
   pages?: EstimatePlanPage[];
   onSelectPage?: (page: EstimatePlanPage) => void;
   canReview: boolean;
@@ -45,6 +50,7 @@ export function ClientPlanPageReview({
         imageHeight={page.height}
         annotations={initial}
         sharedAnnotations={sharedAnnotations}
+        sharedComments={sharedComments}
         canAnnotate={canReview && page.status !== "approved"}
         navigation={<nav className="client-plan-page-navigation" aria-label="Uploaded plan pages">
           {pages.slice().sort((left, right) => left.pageNumber - right.pageNumber).map((candidate) => <button type="button" className="button button--secondary" aria-current={candidate.id === page.id ? "page" : undefined} onClick={() => onSelectPage?.(candidate)} key={candidate.id}>Page {candidate.pageNumber}</button>)}

@@ -8,7 +8,11 @@ import type {
 } from "../../api/types";
 import { tokenStorage } from "../../api/client";
 import { renderApp } from "../../test/render";
-import { projectDrawingAnnotationsToPage } from "./ClientEstimateDrawings";
+import {
+  projectDrawingAnnotationsToPage,
+  projectDrawingCommentsToPage,
+  projectPlanCommentsToDrawing
+} from "./ClientEstimateDrawings";
 
 const client = {
   id: "client-1",
@@ -282,6 +286,13 @@ describe("client estimate drawings", () => {
     expect(projectDrawingAnnotationsToPage(planPage, drawingWorkspace, submitted)).toEqual([
       expect.objectContaining({ id: "request:request-1:crop-note", x: 0.4, y: 0.3125 })
     ]);
+    expect(projectDrawingCommentsToPage(planPage, drawingWorkspace, submitted)).toEqual([
+      { id: "request-1", summary: "Move crop", status: "open", source: "plan" }
+    ]);
+    expect(projectPlanCommentsToDrawing("drawing-living", submitted)).toEqual([
+      { id: "request-1", summary: "Move crop", status: "open", source: "plan" }
+    ]);
+    expect(projectPlanCommentsToDrawing("drawing-detail", submitted)).toEqual([]);
 
     const replacementRevision = {
       ...draftRevision,
@@ -304,6 +315,12 @@ describe("client estimate drawings", () => {
     };
     expect(projectDrawingAnnotationsToPage(planPage, replacementWorkspace, planWorkspace)).toEqual([
       expect.objectContaining({ id: "drawing:revision-living-2:crop-note", x: 0.4, y: 0.3125 })
+    ]);
+    expect(projectDrawingCommentsToPage(planPage, {
+      ...replacementWorkspace,
+      revisions: [{ ...draftRevision, annotationDraft: null }, { ...replacementRevision, changeSummary: "Use revised cabinet width" }]
+    }, planWorkspace)).toEqual([
+      { id: "drawing:revision-living-2", summary: "Use revised cabinet width", status: "submitted", source: "drawing" }
     ]);
   });
 

@@ -16,9 +16,10 @@ beforeEach(() => {
 
 describe("ClientPlanPageReview", () => {
   it("shows projected drawing annotations on the original page as a shared layer", async () => {
-    render(<ClientPlanPageReview page={page} sharedAnnotations={[{ id: "drawing:revision-1:note", type: "text", x: 0.4, y: 0.3125, text: "Projected drawing note", color: "#ef4444", strokeWidth: 2 }]} canReview onClose={vi.fn()} saveDraft={vi.fn()} previewTargets={vi.fn()} submitRequest={vi.fn()} />);
+    render(<ClientPlanPageReview page={page} sharedAnnotations={[{ id: "drawing:revision-1:note", type: "text", x: 0.4, y: 0.3125, text: "Projected drawing note", color: "#ef4444", strokeWidth: 2 }]} sharedComments={[{ id: "drawing:revision-1", summary: "Raise the ceiling line", status: "changes_requested", source: "drawing" }]} canReview onClose={vi.fn()} saveDraft={vi.fn()} previewTargets={vi.fn()} submitRequest={vi.fn()} />);
     const shared = await screen.findByText("Projected drawing note");
     expect(shared).toHaveAttribute("data-shared", "true");
+    expect(screen.getByText("Raise the ceiling line")).toBeVisible();
   });
 
   it("navigates every page of the original upload in order", async () => {
