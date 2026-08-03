@@ -66,8 +66,13 @@ function conflict(message: string) {
   return new ApiError(409, "PLAN_REVIEW_CONFLICT", message);
 }
 
-function alreadyOpen(requestId: string) {
-  return new ApiError(409, "PLAN_REQUEST_ALREADY_OPEN", "A change request is already open for this design page.", { requestId });
+function alreadyOpen(requestId?: string) {
+  return new ApiError(
+    409,
+    "PLAN_REQUEST_ALREADY_OPEN",
+    "A change request is already open for this design page.",
+    requestId ? { requestId } : undefined
+  );
 }
 
 function notFound() {
@@ -631,6 +636,13 @@ export function createEstimatePlanReviewService(input: CreateEstimatePlanReviewS
       } catch (error) {
         const open = await EstimatePlanChangeRequestModel.findOne({ clientId: user.id, sourcePageId: pageId, status: "open" }).lean();
         if (open) throw alreadyOpen(dtoId(open._id));
+        const transactionRace = (error as { name?: string; path?: string; errorLabels?: string[] });
+        if (
+          (transactionRace.name === "StrictModeError" && transactionRace.path === "__v") ||
+          transactionRace.errorLabels?.includes("TransientTransactionError")
+        ) {
+          throw alreadyOpen();
+        }
         throw error;
       }
       return requestDto(saved);
