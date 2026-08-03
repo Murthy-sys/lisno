@@ -24,6 +24,11 @@ const requestSchema = z.object({
   snapshotToken: z.string().length(64),
   idempotencyKey: z.string().trim().min(1).max(128)
 }).strict();
+const updateClientRequestSchema = z.object({
+  version: z.number().int().positive(),
+  summary: z.string().trim().min(1).max(1_000),
+  annotations: annotationDocumentSchema.refine((value) => value.elements.length > 0)
+}).strict();
 const targetSchema = z.object({
   version: z.number().int().positive(),
   targetDrawingIds: z.array(z.string().trim().min(1)).min(1).max(50)
@@ -49,6 +54,9 @@ export function createEstimatePlanReviewRouter(auth: AuthService, plans: Estimat
   });
   router.post("/client/estimate-plan-pages/:pageId/change-requests", ...clientOnly, validateBody(requestSchema), async (request, response, next) => {
     try { response.status(201).json({ data: await plans.submitRequest(request.authenticatedUser!, request.params.pageId as string, request.body) }); } catch (error) { next(error); }
+  });
+  router.put("/client/estimate-plan-change-requests/:requestId", ...clientOnly, validateBody(updateClientRequestSchema), async (request, response, next) => {
+    try { response.json({ data: await plans.updateClientRequest(request.authenticatedUser!, request.params.requestId as string, request.body) }); } catch (error) { next(error); }
   });
   const staffOnly = [authenticate(auth), authorizeRoles("estimator_sales", "designer", "design_manager", "design_head")] as const;
   router.get("/estimate-plan-change-requests", ...staffOnly, async (request, response, next) => {

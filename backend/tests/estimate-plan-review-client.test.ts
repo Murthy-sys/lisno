@@ -19,13 +19,13 @@ const annotations = {
   elements: [{ id: "mark", type: "rectangle" as const, color: "#ff0000", strokeWidth: 2, x: .1, y: .1, width: .3, height: .3 }]
 };
 
-function service() {
+function service(audit = vi.fn(async () => ({}))) {
   return createEstimatePlanReviewService({
     estimateDesigns: {
       listClient: vi.fn(async () => ({ uploads: [], pages: [], drawings: [], revisions: [], readiness: { ready: false, total: 2, approved: 0, awaitingReview: 2, changesRequested: 0 } }))
     },
     storage: { open: vi.fn(), read: vi.fn(), save: vi.fn(), saveGenerated: vi.fn(), delete: vi.fn() },
-    audit: { appendInMongoTransaction: vi.fn(async () => ({})) },
+    audit: { appendInMongoTransaction: audit },
     now: () => new Date("2026-08-03T10:00:00.000Z")
   } as never);
 }
@@ -127,6 +127,51 @@ describe("client estimate plan review service", () => {
       recipientEmail: "owner@example.com", event: "estimate_plan_changes_requested", status: "queued"
     })]);
     expect(JSON.stringify(estimate!.notifications)).not.toContain("base.png");
+    await expect(api.submitRequest(client, "page-1", { ...input, idempotencyKey: "second-key" }))
+      .rejects.toMatchObject({ status: 409, code: "PLAN_REQUEST_ALREADY_OPEN", fields: { requestId: first.id } });
+  });
+
+  it("updates the same owned open request with optimistic locking and audit history", async () => {
+    const audit = vi.fn(async () => ({}));
+    const api = service(audit);
+    const preview = await api.previewTargets(client, "page-1", { annotations });
+    const created = await api.submitRequest(client, "page-1", { version: preview.pageRevisionNumber, summary: "Change A", annotations, targetDrawingIds: ["drawing-a"], snapshotToken: preview.snapshotToken, idempotencyKey: "request-key" });
+    const updatedAnnotations = { ...annotations, elements: [{ ...annotations.elements[0]!, x: .2 }] };
+
+    const updated = await api.updateClientRequest(client, created.id, {
+      version: created.version,
+      summary: "Move A farther left",
+      annotations: updatedAnnotations
+    });
+
+    expect(updated).toMatchObject({ id: created.id, version: 2, summary: "Move A farther left", annotations: updatedAnnotations, targets: created.targets });
+    expect(await EstimatePlanChangeRequestModel.countDocuments()).toBe(1);
+    expect(await EstimatePlanPageRevisionModel.countDocuments({ sourcePageId: "page-1" })).toBe(1);
+    expect(await EstimateDesignRevisionModel.findById("revision-a").lean()).toMatchObject({
+      changeSummary: "Move A farther left",
+      annotationLayerId: created.id,
+      annotations: expect.objectContaining({ imageWidth: 450, imageHeight: 500, elements: expect.any(Array) })
+    });
+    expect(audit).toHaveBeenCalledWith(expect.objectContaining({ action: "estimate_plan_change_request_updated", entityId: created.id }), expect.anything());
+    await expect(api.updateClientRequest(client, created.id, { version: 1, summary: "Stale", annotations }))
+      .rejects.toMatchObject({ status: 409 });
+    await expect(api.updateClientRequest({ ...client, id: "client-2" }, created.id, { version: 2, summary: "Not mine", annotations }))
+      .rejects.toMatchObject({ status: 404 });
+  });
+
+  it("allows only one of two simultaneous overlapping submissions", async () => {
+    const api = service();
+    const preview = await api.previewTargets(client, "page-1", { annotations });
+    const base = { version: preview.pageRevisionNumber, summary: "Change A", annotations, targetDrawingIds: ["drawing-a"], snapshotToken: preview.snapshotToken };
+    const results = await Promise.allSettled([
+      api.submitRequest(client, "page-1", { ...base, idempotencyKey: "concurrent-a" }),
+      api.submitRequest(client, "page-1", { ...base, idempotencyKey: "concurrent-b" })
+    ]);
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    expect(results.filter((result) => result.status === "rejected")).toEqual([
+      expect.objectContaining({ reason: expect.objectContaining({ status: 409, code: "PLAN_REQUEST_ALREADY_OPEN" }) })
+    ]);
+    expect(await EstimatePlanChangeRequestModel.countDocuments({ status: "open" })).toBe(1);
   });
 
   it("preserves non-overlapping annotations as unassigned feedback", async () => {

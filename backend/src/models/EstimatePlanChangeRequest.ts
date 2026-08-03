@@ -43,6 +43,10 @@ estimatePlanChangeRequestSchema.index(
   { clientId: 1, sourcePageId: 1, idempotencyKey: 1 },
   { unique: true }
 );
+estimatePlanChangeRequestSchema.index(
+  { clientId: 1, sourcePageId: 1 },
+  { unique: true, partialFilterExpression: { status: "open" } }
+);
 
 export const EstimatePlanChangeRequestModel = models.EstimatePlanChangeRequest ??
   model("EstimatePlanChangeRequest", estimatePlanChangeRequestSchema);

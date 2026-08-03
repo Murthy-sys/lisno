@@ -5,7 +5,7 @@ import mongoose from "mongoose";
 import sharp, { type OverlayOptions } from "sharp";
 
 import { annotationDocumentSchema, type AnnotationDocumentV1 } from "../domain/estimate-design.js";
-import { detectAnnotationTargets } from "../domain/estimate-plan-review.js";
+import { detectAnnotationTargets, projectAnnotationToCrop } from "../domain/estimate-plan-review.js";
 import { ApiError } from "../middleware/errors.js";
 import { EstimateDesignDrawingModel } from "../models/EstimateDesignDrawing.js";
 import { EstimateDesignAnnotationDraftModel } from "../models/EstimateDesignAnnotationDraft.js";
@@ -46,6 +46,12 @@ export interface SubmitPlanRequestInput {
   idempotencyKey: string;
 }
 
+export interface UpdateClientPlanRequestInput {
+  version: number;
+  summary: string;
+  annotations: AnnotationDocumentV1;
+}
+
 export interface UpdatePlanTargetsInput {
   version: number;
   targetDrawingIds: string[];
@@ -58,6 +64,10 @@ export interface ResolvePlanPageInput {
 
 function conflict(message: string) {
   return new ApiError(409, "PLAN_REVIEW_CONFLICT", message);
+}
+
+function alreadyOpen(requestId: string) {
+  return new ApiError(409, "PLAN_REQUEST_ALREADY_OPEN", "A change request is already open for this design page.", { requestId });
 }
 
 function notFound() {
@@ -499,9 +509,59 @@ export function createEstimatePlanReviewService(input: CreateEstimatePlanReviewS
       return preview(user, pageId, value.annotations);
     },
 
+    async updateClientRequest(user: AuthenticatedUser, requestId: string, change: UpdateClientPlanRequestInput) {
+      annotationDocumentSchema.parse(change.annotations);
+      const summary = change.summary.trim();
+      if (!summary || summary.length > 1_000 || change.annotations.elements.length === 0) {
+        throw new ApiError(400, "INVALID_PLAN_REQUEST", "A change summary and at least one annotation are required.");
+      }
+      return mongoose.connection.transaction(async (session) => {
+        const request = await EstimatePlanChangeRequestModel.findOne({ _id: requestId, clientId: user.id }).session(session);
+        if (!request) throw new ApiError(404, "PLAN_REQUEST_NOT_FOUND", "The plan change request was not found.");
+        if (request.status !== "open" || request.version !== change.version) {
+          throw conflict("The plan request changed. Refresh and try again.");
+        }
+        const previousSummary = request.summary;
+        request.set({ summary, annotations: change.annotations, version: request.version + 1 });
+        await request.save({ session });
+        const page = await EstimateDesignSourcePageModel.findById(request.sourcePageId).session(session).lean();
+        if (!page) throw notFound();
+        for (const target of request.targets) {
+          const revision = await EstimateDesignRevisionModel.findById(target.requestedRevisionId).session(session);
+          if (!revision || revision.reviewStatus !== "changes_requested") continue;
+          const elements = change.annotations.elements
+            .map((element) => projectAnnotationToCrop(element, revision.crop as never, { width: Number(page.width), height: Number(page.height) }))
+            .filter((element): element is NonNullable<typeof element> => element !== null);
+          revision.set({
+            changeSummary: summary,
+            annotationLayerId: requestId,
+            annotations: {
+              schemaVersion: 1,
+              imageWidth: Number(revision.crop.width),
+              imageHeight: Number(revision.crop.height),
+              elements
+            }
+          });
+          await revision.save({ session });
+        }
+        await input.audit.appendInMongoTransaction({
+          actorId: user.id,
+          action: "estimate_plan_change_request_updated",
+          entityType: "estimate_plan_change_request",
+          entityId: requestId,
+          occurredAt: now().toISOString(),
+          oldValues: { summary: previousSummary },
+          newValues: { summary, annotationCount: change.annotations.elements.length }
+        }, session);
+        return requestDto(request.toObject());
+      });
+    },
+
     async submitRequest(user: AuthenticatedUser, pageId: string, request: SubmitPlanRequestInput) {
       const replay = await EstimatePlanChangeRequestModel.findOne({ clientId: user.id, sourcePageId: pageId, idempotencyKey: request.idempotencyKey }).lean();
       if (replay) return requestDto(replay);
+      const existing = await EstimatePlanChangeRequestModel.findOne({ clientId: user.id, sourcePageId: pageId, status: "open" }).lean();
+      if (existing) throw alreadyOpen(dtoId(existing._id));
       const checked = await preview(user, pageId, request.annotations);
       if (checked.pageRevisionNumber !== request.version || checked.snapshotToken !== request.snapshotToken) throw conflict("The plan page changed. Review the detected drawings again.");
       const candidates = new Set(checked.targets.map((target) => target.drawingId));
@@ -513,9 +573,13 @@ export function createEstimatePlanReviewService(input: CreateEstimatePlanReviewS
       const page = await EstimateDesignSourcePageModel.findById(pageId).lean();
       const rows = await latestDrawingRows(estimateId, pageId);
       const revisionByDrawing = new Map(rows.map((row) => [dtoId(row.drawing._id), dtoId(row.revision._id)]));
-      const saved = await mongoose.connection.transaction(async (session) => {
+      let saved: Record<string, any>;
+      try {
+        saved = await mongoose.connection.transaction(async (session) => {
         const again = await EstimatePlanChangeRequestModel.findOne({ clientId: user.id, sourcePageId: pageId, idempotencyKey: request.idempotencyKey }).session(session).lean();
         if (again) return again;
+        const open = await EstimatePlanChangeRequestModel.findOne({ clientId: user.id, sourcePageId: pageId, status: "open" }).session(session).lean();
+        if (open) throw alreadyOpen(dtoId(open._id));
         const [created] = await EstimatePlanChangeRequestModel.create([{
           _id: `plan-request-${randomUUID()}`, estimateId, uploadId: dtoId(page!.uploadId), sourcePageId: pageId,
           clientId: user.id, idempotencyKey: request.idempotencyKey, version: 1,
@@ -562,8 +626,13 @@ export function createEstimatePlanReviewService(input: CreateEstimatePlanReviewS
           }
         }
         await input.audit.appendInMongoTransaction({ actorId: user.id, action: "estimate_plan_changes_requested", entityType: "estimate_plan_change_request", entityId: dtoId(created!._id), occurredAt: now().toISOString(), newValues: { estimateId, sourcePageId: pageId, targetCount: selected.length, unassigned: selected.length === 0, annotationCount: request.annotations.elements.length } }, session);
-        return created!.toObject();
-      });
+          return created!.toObject();
+        });
+      } catch (error) {
+        const open = await EstimatePlanChangeRequestModel.findOne({ clientId: user.id, sourcePageId: pageId, status: "open" }).lean();
+        if (open) throw alreadyOpen(dtoId(open._id));
+        throw error;
+      }
       return requestDto(saved);
     }
   };

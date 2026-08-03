@@ -31,35 +31,35 @@
 - Produces: `plans.updateClientRequest(user, requestId, input)`.
 - Adds: `PUT /client/estimate-plan-change-requests/:requestId`.
 
-- [ ] **Step 1: Write failing service and route tests**
+- [x] **Step 1: Write failing service and route tests**
 
 Prove the owner can update summary and annotations on the same request ID, version increments, targets remain byte-for-byte equal, requested revisions synchronize, and an audit event is written. Prove another client, a stale version, and a resolved request cannot update it.
 
-- [ ] **Step 2: Write the failing duplicate/concurrency tests**
+- [x] **Step 2: Write the failing duplicate/concurrency tests**
 
 Submit overlapping requests from page and extracted contexts and assert only one open request exists. Run two simultaneous submissions and assert one succeeds while one returns 409.
 
-- [ ] **Step 3: Run tests and verify RED**
+- [x] **Step 3: Run tests and verify RED**
 
 Run: `npm test -- --run tests/estimate-plan-review-client.test.ts`
 
 Expected: FAIL because update endpoint and open-request uniqueness do not exist.
 
-- [ ] **Step 4: Implement the database and service contract**
+- [x] **Step 4: Implement the database and service contract**
 
 Add a partial unique index on `{ clientId: 1, sourcePageId: 1 }` where `status: "open"`. Before submission, query for an open request and throw `PLAN_REQUEST_ALREADY_OPEN` with `{ requestId }`. Translate duplicate-key insertion into the same 409. Implement the owner-only versioned update transaction, request/revision synchronization, and `estimate_plan_change_request_updated` audit event.
 
-- [ ] **Step 5: Add the validated route**
+- [x] **Step 5: Add the validated route**
 
 Validate `version` as a positive integer, `summary` as trimmed 1–1,000 characters, and `annotations` as a non-empty annotation document. Return the updated request DTO.
 
-- [ ] **Step 6: Run tests and verify GREEN**
+- [x] **Step 6: Run tests and verify GREEN**
 
 Run: `npm test -- --run tests/estimate-plan-review-client.test.ts tests/estimate-plan-composite.test.ts`
 
 Expected: all tests pass and canonical page/replacement behavior is unchanged.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add backend/src/models/EstimatePlanChangeRequest.ts backend/src/routes/estimate-plan-review.ts backend/src/services/estimate-plan-review.service.ts backend/tests/estimate-plan-review-client.test.ts
