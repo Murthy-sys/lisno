@@ -120,7 +120,16 @@ describe("client estimate plan review service", () => {
     expect(await EstimatePlanChangeRequestModel.countDocuments()).toBe(1);
     expect((await api.listClient(client, "estimate-1")).pages[0]!.annotationDraft).toBeNull();
     expect(await EstimateDesignAnnotationDraftModel.countDocuments({ revisionId: "revision-a" })).toBe(0);
-    expect((await EstimateDesignRevisionModel.findById("revision-a").lean())!.reviewStatus).toBe("changes_requested");
+    expect(await EstimateDesignRevisionModel.findById("revision-a").lean()).toMatchObject({
+      reviewStatus: "changes_requested",
+      changeSummary: "Change A",
+      annotationLayerId: first.id,
+      annotations: expect.objectContaining({
+        imageWidth: 450,
+        imageHeight: 500,
+        elements: [expect.objectContaining({ id: "mark", type: "rectangle" })]
+      })
+    });
     expect((await EstimateDesignRevisionModel.findById("revision-b").lean())!.reviewStatus).toBe("submitted");
     const estimate = await EstimateModel.findById("estimate-1").lean();
     expect(estimate!.notifications).toEqual([expect.objectContaining({

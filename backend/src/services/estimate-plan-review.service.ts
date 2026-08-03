@@ -600,18 +600,30 @@ export function createEstimatePlanReviewService(input: CreateEstimatePlanReviewS
           EstimateDesignAnnotationDraftModel.deleteMany({ clientId: user.id, revisionId: { $in: requestedRevisionIds } }).session(session)
         ]);
         if (requestedRevisionIds.length) {
-          await EstimateDesignRevisionModel.updateMany(
-            { _id: { $in: requestedRevisionIds }, reviewStatus: { $in: ["submitted", "approved"] } },
-            {
-              $set: {
-                reviewStatus: "changes_requested",
-                reviewerId: user.id,
-                reviewedAt: now(),
-                changeSummary: request.summary.trim()
+          for (const revisionId of requestedRevisionIds) {
+            const revision = await EstimateDesignRevisionModel.findOne({
+              _id: revisionId,
+              reviewStatus: { $in: ["submitted", "approved"] }
+            }).session(session);
+            if (!revision) continue;
+            const elements = request.annotations.elements
+              .map((element) => projectAnnotationToCrop(element, revision.crop as never, { width: Number(page!.width), height: Number(page!.height) }))
+              .filter((element): element is NonNullable<typeof element> => element !== null);
+            revision.set({
+              reviewStatus: "changes_requested",
+              reviewerId: user.id,
+              reviewedAt: now(),
+              changeSummary: request.summary.trim(),
+              annotationLayerId: dtoId(created!._id),
+              annotations: {
+                schemaVersion: 1,
+                imageWidth: Number(revision.crop.width),
+                imageHeight: Number(revision.crop.height),
+                elements
               }
-            },
-            { session }
-          );
+            });
+            await revision.save({ session });
+          }
         }
         const estimate = await EstimateModel.findById(estimateId).session(session).lean();
         if (estimate) {
