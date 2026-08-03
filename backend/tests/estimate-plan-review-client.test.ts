@@ -10,6 +10,7 @@ import { EstimatePlanChangeRequestModel } from "../src/models/EstimatePlanChange
 import { EstimatePlanPageRevisionModel } from "../src/models/EstimatePlanPageRevision.js";
 import { UserModel } from "../src/models/User.js";
 import { createEstimatePlanReviewService } from "../src/services/estimate-plan-review.service.js";
+import { createEstimateDesignService } from "../src/services/estimate-design.service.js";
 import { startMongoReplicaSet } from "./helpers/mongo-replica-set.js";
 
 let replica: Awaited<ReturnType<typeof startMongoReplicaSet>>;
@@ -136,6 +137,16 @@ describe("client estimate plan review service", () => {
       recipientEmail: "owner@example.com", event: "estimate_plan_changes_requested", status: "queued"
     })]);
     expect(JSON.stringify(estimate!.notifications)).not.toContain("base.png");
+    await EstimateDesignRevisionModel.updateOne({ _id: "revision-a" }, { $set: { annotations: null, annotationLayerId: null } });
+    const estimatorWorkspace = await createEstimateDesignService({
+      storage: { open: vi.fn(), read: vi.fn(), save: vi.fn(), saveGenerated: vi.fn(), delete: vi.fn() },
+      audit: { append: vi.fn(), appendInMongoTransaction: vi.fn(async () => ({})) },
+      maxUploadBytes: 10_000_000
+    } as never).listEstimator({ id: "owner-1", name: "Owner", email: "owner@example.com", role: "estimator_sales" }, "estimate-1");
+    expect(estimatorWorkspace.revisions.find((revision) => revision.id === "revision-a")).toMatchObject({
+      annotationLayerId: first.id,
+      annotations: expect.objectContaining({ imageWidth: 450, imageHeight: 500, elements: [expect.objectContaining({ id: "mark" })] })
+    });
     await expect(api.submitRequest(client, "page-1", { ...input, idempotencyKey: "second-key" }))
       .rejects.toMatchObject({ status: 409, code: "PLAN_REQUEST_ALREADY_OPEN", fields: { requestId: first.id } });
   });

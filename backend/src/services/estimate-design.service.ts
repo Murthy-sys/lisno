@@ -17,6 +17,7 @@ import {
 import { normalizeEmail } from "../domain/email.js";
 import type { ExtractionRetryPolicy } from "../domain/extraction-lifecycle.js";
 import { estimateScopeCatalogue } from "../domain/estimate-scope-catalogue.js";
+import { projectAnnotationToCrop } from "../domain/estimate-plan-review.js";
 import { ApiError } from "../middleware/errors.js";
 import type { ValidatedUpload } from "../middleware/upload.js";
 import { EstimateDesignDrawingModel } from "../models/EstimateDesignDrawing.js";
@@ -354,6 +355,31 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
       ]);
       const drawingIds = drawings.map((drawing) => drawing._id);
       const revisions = await EstimateDesignRevisionModel.find({ drawingId: { $in: drawingIds } }).sort({ drawingId: 1, revisionNumber: 1 }).lean();
+      const revisionRows = revisions.map((revision) => ({ ...revision }));
+      if (revisionRows.some((revision) => revision.reviewStatus === "changes_requested" && !revision.annotations)) {
+        const requests = await EstimatePlanChangeRequestModel.find({ estimateId, status: "open" }).sort({ createdAt: 1, _id: 1 }).lean();
+        const pageById = new Map(pages.map((page) => [String(page._id), page]));
+        const revisionById = new Map(revisionRows.map((revision) => [String(revision._id), revision]));
+        for (const request of requests) {
+          const page = pageById.get(String(request.sourcePageId));
+          if (!page) continue;
+          const requestAnnotations = request.annotations as AnnotationDocumentV1;
+          for (const target of request.targets) {
+            const revision = revisionById.get(String(target.requestedRevisionId));
+            if (!revision || revision.annotations) continue;
+            const elements = requestAnnotations.elements
+              .map((element) => projectAnnotationToCrop(element, revision.crop as never, { width: Number(page.width), height: Number(page.height) }))
+              .filter((element): element is NonNullable<typeof element> => element !== null);
+            revision.annotationLayerId = String(request._id);
+            revision.annotations = {
+              schemaVersion: 1,
+              imageWidth: Number(revision.crop.width),
+              imageHeight: Number(revision.crop.height),
+              elements
+            };
+          }
+        }
+      }
       return {
         uploads: await Promise.all(
           uploads.map(async (upload) =>
@@ -362,7 +388,7 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
         ),
         pages: pages.map(sourcePageDto),
         drawings: drawings.map(drawingDto),
-        revisions: revisions.map(revisionDto)
+        revisions: revisionRows.map(revisionDto)
       };
     },
 
