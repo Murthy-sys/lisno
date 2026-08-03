@@ -127,7 +127,7 @@ git commit -m "feat: project request comments across plan views"
 **Interfaces:**
 - Verifies the completed comment projection without changing backend persistence.
 
-- [ ] **Step 1: Run the full frontend verification**
+- [x] **Step 1: Run the full frontend verification**
 
 Run:
 
@@ -139,12 +139,12 @@ npm run build
 
 Expected: zero failures and a successful production build.
 
-- [ ] **Step 2: Run backend regression verification**
+- [x] **Step 2: Run backend regression verification**
 
 Run: `npm test -- --run tests/estimate-plan-review-client.test.ts tests/estimate-plan-composite.test.ts`
 
 Expected: all canonical page-count and selective replacement tests pass.
 
-- [ ] **Step 3: Mark the plan complete and commit**
+- [x] **Step 3: Mark the plan complete and commit**
 
 Mark every checkbox complete, run `git diff --check`, then commit the plan.
