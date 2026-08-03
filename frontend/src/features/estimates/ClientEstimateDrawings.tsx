@@ -6,6 +6,7 @@ import type {
   EstimateDesignClientRevision,
   EstimateDesignClientWorkspace,
   EstimateDesignDrawing,
+  EstimatePlanChangeRequest,
   EstimatePlanClientWorkspace,
   EstimatePlanPage
 } from "../../api/types";
@@ -21,7 +22,8 @@ import {
   estimateDesignRevisionImageUrl,
   previewClientPlanTargets,
   saveClientDrawingAnnotationDraft,
-  submitClientPlanChangeRequest
+  submitClientPlanChangeRequest,
+  updateClientPlanChangeRequest
 } from "../leads/estimateDesignApi";
 
 export interface ClientEstimateDrawingOption {
@@ -84,12 +86,14 @@ function canonicalPlacement(
 export function projectDrawingAnnotationsToPage(
   page: EstimatePlanPage,
   drawingWorkspace: EstimateDesignClientWorkspace,
-  planWorkspace: EstimatePlanClientWorkspace
+  planWorkspace: EstimatePlanClientWorkspace,
+  excludedRequestId?: string
 ) {
   const projected: AnnotationDocumentV1["elements"] = [];
   const requestedRevisionIds = new Set<string>();
   for (const request of planWorkspace.openRequests.filter((item) => item.sourcePageId === page.id)) {
     for (const target of request.targets) requestedRevisionIds.add(target.requestedRevisionId);
+    if (request.id === excludedRequestId) continue;
     for (const element of request.annotations.elements) {
       projected.push({ ...element, id: `request:${request.id}:${element.id}` });
     }
@@ -151,6 +155,15 @@ export function projectPlanCommentsToDrawing(
     if (summary) comments.set(request.id, { id: request.id, summary, status: request.status, source: "plan" });
   }
   return [...comments.values()];
+}
+
+export function selectEditablePlanRequestForDrawing(
+  drawingId: string,
+  planWorkspace?: EstimatePlanClientWorkspace
+) {
+  return planWorkspace?.openRequests.filter((request) =>
+    request.targets.some((target) => target.drawingId === drawingId)
+  ).at(-1);
 }
 
 function reviewStatusLabel(status: EstimateDesignClientRevision["reviewStatus"]) {
@@ -249,6 +262,7 @@ export function ClientEstimateDrawings({
   const renderDrawing = (drawing: EstimateDesignDrawing) => {
     const revision = latest.get(drawing.id)!;
     const placement = canonicalPlacement(revision, workspace.revisions, planWorkspace);
+    const editableRequest = selectEditablePlanRequestForDrawing(drawing.id, planWorkspace);
     return (
       <ClientDrawingRow
         canReview={canReview}
@@ -258,7 +272,8 @@ export function ClientEstimateDrawings({
         planPage={placement?.page}
         projectionCrop={placement?.crop ?? revision.crop}
         revision={revision}
-        sharedAnnotations={sharedPlanAnnotations(drawing.id, revision, workspace, planWorkspace)}
+        editableRequest={editableRequest}
+        sharedAnnotations={sharedPlanAnnotations(drawing.id, revision, workspace, planWorkspace, editableRequest?.id)}
         sharedComments={projectPlanCommentsToDrawing(drawing.id, planWorkspace)}
       />
     );
@@ -311,7 +326,8 @@ function ClientDrawingRow({
   projectionCrop,
   canReview,
   sharedAnnotations,
-  sharedComments
+  sharedComments,
+  editableRequest
 }: {
   estimateId: string;
   drawing: EstimateDesignDrawing;
@@ -321,6 +337,7 @@ function ClientDrawingRow({
   canReview: boolean;
   sharedAnnotations: AnnotationDocumentV1["elements"];
   sharedComments: SharedChangeRequestComment[];
+  editableRequest?: EstimatePlanChangeRequest;
 }) {
   const queryClient = useQueryClient();
   const [previewOpen, setPreviewOpen] = useState(false);
@@ -381,10 +398,43 @@ function ClientDrawingRow({
       ]);
     }
   });
-  const canAnnotate = canReview && revision.reviewStatus === "submitted";
+  const updateRequest = useMutation({
+    mutationFn: async ({ document, summary }: { document: AnnotationDocumentV1; summary: string }) => {
+      if (!editableRequest || !planPage) throw new Error("The open change request is unavailable.");
+      const pageAnnotations: AnnotationDocumentV1 = {
+        schemaVersion: 1,
+        imageWidth: planPage.width,
+        imageHeight: planPage.height,
+        elements: document.elements.map((element) => projectAnnotationToPage(element, projectionCrop, planPage))
+      };
+      return updateClientPlanChangeRequest(editableRequest.id, {
+        version: editableRequest.version,
+        summary,
+        annotations: pageAnnotations
+      });
+    },
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: estimateDesignKeys.clientWorkspace(estimateId) }),
+        queryClient.invalidateQueries({ queryKey: estimateDesignKeys.clientPlanWorkspace(estimateId) })
+      ]);
+    }
+  });
+  const canAnnotate = canReview && (revision.reviewStatus === "submitted" || Boolean(editableRequest));
   const storedAnnotations = revision.annotationDraft?.annotations ??
     revision.annotations;
-  const annotations: AnnotationDocumentV1 = storedAnnotations
+  const requestAnnotations = editableRequest && planPage
+    ? {
+        schemaVersion: 1 as const,
+        imageWidth: revision.crop.width,
+        imageHeight: revision.crop.height,
+        elements: editableRequest.annotations.elements.flatMap((element) => {
+          const projected = projectAnnotationToCrop(element, projectionCrop, planPage);
+          return projected ? [projected] : [];
+        })
+      }
+    : undefined;
+  const annotations: AnnotationDocumentV1 = requestAnnotations ?? (storedAnnotations
     ? {
         ...storedAnnotations,
         imageWidth: revision.crop.width,
@@ -394,8 +444,8 @@ function ClientDrawingRow({
       schemaVersion: 1,
       imageWidth: revision.crop.width,
       imageHeight: revision.crop.height,
-        elements: []
-    };
+      elements: []
+    });
   const previewLabel = revision.reviewStatus === "changes_requested"
     ? `Review changes for ${drawing.displayTitle}`
     : `Preview ${drawing.displayTitle}`;
@@ -440,7 +490,7 @@ function ClientDrawingRow({
             {decision.isPending ? "Approving…" : "Approve"}
           </button>
         ) : null}
-        {decision.isError || planRequest.isError ? (
+        {decision.isError || planRequest.isError || updateRequest.isError ? (
           <p role="alert" className="client-estimate-drawing__error">
             The drawing decision could not be saved. Refresh and try again.
           </p>
@@ -455,6 +505,7 @@ function ClientDrawingRow({
           annotations={annotations}
           sharedAnnotations={sharedAnnotations}
           sharedComments={sharedComments}
+          editableRequest={editableRequest ? { id: editableRequest.id, version: editableRequest.version, summary: editableRequest.summary } : undefined}
           canAnnotate={canAnnotate}
           onClose={() => setPreviewOpen(false)}
           onSaveDraft={canAnnotate
@@ -477,6 +528,11 @@ function ClientDrawingRow({
                 setPreviewOpen(false);
               }
             : undefined}
+          onUpdateChangeRequest={canAnnotate && editableRequest
+            ? async (_requestId, _version, document, summary) => {
+                await updateRequest.mutateAsync({ document, summary });
+              }
+            : undefined}
         />
       ) : null}
     </>
@@ -487,11 +543,13 @@ function sharedPlanAnnotations(
   drawingId: string,
   currentRevision: EstimateDesignClientRevision,
   drawingWorkspace: EstimateDesignClientWorkspace,
-  planWorkspace?: EstimatePlanClientWorkspace
+  planWorkspace?: EstimatePlanClientWorkspace,
+  excludedRequestId?: string
 ) {
   if (!planWorkspace) return [];
   const projected: AnnotationDocumentV1["elements"] = [];
   for (const request of planWorkspace.openRequests) {
+    if (request.id === excludedRequestId) continue;
     const target = request.targets.find((item) => item.drawingId === drawingId);
     if (!target) continue;
     const sourceRevision = drawingWorkspace.revisions.find((item) => item.id === target.requestedRevisionId) ?? currentRevision;

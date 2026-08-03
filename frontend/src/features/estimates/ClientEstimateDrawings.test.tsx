@@ -11,7 +11,8 @@ import { renderApp } from "../../test/render";
 import {
   projectDrawingAnnotationsToPage,
   projectDrawingCommentsToPage,
-  projectPlanCommentsToDrawing
+  projectPlanCommentsToDrawing,
+  selectEditablePlanRequestForDrawing
 } from "./ClientEstimateDrawings";
 
 const client = {
@@ -293,6 +294,7 @@ describe("client estimate drawings", () => {
       { id: "request-1", summary: "Move crop", status: "open", source: "plan" }
     ]);
     expect(projectPlanCommentsToDrawing("drawing-detail", submitted)).toEqual([]);
+    expect(selectEditablePlanRequestForDrawing("drawing-living", submitted)).toMatchObject({ id: "request-1", version: 1, summary: "Move crop" });
 
     const replacementRevision = {
       ...draftRevision,

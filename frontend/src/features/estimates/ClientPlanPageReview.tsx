@@ -1,6 +1,6 @@
 import { useState } from "react";
 
-import type { AnnotationDocumentV1, EstimatePlanPage } from "../../api/types";
+import type { AnnotationDocumentV1, EstimatePlanChangeRequest, EstimatePlanPage } from "../../api/types";
 import {
   EstimateDrawingPreviewDialog,
   type SharedChangeRequestComment
@@ -17,17 +17,20 @@ export function ClientPlanPageReview({
   page,
   sharedAnnotations = [],
   sharedComments = [],
+  editableRequest,
   pages = [page],
   onSelectPage,
   canReview,
   onClose,
   saveDraft,
   previewTargets,
-  submitRequest
+  submitRequest,
+  updateRequest
 }: {
   page: EstimatePlanPage;
   sharedAnnotations?: AnnotationDocumentV1["elements"];
   sharedComments?: SharedChangeRequestComment[];
+  editableRequest?: EstimatePlanChangeRequest;
   pages?: EstimatePlanPage[];
   onSelectPage?: (page: EstimatePlanPage) => void;
   canReview: boolean;
@@ -35,8 +38,9 @@ export function ClientPlanPageReview({
   saveDraft: (annotations: AnnotationDocumentV1) => Promise<unknown>;
   previewTargets: (annotations: AnnotationDocumentV1) => Promise<TargetPreview>;
   submitRequest: (input: { version: number; summary: string; annotations: AnnotationDocumentV1; targetDrawingIds: string[]; snapshotToken: string; idempotencyKey: string }) => Promise<unknown>;
+  updateRequest?: (input: { requestId: string; version: number; summary: string; annotations: AnnotationDocumentV1 }) => Promise<unknown>;
 }) {
-  const initial: AnnotationDocumentV1 = page.annotationDraft?.annotations ?? { schemaVersion: 1, imageWidth: page.width, imageHeight: page.height, elements: [] };
+  const initial: AnnotationDocumentV1 = editableRequest?.annotations ?? page.annotationDraft?.annotations ?? { schemaVersion: 1, imageWidth: page.width, imageHeight: page.height, elements: [] };
   const [pending, setPending] = useState<{ document: AnnotationDocumentV1; summary: string; preview: TargetPreview; selected: string[] }>();
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
@@ -51,6 +55,7 @@ export function ClientPlanPageReview({
         annotations={initial}
         sharedAnnotations={sharedAnnotations}
         sharedComments={sharedComments}
+        editableRequest={editableRequest ? { id: editableRequest.id, version: editableRequest.version, summary: editableRequest.summary } : undefined}
         canAnnotate={canReview && page.status !== "approved"}
         navigation={<nav className="client-plan-page-navigation" aria-label="Uploaded plan pages">
           {pages.slice().sort((left, right) => left.pageNumber - right.pageNumber).map((candidate) => <button type="button" className="button button--secondary" aria-current={candidate.id === page.id ? "page" : undefined} onClick={() => onSelectPage?.(candidate)} key={candidate.id}>Page {candidate.pageNumber}</button>)}
@@ -61,6 +66,11 @@ export function ClientPlanPageReview({
           const preview = await previewTargets(document);
           setPending({ document, summary, preview, selected: preview.targets.map((target) => target.drawingId) });
         }}
+        onUpdateChangeRequest={editableRequest && updateRequest
+          ? async (requestId, version, document, summary) => {
+              await updateRequest({ requestId, version, summary, annotations: document });
+            }
+          : undefined}
       />
       {pending ? (
         <Dialog

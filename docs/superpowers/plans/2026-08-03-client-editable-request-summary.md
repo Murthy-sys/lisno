@@ -120,25 +120,25 @@ git commit -m "feat: edit existing client request in preview"
 - Extracted preview selects the last open request targeting its drawing ID.
 - Extracted updates project crop annotations into canonical page coordinates before calling the update endpoint.
 
-- [ ] **Step 1: Write failing bidirectional UI tests**
+- [x] **Step 1: Write failing bidirectional UI tests**
 
 Assert Full Design and extracted preview both prefill the same request summary and call update with the same request ID/version. Assert extracted annotations are projected to page coordinates, and Submit change request is absent while an open request exists.
 
-- [ ] **Step 2: Run focused tests and verify RED**
+- [x] **Step 2: Run focused tests and verify RED**
 
 Run: `VITE_API_URL=/api/v1 npm test -- --run src/features/estimates/ClientEstimateDrawings.test.tsx src/features/estimates/ClientPlanPageReview.test.tsx src/features/estimates/EstimateReviewPanel.collapsible.test.tsx`
 
 Expected: FAIL because the mapped request is only read-only history.
 
-- [ ] **Step 3: Wire Full Design update mode**
+- [x] **Step 3: Wire Full Design update mode**
 
 Pass the selected page request to `ClientPlanPageReview`; call the update endpoint and invalidate plan/drawing queries.
 
-- [ ] **Step 4: Wire extracted update mode**
+- [x] **Step 4: Wire extracted update mode**
 
 Pass the request targeting the drawing to `ClientDrawingRow`; project edited crop annotations to canonical page coordinates and update that same request.
 
-- [ ] **Step 5: Run complete verification**
+- [x] **Step 5: Run complete verification**
 
 Backend: `npm test && npm run typecheck && npm run build`
 
@@ -146,6 +146,6 @@ Frontend: `VITE_API_URL=/api/v1 npm test && npm run typecheck && npm run build`
 
 Expected: zero failures and successful builds.
 
-- [ ] **Step 6: Mark complete, commit, and push feature branch**
+- [x] **Step 6: Mark complete, commit, and push feature branch**
 
 Run `git diff --check`, commit the final wiring and completed plan, then push `feature/ocr_improvements` without merging master.

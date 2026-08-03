@@ -24,7 +24,8 @@ import {
   getClientPlanWorkspace,
   previewClientPlanTargets,
   saveClientPlanDraft,
-  submitClientPlanChangeRequest
+  submitClientPlanChangeRequest,
+  updateClientPlanChangeRequest
 } from "../leads/estimateDesignApi";
 import {
   ClientEstimateDrawings,
@@ -253,8 +254,14 @@ function EstimateReviewCard({
           <ClientPlanPageReview
             key={selectedPlanPage.id}
             page={selectedPlanPage}
+            editableRequest={planWorkspace.data?.openRequests.filter((request) => request.sourcePageId === selectedPlanPage.id).at(-1)}
             sharedAnnotations={drawingWorkspace.data && planWorkspace.data
-              ? projectDrawingAnnotationsToPage(selectedPlanPage, drawingWorkspace.data, planWorkspace.data)
+              ? projectDrawingAnnotationsToPage(
+                  selectedPlanPage,
+                  drawingWorkspace.data,
+                  planWorkspace.data,
+                  planWorkspace.data.openRequests.filter((request) => request.sourcePageId === selectedPlanPage.id).at(-1)?.id
+                )
               : []}
             sharedComments={drawingWorkspace.data && planWorkspace.data
               ? projectDrawingCommentsToPage(selectedPlanPage, drawingWorkspace.data, planWorkspace.data)
@@ -270,6 +277,13 @@ function EstimateReviewCard({
             previewTargets={(annotations) => previewClientPlanTargets(selectedPlanPage.id, annotations)}
             submitRequest={async (input) => {
               await submitClientPlanChangeRequest(selectedPlanPage.id, input);
+              await Promise.all([
+                queryClient.invalidateQueries({ queryKey: estimateDesignKeys.clientPlanWorkspace(estimate.id) }),
+                queryClient.invalidateQueries({ queryKey: estimateDesignKeys.clientWorkspace(estimate.id) })
+              ]);
+            }}
+            updateRequest={async ({ requestId, version, summary, annotations }) => {
+              await updateClientPlanChangeRequest(requestId, { version, summary, annotations });
               await Promise.all([
                 queryClient.invalidateQueries({ queryKey: estimateDesignKeys.clientPlanWorkspace(estimate.id) }),
                 queryClient.invalidateQueries({ queryKey: estimateDesignKeys.clientWorkspace(estimate.id) })

@@ -22,6 +22,25 @@ describe("ClientPlanPageReview", () => {
     expect(screen.getByText("Raise the ceiling line")).toBeVisible();
   });
 
+  it("updates the existing page request instead of submitting another request", async () => {
+    const updateRequest = vi.fn().mockResolvedValue({});
+    const request = {
+      id: "request-1", sourcePageId: "page-1", version: 2, summary: "Lower the ceiling",
+      annotations: { schemaVersion: 1 as const, imageWidth: 1000, imageHeight: 800, elements: [{ id: "mark", type: "text" as const, x: .2, y: .3, text: "Lower", color: "#ef4444", strokeWidth: 2 }] },
+      targets: [{ drawingId: "drawing-a", requestedRevisionId: "revision-a", status: "open" as const, resolvedByRevisionId: null }],
+      unassigned: false, status: "open" as const
+    };
+    render(<ClientPlanPageReview page={page} editableRequest={request} canReview onClose={vi.fn()} saveDraft={vi.fn()} previewTargets={vi.fn()} submitRequest={vi.fn()} updateRequest={updateRequest} />);
+
+    expect(screen.queryByRole("button", { name: "Submit change request" })).not.toBeInTheDocument();
+    const summary = screen.getByLabelText("Change summary");
+    expect(summary).toHaveValue("Lower the ceiling");
+    await userEvent.clear(summary);
+    await userEvent.type(summary, "Lower the ceiling by 100 mm");
+    await userEvent.click(screen.getByRole("button", { name: "Update change request" }));
+    expect(updateRequest).toHaveBeenCalledWith(expect.objectContaining({ requestId: "request-1", version: 2, summary: "Lower the ceiling by 100 mm", annotations: request.annotations }));
+  });
+
   it("navigates every page of the original upload in order", async () => {
     const pages = [page, { ...page, id: "page-2", pageNumber: 2, currentImageUrl: "/current-2" }];
     const onSelectPage = vi.fn();
