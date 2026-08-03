@@ -190,3 +190,50 @@ Add `align-self: stretch` to the desktop rail. Keep Full Design sticky and Ask L
 Run: `VITE_API_URL=/api/v1 npm test && npm run typecheck && npm run build`
 
 Then commit with `fix: make full design annotations usable` and push `feature/ocr_improvements`.
+
+### Task 6: Consolidate the final client review architecture
+
+**Files:**
+- Modify: `backend/src/services/estimate-plan-review.service.ts`
+- Modify: `backend/tests/estimate-plan-review-client.test.ts`
+- Modify: `frontend/src/api/types.ts`
+- Modify: `frontend/src/features/estimates/ClientFullPlanNav.tsx`
+- Modify: `frontend/src/features/estimates/ClientFullPlanNav.test.tsx`
+- Modify: `frontend/src/features/estimates/ClientPlanPageReview.tsx`
+- Modify: `frontend/src/features/estimates/EstimateReviewPanel.tsx`
+- Modify: `frontend/src/features/estimates/EstimateReviewPanel.collapsible.test.tsx`
+- Modify: `frontend/src/features/estimates/ClientEstimateDrawings.tsx`
+- Modify: `frontend/src/features/estimates/ClientEstimateDrawings.test.tsx`
+- Modify: `frontend/src/components/design/ImageAnnotationEditor.tsx`
+- Modify: `frontend/src/components/design/ImageAnnotationEditor.test.tsx`
+- Modify: `frontend/src/components/design/EstimateDrawingPreviewDialog.tsx`
+- Modify: `frontend/src/styles/index.css`
+
+**Interfaces:**
+- The client plan workspace exposes `uploads: Array<{ id: string; originalFilename: string; mimeType: string; pageCount: number; pages: EstimatePlanPage[] }>`.
+- Full Design renders one upload entry and opens an internal ordered-page viewer.
+- Ask Lisno is rendered once by `EstimateReviewPanel`, outside estimate cards.
+
+- [x] **Step 1: Write failing backend and frontend tests**
+
+Cover real upload metadata, one six-page Full Design entry, ordered page navigation, absence of Select, standard Preview/Save button classes, `overflow: clip`, and exactly one page-level Ask Lisno launcher outside estimate cards.
+
+- [x] **Step 2: Run focused tests and verify RED**
+
+Run backend client plan review tests and the focused frontend estimate/annotation tests. Confirm each failure corresponds to missing consolidated behavior.
+
+- [x] **Step 3: Implement backend upload DTO metadata**
+
+Group source pages by upload and return the stored original filename, MIME type, page count, and ordered page DTOs while retaining the flat `pages` collection for existing request mapping compatibility.
+
+- [x] **Step 4: Implement the single-plan viewer and final UI hierarchy**
+
+Render one uploaded-plan control. Open a viewer with ordered page navigation and pass the selected page to `ClientPlanPageReview`. Remove Select from the toolbar. Use `button button--secondary` for extracted Preview and Save as draft. Move Ask Lisno to the panel root as a fixed page-level launcher.
+
+- [x] **Step 5: Fix sticky ancestors and responsive behavior**
+
+Use `overflow: clip` on client content, retain the stretched rail and sticky Full Design card on desktop, and reset to normal flow on mobile.
+
+- [x] **Step 6: Run full backend/frontend verification and push**
+
+Run all tests, typechecks, and builds. Commit and push `feature/ocr_improvements` without merging.

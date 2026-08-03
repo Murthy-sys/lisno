@@ -15,6 +15,19 @@ beforeEach(() => {
 });
 
 describe("ClientPlanPageReview", () => {
+  it("navigates every page of the original upload in order", async () => {
+    const pages = [page, { ...page, id: "page-2", pageNumber: 2, currentImageUrl: "/current-2" }];
+    const onSelectPage = vi.fn();
+    render(<ClientPlanPageReview page={page} pages={pages} onSelectPage={onSelectPage} canReview onClose={vi.fn()} saveDraft={vi.fn()} previewTargets={vi.fn()} submitRequest={vi.fn()} />);
+
+    const navigation = screen.getByRole("navigation", { name: "Uploaded plan pages" });
+    expect(navigation).toBeVisible();
+    expect(within(navigation).getAllByRole("button")).toHaveLength(2);
+    expect(within(navigation).getByRole("button", { name: "Page 1" })).toHaveAttribute("aria-current", "page");
+    await userEvent.click(within(navigation).getByRole("button", { name: "Page 2" }));
+    expect(onSelectPage).toHaveBeenCalledWith(pages[1]);
+  });
+
   it("saves canonical drafts and confirms detected targets before one request", async () => {
     const saveDraft = vi.fn().mockResolvedValue({});
     const previewTargets = vi.fn().mockResolvedValue({ pageRevisionNumber: 1, targets: [{ drawingId: "drawing-a", title: "False Ceiling", reason: "anchor_inside" }], snapshotToken: "a".repeat(64) });

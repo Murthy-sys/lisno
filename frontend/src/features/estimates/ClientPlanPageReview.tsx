@@ -12,6 +12,8 @@ type TargetPreview = {
 
 export function ClientPlanPageReview({
   page,
+  pages = [page],
+  onSelectPage,
   canReview,
   onClose,
   saveDraft,
@@ -19,6 +21,8 @@ export function ClientPlanPageReview({
   submitRequest
 }: {
   page: EstimatePlanPage;
+  pages?: EstimatePlanPage[];
+  onSelectPage?: (page: EstimatePlanPage) => void;
   canReview: boolean;
   onClose: () => void;
   saveDraft: (annotations: AnnotationDocumentV1) => Promise<unknown>;
@@ -39,6 +43,9 @@ export function ClientPlanPageReview({
         imageHeight={page.height}
         annotations={initial}
         canAnnotate={canReview && page.status !== "approved"}
+        navigation={<nav className="client-plan-page-navigation" aria-label="Uploaded plan pages">
+          {pages.slice().sort((left, right) => left.pageNumber - right.pageNumber).map((candidate) => <button type="button" className="button button--secondary" aria-current={candidate.id === page.id ? "page" : undefined} onClick={() => onSelectPage?.(candidate)} key={candidate.id}>Page {candidate.pageNumber}</button>)}
+        </nav>}
         onClose={onClose}
         onSaveDraft={async (document) => { await saveDraft(document); }}
         onSubmitChangeRequest={async (document, summary) => {

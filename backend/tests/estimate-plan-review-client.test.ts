@@ -50,6 +50,13 @@ beforeEach(async () => {
 describe("client estimate plan review service", () => {
   it("bootstraps one immutable page manifest and returns protected DTOs", async () => {
     const workspace = await service().listClient(client, "estimate-1");
+    expect(workspace.uploads).toEqual([{
+      id: "upload-1",
+      originalFilename: "plan.pdf",
+      mimeType: "application/pdf",
+      pageCount: 1,
+      pages: [expect.objectContaining({ id: "page-1", pageNumber: 1 })]
+    }]);
     expect(workspace.pages).toEqual([expect.objectContaining({ id: "page-1", currentRevisionId: expect.any(String), thumbnailUrl: "/client/estimate-plan-pages/page-1/thumbnail" })]);
     expect(JSON.stringify(workspace)).not.toContain("base.png");
     expect(await EstimatePlanPageRevisionModel.countDocuments({ sourcePageId: "page-1" })).toBe(1);

@@ -122,6 +122,7 @@ export function EstimateReviewPanel() {
       onNoteChange={(note) => setNoteByEstimate((current) => ({ ...current, [estimate.id]: note }))}
     />)}</div>
     {role !== "client" && action.isError ? <p role="alert">That action could not be completed. Refresh and try again.</p> : null}
+    {role === "client" ? <AskLisnoLauncher /> : null}
   </section>;
 }
 
@@ -243,13 +244,15 @@ function EstimateReviewCard({
                 selectedPageId={selectedPlanPage?.id}
                 onSelectPage={setSelectedPlanPage}
               />
-              <AskLisnoLauncher />
             </aside>
           ) : null}
         </div>
         {selectedPlanPage ? (
           <ClientPlanPageReview
+            key={selectedPlanPage.id}
             page={selectedPlanPage}
+            pages={planWorkspace.data?.uploads.find((upload) => upload.id === selectedPlanPage.uploadId)?.pages ?? [selectedPlanPage]}
+            onSelectPage={setSelectedPlanPage}
             canReview={canReviewDesign(role, estimate.status)}
             onClose={() => setSelectedPlanPage(undefined)}
             saveDraft={async (annotations) => {

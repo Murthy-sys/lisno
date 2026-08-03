@@ -1,11 +1,13 @@
+import { FileText } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import type { EstimatePlanClientWorkspace, EstimatePlanPage } from "../../api/types";
 import { ProtectedImage } from "../../components/design/ProtectedImage";
 
-function statusLabel(status: EstimatePlanPage["status"]) {
-  const label = status.replaceAll("_", " ");
-  return label[0]!.toUpperCase() + label.slice(1);
+function fileTypeLabel(mimeType: string) {
+  if (mimeType === "application/pdf") return "PDF";
+  const subtype = mimeType.split("/")[1];
+  return subtype ? subtype.toUpperCase() : "FILE";
 }
 
 export function ClientFullPlanNav({
@@ -17,27 +19,31 @@ export function ClientFullPlanNav({
   selectedPageId?: string;
   onSelectPage: (page: EstimatePlanPage) => void;
 }) {
+  const uploads = workspace.uploads ?? [];
   const content = (
     <div className="client-plan-nav__pages">
-        {workspace.pages.slice().sort((left, right) => left.pageNumber - right.pageNumber).map((page) => (
+        {uploads.map((upload) => {
+          const firstPage = upload.pages.slice().sort((left, right) => left.pageNumber - right.pageNumber)[0];
+          if (!firstPage) return null;
+          return (
           <button
             type="button"
             className="client-plan-nav__page"
-            aria-label={`Open design page ${page.pageNumber}`}
-            aria-current={selectedPageId === page.id ? "page" : undefined}
-            onClick={() => onSelectPage(page)}
-            key={page.id}
+            aria-label={`Open uploaded plan ${upload.originalFilename}`}
+            aria-current={upload.pages.some((page) => page.id === selectedPageId) ? "page" : undefined}
+            onClick={() => onSelectPage(firstPage)}
+            key={upload.id}
           >
-            <LazyPlanThumbnail source={page.thumbnailUrl} />
-            <span className="client-plan-nav__page-meta"><strong>Page {page.pageNumber}</strong><small>{statusLabel(page.status)}</small></span>
+            <LazyPlanThumbnail source={firstPage.thumbnailUrl} />
+            <span className="client-plan-nav__page-meta"><strong>{upload.originalFilename}</strong><small><FileText aria-hidden="true" /> <span>{fileTypeLabel(upload.mimeType)}</span> · {upload.pageCount} {upload.pageCount === 1 ? "page" : "pages"}</small></span>
           </button>
-        ))}
+        );})}
     </div>
   );
   return (
     <section className="client-plan-nav" aria-label="Full design plan">
-      <header><div><p className="eyebrow">Full design</p><h4>Design pages</h4></div><small>{workspace.pages.length} pages</small></header>
-      <details className="client-plan-nav__drawer" open><summary>Design pages · {workspace.pages.length}</summary>{content}</details>
+      <header><div><p className="eyebrow">Full design</p><h4>Uploaded plan</h4></div><small>{workspace.pages.length} pages</small></header>
+      <details className="client-plan-nav__drawer" open><summary>Uploaded plan · {workspace.pages.length} pages</summary>{content}</details>
     </section>
   );
 }

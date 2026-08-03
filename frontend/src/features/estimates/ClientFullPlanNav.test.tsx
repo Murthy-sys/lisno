@@ -7,6 +7,7 @@ import type { EstimatePlanClientWorkspace } from "../../api/types";
 import { ClientFullPlanNav } from "./ClientFullPlanNav";
 
 const workspace: EstimatePlanClientWorkspace = {
+  uploads: [],
   pages: Array.from({ length: 6 }, (_, index) => ({
     id: `page-${index + 1}`, uploadId: "upload-1", pageNumber: index + 1,
     width: 1000, height: 800, currentRevisionId: `manifest-${index + 1}`,
@@ -17,22 +18,32 @@ const workspace: EstimatePlanClientWorkspace = {
   openRequests: []
 };
 
+const uploadedPlanWorkspace = {
+  ...workspace,
+  uploads: [{
+    id: "upload-1",
+    originalFilename: "AMIT - FINAL 2D - pages 1-6.pdf",
+    mimeType: "application/pdf",
+    pageCount: 6,
+    pages: workspace.pages
+  }]
+};
+
 describe("ClientFullPlanNav", () => {
-  it("renders ordered compact pages and selection without owning the Ask Lisno launcher", async () => {
+  it("renders one original uploaded plan instead of one card per PDF page", async () => {
     vi.spyOn(apiClient, "getBlob").mockResolvedValue({ blob: new Blob(["image"], { type: "image/png" }), filename: "page.png" });
     Object.defineProperty(URL, "createObjectURL", { configurable: true, value: vi.fn(() => "blob:thumb") });
     Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: vi.fn() });
     const onSelect = vi.fn();
-    render(<ClientFullPlanNav workspace={workspace} selectedPageId="page-1" onSelectPage={onSelect} />);
-    expect(screen.getAllByRole("button", { name: /open design page/i })).toHaveLength(6);
-    expect(screen.queryByText("Preview")).not.toBeInTheDocument();
+    render(<ClientFullPlanNav workspace={uploadedPlanWorkspace} selectedPageId="page-1" onSelectPage={onSelect} />);
+    expect(screen.getAllByRole("button", { name: /open uploaded plan/i })).toHaveLength(1);
+    expect(screen.getByText("AMIT - FINAL 2D - pages 1-6.pdf")).toBeVisible();
+    expect(screen.getByText("PDF")).toBeVisible();
     expect(screen.getByText("6 pages")).toBeVisible();
-    expect(screen.getByRole("button", { name: "Open design page 1" })).toHaveAttribute("aria-current", "page");
-    expect(screen.getByText("Changes requested")).toBeVisible();
+    expect(screen.getByRole("button", { name: /open uploaded plan/i })).toHaveTextContent("PDF · 6 pages");
     expect(screen.queryByRole("button", { name: "Ask Lisno" })).not.toBeInTheDocument();
-    expect(screen.getAllByText("Design pages").length).toBeGreaterThan(0);
-    await userEvent.click(screen.getByRole("button", { name: "Open design page 4" }));
-    expect(onSelect).toHaveBeenCalledWith(workspace.pages[3]);
+    await userEvent.click(screen.getByRole("button", { name: /open uploaded plan/i }));
+    expect(onSelect).toHaveBeenCalledWith(workspace.pages[0]);
   });
 
   it("loads thumbnail bytes only when a page row becomes visible", async () => {
@@ -48,13 +59,14 @@ describe("ClientFullPlanNav", () => {
     }
     vi.stubGlobal("IntersectionObserver", Observer);
     const getBlob = vi.spyOn(apiClient, "getBlob").mockResolvedValue({ blob: new Blob(["image"], { type: "image/png" }), filename: "page.png" });
-    const large = { ...workspace, pages: Array.from({ length: 50 }, (_, index) => ({ ...workspace.pages[0]!, id: `large-${index}`, pageNumber: index + 1, thumbnailUrl: `/large-${index}` })) };
+    const pages = Array.from({ length: 50 }, (_, index) => ({ ...workspace.pages[0]!, id: `large-${index}`, pageNumber: index + 1, thumbnailUrl: `/large-${index}` }));
+    const large = { ...workspace, pages, uploads: [{ ...uploadedPlanWorkspace.uploads[0], pageCount: 50, pages }] };
     render(<ClientFullPlanNav workspace={large} onSelectPage={vi.fn()} />);
     expect(getBlob).not.toHaveBeenCalled();
     await act(async () => {
-      for (const item of observed.slice(0, 4)) item.callback([{ isIntersecting: true, target: item.element } as IntersectionObserverEntry], {} as IntersectionObserver);
+      for (const item of observed) item.callback([{ isIntersecting: true, target: item.element } as IntersectionObserverEntry], {} as IntersectionObserver);
     });
-    expect(getBlob).toHaveBeenCalledTimes(4);
+    expect(getBlob).toHaveBeenCalledTimes(1);
     vi.unstubAllGlobals();
   });
 });

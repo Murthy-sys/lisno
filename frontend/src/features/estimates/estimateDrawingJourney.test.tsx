@@ -493,7 +493,6 @@ describe("estimate drawing review journey", () => {
     );
     const tools = screen.getByRole("toolbar", { name: "Annotation tools" });
     for (const tool of [
-      "Select",
       "Rectangle",
       "Ellipse",
       "Arrow",

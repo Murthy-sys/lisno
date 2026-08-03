@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 
 import type { AnnotationDocumentV1 } from "../../api/types";
 import { Dialog } from "../ui/Dialog";
@@ -17,6 +17,7 @@ export interface EstimateDrawingPreviewDialogProps {
   imageHeight: number;
   annotations: AnnotationDocumentV1;
   canAnnotate: boolean;
+  navigation?: ReactNode;
   onClose: () => void;
   onSaveDraft?: (document: AnnotationDocumentV1) => void | Promise<void>;
   onSubmitChangeRequest?: (
@@ -36,6 +37,7 @@ export function EstimateDrawingPreviewDialog({
   imageHeight,
   annotations,
   canAnnotate,
+  navigation,
   onClose,
   onSaveDraft,
   onSubmitChangeRequest
@@ -116,7 +118,8 @@ export function EstimateDrawingPreviewDialog({
           className={imageSource ? "estimate-drawing-preview-dialog__loader estimate-drawing-preview-dialog__loader--ready" : "estimate-drawing-preview-dialog__loader"}
           onSourceChange={setImageSource}
         />
-        <div className="estimate-drawing-preview-dialog__layout">
+      <div className="estimate-drawing-preview-dialog__layout">
+          {navigation ? <div className="estimate-drawing-preview-dialog__navigation">{navigation}</div> : null}
           <div className="estimate-drawing-preview-dialog__canvas">
             {imageSource ? (
               <MapViewport ariaLabel={`${title} map view`}>
@@ -166,7 +169,7 @@ export function EstimateDrawingPreviewDialog({
                 {error ? <p role="alert">{error}</p> : null}
                 <button
                   type="button"
-                  className="secondary-button"
+                  className="button button--secondary"
                   onClick={() => void saveDraft()}
                   disabled={!onSaveDraft || busy !== undefined || !annotationsDirty}
                 >

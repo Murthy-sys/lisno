@@ -69,7 +69,6 @@ type ResizeOperation = {
 type EditorOperation = DrawingOperation | MoveOperation | ResizeOperation;
 
 const tools: Array<{ tool: AnnotationTool; label: string }> = [
-  { tool: "select", label: "Select" },
   { tool: "ellipse", label: "Ellipse" },
   { tool: "rectangle", label: "Rectangle" },
   { tool: "arrow", label: "Arrow" },
@@ -127,6 +126,7 @@ function renderElement(
 ) {
   const shared = {
     "aria-label": annotationLabel(element),
+    "data-annotation-id": element.id,
     "data-selected": selected ? "true" : "false",
     stroke: element.color,
     strokeWidth: element.strokeWidth,
@@ -309,9 +309,12 @@ export function ImageAnnotationEditor({
       setTextDraft({ point, text: "" });
       return;
     }
-    if (tool === "select") {
+    const annotationTarget = (event.target as Element).closest?.("[data-annotation-id]");
+    if (tool === "select" || annotationTarget) {
       const tolerance = 10 / Math.max(1, Math.min(event.currentTarget.getBoundingClientRect().width, event.currentTarget.getBoundingClientRect().height));
-      const hit = hitTestElements(value.elements, point, tolerance);
+      const hit = annotationTarget
+        ? value.elements.find((element) => element.id === annotationTarget.getAttribute("data-annotation-id"))
+        : hitTestElements(value.elements, point, tolerance);
       setSelectedId(hit?.id);
       if (hit) operationRef.current = { kind: "move", start: point, original: hit };
       return;

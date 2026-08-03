@@ -312,9 +312,11 @@ describe("client estimate drawings", () => {
     expect(within(loft).queryByText("Living ceiling")).not.toBeInTheDocument();
     expect(requestedWorkspaces).toEqual(["estimate-a"]);
 
-    await user.click(within(ceilingGroup).getByRole("button", {
+    const mappedPreview = within(ceilingGroup).getByRole("button", {
       name: "Preview Living ceiling"
-    }));
+    });
+    expect(mappedPreview).toHaveClass("button", "button--secondary");
+    await user.click(mappedPreview);
     await waitForCanvas();
     expect(screen.getByRole("toolbar", { name: "Annotation tools" })).toBeVisible();
     await user.click(within(screen.getByRole("dialog", {
@@ -324,9 +326,11 @@ describe("client estimate drawings", () => {
     }));
     expect(villaToggle).toHaveAttribute("aria-expanded", "true");
 
-    await user.click(within(ceilingGroup).getByRole("button", {
+    const readOnlyPreview = within(ceilingGroup).getByRole("button", {
       name: "Preview Living detail"
-    }));
+    });
+    expect(readOnlyPreview).toHaveClass("button", "button--secondary");
+    await user.click(readOnlyPreview);
     await waitForCanvas();
     expect(screen.queryByRole("toolbar", { name: "Annotation tools" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Save as draft" })).not.toBeInTheDocument();
@@ -421,6 +425,9 @@ describe("client estimate drawings", () => {
     expect(within(misc).getByRole("article", {
       name: "Unassigned TV detail drawing"
     })).toBeVisible();
+    expect(within(misc).getByRole("button", {
+      name: "Preview Unassigned TV detail"
+    })).toHaveClass("button", "button--secondary");
     expect(within(misc).getByRole("button", {
       name: "Approve Unassigned TV detail"
     })).toBeEnabled();

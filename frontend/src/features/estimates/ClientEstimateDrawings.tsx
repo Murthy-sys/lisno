@@ -327,7 +327,7 @@ function ClientDrawingRow({
         </span>
         <button
           type="button"
-          className="secondary-button"
+          className="button button--secondary"
           aria-label={previewLabel}
           onClick={() => setPreviewOpen(true)}
         >

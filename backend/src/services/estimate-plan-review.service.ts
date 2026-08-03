@@ -269,9 +269,16 @@ export function createEstimatePlanReviewService(input: CreateEstimatePlanReviewS
 
   async function pageRows(user: AuthenticatedUser, estimateId: string) {
     await input.estimateDesigns.listClient(user, estimateId);
-    const uploads = await EstimateDesignUploadModel.find({ estimateId }).lean();
-    const pages = await EstimateDesignSourcePageModel.find({ uploadId: { $in: uploads.map((upload) => upload._id) } }).sort({ pageNumber: 1, _id: 1 }).lean();
-    return Promise.all(pages.map(async (page) => ({ page, revision: await bootstrapPageRevision(estimateId, dtoId(page._id)) })));
+    const uploads = await EstimateDesignUploadModel.find({ estimateId }).sort({ uploadedAt: 1, _id: 1 }).lean();
+    const uploadOrder = new Map(uploads.map((upload, index) => [dtoId(upload._id), index]));
+    const pages = await EstimateDesignSourcePageModel.find({ uploadId: { $in: uploads.map((upload) => upload._id) } }).lean();
+    pages.sort((left, right) =>
+      (uploadOrder.get(dtoId(left.uploadId)) ?? 0) - (uploadOrder.get(dtoId(right.uploadId)) ?? 0) ||
+      Number(left.pageNumber) - Number(right.pageNumber) ||
+      dtoId(left._id).localeCompare(dtoId(right._id))
+    );
+    const rows = await Promise.all(pages.map(async (page) => ({ page, revision: await bootstrapPageRevision(estimateId, dtoId(page._id)) })));
+    return { uploads, rows };
   }
 
   async function preview(user: AuthenticatedUser, pageId: string, annotations: AnnotationDocumentV1) {
@@ -419,19 +426,27 @@ export function createEstimatePlanReviewService(input: CreateEstimatePlanReviewS
     },
 
     async listClient(user: AuthenticatedUser, estimateId: string) {
-      const rows = await pageRows(user, estimateId);
+      const { uploads, rows } = await pageRows(user, estimateId);
       const drafts = await EstimatePlanAnnotationDraftModel.find({ clientId: user.id, sourcePageId: { $in: rows.map((row) => row.page._id) } }).lean();
       const draftByPage = new Map(drafts.map((draft) => [dtoId(draft.sourcePageId), draft]));
       const requests = await EstimatePlanChangeRequestModel.find({ clientId: user.id, estimateId, status: "open" }).sort({ createdAt: 1 }).lean();
-      return {
-        pages: rows.map(({ page, revision }) => ({
+      const pages = rows.map(({ page, revision }) => ({
           id: dtoId(page._id), uploadId: dtoId(page.uploadId), pageNumber: Number(page.pageNumber),
           width: Number(page.width), height: Number(page.height), currentRevisionId: dtoId(revision._id),
           status: String(revision.status),
           thumbnailUrl: `/client/estimate-plan-pages/${encodeURIComponent(dtoId(page._id))}/thumbnail`,
           currentImageUrl: `/client/estimate-plan-pages/${encodeURIComponent(dtoId(page._id))}/current-image`,
           annotationDraft: draftByPage.has(dtoId(page._id)) ? draftDto(draftByPage.get(dtoId(page._id))!) : null
-        })),
+        }));
+      return {
+        uploads: uploads.map((upload) => {
+          const uploadPages = pages.filter((page) => page.uploadId === dtoId(upload._id));
+          return {
+            id: dtoId(upload._id), originalFilename: String(upload.originalFilename), mimeType: String(upload.mimeType),
+            pageCount: uploadPages.length, pages: uploadPages
+          };
+        }),
+        pages,
         openRequests: requests.map(requestDto)
       };
     },

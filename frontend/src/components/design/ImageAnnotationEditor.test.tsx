@@ -153,9 +153,10 @@ describe("ImageAnnotationEditor", () => {
     const canvas = screen.getByTestId("annotation-canvas") as unknown as SVGSVGElement;
     canvasRect(canvas);
 
-    for (const name of ["Select", "Ellipse", "Rectangle", "Arrow", "Freehand", "Text", "Undo", "Redo", "Delete selected"]) {
+    for (const name of ["Ellipse", "Rectangle", "Arrow", "Freehand", "Text", "Undo", "Redo", "Delete selected"]) {
       expect(within(toolbar).getByRole("button", { name })).toBeVisible();
     }
+    expect(within(toolbar).queryByRole("button", { name: "Select" })).not.toBeInTheDocument();
     await user.click(within(toolbar).getByRole("button", { name: "Freehand" }));
     fireEvent.pointerDown(canvas, { pointerId: 4, clientX: 100, clientY: 100 });
     fireEvent.pointerMove(canvas, { pointerId: 4, clientX: 101, clientY: 101 });
@@ -214,15 +215,14 @@ describe("ImageAnnotationEditor", () => {
     render(<EditorHarness initial={initial} onDocument={onDocument} />);
     const canvas = screen.getByTestId("annotation-canvas") as unknown as SVGSVGElement;
     canvasRect(canvas);
-    fireEvent.click(screen.getByRole("button", { name: "Select" }));
-
-    fireEvent.pointerDown(canvas, { pointerId: 1, clientX: 300, clientY: 240 });
+    const shape = screen.getByLabelText("Rectangle annotation");
+    fireEvent.pointerDown(shape, { pointerId: 1, clientX: 300, clientY: 240 });
     fireEvent.pointerUp(canvas, { pointerId: 1, clientX: 300, clientY: 240 });
     expect(screen.getByLabelText("Rectangle annotation")).toHaveAttribute("data-selected", "true");
     const handle = screen.getByRole("button", { name: "Resize south-east" });
     expect(handle).toBeVisible();
 
-    fireEvent.pointerDown(canvas, { pointerId: 2, clientX: 300, clientY: 240 });
+    fireEvent.pointerDown(shape, { pointerId: 2, clientX: 300, clientY: 240 });
     fireEvent.pointerMove(canvas, { pointerId: 2, clientX: 500, clientY: 400 });
     fireEvent.pointerUp(canvas, { pointerId: 2, clientX: 500, clientY: 400 });
     expect(onDocument.mock.lastCall?.[0].elements[0]).toMatchObject({ x: 0.4, y: 0.4 });
@@ -373,8 +373,7 @@ describe("ImageAnnotationEditor", () => {
     await user.click(screen.getByRole("button", { name: "Redo" }));
     expect(screen.getByLabelText("Rectangle annotation")).toBeVisible();
 
-    await user.click(screen.getByRole("button", { name: "Select" }));
-    fireEvent.pointerDown(canvas, { pointerId: 2, clientX: 200, clientY: 160 });
+    fireEvent.pointerDown(screen.getByLabelText("Rectangle annotation"), { pointerId: 2, clientX: 200, clientY: 160 });
     fireEvent.pointerUp(canvas, { pointerId: 2, clientX: 200, clientY: 160 });
     canvas.focus();
     fireEvent.keyDown(canvas, { key: "Delete" });

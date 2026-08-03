@@ -746,6 +746,13 @@ export interface EstimatePlanChangeRequest {
 }
 
 export interface EstimatePlanClientWorkspace {
+  uploads: Array<{
+    id: string;
+    originalFilename: string;
+    mimeType: string;
+    pageCount: number;
+    pages: EstimatePlanPage[];
+  }>;
   pages: EstimatePlanPage[];
   openRequests: EstimatePlanChangeRequest[];
 }

@@ -75,13 +75,15 @@ const emptyDrawingWorkspace = {
     changesRequested: 0
   }
 };
-const planWorkspace = {
-  pages: [{
+const planPages = [{
     id: "plan-page-1", uploadId: "upload-1", pageNumber: 1,
     width: 1000, height: 800, currentRevisionId: "manifest-1",
     status: "awaiting_review", thumbnailUrl: "/plan-thumb-1",
     currentImageUrl: "/plan-page-1", annotationDraft: null
-  }],
+  }];
+const planWorkspace = {
+  uploads: [{ id: "upload-1", originalFilename: "client-design.pdf", mimeType: "application/pdf", pageCount: 1, pages: planPages }],
+  pages: planPages,
   openRequests: []
 };
 
@@ -168,7 +170,7 @@ describe("EstimateReviewPanel client disclosures", () => {
 
     const contentRule = ruleBody(stylesheet, ".estimate-review-card__client-content");
     expect(contentRule).toMatch(/min-width:\s*0/);
-    expect(contentRule).toMatch(/overflow:\s*hidden/);
+    expect(contentRule).toMatch(/overflow:\s*clip/);
 
     const navigationRule = ruleBody(stylesheet, ".client-plan-nav");
     expect(navigationRule).toMatch(/position:\s*sticky/);
@@ -181,7 +183,9 @@ describe("EstimateReviewPanel client disclosures", () => {
     expect(railRule).toMatch(/min-height:\s*calc\(100vh\s*-\s*2rem\)/);
 
     const launcherRule = ruleBody(stylesheet, ".ask-lisno-launcher");
-    expect(launcherRule).toMatch(/margin-top:\s*auto/);
+    expect(launcherRule).toMatch(/position:\s*fixed/);
+    expect(launcherRule).toMatch(/bottom:/);
+    expect(launcherRule).toMatch(/right:/);
 
     const pageListRule = ruleBody(stylesheet, ".client-plan-nav__pages");
     expect(pageListRule).toMatch(/max-height:\s*none/);
@@ -200,15 +204,16 @@ describe("EstimateReviewPanel client disclosures", () => {
     expect(ruleBody(mobileRules, ".client-plan-nav")).toMatch(/position:\s*static/);
   });
 
-  it("renders Ask Lisno as a sibling at the bottom of the design-tools rail", async () => {
+  it("renders exactly one page-level Ask Lisno launcher outside estimate cards", async () => {
     tokenStorage.set("client-token");
     installClientApi();
     await userEvent.click((renderApp(["/client"]), await screen.findByRole("button", { name: /Aurora Villa/i })));
 
-    const rail = await screen.findByRole("complementary", { name: "Design tools" });
-    const fullDesign = within(rail).getByRole("region", { name: "Full design plan" });
-    expect(within(rail).getByRole("button", { name: "Ask Lisno" })).toBeDisabled();
-    expect(within(fullDesign).queryByRole("button", { name: "Ask Lisno" })).not.toBeInTheDocument();
+    await screen.findByRole("complementary", { name: "Design tools" });
+    const launchers = screen.getAllByRole("button", { name: "Ask Lisno" });
+    expect(launchers).toHaveLength(1);
+    expect(launchers[0]).toBeDisabled();
+    expect(launchers[0]!.closest("article")).toBeNull();
   });
 
   it("keeps full-design annotations editable after an earlier client change request", async () => {
@@ -218,7 +223,7 @@ describe("EstimateReviewPanel client disclosures", () => {
     Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: vi.fn() });
     renderApp(["/client"]);
     await userEvent.click(await screen.findByRole("button", { name: /Harbor Penthouse/i }));
-    await userEvent.click(await screen.findByRole("button", { name: "Open design page 1" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Open uploaded plan client-design.pdf" }));
 
     expect(await screen.findByText("Mark the drawing or add a text note before requesting changes.")).toBeVisible();
     expect(await screen.findByRole("img", { name: "Design page 1 protected drawing" })).toBeVisible();
@@ -231,7 +236,7 @@ describe("EstimateReviewPanel client disclosures", () => {
     installClientApi();
     renderApp(["/client"]);
     await userEvent.click(await screen.findByRole("button", { name: /Cedar Loft/i }));
-    await userEvent.click(await screen.findByRole("button", { name: "Open design page 1" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Open uploaded plan client-design.pdf" }));
 
     expect(await screen.findByText("Client markings are shown as a read-only overlay.")).toBeVisible();
     expect(screen.queryByRole("toolbar", { name: "Annotation tools" })).not.toBeInTheDocument();

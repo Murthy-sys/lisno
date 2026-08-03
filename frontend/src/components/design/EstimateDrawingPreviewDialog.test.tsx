@@ -130,6 +130,7 @@ describe("EstimateDrawingPreviewDialog", () => {
     const canvas = await waitForProtectedCanvas();
     vi.spyOn(canvas, "getBoundingClientRect").mockReturnValue({ left: 0, top: 0, width: 1000, height: 800, right: 1000, bottom: 800, x: 0, y: 0, toJSON: () => ({}) });
     expect(screen.getByRole("button", { name: "Save as draft" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Save as draft" })).toHaveClass("button", "button--secondary");
 
     fireEvent.pointerDown(canvas, { pointerId: 1, clientX: 100, clientY: 100 });
     fireEvent.pointerMove(canvas, { pointerId: 1, clientX: 300, clientY: 300 });
