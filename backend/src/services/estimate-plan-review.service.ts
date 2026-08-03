@@ -8,6 +8,7 @@ import { annotationDocumentSchema, type AnnotationDocumentV1 } from "../domain/e
 import { detectAnnotationTargets } from "../domain/estimate-plan-review.js";
 import { ApiError } from "../middleware/errors.js";
 import { EstimateDesignDrawingModel } from "../models/EstimateDesignDrawing.js";
+import { EstimateDesignAnnotationDraftModel } from "../models/EstimateDesignAnnotationDraft.js";
 import { EstimateDesignRevisionModel } from "../models/EstimateDesignRevision.js";
 import { EstimateDesignSourcePageModel } from "../models/EstimateDesignSourcePage.js";
 import { EstimateDesignUploadModel } from "../models/EstimateDesignUpload.js";
@@ -525,6 +526,10 @@ export function createEstimatePlanReviewService(input: CreateEstimatePlanReviewS
         const requestedRevisionIds = selected
           .map((drawingId) => revisionByDrawing.get(drawingId))
           .filter((revisionId): revisionId is string => Boolean(revisionId));
+        await Promise.all([
+          EstimatePlanAnnotationDraftModel.deleteOne({ clientId: user.id, sourcePageId: pageId }).session(session),
+          EstimateDesignAnnotationDraftModel.deleteMany({ clientId: user.id, revisionId: { $in: requestedRevisionIds } }).session(session)
+        ]);
         if (requestedRevisionIds.length) {
           await EstimateDesignRevisionModel.updateMany(
             { _id: { $in: requestedRevisionIds }, reviewStatus: { $in: ["submitted", "approved"] } },

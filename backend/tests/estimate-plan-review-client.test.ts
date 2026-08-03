@@ -1,6 +1,7 @@
 import { beforeAll, afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { EstimateDesignDrawingModel } from "../src/models/EstimateDesignDrawing.js";
+import { EstimateDesignAnnotationDraftModel } from "../src/models/EstimateDesignAnnotationDraft.js";
 import { EstimateModel } from "../src/models/Estimate.js";
 import { EstimateDesignRevisionModel } from "../src/models/EstimateDesignRevision.js";
 import { EstimateDesignSourcePageModel } from "../src/models/EstimateDesignSourcePage.js";
@@ -105,6 +106,11 @@ describe("client estimate plan review service", () => {
 
   it("previews overlaps and creates one idempotent shared request", async () => {
     const api = service();
+    await api.saveDraft(client, "page-1", { version: 0, annotations });
+    await EstimateDesignAnnotationDraftModel.create({
+      _id: "drawing-draft-1", revisionId: "revision-a", clientId: client.id, version: 1,
+      annotations: { ...annotations, imageWidth: 450, imageHeight: 500 }
+    });
     const preview = await api.previewTargets(client, "page-1", { annotations });
     expect(preview.targets.map((target) => target.drawingId)).toEqual(["drawing-a"]);
     const input = { version: preview.pageRevisionNumber, summary: "Change A", annotations, targetDrawingIds: ["drawing-a"], snapshotToken: preview.snapshotToken, idempotencyKey: "request-key" };
@@ -112,6 +118,8 @@ describe("client estimate plan review service", () => {
     const replay = await api.submitRequest(client, "page-1", input);
     expect(replay.id).toBe(first.id);
     expect(await EstimatePlanChangeRequestModel.countDocuments()).toBe(1);
+    expect((await api.listClient(client, "estimate-1")).pages[0]!.annotationDraft).toBeNull();
+    expect(await EstimateDesignAnnotationDraftModel.countDocuments({ revisionId: "revision-a" })).toBe(0);
     expect((await EstimateDesignRevisionModel.findById("revision-a").lean())!.reviewStatus).toBe("changes_requested");
     expect((await EstimateDesignRevisionModel.findById("revision-b").lean())!.reviewStatus).toBe("submitted");
     const estimate = await EstimateModel.findById("estimate-1").lean();

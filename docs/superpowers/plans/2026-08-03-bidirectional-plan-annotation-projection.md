@@ -165,7 +165,7 @@ git commit -m "fix: separate shared plan annotations"
 - `ClientPlanPageReview` consumes `sharedAnnotations` and passes them to `EstimateDrawingPreviewDialog`.
 - `ClientDrawingRow` passes projected plan annotations separately instead of merging them into editable drawing annotations.
 
-- [ ] **Step 1: Extend geometry round-trip tests**
+- [x] **Step 1: Extend geometry round-trip tests**
 
 For rectangle, ellipse, arrow, freehand, and text fixtures, assert:
 
@@ -181,17 +181,17 @@ Run: `VITE_API_URL=/api/v1 npm test -- --run src/components/design/planGeometry.
 
 Expected: existing coordinate functions pass for all supported shapes; if a shape fails, fix only its point mapping before continuing.
 
-- [ ] **Step 2: Write the failing extracted-to-page composition test**
+- [x] **Step 2: Write the failing extracted-to-page composition test**
 
 Create a drawing draft in a crop `{ x: 200, y: 100, width: 400, height: 300 }` on a `1000 × 800` page. Open Full Design and assert the projected mark uses page-normalized coordinates. Also provide an open request with the same logical source mark and assert only one shared annotation renders.
 
-- [ ] **Step 3: Run focused estimate tests and verify RED**
+- [x] **Step 3: Run focused estimate tests and verify RED**
 
 Run: `VITE_API_URL=/api/v1 npm test -- --run src/features/estimates/ClientEstimateDrawings.test.tsx src/features/estimates/ClientPlanPageReview.test.tsx src/features/estimates/EstimateReviewPanel.collapsible.test.tsx`
 
 Expected: Full Design does not render the drawing draft/request shared layer.
 
-- [ ] **Step 4: Implement stable projection and deduplication**
+- [x] **Step 4: Implement stable projection and deduplication**
 
 Create a pure helper that:
 
@@ -203,13 +203,13 @@ Create a pure helper that:
 
 Pass the resulting elements into `ClientPlanPageReview.sharedAnnotations`. In extracted drawing previews, pass `sharedPlanAnnotations(...)` through the dialog's shared layer rather than concatenating it into the editable document.
 
-- [ ] **Step 5: Verify bidirectional focused behavior**
+- [x] **Step 5: Verify bidirectional focused behavior**
 
 Run: `VITE_API_URL=/api/v1 npm test -- --run src/components/design/planGeometry.test.ts src/features/estimates/ClientEstimateDrawings.test.tsx src/features/estimates/ClientPlanPageReview.test.tsx src/features/estimates/EstimateReviewPanel.collapsible.test.tsx`
 
 Expected: projected annotations appear in both directions, remain read-only when imported, and never enter draft/request payloads twice.
 
-- [ ] **Step 6: Commit bidirectional projection**
+- [x] **Step 6: Commit bidirectional projection**
 
 ```bash
 git add frontend/src/components/design/planGeometry.test.ts frontend/src/features/estimates/ClientEstimateDrawings.tsx frontend/src/features/estimates/ClientEstimateDrawings.test.tsx frontend/src/features/estimates/ClientPlanPageReview.tsx frontend/src/features/estimates/ClientPlanPageReview.test.tsx frontend/src/features/estimates/EstimateReviewPanel.tsx frontend/src/features/estimates/EstimateReviewPanel.collapsible.test.tsx

@@ -12,6 +12,7 @@ type TargetPreview = {
 
 export function ClientPlanPageReview({
   page,
+  sharedAnnotations = [],
   pages = [page],
   onSelectPage,
   canReview,
@@ -21,6 +22,7 @@ export function ClientPlanPageReview({
   submitRequest
 }: {
   page: EstimatePlanPage;
+  sharedAnnotations?: AnnotationDocumentV1["elements"];
   pages?: EstimatePlanPage[];
   onSelectPage?: (page: EstimatePlanPage) => void;
   canReview: boolean;
@@ -42,6 +44,7 @@ export function ClientPlanPageReview({
         imageWidth={page.width}
         imageHeight={page.height}
         annotations={initial}
+        sharedAnnotations={sharedAnnotations}
         canAnnotate={canReview && page.status !== "approved"}
         navigation={<nav className="client-plan-page-navigation" aria-label="Uploaded plan pages">
           {pages.slice().sort((left, right) => left.pageNumber - right.pageNumber).map((candidate) => <button type="button" className="button button--secondary" aria-current={candidate.id === page.id ? "page" : undefined} onClick={() => onSelectPage?.(candidate)} key={candidate.id}>Page {candidate.pageNumber}</button>)}

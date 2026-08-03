@@ -8,6 +8,7 @@ import type {
 } from "../../api/types";
 import { tokenStorage } from "../../api/client";
 import { renderApp } from "../../test/render";
+import { projectDrawingAnnotationsToPage } from "./ClientEstimateDrawings";
 
 const client = {
   id: "client-1",
@@ -95,7 +96,7 @@ function drawing(
     mappingStatus: "auto_mapped" as const,
     detectedTitle: title,
     displayTitle: title,
-    source: "ocr",
+    source: "ocr" as const,
     roomConfidence: 0.98,
     scopeConfidence: 0.98,
     ocrConfidence: 0.98,
@@ -245,6 +246,44 @@ async function addTextNote() {
 }
 
 describe("client estimate drawings", () => {
+  it("projects an extracted draft into its canonical page and deduplicates its submitted request", () => {
+    const draftRevision = {
+      ...revision("revision-living", "drawing-living", "Living ceiling", "room-living", "FC", "submitted"),
+      crop: { x: 200, y: 100, width: 400, height: 300 },
+      annotationDraft: {
+        id: "draft-1",
+        revisionId: "revision-living",
+        version: 1,
+        annotations: {
+          schemaVersion: 1 as const,
+          imageWidth: 400,
+          imageHeight: 300,
+          elements: [{ id: "crop-note", type: "text" as const, x: 0.5, y: 0.5, text: "Move crop", color: "#ef4444", strokeWidth: 2 }]
+        }
+      }
+    };
+    const drawingWorkspace = { ...workspace([draftRevision]), drawings: [drawings[0]!] };
+    const planPage = { ...page, currentRevisionId: "manifest-1", status: "awaiting_review" as const, thumbnailUrl: "/thumb", currentImageUrl: "/current", annotationDraft: null };
+    const planWorkspace = { uploads: [{ id: "upload-1", originalFilename: "plan.pdf", mimeType: "application/pdf", pageCount: 1, pages: [planPage] }], pages: [planPage], openRequests: [] };
+
+    expect(projectDrawingAnnotationsToPage(planPage, drawingWorkspace, planWorkspace)).toEqual([
+      expect.objectContaining({ id: "drawing:revision-living:crop-note", x: 0.4, y: 0.3125 })
+    ]);
+
+    const submitted = {
+      ...planWorkspace,
+      openRequests: [{
+        id: "request-1", sourcePageId: "page-1", version: 1, summary: "Move crop",
+        annotations: { schemaVersion: 1 as const, imageWidth: 1000, imageHeight: 800, elements: [{ id: "crop-note", type: "text" as const, x: 0.4, y: 0.3125, text: "Move crop", color: "#ef4444", strokeWidth: 2 }] },
+        targets: [{ drawingId: "drawing-living", requestedRevisionId: "revision-living", status: "open" as const, resolvedByRevisionId: null }],
+        unassigned: false, status: "open" as const
+      }]
+    };
+    expect(projectDrawingAnnotationsToPage(planPage, drawingWorkspace, submitted)).toEqual([
+      expect.objectContaining({ id: "request:request-1:crop-note", x: 0.4, y: 0.3125 })
+    ]);
+  });
+
   it("loads drawings only inside the matching expanded estimate and keeps preview expansion state", async () => {
     const estimates = [
       estimate("estimate-a", "Aurora Villa"),

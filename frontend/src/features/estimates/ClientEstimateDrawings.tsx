@@ -6,8 +6,8 @@ import type {
   EstimateDesignClientRevision,
   EstimateDesignClientWorkspace,
   EstimateDesignDrawing,
-  EstimateDesignSourcePage,
-  EstimatePlanClientWorkspace
+  EstimatePlanClientWorkspace,
+  EstimatePlanPage
 } from "../../api/types";
 import { EstimateDrawingPreviewDialog } from "../../components/design/EstimateDrawingPreviewDialog";
 import { ProtectedImage } from "../../components/design/ProtectedImage";
@@ -58,6 +58,56 @@ function latestRevisions(revisions: EstimateDesignClientRevision[]) {
     }
   }
   return latest;
+}
+
+function canonicalPlacement(
+  revision: EstimateDesignClientRevision,
+  revisions: EstimateDesignClientRevision[],
+  planWorkspace?: EstimatePlanClientWorkspace
+) {
+  let current: EstimateDesignClientRevision | undefined = revision;
+  const visited = new Set<string>();
+  while (current && !visited.has(current.id)) {
+    visited.add(current.id);
+    const page = planWorkspace?.pages.find((item) => item.id === current!.sourcePageId);
+    if (page) return { page, crop: current.crop };
+    current = current.replacesRevisionId
+      ? revisions.find((item) => item.id === current!.replacesRevisionId)
+      : undefined;
+  }
+  return undefined;
+}
+
+export function projectDrawingAnnotationsToPage(
+  page: EstimatePlanPage,
+  drawingWorkspace: EstimateDesignClientWorkspace,
+  planWorkspace: EstimatePlanClientWorkspace
+) {
+  const projected: AnnotationDocumentV1["elements"] = [];
+  const requestedRevisionIds = new Set<string>();
+  for (const request of planWorkspace.openRequests.filter((item) => item.sourcePageId === page.id)) {
+    for (const target of request.targets) requestedRevisionIds.add(target.requestedRevisionId);
+    for (const element of request.annotations.elements) {
+      projected.push({ ...element, id: `request:${request.id}:${element.id}` });
+    }
+  }
+  const latest = latestRevisions(drawingWorkspace.revisions);
+  for (const drawing of drawingWorkspace.drawings) {
+    if (!drawing.active) continue;
+    const revision = latest.get(drawing.id);
+    if (!revision || requestedRevisionIds.has(revision.id)) continue;
+    const placement = canonicalPlacement(revision, drawingWorkspace.revisions, planWorkspace);
+    if (!placement || placement.page.id !== page.id) continue;
+    const annotations = revision.annotationDraft?.annotations ?? revision.annotations;
+    if (!annotations) continue;
+    for (const element of annotations.elements) {
+      projected.push({
+        ...projectAnnotationToPage(element, placement.crop, page),
+        id: `drawing:${revision.id}:${element.id}`
+      });
+    }
+  }
+  return projected;
 }
 
 function reviewStatusLabel(status: EstimateDesignClientRevision["reviewStatus"]) {
@@ -155,15 +205,15 @@ export function ClientEstimateDrawings({
 
   const renderDrawing = (drawing: EstimateDesignDrawing) => {
     const revision = latest.get(drawing.id)!;
-    const page = workspace.pages.find((item) => item.id === revision.sourcePageId);
+    const placement = canonicalPlacement(revision, workspace.revisions, planWorkspace);
     return (
       <ClientDrawingRow
         canReview={canReview}
         drawing={drawing}
         estimateId={estimateId}
         key={drawing.id}
-        page={page}
-        planPage={planWorkspace?.pages.find((item) => item.id === revision.sourcePageId)}
+        planPage={placement?.page}
+        projectionCrop={placement?.crop ?? revision.crop}
         revision={revision}
         sharedAnnotations={sharedPlanAnnotations(drawing.id, revision, workspace, planWorkspace)}
       />
@@ -213,16 +263,16 @@ function ClientDrawingRow({
   estimateId,
   drawing,
   revision,
-  page,
   planPage,
+  projectionCrop,
   canReview,
   sharedAnnotations
 }: {
   estimateId: string;
   drawing: EstimateDesignDrawing;
   revision: EstimateDesignClientRevision;
-  page: EstimateDesignSourcePage | undefined;
   planPage: EstimatePlanClientWorkspace["pages"][number] | undefined;
+  projectionCrop: EstimateDesignClientRevision["crop"];
   canReview: boolean;
   sharedAnnotations: AnnotationDocumentV1["elements"];
 }) {
@@ -262,7 +312,7 @@ function ClientDrawingRow({
         imageWidth: planPage.width,
         imageHeight: planPage.height,
         elements: document.elements.map((element) =>
-          projectAnnotationToPage(element, revision.crop, planPage)
+          projectAnnotationToPage(element, projectionCrop, planPage)
         )
       };
       const preview = await previewClientPlanTargets(planPage.id, pageAnnotations);
@@ -298,11 +348,8 @@ function ClientDrawingRow({
       schemaVersion: 1,
       imageWidth: revision.crop.width,
       imageHeight: revision.crop.height,
-        elements: sharedAnnotations
+        elements: []
     };
-  if (storedAnnotations && sharedAnnotations.length) {
-    annotations.elements = [...annotations.elements, ...sharedAnnotations];
-  }
   const previewLabel = revision.reviewStatus === "changes_requested"
     ? `Review changes for ${drawing.displayTitle}`
     : `Preview ${drawing.displayTitle}`;
@@ -360,6 +407,7 @@ function ClientDrawingRow({
           imageWidth={annotations.imageWidth}
           imageHeight={annotations.imageHeight}
           annotations={annotations}
+          sharedAnnotations={sharedAnnotations}
           canAnnotate={canAnnotate}
           onClose={() => setPreviewOpen(false)}
           onSaveDraft={canAnnotate
