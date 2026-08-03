@@ -125,6 +125,32 @@ async function addTextNote() {
 }
 
 describe("EstimateDrawingPreviewDialog", () => {
+  it("renders projected annotations read-only without persisting them in the editable draft", async () => {
+    const onSaveDraft = vi.fn();
+    render(<EstimateDrawingPreviewDialog {...previewProps({
+      sharedAnnotations: [{
+        id: "shared-note",
+        type: "text",
+        x: 0.5,
+        y: 0.5,
+        text: "Shared extracted note",
+        color: "#ef4444",
+        strokeWidth: 2
+      }],
+      onSaveDraft
+    })} />);
+
+    await addTextNote();
+    const shared = screen.getByText("Shared extracted note");
+    expect(shared).toHaveAttribute("data-shared", "true");
+    expect(shared).toHaveStyle({ pointerEvents: "none" });
+    await userEvent.click(screen.getByRole("button", { name: "Save as draft" }));
+    expect(onSaveDraft).toHaveBeenCalledWith(expect.objectContaining({
+      elements: [expect.objectContaining({ type: "text", text: "Shift this door" })]
+    }));
+    expect(JSON.stringify(onSaveDraft.mock.calls[0]?.[0])).not.toContain("shared-note");
+  });
+
   it("enables Save as draft after the first default rectangle drag", async () => {
     render(<EstimateDrawingPreviewDialog {...previewProps()} />);
     const canvas = await waitForProtectedCanvas();

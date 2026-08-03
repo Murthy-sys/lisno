@@ -16,6 +16,7 @@ export interface EstimateDrawingPreviewDialogProps {
   imageWidth: number;
   imageHeight: number;
   annotations: AnnotationDocumentV1;
+  sharedAnnotations?: AnnotationDocumentV1["elements"];
   canAnnotate: boolean;
   navigation?: ReactNode;
   onClose: () => void;
@@ -36,6 +37,7 @@ export function EstimateDrawingPreviewDialog({
   imageWidth,
   imageHeight,
   annotations,
+  sharedAnnotations = [],
   canAnnotate,
   navigation,
   onClose,
@@ -135,6 +137,7 @@ export function EstimateDrawingPreviewDialog({
                       imageWidth={imageWidth}
                       imageHeight={imageHeight}
                       value={document}
+                      sharedAnnotations={sharedAnnotations}
                       readOnly={false}
                       onChange={setDocument}
                       viewTransform={viewTransform}
@@ -144,7 +147,7 @@ export function EstimateDrawingPreviewDialog({
                       imageSource={imageSource}
                       imageWidth={imageWidth}
                       imageHeight={imageHeight}
-                      value={document}
+                      value={{ ...document, elements: [...document.elements, ...sharedAnnotations] }}
                       viewTransform={viewTransform}
                     />
                   );

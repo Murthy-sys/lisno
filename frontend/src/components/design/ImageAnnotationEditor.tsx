@@ -41,6 +41,7 @@ export interface ImageAnnotationEditorProps {
   imageWidth: number;
   imageHeight: number;
   value: AnnotationDocumentV1;
+  sharedAnnotations?: AnnotationDocumentV1["elements"];
   readOnly: boolean;
   onChange: (document: AnnotationDocumentV1) => void;
   viewTransform?: ViewTransform;
@@ -122,12 +123,14 @@ function renderElement(
   interaction?: {
     onFocus: () => void;
     onKeyDown: (event: ReactKeyboardEvent<SVGElement>) => void;
-  }
+  },
+  isShared = false
 ) {
   const shared = {
     "aria-label": annotationLabel(element),
     "data-annotation-id": element.id,
     "data-selected": selected ? "true" : "false",
+    ...(isShared ? { "data-shared": "true", style: { pointerEvents: "none" as const } } : {}),
     stroke: element.color,
     strokeWidth: element.strokeWidth,
     vectorEffect: "non-scaling-stroke" as const,
@@ -244,6 +247,7 @@ export function ImageAnnotationEditor({
   imageWidth,
   imageHeight,
   value,
+  sharedAnnotations = [],
   readOnly,
   onChange,
   viewTransform = DEFAULT_TRANSFORM
@@ -650,6 +654,9 @@ export function ImageAnnotationEditor({
             </marker>
           </defs>
           <image href={imageSource} width={imageWidth} height={imageHeight} preserveAspectRatio="xMidYMid meet" />
+          {sharedAnnotations.map((element) =>
+            renderElement(element, imageWidth, imageHeight, false, markerId, undefined, true)
+          )}
           {renderedElements.map((element) =>
             renderElement(
               element,

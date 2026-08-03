@@ -87,7 +87,7 @@ git commit -m "fix: keep replacement pages out of full design"
 - Produces: `EstimateDrawingPreviewDialogProps.sharedAnnotations?: AnnotationDocumentV1["elements"]`.
 - Guarantees: `onSaveDraft` and `onSubmitChangeRequest` receive only the editable annotation document.
 
-- [ ] **Step 1: Write a failing shared-layer persistence test**
+- [x] **Step 1: Write a failing shared-layer persistence test**
 
 Render the dialog with one editable rectangle and one shared text annotation:
 
@@ -109,13 +109,13 @@ expect(onSaveDraft).toHaveBeenCalledWith(editableDocument);
 
 The shared text ID must not occur in the submitted document.
 
-- [ ] **Step 2: Run the dialog test and verify RED**
+- [x] **Step 2: Run the dialog test and verify RED**
 
 Run: `VITE_API_URL=/api/v1 npm test -- --run src/components/design/EstimateDrawingPreviewDialog.test.tsx`
 
 Expected: TypeScript/runtime behavior lacks the `sharedAnnotations` layer.
 
-- [ ] **Step 3: Render shared annotations as a non-interactive overlay**
+- [x] **Step 3: Render shared annotations as a non-interactive overlay**
 
 Add the prop:
 
@@ -136,13 +136,13 @@ Inside the canvas, render the editable `ImageAnnotationEditor` as today and a si
 
 Mark shared SVG elements with `data-shared="true"` and `pointerEvents="none"`. Do not merge shared elements into component state.
 
-- [ ] **Step 4: Run the dialog and editor tests and verify GREEN**
+- [x] **Step 4: Run the dialog and editor tests and verify GREEN**
 
 Run: `VITE_API_URL=/api/v1 npm test -- --run src/components/design/EstimateDrawingPreviewDialog.test.tsx src/components/design/ImageAnnotationEditor.test.tsx`
 
 Expected: both files pass and persistence callbacks contain no shared elements.
 
-- [ ] **Step 5: Commit the layer separation**
+- [x] **Step 5: Commit the layer separation**
 
 ```bash
 git add frontend/src/components/design/EstimateDrawingPreviewDialog.tsx frontend/src/components/design/EstimateDrawingPreviewDialog.test.tsx frontend/src/components/design/ImageAnnotationEditor.tsx
