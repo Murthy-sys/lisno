@@ -73,6 +73,67 @@ describe("Dialog accessibility contract", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: "Preferred action" })).toHaveFocus());
   });
 
+  it("falls back when a marked initial target is hidden", async () => {
+    render(
+      <Dialog title="Choose" showCloseButton={false} onClose={vi.fn()}>
+        <button type="button" hidden data-dialog-initial-focus>Hidden preference</button>
+        <button type="button">Available action</button>
+      </Dialog>
+    );
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "Available action" })).toHaveFocus());
+  });
+
+  it("excludes hidden, aria-hidden, inert, disabled, and negative-tabindex candidates", async () => {
+    render(
+      <Dialog title="Choose" showCloseButton={false} onClose={vi.fn()}>
+        <button type="button" hidden>Hidden action</button>
+        <span aria-hidden="true"><button type="button">Aria-hidden action</button></span>
+        <span inert><button type="button">Inert action</button></span>
+        <button type="button" disabled>Disabled action</button>
+        <button type="button" tabIndex={-2}>Negative action</button>
+        <button type="button" style={{ display: "none" }}>Display-none action</button>
+        <button type="button">Available action</button>
+      </Dialog>
+    );
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "Available action" })).toHaveFocus());
+  });
+
+  it("orders positive tabindex before regular controls and wraps across additional focusables", async () => {
+    render(
+      <Dialog title="Choose" showCloseButton={false} onClose={vi.fn()}>
+        <button type="button">Natural action</button>
+        <button type="button" tabIndex={2}>Second priority</button>
+        <button type="button" tabIndex={1}>First priority</button>
+        <div contentEditable suppressContentEditableWarning>Editable notes</div>
+        <button type="button" hidden>Hidden trailing action</button>
+      </Dialog>
+    );
+
+    const first = screen.getByRole("button", { name: "First priority" });
+    const editor = screen.getByText("Editable notes");
+    await waitFor(() => expect(first).toHaveFocus());
+
+    editor.focus();
+    expect(editor).toHaveFocus();
+    fireEvent.keyDown(document, { key: "Tab" });
+    expect(first).toHaveFocus();
+
+    fireEvent.keyDown(document, { key: "Tab", shiftKey: true });
+    expect(editor).toHaveFocus();
+  });
+
+  it("treats contenteditable as focusable without requiring a tabindex", async () => {
+    render(
+      <Dialog title="Notes" showCloseButton={false} onClose={vi.fn()}>
+        <div contentEditable suppressContentEditableWarning>Editable notes</div>
+      </Dialog>
+    );
+
+    await waitFor(() => expect(screen.getByText("Editable notes")).toHaveFocus());
+  });
+
   it("focuses the first focusable descendant when no target is marked", async () => {
     render(
       <Dialog title="Choose" showCloseButton={false} onClose={vi.fn()}>

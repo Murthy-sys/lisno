@@ -34,17 +34,19 @@ export function Dialog({
 }: DialogProps) {
   const titleId = useId();
   const descriptionId = useId();
+  const layerRef = useRef<HTMLDivElement>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
 
   useOverlay({
     open: true,
     containerRef: dialogRef,
+    presentationRef: layerRef,
     onClose,
     busy
   });
 
   return (
-    <div className="ui-overlay-layer modal-layer">
+    <div ref={layerRef} className="ui-overlay-layer modal-layer">
       <Button
         className="ui-overlay-backdrop modal-backdrop"
         variant="quiet"

@@ -1,9 +1,9 @@
-import { useCallback, useRef, type ReactNode, type RefObject } from "react";
+import { useRef, type ReactNode, type RefObject } from "react";
 import { X } from "lucide-react";
 
 import { Button } from "./Button";
 import { IconButton } from "./IconButton";
-import { focusableSelector, useOverlay } from "./overlay";
+import { useOverlay } from "./overlay";
 
 export interface DrawerProps {
   id: string;
@@ -28,28 +28,26 @@ export function Drawer({
   initialFocusRef,
   returnFocusRef
 }: DrawerProps) {
+  const layerRef = useRef<HTMLDivElement>(null);
   const drawerRef = useRef<HTMLDivElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
   const titleId = `${id}-title`;
-  const defaultInitialFocus = useCallback(
-    () => bodyRef.current?.querySelector<HTMLElement>(focusableSelector) ?? null,
-    []
-  );
 
   useOverlay({
     open,
     containerRef: drawerRef,
+    presentationRef: layerRef,
     onClose,
     busy,
     initialFocusRef,
     returnFocusRef,
-    defaultInitialFocus
+    defaultInitialFocusContainerRef: bodyRef
   });
 
   if (!open) return null;
 
   return (
-    <div className="ui-drawer-layer">
+    <div ref={layerRef} className="ui-drawer-layer">
       <Button
         className="ui-drawer-backdrop"
         variant="quiet"

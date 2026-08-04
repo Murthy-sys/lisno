@@ -61,6 +61,27 @@ describe("Drawer accessibility contract", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: "Preferred child" })).toHaveFocus());
   });
 
+  it("falls back when the explicit initial focus target is hidden", async () => {
+    function Harness() {
+      const hiddenRef = useRef<HTMLButtonElement>(null);
+      return (
+        <Drawer
+          id="filters"
+          open
+          title="Filters"
+          onClose={vi.fn()}
+          initialFocusRef={hiddenRef}
+        >
+          <button ref={hiddenRef} type="button" hidden>Hidden preference</button>
+          <button type="button">Available filter</button>
+        </Drawer>
+      );
+    }
+
+    render(<Harness />);
+    await waitFor(() => expect(screen.getByRole("button", { name: "Available filter" })).toHaveFocus());
+  });
+
   it("restores connected explicit focus before the element active at open", async () => {
     function Harness() {
       const [open, setOpen] = useState(false);
@@ -159,6 +180,45 @@ describe("Drawer accessibility contract", () => {
     fireEvent.keyDown(document, { key: "Escape" });
     expect(drawerClose).toHaveBeenCalledOnce();
     expect(dialogClose).not.toHaveBeenCalled();
+  });
+
+  it("presents a Drawer above a legacy Dialog when Drawer is logically topmost", () => {
+    render(
+      <>
+        <Dialog title="Editor" onClose={vi.fn()}><p>Editor body</p></Dialog>
+        <Drawer id="filters" open title="Filters" onClose={vi.fn()}><p>Filter body</p></Drawer>
+      </>
+    );
+
+    const dialogLayer = screen.getByRole("dialog", { name: "Editor" }).parentElement!;
+    const drawerLayer = screen.getByRole("dialog", { name: "Filters" }).parentElement!;
+    expect(dialogLayer).toHaveClass("modal-layer");
+    expect(dialogLayer).toHaveAttribute("data-overlay-layer", "0");
+    expect(drawerLayer).toHaveAttribute("data-overlay-layer", "1");
+    expect(dialogLayer.style.zIndex).toBe(
+      "calc(var(--z-modal) + var(--ui-overlay-stack-order))"
+    );
+    expect(drawerLayer.style.zIndex).toBe(
+      "calc(var(--z-modal) + var(--ui-overlay-stack-order))"
+    );
+    expect(dialogLayer.style.getPropertyValue("--ui-overlay-stack-order")).toBe("0");
+    expect(drawerLayer.style.getPropertyValue("--ui-overlay-stack-order")).toBe("1");
+  });
+
+  it("presents a Dialog above a Drawer when Dialog is logically topmost", () => {
+    render(
+      <>
+        <Drawer id="filters" open title="Filters" onClose={vi.fn()}><p>Filter body</p></Drawer>
+        <Dialog title="Editor" onClose={vi.fn()}><p>Editor body</p></Dialog>
+      </>
+    );
+
+    const drawerLayer = screen.getByRole("dialog", { name: "Filters" }).parentElement!;
+    const dialogLayer = screen.getByRole("dialog", { name: "Editor" }).parentElement!;
+    expect(drawerLayer).toHaveAttribute("data-overlay-layer", "0");
+    expect(dialogLayer).toHaveAttribute("data-overlay-layer", "1");
+    expect(drawerLayer.style.getPropertyValue("--ui-overlay-stack-order")).toBe("0");
+    expect(dialogLayer.style.getPropertyValue("--ui-overlay-stack-order")).toBe("1");
   });
 });
 

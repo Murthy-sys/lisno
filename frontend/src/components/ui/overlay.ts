@@ -6,16 +6,27 @@ import {
 
 export const focusableSelector = [
   "a[href]",
-  "button:not([disabled])",
-  "input:not([disabled])",
-  "select:not([disabled])",
-  "textarea:not([disabled])",
-  "[tabindex]:not([tabindex='-1'])"
+  "area[href]",
+  "button",
+  "input:not([type='hidden'])",
+  "select",
+  "textarea",
+  "iframe",
+  "object",
+  "embed",
+  "audio[controls]",
+  "video[controls]",
+  "summary:first-of-type",
+  "[contenteditable]:not([contenteditable='false'])",
+  "[tabindex]"
 ].join(",");
+
+const overlayZIndex = "calc(var(--z-modal) + var(--ui-overlay-stack-order))";
 
 interface OverlayEntry {
   id: symbol;
   containerRef: RefObject<HTMLElement | null>;
+  presentationRef: RefObject<HTMLElement | null>;
   onCloseRef: RefObject<() => void>;
   busyRef: RefObject<boolean>;
 }
@@ -23,11 +34,12 @@ interface OverlayEntry {
 interface UseOverlayOptions {
   open: boolean;
   containerRef: RefObject<HTMLElement | null>;
+  presentationRef: RefObject<HTMLElement | null>;
   onClose: () => void;
   busy?: boolean;
   initialFocusRef?: RefObject<HTMLElement | null>;
   returnFocusRef?: RefObject<HTMLElement | null>;
-  defaultInitialFocus?: () => HTMLElement | null;
+  defaultInitialFocusContainerRef?: RefObject<HTMLElement | null>;
 }
 
 const overlayStack: OverlayEntry[] = [];
@@ -39,10 +51,55 @@ function connected(element: HTMLElement | null | undefined) {
   return element?.isConnected ? element : null;
 }
 
-function focusableElements(container: HTMLElement) {
-  return Array.from(container.querySelectorAll<HTMLElement>(focusableSelector)).filter(
-    (element) => element.isConnected
-  );
+function isUnavailable(element: HTMLElement) {
+  const closedDetails = element.closest("details:not([open])");
+  const visibleSummary = closedDetails?.querySelector(":scope > summary");
+  if (closedDetails && !visibleSummary?.contains(element)) return true;
+
+  let current: HTMLElement | null = element;
+  while (current) {
+    if (
+      current.hidden ||
+      current.hasAttribute("inert") ||
+      current.getAttribute("aria-hidden")?.toLowerCase() === "true"
+    ) {
+      return true;
+    }
+
+    const style = window.getComputedStyle(current);
+    if (style.display === "none" || style.visibility === "hidden" || style.visibility === "collapse") {
+      return true;
+    }
+    current = current.parentElement;
+  }
+
+  return element.matches(":disabled");
+}
+
+function isProgrammaticallyFocusable(element: HTMLElement, container: HTMLElement) {
+  if (!element.isConnected || !container.contains(element) || isUnavailable(element)) {
+    return false;
+  }
+  return element.hasAttribute("tabindex") || element.matches(focusableSelector);
+}
+
+function tabIndexValue(element: HTMLElement) {
+  const attribute = element.getAttribute("tabindex");
+  if (attribute === null) return 0;
+  const parsed = Number(attribute);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function tabbableElements(container: HTMLElement) {
+  return Array.from(container.querySelectorAll<HTMLElement>(focusableSelector))
+    .map((element, domOrder) => ({ element, domOrder, tabIndex: tabIndexValue(element) }))
+    .filter(({ element, tabIndex }) => tabIndex >= 0 && isProgrammaticallyFocusable(element, container))
+    .sort((left, right) => {
+      const leftGroup = left.tabIndex > 0 ? 0 : 1;
+      const rightGroup = right.tabIndex > 0 ? 0 : 1;
+      return leftGroup - rightGroup || left.tabIndex - right.tabIndex || left.domOrder - right.domOrder;
+    })
+    .map(({ element }) => element);
 }
 
 function handleOverlayKeyDown(event: KeyboardEvent) {
@@ -60,7 +117,7 @@ function handleOverlayKeyDown(event: KeyboardEvent) {
 
   if (event.key !== "Tab") return;
 
-  const focusable = focusableElements(container);
+  const focusable = tabbableElements(container);
   if (focusable.length === 0) {
     event.preventDefault();
     container.focus();
@@ -97,13 +154,31 @@ function addOverlay(entry: OverlayEntry) {
   const existingIndex = overlayStack.findIndex((candidate) => candidate.id === entry.id);
   if (existingIndex >= 0) overlayStack.splice(existingIndex, 1);
   overlayStack.push(entry);
+  syncOverlayPresentation();
   syncKeydownListener();
+}
+
+function syncOverlayPresentation() {
+  overlayStack.forEach((entry, stackOrder) => {
+    const root = entry.presentationRef.current;
+    if (!root) return;
+    root.dataset.overlayLayer = String(stackOrder);
+    root.style.setProperty("--ui-overlay-stack-order", String(stackOrder));
+    root.style.zIndex = overlayZIndex;
+  });
 }
 
 function removeOverlay(id: symbol) {
   const index = overlayStack.findIndex((entry) => entry.id === id);
   const wasTopmost = index === overlayStack.length - 1;
-  if (index >= 0) overlayStack.splice(index, 1);
+  if (index >= 0) {
+    const root = overlayStack[index]?.presentationRef.current;
+    root?.removeAttribute("data-overlay-layer");
+    root?.style.removeProperty("--ui-overlay-stack-order");
+    root?.style.removeProperty("z-index");
+    overlayStack.splice(index, 1);
+    syncOverlayPresentation();
+  }
   syncKeydownListener();
   return wasTopmost;
 }
@@ -131,11 +206,12 @@ function acquireBodyScrollLock(owner: symbol) {
 export function useOverlay({
   open,
   containerRef,
+  presentationRef,
   onClose,
   busy = false,
   initialFocusRef,
   returnFocusRef,
-  defaultInitialFocus
+  defaultInitialFocusContainerRef
 }: UseOverlayOptions) {
   const instanceIdRef = useRef<symbol>(Symbol("overlay"));
   const onCloseRef = useRef(onClose);
@@ -154,6 +230,7 @@ export function useOverlay({
     const entry: OverlayEntry = {
       id,
       containerRef,
+      presentationRef,
       onCloseRef,
       busyRef
     };
@@ -163,11 +240,20 @@ export function useOverlay({
     const focusInitial = window.setTimeout(() => {
       const container = containerRef.current;
       if (!container) return;
+      const markedInitialFocus = Array.from(
+        container.querySelectorAll<HTMLElement>("[data-dialog-initial-focus]")
+      ).find((element) => isProgrammaticallyFocusable(element, container));
+      const explicitInitialFocus = initialFocusRef?.current;
+      const defaultInitialFocusContainer = defaultInitialFocusContainerRef?.current;
       const target =
-        connected(initialFocusRef?.current) ??
-        connected(container.querySelector<HTMLElement>("[data-dialog-initial-focus]")) ??
-        connected(defaultInitialFocus?.()) ??
-        focusableElements(container)[0] ??
+        (explicitInitialFocus && isProgrammaticallyFocusable(explicitInitialFocus, container)
+          ? explicitInitialFocus
+          : null) ??
+        markedInitialFocus ??
+        (defaultInitialFocusContainer
+          ? tabbableElements(defaultInitialFocusContainer)[0]
+          : null) ??
+        tabbableElements(container)[0] ??
         container;
       target.focus();
     }, 0);
@@ -182,5 +268,12 @@ export function useOverlay({
         connected(returnFocusRef?.current) ?? connected(priorFocus);
       returnTarget?.focus();
     };
-  }, [containerRef, defaultInitialFocus, initialFocusRef, open, returnFocusRef]);
+  }, [
+    containerRef,
+    defaultInitialFocusContainerRef,
+    initialFocusRef,
+    open,
+    presentationRef,
+    returnFocusRef
+  ]);
 }
