@@ -77,15 +77,27 @@ export function RouteFocusManager({
 }: RouteFocusManagerProps) {
   const location = useLocation();
   const navigationType = useNavigationType();
-  const previousKey = useRef<string | null>(null);
+  const initialKey = useRef(location.key);
+  const hasNavigated = useRef(false);
   const savedFocus = useRef(new Map<string, HTMLElement>());
 
   useEffect(() => {
     const locationKey = location.key;
-    if (previousKey.current === locationKey) return;
+    return () => {
+      const activeElement = document.activeElement;
+      if (activeElement instanceof HTMLElement && activeElement !== document.body) {
+        savedFocus.current.set(locationKey, activeElement);
+      }
+    };
+  }, [location.key]);
 
-    const isInitialLocation = previousKey.current === null;
-    previousKey.current = locationKey;
+  useEffect(() => {
+    const locationKey = location.key;
+    const isInitialReplay =
+      locationKey === initialKey.current && !hasNavigated.current;
+    if (locationKey !== initialKey.current) hasNavigated.current = true;
+    if (isInitialReplay) return;
+
     let observer: MutationObserver | null = null;
     let observerDisconnected = false;
 
@@ -95,22 +107,13 @@ export function RouteFocusManager({
       observerDisconnected = true;
     };
 
-    const saveCurrentFocus = () => {
-      const activeElement = document.activeElement;
-      if (activeElement instanceof HTMLElement && activeElement !== document.body) {
-        savedFocus.current.set(locationKey, activeElement);
-      }
-    };
-
-    if (isInitialLocation) return saveCurrentFocus;
-
     const main = routeMain(mainId);
     const markedReplace =
       navigationType === "REPLACE" &&
       (location.state as { routeFocus?: unknown } | null)?.routeFocus === true;
 
     if (!main || (navigationType === "REPLACE" && !markedReplace)) {
-      return saveCurrentFocus;
+      return;
     }
 
     const focusDestination = () => {
@@ -134,7 +137,7 @@ export function RouteFocusManager({
       const savedElement = savedFocus.current.get(locationKey);
       if (savedElement && isAvailable(savedElement)) {
         focusElement(savedElement);
-        return saveCurrentFocus;
+        return;
       }
     }
 
@@ -147,9 +150,8 @@ export function RouteFocusManager({
 
     return () => {
       disconnectObserver();
-      saveCurrentFocus();
     };
-  }, [headingSelector, location.key, location.state, mainId, navigationType]);
+  }, [location.key]);
 
   return null;
 }

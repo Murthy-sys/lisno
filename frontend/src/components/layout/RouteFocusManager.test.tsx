@@ -1,6 +1,6 @@
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { useState } from "react";
+import { StrictMode, useState } from "react";
 import {
   Link,
   MemoryRouter,
@@ -126,9 +126,11 @@ function renderHarness(
   asyncState: AsyncState = "loading"
 ) {
   return render(
-    <MemoryRouter initialEntries={initialEntries}>
-      <Harness asyncState={asyncState} />
-    </MemoryRouter>
+    <StrictMode>
+      <MemoryRouter initialEntries={initialEntries}>
+        <Harness asyncState={asyncState} />
+      </MemoryRouter>
+    </StrictMode>
   );
 }
 
@@ -260,9 +262,11 @@ describe("RouteFocusManager", () => {
     expect(observer.disconnect).not.toHaveBeenCalled();
 
     view.rerender(
-      <MemoryRouter initialEntries={["/async"]}>
-        <Harness asyncState="heading" />
-      </MemoryRouter>
+      <StrictMode>
+        <MemoryRouter initialEntries={["/async"]}>
+          <Harness asyncState="heading" />
+        </MemoryRouter>
+      </StrictMode>
     );
     act(() => observer.flush());
 
@@ -279,9 +283,11 @@ describe("RouteFocusManager", () => {
       await user.click(screen.getByRole("link", { name: "Async page" }));
       const observer = ControlledMutationObserver.instances.at(-1)!;
       view.rerender(
-        <MemoryRouter initialEntries={["/login"]}>
-          <Harness asyncState={terminalState} />
-        </MemoryRouter>
+        <StrictMode>
+          <MemoryRouter initialEntries={["/login"]}>
+            <Harness asyncState={terminalState} />
+          </MemoryRouter>
+        </StrictMode>
       );
       act(() => observer.flush());
 
