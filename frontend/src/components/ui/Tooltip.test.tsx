@@ -40,6 +40,22 @@ describe("Tooltip", () => {
     expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
   });
 
+  it("merges an existing description while open and preserves it after close", () => {
+    render(
+      <Tooltip label="Add a project">
+        <button type="button" aria-describedby="keyboard-shortcut">Add project</button>
+      </Tooltip>
+    );
+    const button = screen.getByRole("button", { name: "Add project" });
+
+    fireEvent.pointerEnter(button);
+    const tooltip = screen.getByRole("tooltip");
+    expect(button).toHaveAttribute("aria-describedby", `keyboard-shortcut ${tooltip.id}`);
+
+    fireEvent.pointerLeave(button);
+    expect(button).toHaveAttribute("aria-describedby", "keyboard-shortcut");
+  });
+
   it("closes on Escape without moving focus or activating the child", () => {
     const onClick = vi.fn();
     render(

@@ -106,6 +106,12 @@ describe("Button and Spinner", () => {
     expect(spinner).not.toHaveAttribute("aria-live");
   });
 
+  it("uses the medium size when no spinner size is specified", () => {
+    const { container } = render(<Spinner />);
+
+    expect(container.firstElementChild).toHaveClass("ui-spinner", "ui-spinner--medium");
+  });
+
   it("uses the tokenized cursor, target, and transition rules for shared controls", () => {
     expect(primitives).toMatch(/\.ui-button\[data-busy\]\s*\{[^}]*cursor:\s*progress/s);
     expect(primitives).toMatch(/\.ui-button:disabled\s*\{[^}]*cursor:\s*default/s);
