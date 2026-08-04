@@ -1,4 +1,4 @@
-import { screen } from "@testing-library/react";
+import { screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
@@ -78,8 +78,17 @@ describe("ClientDashboard", () => {
     renderApp(["/client"]);
 
     expect(await screen.findByRole("heading", { name: "Your design plans" })).toBeVisible();
+    const overview = screen.getByRole("region", { name: "Client overview" });
+    expect(within(overview).getByText("Shared projects")).toBeVisible();
+    expect(within(overview).getByText("2", { selector: "dd" })).toBeVisible();
+    expect(within(overview).getByText("Average progress")).toBeVisible();
+    expect(within(overview).getByText("32%", { selector: "dd" })).toBeVisible();
+    expect(within(overview).getByText("Approved plans")).toBeVisible();
+    expect(within(overview).getByText("1", { selector: "dd" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Projects", level: 2 })).toBeVisible();
     expect(screen.getByRole("region", { name: "Your design plans" })).not.toHaveClass("client-page--project");
     expect(screen.getByText("Aurora Villa")).toBeVisible();
+    expect(screen.getByText("Active")).toBeVisible();
     expect(screen.getByText("Cedar Loft")).toBeVisible();
     expect(screen.getByText("64% complete")).toBeVisible();
     expect(screen.getByText("3 floors")).toBeVisible();
