@@ -1,9 +1,16 @@
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { FeedbackProvider, useFeedback } from "./FeedbackProvider";
+
+const primitivesCss = readFileSync(
+  resolve(process.cwd(), "src/styles/primitives.css"),
+  "utf8"
+);
 
 function FeedbackHarness() {
   const feedback = useFeedback();
@@ -166,6 +173,27 @@ describe("FeedbackProvider", () => {
     );
     expect(observer.takeRecords()).toHaveLength(0);
     observer.disconnect();
+  });
+
+  it("keeps the toast dismiss control at least 44px in both dimensions", () => {
+    const style = document.createElement("style");
+    style.textContent = primitivesCss;
+    document.head.append(style);
+
+    try {
+      renderFeedback();
+      fireEvent.click(screen.getByRole("button", { name: "Show default success" }));
+
+      const dismiss = screen.getByRole("button", {
+        name: "Dismiss Project saved."
+      });
+      const computed = window.getComputedStyle(dismiss);
+
+      expect(Number.parseFloat(computed.minBlockSize)).toBeGreaterThanOrEqual(44);
+      expect(Number.parseFloat(computed.minInlineSize)).toBeGreaterThanOrEqual(44);
+    } finally {
+      style.remove();
+    }
   });
 
   it("removes success toasts after the default or custom duration", () => {

@@ -727,13 +727,6 @@
   font: var(--type-metadata);
 }
 
-.ui-toast__dismiss {
-  block-size: 36px;
-  inline-size: 36px;
-  min-block-size: 36px;
-  min-inline-size: 36px;
-}
-
 @media (max-width: 32rem) {
   .ui-toast-viewport {
     inset-block-end: var(--space-4);
