@@ -1,1 +1,213 @@
-/* Intentionally empty: component tasks add shared UI primitives here. */
+.ui-button,
+.ui-icon-button {
+  align-items: center;
+  border: 1px solid transparent;
+  border-radius: var(--radius-control);
+  display: inline-flex;
+  font: var(--type-body);
+  font-weight: 600;
+  justify-content: center;
+  transition: background-color var(--duration-fast) var(--ease-standard), border-color var(--duration-fast) var(--ease-standard), box-shadow var(--duration-fast) var(--ease-standard), color var(--duration-fast) var(--ease-standard), transform var(--duration-fast) var(--ease-standard);
+}
+
+.ui-button {
+  cursor: pointer;
+  min-block-size: 44px;
+  padding: 0 var(--space-4);
+}
+
+.ui-button--compact {
+  min-block-size: 36px;
+  padding-inline: var(--space-3);
+}
+
+.ui-button--large {
+  min-block-size: 52px;
+  padding-inline: var(--space-5);
+}
+
+.ui-button--full-width {
+  inline-size: 100%;
+}
+
+.ui-button--primary,
+.ui-icon-button--primary {
+  background: var(--color-brand-violet);
+  color: var(--color-surface);
+}
+
+.ui-button--secondary,
+.ui-icon-button--secondary {
+  background: var(--color-surface);
+  border-color: var(--color-border-strong);
+  color: var(--color-brand-midnight);
+}
+
+.ui-button--quiet,
+.ui-icon-button--quiet {
+  background: transparent;
+  color: var(--color-brand-violet);
+}
+
+.ui-button--destructive,
+.ui-icon-button--destructive {
+  background: var(--color-danger);
+  color: var(--color-surface);
+}
+
+.ui-button:not(:disabled):hover,
+.ui-icon-button:not(:disabled):hover {
+  box-shadow: var(--shadow-soft);
+}
+
+.ui-button:not(:disabled):active,
+.ui-icon-button:not(:disabled):active {
+  transform: translateY(1px);
+}
+
+.ui-button:focus-visible,
+.ui-icon-button:focus-visible {
+  box-shadow: var(--focus-ring);
+  outline: none;
+}
+
+.ui-button:disabled {
+  cursor: default;
+  opacity: 0.56;
+}
+
+.ui-icon-button:disabled {
+  cursor: default;
+  opacity: 0.56;
+}
+
+.ui-button[data-busy] {
+  cursor: progress;
+}
+
+.ui-icon-button[data-busy] {
+  cursor: progress;
+}
+
+.ui-button__stack {
+  display: grid;
+  inline-size: 100%;
+}
+
+.ui-button__content,
+.ui-button__busy {
+  align-items: center;
+  display: inline-flex;
+  gap: var(--space-2);
+  grid-area: 1 / 1;
+  justify-content: center;
+  transition: opacity var(--duration-fast) var(--ease-standard), visibility var(--duration-fast) var(--ease-standard);
+}
+
+.ui-button__icon,
+.ui-icon-button > svg {
+  display: inline-flex;
+  flex: 0 0 auto;
+}
+
+.ui-button__busy {
+  opacity: 0;
+  visibility: hidden;
+}
+
+.ui-button[data-busy] .ui-button__content {
+  opacity: 0;
+}
+
+.ui-button[data-busy] .ui-button__busy {
+  opacity: 1;
+  visibility: visible;
+}
+
+.ui-icon-button {
+  cursor: pointer;
+  inline-size: 44px;
+  justify-content: center;
+  min-block-size: 44px;
+  min-inline-size: 44px;
+  padding: 0;
+}
+
+.ui-spinner {
+  animation: ui-spinner-rotate var(--duration-settle) linear infinite;
+  border: 2px solid currentColor;
+  border-inline-end-color: transparent;
+  border-radius: var(--radius-pill);
+  box-sizing: border-box;
+  display: inline-block;
+  inline-size: 18px;
+  block-size: 18px;
+}
+
+.ui-spinner--small {
+  inline-size: 14px;
+  block-size: 14px;
+}
+
+.ui-tooltip-wrapper {
+  display: inline-flex;
+  position: relative;
+}
+
+.ui-tooltip {
+  background: var(--color-brand-midnight);
+  border-radius: var(--radius-control);
+  box-shadow: var(--shadow-raised);
+  color: var(--color-surface);
+  font: var(--type-metadata);
+  inline-size: max-content;
+  max-inline-size: 18rem;
+  padding: var(--space-2) var(--space-3);
+  pointer-events: none;
+  position: absolute;
+  transition: opacity var(--duration-settle) var(--ease-standard), transform var(--duration-settle) var(--ease-standard);
+  z-index: var(--z-overlay);
+}
+
+.ui-tooltip--top {
+  bottom: calc(100% + var(--space-2));
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+.ui-tooltip--right {
+  left: calc(100% + var(--space-2));
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+.ui-tooltip--bottom {
+  left: 50%;
+  top: calc(100% + var(--space-2));
+  transform: translateX(-50%);
+}
+
+.ui-tooltip--left {
+  right: calc(100% + var(--space-2));
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+@keyframes ui-spinner-rotate {
+  to { transform: rotate(1turn); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ui-button,
+  .ui-icon-button,
+  .ui-button__content,
+  .ui-button__busy,
+  .ui-tooltip {
+    transition-duration: 0.01ms;
+  }
+
+  .ui-spinner {
+    animation-duration: 0.01ms;
+    animation-iteration-count: 1;
+  }
+}
