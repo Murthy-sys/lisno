@@ -8,7 +8,11 @@ import {
   FoundationQaPage,
   type FoundationQaState
 } from "../../test/fixtures/FoundationQaPage";
-import { resolveFoundationQaTarget } from "../../test/fixtures/foundationQaEntry";
+import {
+  createFoundationQaAxeController,
+  installFoundationQaAxeHook,
+  resolveFoundationQaTarget
+} from "../../test/fixtures/foundationQaEntry";
 
 const states = [
   "default",
@@ -177,8 +181,72 @@ describe("foundation QA target safety", () => {
     "/%252f%252fattacker.example/login",
     "/qa/ui-foundation.html",
     "/%71a/ui-foundation.html",
+    "/qa//ui-foundation.html",
+    "/%71a/%2fui-foundation.html",
+    "/%2571a/%252fui-foundation.html",
     "/qa/ui-foundation.html?target=/login"
   ])("rejects unsafe target %s", (target) => {
     expect(resolveFoundationQaTarget(target, "https://lisno.example")).toBeNull();
+  });
+
+  it("waits for the requested iframe identity and scans only its loaded document", async () => {
+    const scan = vi.fn(async () => ({ violations: [] }) as unknown as axe.AxeResults);
+    const controller = createFoundationQaAxeController(
+      "/login",
+      "https://lisno.example",
+      scan
+    );
+    const iframeDocument = document.implementation.createHTMLDocument("Target app");
+    Object.defineProperty(iframeDocument, "readyState", { value: "complete" });
+    const location = { href: "about:blank" };
+    const iframe = document.createElement("iframe");
+    Object.defineProperties(iframe, {
+      contentDocument: { value: iframeDocument },
+      contentWindow: { value: { location } }
+    });
+    const previousHook = window.__lisnoRunAxe;
+    installFoundationQaAxeHook(controller);
+
+    try {
+      await expect(window.__lisnoRunAxe?.()).rejects.toThrow(
+        "UI foundation target iframe is not ready."
+      );
+      expect(scan).not.toHaveBeenCalled();
+
+      controller.attachIframe(iframe);
+      controller.markIframeLoaded(iframe);
+      await expect(window.__lisnoRunAxe?.()).rejects.toThrow(
+        "UI foundation target iframe is not ready."
+      );
+      expect(scan).not.toHaveBeenCalled();
+
+      location.href = "https://lisno.example/login";
+      controller.markIframeLoaded(iframe);
+      await window.__lisnoRunAxe?.();
+      expect(scan).toHaveBeenCalledTimes(1);
+      expect(scan).toHaveBeenCalledWith(iframeDocument);
+
+      location.href = "https://lisno.example/signup";
+      await expect(window.__lisnoRunAxe?.()).rejects.toThrow(
+        "UI foundation target iframe is not ready."
+      );
+      expect(scan).toHaveBeenCalledTimes(1);
+    } finally {
+      window.__lisnoRunAxe = previousHook;
+    }
+  });
+
+  it("scans the direct gallery body only when no iframe target was requested", async () => {
+    const scan = vi.fn(async () => ({ violations: [] }) as unknown as axe.AxeResults);
+    const controller = createFoundationQaAxeController(
+      null,
+      "https://lisno.example",
+      scan
+    );
+
+    await controller.run();
+
+    expect(scan).toHaveBeenCalledTimes(1);
+    expect(scan).toHaveBeenCalledWith(document.body);
   });
 });

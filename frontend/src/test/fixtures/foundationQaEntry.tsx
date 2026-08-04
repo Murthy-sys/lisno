@@ -7,8 +7,18 @@ import { FoundationQaPage, type FoundationQaState } from "./FoundationQaPage";
 
 declare global {
   interface Window {
-    __lisnoRunAxe?: () => ReturnType<typeof axe.run>;
+    __lisnoRunAxe?: () => Promise<axe.AxeResults>;
   }
+}
+
+type FoundationQaAxeScanner = (
+  target: Document | HTMLElement
+) => Promise<axe.AxeResults>;
+
+export interface FoundationQaAxeController {
+  attachIframe(iframe: HTMLIFrameElement | null): void;
+  markIframeLoaded(iframe: HTMLIFrameElement): void;
+  run(): Promise<axe.AxeResults>;
 }
 
 const foundationStates = new Set<FoundationQaState>([
@@ -64,16 +74,82 @@ export function resolveFoundationQaTarget(target: string | null, origin: string)
     return null;
   }
   if (!decodedPath || /^\/{2,}/.test(decodedPath) || decodedPath.includes("\\")) return null;
-  if (decodedPath.startsWith("/qa/ui-foundation.html")) return null;
+  const canonicalPath = decodedPath.replace(/\/{2,}/g, "/");
+  if (canonicalPath.startsWith("/qa/ui-foundation.html")) return null;
 
   return `${parsed.pathname}${parsed.search}${parsed.hash}`;
 }
 
+function loadedIframeDocument(iframe: HTMLIFrameElement, expectedHref: string) {
+  const iframeDocument = iframe.contentDocument;
+  if (!iframeDocument?.body || iframeDocument.readyState !== "complete") return null;
+
+  try {
+    if (iframe.contentWindow?.location.href !== expectedHref) return null;
+  } catch {
+    return null;
+  }
+
+  return iframeDocument;
+}
+
+export function createFoundationQaAxeController(
+  requestedTarget: string | null,
+  origin: string,
+  scan: FoundationQaAxeScanner = (target) => axe.run(target)
+): FoundationQaAxeController {
+  const expectedHref = requestedTarget
+    ? new URL(requestedTarget, origin).href
+    : null;
+  let iframe: HTMLIFrameElement | null = null;
+  let readyDocument: Document | null = null;
+
+  return {
+    attachIframe(nextIframe) {
+      if (nextIframe === iframe) return;
+      iframe = nextIframe;
+      readyDocument = null;
+    },
+    markIframeLoaded(loadedIframe) {
+      if (loadedIframe !== iframe || !expectedHref) return;
+      readyDocument = loadedIframeDocument(loadedIframe, expectedHref);
+    },
+    run() {
+      if (!expectedHref) return scan(document.body);
+
+      const currentDocument = iframe
+        ? loadedIframeDocument(iframe, expectedHref)
+        : null;
+      if (!readyDocument || currentDocument !== readyDocument) {
+        readyDocument = null;
+        return Promise.reject(
+          new Error("UI foundation target iframe is not ready.")
+        );
+      }
+
+      return scan(readyDocument);
+    }
+  };
+}
+
+export function installFoundationQaAxeHook(
+  controller: FoundationQaAxeController
+) {
+  window.__lisnoRunAxe = () => controller.run();
+}
+
 const root = document.getElementById("root");
+const parameters = new URLSearchParams(window.location.search);
+const target = resolveFoundationQaTarget(
+  parameters.get("target"),
+  window.location.origin
+);
+const axeController = createFoundationQaAxeController(
+  target,
+  window.location.origin
+);
 
 if (root) {
-  const parameters = new URLSearchParams(window.location.search);
-  const target = resolveFoundationQaTarget(parameters.get("target"), window.location.origin);
   const requestedState = parameters.get("state") as FoundationQaState | null;
   const state = requestedState && foundationStates.has(requestedState)
     ? requestedState
@@ -82,7 +158,12 @@ if (root) {
   createRoot(root).render(
     <FeedbackProvider>
       {target ? (
-        <iframe title="UI foundation target" src={target} />
+        <iframe
+          ref={(iframe) => axeController.attachIframe(iframe)}
+          onLoad={(event) => axeController.markIframeLoaded(event.currentTarget)}
+          title="UI foundation target"
+          src={target}
+        />
       ) : (
         <FoundationQaPage state={state} />
       )}
@@ -90,12 +171,4 @@ if (root) {
   );
 }
 
-window.__lisnoRunAxe = () => {
-  const iframe = document.querySelector<HTMLIFrameElement>("iframe");
-  const iframeDocument = iframe?.contentDocument;
-  const target = iframeDocument?.readyState === "complete" && iframeDocument.body
-    ? iframeDocument
-    : document.body;
-
-  return axe.run(target);
-};
+installFoundationQaAxeHook(axeController);
