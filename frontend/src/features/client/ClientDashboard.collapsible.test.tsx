@@ -1,9 +1,12 @@
+import { readFileSync } from "node:fs";
 import { screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import { tokenStorage } from "../../api/client";
 import { renderApp } from "../../test/render";
+
+const clientDashboardStyles = readFileSync("src/styles/client-dashboard.css", "utf8");
 
 const client = {
   id: "client-1",
@@ -85,7 +88,48 @@ function installClientDashboardApi() {
   });
 }
 
+function parsedStyleRules(source: string) {
+  const style = document.createElement("style");
+  style.textContent = source;
+  document.head.append(style);
+  const rules = Array.from(style.sheet?.cssRules ?? []);
+  style.remove();
+  return rules;
+}
+
+function findStyleRule(rules: CSSRule[], expectedSelectors: string[]) {
+  return rules.find((rule): rule is CSSStyleRule => {
+    if (!("selectorText" in rule) || typeof rule.selectorText !== "string") return false;
+    const selectors = rule.selectorText.split(",").map((selector) => selector.trim());
+    return expectedSelectors.every((selector) => selectors.includes(selector));
+  });
+}
+
 describe("collapsible client project cards", () => {
+  it("gives each project expansion toggle a 44 by 44 pixel minimum target", () => {
+    const toggleRule = findStyleRule(parsedStyleRules(clientDashboardStyles), [
+      ".client-dashboard .client-project-card__toggle"
+    ]);
+
+    expect(toggleRule?.style.getPropertyValue("min-inline-size")).toBe("44px");
+    expect(toggleRule?.style.getPropertyValue("min-block-size")).toBe("44px");
+  });
+
+  it("stacks each project card header and its controls below 720 pixels", () => {
+    const rules = parsedStyleRules(clientDashboardStyles);
+    const narrowRule = rules.find(
+      (rule) => rule.cssText.startsWith("@media (max-width: 720px)") && "cssRules" in rule
+    ) as CSSMediaRule | undefined;
+    const stackedRule = findStyleRule(Array.from(narrowRule?.cssRules ?? []), [
+      ".client-dashboard .client-project-card__header",
+      ".client-dashboard .client-project-card__toggle",
+      ".client-dashboard .client-project-card__summary"
+    ]);
+
+    expect(stackedRule?.style.getPropertyValue("align-items")).toBe("flex-start");
+    expect(stackedRule?.style.getPropertyValue("flex-direction")).toBe("column");
+  });
+
   it("starts collapsed and toggles projects independently", async () => {
     tokenStorage.set("client-token");
     installClientDashboardApi();
