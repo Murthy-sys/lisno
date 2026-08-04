@@ -126,6 +126,22 @@ function installDesignerApi(
 }
 
 describe("protected role routing", () => {
+  it("focuses the signup heading after PUSH navigation from login", async () => {
+    const user = userEvent.setup();
+    renderApp(["/login"]);
+
+    await user.click(
+      await screen.findByRole("link", { name: "Create a client account" })
+    );
+
+    const heading = await screen.findByRole("heading", {
+      level: 1,
+      name: "Create your client account"
+    });
+    expect(heading).toHaveFocus();
+    expect(heading).toHaveAttribute("tabindex", "-1");
+  });
+
   it("opens the estimator sales workspace for an estimator sales session", async () => {
     tokenStorage.set("sales-token");
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {

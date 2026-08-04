@@ -104,6 +104,9 @@ describe("AppShell", () => {
       expect(screen.getAllByRole("main")).toHaveLength(1);
       expect(screen.getByRole("main")).toHaveAttribute("data-role", role);
       expect(screen.getByRole("main")).toHaveAttribute("tabindex", "-1");
+      expect(
+        document.querySelector('[aria-live][aria-label="Page title"]')
+      ).toBeNull();
 
       expect(screen.getByRole("link", { name: label })).toHaveAttribute(
         "aria-current",

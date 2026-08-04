@@ -13,6 +13,7 @@ import { LoginPage } from "../auth/LoginPage";
 import { SignupPage } from "../auth/SignupPage";
 import { ProtectedRoute } from "../auth/ProtectedRoute";
 import { AppShell } from "../components/layout/AppShell";
+import { RouteFocusManager } from "../components/layout/RouteFocusManager";
 import { StatusBadge } from "../components/ui/StatusBadge";
 import { DesignerDashboard } from "../features/designer/DesignerDashboard";
 import { ProjectWorkspace } from "../features/designer/ProjectWorkspace";
@@ -160,7 +161,9 @@ function HomeRedirect() {
 
 export function AppRoutes() {
   return (
-    <Routes>
+    <>
+      <RouteFocusManager />
+      <Routes>
       <Route path="/login" element={<LoginRoute />} />
       <Route path="/signup" element={<SignupRoute />} />
       <Route path="/" element={<HomeRedirect />} />
@@ -231,7 +234,8 @@ export function AppRoutes() {
         <Route path="/client/projects/:projectId" element={<ProtectedRoute allowedRoles={["client"]}><ClientProject /></ProtectedRoute>} />
       </Route>
       <Route path="*" element={<HomeRedirect />} />
-    </Routes>
+      </Routes>
+    </>
   );
 }
 
