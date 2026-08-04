@@ -5,6 +5,7 @@ import { useState } from "react";
 import type { LeadStage } from "../../api/types";
 import { AsyncState } from "../../components/ui/AsyncState";
 import { DownloadButton } from "../../components/ui/DownloadButton";
+import "../../styles/estimator-dashboard.css";
 import { LeadCreateDialog } from "./LeadCreateDialog";
 import {
   downloadEstimatePdf,
@@ -38,11 +39,14 @@ export function LeadDashboard() {
     queryKey: [...leadKeys.all, "saved-estimates"],
     queryFn: getSavedEstimates
   });
+  const savedEstimates = estimates.data ?? [];
+  const draftEstimates = savedEstimates.filter((estimate) => estimate.status === "draft").length;
+  const savedValue = savedEstimates.reduce((total, estimate) => total + estimate.total, 0);
 
   if (query.isPending) return <AsyncState state="loading" message="Loading your leads…" />;
   if (query.isError) return <AsyncState state="error" message="We couldn't load your leads." actionLabel="Try again" onAction={() => void query.refetch()} />;
 
-  return <section className="lead-page" aria-labelledby="lead-title">
+  return <section className="lead-page estimator-dashboard" aria-labelledby="lead-title">
     <header className="workspace-header">
       <div>
         <p className="eyebrow">Estimator / Sales</p>
@@ -52,8 +56,40 @@ export function LeadDashboard() {
       <button className="button button--primary" onClick={() => setCreating(true)}>New lead</button>
     </header>
 
-    <section className="saved-estimates" aria-labelledby="saved-estimates-title">
-      <header>
+    <section className="estimator-dashboard__overview" aria-label="Pipeline overview">
+      <dl>
+        <div><dt>Visible leads</dt><dd>{query.data.items.length}</dd></div>
+        <div><dt>Saved estimates</dt><dd>{estimates.isPending ? "—" : savedEstimates.length}</dd></div>
+        <div><dt>Draft estimates</dt><dd>{estimates.isPending ? "—" : draftEstimates}</dd></div>
+        <div><dt>Saved value</dt><dd>{estimates.isPending ? "—" : money(savedValue)}</dd></div>
+      </dl>
+    </section>
+
+    <div className="lead-controls">
+      <label>Search leads<input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Client, email or project" /></label>
+      <label>Lead stage<select value={stage} onChange={(event) => setStage(event.target.value as LeadStage | "all")}><option value="all">All stages</option>{Object.entries(labels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+    </div>
+
+    <section className="estimator-dashboard__section" aria-labelledby="leads-title">
+      <header className="estimator-dashboard__section-heading">
+        <div><p className="eyebrow">Opportunity pipeline</p><h2 id="leads-title">Leads</h2></div>
+        <span>{query.data.items.length} total</span>
+      </header>
+      {query.data.items.length ? <div className="lead-list">
+        <div className="lead-list__header" aria-hidden="true">
+          <span>Client</span><span>Project</span><span>Stage</span><span>Next action</span>
+        </div>
+        {query.data.items.map((lead) => <Link key={lead.id} className="lead-row" to={`/estimator-sales/leads/${lead.id}`}>
+          <span className="lead-row__client" data-label="Client"><strong>{lead.clientName}</strong><small>{lead.clientEmail} · {lead.clientMobile}</small></span>
+          <span data-label="Project">{lead.projectName} · {lead.propertyType} · {lead.location}</span>
+          <span data-label="Stage"><span className={`lead-stage-badge lead-stage-badge--${lead.stage}`}>{labels[lead.stage]}</span></span>
+          <span data-label="Next action">{lead.nextAction}</span>
+        </Link>)}
+      </div> : <div className="inline-empty"><h2>No leads yet</h2><p>Create a lead to start tracking an opportunity.</p></div>}
+    </section>
+
+    <section className="saved-estimates estimator-dashboard__section" aria-labelledby="saved-estimates-title">
+      <header className="estimator-dashboard__section-heading">
         <div>
           <p className="eyebrow">Estimate pipeline</p>
           <h2 id="saved-estimates-title">Saved estimates</h2>
@@ -91,20 +127,6 @@ export function LeadDashboard() {
         </article>)}
       </div> : estimates.isSuccess ? <p className="inline-empty">No saved estimates yet. Start one from a lead.</p> : null}
     </section>
-
-    <div className="lead-controls">
-      <label>Search leads<input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Client, email or project" /></label>
-      <label>Lead stage<select value={stage} onChange={(event) => setStage(event.target.value as LeadStage | "all")}><option value="all">All stages</option>{Object.entries(labels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
-    </div>
-
-    {query.data.items.length ? <div className="lead-list">
-      {query.data.items.map((lead) => <Link key={lead.id} className="lead-row" to={`/estimator-sales/leads/${lead.id}`}>
-        <span className="lead-row__client"><strong>{lead.clientName}</strong><small>{lead.clientEmail} · {lead.clientMobile}</small></span>
-        <span>{lead.projectName} · {lead.propertyType} · {lead.location}</span>
-        <span>{labels[lead.stage]}</span>
-        <span>Next: {lead.nextAction}</span>
-      </Link>)}
-    </div> : <div className="inline-empty"><h2>No leads yet</h2><p>Create a lead to start tracking an opportunity.</p></div>}
 
     {creating ? <LeadCreateDialog onClose={() => setCreating(false)} /> : null}
   </section>;
