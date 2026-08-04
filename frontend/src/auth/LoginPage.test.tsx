@@ -15,6 +15,19 @@ const authStyles = readFileSync(
   resolve(process.cwd(), "src/styles/index.css"),
   "utf8"
 );
+const primitiveStyles = readFileSync(
+  resolve(process.cwd(), "src/styles/primitives.css"),
+  "utf8"
+);
+
+function cssRuleFrom(source: string, selector: string) {
+  const escapedSelector = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return source.match(new RegExp(`${escapedSelector}\\s*\\{([^}]*)\\}`))?.[1] ?? "";
+}
+
+function cssRule(selector: string) {
+  return cssRuleFrom(authStyles, selector);
+}
 
 const designer = {
   id: "user-designer-ananya",
@@ -402,6 +415,15 @@ describe("LoginPage", () => {
       "aria-hidden",
       "true"
     );
+    expect(cssRule(".login-page--signin .login-submit .ui-button__busy")).toContain(
+      "gap: 0.65rem"
+    );
+    const exposedBusyRule = cssRuleFrom(
+      primitiveStyles,
+      ".ui-button[data-busy] .ui-button__busy"
+    );
+    expect(exposedBusyRule).toContain("opacity: 1");
+    expect(exposedBusyRule).toContain("visibility: visible");
     expect(
       screen.getByRole("status", { name: "Sign-in status" })
     ).toHaveTextContent("Signing in. Please wait.");
@@ -416,11 +438,45 @@ describe("LoginPage", () => {
     ).toBeVisible();
   });
 
-  it("scopes sign-in button layout and busy feedback to stable shared slots", () => {
-    expect(authStyles).toMatch(/\.login-page--signin\s+\.login-submit\s+\.ui-button__stack/);
-    expect(authStyles).toMatch(/\.login-page--signin\s+\.login-submit\s+\.ui-button__content/);
-    expect(authStyles).toMatch(/\.login-page--signin\s+\.login-submit\s+\.ui-spinner/);
-    expect(authStyles).toMatch(/\.login-page--signin\s+\.login-submit__arrow/);
+  it("preserves the approved sign-in button and password-toggle presentation", () => {
+    expect(authStyles).toMatch(
+      /\.login-page--signin\s+\.login-submit\s+\.ui-button__stack/
+    );
+    expect(authStyles).toMatch(
+      /\.login-page--signin\s+\.login-submit\s+\.ui-spinner/
+    );
+    expect(authStyles).toMatch(
+      /\.login-page--signin\s+\.login-submit__arrow/
+    );
+    const submitRule = cssRule(".login-page--signin .login-submit");
+    expect(submitRule).toContain("min-height: 3.45rem");
+    expect(submitRule).toContain("padding: 0.72rem 1rem");
+    expect(submitRule).toContain("font-weight: 750");
+
+    expect(cssRule(".login-page--signin .login-submit .ui-button__content")).toContain(
+      "gap: 0.65rem"
+    );
+    expect(cssRule(".login-page--signin .login-submit .ui-button__busy")).toContain(
+      "gap: 0.65rem"
+    );
+
+    const demoRule = cssRule(".login-page--signin .button--quiet");
+    expect(demoRule).toContain("min-height: 2.55rem");
+    expect(demoRule).toContain("padding: 0.72rem 1rem");
+    expect(demoRule).toContain("font-weight: 750");
+    expect(
+      cssRule(".login-page--signin .button--quiet:hover:not(:disabled)")
+    ).toContain("box-shadow: none");
+
+    const toggleRule = cssRule(".login-page--signin .password-field__toggle");
+    expect(toggleRule).toContain("width: 2.75rem");
+    expect(toggleRule).toContain("height: 2.75rem");
+    expect(toggleRule).toContain("color: #697086");
+    const toggleHoverRule = cssRule(
+      ".login-page--signin .password-field__toggle:hover:not(:disabled)"
+    );
+    expect(toggleHoverRule).toContain("background: #f2effc");
+    expect(toggleHoverRule).toContain("color: var(--color-lisno-violet)");
   });
 
   it("toggles password visibility with an accessible pressed state", async () => {

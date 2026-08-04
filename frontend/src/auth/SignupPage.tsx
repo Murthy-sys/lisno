@@ -1,5 +1,5 @@
 import { Eye, EyeOff } from "lucide-react";
-import { useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { z } from "zod";
@@ -57,6 +57,8 @@ export function SignupPage() {
   const [validationSummary, setValidationSummary] = useState<string[]>([]);
   const fields = useRef<Partial<Record<keyof SignupFields, HTMLInputElement | HTMLTextAreaElement | null>>>({});
   const resolveSignupIntent = useRef<(() => void) | null>(null);
+  const signupIntentActive = useRef(false);
+  const mounted = useRef(true);
   const {
     register,
     handleSubmit,
@@ -95,13 +97,24 @@ export function SignupPage() {
     if (firstField) fields.current[firstField]?.focus();
   };
 
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+
   useLayoutEffect(() => {
     const signupState = location.state as { signupRouteFocus?: unknown } | null;
     if (signupState?.signupRouteFocus === true) {
-      resolveSignupIntent.current?.();
-      resolveSignupIntent.current = null;
+      if (resolveSignupIntent.current) {
+        resolveSignupIntent.current();
+        resolveSignupIntent.current = null;
+      } else if (!signupIntentActive.current) {
+        navigate("/signup", { replace: true, state: null });
+      }
     }
-  }, [location.key, location.state]);
+  }, [location.key, location.state, navigate]);
 
   const submit = handleSubmit(async (values) => {
     setSubmitError(null);
@@ -120,6 +133,7 @@ export function SignupPage() {
 
     setValidationSummary([]);
     await new Promise<void>((resolve) => {
+      signupIntentActive.current = true;
       resolveSignupIntent.current = resolve;
       navigate("/signup", {
         replace: true,
@@ -129,6 +143,10 @@ export function SignupPage() {
     try {
       await auth.signupClient(parsed.data satisfies ClientSignupInput);
     } catch (error) {
+      signupIntentActive.current = false;
+      if (mounted.current) {
+        navigate("/signup", { replace: true, state: null });
+      }
       if (error instanceof ApiError && error.fields) {
         const messages: Partial<Record<keyof SignupFields, string>> = {};
         for (const field of fieldOrder) {

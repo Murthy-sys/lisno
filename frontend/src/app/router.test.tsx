@@ -221,6 +221,17 @@ describe("protected role routing", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Create client account" }));
     expect(await screen.findByRole("alert", { name: "Signup error" })).toBeVisible();
+    await waitFor(() => expect(router.state.location.state).toBeNull());
+    for (const [label, value] of [
+      ["Full name", "Priya Shah"],
+      ["Email address", "priya@example.com"],
+      ["Mobile number", "+91 98765 43210"],
+      ["Address", "42 Garden Lane, Bengaluru"],
+      ["Password", "StrongPassword!23"],
+      ["Confirm password", "StrongPassword!23"]
+    ] as const) {
+      expect(screen.getByLabelText(label, { exact: true })).toHaveValue(value);
+    }
     fireEvent.click(screen.getByRole("button", { name: "Create client account" }));
 
     const heading = await screen.findByRole("heading", {
@@ -231,7 +242,13 @@ describe("protected role routing", () => {
     expect(heading).toHaveFocus();
   });
 
-  it("keeps a restore-driven authenticated signup redirect unmarked", async () => {
+  it.each([
+    ["an unmarked POP entry", "/signup"],
+    [
+      "a stale marked POP entry",
+      { pathname: "/signup", state: { signupRouteFocus: true } }
+    ]
+  ] as const)("keeps a restore-driven authenticated signup redirect unmarked from %s", async (_case, entry) => {
     const client = {
       id: "client-priya",
       name: "Priya Shah",
@@ -258,7 +275,7 @@ describe("protected role routing", () => {
       }
       throw new Error(`Unhandled request: ${url}`);
     });
-    const { router } = renderApp(["/signup"]);
+    const { router } = renderApp([entry]);
 
     const heading = await screen.findByRole("heading", {
       name: "Your design plans"

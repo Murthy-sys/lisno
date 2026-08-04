@@ -4,6 +4,7 @@ import {
   Routes,
   Navigate,
   useLocation,
+  useNavigationType,
 } from "react-router-dom";
 
 import type { Role } from "../api/types";
@@ -120,6 +121,7 @@ function LoginRoute() {
 function SignupRoute() {
   const auth = useAuth();
   const location = useLocation();
+  const navigationType = useNavigationType();
 
   if (auth.status === "restoring") {
     return (
@@ -137,7 +139,8 @@ function SignupRoute() {
         to={roleHomePath(auth.user.role)}
         replace
         state={
-          signupState?.signupRouteFocus === true
+          signupState?.signupRouteFocus === true &&
+          navigationType === "REPLACE"
             ? { routeFocus: true }
             : undefined
         }

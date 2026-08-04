@@ -1,4 +1,4 @@
-import { screen, waitFor } from "@testing-library/react";
+import { fireEvent, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -153,13 +153,15 @@ describe("SignupPage", () => {
         )
       )
     );
-    renderApp(["/signup"]);
+    const { router } = renderApp(["/signup"]);
     await fillSignupForm();
 
     await userEvent.click(screen.getByRole("button", { name: "Create client account" }));
 
     const email = await screen.findByLabelText("Email address");
     expect(email).toHaveAccessibleDescription("This email address is already registered.");
+    expect(email).toHaveFocus();
+    await waitFor(() => expect(router.state.location.state).toBeNull());
     expect(email).toHaveAttribute("aria-describedby", "signup-email-error");
     expect(email).toHaveValue(signup.email);
     expect(screen.getByLabelText("Mobile number")).toHaveAccessibleDescription(
@@ -201,6 +203,9 @@ describe("SignupPage", () => {
     }
     expect(authStyles).toMatch(
       /\.login-page\s+\.password-field\s+\.ui-control\s*{[^}]*padding-inline-end:\s*var\(--space-10\)/
+    );
+    expect(authStyles).not.toMatch(
+      /\.login-page--signup\s+\.password-field__toggle\s*{[^}]*(?:width|height|block-size|inline-size)\s*:/
     );
 
     passwordToggle.focus();
@@ -246,7 +251,10 @@ describe("SignupPage", () => {
     const submitButton = screen.getByRole("button", {
       name: "Create client account"
     });
-    await userEvent.click(submitButton);
+    const form = document.getElementById("signup-form");
+    expect(form).not.toBeNull();
+    fireEvent.submit(form!);
+    fireEvent.submit(form!);
 
     await waitFor(() => expect(submitButton).toBeDisabled());
     expect(submitButton).toHaveAccessibleName("Create client account");
@@ -267,10 +275,10 @@ describe("SignupPage", () => {
     expect(
       screen.getByRole("status", { name: "Signup status" })
     ).toHaveTextContent("Creating account. Please wait.");
-    await userEvent.click(submitButton);
-    expect(requests).toBe(1);
+    await waitFor(() => expect(requests).toBe(1));
 
     releaseSignup();
     expect(await screen.findByRole("alert", { name: "Signup error" })).toBeVisible();
+    expect(requests).toBe(1);
   });
 });

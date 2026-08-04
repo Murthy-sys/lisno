@@ -4080,6 +4080,7 @@
   width: 2.75rem;
   height: 2.75rem;
   border-radius: 0.7rem;
+  color: #697086;
   transition:
     color 160ms ease,
     background 160ms ease,
@@ -4087,7 +4088,9 @@
 }
 
 .login-page--signin .password-field__toggle:hover:not(:disabled) {
+  background: #f2effc;
   box-shadow: none;
+  color: var(--color-lisno-violet);
 }
 
 .login-page--signin .password-field__toggle svg {
@@ -4114,6 +4117,8 @@
   box-shadow:
     0 14px 30px rgb(91 66 222 / 28%),
     0 1px 0 rgb(255 255 255 / 24%) inset;
+  padding: 0.72rem 1rem;
+  font-weight: 750;
   letter-spacing: 0.01em;
   transition:
     transform 180ms cubic-bezier(0.2, 0.8, 0.2, 1),
@@ -4126,6 +4131,10 @@
 }
 
 .login-page--signin .login-submit .ui-button__content {
+  gap: 0.65rem;
+}
+
+.login-page--signin .login-submit .ui-button__busy {
   gap: 0.65rem;
 }
 
@@ -4188,6 +4197,8 @@
   border-color: rgb(112 87 255 / 20%);
   border-radius: 0.75rem;
   background: rgb(255 255 255 / 78%);
+  padding: 0.72rem 1rem;
+  font-weight: 750;
   transition:
     border-color 160ms ease,
     background 160ms ease,
@@ -4198,6 +4209,7 @@
 .login-page--signin .button--quiet:hover:not(:disabled) {
   border-color: rgb(112 87 255 / 38%);
   background: #fff;
+  box-shadow: none;
   color: #4f38ca;
   transform: translateY(-1px);
 }
