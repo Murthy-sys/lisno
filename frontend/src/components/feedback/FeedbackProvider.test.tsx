@@ -1,4 +1,5 @@
-import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -7,6 +8,7 @@ import { FeedbackProvider, useFeedback } from "./FeedbackProvider";
 function FeedbackHarness() {
   const feedback = useFeedback();
   const [ids, setIds] = useState<string[]>([]);
+  const [removableTriggerVisible, setRemovableTriggerVisible] = useState(true);
 
   const showSuccess = (
     durationMs?: number,
@@ -56,6 +58,17 @@ function FeedbackHarness() {
       >
         Dismiss latest
       </button>
+      {removableTriggerVisible ? (
+        <button
+          type="button"
+          onClick={() => {
+            showSuccess();
+            setRemovableTriggerVisible(false);
+          }}
+        >
+          Show and remove trigger
+        </button>
+      ) : null}
       <p aria-label="Returned feedback IDs">{ids.join(",")}</p>
     </>
   );
@@ -75,7 +88,10 @@ describe("FeedbackProvider", () => {
   });
 
   afterEach(() => {
-    vi.runOnlyPendingTimers();
+    cleanup();
+    if (vi.isFakeTimers()) {
+      act(() => vi.runOnlyPendingTimers());
+    }
     vi.useRealTimers();
   });
 
@@ -202,15 +218,73 @@ describe("FeedbackProvider", () => {
     expect(vi.getTimerCount()).toBe(3);
   });
 
-  it("never moves focus while showing or dismissing feedback", () => {
+  it("does not move focus when showing feedback and restores the creation origin after pointer dismissal", async () => {
+    vi.useRealTimers();
+    const user = userEvent.setup();
+    renderFeedback();
+    const trigger = screen.getByRole("button", { name: "Show default success" });
+
+    await user.click(trigger);
+    expect(trigger).toHaveFocus();
+    await user.click(screen.getByRole("button", { name: "Dismiss Project saved." }));
+    expect(screen.queryByRole("button", { name: "Dismiss Project saved." })).not.toBeInTheDocument();
+    expect(trigger).toHaveFocus();
+  });
+
+  it("restores the creation origin after keyboard dismissal", async () => {
+    vi.useRealTimers();
+    const user = userEvent.setup();
+    renderFeedback();
+    const trigger = screen.getByRole("button", { name: "Show default success" });
+    await user.click(trigger);
+    const dismiss = screen.getByRole("button", { name: "Dismiss Project saved." });
+    dismiss.focus();
+
+    await user.keyboard("{Enter}");
+
+    expect(dismiss).not.toBeInTheDocument();
+    expect(trigger).toHaveFocus();
+  });
+
+  it("restores the creation origin when an automatically expiring toast owns focus", () => {
     renderFeedback();
     const trigger = screen.getByRole("button", { name: "Show default success" });
     trigger.focus();
+    fireEvent.click(trigger);
+    screen.getByRole("button", { name: "Dismiss Project saved." }).focus();
+
+    act(() => vi.advanceTimersByTime(5_000));
+
+    expect(screen.queryByRole("button", { name: "Dismiss Project saved." })).not.toBeInTheDocument();
+    expect(trigger).toHaveFocus();
+  });
+
+  it("restores the creation origin when the focused oldest toast is evicted", () => {
+    renderFeedback();
+    const trigger = screen.getByRole("button", { name: "Show sequenced success" });
+    trigger.focus();
+    fireEvent.click(trigger);
+    fireEvent.click(trigger);
+    fireEvent.click(trigger);
+    screen.getByRole("button", { name: "Dismiss Success 1." }).focus();
 
     fireEvent.click(trigger);
+
+    expect(screen.queryByRole("button", { name: "Dismiss Success 1." })).not.toBeInTheDocument();
     expect(trigger).toHaveFocus();
-    fireEvent.click(screen.getByRole("button", { name: "Dismiss latest" }));
-    expect(trigger).toHaveFocus();
+  });
+
+  it("focuses the labelled notification region when the creation origin disconnected", async () => {
+    vi.useRealTimers();
+    const user = userEvent.setup();
+    renderFeedback();
+    await user.click(screen.getByRole("button", { name: "Show and remove trigger" }));
+    const dismiss = screen.getByRole("button", { name: "Dismiss Project saved." });
+    dismiss.focus();
+
+    await user.keyboard("{Enter}");
+
+    expect(screen.getByRole("region", { name: "Notifications" })).toHaveFocus();
   });
 
   it("clears pending toast timers when the provider unmounts", () => {

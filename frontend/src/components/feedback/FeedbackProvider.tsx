@@ -31,6 +31,8 @@ const FeedbackContext = createContext<FeedbackApi | null>(null);
 export function FeedbackProvider({ children }: { children: ReactNode }) {
   const [announcement, setAnnouncement] = useState("");
   const [toasts, setToasts] = useState<SuccessToast[]>([]);
+  const toastsRef = useRef<SuccessToast[]>([]);
+  const viewportRef = useRef<HTMLElement>(null);
   const lastAnnouncementRef = useRef("");
   const nextIdRef = useRef(0);
   const timersRef = useRef(new Map<string, ReturnType<typeof setTimeout>>());
@@ -43,12 +45,36 @@ export function FeedbackProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  const restoreFocusIfOwned = useCallback((toast: SuccessToast) => {
+    const activeElement = document.activeElement;
+    if (!(activeElement instanceof HTMLElement)) return;
+    const activeToast = activeElement.closest<HTMLElement>("[data-feedback-id]");
+    if (activeToast?.dataset.feedbackId !== toast.id) return;
+
+    if (toast.focusOrigin?.isConnected) {
+      toast.focusOrigin.focus();
+      return;
+    }
+
+    // The labelled, always-mounted viewport is the deterministic fallback
+    // when the element that owned focus at creation no longer exists.
+    viewportRef.current?.focus();
+  }, []);
+
   const dismiss = useCallback(
     (id: string) => {
+      const toast = toastsRef.current.find((item) => item.id === id);
+      if (!toast) {
+        clearTimer(id);
+        return;
+      }
+      restoreFocusIfOwned(toast);
       clearTimer(id);
-      setToasts((current) => current.filter((toast) => toast.id !== id));
+      const next = toastsRef.current.filter((item) => item.id !== id);
+      toastsRef.current = next;
+      setToasts(next);
     },
-    [clearTimer]
+    [clearTimer, restoreFocusIfOwned]
   );
 
   const announce = useCallback((message: string) => {
@@ -65,25 +91,35 @@ export function FeedbackProvider({ children }: { children: ReactNode }) {
   const success = useCallback(
     ({ title, message, durationMs }: SuccessFeedback) => {
       const id = `feedback-${++nextIdRef.current}`;
-      const toast = { id, title, message };
+      const activeElement = document.activeElement;
+      const focusOrigin =
+        activeElement instanceof HTMLElement && activeElement !== document.body
+          ? activeElement
+          : null;
+      const toast = { id, title, message, focusOrigin };
       announce(message ? `${title} ${message}` : title);
 
-      setToasts((current) => {
-        if (current.length < MAX_VISIBLE_TOASTS) return [...current, toast];
-        const [oldest, ...remaining] = current;
-        if (oldest) clearTimer(oldest.id);
-        return [...remaining, toast];
-      });
+      const [oldest, ...remaining] = toastsRef.current;
+      const next =
+        toastsRef.current.length < MAX_VISIBLE_TOASTS
+          ? [...toastsRef.current, toast]
+          : [...remaining, toast];
+      if (toastsRef.current.length >= MAX_VISIBLE_TOASTS && oldest) {
+        restoreFocusIfOwned(oldest);
+        clearTimer(oldest.id);
+      }
+      toastsRef.current = next;
+      setToasts(next);
 
-      const timer = setTimeout(() => {
-        timersRef.current.delete(id);
-        setToasts((current) => current.filter((item) => item.id !== id));
-      }, durationMs ?? DEFAULT_SUCCESS_DURATION_MS);
+      const timer = setTimeout(
+        () => dismiss(id),
+        durationMs ?? DEFAULT_SUCCESS_DURATION_MS
+      );
       timersRef.current.set(id, timer);
 
       return id;
     },
-    [announce, clearTimer]
+    [announce, clearTimer, dismiss, restoreFocusIfOwned]
   );
 
   useEffect(
@@ -111,7 +147,7 @@ export function FeedbackProvider({ children }: { children: ReactNode }) {
       >
         {announcement}
       </p>
-      <ToastViewport toasts={toasts} onDismiss={dismiss} />
+      <ToastViewport ref={viewportRef} toasts={toasts} onDismiss={dismiss} />
     </FeedbackContext.Provider>
   );
 }

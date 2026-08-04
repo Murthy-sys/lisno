@@ -123,6 +123,45 @@ function response(data: unknown, init?: ResponseInit) {
   return Response.json({ data }, init);
 }
 
+function apiRequestPath(input: RequestInfo | URL): string {
+  if (input instanceof Request) {
+    const requestUrl = new URL(input.url);
+    return `${requestUrl.pathname}${requestUrl.search}`;
+  }
+
+  if (input instanceof URL) {
+    return `${input.pathname}${input.search}`;
+  }
+
+  try {
+    const requestUrl = new URL(input);
+    return `${requestUrl.pathname}${requestUrl.search}`;
+  } catch {
+    return input;
+  }
+}
+
+describe("apiRequestPath", () => {
+  it("keeps a malformed relative API path distinct from a root-relative path", () => {
+    expect(apiRequestPath("api/v1/auth/me?source=restore")).toBe(
+      "api/v1/auth/me?source=restore"
+    );
+    expect(apiRequestPath("/api/v1/auth/me?source=restore")).toBe(
+      "/api/v1/auth/me?source=restore"
+    );
+  });
+
+  it("reads a Request URL and preserves its query", () => {
+    expect(
+      apiRequestPath(
+        new Request(
+          "https://api.lisno.example/api/v1/auth/me?source=restore&attempt=2"
+        )
+      )
+    ).toBe("/api/v1/auth/me?source=restore&attempt=2");
+  });
+});
+
 function installWorkspaceApi(options?: {
   conflict?: boolean;
   mutationError?: boolean;
@@ -142,8 +181,7 @@ function installWorkspaceApi(options?: {
     : Promise.resolve();
 
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
-    const requestUrl = new URL(String(input), window.location.origin);
-    const url = `${requestUrl.pathname}${requestUrl.search}`;
+    const url = apiRequestPath(input);
     if (url === "/api/v1/auth/me") return response(designer);
     if (url === `/api/v1/projects/${project.id}`) {
       projectReads += 1;
