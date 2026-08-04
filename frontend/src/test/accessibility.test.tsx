@@ -9,7 +9,7 @@ import { renderWithQuery } from "./render";
 import { DesignUploadsWorkspace } from "../features/designer/DesignUploadsWorkspace";
 import { DesignSectionReview } from "../features/client/DesignSectionReview";
 
-const userFor = (role: "designer" | "design_manager" | "design_head" | "client") => ({ id: `${role}-1`, name: "Accessible Person", email: `${role}@lisno.example`, role });
+const userFor = (role: "designer" | "design_manager" | "design_head" | "estimator_sales" | "client") => ({ id: `${role}-1`, name: "Accessible Person", email: `${role}@lisno.example`, role });
 
 const accessibleProject = {
   id: "project-a11y",
@@ -87,6 +87,8 @@ function fixtureFetch(user: ReturnType<typeof userFor>) {
     if (url.startsWith("/api/v1/organization/team?")) return Response.json({ data: { items: [], pagination: { limit: 100, offset: 0, total: 0, hasMore: false } } });
     if (url.startsWith("/api/v1/organization/tree?")) return Response.json({ data: { items: [], pagination: { limit: 100, offset: 0, total: 0, hasMore: false } } });
     if (url.startsWith("/api/v1/organization/managers?")) return Response.json({ data: { items: [{ id: "manager-a11y", name: "Aarav Mehta", email: "aarav@lisno.example", mobile: "+91 90000 00001" }], pagination: { limit: 20, offset: 0, total: 1, hasMore: false } } });
+    if (url.startsWith("/api/v1/leads?")) return Response.json({ data: { items: [], pagination: { limit: 20, offset: 0, total: 0, hasMore: false } } });
+    if (url === "/api/v1/estimates") return Response.json({ data: [] });
     if (url.startsWith("/api/v1/kpis/users/") && url.includes("/tasks?")) return Response.json({ data: { items: [], pagination: { limit: 20, offset: 0, total: 0, hasMore: false } } });
     if (url.startsWith("/api/v1/kpis/users/")) return Response.json({ data: { userId: user.id, periodStartAt: "2000-01-01T00:00:00.000Z", periodEndAt: "2100-01-01T00:00:00.000Z", score: 0, components: [], aggregates: { taskCounts: { total: 0, completed: 0, active: 0 }, riskCounts: { gray: 0, green: 0, yellow: 0, red: 0 }, effort: { planned: 0, completed: 0, remaining: 0, workloadPercentage: 0 }, projects: [], recentActivity: [] }, tasks: { items: [], pagination: { limit: 100, offset: 0, total: 0, hasMore: false } } } });
     throw new Error(`Unhandled request: ${url}`);
@@ -94,10 +96,23 @@ function fixtureFetch(user: ReturnType<typeof userFor>) {
 }
 
 async function expectNoAxeViolations() {
-  const results = await axe.run(document.body, {
-    rules: { "color-contrast": { enabled: false } }
-  });
-  expect(results.violations).toEqual([]);
+  const context = {
+    canvas: document.createElement("canvas"),
+    clearRect: () => undefined,
+    fillText: () => undefined,
+    getImageData: () => ({ data: new Uint8ClampedArray([255, 255, 255, 255]) }),
+    measureText: (text: string) => ({ width: Math.max(text.length, 1) * 10 })
+  } as unknown as CanvasRenderingContext2D;
+  const getContext = vi
+    .spyOn(HTMLCanvasElement.prototype, "getContext")
+    .mockReturnValue(context);
+
+  try {
+    const results = await axe.run(document.body);
+    expect(results.violations).toEqual([]);
+  } finally {
+    getContext.mockRestore();
+  }
 }
 
 describe("accessibility smoke coverage", () => {
@@ -240,17 +255,21 @@ describe("accessibility smoke coverage", () => {
   });
 
   it.each([
-    ["designer", "/designer", "Good morning, Accessible."],
-    ["design_manager", "/manager", "Team delivery pulse"],
-    ["design_head", "/head", "Organization delivery health"],
-    ["client", "/client", "Your design plans"]
-  ] as const)("renders an accessible %s home", async (role, path, heading) => {
+    ["designer", "/designer", "Good morning, Accessible.", "Workspace"],
+    ["design_manager", "/manager", "Team delivery pulse", "Team"],
+    ["design_head", "/head", "Organization delivery health", "Organization"],
+    ["estimator_sales", "/estimator-sales", "Lead workspace", "Leads & estimates"],
+    ["client", "/client", "Your design plans", "My projects"]
+  ] as const)("renders an accessible %s home", async (role, path, heading, navigationLabel) => {
     tokenStorage.set(`${role}-token`);
     fixtureFetch(userFor(role));
     renderApp([path]);
     expect(await screen.findByRole("heading", { name: heading })).toBeVisible();
-    expect(screen.getByRole("navigation", { name: "Primary navigation" })).toBeVisible();
-    expect(screen.getByRole("main")).toHaveAttribute("id", "main-content");
+    const navigation = screen.getByRole("navigation", { name: "Primary navigation" });
+    expect(navigation).toBeVisible();
+    expect(within(navigation).getByRole("link", { name: navigationLabel })).toBeVisible();
+    expect(document.querySelectorAll("main#main-content")).toHaveLength(1);
+    expect(document.querySelectorAll("h1")).toHaveLength(1);
     expect(screen.getByRole("button", { name: "Sign out" })).toBeVisible();
     await expectNoAxeViolations();
   });

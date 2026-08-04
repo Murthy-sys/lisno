@@ -68,6 +68,34 @@ function contrast(first: string, second: string) {
   return (lighter + 0.05) / (darker + 0.05);
 }
 
+function mix(first: string, firstWeight: number, second: string) {
+  const firstChannels = hexToRgb(first);
+  const secondChannels = hexToRgb(second);
+  const channels = firstChannels.map((channel, index) =>
+    Math.round(channel * firstWeight + secondChannels[index] * (1 - firstWeight))
+  );
+  return `#${channels.map((channel) => channel.toString(16).padStart(2, "0")).join("")}`;
+}
+
+function ruleBodies(css: string, prelude: string) {
+  const matches = css.matchAll(new RegExp(`${prelude.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*\\{`, "g"));
+
+  return [...matches].map((match) => {
+    const openingBrace = css.indexOf("{", match.index ?? 0);
+    let depth = 1;
+    let cursor = openingBrace + 1;
+
+    while (cursor < css.length && depth > 0) {
+      if (css[cursor] === "{") depth += 1;
+      if (css[cursor] === "}") depth -= 1;
+      cursor += 1;
+    }
+
+    if (depth !== 0) throw new Error(`Unclosed CSS block for ${prelude}`);
+    return css.slice(openingBrace + 1, cursor - 1);
+  });
+}
+
 const expectedColors = {
   "--color-brand-midnight": "#111a39",
   "--color-brand-midnight-raised": "#192448",
@@ -147,6 +175,38 @@ describe("semantic UI foundation", () => {
     expect(contrast(surface, colorToken(tokens, "--color-danger"))).toBeGreaterThanOrEqual(4.5);
   });
 
+  it("keeps semantic action and success-status text pairings above 4.5 to 1", () => {
+    const tokens = tokenDeclarations(readStyle("tokens.css"));
+    const surface = colorToken(tokens, "--color-surface");
+    const successStatus = readStyle("primitives.css").match(
+      /\.ui-status--success\s*\{[^}]*background:\s*color-mix\(in srgb, var\((--[\w-]+)\) (\d+(?:\.\d+)?)%, var\((--[\w-]+)\)\)/s
+    );
+    expect(successStatus).not.toBeNull();
+    const successStatusBackground = mix(
+      colorToken(tokens, successStatus![1]),
+      Number(successStatus![2]) / 100,
+      colorToken(tokens, successStatus![3])
+    );
+
+    expect(contrast(surface, colorToken(tokens, "--color-brand-violet"))).toBeGreaterThanOrEqual(4.5);
+    expect(contrast(surface, colorToken(tokens, "--color-danger"))).toBeGreaterThanOrEqual(4.5);
+    expect(contrast(surface, colorToken(tokens, "--color-success"))).toBeGreaterThanOrEqual(4.5);
+    expect(contrast(successStatusBackground, colorToken(tokens, "--color-success"))).toBeGreaterThanOrEqual(4.5);
+  });
+
+  it("keeps muted body text readable on every foundation surface where it is used", () => {
+    const tokens = tokenDeclarations(readStyle("tokens.css"));
+    const muted = colorToken(tokens, "--color-text-muted");
+
+    for (const background of [
+      "--color-canvas",
+      "--color-surface",
+      "--color-surface-subtle"
+    ]) {
+      expect(contrast(muted, colorToken(tokens, background))).toBeGreaterThanOrEqual(4.5);
+    }
+  });
+
   it("keeps the focus indicator distinguishable on every foundation surface", () => {
     const tokens = tokenDeclarations(readStyle("tokens.css"));
     const focus = colorToken(tokens, "--focus-ring-color");
@@ -167,6 +227,33 @@ describe("semantic UI foundation", () => {
     expect(motion).toMatch(/transition-duration:\s*0\.01ms\s*!important/);
     expect(motion).toMatch(/animation-duration:\s*0\.01ms\s*!important/);
     expect(motion).toMatch(/animation-iteration-count:\s*1\s*!important/);
+  });
+
+  it("effectively disables every foundation motion hook under reduced motion", () => {
+    const foundation = ["motion.css", "primitives.css", "shell.css"]
+      .map(readStyle)
+      .join("\n");
+    const reducedMotion = ruleBodies(foundation, "@media (prefers-reduced-motion: reduce)")
+      .join("\n");
+
+    expect(reducedMotion).toMatch(/\*,\s*\*::before,\s*\*::after\s*\{[^}]*transition-duration:\s*0\.01ms\s*!important[^}]*animation-duration:\s*0\.01ms\s*!important[^}]*animation-iteration-count:\s*1\s*!important/s);
+    for (const selector of [
+      ".ui-spinner",
+      ".ui-skeleton",
+      ".ui-drawer",
+      ".ui-dialog",
+      ".ui-tooltip",
+      ".ui-button"
+    ]) {
+      expect(foundation).toContain(selector);
+    }
+    expect(foundation).toContain("@keyframes ui-route-enter");
+  });
+
+  it("keeps literal hex colors inside the token layer", () => {
+    for (const filename of ["base.css", "motion.css", "primitives.css", "shell.css"]) {
+      expect(readStyle(filename), filename).not.toMatch(/#[\da-f]{3,8}\b/i);
+    }
   });
 
   it("loads foundations in layer order and owns the global focus treatment in base", () => {
