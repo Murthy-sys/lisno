@@ -12,11 +12,16 @@ const designer = {
   role: "designer" as const
 };
 
+function apiRequestPath(input: RequestInfo | URL): string {
+  const url = new URL(String(input), "http://lisno.test");
+  return `${url.pathname}${url.search}`;
+}
+
 function installDesignerApi(
   inspectAuth?: (input: RequestInfo | URL, init?: RequestInit) => void
 ) {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
-    const url = String(input);
+    const url = apiRequestPath(input);
     if (url === "/api/v1/auth/me") {
       inspectAuth?.(input, init);
       return Response.json({ data: designer });
@@ -72,7 +77,7 @@ describe("protected role routing", () => {
   it("opens the estimator sales workspace for an estimator sales session", async () => {
     tokenStorage.set("sales-token");
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
-      const url = String(input);
+      const url = apiRequestPath(input);
       if (url === "/api/v1/auth/me") return Response.json({ data: { id: "user-estimator-sales", name: "Priya Sharma", email: "sales@lisno.example", role: "estimator_sales" } });
       if (url.startsWith("/api/v1/leads?")) return Response.json({ data: { items: [], pagination: { limit: 20, offset: 0, total: 0, hasMore: false } } });
       throw new Error(`Unhandled request: ${url}`);
@@ -86,7 +91,7 @@ describe("protected role routing", () => {
   it("opens estimate configuration from a lead-scoped estimator route", async () => {
     tokenStorage.set("sales-token");
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
-      const url = String(input);
+      const url = apiRequestPath(input);
       if (url === "/api/v1/auth/me") return Response.json({ data: { id: "user-estimator-sales", name: "Priya Sharma", email: "sales@lisno.example", role: "estimator_sales" } });
       if (url === "/api/v1/leads/lead-1") return Response.json({ data: { id: "lead-1", ownerId: "user-estimator-sales", clientName: "Test User", clientEmail: "test@example.com", clientMobile: "8500098088", projectName: "Test project", location: "Bangalore", propertyType: "2BHK", budgetMin: 1000000, budgetMax: 1500000, source: "Walk-in", stage: "estimate_in_progress", nextAction: "estimate", nextActionAt: "2026-07-29T10:00:00.000Z", builder: null, areaSqft: null, targetHandoverAt: null, notes: null, latestActivityAt: null, createdAt: "2026-07-29T10:00:00.000Z", updatedAt: "2026-07-29T10:00:00.000Z" } });
       throw new Error(`Unhandled request: ${url}`);
@@ -101,7 +106,7 @@ describe("protected role routing", () => {
   it("continues from configured rooms to estimate item selection", async () => {
     tokenStorage.set("sales-token");
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
-      const url = String(input);
+      const url = apiRequestPath(input);
       if (url === "/api/v1/auth/me") return Response.json({ data: { id: "user-estimator-sales", name: "Priya Sharma", email: "sales@lisno.example", role: "estimator_sales" } });
       if (url === "/api/v1/leads/lead-1") return Response.json({ data: { id: "lead-1", ownerId: "user-estimator-sales", clientName: "Test User", clientEmail: "test@example.com", clientMobile: "8500098088", projectName: "Test project", location: "Bangalore", propertyType: "2BHK", budgetMin: 1000000, budgetMax: 1500000, source: "Walk-in", stage: "estimate_in_progress", nextAction: "estimate", nextActionAt: "2026-07-29T10:00:00.000Z", builder: null, areaSqft: null, targetHandoverAt: null, notes: null, latestActivityAt: null, createdAt: "2026-07-29T10:00:00.000Z", updatedAt: "2026-07-29T10:00:00.000Z" } });
       throw new Error(`Unhandled request: ${url}`);
@@ -116,7 +121,7 @@ describe("protected role routing", () => {
   it("restores saved rooms and selected estimate items when an estimator reopens an estimate", async () => {
     tokenStorage.set("sales-token");
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
-      const url = String(input);
+      const url = apiRequestPath(input);
       if (url === "/api/v1/auth/me") return Response.json({ data: { id: "user-estimator-sales", name: "Priya Sharma", email: "sales@lisno.example", role: "estimator_sales" } });
       if (url === "/api/v1/leads/lead-1") return Response.json({ data: { id: "lead-1", ownerId: "user-estimator-sales", clientName: "Test User", clientEmail: "test@example.com", clientMobile: "8500098088", projectName: "Test project", location: "Bangalore", propertyType: "2BHK", budgetMin: 1000000, budgetMax: 1500000, source: "Walk-in", stage: "estimate_in_progress", nextAction: "estimate", nextActionAt: "2026-07-29T10:00:00.000Z", builder: null, areaSqft: null, targetHandoverAt: null, notes: null, latestActivityAt: null, createdAt: "2026-07-29T10:00:00.000Z", updatedAt: "2026-07-29T10:00:00.000Z" } });
       if (url === "/api/v1/leads/lead-1/estimate") return Response.json({ data: {
@@ -139,7 +144,7 @@ describe("protected role routing", () => {
   it("restores a persisted token through /auth/me before showing the role home", async () => {
     tokenStorage.set("restored-token");
     installDesignerApi((input, init) => {
-      expect(String(input)).toBe("/api/v1/auth/me");
+      expect(apiRequestPath(input)).toBe("/api/v1/auth/me");
       expect(new Headers(init?.headers).get("authorization")).toBe(
         "Bearer restored-token"
       );
@@ -148,11 +153,81 @@ describe("protected role routing", () => {
 
     const { router } = renderApp(["/designer"]);
 
+    expect(screen.getAllByRole("main")).toHaveLength(1);
+    expect(
+      screen.getByRole("heading", { level: 1, name: "Opening your workspace" })
+    ).toBeVisible();
     expect(screen.getByRole("status")).toHaveTextContent("Restoring your session");
     expect(
       await screen.findByRole("heading", { name: "Good morning, Ananya." })
     ).toBeVisible();
+    expect(screen.getAllByRole("main")).toHaveLength(1);
+    expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
     expect(router.state.location.pathname).toBe("/designer");
+  });
+
+  it.each([
+    ["/login", "Welcome back"],
+    ["/signup", "Create your client account"],
+    ["/", "Opening your workspace"],
+    ["/missing-route", "Opening your workspace"]
+  ])("retains the %s page heading while restoring a session", (path, heading) => {
+    tokenStorage.set("pending-token");
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      () => new Promise<Response>(() => undefined)
+    );
+
+    renderApp([path]);
+
+    expect(screen.getAllByRole("main")).toHaveLength(1);
+    expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
+    expect(screen.getByRole("heading", { level: 1, name: heading })).toBeVisible();
+    expect(screen.getByRole("status")).toHaveTextContent("Restoring your session");
+  });
+
+  it("keeps a valid token and stable page shell when protected restoration can be retried", async () => {
+    tokenStorage.set("still-valid-token");
+    const restoreRequest = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      Response.json(
+        { error: { code: "SERVER_ERROR", message: "Please try again." } },
+        { status: 500 }
+      )
+    );
+
+    renderApp(["/designer"]);
+
+    expect(
+      await screen.findByRole("heading", {
+        level: 1,
+        name: "Opening your workspace"
+      })
+    ).toBeVisible();
+    expect(screen.getAllByRole("main")).toHaveLength(1);
+    expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "We couldn't restore your session."
+    );
+    expect(tokenStorage.get()).toBe("still-valid-token");
+
+    await userEvent.click(screen.getByRole("button", { name: "Try again" }));
+    await waitFor(() => expect(restoreRequest).toHaveBeenCalledTimes(2));
+    expect(await screen.findByRole("alert")).toBeVisible();
+    expect(tokenStorage.get()).toBe("still-valid-token");
+  });
+
+  it.each([
+    ["/login", "Welcome back"],
+    ["/signup", "Create your client account"],
+    ["/", "Welcome back"],
+    ["/missing-route", "Welcome back"]
+  ])("settles %s with one main and one page heading", async (path, heading) => {
+    renderApp([path]);
+
+    expect(
+      await screen.findByRole("heading", { level: 1, name: heading })
+    ).toBeVisible();
+    expect(screen.getAllByRole("main")).toHaveLength(1);
+    expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
   });
 
   it("clears an expired restored session and redirects to login", async () => {

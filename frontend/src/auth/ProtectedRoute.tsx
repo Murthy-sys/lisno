@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import { Navigate, useLocation } from "react-router-dom";
 
 import type { Role } from "../api/types";
-import { AsyncState } from "../components/ui/AsyncState";
+import { AuthRouteState } from "./AuthRouteState";
 import { useAuth } from "./AuthProvider";
 
 export function roleHomePath(role: Role): string {
@@ -27,16 +27,22 @@ export function ProtectedRoute({
   const location = useLocation();
 
   if (auth.status === "restoring") {
-    return <AsyncState state="loading" message="Restoring your session…" />;
+    return (
+      <AuthRouteState
+        title="Opening your workspace"
+        state="loading"
+        message="Restoring your session…"
+      />
+    );
   }
 
   if (auth.status === "error") {
     return (
-      <AsyncState
+      <AuthRouteState
+        title="Opening your workspace"
         state="error"
         message="We couldn't restore your session."
-        actionLabel="Try again"
-        onAction={() => void auth.restore()}
+        action={{ label: "Try again", onAction: () => void auth.restore() }}
       />
     );
   }

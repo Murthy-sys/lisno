@@ -6,12 +6,12 @@ import {
 } from "react-router-dom";
 
 import type { Role } from "../api/types";
+import { AuthRouteState } from "../auth/AuthRouteState";
 import { useAuth } from "../auth/AuthProvider";
 import { LoginPage } from "../auth/LoginPage";
 import { SignupPage } from "../auth/SignupPage";
 import { ProtectedRoute, roleHomePath } from "../auth/ProtectedRoute";
 import { AppShell } from "../components/layout/AppShell";
-import { AsyncState } from "../components/ui/AsyncState";
 import { StatusBadge } from "../components/ui/StatusBadge";
 import { DesignerDashboard } from "../features/designer/DesignerDashboard";
 import { ProjectWorkspace } from "../features/designer/ProjectWorkspace";
@@ -91,7 +91,13 @@ function LoginRoute() {
   const auth = useAuth();
 
   if (auth.status === "restoring") {
-    return <AsyncState state="loading" message="Restoring your session…" />;
+    return (
+      <AuthRouteState
+        title="Welcome back"
+        state="loading"
+        message="Restoring your session…"
+      />
+    );
   }
   if (auth.status === "authenticated" && auth.user) {
     return <Navigate to={roleHomePath(auth.user.role)} replace />;
@@ -103,7 +109,13 @@ function SignupRoute() {
   const auth = useAuth();
 
   if (auth.status === "restoring") {
-    return <AsyncState state="loading" message="Restoring your session…" />;
+    return (
+      <AuthRouteState
+        title="Create your client account"
+        state="loading"
+        message="Restoring your session…"
+      />
+    );
   }
   if (auth.status === "authenticated" && auth.user) {
     return <Navigate to={roleHomePath(auth.user.role)} replace />;
@@ -115,15 +127,21 @@ function HomeRedirect() {
   const auth = useAuth();
 
   if (auth.status === "restoring") {
-    return <AsyncState state="loading" message="Restoring your session…" />;
+    return (
+      <AuthRouteState
+        title="Opening your workspace"
+        state="loading"
+        message="Restoring your session…"
+      />
+    );
   }
   if (auth.status === "error") {
     return (
-      <AsyncState
+      <AuthRouteState
+        title="Opening your workspace"
         state="error"
         message="We couldn't restore your session."
-        actionLabel="Try again"
-        onAction={() => void auth.restore()}
+        action={{ label: "Try again", onAction: () => void auth.restore() }}
       />
     );
   }
