@@ -681,7 +681,9 @@ describe("estimate drawing review journey", () => {
       name: "Upload replacement",
     }));
 
-    expect(await screen.findByRole("status")).toHaveTextContent(
+    expect(await within(screen.getByRole("region", {
+      name: "Upload design plans",
+    })).findByRole("status")).toHaveTextContent(
       "Revision 2 awaits verification.",
     );
     const replacementRow = await screen.findByRole("article", {

@@ -883,13 +883,17 @@ describe("EstimateDesignUploads", () => {
 
   it("updates the rendered drawing after an immediate replacement response", async () => {
     await replaceThroughUi(false);
-    expect(await screen.findByRole("status")).toHaveTextContent("Replacement drawing created.");
+    expect(await within(screen.getByRole("region", {
+      name: "Upload design plans"
+    })).findByRole("status")).toHaveTextContent("Replacement drawing created.");
     expect(await screen.findByText("Replacement complete")).toBeVisible();
   });
 
   it("shows the queued replacement notice and enters the queued polling branch", async () => {
     await replaceThroughUi(true);
-    expect(await screen.findByRole("status")).toHaveTextContent("Replacement queued for extraction.");
+    expect(await within(screen.getByRole("region", {
+      name: "Upload design plans"
+    })).findByRole("status")).toHaveTextContent("Replacement queued for extraction.");
     expect(await screen.findByText("Queued")).toBeVisible();
   });
 
@@ -1039,7 +1043,9 @@ describe("EstimateDesignUploads", () => {
       expect((body.get("file") as File).name).toBe("changed.png");
     }
 
-    expect(await screen.findByRole("status")).toHaveTextContent(
+    expect(await within(screen.getByRole("region", {
+      name: "Upload design plans"
+    })).findByRole("status")).toHaveTextContent(
       "Revision 2 awaits verification."
     );
     const replacementRow = await screen.findByRole("article", {
