@@ -30,4 +30,11 @@ describe("StatusBadge", () => {
 
     expect(screen.getByText("needs_review")).toBeVisible();
   });
+
+  it("leaves status presentation to the shared ui-status rules", () => {
+    render(<StatusBadge tone="success" label="On track" />);
+
+    const badge = screen.getByText("On track").closest("span");
+    expect(badge).not.toHaveClass("status-badge", "status-badge--success");
+  });
 });

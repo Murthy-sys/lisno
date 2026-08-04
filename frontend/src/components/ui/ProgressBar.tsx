@@ -16,7 +16,7 @@ export function ProgressBar(props: ProgressBarProps) {
 
   return (
     <div
-      className={`ui-progress progress${bounded === undefined ? " ui-progress--indeterminate progress--indeterminate" : ""}`}
+      className={`ui-progress${bounded === undefined ? " ui-progress--indeterminate" : ""}`}
       role="progressbar"
       aria-label={label}
       aria-valuetext={bounded === undefined ? undefined : props.valueText}

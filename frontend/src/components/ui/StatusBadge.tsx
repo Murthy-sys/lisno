@@ -27,7 +27,7 @@ export function StatusBadge({
   const Icon = icons[tone];
 
   return (
-    <span className={`ui-status ui-status--${tone} status-badge status-badge--${tone}`}>
+    <span className={`ui-status ui-status--${tone}`}>
       <Icon aria-hidden="true" />
       {label}
       {reason ? <span className="sr-only">: {reason}</span> : null}

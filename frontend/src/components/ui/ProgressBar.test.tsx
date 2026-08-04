@@ -35,6 +35,14 @@ describe("ProgressBar", () => {
     expect(progress).toHaveClass("ui-progress--indeterminate");
   });
 
+  it("leaves progress presentation to the shared ui-progress rules", () => {
+    render(<ProgressBar value={42} />);
+
+    const progress = screen.getByRole("progressbar");
+    expect(progress).not.toHaveClass("progress");
+    expect(progress).not.toHaveClass("progress--indeterminate");
+  });
+
   // @ts-expect-error Indeterminate progress requires a caller-supplied stage label.
   const invalidIndeterminateProgress = <ProgressBar />;
   void invalidIndeterminateProgress;
