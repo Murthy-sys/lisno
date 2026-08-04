@@ -76,6 +76,53 @@ describe("LoginPage", () => {
     expect(screen.queryByText(/unknown email/i)).not.toBeInTheDocument();
   });
 
+  it("announces that sign-in is busy while authentication is pending", async () => {
+    let releaseLogin!: () => void;
+    const loginPending = new Promise<void>((resolve) => {
+      releaseLogin = resolve;
+    });
+    server.use(
+      http.post("/api/v1/auth/login", async () => {
+        await loginPending;
+        return HttpResponse.json(
+          {
+            error: {
+              code: "INVALID_CREDENTIALS",
+              message: "Invalid email or password."
+            }
+          },
+          { status: 401 }
+        );
+      })
+    );
+    renderApp(["/login"]);
+
+    await userEvent.type(
+      screen.getByLabelText("Email address"),
+      "person@lisno.example"
+    );
+    await userEvent.type(screen.getByLabelText("Password"), "incorrect");
+    await userEvent.click(screen.getByRole("button", { name: "Sign in" }));
+
+    const submitButton = await screen.findByRole("button", {
+      name: "Signing in…"
+    });
+    expect(submitButton).toBeDisabled();
+    expect(submitButton).toHaveAttribute("aria-busy", "true");
+    expect(
+      screen.getByRole("status", { name: "Sign-in status" })
+    ).toHaveTextContent("Signing in. Please wait.");
+    expect(document.getElementById("login-form")).toHaveAttribute(
+      "aria-busy",
+      "true"
+    );
+
+    releaseLogin();
+    expect(
+      await screen.findByRole("alert", { name: "Sign-in error" })
+    ).toBeVisible();
+  });
+
   it("toggles password visibility with an accessible pressed state", async () => {
     renderApp(["/login"]);
     const passwordInput = screen.getByLabelText("Password");
@@ -149,6 +196,15 @@ describe("LoginPage", () => {
               pagination: { limit: 100, offset: 0, total: 0, hasMore: false }
             }
           })
+        ),
+        http.get("/api/v1/client/estimates", () =>
+          HttpResponse.json({ data: [] })
+        ),
+        http.get("/api/v1/estimates/review-queue", () =>
+          HttpResponse.json({ data: [] })
+        ),
+        http.get("/api/v1/estimates/designers", () =>
+          HttpResponse.json({ data: [] })
         ),
         http.get("/api/v1/organization/team", () =>
           HttpResponse.json({

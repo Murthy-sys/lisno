@@ -1,4 +1,4 @@
-import { Eye, EyeOff, Sparkles } from "lucide-react";
+import { ArrowRight, Eye, EyeOff, LoaderCircle, Sparkles } from "lucide-react";
 import { useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { Link, useNavigate } from "react-router-dom";
@@ -88,7 +88,7 @@ export function LoginPage() {
   };
 
   return (
-    <main className="login-page">
+    <main className="login-page login-page--signin">
       <section className="login-story" aria-label="Lisno design operations">
         <a href="#login-form" className="skip-link">
           Skip to sign in
@@ -120,7 +120,21 @@ export function LoginPage() {
             Sign in to continue to your design workspace.
           </p>
 
-          <form id="login-form" onSubmit={submit} noValidate>
+          <form
+            id="login-form"
+            onSubmit={submit}
+            noValidate
+            aria-busy={isSubmitting}
+          >
+            <p
+              className="sr-only"
+              role="status"
+              aria-live="polite"
+              aria-atomic="true"
+              aria-label="Sign-in status"
+            >
+              {isSubmitting ? "Signing in. Please wait." : ""}
+            </p>
             {submitError ? (
               <div className="form-alert" role="alert" aria-label="Sign-in error">
                 {submitError}
@@ -201,10 +215,27 @@ export function LoginPage() {
 
             <button
               type="submit"
-              className="button button--primary button--full"
+              className="button button--primary button--full login-submit"
               disabled={isSubmitting}
+              aria-busy={isSubmitting}
             >
-              {isSubmitting ? "Signing in…" : "Sign in"}
+              {isSubmitting ? (
+                <>
+                  <LoaderCircle
+                    className="login-submit__spinner"
+                    aria-hidden="true"
+                  />
+                  <span>Signing in…</span>
+                </>
+              ) : (
+                <>
+                  <span>Sign in</span>
+                  <ArrowRight
+                    className="login-submit__arrow"
+                    aria-hidden="true"
+                  />
+                </>
+              )}
             </button>
           </form>
 
