@@ -51,10 +51,28 @@ function connected(element: HTMLElement | null | undefined) {
   return element?.isConnected ? element : null;
 }
 
+function firstSummary(details: HTMLElement) {
+  return Array.from(details.children).find((child) => child.tagName === "SUMMARY");
+}
+
+function isImplicitlyFocusableSummary(element: HTMLElement) {
+  if (element.tagName !== "SUMMARY" || element.hasAttribute("tabindex")) return true;
+  const parent = element.parentElement;
+  return parent?.tagName === "DETAILS" && firstSummary(parent) === element;
+}
+
 function isUnavailable(element: HTMLElement) {
-  const closedDetails = element.closest("details:not([open])");
-  const visibleSummary = closedDetails?.querySelector(":scope > summary");
-  if (closedDetails && !visibleSummary?.contains(element)) return true;
+  let detailsAncestor = element.parentElement;
+  while (detailsAncestor) {
+    if (
+      detailsAncestor.tagName === "DETAILS" &&
+      !detailsAncestor.hasAttribute("open") &&
+      !firstSummary(detailsAncestor)?.contains(element)
+    ) {
+      return true;
+    }
+    detailsAncestor = detailsAncestor.parentElement;
+  }
 
   let current: HTMLElement | null = element;
   while (current) {
@@ -80,14 +98,12 @@ function isProgrammaticallyFocusable(element: HTMLElement, container: HTMLElemen
   if (!element.isConnected || !container.contains(element) || isUnavailable(element)) {
     return false;
   }
-  return element.hasAttribute("tabindex") || element.matches(focusableSelector);
+  return isImplicitlyFocusableSummary(element) &&
+    (element.hasAttribute("tabindex") || element.matches(focusableSelector));
 }
 
 function tabIndexValue(element: HTMLElement) {
-  const attribute = element.getAttribute("tabindex");
-  if (attribute === null) return 0;
-  const parsed = Number(attribute);
-  return Number.isFinite(parsed) ? parsed : 0;
+  return element.hasAttribute("tabindex") ? element.tabIndex : 0;
 }
 
 function tabbableElements(container: HTMLElement) {
@@ -128,7 +144,7 @@ function handleOverlayKeyDown(event: KeyboardEvent) {
   const last = focusable[focusable.length - 1]!;
   const active = document.activeElement;
 
-  if (!container.contains(active)) {
+  if (!focusable.includes(active as HTMLElement)) {
     event.preventDefault();
     (event.shiftKey ? last : first).focus();
   } else if (event.shiftKey && active === first) {

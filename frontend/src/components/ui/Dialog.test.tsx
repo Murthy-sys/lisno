@@ -124,6 +124,81 @@ describe("Dialog accessibility contract", () => {
     expect(editor).toHaveFocus();
   });
 
+  it("uses IDL tabindex parsing and DOM-order ties for fractional and invalid values", async () => {
+    render(
+      <Dialog title="Tab order" showCloseButton={false} onClose={vi.fn()}>
+        <button type="button" tabIndex={1.5}>Fractional first</button>
+        <button type="button" tabIndex={1}>Integer second</button>
+        <button type="button">Natural action</button>
+        <button type="button" tabIndex={"1x" as unknown as number}>Invalid regular</button>
+      </Dialog>
+    );
+
+    const fractional = screen.getByRole("button", { name: "Fractional first" });
+    const invalid = screen.getByRole("button", { name: "Invalid regular" });
+    expect(fractional.tabIndex).toBe(1);
+    expect(invalid.tabIndex).toBe(0);
+    await waitFor(() => expect(fractional).toHaveFocus());
+
+    invalid.focus();
+    fireEvent.keyDown(document, { key: "Tab" });
+    expect(fractional).toHaveFocus();
+  });
+
+  it("rejects a standalone summary and falls back to the next usable control", async () => {
+    render(
+      <Dialog title="Summary" showCloseButton={false} onClose={vi.fn()}>
+        <summary>Standalone summary</summary>
+        <button type="button">Available action</button>
+      </Dialog>
+    );
+
+    const standalone = screen.getByText("Standalone summary");
+    expect(standalone.tabIndex).toBe(-1);
+    await waitFor(() => expect(screen.getByRole("button", { name: "Available action" })).toHaveFocus());
+  });
+
+  it("enters the ordered Tab cycle from a programmatic negative-tabindex target", async () => {
+    render(
+      <Dialog title="Programmatic introduction" showCloseButton={false} onClose={vi.fn()}>
+        <section tabIndex={-1} data-dialog-initial-focus>Introduction</section>
+        <button type="button">First action</button>
+        <button type="button">Last action</button>
+      </Dialog>
+    );
+
+    const introduction = screen.getByText("Introduction");
+    const first = screen.getByRole("button", { name: "First action" });
+    const last = screen.getByRole("button", { name: "Last action" });
+    await waitFor(() => expect(introduction).toHaveFocus());
+
+    fireEvent.keyDown(document, { key: "Tab" });
+    expect(first).toHaveFocus();
+
+    introduction.focus();
+    fireEvent.keyDown(document, { key: "Tab", shiftKey: true });
+    expect(last).toHaveFocus();
+  });
+
+  it("keeps inner summaries and content out of an outer closed details tab order", async () => {
+    render(
+      <Dialog title="Details" showCloseButton={false} onClose={vi.fn()}>
+        <details>
+          <summary>Outer summary</summary>
+          <details>
+            <summary tabIndex={1}>Inner summary</summary>
+            <button type="button" tabIndex={2}>Nested content</button>
+          </details>
+        </details>
+        <button type="button">Available action</button>
+      </Dialog>
+    );
+
+    const outerSummary = screen.getByText("Outer summary");
+    expect(outerSummary.tabIndex).toBe(0);
+    await waitFor(() => expect(outerSummary).toHaveFocus());
+  });
+
   it("treats contenteditable as focusable without requiring a tabindex", async () => {
     render(
       <Dialog title="Notes" showCloseButton={false} onClose={vi.fn()}>
