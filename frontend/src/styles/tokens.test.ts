@@ -9,8 +9,45 @@ function readStyle(filename: string) {
   return existsSync(path) ? readFileSync(path, "utf8") : "";
 }
 
-function tokenValue(css: string, name: string) {
-  return css.match(new RegExp(`${name}:\\s*([^;]+);`))?.[1]?.trim();
+function tokenDeclarations(css: string) {
+  const rootRules = [...css.matchAll(/:root\s*\{([^{}]*)\}/g)];
+  expect(rootRules).toHaveLength(1);
+  expect(css.replace(rootRules[0][0], "").trim()).toBe("");
+
+  const declarations = [...rootRules[0][1].matchAll(/^\s*([^:\s]+)\s*:\s*([^;]+);/gm)];
+  expect(declarations).not.toHaveLength(0);
+  expect(declarations.every(([, name]) => name.startsWith("--"))).toBe(true);
+  expect(rootRules[0][1].replace(/^\s*--[\w-]+\s*:\s*[^;]+;/gm, "").trim()).toBe("");
+
+  return new Map(declarations.map(([, name, value]) => [name, value.trim()]));
+}
+
+function colorToken(tokens: Map<string, string>, name: string): string {
+  const value = tokens.get(name);
+  if (!value) {
+    throw new Error(`Missing ${name}`);
+  }
+
+  if (/^#[\da-f]{6}$/i.test(value)) {
+    return value;
+  }
+
+  const alias = value.match(/^var\((--[\w-]+)\)$/);
+  if (alias) {
+    return colorToken(tokens, alias[1]);
+  }
+
+  const colorMix = value.match(/^color-mix\(in srgb, var\((--[\w-]+)\) (\d+(?:\.\d+)?)%, (white|#[\da-f]{6})\)$/i);
+  if (colorMix) {
+    const [, source, percentage, destination] = colorMix;
+    const sourceChannels = hexToRgb(colorToken(tokens, source));
+    const destinationChannels = hexToRgb(destination === "white" ? "#ffffff" : destination);
+    const weight = Number(percentage) / 100;
+    const mixed = sourceChannels.map((channel, index) => Math.round(channel * weight + destinationChannels[index] * (1 - weight)));
+    return `#${mixed.map((channel) => channel.toString(16).padStart(2, "0")).join("")}`;
+  }
+
+  throw new Error(`${name} must resolve to a hex color`);
 }
 
 function hexToRgb(hex: string) {
@@ -51,10 +88,10 @@ const expectedColors = {
 
 describe("semantic UI foundation", () => {
   it("provides the approved semantic color and foundation token contract", () => {
-    const tokens = readStyle("tokens.css");
+    const tokens = tokenDeclarations(readStyle("tokens.css"));
 
     for (const [name, value] of Object.entries(expectedColors)) {
-      expect(tokenValue(tokens, name)).toBe(value);
+      expect(tokens.get(name)).toBe(value);
     }
 
     for (const [name, value] of [
@@ -76,7 +113,7 @@ describe("semantic UI foundation", () => {
       ["--duration-settle", "220ms"],
       ["--duration-overlay", "320ms"],
     ] as const) {
-      expect(tokenValue(tokens, name)).toBe(value);
+      expect(tokens.get(name)).toBe(value);
     }
 
     [
@@ -93,18 +130,23 @@ describe("semantic UI foundation", () => {
       "--type-section-title",
       "--type-body",
       "--type-metadata",
-    ].forEach((name) => expect(tokenValue(tokens, name)).toBeTruthy());
+    ].forEach((name) => expect(tokens.get(name)).toBeTruthy());
 
-    expect(tokens.match(/--shadow-[\w-]+:/g)).toHaveLength(3);
+    expect([...tokens.keys()].filter((name) => name.startsWith("--shadow-"))).toHaveLength(3);
   });
 
   it("keeps the approved foreground and background contrast pairs accessible", () => {
-    expect(contrast("#ffffff", "#5a45d6")).toBeGreaterThanOrEqual(4.5);
-    expect(contrast("#ffffff", "#111a39")).toBeGreaterThanOrEqual(4.5);
-    expect(contrast("#171b2d", "#ffffff")).toBeGreaterThanOrEqual(4.5);
-    expect(contrast("#626a7d", "#ffffff")).toBeGreaterThanOrEqual(4.5);
-    expect(contrast("#ffffff", "#18795c")).toBeGreaterThanOrEqual(4.5);
-    expect(contrast("#ffffff", "#b33a4a")).toBeGreaterThanOrEqual(4.5);
+    const tokens = tokenDeclarations(readStyle("tokens.css"));
+    const surface = colorToken(tokens, "--color-surface");
+
+    expect(contrast(surface, colorToken(tokens, "--color-brand-violet"))).toBeGreaterThanOrEqual(4.5);
+    expect(contrast(surface, colorToken(tokens, "--color-brand-midnight"))).toBeGreaterThanOrEqual(4.5);
+    expect(contrast(colorToken(tokens, "--color-text"), surface)).toBeGreaterThanOrEqual(4.5);
+    expect(contrast(colorToken(tokens, "--color-text-muted"), surface)).toBeGreaterThanOrEqual(4.5);
+    expect(contrast(surface, colorToken(tokens, "--color-success"))).toBeGreaterThanOrEqual(4.5);
+    expect(contrast(surface, colorToken(tokens, "--color-danger"))).toBeGreaterThanOrEqual(4.5);
+    expect(contrast(surface, colorToken(tokens, "--focus-ring-color"))).toBeGreaterThanOrEqual(3);
+    expect(contrast(colorToken(tokens, "--color-canvas"), colorToken(tokens, "--focus-ring-color"))).toBeGreaterThanOrEqual(3);
   });
 
   it("provides reduced-motion protections for transitions and continuous animation", () => {

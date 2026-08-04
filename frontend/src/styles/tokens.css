@@ -51,7 +51,7 @@
   --content-default: 72rem;
   --content-wide: 90rem;
 
-  --focus-ring-color: color-mix(in srgb, var(--color-brand-violet-bright) 72%, white);
+  --focus-ring-color: var(--color-brand-violet);
   --focus-ring: 0 0 0 3px var(--focus-ring-color);
 
   --duration-fast: 140ms;
