@@ -454,6 +454,37 @@
   resize: vertical;
 }
 
+.password-field {
+  position: relative;
+}
+
+.password-field .ui-control {
+  padding-inline-end: var(--space-10);
+}
+
+.password-field__toggle {
+  position: absolute;
+  inset-block-start: 50%;
+  inset-inline-end: var(--space-2);
+  block-size: 44px;
+  inline-size: 44px;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--color-text-muted);
+  transform: translateY(-50%);
+}
+
+.password-field .password-field__toggle:hover:not(:disabled) {
+  background: var(--color-surface-subtle);
+  box-shadow: none;
+  color: var(--color-brand-violet);
+}
+
+.password-field__toggle > svg {
+  inline-size: var(--space-5);
+}
+
 .ui-file-input {
   padding-block: var(--space-2);
 }

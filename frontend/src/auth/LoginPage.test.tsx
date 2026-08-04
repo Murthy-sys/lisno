@@ -1,5 +1,7 @@
 import { fireEvent, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { http, HttpResponse } from "msw";
 import { describe, expect, it, vi } from "vitest";
 
@@ -9,6 +11,10 @@ import { renderApp } from "../test/render";
 import { server } from "../test/server";
 
 const password = "LisnoDemo2026!";
+const authStyles = readFileSync(
+  resolve(process.cwd(), "src/styles/index.css"),
+  "utf8"
+);
 
 const designer = {
   id: "user-designer-ananya",
@@ -79,6 +85,46 @@ async function signIn() {
 }
 
 describe("LoginPage", () => {
+  it("preserves the approved sign-in copy and Lisno logo asset", () => {
+    renderApp(["/login"]);
+
+    expect(screen.getByText("Design operations, in focus")).toBeVisible();
+    expect(
+      screen.getByRole("heading", { name: "From first sketch to final handoff." })
+    ).toBeVisible();
+    expect(
+      screen.getByText(
+        "Keep every project, decision, deadline, and approved design moving in one shared workspace."
+      )
+    ).toBeVisible();
+    expect(
+      screen.getByText("Clear ownership. Timely reviews. Beautiful outcomes.")
+    ).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Welcome back" })).toBeVisible();
+    for (const logo of screen.getAllByRole("img", { name: "Lisno" })) {
+      expect(logo).toHaveAttribute("src", "/lisno-logo.svg");
+    }
+  });
+
+  it("renders login fields and the password toggle through shared controls", () => {
+    renderApp(["/login"]);
+
+    const email = screen.getByLabelText("Email address");
+    const passwordControl = screen.getByLabelText("Password");
+    expect(email).toHaveAttribute("id", "email");
+    expect(email).toHaveAttribute("autocomplete", "username");
+    expect(email).toHaveClass("ui-control", "ui-input");
+    expect(email.closest(".ui-field")).toHaveClass("field");
+    expect(passwordControl).toHaveAttribute("id", "password");
+    expect(passwordControl).toHaveAttribute("autocomplete", "current-password");
+    expect(passwordControl).toHaveClass("ui-control", "ui-input");
+    expect(passwordControl.closest(".ui-field")).toHaveClass("field");
+    expect(screen.getByRole("button", { name: "Show password" })).toHaveClass(
+      "ui-icon-button",
+      "password-field__toggle"
+    );
+  });
+
   it("links prospective clients to the account signup form", async () => {
     renderApp(["/login"]);
 
@@ -330,13 +376,32 @@ describe("LoginPage", () => {
       "person@lisno.example"
     );
     await userEvent.type(screen.getByLabelText("Password"), "incorrect");
-    await userEvent.click(screen.getByRole("button", { name: "Sign in" }));
+    const submitButton = screen.getByRole("button", { name: "Sign in" });
+    const settledClassName = submitButton.className;
+    const settledStackClasses = Array.from(
+      submitButton.querySelector(".ui-button__stack")?.children ?? []
+    ).map((child) => child.className);
+    await userEvent.click(submitButton);
 
-    const submitButton = await screen.findByRole("button", {
-      name: "Signing in…"
-    });
+    await waitFor(() => expect(submitButton).toBeDisabled());
+    expect(submitButton).toHaveAccessibleName("Sign in");
     expect(submitButton).toBeDisabled();
     expect(submitButton).toHaveAttribute("aria-busy", "true");
+    expect(submitButton).toHaveAttribute("data-busy", "true");
+    expect(submitButton).toHaveTextContent("Signing in…");
+    expect(submitButton.className).toBe(settledClassName);
+    expect(
+      Array.from(submitButton.querySelector(".ui-button__stack")?.children ?? []).map(
+        (child) => child.className
+      )
+    ).toEqual(settledStackClasses);
+    expect(submitButton.querySelector(".ui-button__content")).toHaveTextContent(
+      "Sign in"
+    );
+    expect(submitButton.querySelector(".ui-button__busy")).toHaveAttribute(
+      "aria-hidden",
+      "true"
+    );
     expect(
       screen.getByRole("status", { name: "Sign-in status" })
     ).toHaveTextContent("Signing in. Please wait.");
@@ -349,6 +414,13 @@ describe("LoginPage", () => {
     expect(
       await screen.findByRole("alert", { name: "Sign-in error" })
     ).toBeVisible();
+  });
+
+  it("scopes sign-in button layout and busy feedback to stable shared slots", () => {
+    expect(authStyles).toMatch(/\.login-page--signin\s+\.login-submit\s+\.ui-button__stack/);
+    expect(authStyles).toMatch(/\.login-page--signin\s+\.login-submit\s+\.ui-button__content/);
+    expect(authStyles).toMatch(/\.login-page--signin\s+\.login-submit\s+\.ui-spinner/);
+    expect(authStyles).toMatch(/\.login-page--signin\s+\.login-submit__arrow/);
   });
 
   it("toggles password visibility with an accessible pressed state", async () => {

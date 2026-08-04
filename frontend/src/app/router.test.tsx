@@ -150,6 +150,123 @@ describe("protected role routing", () => {
     expect(heading).toHaveAttribute("tabindex", "-1");
   });
 
+  it("marks interactive signup focus after a failed attempt is retried", async () => {
+    let signupAttempts = 0;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = apiRequestPath(input);
+      if (url === "/api/v1/auth/client-signup") {
+        signupAttempts += 1;
+        if (signupAttempts === 1) {
+          return Response.json(
+            {
+              error: {
+                code: "SERVER_ERROR",
+                message: "Please try again."
+              }
+            },
+            { status: 503 }
+          );
+        }
+        return Response.json(
+          {
+            data: {
+              token: "client-token",
+              user: {
+                id: "client-priya",
+                name: "Priya Shah",
+                email: "priya@example.com",
+                role: "client"
+              }
+            }
+          },
+          { status: 201 }
+        );
+      }
+      if (url === "/api/v1/client/latest-approved-versions") {
+        return Response.json({ data: [] });
+      }
+      if (url.startsWith("/api/v1/client/project-summaries")) {
+        return Response.json({
+          data: {
+            items: [],
+            pagination: { limit: 100, offset: 0, total: 0, hasMore: false }
+          }
+        });
+      }
+      if (url === "/api/v1/client/estimates") {
+        return Response.json({ data: [] });
+      }
+      throw new Error(`Unhandled request: ${url}`);
+    });
+    const { router } = renderApp(["/signup"]);
+
+    fireEvent.change(screen.getByLabelText("Full name"), {
+      target: { value: "Priya Shah" }
+    });
+    fireEvent.change(screen.getByLabelText("Email address"), {
+      target: { value: "priya@example.com" }
+    });
+    fireEvent.change(screen.getByLabelText("Mobile number"), {
+      target: { value: "+91 98765 43210" }
+    });
+    fireEvent.change(screen.getByLabelText("Address"), {
+      target: { value: "42 Garden Lane, Bengaluru" }
+    });
+    fireEvent.change(screen.getByLabelText("Password", { exact: true }), {
+      target: { value: "StrongPassword!23" }
+    });
+    fireEvent.change(screen.getByLabelText("Confirm password"), {
+      target: { value: "StrongPassword!23" }
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Create client account" }));
+    expect(await screen.findByRole("alert", { name: "Signup error" })).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Create client account" }));
+
+    const heading = await screen.findByRole("heading", {
+      name: "Your design plans"
+    });
+    expect(signupAttempts).toBe(2);
+    expect(router.state.location.state).toEqual({ routeFocus: true });
+    expect(heading).toHaveFocus();
+  });
+
+  it("keeps a restore-driven authenticated signup redirect unmarked", async () => {
+    const client = {
+      id: "client-priya",
+      name: "Priya Shah",
+      email: "priya@example.com",
+      role: "client" as const
+    };
+    tokenStorage.set("restored-client-token");
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = apiRequestPath(input);
+      if (url === "/api/v1/auth/me") return Response.json({ data: client });
+      if (url === "/api/v1/client/latest-approved-versions") {
+        return Response.json({ data: [] });
+      }
+      if (url.startsWith("/api/v1/client/project-summaries")) {
+        return Response.json({
+          data: {
+            items: [],
+            pagination: { limit: 100, offset: 0, total: 0, hasMore: false }
+          }
+        });
+      }
+      if (url === "/api/v1/client/estimates") {
+        return Response.json({ data: [] });
+      }
+      throw new Error(`Unhandled request: ${url}`);
+    });
+    const { router } = renderApp(["/signup"]);
+
+    const heading = await screen.findByRole("heading", {
+      name: "Your design plans"
+    });
+    expect(router.state.location.state).toBeNull();
+    expect(heading).not.toHaveFocus();
+  });
+
   it("lets a safe captured login return win through marked replace navigation", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = apiRequestPath(input);

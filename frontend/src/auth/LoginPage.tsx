@@ -1,4 +1,4 @@
-import { ArrowRight, Eye, EyeOff, LoaderCircle, Sparkles } from "lucide-react";
+import { ArrowRight, Eye, EyeOff, Sparkles } from "lucide-react";
 import { useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { Link, useLocation, useNavigate } from "react-router-dom";
@@ -6,6 +6,9 @@ import { z } from "zod";
 
 import { ApiError } from "../api/client";
 import { BrandLogo } from "../components/ui/BrandLogo";
+import { Button } from "../components/ui/Button";
+import { Field, Input } from "../components/ui/Field";
+import { IconButton } from "../components/ui/IconButton";
 import { NoticeBanner } from "../components/ui/NoticeBanner";
 import { safeReturnPath } from "../app/routePaths";
 import { useAuth } from "./AuthProvider";
@@ -169,87 +172,75 @@ export function LoginPage() {
               </div>
             ) : null}
 
-            <div className="field">
-              <label htmlFor="email">Email address</label>
-              <input
-                id="email"
-                type="email"
-                autoComplete="username"
-                aria-invalid={Boolean(errors.email)}
-                aria-describedby={errors.email ? "email-error" : undefined}
-                {...emailRegistration}
-                ref={(element) => {
-                  registerEmail(element);
-                  emailRef.current = element;
-                }}
-              />
-              {errors.email ? (
-                <p id="email-error" className="field__error">
-                  {errors.email.message}
-                </p>
-              ) : null}
-            </div>
-
-            <div className="field">
-              <label htmlFor="password">Password</label>
-              <div className="password-field">
-                <input
-                  id="password"
-                  type={showPassword ? "text" : "password"}
-                  autoComplete="current-password"
-                  aria-invalid={Boolean(errors.password)}
-                  aria-describedby={errors.password ? "password-error" : undefined}
-                  {...passwordRegistration}
+            <Field
+              id="email"
+              className="field"
+              label="Email address"
+              error={errors.email?.message}
+            >
+              {(controlProps) => (
+                <Input
+                  {...controlProps}
+                  type="email"
+                  autoComplete="username"
+                  {...emailRegistration}
                   ref={(element) => {
-                    registerPassword(element);
-                    passwordRef.current = element;
+                    registerEmail(element);
+                    emailRef.current = element;
                   }}
                 />
-                <button
-                  type="button"
-                  className="password-field__toggle"
-                  aria-label={showPassword ? "Hide password" : "Show password"}
-                  aria-pressed={showPassword}
-                  onClick={() => setShowPassword((visible) => !visible)}
-                >
-                  {showPassword ? (
-                    <EyeOff aria-hidden="true" />
-                  ) : (
-                    <Eye aria-hidden="true" />
-                  )}
-                </button>
-              </div>
-              {errors.password ? (
-                <p id="password-error" className="field__error">
-                  {errors.password.message}
-                </p>
-              ) : null}
-            </div>
-
-            <button
-              type="submit"
-              className="button button--primary button--full login-submit"
-              disabled={isSubmitting}
-              aria-busy={isSubmitting}
-            >
-              {isSubmitting ? (
-                <>
-                  <LoaderCircle
-                    className="login-submit__spinner"
-                    aria-hidden="true"
-                  />
-                  <span>Signing in…</span>
-                </>
-              ) : (
-                <>
-                  <span>Sign in</span>
-                  <ArrowRight
-                    className="login-submit__arrow"
-                    aria-hidden="true"
-                  />
-                </>
               )}
-            </button>
+            </Field>
+
+            <Field
+              id="password"
+              className="field"
+              label="Password"
+              error={errors.password?.message}
+            >
+              {(controlProps) => (
+                <div className="password-field">
+                  <Input
+                    {...controlProps}
+                    type={showPassword ? "text" : "password"}
+                    autoComplete="current-password"
+                    {...passwordRegistration}
+                    ref={(element) => {
+                      registerPassword(element);
+                      passwordRef.current = element;
+                    }}
+                  />
+                  <IconButton
+                    type="button"
+                    variant="quiet"
+                    className="password-field__toggle"
+                    label={showPassword ? "Hide password" : "Show password"}
+                    aria-pressed={showPassword}
+                    icon={
+                      showPassword ? (
+                        <EyeOff aria-hidden="true" />
+                      ) : (
+                        <Eye aria-hidden="true" />
+                      )
+                    }
+                    onClick={() => setShowPassword((visible) => !visible)}
+                  />
+                </div>
+              )}
+            </Field>
+
+            <Button
+              type="submit"
+              className="login-submit"
+              fullWidth
+              busy={isSubmitting}
+              busyLabel="Signing in…"
+              trailingIcon={
+                <ArrowRight className="login-submit__arrow" aria-hidden="true" />
+              }
+            >
+              Sign in
+            </Button>
           </form>
 
           <div className="demo-helper">
@@ -258,13 +249,14 @@ export function LoginPage() {
               <strong>Reviewing the demo?</strong>
               <p>Fill the seeded designer credentials in one step.</p>
             </div>
-            <button
+            <Button
               type="button"
-              className="button button--quiet"
+              variant="quiet"
+              className="button--quiet"
               onClick={fillDemoAccount}
             >
               Use designer demo account
-            </button>
+            </Button>
           </div>
           <p className="auth-switch">
             New to Lisno? <Link to="/signup">Create a client account</Link>

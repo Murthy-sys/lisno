@@ -119,6 +119,7 @@ function LoginRoute() {
 
 function SignupRoute() {
   const auth = useAuth();
+  const location = useLocation();
 
   if (auth.status === "restoring") {
     return (
@@ -130,7 +131,18 @@ function SignupRoute() {
     );
   }
   if (auth.status === "authenticated" && auth.user) {
-    return <Navigate to={roleHomePath(auth.user.role)} replace />;
+    const signupState = location.state as { signupRouteFocus?: unknown } | null;
+    return (
+      <Navigate
+        to={roleHomePath(auth.user.role)}
+        replace
+        state={
+          signupState?.signupRouteFocus === true
+            ? { routeFocus: true }
+            : undefined
+        }
+      />
+    );
   }
   return <SignupPage />;
 }

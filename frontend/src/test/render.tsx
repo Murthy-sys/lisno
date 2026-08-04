@@ -19,13 +19,19 @@ export function renderApp(
   });
   const router = {
     state: {
-      location: { pathname: initialEntries[initialEntries.length - 1] ?? "/" }
+      location: {
+        pathname: initialEntries[initialEntries.length - 1] ?? "/",
+        state: null as unknown
+      }
     }
   };
 
   function LocationObserver() {
     const location = useLocation();
-    router.state.location = { pathname: location.pathname };
+    router.state.location = {
+      pathname: location.pathname,
+      state: location.state
+    };
     return null;
   }
 
