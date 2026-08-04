@@ -1,0 +1,61 @@
+:root {
+  --color-brand-midnight: #111a39;
+  --color-brand-midnight-raised: #192448;
+  --color-brand-violet: #5a45d6;
+  --color-brand-violet-bright: #8e7cff;
+  --color-canvas: #f4f5fa;
+  --color-surface: #ffffff;
+  --color-surface-subtle: #f8f8fc;
+  --color-text: #171b2d;
+  --color-text-muted: #626a7d;
+  --color-border: #dde1eb;
+  --color-border-strong: #c8cedc;
+  --color-success: #18795c;
+  --color-warning: #8a5b12;
+  --color-danger: #b33a4a;
+  --color-info: #315ab8;
+
+  --font-interface: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-editorial: Georgia, Cambria, "Times New Roman", serif;
+  --font-tabular: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  --type-page-title: 2.5rem/1.08 var(--font-editorial);
+  --type-section-title: 1.5rem/1.2 var(--font-interface);
+  --type-body: 1rem/1.5 var(--font-interface);
+  --type-metadata: 0.8125rem/1.35 var(--font-interface);
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-7: 32px;
+  --space-8: 40px;
+  --space-9: 48px;
+  --space-10: 64px;
+
+  --radius-control: 10px;
+  --radius-field: 14px;
+  --radius-surface: 20px;
+  --radius-pill: 999px;
+
+  --shadow-soft: 0 4px 16px rgb(17 26 57 / 6%);
+  --shadow-raised: 0 12px 32px rgb(17 26 57 / 12%);
+  --shadow-overlay: 0 24px 64px rgb(17 26 57 / 20%);
+
+  --z-base: 0;
+  --z-raised: 10;
+  --z-overlay: 20;
+  --z-modal: 30;
+  --content-narrow: 42rem;
+  --content-default: 72rem;
+  --content-wide: 90rem;
+
+  --focus-ring-color: color-mix(in srgb, var(--color-brand-violet-bright) 72%, white);
+  --focus-ring: 0 0 0 3px var(--focus-ring-color);
+
+  --duration-fast: 140ms;
+  --duration-settle: 220ms;
+  --duration-overlay: 320ms;
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+}
