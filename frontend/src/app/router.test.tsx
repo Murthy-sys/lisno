@@ -209,7 +209,11 @@ describe("protected role routing", () => {
     expect(
       screen.getByRole("heading", { level: 1, name: "Opening your workspace" })
     ).toBeVisible();
-    expect(screen.getByRole("status")).toHaveTextContent("Restoring your session");
+    expect(
+      within(document.querySelector("main#main-content")!).getByRole("status", {
+        name: "Content status"
+      })
+    ).toHaveTextContent("Restoring your session");
     expect(
       await screen.findByRole("heading", { name: "Good morning, Ananya." })
     ).toBeVisible();
@@ -234,7 +238,11 @@ describe("protected role routing", () => {
     expect(screen.getAllByRole("main")).toHaveLength(1);
     expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
     expect(screen.getByRole("heading", { level: 1, name: heading })).toBeVisible();
-    expect(screen.getByRole("status")).toHaveTextContent("Restoring your session");
+    expect(
+      within(document.querySelector("main#main-content")!).getByRole("status", {
+        name: "Content status"
+      })
+    ).toHaveTextContent("Restoring your session");
   });
 
   it("keeps a valid token and stable page shell when protected restoration can be retried", async () => {

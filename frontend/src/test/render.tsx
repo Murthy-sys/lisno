@@ -5,6 +5,7 @@ import { MemoryRouter, useLocation } from "react-router-dom";
 
 import { AppRoutes } from "../app/router";
 import { AuthProvider } from "../auth/AuthProvider";
+import { FeedbackProvider } from "../components/feedback/FeedbackProvider";
 
 export function renderApp(
   initialEntries: string[] = ["/"],
@@ -34,10 +35,12 @@ export function renderApp(
     ...render(
       <QueryClientProvider client={queryClient}>
         <MemoryRouter initialEntries={initialEntries}>
-          <AuthProvider>
-            <AppRoutes />
-            <LocationObserver />
-          </AuthProvider>
+          <FeedbackProvider>
+            <AuthProvider>
+              <AppRoutes />
+              <LocationObserver />
+            </AuthProvider>
+          </FeedbackProvider>
         </MemoryRouter>
       </QueryClientProvider>,
       options
@@ -57,7 +60,9 @@ export function renderWithQuery(
   });
 
   return render(
-    <QueryClientProvider client={queryClient}>{element}</QueryClientProvider>,
+    <QueryClientProvider client={queryClient}>
+      <FeedbackProvider>{element}</FeedbackProvider>
+    </QueryClientProvider>,
     options
   );
 }

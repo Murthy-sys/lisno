@@ -73,6 +73,11 @@ const review: DesignSectionReviewData = {
   }]
 };
 
+function apiRequestPath(input: RequestInfo | URL): string {
+  const requestUrl = input instanceof Request ? input.url : String(input);
+  return requestUrl.replace(/^https?:\/\/[^/]+/i, "");
+}
+
 function installApi(options: {
   failList?: boolean;
   failDecision?: boolean;
@@ -83,7 +88,7 @@ function installApi(options: {
   let current = structuredClone(options.reviewData ?? review);
   let decisionSaved = false;
   return vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
-    const url = String(input);
+    const url = apiRequestPath(input);
     if (url === "/api/v1/client/projects/project-1/design-sections") {
       if (decisionSaved) await options.refetchAfterDecision;
       if (decisionSaved && options.failRefetchAfterDecision) {
@@ -205,9 +210,9 @@ describe("DesignSectionReview", () => {
     expect(screen.queryByText("View source page")).not.toBeInTheDocument();
     const sourceTrigger = screen.getByRole("button", { name: "View source image" });
     await waitFor(() => expect(sourceTrigger).toBeEnabled());
-    const sourceRequests = () => api.mock.calls.filter(([input]) => String(input) === "/api/v1/design-source-pages/page-2/image");
+    const sourceRequests = () => api.mock.calls.filter(([input]) => apiRequestPath(input) === "/api/v1/design-source-pages/page-2/image");
     expect(sourceRequests()).toHaveLength(1);
-    expect(api.mock.calls.some(([input]) => String(input) === "/api/v1/design-source-pages/page-1/image")).toBe(false);
+    expect(api.mock.calls.some(([input]) => apiRequestPath(input) === "/api/v1/design-source-pages/page-1/image")).toBe(false);
     await user.click(sourceTrigger);
     expect(screen.getByRole("dialog", { name: "Project source image" })).toBeVisible();
     expect(screen.getByRole("img", { name: "Project source image" })).toHaveAttribute("src", expect.stringContaining("blob:"));
@@ -269,14 +274,14 @@ describe("DesignSectionReview", () => {
 
     expect(screen.getByRole("article", { name: "Site plan review" })).toBeVisible();
     expect(screen.getByRole("button", { name: "Next plan" })).toHaveFocus();
-    expect(screen.getByRole("status")).toHaveTextContent("Now showing Site plan.");
+    expect(screen.getByRole("status", { name: "Design review updates" })).toHaveTextContent("Now showing Site plan.");
 
     const previous = screen.getByRole("button", { name: "Previous plan: Front elevation" });
     await user.click(previous);
 
     expect(screen.getByRole("article", { name: "Front elevation review" })).toBeVisible();
     expect(screen.getByRole("button", { name: "Previous plan" })).toHaveFocus();
-    expect(screen.getByRole("status")).toHaveTextContent("Now showing Front elevation.");
+    expect(screen.getByRole("status", { name: "Design review updates" })).toHaveTextContent("Now showing Front elevation.");
   });
 
   it("keeps a decision settled through delayed synchronization and prevents duplicate submission", async () => {
@@ -328,7 +333,7 @@ describe("DesignSectionReview", () => {
     await user.click(await screen.findByRole("button", { name: "Approve Front elevation" }));
     const dialog = screen.getByRole("dialog", { name: "Approve Front elevation?" });
     await user.click(within(dialog).getByRole("button", { name: "Confirm approval" }));
-    expect(await screen.findByRole("status")).toHaveTextContent("Review saved. Now showing Site plan, the next plan awaiting review.");
+    expect(await screen.findByRole("status", { name: "Design review updates" })).toHaveTextContent("Review saved. Now showing Site plan, the next plan awaiting review.");
     expect(screen.getByRole("article", { name: "Site plan review" })).toBeVisible();
     expect(screen.queryByRole("button", { name: "Approve Front elevation" })).not.toBeInTheDocument();
   });
@@ -343,7 +348,7 @@ describe("DesignSectionReview", () => {
     await user.type(within(dialog).getByLabelText("Modification comment"), "Raise the roof line.");
     await user.click(within(dialog).getByRole("button", { name: "Send request" }));
 
-    expect(await screen.findByRole("status")).toHaveTextContent("Review saved. Now showing Site plan, the next plan awaiting review.");
+    expect(await screen.findByRole("status", { name: "Design review updates" })).toHaveTextContent("Review saved. Now showing Site plan, the next plan awaiting review.");
     expect(screen.getByRole("article", { name: "Site plan review" })).toBeVisible();
   });
 
@@ -376,7 +381,7 @@ describe("DesignSectionReview", () => {
     await user.click(screen.getByRole("button", { name: "Confirm approval" }));
 
     expect(await screen.findByRole("heading", { name: "Review complete" })).toBeVisible();
-    expect(screen.getByRole("status")).toHaveTextContent("Review saved. Review complete. Now showing Front elevation.");
+    expect(screen.getByRole("status", { name: "Design review updates" })).toHaveTextContent("Review saved. Review complete. Now showing Front elevation.");
     expect(screen.getByRole("article", { name: "Front elevation review" })).toBeVisible();
   });
 
@@ -408,14 +413,14 @@ describe("DesignSectionReview", () => {
 
     await user.click(await screen.findByRole("button", { name: "Approve Front elevation" }));
     await user.click(screen.getByRole("button", { name: "Confirm approval" }));
-    const firstAnnouncement = screen.getByRole("status").textContent;
+    const firstAnnouncement = screen.getByRole("status", { name: "Design review updates" }).textContent;
     expect(firstAnnouncement).toContain("Site plan");
 
     await user.click(await screen.findByRole("button", { name: "Approve Site plan" }));
     await user.click(screen.getByRole("button", { name: "Confirm approval" }));
     expect(await screen.findByRole("article", { name: "Roof plan review" })).toBeVisible();
-    expect(screen.getByRole("status")).toHaveTextContent("Roof plan");
-    expect(screen.getByRole("status").textContent).not.toBe(firstAnnouncement);
+    expect(screen.getByRole("status", { name: "Design review updates" })).toHaveTextContent("Roof plan");
+    expect(screen.getByRole("status", { name: "Design review updates" }).textContent).not.toBe(firstAnnouncement);
   });
 
   it("keeps queue navigation but no decision actions in read-only mode", async () => {
@@ -441,8 +446,8 @@ describe("DesignSectionReview", () => {
 
     const sourceTrigger = await screen.findByRole("button", { name: "View source image" });
     await waitFor(() => expect(sourceTrigger).toBeEnabled());
-    expect(api.mock.calls.filter(([input]) => String(input) === "/api/v1/design-source-pages/page-1/image")).toHaveLength(1);
-    expect(api.mock.calls.some(([input]) => String(input) === "/api/v1/design-source-pages/page-2/image")).toBe(false);
+    expect(api.mock.calls.filter(([input]) => apiRequestPath(input) === "/api/v1/design-source-pages/page-1/image")).toHaveLength(1);
+    expect(api.mock.calls.some(([input]) => apiRequestPath(input) === "/api/v1/design-source-pages/page-2/image")).toBe(false);
   });
 
   it("omits the source trigger when source URLs are absent or empty", async () => {
@@ -454,7 +459,7 @@ describe("DesignSectionReview", () => {
 
     await screen.findByRole("article", { name: "Front elevation review" });
     expect(screen.queryByRole("button", { name: "View source image" })).not.toBeInTheDocument();
-    expect(api.mock.calls.some(([input]) => String(input).includes("/api/v1/design-source-pages/"))).toBe(false);
+    expect(api.mock.calls.some(([input]) => apiRequestPath(input).includes("/api/v1/design-source-pages/"))).toBe(false);
   });
 
   it("shows only the editorial empty state when no review sections exist", async () => {

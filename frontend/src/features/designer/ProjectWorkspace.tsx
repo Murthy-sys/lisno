@@ -122,7 +122,7 @@ export function ProjectWorkspace() {
       </header>
 
       {notice ? (
-        <div className="workspace-notice" role="status">
+        <div className="workspace-notice" role="status" aria-label="Project updates">
           {notice}
           <button type="button" onClick={() => setNotice(null)}>Dismiss</button>
         </div>
