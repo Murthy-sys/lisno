@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
@@ -18,6 +20,53 @@ const shellFixtures = [
   ],
   ["client", "/client", "My projects", "Maya Patel", "maya@lisno.example"]
 ] as const satisfies ReadonlyArray<readonly [Role, string, string, string, string]>;
+
+const stylesDirectory = resolve(process.cwd(), "src/styles");
+
+function readRuntimeStyle(filename: string) {
+  return readFileSync(resolve(stylesDirectory, filename), "utf8");
+}
+
+function escapePattern(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function ruleBodies(css: string, prelude: string) {
+  const matches = css.matchAll(new RegExp(`${escapePattern(prelude)}\\s*\\{`, "g"));
+
+  return [...matches].map((match) => {
+    const openingBrace = css.indexOf("{", match.index ?? 0);
+    let depth = 1;
+    let cursor = openingBrace + 1;
+
+    while (cursor < css.length && depth > 0) {
+      if (css[cursor] === "{") depth += 1;
+      if (css[cursor] === "}") depth -= 1;
+      cursor += 1;
+    }
+
+    if (depth !== 0) throw new Error(`Unclosed CSS block for ${prelude}`);
+    return css.slice(openingBrace + 1, cursor - 1);
+  });
+}
+
+function declarations(css: string, selector: string, occurrence = 0) {
+  const body = ruleBodies(css, selector)[occurrence];
+  if (!body) throw new Error(`Missing CSS rule for ${selector}`);
+
+  return new Map(
+    [...body.matchAll(/([\w-]+)\s*:\s*([^;]+);/g)].map(([, property, value]) => [
+      property,
+      value.trim().replace(/\s+/g, " ")
+    ])
+  );
+}
+
+function numericToken(css: string, name: string) {
+  const value = css.match(new RegExp(`${escapePattern(name)}\\s*:\\s*(\\d+);`))?.[1];
+  if (!value) throw new Error(`Missing numeric token ${name}`);
+  return Number(value);
+}
 
 function installAuthenticatedSession(user: PublicUser) {
   tokenStorage.set(`${user.role}-token`);
@@ -69,6 +118,84 @@ describe("AppShell", () => {
       expect(screen.getByRole("button", { name: "Sign out" })).toBeVisible();
     }
   );
+
+  it("moves keyboard focus from the authenticated skip link to the shell-owned main", async () => {
+    const user = userEvent.setup();
+    installAuthenticatedSession({
+      id: "designer-1",
+      name: "Ananya Rao",
+      email: "ananya@lisno.example",
+      role: "designer"
+    });
+    renderApp(["/designer"]);
+
+    await screen.findByRole("navigation", { name: "Primary navigation" });
+    const skipLink = screen.getByRole("link", { name: "Skip to main content" });
+    const main = screen.getByRole("main");
+
+    expect(main).toHaveAttribute("id", "main-content");
+    expect(skipLink).toHaveAttribute("href", `#${main.id}`);
+
+    await user.tab();
+    expect(skipLink).toHaveFocus();
+    await user.keyboard("{Enter}");
+
+    expect(main).toHaveFocus();
+  });
+});
+
+describe("shell CSS contract", () => {
+  it("preserves the layered, responsive, role-aware shell cascade", () => {
+    const index = readRuntimeStyle("index.css");
+    const shell = readRuntimeStyle("shell.css");
+    const tokens = readRuntimeStyle("tokens.css");
+
+    expect(
+      /@layer\s+theme,\s*base,\s*components,\s*shell,\s*utilities;/.test(index)
+    ).toBe(true);
+    expect(/@import\s+"\.\/shell\.css"\s+layer\(shell\);/.test(index)).toBe(true);
+
+    const appShell = declarations(shell, ".ui-app-shell");
+    expect(appShell.get("min-inline-size")).toBe("320px");
+    expect(appShell.get("overflow-x")).toBe("clip");
+    expect(appShell.get("grid-template-columns")).toContain("minmax(0, 1fr)");
+
+    const staffWorkspace = declarations(shell, ".ui-workspace");
+    const clientWorkspace = declarations(shell, '.ui-workspace[data-role="client"]');
+    expect(staffWorkspace.get("--ui-workspace-measure")).toBe("var(--content-wide)");
+    expect(clientWorkspace.get("--ui-workspace-measure")).toBe(
+      "var(--content-default)"
+    );
+    expect(staffWorkspace.get("padding")).toContain("env(safe-area-inset-top)");
+    expect(staffWorkspace.get("padding")).toContain("env(safe-area-inset-right)");
+    expect(staffWorkspace.get("padding")).toContain("env(safe-area-inset-bottom)");
+    expect(staffWorkspace.get("padding")).toContain("env(safe-area-inset-left)");
+
+    const mobileRules = ruleBodies(shell, "@media (max-width: 767px)");
+    expect(mobileRules).toHaveLength(1);
+    const mobile = mobileRules[0];
+    expect(declarations(mobile, ".ui-sidebar-rail").get("display")).toBe("none");
+    expect(declarations(mobile, ".ui-mobile-header").get("display")).toBe("flex");
+    expect(declarations(mobile, ".ui-mobile-header").get("padding")).toContain(
+      "env(safe-area-inset-top)"
+    );
+    expect(declarations(shell, ".ui-mobile-header").get("display")).toBe("none");
+    expect(declarations(shell, ".ui-drawer-layer").get("position")).toBe("fixed");
+    expect(declarations(shell, ".ui-drawer").get("block-size")).toBe("100%");
+
+    const overlay = numericToken(tokens, "--z-overlay");
+    const modal = numericToken(tokens, "--z-modal");
+    const skipLink = declarations(shell, ".ui-skip-link");
+    const drawerLayer = declarations(shell, ".ui-drawer-layer");
+    const skipOffset = skipLink
+      .get("z-index")
+      ?.match(/^calc\(var\(--z-overlay\) \+ (\d+)\)$/)?.[1];
+    expect(skipOffset).toBeTruthy();
+    expect(drawerLayer.get("z-index")).toBe("var(--z-modal)");
+    const skipLayer = overlay + Number(skipOffset);
+    expect(skipLayer).toBeGreaterThan(overlay);
+    expect(skipLayer).toBeLessThan(modal);
+  });
 });
 
 describe("SkipLink", () => {
