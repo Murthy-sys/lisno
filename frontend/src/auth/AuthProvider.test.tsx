@@ -361,6 +361,73 @@ describe("AuthProvider session concurrency", () => {
 });
 
 describe("AuthProvider cache isolation", () => {
+  it("does not let superseded expiry cleanup clear user B's authenticated cache", async () => {
+    const expiredCleanupStarted = deferred();
+    const expiredCleanupGate = deferred();
+    const expiredCleanupFinished = deferred();
+    const queryClient = createQueryClient();
+    const realCancelQueries = queryClient.cancelQueries.bind(queryClient);
+    let cancellationCall = 0;
+    vi.spyOn(queryClient, "cancelQueries").mockImplementation(() => {
+      cancellationCall += 1;
+      const cancellation = realCancelQueries();
+      if (cancellationCall !== 1) return cancellation;
+
+      expiredCleanupStarted.resolve();
+      return expiredCleanupGate.promise.then(async () => {
+        await cancellation;
+        setTimeout(expiredCleanupFinished.resolve, 0);
+      });
+    });
+    tokenStorage.set("token-a");
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const path = String(input);
+      if (path.endsWith("/auth/me")) {
+        return Response.json({ data: userA });
+      }
+      if (path.endsWith("/auth/login")) {
+        return Response.json({ data: { token: "token-b", user: userB } });
+      }
+      return Response.json(
+        {
+          error: {
+            code: "TOKEN_EXPIRED",
+            message: "User A's session expired."
+          }
+        },
+        { status: 401 }
+      );
+    });
+    renderAuthProvider(queryClient);
+    await waitFor(() =>
+      expect(screen.getByLabelText("Current user")).toHaveTextContent("User A")
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "Expire session" }));
+    await expiredCleanupStarted.promise;
+    expect(screen.getByLabelText("Session expired")).toHaveTextContent("true");
+
+    await userEvent.click(screen.getByRole("button", { name: "Log in as B" }));
+    await waitFor(() => {
+      expect(screen.getByLabelText("Authentication status")).toHaveTextContent(
+        /^authenticated$/
+      );
+      expect(screen.getByLabelText("Current user")).toHaveTextContent("User B");
+    });
+    queryClient.setQueryData(["viewer"], { owner: "User B" });
+
+    expiredCleanupGate.resolve();
+    await expiredCleanupFinished.promise;
+
+    expect(queryClient.getQueryData(["viewer"])).toEqual({ owner: "User B" });
+    expect(tokenStorage.get()).toBe("token-b");
+    expect(screen.getByLabelText("Authentication status")).toHaveTextContent(
+      /^authenticated$/
+    );
+    expect(screen.getByLabelText("Current user")).toHaveTextContent("User B");
+    expect(screen.getByLabelText("Session expired")).toHaveTextContent("false");
+  });
+
   it("cancels authenticated queries and removes user data on logout", async () => {
     tokenStorage.set("token-a");
     vi.spyOn(globalThis, "fetch").mockResolvedValue(

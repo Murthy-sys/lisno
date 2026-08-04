@@ -41,6 +41,7 @@ export function safeReturnPath(
   }
 
   try {
+    decodeURI(candidate);
     const parsed = new URL(candidate, returnPathOrigin);
     if (
       parsed.origin !== returnPathOrigin ||

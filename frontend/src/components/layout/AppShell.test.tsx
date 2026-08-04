@@ -240,6 +240,35 @@ describe("Sidebar", () => {
 });
 
 describe("shell CSS contract", () => {
+  it("keeps the labelled sign-out legible on midnight while interactive and busy", () => {
+    const primitives = readRuntimeStyle("primitives.css");
+    const shell = readRuntimeStyle("shell.css");
+
+    expect(
+      declarations(shell, ".ui-sidebar__sign-out.ui-button--quiet").get("color")
+    ).toBe("var(--color-surface)");
+    expect(
+      declarations(
+        shell,
+        ".ui-sidebar__sign-out.ui-button--quiet:not(:disabled):hover"
+      ).get("background")
+    ).toBe("var(--color-brand-midnight-raised)");
+    expect(
+      declarations(
+        shell,
+        ".ui-sidebar__sign-out.ui-button--quiet[data-busy]"
+      ).get("opacity")
+    ).toBe("1");
+    expect(
+      declarations(shell, ".ui-sidebar__sign-out.ui-icon-button--quiet").get(
+        "color"
+      )
+    ).toBe("var(--color-surface)");
+    expect(declarations(primitives, ".ui-button:disabled").get("opacity")).toBe(
+      "0.56"
+    );
+  });
+
   it("preserves the layered, responsive, role-aware shell cascade", () => {
     const index = readRuntimeStyle("index.css");
     const shell = readRuntimeStyle("shell.css");

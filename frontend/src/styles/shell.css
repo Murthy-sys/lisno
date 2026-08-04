@@ -175,6 +175,18 @@
   background: var(--color-brand-midnight-raised);
 }
 
+.ui-sidebar__sign-out.ui-button--quiet {
+  color: var(--color-surface);
+}
+
+.ui-sidebar__sign-out.ui-button--quiet:not(:disabled):hover {
+  background: var(--color-brand-midnight-raised);
+}
+
+.ui-sidebar__sign-out.ui-button--quiet[data-busy] {
+  opacity: 1;
+}
+
 .ui-mobile-header {
   display: none;
 }

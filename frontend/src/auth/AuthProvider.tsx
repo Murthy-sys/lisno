@@ -69,11 +69,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return generationRef.current;
   }, []);
 
-  const clearAuthenticatedCache = useCallback(async () => {
+  const clearAuthenticatedCache = useCallback(async (generation: number) => {
     try {
       await queryClient.cancelQueries();
     } finally {
-      queryClient.clear();
+      if (generationRef.current === generation) {
+        queryClient.clear();
+      }
     }
   }, [queryClient]);
 
@@ -87,7 +89,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setSessionExpired(reason === "expired");
       commitStatus(reason === "logout" ? "signing_out" : "unauthenticated");
       try {
-        await clearAuthenticatedCache();
+        await clearAuthenticatedCache(generation);
       } catch {
         // Cache clearing still runs in clearAuthenticatedCache's finally.
       } finally {
@@ -180,7 +182,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         tokenStorage.set(replacementToken);
         pendingTokenRef.current = replacementToken;
         cleanupAttempted = true;
-        await clearAuthenticatedCache();
+        await clearAuthenticatedCache(generation);
         if (
           !mountedRef.current ||
           generationRef.current !== generation ||
@@ -210,7 +212,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           commitStatus("unauthenticated");
           if (!cleanupAttempted) {
             try {
-              await clearAuthenticatedCache();
+              await clearAuthenticatedCache(generation);
             } catch {
               // Cache removal still runs in clearAuthenticatedCache's finally.
             }

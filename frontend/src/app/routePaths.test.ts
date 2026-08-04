@@ -26,6 +26,9 @@ describe("safeReturnPath", () => {
     ["client", "/client/%2e%2e%2fmanager"],
     ["client", "/client/%252e%252e/manager"],
     ["client", "/client/%ZZ"],
+    ["client", "/client?next=%ZZ"],
+    ["client", "/client#%ZZ"],
+    ["client", "/client?next=%E0%A4"],
     ["client", "?from=/client/projects/project-1"],
     ["client", "#/client/projects/project-1"]
   ] as const)("falls back from an unsafe %s candidate %s", (role, candidate) => {
