@@ -49,6 +49,24 @@ describe("apiRequestPath", () => {
       "/api/v1/auth/me?source=restore&attempt=2"
     );
   });
+
+  it("strips the origin from an absolute URL string without changing its query", () => {
+    expect(
+      apiRequestPath(
+        "https://api.lisno.example/api/v1/projects?tag=room%20plan&tag=approved"
+      )
+    ).toBe("/api/v1/projects?tag=room%20plan&tag=approved");
+  });
+
+  it("reads a URL object without changing its encoded query", () => {
+    const url = new URL(
+      "https://api.lisno.example/api/v1/leads?stage=estimate%2Fin_progress&stage=won"
+    );
+
+    expect(apiRequestPath(url)).toBe(
+      "/api/v1/leads?stage=estimate%2Fin_progress&stage=won"
+    );
+  });
 });
 
 function installDesignerApi(
