@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
@@ -142,6 +142,54 @@ describe("AppShell", () => {
 
     expect(main).toHaveFocus();
   });
+
+  it("connects the mobile trigger to the Drawer and closes it after navigation", async () => {
+    installAuthenticatedSession({
+      id: "designer-1",
+      name: "Ananya Rao",
+      email: "ananya@lisno.example",
+      role: "designer"
+    });
+    renderApp(["/designer"]);
+    await screen.findByRole("navigation", { name: "Primary navigation" });
+
+    const trigger = screen.getByRole("button", { name: "Open navigation" });
+    expect(trigger).toHaveAttribute("aria-controls", "mobile-navigation");
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
+    await userEvent.click(trigger);
+
+    expect(trigger).toHaveAttribute("aria-expanded", "true");
+    const drawer = screen.getByRole("dialog", { name: "Navigation" });
+    expect(drawer).toHaveAttribute("id", "mobile-navigation");
+    expect(screen.getAllByRole("main")).toHaveLength(1);
+    await userEvent.click(within(drawer).getByRole("link", { name: "Workspace" }));
+
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "Navigation" })).not.toBeInTheDocument()
+    );
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
+    expect(trigger).toHaveFocus();
+  });
+
+  it("closes the mobile Drawer when its sign-out action logs out", async () => {
+    installAuthenticatedSession({
+      id: "designer-1",
+      name: "Ananya Rao",
+      email: "ananya@lisno.example",
+      role: "designer"
+    });
+    renderApp(["/designer"]);
+    await screen.findByRole("navigation", { name: "Primary navigation" });
+    await userEvent.click(screen.getByRole("button", { name: "Open navigation" }));
+
+    const drawer = screen.getByRole("dialog", { name: "Navigation" });
+    await userEvent.click(within(drawer).getByRole("button", { name: "Sign out" }));
+
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "Navigation" })).not.toBeInTheDocument()
+    );
+    expect(await screen.findByRole("heading", { name: "Welcome back" })).toBeVisible();
+  });
 });
 
 describe("shell CSS contract", () => {
@@ -195,6 +243,24 @@ describe("shell CSS contract", () => {
     const skipLayer = overlay + Number(skipOffset);
     expect(skipLayer).toBeGreaterThan(overlay);
     expect(skipLayer).toBeLessThan(modal);
+  });
+
+  it("removes Dialog and Drawer movement under reduced motion without hiding content", () => {
+    const primitives = readRuntimeStyle("primitives.css");
+    const shell = readRuntimeStyle("shell.css");
+    const primitiveReducedMotion = ruleBodies(
+      primitives,
+      "@media (prefers-reduced-motion: reduce)"
+    ).join("\n");
+    const shellReducedMotion = ruleBodies(
+      shell,
+      "@media (prefers-reduced-motion: reduce)"
+    ).join("\n");
+
+    expect(declarations(primitiveReducedMotion, ".ui-dialog").get("animation")).toBe("none");
+    expect(declarations(primitiveReducedMotion, ".ui-dialog").get("display")).toBeUndefined();
+    expect(declarations(shellReducedMotion, ".ui-drawer").get("animation")).toBe("none");
+    expect(declarations(shellReducedMotion, ".ui-drawer").get("display")).toBeUndefined();
   });
 });
 

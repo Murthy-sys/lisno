@@ -133,6 +133,28 @@
   padding: 0;
 }
 
+.ui-overlay-layer {
+  inset: 0;
+  position: fixed;
+  z-index: var(--z-modal);
+}
+
+.ui-overlay-backdrop {
+  inset: 0;
+  position: absolute;
+}
+
+.ui-dialog {
+  animation: ui-dialog-enter var(--duration-settle) var(--ease-standard) both;
+}
+
+@keyframes ui-dialog-enter {
+  from {
+    opacity: 0;
+    transform: translateY(var(--space-3));
+  }
+}
+
 .ui-spinner {
   animation: ui-spinner-rotate var(--duration-settle) linear infinite;
   border: 2px solid currentColor;
@@ -476,6 +498,11 @@
   .ui-progress--indeterminate .ui-progress__value {
     animation-duration: 0.01ms;
     animation-iteration-count: 1;
+  }
+
+  .ui-dialog {
+    animation: none;
+    transform: none;
   }
 }
 

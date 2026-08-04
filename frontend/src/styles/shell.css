@@ -218,7 +218,12 @@
   position: absolute;
 }
 
+.ui-drawer-backdrop > .ui-button__stack {
+  pointer-events: none;
+}
+
 .ui-drawer {
+  animation: ui-drawer-enter-left var(--duration-settle) var(--ease-standard) both;
   background: var(--color-brand-midnight);
   block-size: 100%;
   box-shadow: var(--shadow-overlay);
@@ -227,6 +232,16 @@
   inset-block: 0;
   inset-inline-start: 0;
   position: absolute;
+}
+
+.ui-drawer--right {
+  animation-name: ui-drawer-enter-right;
+  inset-inline-end: 0;
+  inset-inline-start: auto;
+}
+
+.ui-drawer__body {
+  block-size: 100%;
 }
 
 .ui-drawer__close,
@@ -256,6 +271,21 @@
   inset-inline-end: max(var(--space-3), env(safe-area-inset-right));
   position: absolute;
   z-index: var(--z-raised);
+}
+
+@keyframes ui-drawer-enter-left {
+  from { transform: translateX(-100%); }
+}
+
+@keyframes ui-drawer-enter-right {
+  from { transform: translateX(100%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ui-drawer {
+    animation: none;
+    transform: none;
+  }
 }
 
 @media (max-width: 767px) {
