@@ -277,9 +277,16 @@
 
 .ui-checkbox {
   accent-color: var(--color-brand-violet);
-  block-size: var(--space-5);
+  block-size: 44px;
   cursor: pointer;
-  inline-size: var(--space-5);
+  inline-size: 44px;
+  min-block-size: 44px;
+  min-inline-size: 44px;
+}
+
+.ui-checkbox[aria-invalid="true"] {
+  outline: var(--space-1) dashed var(--color-danger);
+  outline-offset: var(--space-1);
 }
 
 @keyframes ui-spinner-rotate {

@@ -1,10 +1,14 @@
 import { useState } from "react";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useForm } from "react-hook-form";
 import { describe, expect, it } from "vitest";
 
 import { Checkbox, Field, FileInput, Input, Select, Textarea } from "./Field";
+
+const primitives = readFileSync(resolve(process.cwd(), "src/styles/primitives.css"), "utf8");
 
 describe("Field", () => {
   it("associates a required control with its label, hint, and error", () => {
@@ -166,6 +170,22 @@ function HookFormHarness() {
 }
 
 describe("native form controls", () => {
+  it("gives an invalid native checkbox a non-color-only outline and 44px interactive target", () => {
+    render(
+      <Field id="approved" label="Client approved" error="Client approval is required.">
+        {(controlProps) => <Checkbox {...controlProps} />}
+      </Field>
+    );
+
+    const checkbox = screen.getByRole("checkbox", { name: "Client approved" });
+
+    expect(checkbox).toHaveAttribute("aria-invalid", "true");
+    expect(primitives).toMatch(/\.ui-checkbox\s*\{[^}]*min-block-size:\s*44px[^}]*min-inline-size:\s*44px/s);
+    expect(primitives).toMatch(
+      /\.ui-checkbox\[aria-invalid="true"\]\s*\{[^}]*outline:\s*var\(--space-1\) dashed var\(--color-danger\)/s
+    );
+  });
+
   it("keeps React Hook Form registration, native attributes, submitted values, and invalid focus intact", async () => {
     const user = userEvent.setup();
     render(<HookFormHarness />);
