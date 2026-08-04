@@ -13,9 +13,43 @@ const designer = {
 };
 
 function apiRequestPath(input: RequestInfo | URL): string {
-  const url = new URL(String(input), "http://lisno.test");
-  return `${url.pathname}${url.search}`;
+  if (input instanceof Request) {
+    const url = new URL(input.url);
+    return `${url.pathname}${url.search}`;
+  }
+
+  if (input instanceof URL) {
+    return `${input.pathname}${input.search}`;
+  }
+
+  try {
+    const url = new URL(input);
+    return `${url.pathname}${url.search}`;
+  } catch {
+    return input;
+  }
 }
+
+describe("apiRequestPath", () => {
+  it("keeps a malformed relative API path distinct from a root-relative path", () => {
+    expect(apiRequestPath("api/v1/auth/me?source=restore")).toBe(
+      "api/v1/auth/me?source=restore"
+    );
+    expect(apiRequestPath("/api/v1/auth/me?source=restore")).toBe(
+      "/api/v1/auth/me?source=restore"
+    );
+  });
+
+  it("reads a real Request URL and retains its query", () => {
+    const request = new Request(
+      "https://api.lisno.example/api/v1/auth/me?source=restore&attempt=2"
+    );
+
+    expect(apiRequestPath(request)).toBe(
+      "/api/v1/auth/me?source=restore&attempt=2"
+    );
+  });
+});
 
 function installDesignerApi(
   inspectAuth?: (input: RequestInfo | URL, init?: RequestInit) => void
