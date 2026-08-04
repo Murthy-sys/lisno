@@ -145,8 +145,19 @@ describe("semantic UI foundation", () => {
     expect(contrast(colorToken(tokens, "--color-text-muted"), surface)).toBeGreaterThanOrEqual(4.5);
     expect(contrast(surface, colorToken(tokens, "--color-success"))).toBeGreaterThanOrEqual(4.5);
     expect(contrast(surface, colorToken(tokens, "--color-danger"))).toBeGreaterThanOrEqual(4.5);
-    expect(contrast(surface, colorToken(tokens, "--focus-ring-color"))).toBeGreaterThanOrEqual(3);
-    expect(contrast(colorToken(tokens, "--color-canvas"), colorToken(tokens, "--focus-ring-color"))).toBeGreaterThanOrEqual(3);
+  });
+
+  it("keeps the focus indicator distinguishable on every foundation surface", () => {
+    const tokens = tokenDeclarations(readStyle("tokens.css"));
+    const focus = colorToken(tokens, "--focus-ring-color");
+
+    for (const background of [
+      "--color-canvas",
+      "--color-surface",
+      "--color-brand-midnight"
+    ]) {
+      expect(contrast(focus, colorToken(tokens, background))).toBeGreaterThanOrEqual(3);
+    }
   });
 
   it("provides reduced-motion protections for transitions and continuous animation", () => {

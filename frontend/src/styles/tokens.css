@@ -51,7 +51,7 @@
   --content-default: 72rem;
   --content-wide: 90rem;
 
-  --focus-ring-color: var(--color-brand-violet);
+  --focus-ring-color: #8b78fa;
   --focus-ring: 0 0 0 3px var(--focus-ring-color);
 
   --duration-fast: 140ms;
