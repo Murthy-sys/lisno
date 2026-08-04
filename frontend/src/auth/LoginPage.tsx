@@ -1,12 +1,13 @@
 import { ArrowRight, Eye, EyeOff, LoaderCircle, Sparkles } from "lucide-react";
 import { useRef, useState } from "react";
 import { useForm } from "react-hook-form";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { z } from "zod";
 
 import { ApiError } from "../api/client";
 import { BrandLogo } from "../components/ui/BrandLogo";
-import { roleHomePath } from "../app/routePaths";
+import { NoticeBanner } from "../components/ui/NoticeBanner";
+import { safeReturnPath } from "../app/routePaths";
 import { useAuth } from "./AuthProvider";
 
 const loginSchema = z.object({
@@ -24,6 +25,7 @@ const DEMO_ACCOUNT: LoginFields = {
 export function LoginPage() {
   const auth = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
   const [showPassword, setShowPassword] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [validationSummary, setValidationSummary] = useState<string[]>([]);
@@ -68,9 +70,14 @@ export function LoginPage() {
     }
 
     setValidationSummary([]);
+    const locationState = location.state as { from?: unknown } | null;
+    const from = typeof locationState?.from === "string" ? locationState.from : null;
     try {
       const user = await auth.login(parsed.data);
-      navigate(roleHomePath(user.role), { replace: true });
+      navigate(safeReturnPath(user.role, from), {
+        replace: true,
+        state: { routeFocus: true }
+      });
     } catch (error) {
       setSubmitError(
         error instanceof ApiError && error.code === "INVALID_CREDENTIALS"
@@ -119,6 +126,12 @@ export function LoginPage() {
           <p className="login-card__intro">
             Sign in to continue to your design workspace.
           </p>
+
+          {auth.sessionExpired ? (
+            <NoticeBanner tone="warning" label="Session expired">
+              Your session expired. Sign in again.
+            </NoticeBanner>
+          ) : null}
 
           <form
             id="login-form"

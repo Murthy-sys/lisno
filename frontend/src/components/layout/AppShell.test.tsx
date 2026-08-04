@@ -3,10 +3,13 @@ import { resolve } from "node:path";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
+import { MemoryRouter } from "react-router-dom";
 
 import type { PublicUser, Role } from "../../api/types";
 import { tokenStorage } from "../../api/client";
 import { renderApp } from "../../test/render";
+import { FeedbackProvider } from "../feedback/FeedbackProvider";
+import { Sidebar } from "./Sidebar";
 import { SkipLink } from "./SkipLink";
 
 const shellFixtures = [
@@ -192,6 +195,47 @@ describe("AppShell", () => {
       expect(screen.queryByRole("dialog", { name: "Navigation" })).not.toBeInTheDocument()
     );
     expect(await screen.findByRole("heading", { name: "Welcome back" })).toBeVisible();
+  });
+});
+
+describe("Sidebar", () => {
+  it("disables duplicate sign-out activation while preserving its accessible name", async () => {
+    let finishLogout!: () => void;
+    const logoutPending = new Promise<void>((resolve) => {
+      finishLogout = resolve;
+    });
+    const onLogout = vi.fn(() => logoutPending);
+    const user = userEvent.setup();
+
+    render(
+      <MemoryRouter initialEntries={["/designer"]}>
+        <FeedbackProvider>
+          <Sidebar
+            user={{
+              id: "designer-1",
+              name: "Ananya Rao",
+              email: "ananya@lisno.example",
+              role: "designer"
+            }}
+            onLogout={onLogout}
+          />
+        </FeedbackProvider>
+      </MemoryRouter>
+    );
+
+    const button = screen.getByRole("button", { name: "Sign out" });
+    await user.click(button);
+
+    expect(button).toBeDisabled();
+    expect(button).toHaveAttribute("aria-busy", "true");
+    expect(button).toHaveAccessibleName("Sign out");
+    expect(button).toHaveTextContent("Signing out…");
+
+    await user.click(button);
+    expect(onLogout).toHaveBeenCalledTimes(1);
+
+    finishLogout();
+    await waitFor(() => expect(button).not.toBeDisabled());
   });
 });
 

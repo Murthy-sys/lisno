@@ -16,6 +16,16 @@ export function ProtectedRoute({
   const auth = useAuth();
   const location = useLocation();
 
+  if (auth.status === "signing_out") {
+    return (
+      <AuthRouteState
+        title="Signing out"
+        state="loading"
+        message="Signing out…"
+      />
+    );
+  }
+
   if (auth.status === "restoring") {
     return (
       <AuthRouteState

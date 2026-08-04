@@ -3,10 +3,11 @@ import {
   Route,
   Routes,
   Navigate,
+  useLocation,
 } from "react-router-dom";
 
 import type { Role } from "../api/types";
-import { roleHomePath } from "./routePaths";
+import { roleHomePath, safeReturnPath } from "./routePaths";
 import { AuthRouteState } from "../auth/AuthRouteState";
 import { useAuth } from "../auth/AuthProvider";
 import { LoginPage } from "../auth/LoginPage";
@@ -91,6 +92,7 @@ function RoleLanding({ role }: { role: Role }) {
 
 function LoginRoute() {
   const auth = useAuth();
+  const location = useLocation();
 
   if (auth.status === "restoring") {
     return (
@@ -102,7 +104,15 @@ function LoginRoute() {
     );
   }
   if (auth.status === "authenticated" && auth.user) {
-    return <Navigate to={roleHomePath(auth.user.role)} replace />;
+    const locationState = location.state as { from?: unknown } | null;
+    const from = typeof locationState?.from === "string" ? locationState.from : null;
+    return (
+      <Navigate
+        to={safeReturnPath(auth.user.role, from)}
+        replace
+        state={{ routeFocus: true }}
+      />
+    );
   }
   return <LoginPage />;
 }

@@ -1,9 +1,10 @@
 import { ArrowRight, LogOut } from "lucide-react";
+import { useState } from "react";
 import { NavLink } from "react-router-dom";
 
 import type { PublicUser } from "../../api/types";
 import { BrandLogo } from "../ui/BrandLogo";
-import { IconButton } from "../ui/IconButton";
+import { Button } from "../ui/Button";
 import { navigationForRole } from "./navigation";
 
 const roleLabels = {
@@ -21,16 +22,27 @@ export function Sidebar({
   navigationLabel = "Primary navigation"
 }: {
   user: PublicUser;
-  onLogout: () => void;
+  onLogout: () => void | Promise<void>;
   onNavigate?: () => void;
   navigationLabel?: string;
 }) {
+  const [logoutPending, setLogoutPending] = useState(false);
   const initials = user.name
     .split(/\s+/)
     .map((part) => part[0])
     .join("")
     .slice(0, 2)
     .toUpperCase();
+
+  const logout = async () => {
+    if (logoutPending) return;
+    setLogoutPending(true);
+    try {
+      await onLogout();
+    } finally {
+      setLogoutPending(false);
+    }
+  };
 
   return (
     <div className="ui-sidebar__inner">
@@ -71,13 +83,16 @@ export function Sidebar({
           <strong>{user.name}</strong>
           <span>{user.email}</span>
         </span>
-        <IconButton
+        <Button
           className="ui-sidebar__sign-out"
-          label="Sign out"
-          icon={<LogOut aria-hidden="true" />}
-          onClick={onLogout}
+          leadingIcon={<LogOut aria-hidden="true" />}
+          onClick={() => void logout()}
           variant="quiet"
-        />
+          busy={logoutPending}
+          busyLabel="Signing out…"
+        >
+          Sign out
+        </Button>
       </div>
     </div>
   );

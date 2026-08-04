@@ -12,6 +12,14 @@ const designer = {
   role: "designer" as const
 };
 
+function deferred() {
+  let resolve!: () => void;
+  const promise = new Promise<void>((complete) => {
+    resolve = complete;
+  });
+  return { promise, resolve };
+}
+
 function apiRequestPath(input: RequestInfo | URL): string {
   if (input instanceof Request) {
     const url = new URL(input.url);
@@ -140,6 +148,65 @@ describe("protected role routing", () => {
     });
     expect(heading).toHaveFocus();
     expect(heading).toHaveAttribute("tabindex", "-1");
+  });
+
+  it("lets a safe captured login return win through marked replace navigation", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = apiRequestPath(input);
+      if (url === "/api/v1/auth/login") {
+        return Response.json({
+          data: { token: "designer-token", user: designer }
+        });
+      }
+      if (url === "/api/v1/projects/project-return") {
+        return Response.json({
+          data: {
+            id: "project-return",
+            name: "Captured return project",
+            clientId: "client-1",
+            initiatingDesignerId: designer.id,
+            assignedDesignerIds: [designer.id],
+            managerId: "manager-1",
+            status: "active",
+            location: "Bengaluru",
+            plannedStartAt: "2026-06-01T00:00:00.000Z",
+            plannedEndAt: "2026-09-30T00:00:00.000Z",
+            actualStartAt: null,
+            actualEndAt: null,
+            createdAt: "2026-05-01T00:00:00.000Z",
+            updatedAt: "2026-07-01T00:00:00.000Z",
+            floors: []
+          }
+        });
+      }
+      if (url.startsWith("/api/v1/projects/project-return/design-versions?")) {
+        return Response.json({
+          data: {
+            items: [],
+            pagination: { limit: 100, offset: 0, total: 0, hasMore: false }
+          }
+        });
+      }
+      throw new Error(`Unhandled request: ${url}`);
+    });
+    const { router } = renderApp(["/designer/projects/project-return"]);
+    await screen.findByRole("heading", { name: "Welcome back" });
+
+    fireEvent.change(screen.getByLabelText("Email address"), {
+      target: { value: "ananya@lisno.example" }
+    });
+    fireEvent.change(screen.getByLabelText("Password"), {
+      target: { value: "LisnoDemo2026!" }
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
+
+    const heading = await screen.findByRole("heading", {
+      name: "Captured return project"
+    });
+    expect(router.state.location.pathname).toBe(
+      "/designer/projects/project-return"
+    );
+    expect(heading).toHaveFocus();
   });
 
   it("opens the estimator sales workspace for an estimator sales session", async () => {
@@ -327,6 +394,27 @@ describe("protected role routing", () => {
     ).toBeVisible();
     expect(router.state.location.pathname).toBe("/login");
     expect(tokenStorage.get()).toBeNull();
+    expect(screen.queryByText("Your session expired. Sign in again.")).not.toBeInTheDocument();
+  });
+
+  it("replaces protected content with persistent login guidance after a mid-session 401", async () => {
+    tokenStorage.set("valid-token");
+    installDesignerApi();
+    const { router } = renderApp(["/designer"]);
+    await screen.findByRole("heading", { name: "Good morning, Ananya." });
+
+    tokenStorage.clear();
+    window.dispatchEvent(
+      new CustomEvent("lisno:unauthorized", {
+        detail: { token: "valid-token" }
+      })
+    );
+
+    expect(await screen.findByRole("heading", { name: "Welcome back" })).toBeVisible();
+    expect(screen.getByText("Your session expired. Sign in again.")).toBeVisible();
+    expect(screen.queryByRole("heading", { name: "Good morning, Ananya." })).not.toBeInTheDocument();
+    expect(screen.getAllByRole("main")).toHaveLength(1);
+    expect(router.state.location.pathname).toBe("/login");
   });
 
   it("redirects a valid designer away from another role without destroying the session", async () => {
@@ -340,6 +428,49 @@ describe("protected role routing", () => {
     ).toBeVisible();
     expect(router.state.location.pathname).toBe("/designer");
     expect(tokenStorage.get()).toBe("valid-token");
+    expect(screen.queryByRole("heading", { name: "Team delivery pulse" })).not.toBeInTheDocument();
+  });
+
+  it.each(["/", "/missing-route"])(
+    "redirects an authenticated wildcard entry %s to the role home",
+    async (path) => {
+      tokenStorage.set("valid-token");
+      installDesignerApi();
+
+      const { router } = renderApp([path]);
+
+      expect(
+        await screen.findByRole("heading", { name: "Good morning, Ananya." })
+      ).toBeVisible();
+      expect(router.state.location.pathname).toBe("/designer");
+    }
+  );
+
+  it("unmounts the protected shell while one full-page signing-out state owns progress", async () => {
+    tokenStorage.set("valid-token");
+    installDesignerApi();
+    const cleanupGate = deferred();
+    const { queryClient, router } = renderApp(["/designer"]);
+    await screen.findByRole("heading", { name: "Good morning, Ananya." });
+    vi.spyOn(queryClient, "cancelQueries").mockImplementation(async () => {
+      await cleanupGate.promise;
+    });
+
+    await userEvent.click(screen.getByRole("button", { name: "Sign out" }));
+
+    expect(screen.queryByRole("button", { name: "Sign out" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("navigation", { name: "Primary navigation" })).not.toBeInTheDocument();
+    expect(screen.getAllByRole("main")).toHaveLength(1);
+    expect(screen.getAllByRole("status", { name: "Content status" })).toHaveLength(1);
+    expect(screen.getByRole("heading", { level: 1, name: "Signing out" })).toBeVisible();
+    expect(screen.getByRole("status", { name: "Content status" })).toHaveTextContent(
+      "Signing out…"
+    );
+    expect(router.state.location.pathname).toBe("/designer");
+
+    cleanupGate.resolve();
+    expect(await screen.findByRole("heading", { name: "Welcome back" })).toBeVisible();
+    expect(router.state.location.pathname).toBe("/login");
   });
 
   it("logs out, clears the token, and returns to login", async () => {

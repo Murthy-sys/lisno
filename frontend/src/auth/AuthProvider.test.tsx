@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { StrictMode, type ReactNode } from "react";
+import { StrictMode, useState, type ReactNode } from "react";
 import { describe, expect, it, vi } from "vitest";
 
 import { apiClient, tokenStorage } from "../api/client";
@@ -48,12 +48,26 @@ function deferred() {
 
 function AuthHarness() {
   const auth = useAuth();
+  const [logoutOutcome, setLogoutOutcome] = useState("idle");
+  const [signupOutcome, setSignupOutcome] = useState("idle");
 
   return (
     <>
       <output aria-label="Authentication status">{auth.status}</output>
       <output aria-label="Current user">{auth.user?.name ?? "none"}</output>
-      <button type="button" onClick={() => void auth.logout()}>
+      <output aria-label="Session expired">{String(auth.sessionExpired)}</output>
+      <output aria-label="Logout outcome">{logoutOutcome}</output>
+      <output aria-label="Signup outcome">{signupOutcome}</output>
+      <button
+        type="button"
+        onClick={() => {
+          setLogoutOutcome("pending");
+          void auth.logout().then(
+            () => setLogoutOutcome("resolved"),
+            () => setLogoutOutcome("rejected")
+          );
+        }}
+      >
         Log out
       </button>
       <button
@@ -68,7 +82,18 @@ function AuthHarness() {
       </button>
       <button
         type="button"
-        onClick={() => void auth.signupClient(clientSignup).catch(() => undefined)}
+        onClick={() => {
+          setSignupOutcome("pending");
+          void auth.signupClient(clientSignup).then(
+            () => setSignupOutcome("resolved"),
+            (error: unknown) =>
+              setSignupOutcome(
+                error instanceof Error
+                  ? `${error.name}: ${error.message}`
+                  : "rejected"
+              )
+          );
+        }}
       >
         Sign up as C
       </button>
@@ -143,7 +168,9 @@ async function seedAuthenticatedCache(queryClient: QueryClient) {
 describe("AuthProvider session concurrency", () => {
   it("persists the client-signup auth payload and exposes its authenticated client", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
-      expect(String(input)).toBe("/api/v1/auth/client-signup");
+      expect(new URL(String(input), window.location.origin).pathname).toBe(
+        "/api/v1/auth/client-signup"
+      );
       expect(JSON.parse(String(init?.body))).toEqual(clientSignup);
       return Response.json({ data: { token: "token-c", user: userC } }, { status: 201 });
     });
@@ -153,9 +180,10 @@ describe("AuthProvider session concurrency", () => {
 
     await waitFor(() =>
       expect(screen.getByLabelText("Authentication status")).toHaveTextContent(
-        "authenticated"
+        /^authenticated$/
       )
     );
+    expect(screen.getByLabelText("Signup outcome")).toHaveTextContent("resolved");
     expect(screen.getByLabelText("Current user")).toHaveTextContent("Client C");
     expect(tokenStorage.get()).toBe("token-c");
   });
@@ -202,7 +230,33 @@ describe("AuthProvider session concurrency", () => {
         "authenticated"
       );
       expect(screen.getByLabelText("Current user")).toHaveTextContent("User A");
+      expect(screen.getByLabelText("Session expired")).toHaveTextContent("false");
     });
+  });
+
+  it("does not describe an initial restore 401 as a mid-session expiry", async () => {
+    tokenStorage.set("expired-before-restore");
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      Response.json(
+        {
+          error: {
+            code: "TOKEN_EXPIRED",
+            message: "Authentication token has expired."
+          }
+        },
+        { status: 401 }
+      )
+    );
+
+    renderAuthProvider();
+
+    await waitFor(() =>
+      expect(screen.getByLabelText("Authentication status")).toHaveTextContent(
+        "unauthenticated"
+      )
+    );
+    expect(screen.getByLabelText("Session expired")).toHaveTextContent("false");
+    expect(tokenStorage.get()).toBeNull();
   });
 
   it("does not commit a stale restore success after logout", async () => {
@@ -395,6 +449,7 @@ describe("AuthProvider cache isolation", () => {
     await expect(staleARequest).rejects.toMatchObject({ status: 401 });
 
     expect(tokenStorage.get()).toBe("token-b");
+    expect(screen.getByLabelText("Session expired")).toHaveTextContent("false");
     expect(screen.getByLabelText("Authentication status")).toHaveTextContent(
       "restoring"
     );
@@ -408,6 +463,46 @@ describe("AuthProvider cache isolation", () => {
       expect(screen.getByLabelText("Current user")).toHaveTextContent("User B");
     });
     expect(tokenStorage.get()).toBe("token-b");
+    expect(queryClient.getQueryData(["viewer"])).toBeUndefined();
+    expect(screen.getByLabelText("Session expired")).toHaveTextContent("false");
+  });
+
+  it("keeps signing out visible until failed cancellation clears the cache", async () => {
+    const cleanupGate = deferred();
+    const queryClient = createQueryClient();
+    vi.spyOn(queryClient, "cancelQueries").mockImplementation(async () => {
+      await cleanupGate.promise;
+      throw new Error("Cache cancellation failed.");
+    });
+    tokenStorage.set("token-a");
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      Response.json({ data: userA })
+    );
+    renderAuthProvider(queryClient);
+    await waitFor(() =>
+      expect(screen.getByLabelText("Current user")).toHaveTextContent("User A")
+    );
+    queryClient.setQueryData(["viewer"], { owner: "User A" });
+
+    await userEvent.click(screen.getByRole("button", { name: "Log out" }));
+
+    expect(screen.getByLabelText("Authentication status")).toHaveTextContent(
+      "signing_out"
+    );
+    expect(screen.getByLabelText("Current user")).toHaveTextContent("none");
+    expect(screen.getByLabelText("Session expired")).toHaveTextContent("false");
+    expect(screen.getByLabelText("Logout outcome")).toHaveTextContent("pending");
+    expect(tokenStorage.get()).toBeNull();
+    expect(queryClient.getQueryData(["viewer"])).toEqual({ owner: "User A" });
+
+    cleanupGate.resolve();
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("Authentication status")).toHaveTextContent(
+        "unauthenticated"
+      );
+      expect(screen.getByLabelText("Logout outcome")).toHaveTextContent("resolved");
+    });
     expect(queryClient.getQueryData(["viewer"])).toBeUndefined();
   });
 
@@ -563,9 +658,20 @@ describe("AuthProvider cache isolation", () => {
     expect(screen.getByLabelText("Authentication status")).toHaveTextContent(
       "unauthenticated"
     );
+    expect(screen.getByLabelText("Session expired")).toHaveTextContent("true");
     expect(tokenStorage.get()).toBeNull();
     expect(queryClient.getQueryData(["viewer"])).toBeUndefined();
     expect(queryClient.getQueryState(["in-flight"])).toBeUndefined();
     await inFlight.pendingQuery;
+
+    vi.mocked(globalThis.fetch).mockResolvedValueOnce(
+      Response.json({ data: { token: "token-b", user: userB } })
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Log in as B" }));
+
+    await waitFor(() =>
+      expect(screen.getByLabelText("Current user")).toHaveTextContent("User B")
+    );
+    expect(screen.getByLabelText("Session expired")).toHaveTextContent("false");
   });
 });

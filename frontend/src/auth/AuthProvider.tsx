@@ -16,6 +16,7 @@ import type { AuthPayload, ClientSignupInput, PublicUser } from "../api/types";
 export type AuthStatus =
   | "restoring"
   | "authenticated"
+  | "signing_out"
   | "unauthenticated"
   | "error";
 
@@ -27,6 +28,7 @@ interface Credentials {
 interface AuthContextValue {
   status: AuthStatus;
   user: PublicUser | null;
+  sessionExpired: boolean;
   login(credentials: Credentials): Promise<PublicUser>;
   signupClient(input: ClientSignupInput): Promise<PublicUser>;
   logout(): Promise<void>;
@@ -41,9 +43,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     tokenStorage.get() ? "restoring" : "unauthenticated"
   );
   const [user, setUser] = useState<PublicUser | null>(null);
+  const [sessionExpired, setSessionExpired] = useState(false);
+  const statusRef = useRef(status);
+  const userRef = useRef(user);
+  const acceptedTokenRef = useRef<string | null>(null);
+  const pendingTokenRef = useRef<string | null>(null);
   const generationRef = useRef(0);
   const restoreControllerRef = useRef<AbortController | null>(null);
   const mountedRef = useRef(true);
+
+  const commitStatus = useCallback((nextStatus: AuthStatus) => {
+    statusRef.current = nextStatus;
+    setStatus(nextStatus);
+  }, []);
+
+  const commitUser = useCallback((nextUser: PublicUser | null) => {
+    userRef.current = nextUser;
+    setUser(nextUser);
+  }, []);
 
   const supersedeRestore = useCallback(() => {
     generationRef.current += 1;
@@ -60,26 +77,51 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, [queryClient]);
 
-  const logout = useCallback(async () => {
-    supersedeRestore();
-    tokenStorage.clear();
-    setUser(null);
-    setStatus("unauthenticated");
-    await clearAuthenticatedCache();
-  }, [clearAuthenticatedCache, supersedeRestore]);
+  const terminateSession = useCallback(
+    async (reason: "logout" | "expired") => {
+      const generation = supersedeRestore();
+      acceptedTokenRef.current = null;
+      pendingTokenRef.current = null;
+      tokenStorage.clear();
+      commitUser(null);
+      setSessionExpired(reason === "expired");
+      commitStatus(reason === "logout" ? "signing_out" : "unauthenticated");
+      try {
+        await clearAuthenticatedCache();
+      } catch {
+        // Cache clearing still runs in clearAuthenticatedCache's finally.
+      } finally {
+        if (
+          reason === "logout" &&
+          mountedRef.current &&
+          generationRef.current === generation
+        ) {
+          commitStatus("unauthenticated");
+        }
+      }
+    },
+    [clearAuthenticatedCache, commitStatus, commitUser, supersedeRestore]
+  );
+
+  const logout = useCallback(
+    () => terminateSession("logout"),
+    [terminateSession]
+  );
 
   const restore = useCallback(async () => {
     const token = tokenStorage.get();
     const generation = supersedeRestore();
+    acceptedTokenRef.current = null;
+    pendingTokenRef.current = null;
     if (!token) {
-      setUser(null);
-      setStatus("unauthenticated");
+      commitUser(null);
+      commitStatus("unauthenticated");
       return;
     }
 
     const controller = new AbortController();
     restoreControllerRef.current = controller;
-    setStatus("restoring");
+    commitStatus("restoring");
     try {
       const currentUser = await apiClient.get<PublicUser>("/auth/me", {
         signal: controller.signal
@@ -91,34 +133,40 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       ) {
         return;
       }
-      setUser(currentUser);
-      setStatus("authenticated");
+      acceptedTokenRef.current = token;
+      commitUser(currentUser);
+      setSessionExpired(false);
+      commitStatus("authenticated");
     } catch (error) {
       if (
         controller.signal.aborted ||
         !mountedRef.current ||
-        generationRef.current !== generation ||
-        tokenStorage.get() !== token
+        generationRef.current !== generation
       ) {
         return;
       }
-      if (!tokenStorage.get()) {
-        setUser(null);
-        setStatus("unauthenticated");
+      const currentToken = tokenStorage.get();
+      if (currentToken !== token) {
+        if (!currentToken) {
+          commitUser(null);
+          commitStatus("unauthenticated");
+        }
         return;
       }
-      setStatus("error");
+      commitStatus("error");
     } finally {
       if (restoreControllerRef.current === controller) {
         restoreControllerRef.current = null;
       }
     }
-  }, [supersedeRestore]);
+  }, [commitStatus, commitUser, supersedeRestore]);
 
   const establishSession = useCallback(
     async (path: string, body: Credentials | ClientSignupInput) => {
       const previousToken = tokenStorage.get();
       const generation = supersedeRestore();
+      acceptedTokenRef.current = null;
+      pendingTokenRef.current = null;
       let replacementToken: string | null = null;
       let cleanupAttempted = false;
       try {
@@ -127,9 +175,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           throw new DOMException("Authentication was superseded.", "AbortError");
         }
         replacementToken = payload.token;
-        setUser(null);
-        setStatus("restoring");
+        commitUser(null);
+        commitStatus("restoring");
         tokenStorage.set(replacementToken);
+        pendingTokenRef.current = replacementToken;
         cleanupAttempted = true;
         await clearAuthenticatedCache();
         if (
@@ -139,19 +188,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         ) {
           throw new DOMException("Authentication was superseded.", "AbortError");
         }
-        setUser(payload.user);
-        setStatus("authenticated");
+        acceptedTokenRef.current = replacementToken;
+        pendingTokenRef.current = null;
+        commitUser(payload.user);
+        setSessionExpired(false);
+        commitStatus("authenticated");
         return payload.user;
       } catch (error) {
         const ownedToken = replacementToken ?? previousToken;
+        const currentToken = tokenStorage.get();
         if (
           mountedRef.current &&
           generationRef.current === generation &&
-          tokenStorage.get() === ownedToken
+          (currentToken === ownedToken ||
+            (replacementToken !== null && currentToken === null))
         ) {
           tokenStorage.clear();
-          setUser(null);
-          setStatus("unauthenticated");
+          acceptedTokenRef.current = null;
+          pendingTokenRef.current = null;
+          commitUser(null);
+          commitStatus("unauthenticated");
           if (!cleanupAttempted) {
             try {
               await clearAuthenticatedCache();
@@ -163,7 +219,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         throw error;
       }
     },
-    [clearAuthenticatedCache, supersedeRestore]
+    [clearAuthenticatedCache, commitStatus, commitUser, supersedeRestore]
   );
 
   const login = useCallback(
@@ -182,20 +238,44 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     void restore();
     return () => {
       mountedRef.current = false;
+      acceptedTokenRef.current = null;
+      pendingTokenRef.current = null;
       supersedeRestore();
     };
   }, [restore, supersedeRestore]);
 
   useEffect(() => {
-    const handleUnauthorized = () => void logout();
+    const handleUnauthorized = (event: Event) => {
+      const token = (event as CustomEvent<{ token?: unknown }>).detail?.token;
+      if (typeof token !== "string") {
+        return;
+      }
+      if (
+        acceptedTokenRef.current === token &&
+        statusRef.current === "authenticated" &&
+        userRef.current
+      ) {
+        acceptedTokenRef.current = null;
+        void terminateSession("expired");
+        return;
+      }
+      if (
+        pendingTokenRef.current === token &&
+        statusRef.current === "restoring"
+      ) {
+        pendingTokenRef.current = null;
+        commitUser(null);
+        commitStatus("unauthenticated");
+      }
+    };
     window.addEventListener("lisno:unauthorized", handleUnauthorized);
     return () =>
       window.removeEventListener("lisno:unauthorized", handleUnauthorized);
-  }, [logout]);
+  }, [commitStatus, commitUser, terminateSession]);
 
   const value = useMemo<AuthContextValue>(
-    () => ({ status, user, login, signupClient, logout, restore }),
-    [status, user, login, signupClient, logout, restore]
+    () => ({ status, user, sessionExpired, login, signupClient, logout, restore }),
+    [status, user, sessionExpired, login, signupClient, logout, restore]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
