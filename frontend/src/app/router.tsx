@@ -6,11 +6,12 @@ import {
 } from "react-router-dom";
 
 import type { Role } from "../api/types";
+import { roleHomePath } from "./routePaths";
 import { AuthRouteState } from "../auth/AuthRouteState";
 import { useAuth } from "../auth/AuthProvider";
 import { LoginPage } from "../auth/LoginPage";
 import { SignupPage } from "../auth/SignupPage";
-import { ProtectedRoute, roleHomePath } from "../auth/ProtectedRoute";
+import { ProtectedRoute } from "../auth/ProtectedRoute";
 import { AppShell } from "../components/layout/AppShell";
 import { StatusBadge } from "../components/ui/StatusBadge";
 import { DesignerDashboard } from "../features/designer/DesignerDashboard";

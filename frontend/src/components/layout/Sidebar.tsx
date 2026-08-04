@@ -1,9 +1,10 @@
-import { ArrowRight, LayoutDashboard, LogOut } from "lucide-react";
+import { ArrowRight, LogOut } from "lucide-react";
 import { NavLink } from "react-router-dom";
 
 import type { PublicUser } from "../../api/types";
-import { roleHomePath } from "../../auth/ProtectedRoute";
 import { BrandLogo } from "../ui/BrandLogo";
+import { IconButton } from "../ui/IconButton";
+import { navigationForRole } from "./navigation";
 
 const roleLabels = {
   designer: "Designer",
@@ -32,40 +33,51 @@ export function Sidebar({
     .toUpperCase();
 
   return (
-    <div className="sidebar__inner">
-      <div className="brand brand--light sidebar__brand">
+    <div className="ui-sidebar__inner">
+      <div className="ui-sidebar__brand">
         <BrandLogo light />
       </div>
 
-      <div className="sidebar__role">
+      <div className="ui-sidebar__role">
         <p>Signed in as</p>
         <strong>{roleLabels[user.role]}</strong>
       </div>
 
-      <nav aria-label={navigationLabel} className="sidebar__nav">
-        <NavLink
-          to={roleHomePath(user.role)}
-          end
-          onClick={onNavigate}
-          className={({ isActive }) =>
-            `sidebar__link${isActive ? " sidebar__link--active" : ""}`
-          }
-        >
-          <LayoutDashboard aria-hidden="true" />
-          <span>Workspace</span>
-          <ArrowRight className="sidebar__link-arrow" aria-hidden="true" />
-        </NavLink>
+      <nav aria-label={navigationLabel} className="ui-sidebar__nav">
+        {navigationForRole(user.role).map((item) => {
+          const Icon = item.icon;
+
+          return (
+            <NavLink
+              key={item.to}
+              to={item.to}
+              end={item.end}
+              onClick={onNavigate}
+              className={({ isActive }) =>
+                `ui-sidebar__link${isActive ? " ui-sidebar__link--active" : ""}`
+              }
+            >
+              <Icon aria-hidden="true" />
+              <span>{item.label}</span>
+              <ArrowRight className="ui-sidebar__link-arrow" aria-hidden="true" />
+            </NavLink>
+          );
+        })}
       </nav>
 
-      <div className="sidebar__account">
-        <span className="avatar" aria-hidden="true">{initials}</span>
-        <span className="sidebar__identity">
+      <div className="ui-sidebar__account">
+        <span className="ui-sidebar__avatar" aria-hidden="true">{initials}</span>
+        <span className="ui-sidebar__identity">
           <strong>{user.name}</strong>
           <span>{user.email}</span>
         </span>
-        <button type="button" onClick={onLogout} aria-label="Sign out">
-          <LogOut aria-hidden="true" />
-        </button>
+        <IconButton
+          className="ui-sidebar__sign-out"
+          label="Sign out"
+          icon={<LogOut aria-hidden="true" />}
+          onClick={onLogout}
+          variant="quiet"
+        />
       </div>
     </div>
   );

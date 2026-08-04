@@ -61,14 +61,14 @@ export function MobileHeader({
 
   return (
     <>
-      <header className="mobile-header">
-        <div className="brand">
+      <header className="ui-mobile-header">
+        <div className="ui-mobile-header__brand">
           <BrandLogo />
         </div>
         <button
           ref={triggerRef}
           type="button"
-          className="icon-button"
+          className="ui-mobile-header__trigger"
           aria-label="Open navigation"
           aria-expanded={open}
           aria-controls="mobile-navigation"
@@ -79,24 +79,24 @@ export function MobileHeader({
       </header>
 
       {open ? (
-        <div className="drawer-layer">
+        <div className="ui-drawer-layer">
           <button
             type="button"
-            className="drawer-backdrop"
+            className="ui-drawer-backdrop"
             aria-label="Close navigation"
             onClick={() => setOpen(false)}
           />
           <div
             ref={drawerRef}
             id="mobile-navigation"
-            className="drawer"
+            className="ui-drawer"
             role="dialog"
             aria-modal="true"
             aria-label="Navigation"
           >
             <button
               type="button"
-              className="drawer__close"
+              className="ui-drawer__close"
               aria-label="Close navigation"
               onClick={() => setOpen(false)}
             >

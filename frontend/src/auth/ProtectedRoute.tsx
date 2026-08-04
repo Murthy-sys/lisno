@@ -2,19 +2,9 @@ import type { ReactNode } from "react";
 import { Navigate, useLocation } from "react-router-dom";
 
 import type { Role } from "../api/types";
+import { roleHomePath } from "../app/routePaths";
 import { AuthRouteState } from "./AuthRouteState";
 import { useAuth } from "./AuthProvider";
-
-export function roleHomePath(role: Role): string {
-  const paths: Record<Role, string> = {
-    designer: "/designer",
-    design_manager: "/manager",
-    design_head: "/head",
-    estimator_sales: "/estimator-sales",
-    client: "/client"
-  };
-  return paths[role];
-}
 
 export function ProtectedRoute({
   children,

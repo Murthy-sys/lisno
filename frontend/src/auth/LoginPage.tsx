@@ -6,7 +6,7 @@ import { z } from "zod";
 
 import { ApiError } from "../api/client";
 import { BrandLogo } from "../components/ui/BrandLogo";
-import { roleHomePath } from "./ProtectedRoute";
+import { roleHomePath } from "../app/routePaths";
 import { useAuth } from "./AuthProvider";
 
 const loginSchema = z.object({
