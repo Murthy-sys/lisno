@@ -36,7 +36,6 @@ import {
 import { clientKeys } from "../client/clientApi";
 import type { EstimatePlanPage } from "../../api/types";
 import { ClientFullPlanNav } from "./ClientFullPlanNav";
-import { AskLisnoLauncher } from "./AskLisnoLauncher";
 import { ClientPlanPageReview } from "./ClientPlanPageReview";
 
 const money = (value: number) => `₹${value.toLocaleString("en-IN")}`;
@@ -125,7 +124,6 @@ export function EstimateReviewPanel() {
       onNoteChange={(note) => setNoteByEstimate((current) => ({ ...current, [estimate.id]: note }))}
     />)}</div>
     {role !== "client" && action.isError ? <p role="alert">That action could not be completed. Refresh and try again.</p> : null}
-    {role === "client" ? <AskLisnoLauncher /> : null}
   </section>;
 }
 

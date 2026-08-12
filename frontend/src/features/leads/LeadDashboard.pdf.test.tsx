@@ -115,12 +115,12 @@ describe("LeadDashboard estimate PDF export", () => {
       name: "Cedar Loft",
       level: 3
     }).closest("article")!;
-    const draftHeader = draftCard.querySelector<HTMLElement>(".saved-estimate-card__top")!;
-    const sentHeader = sentCard.querySelector<HTMLElement>(".saved-estimate-card__top")!;
-    const draftExport = within(draftHeader).getByRole("button", {
+    const draftActions = draftCard.querySelector<HTMLElement>(".lead-row__actions")!;
+    const sentActions = sentCard.querySelector<HTMLElement>(".lead-row__actions")!;
+    const draftExport = within(draftActions).getByRole("button", {
       name: "Export as PDF"
     });
-    const sentExport = within(sentHeader).getByRole("button", {
+    const sentExport = within(sentActions).getByRole("button", {
       name: "Export as PDF"
     });
 

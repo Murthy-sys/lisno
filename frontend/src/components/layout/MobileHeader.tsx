@@ -21,7 +21,7 @@ export function MobileHeader({
     <>
       <header className="ui-mobile-header">
         <div className="ui-mobile-header__brand">
-          <BrandLogo />
+          <BrandLogo light />
         </div>
         <IconButton
           ref={triggerRef}

@@ -44,13 +44,19 @@ export function ClientDashboard() {
     <section className="client-dashboard__estimates" aria-label="Estimate review">
       <EstimateReviewPanel />
     </section>
-    <section className="client-dashboard__projects" aria-labelledby="client-projects-title">
+    {/*
+      Nothing is rendered for an empty account: the "Shared projects" tile
+      above already reports 0, and the page shows a loading state while the
+      query is pending, so a project-less account is still distinguishable
+      from one whose plans are still being prepared.
+    */}
+    {projects.length ? <section className="client-dashboard__projects" aria-labelledby="client-projects-title">
       <header className="client-dashboard__section-heading">
         <div><p className="eyebrow">Project workspace</p><h2 id="client-projects-title">Projects</h2></div>
         <span>{projects.length} total</span>
       </header>
-      {projects.length ? <div className="client-project-grid">{projects.map((project) => <ClientProjectCard key={project.id} project={project} latest={latestForProject(latestQuery.data ?? [], project.id)} loading={latestQuery.isPending} failed={latestQuery.isError} onRetry={() => void latestQuery.refetch()} />)}</div> : <div className="project-empty"><div><h2>No projects have been shared with you yet.</h2><p>When your design team begins a project for this account, it will appear here.</p></div></div>}
-    </section>
+      <div className="client-project-grid">{projects.map((project) => <ClientProjectCard key={project.id} project={project} latest={latestForProject(latestQuery.data ?? [], project.id)} loading={latestQuery.isPending} failed={latestQuery.isError} onRetry={() => void latestQuery.refetch()} />)}</div>
+    </section> : null}
   </section>;
 }
 

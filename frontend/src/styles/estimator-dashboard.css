@@ -10,9 +10,11 @@
 .estimator-dashboard__section { display: grid; gap: var(--space-4); }
 .estimator-dashboard__section-heading { display: flex; align-items: end; justify-content: space-between; gap: var(--space-4); }
 .estimator-dashboard__section-heading h2 { margin: 0; }
+/* The actions column is a fixed width, not `auto`: the header's matching cell
+   is empty, so `auto` collapsed it to 0 there and every label drifted right. */
 .lead-list__header,
-.estimator-dashboard .lead-row { grid-template-columns: 1.15fr 1.35fr .8fr 1.2fr; }
-.lead-list__header { display: grid; gap: var(--space-3); padding-inline: var(--space-4); color: var(--color-text-muted); font: var(--type-metadata); font-weight: 800; text-transform: uppercase; letter-spacing: .08em; }
+.estimator-dashboard .lead-row { grid-template-columns: minmax(0, 1.2fr) minmax(0, 1.05fr) minmax(0, .8fr) minmax(0, 1fr) 12rem; }
+.lead-list__header { display: grid; gap: var(--space-3); padding-inline: 1.1rem; color: var(--color-text-muted); font: var(--type-metadata); font-weight: 800; text-transform: uppercase; letter-spacing: .08em; }
 .estimator-dashboard .lead-row { min-block-size: 5rem; border-color: var(--color-border); box-shadow: var(--shadow-soft); }
 .estimator-dashboard .lead-row:hover { transform: none; border-color: var(--color-border-strong); background: var(--color-surface-subtle); }
 .lead-stage-badge { display: inline-flex; inline-size: max-content; padding: .3rem .6rem; border-radius: var(--radius-pill); color: var(--color-info); background: color-mix(in srgb, var(--color-info) 12%, var(--color-surface)); font-weight: 800; }
@@ -29,4 +31,6 @@
   .estimator-dashboard .lead-row { grid-template-columns: 1fr; }
   .estimator-dashboard .lead-row > [data-label] { display: grid; gap: .2rem; }
   .estimator-dashboard .lead-row > [data-label]::before { content: attr(data-label); color: var(--color-text-muted); font: var(--type-metadata); font-weight: 800; text-transform: uppercase; letter-spacing: .06em; }
+  .estimator-dashboard .lead-row__actions { grid-auto-flow: row; }
+  .estimator-dashboard .lead-row__actions > * { width: 100%; }
 }

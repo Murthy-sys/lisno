@@ -1,6 +1,7 @@
 import { Outlet } from "react-router-dom";
 
 import { useAuth } from "../../auth/AuthProvider";
+import { AskLisnoLauncher } from "../../features/estimates/AskLisnoLauncher";
 import { MobileHeader } from "./MobileHeader";
 import { Sidebar } from "./Sidebar";
 import { SkipLink } from "./SkipLink";
@@ -24,6 +25,13 @@ export function AppShell() {
       >
         <Outlet />
       </main>
+      {/*
+        Sits outside <main> on purpose. It is position: fixed, and the glass
+        decks inside the workspace use backdrop-filter, which makes them a
+        containing block for fixed descendants — rendering it in the estimates
+        panel pinned it to that card instead of the viewport.
+      */}
+      {auth.user.role === "client" ? <AskLisnoLauncher /> : null}
     </div>
   );
 }

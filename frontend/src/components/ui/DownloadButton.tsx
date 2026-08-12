@@ -9,6 +9,8 @@ export interface DownloadButtonProps {
   getFile: () => Promise<{ blob: Blob; filename: string | undefined }>;
   className?: string;
   onBusyChange?: (busy: boolean) => void;
+  /** Render the icon alone. The label stays in the accessibility tree. */
+  iconOnly?: boolean;
 }
 
 interface DownloadResource {
@@ -24,7 +26,8 @@ export function DownloadButton({
   fallbackFilename,
   getFile,
   className,
-  onBusyChange
+  onBusyChange,
+  iconOnly = false
 }: DownloadButtonProps): JSX.Element {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -88,9 +91,12 @@ export function DownloadButton({
         className={className ?? "button button--download"}
         onClick={() => void download()}
         disabled={busy}
+        title={iconOnly ? label : undefined}
       >
         <Download aria-hidden="true" size={18} />
-        {busy ? loadingLabel : label}
+        {iconOnly
+          ? <span className="sr-only">{busy ? loadingLabel : label}</span>
+          : (busy ? loadingLabel : label)}
       </button>
       {error ? <p role="alert">{error}</p> : null}
     </div>

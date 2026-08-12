@@ -133,6 +133,13 @@ describe("ClientDashboard", () => {
     });
 
     renderApp(["/client"]);
-    expect(await screen.findByText("No projects have been shared with you yet.")).toBeVisible();
+
+    // The Projects section is dropped entirely for an empty account; the
+    // overview tile is what still separates "none shared" from "still loading".
+    const overview = await screen.findByRole("region", { name: "Client overview" });
+    const sharedProjects = within(overview).getByText("Shared projects").parentElement!;
+    expect(within(sharedProjects).getByText("0", { selector: "dd" })).toBeVisible();
+    expect(screen.queryByRole("heading", { name: "Projects", level: 2 })).not.toBeInTheDocument();
+    expect(screen.queryByText("No projects have been shared with you yet.")).not.toBeInTheDocument();
   });
 });

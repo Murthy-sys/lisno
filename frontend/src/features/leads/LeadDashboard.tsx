@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { useState } from "react";
 
-import type { LeadStage } from "../../api/types";
+import type { Lead, LeadStage } from "../../api/types";
 import { AsyncState } from "../../components/ui/AsyncState";
 import { DownloadButton } from "../../components/ui/DownloadButton";
 import "../../styles/estimator-dashboard.css";
@@ -11,7 +11,8 @@ import {
   downloadEstimatePdf,
   getLeadPage,
   getSavedEstimates,
-  leadKeys
+  leadKeys,
+  type SavedEstimate
 } from "./leadsApi";
 
 const labels: Record<LeadStage, string> = {
@@ -42,6 +43,7 @@ export function LeadDashboard() {
   const savedEstimates = estimates.data ?? [];
   const draftEstimates = savedEstimates.filter((estimate) => estimate.status === "draft").length;
   const savedValue = savedEstimates.reduce((total, estimate) => total + estimate.total, 0);
+  const estimateByLead = new Map(savedEstimates.map((estimate) => [estimate.leadId, estimate]));
 
   if (query.isPending) return <AsyncState state="loading" message="Loading your leads…" />;
   if (query.isError) return <AsyncState state="error" message="We couldn't load your leads." actionLabel="Try again" onAction={() => void query.refetch()} />;
@@ -75,59 +77,59 @@ export function LeadDashboard() {
         <div><p className="eyebrow">Opportunity pipeline</p><h2 id="leads-title">Leads</h2></div>
         <span>{query.data.items.length} total</span>
       </header>
+      {estimates.isError ? <p role="alert" className="lead-list__estimates-error">Saved estimates are unavailable, so estimate totals and exports are hidden. <button type="button" className="secondary-button" onClick={() => void estimates.refetch()}>Try again</button></p> : null}
       {query.data.items.length ? <div className="lead-list">
         <div className="lead-list__header" aria-hidden="true">
-          <span>Client</span><span>Project</span><span>Stage</span><span>Next action</span>
+          <span>Client</span><span>Project</span><span>Stage</span><span>Estimate</span><span />
         </div>
-        {query.data.items.map((lead) => <Link key={lead.id} className="lead-row" to={`/estimator-sales/leads/${lead.id}`}>
-          <span className="lead-row__client" data-label="Client"><strong>{lead.clientName}</strong><small>{lead.clientEmail} · {lead.clientMobile}</small></span>
-          <span data-label="Project">{lead.projectName} · {lead.propertyType} · {lead.location}</span>
-          <span data-label="Stage"><span className={`lead-stage-badge lead-stage-badge--${lead.stage}`}>{labels[lead.stage]}</span></span>
-          <span data-label="Next action">{lead.nextAction}</span>
-        </Link>)}
+        {query.data.items.map((lead) => <LeadRow key={lead.id} lead={lead} estimate={estimateByLead.get(lead.id)} estimatesPending={estimates.isPending} />)}
       </div> : <div className="inline-empty"><h2>No leads yet</h2><p>Create a lead to start tracking an opportunity.</p></div>}
-    </section>
-
-    <section className="saved-estimates estimator-dashboard__section" aria-labelledby="saved-estimates-title">
-      <header className="estimator-dashboard__section-heading">
-        <div>
-          <p className="eyebrow">Estimate pipeline</p>
-          <h2 id="saved-estimates-title">Saved estimates</h2>
-        </div>
-        {estimates.data ? <strong>{estimates.data.length} total</strong> : null}
-      </header>
-      {estimates.isPending ? <p>Loading saved estimates…</p> : null}
-      {estimates.isError ? <p role="alert">Saved estimates are unavailable. <button type="button" onClick={() => void estimates.refetch()}>Try again</button></p> : null}
-      {estimates.data?.length ? <div className="saved-estimate-grid">
-        {estimates.data.map((estimate) => <article className="saved-estimate-card" key={estimate.id}>
-          <div className="saved-estimate-card__top">
-            <div className="saved-estimate-card__summary">
-              <span className="estimate-status">{estimate.status.replaceAll("_", " ")}</span>
-              <strong>{money(estimate.total)}</strong>
-            </div>
-            <DownloadButton
-              className="button button--secondary saved-estimate-card__export"
-              label="Export as PDF"
-              loadingLabel="Preparing PDF..."
-              errorMessage={`PDF export failed for ${estimate.lead?.projectName ?? "this estimate"}. Try again.`}
-              fallbackFilename={`lisno-${estimate.id}.pdf`}
-              getFile={() => downloadEstimatePdf(estimate.id)}
-            />
-          </div>
-          <h3>{estimate.lead?.projectName ?? "Saved estimate"}</h3>
-          <dl>
-            <div><dt>Client</dt><dd>{estimate.lead?.clientName ?? "—"}</dd></div>
-            <div><dt>Email</dt><dd>{estimate.lead?.clientEmail ?? "—"}</dd></div>
-            <div><dt>Phone</dt><dd>{estimate.lead?.clientMobile ?? "—"}</dd></div>
-            <div><dt>Property</dt><dd>{estimate.propertyType}</dd></div>
-          </dl>
-          <Link className="button button--primary" to={`/estimator-sales/leads/${estimate.leadId}/estimate`}>
-            {estimate.status === "draft" ? "Continue estimate" : "View estimate"}
-          </Link>
-        </article>)}
-      </div> : estimates.isSuccess ? <p className="inline-empty">No saved estimates yet. Start one from a lead.</p> : null}
     </section>
 
     {creating ? <LeadCreateDialog onClose={() => setCreating(false)} /> : null}
   </section>;
+}
+
+/*
+ * One row per lead, carrying its saved estimate inline. The two lists used to
+ * repeat the same clients — the estimate lives here now instead of in a
+ * parallel card grid.
+ */
+function LeadRow({ lead, estimate, estimatesPending }: { lead: Lead; estimate: SavedEstimate | undefined; estimatesPending: boolean }) {
+  const leadPath = `/estimator-sales/leads/${lead.id}`;
+  const projectHeadingId = `lead-${lead.id}-project`;
+
+  return <article className="lead-row" aria-labelledby={projectHeadingId}>
+    <span className="lead-row__client" data-label="Client">
+      <Link className="lead-row__name" to={leadPath}>{lead.clientName}</Link>
+      <small>{lead.clientEmail} · {lead.clientMobile}</small>
+    </span>
+    <span className="lead-row__project" data-label="Project">
+      <h3 id={projectHeadingId}>{lead.projectName}</h3>
+      <small>{lead.propertyType} · {lead.location}</small>
+    </span>
+    <span data-label="Stage"><span className={`lead-stage-badge lead-stage-badge--${lead.stage}`}>{labels[lead.stage]}</span></span>
+    <span className="lead-row__estimate" data-label="Estimate">
+      {estimate ? <>
+        <span className="estimate-status">{estimate.status.replaceAll("_", " ")}</span>
+        <strong>{money(estimate.total)}</strong>
+      </> : <small>{estimatesPending ? "Loading…" : "No estimate yet"}</small>}
+    </span>
+    <span className="lead-row__actions" data-label="Actions">
+      {estimate ? <>
+        <DownloadButton
+          iconOnly
+          className="secondary-button lead-row__export"
+          label="Export as PDF"
+          loadingLabel="Preparing PDF..."
+          errorMessage={`PDF export failed for ${lead.projectName}. Try again.`}
+          fallbackFilename={`lisno-${estimate.id}.pdf`}
+          getFile={() => downloadEstimatePdf(estimate.id)}
+        />
+        <Link className="button button--primary lead-row__open" to={`${leadPath}/estimate`}>
+          {estimate.status === "draft" ? "Continue estimate" : "View details"}
+        </Link>
+      </> : <Link className="secondary-button lead-row__open" to={leadPath}>Open lead</Link>}
+    </span>
+  </article>;
 }

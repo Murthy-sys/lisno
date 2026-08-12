@@ -146,9 +146,9 @@ describe("LeadDashboard", () => {
     expect(within(overview).getByText("Saved value")).toBeVisible();
     expect(within(overview).getByText("₹3,54,000", { selector: "dd" })).toBeVisible();
     expect(screen.getByRole("heading", { name: "Leads", level: 2 })).toBeVisible();
-    expect(screen.getByRole("heading", { name: "Saved estimates", level: 2 })).toBeVisible();
-    expect(screen.getByText("Next action", { selector: ".lead-list__header span" })).toBeVisible();
-    expect(screen.getByText("Contact architect").closest("[data-label='Next action']")).toBeVisible();
+    expect(screen.queryByRole("heading", { name: "Saved estimates", level: 2 })).not.toBeInTheDocument();
+    expect(screen.getByText("Estimate", { selector: ".lead-list__header span" })).toBeVisible();
+    expect(screen.queryByText("Contact architect")).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "New lead" }));
     expect(await screen.findByRole("dialog", { name: "New lead" })).toBeVisible();
   });

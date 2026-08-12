@@ -4,7 +4,7 @@ import { NavLink } from "react-router-dom";
 
 import type { PublicUser } from "../../api/types";
 import { BrandLogo } from "../ui/BrandLogo";
-import { Button } from "../ui/Button";
+import { IconButton } from "../ui/IconButton";
 import { navigationForRole } from "./navigation";
 
 const roleLabels = {
@@ -83,16 +83,15 @@ export function Sidebar({
           <strong>{user.name}</strong>
           <span>{user.email}</span>
         </span>
-        <Button
+        <IconButton
           className="ui-sidebar__sign-out"
-          leadingIcon={<LogOut aria-hidden="true" />}
+          label="Sign out"
+          tooltip="Sign out"
+          icon={<LogOut aria-hidden="true" />}
           onClick={() => void logout()}
           variant="quiet"
           busy={logoutPending}
-          busyLabel="Signing out…"
-        >
-          Sign out
-        </Button>
+        />
       </div>
     </div>
   );

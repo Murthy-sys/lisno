@@ -229,7 +229,7 @@ describe("Sidebar", () => {
     expect(button).toBeDisabled();
     expect(button).toHaveAttribute("aria-busy", "true");
     expect(button).toHaveAccessibleName("Sign out");
-    expect(button).toHaveTextContent("Signing out…");
+    expect(button).toHaveAttribute("data-busy", "true");
 
     await user.click(button);
     expect(onLogout).toHaveBeenCalledTimes(1);
