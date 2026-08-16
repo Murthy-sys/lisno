@@ -1,6 +1,6 @@
 # Room-Specific Estimator Catalogue
 
-**Status:** Approved in conversation on 2026-08-16; awaiting written-spec review
+**Status:** Written specification approved by the user on 2026-08-16
 
 **Scope:** Estimator/Sales estimate configuration and builder catalogue selection
 
