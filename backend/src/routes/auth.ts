@@ -3,6 +3,7 @@ import { z } from "zod";
 
 import { normalizedEmailSchema } from "../domain/email.js";
 import { authenticate } from "../middleware/auth.js";
+import { requireOperation } from "../middleware/authorization.js";
 import { ApiError } from "../middleware/errors.js";
 import { validateBody } from "../middleware/validate.js";
 import {
@@ -89,9 +90,25 @@ export function createAuthRouter(
     }
   );
 
-  router.get("/auth/me", authenticate(authService), (request, response) => {
-    response.status(200).json({ data: request.authenticatedUser });
-  });
+  router.get(
+    "/auth/me",
+    authenticate(authService),
+    requireOperation("GET /auth/me"),
+    (request, response) => {
+      response.status(200).json({ data: request.authenticatedUser });
+    }
+  );
+
+  router.get(
+    "/auth/authorization",
+    authenticate(authService),
+    requireOperation("GET /auth/authorization"),
+    (request, response) => {
+      response.status(200).json({
+        data: authService.authorization(request.authenticatedUser!)
+      });
+    }
+  );
 
   return router;
 }

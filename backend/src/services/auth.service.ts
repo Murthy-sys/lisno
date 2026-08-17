@@ -3,6 +3,10 @@ import jwt from "jsonwebtoken";
 import { z } from "zod";
 
 import type { Role } from "../contracts/domain.js";
+import {
+  ROLE_PERMISSIONS,
+  type PermissionCode
+} from "../domain/authorization.js";
 import { normalizeEmail } from "../domain/email.js";
 import { roleSchema } from "../domain/roles.js";
 import {
@@ -50,6 +54,22 @@ export interface AuthPayload {
   user: PublicUser;
 }
 
+export const AUTHORIZATION_POLICY_VERSION = "2026-08-17.prompt-1" as const;
+
+export interface AuthorizationSnapshot {
+  readonly role: Role;
+  readonly policyVersion: typeof AUTHORIZATION_POLICY_VERSION;
+  readonly permissions: readonly PermissionCode[];
+}
+
+export function authorizationSnapshotFor(role: Role): AuthorizationSnapshot {
+  return Object.freeze({
+    role,
+    policyVersion: AUTHORIZATION_POLICY_VERSION,
+    permissions: Object.freeze([...ROLE_PERMISSIONS[role]])
+  });
+}
+
 export interface ClientSignupInput {
   name: string;
   email: string;
@@ -95,6 +115,7 @@ export interface AuthService {
   login(email: string, password: string): Promise<AuthPayload>;
   signupClient(input: ClientSignupInput): Promise<AuthPayload>;
   authenticate(token: string): Promise<PublicUser>;
+  authorization(actor: PublicUser): AuthorizationSnapshot;
 }
 
 export function createAuthService(
@@ -223,6 +244,10 @@ export function createAuthService(
       }
 
       return toPublicUser(user);
+    },
+
+    authorization(actor) {
+      return authorizationSnapshotFor(actor.role);
     }
   };
 }
