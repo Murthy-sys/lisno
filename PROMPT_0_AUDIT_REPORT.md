@@ -795,3 +795,39 @@ Further annotation/test-runner stabilization, instrumentation, or cleanup change
 Current generic project access for `estimator_sales` remains explicit deny-by-default. Future Estimator/Sales access may be introduced only through a later authorized Admin assignment to a named active user selected from a role-filtered `estimator_sales` dropdown, with backend enforcement.
 
 The unverified client-email claiming issue also remains open: it is a public-release blocker/high-priority risk independent of the non-deterministic test gate. The known 639.34 kB frontend bundle warning and non-failing MSW unmatched-request diagnostic remain recorded concerns.
+
+---
+
+## Post-controller frontend stabilization verdict — 2026-08-17
+
+> **Current authoritative gate record.** This section supersedes the controller re-verification verdict immediately above for readiness status. Earlier red and green evidence remains preserved as historical diagnostic evidence.
+
+### Stabilization scope and cause
+
+**Prompt 0: COMPLETE. Readiness gate: CLEARED.** Prompt 1 through Prompt 10 remain **NOT STARTED** at this record boundary.
+
+The separately authorized stabilization changed only `frontend/src/components/design/EstimateDrawingPreviewDialog.test.tsx`. The installed `@testing-library/user-event` implementation schedules a zero-delay timer between keyboard actions even when its default delay is zero. Under scheduler pressure, a test could reach Vitest's five-second timeout while typing was still pending; that pending sequence could then resume after cleanup and interleave with the next test's focused text control. This matches the previously recorded two timeouts followed by an order-preserving merged string.
+
+The affected preview tests now route interactions through timer-free `userEvent.setup({ delay: null })` sessions. This preserves the keyboard/pointer event sequence while removing the timer-backed continuation points that could outlive a timed-out test. No production component, route, API, schema, migration, OCR file, Admin assignment UI, role-filtered dropdown, or Prompt 1 feature changed.
+
+### Fresh verification evidence
+
+| Area | Exact command/context | Fresh result |
+|---|---|---|
+| Affected annotation pair | `cd frontend && VITE_API_URL=http://hostile.invalid/api/v1 npm test -- src/components/design/EstimateDrawingPreviewDialog.test.tsx src/components/design/ImageAnnotationEditor.test.tsx` | **PASS — 2/2 files; 32/32 tests** |
+| Hostile frontend full suite | Twelve consecutive clean-environment runs of `cd frontend && VITE_API_URL=http://hostile.invalid/api/v1 npm test` after confirming diagnostic CPU-load processes were absent | **PASS — every run 63/63 files and 563/563 tests; 0 failures across 6,756 test executions** |
+| Backend tests | `cd backend && npm test` | **PASS — 36/36 files; 491/491 tests** |
+| Backend typecheck | `cd backend && npm run typecheck` | **PASS — exit 0** |
+| Backend production build | `cd backend && npm run build` | **PASS — exit 0** |
+| Frontend typecheck | `cd frontend && npm run typecheck` | **PASS — exit 0** |
+| Frontend production build | `cd frontend && npm run build` | **PASS — exit 0**, with the unchanged 639.34 kB main-JavaScript chunk warning |
+
+During deliberate scheduler-pressure diagnosis, a cleanup error left the diagnostic CPU-load processes running. A full-suite run under that artificial starvation took approximately 427 seconds and failed four tests in unrelated signup and estimate-review paths. That run is retained here as diagnostic context but is excluded from the readiness sample: process-table inspection subsequently confirmed the diagnostic processes were absent, the next identical run returned to 9.20 seconds and passed 563/563, and all twelve authoritative runs were then collected in that clean environment.
+
+All twelve authoritative hostile full-suite runs completed in approximately 9.20–9.45 seconds. None reproduced the five-second typing timeouts or cross-test text corruption.
+
+### Current readiness and remaining risks
+
+**Ready to begin Prompt 1: YES.** The shared authorization prerequisite remains default-deny for unassigned `estimator_sales`, and the strict hostile-environment frontend baseline is now repeatedly green after removing the identified cross-test timer continuation.
+
+**Ready for public production: NO.** Later lifecycle, security, operational, migration, browser-E2E, performance, observability, storage, and release-hardening work remains incomplete. In particular, public client signup still creates an active account and can claim matching unowned projects without verified email ownership; that remains a high-priority public-release blocker. The frontend bundle-size warning and non-failing unmatched-request diagnostic also remain recorded concerns.
