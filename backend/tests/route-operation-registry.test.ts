@@ -77,6 +77,9 @@ const LEAD_EXPECTED_ROUTES = EXPECTED_HUMAN_JWT_OPERATIONS
 const ESTIMATE_EXPECTED_ROUTES = EXPECTED_HUMAN_JWT_OPERATIONS
   .slice(71, 84)
   .map(({ key }) => key);
+const ACCESS_REQUEST_EXPECTED_ROUTES = EXPECTED_HUMAN_JWT_OPERATIONS
+  .slice(87, 93)
+  .map(({ key }) => key);
 
 function mountedHumanRouters(): MountedRouter[] {
   const app = createApp({
@@ -278,7 +281,26 @@ describe("human JWT operation registry", () => {
     }
   });
 
-  it("mounts exactly the 84 baseline human operations and leaves only rows 86 through 93 unmounted", () => {
+  it("classifies Access Request rows 88 through 93 with one ordered marker pair", () => {
+    const routers = mountedHumanRouters();
+    const matches = routers.filter((router) =>
+      router.routes.some(({ key }) => ACCESS_REQUEST_EXPECTED_ROUTES.includes(key as never))
+    );
+    expect(matches).toHaveLength(1);
+    expect(matches[0]!.routes.map(({ key }) => key).sort()).toEqual(
+      [...ACCESS_REQUEST_EXPECTED_ROUTES].sort()
+    );
+    for (const route of matches[0]!.routes) {
+      expect(route.authenticationIndices, `${route.key} authentication markers`).toHaveLength(1);
+      expect(route.operationMarkers, `${route.key} operation markers`).toHaveLength(1);
+      expect(route.operationMarkers[0]?.key, `${route.key} operation key`).toBe(route.key);
+      expect(route.operationMarkers[0]!.index, `${route.key} middleware order`).toBeGreaterThan(
+        route.authenticationIndices[0]!
+      );
+    }
+  });
+
+  it("mounts all baseline and access-request operations and leaves only rows 86 through 87 unmounted", () => {
     const mountedOperations = mountedHumanRouters().flatMap(({ routes }) => routes)
       .flatMap(({ operationMarkers }) => operationMarkers.map(({ key }) => key))
       .filter((key): key is string => Boolean(key));
@@ -289,10 +311,10 @@ describe("human JWT operation registry", () => {
 
     expect([...mountedBaselineOperations].sort()).toEqual([...baselineOperations].sort());
     expect(mountedBaselineOperations).toHaveLength(84);
-    expect(mountedOperations).toHaveLength(85);
+    expect(mountedOperations).toHaveLength(91);
     expect(mountedOperations).toContain("GET /auth/authorization");
     expect(EXPECTED_HUMAN_JWT_OPERATIONS.filter(({ key }) => !mountedOperations.includes(key)).map(({ key }) => key))
-      .toEqual(EXPECTED_HUMAN_JWT_OPERATIONS.slice(85).map(({ key }) => key));
+      .toEqual(EXPECTED_HUMAN_JWT_OPERATIONS.slice(85, 87).map(({ key }) => key));
   });
 
   it.each([

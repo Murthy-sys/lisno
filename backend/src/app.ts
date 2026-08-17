@@ -7,11 +7,13 @@ import {
   type ExtractionRetryPolicy
 } from "./domain/extraction-lifecycle.js";
 import { createAuthRateLimit } from "./middleware/auth-rate-limit.js";
+import { createAccessRequestRateLimit } from "./middleware/access-request-rate-limit.js";
 import { allowCors } from "./middleware/cors.js";
 import { errorHandler, notFoundHandler } from "./middleware/errors.js";
 import { createMemoryRepository } from "./repositories/memory.js";
 import type { AppRepository } from "./repositories/types.js";
 import { createAuditRouter } from "./routes/audit.js";
+import { createAccessRequestsRouter } from "./routes/access-requests.js";
 import { createAuthRouter } from "./routes/auth.js";
 import { createEvaluationsRouter } from "./routes/evaluations.js";
 import { createDesignVersionsRouter } from "./routes/design-versions.js";
@@ -27,6 +29,7 @@ import { createOrganizationRouter } from "./routes/organization.js";
 import { createProjectsRouter } from "./routes/projects.js";
 import { createTasksRouter } from "./routes/tasks.js";
 import { createAuditService } from "./services/audit.service.js";
+import { createAccessRequestService } from "./services/access-request.service.js";
 import {
   createAuthService,
   type AuthConfig
@@ -64,6 +67,11 @@ export interface AppDependencies {
   enableEstimateDesignJobs?: boolean;
   corsOrigins?: readonly string[];
   authRateLimit?: { windowMs?: number; maxAttempts?: number; maxEntries?: number };
+  accessRequestRateLimit?: {
+    windowMs?: number;
+    maxAttempts?: number;
+    maxEntries?: number;
+  };
   estimatePdfService?: EstimatePdfService;
 }
 
@@ -88,6 +96,17 @@ export function createApp(dependencies: AppDependencies) {
     maxEntries: dependencies.authRateLimit?.maxEntries,
     clock: () => clock().getTime()
   });
+  const accessRequestRateLimit = createAccessRequestRateLimit({
+    windowMs: dependencies.accessRequestRateLimit?.windowMs ?? 15 * 60_000,
+    maxAttempts: dependencies.accessRequestRateLimit?.maxAttempts ?? 10,
+    maxEntries: dependencies.accessRequestRateLimit?.maxEntries ?? 10_000,
+    clock: () => clock().getTime()
+  });
+  const accessRequestService = createAccessRequestService(
+    repository,
+    auditService,
+    clock
+  );
   const projectActivityService = createProjectActivityService(repository);
   const projectService = createProjectService(repository, auditService, clock);
   const leadService = createLeadService(repository, auditService, clock);
@@ -152,6 +171,14 @@ export function createApp(dependencies: AppDependencies) {
   app.use(express.json({ limit: "300kb" }));
   app.use("/api/v1", healthRouter);
   app.use("/api/v1", createAuthRouter(authService, authRateLimit));
+  app.use(
+    "/api/v1",
+    createAccessRequestsRouter(
+      authService,
+      accessRequestService,
+      accessRequestRateLimit
+    )
+  );
   app.use(
     "/api/v1",
     createEstimateDesignsRouter(authService, estimateDesignService, maxUploadBytes)
