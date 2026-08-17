@@ -111,6 +111,31 @@ async function createPending(id: string, projectId = "project-mongo-access") {
 }
 
 describe("access-request Mongo replica-set transactions", () => {
+  it("keeps project lookup inside the transaction snapshot", async () => {
+    const repository = createMongoRepository();
+    let markSnapshotStarted!: () => void;
+    let releaseLookup!: () => void;
+    const snapshotStarted = new Promise<void>((resolve) => {
+      markSnapshotStarted = resolve;
+    });
+    const lookupReleased = new Promise<void>((resolve) => {
+      releaseLookup = resolve;
+    });
+
+    const lookup = repository.runInTransaction(async (transaction) => {
+      await transaction.coordinateAuthorizationMutation();
+      markSnapshotStarted();
+      await lookupReleased;
+      return transaction.findProjectById("project-after-snapshot");
+    });
+
+    await snapshotStarted;
+    await insertProject("project-after-snapshot");
+    releaseLookup();
+
+    expect(await lookup).toBeNull();
+  });
+
   it("keeps parallel opaque submissions to one pending row and one audit", async () => {
     await insertUser("user-mongo-designer", "designer");
     const application = app();

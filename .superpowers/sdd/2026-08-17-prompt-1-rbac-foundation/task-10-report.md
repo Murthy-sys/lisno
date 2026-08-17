@@ -5,7 +5,7 @@
 - Plan task: Task 10 only, operation-matrix rows 88–93.
 - Base HEAD: `81b97f27ad0f912d71025c1d132f232327ee7a1a`.
 - Added only the project access-request submit, owner history/cancel, reviewer inbox/decision, and grant revocation workflow.
-- Reused the Task 4 memory/Mongo repository APIs and indexes; no repository, model, migration, seed, Task 11, or Prompt 2 production behavior was added.
+- Reused the Task 4 memory/Mongo repository APIs and indexes; no new repository API, model, migration, seed, Task 11, or Prompt 2 production behavior was added.
 
 ## TDD slices
 
@@ -53,14 +53,15 @@ GREEN:
 
 ## Mongo transaction and race evidence
 
-`backend/tests/access-request-mongo.replica-set.test.ts` uses a real replica set and synchronizes the AccessRequest, ProjectAccessGrant, User, Audit, and Project indexes. All 6 scenarios pass:
+`backend/tests/access-request-mongo.replica-set.test.ts` uses a real replica set and synchronizes the AccessRequest, ProjectAccessGrant, User, Audit, and Project indexes. All 7 scenarios pass:
 
-1. Parallel opaque submissions produce one pending request and one created audit.
-2. A direct duplicate upsert is recovered across the complete transaction boundary.
-3. Audit failure rolls back grant creation, request transition, and both audits.
-4. Duplicate approval and competing terminal decisions serialize to one durable result.
-5. Unresolved rejection reconstructs only from the original normalized reason.
-6. Approval reconstruction before and after revocation uses only the exact approved grant, even when a later matching grant exists.
+1. Project lookup cannot observe a project inserted outside after the transaction snapshot begins.
+2. Parallel opaque submissions produce one pending request and one created audit.
+3. A direct duplicate upsert is recovered across the complete transaction boundary.
+4. Audit failure rolls back grant creation, request transition, and both audits.
+5. Duplicate approval and competing terminal decisions serialize to one durable result.
+6. Unresolved rejection reconstructs only from the original normalized reason.
+7. Approval reconstruction before and after revocation uses only the exact approved grant, even when a later matching grant exists.
 
 ## Route registry and boundary audit
 
@@ -81,7 +82,7 @@ GREEN:
 Final focused Task 10 verification:
 
 - `npm test -- tests/access-requests.test.ts tests/access-request-repository.test.ts tests/access-request-mongo.replica-set.test.ts tests/project-module-access.test.ts tests/route-operation-registry.test.ts --reporter=dot`
-- 5/5 files passed; 108/108 tests passed; duration 3.90 seconds.
+- 5/5 files passed; 109/109 tests passed; duration 3.86 seconds after Fix Round 1.
 - `npm run typecheck`: passed.
 - `git diff --check`: passed.
 
@@ -95,3 +96,19 @@ Full backend verification:
 
 - No Task 10 correctness or scope concern remains after focused tests, typecheck, registry checks, race coverage, and the green 865-test backend suite.
 - Mongoose emits its existing `findOneAndUpdate` deprecation warnings during Mongo-backed tests; this task does not introduce or broaden those calls.
+
+## Fix Round 1 — transactional project lookup
+
+Review RED:
+
+- A real replica-set test begins a repository transaction, performs authorization coordination to establish its snapshot, inserts a project outside that transaction, and then calls the transaction repository's `findProjectById`.
+- Before the fix, the lookup incorrectly returned the complete outside-inserted Project DTO instead of `null`: 1/1 focused test failed for the intended reason.
+
+Implementation and GREEN:
+
+- `findProjectById` now constructs the query, attaches the repository's `ClientSession` when present, and executes it. This is the same transaction-aware query pattern already used by adjacent project repository methods.
+- The exact regression test passed 1/1 with 6 skipped.
+- Complete Task 10 focus passed 5/5 files and 109/109 tests.
+- Backend typecheck passed.
+- The required single fresh full backend run passed 46/47 files and 865/866 tests. Its only failure was the unchanged Task 9 row-79 replica rollback test reaching its 5-second timeout under parallel replica-set startup; the new Task 10 snapshot test passed in the same run. Per scope, no Task 9 file was changed and the full suite was not rerun.
+- No route, service, public DTO, operation marker, repository interface, Task 11, or Prompt 2 behavior changed.

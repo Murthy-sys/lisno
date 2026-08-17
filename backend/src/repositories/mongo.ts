@@ -677,7 +677,9 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
     },
 
     async findProjectById(id) {
-      const document = await ProjectModel.findById(id).lean().exec();
+      const query = ProjectModel.findById(id).lean();
+      if (session) query.session(session);
+      const document = await query.exec();
       return document ? mapProject(document) : null;
     },
 
