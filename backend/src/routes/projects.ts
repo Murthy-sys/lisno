@@ -2,7 +2,8 @@ import { Router } from "express";
 import { z } from "zod";
 
 import { emailSchema } from "../domain/email.js";
-import { authenticate, authorizeRoles } from "../middleware/auth.js";
+import { authenticate } from "../middleware/auth.js";
+import { requireOperation } from "../middleware/authorization.js";
 import {
   paginatedEnvelope,
   paginationShape
@@ -78,6 +79,7 @@ export function createProjectsRouter(
   router.get(
     "/projects",
     protectedRoute,
+    requireOperation("GET /projects"),
     validateQuery(listQuerySchema),
     async (request, response, next) => {
       try {
@@ -100,7 +102,7 @@ export function createProjectsRouter(
   router.get(
     "/client/project-summaries",
     protectedRoute,
-    authorizeRoles("client"),
+    requireOperation("GET /client/project-summaries"),
     validateQuery(listQuerySchema),
     async (request, response, next) => {
       try {
@@ -123,7 +125,7 @@ export function createProjectsRouter(
   router.post(
     "/projects",
     protectedRoute,
-    authorizeRoles("designer"),
+    requireOperation("POST /projects"),
     validateBody(projectSchema),
     async (request, response, next) => {
       try {
@@ -142,6 +144,7 @@ export function createProjectsRouter(
   router.get(
     "/projects/:projectId",
     protectedRoute,
+    requireOperation("GET /projects/:projectId"),
     async (request, response, next) => {
       try {
         response.json({
@@ -159,7 +162,7 @@ export function createProjectsRouter(
   router.post(
     "/projects/:projectId/floors",
     protectedRoute,
-    authorizeRoles("designer"),
+    requireOperation("POST /projects/:projectId/floors"),
     validateBody(floorSchema),
     async (request, response, next) => {
       try {
@@ -179,7 +182,7 @@ export function createProjectsRouter(
   router.post(
     "/floors/:floorId/stages",
     protectedRoute,
-    authorizeRoles("designer"),
+    requireOperation("POST /floors/:floorId/stages"),
     validateBody(stageSchema),
     async (request, response, next) => {
       try {
@@ -199,7 +202,7 @@ export function createProjectsRouter(
   router.post(
     "/stages/:stageId/tasks",
     protectedRoute,
-    authorizeRoles("designer"),
+    requireOperation("POST /stages/:stageId/tasks"),
     validateBody(taskSchema),
     async (request, response, next) => {
       try {

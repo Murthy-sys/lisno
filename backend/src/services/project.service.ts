@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
 
 import { normalizeEmail } from "../domain/email.js";
+import { AuthorizationConfigurationError } from "../domain/authorization.js";
+import { currentHumanOperation } from "../domain/operation-context.js";
 import { ApiError } from "../middleware/errors.js";
 import { calculateTaskRisk } from "../domain/risk.js";
 import type {
@@ -18,7 +20,7 @@ import type { PublicUser } from "./auth.service.js";
 import type { AuditService } from "./audit.service.js";
 import {
   forbidden,
-  requireAccessibleProject,
+  requireProjectOperationAccess,
   requireActor,
   requireUser,
   type Clock
@@ -155,7 +157,11 @@ export function createProjectService(
   return {
     async list(actor, pagination) {
       const user = await requireActor(repository, actor);
-      const page = await repository.pageProjectsForUser(user, pagination);
+      const page = await repository.pageProjectsForUserInModule(
+        user,
+        currentProjectModule(),
+        pagination
+      );
       const tasks = await repository.listTasksForProjectIds(
         page.items.map((project) => project.id)
       );
@@ -173,8 +179,12 @@ export function createProjectService(
 
     async clientSummaries(actor, pagination) {
       const user = await requireActor(repository, actor);
-      if (user.role !== "client") forbidden();
-      const page = await repository.pageProjectsForUser(user, pagination);
+      if (user.role !== "client" && user.role !== "super_admin") forbidden();
+      const page = await repository.pageProjectsForUserInModule(
+        user,
+        currentProjectModule(),
+        pagination
+      );
       const projectIds = page.items.map((project) => project.id);
       const [tasks, floors] = await Promise.all([
         repository.listTasksForProjectIds(projectIds),
@@ -285,7 +295,7 @@ export function createProjectService(
     },
 
     async get(actor, projectId) {
-      await requireAccessibleProject(repository, actor, projectId);
+      await requireProjectOperationAccess(repository, actor, projectId);
       const hierarchy = await repository.getProjectHierarchy(projectId);
       if (!hierarchy) {
         throw new ApiError(404, "NOT_FOUND", "The requested resource was not found.");
@@ -326,7 +336,7 @@ export function createProjectService(
 
     async createFloor(actor, projectId, input) {
       if (actor.role !== "designer") forbidden();
-      const project = await requireAccessibleProject(repository, actor, projectId);
+      const project = await requireProjectOperationAccess(repository, actor, projectId);
       if (new Date(input.plannedEndAt) < new Date(input.plannedStartAt)) {
         throw new ApiError(
           400,
@@ -587,7 +597,10 @@ async function findAccessibleFloor(
   floorId: string
 ) {
   const user = await requireActor(repository, actor);
-  const projects = await repository.listProjectsForUser(user);
+  const projects = await repository.listProjectsForUserInModule(
+    user,
+    currentProjectModule()
+  );
   for (const candidate of projects) {
     const hierarchy = await repository.getProjectHierarchy(candidate.id);
     const floor = hierarchy?.floors.find((item) => item.id === floorId);
@@ -602,7 +615,10 @@ async function findAccessibleStage(
   stageId: string
 ) {
   const user = await requireActor(repository, actor);
-  const projects = await repository.listProjectsForUser(user);
+  const projects = await repository.listProjectsForUserInModule(
+    user,
+    currentProjectModule()
+  );
   for (const project of projects) {
     const hierarchy = await repository.getProjectHierarchy(project.id);
     for (const floor of hierarchy?.floors ?? []) {
@@ -611,4 +627,14 @@ async function findAccessibleStage(
     }
   }
   throw new ApiError(404, "NOT_FOUND", "The requested resource was not found.");
+}
+
+function currentProjectModule() {
+  const { operation } = currentHumanOperation();
+  if (operation.scope.kind !== "project") {
+    throw new AuthorizationConfigurationError(
+      "The current operation is not project-backed."
+    );
+  }
+  return operation.scope.module;
 }

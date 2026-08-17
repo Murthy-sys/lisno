@@ -2,6 +2,7 @@ import express, { type RequestHandler } from "express";
 import request from "supertest";
 import { describe, expect, it } from "vitest";
 
+import { createApp } from "../src/app.js";
 import { PERMISSION_CODES } from "../src/domain/authorization.js";
 import { currentHumanOperation } from "../src/domain/operation-context.js";
 import {
@@ -32,6 +33,48 @@ const slices = [
   ["matches manifest rows 85 through 93", 84, 93, EXPECTED_HUMAN_JWT_OPERATIONS_85_93]
 ] as const;
 
+type RouterLayer = {
+  handle?: { stack?: RouterLayer[] } | RequestHandler;
+  route?: {
+    path: string;
+    methods: Record<string, boolean>;
+    stack: Array<{ handle: RequestHandler }>;
+  };
+};
+
+function mountedHumanOperations() {
+  const app = createApp({
+    auth: {
+      jwtSecret: "route-registry-test-secret-with-enough-entropy",
+      jwtExpiresInSeconds: 900
+    }
+  });
+  const stack = (app as unknown as { router: { stack: RouterLayer[] } }).router.stack;
+  return stack.flatMap((outer) =>
+    ((typeof outer.handle === "object" || typeof outer.handle === "function")
+      ? outer.handle.stack ?? []
+      : []).flatMap((layer) => {
+      if (!layer.route) return [];
+      const method = Object.keys(layer.route.methods)[0]?.toUpperCase();
+      if (!method) return [];
+      const operationIndex = layer.route.stack.findIndex(({ handle }) =>
+        isHumanOperationHandler(handle)
+      );
+      const authenticationIndex = layer.route.stack.findIndex(({ handle }) =>
+        isAuthenticationHandler(handle)
+      );
+      return [{
+        key: `${method} ${layer.route.path}`,
+        authenticationIndex,
+        operationIndex,
+        operationKey: operationIndex >= 0
+          ? operationKeyForHandler(layer.route.stack[operationIndex]!.handle)
+          : undefined
+      }];
+    })
+  );
+}
+
 describe("human JWT operation registry", () => {
   it.each(slices)("%s", (_name, start, end, expected) => {
     expect(HUMAN_JWT_OPERATION_LIST.slice(start, end)).toEqual(expected);
@@ -40,6 +83,18 @@ describe("human JWT operation registry", () => {
   it("matches all normative operation rows", () => {
     expect(Object.values(HUMAN_JWT_OPERATIONS)).toEqual(EXPECTED_HUMAN_JWT_OPERATIONS);
     expect(Object.keys(HUMAN_JWT_OPERATIONS)).toHaveLength(93);
+  });
+
+  it("classifies rows 1 through 11 on mounted routes after authentication", () => {
+    const mounted = mountedHumanOperations();
+
+    for (const { key } of EXPECTED_HUMAN_JWT_OPERATIONS.slice(0, 11)) {
+      const route = mounted.find((candidate) => candidate.key === key);
+      expect(route, key).toBeDefined();
+      expect(route?.operationKey, key).toBe(key);
+      expect(route?.authenticationIndex, key).toBeGreaterThanOrEqual(0);
+      expect(route?.operationIndex, key).toBeGreaterThan(route!.authenticationIndex);
+    }
   });
 
   it("has unique keys and exactly 90 routed permissions", () => {

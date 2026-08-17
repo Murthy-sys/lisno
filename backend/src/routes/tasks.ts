@@ -1,7 +1,8 @@
 import { Router } from "express";
 import { z } from "zod";
 
-import { authenticate, authorizeRoles } from "../middleware/auth.js";
+import { authenticate } from "../middleware/auth.js";
+import { requireOperation } from "../middleware/authorization.js";
 import {
   paginatedEnvelope,
   paginationShape
@@ -53,7 +54,7 @@ export function createTasksRouter(
   router.get(
     "/tasks/:taskId/events",
     protectedRoute,
-    authorizeRoles("designer", "design_manager", "design_head"),
+    requireOperation("GET /tasks/:taskId/events"),
     validateQuery(listEventsQuerySchema),
     async (request, response, next) => {
       try {
@@ -79,7 +80,7 @@ export function createTasksRouter(
   router.patch(
     "/tasks/:taskId",
     protectedRoute,
-    authorizeRoles("designer"),
+    requireOperation("PATCH /tasks/:taskId"),
     validateBody(updateTaskSchema),
     async (request, response, next) => {
       try {
@@ -99,7 +100,7 @@ export function createTasksRouter(
   router.patch(
     "/tasks/:taskId/deadline",
     protectedRoute,
-    authorizeRoles("design_manager", "design_head"),
+    requireOperation("PATCH /tasks/:taskId/deadline"),
     validateBody(deadlineSchema),
     async (request, response, next) => {
       try {

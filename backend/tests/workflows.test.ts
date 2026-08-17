@@ -945,6 +945,50 @@ describe("task workflows", () => {
   });
 });
 
+describe("Projects and Tasks operations", () => {
+  it("allows a Super Admin deadline override without bypassing workflow", async () => {
+    const seed = structuredClone(demoSeedData);
+    seed.users.push({
+      ...seed.users[0]!,
+      id: "user-super-admin",
+      name: "Super Admin",
+      email: "super-admin@lisno.example",
+      emailNormalized: "super-admin@lisno.example",
+      role: "super_admin",
+      active: true,
+      managerId: null,
+      authorizedClientIds: []
+    });
+    const { app, repository } = setup(seed);
+
+    const response = await request(app)
+      .patch("/api/v1/tasks/task-circulation/deadline")
+      .set("Authorization", bearer(["user-super-admin", "super_admin"]))
+      .send({
+        version: 1,
+        currentDeadlineAt: "2026-09-01T00:00:00.000Z",
+        reason: "Coverage"
+      });
+
+    expect(response.status).toBe(200);
+    expect(await repository.listTaskEvents("task-circulation")).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ actorId: "user-super-admin" })
+      ])
+    );
+
+    const stale = await request(app)
+      .patch("/api/v1/tasks/task-circulation/deadline")
+      .set("Authorization", bearer(["user-super-admin", "super_admin"]))
+      .send({
+        version: 1,
+        currentDeadlineAt: "2026-09-02T00:00:00.000Z",
+        reason: "Stale override"
+      });
+    expect(stale.status).toBe(409);
+  });
+});
+
 describe("organization and KPI workflows", () => {
   it("returns direct-report summaries only to the authenticated design manager", async () => {
     const { app } = setup();

@@ -13,7 +13,7 @@ import type { PublicUser } from "./auth.service.js";
 import type { AuditService } from "./audit.service.js";
 import {
   forbidden,
-  requireAccessibleProject,
+  requireProjectOperationAccess,
   requireTask,
   requireUser,
   type Clock
@@ -69,13 +69,14 @@ export function createTaskService(
     async listEvents(actor, taskId, pagination, sort = "asc") {
       if (actor.role === "client") forbidden();
       const task = await requireTask(repository, taskId);
-      await requireAccessibleProject(repository, actor, task.projectId);
+      await requireProjectOperationAccess(repository, actor, task.projectId);
       return repository.pageTaskEvents(task.id, pagination, sort);
     },
 
     async update(actor, taskId, input) {
       if (actor.role !== "designer") forbidden();
       const current = await requireTask(repository, taskId);
+      await requireProjectOperationAccess(repository, actor, current.projectId);
       if (current.ownerId !== actor.id) forbidden();
       assertVersion(current, input.version);
 
@@ -187,10 +188,15 @@ export function createTaskService(
     },
 
     async reviseDeadline(actor, taskId, input) {
-      if (actor.role !== "design_manager" && actor.role !== "design_head") {
+      if (
+        actor.role !== "super_admin" &&
+        actor.role !== "design_manager" &&
+        actor.role !== "design_head"
+      ) {
         forbidden();
       }
       const current = await requireTask(repository, taskId);
+      await requireProjectOperationAccess(repository, actor, current.projectId);
       const owner = await requireUser(repository, current.ownerId);
       if (
         actor.role === "design_manager" &&
