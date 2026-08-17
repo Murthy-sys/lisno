@@ -197,6 +197,11 @@ function setupEstimateDrawingJourneyModels() {
       estimates.find((record) => modelMatches(record, filter as never)) ?? null
     ) as never
   );
+  vi.spyOn(EstimateModel, "find").mockImplementation((filter) =>
+    modelQuery(
+      estimates.filter((record) => modelMatches(record, filter as never))
+    ) as never
+  );
   vi.spyOn(EstimateModel, "updateOne").mockImplementation(async (filter, update) => {
     const record = estimates.find((item) => modelMatches(item, filter as never));
     if (record) applyModelUpdate(record, update as never);
@@ -208,6 +213,11 @@ function setupEstimateDrawingJourneyModels() {
   vi.spyOn(LeadModel, "findOne").mockImplementation((filter) =>
     modelQuery(
       leads.find((record) => modelMatches(record, filter as never)) ?? null
+    ) as never
+  );
+  vi.spyOn(LeadModel, "find").mockImplementation((filter) =>
+    modelQuery(
+      leads.filter((record) => modelMatches(record, filter as never))
     ) as never
   );
   vi.spyOn(LeadModel, "updateOne").mockImplementation(async (filter, update) => {
@@ -352,6 +362,18 @@ function setupEstimateDrawingJourneyModels() {
   vi.spyOn(UserModel, "findById").mockImplementation((id) =>
     modelQuery(team.get(String(id)) ?? null) as never
   );
+  vi.spyOn(UserModel, "findOne").mockImplementation((filter) =>
+    modelQuery(
+      [...team.values()].find((record) =>
+        modelMatches(record, filter as never)
+      ) ?? null
+    ) as never
+  );
+  vi.spyOn(UserModel, "find").mockImplementation((filter) =>
+    modelQuery(
+      [...team.values()].filter((record) => modelMatches(record, filter as never))
+    ) as never
+  );
   vi.spyOn(ProjectModel, "create").mockImplementation(async (input) => {
     projects.push(...(input as Array<Record<string, any>>));
     return input as never;
@@ -374,6 +396,177 @@ function setupEstimateDrawingJourneyModels() {
 afterEach(() => vi.restoreAllMocks());
 
 describe("complete cross-role journey", () => {
+  it("keeps the 19 lead and estimate route characterizations reachable with their current envelopes", async () => {
+    const state = setupEstimateDrawingJourneyModels();
+    const seed = structuredClone(demoSeedData);
+    seed.leads.push({
+      id: "lead-aurora",
+      ownerId: "user-estimator-sales",
+      clientName: "Rhea Kapoor",
+      clientEmail: "client@aurora.example",
+      clientMobile: "+91 90000 00000",
+      projectName: "Aurora",
+      location: "Pune",
+      propertyType: "villa",
+      budgetMin: null,
+      budgetMax: null,
+      source: "referral",
+      stage: "new_lead",
+      nextAction: "site visit",
+      nextActionAt: "2026-09-01T10:00:00.000Z",
+      builder: null,
+      areaSqft: null,
+      targetHandoverAt: null,
+      notes: null,
+      latestActivityAt: null,
+      createdAt: "2026-07-30T12:00:00.000Z",
+      updatedAt: "2026-07-30T12:00:00.000Z"
+    });
+    Object.assign(state.leads[0]!, {
+      _id: "lead-aurora",
+      ownerId: "user-estimator-sales",
+      clientName: "Rhea Kapoor",
+      clientEmail: "client@aurora.example",
+      clientMobile: "+91 90000 00000",
+      projectName: "Aurora",
+      location: "Pune"
+    });
+    const estimate = state.estimates[0]!;
+    Object.assign(estimate, {
+      _id: "estimate-draft",
+      leadId: "lead-aurora",
+      propertyType: "villa",
+      rooms: [],
+      scopes: ["interiors"],
+      subtotal: 0,
+      gst: 0,
+      total: 0
+    });
+    const addEstimate = (input: Record<string, any>) => {
+      const record = {
+        ...estimate,
+        ...input,
+        reviews: [...(input.reviews ?? [])],
+        notifications: [...(input.notifications ?? [])],
+        async save() { return this; },
+        toObject() { return { ...this }; }
+      };
+      state.estimates.push(record);
+      return record;
+    };
+    const app = createApp({
+      repository: createMemoryRepository(seed),
+      storage: new JourneyStorage(),
+      auth: {
+        jwtSecret: "journey-secret-that-is-at-least-thirty-two-characters",
+        jwtExpiresInSeconds: 900
+      },
+      clock: () => new Date("2026-07-30T15:00:00.000Z"),
+      estimatePdfService: {
+        generate: vi.fn(async () => ({
+          bytes: Buffer.from("%PDF-1.7\\n%%EOF"),
+          filename: "aurora-estimate.pdf"
+        }))
+      }
+    });
+    const login = async (email: string) => {
+      const response = await request(app)
+        .post("/api/v1/auth/login")
+        .send({ email, password })
+        .expect(200);
+      return `Bearer ${response.body.data.token}`;
+    };
+    const estimator = await login("sales@lisno.example");
+    const manager = await login("aarav@lisno.example");
+    const designer = await login("ananya@lisno.example");
+    const client = await login("client@aurora.example");
+    const leadBody = {
+      clientName: "Asha Rao",
+      clientEmail: "asha@example.com",
+      clientMobile: "9999999999",
+      projectName: "Aurora",
+      location: "Pune",
+      propertyType: "villa",
+      source: "referral",
+      nextAction: "site visit",
+      nextActionAt: "2026-09-01T10:00:00.000Z"
+    };
+    const estimateBody = {
+      propertyType: "villa",
+      rooms: [],
+      scopes: ["interiors"],
+      lineItems: [{
+        catalogueId: "cat-paint",
+        roomName: "Living",
+        specification: "Primer and paint",
+        unit: "sqft",
+        rate: 10,
+        quantity: 100,
+        included: true
+      }]
+    };
+
+    const listed = await request(app).get("/api/v1/leads?limit=20&offset=0")
+      .set("Authorization", estimator).expect(200);
+    expect(listed.body.data).toMatchObject({
+      pagination: { limit: 20, offset: 0 }
+    });
+    expect((await request(app).post("/api/v1/leads").set("Authorization", estimator)
+      .send(leadBody).expect(201)).body.data).toMatchObject({ ownerId: "user-estimator-sales", clientName: "Asha Rao" });
+    expect((await request(app).get("/api/v1/leads/lead-aurora").set("Authorization", estimator)
+      .expect(200)).body.data).toMatchObject({ id: "lead-aurora", clientName: "Rhea Kapoor" });
+    expect((await request(app).patch("/api/v1/leads/lead-aurora").set("Authorization", estimator)
+      .send({ stage: "negotiation" }).expect(200)).body.data.stage).toBe("negotiation");
+    expect((await request(app).get("/api/v1/leads/lead-aurora/activities?limit=20&offset=0")
+      .set("Authorization", estimator).expect(200)).body.data).toMatchObject({
+        items: [],
+        pagination: { limit: 20, offset: 0, total: 0 }
+      });
+    expect((await request(app).post("/api/v1/leads/lead-aurora/activities").set("Authorization", estimator)
+      .send({ type: "call", note: "Confirmed site visit", occurredAt: "2026-07-29T10:00:00.000Z" }).expect(201)).body.data)
+      .toMatchObject({ leadId: "lead-aurora", note: "Confirmed site visit" });
+
+    expect((await request(app).get("/api/v1/leads/lead-aurora/estimate").set("Authorization", estimator)
+      .expect(200)).body.data).toMatchObject({ id: "estimate-draft", status: "draft" });
+    expect((await request(app).get("/api/v1/estimates").set("Authorization", estimator)
+      .expect(200)).body.data).toEqual(expect.arrayContaining([expect.objectContaining({ id: "estimate-draft" })]));
+    expect((await request(app).put("/api/v1/leads/lead-aurora/estimate").set("Authorization", estimator)
+      .send(estimateBody).expect(200)).body.data).toMatchObject({ id: "estimate-draft", subtotal: 1000, gst: 180, total: 1180 });
+    expect((await request(app).post("/api/v1/leads/lead-aurora/estimate/submit").set("Authorization", estimator)
+      .expect(200)).body.data).toMatchObject({ status: "sent_to_client" });
+    const salesPdf = await request(app).get("/api/v1/estimates/estimate-draft/pdf")
+      .set("Authorization", estimator).expect(200);
+    expect(salesPdf.headers["content-type"]).toMatch(/^application\/pdf/);
+    expect(salesPdf.headers["content-disposition"]).toBe('attachment; filename="aurora-estimate.pdf"');
+
+    addEstimate({ _id: "estimate-awaiting-assignment", status: "pending_manager_assignment" });
+    expect((await request(app).get("/api/v1/estimates/review-queue").set("Authorization", manager)
+      .expect(200)).body.data).toEqual(expect.arrayContaining([expect.objectContaining({ id: "estimate-awaiting-assignment" })]));
+    expect((await request(app).get("/api/v1/estimates/designers").set("Authorization", manager)
+      .expect(200)).body.data).toEqual(expect.arrayContaining([expect.objectContaining({ id: "user-designer-ananya" })]));
+    expect((await request(app).post("/api/v1/estimates/estimate-awaiting-assignment/assign").set("Authorization", manager)
+      .send({ designerId: "user-designer-ananya" }).expect(200)).body.data)
+      .toMatchObject({ status: "pending_designer_approval", assignedManagerId: "user-manager-aarav", assignedDesignerId: "user-designer-ananya" });
+    addEstimate({ _id: "estimate-awaiting-designer", status: "pending_designer_approval", assignedDesignerId: "user-designer-ananya" });
+    expect((await request(app).post("/api/v1/estimates/estimate-awaiting-designer/designer-decision").set("Authorization", designer)
+      .send({ decision: "approve", note: "Approved" }).expect(200)).body.data).toMatchObject({ status: "ready_for_client" });
+    addEstimate({ _id: "estimate-ready", status: "ready_for_client" });
+    expect((await request(app).post("/api/v1/estimates/estimate-ready/send-client").set("Authorization", estimator)
+      .expect(200)).body.data).toMatchObject({ status: "sent_to_client" });
+
+    addEstimate({ _id: "estimate-client-visible", status: "sent_to_client", designLifecycleVersion: 0, designFrozenAt: null });
+    expect((await request(app).get("/api/v1/client/estimates").set("Authorization", client)
+      .expect(200)).body.data).toEqual(expect.arrayContaining([expect.objectContaining({ id: "estimate-client-visible" })]));
+    const clientPdf = await request(app).get("/api/v1/client/estimates/estimate-client-visible/pdf")
+      .set("Authorization", client).expect(200);
+    expect(clientPdf.headers["content-type"]).toMatch(/^application\/pdf/);
+    expect(clientPdf.headers["content-disposition"]).toBe('attachment; filename="aurora-estimate.pdf"');
+    expect((await request(app).post("/api/v1/client/estimates/estimate-client-visible/decision").set("Authorization", client)
+      .send({ decision: "approve", note: "Approved" }).expect(200)).body.data)
+      .toMatchObject({ status: "client_approved", projectId: expect.stringMatching(/^project-/) });
+    expect(state.projects).toContainEqual(expect.objectContaining({ clientId: "user-client-aurora" }));
+  }, 15_000);
+
   it("links every unclaimed mixed-case client project through upload, review, and revision history", async () => {
     const repository = createMemoryRepository(structuredClone(demoSeedData));
     const storage = new JourneyStorage();

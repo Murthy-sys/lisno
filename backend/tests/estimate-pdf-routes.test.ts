@@ -182,6 +182,9 @@ describe("estimate PDF download routes", () => {
       }
     });
     expect(response.headers["content-type"]).toMatch(/^application\/pdf/);
+    expect(response.headers["content-disposition"]).toBe(
+      'attachment; filename="lisno-aurora-villa-estimate-v1.pdf"'
+    );
     expect(response.body.subarray(0, 5).toString()).toBe("%PDF-");
     expect(generate).toHaveBeenCalledWith(expect.objectContaining({
       id: "estimate-client-visible",

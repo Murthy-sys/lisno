@@ -19,6 +19,7 @@ import { createDesignSectionsRouter } from "./routes/design-sections.js";
 import { createExtractionWorkerRouter } from "./routes/extraction-worker.js";
 import { createEstimateDesignsRouter } from "./routes/estimate-designs.js";
 import { createEstimatePlanReviewRouter } from "./routes/estimate-plan-review.js";
+import { createEstimatesRouter } from "./routes/estimates.js";
 import { healthRouter } from "./routes/health.js";
 import { createKpisRouter } from "./routes/kpis.js";
 import { createLeadsRouter } from "./routes/leads.js";
@@ -160,6 +161,13 @@ export function createApp(dependencies: AppDependencies) {
   app.use(
     "/api/v1",
     createLeadsRouter(
+      authService,
+      leadService
+    )
+  );
+  app.use(
+    "/api/v1",
+    createEstimatesRouter(
       authService,
       leadService,
       estimatePdfService,

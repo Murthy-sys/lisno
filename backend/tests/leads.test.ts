@@ -30,6 +30,8 @@ describe("lead API", () => {
     const created = await request(app).post("/api/v1/leads").set("Authorization", `Bearer ${token}`).send(lead).expect(201);
     expect(created.body.data).toMatchObject({ ownerId: "user-estimator-sales", stage: "new_lead", clientName: "Ramesh Nair" });
     const id = created.body.data.id as string;
+    const fetched = await request(app).get(`/api/v1/leads/${id}`).set("Authorization", `Bearer ${token}`).expect(200);
+    expect(fetched.body.data).toMatchObject({ id, ownerId: "user-estimator-sales", clientName: "Ramesh Nair" });
     await request(app).patch(`/api/v1/leads/${id}`).set("Authorization", `Bearer ${token}`).send({ stage: "negotiation" }).expect(200);
     await request(app).post(`/api/v1/leads/${id}/activities`).set("Authorization", `Bearer ${token}`).send({ type: "call", note: "Confirmed site visit", occurredAt: "2026-07-29T10:00:00.000Z" }).expect(201);
     const listed = await request(app).get("/api/v1/leads?search=nair&stage=negotiation&limit=20&offset=0").set("Authorization", `Bearer ${token}`).expect(200);
