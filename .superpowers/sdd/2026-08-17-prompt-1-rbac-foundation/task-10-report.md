@@ -112,3 +112,25 @@ Implementation and GREEN:
 - Backend typecheck passed.
 - The required single fresh full backend run passed 46/47 files and 865/866 tests. Its only failure was the unchanged Task 9 row-79 replica rollback test reaching its 5-second timeout under parallel replica-set startup; the new Task 10 snapshot test passed in the same run. Per scope, no Task 9 file was changed and the full suite was not rerun.
 - No route, service, public DTO, operation marker, repository interface, Task 11, or Prompt 2 behavior changed.
+
+## Fix Round 2 — complete opaque receipt equivalence
+
+Acceptance-test gap:
+
+- Runtime behavior was already approved, so no production RED was expected or manufactured for this test-only round.
+- The prior cases used separate app instances, a named-but-nonexistent hidden ID, and a separate two-response header comparison. They did not prove one same-app four-way observable-equivalence matrix.
+
+Coverage added:
+
+- One app now submits as Ananya to visible existing `project-aurora-villa`, hidden existing `project-aurora-studio`, unknown `project-does-not-exist`, and the same unknown ID again.
+- The test loads both real fixtures first and proves Aurora Studio exists with Kabir as initiator and sole assignee, while Ananya is neither initiator nor assigned. The project lookup spy is then cleared so the four submissions still prove zero project resolution.
+- All four responses compare status, exact body, exact top-level and data keys, exact content type, and a projection containing every CORS control, safelisted, and explicitly exposed response header.
+- The existing independent duplicate proof remains and still asserts one pending row, one `access_request.created` audit, and zero project lookup.
+- A real no-Origin request is the negative control: it retains the opaque 202 body/status but must differ in the projected CORS headers, proving that header equivalence participates in the assertion.
+
+Verification:
+
+- `npm test -- tests/access-requests.test.ts --reporter=dot`: 1/1 file and 25/25 tests passed.
+- `npm run typecheck`: passed.
+- The controller's separately stabilized full backend gate was green at 47/47 files and 866/866 tests before this test-only acceptance expansion.
+- No production file, Task 11 route, or Prompt 2 behavior changed.

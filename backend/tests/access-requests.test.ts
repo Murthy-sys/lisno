@@ -45,7 +45,8 @@ function addUser(
 }
 
 function setup(
-  rateLimit: { windowMs?: number; maxAttempts?: number; maxEntries?: number } = {}
+  rateLimit: { windowMs?: number; maxAttempts?: number; maxEntries?: number } = {},
+  corsOrigins?: readonly string[]
 ) {
   const seed = structuredClone(demoSeedData);
   addUser(seed, "user-requester-two", "designer");
@@ -61,7 +62,8 @@ function setup(
     repository,
     auth,
     clock,
-    accessRequestRateLimit: rateLimit
+    accessRequestRateLimit: rateLimit,
+    ...(corsOrigins ? { corsOrigins } : {})
   });
   return { app, repository, findProjectById };
 }
@@ -73,21 +75,114 @@ const validBody = {
 } as const;
 
 describe("access-request opaque submission", () => {
-  it.each([
-    "project-aurora-villa",
-    "project-hidden-valid",
-    "project-does-not-exist"
-  ])("returns the same opaque receipt for %s", async (projectId) => {
-    const { app, findProjectById } = setup();
+  it("keeps visible, hidden-existing, unknown, and duplicate-unknown receipts observably equivalent", async () => {
+    const { app, repository, findProjectById } = setup(
+      {},
+      ["https://console.lisno.example"]
+    );
+    const visible = await repository.findProjectById("project-aurora-villa");
+    const hidden = await repository.findProjectById("project-aurora-studio");
+    expect(visible).toMatchObject({
+      id: "project-aurora-villa",
+      initiatingDesignerId: "user-designer-ananya",
+      assignedDesignerIds: expect.arrayContaining(["user-designer-ananya"])
+    });
+    expect(hidden).toMatchObject({
+      id: "project-aurora-studio",
+      initiatingDesignerId: "user-designer-kabir",
+      assignedDesignerIds: ["user-designer-kabir"]
+    });
+    expect(hidden?.initiatingDesignerId).not.toBe("user-designer-ananya");
+    expect(hidden?.assignedDesignerIds).not.toContain("user-designer-ananya");
+    findProjectById.mockClear();
 
-    const response = await request(app)
+    const token = bearer("user-designer-ananya", "designer");
+    const responses = [];
+    for (const projectId of [
+      "project-aurora-villa",
+      "project-aurora-studio",
+      "project-does-not-exist",
+      "project-does-not-exist"
+    ]) {
+      responses.push(
+        await request(app)
+          .post("/api/v1/access-requests")
+          .set("Origin", "https://console.lisno.example")
+          .set("Authorization", token)
+          .send({ ...validBody, projectId })
+      );
+    }
+
+    const corsSafelistedHeaderNames = [
+      "cache-control",
+      "content-language",
+      "content-length",
+      "content-type",
+      "expires",
+      "last-modified",
+      "pragma"
+    ] as const;
+    const observableReceipt = (response: (typeof responses)[number]) => {
+      const exposedHeaderNames = String(
+        response.headers["access-control-expose-headers"] ?? ""
+      )
+        .split(",")
+        .map((name) => name.trim().toLowerCase())
+        .filter(Boolean);
+      const headerNames = new Set<string>([
+        ...corsSafelistedHeaderNames,
+        "vary",
+        ...Object.keys(response.headers).filter((name) =>
+          name.startsWith("access-control-")
+        ),
+        ...(exposedHeaderNames.includes("*")
+          ? Object.keys(response.headers)
+          : exposedHeaderNames)
+      ]);
+      return {
+        status: response.status,
+        body: response.body,
+        bodyKeys: Object.keys(response.body),
+        dataKeys: Object.keys(response.body.data ?? {}),
+        contentType: response.headers["content-type"],
+        corsVisibleHeaders: Object.fromEntries(
+          [...headerNames].sort().map((name) => [
+            name,
+            response.headers[name] ?? null
+          ])
+        )
+      };
+    };
+    const receipts = responses.map(observableReceipt);
+    expect(receipts[0]).toMatchObject({
+      status: 202,
+      body: { data: { accepted: true } },
+      bodyKeys: ["data"],
+      dataKeys: ["accepted"],
+      contentType: "application/json; charset=utf-8",
+      corsVisibleHeaders: {
+        "access-control-allow-origin": "https://console.lisno.example",
+        "access-control-allow-methods":
+          "GET,HEAD,POST,PUT,PATCH,DELETE,OPTIONS",
+        "access-control-allow-headers": "Authorization,Content-Type",
+        vary: "Origin"
+      }
+    });
+    for (const receipt of receipts.slice(1)) {
+      expect(receipt).toEqual(receipts[0]);
+    }
+
+    const noOriginControl = await request(app)
       .post("/api/v1/access-requests")
-      .set("Authorization", bearer("user-designer-ananya", "designer"))
-      .send({ ...validBody, projectId });
-
-    expect(response.status).toBe(202);
-    expect(response.type).toBe("application/json");
-    expect(response.body).toEqual({ data: { accepted: true } });
+      .set("Authorization", token)
+      .send({ ...validBody, projectId: "project-does-not-exist" });
+    expect(observableReceipt(noOriginControl)).toMatchObject({
+      status: 202,
+      body: { data: { accepted: true } }
+    });
+    expect(observableReceipt(noOriginControl).corsVisibleHeaders).not.toEqual(
+      receipts[0]!.corsVisibleHeaders
+    );
     expect(findProjectById).not.toHaveBeenCalled();
   });
 
@@ -233,34 +328,6 @@ describe("access-request opaque submission", () => {
       .set("Authorization", bearer("user-designer-ananya", "designer"))
       .send(validBody)
       .expect(202);
-  });
-
-  it("uses the same CORS-visible receipt headers for known and unknown IDs", async () => {
-    const seed = structuredClone(demoSeedData);
-    const repository = createMemoryRepository(seed);
-    const app = createApp({
-      repository,
-      auth,
-      clock,
-      corsOrigins: ["https://console.lisno.example"]
-    });
-    const headers = [];
-    for (const projectId of ["project-aurora-villa", "project-hidden-valid"]) {
-      const response = await request(app)
-        .post("/api/v1/access-requests")
-        .set("Origin", "https://console.lisno.example")
-        .set("Authorization", bearer("user-designer-ananya", "designer"))
-        .send({ ...validBody, projectId });
-      expect(response.status).toBe(202);
-      headers.push({
-        type: response.type,
-        origin: response.headers["access-control-allow-origin"],
-        methods: response.headers["access-control-allow-methods"],
-        allowedHeaders: response.headers["access-control-allow-headers"],
-        vary: response.headers.vary
-      });
-    }
-    expect(headers[1]).toEqual(headers[0]);
   });
 
   it.each(["invalid/project", "invalid project", "x".repeat(129)])(
