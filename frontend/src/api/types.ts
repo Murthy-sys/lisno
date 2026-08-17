@@ -233,6 +233,56 @@ export interface PageData<T> {
   pagination: PageMetadata;
 }
 
+export interface UserDirectoryFilters {
+  search?: string;
+  role?: Role;
+  active?: boolean;
+}
+
+export interface PaginationInput {
+  limit: number;
+  offset: number;
+}
+
+export interface UserDirectoryItem {
+  id: string;
+  name: string;
+  email: string;
+  role: Role;
+  active: boolean;
+  version: number;
+  avatar?: string;
+  title?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface UserDirectoryPage extends PageData<UserDirectoryItem> {
+  manageableRoles: Role[];
+}
+
+export type UpdateManagedUserInput =
+  | { version: number; role: Role; active?: never }
+  | { version: number; active: boolean; role?: never };
+
+export interface UserResponsibilityCounts {
+  ownedActiveLeads: number;
+  ownedActiveEstimates: number;
+  initiatedActiveProjects: number;
+  assignedActiveProjects: number;
+  managedActiveProjects: number;
+  ownedActiveTasks: number;
+  directReports: number;
+  linkedClientProjects: number;
+  adminInitiatorGrants: number;
+}
+
+export interface ManagedUserMutationResult {
+  user: UserDirectoryItem;
+  revokedGrantCount: number;
+  responsibilities: UserResponsibilityCounts;
+}
+
 export interface LinkedPageData<T> extends PageData<T> {
   href: string;
 }

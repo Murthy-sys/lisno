@@ -1,0 +1,142 @@
+.access-administration {
+  display: grid;
+  gap: var(--space-5);
+}
+
+.access-administration__filters {
+  display: grid;
+  grid-template-columns: minmax(12rem, 2fr) repeat(2, minmax(10rem, 1fr));
+  gap: var(--space-4);
+}
+
+.access-administration__directory {
+  display: grid;
+  gap: var(--space-4);
+  min-inline-size: 0;
+}
+
+.access-administration__table-scroll {
+  overflow-x: auto;
+}
+
+.access-administration__table {
+  border-collapse: collapse;
+  inline-size: 100%;
+  min-inline-size: 58rem;
+}
+
+.access-administration__table th,
+.access-administration__table td {
+  border-block-end: 1px solid var(--color-border);
+  padding: var(--space-3);
+  text-align: start;
+  vertical-align: middle;
+}
+
+.access-administration__table th {
+  color: var(--color-text-muted);
+  font: var(--type-metadata);
+}
+
+.access-administration__table tbody tr:last-child td {
+  border-block-end: 0;
+}
+
+.access-administration__identity,
+.admin-user-dialog__identity {
+  display: grid;
+  gap: var(--space-1);
+  min-inline-size: 0;
+}
+
+.access-administration__identity span,
+.access-administration__identity small,
+.admin-user-dialog__identity span {
+  color: var(--color-text-muted);
+  overflow-wrap: anywhere;
+}
+
+.access-administration__pagination,
+.access-administration__pagination > div,
+.admin-user-dialog__actions,
+.admin-user-dialog__role-action {
+  align-items: center;
+  display: flex;
+  gap: var(--space-3);
+}
+
+.access-administration__pagination {
+  justify-content: space-between;
+}
+
+.access-administration__pagination p {
+  color: var(--color-text-muted);
+  margin: 0;
+}
+
+.admin-user-dialog {
+  display: grid;
+  gap: var(--space-5);
+  padding: 0 var(--space-5) var(--space-5);
+}
+
+.admin-user-dialog__error,
+.admin-user-dialog__warning {
+  border: 1px solid var(--color-danger);
+  border-radius: var(--radius-control);
+  color: var(--color-danger);
+  margin: 0;
+  padding: var(--space-3);
+}
+
+.admin-user-dialog__warning {
+  background: var(--color-surface-subtle);
+  color: var(--color-text);
+}
+
+.admin-user-dialog__account {
+  align-items: center;
+  border-block-start: 1px solid var(--color-border);
+  display: flex;
+  gap: var(--space-4);
+  justify-content: space-between;
+  padding-block-start: var(--space-4);
+}
+
+.admin-user-dialog__account h3,
+.admin-user-dialog__account p {
+  margin: 0;
+}
+
+.admin-user-dialog__account p {
+  color: var(--color-text-muted);
+  margin-block-start: var(--space-1);
+}
+
+.admin-user-dialog__actions,
+.admin-user-dialog__role-action {
+  justify-content: flex-end;
+}
+
+@media (max-width: 760px) {
+  .access-administration__filters {
+    grid-template-columns: 1fr;
+  }
+
+  .access-administration__pagination,
+  .admin-user-dialog__account {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .access-administration__pagination > div,
+  .admin-user-dialog__actions {
+    inline-size: 100%;
+  }
+
+  .access-administration__pagination button,
+  .admin-user-dialog__actions button,
+  .admin-user-dialog__account button {
+    flex: 1;
+  }
+}

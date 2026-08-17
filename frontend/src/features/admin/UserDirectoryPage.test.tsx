@@ -1,0 +1,248 @@
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { http, HttpResponse } from "msw";
+import { describe, expect, it } from "vitest";
+
+import {
+  OPERATIONAL_ROLES,
+  ROLE_CODES,
+  ROLE_LABELS,
+  type Role
+} from "../../api/authorization-contract";
+import { tokenStorage } from "../../api/client";
+import { authorizationFor } from "../../test/authFixtures";
+import { renderApp } from "../../test/render";
+import { server } from "../../test/server";
+
+const admin = {
+  id: "user-admin-meera",
+  name: "Meera Admin",
+  email: "meera@lisno.example",
+  role: "admin" as const
+};
+
+const superAdmin = {
+  id: "user-super-admin",
+  name: "Sana Super Admin",
+  email: "sana@lisno.example",
+  role: "super_admin" as const
+};
+
+const designer = {
+  id: "user-designer-arun",
+  name: "Arun Patel",
+  email: "arun@lisno.example",
+  role: "designer" as const,
+  active: true,
+  version: 3,
+  title: "Senior Designer",
+  createdAt: "2026-07-01T09:00:00.000Z",
+  updatedAt: "2026-08-01T09:00:00.000Z"
+};
+
+const directoryRows = [
+  {
+    ...superAdmin,
+    active: true,
+    version: 1,
+    createdAt: "2026-06-01T09:00:00.000Z",
+    updatedAt: "2026-08-01T09:00:00.000Z"
+  },
+  {
+    ...admin,
+    active: true,
+    version: 2,
+    createdAt: "2026-06-02T09:00:00.000Z",
+    updatedAt: "2026-08-02T09:00:00.000Z"
+  },
+  designer,
+  {
+    id: "user-client-maya",
+    name: "Maya Client",
+    email: "maya@client.example",
+    role: "client" as const,
+    active: true,
+    version: 2,
+    createdAt: "2026-06-04T09:00:00.000Z",
+    updatedAt: "2026-08-04T09:00:00.000Z"
+  }
+];
+
+function installSession(actor: typeof admin | typeof superAdmin) {
+  tokenStorage.set(`${actor.role}-token`);
+  server.use(
+    http.get("/api/v1/auth/me", () => HttpResponse.json({ data: actor })),
+    http.get("/api/v1/auth/authorization", () =>
+      HttpResponse.json({
+        data: authorizationFor(actor.role, [
+          "identity.self.read",
+          "identity.authorization.read",
+          "identity.users.read",
+          "identity.users.update"
+        ])
+      })
+    )
+  );
+}
+
+function page(
+  items: typeof directoryRows,
+  manageableRoles: readonly Role[],
+  offset = 0,
+  total = items.length,
+  hasMore = false
+) {
+  return {
+    data: {
+      items,
+      pagination: { limit: 20, offset, total, hasMore },
+      manageableRoles
+    }
+  };
+}
+
+describe("UserDirectoryPage", () => {
+  it("Admin sees only operational users and destinations", async () => {
+    installSession(admin);
+    const requestedUrls: string[] = [];
+    server.use(
+      http.get("/api/v1/admin/users", ({ request }) => {
+        const url = new URL(request.url);
+        requestedUrls.push(`${url.pathname}${url.search}`);
+        return HttpResponse.json(page([designer], OPERATIONAL_ROLES));
+      })
+    );
+
+    const user = userEvent.setup();
+    renderApp(["/admin/users"]);
+
+    expect(
+      await screen.findByRole("heading", { name: "User administration" })
+    ).toBeVisible();
+    expect(requestedUrls).toEqual([
+      "/api/v1/admin/users?limit=20&offset=0"
+    ]);
+    expect(
+      await screen.findByRole("button", { name: "Manage Arun Patel" })
+    ).toBeVisible();
+    expect(screen.queryByText("Sana Super Admin")).not.toBeInTheDocument();
+    expect(screen.queryByText("Maya Client")).not.toBeInTheDocument();
+
+    await user.click(
+      screen.getByRole("button", { name: "Manage Arun Patel" })
+    );
+    const dialog = screen.getByRole("dialog", { name: "Manage Arun Patel" });
+    const roleSelect = within(dialog).getByRole("combobox", { name: "Role" });
+    expect(
+      within(roleSelect).getAllByRole("option").map((option) => option.textContent)
+    ).toEqual(OPERATIONAL_ROLES.map((role) => ROLE_LABELS[role]));
+    expect(within(roleSelect).queryByRole("option", { name: "Admin" })).not.toBeInTheDocument();
+    expect(within(roleSelect).queryByRole("option", { name: "Client" })).not.toBeInTheDocument();
+
+    expect(document.body).not.toHaveTextContent(/password|credential/i);
+    expect(
+      screen.queryByRole("button", { name: /create|invite|impersonate/i })
+    ).not.toBeInTheDocument();
+  });
+
+  it("Super Admin sees every role", async () => {
+    installSession(superAdmin);
+    server.use(
+      http.get("/api/v1/admin/users", ({ request }) => {
+        const url = new URL(request.url);
+        expect(`${url.pathname}${url.search}`).toBe(
+          "/api/v1/admin/users?limit=20&offset=0"
+        );
+        return HttpResponse.json(page(directoryRows, ROLE_CODES));
+      })
+    );
+
+    const user = userEvent.setup();
+    renderApp(["/admin/users"]);
+
+    await screen.findByRole("heading", { name: "User administration" });
+    const directory = await screen.findByRole("region", {
+      name: "User directory"
+    });
+    for (const row of directoryRows) {
+      expect(
+        within(directory).getByRole("button", { name: `Manage ${row.name}` })
+      ).toBeVisible();
+    }
+
+    await user.click(
+      screen.getByRole("button", { name: "Manage Arun Patel" })
+    );
+    const roleSelect = within(
+      screen.getByRole("dialog", { name: "Manage Arun Patel" })
+    ).getByRole("combobox", { name: "Role" });
+    expect(
+      within(roleSelect).getAllByRole("option").map((option) => option.textContent)
+    ).toEqual(ROLE_CODES.map((role) => ROLE_LABELS[role]));
+  });
+
+  it("directory sends canonical filters and pagination", async () => {
+    installSession(superAdmin);
+    const requestedPaths: string[] = [];
+    server.use(
+      http.get("/api/v1/admin/users", ({ request }) => {
+        const url = new URL(request.url);
+        const path = `${url.pathname}${url.search}`;
+        requestedPaths.push(path);
+        const offset = Number(url.searchParams.get("offset"));
+        return HttpResponse.json(
+          page([designer], ROLE_CODES, offset, 21, offset === 0)
+        );
+      })
+    );
+
+    const user = userEvent.setup();
+    renderApp(["/admin/users"]);
+    await screen.findByRole("heading", { name: "User administration" });
+    await waitFor(() =>
+      expect(requestedPaths).toContain("/api/v1/admin/users?limit=20&offset=0")
+    );
+
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search users" }), {
+      target: { value: "  maya  " }
+    });
+    await waitFor(() =>
+      expect(requestedPaths).toContain(
+        "/api/v1/admin/users?search=maya&limit=20&offset=0"
+      )
+    );
+
+    await user.selectOptions(
+      screen.getByRole("combobox", { name: "Filter by role" }),
+      "designer"
+    );
+    await waitFor(() =>
+      expect(requestedPaths).toContain(
+        "/api/v1/admin/users?search=maya&role=designer&limit=20&offset=0"
+      )
+    );
+
+    await user.selectOptions(
+      screen.getByRole("combobox", { name: "Filter by account status" }),
+      "true"
+    );
+    const filteredFirstPage =
+      "/api/v1/admin/users?search=maya&role=designer&active=true&limit=20&offset=0";
+    await waitFor(() => expect(requestedPaths).toContain(filteredFirstPage));
+
+    await user.click(screen.getByRole("button", { name: "Next page" }));
+    const expectedNextPage =
+      "/api/v1/admin/users?search=maya&role=designer&active=true&limit=20&offset=20";
+    await waitFor(() => expect(requestedPaths).toContain(expectedNextPage));
+
+    expect(requestedPaths.at(-1)).toBe(expectedNextPage);
+    expect(
+      requestedPaths.filter((path) => path.includes("search=maya") && path.includes("offset=20"))
+    ).toEqual([expectedNextPage]);
+    expect(
+      requestedPaths.some((path) =>
+        path.includes("offset=20&search=") || path.includes("limit=20&active=")
+      )
+    ).toBe(false);
+  });
+});

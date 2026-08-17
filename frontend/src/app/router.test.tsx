@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  OPERATIONAL_ROLES,
   ROLE_CODES,
   type PermissionCode,
   type Role
@@ -181,6 +182,15 @@ function installAuthorizationSession(
     }
     if (path === "/api/v1/auth/authorization") {
       return Response.json({ data: authorizationFor(role, permissions) });
+    }
+    if (path === "/api/v1/admin/users?limit=20&offset=0") {
+      return Response.json({
+        data: {
+          items: [],
+          pagination: { limit: 20, offset: 0, total: 0, hasMore: false },
+          manageableRoles: role === "super_admin" ? ROLE_CODES : OPERATIONAL_ROLES
+        }
+      });
     }
     throw new Error(`Unhandled request: ${path}`);
   });

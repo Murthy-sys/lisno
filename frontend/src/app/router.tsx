@@ -35,6 +35,7 @@ import { ClientProject } from "../features/client/ClientProject";
 import { LeadDashboard } from "../features/leads/LeadDashboard";
 import { LeadDetail } from "../features/leads/LeadDetail";
 import { LeadEstimateWorkspace } from "../features/leads/LeadEstimateWorkspace";
+import { UserDirectoryPage } from "../features/admin/UserDirectoryPage";
 import { NeutralHomePage } from "../features/home/NeutralHomePage";
 
 interface RoleHomeContent {
@@ -273,12 +274,7 @@ function HomeRedirect() {
 }
 
 const stagedElements = {
-  "/admin/users": (
-    <NeutralHomePage
-      title="User administration"
-      description="User access management is loading in the next Prompt 1 task."
-    />
-  ),
+  "/admin/users": <UserDirectoryPage />,
   "/admin/access-requests": (
     <NeutralHomePage
       title="Access requests"

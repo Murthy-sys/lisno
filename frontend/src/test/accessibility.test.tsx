@@ -4,7 +4,11 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import { tokenStorage } from "../api/client";
-import type { PermissionCode, Role } from "../api/authorization-contract";
+import {
+  OPERATIONAL_ROLES,
+  type PermissionCode,
+  type Role
+} from "../api/authorization-contract";
 import { authorizationFor } from "./authFixtures";
 import { renderApp } from "./render";
 import { renderWithQuery } from "./render";
@@ -97,6 +101,20 @@ function fixtureFetch(
     if (url === "/api/v1/estimates") return Response.json({ data: [] });
     if (url.startsWith("/api/v1/kpis/users/") && url.includes("/tasks?")) return Response.json({ data: { items: [], pagination: { limit: 20, offset: 0, total: 0, hasMore: false } } });
     if (url.startsWith("/api/v1/kpis/users/")) return Response.json({ data: { userId: user.id, periodStartAt: "2000-01-01T00:00:00.000Z", periodEndAt: "2100-01-01T00:00:00.000Z", score: 0, components: [], aggregates: { taskCounts: { total: 0, completed: 0, active: 0 }, riskCounts: { gray: 0, green: 0, yellow: 0, red: 0 }, effort: { planned: 0, completed: 0, remaining: 0, workloadPercentage: 0 }, projects: [], recentActivity: [] }, tasks: { items: [], pagination: { limit: 100, offset: 0, total: 0, hasMore: false } } } });
+    if (url === "/api/v1/admin/users?limit=20&offset=0") return Response.json({ data: {
+      items: [{
+        id: "user-designer-accessible",
+        name: "Accessible Designer",
+        email: "designer-accessible@lisno.example",
+        role: "designer",
+        active: true,
+        version: 2,
+        createdAt: "2026-07-01T00:00:00.000Z",
+        updatedAt: "2026-08-01T00:00:00.000Z"
+      }],
+      pagination: { limit: 20, offset: 0, total: 1, hasMore: false },
+      manageableRoles: OPERATIONAL_ROLES
+    } });
     throw new Error(`Unhandled request: ${url}`);
   });
 }
@@ -351,5 +369,35 @@ describe("accessibility smoke coverage", () => {
     mobileHome.focus();
     expect(mobileHome).toHaveFocus();
     await expectNoAxeViolations();
+  });
+
+  it("keeps the user directory and mutation dialog keyboard accessible", async () => {
+    const user = userEvent.setup();
+    tokenStorage.set("admin-accessibility-token");
+    fixtureFetch(userFor("admin"), [
+      "identity.self.read",
+      "identity.authorization.read",
+      "identity.users.read",
+      "identity.users.update"
+    ]);
+    renderApp(["/admin/users"]);
+
+    const trigger = await screen.findByRole("button", {
+      name: "Manage Accessible Designer"
+    });
+    await expectNoAxeViolations();
+
+    await user.click(trigger);
+    const dialog = screen.getByRole("dialog", {
+      name: "Manage Accessible Designer"
+    });
+    await waitFor(() =>
+      expect(within(dialog).getByRole("combobox", { name: "Role" })).toHaveFocus()
+    );
+    await expectNoAxeViolations();
+
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(trigger).toHaveFocus();
   });
 });
