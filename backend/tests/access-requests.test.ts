@@ -1,3 +1,4 @@
+import { once } from "node:events";
 import jwt from "jsonwebtoken";
 import request from "supertest";
 import { describe, expect, it, vi } from "vitest";
@@ -96,94 +97,102 @@ describe("access-request opaque submission", () => {
     expect(hidden?.assignedDesignerIds).not.toContain("user-designer-ananya");
     findProjectById.mockClear();
 
-    const token = bearer("user-designer-ananya", "designer");
-    const responses = [];
-    for (const projectId of [
-      "project-aurora-villa",
-      "project-aurora-studio",
-      "project-does-not-exist",
-      "project-does-not-exist"
-    ]) {
-      responses.push(
-        await request(app)
-          .post("/api/v1/access-requests")
-          .set("Origin", "https://console.lisno.example")
-          .set("Authorization", token)
-          .send({ ...validBody, projectId })
-      );
-    }
-
-    const corsSafelistedHeaderNames = [
-      "cache-control",
-      "content-language",
-      "content-length",
-      "content-type",
-      "expires",
-      "last-modified",
-      "pragma"
-    ] as const;
-    const observableReceipt = (response: (typeof responses)[number]) => {
-      const exposedHeaderNames = String(
-        response.headers["access-control-expose-headers"] ?? ""
-      )
-        .split(",")
-        .map((name) => name.trim().toLowerCase())
-        .filter(Boolean);
-      const headerNames = new Set<string>([
-        ...corsSafelistedHeaderNames,
-        "vary",
-        ...Object.keys(response.headers).filter((name) =>
-          name.startsWith("access-control-")
-        ),
-        ...(exposedHeaderNames.includes("*")
-          ? Object.keys(response.headers)
-          : exposedHeaderNames)
-      ]);
-      return {
-        status: response.status,
-        body: response.body,
-        bodyKeys: Object.keys(response.body),
-        dataKeys: Object.keys(response.body.data ?? {}),
-        contentType: response.headers["content-type"],
-        corsVisibleHeaders: Object.fromEntries(
-          [...headerNames].sort().map((name) => [
-            name,
-            response.headers[name] ?? null
-          ])
-        )
-      };
-    };
-    const receipts = responses.map(observableReceipt);
-    expect(receipts[0]).toMatchObject({
-      status: 202,
-      body: { data: { accepted: true } },
-      bodyKeys: ["data"],
-      dataKeys: ["accepted"],
-      contentType: "application/json; charset=utf-8",
-      corsVisibleHeaders: {
-        "access-control-allow-origin": "https://console.lisno.example",
-        "access-control-allow-methods":
-          "GET,HEAD,POST,PUT,PATCH,DELETE,OPTIONS",
-        "access-control-allow-headers": "Authorization,Content-Type",
-        vary: "Origin"
+    const server = app.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    try {
+      const token = bearer("user-designer-ananya", "designer");
+      const responses = [];
+      for (const projectId of [
+        "project-aurora-villa",
+        "project-aurora-studio",
+        "project-does-not-exist",
+        "project-does-not-exist"
+      ]) {
+        responses.push(
+          await request(server)
+            .post("/api/v1/access-requests")
+            .set("Origin", "https://console.lisno.example")
+            .set("Authorization", token)
+            .send({ ...validBody, projectId })
+        );
       }
-    });
-    for (const receipt of receipts.slice(1)) {
-      expect(receipt).toEqual(receipts[0]);
-    }
 
-    const noOriginControl = await request(app)
-      .post("/api/v1/access-requests")
-      .set("Authorization", token)
-      .send({ ...validBody, projectId: "project-does-not-exist" });
-    expect(observableReceipt(noOriginControl)).toMatchObject({
-      status: 202,
-      body: { data: { accepted: true } }
-    });
-    expect(observableReceipt(noOriginControl).corsVisibleHeaders).not.toEqual(
-      receipts[0]!.corsVisibleHeaders
-    );
-    expect(findProjectById).not.toHaveBeenCalled();
+      const corsSafelistedHeaderNames = [
+        "cache-control",
+        "content-language",
+        "content-length",
+        "content-type",
+        "expires",
+        "last-modified",
+        "pragma"
+      ] as const;
+      const observableReceipt = (response: (typeof responses)[number]) => {
+        const exposedHeaderNames = String(
+          response.headers["access-control-expose-headers"] ?? ""
+        )
+          .split(",")
+          .map((name) => name.trim().toLowerCase())
+          .filter(Boolean);
+        const headerNames = new Set<string>([
+          ...corsSafelistedHeaderNames,
+          "vary",
+          ...Object.keys(response.headers).filter((name) =>
+            name.startsWith("access-control-")
+          ),
+          ...(exposedHeaderNames.includes("*")
+            ? Object.keys(response.headers)
+            : exposedHeaderNames)
+        ]);
+        return {
+          status: response.status,
+          body: response.body,
+          bodyKeys: Object.keys(response.body),
+          dataKeys: Object.keys(response.body.data ?? {}),
+          contentType: response.headers["content-type"],
+          corsVisibleHeaders: Object.fromEntries(
+            [...headerNames].sort().map((name) => [
+              name,
+              response.headers[name] ?? null
+            ])
+          )
+        };
+      };
+      const receipts = responses.map(observableReceipt);
+      expect(receipts[0]).toMatchObject({
+        status: 202,
+        body: { data: { accepted: true } },
+        bodyKeys: ["data"],
+        dataKeys: ["accepted"],
+        contentType: "application/json; charset=utf-8",
+        corsVisibleHeaders: {
+          "access-control-allow-origin": "https://console.lisno.example",
+          "access-control-allow-methods":
+            "GET,HEAD,POST,PUT,PATCH,DELETE,OPTIONS",
+          "access-control-allow-headers": "Authorization,Content-Type",
+          vary: "Origin"
+        }
+      });
+      for (const receipt of receipts.slice(1)) {
+        expect(receipt).toEqual(receipts[0]);
+      }
+
+      const noOriginControl = await request(server)
+        .post("/api/v1/access-requests")
+        .set("Authorization", token)
+        .send({ ...validBody, projectId: "project-does-not-exist" });
+      expect(observableReceipt(noOriginControl)).toMatchObject({
+        status: 202,
+        body: { data: { accepted: true } }
+      });
+      expect(observableReceipt(noOriginControl).corsVisibleHeaders).not.toEqual(
+        receipts[0]!.corsVisibleHeaders
+      );
+      expect(findProjectById).not.toHaveBeenCalled();
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => error ? reject(error) : resolve());
+      });
+    }
   });
 
   it("keeps duplicate submission opaque and writes one request and audit event", async () => {
