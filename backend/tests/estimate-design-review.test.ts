@@ -20,6 +20,7 @@ import { EstimateDesignUploadModel } from "../src/models/EstimateDesignUpload.js
 import { AuditEventModel } from "../src/models/AuditEvent.js";
 import { EstimateModel } from "../src/models/Estimate.js";
 import { LeadModel } from "../src/models/Lead.js";
+import { UserModel } from "../src/models/User.js";
 import { createMemoryRepository } from "../src/repositories/memory.js";
 import { demoSeedData } from "../src/seed/data.js";
 import { createEstimateDesignService } from "../src/services/estimate-design.service.js";
@@ -316,6 +317,13 @@ function setup(maxUploadBytes = 10_000_000) {
   vi.spyOn(LeadModel, "findOne").mockImplementation((filter) =>
     query(leads.find((item) => item._id === filter._id) ?? null) as never
   );
+  vi.spyOn(UserModel, "findOne").mockImplementation((filter) =>
+    query(
+      filter.role === "client" && filter.emailNormalized === "client@aurora.example"
+        ? { _id: "user-client-aurora", role: "client", active: true }
+        : null
+    ) as never
+  );
   vi.spyOn(EstimateDesignUploadModel, "findById").mockImplementation((id) =>
     query(uploads.find((item) => item._id === id) ?? null) as never
   );
@@ -529,6 +537,37 @@ describe("estimate drawing annotation schema", () => {
 });
 
 describe("estimate drawing client review", () => {
+  it("uses the related Client draft identity for a Super Admin client-shaped read", async () => {
+    const { app, drafts } = setup();
+    drafts.push({
+      _id: "annotation-draft-related-client",
+      revisionId: "revision-1",
+      clientId: "user-client-aurora",
+      version: 3,
+      annotations: annotations()
+    });
+
+    const response = await request(app)
+      .get("/api/v1/client/estimates/estimate-1/design-drawings")
+      .set("Authorization", auth("user-super-admin", "super_admin"))
+      .expect(200);
+
+    expect(response.body.data.revisions).toContainEqual(expect.objectContaining({
+      id: "revision-1",
+      annotationDraft: expect.objectContaining({
+        id: "annotation-draft-related-client",
+        version: 3
+      })
+    }));
+    expect(EstimateDesignAnnotationDraftModel.findOne).toHaveBeenCalledWith({
+      revisionId: "revision-1",
+      clientId: "user-client-aurora"
+    });
+    expect(EstimateDesignAnnotationDraftModel.findOne).not.toHaveBeenCalledWith(
+      expect.objectContaining({ clientId: "user-super-admin" })
+    );
+  });
+
   it("allows Super Admin global Estimate Design reads without project grants", async () => {
     const { app, projectGrantSpies } = setup();
     const authorization = auth("user-super-admin", "super_admin");

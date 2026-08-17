@@ -77,6 +77,30 @@ describe("estimate plan staff workflow", () => {
     );
   });
 
+  it("audits the actual Super Admin actor for row 64 page resolution", async () => {
+    const audit = vi.fn(async () => ({}));
+    const api = createEstimatePlanReviewService({
+      estimateDesigns: { listClient: vi.fn() },
+      storage: { open: vi.fn(), read: vi.fn(), save: vi.fn(), saveGenerated: vi.fn(), delete: vi.fn() },
+      audit: { appendInMongoTransaction: audit },
+      now: () => new Date("2026-08-03T12:00:00.000Z")
+    } as never);
+
+    await api.resolvePage(superAdmin, "request-1", {
+      version: 1,
+      note: "Handled in the full sheet."
+    });
+
+    expect(audit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        actorId: superAdmin.id,
+        action: "estimate_plan_page_resolved",
+        entityId: "request-1"
+      }),
+      expect.anything()
+    );
+  });
+
   it("returns metadata-only queues to the owner and assigned designer", async () => {
     for (const user of [estimator, designer]) {
       const rows = await service().listStaff(user, {});

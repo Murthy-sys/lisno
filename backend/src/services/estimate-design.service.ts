@@ -29,6 +29,7 @@ import { EstimateDesignUploadModel } from "../models/EstimateDesignUpload.js";
 import { EstimatePlanChangeRequestModel } from "../models/EstimatePlanChangeRequest.js";
 import { EstimateModel } from "../models/Estimate.js";
 import { LeadModel } from "../models/Lead.js";
+import { UserModel } from "../models/User.js";
 import type { PublicUser as AuthenticatedUser } from "./auth.service.js";
 import type { AuditService, AuditWrite } from "./audit.service.js";
 import type { Storage } from "../storage/storage.js";
@@ -393,7 +394,7 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
     },
 
     async listClient(user, estimateId) {
-      await requireClientVisibleEstimateReader(user, estimateId);
+      const { clientId } = await requireClientVisibleEstimateReader(user, estimateId);
       const drawings = await EstimateDesignDrawingModel.find({
         estimateId,
         active: true
@@ -415,10 +416,10 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
         if (!latest) {
           continue;
         }
-        const draft = latest.reviewStatus === "submitted"
+        const draft = latest.reviewStatus === "submitted" && clientId
           ? await EstimateDesignAnnotationDraftModel.findOne({
               revisionId: latest._id,
-              clientId: user.id
+              clientId
             }).lean()
           : null;
         revisions.push(...visibleHistory.map((revision) => ({
@@ -2249,7 +2250,7 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
     ) {
       throw estimateNotFound();
     }
-    return { estimate, lead };
+    return { estimate, lead, clientId: user.id };
   }
 
   async function requireClientVisibleEstimateReader(
@@ -2275,7 +2276,18 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
     if (session) leadQuery.session(session);
     const lead = await leadQuery.lean();
     if (!lead) throw estimateNotFound();
-    return { estimate, lead };
+    const clientQuery = UserModel.findOne({
+      role: "client",
+      active: true,
+      emailNormalized: normalizeEmail(String(lead.clientEmail))
+    });
+    if (session) clientQuery.session(session);
+    const client = await clientQuery.lean();
+    return {
+      estimate,
+      lead,
+      clientId: client ? String(client._id) : null
+    };
   }
 
   async function requireClientRevision(

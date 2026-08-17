@@ -132,33 +132,42 @@ export function createEstimatesRouter(
   } catch (error) { next(error); } });
 
   router.post("/estimates/:estimateId/assign", protectedRoute, requireOperation("POST /estimates/:estimateId/assign"), validateBody(assignmentSchema), async (req, res, next) => { try {
-    const designerFilter = req.authenticatedUser!.role === "super_admin"
-      ? { _id: req.body.designerId, role: "designer", active: true }
-      : { _id: req.body.designerId, role: "designer", managerId: req.authenticatedUser!.id, active: true };
-    const designer = await UserModel.findOne(designerFilter).lean();
-    if (!designer) throw new ApiError(404, "DESIGNER_NOT_FOUND", "Choose an active designer from your team.");
-    const manager = designer.managerId
-      ? await UserModel.findOne({ _id: designer.managerId, role: "design_manager", active: true }).lean()
-      : null;
-    if (!manager) throw new ApiError(404, "DESIGNER_MANAGER_NOT_FOUND", "Choose a designer with an active accountable manager.");
-    const estimate = await EstimateModel.findOne({ _id: req.params.estimateId, status: "pending_manager_assignment" });
-    if (!estimate) throw new ApiError(409, "ESTIMATE_NOT_ASSIGNABLE", "This estimate is no longer awaiting assignment.");
-    estimate.assignedManagerId = manager._id;
-    estimate.assignedDesignerId = designer._id;
-    estimate.status = "pending_designer_approval";
-    estimate.reviews.push({ actorId: req.authenticatedUser!.id, action: "designer_assigned", note: designer.name, occurredAt: new Date() });
-    estimate.notifications.push({ recipientEmail: designer.email, recipientRole: "designer", event: "estimate_approval_assigned", status: "queued", queuedAt: new Date() });
-    await estimate.save();
-    await audit.append({
-      actorId: req.authenticatedUser!.id,
-      action: "estimate_designer_assigned",
-      entityType: "estimate",
-      entityId: String(estimate._id),
-      occurredAt: new Date().toISOString(),
-      oldValues: { status: "pending_manager_assignment" },
-      newValues: { status: "pending_designer_approval", designerId: String(designer._id), managerId: String(manager._id) }
+    let responseEstimate: Record<string, unknown> | null = null;
+    await withMongoTransaction(async (session) => {
+      const designerFilter = req.authenticatedUser!.role === "super_admin"
+        ? { _id: req.body.designerId, role: "designer", active: true }
+        : { _id: req.body.designerId, role: "designer", managerId: req.authenticatedUser!.id, active: true };
+      const designer = await UserModel.findOne(designerFilter).session(session).lean();
+      if (!designer) throw new ApiError(404, "DESIGNER_NOT_FOUND", "Choose an active designer from your team.");
+      const manager = designer.managerId
+        ? await UserModel.findOne({ _id: designer.managerId, role: "design_manager", active: true }).session(session).lean()
+        : null;
+      if (!manager) throw new ApiError(404, "DESIGNER_MANAGER_NOT_FOUND", "Choose a designer with an active accountable manager.");
+      const estimate = await EstimateModel.findOne({
+        _id: req.params.estimateId,
+        status: "pending_manager_assignment"
+      }).session(session);
+      if (!estimate) throw new ApiError(409, "ESTIMATE_NOT_ASSIGNABLE", "This estimate is no longer awaiting assignment.");
+      const occurredAt = new Date();
+      estimate.assignedManagerId = manager._id;
+      estimate.assignedDesignerId = designer._id;
+      estimate.status = "pending_designer_approval";
+      estimate.reviews.push({ actorId: req.authenticatedUser!.id, action: "designer_assigned", note: designer.name, occurredAt });
+      estimate.notifications.push({ recipientEmail: designer.email, recipientRole: "designer", event: "estimate_approval_assigned", status: "queued", queuedAt: occurredAt });
+      await estimate.save({ session });
+      await audit.appendInMongoTransaction({
+        actorId: req.authenticatedUser!.id,
+        action: "estimate_designer_assigned",
+        entityType: "estimate",
+        entityId: String(estimate._id),
+        occurredAt: occurredAt.toISOString(),
+        oldValues: { status: "pending_manager_assignment" },
+        newValues: { status: "pending_designer_approval", designerId: String(designer._id), managerId: String(manager._id) }
+      }, session);
+      responseEstimate = estimate.toObject();
     });
-    res.json({ data: mapEstimate(estimate.toObject()) });
+    if (!responseEstimate) throw new Error("Estimate assignment transaction did not complete.");
+    res.json({ data: mapEstimate(responseEstimate) });
   } catch (error) { next(error); } });
 
   router.post("/estimates/:estimateId/designer-decision", protectedRoute, requireOperation("POST /estimates/:estimateId/designer-decision"), validateBody(decisionSchema), async (req, res, next) => { try {

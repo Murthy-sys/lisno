@@ -61,6 +61,38 @@ beforeEach(async () => {
 });
 
 describe("client estimate plan review service", () => {
+  it("runs Super Admin Plan Review through the real related-Client Estimate Design reader", async () => {
+    await EstimateDesignAnnotationDraftModel.create({
+      _id: "design-draft-related-client",
+      revisionId: "revision-a",
+      clientId: client.id,
+      version: 1,
+      annotations: { ...annotations, imageWidth: 450, imageHeight: 500 }
+    });
+    const draftLookup = vi.spyOn(EstimateDesignAnnotationDraftModel, "findOne");
+    const estimateDesigns = createEstimateDesignService({
+      storage: { open: vi.fn(), read: vi.fn(), save: vi.fn(), saveGenerated: vi.fn(), delete: vi.fn() },
+      audit: { append: vi.fn(), appendInMongoTransaction: vi.fn(async () => ({})) },
+      maxUploadBytes: 10_000_000
+    } as never);
+    const api = createEstimatePlanReviewService({
+      estimateDesigns,
+      storage: { open: vi.fn(), read: vi.fn(), save: vi.fn(), saveGenerated: vi.fn(), delete: vi.fn() },
+      audit: { appendInMongoTransaction: vi.fn(async () => ({})) },
+      now: () => new Date("2026-08-03T10:00:00.000Z")
+    } as never);
+
+    await api.listClient(superAdmin, "estimate-1");
+
+    expect(draftLookup).toHaveBeenCalledWith({
+      revisionId: "revision-a",
+      clientId: client.id
+    });
+    expect(draftLookup).not.toHaveBeenCalledWith(
+      expect.objectContaining({ clientId: superAdmin.id })
+    );
+  });
+
   it("uses the related Client identity for Super Admin client-shaped reads", async () => {
     const api = service();
     await EstimatePlanChangeRequestModel.create({

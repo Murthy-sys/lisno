@@ -13,6 +13,7 @@ import { UserModel } from "../src/models/User.js";
 import { AuditEventModel } from "../src/models/AuditEvent.js";
 import { createMemoryRepository } from "../src/repositories/memory.js";
 import { demoSeedData } from "../src/seed/data.js";
+import { startMongoReplicaSet } from "./helpers/mongo-replica-set.js";
 
 const LEAD_SECRET = "lead-test-secret-with-enough-entropy";
 const app = createApp({ repository: createMemoryRepository(demoSeedData), auth: { jwtSecret: LEAD_SECRET, jwtExpiresInSeconds: 900 } });
@@ -480,7 +481,7 @@ describe("lead and owner-estimate route characterizations", () => {
   });
 
   it("assigns through a selected Designer's active manager and audits the real Super Admin", async () => {
-    const { app, superAdminAuthorization, repository, projectGrantSpies } = setupLeadCharacterization();
+    const { app, superAdminAuthorization, projectGrantSpies } = setupLeadCharacterization();
     const estimate = estimateDocument({ _id: "estimate-awaiting", status: "pending_manager_assignment" });
     const designer = { _id: "designer-1", name: "Designer One", email: "designer@example.com", role: "designer", active: true, managerId: "manager-1" };
     const manager = { _id: "manager-1", name: "Manager One", email: "manager@example.com", role: "design_manager", active: true };
@@ -488,6 +489,16 @@ describe("lead and owner-estimate route characterizations", () => {
       query((filter as Record<string, unknown>).role === "designer" ? designer : manager) as never
     );
     vi.spyOn(EstimateModel, "findOne").mockReturnValue(query(estimate) as never);
+    const session = {
+      withTransaction: vi.fn(async (operation: () => Promise<unknown>) => operation()),
+      endSession: vi.fn(async () => undefined)
+    };
+    vi.spyOn(mongoose, "startSession").mockResolvedValue(session as never);
+    const auditCreate = vi.spyOn(AuditEventModel, "create").mockImplementation(async (input) =>
+      (input as Array<Record<string, unknown>>).map((event) => ({
+        toObject: () => ({ ...event })
+      })) as never
+    );
 
     const response = await request(app)
       .post("/api/v1/estimates/estimate-awaiting/assign")
@@ -503,12 +514,71 @@ describe("lead and owner-estimate route characterizations", () => {
       status: "pending_designer_approval",
       reviews: [expect.objectContaining({ actorId: "user-super-admin", action: "designer_assigned" })]
     });
-    expect((await repository.listAuditEvents({})).at(-1)).toMatchObject({
-      actorId: "user-super-admin",
-      action: "estimate_designer_assigned",
-      entityId: "estimate-awaiting"
-    });
+    expect(estimate.save).toHaveBeenCalledWith({ session });
+    expect(auditCreate).toHaveBeenCalledWith([
+      expect.objectContaining({
+        actorId: "user-super-admin",
+        action: "estimate_designer_assigned",
+        entityId: "estimate-awaiting"
+      })
+    ], { session });
     for (const spy of projectGrantSpies) expect(spy).not.toHaveBeenCalled();
+  });
+
+  it("rolls back row 79 assignment, review, and notification when typed audit persistence fails", async () => {
+    const { app, superAdminAuthorization } = setupLeadCharacterization();
+    const replica = await startMongoReplicaSet();
+    try {
+      await UserModel.create([
+        {
+          _id: "manager-atomic",
+          name: "Atomic Manager",
+          email: "atomic-manager@example.com",
+          emailNormalized: "atomic-manager@example.com",
+          passwordHash: "not-used",
+          role: "design_manager",
+          active: true
+        },
+        {
+          _id: "designer-atomic",
+          name: "Atomic Designer",
+          email: "atomic-designer@example.com",
+          emailNormalized: "atomic-designer@example.com",
+          passwordHash: "not-used",
+          role: "designer",
+          active: true,
+          managerId: "manager-atomic"
+        }
+      ]);
+      await EstimateModel.create({
+        _id: "estimate-audit-failure",
+        leadId: "lead-audit-failure",
+        ownerId: "user-estimator-sales",
+        status: "pending_manager_assignment",
+        propertyType: "villa"
+      });
+      vi.spyOn(AuditEventModel, "create").mockRejectedValue(
+        new Error("audit unavailable") as never
+      );
+
+      await request(app)
+        .post("/api/v1/estimates/estimate-audit-failure/assign")
+        .set("Authorization", superAdminAuthorization)
+        .send({ designerId: "designer-atomic" })
+        .expect(500);
+
+      expect(await EstimateModel.findById("estimate-audit-failure").lean()).toMatchObject({
+        status: "pending_manager_assignment",
+        assignedDesignerId: null,
+        assignedManagerId: null,
+        reviews: [],
+        notifications: []
+      });
+      expect(AuditEventModel.create).toHaveBeenCalledOnce();
+      expect(await AuditEventModel.countDocuments()).toBe(0);
+    } finally {
+      await replica.stop();
+    }
   });
 
   it("denies every Super Admin personal Estimate mutation before validation or data access", async () => {

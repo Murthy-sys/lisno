@@ -8,7 +8,11 @@ import {
   hasPermission,
   roleMayRequestModule
 } from "../src/domain/authorization.js";
-import { PROMPT_1_AUDIT_ACTIONS } from "../src/domain/audit-actions.js";
+import {
+  AUDIT_ACTIONS,
+  EXISTING_AUDIT_ACTIONS,
+  PROMPT_1_AUDIT_ACTIONS
+} from "../src/domain/audit-actions.js";
 import { ROLE_CODES, WORKER_ROLES, type Role } from "../src/domain/roles.js";
 import { EXPECTED_HUMAN_JWT_OPERATIONS } from "./fixtures/prompt-1-route-operations.js";
 
@@ -122,5 +126,11 @@ describe("authorization policy", () => {
       "access_request.created", "access_request.cancelled", "access_request.approved",
       "access_request.rejected", "project_access.granted", "project_access.revoked"
     ]);
+  });
+
+  it("registers estimate assignment as a typed existing-domain audit action", () => {
+    expect(EXISTING_AUDIT_ACTIONS).toContain("estimate_designer_assigned");
+    expect(AUDIT_ACTIONS).toContain("estimate_designer_assigned");
+    expect(PROMPT_1_AUDIT_ACTIONS).toHaveLength(9);
   });
 });

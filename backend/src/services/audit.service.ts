@@ -8,13 +8,14 @@ import type {
 } from "../repositories/types.js";
 import type { ClientSession } from "mongoose";
 import { randomUUID } from "node:crypto";
+import type { AuditAction } from "../domain/audit-actions.js";
 import { AuditEventModel } from "../models/AuditEvent.js";
 import type { PublicUser } from "./auth.service.js";
 import { forbidden, requireActor, requireUser } from "./workflow.js";
 
 export interface AuditWrite {
   actorId: string;
-  action: string;
+  action: AuditAction;
   entityType: string;
   entityId: string;
   occurredAt: string;

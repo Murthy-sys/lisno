@@ -34,6 +34,7 @@ export const EXISTING_AUDIT_ACTIONS = [
   "estimate_design_upload_retried",
   "estimate_design_uploaded",
   "estimate_design_verified",
+  "estimate_designer_assigned",
   "estimate_plan_change_request_updated",
   "estimate_plan_changes_requested",
   "estimate_plan_page_resolved",

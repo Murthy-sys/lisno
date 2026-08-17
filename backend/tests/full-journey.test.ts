@@ -629,7 +629,13 @@ describe("complete cross-role journey", () => {
     expect(LeadModel.updateOne).not.toHaveBeenCalled();
     expect(EstimateModel.updateOne).not.toHaveBeenCalled();
     expect(ProjectModel.create).not.toHaveBeenCalled();
-    expect(AuditEventModel.create).not.toHaveBeenCalled();
+    expect(AuditEventModel.create).toHaveBeenCalledWith([
+      expect.objectContaining({
+        actorId: "user-manager-aarav",
+        action: "estimate_designer_assigned",
+        entityId: "estimate-awaiting-assignment"
+      })
+    ], { session: expect.anything() });
   });
 
   it("row 80 records one assigned Designer approval", async () => {
