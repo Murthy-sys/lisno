@@ -4,6 +4,7 @@ import { z } from "zod";
 
 import type { Role } from "../contracts/domain.js";
 import { normalizeEmail } from "../domain/email.js";
+import { roleSchema } from "../domain/roles.js";
 import {
   RepositoryConflictError,
   type AppRepository,
@@ -12,13 +13,6 @@ import {
 import { createAuditService, type AuditService } from "./audit.service.js";
 import { systemClock, type Clock } from "./workflow.js";
 
-const roleSchema = z.enum([
-  "designer",
-  "design_manager",
-  "design_head",
-  "estimator_sales",
-  "client"
-]);
 const tokenPayloadSchema = z
   .object({
     id: z.string().min(1),

@@ -1,9 +1,4 @@
-export type Role =
-  | "designer"
-  | "design_manager"
-  | "design_head"
-  | "estimator_sales"
-  | "client";
+export type { Role } from "../domain/roles.js";
 
 export type TaskStatus =
   | "not_started"

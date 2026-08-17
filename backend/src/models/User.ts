@@ -1,4 +1,5 @@
 import { model, models, Schema } from "./mongoose.js";
+import { ROLE_CODES } from "../domain/roles.js";
 
 const userSchema = new Schema(
   {
@@ -11,7 +12,7 @@ const userSchema = new Schema(
     passwordHash: { type: String, required: true, select: false },
     role: {
       type: String,
-      enum: ["designer", "design_manager", "design_head", "estimator_sales", "client"],
+      enum: ROLE_CODES,
       required: true
     },
     active: { type: Boolean, required: true, default: true },
