@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import mongoose from "mongoose";
+import { AccessRequestModel } from "../src/models/AccessRequest.js";
 import { AuditEventModel } from "../src/models/AuditEvent.js";
+import { AuthorizationCoordinationModel } from "../src/models/AuthorizationCoordination.js";
 import { DesignExtractionJobModel } from "../src/models/DesignExtractionJob.js";
 import { DesignSectionModel } from "../src/models/DesignSection.js";
 import { DesignStageModel } from "../src/models/DesignStage.js";
@@ -12,6 +14,7 @@ import { EmailCoordinationModel } from "../src/models/EmailCoordination.js";
 import { EvaluationModel } from "../src/models/Evaluation.js";
 import { FloorModel } from "../src/models/Floor.js";
 import { ProjectModel } from "../src/models/Project.js";
+import { ProjectAccessGrantModel } from "../src/models/ProjectAccessGrant.js";
 import { TaskModel } from "../src/models/Task.js";
 import { TaskEventModel } from "../src/models/TaskEvent.js";
 import { UserModel } from "../src/models/User.js";
@@ -128,6 +131,173 @@ afterEach(() => {
 });
 
 describe("Mongo repository contracts", () => {
+  it("coordinates authorization mutations in the active session", async () => {
+    const session = {} as never;
+    const coordinationQuery = {
+      session: vi.fn(),
+      exec: vi.fn().mockResolvedValue({ acknowledged: true })
+    };
+    const update = vi
+      .spyOn(AuthorizationCoordinationModel, "updateOne")
+      .mockReturnValueOnce(coordinationQuery as never);
+
+    await createMongoRepository(session).coordinateAuthorizationMutation();
+
+    expect(update).toHaveBeenCalledWith(
+      { _id: "authorization" },
+      {
+        $inc: { revision: 1 },
+        $set: { updatedAt: expect.any(Date) }
+      },
+      { upsert: true }
+    );
+    expect(coordinationQuery.session).toHaveBeenCalledWith(session);
+  });
+
+  it("atomically upserts a pending request and maps Mongo version zero to one", async () => {
+    const session = {} as never;
+    const record = {
+      _id: "request-atomic",
+      requesterId: "user-1",
+      projectId: "project-1",
+      module: "design",
+      reason: "Need access",
+      status: "pending",
+      reviewerId: null,
+      decisionReason: null,
+      decisionFingerprint: null,
+      approvedGrantId: null,
+      reviewedAt: null,
+      __v: 0,
+      createdAt: new Date("2026-08-17T10:00:00.000Z"),
+      updatedAt: new Date("2026-08-17T10:00:00.000Z")
+    };
+    const upsert = vi.spyOn(AccessRequestModel, "findOneAndUpdate").mockReturnValueOnce({
+      lean: () => ({
+        exec: vi.fn().mockResolvedValue({
+          value: record,
+          lastErrorObject: { upserted: record._id }
+        })
+      })
+    } as never);
+
+    const result = await createMongoRepository(session).findOrCreatePendingAccessRequest({
+      id: record._id,
+      requesterId: record.requesterId,
+      projectId: record.projectId,
+      module: "design",
+      reason: record.reason,
+      createdAt: record.createdAt.toISOString(),
+      updatedAt: record.updatedAt.toISOString()
+    });
+
+    expect(result).toMatchObject({ created: true, record: { id: record._id, version: 1 } });
+    expect(upsert).toHaveBeenCalledWith(
+      {
+        requesterId: record.requesterId,
+        projectId: record.projectId,
+        module: "design",
+        status: "pending"
+      },
+      { $setOnInsert: expect.objectContaining({ _id: record._id, __v: 0 }) },
+      expect.objectContaining({ upsert: true, new: true, session })
+    );
+  });
+
+  it("aborts and retries the entire pending-request transaction after raw E11000", async () => {
+    const sessions = [0, 1].map(() => ({
+      withTransaction: vi.fn(async (operation: () => Promise<unknown>) => operation()),
+      endSession: vi.fn(async () => undefined)
+    }));
+    vi.spyOn(mongoose, "startSession")
+      .mockResolvedValueOnce(sessions[0] as never)
+      .mockResolvedValueOnce(sessions[1] as never);
+    const duplicate = Object.assign(new Error("pending tuple duplicate"), { code: 11000 });
+    const document = {
+      _id: "request-winner",
+      requesterId: "user-1",
+      projectId: "project-1",
+      module: "design",
+      reason: "Need access",
+      status: "pending",
+      __v: 0,
+      createdAt: new Date("2026-08-17T10:00:00.000Z"),
+      updatedAt: new Date("2026-08-17T10:00:00.000Z")
+    };
+    vi.spyOn(AccessRequestModel, "findOneAndUpdate")
+      .mockReturnValueOnce({
+        lean: () => ({ exec: vi.fn().mockRejectedValue(duplicate) })
+      } as never)
+      .mockReturnValueOnce({
+        lean: () => ({
+          exec: vi.fn().mockResolvedValue({ value: document, lastErrorObject: {} })
+        })
+      } as never);
+    const reread = vi.spyOn(AccessRequestModel, "findOne");
+    let attempts = 0;
+
+    const result = await createMongoRepository().runInTransaction(async (transaction) => {
+      attempts += 1;
+      return transaction.findOrCreatePendingAccessRequest({
+        id: "request-candidate",
+        requesterId: "user-1",
+        projectId: "project-1",
+        module: "design",
+        reason: "Need access",
+        createdAt: "2026-08-17T10:00:00.000Z",
+        updatedAt: "2026-08-17T10:00:00.000Z"
+      });
+    });
+
+    expect(result).toMatchObject({ created: false, record: { id: "request-winner" } });
+    expect(attempts).toBe(2);
+    expect(reread).not.toHaveBeenCalled();
+    expect(sessions[0]!.endSession).toHaveBeenCalledOnce();
+    expect(sessions[1]!.endSession).toHaveBeenCalledOnce();
+  });
+
+  it("uses the same atomic shape for active project grants", async () => {
+    const record = {
+      _id: "grant-existing",
+      projectId: "project-1",
+      userId: "user-1",
+      module: "design",
+      source: "access_request",
+      accessRequestId: "request-1",
+      grantedById: "admin-1",
+      active: true,
+      grantedAt: new Date("2026-08-17T10:00:00.000Z"),
+      __v: 0,
+      createdAt: new Date("2026-08-17T10:00:00.000Z"),
+      updatedAt: new Date("2026-08-17T10:00:00.000Z")
+    };
+    const upsert = vi.spyOn(ProjectAccessGrantModel, "findOneAndUpdate").mockReturnValueOnce({
+      lean: () => ({
+        exec: vi.fn().mockResolvedValue({ value: record, lastErrorObject: {} })
+      })
+    } as never);
+
+    const result = await createMongoRepository().findOrCreateActiveProjectAccessGrant({
+      id: "grant-candidate",
+      projectId: record.projectId,
+      userId: record.userId,
+      module: "design",
+      source: "access_request",
+      accessRequestId: "request-2",
+      grantedById: "admin-1",
+      grantedAt: record.grantedAt.toISOString(),
+      createdAt: record.createdAt.toISOString(),
+      updatedAt: record.updatedAt.toISOString()
+    });
+
+    expect(result).toMatchObject({ created: false, record: { id: record._id, version: 1 } });
+    expect(upsert).toHaveBeenCalledWith(
+      { userId: "user-1", projectId: "project-1", module: "design", active: true },
+      { $setOnInsert: expect.objectContaining({ _id: "grant-candidate", __v: 0 }) },
+      expect.objectContaining({ upsert: true, new: true })
+    );
+  });
+
   it.each(["client signup", "project creation"])(
     "retries the complete %s transaction after a first-use coordination duplicate",
     async (workflow) => {

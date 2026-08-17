@@ -2,6 +2,8 @@ import { randomUUID } from "node:crypto";
 import mongoose, { type ClientSession, type Model, type PipelineStage } from "mongoose";
 import { normalizeEmail } from "../domain/email.js";
 import { projectAccessScopeForUser } from "../domain/project-access.js";
+import { AccessRequestModel } from "../models/AccessRequest.js";
+import { AuthorizationCoordinationModel } from "../models/AuthorizationCoordination.js";
 import { AuditEventModel } from "../models/AuditEvent.js";
 import { DesignStageModel } from "../models/DesignStage.js";
 import { DesignExtractionJobModel } from "../models/DesignExtractionJob.js";
@@ -16,6 +18,7 @@ import { FloorModel } from "../models/Floor.js";
 import { LeadModel } from "../models/Lead.js";
 import { LeadActivityModel } from "../models/LeadActivity.js";
 import { ProjectModel } from "../models/Project.js";
+import { ProjectAccessGrantModel } from "../models/ProjectAccessGrant.js";
 import { TaskModel } from "../models/Task.js";
 import { TaskEventModel } from "../models/TaskEvent.js";
 import { UserModel } from "../models/User.js";
@@ -23,6 +26,8 @@ import {
   RepositoryConflictError,
   RepositoryNotFoundError,
   type AppRepository,
+  type AccessRequestFilters,
+  type AccessRequestRecord,
   type AuditEventRecord,
   type AuditFilters,
   type DesignExtractionJobRecord,
@@ -37,10 +42,13 @@ import {
   type LeadRecord,
   type ManagerTreeNode,
   type NewUser,
+  type NewAccessRequest,
+  type NewProjectAccessGrant,
   type NewDesignExtractionJob,
   type NewDesignVersion,
   type ProjectHierarchy,
   type ProjectRecord,
+  type ProjectAccessGrantRecord,
   type TaskEventRecord,
   type TaskRecord,
   type UserRecord
@@ -113,6 +121,310 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
       );
       if (session) query.session(session);
       await query.exec();
+    },
+
+    async coordinateAuthorizationMutation() {
+      const query = AuthorizationCoordinationModel.updateOne(
+        { _id: "authorization" },
+        {
+          $inc: { revision: 1 },
+          $set: { updatedAt: new Date() }
+        },
+        { upsert: true }
+      );
+      if (session) query.session(session);
+      await query.exec();
+    },
+
+    async findAccessRequestById(id) {
+      const query = AccessRequestModel.findById(id);
+      if (session) query.session(session);
+      const document = await query.lean().exec();
+      return document ? mapAccessRequest(document) : null;
+    },
+
+    async findPendingAccessRequest(requesterId, projectId, module) {
+      const query = AccessRequestModel.findOne({
+        requesterId,
+        projectId,
+        module,
+        status: "pending"
+      });
+      if (session) query.session(session);
+      const document = await query.lean().exec();
+      return document ? mapAccessRequest(document) : null;
+    },
+
+    async createAccessRequest(input: NewAccessRequest) {
+      return runAuthorizationWrite(session, "Access request", async () => {
+        const document = await createDocument(
+          AccessRequestModel,
+          accessRequestForMongo(input, input.id ?? randomUUID()),
+          session
+        );
+        return mapAccessRequest(document.toObject());
+      });
+    },
+
+    async findOrCreatePendingAccessRequest(input: NewAccessRequest) {
+      const candidateId = input.id ?? randomUUID();
+      return runAuthorizationWrite(session, "Access request", async () => {
+        const result = await AccessRequestModel.findOneAndUpdate(
+          {
+            requesterId: input.requesterId,
+            projectId: input.projectId,
+            module: input.module,
+            status: "pending"
+          },
+          {
+            $setOnInsert: accessRequestForMongo(input, candidateId)
+          },
+          {
+            upsert: true,
+            new: true,
+            includeResultMetadata: true,
+            ...(session ? { session } : {})
+          }
+        ).lean().exec();
+        if (!result.value) {
+          throw new Error("Pending request upsert returned no row.");
+        }
+        return {
+          record: mapAccessRequest(result.value),
+          created: result.lastErrorObject?.upserted !== undefined
+        };
+      });
+    },
+
+    async transitionAccessRequest(id, expectedVersion, change) {
+      const query = AccessRequestModel.findOneAndUpdate(
+        { _id: id, status: "pending", __v: expectedVersion - 1 },
+        {
+          $set: {
+            ...change,
+            reviewedAt: change.reviewedAt ? date(change.reviewedAt) : null,
+            updatedAt: date(change.updatedAt)
+          },
+          $inc: { __v: 1 }
+        },
+        { new: true, runValidators: true }
+      );
+      if (session) query.session(session);
+      const document = await query.lean().exec();
+      if (document) return mapAccessRequest(document);
+      const exists = AccessRequestModel.exists({ _id: id });
+      if (session) exists.session(session);
+      if (!(await exists.exec())) {
+        throw new RepositoryNotFoundError(`Access request ${id} was not found.`);
+      }
+      throw new RepositoryConflictError(
+        `Access request ${id} cannot transition at version ${expectedVersion}.`
+      );
+    },
+
+    async pageAccessRequestsForRequester(requesterId, filters, pagination) {
+      return pageAccessRequests(
+        { requesterId, ...accessRequestFilter(filters) },
+        pagination,
+        session
+      );
+    },
+
+    async pageAccessRequestsForReview(scope, filters, pagination) {
+      const filter = accessRequestFilter(filters);
+      if (scope.kind === "global") {
+        return pageAccessRequests(filter, pagination, session);
+      }
+      const pipeline: PipelineStage[] = [
+        { $match: filter },
+        {
+          $lookup: {
+            from: ProjectAccessGrantModel.collection.name,
+            let: { requestProjectId: "$projectId" },
+            pipeline: [
+              {
+                $match: {
+                  $expr: { $eq: ["$projectId", "$$requestProjectId"] },
+                  userId: scope.adminId,
+                  module: "projects",
+                  source: "admin_initiator",
+                  active: true
+                }
+              },
+              { $limit: 1 }
+            ],
+            as: "initiatorGrants"
+          }
+        },
+        {
+          $lookup: {
+            from: ProjectModel.collection.name,
+            localField: "projectId",
+            foreignField: "_id",
+            as: "existingProjects"
+          }
+        },
+        {
+          $match: {
+            "initiatorGrants.0": { $exists: true },
+            "existingProjects.0": { $exists: true }
+          }
+        },
+        {
+          $facet: {
+            items: [
+              { $sort: { createdAt: -1, _id: -1 } },
+              { $skip: pagination.offset },
+              { $limit: pagination.limit },
+              { $project: { initiatorGrants: 0, existingProjects: 0 } }
+            ],
+            count: [{ $count: "total" }]
+          }
+        }
+      ];
+      const aggregate = AccessRequestModel.aggregate(pipeline);
+      if (session) aggregate.session(session);
+      const [result] = await aggregate.exec();
+      return {
+        items: (result?.items ?? []).map(mapAccessRequest),
+        total: result?.count?.[0]?.total ?? 0
+      };
+    },
+
+    async findProjectAccessGrantById(id) {
+      const query = ProjectAccessGrantModel.findById(id);
+      if (session) query.session(session);
+      const document = await query.lean().exec();
+      return document ? mapProjectAccessGrant(document) : null;
+    },
+
+    async findProjectAccessGrantByAccessRequestId(accessRequestId) {
+      const query = ProjectAccessGrantModel.findOne({ accessRequestId });
+      if (session) query.session(session);
+      const document = await query.lean().exec();
+      return document ? mapProjectAccessGrant(document) : null;
+    },
+
+    async findActiveProjectAccessGrant(userId, projectId, module) {
+      const query = ProjectAccessGrantModel.findOne({
+        userId,
+        projectId,
+        module,
+        active: true
+      });
+      if (session) query.session(session);
+      const document = await query.lean().exec();
+      return document ? mapProjectAccessGrant(document) : null;
+    },
+
+    async listActiveProjectAccessGrants(userId, module) {
+      const query = ProjectAccessGrantModel.find({ userId, module, active: true })
+        .sort({ projectId: 1, _id: 1 });
+      if (session) query.session(session);
+      const documents = await query.lean().exec();
+      return documents.map(mapProjectAccessGrant);
+    },
+
+    async createProjectAccessGrant(input: NewProjectAccessGrant) {
+      return runAuthorizationWrite(session, "Project access grant", async () => {
+        const document = await createDocument(
+          ProjectAccessGrantModel,
+          projectAccessGrantForMongo(input, input.id ?? randomUUID()),
+          session
+        );
+        return mapProjectAccessGrant(document.toObject());
+      });
+    },
+
+    async findOrCreateActiveProjectAccessGrant(input: NewProjectAccessGrant) {
+      const candidateId = input.id ?? randomUUID();
+      return runAuthorizationWrite(session, "Project access grant", async () => {
+        const result = await ProjectAccessGrantModel.findOneAndUpdate(
+          {
+            userId: input.userId,
+            projectId: input.projectId,
+            module: input.module,
+            active: true
+          },
+          {
+            $setOnInsert: projectAccessGrantForMongo(input, candidateId)
+          },
+          {
+            upsert: true,
+            new: true,
+            includeResultMetadata: true,
+            ...(session ? { session } : {})
+          }
+        ).lean().exec();
+        if (!result.value) {
+          throw new Error("Active project grant upsert returned no row.");
+        }
+        return {
+          record: mapProjectAccessGrant(result.value),
+          created: result.lastErrorObject?.upserted !== undefined
+        };
+      });
+    },
+
+    async revokeProjectAccessGrant(id, expectedVersion, change) {
+      const query = ProjectAccessGrantModel.findOneAndUpdate(
+        { _id: id, active: true, __v: expectedVersion - 1 },
+        {
+          $set: {
+            active: false,
+            revokedAt: date(change.revokedAt),
+            revokedById: change.revokedById,
+            revocationReason: change.revocationReason.trim(),
+            updatedAt: date(change.updatedAt)
+          },
+          $inc: { __v: 1 }
+        },
+        { new: true, runValidators: true }
+      );
+      if (session) query.session(session);
+      const document = await query.lean().exec();
+      if (document) return mapProjectAccessGrant(document);
+      const exists = ProjectAccessGrantModel.exists({ _id: id });
+      if (session) exists.session(session);
+      if (!(await exists.exec())) {
+        throw new RepositoryNotFoundError(`Project access grant ${id} was not found.`);
+      }
+      throw new RepositoryConflictError(
+        `Project access grant ${id} cannot be revoked at version ${expectedVersion}.`
+      );
+    },
+
+    async revokeActiveProjectAccessGrantsForUser(userId, change) {
+      const beforeQuery = ProjectAccessGrantModel.find({ userId, active: true }).select({ _id: 1 });
+      if (session) beforeQuery.session(session);
+      const before = await beforeQuery.lean().exec();
+      if (before.length === 0) return [];
+      const ids = before.map((document) => document._id);
+      const update = ProjectAccessGrantModel.updateMany(
+        { _id: { $in: ids }, active: true },
+        {
+          $set: {
+            active: false,
+            revokedAt: date(change.revokedAt),
+            revokedById: change.revokedById,
+            revocationReason: change.revocationReason.trim(),
+            updatedAt: date(change.updatedAt)
+          },
+          $inc: { __v: 1 }
+        },
+        { runValidators: true }
+      );
+      if (session) update.session(session);
+      await update.exec();
+      const afterQuery = ProjectAccessGrantModel.find({
+        _id: { $in: ids },
+        active: false,
+        revokedAt: date(change.revokedAt),
+        revokedById: change.revokedById
+      }).sort({ projectId: 1, _id: 1 });
+      if (session) afterQuery.session(session);
+      const after = await afterQuery.lean().exec();
+      return after.map(mapProjectAccessGrant);
     },
 
     async findUserById(id) {
@@ -1558,6 +1870,88 @@ async function createMongoDocument<T>(
   }
 }
 
+async function runAuthorizationWrite<T>(
+  session: ClientSession | undefined,
+  label: string,
+  operation: () => Promise<T>
+): Promise<T> {
+  try {
+    return await operation();
+  } catch (error) {
+    if (!session && isMongoDuplicateKeyError(error)) {
+      throw new RepositoryConflictError(`${label} already exists.`);
+    }
+    throw error;
+  }
+}
+
+function accessRequestForMongo(input: NewAccessRequest, id: string): PlainDocument {
+  return {
+    _id: id,
+    requesterId: input.requesterId,
+    projectId: input.projectId,
+    module: input.module,
+    reason: input.reason.trim(),
+    status: "pending",
+    reviewerId: null,
+    decisionReason: null,
+    decisionFingerprint: null,
+    approvedGrantId: null,
+    reviewedAt: null,
+    __v: 0,
+    createdAt: date(input.createdAt),
+    updatedAt: date(input.updatedAt)
+  };
+}
+
+function projectAccessGrantForMongo(
+  input: NewProjectAccessGrant,
+  id: string
+): PlainDocument {
+  return {
+    _id: id,
+    projectId: input.projectId,
+    userId: input.userId,
+    module: input.module,
+    source: input.source,
+    accessRequestId: input.accessRequestId,
+    grantedById: input.grantedById,
+    active: true,
+    grantedAt: date(input.grantedAt),
+    revokedAt: null,
+    revokedById: null,
+    revocationReason: null,
+    __v: 0,
+    createdAt: date(input.createdAt),
+    updatedAt: date(input.updatedAt)
+  };
+}
+
+function accessRequestFilter(filters: AccessRequestFilters): PlainDocument {
+  return compactFilter({ status: filters.status, module: filters.module });
+}
+
+async function pageAccessRequests(
+  filter: PlainDocument,
+  pagination: { limit: number; offset: number },
+  session?: ClientSession
+) {
+  const documentsQuery = AccessRequestModel.find(filter)
+    .sort({ createdAt: -1, _id: -1 })
+    .skip(pagination.offset)
+    .limit(pagination.limit);
+  const countQuery = AccessRequestModel.countDocuments(filter);
+  if (session) {
+    documentsQuery.session(session);
+    countQuery.session(session);
+  }
+  const [documents, total] = await Promise.all([
+    documentsQuery.lean().exec(),
+    countQuery.exec()
+  ]);
+  return { items: documents.map(mapAccessRequest), total };
+}
+
 function isMongoDuplicateKeyError(error: unknown): boolean {
   return (
     typeof error === "object" &&
@@ -1691,6 +2085,45 @@ function mapUser(document: PlainDocument): UserRecord {
     authorizedClientIds: [...(document.authorizedClientIds ?? [])],
     ...(document.avatar ? { avatar: document.avatar } : {}),
     ...(document.title ? { title: document.title } : {}),
+    createdAt: iso(document.createdAt),
+    updatedAt: iso(document.updatedAt)
+  };
+}
+
+function mapAccessRequest(document: PlainDocument): AccessRequestRecord {
+  return {
+    id: idOf(document),
+    requesterId: document.requesterId,
+    projectId: document.projectId,
+    module: document.module,
+    reason: document.reason,
+    status: document.status,
+    reviewerId: document.reviewerId ?? null,
+    decisionReason: document.decisionReason ?? null,
+    decisionFingerprint: document.decisionFingerprint ?? null,
+    approvedGrantId: document.approvedGrantId ?? null,
+    reviewedAt: nullableIso(document.reviewedAt),
+    version: (document.__v ?? 0) + 1,
+    createdAt: iso(document.createdAt),
+    updatedAt: iso(document.updatedAt)
+  };
+}
+
+function mapProjectAccessGrant(document: PlainDocument): ProjectAccessGrantRecord {
+  return {
+    id: idOf(document),
+    projectId: document.projectId,
+    userId: document.userId,
+    module: document.module,
+    source: document.source,
+    accessRequestId: document.accessRequestId ?? null,
+    grantedById: document.grantedById,
+    active: document.active,
+    grantedAt: iso(document.grantedAt),
+    revokedAt: nullableIso(document.revokedAt),
+    revokedById: document.revokedById ?? null,
+    revocationReason: document.revocationReason ?? null,
+    version: (document.__v ?? 0) + 1,
     createdAt: iso(document.createdAt),
     updatedAt: iso(document.updatedAt)
   };

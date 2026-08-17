@@ -1081,4 +1081,29 @@ describe("memory repository", () => {
 
     expect(new Set(levels)).toEqual(new Set(["gray", "green", "yellow", "red"]));
   });
+
+  it("enforces pending-request and active-grant partial uniqueness in seed snapshots", () => {
+    const seed = structuredClone(demoSeedData);
+    const pending = {
+      id: "request-seed-1",
+      requesterId: "user-designer-ananya",
+      projectId: "project-aurora-villa",
+      module: "design" as const,
+      reason: "Need access",
+      status: "pending" as const,
+      reviewerId: null,
+      decisionReason: null,
+      decisionFingerprint: null,
+      approvedGrantId: null,
+      reviewedAt: null,
+      version: 1,
+      createdAt: "2026-08-17T10:00:00.000Z",
+      updatedAt: "2026-08-17T10:00:00.000Z"
+    };
+    seed.accessRequests.push(pending, { ...pending, id: "request-seed-2" });
+
+    expect(() => createMemoryRepository(seed)).toThrow(RepositoryConflictError);
+    expect(demoSeedData.accessRequests).toEqual([]);
+    expect(demoSeedData.projectAccessGrants).toEqual([]);
+  });
 });

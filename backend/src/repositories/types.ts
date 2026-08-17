@@ -1,4 +1,8 @@
 import type { Role, TaskStatus } from "../contracts/domain.js";
+import type {
+  ProjectModule,
+  RequestableProjectModule
+} from "../domain/authorization.js";
 
 export type ProjectStatus = "planning" | "active" | "on_hold" | "completed";
 
@@ -465,6 +469,107 @@ export interface PageResult<T> {
   total: number;
 }
 
+export type AccessRequestStatus =
+  | "pending"
+  | "approved"
+  | "rejected"
+  | "cancelled";
+
+export interface AccessRequestRecord {
+  id: string;
+  requesterId: string;
+  projectId: string;
+  module: RequestableProjectModule;
+  reason: string;
+  status: AccessRequestStatus;
+  reviewerId: string | null;
+  decisionReason: string | null;
+  decisionFingerprint: string | null;
+  approvedGrantId: string | null;
+  reviewedAt: string | null;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ProjectAccessGrantRecord {
+  id: string;
+  projectId: string;
+  userId: string;
+  module: ProjectModule;
+  source: "access_request" | "direct_assignment" | "admin_initiator";
+  accessRequestId: string | null;
+  grantedById: string;
+  active: boolean;
+  grantedAt: string;
+  revokedAt: string | null;
+  revokedById: string | null;
+  revocationReason: string | null;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type NewAccessRequest = Pick<
+  AccessRequestRecord,
+  "requesterId" | "projectId" | "module" | "reason"
+> & { id?: string; createdAt: string; updatedAt: string };
+
+export type AccessRequestTransition =
+  | {
+      status: "approved";
+      reviewerId: string;
+      decisionReason: null;
+      decisionFingerprint: string;
+      approvedGrantId: string;
+      reviewedAt: string;
+      updatedAt: string;
+    }
+  | {
+      status: "rejected";
+      reviewerId: string;
+      decisionReason: string;
+      decisionFingerprint: string;
+      approvedGrantId: null;
+      reviewedAt: string;
+      updatedAt: string;
+    }
+  | {
+      status: "cancelled";
+      reviewerId: null;
+      decisionReason: null;
+      decisionFingerprint: null;
+      approvedGrantId: null;
+      reviewedAt: null;
+      updatedAt: string;
+    };
+
+export interface AccessRequestFilters {
+  status?: AccessRequestStatus;
+  module?: RequestableProjectModule;
+}
+
+export type AccessRequestReviewScope =
+  | { kind: "global" }
+  | { kind: "admin_initiator"; adminId: string };
+
+export type NewProjectAccessGrant = Pick<
+  ProjectAccessGrantRecord,
+  | "projectId"
+  | "userId"
+  | "module"
+  | "source"
+  | "accessRequestId"
+  | "grantedById"
+> & { id?: string; grantedAt: string; createdAt: string; updatedAt: string };
+
+export interface GrantRevocation {
+  revokedAt: string;
+  revokedById: string;
+  revocationReason: string;
+  updatedAt: string;
+}
+
 export interface SeedData {
   users: UserRecord[];
   leads: LeadRecord[];
@@ -481,6 +586,8 @@ export interface SeedData {
   designSectionRevisions: DesignSectionRevisionRecord[];
   evaluations: EvaluationRecord[];
   auditEvents: AuditEventRecord[];
+  accessRequests: AccessRequestRecord[];
+  projectAccessGrants: ProjectAccessGrantRecord[];
 }
 
 export type NewProject = ProjectRecord;
@@ -510,6 +617,60 @@ export interface AppRepository {
     operation: (repository: AppRepository) => Promise<T>
   ): Promise<T>;
   coordinateClientEmail(emailNormalized: string): Promise<void>;
+  coordinateAuthorizationMutation(): Promise<void>;
+  findAccessRequestById(id: string): Promise<AccessRequestRecord | null>;
+  findPendingAccessRequest(
+    requesterId: string,
+    projectId: string,
+    module: RequestableProjectModule
+  ): Promise<AccessRequestRecord | null>;
+  createAccessRequest(input: NewAccessRequest): Promise<AccessRequestRecord>;
+  findOrCreatePendingAccessRequest(
+    input: NewAccessRequest
+  ): Promise<{ record: AccessRequestRecord; created: boolean }>;
+  transitionAccessRequest(
+    id: string,
+    expectedVersion: number,
+    change: AccessRequestTransition
+  ): Promise<AccessRequestRecord>;
+  pageAccessRequestsForRequester(
+    requesterId: string,
+    filters: AccessRequestFilters,
+    pagination: PaginationInput
+  ): Promise<PageResult<AccessRequestRecord>>;
+  pageAccessRequestsForReview(
+    scope: AccessRequestReviewScope,
+    filters: AccessRequestFilters,
+    pagination: PaginationInput
+  ): Promise<PageResult<AccessRequestRecord>>;
+  findProjectAccessGrantById(id: string): Promise<ProjectAccessGrantRecord | null>;
+  findProjectAccessGrantByAccessRequestId(
+    accessRequestId: string
+  ): Promise<ProjectAccessGrantRecord | null>;
+  findActiveProjectAccessGrant(
+    userId: string,
+    projectId: string,
+    module: ProjectModule
+  ): Promise<ProjectAccessGrantRecord | null>;
+  listActiveProjectAccessGrants(
+    userId: string,
+    module: ProjectModule
+  ): Promise<ProjectAccessGrantRecord[]>;
+  createProjectAccessGrant(
+    input: NewProjectAccessGrant
+  ): Promise<ProjectAccessGrantRecord>;
+  findOrCreateActiveProjectAccessGrant(
+    input: NewProjectAccessGrant
+  ): Promise<{ record: ProjectAccessGrantRecord; created: boolean }>;
+  revokeProjectAccessGrant(
+    id: string,
+    expectedVersion: number,
+    change: GrantRevocation
+  ): Promise<ProjectAccessGrantRecord>;
+  revokeActiveProjectAccessGrantsForUser(
+    userId: string,
+    change: GrantRevocation
+  ): Promise<ProjectAccessGrantRecord[]>;
   findUserById(id: string): Promise<UserRecord | null>;
   findUserByEmail(email: string): Promise<UserRecord | null>;
   createUser(input: NewUser): Promise<UserRecord>;

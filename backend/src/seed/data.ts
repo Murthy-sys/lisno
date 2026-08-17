@@ -509,5 +509,7 @@ export const demoSeedData: SeedData = {
       reason: null,
       createdAt: "2026-07-14T09:00:00.000Z"
     }
-  ]
+  ],
+  accessRequests: [],
+  projectAccessGrants: []
 };

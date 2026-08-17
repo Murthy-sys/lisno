@@ -2,6 +2,10 @@ import { AsyncLocalStorage } from "node:async_hooks";
 
 import { normalizeEmail } from "../domain/email.js";
 import {
+  PROJECT_MODULES,
+  REQUESTABLE_PROJECT_MODULES
+} from "../domain/authorization.js";
+import {
   projectAccessScopeForUser,
   projectIsInAccessScope
 } from "../domain/project-access.js";
@@ -10,6 +14,8 @@ import {
   RepositoryConflictError,
   RepositoryNotFoundError,
   type AppRepository,
+  type AccessRequestRecord,
+  type AccessRequestTransition,
   type AuditEventRecord,
   type AuditFilters,
   type DesignExtractionJobRecord,
@@ -24,9 +30,12 @@ import {
   type LeadActivityRecord,
   type LeadRecord,
   type ManagerTreeNode,
+  type NewAccessRequest,
+  type NewProjectAccessGrant,
   type NewUser,
   type ProjectHierarchy,
   type ProjectRecord,
+  type ProjectAccessGrantRecord,
   type SeedData,
   type TaskEventRecord,
   type TaskFilters,
@@ -57,6 +66,14 @@ interface MemorySnapshot {
 const snapshotReaders = new WeakMap<AppRepository, () => MemorySnapshot>();
 const mutationMethods = new Set<keyof AppRepository>([
   "coordinateClientEmail",
+  "coordinateAuthorizationMutation",
+  "createAccessRequest",
+  "findOrCreatePendingAccessRequest",
+  "transitionAccessRequest",
+  "createProjectAccessGrant",
+  "findOrCreateActiveProjectAccessGrant",
+  "revokeProjectAccessGrant",
+  "revokeActiveProjectAccessGrantsForUser",
   "createProject",
   "createLead",
   "updateLead",
@@ -90,6 +107,7 @@ const mutationMethods = new Set<keyof AppRepository>([
 ]);
 
 export function createMemoryRepository(seed: SeedData = demoSeedData): AppRepository {
+  assertAuthorizationUniqueness(seed);
   return buildMemoryRepository({
     state: clone(seed),
     counters: new Map(),
@@ -155,6 +173,7 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
           operation(transactionView)
         );
         const committed = snapshotReaders.get(transactionRepository)!();
+        assertAuthorizationUniqueness(committed.state);
         state = committed.state;
         timestamp = committed.timestamp;
         counters.clear();
@@ -167,6 +186,249 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
 
     async coordinateClientEmail(emailNormalized) {
       normalizeEmail(emailNormalized);
+    },
+
+    async coordinateAuthorizationMutation() {
+      // The memory repository's write lock is the coordination record equivalent.
+    },
+
+    async findAccessRequestById(id) {
+      return copyOrNull(state.accessRequests.find((request) => request.id === id));
+    },
+
+    async findPendingAccessRequest(requesterId, projectId, module) {
+      return copyOrNull(
+        state.accessRequests.find(
+          (request) =>
+            request.requesterId === requesterId &&
+            request.projectId === projectId &&
+            request.module === module &&
+            request.status === "pending"
+        )
+      );
+    },
+
+    async createAccessRequest(input: NewAccessRequest) {
+      const normalized = normalizeNewAccessRequest(
+        input,
+        input.id ?? nextId("access-request")
+      );
+      ensureUniqueId(state.accessRequests, normalized.id, "Access request");
+      if (
+        state.accessRequests.some(
+          (request) =>
+            request.status === "pending" &&
+            request.requesterId === normalized.requesterId &&
+            request.projectId === normalized.projectId &&
+            request.module === normalized.module
+        )
+      ) {
+        throw new RepositoryConflictError("Pending access request already exists.");
+      }
+      state.accessRequests.push(normalized);
+      return clone(normalized);
+    },
+
+    async findOrCreatePendingAccessRequest(input: NewAccessRequest) {
+      const existing = await implementation.findPendingAccessRequest(
+        input.requesterId,
+        input.projectId,
+        input.module
+      );
+      if (existing) return { record: existing, created: false };
+      return {
+        record: await implementation.createAccessRequest(input),
+        created: true
+      };
+    },
+
+    async transitionAccessRequest(
+      id,
+      expectedVersion,
+      change: AccessRequestTransition
+    ) {
+      const index = state.accessRequests.findIndex((request) => request.id === id);
+      if (index < 0) {
+        throw new RepositoryNotFoundError(`Access request ${id} was not found.`);
+      }
+      const current = state.accessRequests[index]!;
+      if (current.version !== expectedVersion || current.status !== "pending") {
+        throw new RepositoryConflictError(
+          `Access request ${id} cannot transition at version ${expectedVersion}.`
+        );
+      }
+      const transitioned: AccessRequestRecord = {
+        ...current,
+        ...clone(change),
+        version: current.version + 1
+      };
+      state.accessRequests[index] = transitioned;
+      return clone(transitioned);
+    },
+
+    async pageAccessRequestsForRequester(requesterId, filters, pagination) {
+      const requests = filteredAccessRequests(state.accessRequests, filters)
+        .filter((request) => request.requesterId === requesterId)
+        .sort(compareAccessRequestChronology);
+      return paginate(clone(requests), pagination);
+    },
+
+    async pageAccessRequestsForReview(scope, filters, pagination) {
+      let requests = filteredAccessRequests(state.accessRequests, filters);
+      if (scope.kind === "admin_initiator") {
+        const existingProjects = new Set(state.projects.map((project) => project.id));
+        const projectIds = new Set(
+          state.projectAccessGrants
+            .filter(
+              (grant) =>
+                grant.active &&
+                grant.userId === scope.adminId &&
+                grant.module === "projects" &&
+                grant.source === "admin_initiator" &&
+                existingProjects.has(grant.projectId)
+            )
+            .map((grant) => grant.projectId)
+        );
+        requests = requests.filter((request) => projectIds.has(request.projectId));
+      }
+      requests.sort(compareAccessRequestChronology);
+      return paginate(clone(requests), pagination);
+    },
+
+    async findProjectAccessGrantById(id) {
+      return copyOrNull(state.projectAccessGrants.find((grant) => grant.id === id));
+    },
+
+    async findProjectAccessGrantByAccessRequestId(accessRequestId) {
+      return copyOrNull(
+        state.projectAccessGrants.find(
+          (grant) => grant.accessRequestId === accessRequestId
+        )
+      );
+    },
+
+    async findActiveProjectAccessGrant(userId, projectId, module) {
+      return copyOrNull(
+        state.projectAccessGrants.find(
+          (grant) =>
+            grant.active &&
+            grant.userId === userId &&
+            grant.projectId === projectId &&
+            grant.module === module
+        )
+      );
+    },
+
+    async listActiveProjectAccessGrants(userId, module) {
+      return clone(
+        state.projectAccessGrants
+          .filter(
+            (grant) =>
+              grant.active && grant.userId === userId && grant.module === module
+          )
+          .sort(
+            (left, right) =>
+              left.projectId.localeCompare(right.projectId) ||
+              left.id.localeCompare(right.id)
+          )
+      );
+    },
+
+    async createProjectAccessGrant(input: NewProjectAccessGrant) {
+      const normalized = normalizeNewProjectAccessGrant(
+        input,
+        input.id ?? nextId("project-access-grant")
+      );
+      ensureUniqueId(state.projectAccessGrants, normalized.id, "Project access grant");
+      if (
+        normalized.accessRequestId !== null &&
+        state.projectAccessGrants.some(
+          (grant) => grant.accessRequestId === normalized.accessRequestId
+        )
+      ) {
+        throw new RepositoryConflictError("Access request grant already exists.");
+      }
+      if (
+        state.projectAccessGrants.some(
+          (grant) =>
+            grant.active &&
+            grant.userId === normalized.userId &&
+            grant.projectId === normalized.projectId &&
+            grant.module === normalized.module
+        )
+      ) {
+        throw new RepositoryConflictError("Active project access grant already exists.");
+      }
+      state.projectAccessGrants.push(normalized);
+      return clone(normalized);
+    },
+
+    async findOrCreateActiveProjectAccessGrant(input: NewProjectAccessGrant) {
+      const existing = await implementation.findActiveProjectAccessGrant(
+        input.userId,
+        input.projectId,
+        input.module
+      );
+      if (existing) return { record: existing, created: false };
+      return {
+        record: await implementation.createProjectAccessGrant(input),
+        created: true
+      };
+    },
+
+    async revokeProjectAccessGrant(id, expectedVersion, change) {
+      const index = state.projectAccessGrants.findIndex((grant) => grant.id === id);
+      if (index < 0) {
+        throw new RepositoryNotFoundError(`Project access grant ${id} was not found.`);
+      }
+      const current = state.projectAccessGrants[index]!;
+      if (!current.active || current.version !== expectedVersion) {
+        throw new RepositoryConflictError(
+          `Project access grant ${id} cannot be revoked at version ${expectedVersion}.`
+        );
+      }
+      const revocationReason = normalizeBoundedReason(
+        change.revocationReason,
+        "Revocation reason"
+      );
+      const revoked: ProjectAccessGrantRecord = {
+        ...current,
+        active: false,
+        revokedAt: change.revokedAt,
+        revokedById: change.revokedById,
+        revocationReason,
+        updatedAt: change.updatedAt,
+        version: current.version + 1
+      };
+      state.projectAccessGrants[index] = revoked;
+      return clone(revoked);
+    },
+
+    async revokeActiveProjectAccessGrantsForUser(userId, change) {
+      const revocationReason = normalizeBoundedReason(
+        change.revocationReason,
+        "Revocation reason"
+      );
+      const revoked: ProjectAccessGrantRecord[] = [];
+      for (let index = 0; index < state.projectAccessGrants.length; index += 1) {
+        const current = state.projectAccessGrants[index]!;
+        if (!current.active || current.userId !== userId) continue;
+        const next: ProjectAccessGrantRecord = {
+          ...current,
+          active: false,
+          revokedAt: change.revokedAt,
+          revokedById: change.revokedById,
+          revocationReason,
+          updatedAt: change.updatedAt,
+          version: current.version + 1
+        };
+        state.projectAccessGrants[index] = next;
+        revoked.push(clone(next));
+      }
+      return revoked.sort(
+        (left, right) =>
+          left.projectId.localeCompare(right.projectId) || left.id.localeCompare(right.id)
+      );
     },
 
     async findUserById(id) {
@@ -1371,6 +1633,141 @@ function copyOrNull<T>(value: T | undefined): T | null {
   return value === undefined ? null : clone(value);
 }
 
+const PROJECT_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+
+function normalizeNewAccessRequest(
+  input: NewAccessRequest,
+  id: string
+): AccessRequestRecord {
+  if (!PROJECT_ID_PATTERN.test(input.projectId)) {
+    throw new RepositoryConflictError("Access request project ID is invalid.");
+  }
+  if (!REQUESTABLE_PROJECT_MODULES.includes(input.module)) {
+    throw new RepositoryConflictError("Access request module is invalid.");
+  }
+  return {
+    id,
+    requesterId: input.requesterId,
+    projectId: input.projectId,
+    module: input.module,
+    reason: normalizeBoundedReason(input.reason, "Access request reason"),
+    status: "pending",
+    reviewerId: null,
+    decisionReason: null,
+    decisionFingerprint: null,
+    approvedGrantId: null,
+    reviewedAt: null,
+    version: 1,
+    createdAt: input.createdAt,
+    updatedAt: input.updatedAt
+  };
+}
+
+function normalizeNewProjectAccessGrant(
+  input: NewProjectAccessGrant,
+  id: string
+): ProjectAccessGrantRecord {
+  if (!PROJECT_ID_PATTERN.test(input.projectId)) {
+    throw new RepositoryConflictError("Project access grant project ID is invalid.");
+  }
+  if (!PROJECT_MODULES.includes(input.module)) {
+    throw new RepositoryConflictError("Project access grant module is invalid.");
+  }
+  if (
+    (input.source === "access_request" && input.accessRequestId === null) ||
+    (input.source !== "access_request" && input.accessRequestId !== null)
+  ) {
+    throw new RepositoryConflictError(
+      "accessRequestId is required only for access_request grants."
+    );
+  }
+  return {
+    id,
+    projectId: input.projectId,
+    userId: input.userId,
+    module: input.module,
+    source: input.source,
+    accessRequestId: input.accessRequestId,
+    grantedById: input.grantedById,
+    active: true,
+    grantedAt: input.grantedAt,
+    revokedAt: null,
+    revokedById: null,
+    revocationReason: null,
+    version: 1,
+    createdAt: input.createdAt,
+    updatedAt: input.updatedAt
+  };
+}
+
+function normalizeBoundedReason(value: string, label: string): string {
+  const normalized = value.trim();
+  if (normalized.length < 1 || normalized.length > 1000) {
+    throw new RepositoryConflictError(`${label} must contain 1 to 1000 characters.`);
+  }
+  return normalized;
+}
+
+function filteredAccessRequests(
+  requests: AccessRequestRecord[],
+  filters: { status?: AccessRequestRecord["status"]; module?: AccessRequestRecord["module"] }
+) {
+  return requests.filter(
+    (request) =>
+      (filters.status === undefined || request.status === filters.status) &&
+      (filters.module === undefined || request.module === filters.module)
+  );
+}
+
+function compareAccessRequestChronology(
+  left: AccessRequestRecord,
+  right: AccessRequestRecord
+) {
+  return byDateThenId("createdAt", right, left);
+}
+
+function assertAuthorizationUniqueness(seed: SeedData) {
+  const requestIds = new Set<string>();
+  const pendingTuples = new Set<string>();
+  for (const request of seed.accessRequests) {
+    if (requestIds.has(request.id)) {
+      throw new RepositoryConflictError(`Access request ${request.id} already exists.`);
+    }
+    requestIds.add(request.id);
+    if (request.status !== "pending") continue;
+    const tuple = JSON.stringify([
+      request.requesterId,
+      request.projectId,
+      request.module
+    ]);
+    if (pendingTuples.has(tuple)) {
+      throw new RepositoryConflictError("Pending access request already exists.");
+    }
+    pendingTuples.add(tuple);
+  }
+  const grantIds = new Set<string>();
+  const activeTuples = new Set<string>();
+  const accessRequestIds = new Set<string>();
+  for (const grant of seed.projectAccessGrants) {
+    if (grantIds.has(grant.id)) {
+      throw new RepositoryConflictError(`Project access grant ${grant.id} already exists.`);
+    }
+    grantIds.add(grant.id);
+    if (grant.accessRequestId !== null) {
+      if (accessRequestIds.has(grant.accessRequestId)) {
+        throw new RepositoryConflictError("Access request grant already exists.");
+      }
+      accessRequestIds.add(grant.accessRequestId);
+    }
+    if (!grant.active) continue;
+    const tuple = JSON.stringify([grant.userId, grant.projectId, grant.module]);
+    if (activeTuples.has(tuple)) {
+      throw new RepositoryConflictError("Active project access grant already exists.");
+    }
+    activeTuples.add(tuple);
+  }
+}
+
 function matchesTaskFilters(task: TaskRecord, filters: TaskFilters) {
   return (
     (filters.projectId === undefined || task.projectId === filters.projectId) &&
@@ -1477,7 +1874,9 @@ function latestTimestamp(seed: SeedData): number {
     ...seed.designSections.flatMap((record) => [record.createdAt, record.updatedAt]),
     ...seed.designSectionRevisions.map((record) => record.createdAt),
     ...seed.evaluations.map((record) => record.createdAt),
-    ...seed.auditEvents.map((record) => record.createdAt)
+    ...seed.auditEvents.map((record) => record.createdAt),
+    ...seed.accessRequests.flatMap((record) => [record.createdAt, record.updatedAt]),
+    ...seed.projectAccessGrants.flatMap((record) => [record.createdAt, record.updatedAt])
   ]
     .filter((value): value is string => value !== null && value !== undefined)
     .map((value) => new Date(value).getTime());
