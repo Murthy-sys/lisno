@@ -49,6 +49,42 @@ See [the workflow runbook](../docs/estimate-design-image-review.md) and
 [the worker README](../ocr-worker/README.md) for supported formats, native HEIF
 requirements, processing limits, and verification commands.
 
+## Local demo seed
+
+The demo seed is a destructive local reset. Its URI comes from `backend/.env`
+and must use a loopback `mongodb://` host and a database whose name exactly
+matches `DEMO_SEED_DATABASE`. With the example `lisno_demo` configuration, run:
+
+```bash
+NODE_ENV=development ALLOW_DEMO_SEED=true DEMO_SEED_DATABASE=lisno_demo npm run seed
+```
+
+The command refuses production, missing or non-exact opt-in flags, remote/SRV
+targets, production-like database names, and URI/database mismatches before it
+connects or loads models. It clears the authorized demo-domain collections
+before rebuilding deterministic fixtures. This command is not a production
+privileged-account bootstrap and must never be used to create production users.
+
+Every local demo account uses `LisnoDemo2026!`:
+
+| Role | Email |
+| --- | --- |
+| Designer | `ananya@lisno.example` |
+| Design manager | `aarav@lisno.example` |
+| Design head | `head@lisno.example` |
+| Client | `client@aurora.example` |
+| Super Admin | `super-admin@lisno.example` |
+| Admin | `admin@lisno.example` |
+| Procurement | `procurement@lisno.example` |
+| Finance Head | `finance-head@lisno.example` |
+| Site Manager | `site-manager@lisno.example` |
+| Electrician | `worker-electrician@lisno.example` |
+| Plumber | `worker-plumber@lisno.example` |
+| Carpenter | `worker-carpenter@lisno.example` |
+| Painter | `worker-painter@lisno.example` |
+| Civil Worker | `worker-civil@lisno.example` |
+| Other Worker | `worker-other@lisno.example` |
+
 ### Estimate design mapping migration
 
 Back up production first and verify the archive exists and is restorable before

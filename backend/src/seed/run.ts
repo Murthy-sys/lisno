@@ -1,18 +1,5 @@
-import "dotenv/config";
-
 import { pathToFileURL } from "node:url";
-import mongoose, { type Model } from "mongoose";
-import { loadEnvironment } from "../config/env.js";
-import { AuditEventModel } from "../models/AuditEvent.js";
-import { DesignStageModel } from "../models/DesignStage.js";
-import { DesignVersionModel } from "../models/DesignVersion.js";
-import { DesignVersionSequenceModel } from "../models/DesignVersionSequence.js";
-import { EvaluationModel } from "../models/Evaluation.js";
-import { FloorModel } from "../models/Floor.js";
-import { ProjectModel } from "../models/Project.js";
-import { TaskModel } from "../models/Task.js";
-import { TaskEventModel } from "../models/TaskEvent.js";
-import { UserModel } from "../models/User.js";
+import type { Model } from "mongoose";
 import type {
   AuditEventRecord,
   DesignStageRecord,
@@ -24,45 +11,153 @@ import type {
   TaskRecord,
   UserRecord
 } from "../repositories/types.js";
+import {
+  assertAuthorizedDemoSeedTarget,
+  authorizeDemoSeed,
+  loadDemoSeedEnvironment,
+  type DemoSeedAuthorization,
+  type LoadedDemoSeedEnvironment
+} from "./config.js";
 import { demoSeedData } from "./data.js";
 
 type MongoRecord = Record<string, unknown>;
 
-export async function seedMongoDatabase(): Promise<void> {
+export interface SeedModels {
+  user: Model<any>;
+  project: Model<any>;
+  floor: Model<any>;
+  designStage: Model<any>;
+  task: Model<any>;
+  taskEvent: Model<any>;
+  designVersion: Model<any>;
+  designVersionSequence: Model<any>;
+  evaluation: Model<any>;
+  auditEvent: Model<any>;
+  accessRequest: Model<any>;
+  projectAccessGrant: Model<any>;
+  authorizationCoordination: Model<any>;
+}
+
+interface SeedMongooseRuntime {
+  connection: { name: string };
+  connect(uri: string): Promise<unknown>;
+  disconnect(): Promise<unknown>;
+}
+
+interface SeedDatabaseDependencies {
+  loadMongoose?: () => Promise<Pick<SeedMongooseRuntime, "connection">>;
+  loadModels?: () => Promise<SeedModels>;
+}
+
+interface DemoSeedCommandDependencies {
+  loadEnvironment?: () => LoadedDemoSeedEnvironment;
+  loadMongoose?: () => Promise<SeedMongooseRuntime>;
+  loadModels?: () => Promise<SeedModels>;
+  writeOutput?: (message: string) => void;
+}
+
+async function importMongoose(): Promise<SeedMongooseRuntime> {
+  return (await import("mongoose")).default;
+}
+
+export async function loadSeedModels(): Promise<SeedModels> {
+  const [
+    user,
+    project,
+    floor,
+    designStage,
+    task,
+    taskEvent,
+    designVersion,
+    designVersionSequence,
+    evaluation,
+    auditEvent,
+    accessRequest,
+    projectAccessGrant,
+    authorizationCoordination
+  ] = await Promise.all([
+    import("../models/User.js"),
+    import("../models/Project.js"),
+    import("../models/Floor.js"),
+    import("../models/DesignStage.js"),
+    import("../models/Task.js"),
+    import("../models/TaskEvent.js"),
+    import("../models/DesignVersion.js"),
+    import("../models/DesignVersionSequence.js"),
+    import("../models/Evaluation.js"),
+    import("../models/AuditEvent.js"),
+    import("../models/AccessRequest.js"),
+    import("../models/ProjectAccessGrant.js"),
+    import("../models/AuthorizationCoordination.js")
+  ]);
+  return {
+    user: user.UserModel,
+    project: project.ProjectModel,
+    floor: floor.FloorModel,
+    designStage: designStage.DesignStageModel,
+    task: task.TaskModel,
+    taskEvent: taskEvent.TaskEventModel,
+    designVersion: designVersion.DesignVersionModel,
+    designVersionSequence: designVersionSequence.DesignVersionSequenceModel,
+    evaluation: evaluation.EvaluationModel,
+    auditEvent: auditEvent.AuditEventModel,
+    accessRequest: accessRequest.AccessRequestModel,
+    projectAccessGrant: projectAccessGrant.ProjectAccessGrantModel,
+    authorizationCoordination:
+      authorizationCoordination.AuthorizationCoordinationModel
+  };
+}
+
+export async function seedMongoDatabase(
+  authorization: DemoSeedAuthorization,
+  dependencies: SeedDatabaseDependencies = {}
+): Promise<void> {
+  const mongoose = await (dependencies.loadMongoose ?? importMongoose)();
+  assertAuthorizedDemoSeedTarget(authorization, mongoose.connection.name);
+  const models = await (dependencies.loadModels ?? loadSeedModels)();
+  await resetAuthorizedSeedCollections(models);
+}
+
+export async function resetAuthorizedSeedCollections(
+  models: SeedModels
+): Promise<void> {
   await Promise.all([
-    UserModel,
-    ProjectModel,
-    FloorModel,
-    DesignStageModel,
-    TaskModel,
-    TaskEventModel,
-    DesignVersionModel,
-    DesignVersionSequenceModel,
-    EvaluationModel,
-    AuditEventModel
+    models.user,
+    models.project,
+    models.floor,
+    models.designStage,
+    models.task,
+    models.taskEvent,
+    models.designVersion,
+    models.designVersionSequence,
+    models.evaluation,
+    models.auditEvent,
+    models.accessRequest,
+    models.projectAccessGrant,
+    models.authorizationCoordination
   ].map((model) => model.deleteMany({})));
-  await replaceAll(UserModel, demoSeedData.users, userDocument);
-  await replaceAll(ProjectModel, demoSeedData.projects, projectDocument);
-  await replaceAll(FloorModel, demoSeedData.floors, floorDocument);
-  await replaceAll(DesignStageModel, demoSeedData.stages, stageDocument);
-  await replaceAll(TaskModel, demoSeedData.tasks, taskDocument);
+  await replaceAll(models.user, demoSeedData.users, userDocument);
+  await replaceAll(models.project, demoSeedData.projects, projectDocument);
+  await replaceAll(models.floor, demoSeedData.floors, floorDocument);
+  await replaceAll(models.designStage, demoSeedData.stages, stageDocument);
+  await replaceAll(models.task, demoSeedData.tasks, taskDocument);
   await replaceAll(
-    DesignVersionModel,
+    models.designVersion,
     demoSeedData.designVersions,
     designVersionDocument
   );
   await resetAppendOnlyHistoryForSeed(
-    TaskEventModel,
+    models.taskEvent,
     demoSeedData.taskEvents,
     taskEventDocument
   );
   await resetAppendOnlyHistoryForSeed(
-    EvaluationModel,
+    models.evaluation,
     demoSeedData.evaluations,
     evaluationDocument
   );
   await resetAppendOnlyHistoryForSeed(
-    AuditEventModel,
+    models.auditEvent,
     demoSeedData.auditEvents,
     auditEventDocument
   );
@@ -211,12 +306,19 @@ function nullableDate(value: string | null): Date | null {
   return value ? date(value) : null;
 }
 
-async function main() {
-  const env = loadEnvironment();
+export async function runDemoSeedCommand(
+  dependencies: DemoSeedCommandDependencies = {}
+): Promise<void> {
+  const env = (dependencies.loadEnvironment ?? loadDemoSeedEnvironment)();
+  const authorization = authorizeDemoSeed(env, env.MONGODB_URI);
+  const mongoose = await (dependencies.loadMongoose ?? importMongoose)();
   await mongoose.connect(env.MONGODB_URI);
   try {
-    await seedMongoDatabase();
-    process.stdout.write(
+    await seedMongoDatabase(authorization, {
+      loadMongoose: async () => mongoose,
+      loadModels: dependencies.loadModels
+    });
+    (dependencies.writeOutput ?? process.stdout.write.bind(process.stdout))(
       `Seeded ${demoSeedData.users.length} users, ${demoSeedData.projects.length} projects, and ${demoSeedData.tasks.length} tasks.\n`
     );
   } finally {
@@ -226,7 +328,7 @@ async function main() {
 
 const entrypoint = process.argv[1] ? pathToFileURL(process.argv[1]).href : "";
 if (import.meta.url === entrypoint) {
-  main().catch((error: unknown) => {
+  runDemoSeedCommand().catch((error: unknown) => {
     const message = error instanceof Error ? error.stack ?? error.message : String(error);
     process.stderr.write(`${message}\n`);
     process.exitCode = 1;

@@ -137,28 +137,6 @@
   box-shadow: 0 9px 20px rgb(107 74 47 / 28%);
 }
 
-.login-page--signin .demo-helper {
-  border-color: var(--auth-line);
-  background: linear-gradient(145deg, #fdf8ee, #f6ecdb);
-  box-shadow: 0 8px 22px rgb(58 38 18 / 7%);
-}
-
-.login-page--signin .demo-helper > svg {
-  color: var(--auth-accent);
-}
-
-.login-page--signin .button--quiet {
-  border-color: rgb(169 121 63 / 30%);
-  background: rgb(255 253 248 / 82%);
-  color: var(--auth-accent);
-}
-
-.login-page--signin .button--quiet:hover:not(:disabled) {
-  border-color: rgb(169 121 63 / 52%);
-  background: #fffdf8;
-  color: #7a5122;
-}
-
 .login-page--signin .password-field__toggle:hover:not(:disabled) {
   background: #f6ecdb;
   color: var(--auth-accent);

@@ -198,10 +198,21 @@ describe("authentication API", () => {
   });
 
   it.each([
+    ["super_admin", "super-admin@lisno.example", "user-super-admin"],
+    ["admin", "admin@lisno.example", "user-admin"],
     ["designer", "ananya@lisno.example", "user-designer-ananya"],
     ["design_manager", "aarav@lisno.example", "user-manager-aarav"],
     ["design_head", "head@lisno.example", "user-head"],
     ["estimator_sales", "sales@lisno.example", "user-estimator-sales"],
+    ["procurement", "procurement@lisno.example", "user-procurement"],
+    ["finance_head", "finance-head@lisno.example", "user-finance-head"],
+    ["site_manager", "site-manager@lisno.example", "user-site-manager"],
+    ["worker_electrician", "worker-electrician@lisno.example", "user-worker-electrician"],
+    ["worker_plumber", "worker-plumber@lisno.example", "user-worker-plumber"],
+    ["worker_carpenter", "worker-carpenter@lisno.example", "user-worker-carpenter"],
+    ["worker_painter", "worker-painter@lisno.example", "user-worker-painter"],
+    ["worker_civil", "worker-civil@lisno.example", "user-worker-civil"],
+    ["worker_other", "worker-other@lisno.example", "user-worker-other"],
     ["client", "client@aurora.example", "user-client-aurora"]
   ] as const)("logs in the seeded %s account", async (role, email, id) => {
     const response = await request(createTestApp()).post("/api/v1/auth/login").send({

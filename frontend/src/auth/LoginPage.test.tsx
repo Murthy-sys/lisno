@@ -19,6 +19,10 @@ const primitiveStyles = readFileSync(
   resolve(process.cwd(), "src/styles/primitives.css"),
   "utf8"
 );
+const roleThemeStyles = readFileSync(
+  resolve(process.cwd(), "src/styles/role-themes.css"),
+  "utf8"
+);
 
 function cssRuleFrom(source: string, selector: string) {
   const escapedSelector = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -460,14 +464,6 @@ describe("LoginPage", () => {
       "gap: 0.65rem"
     );
 
-    const demoRule = cssRule(".login-page--signin .button--quiet");
-    expect(demoRule).toContain("min-height: 2.55rem");
-    expect(demoRule).toContain("padding: 0.72rem 1rem");
-    expect(demoRule).toContain("font-weight: 750");
-    expect(
-      cssRule(".login-page--signin .button--quiet:hover:not(:disabled)")
-    ).toContain("box-shadow: none");
-
     const toggleRule = cssRule(".login-page--signin .password-field__toggle");
     expect(toggleRule).toContain("width: 2.75rem");
     expect(toggleRule).toContain("height: 2.75rem");
@@ -477,6 +473,15 @@ describe("LoginPage", () => {
     );
     expect(toggleHoverRule).toContain("background: #f2effc");
     expect(toggleHoverRule).toContain("color: var(--color-lisno-violet)");
+  });
+
+  it("removes all dead demo-helper styling", () => {
+    expect(authStyles).not.toMatch(/\.demo-helper/);
+    expect(roleThemeStyles).not.toMatch(/\.demo-helper/);
+    expect(cssRule(".login-page--signin .button--quiet")).toBe("");
+    expect(
+      cssRule(".login-page--signin .button--quiet:hover:not(:disabled)")
+    ).toBe("");
   });
 
   it("toggles password visibility with an accessible pressed state", async () => {
@@ -493,18 +498,17 @@ describe("LoginPage", () => {
     );
   });
 
-  it("fills the seeded designer demo account without storing a password", async () => {
+  it("does not render or prefill local demo credentials", () => {
     renderApp(["/login"]);
 
-    await userEvent.click(
-      screen.getByRole("button", { name: "Use designer demo account" })
-    );
-
-    expect(screen.getByLabelText("Email address")).toHaveValue(
-      "ananya@lisno.example"
-    );
-    expect(screen.getByLabelText("Password")).toHaveValue(password);
-    expect(JSON.stringify(window.localStorage)).not.toContain(password);
+    expect(
+      screen.queryByRole("button", { name: "Use designer demo account" })
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText("Reviewing the demo?")).not.toBeInTheDocument();
+    expect(screen.queryByDisplayValue("ananya@lisno.example")).not.toBeInTheDocument();
+    expect(screen.queryByDisplayValue(password)).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Email address")).toHaveValue("");
+    expect(screen.getByLabelText("Password")).toHaveValue("");
   });
 
   it.each([

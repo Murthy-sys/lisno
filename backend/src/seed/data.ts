@@ -6,14 +6,13 @@ import type {
   UserRecord
 } from "../repositories/types.js";
 import { normalizeEmail } from "../domain/email.js";
+import {
+  DEMO_ROLE_ACCOUNTS,
+  DEMO_SEED_PASSWORD_HASH
+} from "./config.js";
 
 const CREATED_AT = "2026-06-01T08:00:00.000Z";
 const UPDATED_AT = "2026-07-15T08:00:00.000Z";
-
-// Demo login for every seeded account: password `LisnoDemo2026!`.
-// This precomputed hash keeps seed imports deterministic and side-effect free.
-const DEMO_PASSWORD_HASH =
-  "$2b$10$7EqJtq98hPqEX7fNZaFWoOhqP8D5iEyOH6v9mJEkjEBlrptHw28.O";
 
 const user = (
   input: Pick<UserRecord, "id" | "name" | "email" | "role"> &
@@ -27,7 +26,7 @@ const user = (
   emailNormalized: normalizeEmail(input.email),
   mobile: input.mobile ?? null,
   address: input.address ?? null,
-  passwordHash: DEMO_PASSWORD_HASH,
+  passwordHash: DEMO_SEED_PASSWORD_HASH,
   active: true,
   version: 1,
   managerId: input.managerId ?? null,
@@ -212,6 +211,8 @@ const users: UserRecord[] = [
     title: "Celeste Works"
   })
 ];
+
+users.push(...DEMO_ROLE_ACCOUNTS.map((account) => user(account)));
 
 const projects: ProjectRecord[] = [
   project({

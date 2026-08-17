@@ -22,7 +22,8 @@ Copy each workspace example environment file, then set a long JWT secret:
 
 ```bash
 cp backend/.env.example backend/.env
-cd backend && npm install && npm run seed
+cd backend && npm install
+NODE_ENV=development ALLOW_DEMO_SEED=true DEMO_SEED_DATABASE=lisno_demo npm run seed
 cd ../frontend && npm install
 cd ../ocr-worker && python3 -m venv .venv
 source .venv/bin/activate
@@ -32,9 +33,10 @@ python -m pip install -e ".[test,model]"
 The API defaults to `http://localhost:3000`; Vite defaults to
 `http://localhost:5173` and proxies local `/api` requests to the API, so local
 frontend development does not require an environment file. Uploaded files are
-stored under `backend/uploads` unless `UPLOADS_DIR` is changed. `npm run seed`
-loads the deterministic demo data and provides the accounts below. The backend
-loads `backend/.env` for its production `start` and seed commands.
+stored under `backend/uploads` unless `UPLOADS_DIR` is changed. The explicitly
+gated seed command loads deterministic demo data and provides the accounts
+below. The backend loads `backend/.env` for its production `start` and seed
+commands without overriding shell values.
 
 ## Start the application
 
@@ -71,6 +73,12 @@ atomically claims every unclaimed project with the same normalized email, so
 capitalization and surrounding whitespace do not affect the match. Existing
 project contact snapshots remain unchanged. An email already used by an
 internal account cannot be selected as a project client.
+
+> Production blocker: this email-based claim flow does not yet verify control
+> of the client email address. Do not enable public production signup/project
+> claiming until email verification is enforced before a client can claim any
+> project. This warning documents the blocker without changing current Client
+> behavior.
 
 Designers choose the project manager from the active-manager search in the
 project creation dialog. The selection is independent of the designer's
@@ -138,15 +146,21 @@ In this application, a `section` record is an extracted UI/data record; it must
 not be confused with an architectural Section drawing, which is excluded from
 this title taxonomy.
 
-> Warning: `npm run seed` is an explicit demo-reset operation. It deletes all
-> records in Lisno's demo-domain collections (including design-version
-> sequences) before inserting the deterministic seed. Never run it against a
+> Warning: `npm run seed` is an explicit demo-reset operation. It requires
+> development/test, exact `ALLOW_DEMO_SEED=true`, a loopback `mongodb://` URI,
+> and an exact allowlisted `lisno_demo`/`lisno_test*` database match. It deletes
+> all records in the authorized demo-domain collections (including access
+> requests, project grants, authorization coordination, and design-version
+> sequences) before inserting deterministic fixtures. Never run it against a
 > production database.
 
 ## Environment variables
 
-Backend: `PORT`, `MONGODB_URI`, `JWT_SECRET`, `CORS_ORIGIN`, `UPLOADS_DIR`,
-`MAX_UPLOAD_MB`, `OCR_WORKER_TOKEN`, and `OCR_LEASE_SECONDS`. The worker uses
+Backend: `PORT`, `NODE_ENV`, `MONGODB_URI`, `JWT_SECRET`, `CORS_ORIGIN`,
+`UPLOADS_DIR`, `MAX_UPLOAD_MB`, `OCR_WORKER_TOKEN`, `OCR_LEASE_SECONDS`,
+`ALLOW_DEMO_SEED`, and `DEMO_SEED_DATABASE`. The two demo-seed variables are
+only for an intentional local destructive reset; the database name must match
+the URI exactly. The worker uses
 the matching token, `OCR_API_BASE_URL`, `OCR_POLL_SECONDS`, and
 `OCR_REQUEST_TIMEOUT_SECONDS`. `CORS_ORIGIN` is a comma-separated allow-list of
 full browser origins. The server connects to `MONGODB_URI` before listening and
@@ -163,6 +177,21 @@ All accounts use `LisnoDemo2026!`.
 - Design manager — `aarav@lisno.example`
 - Design head — `head@lisno.example`
 - Client — `client@aurora.example`
+- Super Admin — `super-admin@lisno.example`
+- Admin — `admin@lisno.example`
+- Procurement — `procurement@lisno.example`
+- Finance Head — `finance-head@lisno.example`
+- Site Manager — `site-manager@lisno.example`
+- Electrician — `worker-electrician@lisno.example`
+- Plumber — `worker-plumber@lisno.example`
+- Carpenter — `worker-carpenter@lisno.example`
+- Painter — `worker-painter@lisno.example`
+- Civil Worker — `worker-civil@lisno.example`
+- Other Worker — `worker-other@lisno.example`
+
+These deterministic local accounts are fixtures only. Seeding is not a
+production privileged-account bootstrap; provision production identities
+through a separately reviewed operational process.
 
 ## Roles and visibility
 

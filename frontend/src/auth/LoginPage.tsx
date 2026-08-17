@@ -1,4 +1,4 @@
-import { ArrowRight, Eye, EyeOff, Sparkles } from "lucide-react";
+import { ArrowRight, Eye, EyeOff } from "lucide-react";
 import { useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { Link, useLocation, useNavigate } from "react-router-dom";
@@ -20,11 +20,6 @@ const loginSchema = z.object({
 
 type LoginFields = z.infer<typeof loginSchema>;
 
-const DEMO_ACCOUNT: LoginFields = {
-  email: "ananya@lisno.example",
-  password: "LisnoDemo2026!"
-};
-
 export function LoginPage() {
   const auth = useAuth();
   const navigate = useNavigate();
@@ -38,7 +33,6 @@ export function LoginPage() {
     register,
     handleSubmit,
     setError,
-    setValue,
     formState: { errors, isSubmitting }
   } = useForm<LoginFields>({
     defaultValues: { email: "", password: "" }
@@ -89,13 +83,6 @@ export function LoginPage() {
       );
     }
   });
-
-  const fillDemoAccount = () => {
-    setValue("email", DEMO_ACCOUNT.email, { shouldValidate: true });
-    setValue("password", DEMO_ACCOUNT.password, { shouldValidate: true });
-    setSubmitError(null);
-    setValidationSummary([]);
-  };
 
   return (
     <main className="login-page login-page--signin">
@@ -243,21 +230,6 @@ export function LoginPage() {
             </Button>
           </form>
 
-          <div className="demo-helper">
-            <Sparkles aria-hidden="true" />
-            <div>
-              <strong>Reviewing the demo?</strong>
-              <p>Fill the seeded designer credentials in one step.</p>
-            </div>
-            <Button
-              type="button"
-              variant="quiet"
-              className="button--quiet"
-              onClick={fillDemoAccount}
-            >
-              Use designer demo account
-            </Button>
-          </div>
           <p className="auth-switch">
             New to Lisno? <Link to="/signup">Create a client account</Link>
           </p>
