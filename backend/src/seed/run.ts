@@ -39,7 +39,7 @@ export interface SeedModels {
 }
 
 interface SeedMongooseRuntime {
-  connection: { name: string };
+  connection: Model<any>["db"];
   connect(uri: string): Promise<unknown>;
   disconnect(): Promise<unknown>;
 }
@@ -60,7 +60,7 @@ async function importMongoose(): Promise<SeedMongooseRuntime> {
   return (await import("mongoose")).default;
 }
 
-export async function loadSeedModels(): Promise<SeedModels> {
+async function loadSeedModels(): Promise<SeedModels> {
   const [
     user,
     project,
@@ -115,10 +115,30 @@ export async function seedMongoDatabase(
   const mongoose = await (dependencies.loadMongoose ?? importMongoose)();
   assertAuthorizedDemoSeedTarget(authorization, mongoose.connection.name);
   const models = await (dependencies.loadModels ?? loadSeedModels)();
+  assertAuthorizedSeedModels(
+    models,
+    mongoose.connection,
+    authorization.databaseName
+  );
   await resetAuthorizedSeedCollections(models);
 }
 
-export async function resetAuthorizedSeedCollections(
+function assertAuthorizedSeedModels(
+  models: SeedModels,
+  connection: Model<any>["db"],
+  authorizedDatabaseName: string
+): void {
+  if (
+    Object.values(models).some(
+      (model) =>
+        model.db !== connection || model.db.name !== authorizedDatabaseName
+    )
+  ) {
+    throw new Error("Demo seed models do not match the authorized connection.");
+  }
+}
+
+async function resetAuthorizedSeedCollections(
   models: SeedModels
 ): Promise<void> {
   await Promise.all([

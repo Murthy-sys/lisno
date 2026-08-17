@@ -10,6 +10,7 @@ import {
   parseSingleHostMongoTarget
 } from "../src/seed/config.js";
 import { demoSeedData } from "../src/seed/data.js";
+import * as seedRunModule from "../src/seed/run.js";
 import { runDemoSeedCommand, seedMongoDatabase } from "../src/seed/run.js";
 
 const originalEnvironment = {
@@ -32,8 +33,25 @@ function restoreEnvironment(key: string, value: string | undefined) {
   else process.env[key] = value;
 }
 
-function fakeSeedModel(order: string[], name: string) {
+function setSeedEnvironment(environment: {
+  NODE_ENV?: string;
+  ALLOW_DEMO_SEED?: string;
+  DEMO_SEED_DATABASE?: string;
+  MONGODB_URI: string;
+}) {
+  for (const key of [
+    "NODE_ENV",
+    "ALLOW_DEMO_SEED",
+    "DEMO_SEED_DATABASE",
+    "MONGODB_URI"
+  ] as const) {
+    restoreEnvironment(key, environment[key]);
+  }
+}
+
+function fakeSeedModel(order: string[], name: string, db: object) {
   return {
+    db,
     deleteMany: vi.fn(async () => {
       order.push(`delete:${name}`);
       return {};
@@ -49,21 +67,21 @@ function fakeSeedModel(order: string[], name: string) {
   };
 }
 
-function fakeSeedModels(order: string[] = []) {
+function fakeSeedModels(order: string[] = [], db: object = { name: "lisno_demo" }) {
   const models = {
-    user: fakeSeedModel(order, "user"),
-    project: fakeSeedModel(order, "project"),
-    floor: fakeSeedModel(order, "floor"),
-    designStage: fakeSeedModel(order, "design-stage"),
-    task: fakeSeedModel(order, "task"),
-    taskEvent: fakeSeedModel(order, "task-event"),
-    designVersion: fakeSeedModel(order, "design-version"),
-    designVersionSequence: fakeSeedModel(order, "design-version-sequence"),
-    evaluation: fakeSeedModel(order, "evaluation"),
-    auditEvent: fakeSeedModel(order, "audit-event"),
-    accessRequest: fakeSeedModel(order, "access-request"),
-    projectAccessGrant: fakeSeedModel(order, "project-access-grant"),
-    authorizationCoordination: fakeSeedModel(order, "authorization-coordination")
+    user: fakeSeedModel(order, "user", db),
+    project: fakeSeedModel(order, "project", db),
+    floor: fakeSeedModel(order, "floor", db),
+    designStage: fakeSeedModel(order, "design-stage", db),
+    task: fakeSeedModel(order, "task", db),
+    taskEvent: fakeSeedModel(order, "task-event", db),
+    designVersion: fakeSeedModel(order, "design-version", db),
+    designVersionSequence: fakeSeedModel(order, "design-version-sequence", db),
+    evaluation: fakeSeedModel(order, "evaluation", db),
+    auditEvent: fakeSeedModel(order, "audit-event", db),
+    accessRequest: fakeSeedModel(order, "access-request", db),
+    projectAccessGrant: fakeSeedModel(order, "project-access-grant", db),
+    authorizationCoordination: fakeSeedModel(order, "authorization-coordination", db)
   };
   return {
     models,
@@ -78,7 +96,6 @@ function commandHarness(input: {
   MONGODB_URI: string;
 }) {
   const order: string[] = [];
-  const seedModels = fakeSeedModels(order);
   const loadEnvironment = vi.fn(() => input);
   const mongoose = {
     connection: { name: "" },
@@ -90,6 +107,7 @@ function commandHarness(input: {
       order.push("disconnect");
     })
   };
+  const seedModels = fakeSeedModels(order, mongoose.connection);
   const loadMongoose = vi.fn(async () => mongoose);
   const loadModels = vi.fn(async () => {
     order.push("load-models");
@@ -136,6 +154,7 @@ describe("demo seed authorization", () => {
     ["multi-host target", { NODE_ENV: "development", ALLOW_DEMO_SEED: "true", DEMO_SEED_DATABASE: "lisno_demo", MONGODB_URI: "mongodb://localhost,127.0.0.1/lisno_demo" }],
     ["malformed target", { NODE_ENV: "development", ALLOW_DEMO_SEED: "true", DEMO_SEED_DATABASE: "lisno_demo", MONGODB_URI: "not-a-mongo-uri" }]
   ])("rejects %s before connection, model loading, or mutation", async (_label, environment) => {
+    setSeedEnvironment(environment);
     const harness = commandHarness(environment);
 
     await expect(
@@ -155,6 +174,7 @@ describe("demo seed authorization", () => {
     ["test IPv4", { NODE_ENV: "test", ALLOW_DEMO_SEED: "true", DEMO_SEED_DATABASE: "lisno_test", MONGODB_URI: "mongodb://127.0.0.1:27017/lisno_test" }],
     ["test IPv6 suffix", { NODE_ENV: "test", ALLOW_DEMO_SEED: "true", DEMO_SEED_DATABASE: "lisno_test_feature-1", MONGODB_URI: "mongodb://[::1]:27017/lisno_test_feature-1" }]
   ])("authorizes %s and resets only after connecting", async (_label, environment) => {
+    setSeedEnvironment(environment);
     const harness = commandHarness(environment);
 
     await runDemoSeedCommand({
@@ -205,6 +225,12 @@ describe("demo seed authorization", () => {
   });
 
   it("mints a frozen private-brand capability", () => {
+    setSeedEnvironment({
+      NODE_ENV: "development",
+      ALLOW_DEMO_SEED: "true",
+      DEMO_SEED_DATABASE: "lisno_demo",
+      MONGODB_URI: "mongodb://localhost:27017/lisno_demo"
+    });
     const authorization = authorizeDemoSeed(
       {
         NODE_ENV: "development",
@@ -215,9 +241,72 @@ describe("demo seed authorization", () => {
     );
 
     expect(Object.isFrozen(authorization)).toBe(true);
+    const brand = Object.getOwnPropertySymbols(authorization)[0];
+    expect(brand).toBeDefined();
+    expect(
+      Object.getOwnPropertyDescriptor(authorization, brand!)?.enumerable
+    ).toBe(false);
     expect(() => {
       (authorization as { databaseName: string }).databaseName = "lisno";
     }).toThrow();
+  });
+
+  it("rejects a copied or retargeted authorization capability", async () => {
+    setSeedEnvironment({
+      NODE_ENV: "test",
+      ALLOW_DEMO_SEED: "true",
+      DEMO_SEED_DATABASE: "lisno_test",
+      MONGODB_URI: "mongodb://localhost:27017/lisno_test"
+    });
+    const authorization = authorizeDemoSeed(
+      {
+        NODE_ENV: "test",
+        ALLOW_DEMO_SEED: "true",
+        DEMO_SEED_DATABASE: "lisno_test"
+      },
+      "mongodb://localhost:27017/lisno_test"
+    );
+    const brand = Object.getOwnPropertySymbols(authorization)[0]!;
+    const copied = Object.defineProperties(
+      {},
+      Object.getOwnPropertyDescriptors(authorization)
+    );
+    const retargeted = Object.freeze({
+      [brand]: true,
+      databaseName: "lisno_demo"
+    });
+    for (const candidate of [copied, retargeted]) {
+      const connection = { name: candidate.databaseName };
+      const seedModels = fakeSeedModels([], connection);
+      const loadModels = vi.fn(async () => seedModels.models);
+      await expect(
+        seedMongoDatabase(candidate as never, {
+          loadMongoose: async () => ({ connection }),
+          loadModels
+        })
+      ).rejects.toThrow("Demo seed authorization does not match the connection.");
+      expect(loadModels).not.toHaveBeenCalled();
+    }
+  });
+
+  it("cannot mint authorization from caller-supplied flags that differ from the process environment", () => {
+    setSeedEnvironment({
+      NODE_ENV: "production",
+      ALLOW_DEMO_SEED: "false",
+      DEMO_SEED_DATABASE: "lisno",
+      MONGODB_URI: "mongodb://production.example/lisno"
+    });
+
+    expect(() =>
+      authorizeDemoSeed(
+        {
+          NODE_ENV: "development",
+          ALLOW_DEMO_SEED: "true",
+          DEMO_SEED_DATABASE: "lisno_demo"
+        },
+        "mongodb://localhost:27017/lisno_demo"
+      )
+    ).toThrow("Demo seed environment does not match the current process.");
   });
 
   it.each([
@@ -243,6 +332,12 @@ describe("demo seed authorization", () => {
   });
 
   it("rejects a capability when the connected database differs before model loading", async () => {
+    setSeedEnvironment({
+      NODE_ENV: "test",
+      ALLOW_DEMO_SEED: "true",
+      DEMO_SEED_DATABASE: "lisno_test",
+      MONGODB_URI: "mongodb://localhost:27017/lisno_test"
+    });
     const authorization = authorizeDemoSeed(
       {
         NODE_ENV: "test",
@@ -260,6 +355,43 @@ describe("demo seed authorization", () => {
       })
     ).rejects.toThrow("Demo seed authorization does not match the connection.");
     expect(loadModels).not.toHaveBeenCalled();
+  });
+
+  it("rejects models from a different connection before any mutation", async () => {
+    setSeedEnvironment({
+      NODE_ENV: "test",
+      ALLOW_DEMO_SEED: "true",
+      DEMO_SEED_DATABASE: "lisno_test",
+      MONGODB_URI: "mongodb://localhost:27017/lisno_test"
+    });
+    const authorization = authorizeDemoSeed(
+      {
+        NODE_ENV: "test",
+        ALLOW_DEMO_SEED: "true",
+        DEMO_SEED_DATABASE: "lisno_test"
+      },
+      "mongodb://localhost:27017/lisno_test"
+    );
+    const connection = { name: "lisno_test" };
+    const seedModels = fakeSeedModels([], { name: "lisno_test" });
+
+    await expect(
+      seedMongoDatabase(authorization, {
+        loadMongoose: async () => ({ connection }),
+        loadModels: async () => seedModels.models
+      })
+    ).rejects.toThrow("Demo seed models do not match the authorized connection.");
+
+    for (const model of seedModels.all) {
+      expect(model.deleteMany).not.toHaveBeenCalled();
+      expect(model.bulkWrite).not.toHaveBeenCalled();
+      expect(model.insertMany).not.toHaveBeenCalled();
+    }
+  });
+
+  it("does not expose the destructive reset helper from the module", () => {
+    expect(seedRunModule).not.toHaveProperty("resetAuthorizedSeedCollections");
+    expect(seedRunModule).not.toHaveProperty("loadSeedModels");
   });
 });
 

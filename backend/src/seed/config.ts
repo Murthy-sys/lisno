@@ -49,6 +49,7 @@ export function loadDemoSeedEnvironment(): LoadedDemoSeedEnvironment {
 }
 
 const demoSeedAuthorizationBrand = Symbol("demo-seed-authorization");
+const issuedDemoSeedAuthorizations = new WeakMap<object, string>();
 
 export type DemoSeedAuthorization = {
   readonly [demoSeedAuthorizationBrand]: true;
@@ -103,6 +104,14 @@ export function authorizeDemoSeed(
   runtime: DemoSeedRuntime,
   mongodbUri: string
 ): DemoSeedAuthorization {
+  if (
+    runtime.NODE_ENV !== process.env.NODE_ENV ||
+    runtime.ALLOW_DEMO_SEED !== process.env.ALLOW_DEMO_SEED ||
+    runtime.DEMO_SEED_DATABASE !== process.env.DEMO_SEED_DATABASE ||
+    mongodbUri !== (process.env.MONGODB_URI ?? "")
+  ) {
+    throw new Error("Demo seed environment does not match the current process.");
+  }
   assertDemoSeedRuntimeAllowed(runtime);
   const expectedDatabase = runtime.DEMO_SEED_DATABASE ?? "";
   if (!/^lisno_(?:demo|test)(?:[_-][a-z0-9_-]+)?$/.test(expectedDatabase)) {
@@ -115,10 +124,15 @@ export function authorizeDemoSeed(
   ) {
     throw new Error("Demo seed target is not a local allowlisted database.");
   }
-  return Object.freeze({
-    [demoSeedAuthorizationBrand]: true as const,
-    databaseName: expectedDatabase
+  const authorization = { databaseName: expectedDatabase } as DemoSeedAuthorization;
+  Object.defineProperty(authorization, demoSeedAuthorizationBrand, {
+    value: true,
+    enumerable: false,
+    configurable: false,
+    writable: false
   });
+  issuedDemoSeedAuthorizations.set(authorization, expectedDatabase);
+  return Object.freeze(authorization);
 }
 
 export function assertAuthorizedDemoSeedTarget(
@@ -128,6 +142,8 @@ export function assertAuthorizedDemoSeedTarget(
   if (
     !authorization ||
     authorization[demoSeedAuthorizationBrand] !== true ||
+    issuedDemoSeedAuthorizations.get(authorization) !==
+      authorization.databaseName ||
     connectedDatabaseName !== authorization.databaseName
   ) {
     throw new Error("Demo seed authorization does not match the connection.");
