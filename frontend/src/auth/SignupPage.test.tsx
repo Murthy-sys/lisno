@@ -140,8 +140,9 @@ describe("SignupPage", () => {
 
   it("associates API field errors with their matching controls", async () => {
     server.use(
-      http.post("/api/v1/auth/client-signup", () =>
-        HttpResponse.json(
+      http.post("/api/v1/auth/client-signup", async () => {
+        await new Promise((resolve) => setTimeout(resolve, 25));
+        return HttpResponse.json(
           {
             error: {
               code: "VALIDATION_ERROR",
@@ -150,8 +151,8 @@ describe("SignupPage", () => {
             }
           },
           { status: 400 }
-        )
-      )
+        );
+      })
     );
     const { router } = renderApp(["/signup"]);
     await fillSignupForm();
@@ -159,8 +160,10 @@ describe("SignupPage", () => {
     await userEvent.click(screen.getByRole("button", { name: "Create client account" }));
 
     const email = await screen.findByLabelText("Email address");
-    expect(email).toHaveAccessibleDescription("This email address is already registered.");
-    expect(email).toHaveFocus();
+    await waitFor(() =>
+      expect(email).toHaveAccessibleDescription("This email address is already registered.")
+    );
+    await waitFor(() => expect(email).toHaveFocus());
     await waitFor(() => expect(router.state.location.state).toBeNull());
     expect(email).toHaveAttribute("aria-describedby", "signup-email-error");
     expect(email).toHaveValue(signup.email);
