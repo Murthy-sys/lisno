@@ -93,6 +93,26 @@ function failAuditWrites(base: AppRepository): AppRepository {
 }
 
 describe("project workflows", () => {
+  it("preserves current Project and Design route success before route migration", async () => {
+    const { app } = setup();
+
+    const project = await request(app)
+      .get("/api/v1/projects/project-aurora-villa")
+      .set("Authorization", bearer(users.ananya));
+    const designVersions = await request(app)
+      .get("/api/v1/projects/project-aurora-villa/design-versions")
+      .set("Authorization", bearer(users.ananya));
+
+    expect(project.status).toBe(200);
+    expect(project.body.data).toMatchObject({ id: "project-aurora-villa" });
+    expect(designVersions.status).toBe(200);
+    expect(designVersions.body.data.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ projectId: "project-aurora-villa" })
+      ])
+    );
+  });
+
   it("denies estimator sales generic project and artifact access", async () => {
     const seed = structuredClone(demoSeedData);
     seed.projects.find(

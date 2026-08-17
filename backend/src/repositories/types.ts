@@ -683,12 +683,21 @@ export interface AppRepository {
   appendLeadActivity(input: NewLeadActivity): Promise<LeadActivityRecord>;
   listLeadActivities(leadId: string): Promise<LeadActivityRecord[]>;
   listProjectsForUser(user: UserRecord): Promise<ProjectRecord[]>;
+  listProjectsForUserInModule(
+    user: UserRecord,
+    module: ProjectModule
+  ): Promise<ProjectRecord[]>;
   listProjectsForDesignerIds(
     designerIds: string[],
     limit?: number
   ): Promise<ProjectRecord[]>;
   pageProjectsForUser(
     user: UserRecord,
+    pagination: PaginationInput
+  ): Promise<PageResult<ProjectRecord>>;
+  pageProjectsForUserInModule(
+    user: UserRecord,
+    module: ProjectModule,
     pagination: PaginationInput
   ): Promise<PageResult<ProjectRecord>>;
   findProjectById(id: string): Promise<ProjectRecord | null>;

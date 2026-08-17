@@ -1,4 +1,9 @@
 import type { Role } from "../contracts/domain.js";
+import {
+  REQUESTABLE_MODULES_BY_ROLE,
+  type ProjectModule
+} from "./authorization.js";
+import type { ProjectAccessGrantRecord } from "../repositories/types.js";
 
 export type ProjectAccessScope =
   | { kind: "all" }
@@ -18,6 +23,23 @@ type ProjectAccessRecord = {
   assignedDesignerIds: string[];
   managerId: string;
 };
+
+export function grantCanSupplyProjectModuleScope(
+  role: Role,
+  grant: Pick<ProjectAccessGrantRecord, "module" | "source" | "active">
+): boolean {
+  if (!grant.active) return false;
+
+  if (grant.source === "access_request") {
+    return REQUESTABLE_MODULES_BY_ROLE[role].some(
+      (module) => module === grant.module
+    );
+  }
+  if (grant.source === "admin_initiator") {
+    return role === "admin" && grant.module === "projects";
+  }
+  return false;
+}
 
 const PROJECT_SCOPE_KIND_BY_ROLE = {
   super_admin: "none",
@@ -75,4 +97,13 @@ export function projectIsInAccessScope(
     case "none":
       return false;
   }
+}
+
+export function legacyRelationshipAllows(
+  user: ProjectAccessUser,
+  project: ProjectAccessRecord,
+  module: ProjectModule
+): boolean {
+  if (module !== "projects" && module !== "design") return false;
+  return projectIsInAccessScope(projectAccessScopeForUser(user), project);
 }

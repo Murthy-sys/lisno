@@ -1,7 +1,13 @@
 import { randomUUID } from "node:crypto";
 import mongoose, { type ClientSession, type Model, type PipelineStage } from "mongoose";
 import { normalizeEmail } from "../domain/email.js";
-import { projectAccessScopeForUser } from "../domain/project-access.js";
+import {
+  projectAccessScopeForUser
+} from "../domain/project-access.js";
+import {
+  REQUESTABLE_MODULES_BY_ROLE,
+  type ProjectModule
+} from "../domain/authorization.js";
 import { AccessRequestModel } from "../models/AccessRequest.js";
 import { AuthorizationCoordinationModel } from "../models/AuthorizationCoordination.js";
 import { AuditEventModel } from "../models/AuditEvent.js";
@@ -77,6 +83,68 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
       case "none":
         return null;
     }
+  };
+
+  const eligibleGrantSource = (
+    user: UserRecord,
+    module: ProjectModule
+  ): ProjectAccessGrantRecord["source"] | null => {
+    if (!user.active) return null;
+    if (user.role === "admin" && module === "projects") {
+      return "admin_initiator";
+    }
+    if (
+      REQUESTABLE_MODULES_BY_ROLE[user.role].some(
+        (requestableModule) => requestableModule === module
+      )
+    ) {
+      return "access_request";
+    }
+    return null;
+  };
+
+  const legacyProjectFilterForUserInModule = (
+    user: UserRecord,
+    module: ProjectModule
+  ): PlainDocument | null => {
+    if (!user.active) return null;
+    if (user.role === "super_admin") return {};
+    if (module !== "projects" && module !== "design") return null;
+    return projectFilterForUser(user);
+  };
+
+  const projectFilterForUserInModule = async (
+    user: UserRecord,
+    module: ProjectModule
+  ): Promise<PlainDocument | null> => {
+    const legacyFilter = legacyProjectFilterForUserInModule(user, module);
+    if (legacyFilter !== null && Object.keys(legacyFilter).length === 0) return {};
+
+    const source = eligibleGrantSource(user, module);
+    let grantProjectIds: string[] = [];
+    if (source !== null) {
+      const grantQuery = ProjectAccessGrantModel.find({
+        userId: user.id,
+        module,
+        active: true,
+        source
+      })
+        .select({ projectId: 1, _id: 0 })
+        .lean();
+      if (session) grantQuery.session(session);
+      const grants = await grantQuery.exec();
+      grantProjectIds = grants.map((grant) => String(grant.projectId));
+    }
+
+    if (legacyFilter === null) {
+      return grantProjectIds.length === 0
+        ? null
+        : { _id: { $in: grantProjectIds } };
+    }
+    if (grantProjectIds.length === 0) return legacyFilter;
+    return {
+      $or: [legacyFilter, { _id: { $in: grantProjectIds } }]
+    };
   };
 
   const repository: AppRepository = {
@@ -570,6 +638,15 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
       return documents.map(mapProject);
     },
 
+    async listProjectsForUserInModule(user, module) {
+      const filter = await projectFilterForUserInModule(user, module);
+      if (filter === null) return [];
+      const query = ProjectModel.find(filter).sort({ name: 1, _id: 1 }).lean();
+      if (session) query.session(session);
+      const documents = await query.exec();
+      return documents.map(mapProject);
+    },
+
     async listProjectsForDesignerIds(designerIds, limit) {
       if (designerIds.length === 0) return [];
       const query = ProjectModel.find({
@@ -594,6 +671,26 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
           .lean()
           .exec(),
         ProjectModel.countDocuments(filter).exec()
+      ]);
+      return { items: documents.map(mapProject), total };
+    },
+
+    async pageProjectsForUserInModule(user, module, pagination) {
+      const filter = await projectFilterForUserInModule(user, module);
+      if (filter === null) return { items: [], total: 0 };
+      const itemQuery = ProjectModel.find(filter)
+        .sort({ name: 1, _id: 1 })
+        .skip(pagination.offset)
+        .limit(pagination.limit)
+        .lean();
+      const countQuery = ProjectModel.countDocuments(filter);
+      if (session) {
+        itemQuery.session(session);
+        countQuery.session(session);
+      }
+      const [documents, total] = await Promise.all([
+        itemQuery.exec(),
+        countQuery.exec()
       ]);
       return { items: documents.map(mapProject), total };
     },

@@ -623,6 +623,188 @@ describe("memory repository", () => {
     ).resolves.toEqual({ items: [], total: 0 });
   });
 
+  it("keeps module-aware project list and page scope identical across legacy and exact grants", async () => {
+    const seed = structuredClone(demoSeedData);
+    const template = seed.users.find((user) => user.id === "user-head")!;
+    const addUser = (
+      id: string,
+      role: typeof template.role,
+      active = true
+    ) => {
+      seed.users.push({
+        ...structuredClone(template),
+        id,
+        name: id,
+        email: `${id}@lisno.example`,
+        emailNormalized: `${id}@lisno.example`,
+        role,
+        active,
+        managerId: null,
+        authorizedClientIds: []
+      });
+      return seed.users.at(-1)!;
+    };
+    const superAdmin = addUser("user-super-admin-scope", "super_admin");
+    const admin = addUser("user-admin-scope", "admin");
+    const procurement = addUser("user-procurement-scope", "procurement");
+    const directDesigner = addUser("user-direct-designer", "designer");
+    const staleRole = addUser("user-stale-grant", "worker_other");
+    const revokedFinance = addUser("user-revoked-finance", "finance_head");
+    const ungrantedSiteManager = addUser("user-site-manager", "site_manager");
+    const inactiveFinance = addUser("user-inactive-finance", "finance_head", false);
+    const now = "2026-08-17T08:00:00.000Z";
+    seed.projectAccessGrants.push(
+      {
+        id: "grant-admin-projects",
+        projectId: "project-aurora-villa",
+        userId: admin.id,
+        module: "projects",
+        source: "admin_initiator",
+        accessRequestId: null,
+        grantedById: superAdmin.id,
+        active: true,
+        grantedAt: now,
+        revokedAt: null,
+        revokedById: null,
+        revocationReason: null,
+        version: 1,
+        createdAt: now,
+        updatedAt: now
+      },
+      {
+        id: "grant-procurement",
+        projectId: "project-celeste-office",
+        userId: procurement.id,
+        module: "procurement",
+        source: "access_request",
+        accessRequestId: "request-procurement",
+        grantedById: superAdmin.id,
+        active: true,
+        grantedAt: now,
+        revokedAt: null,
+        revokedById: null,
+        revocationReason: null,
+        version: 1,
+        createdAt: now,
+        updatedAt: now
+      },
+      {
+        id: "grant-direct-dormant",
+        projectId: "project-celeste-office",
+        userId: directDesigner.id,
+        module: "design",
+        source: "direct_assignment",
+        accessRequestId: null,
+        grantedById: superAdmin.id,
+        active: true,
+        grantedAt: now,
+        revokedAt: null,
+        revokedById: null,
+        revocationReason: null,
+        version: 1,
+        createdAt: now,
+        updatedAt: now
+      },
+      {
+        id: "grant-stale-role",
+        projectId: "project-aurora-villa",
+        userId: staleRole.id,
+        module: "execution",
+        source: "access_request",
+        accessRequestId: "request-stale-role",
+        grantedById: superAdmin.id,
+        active: true,
+        grantedAt: now,
+        revokedAt: null,
+        revokedById: null,
+        revocationReason: null,
+        version: 1,
+        createdAt: now,
+        updatedAt: now
+      },
+      {
+        id: "grant-revoked-finance",
+        projectId: "project-celeste-office",
+        userId: revokedFinance.id,
+        module: "finance",
+        source: "access_request",
+        accessRequestId: "request-revoked-finance",
+        grantedById: superAdmin.id,
+        active: false,
+        grantedAt: now,
+        revokedAt: now,
+        revokedById: superAdmin.id,
+        revocationReason: "Role coverage changed",
+        version: 2,
+        createdAt: now,
+        updatedAt: now
+      },
+      {
+        id: "grant-inactive-user",
+        projectId: "project-aurora-villa",
+        userId: inactiveFinance.id,
+        module: "finance",
+        source: "access_request",
+        accessRequestId: "request-inactive-user",
+        grantedById: superAdmin.id,
+        active: true,
+        grantedAt: now,
+        revokedAt: null,
+        revokedById: null,
+        revocationReason: null,
+        version: 1,
+        createdAt: now,
+        updatedAt: now
+      }
+    );
+    const repository = createMemoryRepository(seed);
+    const client = seed.users.find((user) => user.id === "user-client-aurora")!;
+    const designer = seed.users.find((user) => user.id === "user-designer-ananya")!;
+    const manager = seed.users.find((user) => user.id === "user-manager-aarav")!;
+    const head = seed.users.find((user) => user.id === "user-head")!;
+
+    await expect(repository.listProjectsForUserInModule(client, "projects"))
+      .resolves.toHaveLength(2);
+    await expect(repository.listProjectsForUserInModule(designer, "design"))
+      .resolves.toHaveLength(2);
+    await expect(repository.listProjectsForUserInModule(manager, "design"))
+      .resolves.toHaveLength(2);
+    await expect(repository.listProjectsForUserInModule(head, "projects"))
+      .resolves.toHaveLength(3);
+    await expect(repository.listProjectsForUserInModule(head, "design"))
+      .resolves.toHaveLength(3);
+    await expect(repository.listProjectsForUserInModule(superAdmin, "finance"))
+      .resolves.toHaveLength(3);
+    await expect(repository.listProjectsForUserInModule(admin, "projects"))
+      .resolves.toMatchObject([{ id: "project-aurora-villa" }]);
+    await expect(repository.listProjectsForUserInModule(admin, "design"))
+      .resolves.toEqual([]);
+    await expect(repository.listProjectsForUserInModule(procurement, "procurement"))
+      .resolves.toMatchObject([{ id: "project-celeste-office" }]);
+    await expect(repository.listProjectsForUserInModule(procurement, "finance"))
+      .resolves.toEqual([]);
+    await expect(repository.listProjectsForUserInModule(directDesigner, "design"))
+      .resolves.toEqual([]);
+    await expect(repository.listProjectsForUserInModule(staleRole, "execution"))
+      .resolves.toEqual([]);
+    await expect(repository.listProjectsForUserInModule(revokedFinance, "finance"))
+      .resolves.toEqual([]);
+    await expect(
+      repository.listProjectsForUserInModule(ungrantedSiteManager, "execution")
+    ).resolves.toEqual([]);
+    await expect(repository.listProjectsForUserInModule(inactiveFinance, "finance"))
+      .resolves.toEqual([]);
+    await expect(
+      repository.pageProjectsForUserInModule(procurement, "procurement", {
+        limit: 1,
+        offset: 0
+      })
+    ).resolves.toMatchObject({
+      items: [{ id: "project-celeste-office" }],
+      total: 1
+    });
+  });
+
   it("slices paginated reads while retaining filtered totals", async () => {
     const seed = structuredClone(demoSeedData);
     seed.evaluations.push({

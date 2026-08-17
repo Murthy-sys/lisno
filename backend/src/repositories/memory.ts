@@ -6,6 +6,8 @@ import {
   REQUESTABLE_PROJECT_MODULES
 } from "../domain/authorization.js";
 import {
+  grantCanSupplyProjectModuleScope,
+  legacyRelationshipAllows,
   projectAccessScopeForUser,
   projectIsInAccessScope
 } from "../domain/project-access.js";
@@ -531,6 +533,31 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
       return clone(projects);
     },
 
+    async listProjectsForUserInModule(user, module) {
+      if (!user.active) return [];
+      if (user.role === "super_admin") {
+        return clone([...state.projects].sort(byNameThenId));
+      }
+      const grantedProjectIds = new Set(
+        state.projectAccessGrants
+          .filter(
+            (grant) =>
+              grant.userId === user.id &&
+              grant.module === module &&
+              grantCanSupplyProjectModuleScope(user.role, grant)
+          )
+          .map((grant) => grant.projectId)
+      );
+      const projects = state.projects
+        .filter(
+          (project) =>
+            legacyRelationshipAllows(user, project, module) ||
+            grantedProjectIds.has(project.id)
+        )
+        .sort(byNameThenId);
+      return clone(projects);
+    },
+
     async listProjectsForDesignerIds(designerIds, limit) {
       const ids = new Set(designerIds);
       const projects = state.projects
@@ -545,6 +572,11 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
 
     async pageProjectsForUser(user, pagination) {
       const projects = await implementation.listProjectsForUser(user);
+      return paginate(projects, pagination);
+    },
+
+    async pageProjectsForUserInModule(user, module, pagination) {
+      const projects = await implementation.listProjectsForUserInModule(user, module);
       return paginate(projects, pagination);
     },
 

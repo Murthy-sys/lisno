@@ -794,6 +794,205 @@ describe("Mongo repository contracts", () => {
     expect(find).toHaveBeenCalledWith({});
   });
 
+  it("preserves every legacy relationship and Super Admin scope in module-aware Mongo reads", async () => {
+    vi.spyOn(ProjectAccessGrantModel, "find").mockReturnValueOnce({
+      select: () => ({
+        lean: () => ({ exec: vi.fn().mockResolvedValue([]) })
+      })
+    } as never);
+    const projectFind = vi.spyOn(ProjectModel, "find").mockReturnValue({
+      sort: () => ({ lean: () => ({ exec: vi.fn().mockResolvedValue([]) }) })
+    } as never);
+    const client = demoSeedData.users.find(
+      (user) => user.id === "user-client-aurora"
+    )!;
+    const designer = demoSeedData.users.find(
+      (user) => user.id === "user-designer-ananya"
+    )!;
+    const manager = demoSeedData.users.find(
+      (user) => user.id === "user-manager-aarav"
+    )!;
+    const head = demoSeedData.users.find((user) => user.id === "user-head")!;
+    const superAdmin = {
+      ...head,
+      id: "user-super-admin",
+      role: "super_admin" as const
+    };
+    const repository = createMongoRepository();
+
+    await repository.listProjectsForUserInModule(client, "projects");
+    await repository.listProjectsForUserInModule(designer, "design");
+    await repository.listProjectsForUserInModule(manager, "projects");
+    await repository.listProjectsForUserInModule(head, "design");
+    await repository.listProjectsForUserInModule(superAdmin, "finance");
+
+    expect(projectFind.mock.calls.map(([filter]) => filter)).toEqual([
+      { clientId: "user-client-aurora" },
+      {
+        $or: [
+          { initiatingDesignerId: "user-designer-ananya" },
+          { assignedDesignerIds: "user-designer-ananya" }
+        ]
+      },
+      { managerId: "user-manager-aarav" },
+      {},
+      {}
+    ]);
+  });
+
+  it("unions only current-role eligible grant IDs into module-aware Mongo project reads", async () => {
+    const grantExec = vi.fn().mockResolvedValue([
+      { projectId: "project-celeste-office" }
+    ]);
+    const grantLean = vi.fn(() => ({ exec: grantExec }));
+    const grantSelect = vi.fn(() => ({ lean: grantLean }));
+    const grantFind = vi
+      .spyOn(ProjectAccessGrantModel, "find")
+      .mockReturnValueOnce({ select: grantSelect } as never);
+    const projectExec = vi.fn().mockResolvedValue([]);
+    const projectFind = vi.spyOn(ProjectModel, "find").mockReturnValueOnce({
+      sort: () => ({ lean: () => ({ exec: projectExec }) })
+    } as never);
+    const procurement = {
+      ...demoSeedData.users[0]!,
+      id: "user-procurement",
+      role: "procurement" as const,
+      active: true
+    };
+
+    await createMongoRepository().listProjectsForUserInModule(
+      procurement,
+      "procurement"
+    );
+
+    expect(grantFind).toHaveBeenCalledWith({
+      userId: procurement.id,
+      module: "procurement",
+      active: true,
+      source: "access_request"
+    });
+    expect(projectFind).toHaveBeenCalledWith({
+      _id: { $in: ["project-celeste-office"] }
+    });
+  });
+
+  it("uses only admin initiator grants for Admin projects scope", async () => {
+    const grantFind = vi
+      .spyOn(ProjectAccessGrantModel, "find")
+      .mockReturnValueOnce({
+        select: () => ({
+          lean: () => ({ exec: vi.fn().mockResolvedValue([]) })
+        })
+      } as never);
+    const admin = {
+      ...demoSeedData.users[0]!,
+      id: "user-admin",
+      role: "admin" as const,
+      active: true
+    };
+
+    await expect(
+      createMongoRepository().listProjectsForUserInModule(admin, "projects")
+    ).resolves.toEqual([]);
+
+    expect(grantFind).toHaveBeenCalledWith({
+      userId: admin.id,
+      module: "projects",
+      active: true,
+      source: "admin_initiator"
+    });
+  });
+
+  it("short-circuits module-aware Mongo reads for roles without legacy or eligible grant scope", async () => {
+    const grantFind = vi.spyOn(ProjectAccessGrantModel, "find");
+    const projectFind = vi.spyOn(ProjectModel, "find");
+    const count = vi.spyOn(ProjectModel, "countDocuments");
+    const worker = {
+      ...demoSeedData.users[0]!,
+      id: "user-worker",
+      role: "worker_other" as const,
+      active: true
+    };
+    const mismatchedDesigner = {
+      ...worker,
+      id: "user-designer-module-mismatch",
+      role: "designer" as const
+    };
+    const inactiveProcurement = {
+      ...worker,
+      id: "user-inactive-procurement",
+      role: "procurement" as const,
+      active: false
+    };
+
+    await expect(
+      createMongoRepository().listProjectsForUserInModule(worker, "execution")
+    ).resolves.toEqual([]);
+    await expect(
+      createMongoRepository().pageProjectsForUserInModule(
+        worker,
+        "execution",
+        { limit: 20, offset: 0 }
+      )
+    ).resolves.toEqual({ items: [], total: 0 });
+    await expect(
+      createMongoRepository().listProjectsForUserInModule(
+        mismatchedDesigner,
+        "finance"
+      )
+    ).resolves.toEqual([]);
+    await expect(
+      createMongoRepository().listProjectsForUserInModule(
+        inactiveProcurement,
+        "procurement"
+      )
+    ).resolves.toEqual([]);
+
+    expect(grantFind).not.toHaveBeenCalled();
+    expect(projectFind).not.toHaveBeenCalled();
+    expect(count).not.toHaveBeenCalled();
+  });
+
+  it("uses the same eligible grant filter for module-aware Mongo pages", async () => {
+    vi.spyOn(ProjectAccessGrantModel, "find").mockReturnValueOnce({
+      select: () => ({
+        lean: () => ({
+          exec: vi.fn().mockResolvedValue([{ projectId: "project-celeste-office" }])
+        })
+      })
+    } as never);
+    const itemExec = vi.fn().mockResolvedValue([]);
+    const projectFind = vi.spyOn(ProjectModel, "find").mockReturnValueOnce({
+      sort: () => ({
+        skip: () => ({
+          limit: () => ({ lean: () => ({ exec: itemExec }) })
+        })
+      })
+    } as never);
+    const countExec = vi.fn().mockResolvedValue(1);
+    const count = vi.spyOn(ProjectModel, "countDocuments").mockReturnValueOnce({
+      exec: countExec
+    } as never);
+    const procurement = {
+      ...demoSeedData.users[0]!,
+      id: "user-procurement",
+      role: "procurement" as const,
+      active: true
+    };
+
+    await expect(
+      createMongoRepository().pageProjectsForUserInModule(
+        procurement,
+        "procurement",
+        { limit: 20, offset: 0 }
+      )
+    ).resolves.toEqual({ items: [], total: 1 });
+
+    const expectedFilter = { _id: { $in: ["project-celeste-office"] } };
+    expect(projectFind).toHaveBeenCalledWith(expectedFilter);
+    expect(count).toHaveBeenCalledWith(expectedFilter);
+  });
+
   it("rejects a stale extraction completion with the current-lease filter", async () => {
     const update = vi.spyOn(DesignExtractionJobModel, "findByIdAndUpdate").mockReturnValueOnce({
       lean: () => ({ exec: vi.fn().mockResolvedValue(null) })
