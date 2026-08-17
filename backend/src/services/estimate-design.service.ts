@@ -255,7 +255,7 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
     estimateId: string,
     session?: mongoose.ClientSession
   ): Promise<EstimateDesignApprovalReadiness> => {
-    await requireClientEstimate(user, estimateId, session);
+    await requireClientVisibleEstimateReader(user, estimateId, session);
     const drawingQuery = EstimateDesignDrawingModel.find({
       estimateId,
       active: true
@@ -346,7 +346,7 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
     },
 
     async listEstimator(user, estimateId) {
-      await requireOwnedEstimate(user, estimateId);
+      await requireEstimateWorkspaceReader(user, estimateId);
       const uploads = await EstimateDesignUploadModel.find({ estimateId }).sort({ uploadedAt: -1, _id: -1 }).lean();
       const uploadIds = uploads.map((upload) => upload._id);
       const [pages, drawings] = await Promise.all([
@@ -393,7 +393,7 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
     },
 
     async listClient(user, estimateId) {
-      await requireClientEstimate(user, estimateId);
+      await requireClientVisibleEstimateReader(user, estimateId);
       const drawings = await EstimateDesignDrawingModel.find({
         estimateId,
         active: true
@@ -844,7 +844,7 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
       if (!page) throw estimateNotFound();
       const upload = await EstimateDesignUploadModel.findById(page.uploadId).lean();
       if (!upload) throw estimateNotFound();
-      await requireOwnedEstimate(user, upload.estimateId);
+      await requireEstimateWorkspaceReader(user, upload.estimateId);
       return openStoredImage(input.storage, page.normalizedFileReference);
     },
 
@@ -853,8 +853,8 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
       if (!revision) throw estimateNotFound();
       const drawing = await EstimateDesignDrawingModel.findById(revision.drawingId).lean();
       if (!drawing) throw estimateNotFound();
-      if (user.role === "estimator_sales") {
-        await requireOwnedEstimate(user, String(drawing.estimateId));
+      if (user.role === "estimator_sales" || user.role === "super_admin") {
+        await requireEstimateWorkspaceReader(user, String(drawing.estimateId));
       } else if (
         user.role === "client" &&
         ["submitted", "approved", "changes_requested"].includes(String(revision.reviewStatus))
@@ -2193,6 +2193,21 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
     return estimate;
   }
 
+  async function requireEstimateWorkspaceReader(
+    user: AuthenticatedUser,
+    estimateId: string,
+    session?: mongoose.ClientSession
+  ) {
+    if (user.role !== "super_admin") {
+      return requireOwnedEstimate(user, estimateId, session);
+    }
+    const query = EstimateModel.findById(estimateId);
+    if (session) query.session(session);
+    const estimate = await query.lean();
+    if (!estimate) throw estimateNotFound();
+    return estimate;
+  }
+
   async function requireOwnedEditableEstimate(user: AuthenticatedUser, estimateId: string) {
     const estimate = await requireOwnedEstimate(user, estimateId);
     if (!isEstimateDesignEditable(estimate.status)) {
@@ -2234,6 +2249,32 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
     ) {
       throw estimateNotFound();
     }
+    return { estimate, lead };
+  }
+
+  async function requireClientVisibleEstimateReader(
+    user: AuthenticatedUser,
+    estimateId: string,
+    session?: mongoose.ClientSession
+  ) {
+    if (user.role !== "super_admin") {
+      return requireClientEstimate(user, estimateId, session);
+    }
+    const estimateQuery = EstimateModel.findById(estimateId);
+    if (session) estimateQuery.session(session);
+    const estimate = await estimateQuery.lean();
+    if (
+      !estimate ||
+      !["sent_to_client", "client_changes_requested", "client_approved"].includes(
+        String(estimate.status)
+      )
+    ) {
+      throw estimateNotFound();
+    }
+    const leadQuery = LeadModel.findById(estimate.leadId);
+    if (session) leadQuery.session(session);
+    const lead = await leadQuery.lean();
+    if (!lead) throw estimateNotFound();
     return { estimate, lead };
   }
 

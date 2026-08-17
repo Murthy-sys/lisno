@@ -434,7 +434,23 @@ function setup(maxUploadBytes = 10_000_000) {
     return { deletedCount: index >= 0 ? 1 : 0 } as never;
   });
 
-  const repository = createMemoryRepository(structuredClone(demoSeedData));
+  const seed = structuredClone(demoSeedData);
+  seed.users.push({
+    ...seed.users[0]!,
+    id: "user-super-admin",
+    name: "Global Administrator",
+    email: "super-admin@lisno.example",
+    emailNormalized: "super-admin@lisno.example",
+    role: "super_admin",
+    managerId: null,
+    authorizedClientIds: []
+  });
+  const repository = createMemoryRepository(seed);
+  const projectGrantSpies = [
+    vi.spyOn(repository, "findActiveProjectAccessGrant"),
+    vi.spyOn(repository, "listProjectsForUserInModule"),
+    vi.spyOn(repository, "pageProjectsForUserInModule")
+  ] as const;
   const app = createApp({
     repository,
     auth: { jwtSecret: SECRET, jwtExpiresInSeconds: 900 },
@@ -459,7 +475,8 @@ function setup(maxUploadBytes = 10_000_000) {
     drawings,
     revisions,
     drafts,
-    auditEvents
+    auditEvents,
+    projectGrantSpies
   };
 }
 
@@ -512,6 +529,30 @@ describe("estimate drawing annotation schema", () => {
 });
 
 describe("estimate drawing client review", () => {
+  it("allows Super Admin global Estimate Design reads without project grants", async () => {
+    const { app, projectGrantSpies } = setup();
+    const authorization = auth("user-super-admin", "super_admin");
+
+    await request(app)
+      .get("/api/v1/estimates/estimate-1/design-uploads")
+      .set("Authorization", authorization)
+      .expect(200);
+    await request(app)
+      .get("/api/v1/estimate-design-source-pages/page-1/image")
+      .set("Authorization", authorization)
+      .expect(200);
+    await request(app)
+      .get("/api/v1/estimate-design-revisions/revision-1/image")
+      .set("Authorization", authorization)
+      .expect(200);
+    await request(app)
+      .get("/api/v1/client/estimates/estimate-1/design-drawings")
+      .set("Authorization", authorization)
+      .expect(200);
+
+    for (const spy of projectGrantSpies) expect(spy).not.toHaveBeenCalled();
+  });
+
   it("exposes submitted drawings only to the exact lead-email client", async () => {
     const { app } = setup();
 
