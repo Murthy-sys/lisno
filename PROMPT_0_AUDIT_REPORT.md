@@ -38,7 +38,9 @@ Audit baseline:
 
 No later phase has been implemented, scaffolded, or partially started.
 
-## Prompt 1 readiness decision
+## Historical Prompt 1 readiness decision — superseded 2026-08-17
+
+> **Historical Prompt 0 snapshot.** This original pre-remediation readiness decision is retained unchanged for audit history. The dated readiness-remediation addendum below supersedes it as the current gate verdict.
 
 **Repository ready for Prompt 1: NO — not under a strict safety and green-baseline gate.**
 
@@ -614,7 +616,9 @@ This sequence is a recommendation only. No step after Prompt 0 has started.
 - Exercise the complete lifecycle, migrations, role matrix, locked modules, retries, idempotency, and failure recovery.
 - Add browser E2E, performance budgets, CI/lint/coverage gates, object storage, retention, observability, and security review.
 
-## Verification evidence
+## Historical Prompt 0 verification evidence — superseded 2026-08-17
+
+> **Historical Prompt 0 snapshot.** These original test results are retained unchanged for audit history. The fresh full-gate evidence in the dated readiness-remediation addendum below supersedes them as the current verification result.
 
 | Area | Command and context | Result |
 |---|---|---|
@@ -629,7 +633,9 @@ This sequence is a recommendation only. No step after Prompt 0 has started.
 
 The optional OCR model-marked test was not run. No lint or browser E2E command exists in the repository manifests.
 
-## Prompt 0 completion report
+## Historical Prompt 0 completion report — superseded 2026-08-17
+
+> **Historical Prompt 0 snapshot.** This original completion report is retained unchanged for audit history. Its pre-remediation readiness status and next step are superseded by the dated readiness-remediation addendum below; Prompt 0 itself remains complete.
 
 IMPLEMENTATION STATUS
 
@@ -704,6 +710,8 @@ No major feature implementation performed.
 ---
 
 ## Readiness remediation addendum — 2026-08-17
+
+> **Current authoritative gate record.** This addendum supersedes the earlier historical Prompt 1 readiness decision, Prompt 0 verification evidence, and Prompt 0 completion report for current readiness status and verification results.
 
 ### Remediation state and scope
 
