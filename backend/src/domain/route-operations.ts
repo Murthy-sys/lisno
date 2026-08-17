@@ -155,7 +155,16 @@ export function markHumanOperation(
 export function isHumanOperationHandler(
   handler: RequestHandler
 ): handler is MarkedHumanOperationHandler {
-  return humanOperationMarker in handler;
+  const descriptor = Object.getOwnPropertyDescriptor(
+    handler,
+    humanOperationMarker
+  );
+  return descriptor !== undefined &&
+    descriptor.enumerable === false &&
+    descriptor.writable === false &&
+    descriptor.configurable === false &&
+    typeof descriptor.value === "string" &&
+    Object.hasOwn(HUMAN_JWT_OPERATIONS, descriptor.value);
 }
 
 export function operationKeyForHandler(

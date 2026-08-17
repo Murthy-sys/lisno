@@ -82,11 +82,29 @@ describe("human JWT operation registry", () => {
     expect(operationKeyForHandler(handler)).toBe(key);
   });
 
+  it("does not inherit a human-operation marker through a wrapper prototype", () => {
+    const markedHandler = requireOperation("GET /auth/me");
+    const wrapper: RequestHandler = (_request, _response, next) => next();
+    Object.setPrototypeOf(wrapper, markedHandler);
+
+    expect(isHumanOperationHandler(wrapper)).toBe(false);
+    expect(operationKeyForHandler(wrapper)).toBeUndefined();
+  });
+
   it("marks authentication separately from human operations", () => {
     const authService = { authenticate: async () => ({}) } as AuthService;
     const handler = authenticate(authService);
     expect(isAuthenticationHandler(handler)).toBe(true);
     expect(isHumanOperationHandler(handler)).toBe(false);
+  });
+
+  it("does not inherit an authentication marker through a wrapper prototype", () => {
+    const authService = { authenticate: async () => ({}) } as AuthService;
+    const markedHandler = authenticate(authService);
+    const wrapper: RequestHandler = (_request, _response, next) => next();
+    Object.setPrototypeOf(wrapper, markedHandler);
+
+    expect(isAuthenticationHandler(wrapper)).toBe(false);
   });
 
   it("rejects unregistered operation configuration", () => {

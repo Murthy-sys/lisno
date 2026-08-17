@@ -26,7 +26,15 @@ type MarkedAuthenticationHandler = RequestHandler & {
 export function isAuthenticationHandler(
   handler: RequestHandler
 ): handler is MarkedAuthenticationHandler {
-  return authenticationHandlerMarker in handler;
+  const descriptor = Object.getOwnPropertyDescriptor(
+    handler,
+    authenticationHandlerMarker
+  );
+  return descriptor !== undefined &&
+    descriptor.value === true &&
+    descriptor.enumerable === false &&
+    descriptor.writable === false &&
+    descriptor.configurable === false;
 }
 
 export function authenticate(authService: AuthService): RequestHandler {
