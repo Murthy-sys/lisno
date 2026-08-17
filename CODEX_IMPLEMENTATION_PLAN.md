@@ -10,7 +10,7 @@ Last updated: 2026-08-17
 | Phase | State |
 |---|---|
 | Prompt 0 — Complete codebase audit | **COMPLETE** |
-| Prompt 0 readiness remediation — safety and green-baseline gate | **COMPLETE — 2026-08-17** |
+| Prompt 0 readiness remediation — safety and green-baseline gate | **SCOPED CHANGES IMPLEMENTED; GATE NOT CLEARED — 2026-08-17** |
 | Prompt 1 — Roles, RBAC and authorization foundation | **NOT STARTED** |
 | Prompt 2 — Project and estimation lifecycle | **NOT STARTED** |
 | Prompt 3 — Design lifecycle | **NOT STARTED** |
@@ -24,11 +24,11 @@ Last updated: 2026-08-17
 
 Prompt 0 produced documentation only. No feature, API, frontend, database, migration, or later-phase implementation was performed.
 
-The separately authorized Prompt 0 readiness remediation corrected shared project-access scope, isolated the frontend test API base from hostile ambient values, restored the complete saved-estimate export surface, and passed the full required backend/frontend gate. It did not start Prompt 1 or change OCR.
+The three separately authorized Prompt 0 readiness-remediation changes are implemented: shared project-access scope, frontend test API-base isolation, and the restored complete saved-estimate export surface. Independent controller verification then observed both red and green outcomes from the identical hostile-environment frontend full-suite command on the same HEAD. The required deterministic baseline is therefore not established, and the readiness gate is not cleared. The remediation did not start Prompt 1 or change OCR.
 
 Detailed result: [Prompt 0 audit report](./PROMPT_0_AUDIT_REPORT.md)
 
-**Repository ready to begin Prompt 1: YES.** On 2026-08-17, all six required backend and hostile-environment frontend test/typecheck/build commands exited zero. This is a readiness-to-start verdict, not a public-production-readiness claim.
+**Repository ready to begin Prompt 1: NO.** Backend tests/typecheck/build and frontend typecheck/build are green, but independent runs of `VITE_API_URL=http://hostile.invalid/api/v1 npm test` produced both 3 failures / 560 passes and 563/563 passes on the same HEAD. Further annotation/test-runner stabilization requires separate authorization because it is outside the approved readiness plan. Public-production readiness is also NO.
 
 Current generic project access for `estimator_sales` is explicit deny-by-default. Future `estimator_sales` project access may be granted only through a later Prompt 1+ Admin assignment workflow: an Admin must explicitly assign the project to a named active user selected from a role-filtered `estimator_sales` dropdown. Public production release remains blocked on later hardening, including remediation of the unverified client-email claiming risk documented in the Prompt 0 audit.
 

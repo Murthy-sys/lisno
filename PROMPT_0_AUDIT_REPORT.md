@@ -709,9 +709,9 @@ No major feature implementation performed.
 
 ---
 
-## Readiness remediation addendum — 2026-08-17
+## Historical readiness remediation gate addendum — 2026-08-17 — superseded by controller re-verification
 
-> **Current authoritative gate record.** This addendum supersedes the earlier historical Prompt 1 readiness decision, Prompt 0 verification evidence, and Prompt 0 completion report for current readiness status and verification results.
+> **Historical remediation snapshot.** This addendum retains the implementer's original green gate run and YES verdict unchanged for audit history. The current controller re-verification verdict below supersedes it for readiness status and verification results.
 
 ### Remediation state and scope
 
@@ -753,3 +753,45 @@ Current generic project access for `estimator_sales` is explicit deny-by-default
 **Ready for public production: NO.** This gate establishes a controlled starting point for Prompt 1; it does not complete later lifecycle, security, operational, migration, browser-E2E, performance, observability, storage, or release-hardening work.
 
 The unverified client-email claiming issue remains open and non-blocking for beginning Prompt 1 but blocking/high-priority for public release: public signup can activate a client for a submitted email and claim matching unowned projects, while client estimate access also relies on normalized lead-email matching. Email verification or Admin-issued invitation/claim semantics and durable client identity binding remain required before public production. The existing non-failing frontend bundle-size warning and the non-failing MSW unmatched-request diagnostic should also be addressed in later hardening.
+
+---
+
+## Current controller re-verification verdict — 2026-08-17
+
+> **Current authoritative gate record.** This section supersedes all earlier Prompt 1 readiness verdicts and gate-result summaries in this document. Their exact evidence remains above as historical snapshots.
+
+### Durable implementation state
+
+**Prompt 0: COMPLETE.** The three scoped readiness-remediation changes are implemented: the shared default-deny project-access policy, isolated frontend test API base, and restored complete saved-estimate export surface.
+
+**Readiness gate: NOT CLEARED.** Prompt 1 through Prompt 10 remain **NOT STARTED**. No source, test, configuration, OCR, schema, migration, Admin assignment UI, role-filtered dropdown, or later-prompt change was authorized or made during controller diagnostics.
+
+### Controller and diagnostic evidence
+
+The fresh controller verification and read-only diagnostics established all of the following on the same HEAD:
+
+| Area | Exact command/context | Authoritative result |
+|---|---|---|
+| Backend tests | `cd backend && npm test` | **PASS — 36/36 test files; 491/491 tests; exit 0** |
+| Backend typecheck | `cd backend && npm run typecheck` | **PASS — exit 0** |
+| Backend production build | `cd backend && npm run build` | **PASS — exit 0** |
+| Frontend hostile full suite — controller run | `cd frontend && VITE_API_URL=http://hostile.invalid/api/v1 npm test` | **FAIL — 2 failed files; 3 failed tests; 560 passed; 563 total** |
+| Frontend typecheck | `cd frontend && npm run typecheck` | **PASS — exit 0** |
+| Frontend production build | `cd frontend && npm run build` | **PASS — exit 0**, with the known 639.34 kB main-JavaScript chunk warning |
+| Frontend hostile full suite — later controlled rerun | The identical normal hostile-environment command | **PASS — 63/63 test files; 563/563 tests; 9.29 s**, with the known non-failing MSW unmatched-request diagnostic |
+
+The red full-suite run contained two five-second `user-event` timeouts followed by one scrambled-text assertion. Read-only diagnostics did not reproduce a product regression and found no readiness-commit change in the affected annotation/preview area. The two target suites passed 32/32 tests together in each of four runs, and each of the three named cases passed 12/12 repetitions. The scrambled string was proven to be an order-preserving merge of the next test's intended text with pending typing from the preceding timed-out test.
+
+This evidence bounds the symptom to a non-deterministic test-runner/user-event scheduling interaction, without proving a source defect or a single polluting test. Crucially, the exact required full-suite command produced both red and green outcomes on the same HEAD. A later pass does not erase the independent failure, so the approved requirement for a deterministic green baseline is not met.
+
+### Current readiness and next authorization boundary
+
+**Ready to begin Prompt 1: NO.** The scoped remediation code is implemented, but the readiness gate remains uncleared until the hostile-environment frontend full suite is demonstrably deterministic.
+
+Further annotation/test-runner stabilization, instrumentation, or cleanup changes require separate authorization because they are outside the approved readiness-remediation plan. This verdict does not authorize an attempted fix or Prompt 1 work.
+
+**Ready for public production: NO.** The later lifecycle, security, operational, migration, browser-E2E, performance, observability, storage, and release-hardening work remains incomplete.
+
+Current generic project access for `estimator_sales` remains explicit deny-by-default. Future Estimator/Sales access may be introduced only through a later authorized Admin assignment to a named active user selected from a role-filtered `estimator_sales` dropdown, with backend enforcement.
+
+The unverified client-email claiming issue also remains open: it is a public-release blocker/high-priority risk independent of the non-deterministic test gate. The known 639.34 kB frontend bundle warning and non-failing MSW unmatched-request diagnostic remain recorded concerns.
