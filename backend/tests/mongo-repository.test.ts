@@ -12,7 +12,9 @@ import { DesignVersionModel } from "../src/models/DesignVersion.js";
 import { DesignVersionSequenceModel } from "../src/models/DesignVersionSequence.js";
 import { EmailCoordinationModel } from "../src/models/EmailCoordination.js";
 import { EvaluationModel } from "../src/models/Evaluation.js";
+import { EstimateModel } from "../src/models/Estimate.js";
 import { FloorModel } from "../src/models/Floor.js";
+import { LeadModel } from "../src/models/Lead.js";
 import { ProjectModel } from "../src/models/Project.js";
 import { ProjectAccessGrantModel } from "../src/models/ProjectAccessGrant.js";
 import { TaskModel } from "../src/models/Task.js";
@@ -673,6 +675,167 @@ describe("Mongo repository contracts", () => {
         role: "design_manager"
       })
     ).rejects.toBeInstanceOf(RepositoryConflictError);
+  });
+
+  it("maps a legacy user without a stored version to public version one", async () => {
+    const stored = {
+      _id: "user-legacy-version",
+      name: "Legacy User",
+      email: "legacy@example.com",
+      emailNormalized: "legacy@example.com",
+      passwordHash: "hash",
+      role: "designer",
+      active: true,
+      managerId: null,
+      authorizedClientIds: [],
+      createdAt: new Date("2026-08-17T10:00:00.000Z"),
+      updatedAt: new Date("2026-08-17T10:00:00.000Z")
+    };
+    vi.spyOn(UserModel, "findById").mockReturnValueOnce({
+      select: () => ({ lean: () => ({ exec: vi.fn().mockResolvedValue(stored) }) })
+    } as never);
+
+    await expect(
+      createMongoRepository().findUserById(stored._id)
+    ).resolves.toMatchObject({ id: stored._id, version: 1 });
+    expect(UserModel.schema.path("version").options.default).toBe(1);
+  });
+
+  it("uses legacy-aware version-one CAS then exact incrementing Mongo CAS", async () => {
+    const session = {} as never;
+    const document = (version: number, active: boolean) => ({
+      _id: "user-versioned",
+      name: "Versioned User",
+      email: "versioned@example.com",
+      emailNormalized: "versioned@example.com",
+      passwordHash: "hash",
+      role: "designer",
+      active,
+      version,
+      managerId: null,
+      authorizedClientIds: [],
+      createdAt: new Date("2026-08-17T10:00:00.000Z"),
+      updatedAt: new Date("2026-08-17T11:00:00.000Z")
+    });
+    const queryFor = (value: unknown) => {
+      const query = {
+        session: vi.fn(),
+        lean: () => ({ exec: vi.fn().mockResolvedValue(value) })
+      };
+      return {
+        query,
+        modelResult: { select: () => query }
+      };
+    };
+    const first = queryFor(document(2, true));
+    const second = queryFor(document(3, false));
+    const update = vi.spyOn(UserModel, "findOneAndUpdate")
+      .mockReturnValueOnce(first.modelResult as never)
+      .mockReturnValueOnce(second.modelResult as never);
+    const repository = createMongoRepository(session);
+
+    await expect(
+      repository.updateUser("user-versioned", 1, {
+        role: "designer",
+        updatedAt: "2026-08-17T11:00:00.000Z"
+      })
+    ).resolves.toMatchObject({ version: 2 });
+    await expect(
+      repository.updateUser("user-versioned", 2, {
+        active: false,
+        updatedAt: "2026-08-17T12:00:00.000Z"
+      })
+    ).resolves.toMatchObject({ version: 3, active: false });
+
+    expect(update).toHaveBeenNthCalledWith(
+      1,
+      {
+        _id: "user-versioned",
+        $or: [{ version: 1 }, { version: { $exists: false } }]
+      },
+      {
+        $set: {
+          role: "designer",
+          updatedAt: new Date("2026-08-17T11:00:00.000Z"),
+          version: 2
+        }
+      },
+      { new: true, runValidators: true, timestamps: false }
+    );
+    expect(update).toHaveBeenNthCalledWith(
+      2,
+      { _id: "user-versioned", version: 2 },
+      {
+        $set: {
+          active: false,
+          updatedAt: new Date("2026-08-17T12:00:00.000Z")
+        },
+        $inc: { version: 1 }
+      },
+      { new: true, runValidators: true, timestamps: false }
+    );
+    expect(first.query.session).toHaveBeenCalledWith(session);
+    expect(second.query.session).toHaveBeenCalledWith(session);
+  });
+
+  it("counts all nine Mongo responsibilities sequentially in the active session", async () => {
+    const session = {} as never;
+    let inFlight = 0;
+    let maximumInFlight = 0;
+    const queries = Array.from({ length: 9 }, (_, index) => ({
+      session: vi.fn(),
+      exec: vi.fn(async () => {
+        inFlight += 1;
+        maximumInFlight = Math.max(maximumInFlight, inFlight);
+        await Promise.resolve();
+        inFlight -= 1;
+        return index + 1;
+      })
+    }));
+    vi.spyOn(LeadModel, "countDocuments").mockReturnValueOnce(queries[0] as never);
+    vi.spyOn(EstimateModel, "countDocuments").mockReturnValueOnce(queries[1] as never);
+    vi.spyOn(ProjectModel, "countDocuments")
+      .mockReturnValueOnce(queries[2] as never)
+      .mockReturnValueOnce(queries[3] as never)
+      .mockReturnValueOnce(queries[4] as never)
+      .mockReturnValueOnce(queries[7] as never);
+    vi.spyOn(TaskModel, "countDocuments").mockReturnValueOnce(queries[5] as never);
+    vi.spyOn(UserModel, "countDocuments").mockReturnValueOnce(queries[6] as never);
+    vi.spyOn(ProjectAccessGrantModel, "countDocuments")
+      .mockReturnValueOnce(queries[8] as never);
+
+    await expect(
+      createMongoRepository(session).countUserResponsibilities("user-counted")
+    ).resolves.toEqual({
+      ownedActiveLeads: 1,
+      ownedActiveEstimates: 2,
+      initiatedActiveProjects: 3,
+      assignedActiveProjects: 4,
+      managedActiveProjects: 5,
+      ownedActiveTasks: 6,
+      directReports: 7,
+      linkedClientProjects: 8,
+      adminInitiatorGrants: 9
+    });
+    expect(maximumInFlight).toBe(1);
+    for (const countQuery of queries) {
+      expect(countQuery.session).toHaveBeenCalledWith(session);
+    }
+    expect(LeadModel.countDocuments).toHaveBeenCalledWith({
+      ownerId: "user-counted",
+      stage: { $nin: ["won", "lost"] }
+    });
+    expect(EstimateModel.countDocuments).toHaveBeenCalledWith({
+      ownerId: "user-counted",
+      status: { $ne: "client_approved" }
+    });
+    expect(UserModel.countDocuments).toHaveBeenCalledWith({ managerId: "user-counted" });
+    expect(ProjectAccessGrantModel.countDocuments).toHaveBeenCalledWith({
+      userId: "user-counted",
+      module: "projects",
+      source: "admin_initiator",
+      active: true
+    });
   });
 
   it("links only unclaimed Mongo projects with the matching normalized email", async () => {

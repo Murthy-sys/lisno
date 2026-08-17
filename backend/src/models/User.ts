@@ -16,6 +16,7 @@ const userSchema = new Schema(
       required: true
     },
     active: { type: Boolean, required: true, default: true },
+    version: { type: Number, required: true, default: 1, min: 1 },
     managerId: { type: String, ref: "User", default: null },
     authorizedClientIds: [{ type: String, ref: "User" }],
     avatar: { type: String },

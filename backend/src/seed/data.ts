@@ -29,6 +29,7 @@ const user = (
   address: input.address ?? null,
   passwordHash: DEMO_PASSWORD_HASH,
   active: true,
+  version: 1,
   managerId: input.managerId ?? null,
   authorizedClientIds: input.authorizedClientIds ?? [],
   createdAt: CREATED_AT,
@@ -438,6 +439,7 @@ const tasks: TaskRecord[] = [
 export const demoSeedData: SeedData = {
   users,
   leads: [],
+  estimateResponsibilities: [],
   leadActivities: [],
   projects,
   floors,

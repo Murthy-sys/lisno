@@ -61,12 +61,31 @@ export interface UserRecord {
   passwordHash: string;
   role: Role;
   active: boolean;
+  version: number;
   managerId: string | null;
   authorizedClientIds: string[];
   avatar?: string;
   title?: string;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface UserDirectoryFilters {
+  search?: string;
+  role?: Role;
+  active?: boolean;
+}
+
+export interface UserResponsibilityCounts {
+  ownedActiveLeads: number;
+  ownedActiveEstimates: number;
+  initiatedActiveProjects: number;
+  assignedActiveProjects: number;
+  managedActiveProjects: number;
+  ownedActiveTasks: number;
+  directReports: number;
+  linkedClientProjects: number;
+  adminInitiatorGrants: number;
 }
 
 export interface ProjectRecord {
@@ -123,6 +142,22 @@ export interface LeadActivityRecord {
   note: string;
   occurredAt: string;
   createdAt: string;
+}
+
+export type EstimateResponsibilityStatus =
+  | "draft"
+  | "pending_manager_assignment"
+  | "pending_designer_approval"
+  | "designer_changes_requested"
+  | "ready_for_client"
+  | "sent_to_client"
+  | "client_changes_requested"
+  | "client_approved";
+
+export interface EstimateResponsibilityRecord {
+  id: string;
+  ownerId: string;
+  status: EstimateResponsibilityStatus;
 }
 
 export interface LeadFilters {
@@ -573,6 +608,7 @@ export interface GrantRevocation {
 export interface SeedData {
   users: UserRecord[];
   leads: LeadRecord[];
+  estimateResponsibilities: EstimateResponsibilityRecord[];
   leadActivities: LeadActivityRecord[];
   projects: ProjectRecord[];
   floors: FloorRecord[];
@@ -676,6 +712,17 @@ export interface AppRepository {
   createUser(input: NewUser): Promise<UserRecord>;
   listUsers(): Promise<UserRecord[]>;
   listUsersByIds(ids: string[]): Promise<UserRecord[]>;
+  pageUsers(
+    filters: UserDirectoryFilters & { visibleRoles: readonly Role[] },
+    pagination: PaginationInput
+  ): Promise<PageResult<UserRecord>>;
+  countActiveUsersByRole(role: Role): Promise<number>;
+  countUserResponsibilities(userId: string): Promise<UserResponsibilityCounts>;
+  updateUser(
+    userId: string,
+    expectedVersion: number,
+    change: { role?: Role; active?: boolean; updatedAt: string }
+  ): Promise<UserRecord>;
   pageAllLeads(filters: LeadFilters, pagination: PaginationInput): Promise<PageResult<LeadRecord>>;
   pageLeadsForOwner(ownerId: string, filters: LeadFilters, pagination: PaginationInput): Promise<PageResult<LeadRecord>>;
   findLeadById(id: string): Promise<LeadRecord | null>;

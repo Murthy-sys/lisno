@@ -55,8 +55,8 @@ export function createAuditService(repository: AppRepository): AuditService {
         entityType: input.entityType,
         entityId: input.entityId,
         occurredAt: input.occurredAt,
-        oldValues: input.oldValues ?? {},
-        newValues: input.newValues ?? {},
+        oldValues: sanitizeAuditObject(input.oldValues ?? {}),
+        newValues: sanitizeAuditObject(input.newValues ?? {}),
         reason: input.reason ?? null
       });
     },
@@ -70,8 +70,8 @@ export function createAuditService(repository: AppRepository): AuditService {
           entityType: input.entityType,
           entityId: input.entityId,
           occurredAt: input.occurredAt,
-          oldValues: input.oldValues ?? {},
-          newValues: input.newValues ?? {},
+          oldValues: sanitizeAuditObject(input.oldValues ?? {}),
+          newValues: sanitizeAuditObject(input.newValues ?? {}),
           reason: input.reason ?? null
         }],
         { session }
@@ -188,7 +188,17 @@ function sanitizeAuditValue(value: unknown): unknown {
   if (!value || typeof value !== "object") return value;
   return Object.fromEntries(
     Object.entries(value as Record<string, unknown>)
-      .filter(([key]) => !/password|hash|token|secret/i.test(key))
+      .filter(([key]) => !isSensitiveAuditKey(key))
       .map(([key, nested]) => [key, sanitizeAuditValue(nested)])
+  );
+}
+
+function isSensitiveAuditKey(key: string): boolean {
+  const normalized = key
+    .normalize("NFKC")
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "");
+  return ["password", "hash", "token", "secret"].some((part) =>
+    normalized.includes(part)
   );
 }

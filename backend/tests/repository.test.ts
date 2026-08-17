@@ -109,6 +109,162 @@ describe("memory repository", () => {
     ).rejects.toBeInstanceOf(RepositoryConflictError);
   });
 
+  it("pages visible users and counts every persisted responsibility boundary", async () => {
+    const seed = structuredClone(demoSeedData);
+    const targetId = "user-estimator-sales";
+    const baseLead = {
+      id: "lead-responsibility-active",
+      ownerId: targetId,
+      clientName: "Responsibility Client",
+      clientEmail: "responsibility@example.com",
+      clientMobile: "9999999999",
+      projectName: "Responsibility Project",
+      location: "Pune",
+      propertyType: "Apartment",
+      budgetMin: null,
+      budgetMax: null,
+      source: "Referral",
+      stage: "negotiation" as const,
+      nextAction: "Follow up",
+      nextActionAt: "2026-08-18T10:00:00.000Z",
+      builder: null,
+      areaSqft: null,
+      targetHandoverAt: null,
+      notes: null,
+      latestActivityAt: null,
+      createdAt: "2026-08-17T10:00:00.000Z",
+      updatedAt: "2026-08-17T10:00:00.000Z"
+    };
+    seed.leads.push(
+      baseLead,
+      { ...baseLead, id: "lead-responsibility-won", stage: "won" },
+      { ...baseLead, id: "lead-responsibility-lost", stage: "lost" }
+    );
+    seed.estimateResponsibilities.push(
+      { id: "estimate-responsibility-active", ownerId: targetId, status: "draft" },
+      {
+        id: "estimate-responsibility-complete",
+        ownerId: targetId,
+        status: "client_approved"
+      }
+    );
+    const activeProject = {
+      ...structuredClone(seed.projects[0]!),
+      id: "project-responsibility-active",
+      clientId: targetId,
+      initiatingDesignerId: targetId,
+      assignedDesignerIds: [targetId],
+      managerId: targetId,
+      status: "active" as const
+    };
+    seed.projects.push(activeProject, {
+      ...activeProject,
+      id: "project-responsibility-completed",
+      status: "completed"
+    });
+    const activeTask = {
+      ...structuredClone(seed.tasks[0]!),
+      id: "task-responsibility-active",
+      projectId: activeProject.id,
+      ownerId: targetId,
+      status: "in_progress" as const,
+      completedAt: null
+    };
+    seed.tasks.push(activeTask, {
+      ...activeTask,
+      id: "task-responsibility-completed",
+      status: "completed",
+      completedAt: "2026-08-18T10:00:00.000Z"
+    });
+    seed.users.push({
+      ...structuredClone(seed.users[0]!),
+      id: "user-inactive-direct-report",
+      name: "Inactive Direct Report",
+      email: "inactive-report@example.com",
+      emailNormalized: "inactive-report@example.com",
+      active: false,
+      managerId: targetId
+    });
+    const grantAt = "2026-08-17T10:00:00.000Z";
+    seed.projectAccessGrants.push({
+      id: "grant-responsibility-initiator",
+      projectId: activeProject.id,
+      userId: targetId,
+      module: "projects",
+      source: "admin_initiator",
+      accessRequestId: null,
+      grantedById: "user-super-admin",
+      active: true,
+      grantedAt: grantAt,
+      revokedAt: null,
+      revokedById: null,
+      revocationReason: null,
+      version: 1,
+      createdAt: grantAt,
+      updatedAt: grantAt
+    });
+    const repository = createMemoryRepository(seed);
+
+    await expect(
+      repository.pageUsers(
+        {
+          search: "SALES@",
+          role: "estimator_sales",
+          active: true,
+          visibleRoles: ["estimator_sales"]
+        },
+        { limit: 20, offset: 0 }
+      )
+    ).resolves.toMatchObject({
+      total: 1,
+      items: [{ id: targetId, role: "estimator_sales", active: true, version: 1 }]
+    });
+    await expect(repository.countActiveUsersByRole("design_manager")).resolves.toBe(2);
+    await expect(repository.countUserResponsibilities(targetId)).resolves.toEqual({
+      ownedActiveLeads: 1,
+      ownedActiveEstimates: 1,
+      initiatedActiveProjects: 1,
+      assignedActiveProjects: 1,
+      managedActiveProjects: 1,
+      ownedActiveTasks: 1,
+      directReports: 1,
+      linkedClientProjects: 2,
+      adminInitiatorGrants: 1
+    });
+  });
+
+  it("updates memory users by exact version and keeps outer writes rollback-safe", async () => {
+    const repository = createMemoryRepository(structuredClone(demoSeedData));
+    const target = await repository.findUserById("user-estimator-sales");
+    expect(target?.version).toBe(1);
+
+    const updated = await repository.updateUser(target!.id, target!.version, {
+      active: false,
+      updatedAt: "2026-08-17T11:00:00.000Z"
+    });
+    expect(updated).toMatchObject({ active: false, version: 2 });
+    await expect(
+      repository.updateUser(target!.id, target!.version, {
+        active: true,
+        updatedAt: "2026-08-17T12:00:00.000Z"
+      })
+    ).rejects.toBeInstanceOf(RepositoryConflictError);
+
+    await expect(
+      repository.runInTransaction(async () => {
+        await repository.updateUser(target!.id, updated.version, {
+          active: true,
+          updatedAt: "2026-08-17T13:00:00.000Z"
+        });
+        throw new Error("rollback outer write");
+      })
+    ).rejects.toThrow();
+    await expect(repository.findUserById(target!.id)).resolves.toMatchObject({
+      active: false,
+      version: 2
+    });
+  });
+
   it("submits replacement drafts while preserving approved active section revisions", async () => {
     const seed = structuredClone(demoSeedData);
     seed.extractionJobs.push({

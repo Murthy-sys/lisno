@@ -79,6 +79,7 @@ const mutationMethods = new Set<keyof AppRepository>([
   "updateLead",
   "appendLeadActivity",
   "createUser",
+  "updateUser",
   "linkUnclaimedProjectsToClient",
   "createFloor",
   "createDesignStage",
@@ -107,11 +108,17 @@ const mutationMethods = new Set<keyof AppRepository>([
 ]);
 
 export function createMemoryRepository(seed: SeedData = demoSeedData): AppRepository {
-  assertAuthorizationUniqueness(seed);
+  const normalizedSeed = clone(seed);
+  normalizedSeed.users = normalizedSeed.users.map((user) => ({
+    ...user,
+    version: user.version ?? 1
+  }));
+  normalizedSeed.estimateResponsibilities ??= [];
+  assertAuthorizationUniqueness(normalizedSeed);
   return buildMemoryRepository({
-    state: clone(seed),
+    state: normalizedSeed,
     counters: new Map(),
-    timestamp: latestTimestamp(seed)
+    timestamp: latestTimestamp(normalizedSeed)
   });
 }
 
@@ -458,6 +465,7 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
         passwordHash: input.passwordHash,
         role: input.role,
         active: input.active ?? true,
+        version: 1,
         managerId: input.managerId ?? null,
         authorizedClientIds: input.authorizedClientIds ?? [],
         ...(input.avatar ? { avatar: input.avatar } : {}),
@@ -479,6 +487,83 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
       return clone(
         state.users.filter((user) => selected.has(user.id)).sort(byNameThenId)
       );
+    },
+
+    async pageUsers(filters, pagination) {
+      const visibleRoles = new Set(filters.visibleRoles);
+      const search = filters.search?.trim().toLowerCase();
+      const users = state.users
+        .filter((user) => visibleRoles.has(user.role))
+        .filter((user) => !filters.role || user.role === filters.role)
+        .filter((user) => filters.active === undefined || user.active === filters.active)
+        .filter(
+          (user) =>
+            !search ||
+            user.name.toLowerCase().includes(search) ||
+            user.email.toLowerCase().includes(search)
+        )
+        .sort(byNameThenId);
+      return paginate(clone(users), pagination);
+    },
+
+    async countActiveUsersByRole(role) {
+      return state.users.filter((user) => user.role === role && user.active).length;
+    },
+
+    async countUserResponsibilities(userId) {
+      return {
+        ownedActiveLeads: state.leads.filter(
+          (lead) => lead.ownerId === userId && lead.stage !== "won" && lead.stage !== "lost"
+        ).length,
+        ownedActiveEstimates: state.estimateResponsibilities.filter(
+          (estimate) =>
+            estimate.ownerId === userId && estimate.status !== "client_approved"
+        ).length,
+        initiatedActiveProjects: state.projects.filter(
+          (project) =>
+            project.initiatingDesignerId === userId && project.status !== "completed"
+        ).length,
+        assignedActiveProjects: state.projects.filter(
+          (project) =>
+            project.assignedDesignerIds.includes(userId) && project.status !== "completed"
+        ).length,
+        managedActiveProjects: state.projects.filter(
+          (project) => project.managerId === userId && project.status !== "completed"
+        ).length,
+        ownedActiveTasks: state.tasks.filter(
+          (task) => task.ownerId === userId && task.status !== "completed"
+        ).length,
+        directReports: state.users.filter((user) => user.managerId === userId).length,
+        linkedClientProjects: state.projects.filter((project) => project.clientId === userId)
+          .length,
+        adminInitiatorGrants: state.projectAccessGrants.filter(
+          (grant) =>
+            grant.userId === userId &&
+            grant.module === "projects" &&
+            grant.source === "admin_initiator" &&
+            grant.active
+        ).length
+      };
+    },
+
+    async updateUser(userId, expectedVersion, change) {
+      const index = state.users.findIndex((user) => user.id === userId);
+      if (index < 0) {
+        throw new RepositoryNotFoundError(`User ${userId} was not found.`);
+      }
+      const current = state.users[index]!;
+      if (current.version !== expectedVersion) {
+        throw new RepositoryConflictError(`User ${userId} changed concurrently.`);
+      }
+      const updated: UserRecord = {
+        ...current,
+        ...(change.role === undefined ? {} : { role: change.role }),
+        ...(change.active === undefined ? {} : { active: change.active }),
+        updatedAt: change.updatedAt,
+        version: current.version + 1
+      };
+      state.users[index] = updated;
+      return clone(updated);
     },
 
     async pageAllLeads(filters, pagination) {

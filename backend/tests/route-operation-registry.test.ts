@@ -77,16 +77,22 @@ const LEAD_EXPECTED_ROUTES = EXPECTED_HUMAN_JWT_OPERATIONS
 const ESTIMATE_EXPECTED_ROUTES = EXPECTED_HUMAN_JWT_OPERATIONS
   .slice(71, 84)
   .map(({ key }) => key);
+const ADMIN_USER_EXPECTED_ROUTES = EXPECTED_HUMAN_JWT_OPERATIONS
+  .slice(85, 87)
+  .map(({ key }) => key);
 const ACCESS_REQUEST_EXPECTED_ROUTES = EXPECTED_HUMAN_JWT_OPERATIONS
   .slice(87, 93)
   .map(({ key }) => key);
 
-function mountedHumanRouters(): MountedRouter[] {
+function mountedHumanRouters(includeExtractionWorker = false): MountedRouter[] {
   const app = createApp({
     auth: {
       jwtSecret: "route-registry-test-secret-with-enough-entropy",
       jwtExpiresInSeconds: 900
-    }
+    },
+    ...(includeExtractionWorker
+      ? { ocrWorkerToken: "route-registry-worker-token" }
+      : {})
   });
   const stack = (app as unknown as { router: { stack: RouterLayer[] } }).router.stack;
   return stack.flatMap((outer) => {
@@ -300,21 +306,46 @@ describe("human JWT operation registry", () => {
     }
   });
 
-  it("mounts all baseline and access-request operations and leaves only rows 86 through 87 unmounted", () => {
-    const mountedOperations = mountedHumanRouters().flatMap(({ routes }) => routes)
-      .flatMap(({ operationMarkers }) => operationMarkers.map(({ key }) => key))
-      .filter((key): key is string => Boolean(key));
-    const baselineOperations = EXPECTED_HUMAN_JWT_OPERATIONS
-      .filter((operation) => operation.availability === "baseline")
-      .map(({ key }) => key);
-    const mountedBaselineOperations = mountedOperations.filter((key) => baselineOperations.includes(key as never));
+  it("classifies Admin User rows 86 through 87 with one ordered marker pair", () => {
+    const routers = mountedHumanRouters();
+    const matches = routers.filter((router) =>
+      router.routes.some(({ key }) => ADMIN_USER_EXPECTED_ROUTES.includes(key as never))
+    );
+    expect(matches).toHaveLength(1);
+    expect(matches[0]!.routes.map(({ key }) => key).sort()).toEqual(
+      [...ADMIN_USER_EXPECTED_ROUTES].sort()
+    );
+    for (const route of matches[0]!.routes) {
+      expect(route.authenticationIndices, `${route.key} authentication markers`).toHaveLength(1);
+      expect(route.operationMarkers, `${route.key} operation markers`).toHaveLength(1);
+      expect(route.operationMarkers[0]?.key, `${route.key} operation key`).toBe(route.key);
+      expect(route.operationMarkers[0]!.index, `${route.key} middleware order`).toBeGreaterThan(
+        route.authenticationIndices[0]!
+      );
+    }
+  });
 
-    expect([...mountedBaselineOperations].sort()).toEqual([...baselineOperations].sort());
-    expect(mountedBaselineOperations).toHaveLength(84);
-    expect(mountedOperations).toHaveLength(91);
-    expect(mountedOperations).toContain("GET /auth/authorization");
-    expect(EXPECTED_HUMAN_JWT_OPERATIONS.filter(({ key }) => !mountedOperations.includes(key)).map(({ key }) => key))
-      .toEqual(EXPECTED_HUMAN_JWT_OPERATIONS.slice(85, 87).map(({ key }) => key));
+  it("mounts the exact 93-operation manifest with one ordered marker pair each", () => {
+    const mountedRoutes = mountedHumanRouters()
+      .flatMap(({ routes }) => routes)
+      .filter(({ operationMarkers }) => operationMarkers.length > 0);
+    const mountedOperations = mountedRoutes.map(({ key }) => key);
+    const expectedKeys = EXPECTED_HUMAN_JWT_OPERATIONS.map(({ key }) => key).sort();
+
+    expect([...mountedOperations].sort()).toEqual(expectedKeys);
+    expect(expectedKeys).toHaveLength(93);
+    expect(new Set(expectedKeys).size).toBe(93);
+    expect(mountedOperations).not.toContain(
+      "POST /execution/worker-assignments/override"
+    );
+    for (const route of mountedRoutes) {
+      expect(route.authenticationIndices, `${route.key} authentication markers`).toHaveLength(1);
+      expect(route.operationMarkers, `${route.key} operation markers`).toHaveLength(1);
+      expect(route.operationMarkers[0]?.key, `${route.key} operation key`).toBe(route.key);
+      expect(route.operationMarkers[0]!.index, `${route.key} middleware order`).toBeGreaterThan(
+        route.authenticationIndices[0]!
+      );
+    }
   });
 
   it.each([
@@ -367,6 +398,21 @@ describe("human JWT operation registry", () => {
     ];
     for (const key of nonHumanKeys) {
       expect(HUMAN_JWT_OPERATIONS).not.toHaveProperty(key);
+    }
+
+    const mountedRoutes = mountedHumanRouters(true).flatMap(({ routes }) => routes);
+    const publicRoutes = mountedRoutes.filter(
+      ({ key }) =>
+        key === "GET /health" ||
+        key === "POST /auth/login" ||
+        key === "POST /auth/client-signup" ||
+        key.startsWith("POST /internal/extraction-jobs") ||
+        key.startsWith("GET /internal/extraction-jobs")
+    );
+    expect(publicRoutes.length).toBeGreaterThanOrEqual(8);
+    for (const route of publicRoutes) {
+      expect(route.authenticationIndices, `${route.key} authentication markers`).toEqual([]);
+      expect(route.operationMarkers, `${route.key} operation markers`).toEqual([]);
     }
   });
 

@@ -17,6 +17,7 @@ import { DesignVersionModel } from "../models/DesignVersion.js";
 import { DesignVersionSequenceModel } from "../models/DesignVersionSequence.js";
 import { EmailCoordinationModel } from "../models/EmailCoordination.js";
 import { EvaluationModel } from "../models/Evaluation.js";
+import { EstimateModel } from "../models/Estimate.js";
 import { FloorModel } from "../models/Floor.js";
 import { LeadModel } from "../models/Lead.js";
 import { LeadActivityModel } from "../models/LeadActivity.js";
@@ -547,6 +548,7 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
           passwordHash: input.passwordHash,
           role: input.role,
           active: input.active ?? true,
+          version: 1,
           managerId: input.managerId ?? null,
           authorizedClientIds: input.authorizedClientIds ?? [],
           ...(input.avatar ? { avatar: input.avatar } : {}),
@@ -575,6 +577,144 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
         .lean()
         .exec();
       return documents.map(mapUser);
+    },
+
+    async pageUsers(filters, pagination) {
+      if (filters.role && !filters.visibleRoles.includes(filters.role)) {
+        return { items: [], total: 0 };
+      }
+      const filter: PlainDocument = {
+        role: filters.role ?? { $in: [...filters.visibleRoles] }
+      };
+      if (filters.active !== undefined) filter.active = filters.active;
+      if (filters.search?.trim()) {
+        const search = new RegExp(escapeRegex(filters.search.trim()), "i");
+        filter.$or = [{ name: search }, { email: search }];
+      }
+      const usersQuery = UserModel.find(filter)
+        .select("+passwordHash")
+        .sort({ name: 1, _id: 1 })
+        .skip(pagination.offset)
+        .limit(pagination.limit);
+      if (session) usersQuery.session(session);
+      const documents = await usersQuery.lean().exec();
+      const countQuery = UserModel.countDocuments(filter);
+      if (session) countQuery.session(session);
+      const total = await countQuery.exec();
+      return { items: documents.map(mapUser), total };
+    },
+
+    async countActiveUsersByRole(role) {
+      const query = UserModel.countDocuments({ role, active: true });
+      if (session) query.session(session);
+      return query.exec();
+    },
+
+    async countUserResponsibilities(userId) {
+      const leadQuery = LeadModel.countDocuments({
+        ownerId: userId,
+        stage: { $nin: ["won", "lost"] }
+      });
+      if (session) leadQuery.session(session);
+      const ownedActiveLeads = await leadQuery.exec();
+
+      const estimateQuery = EstimateModel.countDocuments({
+        ownerId: userId,
+        status: { $ne: "client_approved" }
+      });
+      if (session) estimateQuery.session(session);
+      const ownedActiveEstimates = await estimateQuery.exec();
+
+      const initiatedProjectQuery = ProjectModel.countDocuments({
+        initiatingDesignerId: userId,
+        status: { $ne: "completed" }
+      });
+      if (session) initiatedProjectQuery.session(session);
+      const initiatedActiveProjects = await initiatedProjectQuery.exec();
+
+      const assignedProjectQuery = ProjectModel.countDocuments({
+        assignedDesignerIds: userId,
+        status: { $ne: "completed" }
+      });
+      if (session) assignedProjectQuery.session(session);
+      const assignedActiveProjects = await assignedProjectQuery.exec();
+
+      const managedProjectQuery = ProjectModel.countDocuments({
+        managerId: userId,
+        status: { $ne: "completed" }
+      });
+      if (session) managedProjectQuery.session(session);
+      const managedActiveProjects = await managedProjectQuery.exec();
+
+      const taskQuery = TaskModel.countDocuments({
+        ownerId: userId,
+        status: { $ne: "completed" }
+      });
+      if (session) taskQuery.session(session);
+      const ownedActiveTasks = await taskQuery.exec();
+
+      const directReportQuery = UserModel.countDocuments({ managerId: userId });
+      if (session) directReportQuery.session(session);
+      const directReports = await directReportQuery.exec();
+
+      const clientProjectQuery = ProjectModel.countDocuments({ clientId: userId });
+      if (session) clientProjectQuery.session(session);
+      const linkedClientProjects = await clientProjectQuery.exec();
+
+      const initiatorGrantQuery = ProjectAccessGrantModel.countDocuments({
+        userId,
+        module: "projects",
+        source: "admin_initiator",
+        active: true
+      });
+      if (session) initiatorGrantQuery.session(session);
+      const adminInitiatorGrants = await initiatorGrantQuery.exec();
+
+      return {
+        ownedActiveLeads,
+        ownedActiveEstimates,
+        initiatedActiveProjects,
+        assignedActiveProjects,
+        managedActiveProjects,
+        ownedActiveTasks,
+        directReports,
+        linkedClientProjects,
+        adminInitiatorGrants
+      };
+    },
+
+    async updateUser(userId, expectedVersion, change) {
+      const set: PlainDocument = {
+        ...(change.role === undefined ? {} : { role: change.role }),
+        ...(change.active === undefined ? {} : { active: change.active }),
+        updatedAt: date(change.updatedAt)
+      };
+      const filter: PlainDocument =
+        expectedVersion === 1
+          ? {
+              _id: userId,
+              $or: [{ version: 1 }, { version: { $exists: false } }]
+            }
+          : { _id: userId, version: expectedVersion };
+      const update: PlainDocument =
+        expectedVersion === 1
+          ? { $set: { ...set, version: 2 } }
+          : { $set: set, $inc: { version: 1 } };
+      const query = UserModel.findOneAndUpdate(filter, update, {
+        new: true,
+        runValidators: true,
+        timestamps: false
+      }).select("+passwordHash");
+      if (session) query.session(session);
+      const document = await query.lean().exec();
+      if (document) return mapUser(document);
+
+      const existsQuery = UserModel.exists({ _id: userId });
+      if (session) existsQuery.session(session);
+      if (!(await existsQuery.exec())) {
+        throw new RepositoryNotFoundError(`User ${userId} was not found.`);
+      }
+      throw new RepositoryConflictError(`User ${userId} changed concurrently.`);
     },
 
     async pageAllLeads(filters, pagination) {
@@ -2214,6 +2354,7 @@ function mapUser(document: PlainDocument): UserRecord {
     passwordHash: document.passwordHash,
     role: document.role,
     active: document.active,
+    version: document.version ?? 1,
     managerId: document.managerId ?? null,
     authorizedClientIds: [...(document.authorizedClientIds ?? [])],
     ...(document.avatar ? { avatar: document.avatar } : {}),
