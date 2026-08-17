@@ -95,8 +95,10 @@ export function createUserAdministrationService(
         await transaction.coordinateAuthorizationMutation();
         const storedActor = await requireAdministrativeActor(transaction, actor);
         const target = await transaction.findUserById(userId);
-        if (!target) notFound();
-        if (target.version !== input.version) versionConflict();
+        if (!target) {
+          if (storedActor.role === "admin") forbidden();
+          notFound();
+        }
 
         if (storedActor.role === "admin") {
           if (
@@ -107,6 +109,7 @@ export function createUserAdministrationService(
             forbidden();
           }
         }
+        if (target.version !== input.version) versionConflict();
 
         const roleChanges = input.role !== undefined && input.role !== target.role;
         const activeChanges = input.active !== undefined && input.active !== target.active;

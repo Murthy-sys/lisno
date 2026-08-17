@@ -165,6 +165,99 @@ describe("user administration service", () => {
     }
   });
 
+  it("keeps missing, self, protected-role, and protected-destination targets generic for Admin", async () => {
+    const seed = emptyAdministrationSeed();
+    const admin = addUser(seed, "user-admin", "admin");
+    const protectedUsers = [
+      admin,
+      addUser(seed, "user-admin-two", "admin"),
+      addUser(seed, "user-super", "super_admin"),
+      addUser(seed, "user-client", "client"),
+      addUser(seed, "user-manager", "design_manager"),
+      addUser(seed, "user-head", "design_head")
+    ];
+    const designer = addUser(seed, "user-designer", "designer");
+    const { service } = setup(seed);
+    const attempts = [
+      () => service.update(publicUser(admin), "user-missing", { version: 1, active: false }),
+      () => service.update(publicUser(admin), "user-missing", { version: 999, active: false }),
+      ...protectedUsers.flatMap((target) => [
+        () => service.update(publicUser(admin), target.id, {
+          version: target.version,
+          active: false
+        }),
+        () => service.update(publicUser(admin), target.id, {
+          version: target.version + 99,
+          active: false
+        })
+      ]),
+      () => service.update(publicUser(admin), designer.id, {
+        version: designer.version,
+        role: "admin"
+      }),
+      () => service.update(publicUser(admin), designer.id, {
+        version: designer.version + 99,
+        role: "admin"
+      })
+    ];
+
+    const outcomes = await Promise.all(
+      attempts.map(async (attempt) => {
+        try {
+          await attempt();
+          return { unexpectedSuccess: true };
+        } catch (error) {
+          const failure = error as {
+            status?: number;
+            code?: string;
+            message?: string;
+            fields?: Record<string, string>;
+          };
+          return {
+            status: failure.status,
+            code: failure.code,
+            message: failure.message,
+            ...(failure.fields ? { fields: failure.fields } : {})
+          };
+        }
+      })
+    );
+    const expected = {
+      status: 403,
+      code: "FORBIDDEN",
+      message: "You are not authorized to perform this action."
+    };
+    expect(outcomes).toEqual(attempts.map(() => expected));
+  });
+
+  it("retains Super Admin global missing-target and stale-version distinctions", async () => {
+    const seed = emptyAdministrationSeed();
+    const superAdmin = addUser(seed, "user-super", "super_admin");
+    const designer = addUser(seed, "user-designer", "designer");
+    const { service } = setup(seed);
+
+    await expect(
+      service.update(publicUser(superAdmin), "user-missing", {
+        version: 1,
+        active: false
+      })
+    ).rejects.toMatchObject({
+      status: 404,
+      code: "NOT_FOUND",
+      message: "The requested resource was not found."
+    });
+    await expect(
+      service.update(publicUser(superAdmin), designer.id, {
+        version: designer.version + 99,
+        active: false
+      })
+    ).rejects.toMatchObject({
+      status: 409,
+      code: "VERSION_CONFLICT",
+      message: "The user changed elsewhere."
+    });
+  });
+
   it("rejects role change while dependent responsibilities remain", async () => {
     const seed = emptyAdministrationSeed();
     const superAdmin = addUser(seed, "user-super", "super_admin");
@@ -440,5 +533,97 @@ describe("user administration routes", () => {
       expect(response.status).toBe(400);
       expect(response.body.error.code).toBe("VALIDATION_ERROR");
     }
+  });
+
+  it("returns one observable generic forbidden response for every protected Admin target", async () => {
+    const seed = emptyAdministrationSeed();
+    const admin = addUser(seed, "user-admin", "admin");
+    const protectedUsers = [
+      admin,
+      addUser(seed, "user-admin-two", "admin"),
+      addUser(seed, "user-super", "super_admin"),
+      addUser(seed, "user-client", "client"),
+      addUser(seed, "user-manager", "design_manager"),
+      addUser(seed, "user-head", "design_head")
+    ];
+    const designer = addUser(seed, "user-designer", "designer");
+    const app = createApp({ repository: createMemoryRepository(seed), auth, clock });
+    const token = bearer(admin);
+    const cases = [
+      { userId: "user-missing", body: { version: 1, active: false } },
+      { userId: "user-missing", body: { version: 999, active: false } },
+      ...protectedUsers.flatMap((target) => [
+        { userId: target.id, body: { version: target.version, active: false } },
+        { userId: target.id, body: { version: target.version + 99, active: false } }
+      ]),
+      {
+        userId: designer.id,
+        body: { version: designer.version, role: "admin" }
+      },
+      {
+        userId: designer.id,
+        body: { version: designer.version + 99, role: "admin" }
+      }
+    ];
+    const responses = [];
+    for (const testCase of cases) {
+      responses.push(
+        await request(app)
+          .patch(`/api/v1/admin/users/${testCase.userId}`)
+          .set("Authorization", token)
+          .send(testCase.body)
+      );
+    }
+    const observable = (response: (typeof responses)[number]) => ({
+      status: response.status,
+      body: response.body,
+      bodyKeys: Object.keys(response.body),
+      errorKeys: Object.keys(response.body.error ?? {}),
+      contentType: response.headers["content-type"]
+    });
+    const expected = {
+      status: 403,
+      body: {
+        error: {
+          code: "FORBIDDEN",
+          message: "You are not authorized to perform this action."
+        }
+      },
+      bodyKeys: ["error"],
+      errorKeys: ["code", "message"],
+      contentType: "application/json; charset=utf-8"
+    };
+    expect(responses.map(observable)).toEqual(cases.map(() => expected));
+  });
+
+  it("keeps global Super Admin missing and stale errors distinct", async () => {
+    const seed = emptyAdministrationSeed();
+    const superAdmin = addUser(seed, "user-super", "super_admin");
+    const designer = addUser(seed, "user-designer", "designer");
+    const app = createApp({ repository: createMemoryRepository(seed), auth, clock });
+
+    const missing = await request(app)
+      .patch("/api/v1/admin/users/user-missing")
+      .set("Authorization", bearer(superAdmin))
+      .send({ version: 1, active: false });
+    expect(missing.status).toBe(404);
+    expect(missing.body).toEqual({
+      error: {
+        code: "NOT_FOUND",
+        message: "The requested resource was not found."
+      }
+    });
+
+    const stale = await request(app)
+      .patch(`/api/v1/admin/users/${designer.id}`)
+      .set("Authorization", bearer(superAdmin))
+      .send({ version: designer.version + 99, active: false });
+    expect(stale.status).toBe(409);
+    expect(stale.body).toEqual({
+      error: {
+        code: "VERSION_CONFLICT",
+        message: "The user changed elsewhere."
+      }
+    });
   });
 });
