@@ -9,6 +9,9 @@ export default defineConfig({
   server: developmentServer,
   test: {
     environment: "jsdom",
-    setupFiles: ["./src/test/setup.ts"]
+    setupFiles: ["./src/test/setup.ts"],
+    env: {
+      VITE_API_URL: "/api/v1"
+    }
   }
 });
