@@ -42,7 +42,24 @@ type RouterLayer = {
   };
 };
 
-function mountedHumanOperations() {
+type MountedRoute = {
+  key: string;
+  authenticationIndices: number[];
+  operationMarkers: Array<{ index: number; key: string | undefined }>;
+};
+
+type MountedRouter = { routes: MountedRoute[] };
+
+const TASK_SIX_EXPECTED_ROUTE_GROUPS = [
+  EXPECTED_HUMAN_JWT_OPERATIONS.slice(1, 8).map(({ key }) => key),
+  EXPECTED_HUMAN_JWT_OPERATIONS.slice(8, 11).map(({ key }) => key),
+  EXPECTED_HUMAN_JWT_OPERATIONS.slice(11, 16).map(({ key }) => key),
+  EXPECTED_HUMAN_JWT_OPERATIONS.slice(16, 18).map(({ key }) => key),
+  EXPECTED_HUMAN_JWT_OPERATIONS.slice(18, 20).map(({ key }) => key),
+  EXPECTED_HUMAN_JWT_OPERATIONS.slice(20, 23).map(({ key }) => key)
+] as const;
+
+function mountedHumanRouters(): MountedRouter[] {
   const app = createApp({
     auth: {
       jwtSecret: "route-registry-test-secret-with-enough-entropy",
@@ -50,29 +67,76 @@ function mountedHumanOperations() {
     }
   });
   const stack = (app as unknown as { router: { stack: RouterLayer[] } }).router.stack;
-  return stack.flatMap((outer) =>
-    ((typeof outer.handle === "object" || typeof outer.handle === "function")
+  return stack.flatMap((outer) => {
+    const routes = ((typeof outer.handle === "object" || typeof outer.handle === "function")
       ? outer.handle.stack ?? []
       : []).flatMap((layer) => {
       if (!layer.route) return [];
       const method = Object.keys(layer.route.methods)[0]?.toUpperCase();
       if (!method) return [];
-      const operationIndex = layer.route.stack.findIndex(({ handle }) =>
-        isHumanOperationHandler(handle)
-      );
-      const authenticationIndex = layer.route.stack.findIndex(({ handle }) =>
-        isAuthenticationHandler(handle)
-      );
       return [{
         key: `${method} ${layer.route.path}`,
-        authenticationIndex,
-        operationIndex,
-        operationKey: operationIndex >= 0
-          ? operationKeyForHandler(layer.route.stack[operationIndex]!.handle)
-          : undefined
+        authenticationIndices: layer.route.stack.flatMap(({ handle }, index) =>
+          isAuthenticationHandler(handle) ? [index] : []
+        ),
+        operationMarkers: layer.route.stack.flatMap(({ handle }, index) =>
+          isHumanOperationHandler(handle)
+            ? [{ index, key: operationKeyForHandler(handle) }]
+            : []
+        )
       }];
-    })
-  );
+    });
+    return routes.length === 0 ? [] : [{ routes }];
+  });
+}
+
+function assertTaskSixRouteMounts(routers: MountedRouter[]): void {
+  const allRoutes = routers.flatMap(({ routes }) => routes);
+  const expectedKeys = TASK_SIX_EXPECTED_ROUTE_GROUPS.flat();
+
+  expect(allRoutes.filter(({ key }) => expectedKeys.includes(key as never))).toHaveLength(22);
+  for (const expectedKey of expectedKeys) {
+    expect(
+      allRoutes.filter(({ key }) => key === expectedKey),
+      `${expectedKey} mounted route count`
+    ).toHaveLength(1);
+  }
+
+  const matchedRouterIndices: number[] = [];
+  for (const expectedGroup of TASK_SIX_EXPECTED_ROUTE_GROUPS) {
+    const matches = routers.flatMap((router, index) =>
+      router.routes.some(({ key }) => expectedGroup.includes(key as never))
+        ? [{ index, router }]
+        : []
+    );
+    expect(matches, `${expectedGroup[0]} router group`).toHaveLength(1);
+    const match = matches[0]!;
+    matchedRouterIndices.push(match.index);
+    expect(
+      match.router.routes.map(({ key }) => key).sort(),
+      `${expectedGroup[0]} exact route multiset`
+    ).toEqual([...expectedGroup].sort());
+
+    for (const route of match.router.routes) {
+      expect(route.authenticationIndices, `${route.key} authentication markers`).toHaveLength(1);
+      expect(route.operationMarkers, `${route.key} operation markers`).toHaveLength(1);
+      expect(route.operationMarkers[0]?.key, `${route.key} operation key`).toBe(route.key);
+      expect(route.operationMarkers[0]!.index, `${route.key} middleware order`).toBeGreaterThan(
+        route.authenticationIndices[0]!
+      );
+    }
+  }
+  expect(new Set(matchedRouterIndices).size).toBe(TASK_SIX_EXPECTED_ROUTE_GROUPS.length);
+}
+
+function validTaskSixRouterFixture(): MountedRouter[] {
+  return TASK_SIX_EXPECTED_ROUTE_GROUPS.map((expectedGroup) => ({
+    routes: expectedGroup.map((key) => ({
+      key,
+      authenticationIndices: [0],
+      operationMarkers: [{ index: 1, key }]
+    }))
+  }));
 }
 
 describe("human JWT operation registry", () => {
@@ -85,40 +149,41 @@ describe("human JWT operation registry", () => {
     expect(Object.keys(HUMAN_JWT_OPERATIONS)).toHaveLength(93);
   });
 
-  it("classifies rows 1 through 11 on mounted routes after authentication", () => {
-    const mounted = mountedHumanOperations();
-
-    for (const { key } of EXPECTED_HUMAN_JWT_OPERATIONS.slice(0, 11)) {
-      const route = mounted.find((candidate) => candidate.key === key);
-      expect(route, key).toBeDefined();
-      expect(route?.operationKey, key).toBe(key);
-      expect(route?.authenticationIndex, key).toBeGreaterThanOrEqual(0);
-      expect(route?.operationIndex, key).toBeGreaterThan(route!.authenticationIndex);
-    }
+  it("mounts rows 2 through 23 as exact router groups with one ordered marker pair", () => {
+    assertTaskSixRouteMounts(mountedHumanRouters());
   });
 
-  it("classifies rows 12 through 20 on mounted routes after authentication", () => {
-    const mounted = mountedHumanOperations();
+  it.each([
+    ["a duplicate route", (routers: MountedRouter[]) => {
+      routers[0]!.routes.push(structuredClone(routers[0]!.routes[0]!));
+    }],
+    ["an extra unclassified route", (routers: MountedRouter[]) => {
+      routers[0]!.routes.push({
+        key: "GET /projects/unclassified",
+        authenticationIndices: [0],
+        operationMarkers: [{ index: 1, key: "GET /projects/unclassified" }]
+      });
+    }],
+    ["duplicate authentication markers", (routers: MountedRouter[]) => {
+      routers[0]!.routes[0]!.authenticationIndices.push(2);
+    }],
+    ["duplicate operation markers", (routers: MountedRouter[]) => {
+      routers[0]!.routes[0]!.operationMarkers.push({
+        index: 2,
+        key: routers[0]!.routes[0]!.key
+      });
+    }],
+    ["a mismatched operation key", (routers: MountedRouter[]) => {
+      routers[0]!.routes[0]!.operationMarkers[0]!.key = "GET /projects/:projectId";
+    }],
+    ["operation middleware before authentication", (routers: MountedRouter[]) => {
+      routers[0]!.routes[0]!.authenticationIndices[0] = 2;
+    }]
+  ] as const)("rejects %s in the Task 6 mount assertion", (_label, mutate) => {
+    const routers = validTaskSixRouterFixture();
+    mutate(routers);
 
-    for (const { key } of EXPECTED_HUMAN_JWT_OPERATIONS.slice(11, 20)) {
-      const route = mounted.find((candidate) => candidate.key === key);
-      expect(route, key).toBeDefined();
-      expect(route?.operationKey, key).toBe(key);
-      expect(route?.authenticationIndex, key).toBeGreaterThanOrEqual(0);
-      expect(route?.operationIndex, key).toBeGreaterThan(route!.authenticationIndex);
-    }
-  });
-
-  it("classifies rows 21 through 23 on mounted routes after authentication", () => {
-    const mounted = mountedHumanOperations();
-
-    for (const { key } of EXPECTED_HUMAN_JWT_OPERATIONS.slice(20, 23)) {
-      const route = mounted.find((candidate) => candidate.key === key);
-      expect(route, key).toBeDefined();
-      expect(route?.operationKey, key).toBe(key);
-      expect(route?.authenticationIndex, key).toBeGreaterThanOrEqual(0);
-      expect(route?.operationIndex, key).toBeGreaterThan(route!.authenticationIndex);
-    }
+    expect(() => assertTaskSixRouteMounts(routers)).toThrow();
   });
 
   it("has unique keys and exactly 90 routed permissions", () => {

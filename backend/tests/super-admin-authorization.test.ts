@@ -79,6 +79,59 @@ function setup(seed = taskSixSeed()): {
   };
 }
 
+type RepositoryCallCounters = Map<string, number>;
+
+function setupWithRepositoryCounters(seed = taskSixSeed()): {
+  app: Express;
+  repository: AppRepository;
+  calls: RepositoryCallCounters;
+} {
+  const base = createMemoryRepository(seed);
+  const calls: RepositoryCallCounters = new Map();
+  const repository = new Proxy(base, {
+    get(target, property, receiver) {
+      const value = Reflect.get(target, property, receiver) as unknown;
+      if (typeof value !== "function") return value;
+      return (...args: unknown[]) => {
+        const key = String(property);
+        calls.set(key, (calls.get(key) ?? 0) + 1);
+        return Reflect.apply(value, target, args);
+      };
+    }
+  });
+  return {
+    repository,
+    calls,
+    app: createApp({ repository, auth, clock })
+  };
+}
+
+function snapshotRepositoryCalls(calls: RepositoryCallCounters): Map<string, number> {
+  return new Map(calls);
+}
+
+function repositoryCallDelta(
+  calls: RepositoryCallCounters,
+  before: Map<string, number>
+): Record<string, number> {
+  const keys = new Set([...before.keys(), ...calls.keys()]);
+  return Object.fromEntries(
+    [...keys]
+      .sort()
+      .flatMap((key) => {
+        const delta = (calls.get(key) ?? 0) - (before.get(key) ?? 0);
+        return delta === 0 ? [] : [[key, delta]];
+      })
+  );
+}
+
+function expectDeniedBeforeServiceRepositoryEntry(
+  calls: RepositoryCallCounters,
+  before: Map<string, number>
+): void {
+  expect(repositoryCallDelta(calls, before)).toEqual({ findUserById: 1 });
+}
+
 function authenticatedRequest(
   app: Express,
   method: "GET" | "POST" | "PATCH",
@@ -132,7 +185,7 @@ const taskInput = {
 
 describe("Projects and Tasks operations", () => {
   it("gives Super Admin global project and task-event reads with endpoint redaction", async () => {
-    const { app } = setup();
+    const { app, calls } = setupWithRepositoryCounters();
 
     const projects = await authenticatedRequest(
       app,
@@ -172,6 +225,7 @@ describe("Projects and Tasks operations", () => {
     expect(JSON.stringify(summaries.body)).not.toContain("assignedDesignerIds");
     expect(JSON.stringify(summaries.body)).not.toContain("managerId");
     expect(events.status).toBe(200);
+    expect(calls.get("findActiveProjectAccessGrant") ?? 0).toBe(0);
   });
 
   it.each([
@@ -181,9 +235,11 @@ describe("Projects and Tasks operations", () => {
     ["POST", "/api/v1/stages/stage-ground-plan/tasks", taskInput],
     ["PATCH", "/api/v1/tasks/task-circulation", { version: 1, progress: 10 }]
   ] as const)("denies Super Admin personal operation %s %s", async (method, path, body) => {
-    const { app } = setup();
+    const { app, calls } = setupWithRepositoryCounters();
+    const before = snapshotRepositoryCalls(calls);
 
     await authenticatedRequest(app, method, path, actors.superAdmin, body).expect(403);
+    expectDeniedBeforeServiceRepositoryEntry(calls, before);
   });
 
   it.each([
@@ -192,7 +248,7 @@ describe("Projects and Tasks operations", () => {
     [actors.siteManager],
     [actors.worker]
   ])("denies future role %s before core project or task service entry", async (actor) => {
-    const { app, repository } = setup();
+    const { app, repository, calls } = setupWithRepositoryCounters();
     const initialProjects = await repository.listProjectsForUserInModule(
       (await repository.findUserById(actor[0]))!,
       "projects"
@@ -216,7 +272,9 @@ describe("Projects and Tasks operations", () => {
     ] as const;
 
     for (const [method, path, body] of operations) {
+      const before = snapshotRepositoryCalls(calls);
       await authenticatedRequest(app, method, path, actor, body).expect(403);
+      expectDeniedBeforeServiceRepositoryEntry(calls, before);
     }
     expect(await repository.listProjectsForUserInModule(
       (await repository.findUserById(actor[0]))!,
@@ -315,7 +373,7 @@ describe("Organization KPI and Evaluation operations", () => {
     [actors.siteManager],
     [actors.worker]
   ])("denies future role %s before organization service entry", async (actor) => {
-    const { app, repository } = setup();
+    const { app, repository, calls } = setupWithRepositoryCounters();
     const before = await repository.listEvaluationsForSubject("user-designer-arun");
     const operations = [
       ["GET", "/api/v1/organization/managers?limit=20&offset=0"],
@@ -330,7 +388,9 @@ describe("Organization KPI and Evaluation operations", () => {
     ] as const;
 
     for (const [method, path, body] of operations) {
+      const before = snapshotRepositoryCalls(calls);
       await authenticatedRequest(app, method, path, actor, body).expect(403);
+      expectDeniedBeforeServiceRepositoryEntry(calls, before);
     }
     expect(await repository.listEvaluationsForSubject("user-designer-arun")).toEqual(before);
   });
@@ -347,7 +407,7 @@ function sensitiveKeys(value: unknown): string[] {
 
 describe("Audit operations", () => {
   it("gives Super Admin global audit reads with recursive secret-key redaction", async () => {
-    const { app, repository } = setup();
+    const { app, repository, calls } = setupWithRepositoryCounters();
     await repository.appendAuditEvent({
       id: "audit-super-admin-sensitive",
       actorId: "user-manager-meera",
@@ -403,6 +463,7 @@ describe("Audit operations", () => {
       oldValues: { nested: { safe: "keep" }, entries: [{ note: "keep" }] },
       newValues: { progress: 75 }
     });
+    expect(calls.get("findActiveProjectAccessGrant") ?? 0).toBe(0);
   });
 
   it.each([
@@ -411,7 +472,7 @@ describe("Audit operations", () => {
     [actors.siteManager],
     [actors.worker]
   ])("denies future role %s before audit service entry", async (actor) => {
-    const { app, repository } = setup();
+    const { app, repository, calls } = setupWithRepositoryCounters();
     const before = await repository.listAuditEvents({});
 
     for (const path of [
@@ -419,7 +480,9 @@ describe("Audit operations", () => {
       "/api/v1/designers/user-designer-ananya/audit?limit=20&offset=0",
       "/api/v1/audit?limit=20&offset=0"
     ]) {
+      const before = snapshotRepositoryCalls(calls);
       await authenticatedRequest(app, "GET", path, actor).expect(403);
+      expectDeniedBeforeServiceRepositoryEntry(calls, before);
     }
     expect(await repository.listAuditEvents({})).toEqual(before);
   });
