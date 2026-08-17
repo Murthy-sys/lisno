@@ -192,6 +192,13 @@ describe("LeadDashboard", () => {
     expect(screen.getByRole("alert")).toHaveTextContent(
       "Saved estimates are unavailable."
     );
+    const overview = screen.getByRole("region", { name: "Pipeline overview" });
+    for (const label of ["Saved estimates", "Draft estimates", "Saved value"]) {
+      const metric = within(overview).getByText(label).parentElement!;
+      expect(within(metric).getByText("—", { selector: "dd" })).toBeVisible();
+      expect(within(metric).queryByText("0", { selector: "dd" })).not.toBeInTheDocument();
+      expect(within(metric).queryByText("₹0", { selector: "dd" })).not.toBeInTheDocument();
+    }
     expect(screen.getAllByText("Unavailable")).toHaveLength(2);
     expect(screen.getByRole("button", { name: "Try again" })).toBeEnabled();
   });

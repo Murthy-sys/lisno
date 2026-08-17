@@ -61,9 +61,9 @@ export function LeadDashboard() {
     <section className="estimator-dashboard__overview" aria-label="Pipeline overview">
       <dl>
         <div><dt>Visible leads</dt><dd>{query.data.items.length}</dd></div>
-        <div><dt>Saved estimates</dt><dd>{estimates.isPending ? "—" : savedEstimates.length}</dd></div>
-        <div><dt>Draft estimates</dt><dd>{estimates.isPending ? "—" : draftEstimates}</dd></div>
-        <div><dt>Saved value</dt><dd>{estimates.isPending ? "—" : money(savedValue)}</dd></div>
+        <div><dt>Saved estimates</dt><dd>{estimates.isSuccess ? savedEstimates.length : "—"}</dd></div>
+        <div><dt>Draft estimates</dt><dd>{estimates.isSuccess ? draftEstimates : "—"}</dd></div>
+        <div><dt>Saved value</dt><dd>{estimates.isSuccess ? money(savedValue) : "—"}</dd></div>
       </dl>
     </section>
 
