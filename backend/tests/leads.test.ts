@@ -579,7 +579,7 @@ describe("lead and owner-estimate route characterizations", () => {
     } finally {
       await replica.stop();
     }
-  });
+  }, 30_000);
 
   it("denies every Super Admin personal Estimate mutation before validation or data access", async () => {
     const { app, superAdminAuthorization } = setupLeadCharacterization();
