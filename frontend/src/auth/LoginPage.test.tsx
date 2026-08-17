@@ -11,7 +11,7 @@ import { authorizationFor } from "../test/authFixtures";
 import { renderApp } from "../test/render";
 import { server } from "../test/server";
 
-const password = "LisnoDemo2026!";
+const password = "frontend-test-password";
 const authStyles = readFileSync(
   resolve(process.cwd(), "src/styles/index.css"),
   "utf8"
@@ -508,7 +508,7 @@ describe("LoginPage", () => {
     );
   });
 
-  it("does not render or prefill local demo credentials", () => {
+  it("does not render a credential helper or prefill the login fields", () => {
     renderApp(["/login"]);
 
     expect(
@@ -516,7 +516,6 @@ describe("LoginPage", () => {
     ).not.toBeInTheDocument();
     expect(screen.queryByText("Reviewing the demo?")).not.toBeInTheDocument();
     expect(screen.queryByDisplayValue("ananya@lisno.example")).not.toBeInTheDocument();
-    expect(screen.queryByDisplayValue(password)).not.toBeInTheDocument();
     expect(screen.getByLabelText("Email address")).toHaveValue("");
     expect(screen.getByLabelText("Password")).toHaveValue("");
   });

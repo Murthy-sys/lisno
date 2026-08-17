@@ -536,7 +536,7 @@ describe("protected role routing", () => {
       target: { value: "ananya@lisno.example" }
     });
     fireEvent.change(screen.getByLabelText("Password"), {
-      target: { value: "LisnoDemo2026!" }
+      target: { value: "router-test-password" }
     });
     fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
 
