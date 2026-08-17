@@ -1,3 +1,4 @@
+import { once } from "node:events";
 import type { Server } from "node:http";
 import { Readable } from "node:stream";
 
@@ -216,27 +217,50 @@ function expectDeniedBeforeServiceRepositoryEntry(
   expect(repositoryCallDelta(calls, before)).toEqual({ findUserById: 1 });
 }
 
-const listeningServers = new Map<Express, Server>();
+interface ListeningServer {
+  server: Server;
+  ready: Promise<void>;
+}
 
-function listeningServerFor(app: Express): Server {
+const listeningServers = new Map<Express, ListeningServer>();
+
+function listenerFor(app: Express): ListeningServer {
   const existing = listeningServers.get(app);
   if (existing) return existing;
   const server = app.listen(0, "127.0.0.1");
-  listeningServers.set(app, server);
-  return server;
+  const listener = {
+    server,
+    ready: once(server, "listening").then(() => undefined)
+  };
+  listeningServers.set(app, listener);
+  return listener;
 }
 
-afterEach(async () => {
-  const servers = [...listeningServers.values()];
+function listeningServerFor(app: Express): Server {
+  return listenerFor(app).server;
+}
+
+async function readyListeningServerFor(app: Express): Promise<Server> {
+  const listener = listenerFor(app);
+  await listener.ready;
+  return listener.server;
+}
+
+async function closeListeningServers(): Promise<void> {
+  const listeners = [...listeningServers.values()];
   listeningServers.clear();
-  await Promise.all(servers.map((server) => new Promise<void>((resolve, reject) => {
+  await Promise.all(listeners.map(async ({ server, ready }) => {
+    await ready;
     if (!server.listening) {
-      resolve();
       return;
     }
-    server.close((error) => error ? reject(error) : resolve());
-  })));
-});
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => error ? reject(error) : resolve());
+    });
+  }));
+}
+
+afterEach(closeListeningServers);
 
 function authenticatedRequest(
   app: Express,
@@ -1727,6 +1751,25 @@ describe("Estimate operations", () => {
 });
 
 describe("Task 6 router service-entry boundary", () => {
+  it("closes a loopback listener even when teardown races its startup", async () => {
+    const app = express();
+    const server = listeningServerFor(app);
+    const started = once(server, "listening");
+
+    try {
+      await closeListeningServers();
+      await started;
+
+      expect(server.listening).toBe(false);
+    } finally {
+      if (server.listening) {
+        await new Promise<void>((resolve, reject) => {
+          server.close((error) => error ? reject(error) : resolve());
+        });
+      }
+    }
+  });
+
   it.each(taskSixRouterServiceEntryCases.map((entry) => [entry.label, entry] as const))(
     "proves valid future-role %s input reaches its service without operation authorization",
     async (_label, entry) => {
@@ -1789,6 +1832,7 @@ describe("Task 6 router service-entry boundary", () => {
     [actors.worker]
   ])("denies future role %s before every Task 6 service entry", async (actor) => {
     const { app, calls } = createRouterServiceEntryHarness();
+    await readyListeningServerFor(app);
 
     for (const entry of taskSixRouterServiceEntryCases) {
       const before = snapshotServiceEntries(calls);
