@@ -11,7 +11,7 @@ Last updated: 2026-08-17
 |---|---|
 | Prompt 0 — Complete codebase audit | **COMPLETE** |
 | Prompt 0 readiness remediation — safety and green-baseline gate | **COMPLETE; GATE CLEARED — 2026-08-17** |
-| Prompt 1 — Roles, RBAC and authorization foundation | **IN DESIGN — 2026-08-17** |
+| Prompt 1 — Roles, RBAC and authorization foundation | **DESIGN APPROVED; IMPLEMENTATION NOT STARTED — 2026-08-17** |
 | Prompt 2 — Project and estimation lifecycle | **NOT STARTED** |
 | Prompt 3 — Design lifecycle | **NOT STARTED** |
 | Prompt 4 — Procurement | **NOT STARTED** |
@@ -30,9 +30,9 @@ Detailed result: [Prompt 0 audit report](./PROMPT_0_AUDIT_REPORT.md)
 
 **Repository ready to begin Prompt 1: YES.** Backend tests/typecheck/build and frontend typecheck/build are green. The affected annotation pair passes 32/32, and twelve consecutive clean-environment runs of `VITE_API_URL=http://hostile.invalid/api/v1 npm test` passed 63/63 files and 563/563 tests. Public-production readiness remains NO.
 
-Prompt 1 design discovery is now active. No Prompt 1 role, permission, API, schema, migration, frontend, or test implementation has been made yet, and Prompt 2 remains not started.
+Prompt 1 design is approved and documented at [Prompt 1 RBAC foundation design](./docs/superpowers/specs/2026-08-17-prompt-1-rbac-foundation-design.md). No Prompt 1 role, permission, API, schema, migration, frontend, or test implementation has been made yet, and Prompt 2 remains not started.
 
-Current generic project access for `estimator_sales` is explicit deny-by-default. Future `estimator_sales` project access may be granted only through a later Prompt 1+ Admin assignment workflow: an Admin must explicitly assign the project to a named active user selected from a role-filtered `estimator_sales` dropdown. Public production release remains blocked on later hardening, including remediation of the unverified client-email claiming risk documented in the Prompt 0 audit.
+Current generic project access for `estimator_sales` is explicit deny-by-default. Future `estimator_sales` project access may be granted only through the Prompt 2 Admin assignment workflow: an Admin must explicitly assign the project to a named active user selected from a role-filtered `estimator_sales` dropdown. Prompt 1 access requests cannot grant Estimator/Sales project access. Public production release remains blocked on later hardening, including remediation of the unverified client-email claiming risk documented in the Prompt 0 audit.
 
 ---
 
