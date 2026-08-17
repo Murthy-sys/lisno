@@ -196,7 +196,6 @@ export function createTaskService(
         forbidden();
       }
       const current = await requireTask(repository, taskId);
-      await requireProjectOperationAccess(repository, actor, current.projectId);
       const owner = await requireUser(repository, current.ownerId);
       if (
         actor.role === "design_manager" &&
@@ -204,6 +203,7 @@ export function createTaskService(
       ) {
         forbidden();
       }
+      await requireProjectOperationAccess(repository, actor, current.projectId);
       if (current.status === "completed") {
         throw new ApiError(
           409,
