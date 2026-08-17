@@ -614,11 +614,16 @@ describe("complete cross-role journey", () => {
       fixture.estimate.notifications[0].queuedAt.toISOString()
     );
     expect(fixture.estimate.save).toHaveBeenCalledOnce();
-    expect(UserModel.findOne).toHaveBeenCalledOnce();
-    expect(UserModel.findOne).toHaveBeenCalledWith({
+    expect(UserModel.findOne).toHaveBeenCalledTimes(2);
+    expect(UserModel.findOne).toHaveBeenNthCalledWith(1, {
       _id: "user-designer-ananya",
       role: "designer",
       managerId: "user-manager-aarav",
+      active: true
+    });
+    expect(UserModel.findOne).toHaveBeenNthCalledWith(2, {
+      _id: "user-manager-aarav",
+      role: "design_manager",
       active: true
     });
     expect(LeadModel.updateOne).not.toHaveBeenCalled();
