@@ -23,6 +23,7 @@ import { createEstimateDesignsRouter } from "../src/routes/estimate-designs.js";
 import { createEstimatePlanReviewRouter } from "../src/routes/estimate-plan-review.js";
 import { createEvaluationsRouter } from "../src/routes/evaluations.js";
 import { createKpisRouter } from "../src/routes/kpis.js";
+import { createLeadsRouter } from "../src/routes/leads.js";
 import { createOrganizationRouter } from "../src/routes/organization.js";
 import { createProjectsRouter } from "../src/routes/projects.js";
 import { createTasksRouter } from "../src/routes/tasks.js";
@@ -41,6 +42,7 @@ import {
 import type { EvaluationService } from "../src/services/evaluation.service.js";
 import type { HierarchyService } from "../src/services/hierarchy.service.js";
 import type { KpiService } from "../src/services/kpi.service.js";
+import type { LeadService } from "../src/services/lead.service.js";
 import type { ProjectActivityService } from "../src/services/project-activity.service.js";
 import type { ProjectService } from "../src/services/project.service.js";
 import type { TaskService } from "../src/services/task.service.js";
@@ -485,6 +487,24 @@ function createEstimationRouterServiceEntryHarness(
     "/api/v1",
     withoutOperationAuthorization ? removeOperationAuthorization(router) : router
   );
+  app.use(errorHandler);
+  return { app, calls };
+}
+
+function createLeadRouterServiceEntryHarness(): { app: Express; calls: ServiceEntryCounters } {
+  const calls: ServiceEntryCounters = new Map();
+  const record = <T>(key: string, result: T) => recordServiceEntry(calls, key, result);
+  const leads = new Proxy({} as LeadService, {
+    get(_target, property) {
+      const key = `lead.${String(property)}`;
+      if (property === "page") return () => record(key, emptyPage());
+      if (property === "listActivities") return () => record(key, []);
+      return () => record(key, {});
+    }
+  });
+  const app = express();
+  app.use(express.json());
+  app.use("/api/v1", createLeadsRouter(deterministicRouterAuth, leads));
   app.use(errorHandler);
   return { app, calls };
 }
@@ -1254,6 +1274,30 @@ describe("Estimate Plan Review operations", () => {
     const { app, calls } = createEstimationRouterServiceEntryHarness("plan");
     const before = snapshotServiceEntries(calls);
     await routerAuthenticatedRequest(app, method, path, actors.superAdmin).expect(403);
+    expect(serviceEntryDelta(calls, before)).toEqual({});
+  });
+});
+
+describe("Lead operations", () => {
+  it.each([
+    ["GET", "/api/v1/leads?limit=20&offset=0", "lead.page"],
+    ["GET", "/api/v1/leads/lead-router-fixture", "lead.get"],
+    ["GET", "/api/v1/leads/lead-router-fixture/activities?limit=20&offset=0", "lead.listActivities"]
+  ] as const)("allows Super Admin global %s %s", async (method, path, serviceMethod) => {
+    const { app, calls } = createLeadRouterServiceEntryHarness();
+    const before = snapshotServiceEntries(calls);
+    await routerAuthenticatedRequest(app, method, path, actors.superAdmin).expect(200);
+    expect(serviceEntryDelta(calls, before)).toEqual({ [serviceMethod]: 1 });
+  });
+
+  it.each([
+    ["POST", "/api/v1/leads"],
+    ["PATCH", "/api/v1/leads/lead-router-fixture"],
+    ["POST", "/api/v1/leads/lead-router-fixture/activities"]
+  ] as const)("denies Super Admin personal %s %s before service entry", async (method, path) => {
+    const { app, calls } = createLeadRouterServiceEntryHarness();
+    const before = snapshotServiceEntries(calls);
+    await routerAuthenticatedRequest(app, method, path, actors.superAdmin).send({}).expect(403);
     expect(serviceEntryDelta(calls, before)).toEqual({});
   });
 });

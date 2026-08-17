@@ -676,6 +676,7 @@ export interface AppRepository {
   createUser(input: NewUser): Promise<UserRecord>;
   listUsers(): Promise<UserRecord[]>;
   listUsersByIds(ids: string[]): Promise<UserRecord[]>;
+  pageAllLeads(filters: LeadFilters, pagination: PaginationInput): Promise<PageResult<LeadRecord>>;
   pageLeadsForOwner(ownerId: string, filters: LeadFilters, pagination: PaginationInput): Promise<PageResult<LeadRecord>>;
   findLeadById(id: string): Promise<LeadRecord | null>;
   createLead(input: NewLead): Promise<LeadRecord>;

@@ -481,6 +481,16 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
       );
     },
 
+    async pageAllLeads(filters, pagination) {
+      const search = filters.search?.trim().toLowerCase();
+      const leads = state.leads
+        .filter((lead) => !filters.stage || lead.stage === filters.stage)
+        .filter((lead) => !search || [lead.clientName, lead.clientEmail, lead.clientMobile, lead.projectName]
+          .some((value) => value.toLowerCase().includes(search)))
+        .sort((left, right) => byDateThenId("updatedAt", right, left));
+      return paginate(clone(leads), pagination);
+    },
+
     async pageLeadsForOwner(ownerId, filters, pagination) {
       const search = filters.search?.trim().toLowerCase();
       const leads = state.leads

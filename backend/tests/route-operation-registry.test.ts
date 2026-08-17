@@ -71,6 +71,9 @@ const ESTIMATE_DESIGN_EXPECTED_ROUTES = EXPECTED_HUMAN_JWT_OPERATIONS
 const ESTIMATE_PLAN_REVIEW_EXPECTED_ROUTES = EXPECTED_HUMAN_JWT_OPERATIONS
   .slice(53, 65)
   .map(({ key }) => key);
+const LEAD_EXPECTED_ROUTES = EXPECTED_HUMAN_JWT_OPERATIONS
+  .slice(65, 71)
+  .map(({ key }) => key);
 
 function mountedHumanRouters(): MountedRouter[] {
   const app = createApp({
@@ -239,6 +242,21 @@ describe("human JWT operation registry", () => {
       expect(route.operationMarkers[0]!.index, `${route.key} middleware order`).toBeGreaterThan(
         route.authenticationIndices[0]!
       );
+    }
+  });
+
+  it("classifies Lead operations rows 66 through 71 with one ordered marker pair", () => {
+    const routers = mountedHumanRouters();
+    const matches = routers.filter((router) =>
+      router.routes.some(({ key }) => LEAD_EXPECTED_ROUTES.includes(key as never))
+    );
+    expect(matches).toHaveLength(1);
+    expect(matches[0]!.routes.map(({ key }) => key).sort()).toEqual([...LEAD_EXPECTED_ROUTES].sort());
+    for (const route of matches[0]!.routes) {
+      expect(route.authenticationIndices, `${route.key} authentication markers`).toHaveLength(1);
+      expect(route.operationMarkers, `${route.key} operation markers`).toHaveLength(1);
+      expect(route.operationMarkers[0]?.key, `${route.key} operation key`).toBe(route.key);
+      expect(route.operationMarkers[0]!.index, `${route.key} middleware order`).toBeGreaterThan(route.authenticationIndices[0]!);
     }
   });
 

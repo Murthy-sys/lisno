@@ -29,9 +29,21 @@ export function createLeadService(repository: AppRepository, audit: AuditService
     if (!lead || lead.ownerId !== actor.id) throw new ApiError(404, "NOT_FOUND", "The requested resource was not found.");
     return lead;
   };
+  const findLeadForReader = async (actor: PublicUser, id: string) => {
+    await requireActor(repository, actor);
+    if (actor.role !== "super_admin") return owned(actor, id);
+    const lead = await repository.findLeadById(id);
+    if (!lead) throw new ApiError(404, "NOT_FOUND", "The requested resource was not found.");
+    return lead;
+  };
   return {
-    async page(actor, filters, pagination) { await requireEstimator(repository, actor); return repository.pageLeadsForOwner(actor.id, filters, pagination); },
-    async get(actor, leadId) { return owned(actor, leadId); },
+    async page(actor, filters, pagination) {
+      await requireActor(repository, actor);
+      if (actor.role === "super_admin") return repository.pageAllLeads(filters, pagination);
+      if (actor.role !== "estimator_sales") forbidden();
+      return repository.pageLeadsForOwner(actor.id, filters, pagination);
+    },
+    async get(actor, leadId) { return findLeadForReader(actor, leadId); },
     async create(actor, input) {
       await requireEstimator(repository, actor);
       const now = clock().toISOString();
@@ -43,7 +55,7 @@ export function createLeadService(repository: AppRepository, audit: AuditService
       const current = await owned(actor, leadId); const now = clock().toISOString();
       return repository.runInTransaction(async (tx) => { const lead = await tx.updateLead(leadId, { ...clean(input), stage: input.stage, updatedAt: now }); await audit.append({ actorId: actor.id, action: "lead_updated", entityType: "lead", entityId: leadId, occurredAt: now, oldValues: { stage: current.stage }, newValues: { stage: lead.stage } }, tx); return lead; });
     },
-    async listActivities(actor, leadId) { await owned(actor, leadId); return repository.listLeadActivities(leadId); },
+    async listActivities(actor, leadId) { await findLeadForReader(actor, leadId); return repository.listLeadActivities(leadId); },
     async addActivity(actor, leadId, input) {
       await owned(actor, leadId); const now = clock().toISOString();
       return repository.runInTransaction(async (tx) => { const activity = await tx.appendLeadActivity({ id: `lead-activity-${randomUUID()}`, leadId, actorId: actor.id, type: input.type, note: input.note.trim(), occurredAt: input.occurredAt, createdAt: now }); await tx.updateLead(leadId, { latestActivityAt: input.occurredAt, updatedAt: now }); await audit.append({ actorId: actor.id, action: "lead_activity_added", entityType: "lead", entityId: leadId, occurredAt: now, newValues: { type: input.type } }, tx); return activity; });

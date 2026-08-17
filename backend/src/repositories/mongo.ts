@@ -577,6 +577,20 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
       return documents.map(mapUser);
     },
 
+    async pageAllLeads(filters, pagination) {
+      const filter: PlainDocument = {};
+      if (filters.stage) filter.stage = filters.stage;
+      if (filters.search?.trim()) {
+        const search = new RegExp(escapeRegex(filters.search.trim()), "i");
+        filter.$or = [{ clientName: search }, { clientEmail: search }, { clientMobile: search }, { projectName: search }];
+      }
+      const [documents, total] = await Promise.all([
+        LeadModel.find(filter).sort({ updatedAt: -1, _id: -1 }).skip(pagination.offset).limit(pagination.limit).lean().exec(),
+        LeadModel.countDocuments(filter).exec()
+      ]);
+      return { items: documents.map(mapLead), total };
+    },
+
     async pageLeadsForOwner(ownerId, filters, pagination) {
       const filter: PlainDocument = { ownerId };
       if (filters.stage) filter.stage = filters.stage;

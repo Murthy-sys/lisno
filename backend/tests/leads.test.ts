@@ -78,8 +78,23 @@ function setupLeadCharacterization() {
   const seed = structuredClone(demoSeedData);
   seed.leads = [structuredClone(CHARACTERIZATION_LEAD)];
   seed.leadActivities = [];
+  seed.users.push({
+    ...seed.users[0]!,
+    id: "user-super-admin",
+    name: "Global Administrator",
+    email: "super-admin@lisno.example",
+    emailNormalized: "super-admin@lisno.example",
+    role: "super_admin",
+    managerId: null,
+    authorizedClientIds: []
+  });
   const repository = createMemoryRepository(seed);
   const runInTransaction = vi.spyOn(repository, "runInTransaction");
+  const projectGrantSpies = [
+    vi.spyOn(repository, "findActiveProjectAccessGrant"),
+    vi.spyOn(repository, "listProjectsForUserInModule"),
+    vi.spyOn(repository, "pageProjectsForUserInModule")
+  ] as const;
   const app = createApp({
     repository,
     auth: { jwtSecret: LEAD_SECRET, jwtExpiresInSeconds: 900 },
@@ -90,7 +105,12 @@ function setupLeadCharacterization() {
     LEAD_SECRET,
     { expiresIn: 900 }
   )}`;
-  return { app, authorization, repository, runInTransaction };
+  const superAdminAuthorization = `Bearer ${jwt.sign(
+    { id: "user-super-admin", role: "super_admin" },
+    LEAD_SECRET,
+    { expiresIn: 900 }
+  )}`;
+  return { app, authorization, superAdminAuthorization, repository, runInTransaction, projectGrantSpies };
 }
 
 function estimateFixture(overrides: Record<string, unknown> = {}) {
@@ -174,6 +194,35 @@ describe("lead API", () => {
 });
 
 describe("lead and owner-estimate route characterizations", () => {
+  it("allows Super Admin global Lead reads and denies personal mutations before service entry", async () => {
+    const { app, superAdminAuthorization, runInTransaction, projectGrantSpies } = setupLeadCharacterization();
+
+    await request(app)
+      .get("/api/v1/leads?limit=20&offset=0")
+      .set("Authorization", superAdminAuthorization)
+      .expect(200, {
+        data: {
+          items: [CHARACTERIZATION_LEAD],
+          pagination: { limit: 20, offset: 0, total: 1, hasMore: false }
+        }
+      });
+    await request(app)
+      .get("/api/v1/leads/lead-aurora")
+      .set("Authorization", superAdminAuthorization)
+      .expect(200, { data: CHARACTERIZATION_LEAD });
+    await request(app)
+      .get("/api/v1/leads/lead-aurora/activities?limit=20&offset=0")
+      .set("Authorization", superAdminAuthorization)
+      .expect(200);
+
+    await request(app).post("/api/v1/leads").set("Authorization", superAdminAuthorization).send({}).expect(403);
+    await request(app).patch("/api/v1/leads/lead-aurora").set("Authorization", superAdminAuthorization).send({}).expect(403);
+    await request(app).post("/api/v1/leads/lead-aurora/activities").set("Authorization", superAdminAuthorization).send({}).expect(403);
+
+    expect(runInTransaction).not.toHaveBeenCalled();
+    for (const spy of projectGrantSpies) expect(spy).not.toHaveBeenCalled();
+  });
+
   it("row 66 returns the exact paginated owner lead envelope without writes", async () => {
     const { app, authorization, runInTransaction } = setupLeadCharacterization();
 

@@ -1,7 +1,8 @@
 import { Router } from "express";
 import { z } from "zod";
 
-import { authenticate, authorizeRoles } from "../middleware/auth.js";
+import { authenticate } from "../middleware/auth.js";
+import { requireOperation } from "../middleware/authorization.js";
 import { paginatedEnvelope, paginationShape } from "../middleware/pagination.js";
 import { validateBody, validateQuery } from "../middleware/validate.js";
 import type { AuthService } from "../services/auth.service.js";
@@ -21,12 +22,12 @@ export function createLeadsRouter(
   auth: AuthService,
   leads: LeadService
 ): Router {
-  const router = Router(); const protectedRoute = authenticate(auth); const allowed = authorizeRoles("estimator_sales");
-  router.get("/leads", protectedRoute, allowed, validateQuery(listSchema), async (req, res, next) => { try { const { limit, offset, search, stage } = res.locals.validatedQuery; const pagination = { limit, offset }; res.json({ data: paginatedEnvelope(await leads.page(req.authenticatedUser!, { search, stage }, pagination), pagination) }); } catch (error) { next(error); } });
-  router.post("/leads", protectedRoute, allowed, validateBody(createSchema), async (req, res, next) => { try { res.status(201).json({ data: await leads.create(req.authenticatedUser!, req.body) }); } catch (error) { next(error); } });
-  router.get("/leads/:leadId", protectedRoute, allowed, async (req, res, next) => { try { res.json({ data: await leads.get(req.authenticatedUser!, req.params.leadId as string) }); } catch (error) { next(error); } });
-  router.patch("/leads/:leadId", protectedRoute, allowed, validateBody(updateSchema), async (req, res, next) => { try { res.json({ data: await leads.update(req.authenticatedUser!, req.params.leadId as string, req.body) }); } catch (error) { next(error); } });
-  router.get("/leads/:leadId/activities", protectedRoute, allowed, validateQuery(z.object(paginationShape).strict()), async (req, res, next) => { try { const { limit, offset } = res.locals.validatedQuery; const items = await leads.listActivities(req.authenticatedUser!, req.params.leadId as string); res.json({ data: paginatedEnvelope({ items: items.slice(offset, offset + limit), total: items.length }, { limit, offset }) }); } catch (error) { next(error); } });
-  router.post("/leads/:leadId/activities", protectedRoute, allowed, validateBody(activitySchema), async (req, res, next) => { try { res.status(201).json({ data: await leads.addActivity(req.authenticatedUser!, req.params.leadId as string, req.body) }); } catch (error) { next(error); } });
+  const router = Router(); const protectedRoute = authenticate(auth);
+  router.get("/leads", protectedRoute, requireOperation("GET /leads"), validateQuery(listSchema), async (req, res, next) => { try { const { limit, offset, search, stage } = res.locals.validatedQuery; const pagination = { limit, offset }; res.json({ data: paginatedEnvelope(await leads.page(req.authenticatedUser!, { search, stage }, pagination), pagination) }); } catch (error) { next(error); } });
+  router.post("/leads", protectedRoute, requireOperation("POST /leads"), validateBody(createSchema), async (req, res, next) => { try { res.status(201).json({ data: await leads.create(req.authenticatedUser!, req.body) }); } catch (error) { next(error); } });
+  router.get("/leads/:leadId", protectedRoute, requireOperation("GET /leads/:leadId"), async (req, res, next) => { try { res.json({ data: await leads.get(req.authenticatedUser!, req.params.leadId as string) }); } catch (error) { next(error); } });
+  router.patch("/leads/:leadId", protectedRoute, requireOperation("PATCH /leads/:leadId"), validateBody(updateSchema), async (req, res, next) => { try { res.json({ data: await leads.update(req.authenticatedUser!, req.params.leadId as string, req.body) }); } catch (error) { next(error); } });
+  router.get("/leads/:leadId/activities", protectedRoute, requireOperation("GET /leads/:leadId/activities"), validateQuery(z.object(paginationShape).strict()), async (req, res, next) => { try { const { limit, offset } = res.locals.validatedQuery; const items = await leads.listActivities(req.authenticatedUser!, req.params.leadId as string); res.json({ data: paginatedEnvelope({ items: items.slice(offset, offset + limit), total: items.length }, { limit, offset }) }); } catch (error) { next(error); } });
+  router.post("/leads/:leadId/activities", protectedRoute, requireOperation("POST /leads/:leadId/activities"), validateBody(activitySchema), async (req, res, next) => { try { res.status(201).json({ data: await leads.addActivity(req.authenticatedUser!, req.params.leadId as string, req.body) }); } catch (error) { next(error); } });
   return router;
 }
