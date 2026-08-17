@@ -11,7 +11,7 @@ Last updated: 2026-08-17
 |---|---|
 | Prompt 0 — Complete codebase audit | **COMPLETE** |
 | Prompt 0 readiness remediation — safety and green-baseline gate | **COMPLETE; GATE CLEARED — 2026-08-17** |
-| Prompt 1 — Roles, RBAC and authorization foundation | **DESIGN APPROVED; IMPLEMENTATION NOT STARTED — 2026-08-17** |
+| Prompt 1 — Roles, RBAC and authorization foundation | **COMPLETE — 2026-08-17** |
 | Prompt 2 — Project and estimation lifecycle | **NOT STARTED** |
 | Prompt 3 — Design lifecycle | **NOT STARTED** |
 | Prompt 4 — Procurement | **NOT STARTED** |
@@ -28,11 +28,15 @@ The three Prompt 0 readiness-remediation changes are implemented: shared project
 
 Detailed result: [Prompt 0 audit report](./PROMPT_0_AUDIT_REPORT.md)
 
-**Repository ready to begin Prompt 1: YES.** Backend tests/typecheck/build and frontend typecheck/build are green. The affected annotation pair passes 32/32, and twelve consecutive clean-environment runs of `VITE_API_URL=http://hostile.invalid/api/v1 npm test` passed 63/63 files and 563/563 tests. Public-production readiness remains NO.
+Prompt 1 is implemented according to the approved [RBAC foundation design](./docs/superpowers/specs/2026-08-17-prompt-1-rbac-foundation-design.md), [route-operation matrix](./docs/superpowers/specs/2026-08-17-prompt-1-route-operation-matrix.md), and [implementation plan](./docs/superpowers/plans/2026-08-17-prompt-1-rbac-foundation.md). The verified result is recorded in the [Prompt 1 implementation report](./PROMPT_1_IMPLEMENTATION_REPORT.md).
 
-Prompt 1 design is approved and documented at [Prompt 1 RBAC foundation design](./docs/superpowers/specs/2026-08-17-prompt-1-rbac-foundation-design.md). No Prompt 1 role, permission, API, schema, migration, frontend, or test implementation has been made yet, and Prompt 2 remains not started.
+Fresh completion evidence is green. Task 17 passed 14/14 files and 338/338 integrated security/acceptance tests, both typechecks, both production builds, and a clean-worktree gate. Task 18 then passed the full backend suite at 51/51 files and 935/935 tests in 10.06 seconds and the hostile-API-base frontend suite at 73/73 files and 781/781 tests in 11.74 seconds; backend/frontend typechecks and production builds also passed. Range/worktree checks are clean, scope searches confirm Prompt 2 exclusion, and the final independent code/security review found zero Critical or Important issues.
 
-Current generic project access for `estimator_sales` is explicit deny-by-default. Future `estimator_sales` project access may be granted only through the Prompt 2 Admin assignment workflow: an Admin must explicitly assign the project to a named active user selected from a role-filtered `estimator_sales` dropdown. Prompt 1 access requests cannot grant Estimator/Sales project access. Public production release remains blocked on later hardening, including remediation of the unverified client-email claiming risk documented in the Prompt 0 audit.
+**Public-production readiness: NO.** Prompt 1 does not provide production staff invitation/password setup or a non-destructive first-Super-Admin bootstrap, and the local demo seed must never provision production identities. Public signup/project access also remains blocked by the unverified client-email project-claim risk documented in the Prompt 0 audit.
+
+The Admin review inbox is staged until Prompt 2 creates `admin_initiator` grants. Procurement, Finance, and Execution grants remain dormant until their later module phases. Generic `estimator_sales` project access remains explicit deny-by-default; it may be created only by the future Prompt 2 explicit active-estimator assignment workflow, not by Prompt 1 access requests. Prompt 2 and every later prompt remain **NOT STARTED**.
+
+**Ready for Prompt 2: YES.** Separate authorization and design approval are still required before implementation begins.
 
 ---
 
