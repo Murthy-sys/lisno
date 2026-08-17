@@ -18,8 +18,19 @@ declare global {
   }
 }
 
+const authenticationHandlerMarker = Symbol("authenticationHandler");
+type MarkedAuthenticationHandler = RequestHandler & {
+  readonly [authenticationHandlerMarker]: true;
+};
+
+export function isAuthenticationHandler(
+  handler: RequestHandler
+): handler is MarkedAuthenticationHandler {
+  return authenticationHandlerMarker in handler;
+}
+
 export function authenticate(authService: AuthService): RequestHandler {
-  return async (request, _response, next) => {
+  const handler: RequestHandler = async (request, _response, next) => {
     const authorization = request.header("Authorization");
     if (!authorization) {
       next(
@@ -59,6 +70,13 @@ export function authenticate(authService: AuthService): RequestHandler {
       next(error);
     }
   };
+  Object.defineProperty(handler, authenticationHandlerMarker, {
+    value: true,
+    enumerable: false,
+    writable: false,
+    configurable: false
+  });
+  return handler;
 }
 
 export function authorizeRoles(...allowedRoles: Role[]): RequestHandler {
