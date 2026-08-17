@@ -611,6 +611,18 @@ describe("memory repository", () => {
     await expect(repository.listProjectsForUser(head!)).resolves.toHaveLength(4);
   });
 
+  it("denies estimator sales projects even when legacy data names them as manager", async () => {
+    const seed = structuredClone(demoSeedData);
+    const sales = seed.users.find((user) => user.id === "user-estimator-sales")!;
+    seed.projects[0]!.managerId = sales.id;
+    const repository = createMemoryRepository(seed);
+
+    await expect(repository.listProjectsForUser(sales)).resolves.toEqual([]);
+    await expect(
+      repository.pageProjectsForUser(sales, { limit: 20, offset: 0 })
+    ).resolves.toEqual({ items: [], total: 0 });
+  });
+
   it("slices paginated reads while retaining filtered totals", async () => {
     const seed = structuredClone(demoSeedData);
     seed.evaluations.push({

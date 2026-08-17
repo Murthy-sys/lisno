@@ -368,6 +368,42 @@ describe("Mongo repository contracts", () => {
     expect(find).toHaveBeenCalledWith({ managerId: "user-manager-aarav" });
   });
 
+  it("short-circuits Mongo project reads for estimator sales", async () => {
+    const exec = vi.fn().mockResolvedValue([]);
+    const lean = vi.fn(() => ({ exec }));
+    const limit = vi.fn(() => ({ lean }));
+    const skip = vi.fn(() => ({ limit }));
+    const sort = vi.fn(() => ({ lean, skip }));
+    const find = vi.spyOn(ProjectModel, "find").mockReturnValue({ sort } as never);
+    const count = vi.spyOn(ProjectModel, "countDocuments").mockReturnValue({
+      exec: vi.fn().mockResolvedValue(0)
+    } as never);
+    const sales = demoSeedData.users.find(
+      (user) => user.id === "user-estimator-sales"
+    )!;
+    const repository = createMongoRepository();
+
+    await expect(repository.listProjectsForUser(sales)).resolves.toEqual([]);
+    await expect(
+      repository.pageProjectsForUser(sales, { limit: 20, offset: 0 })
+    ).resolves.toEqual({ items: [], total: 0 });
+
+    expect(find).not.toHaveBeenCalled();
+    expect(count).not.toHaveBeenCalled();
+  });
+
+  it("keeps the design head Mongo project scope explicitly unrestricted", async () => {
+    const exec = vi.fn().mockResolvedValue([]);
+    const lean = vi.fn(() => ({ exec }));
+    const sort = vi.fn(() => ({ lean }));
+    const find = vi.spyOn(ProjectModel, "find").mockReturnValue({ sort } as never);
+    const head = demoSeedData.users.find((user) => user.id === "user-head")!;
+
+    await createMongoRepository().listProjectsForUser(head);
+
+    expect(find).toHaveBeenCalledWith({});
+  });
+
   it("rejects a stale extraction completion with the current-lease filter", async () => {
     const update = vi.spyOn(DesignExtractionJobModel, "findByIdAndUpdate").mockReturnValueOnce({
       lean: () => ({ exec: vi.fn().mockResolvedValue(null) })

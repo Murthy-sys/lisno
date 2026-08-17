@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import mongoose, { type ClientSession, type Model, type PipelineStage } from "mongoose";
 import { normalizeEmail } from "../domain/email.js";
+import { projectAccessScopeForUser } from "../domain/project-access.js";
 import { AuditEventModel } from "../models/AuditEvent.js";
 import { DesignStageModel } from "../models/DesignStage.js";
 import { DesignExtractionJobModel } from "../models/DesignExtractionJob.js";
@@ -49,21 +50,25 @@ type PlainDocument = Record<string, any>;
 const MAX_DUPLICATE_KEY_TRANSACTION_ATTEMPTS = 2;
 
 export function createMongoRepository(session?: ClientSession): AppRepository {
-  const projectFilterForUser = (user: UserRecord) => {
-    let filter: PlainDocument = {};
-    if (user.role === "client") filter = { clientId: user.id };
-    if (user.role === "designer") {
-      filter = {
-        $or: [
-          { initiatingDesignerId: user.id },
-          { assignedDesignerIds: user.id }
-        ]
-      };
+  const projectFilterForUser = (user: UserRecord): PlainDocument | null => {
+    const scope = projectAccessScopeForUser(user);
+    switch (scope.kind) {
+      case "all":
+        return {};
+      case "linked-client":
+        return { clientId: scope.clientId };
+      case "initiated-or-assigned-designer":
+        return {
+          $or: [
+            { initiatingDesignerId: scope.designerId },
+            { assignedDesignerIds: scope.designerId }
+          ]
+        };
+      case "accountable-manager":
+        return { managerId: scope.managerId };
+      case "none":
+        return null;
     }
-    if (user.role === "design_manager") {
-      filter = { managerId: user.id };
-    }
-    return filter;
   };
 
   const repository: AppRepository = {
@@ -215,6 +220,7 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
 
     async listProjectsForUser(user) {
       const filter = projectFilterForUser(user);
+      if (filter === null) return [];
       const documents = await ProjectModel.find(filter)
         .sort({ name: 1, _id: 1 })
         .lean()
@@ -237,6 +243,7 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
 
     async pageProjectsForUser(user, pagination) {
       const filter = projectFilterForUser(user);
+      if (filter === null) return { items: [], total: 0 };
       const [documents, total] = await Promise.all([
         ProjectModel.find(filter)
           .sort({ name: 1, _id: 1 })

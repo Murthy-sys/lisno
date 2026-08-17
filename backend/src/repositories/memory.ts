@@ -1,6 +1,10 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 
 import { normalizeEmail } from "../domain/email.js";
+import {
+  projectAccessScopeForUser,
+  projectIsInAccessScope
+} from "../domain/project-access.js";
 import { demoSeedData } from "../seed/data.js";
 import {
   RepositoryConflictError,
@@ -258,19 +262,11 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
     },
 
     async listProjectsForUser(user) {
-      const projects = state.projects.filter((project) => {
-        if (user.role === "design_head") return true;
-        if (user.role === "client") return project.clientId === user.id;
-        if (user.role === "designer") {
-          return (
-            project.initiatingDesignerId === user.id ||
-            project.assignedDesignerIds.includes(user.id)
-          );
-        }
-        return project.managerId === user.id;
-      });
-
-      return clone([...projects].sort(byNameThenId));
+      const scope = projectAccessScopeForUser(user);
+      const projects = state.projects
+        .filter((project) => projectIsInAccessScope(scope, project))
+        .sort(byNameThenId);
+      return clone(projects);
     },
 
     async listProjectsForDesignerIds(designerIds, limit) {

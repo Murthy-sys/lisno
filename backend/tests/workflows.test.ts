@@ -24,7 +24,8 @@ const users = {
   kabir: ["user-designer-kabir", "designer"],
   ishita: ["user-designer-ishita", "designer"],
   auroraClient: ["user-client-aurora", "client"],
-  celesteClient: ["user-client-celeste", "client"]
+  celesteClient: ["user-client-celeste", "client"],
+  sales: ["user-estimator-sales", "estimator_sales"]
 } as const satisfies Record<string, readonly [string, Role]>;
 
 function bearer([id, role]: readonly [string, Role]) {
@@ -92,6 +93,39 @@ function failAuditWrites(base: AppRepository): AppRepository {
 }
 
 describe("project workflows", () => {
+  it("denies estimator sales generic project and artifact access", async () => {
+    const seed = structuredClone(demoSeedData);
+    seed.projects.find(
+      (project) => project.id === "project-aurora-villa"
+    )!.managerId = "user-estimator-sales";
+    const { app } = setup(seed);
+
+    const list = await request(app)
+      .get("/api/v1/projects?limit=20&offset=0")
+      .set("Authorization", bearer(users.sales));
+
+    expect(list.status).toBe(200);
+    expect(list.body.data).toEqual({
+      items: [],
+      pagination: {
+        limit: 20,
+        offset: 0,
+        total: 0,
+        hasMore: false
+      }
+    });
+
+    for (const path of [
+      "/api/v1/projects/project-aurora-villa",
+      "/api/v1/projects/project-aurora-villa/design-versions"
+    ]) {
+      await request(app)
+        .get(path)
+        .set("Authorization", bearer(users.sales))
+        .expect(404);
+    }
+  });
+
   it("does not grant a reporting manager project, design, or activity access to a cross-team assignment", async () => {
     const seed = structuredClone(demoSeedData);
     seed.projects.find(
