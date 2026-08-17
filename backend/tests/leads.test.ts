@@ -24,6 +24,120 @@ async function salesToken() {
 
 const lead = { clientName: "Ramesh Nair", clientEmail: "ramesh@example.com", clientMobile: "9876500000", projectName: "Prestige Lakeside", location: "Bengaluru", propertyType: "3BHK", budgetMin: 1000000, budgetMax: 1400000, source: "Referral", nextAction: "Call client", nextActionAt: "2026-08-01T10:00:00.000Z" };
 
+const CHARACTERIZATION_NOW = "2026-08-17T12:00:00.000Z";
+const CHARACTERIZATION_LEAD = {
+  id: "lead-aurora",
+  ownerId: "user-estimator-sales",
+  clientName: "Rhea Kapoor",
+  clientEmail: "client@aurora.example",
+  clientMobile: "+91 90000 00000",
+  projectName: "Aurora",
+  location: "Pune",
+  propertyType: "villa",
+  budgetMin: null,
+  budgetMax: null,
+  source: "referral",
+  stage: "new_lead" as const,
+  nextAction: "site visit",
+  nextActionAt: "2026-09-01T10:00:00.000Z",
+  builder: null,
+  areaSqft: null,
+  targetHandoverAt: null,
+  notes: null,
+  latestActivityAt: null,
+  createdAt: "2026-07-30T12:00:00.000Z",
+  updatedAt: "2026-07-30T12:00:00.000Z"
+};
+const CHARACTERIZATION_LEAD_BODY = {
+  clientName: "Asha Rao",
+  clientEmail: "asha@example.com",
+  clientMobile: "9999999999",
+  projectName: "Aurora",
+  location: "Pune",
+  propertyType: "villa",
+  source: "referral",
+  nextAction: "site visit",
+  nextActionAt: "2026-09-01T10:00:00.000Z"
+};
+const CHARACTERIZATION_ESTIMATE_BODY = {
+  propertyType: "villa",
+  rooms: [],
+  scopes: ["interiors"],
+  lineItems: [{
+    catalogueId: "cat-paint",
+    roomName: "Living",
+    specification: "Primer and paint",
+    unit: "sqft",
+    rate: 10,
+    quantity: 100,
+    included: true
+  }]
+};
+
+function setupLeadCharacterization() {
+  const seed = structuredClone(demoSeedData);
+  seed.leads = [structuredClone(CHARACTERIZATION_LEAD)];
+  seed.leadActivities = [];
+  const repository = createMemoryRepository(seed);
+  const runInTransaction = vi.spyOn(repository, "runInTransaction");
+  const app = createApp({
+    repository,
+    auth: { jwtSecret: LEAD_SECRET, jwtExpiresInSeconds: 900 },
+    clock: () => new Date(CHARACTERIZATION_NOW)
+  });
+  const authorization = `Bearer ${jwt.sign(
+    { id: "user-estimator-sales", role: "estimator_sales" },
+    LEAD_SECRET,
+    { expiresIn: 900 }
+  )}`;
+  return { app, authorization, repository, runInTransaction };
+}
+
+function estimateFixture(overrides: Record<string, unknown> = {}) {
+  return {
+    _id: "estimate-draft",
+    leadId: "lead-aurora",
+    ownerId: "user-estimator-sales",
+    version: 1,
+    designLifecycleVersion: 0,
+    designFrozenAt: null,
+    status: "draft",
+    propertyType: "villa",
+    rooms: [],
+    scopes: ["interiors"],
+    lineItems: [],
+    subtotal: 0,
+    gst: 0,
+    total: 0,
+    approvalRequired: false,
+    assignedManagerId: null,
+    assignedDesignerId: null,
+    submittedAt: null,
+    sentToClientAt: null,
+    clientDecisionAt: null,
+    projectId: null,
+    reviews: [],
+    notifications: [],
+    ...overrides
+  } as Record<string, any>;
+}
+
+function estimateDocument(overrides: Record<string, unknown> = {}) {
+  const document = estimateFixture(overrides);
+  document.save = vi.fn(async () => document);
+  document.toObject = () => Object.fromEntries(
+    Object.entries(document).filter(([key]) => key !== "save" && key !== "toObject")
+  );
+  return document;
+}
+
+function estimateDto(record: Record<string, any>) {
+  const plain = Object.fromEntries(
+    Object.entries(record).filter(([key]) => key !== "save" && key !== "toObject" && key !== "_id")
+  );
+  return JSON.parse(JSON.stringify({ ...plain, id: record._id }));
+}
+
 describe("lead API", () => {
   it("creates, lists, updates and logs an owner activity", async () => {
     const token = await salesToken();
@@ -38,6 +152,313 @@ describe("lead API", () => {
     expect(listed.body.data.items).toHaveLength(1);
     const activities = await request(app).get(`/api/v1/leads/${id}/activities`).set("Authorization", `Bearer ${token}`).expect(200);
     expect(activities.body.data.items[0]).toMatchObject({ note: "Confirmed site visit" });
+  });
+});
+
+describe("lead and owner-estimate route characterizations", () => {
+  it("row 66 returns the exact paginated owner lead envelope without writes", async () => {
+    const { app, authorization, runInTransaction } = setupLeadCharacterization();
+
+    const response = await request(app)
+      .get("/api/v1/leads?limit=20&offset=0")
+      .set("Authorization", authorization)
+      .expect(200);
+
+    expect(response.body).toEqual({
+      data: {
+        items: [CHARACTERIZATION_LEAD],
+        pagination: { limit: 20, offset: 0, total: 1, hasMore: false }
+      }
+    });
+    expect(runInTransaction).not.toHaveBeenCalled();
+  });
+
+  it("row 67 creates exactly one actor-owned lead with the exact DTO", async () => {
+    const { app, authorization, repository, runInTransaction } = setupLeadCharacterization();
+
+    const response = await request(app)
+      .post("/api/v1/leads")
+      .set("Authorization", authorization)
+      .send(CHARACTERIZATION_LEAD_BODY)
+      .expect(201);
+    const createdId = response.body.data.id as string;
+
+    expect(response.body).toEqual({
+      data: {
+        id: expect.stringMatching(/^lead-/),
+        ownerId: "user-estimator-sales",
+        ...CHARACTERIZATION_LEAD_BODY,
+        budgetMin: null,
+        budgetMax: null,
+        builder: null,
+        areaSqft: null,
+        targetHandoverAt: null,
+        notes: null,
+        stage: "new_lead",
+        latestActivityAt: null,
+        createdAt: CHARACTERIZATION_NOW,
+        updatedAt: CHARACTERIZATION_NOW
+      }
+    });
+    const page = await repository.pageLeadsForOwner(
+      "user-estimator-sales",
+      {},
+      { limit: 20, offset: 0 }
+    );
+    expect(page.items.filter((item) => item.id === createdId)).toEqual([
+      response.body.data
+    ]);
+    expect(page.total).toBe(2);
+    expect(runInTransaction).toHaveBeenCalledOnce();
+  });
+
+  it("row 68 returns the exact owner lead DTO without writes", async () => {
+    const { app, authorization, runInTransaction } = setupLeadCharacterization();
+
+    const response = await request(app)
+      .get("/api/v1/leads/lead-aurora")
+      .set("Authorization", authorization)
+      .expect(200);
+
+    expect(response.body).toEqual({ data: CHARACTERIZATION_LEAD });
+    expect(runInTransaction).not.toHaveBeenCalled();
+  });
+
+  it("row 69 changes the stage exactly once and returns the exact DTO", async () => {
+    const { app, authorization, repository, runInTransaction } = setupLeadCharacterization();
+
+    const response = await request(app)
+      .patch("/api/v1/leads/lead-aurora")
+      .set("Authorization", authorization)
+      .send({ stage: "negotiation" })
+      .expect(200);
+    const expected = {
+      ...CHARACTERIZATION_LEAD,
+      stage: "negotiation",
+      updatedAt: CHARACTERIZATION_NOW
+    };
+
+    expect(response.body).toEqual({ data: expected });
+    expect(await repository.findLeadById("lead-aurora")).toEqual(expected);
+    expect(runInTransaction).toHaveBeenCalledOnce();
+  });
+
+  it("row 70 returns the exact empty activity page without writes", async () => {
+    const { app, authorization, runInTransaction } = setupLeadCharacterization();
+
+    const response = await request(app)
+      .get("/api/v1/leads/lead-aurora/activities?limit=20&offset=0")
+      .set("Authorization", authorization)
+      .expect(200);
+
+    expect(response.body).toEqual({
+      data: {
+        items: [],
+        pagination: { limit: 20, offset: 0, total: 0, hasMore: false }
+      }
+    });
+    expect(runInTransaction).not.toHaveBeenCalled();
+  });
+
+  it("row 71 appends one exact activity and updates the lead once", async () => {
+    const { app, authorization, repository, runInTransaction } = setupLeadCharacterization();
+    const activityInput = {
+      type: "call",
+      note: "Confirmed site visit",
+      occurredAt: "2026-07-29T10:00:00.000Z"
+    };
+
+    const response = await request(app)
+      .post("/api/v1/leads/lead-aurora/activities")
+      .set("Authorization", authorization)
+      .send(activityInput)
+      .expect(201);
+
+    expect(response.body).toEqual({
+      data: {
+        id: expect.stringMatching(/^lead-activity-/),
+        leadId: "lead-aurora",
+        actorId: "user-estimator-sales",
+        ...activityInput,
+        createdAt: CHARACTERIZATION_NOW
+      }
+    });
+    expect(await repository.listLeadActivities("lead-aurora")).toEqual([
+      response.body.data
+    ]);
+    expect(await repository.findLeadById("lead-aurora")).toEqual({
+      ...CHARACTERIZATION_LEAD,
+      latestActivityAt: activityInput.occurredAt,
+      updatedAt: CHARACTERIZATION_NOW
+    });
+    expect(runInTransaction).toHaveBeenCalledOnce();
+  });
+
+  it("row 72 returns the fixture null estimate without writes", async () => {
+    const { app, authorization, runInTransaction } = setupLeadCharacterization();
+    const findEstimate = vi
+      .spyOn(EstimateModel, "findOne")
+      .mockReturnValue(query(null) as never);
+    const updateEstimate = vi.spyOn(EstimateModel, "updateOne");
+    const updateLead = vi.spyOn(LeadModel, "updateOne");
+
+    const response = await request(app)
+      .get("/api/v1/leads/lead-aurora/estimate")
+      .set("Authorization", authorization)
+      .expect(200);
+
+    expect(response.body).toEqual({ data: null });
+    expect(findEstimate).toHaveBeenCalledOnce();
+    expect(findEstimate).toHaveBeenCalledWith({
+      leadId: "lead-aurora",
+      ownerId: "user-estimator-sales"
+    });
+    expect(updateEstimate).not.toHaveBeenCalled();
+    expect(updateLead).not.toHaveBeenCalled();
+    expect(runInTransaction).not.toHaveBeenCalled();
+  });
+
+  it("row 73 returns the exact owner estimate list without writes", async () => {
+    const { app, authorization, runInTransaction } = setupLeadCharacterization();
+    const estimate = estimateFixture();
+    const mongoLead = {
+      _id: "lead-aurora",
+      ownerId: "user-estimator-sales",
+      clientName: "Rhea Kapoor",
+      clientEmail: "client@aurora.example",
+      projectName: "Aurora",
+      location: "Pune"
+    };
+    const findEstimates = vi
+      .spyOn(EstimateModel, "find")
+      .mockReturnValue(query([estimate]) as never);
+    const findLeads = vi
+      .spyOn(LeadModel, "find")
+      .mockReturnValue(query([mongoLead]) as never);
+    const updateEstimate = vi.spyOn(EstimateModel, "updateOne");
+    const updateLead = vi.spyOn(LeadModel, "updateOne");
+
+    const response = await request(app)
+      .get("/api/v1/estimates")
+      .set("Authorization", authorization)
+      .expect(200);
+
+    expect(response.body).toEqual({
+      data: [{
+        ...estimateDto(estimate),
+        lead: {
+          ownerId: "user-estimator-sales",
+          clientName: "Rhea Kapoor",
+          clientEmail: "client@aurora.example",
+          projectName: "Aurora",
+          location: "Pune",
+          id: "lead-aurora"
+        }
+      }]
+    });
+    expect(findEstimates).toHaveBeenCalledWith({ ownerId: "user-estimator-sales" });
+    expect(findLeads).toHaveBeenCalledWith({
+      _id: { $in: ["lead-aurora"] },
+      ownerId: "user-estimator-sales"
+    });
+    expect(updateEstimate).not.toHaveBeenCalled();
+    expect(updateLead).not.toHaveBeenCalled();
+    expect(runInTransaction).not.toHaveBeenCalled();
+  });
+
+  it("row 74 saves one exact calculated draft estimate", async () => {
+    const { app, authorization, runInTransaction } = setupLeadCharacterization();
+    const estimate = estimateDocument();
+    const findEstimate = vi
+      .spyOn(EstimateModel, "findOne")
+      .mockReturnValue(query(estimate) as never);
+    const updateLead = vi.spyOn(LeadModel, "updateOne");
+
+    const response = await request(app)
+      .put("/api/v1/leads/lead-aurora/estimate")
+      .set("Authorization", authorization)
+      .send(CHARACTERIZATION_ESTIMATE_BODY)
+      .expect(200);
+
+    expect(response.body).toEqual({ data: estimateDto(estimate) });
+    expect({
+      propertyType: estimate.propertyType,
+      rooms: estimate.rooms,
+      scopes: estimate.scopes,
+      lineItems: estimate.lineItems,
+      subtotal: estimate.subtotal,
+      gst: estimate.gst,
+      total: estimate.total,
+      status: estimate.status,
+      version: estimate.version
+    }).toEqual({
+      propertyType: "villa",
+      rooms: [],
+      scopes: ["interiors"],
+      lineItems: [{
+        ...CHARACTERIZATION_ESTIMATE_BODY.lineItems[0],
+        amount: 1000
+      }],
+      subtotal: 1000,
+      gst: 180,
+      total: 1180,
+      status: "draft",
+      version: 1
+    });
+    expect(findEstimate).toHaveBeenCalledOnce();
+    expect(estimate.save).toHaveBeenCalledOnce();
+    expect(updateLead).not.toHaveBeenCalled();
+    expect(runInTransaction).not.toHaveBeenCalled();
+  });
+
+  it("row 75 submits once with exact status, review, notification, and Lead effect", async () => {
+    const { app, authorization, runInTransaction } = setupLeadCharacterization();
+    const estimate = estimateDocument({
+      lineItems: [{ ...CHARACTERIZATION_ESTIMATE_BODY.lineItems[0], amount: 1000 }],
+      subtotal: 1000,
+      gst: 180,
+      total: 1180
+    });
+    const findEstimate = vi
+      .spyOn(EstimateModel, "findOne")
+      .mockReturnValue(query(estimate) as never);
+    const updateLead = vi
+      .spyOn(LeadModel, "updateOne")
+      .mockResolvedValue({ matchedCount: 1, modifiedCount: 1 } as never);
+
+    const response = await request(app)
+      .post("/api/v1/leads/lead-aurora/estimate/submit")
+      .set("Authorization", authorization)
+      .expect(200);
+
+    expect(response.body).toEqual({ data: estimateDto(estimate) });
+    expect(estimate.status).toBe("sent_to_client");
+    expect(estimate.approvalRequired).toBe(false);
+    expect(estimate.reviews).toEqual([{
+      actorId: "user-estimator-sales",
+      action: "submitted",
+      note: "",
+      occurredAt: expect.any(Date)
+    }]);
+    expect(estimate.notifications).toEqual([{
+      recipientEmail: "client@aurora.example",
+      recipientRole: "client",
+      event: "estimate_ready_for_review",
+      status: "queued",
+      queuedAt: expect.any(Date)
+    }]);
+    expect(findEstimate).toHaveBeenCalledOnce();
+    expect(estimate.save).toHaveBeenCalledOnce();
+    expect(updateLead).toHaveBeenCalledOnce();
+    expect(updateLead).toHaveBeenCalledWith(
+      { _id: "lead-aurora" },
+      { $set: {
+        stage: "estimate_sent",
+        nextAction: "client estimate decision",
+        nextActionAt: expect.any(Date)
+      } }
+    );
+    expect(runInTransaction).not.toHaveBeenCalled();
   });
 });
 

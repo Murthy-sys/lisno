@@ -74,7 +74,7 @@ afterEach(() => {
 });
 
 describe("estimate PDF download routes", () => {
-  it("exports a sales-owned non-draft PDF from persisted estimate and lead data", async () => {
+  it("row 76 exports the exact sales-owned PDF without writes", async () => {
     const { app, generate } = setup();
     const readyEstimate = { ...estimate, status: "ready_for_client" };
     const findEstimate = vi
@@ -83,6 +83,8 @@ describe("estimate PDF download routes", () => {
     const findLead = vi
       .spyOn(LeadModel, "findById")
       .mockReturnValue(lean(lead) as never);
+    const updateEstimate = vi.spyOn(EstimateModel, "updateOne");
+    const updateLead = vi.spyOn(LeadModel, "updateOne");
 
     const response = await request(app)
       .get("/api/v1/estimates/estimate-draft/pdf")
@@ -95,7 +97,7 @@ describe("estimate PDF download routes", () => {
       ownerId: "user-estimator-sales"
     });
     expect(findLead).toHaveBeenCalledWith("lead-aurora");
-    expect(response.headers["content-type"]).toMatch(/^application\/pdf/);
+    expect(response.headers["content-type"]).toBe("application/pdf");
     expect(response.headers["content-disposition"]).toBe(
       'attachment; filename="lisno-aurora-villa-estimate-v1.pdf"'
     );
@@ -116,6 +118,9 @@ describe("estimate PDF download routes", () => {
         location: "Bengaluru"
       }
     });
+    expect(generate).toHaveBeenCalledOnce();
+    expect(updateEstimate).not.toHaveBeenCalled();
+    expect(updateLead).not.toHaveBeenCalled();
   });
 
   it("returns one not-found response for missing and foreign sales estimates", async () => {
@@ -148,7 +153,7 @@ describe("estimate PDF download routes", () => {
   });
 
   it.each(["sent_to_client", "client_changes_requested", "client_approved"])(
-    "exports a %s client-visible PDF only when the persisted lead email matches exactly",
+    "row 83 exports a %s client-visible PDF exactly and without writes",
     async (status) => {
     const { app, generate } = setup();
     const clientEstimate = {
@@ -162,6 +167,8 @@ describe("estimate PDF download routes", () => {
     const findLead = vi
       .spyOn(LeadModel, "findOne")
       .mockReturnValue(lean(lead) as never);
+    const updateEstimate = vi.spyOn(EstimateModel, "updateOne");
+    const updateLead = vi.spyOn(LeadModel, "updateOne");
 
     const response = await request(app)
       .get("/api/v1/client/estimates/estimate-client-visible/pdf")
@@ -181,16 +188,30 @@ describe("estimate PDF download routes", () => {
         $options: "i"
       }
     });
-    expect(response.headers["content-type"]).toMatch(/^application\/pdf/);
+    expect(response.headers["content-type"]).toBe("application/pdf");
     expect(response.headers["content-disposition"]).toBe(
       'attachment; filename="lisno-aurora-villa-estimate-v1.pdf"'
     );
     expect(response.body.subarray(0, 5).toString()).toBe("%PDF-");
-    expect(generate).toHaveBeenCalledWith(expect.objectContaining({
+    expect(generate).toHaveBeenCalledWith({
       id: "estimate-client-visible",
       status,
-      lead: expect.objectContaining({ clientEmail: "client@lisno.example" })
-    }));
+      version: 2,
+      propertyType: "residential_apartment",
+      subtotal: 9_500,
+      gst: 1_710,
+      total: 11_210,
+      lineItems: estimate.lineItems,
+      lead: {
+        clientName: "Aurora Homes",
+        clientEmail: "client@lisno.example",
+        projectName: "Aurora Villa",
+        location: "Bengaluru"
+      }
+    });
+    expect(generate).toHaveBeenCalledOnce();
+    expect(updateEstimate).not.toHaveBeenCalled();
+    expect(updateLead).not.toHaveBeenCalled();
     }
   );
 

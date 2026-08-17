@@ -393,179 +393,468 @@ function setupEstimateDrawingJourneyModels() {
   };
 }
 
+function plainRecord(record: Record<string, any>) {
+  return Object.fromEntries(
+    Object.entries(record).filter(([key]) => key !== "save" && key !== "toObject")
+  );
+}
+
+function estimateResponseDto(record: Record<string, any>) {
+  const { _id, ...plain } = plainRecord(record);
+  return JSON.parse(JSON.stringify({ ...plain, id: _id }));
+}
+
+function setupWorkflowCharacterization(
+  estimateOverrides: Record<string, any>,
+  extraEstimateOverrides: Array<Record<string, any>> = []
+) {
+  const state = setupEstimateDrawingJourneyModels();
+  const lead = Object.assign(state.leads[0]!, {
+    _id: "lead-aurora",
+    ownerId: "user-estimator-sales",
+    clientName: "Rhea Kapoor",
+    clientEmail: "client@aurora.example",
+    clientMobile: "+91 90000 00000",
+    projectName: "Aurora",
+    location: "Pune",
+    propertyType: "villa",
+    stage: "estimate_in_progress",
+    nextAction: "prepare estimate",
+    nextActionAt: new Date("2026-09-01T10:00:00.000Z")
+  });
+  const base = plainRecord(state.estimates[0]!);
+  const makeEstimate = (overrides: Record<string, any>) => {
+    const record: Record<string, any> = {
+      ...base,
+      _id: "estimate-characterization",
+      leadId: "lead-aurora",
+      ownerId: "user-estimator-sales",
+      version: 1,
+      designLifecycleVersion: 0,
+      designFrozenAt: null,
+      status: "draft",
+      propertyType: "villa",
+      rooms: [],
+      scopes: ["interiors"],
+      lineItems: [],
+      subtotal: 1000,
+      gst: 180,
+      total: 1180,
+      approvalRequired: false,
+      assignedManagerId: null,
+      assignedDesignerId: null,
+      submittedAt: null,
+      sentToClientAt: null,
+      clientDecisionAt: null,
+      projectId: null,
+      reviews: [],
+      notifications: [],
+      ...overrides
+    };
+    record.reviews = [...(overrides.reviews ?? record.reviews)];
+    record.notifications = [...(overrides.notifications ?? record.notifications)];
+    record.save = vi.fn(async () => record);
+    record.toObject = () => plainRecord(record);
+    return record;
+  };
+  const estimate = makeEstimate(estimateOverrides);
+  const extraEstimates = extraEstimateOverrides.map(makeEstimate);
+  state.estimates.splice(0, state.estimates.length, estimate, ...extraEstimates);
+
+  const seed = structuredClone(demoSeedData);
+  const app = createApp({
+    repository: createMemoryRepository(seed),
+    storage: new JourneyStorage(),
+    auth: {
+      jwtSecret: "journey-secret-that-is-at-least-thirty-two-characters",
+      jwtExpiresInSeconds: 900
+    },
+    clock: () => new Date("2026-07-30T15:00:00.000Z")
+  });
+  const login = async (email: string) => {
+    const response = await request(app)
+      .post("/api/v1/auth/login")
+      .send({ email, password })
+      .expect(200);
+    return `Bearer ${response.body.data.token}`;
+  };
+  return { app, estimate, extraEstimates, lead, login, state };
+}
+
+function expectNoWorkflowWrites(fixture: ReturnType<typeof setupWorkflowCharacterization>) {
+  expect(fixture.estimate.save).not.toHaveBeenCalled();
+  expect(EstimateModel.updateOne).not.toHaveBeenCalled();
+  expect(LeadModel.updateOne).not.toHaveBeenCalled();
+  expect(ProjectModel.create).not.toHaveBeenCalled();
+  expect(AuditEventModel.create).not.toHaveBeenCalled();
+}
+
 afterEach(() => vi.restoreAllMocks());
 
 describe("complete cross-role journey", () => {
-  it("keeps the 19 lead and estimate route characterizations reachable with their current envelopes", async () => {
-    const state = setupEstimateDrawingJourneyModels();
-    const seed = structuredClone(demoSeedData);
-    seed.leads.push({
-      id: "lead-aurora",
-      ownerId: "user-estimator-sales",
-      clientName: "Rhea Kapoor",
-      clientEmail: "client@aurora.example",
-      clientMobile: "+91 90000 00000",
-      projectName: "Aurora",
-      location: "Pune",
-      propertyType: "villa",
-      budgetMin: null,
-      budgetMax: null,
-      source: "referral",
-      stage: "new_lead",
-      nextAction: "site visit",
-      nextActionAt: "2026-09-01T10:00:00.000Z",
-      builder: null,
-      areaSqft: null,
-      targetHandoverAt: null,
-      notes: null,
-      latestActivityAt: null,
-      createdAt: "2026-07-30T12:00:00.000Z",
-      updatedAt: "2026-07-30T12:00:00.000Z"
+
+  it("row 77 returns the exact manager review queue without writes", async () => {
+    const fixture = setupWorkflowCharacterization({
+      _id: "estimate-awaiting-assignment",
+      status: "pending_manager_assignment",
+      submittedAt: new Date("2026-07-29T10:00:00.000Z")
     });
-    Object.assign(state.leads[0]!, {
-      _id: "lead-aurora",
-      ownerId: "user-estimator-sales",
-      clientName: "Rhea Kapoor",
-      clientEmail: "client@aurora.example",
-      clientMobile: "+91 90000 00000",
-      projectName: "Aurora",
-      location: "Pune"
-    });
-    const estimate = state.estimates[0]!;
-    Object.assign(estimate, {
-      _id: "estimate-draft",
-      leadId: "lead-aurora",
-      propertyType: "villa",
-      rooms: [],
-      scopes: ["interiors"],
-      subtotal: 0,
-      gst: 0,
-      total: 0
-    });
-    const addEstimate = (input: Record<string, any>) => {
-      const record = {
-        ...estimate,
-        ...input,
-        reviews: [...(input.reviews ?? [])],
-        notifications: [...(input.notifications ?? [])],
-        async save() { return this; },
-        toObject() { return { ...this }; }
-      };
-      state.estimates.push(record);
-      return record;
-    };
-    const app = createApp({
-      repository: createMemoryRepository(seed),
-      storage: new JourneyStorage(),
-      auth: {
-        jwtSecret: "journey-secret-that-is-at-least-thirty-two-characters",
-        jwtExpiresInSeconds: 900
-      },
-      clock: () => new Date("2026-07-30T15:00:00.000Z"),
-      estimatePdfService: {
-        generate: vi.fn(async () => ({
-          bytes: Buffer.from("%PDF-1.7\\n%%EOF"),
-          filename: "aurora-estimate.pdf"
-        }))
-      }
-    });
-    const login = async (email: string) => {
-      const response = await request(app)
-        .post("/api/v1/auth/login")
-        .send({ email, password })
-        .expect(200);
-      return `Bearer ${response.body.data.token}`;
-    };
-    const estimator = await login("sales@lisno.example");
-    const manager = await login("aarav@lisno.example");
-    const designer = await login("ananya@lisno.example");
-    const client = await login("client@aurora.example");
-    const leadBody = {
-      clientName: "Asha Rao",
-      clientEmail: "asha@example.com",
-      clientMobile: "9999999999",
-      projectName: "Aurora",
-      location: "Pune",
-      propertyType: "villa",
-      source: "referral",
-      nextAction: "site visit",
-      nextActionAt: "2026-09-01T10:00:00.000Z"
-    };
-    const estimateBody = {
-      propertyType: "villa",
-      rooms: [],
-      scopes: ["interiors"],
-      lineItems: [{
-        catalogueId: "cat-paint",
-        roomName: "Living",
-        specification: "Primer and paint",
-        unit: "sqft",
-        rate: 10,
-        quantity: 100,
-        included: true
+    const manager = await fixture.login("aarav@lisno.example");
+    const response = await request(fixture.app)
+      .get("/api/v1/estimates/review-queue")
+      .set("Authorization", manager)
+      .expect(200);
+
+    expect(response.body).toEqual({
+      data: [{
+        ...estimateResponseDto(fixture.estimate),
+        lead: JSON.parse(JSON.stringify(fixture.lead))
       }]
-    };
-
-    const listed = await request(app).get("/api/v1/leads?limit=20&offset=0")
-      .set("Authorization", estimator).expect(200);
-    expect(listed.body.data).toMatchObject({
-      pagination: { limit: 20, offset: 0 }
     });
-    expect((await request(app).post("/api/v1/leads").set("Authorization", estimator)
-      .send(leadBody).expect(201)).body.data).toMatchObject({ ownerId: "user-estimator-sales", clientName: "Asha Rao" });
-    expect((await request(app).get("/api/v1/leads/lead-aurora").set("Authorization", estimator)
-      .expect(200)).body.data).toMatchObject({ id: "lead-aurora", clientName: "Rhea Kapoor" });
-    expect((await request(app).patch("/api/v1/leads/lead-aurora").set("Authorization", estimator)
-      .send({ stage: "negotiation" }).expect(200)).body.data.stage).toBe("negotiation");
-    expect((await request(app).get("/api/v1/leads/lead-aurora/activities?limit=20&offset=0")
-      .set("Authorization", estimator).expect(200)).body.data).toMatchObject({
-        items: [],
-        pagination: { limit: 20, offset: 0, total: 0 }
-      });
-    expect((await request(app).post("/api/v1/leads/lead-aurora/activities").set("Authorization", estimator)
-      .send({ type: "call", note: "Confirmed site visit", occurredAt: "2026-07-29T10:00:00.000Z" }).expect(201)).body.data)
-      .toMatchObject({ leadId: "lead-aurora", note: "Confirmed site visit" });
+    expect(EstimateModel.find).toHaveBeenCalledOnce();
+    expect(EstimateModel.find).toHaveBeenCalledWith({ status: "pending_manager_assignment" });
+    expect(LeadModel.find).toHaveBeenCalledOnce();
+    expectNoWorkflowWrites(fixture);
+  });
 
-    expect((await request(app).get("/api/v1/leads/lead-aurora/estimate").set("Authorization", estimator)
-      .expect(200)).body.data).toMatchObject({ id: "estimate-draft", status: "draft" });
-    expect((await request(app).get("/api/v1/estimates").set("Authorization", estimator)
-      .expect(200)).body.data).toEqual(expect.arrayContaining([expect.objectContaining({ id: "estimate-draft" })]));
-    expect((await request(app).put("/api/v1/leads/lead-aurora/estimate").set("Authorization", estimator)
-      .send(estimateBody).expect(200)).body.data).toMatchObject({ id: "estimate-draft", subtotal: 1000, gst: 180, total: 1180 });
-    expect((await request(app).post("/api/v1/leads/lead-aurora/estimate/submit").set("Authorization", estimator)
-      .expect(200)).body.data).toMatchObject({ status: "sent_to_client" });
-    const salesPdf = await request(app).get("/api/v1/estimates/estimate-draft/pdf")
-      .set("Authorization", estimator).expect(200);
-    expect(salesPdf.headers["content-type"]).toMatch(/^application\/pdf/);
-    expect(salesPdf.headers["content-disposition"]).toBe('attachment; filename="aurora-estimate.pdf"');
+  it("row 78 returns the exact active manager-team Designer DTOs without writes", async () => {
+    const fixture = setupWorkflowCharacterization({ _id: "estimate-unused", status: "draft" });
+    const manager = await fixture.login("aarav@lisno.example");
+    const response = await request(fixture.app)
+      .get("/api/v1/estimates/designers")
+      .set("Authorization", manager)
+      .expect(200);
 
-    addEstimate({ _id: "estimate-awaiting-assignment", status: "pending_manager_assignment" });
-    expect((await request(app).get("/api/v1/estimates/review-queue").set("Authorization", manager)
-      .expect(200)).body.data).toEqual(expect.arrayContaining([expect.objectContaining({ id: "estimate-awaiting-assignment" })]));
-    expect((await request(app).get("/api/v1/estimates/designers").set("Authorization", manager)
-      .expect(200)).body.data).toEqual(expect.arrayContaining([expect.objectContaining({ id: "user-designer-ananya" })]));
-    expect((await request(app).post("/api/v1/estimates/estimate-awaiting-assignment/assign").set("Authorization", manager)
-      .send({ designerId: "user-designer-ananya" }).expect(200)).body.data)
-      .toMatchObject({ status: "pending_designer_approval", assignedManagerId: "user-manager-aarav", assignedDesignerId: "user-designer-ananya" });
-    addEstimate({ _id: "estimate-awaiting-designer", status: "pending_designer_approval", assignedDesignerId: "user-designer-ananya" });
-    expect((await request(app).post("/api/v1/estimates/estimate-awaiting-designer/designer-decision").set("Authorization", designer)
-      .send({ decision: "approve", note: "Approved" }).expect(200)).body.data).toMatchObject({ status: "ready_for_client" });
-    addEstimate({ _id: "estimate-ready", status: "ready_for_client" });
-    expect((await request(app).post("/api/v1/estimates/estimate-ready/send-client").set("Authorization", estimator)
-      .expect(200)).body.data).toMatchObject({ status: "sent_to_client" });
+    expect(response.body).toEqual({ data: [{
+      id: "user-designer-ananya",
+      name: "Ananya Rao",
+      email: "ananya@lisno.example",
+      title: null
+    }] });
+    expect(UserModel.find).toHaveBeenCalledOnce();
+    expect(UserModel.find).toHaveBeenCalledWith({
+      role: "designer",
+      managerId: "user-manager-aarav",
+      active: true
+    });
+    expectNoWorkflowWrites(fixture);
+  });
 
-    addEstimate({ _id: "estimate-client-visible", status: "sent_to_client", designLifecycleVersion: 0, designFrozenAt: null });
-    expect((await request(app).get("/api/v1/client/estimates").set("Authorization", client)
-      .expect(200)).body.data).toEqual(expect.arrayContaining([expect.objectContaining({ id: "estimate-client-visible" })]));
-    const clientPdf = await request(app).get("/api/v1/client/estimates/estimate-client-visible/pdf")
-      .set("Authorization", client).expect(200);
-    expect(clientPdf.headers["content-type"]).toMatch(/^application\/pdf/);
-    expect(clientPdf.headers["content-disposition"]).toBe('attachment; filename="aurora-estimate.pdf"');
-    expect((await request(app).post("/api/v1/client/estimates/estimate-client-visible/decision").set("Authorization", client)
-      .send({ decision: "approve", note: "Approved" }).expect(200)).body.data)
-      .toMatchObject({ status: "client_approved", projectId: expect.stringMatching(/^project-/) });
-    expect(state.projects).toContainEqual(expect.objectContaining({ clientId: "user-client-aurora" }));
-  }, 15_000);
+  it("row 79 assigns one Designer with one review and notification", async () => {
+    const fixture = setupWorkflowCharacterization({
+      _id: "estimate-awaiting-assignment",
+      status: "pending_manager_assignment"
+    });
+    const manager = await fixture.login("aarav@lisno.example");
+    const response = await request(fixture.app)
+      .post("/api/v1/estimates/estimate-awaiting-assignment/assign")
+      .set("Authorization", manager)
+      .send({ designerId: "user-designer-ananya" })
+      .expect(200);
+
+    expect(response.body).toEqual({ data: estimateResponseDto(fixture.estimate) });
+    expect(fixture.estimate.assignedManagerId).toBe("user-manager-aarav");
+    expect(fixture.estimate.assignedDesignerId).toBe("user-designer-ananya");
+    expect(fixture.estimate.status).toBe("pending_designer_approval");
+    expect(fixture.estimate.reviews).toEqual([{
+      actorId: "user-manager-aarav",
+      action: "designer_assigned",
+      note: "Ananya Rao",
+      occurredAt: expect.any(Date)
+    }]);
+    expect(fixture.estimate.notifications).toEqual([{
+      recipientEmail: "ananya@lisno.example",
+      recipientRole: "designer",
+      event: "estimate_approval_assigned",
+      status: "queued",
+      queuedAt: expect.any(Date)
+    }]);
+    expect(fixture.estimate.save).toHaveBeenCalledOnce();
+    expect(UserModel.findOne).toHaveBeenCalledOnce();
+    expect(UserModel.findOne).toHaveBeenCalledWith({
+      _id: "user-designer-ananya",
+      role: "designer",
+      managerId: "user-manager-aarav",
+      active: true
+    });
+    expect(LeadModel.updateOne).not.toHaveBeenCalled();
+    expect(EstimateModel.updateOne).not.toHaveBeenCalled();
+    expect(ProjectModel.create).not.toHaveBeenCalled();
+    expect(AuditEventModel.create).not.toHaveBeenCalled();
+  });
+
+  it("row 80 records one assigned Designer approval", async () => {
+    const fixture = setupWorkflowCharacterization({
+      _id: "estimate-awaiting-designer",
+      status: "pending_designer_approval",
+      assignedDesignerId: "user-designer-ananya"
+    });
+    const designer = await fixture.login("ananya@lisno.example");
+    const response = await request(fixture.app)
+      .post("/api/v1/estimates/estimate-awaiting-designer/designer-decision")
+      .set("Authorization", designer)
+      .send({ decision: "approve", note: "Approved" })
+      .expect(200);
+
+    expect(response.body).toEqual({ data: estimateResponseDto(fixture.estimate) });
+    expect(fixture.estimate.status).toBe("ready_for_client");
+    expect(fixture.estimate.reviews).toEqual([{
+      actorId: "user-designer-ananya",
+      action: "designer_approved",
+      note: "Approved",
+      occurredAt: expect.any(Date)
+    }]);
+    expect(fixture.estimate.notifications).toEqual([]);
+    expect(fixture.estimate.save).toHaveBeenCalledOnce();
+    expect(LeadModel.updateOne).not.toHaveBeenCalled();
+    expect(EstimateModel.updateOne).not.toHaveBeenCalled();
+    expect(ProjectModel.create).not.toHaveBeenCalled();
+    expect(AuditEventModel.create).not.toHaveBeenCalled();
+  });
+
+  it("row 81 sends one ready estimate and updates its Lead exactly once", async () => {
+    const fixture = setupWorkflowCharacterization({ _id: "estimate-ready", status: "ready_for_client" });
+    const estimator = await fixture.login("sales@lisno.example");
+    const response = await request(fixture.app)
+      .post("/api/v1/estimates/estimate-ready/send-client")
+      .set("Authorization", estimator)
+      .expect(200);
+
+    expect(response.body).toEqual({ data: estimateResponseDto(fixture.estimate) });
+    expect(fixture.estimate.status).toBe("sent_to_client");
+    expect(fixture.estimate.sentToClientAt).toEqual(expect.any(Date));
+    expect(fixture.estimate.reviews).toEqual([]);
+    expect(fixture.estimate.notifications).toEqual([{
+      recipientEmail: "client@aurora.example",
+      recipientRole: "client",
+      event: "estimate_ready_for_review",
+      status: "queued",
+      queuedAt: expect.any(Date)
+    }]);
+    expect(fixture.estimate.save).toHaveBeenCalledOnce();
+    expect(LeadModel.updateOne).toHaveBeenCalledOnce();
+    expect(LeadModel.updateOne).toHaveBeenCalledWith(
+      { _id: "lead-aurora" },
+      { $set: {
+        stage: "estimate_sent",
+        nextAction: "client estimate decision",
+        nextActionAt: expect.any(Date)
+      } }
+    );
+    expect({
+      stage: fixture.lead.stage,
+      nextAction: fixture.lead.nextAction,
+      nextActionAt: fixture.lead.nextActionAt
+    }).toEqual({
+      stage: "estimate_sent",
+      nextAction: "client estimate decision",
+      nextActionAt: expect.any(Date)
+    });
+    expect(EstimateModel.updateOne).not.toHaveBeenCalled();
+    expect(ProjectModel.create).not.toHaveBeenCalled();
+    expect(AuditEventModel.create).not.toHaveBeenCalled();
+  });
+
+  it("row 82 returns only the exact client-visible estimates without writes", async () => {
+    const fixture = setupWorkflowCharacterization(
+      { _id: "estimate-client-visible", status: "sent_to_client" },
+      [
+        { _id: "estimate-hidden-draft", status: "draft" },
+        { _id: "estimate-hidden-ready", status: "ready_for_client" }
+      ]
+    );
+    const client = await fixture.login("client@aurora.example");
+    const response = await request(fixture.app)
+      .get("/api/v1/client/estimates")
+      .set("Authorization", client)
+      .expect(200);
+
+    expect(response.body).toEqual({ data: [{
+      ...estimateResponseDto(fixture.estimate),
+      lead: JSON.parse(JSON.stringify(fixture.lead))
+    }] });
+    expect(EstimateModel.find).toHaveBeenCalledOnce();
+    expect(EstimateModel.find).toHaveBeenCalledWith({
+      leadId: { $in: ["lead-aurora"] },
+      status: { $in: ["sent_to_client", "client_changes_requested", "client_approved"] }
+    });
+    expect(response.body.data.map((item: { id: string }) => item.id)).toEqual(["estimate-client-visible"]);
+    expectNoWorkflowWrites(fixture);
+    for (const hidden of fixture.extraEstimates) expect(hidden.save).not.toHaveBeenCalled();
+  });
+
+  it("row 84 performs one CAS approval, review, audit, and linked-project transition", async () => {
+    const fixture = setupWorkflowCharacterization({
+      _id: "estimate-client-visible",
+      status: "sent_to_client",
+      version: 1,
+      designLifecycleVersion: 0,
+      designFrozenAt: null,
+      assignedDesignerId: "user-designer-ananya"
+    });
+    const initialEstimate = structuredClone(plainRecord(fixture.estimate));
+    vi.spyOn(EstimateModel, "findOne").mockImplementation((filter) =>
+      modelQuery(modelMatches(initialEstimate, filter as never) ? structuredClone(initialEstimate) : null) as never
+    );
+    vi.spyOn(EstimateModel, "findById").mockImplementation((id) =>
+      modelQuery(id === initialEstimate._id ? structuredClone(initialEstimate) : null) as never
+    );
+    const client = await fixture.login("client@aurora.example");
+    const response = await request(fixture.app)
+      .post("/api/v1/client/estimates/estimate-client-visible/decision")
+      .set("Authorization", client)
+      .send({ decision: "approve", note: "Approved" })
+      .expect(200);
+    const projectId = response.body.data.projectId as string;
+    const decisionAt = response.body.data.clientDecisionAt as string;
+
+    expect(response.body).toEqual({ data: {
+      ...estimateResponseDto(initialEstimate),
+      status: "client_approved",
+      version: 2,
+      designLifecycleVersion: 1,
+      designFrozenAt: decisionAt,
+      projectId: expect.stringMatching(/^project-/),
+      clientDecisionAt: decisionAt,
+      reviews: [{
+        actorId: "user-client-aurora",
+        action: "client_approved",
+        note: "Approved",
+        occurredAt: decisionAt
+      }],
+      notifications: [
+        {
+          recipientEmail: "ananya@lisno.example",
+          recipientRole: "designer",
+          event: "project_kickoff_created",
+          status: "queued",
+          queuedAt: decisionAt
+        },
+        {
+          recipientEmail: "aarav@lisno.example",
+          recipientRole: "design_manager",
+          event: "project_kickoff_created",
+          status: "queued",
+          queuedAt: decisionAt
+        }
+      ]
+    } });
+    expect(EstimateModel.updateOne).toHaveBeenCalledOnce();
+    expect(EstimateModel.updateOne).toHaveBeenCalledWith(
+      {
+        _id: "estimate-client-visible",
+        status: "sent_to_client",
+        version: 1,
+        designLifecycleVersion: { $in: [0, null] },
+        designFrozenAt: { $in: [null] }
+      },
+      {
+        $set: {
+          status: "client_approved",
+          projectId,
+          clientDecisionAt: expect.any(Date),
+          designFrozenAt: expect.any(Date)
+        },
+        $inc: { version: 1, designLifecycleVersion: 1 },
+        $push: {
+          reviews: {
+            actorId: "user-client-aurora",
+            action: "client_approved",
+            note: "Approved",
+            occurredAt: expect.any(Date)
+          },
+          notifications: { $each: [
+            {
+              recipientEmail: "ananya@lisno.example",
+              recipientRole: "designer",
+              event: "project_kickoff_created",
+              status: "queued",
+              queuedAt: expect.any(Date)
+            },
+            {
+              recipientEmail: "aarav@lisno.example",
+              recipientRole: "design_manager",
+              event: "project_kickoff_created",
+              status: "queued",
+              queuedAt: expect.any(Date)
+            }
+          ] }
+        }
+      },
+      expect.any(Object)
+    );
+    expect(LeadModel.updateOne).toHaveBeenCalledOnce();
+    expect(LeadModel.updateOne).toHaveBeenCalledWith(
+      { _id: "lead-aurora", clientEmail: "client@aurora.example" },
+      { $set: {
+        stage: "won",
+        nextAction: "project kickoff",
+        nextActionAt: expect.any(Date)
+      } },
+      expect.any(Object)
+    );
+    expect(ProjectModel.create).toHaveBeenCalledOnce();
+    expect(fixture.state.projects).toEqual([{
+      _id: projectId,
+      name: "Aurora",
+      clientId: "user-client-aurora",
+      clientName: "Rhea Kapoor",
+      clientEmail: "client@aurora.example",
+      clientEmailNormalized: "client@aurora.example",
+      clientMobile: "+91 90000 00000",
+      clientAddress: "Pune",
+      initiatingDesignerId: "user-designer-ananya",
+      assignedDesignerIds: ["user-designer-ananya"],
+      managerId: "user-manager-aarav",
+      status: "planning",
+      location: "Pune",
+      plannedStartAt: expect.any(Date),
+      plannedEndAt: expect.any(Date)
+    }]);
+    expect(AuditEventModel.create).toHaveBeenCalledOnce();
+    expect(fixture.state.auditEvents).toEqual([{
+      _id: expect.stringMatching(/^audit-/),
+      actorId: "user-client-aurora",
+      action: "estimate_design_final_approved",
+      entityType: "estimate",
+      entityId: "estimate-client-visible",
+      occurredAt: decisionAt,
+      oldValues: { status: "sent_to_client" },
+      newValues: { status: "client_approved", projectId, approvedDrawingCount: 0 },
+      reason: null
+    }]);
+    expect(plainRecord(fixture.estimate)).toEqual({
+      ...initialEstimate,
+      status: "client_approved",
+      version: 2,
+      designLifecycleVersion: 1,
+      designFrozenAt: expect.any(Date),
+      projectId,
+      clientDecisionAt: expect.any(Date),
+      reviews: [{
+        actorId: "user-client-aurora",
+        action: "client_approved",
+        note: "Approved",
+        occurredAt: expect.any(Date)
+      }],
+      notifications: [
+        {
+          recipientEmail: "ananya@lisno.example",
+          recipientRole: "designer",
+          event: "project_kickoff_created",
+          status: "queued",
+          queuedAt: expect.any(Date)
+        },
+        {
+          recipientEmail: "aarav@lisno.example",
+          recipientRole: "design_manager",
+          event: "project_kickoff_created",
+          status: "queued",
+          queuedAt: expect.any(Date)
+        }
+      ]
+    });
+  });
 
   it("links every unclaimed mixed-case client project through upload, review, and revision history", async () => {
     const repository = createMemoryRepository(structuredClone(demoSeedData));
