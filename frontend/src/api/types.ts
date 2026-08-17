@@ -1,4 +1,8 @@
-import type { Role } from "./authorization-contract";
+import type {
+  ProjectModule,
+  RequestableProjectModule,
+  Role
+} from "./authorization-contract";
 
 export type { Role } from "./authorization-contract";
 
@@ -281,6 +285,60 @@ export interface ManagedUserMutationResult {
   user: UserDirectoryItem;
   revokedGrantCount: number;
   responsibilities: UserResponsibilityCounts;
+}
+
+export interface OwnAccessRequest {
+  id: string;
+  projectId: string;
+  module: RequestableProjectModule;
+  reason: string;
+  status: "pending" | "approved" | "rejected" | "cancelled";
+  decisionReason: string | null;
+  reviewedAt: string | null;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ReviewAccessRequest extends OwnAccessRequest {
+  requester: {
+    id: string;
+    name: string;
+    email: string;
+    role: Role;
+    active: boolean;
+  };
+  project: { id: string; resolved: boolean; name: string | null };
+  reviewerId: string | null;
+  activeGrant: { id: string; version: number; grantedAt: string } | null;
+}
+
+export interface ProjectAccessGrant {
+  id: string;
+  projectId: string;
+  userId: string;
+  module: ProjectModule;
+  source: "access_request" | "direct_assignment" | "admin_initiator";
+  accessRequestId: string | null;
+  grantedById: string;
+  active: boolean;
+  grantedAt: string;
+  revokedAt: string | null;
+  revokedById: string | null;
+  revocationReason: string | null;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AccessRequestDecisionResult {
+  request: ReviewAccessRequest;
+  grant: ProjectAccessGrant | null;
+}
+
+export interface AccessRequestListFilters {
+  status?: OwnAccessRequest["status"];
+  module?: RequestableProjectModule;
 }
 
 export interface LinkedPageData<T> extends PageData<T> {

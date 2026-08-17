@@ -192,6 +192,22 @@ function installAuthorizationSession(
         }
       });
     }
+    if (path === "/api/v1/access-requests/mine?limit=20&offset=0") {
+      return Response.json({
+        data: {
+          items: [],
+          pagination: { limit: 20, offset: 0, total: 0, hasMore: false }
+        }
+      });
+    }
+    if (path === "/api/v1/access-requests/review?limit=20&offset=0") {
+      return Response.json({
+        data: {
+          items: [],
+          pagination: { limit: 20, offset: 0, total: 0, hasMore: false }
+        }
+      });
+    }
     throw new Error(`Unhandled request: ${path}`);
   });
 }
@@ -244,27 +260,31 @@ describe("registered permission routes", () => {
       "admin",
       "/admin/users",
       ["identity.self.read", "identity.users.read"],
-      "User administration"
+      "User administration",
+      "No users match these filters."
     ],
     [
       "super_admin",
       "/admin/access-requests",
       ["identity.self.read", "access_request.review.read"],
-      "Access requests"
+      "Access requests",
+      "There are no access requests to review."
     ],
     [
       "designer",
       "/access-requests/mine",
       ["identity.self.read", "access_request.self.read"],
-      "My access requests"
+      "My access requests",
+      "You have no access requests."
     ]
   ] as const)(
-    "mounts the staged %s page at %s without falling through to 404",
-    async (role, path, permissions, title) => {
+    "mounts the registered %s page at %s with its successful empty state",
+    async (role, path, permissions, title, emptyState) => {
       installAuthorizationSession(role, permissions);
       const { router } = renderApp([path]);
 
       expect(await screen.findByRole("heading", { name: title })).toBeVisible();
+      expect(await screen.findByText(emptyState)).toBeVisible();
       expect(screen.queryByRole("heading", { name: "Page not found" })).not.toBeInTheDocument();
       expect(router.state.location.pathname).toBe(path);
     }

@@ -36,6 +36,8 @@ import { LeadDashboard } from "../features/leads/LeadDashboard";
 import { LeadDetail } from "../features/leads/LeadDetail";
 import { LeadEstimateWorkspace } from "../features/leads/LeadEstimateWorkspace";
 import { UserDirectoryPage } from "../features/admin/UserDirectoryPage";
+import { AccessRequestInboxPage } from "../features/access/AccessRequestInboxPage";
+import { MyAccessRequestsPage } from "../features/access/MyAccessRequestsPage";
 import { NeutralHomePage } from "../features/home/NeutralHomePage";
 
 interface RoleHomeContent {
@@ -275,18 +277,8 @@ function HomeRedirect() {
 
 const stagedElements = {
   "/admin/users": <UserDirectoryPage />,
-  "/admin/access-requests": (
-    <NeutralHomePage
-      title="Access requests"
-      description="Access-request review is loading in the final Prompt 1 interface task."
-    />
-  ),
-  "/access-requests/mine": (
-    <NeutralHomePage
-      title="My access requests"
-      description="Your request history is loading in the final Prompt 1 interface task."
-    />
-  )
+  "/admin/access-requests": <AccessRequestInboxPage />,
+  "/access-requests/mine": <MyAccessRequestsPage />
 } as const satisfies Partial<Record<RegisteredFrontendPath, ReactNode>>;
 
 function registeredElement(path: RegisteredFrontendPath, children: ReactNode) {

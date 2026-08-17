@@ -115,6 +115,55 @@ function fixtureFetch(
       pagination: { limit: 20, offset: 0, total: 1, hasMore: false },
       manageableRoles: OPERATIONAL_ROLES
     } });
+    if (url === "/api/v1/access-requests/mine?limit=20&offset=0") return Response.json({ data: {
+      items: [{
+        id: "request-a11y-own",
+        projectId: "project-a11y-opaque",
+        module: "design",
+        reason: "Need design access",
+        status: "pending",
+        decisionReason: null,
+        reviewedAt: null,
+        version: 2,
+        createdAt: "2026-08-17T10:00:00.000Z",
+        updatedAt: "2026-08-17T10:00:00.000Z"
+      }],
+      pagination: { limit: 20, offset: 0, total: 1, hasMore: false }
+    } });
+    if (url === "/api/v1/access-requests/review?limit=20&offset=0") return Response.json({ data: {
+      items: [{
+        id: "request-a11y-pending",
+        projectId: "project-a11y-review",
+        module: "design",
+        reason: "Need project access",
+        status: "pending",
+        decisionReason: null,
+        reviewedAt: null,
+        version: 2,
+        createdAt: "2026-08-17T10:00:00.000Z",
+        updatedAt: "2026-08-17T10:00:00.000Z",
+        requester: { id: "designer-a11y", name: "Accessible Designer", email: "designer-a11y@lisno.example", role: "designer", active: true },
+        project: { id: "project-a11y-review", resolved: true, name: "Accessible residence" },
+        reviewerId: null,
+        activeGrant: null
+      }, {
+        id: "request-a11y-approved",
+        projectId: "project-a11y-review",
+        module: "design",
+        reason: "Need project access",
+        status: "approved",
+        decisionReason: null,
+        reviewedAt: "2026-08-17T11:00:00.000Z",
+        version: 3,
+        createdAt: "2026-08-17T10:00:00.000Z",
+        updatedAt: "2026-08-17T11:00:00.000Z",
+        requester: { id: "designer-a11y", name: "Accessible Designer", email: "designer-a11y@lisno.example", role: "designer", active: true },
+        project: { id: "project-a11y-review", resolved: true, name: "Accessible residence" },
+        reviewerId: "super_admin-1",
+        activeGrant: { id: "grant-a11y", version: 1, grantedAt: "2026-08-17T11:00:00.000Z" }
+      }],
+      pagination: { limit: 20, offset: 0, total: 2, hasMore: false }
+    } });
     throw new Error(`Unhandled request: ${url}`);
   });
 }
@@ -399,5 +448,85 @@ describe("accessibility smoke coverage", () => {
     await user.keyboard("{Escape}");
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(trigger).toHaveFocus();
+  });
+
+  it("keeps the own access-request dialog trapped, dismissible, and associated", async () => {
+    const user = userEvent.setup();
+    tokenStorage.set("designer-access-request-a11y-token");
+    fixtureFetch(userFor("designer"), [
+      "identity.self.read",
+      "identity.authorization.read",
+      "access_request.self.read",
+      "access_request.create",
+      "access_request.self.cancel"
+    ]);
+    renderApp(["/access-requests/mine"]);
+
+    const trigger = await screen.findByRole("button", { name: "Create request" });
+    await user.click(trigger);
+    let dialog = screen.getByRole("dialog", { name: "Request project access" });
+    await waitFor(() => expect(within(dialog).getByRole("textbox", { name: "Project ID" })).toHaveFocus());
+    await user.tab({ shift: true });
+    expect(within(dialog).getByRole("button", { name: "Close Request project access" })).toHaveFocus();
+    await user.tab({ shift: true });
+    expect(within(dialog).getByRole("button", { name: "Create request" })).toHaveFocus();
+    await expectNoAxeViolations();
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog", { name: "Request project access" })).not.toBeInTheDocument();
+    expect(trigger).toHaveFocus();
+
+    await user.click(trigger);
+    dialog = screen.getByRole("dialog", { name: "Request project access" });
+    await user.click(within(dialog).getByRole("button", { name: "Create request" }));
+    expect(within(dialog).getByRole("textbox", { name: "Project ID" })).toHaveAccessibleDescription(/opaque project ID/i);
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    expect(trigger).toHaveFocus();
+  });
+
+  it("keeps decision and revocation dialogs keyboard accessible without mutating", async () => {
+    const user = userEvent.setup();
+    tokenStorage.set("super-admin-access-request-a11y-token");
+    fixtureFetch(userFor("super_admin"), [
+      "identity.self.read",
+      "identity.authorization.read",
+      "access_request.review.read",
+      "access_request.review.decide",
+      "project_access_grant.revoke"
+    ]);
+    renderApp(["/admin/access-requests"]);
+
+    const approve = await screen.findByRole("button", { name: "Approve request request-a11y-pending" });
+    await user.click(approve);
+    let dialog = screen.getByRole("dialog", { name: "Approve access request" });
+    await waitFor(() => expect(within(dialog).getByRole("button", { name: "Cancel" })).toHaveFocus());
+    await user.tab({ shift: true });
+    expect(within(dialog).getByRole("button", { name: "Close Approve access request" })).toHaveFocus();
+    await user.tab({ shift: true });
+    expect(within(dialog).getByRole("button", { name: "Approve request" })).toHaveFocus();
+    await expectNoAxeViolations();
+    await user.keyboard("{Escape}");
+    expect(approve).toHaveFocus();
+    await user.click(approve);
+    dialog = screen.getByRole("dialog", { name: "Approve access request" });
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    expect(approve).toHaveFocus();
+
+    const reject = screen.getByRole("button", { name: "Reject request request-a11y-pending" });
+    await user.click(reject);
+    dialog = screen.getByRole("dialog", { name: "Reject access request" });
+    await waitFor(() => expect(within(dialog).getByRole("textbox", { name: "Reason" })).toHaveFocus());
+    await expectNoAxeViolations();
+    await user.keyboard("{Escape}");
+    expect(reject).toHaveFocus();
+
+    const revoke = screen.getByRole("button", { name: "Revoke grant grant-a11y" });
+    await user.click(revoke);
+    dialog = screen.getByRole("dialog", { name: "Revoke project access" });
+    await waitFor(() => expect(within(dialog).getByRole("textbox", { name: "Reason" })).toHaveFocus());
+    await user.tab({ shift: true });
+    expect(within(dialog).getByRole("button", { name: "Close Revoke project access" })).toHaveFocus();
+    await expectNoAxeViolations();
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    expect(revoke).toHaveFocus();
   });
 });
