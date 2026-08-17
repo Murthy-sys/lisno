@@ -1,7 +1,8 @@
 import { Router } from "express";
 import { z } from "zod";
 
-import { authenticate, authorizeRoles } from "../middleware/auth.js";
+import { authenticate } from "../middleware/auth.js";
+import { requireOperation } from "../middleware/authorization.js";
 import {
   paginatedEnvelope,
   paginationShape
@@ -27,7 +28,7 @@ export function createKpisRouter(
   router.get(
     "/kpis/users/:userId/tasks",
     authenticate(authService),
-    authorizeRoles("designer", "design_manager", "design_head"),
+    requireOperation("GET /kpis/users/:userId/tasks"),
     validateQuery(querySchema),
     async (request, response, next) => {
       try {
@@ -55,7 +56,7 @@ export function createKpisRouter(
   router.get(
     "/kpis/users/:userId",
     authenticate(authService),
-    authorizeRoles("designer", "design_manager", "design_head"),
+    requireOperation("GET /kpis/users/:userId"),
     validateQuery(querySchema),
     async (request, response, next) => {
       try {

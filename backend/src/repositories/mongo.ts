@@ -919,6 +919,21 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
       return { items: documents.map(mapUser), total };
     },
 
+    async pageActiveDesigners(pagination) {
+      const filter = { active: true, role: "designer" };
+      const [documents, total] = await Promise.all([
+        UserModel.find(filter)
+          .select("+passwordHash")
+          .sort({ name: 1, _id: 1 })
+          .skip(pagination.offset)
+          .limit(pagination.limit)
+          .lean()
+          .exec(),
+        UserModel.countDocuments(filter).exec()
+      ]);
+      return { items: documents.map(mapUser), total };
+    },
+
     async pageDesignersForManager(managerId, pagination) {
       const filter = {
         active: true,

@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import type { Role } from "../src/contracts/domain.js";
 import { createApp } from "../src/app.js";
 import { createMemoryRepository } from "../src/repositories/memory.js";
-import type { SeedData, UserRecord } from "../src/repositories/types.js";
+import type { AppRepository, SeedData, UserRecord } from "../src/repositories/types.js";
 import { demoSeedData } from "../src/seed/data.js";
 
 const JWT_SECRET = "hierarchy-test-secret-with-at-least-32-characters";
@@ -163,5 +163,54 @@ describe("active manager directory", () => {
       code: "VALIDATION_ERROR",
       fields: { [field]: expect.any(String) }
     });
+  });
+});
+
+describe("Organization KPI and Evaluation operations", () => {
+  it("uses pageActiveDesigners for a Super Admin global team", async () => {
+    const seed = structuredClone(demoSeedData);
+    seed.users.push(manager({
+      id: "user-super-admin",
+      name: "Super Admin",
+      email: "super-admin@lisno.example",
+      emailNormalized: "super-admin@lisno.example",
+      role: "super_admin"
+    }));
+    const base = createMemoryRepository(seed);
+    let activeDesignerPages = 0;
+    let managerDesignerPages = 0;
+    const repository = new Proxy(base, {
+      get(target, property, receiver) {
+        if (property === "pageActiveDesigners") {
+          return async (pagination: { limit: number; offset: number }) => {
+            activeDesignerPages += 1;
+            const designers = (await target.listUsers())
+              .filter((candidate) => candidate.active && candidate.role === "designer")
+              .sort((left, right) => left.name.localeCompare(right.name) || left.id.localeCompare(right.id));
+            return {
+              items: designers.slice(pagination.offset, pagination.offset + pagination.limit),
+              total: designers.length
+            };
+          };
+        }
+        if (property === "pageDesignersForManager") {
+          return async (...args: Parameters<AppRepository["pageDesignersForManager"]>) => {
+            managerDesignerPages += 1;
+            return target.pageDesignersForManager(...args);
+          };
+        }
+        return Reflect.get(target, property, receiver);
+      }
+    });
+    const app = createApp({ repository, auth });
+
+    const response = await request(app)
+      .get("/api/v1/organization/team?limit=20&offset=0")
+      .set("Authorization", bearer(["user-super-admin", "super_admin"]));
+
+    expect(response.status).toBe(200);
+    expect(response.body.data.items).toHaveLength(4);
+    expect(activeDesignerPages).toBe(1);
+    expect(managerDesignerPages).toBe(0);
   });
 });

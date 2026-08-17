@@ -716,6 +716,13 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
       return paginate(managers, pagination);
     },
 
+    async pageActiveDesigners(pagination) {
+      const designers = state.users
+        .filter((user) => user.active && user.role === "designer")
+        .sort(byNameThenId);
+      return paginate(clone(designers), pagination);
+    },
+
     async pageDesignersForManager(managerId, pagination) {
       const designers = state.users
         .filter(

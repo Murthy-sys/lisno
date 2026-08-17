@@ -196,8 +196,13 @@ async function resolveKpiSubject(
   assertKpiPeriod(periodStartAt, periodEndAt);
   const subject = await requireUser(repository, userId);
   if (subject.role === "designer") {
-    await assertDesignerRelationship(repository, actor, userId);
-  } else if (!(actor.role === "design_head" && subject.role === "design_manager")) {
+    if (actor.role !== "super_admin") {
+      await assertDesignerRelationship(repository, actor, userId);
+    }
+  } else if (!(
+    subject.role === "design_manager" &&
+    (actor.role === "design_head" || actor.role === "super_admin")
+  )) {
     forbidden();
   }
   const ownerIds =

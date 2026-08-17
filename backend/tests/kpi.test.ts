@@ -1,6 +1,13 @@
+import jwt from "jsonwebtoken";
+import request from "supertest";
 import { describe, expect, it } from "vitest";
 
+import { createApp } from "../src/app.js";
 import { calculateKpi, weightedAverage } from "../src/domain/kpi.js";
+import { createMemoryRepository } from "../src/repositories/memory.js";
+import { demoSeedData } from "../src/seed/data.js";
+
+const JWT_SECRET = "kpi-super-admin-secret-with-at-least-32-characters";
 
 const at = (value: string) => new Date(value);
 const period = {
@@ -345,5 +352,51 @@ describe("calculateKpi", () => {
     );
 
     expect(result).toMatchObject({ score: 90, eligibleCount: 2 });
+  });
+});
+
+describe("Organization KPI and Evaluation operations", () => {
+  it("limits Super Admin KPI reads to active Designer or Design Manager subjects", async () => {
+    const seed = structuredClone(demoSeedData);
+    seed.users.push({
+      ...seed.users[0]!,
+      id: "user-super-admin",
+      name: "Super Admin",
+      email: "super-admin@lisno.example",
+      emailNormalized: "super-admin@lisno.example",
+      role: "super_admin",
+      active: true,
+      managerId: null,
+      authorizedClientIds: []
+    });
+    seed.users.find((candidate) => candidate.id === "user-designer-kabir")!.active = false;
+    const app = createApp({
+      repository: createMemoryRepository(seed),
+      auth: { jwtSecret: JWT_SECRET, jwtExpiresInSeconds: 900 },
+      clock: () => new Date("2026-07-16T12:00:00.000Z")
+    });
+    const token = `Bearer ${jwt.sign(
+      { id: "user-super-admin", role: "super_admin" },
+      JWT_SECRET,
+      { expiresIn: 900 }
+    )}`;
+    const query = "from=2026-07-01T00%3A00%3A00.000Z&to=2026-07-31T23%3A59%3A59.999Z&limit=20&offset=0";
+
+    await request(app)
+      .get(`/api/v1/kpis/users/user-designer-ananya?${query}`)
+      .set("Authorization", token)
+      .expect(200);
+    await request(app)
+      .get(`/api/v1/kpis/users/user-manager-aarav?${query}`)
+      .set("Authorization", token)
+      .expect(200);
+    await request(app)
+      .get(`/api/v1/kpis/users/user-client-aurora?${query}`)
+      .set("Authorization", token)
+      .expect(403);
+    await request(app)
+      .get(`/api/v1/kpis/users/user-designer-kabir?${query}`)
+      .set("Authorization", token)
+      .expect(404);
   });
 });

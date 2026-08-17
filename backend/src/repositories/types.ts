@@ -376,7 +376,7 @@ export interface EvaluationRecord {
   id: string;
   subjectUserId: string;
   evaluatorUserId: string;
-  evaluatorRole: Extract<Role, "design_manager" | "design_head">;
+  evaluatorRole: Extract<Role, "super_admin" | "design_manager" | "design_head">;
   periodStartAt: string;
   periodEndAt: string;
   score: number;
@@ -717,6 +717,9 @@ export interface AppRepository {
   ): Promise<PageResult<ManagerTreeNode>>;
   pageActiveManagers(
     search: string,
+    pagination: PaginationInput
+  ): Promise<PageResult<UserRecord>>;
+  pageActiveDesigners(
     pagination: PaginationInput
   ): Promise<PageResult<UserRecord>>;
   pageDesignersForManager(
