@@ -1,7 +1,18 @@
 import { describe, expect, it } from "vitest";
+import { ROLE_CODES } from "../api/authorization-contract";
 import { getRoleFeedback } from "./roleFeedback";
 
 describe("getRoleFeedback", () => {
+  it.each(ROLE_CODES)("returns defined safe feedback for %s", (role) => {
+    expect(getRoleFeedback(role, { situation: "workspaceLoading" })).toEqual(
+      expect.any(String)
+    );
+    expect(getRoleFeedback(role, { situation: "clearState" }).length).toBeGreaterThan(0);
+    expect(
+      getRoleFeedback(role, { situation: "requestedChanges", count: 2 }).length
+    ).toBeGreaterThan(0);
+  });
+
   it.each([
     ["designer", "workspaceLoading", "Loading your projects, priorities, and client feedback…"],
     ["designer", "clearState", "You’re clear—no urgent tasks need attention."],

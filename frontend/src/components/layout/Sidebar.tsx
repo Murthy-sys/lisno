@@ -2,18 +2,11 @@ import { ArrowRight, LogOut } from "lucide-react";
 import { useState } from "react";
 import { NavLink } from "react-router-dom";
 
+import { ROLE_LABELS } from "../../api/authorization-contract";
 import type { PublicUser } from "../../api/types";
 import { BrandLogo } from "../ui/BrandLogo";
 import { IconButton } from "../ui/IconButton";
 import { navigationForRole } from "./navigation";
-
-const roleLabels = {
-  designer: "Designer",
-  design_manager: "Design manager",
-  design_head: "Design head",
-  estimator_sales: "Estimator / Sales",
-  client: "Client"
-} as const;
 
 export function Sidebar({
   user,
@@ -52,7 +45,7 @@ export function Sidebar({
 
       <div className="ui-sidebar__role">
         <p>Signed in as</p>
-        <strong>{roleLabels[user.role]}</strong>
+        <strong>{ROLE_LABELS[user.role]}</strong>
       </div>
 
       <nav aria-label={navigationLabel} className="ui-sidebar__nav">

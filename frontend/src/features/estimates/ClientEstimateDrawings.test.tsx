@@ -7,6 +7,7 @@ import type {
   EstimateDesignClientRevision
 } from "../../api/types";
 import { tokenStorage } from "../../api/client";
+import { authorizationFor } from "../../test/authFixtures";
 import { renderApp } from "../../test/render";
 import {
   projectDrawingAnnotationsToPage,
@@ -187,6 +188,9 @@ function json(data: unknown, status = 200) {
 
 function commonResponse(url: string) {
   if (url.endsWith("/api/v1/auth/me")) return json(client);
+  if (url.endsWith("/api/v1/auth/authorization")) {
+    return json(authorizationFor(client.role));
+  }
   if (url.includes("/api/v1/client/project-summaries?")) {
     return json({
       items: [],

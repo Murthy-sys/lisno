@@ -18,7 +18,23 @@ type RoleFeedbackContent = {
   replacementReady: CountForms;
 };
 
+const neutralCountForms = Object.freeze({
+  zero: "No updates need attention right now.",
+  singular: "1 update needs attention.",
+  plural: (count: number) => `${count} updates need attention.`
+});
+
+const neutralRoleFeedback: RoleFeedbackContent = Object.freeze({
+  workspaceLoading: "Loading your workspace and available updates…",
+  clearState: "Nothing needs your attention right now.",
+  conflict: "This information changed. Review the latest details before continuing.",
+  requestedChanges: neutralCountForms,
+  replacementReady: neutralCountForms
+});
+
 const roleFeedback: Record<Role, RoleFeedbackContent> = {
+  super_admin: neutralRoleFeedback,
+  admin: neutralRoleFeedback,
   designer: {
     workspaceLoading: "Loading your projects, priorities, and client feedback…",
     clearState: "You’re clear—no urgent tasks need attention.",
@@ -79,6 +95,15 @@ const roleFeedback: Record<Role, RoleFeedbackContent> = {
       plural: (count) => `${count} replacements are ready to send.`,
     },
   },
+  procurement: neutralRoleFeedback,
+  finance_head: neutralRoleFeedback,
+  site_manager: neutralRoleFeedback,
+  worker_electrician: neutralRoleFeedback,
+  worker_plumber: neutralRoleFeedback,
+  worker_carpenter: neutralRoleFeedback,
+  worker_painter: neutralRoleFeedback,
+  worker_civil: neutralRoleFeedback,
+  worker_other: neutralRoleFeedback,
   client: {
     workspaceLoading: "Loading your projects and items for review…",
     clearState: "Nothing needs your review right now.",

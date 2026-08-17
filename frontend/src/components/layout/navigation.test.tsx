@@ -11,6 +11,7 @@ import { MemoryRouter } from "react-router-dom";
 import { describe, expect, it, vi } from "vitest";
 
 import type { PublicUser, Role } from "../../api/types";
+import { ROLE_CODES, ROLE_LABELS } from "../../api/authorization-contract";
 import { roleHomePath } from "../../app/routePaths";
 import { Sidebar } from "./Sidebar";
 import { navigationForRole } from "./navigation";
@@ -26,6 +27,40 @@ const roleNavigation = [
 >;
 
 describe("role navigation", () => {
+  it.each(ROLE_CODES)("returns a frozen safe navigation array for %s", (role) => {
+    const items = navigationForRole(role);
+
+    expect(items).toBeDefined();
+    expect(Object.isFrozen(items)).toBe(true);
+    for (const item of items) {
+      expect(Object.isFrozen(item)).toBe(true);
+      expect(item.to).not.toContain(":");
+    }
+  });
+
+  it.each(ROLE_CODES)("renders the canonical %s role label", (role) => {
+    const user: PublicUser = {
+      id: `${role}-1`,
+      name: "Aarav Mehta",
+      email: "aarav@lisno.example",
+      role
+    };
+
+    render(
+      <MemoryRouter initialEntries={[roleHomePath(role)]}>
+        <Sidebar user={user} onLogout={vi.fn()} />
+      </MemoryRouter>
+    );
+
+    expect(screen.getByText(ROLE_LABELS[role])).toBeVisible();
+  });
+
+  it.each(
+    ROLE_CODES.filter((role) => !roleNavigation.some(([legacy]) => legacy === role))
+  )("does not expose future navigation for staged role %s", (role) => {
+    expect(navigationForRole(role)).toEqual([]);
+  });
+
   it.each(roleNavigation)(
     "maps %s to its one stable role home",
     (role, label, destination, icon) => {

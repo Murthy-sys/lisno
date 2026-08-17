@@ -7,6 +7,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { Role } from "../api/types";
 import { tokenStorage } from "../api/client";
+import { authorizationFor } from "../test/authFixtures";
 import { renderApp } from "../test/render";
 import { server } from "../test/server";
 
@@ -214,6 +215,9 @@ describe("LoginPage", () => {
       if (pathname === "/api/v1/auth/me") {
         return Response.json({ data: designer });
       }
+      if (pathname === "/api/v1/auth/authorization") {
+        return Response.json({ data: authorizationFor(designer.role) });
+      }
       if (pathname === "/api/v1/auth/login") {
         return Response.json(
           {
@@ -304,6 +308,9 @@ describe("LoginPage", () => {
           data: { token: "designer-token", user: designer }
         })
       ),
+      http.get("/api/v1/auth/authorization", () =>
+        HttpResponse.json({ data: authorizationFor(designer.role) })
+      ),
       http.get("/api/v1/projects/project-safe", () =>
         HttpResponse.json({
           data: {
@@ -353,6 +360,9 @@ describe("LoginPage", () => {
         HttpResponse.json({
           data: { token: "designer-token", user: designer }
         })
+      ),
+      http.get("/api/v1/auth/authorization", () =>
+        HttpResponse.json({ data: authorizationFor(designer.role) })
       )
     );
     const { router } = renderApp(["/manager"]);
@@ -538,6 +548,9 @@ describe("LoginPage", () => {
             }
           });
         }),
+        http.get("/api/v1/auth/authorization", () =>
+          HttpResponse.json({ data: authorizationFor(role) })
+        ),
         http.get("/api/v1/projects", () =>
           HttpResponse.json({
             data: {

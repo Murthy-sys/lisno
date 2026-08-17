@@ -2,8 +2,11 @@ import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
+import { ROLE_CODES, type Role } from "../api/authorization-contract";
 import { tokenStorage } from "../api/client";
+import { authorizationFor } from "../test/authFixtures";
 import { renderApp } from "../test/render";
+import { roleHomeContentFor } from "./router";
 
 const designer = {
   id: "user-designer-ananya",
@@ -11,6 +14,27 @@ const designer = {
   email: "ananya@lisno.example",
   role: "designer" as const
 };
+
+const estimatorSales = {
+  id: "user-estimator-sales",
+  name: "Priya Sharma",
+  email: "sales@lisno.example",
+  role: "estimator_sales" as const
+};
+
+const neutralHomeRoles = [
+  "super_admin",
+  "admin",
+  "procurement",
+  "finance_head",
+  "site_manager",
+  "worker_electrician",
+  "worker_plumber",
+  "worker_carpenter",
+  "worker_painter",
+  "worker_civil",
+  "worker_other"
+] as const satisfies readonly Role[];
 
 function deferred() {
   let resolve!: () => void;
@@ -86,6 +110,9 @@ function installDesignerApi(
       inspectAuth?.(input, init);
       return Response.json({ data: designer });
     }
+    if (url === "/api/v1/auth/authorization") {
+      return Response.json({ data: authorizationFor(designer.role) });
+    }
     if (url.startsWith("/api/v1/projects?")) {
       return Response.json({
         data: {
@@ -132,6 +159,48 @@ function installDesignerApi(
     throw new Error(`Unhandled request: ${url}`);
   });
 }
+
+describe("role landing staging contract", () => {
+  it.each(ROLE_CODES)("defines safe landing content for %s", (role) => {
+    expect(roleHomeContentFor(role)).toEqual({
+      heading: expect.any(String),
+      eyebrow: expect.any(String),
+      description: expect.any(String),
+      status: expect.any(String)
+    });
+    expect(Object.values(roleHomeContentFor(role)).every(Boolean)).toBe(true);
+  });
+
+  it.each(neutralHomeRoles)("opens the neutral /home route for %s", async (role) => {
+    const currentUser = {
+      id: `user-${role}`,
+      name: "Staged User",
+      email: `${role}@lisno.example`,
+      role
+    };
+    tokenStorage.set(`${role}-token`);
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const path = apiRequestPath(input);
+      if (path === "/api/v1/auth/me") {
+        return Response.json({ data: currentUser });
+      }
+      if (path === "/api/v1/auth/authorization") {
+        return Response.json({ data: authorizationFor(role) });
+      }
+      throw new Error(`Unhandled request: ${path}`);
+    });
+
+    const { router } = renderApp(["/home"]);
+
+    expect(
+      await screen.findByRole("heading", {
+        level: 1,
+        name: roleHomeContentFor(role).heading
+      })
+    ).toBeVisible();
+    expect(router.state.location.pathname).toBe("/home");
+  });
+});
 
 describe("protected role routing", () => {
   it("focuses the signup heading after PUSH navigation from login", async () => {
@@ -181,6 +250,9 @@ describe("protected role routing", () => {
           },
           { status: 201 }
         );
+      }
+      if (url === "/api/v1/auth/authorization") {
+        return Response.json({ data: authorizationFor("client") });
       }
       if (url === "/api/v1/client/latest-approved-versions") {
         return Response.json({ data: [] });
@@ -259,6 +331,9 @@ describe("protected role routing", () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = apiRequestPath(input);
       if (url === "/api/v1/auth/me") return Response.json({ data: client });
+      if (url === "/api/v1/auth/authorization") {
+        return Response.json({ data: authorizationFor(client.role) });
+      }
       if (url === "/api/v1/client/latest-approved-versions") {
         return Response.json({ data: [] });
       }
@@ -291,6 +366,9 @@ describe("protected role routing", () => {
         return Response.json({
           data: { token: "designer-token", user: designer }
         });
+      }
+      if (url === "/api/v1/auth/authorization") {
+        return Response.json({ data: authorizationFor(designer.role) });
       }
       if (url === "/api/v1/projects/project-return") {
         return Response.json({
@@ -347,7 +425,8 @@ describe("protected role routing", () => {
     tokenStorage.set("sales-token");
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = apiRequestPath(input);
-      if (url === "/api/v1/auth/me") return Response.json({ data: { id: "user-estimator-sales", name: "Priya Sharma", email: "sales@lisno.example", role: "estimator_sales" } });
+      if (url === "/api/v1/auth/me") return Response.json({ data: estimatorSales });
+      if (url === "/api/v1/auth/authorization") return Response.json({ data: authorizationFor(estimatorSales.role) });
       if (url.startsWith("/api/v1/leads?")) return Response.json({ data: { items: [], pagination: { limit: 20, offset: 0, total: 0, hasMore: false } } });
       throw new Error(`Unhandled request: ${url}`);
     });
@@ -361,7 +440,8 @@ describe("protected role routing", () => {
     tokenStorage.set("sales-token");
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = apiRequestPath(input);
-      if (url === "/api/v1/auth/me") return Response.json({ data: { id: "user-estimator-sales", name: "Priya Sharma", email: "sales@lisno.example", role: "estimator_sales" } });
+      if (url === "/api/v1/auth/me") return Response.json({ data: estimatorSales });
+      if (url === "/api/v1/auth/authorization") return Response.json({ data: authorizationFor(estimatorSales.role) });
       if (url === "/api/v1/leads/lead-1") return Response.json({ data: { id: "lead-1", ownerId: "user-estimator-sales", clientName: "Test User", clientEmail: "test@example.com", clientMobile: "8500098088", projectName: "Test project", location: "Bangalore", propertyType: "2BHK", budgetMin: 1000000, budgetMax: 1500000, source: "Walk-in", stage: "estimate_in_progress", nextAction: "estimate", nextActionAt: "2026-07-29T10:00:00.000Z", builder: null, areaSqft: null, targetHandoverAt: null, notes: null, latestActivityAt: null, createdAt: "2026-07-29T10:00:00.000Z", updatedAt: "2026-07-29T10:00:00.000Z" } });
       throw new Error(`Unhandled request: ${url}`);
     });
@@ -376,7 +456,8 @@ describe("protected role routing", () => {
     tokenStorage.set("sales-token");
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = apiRequestPath(input);
-      if (url === "/api/v1/auth/me") return Response.json({ data: { id: "user-estimator-sales", name: "Priya Sharma", email: "sales@lisno.example", role: "estimator_sales" } });
+      if (url === "/api/v1/auth/me") return Response.json({ data: estimatorSales });
+      if (url === "/api/v1/auth/authorization") return Response.json({ data: authorizationFor(estimatorSales.role) });
       if (url === "/api/v1/leads/lead-1") return Response.json({ data: { id: "lead-1", ownerId: "user-estimator-sales", clientName: "Test User", clientEmail: "test@example.com", clientMobile: "8500098088", projectName: "Test project", location: "Bangalore", propertyType: "2BHK", budgetMin: 1000000, budgetMax: 1500000, source: "Walk-in", stage: "estimate_in_progress", nextAction: "estimate", nextActionAt: "2026-07-29T10:00:00.000Z", builder: null, areaSqft: null, targetHandoverAt: null, notes: null, latestActivityAt: null, createdAt: "2026-07-29T10:00:00.000Z", updatedAt: "2026-07-29T10:00:00.000Z" } });
       throw new Error(`Unhandled request: ${url}`);
     });
@@ -391,7 +472,8 @@ describe("protected role routing", () => {
     tokenStorage.set("sales-token");
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = apiRequestPath(input);
-      if (url === "/api/v1/auth/me") return Response.json({ data: { id: "user-estimator-sales", name: "Priya Sharma", email: "sales@lisno.example", role: "estimator_sales" } });
+      if (url === "/api/v1/auth/me") return Response.json({ data: estimatorSales });
+      if (url === "/api/v1/auth/authorization") return Response.json({ data: authorizationFor(estimatorSales.role) });
       if (url === "/api/v1/leads/lead-1") return Response.json({ data: { id: "lead-1", ownerId: "user-estimator-sales", clientName: "Test User", clientEmail: "test@example.com", clientMobile: "8500098088", projectName: "Test project", location: "Bangalore", propertyType: "2BHK", budgetMin: 1000000, budgetMax: 1500000, source: "Walk-in", stage: "estimate_in_progress", nextAction: "estimate", nextActionAt: "2026-07-29T10:00:00.000Z", builder: null, areaSqft: null, targetHandoverAt: null, notes: null, latestActivityAt: null, createdAt: "2026-07-29T10:00:00.000Z", updatedAt: "2026-07-29T10:00:00.000Z" } });
       if (url === "/api/v1/leads/lead-1/estimate") return Response.json({ data: {
         id: "estimate-1", status: "draft", approvalRequired: false, propertyType: "2BHK",
@@ -487,7 +569,13 @@ describe("protected role routing", () => {
     expect(tokenStorage.get()).toBe("still-valid-token");
 
     await userEvent.click(screen.getByRole("button", { name: "Try again" }));
-    await waitFor(() => expect(restoreRequest).toHaveBeenCalledTimes(2));
+    await waitFor(() =>
+      expect(
+        restoreRequest.mock.calls.filter(
+          ([input]) => apiRequestPath(input) === "/api/v1/auth/me"
+        )
+      ).toHaveLength(2)
+    );
     expect(await screen.findByRole("alert")).toBeVisible();
     expect(tokenStorage.get()).toBe("still-valid-token");
   });

@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import { tokenStorage } from "../../api/client";
+import { authorizationFor } from "../../test/authFixtures";
 import { renderApp } from "../../test/render";
 
 const salesUser = {
@@ -79,6 +80,7 @@ function installSalesApi(
   return vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = String(input);
     if (url === "/api/v1/auth/me") return Response.json({ data: salesUser });
+    if (url === "/api/v1/auth/authorization") return Response.json({ data: authorizationFor(salesUser.role) });
     if (url.startsWith("/api/v1/leads?")) {
       return Response.json({
         data: {

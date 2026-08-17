@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import { tokenStorage } from "../../api/client";
+import { authorizationFor } from "../../test/authFixtures";
 import { renderApp } from "../../test/render";
 
 const client = { id: "client-1", name: "Aurora Homes", email: "client@lisno.example", role: "client" as const };
@@ -23,6 +24,7 @@ describe("ClientProject", () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const url = String(input);
       if (url === "/api/v1/auth/me") return Response.json({ data: client });
+      if (url === "/api/v1/auth/authorization") return Response.json({ data: authorizationFor(client.role) });
       if (url === "/api/v1/projects/project-villa") return Response.json({ data: project });
       if (url.startsWith("/api/v1/projects/project-villa/design-versions?")) return Response.json({ data: { items: [
         { id: "version-visible", projectId: "project-villa", floorId: "floor-ground", stageId: "stage-1", taskId: null, versionNumber: 3, originalFilename: "Ground plan.pdf", mimeType: "application/pdf", sizeBytes: 1200, uploadedAt: "2026-07-12T00:00:00.000Z", approvalStatus: "approved", approvedAt: "2026-07-14T00:00:00.000Z", clientVisible: true, createdAt: "2026-07-12T00:00:00.000Z", updatedAt: "2026-07-14T00:00:00.000Z" },
@@ -84,6 +86,7 @@ describe("ClientProject", () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = String(input);
       if (url === "/api/v1/auth/me") return Response.json({ data: client });
+      if (url === "/api/v1/auth/authorization") return Response.json({ data: authorizationFor(client.role) });
       if (url === "/api/v1/projects/project-villa") return Response.json({ data: project });
       if (url.startsWith("/api/v1/projects/project-villa/design-versions?")) return Response.json({ data: { items: [], pagination: { limit: 100, offset: 0, total: 0, hasMore: false } } });
       throw new Error(`Unhandled request: ${url}`);

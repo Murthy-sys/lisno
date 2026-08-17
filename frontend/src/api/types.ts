@@ -1,9 +1,6 @@
-export type Role =
-  | "designer"
-  | "design_manager"
-  | "design_head"
-  | "estimator_sales"
-  | "client";
+import type { Role } from "./authorization-contract";
+
+export type { Role } from "./authorization-contract";
 
 export interface PublicUser {
   id: string;
@@ -343,7 +340,7 @@ export interface Evaluation {
   id: string;
   subjectUserId: string;
   evaluatorUserId: string;
-  evaluatorRole: "design_manager" | "design_head";
+  evaluatorRole: "design_manager" | "design_head" | "super_admin";
   periodStartAt: string;
   periodEndAt: string;
   score: number;

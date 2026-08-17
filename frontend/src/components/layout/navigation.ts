@@ -17,13 +17,15 @@ export interface NavigationItem {
 }
 
 function stableItems(items: NavigationItem[]): readonly NavigationItem[] {
-  if (!import.meta.env.DEV) return items;
-
   items.forEach((item) => Object.freeze(item));
   return Object.freeze(items);
 }
 
+const EMPTY_NAVIGATION: readonly NavigationItem[] = Object.freeze([]);
+
 const navigationByRole: Record<Role, readonly NavigationItem[]> = {
+  super_admin: EMPTY_NAVIGATION,
+  admin: EMPTY_NAVIGATION,
   designer: stableItems([
     { label: "Workspace", to: "/designer", end: true, icon: LayoutDashboard }
   ]),
@@ -41,6 +43,15 @@ const navigationByRole: Record<Role, readonly NavigationItem[]> = {
       icon: BriefcaseBusiness
     }
   ]),
+  procurement: EMPTY_NAVIGATION,
+  finance_head: EMPTY_NAVIGATION,
+  site_manager: EMPTY_NAVIGATION,
+  worker_electrician: EMPTY_NAVIGATION,
+  worker_plumber: EMPTY_NAVIGATION,
+  worker_carpenter: EMPTY_NAVIGATION,
+  worker_painter: EMPTY_NAVIGATION,
+  worker_civil: EMPTY_NAVIGATION,
+  worker_other: EMPTY_NAVIGATION,
   client: stableItems([
     { label: "My projects", to: "/client", end: true, icon: FolderKanban }
   ])

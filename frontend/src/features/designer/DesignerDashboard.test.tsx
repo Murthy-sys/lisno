@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import { tokenStorage } from "../../api/client";
+import { authorizationFor } from "../../test/authFixtures";
 import { renderApp } from "../../test/render";
 
 const designer = {
@@ -180,6 +181,7 @@ function installDashboardApi(options?: {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = String(input);
     if (url === "/api/v1/auth/me") return response(designer);
+    if (url === "/api/v1/auth/authorization") return response(authorizationFor(designer.role));
     if (url.startsWith("/api/v1/organization/managers?")) {
       managerRequests += 1;
       if (options?.failManagersOnce && managerRequests === 1) {

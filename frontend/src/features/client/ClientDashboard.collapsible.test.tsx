@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import { tokenStorage } from "../../api/client";
+import { authorizationFor } from "../../test/authFixtures";
 import { renderApp } from "../../test/render";
 
 const clientDashboardStyles = readFileSync("src/styles/client-dashboard.css", "utf8");
@@ -51,6 +52,9 @@ function installClientDashboardApi() {
     const url = String(input);
     if (url.endsWith("/api/v1/auth/me")) {
       return Response.json({ data: client });
+    }
+    if (url.endsWith("/api/v1/auth/authorization")) {
+      return Response.json({ data: authorizationFor(client.role) });
     }
     if (url.includes("/api/v1/client/project-summaries?")) {
       return Response.json({

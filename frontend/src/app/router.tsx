@@ -29,10 +29,26 @@ import { LeadDashboard } from "../features/leads/LeadDashboard";
 import { LeadDetail } from "../features/leads/LeadDetail";
 import { LeadEstimateWorkspace } from "../features/leads/LeadEstimateWorkspace";
 
-const roleHomeContent: Record<
-  Role,
-  { heading: string; eyebrow: string; description: string; status: string }
-> = {
+interface RoleHomeContent {
+  heading: string;
+  eyebrow: string;
+  description: string;
+  status: string;
+}
+
+const roleHomeContent: Record<Role, RoleHomeContent> = {
+  super_admin: {
+    heading: "Super Admin workspace",
+    eyebrow: "Organization administration",
+    description: "Your global administration tools are being prepared.",
+    status: "Ready for staged access"
+  },
+  admin: {
+    heading: "Admin workspace",
+    eyebrow: "Project administration",
+    description: "Your project administration tools are being prepared.",
+    status: "Ready for staged access"
+  },
   designer: {
     heading: "Designer workspace",
     eyebrow: "My design operations",
@@ -55,6 +71,60 @@ const roleHomeContent: Record<
     status: "Ready for organization review"
   },
   estimator_sales: { heading: "Estimator / Sales workspace", eyebrow: "Lead operations", description: "Your leads and estimates will live here.", status: "Ready for lead work" },
+  procurement: {
+    heading: "Procurement workspace",
+    eyebrow: "Project procurement",
+    description: "Your authorized procurement work will appear here.",
+    status: "Ready for staged access"
+  },
+  finance_head: {
+    heading: "Finance Head workspace",
+    eyebrow: "Project finance",
+    description: "Your authorized finance work will appear here.",
+    status: "Ready for staged access"
+  },
+  site_manager: {
+    heading: "Site Manager workspace",
+    eyebrow: "Project execution",
+    description: "Your authorized execution work will appear here.",
+    status: "Ready for staged access"
+  },
+  worker_electrician: {
+    heading: "Electrician workspace",
+    eyebrow: "Site work",
+    description: "Your assigned electrical work will appear here.",
+    status: "Ready for staged access"
+  },
+  worker_plumber: {
+    heading: "Plumber workspace",
+    eyebrow: "Site work",
+    description: "Your assigned plumbing work will appear here.",
+    status: "Ready for staged access"
+  },
+  worker_carpenter: {
+    heading: "Carpenter workspace",
+    eyebrow: "Site work",
+    description: "Your assigned carpentry work will appear here.",
+    status: "Ready for staged access"
+  },
+  worker_painter: {
+    heading: "Painter workspace",
+    eyebrow: "Site work",
+    description: "Your assigned painting work will appear here.",
+    status: "Ready for staged access"
+  },
+  worker_civil: {
+    heading: "Civil Worker workspace",
+    eyebrow: "Site work",
+    description: "Your assigned civil work will appear here.",
+    status: "Ready for staged access"
+  },
+  worker_other: {
+    heading: "Other Worker workspace",
+    eyebrow: "Site work",
+    description: "Your assigned project work will appear here.",
+    status: "Ready for staged access"
+  },
   client: {
     heading: "Client workspace",
     eyebrow: "My projects",
@@ -64,8 +134,26 @@ const roleHomeContent: Record<
   }
 };
 
+const neutralHomeRoles: Role[] = [
+  "super_admin",
+  "admin",
+  "procurement",
+  "finance_head",
+  "site_manager",
+  "worker_electrician",
+  "worker_plumber",
+  "worker_carpenter",
+  "worker_painter",
+  "worker_civil",
+  "worker_other"
+];
+
+export function roleHomeContentFor(role: Role): Readonly<RoleHomeContent> {
+  return roleHomeContent[role];
+}
+
 function RoleLanding({ role }: { role: Role }) {
-  const content = roleHomeContent[role];
+  const content = roleHomeContentFor(role);
   const auth = useAuth();
 
   return (
@@ -89,6 +177,12 @@ function RoleLanding({ role }: { role: Role }) {
       </div>
     </section>
   );
+}
+
+function CurrentRoleLanding() {
+  const auth = useAuth();
+
+  return auth.user ? <RoleLanding role={auth.user.role} /> : null;
 }
 
 function LoginRoute() {
@@ -199,6 +293,14 @@ export function AppRoutes() {
           </ProtectedRoute>
         }
       >
+        <Route
+          path="/home"
+          element={
+            <ProtectedRoute allowedRoles={neutralHomeRoles}>
+              <CurrentRoleLanding />
+            </ProtectedRoute>
+          }
+        />
         <Route
           path="/designer"
           element={

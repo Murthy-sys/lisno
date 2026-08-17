@@ -6,6 +6,8 @@ import { describe, expect, it, vi } from "vitest";
 
 import { apiClient, tokenStorage } from "../api/client";
 import type { ClientSignupInput, PublicUser } from "../api/types";
+import { AUTHORIZATION_POLICY_VERSION } from "../api/authorization-contract";
+import { authorizationFor } from "../test/authFixtures";
 import { AuthProvider, useAuth } from "./AuthProvider";
 
 const userA: PublicUser = {
@@ -46,6 +48,21 @@ function deferred() {
   return { promise, resolve };
 }
 
+function requestPath(input: RequestInfo | URL): string {
+  return new URL(String(input), window.location.origin).pathname;
+}
+
+function restoredSessionResponse(input: RequestInfo | URL, user: PublicUser) {
+  const path = requestPath(input);
+  if (path === "/api/v1/auth/me") {
+    return Response.json({ data: user });
+  }
+  if (path === "/api/v1/auth/authorization") {
+    return Response.json({ data: authorizationFor(user.role) });
+  }
+  throw new Error(`Unexpected request: ${path}`);
+}
+
 function AuthHarness() {
   const auth = useAuth();
   const [logoutOutcome, setLogoutOutcome] = useState("idle");
@@ -55,6 +72,15 @@ function AuthHarness() {
     <>
       <output aria-label="Authentication status">{auth.status}</output>
       <output aria-label="Current user">{auth.user?.name ?? "none"}</output>
+      <output aria-label="Authorization role">
+        {auth.authorization?.role ?? "none"}
+      </output>
+      <output aria-label="Session invariant">
+        {auth.status === "authenticated" &&
+        (!auth.user || !auth.authorization)
+          ? "invalid"
+          : "valid"}
+      </output>
       <output aria-label="Session expired">{String(auth.sessionExpired)}</output>
       <output aria-label="Logout outcome">{logoutOutcome}</output>
       <output aria-label="Signup outcome">{signupOutcome}</output>
@@ -165,14 +191,300 @@ async function seedAuthenticatedCache(queryClient: QueryClient) {
   };
 }
 
+describe("AuthProvider atomic authorization establishment", () => {
+  it("keeps identity hidden until both restore requests succeed", async () => {
+    const authorizationGate = deferred();
+    tokenStorage.set("token-a");
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const path = new URL(String(input), window.location.origin).pathname;
+      if (path === "/api/v1/auth/me") {
+        return Response.json({ data: userA });
+      }
+      if (path === "/api/v1/auth/authorization") {
+        await authorizationGate.promise;
+        return Response.json({ data: authorizationFor("designer") });
+      }
+      throw new Error(`Unexpected request: ${path}`);
+    });
+
+    renderAuthProvider();
+
+    await waitFor(() =>
+      expect(globalThis.fetch).toHaveBeenCalledTimes(2)
+    );
+    expect(screen.getByLabelText("Authentication status")).toHaveTextContent(
+      "restoring"
+    );
+    expect(screen.getByLabelText("Current user")).toHaveTextContent("none");
+    expect(screen.getByLabelText("Authorization role")).toHaveTextContent(
+      "none"
+    );
+
+    authorizationGate.resolve();
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("Current user")).toHaveTextContent("User A");
+      expect(screen.getByLabelText("Authorization role")).toHaveTextContent(
+        "designer"
+      );
+      expect(screen.getByLabelText("Session invariant")).toHaveTextContent(
+        "valid"
+      );
+    });
+  });
+
+  it.each([
+    [
+      "authorization failure",
+      Response.json(
+        { error: { code: "INTERNAL_ERROR", message: "Policy unavailable." } },
+        { status: 500 }
+      )
+    ],
+    [
+      "role mismatch",
+      Response.json({ data: authorizationFor("design_manager") })
+    ],
+    [
+      "stale policy",
+      Response.json({
+        data: {
+          ...authorizationFor("designer"),
+          policyVersion: "2025-01-01.stale"
+        }
+      })
+    ]
+  ])("fails closed when restore has %s", async (_label, authorizationResponse) => {
+    tokenStorage.set("token-a");
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const path = new URL(String(input), window.location.origin).pathname;
+      if (path === "/api/v1/auth/me") {
+        return Response.json({ data: userA });
+      }
+      if (path === "/api/v1/auth/authorization") {
+        return authorizationResponse.clone();
+      }
+      throw new Error(`Unexpected request: ${path}`);
+    });
+
+    renderAuthProvider();
+
+    await waitFor(() =>
+      expect(screen.getByLabelText("Authentication status")).toHaveTextContent(
+        "error"
+      )
+    );
+    expect(screen.getByLabelText("Current user")).toHaveTextContent("none");
+    expect(screen.getByLabelText("Authorization role")).toHaveTextContent(
+      "none"
+    );
+    expect(screen.getByLabelText("Session invariant")).toHaveTextContent(
+      "valid"
+    );
+  });
+
+  it.each(["/api/v1/auth/me", "/api/v1/auth/authorization"])(
+    "aborts both sibling restore requests when %s fails",
+    async (failingPath) => {
+    const signals: AbortSignal[] = [];
+    tokenStorage.set("token-a");
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const path = new URL(String(input), window.location.origin).pathname;
+      signals.push(init?.signal as AbortSignal);
+      if (path === failingPath) {
+        return Response.json(
+          { error: { code: "INTERNAL_ERROR", message: "Restore failed." } },
+          { status: 500 }
+        );
+      }
+      return new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener(
+          "abort",
+          () => reject(new DOMException("Aborted", "AbortError")),
+          { once: true }
+        );
+      });
+    });
+
+    renderAuthProvider();
+
+    await waitFor(() => expect(signals).toHaveLength(2));
+    await waitFor(() => expect(signals.every((signal) => signal.aborted)).toBe(true));
+    expect(signals[0]).toBe(signals[1]);
+    }
+  );
+
+  it("logout aborts the shared signal used by both restore requests", async () => {
+    const signals: AbortSignal[] = [];
+    tokenStorage.set("token-a");
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, init) => {
+      signals.push(init?.signal as AbortSignal);
+      return new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener(
+          "abort",
+          () => reject(new DOMException("Aborted", "AbortError")),
+          { once: true }
+        );
+      });
+    });
+
+    renderAuthProvider();
+    await waitFor(() => expect(signals).toHaveLength(2));
+
+    await userEvent.click(screen.getByRole("button", { name: "Log out" }));
+
+    expect(signals[0]).toBe(signals[1]);
+    expect(signals.every((signal) => signal.aborted)).toBe(true);
+    expect(screen.getByLabelText("Current user")).toHaveTextContent("none");
+    expect(screen.getByLabelText("Authorization role")).toHaveTextContent(
+      "none"
+    );
+  });
+
+  it("does not commit stale restore authorization after a newer login", async () => {
+    const staleAuthorizationGate = deferred();
+    tokenStorage.set("token-a");
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const path = new URL(String(input), window.location.origin).pathname;
+      if (path === "/api/v1/auth/me") {
+        return Response.json({ data: userA });
+      }
+      if (path === "/api/v1/auth/login") {
+        return Response.json({ data: { token: "token-b", user: userB } });
+      }
+      if (path === "/api/v1/auth/authorization") {
+        const requestToken = tokenStorage.get();
+        if (requestToken === "token-a") {
+          await staleAuthorizationGate.promise;
+          return Response.json({ data: authorizationFor("designer") });
+        }
+        return Response.json({ data: authorizationFor("design_manager") });
+      }
+      throw new Error(`Unexpected request: ${path}`);
+    });
+
+    renderAuthProvider();
+    await waitFor(() => expect(globalThis.fetch).toHaveBeenCalledTimes(2));
+
+    await userEvent.click(screen.getByRole("button", { name: "Log in as B" }));
+    await waitFor(() => {
+      expect(screen.getByLabelText("Current user")).toHaveTextContent("User B");
+      expect(screen.getByLabelText("Authorization role")).toHaveTextContent(
+        "design_manager"
+      );
+    });
+
+    staleAuthorizationGate.resolve();
+    await Promise.resolve();
+
+    expect(screen.getByLabelText("Current user")).toHaveTextContent("User B");
+    expect(screen.getByLabelText("Authorization role")).toHaveTextContent(
+      "design_manager"
+    );
+    expect(tokenStorage.get()).toBe("token-b");
+  });
+
+  it("hides the old atomic session while an account-switch POST is pending", async () => {
+    const loginGate = deferred();
+    tokenStorage.set("token-a");
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const path = requestPath(input);
+      if (path === "/api/v1/auth/me") {
+        return Response.json({ data: userA });
+      }
+      if (path === "/api/v1/auth/login") {
+        await loginGate.promise;
+        return Response.json({ data: { token: "token-b", user: userB } });
+      }
+      if (path === "/api/v1/auth/authorization") {
+        return Response.json({
+          data: authorizationFor(
+            tokenStorage.get() === "token-b" ? "design_manager" : "designer"
+          )
+        });
+      }
+      throw new Error(`Unexpected request: ${path}`);
+    });
+
+    renderAuthProvider();
+    await waitFor(() =>
+      expect(screen.getByLabelText("Current user")).toHaveTextContent("User A")
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "Log in as B" }));
+
+    expect(screen.getByLabelText("Authentication status")).toHaveTextContent(
+      "restoring"
+    );
+    expect(screen.getByLabelText("Current user")).toHaveTextContent("none");
+    expect(screen.getByLabelText("Authorization role")).toHaveTextContent(
+      "none"
+    );
+
+    loginGate.resolve();
+    await waitFor(() => {
+      expect(screen.getByLabelText("Current user")).toHaveTextContent("User B");
+      expect(screen.getByLabelText("Authorization role")).toHaveTextContent(
+        "design_manager"
+      );
+    });
+  });
+
+  it.each([
+    ["login", "Log in as B", "/api/v1/auth/login", "token-b", userB],
+    ["signup", "Sign up as C", "/api/v1/auth/client-signup", "token-c", userC]
+  ] as const)(
+    "removes the replacement token when %s authorization establishment fails",
+    async (_label, buttonName, authPath, token, user) => {
+      vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+        const path = new URL(String(input), window.location.origin).pathname;
+        if (path === authPath) {
+          return Response.json({ data: { token, user } });
+        }
+        if (path === "/api/v1/auth/authorization") {
+          return Response.json({
+            data: {
+              role: user.role,
+              policyVersion: `${AUTHORIZATION_POLICY_VERSION}.stale`,
+              permissions: ["identity.self.read"]
+            }
+          });
+        }
+        throw new Error(`Unexpected request: ${path}`);
+      });
+
+      renderAuthProvider();
+      await userEvent.click(screen.getByRole("button", { name: buttonName }));
+
+      await waitFor(() =>
+        expect(screen.getByLabelText("Authentication status")).toHaveTextContent(
+          "unauthenticated"
+        )
+      );
+      expect(tokenStorage.get()).toBeNull();
+      expect(screen.getByLabelText("Current user")).toHaveTextContent("none");
+      expect(screen.getByLabelText("Authorization role")).toHaveTextContent(
+        "none"
+      );
+    }
+  );
+});
+
 describe("AuthProvider session concurrency", () => {
   it("persists the client-signup auth payload and exposes its authenticated client", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
-      expect(new URL(String(input), window.location.origin).pathname).toBe(
-        "/api/v1/auth/client-signup"
-      );
-      expect(JSON.parse(String(init?.body))).toEqual(clientSignup);
-      return Response.json({ data: { token: "token-c", user: userC } }, { status: 201 });
+      const path = requestPath(input);
+      if (path === "/api/v1/auth/client-signup") {
+        expect(JSON.parse(String(init?.body))).toEqual(clientSignup);
+        return Response.json(
+          { data: { token: "token-c", user: userC } },
+          { status: 201 }
+        );
+      }
+      if (path === "/api/v1/auth/authorization") {
+        return Response.json({ data: authorizationFor("client") });
+      }
+      throw new Error(`Unexpected request: ${path}`);
     });
     renderAuthProvider();
 
@@ -194,11 +506,18 @@ describe("AuthProvider session concurrency", () => {
       resolveSignup = resolve;
     });
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
-      if (String(input).endsWith("/auth/client-signup")) {
+      const path = requestPath(input);
+      if (path === "/api/v1/auth/client-signup") {
         await signupGate;
         return Response.json({ data: { token: "token-c", user: userC } }, { status: 201 });
       }
-      return Response.json({ data: { token: "token-b", user: userB } });
+      if (path === "/api/v1/auth/login") {
+        return Response.json({ data: { token: "token-b", user: userB } });
+      }
+      if (path === "/api/v1/auth/authorization") {
+        return Response.json({ data: authorizationFor("design_manager") });
+      }
+      throw new Error(`Unexpected request: ${path}`);
     });
     renderAuthProvider();
 
@@ -217,8 +536,8 @@ describe("AuthProvider session concurrency", () => {
 
   it("restores the current session when wrapped in production StrictMode", async () => {
     tokenStorage.set("token-a");
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      Response.json({ data: userA })
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) =>
+      restoredSessionResponse(input, userA)
     );
 
     renderAuthProvider(undefined, (children) => (
@@ -272,10 +591,10 @@ describe("AuthProvider session concurrency", () => {
       }
     });
     tokenStorage.set("token-a");
-    vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, init) => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       restoreSignal = init?.signal ?? undefined;
       await restoreGate.promise;
-      return Response.json({ data: userA });
+      return restoredSessionResponse(input, userA);
     });
     renderAuthProvider();
 
@@ -311,7 +630,8 @@ describe("AuthProvider session concurrency", () => {
     });
     tokenStorage.set("token-a");
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
-      if (String(input).endsWith("/auth/me")) {
+      const path = requestPath(input);
+      if (path === "/api/v1/auth/me") {
         restoreSignal = init?.signal ?? undefined;
         await restoreGate.promise;
         return Response.json(
@@ -319,7 +639,17 @@ describe("AuthProvider session concurrency", () => {
           { status: 500 }
         );
       }
-      return Response.json({ data: { token: "token-b", user: userB } });
+      if (path === "/api/v1/auth/authorization") {
+        return Response.json({
+          data: authorizationFor(
+            tokenStorage.get() === "token-b" ? "design_manager" : "designer"
+          )
+        });
+      }
+      if (path === "/api/v1/auth/login") {
+        return Response.json({ data: { token: "token-b", user: userB } });
+      }
+      throw new Error(`Unexpected request: ${path}`);
     });
     renderAuthProvider();
 
@@ -343,19 +673,20 @@ describe("AuthProvider session concurrency", () => {
 
   it("aborts an in-flight restore when the provider unmounts", async () => {
     const restoreGate = deferred();
-    let restoreSignal: AbortSignal | undefined;
+    const restoreSignals: AbortSignal[] = [];
     tokenStorage.set("token-a");
-    vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, init) => {
-      restoreSignal = init?.signal ?? undefined;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      restoreSignals.push(init?.signal as AbortSignal);
       await restoreGate.promise;
-      return Response.json({ data: userA });
+      return restoredSessionResponse(input, userA);
     });
     const { unmount } = renderAuthProvider();
-    await waitFor(() => expect(restoreSignal).toBeDefined());
+    await waitFor(() => expect(restoreSignals).toHaveLength(2));
 
     unmount();
 
-    expect(restoreSignal?.aborted).toBe(true);
+    expect(restoreSignals[0]).toBe(restoreSignals[1]);
+    expect(restoreSignals.every((signal) => signal.aborted)).toBe(true);
     restoreGate.resolve();
   });
 });
@@ -381,11 +712,18 @@ describe("AuthProvider cache isolation", () => {
     });
     tokenStorage.set("token-a");
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
-      const path = String(input);
-      if (path.endsWith("/auth/me")) {
+      const path = requestPath(input);
+      if (path === "/api/v1/auth/me") {
         return Response.json({ data: userA });
       }
-      if (path.endsWith("/auth/login")) {
+      if (path === "/api/v1/auth/authorization") {
+        return Response.json({
+          data: authorizationFor(
+            tokenStorage.get() === "token-b" ? "design_manager" : "designer"
+          )
+        });
+      }
+      if (path === "/api/v1/auth/login") {
         return Response.json({ data: { token: "token-b", user: userB } });
       }
       return Response.json(
@@ -430,8 +768,8 @@ describe("AuthProvider cache isolation", () => {
 
   it("cancels authenticated queries and removes user data on logout", async () => {
     tokenStorage.set("token-a");
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      Response.json({ data: userA })
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) =>
+      restoredSessionResponse(input, userA)
     );
     const { queryClient } = renderAuthProvider();
     await waitFor(() =>
@@ -450,10 +788,21 @@ describe("AuthProvider cache isolation", () => {
   it("clears user A's cache before rendering a replacement user B session", async () => {
     tokenStorage.set("token-a");
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
-      if (String(input).endsWith("/auth/me")) {
+      const path = requestPath(input);
+      if (path === "/api/v1/auth/me") {
         return Response.json({ data: userA });
       }
-      return Response.json({ data: { token: "token-b", user: userB } });
+      if (path === "/api/v1/auth/authorization") {
+        return Response.json({
+          data: authorizationFor(
+            tokenStorage.get() === "token-b" ? "design_manager" : "designer"
+          )
+        });
+      }
+      if (path === "/api/v1/auth/login") {
+        return Response.json({ data: { token: "token-b", user: userB } });
+      }
+      throw new Error(`Unexpected request: ${path}`);
     });
     const { queryClient } = renderAuthProvider();
     await waitFor(() =>
@@ -485,12 +834,22 @@ describe("AuthProvider cache isolation", () => {
     });
     tokenStorage.set("token-a");
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
-      const path = String(input);
-      if (path.endsWith("/auth/me")) {
+      const path = requestPath(input);
+      if (path === "/api/v1/auth/me") {
         return Response.json({ data: userA });
       }
-      if (path.endsWith("/auth/login")) {
+      if (path === "/api/v1/auth/authorization") {
+        return Response.json({
+          data: authorizationFor(
+            tokenStorage.get() === "token-b" ? "design_manager" : "designer"
+          )
+        });
+      }
+      if (path === "/api/v1/auth/login") {
         return Response.json({ data: { token: "token-b", user: userB } });
+      }
+      if (path !== "/api/v1/stale-a") {
+        throw new Error(`Unexpected request: ${path}`);
       }
       await staleResponseGate.promise;
       return Response.json(
@@ -542,8 +901,8 @@ describe("AuthProvider cache isolation", () => {
       throw new Error("Cache cancellation failed.");
     });
     tokenStorage.set("token-a");
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      Response.json({ data: userA })
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) =>
+      restoredSessionResponse(input, userA)
     );
     renderAuthProvider(queryClient);
     await waitFor(() =>
@@ -580,10 +939,17 @@ describe("AuthProvider cache isolation", () => {
     );
     tokenStorage.set("token-a");
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
-      if (String(input).endsWith("/auth/me")) {
+      const path = requestPath(input);
+      if (path === "/api/v1/auth/me") {
         return Response.json({ data: userA });
       }
-      return Response.json({ data: { token: "token-b", user: userB } });
+      if (path === "/api/v1/auth/authorization") {
+        return Response.json({ data: authorizationFor("designer") });
+      }
+      if (path === "/api/v1/auth/login") {
+        return Response.json({ data: { token: "token-b", user: userB } });
+      }
+      throw new Error(`Unexpected request: ${path}`);
     });
     renderAuthProvider(queryClient);
     await waitFor(() =>
@@ -615,12 +981,18 @@ describe("AuthProvider cache isolation", () => {
     });
     tokenStorage.set("token-a");
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
-      const path = String(input);
-      if (path.endsWith("/auth/me")) {
+      const path = requestPath(input);
+      if (path === "/api/v1/auth/me") {
         return Response.json({ data: userA });
       }
-      if (path.endsWith("/auth/login")) {
+      if (path === "/api/v1/auth/authorization") {
+        return Response.json({ data: authorizationFor("designer") });
+      }
+      if (path === "/api/v1/auth/login") {
         return Response.json({ data: { token: "token-b", user: userB } });
+      }
+      if (path !== "/api/v1/user-b-private") {
+        throw new Error(`Unexpected request: ${path}`);
       }
       expect(new Headers(init?.headers).get("authorization")).toBe(
         "Bearer token-b"
@@ -639,6 +1011,7 @@ describe("AuthProvider cache isolation", () => {
     await waitFor(() =>
       expect(screen.getByLabelText("Current user")).toHaveTextContent("User A")
     );
+    queryClient.setQueryData(["viewer"], { owner: "User A" });
 
     await userEvent.click(screen.getByRole("button", { name: "Log in as B" }));
     await cleanupStarted.promise;
@@ -660,14 +1033,22 @@ describe("AuthProvider cache isolation", () => {
       )
     );
     expect(screen.getByLabelText("Current user")).toHaveTextContent("none");
+    expect(queryClient.getQueryData(["viewer"])).toBeUndefined();
   });
 
   it("leaves an unauthenticated state and clears user data when login fails", async () => {
     const queryClient = createQueryClient();
     tokenStorage.set("token-a");
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
-      if (String(input).endsWith("/auth/me")) {
+      const path = requestPath(input);
+      if (path === "/api/v1/auth/me") {
         return Response.json({ data: userA });
+      }
+      if (path === "/api/v1/auth/authorization") {
+        return Response.json({ data: authorizationFor("designer") });
+      }
+      if (path !== "/api/v1/auth/login") {
+        throw new Error(`Unexpected request: ${path}`);
       }
       return Response.json(
         {
@@ -697,11 +1078,67 @@ describe("AuthProvider cache isolation", () => {
     expect(queryClient.getQueryData(["viewer"])).toBeUndefined();
   });
 
+  it("fails closed when an authenticated account-switch login returns 401", async () => {
+    const queryClient = createQueryClient();
+    tokenStorage.set("token-a");
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const path = requestPath(input);
+      if (path === "/api/v1/auth/me") {
+        return Response.json({ data: userA });
+      }
+      if (path === "/api/v1/auth/authorization") {
+        return Response.json({ data: authorizationFor("designer") });
+      }
+      if (path !== "/api/v1/auth/login") {
+        throw new Error(`Unexpected request: ${path}`);
+      }
+      return Response.json(
+        {
+          error: {
+            code: "INVALID_CREDENTIALS",
+            message: "Invalid email or password."
+          }
+        },
+        { status: 401 }
+      );
+    });
+    renderAuthProvider(queryClient);
+    await waitFor(() =>
+      expect(screen.getByLabelText("Current user")).toHaveTextContent("User A")
+    );
+    queryClient.setQueryData(["viewer"], { owner: "User A" });
+
+    await userEvent.click(screen.getByRole("button", { name: "Log in as B" }));
+
+    await waitFor(() =>
+      expect(screen.getByLabelText("Authentication status")).toHaveTextContent(
+        "unauthenticated"
+      )
+    );
+    expect(screen.getByLabelText("Current user")).toHaveTextContent("none");
+    expect(screen.getByLabelText("Authorization role")).toHaveTextContent(
+      "none"
+    );
+    expect(tokenStorage.get()).toBeNull();
+    expect(queryClient.getQueryData(["viewer"])).toBeUndefined();
+  });
+
   it("clears authenticated cache after an accepted 401", async () => {
     tokenStorage.set("token-a");
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
-      if (String(input).endsWith("/auth/me")) {
+      const path = requestPath(input);
+      if (path === "/api/v1/auth/me") {
         return Response.json({ data: userA });
+      }
+      if (path === "/api/v1/auth/authorization") {
+        return Response.json({
+          data: authorizationFor(
+            tokenStorage.get() === "token-b" ? "design_manager" : "designer"
+          )
+        });
+      }
+      if (path !== "/api/v1/expired") {
+        throw new Error(`Unexpected request: ${path}`);
       }
       return Response.json(
         {
@@ -726,6 +1163,9 @@ describe("AuthProvider cache isolation", () => {
       "unauthenticated"
     );
     expect(screen.getByLabelText("Session expired")).toHaveTextContent("true");
+    expect(screen.getByLabelText("Authorization role")).toHaveTextContent(
+      "none"
+    );
     expect(tokenStorage.get()).toBeNull();
     expect(queryClient.getQueryData(["viewer"])).toBeUndefined();
     expect(queryClient.getQueryState(["in-flight"])).toBeUndefined();
@@ -738,6 +1178,9 @@ describe("AuthProvider cache isolation", () => {
 
     await waitFor(() =>
       expect(screen.getByLabelText("Current user")).toHaveTextContent("User B")
+    );
+    expect(screen.getByLabelText("Authorization role")).toHaveTextContent(
+      "design_manager"
     );
     expect(screen.getByLabelText("Session expired")).toHaveTextContent("false");
   });

@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { Lead } from "../../api/types";
 import { tokenStorage } from "../../api/client";
+import { authorizationFor } from "../../test/authFixtures";
 import { renderApp } from "../../test/render";
 
 const salesUser = {
@@ -121,6 +122,7 @@ describe("LeadDashboard", () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = String(input);
       if (url === "/api/v1/auth/me") return Response.json({ data: salesUser });
+      if (url === "/api/v1/auth/authorization") return Response.json({ data: authorizationFor(salesUser.role) });
       if (url.startsWith("/api/v1/leads?")) {
         return Response.json({
           data: {
@@ -167,6 +169,7 @@ describe("LeadDashboard", () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = String(input);
       if (url === "/api/v1/auth/me") return Response.json({ data: salesUser });
+      if (url === "/api/v1/auth/authorization") return Response.json({ data: authorizationFor(salesUser.role) });
       if (url.startsWith("/api/v1/leads?")) {
         return Response.json({
           data: {

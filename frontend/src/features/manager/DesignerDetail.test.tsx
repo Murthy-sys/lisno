@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import { tokenStorage } from "../../api/client";
+import { authorizationFor } from "../../test/authFixtures";
 import { renderApp } from "../../test/render";
 
 describe("DesignerDetail", () => {
@@ -11,6 +12,7 @@ describe("DesignerDetail", () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = String(input);
       if (url === "/api/v1/auth/me") return Response.json({ data: { id: "manager-1", name: "Aarav Shah", email: "aarav@lisno.example", role: "design_manager" } });
+      if (url === "/api/v1/auth/authorization") return Response.json({ data: authorizationFor("design_manager") });
       if (url === "/api/v1/designers/designer-1/summary") return Response.json({ data: { user: { id: "designer-1", name: "Ananya Rao", email: "ananya@lisno.example", role: "designer" }, activeProjectCount: 1, workload: 8, overdueCount: 0, yellowRiskCount: 0, pendingEvaluation: true, kpi: { score: 84, components: [] }, projects: [], tasks: [] } });
       if (url.startsWith("/api/v1/evaluations/designer-1?")) return Response.json({ data: { items: [], pagination: { limit: 100, offset: 0, total: 0, hasMore: false } } });
       if (url.startsWith("/api/v1/designers/designer-1/audit?")) return Response.json({ data: { items: [], pagination: { limit: 100, offset: 0, total: 0, hasMore: false } } });
@@ -28,8 +30,10 @@ describe("DesignerDetail", () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const url = String(input);
       if (url === "/api/v1/auth/me") return Response.json({ data: { id: "manager-1", name: "Aarav Shah", email: "aarav@lisno.example", role: "design_manager" } });
+      if (url === "/api/v1/auth/authorization") return Response.json({ data: authorizationFor("design_manager") });
       if (url === "/api/v1/designers/designer-1/summary") return Response.json({ data: { user: { id: "designer-1", name: "Ananya Rao", email: "ananya@lisno.example", role: "designer" }, activeProjectCount: 1, workload: 8, overdueCount: 0, yellowRiskCount: 0, pendingEvaluation: false, kpi: { score: 84, components: [] }, projects: [], tasks: [] } });
       if (url === "/api/v1/evaluations/designer-1?limit=100&offset=0") return Response.json({ data: { items: [
+        { id: "evaluation-super-admin", subjectUserId: "designer-1", evaluatorUserId: "super-admin-1", evaluatorRole: "super_admin", periodStartAt: "2026-08-01T00:00:00.000Z", periodEndAt: "2026-08-31T23:59:59.999Z", score: 96, comments: "Super Admin evaluation", revisionOf: null, createdAt: "2026-09-01T00:00:00.000Z" },
         { id: "evaluation-head", subjectUserId: "designer-1", evaluatorUserId: "head-1", evaluatorRole: "design_head", periodStartAt: "2026-07-01T00:00:00.000Z", periodEndAt: "2026-07-31T23:59:59.999Z", score: 92, comments: "Head evaluation", revisionOf: null, createdAt: "2026-08-02T00:00:00.000Z" }
       ], pagination: { limit: 100, offset: 0, total: 101, hasMore: true } } });
       if (url === "/api/v1/evaluations/designer-1?limit=100&offset=100") return Response.json({ data: { items: [
@@ -49,6 +53,8 @@ describe("DesignerDetail", () => {
     renderApp(["/manager/designers/designer-1"]);
     const user = userEvent.setup();
     await screen.findByRole("heading", { name: "Ananya Rao" });
+    expect(screen.getByText("Latest evaluation: 96 · super_admin")).toBeVisible();
+    expect(screen.getByText(/Super Admin evaluation · super_admin/)).toBeVisible();
     expect(screen.getByText("task_deadline_revised · Second page reason")).toBeVisible();
     const correction = screen.getByLabelText("Evaluation to correct");
     expect(screen.getAllByRole("option").map((option) => option.getAttribute("value"))).toEqual(["", "evaluation-manager"]);

@@ -1,6 +1,32 @@
 import { describe, expect, it } from "vitest";
 
-import { safeReturnPath } from "./routePaths";
+import { ROLE_CODES, type Role } from "../api/authorization-contract";
+import { roleHomePath, safeReturnPath } from "./routePaths";
+
+const expectedRoleHomes: Record<Role, string> = {
+  super_admin: "/home",
+  admin: "/home",
+  estimator_sales: "/estimator-sales",
+  designer: "/designer",
+  procurement: "/home",
+  finance_head: "/home",
+  site_manager: "/home",
+  worker_electrician: "/home",
+  worker_plumber: "/home",
+  worker_carpenter: "/home",
+  worker_painter: "/home",
+  worker_civil: "/home",
+  worker_other: "/home",
+  design_manager: "/manager",
+  design_head: "/head",
+  client: "/client"
+};
+
+describe("roleHomePath", () => {
+  it.each(ROLE_CODES)("maps %s to a defined safe staged home", (role) => {
+    expect(roleHomePath(role)).toBe(expectedRoleHomes[role]);
+  });
+});
 
 describe("safeReturnPath", () => {
   it.each([

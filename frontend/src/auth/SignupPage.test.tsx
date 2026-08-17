@@ -6,6 +6,7 @@ import { http, HttpResponse } from "msw";
 import { describe, expect, it } from "vitest";
 
 import { tokenStorage } from "../api/client";
+import { authorizationFor } from "../test/authFixtures";
 import { renderApp } from "../test/render";
 import { server } from "../test/server";
 
@@ -115,6 +116,9 @@ describe("SignupPage", () => {
           { status: 201 }
         );
       }),
+      http.get("/api/v1/auth/authorization", () =>
+        HttpResponse.json({ data: authorizationFor("client") })
+      ),
       http.get("/api/v1/client/latest-approved-versions", () =>
         HttpResponse.json({ data: [] })
       ),

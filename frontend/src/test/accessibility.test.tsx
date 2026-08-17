@@ -4,12 +4,14 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import { tokenStorage } from "../api/client";
+import type { Role } from "../api/authorization-contract";
+import { authorizationFor } from "./authFixtures";
 import { renderApp } from "./render";
 import { renderWithQuery } from "./render";
 import { DesignUploadsWorkspace } from "../features/designer/DesignUploadsWorkspace";
 import { DesignSectionReview } from "../features/client/DesignSectionReview";
 
-const userFor = (role: "designer" | "design_manager" | "design_head" | "estimator_sales" | "client") => ({ id: `${role}-1`, name: "Accessible Person", email: `${role}@lisno.example`, role });
+const userFor = (role: Role) => ({ id: `${role}-1`, name: "Accessible Person", email: `${role}@lisno.example`, role });
 
 const accessibleProject = {
   id: "project-a11y",
@@ -79,6 +81,7 @@ function fixtureFetch(user: ReturnType<typeof userFor>) {
   return vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const url = String(input);
     if (url === "/api/v1/auth/me") return Response.json({ data: user });
+    if (url === "/api/v1/auth/authorization") return Response.json({ data: authorizationFor(user.role) });
     if (url.startsWith("/api/v1/projects?")) return Response.json({ data: { items: [], pagination: { limit: 100, offset: 0, total: 0, hasMore: false } } });
     if (url === "/api/v1/projects/project-a11y") return Response.json({ data: accessibleProject });
     if (url.startsWith("/api/v1/tasks/task-a11y/events?")) return Response.json({ data: { items: [], pagination: { limit: 1, offset: 0, total: 0, hasMore: false } } });

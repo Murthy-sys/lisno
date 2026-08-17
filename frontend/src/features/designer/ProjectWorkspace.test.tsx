@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import { tokenStorage } from "../../api/client";
+import { authorizationFor } from "../../test/authFixtures";
 import { renderApp } from "../../test/render";
 
 const designer = {
@@ -183,6 +184,7 @@ function installWorkspaceApi(options?: {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = apiRequestPath(input);
     if (url === "/api/v1/auth/me") return response(designer);
+    if (url === "/api/v1/auth/authorization") return response(authorizationFor(designer.role));
     if (url === `/api/v1/projects/${project.id}`) {
       projectReads += 1;
       const hierarchy = structuredClone(project);

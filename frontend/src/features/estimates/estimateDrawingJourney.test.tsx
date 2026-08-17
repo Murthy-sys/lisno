@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { AnnotationDocumentV1 } from "../../api/types";
 import { tokenStorage } from "../../api/client";
+import { authorizationFor } from "../../test/authFixtures";
 import { EstimateDesignUploads } from "../leads/EstimateDesignUploads";
 import { renderApp, renderWithQuery } from "../../test/render";
 
@@ -386,6 +387,9 @@ describe("estimate drawing review journey", () => {
             role: "client",
           });
         }
+        if (url.endsWith("/api/v1/auth/authorization")) {
+          return json(authorizationFor("client"));
+        }
         if (url.includes("/api/v1/client/project-summaries?")) {
           return json({
             items: [],
@@ -747,6 +751,9 @@ describe("estimate drawing review journey", () => {
           email: "client@lisno.example",
           role: "client",
         });
+      }
+      if (url.endsWith("/api/v1/auth/authorization")) {
+        return json(authorizationFor("client"));
       }
       if (url.includes("/api/v1/client/project-summaries?")) {
         const projects = clientPhase === "estimate_approved"

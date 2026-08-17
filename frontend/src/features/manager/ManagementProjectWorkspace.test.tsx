@@ -2,6 +2,7 @@ import { screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { tokenStorage } from "../../api/client";
+import { authorizationFor } from "../../test/authFixtures";
 import { renderApp } from "../../test/render";
 
 describe("ManagementProjectWorkspace", () => {
@@ -18,6 +19,9 @@ describe("ManagementProjectWorkspace", () => {
             role: "design_manager"
           }
         });
+      }
+      if (url === "/api/v1/auth/authorization") {
+        return Response.json({ data: authorizationFor("design_manager") });
       }
       if (url === "/api/v1/projects/project-1") {
         return Response.json({

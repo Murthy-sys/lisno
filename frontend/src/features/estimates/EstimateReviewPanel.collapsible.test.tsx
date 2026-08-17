@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { tokenStorage } from "../../api/client";
+import { authorizationFor } from "../../test/authFixtures";
 import { renderApp } from "../../test/render";
 
 const stylesheet = readFileSync("src/styles/index.css", "utf8");
@@ -95,6 +96,7 @@ function installClientApi() {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const url = String(input);
     if (url.endsWith("/api/v1/auth/me")) return Response.json({ data: client });
+    if (url.endsWith("/api/v1/auth/authorization")) return Response.json({ data: authorizationFor(client.role) });
     if (url.includes("/api/v1/client/project-summaries?")) return Response.json({ data: { items: [], pagination: { limit: 100, offset: 0, total: 0, hasMore: false } } });
     if (url.endsWith("/api/v1/client/latest-approved-versions")) return Response.json({ data: [] });
     if (url.endsWith("/api/v1/client/estimates")) return Response.json({ data: clientEstimates });
@@ -326,6 +328,7 @@ describe("EstimateReviewPanel client disclosures", () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = String(input);
       if (url.endsWith("/api/v1/auth/me")) return Response.json({ data: client });
+      if (url.endsWith("/api/v1/auth/authorization")) return Response.json({ data: authorizationFor(client.role) });
       if (url.includes("/api/v1/client/project-summaries?")) return Response.json({ data: { items: [], pagination: { limit: 100, offset: 0, total: 0, hasMore: false } } });
       if (url.endsWith("/api/v1/client/latest-approved-versions")) return Response.json({ data: [] });
       if (url.endsWith("/api/v1/client/estimates")) return Response.json({ data: clientEstimates });
@@ -376,6 +379,7 @@ describe("EstimateReviewPanel client disclosures", () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = String(input);
       if (url.endsWith("/api/v1/auth/me")) return Response.json({ data: client });
+      if (url.endsWith("/api/v1/auth/authorization")) return Response.json({ data: authorizationFor(client.role) });
       if (url.includes("/api/v1/client/project-summaries?")) return Response.json({ data: { items: [], pagination: { limit: 100, offset: 0, total: 0, hasMore: false } } });
       if (url.endsWith("/api/v1/client/latest-approved-versions")) return Response.json({ data: [] });
       if (url.endsWith("/api/v1/client/estimates")) return Response.json({ data: clientEstimates });
@@ -411,6 +415,7 @@ describe("EstimateReviewPanel client disclosures", () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = String(input);
       if (url.endsWith("/api/v1/auth/me")) return Response.json({ data: { id: "manager-1", name: "Meera Rao", email: "manager@lisno.example", role: "design_manager" } });
+      if (url.endsWith("/api/v1/auth/authorization")) return Response.json({ data: authorizationFor("design_manager") });
       if (url.endsWith("/api/v1/estimates/review-queue")) return Response.json({ data: [{
         id: "estimate-manager", leadId: "lead-manager", propertyType: "3BHK", rooms: [], scopes: [], lineItems: [], subtotal: 100000, gst: 18000, total: 118000, status: "pending_manager_assignment", approvalRequired: true, projectId: "project-manager",
         lead: { _id: "lead-manager", clientName: "Orchid Studio", clientEmail: "orchid@lisno.example", projectName: "Harbor House", location: "Kochi" }
@@ -436,6 +441,7 @@ describe("EstimateReviewPanel client disclosures", () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = String(input);
       if (url.endsWith("/api/v1/auth/me")) return Response.json({ data: { id: "designer-1", name: "Ananya Shah", email: "ananya@lisno.example", role: "designer" } });
+      if (url.endsWith("/api/v1/auth/authorization")) return Response.json({ data: authorizationFor("designer") });
       if (url.endsWith("/api/v1/estimates/review-queue")) return Response.json({ data: [{
         id: "estimate-designer", leadId: "lead-designer", propertyType: "3BHK", rooms: [], scopes: [], lineItems: [], subtotal: 100000, gst: 18000, total: 118000, status: "pending_designer_approval", approvalRequired: true, projectId: "project-designer",
         lead: { _id: "lead-designer", clientName: "Orchid Studio", clientEmail: "orchid@lisno.example", projectName: "Harbor House", location: "Kochi" }

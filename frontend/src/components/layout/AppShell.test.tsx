@@ -7,6 +7,7 @@ import { MemoryRouter } from "react-router-dom";
 
 import type { PublicUser, Role } from "../../api/types";
 import { tokenStorage } from "../../api/client";
+import { authorizationFor } from "../../test/authFixtures";
 import { renderApp } from "../../test/render";
 import { FeedbackProvider } from "../feedback/FeedbackProvider";
 import { Sidebar } from "./Sidebar";
@@ -81,8 +82,14 @@ function installAuthenticatedSession(user: PublicUser) {
           ? input.href
           : input.url;
 
-    if (new URL(url, window.location.origin).pathname === "/api/v1/auth/me") {
+    const pathname = new URL(url, window.location.origin).pathname;
+    if (pathname === "/api/v1/auth/me") {
       return Promise.resolve(Response.json({ data: user }));
+    }
+    if (pathname === "/api/v1/auth/authorization") {
+      return Promise.resolve(
+        Response.json({ data: authorizationFor(user.role) })
+      );
     }
 
     return new Promise<Response>(() => undefined);
