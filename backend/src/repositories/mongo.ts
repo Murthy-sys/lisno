@@ -100,11 +100,13 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
           }
           return result as Awaited<ReturnType<typeof operation>>;
         } catch (error) {
-          if (
-            !isMongoDuplicateKeyError(error) ||
-            attempt === MAX_DUPLICATE_KEY_TRANSACTION_ATTEMPTS - 1
-          ) {
+          if (!isMongoDuplicateKeyError(error)) {
             throw error;
+          }
+          if (attempt === MAX_DUPLICATE_KEY_TRANSACTION_ATTEMPTS - 1) {
+            throw new RepositoryConflictError(
+              "MongoDB transaction conflicted with a concurrent write."
+            );
           }
         } finally {
           await transactionSession.endSession();
@@ -168,7 +170,9 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
 
     async findOrCreatePendingAccessRequest(input: NewAccessRequest) {
       const candidateId = input.id ?? randomUUID();
-      return runAuthorizationWrite(session, "Access request", async () => {
+      const candidate = accessRequestForMongo(input, candidateId);
+      await validateAccessRequestCandidate(candidate);
+      try {
         const result = await AccessRequestModel.findOneAndUpdate(
           {
             requesterId: input.requesterId,
@@ -177,12 +181,14 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
             status: "pending"
           },
           {
-            $setOnInsert: accessRequestForMongo(input, candidateId)
+            $setOnInsert: candidate
           },
           {
             upsert: true,
             new: true,
             includeResultMetadata: true,
+            runValidators: true,
+            timestamps: false,
             ...(session ? { session } : {})
           }
         ).lean().exec();
@@ -193,7 +199,17 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
           record: mapAccessRequest(result.value),
           created: result.lastErrorObject?.upserted !== undefined
         };
-      });
+      } catch (error) {
+        if (!isMongoDuplicateKeyError(error)) throw error;
+        if (session) throw error;
+        const winner = await repository.findPendingAccessRequest(
+          input.requesterId,
+          input.projectId,
+          input.module
+        );
+        if (winner) return { record: winner, created: false };
+        throw new RepositoryConflictError("Access request already exists.");
+      }
     },
 
     async transitionAccessRequest(id, expectedVersion, change) {
@@ -207,7 +223,7 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
           },
           $inc: { __v: 1 }
         },
-        { new: true, runValidators: true }
+        { new: true, runValidators: true, timestamps: false }
       );
       if (session) query.session(session);
       const document = await query.lean().exec();
@@ -338,7 +354,9 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
 
     async findOrCreateActiveProjectAccessGrant(input: NewProjectAccessGrant) {
       const candidateId = input.id ?? randomUUID();
-      return runAuthorizationWrite(session, "Project access grant", async () => {
+      const candidate = projectAccessGrantForMongo(input, candidateId);
+      await validateProjectAccessGrantCandidate(candidate);
+      try {
         const result = await ProjectAccessGrantModel.findOneAndUpdate(
           {
             userId: input.userId,
@@ -347,12 +365,14 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
             active: true
           },
           {
-            $setOnInsert: projectAccessGrantForMongo(input, candidateId)
+            $setOnInsert: candidate
           },
           {
             upsert: true,
             new: true,
             includeResultMetadata: true,
+            runValidators: true,
+            timestamps: false,
             ...(session ? { session } : {})
           }
         ).lean().exec();
@@ -363,7 +383,17 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
           record: mapProjectAccessGrant(result.value),
           created: result.lastErrorObject?.upserted !== undefined
         };
-      });
+      } catch (error) {
+        if (!isMongoDuplicateKeyError(error)) throw error;
+        if (session) throw error;
+        const winner = await repository.findActiveProjectAccessGrant(
+          input.userId,
+          input.projectId,
+          input.module
+        );
+        if (winner) return { record: winner, created: false };
+        throw new RepositoryConflictError("Project access grant already exists.");
+      }
     },
 
     async revokeProjectAccessGrant(id, expectedVersion, change) {
@@ -379,7 +409,7 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
           },
           $inc: { __v: 1 }
         },
-        { new: true, runValidators: true }
+        { new: true, runValidators: true, timestamps: false }
       );
       if (session) query.session(session);
       const document = await query.lean().exec();
@@ -412,7 +442,7 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
           },
           $inc: { __v: 1 }
         },
-        { runValidators: true }
+        { runValidators: true, timestamps: false }
       );
       if (session) update.session(session);
       await update.exec();
@@ -1925,6 +1955,14 @@ function projectAccessGrantForMongo(
     createdAt: date(input.createdAt),
     updatedAt: date(input.updatedAt)
   };
+}
+
+async function validateAccessRequestCandidate(candidate: PlainDocument) {
+  await new AccessRequestModel(candidate).validate();
+}
+
+async function validateProjectAccessGrantCandidate(candidate: PlainDocument) {
+  await new ProjectAccessGrantModel(candidate).validate();
 }
 
 function accessRequestFilter(filters: AccessRequestFilters): PlainDocument {

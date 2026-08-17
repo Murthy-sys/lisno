@@ -200,8 +200,61 @@ describe("Mongo repository contracts", () => {
         status: "pending"
       },
       { $setOnInsert: expect.objectContaining({ _id: record._id, __v: 0 }) },
-      expect.objectContaining({ upsert: true, new: true, session })
+      expect.objectContaining({
+        upsert: true,
+        new: true,
+        runValidators: true,
+        timestamps: false,
+        session
+      })
     );
+    expect(upsert.mock.calls[0]![1]).toEqual({
+      $setOnInsert: expect.objectContaining({
+        createdAt: record.createdAt,
+        updatedAt: record.updatedAt
+      })
+    });
+  });
+
+  it("validates every pending-request upsert candidate with document semantics", async () => {
+    const upsert = vi.spyOn(AccessRequestModel, "findOneAndUpdate").mockReturnValue({
+      lean: () => ({
+        exec: vi.fn().mockResolvedValue({
+          value: {
+            _id: "should-not-persist",
+            requesterId: "user-1",
+            projectId: "valid-project",
+            module: "design",
+            reason: "valid",
+            status: "pending",
+            __v: 0,
+            createdAt: new Date("2026-08-17T10:00:00.000Z"),
+            updatedAt: new Date("2026-08-17T10:00:00.000Z")
+          },
+          lastErrorObject: { upserted: "should-not-persist" }
+        })
+      })
+    } as never);
+    const base = {
+      id: "invalid-request",
+      requesterId: "user-1",
+      projectId: "valid-project",
+      module: "design" as const,
+      reason: "Valid reason",
+      createdAt: "2026-08-17T10:00:00.000Z",
+      updatedAt: "2026-08-17T10:00:00.000Z"
+    };
+
+    for (const invalid of [
+      { ...base, projectId: "project/invalid" },
+      { ...base, reason: "   " },
+      { ...base, module: "estimation" as never }
+    ]) {
+      await expect(
+        createMongoRepository().findOrCreatePendingAccessRequest(invalid)
+      ).rejects.toThrow();
+    }
+    expect(upsert).not.toHaveBeenCalled();
   });
 
   it("aborts and retries the entire pending-request transaction after raw E11000", async () => {
@@ -256,6 +309,48 @@ describe("Mongo repository contracts", () => {
     expect(sessions[1]!.endSession).toHaveBeenCalledOnce();
   });
 
+  it("re-reads a direct pending-request E11000 race and returns the winning tuple", async () => {
+    const duplicate = Object.assign(new Error("pending tuple duplicate"), { code: 11000 });
+    const winner = {
+      _id: "request-winner",
+      requesterId: "user-1",
+      projectId: "project-1",
+      module: "design",
+      reason: "Earlier concurrent request",
+      status: "pending",
+      __v: 0,
+      createdAt: new Date("2026-08-17T09:59:00.000Z"),
+      updatedAt: new Date("2026-08-17T09:59:00.000Z")
+    };
+    vi.spyOn(AccessRequestModel, "findOneAndUpdate").mockReturnValueOnce({
+      lean: () => ({ exec: vi.fn().mockRejectedValue(duplicate) })
+    } as never);
+    const reread = vi.spyOn(AccessRequestModel, "findOne").mockReturnValueOnce({
+      lean: () => query(winner)
+    } as never);
+
+    await expect(
+      createMongoRepository().findOrCreatePendingAccessRequest({
+        id: "request-loser",
+        requesterId: "user-1",
+        projectId: "project-1",
+        module: "design",
+        reason: "Need access",
+        createdAt: "2026-08-17T10:00:00.000Z",
+        updatedAt: "2026-08-17T10:00:00.000Z"
+      })
+    ).resolves.toMatchObject({
+      created: false,
+      record: { id: "request-winner", reason: "Earlier concurrent request" }
+    });
+    expect(reread).toHaveBeenCalledWith({
+      requesterId: "user-1",
+      projectId: "project-1",
+      module: "design",
+      status: "pending"
+    });
+  });
+
   it("uses the same atomic shape for active project grants", async () => {
     const record = {
       _id: "grant-existing",
@@ -294,7 +389,132 @@ describe("Mongo repository contracts", () => {
     expect(upsert).toHaveBeenCalledWith(
       { userId: "user-1", projectId: "project-1", module: "design", active: true },
       { $setOnInsert: expect.objectContaining({ _id: "grant-candidate", __v: 0 }) },
-      expect.objectContaining({ upsert: true, new: true })
+      expect.objectContaining({
+        upsert: true,
+        new: true,
+        runValidators: true,
+        timestamps: false
+      })
+    );
+  });
+
+  it("validates active-grant source relationships before the atomic upsert", async () => {
+    const upsert = vi.spyOn(ProjectAccessGrantModel, "findOneAndUpdate").mockReturnValue({
+      lean: () => ({
+        exec: vi.fn().mockResolvedValue({
+          value: {
+            _id: "should-not-persist",
+            projectId: "project-1",
+            userId: "user-1",
+            module: "design",
+            source: "direct_assignment",
+            accessRequestId: null,
+            grantedById: "admin-1",
+            active: true,
+            grantedAt: new Date("2026-08-17T10:00:00.000Z"),
+            __v: 0,
+            createdAt: new Date("2026-08-17T10:00:00.000Z"),
+            updatedAt: new Date("2026-08-17T10:00:00.000Z")
+          },
+          lastErrorObject: { upserted: "should-not-persist" }
+        })
+      })
+    } as never);
+
+    await expect(
+      createMongoRepository().findOrCreateActiveProjectAccessGrant({
+        id: "invalid-grant",
+        projectId: "project-1",
+        userId: "user-1",
+        module: "design",
+        source: "access_request",
+        accessRequestId: null,
+        grantedById: "admin-1",
+        grantedAt: "2026-08-17T10:00:00.000Z",
+        createdAt: "2026-08-17T10:00:00.000Z",
+        updatedAt: "2026-08-17T10:00:00.000Z"
+      })
+    ).rejects.toThrow(/accessRequestId/i);
+    expect(upsert).not.toHaveBeenCalled();
+  });
+
+  it("preserves exact transition and revocation timestamps in CAS query writes", async () => {
+    const transitionDocument = {
+      _id: "request-1",
+      requesterId: "user-1",
+      projectId: "project-1",
+      module: "design",
+      reason: "Need access",
+      status: "approved",
+      reviewerId: "admin-1",
+      decisionReason: null,
+      decisionFingerprint: "a".repeat(64),
+      approvedGrantId: "grant-1",
+      reviewedAt: new Date("2026-08-18T10:00:00.000Z"),
+      __v: 1,
+      createdAt: new Date("2026-08-17T10:00:00.000Z"),
+      updatedAt: new Date("2026-08-18T10:00:00.000Z")
+    };
+    const grantDocument = {
+      _id: "grant-1",
+      projectId: "project-1",
+      userId: "user-1",
+      module: "design",
+      source: "access_request",
+      accessRequestId: "request-1",
+      grantedById: "admin-1",
+      active: false,
+      grantedAt: new Date("2026-08-18T10:00:00.000Z"),
+      revokedAt: new Date("2026-08-19T10:00:00.000Z"),
+      revokedById: "admin-1",
+      revocationReason: "No longer required",
+      __v: 1,
+      createdAt: new Date("2026-08-18T10:00:00.000Z"),
+      updatedAt: new Date("2026-08-19T10:00:00.000Z")
+    };
+    const transition = vi.spyOn(AccessRequestModel, "findOneAndUpdate").mockReturnValueOnce({
+      lean: () => query(transitionDocument)
+    } as never);
+    const revoke = vi.spyOn(ProjectAccessGrantModel, "findOneAndUpdate").mockReturnValueOnce({
+      lean: () => query(grantDocument)
+    } as never);
+    const repository = createMongoRepository();
+
+    await repository.transitionAccessRequest("request-1", 1, {
+      status: "approved",
+      reviewerId: "admin-1",
+      decisionReason: null,
+      decisionFingerprint: "a".repeat(64),
+      approvedGrantId: "grant-1",
+      reviewedAt: "2026-08-18T10:00:00.000Z",
+      updatedAt: "2026-08-18T10:00:00.000Z"
+    });
+    await repository.revokeProjectAccessGrant("grant-1", 1, {
+      revokedAt: "2026-08-19T10:00:00.000Z",
+      revokedById: "admin-1",
+      revocationReason: "No longer required",
+      updatedAt: "2026-08-19T10:00:00.000Z"
+    });
+
+    expect(transition.mock.calls[0]![1]).toEqual({
+      $set: expect.objectContaining({
+        reviewedAt: new Date("2026-08-18T10:00:00.000Z"),
+        updatedAt: new Date("2026-08-18T10:00:00.000Z")
+      }),
+      $inc: { __v: 1 }
+    });
+    expect(transition.mock.calls[0]![2]).toEqual(
+      expect.objectContaining({ timestamps: false })
+    );
+    expect(revoke.mock.calls[0]![1]).toEqual({
+      $set: expect.objectContaining({
+        revokedAt: new Date("2026-08-19T10:00:00.000Z"),
+        updatedAt: new Date("2026-08-19T10:00:00.000Z")
+      }),
+      $inc: { __v: 1 }
+    });
+    expect(revoke.mock.calls[0]![2]).toEqual(
+      expect.objectContaining({ timestamps: false })
     );
   });
 
@@ -345,7 +565,7 @@ describe("Mongo repository contracts", () => {
     }
   );
 
-  it("bounds first-use duplicate transaction retry to one additional attempt", async () => {
+  it("translates duplicate exhaustion only after one complete transaction retry", async () => {
     const sessions = [0, 1].map(() => ({
       withTransaction: vi.fn(async (operation: () => Promise<unknown>) =>
         operation()
@@ -368,7 +588,7 @@ describe("Mongo repository contracts", () => {
         attempts += 1;
         await transaction.coordinateClientEmail("bounded@example.com");
       })
-    ).rejects.toMatchObject({ code: 11000 });
+    ).rejects.toBeInstanceOf(RepositoryConflictError);
 
     expect(attempts).toBe(2);
     expect(mongoose.startSession).toHaveBeenCalledTimes(2);
