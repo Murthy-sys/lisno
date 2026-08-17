@@ -15,8 +15,7 @@ import {
   assertAuthorizedDemoSeedTarget,
   authorizeDemoSeed,
   loadDemoSeedEnvironment,
-  type DemoSeedAuthorization,
-  type LoadedDemoSeedEnvironment
+  type DemoSeedAuthorization
 } from "./config.js";
 import { demoSeedData } from "./data.js";
 
@@ -42,18 +41,6 @@ interface SeedMongooseRuntime {
   connection: Model<any>["db"];
   connect(uri: string): Promise<unknown>;
   disconnect(): Promise<unknown>;
-}
-
-interface SeedDatabaseDependencies {
-  loadMongoose?: () => Promise<Pick<SeedMongooseRuntime, "connection">>;
-  loadModels?: () => Promise<SeedModels>;
-}
-
-interface DemoSeedCommandDependencies {
-  loadEnvironment?: () => LoadedDemoSeedEnvironment;
-  loadMongoose?: () => Promise<SeedMongooseRuntime>;
-  loadModels?: () => Promise<SeedModels>;
-  writeOutput?: (message: string) => void;
 }
 
 async function importMongoose(): Promise<SeedMongooseRuntime> {
@@ -109,29 +96,33 @@ async function loadSeedModels(): Promise<SeedModels> {
 }
 
 export async function seedMongoDatabase(
-  authorization: DemoSeedAuthorization,
-  dependencies: SeedDatabaseDependencies = {}
+  authorization: DemoSeedAuthorization
 ): Promise<void> {
-  const mongoose = await (dependencies.loadMongoose ?? importMongoose)();
+  if (arguments.length > 1) {
+    throw new Error("Demo seed helper does not accept dependencies.");
+  }
+  const mongoose = await importMongoose();
   assertAuthorizedDemoSeedTarget(authorization, mongoose.connection.name);
-  const models = await (dependencies.loadModels ?? loadSeedModels)();
+  const models = await loadSeedModels();
   assertAuthorizedSeedModels(
-    models,
+    authorization,
     mongoose.connection,
-    authorization.databaseName
+    models
   );
   await resetAuthorizedSeedCollections(models);
 }
 
-function assertAuthorizedSeedModels(
-  models: SeedModels,
+export function assertAuthorizedSeedModels(
+  authorization: DemoSeedAuthorization,
   connection: Model<any>["db"],
-  authorizedDatabaseName: string
+  models: SeedModels
 ): void {
+  assertAuthorizedDemoSeedTarget(authorization, connection.name);
   if (
     Object.values(models).some(
       (model) =>
-        model.db !== connection || model.db.name !== authorizedDatabaseName
+        model.db !== connection ||
+        model.db.name !== authorization.databaseName
     )
   ) {
     throw new Error("Demo seed models do not match the authorized connection.");
@@ -326,19 +317,17 @@ function nullableDate(value: string | null): Date | null {
   return value ? date(value) : null;
 }
 
-export async function runDemoSeedCommand(
-  dependencies: DemoSeedCommandDependencies = {}
-): Promise<void> {
-  const env = (dependencies.loadEnvironment ?? loadDemoSeedEnvironment)();
+export async function runDemoSeedCommand(): Promise<void> {
+  if (arguments.length > 0) {
+    throw new Error("Demo seed command does not accept dependencies.");
+  }
+  const env = loadDemoSeedEnvironment();
   const authorization = authorizeDemoSeed(env, env.MONGODB_URI);
-  const mongoose = await (dependencies.loadMongoose ?? importMongoose)();
+  const mongoose = await importMongoose();
   await mongoose.connect(env.MONGODB_URI);
   try {
-    await seedMongoDatabase(authorization, {
-      loadMongoose: async () => mongoose,
-      loadModels: dependencies.loadModels
-    });
-    (dependencies.writeOutput ?? process.stdout.write.bind(process.stdout))(
+    await seedMongoDatabase(authorization);
+    process.stdout.write(
       `Seeded ${demoSeedData.users.length} users, ${demoSeedData.projects.length} projects, and ${demoSeedData.tasks.length} tasks.\n`
     );
   } finally {
