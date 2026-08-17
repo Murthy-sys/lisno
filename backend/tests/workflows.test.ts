@@ -40,6 +40,46 @@ function setup(seed = demoSeedData) {
   };
 }
 
+describe("Design Version operations", () => {
+  it("uses a Design grant only for Design and not Projects", async () => {
+    const seed = structuredClone(demoSeedData);
+    seed.projectAccessGrants.push({
+      id: "grant-vikram-aurora-design",
+      projectId: "project-aurora-villa",
+      userId: "user-designer-vikram",
+      module: "design",
+      source: "access_request",
+      accessRequestId: "request-vikram-aurora-design",
+      grantedById: "user-head",
+      active: true,
+      grantedAt: TEST_NOW,
+      revokedAt: null,
+      revokedById: null,
+      revocationReason: null,
+      version: 1,
+      createdAt: TEST_NOW,
+      updatedAt: TEST_NOW
+    });
+    const { app } = setup(seed);
+
+    await request(app)
+      .get("/api/v1/projects/project-aurora-villa")
+      .set("Authorization", bearer(["user-designer-vikram", "designer"]))
+      .expect(404);
+
+    const design = await request(app)
+      .get("/api/v1/projects/project-aurora-villa/design-versions?limit=20&offset=0")
+      .set("Authorization", bearer(["user-designer-vikram", "designer"]));
+
+    expect(design.status).toBe(200);
+    expect(design.body.data.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "version-aurora-plan-1" })
+      ])
+    );
+  });
+});
+
 function projectInput(overrides: Record<string, unknown> = {}) {
   return {
     name: "Courtyard Residence",

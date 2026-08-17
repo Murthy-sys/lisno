@@ -98,6 +98,7 @@ beforeAll(async () => {
 });
 
 const users = {
+  superAdmin: ["user-super-admin", "super_admin"],
   head: ["user-head", "design_head"],
   managerAarav: ["user-manager-aarav", "design_manager"],
   managerMeera: ["user-manager-meera", "design_manager"],
@@ -115,6 +116,7 @@ class TestStorage {
   private sequence = 0;
   readonly objects = new Map<string, Buffer>();
   readonly deleted: string[] = [];
+  readonly opened: string[] = [];
   failSave = false;
 
   async save(input: { data: Buffer; extension: string }) {
@@ -131,10 +133,56 @@ class TestStorage {
   }
 
   async open(reference: string) {
+    this.opened.push(reference);
     const data = this.objects.get(reference);
     if (!data) throw new Error("stored object missing");
     return Readable.from(data);
   }
+}
+
+function superAdminDesignSeed() {
+  const seed = structuredClone(demoSeedData);
+  const template = structuredClone(seed.users[0]!);
+  seed.users.push({
+    ...template,
+    id: users.superAdmin[0],
+    name: "Super Admin",
+    email: "super-admin@lisno.example",
+    emailNormalized: "super-admin@lisno.example",
+    role: users.superAdmin[1],
+    managerId: null,
+    authorizedClientIds: []
+  });
+  seed.designVersions.push({
+    ...structuredClone(seed.designVersions[0]!),
+    id: "version-super-admin-submitted",
+    versionNumber: 2,
+    originalFilename: "submitted-plan.pdf",
+    storedFileReference: "seed/submitted-plan.pdf",
+    approvalStatus: "in_review",
+    reviewerId: null,
+    approvedAt: null,
+    clientVisible: false
+  });
+  seed.extractionJobs.push({
+    id: "job-approved-version",
+    designVersionId: "version-aurora-plan-1",
+    status: "approved",
+    attemptCount: 1,
+    queuedAt: TEST_NOW,
+    nextAttemptAt: null,
+    claimGeneration: 1,
+    startedAt: TEST_NOW,
+    completedAt: TEST_NOW,
+    leaseExpiresAt: null,
+    failureCode: null,
+    failureMessage: null,
+    claimId: null,
+    workerResultId: "worker-result-approved-version",
+    createdAt: TEST_NOW,
+    updatedAt: TEST_NOW
+  });
+  return seed;
 }
 
 function setup(options: {
@@ -1214,5 +1262,131 @@ describe("design-version approval and client visibility", () => {
       .get(`/api/v1/design-versions/${uploaded.body.data.id}/download`)
       .set("Authorization", bearer(users.celesteClient));
     expect(otherClient.status).toBe(404);
+  });
+});
+
+describe("Design Version operations", () => {
+  it("Super Admin reads latest approved versions without exposing drafts", async () => {
+    const repository = createMemoryRepository(superAdminDesignSeed());
+    const { app } = setup({ repository });
+
+    const response = await request(app)
+      .get("/api/v1/client/latest-approved-versions?limit=20&offset=0")
+      .set("Authorization", bearer(users.superAdmin));
+
+    expect(response.status).toBe(200);
+    expect(response.body.data).toEqual([
+      expect.objectContaining({
+        id: "version-aurora-plan-1",
+        approvalStatus: "approved",
+        clientVisible: true
+      })
+    ]);
+    expect(JSON.stringify(response.body)).not.toContain("version-super-admin-submitted");
+    expect(response.body.data[0]).not.toHaveProperty("uploaderId");
+    expect(response.body.data[0]).not.toHaveProperty("reviewerId");
+  });
+
+  it("Super Admin cannot upload a Design Version before file handling", async () => {
+    const repository = createMemoryRepository(superAdminDesignSeed());
+    const storage = new TestStorage();
+    const { app } = setup({ repository, storage });
+    const before = await repository.listDesignVersions("project-aurora-villa");
+
+    await upload(
+      app,
+      users.superAdmin,
+      "task-furniture-layout",
+      PDF,
+      "forbidden.pdf",
+      "application/pdf"
+    ).expect(403);
+
+    expect(await repository.listDesignVersions("project-aurora-villa")).toEqual(before);
+    expect(storage.objects.size).toBe(0);
+  });
+
+  it("Super Admin lists project Design Versions and reads extraction state", async () => {
+    const repository = createMemoryRepository(superAdminDesignSeed());
+    const { app } = setup({ repository });
+    const before = await repository.findExtractionJobByVersionId("version-aurora-plan-1");
+
+    const versions = await request(app)
+      .get("/api/v1/projects/project-aurora-villa/design-versions?limit=20&offset=0")
+      .set("Authorization", bearer(users.superAdmin));
+    const extraction = await request(app)
+      .get("/api/v1/design-versions/version-aurora-plan-1/extraction")
+      .set("Authorization", bearer(users.superAdmin));
+
+    expect(versions.status).toBe(200);
+    expect(versions.body.data.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "version-aurora-plan-1" }),
+        expect.objectContaining({ id: "version-super-admin-submitted" })
+      ])
+    );
+    expect(extraction.status).toBe(200);
+    expect(extraction.body.data).toMatchObject({
+      id: "job-approved-version",
+      designVersionId: "version-aurora-plan-1",
+      status: "approved"
+    });
+    expect(await repository.findExtractionJobByVersionId("version-aurora-plan-1"))
+      .toEqual(before);
+  });
+
+  it("Super Admin approves with workflow checks and its own audit identity", async () => {
+    const repository = createMemoryRepository(superAdminDesignSeed());
+    const { app } = setup({ repository });
+
+    const response = await approval(
+      app,
+      users.superAdmin,
+      "version-super-admin-submitted",
+      { approvalStatus: "approved", clientVisible: true }
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.body.data).toMatchObject({
+      id: "version-super-admin-submitted",
+      approvalStatus: "approved",
+      clientVisible: true,
+      reviewerId: "user-super-admin",
+      approvedAt: TEST_NOW
+    });
+    expect(await repository.listAuditEvents({
+      entityType: "design_version",
+      entityId: "version-super-admin-submitted"
+    })).toEqual([
+      expect.objectContaining({
+        actorId: "user-super-admin",
+        action: "design_version_approval_changed"
+      })
+    ]);
+  });
+
+  it("Super Admin downloads a Design Version without mutating it", async () => {
+    const seed = superAdminDesignSeed();
+    seed.designVersions.find(
+      (version) => version.id === "version-aurora-plan-1"
+    )!.sizeBytes = PDF.byteLength;
+    const repository = createMemoryRepository(seed);
+    const storage = new TestStorage();
+    storage.objects.set("seed/aurora-ground-plan-v1.pdf", PDF);
+    const { app } = setup({ repository, storage });
+    const before = await repository.findDesignVersionById("version-aurora-plan-1");
+
+    const response = await request(app)
+      .get("/api/v1/design-versions/version-aurora-plan-1/download")
+      .set("Authorization", bearer(users.superAdmin))
+      .buffer(true)
+      .parse(binaryParser);
+
+    expect(response.status).toBe(200);
+    expect(response.headers["content-type"]).toMatch(/^application\/pdf/);
+    expect(response.headers["content-disposition"]).toContain("attachment;");
+    expect(response.body).toEqual(PDF);
+    expect(storage.opened).toEqual(["seed/aurora-ground-plan-v1.pdf"]);
+    expect(await repository.findDesignVersionById("version-aurora-plan-1")).toEqual(before);
   });
 });

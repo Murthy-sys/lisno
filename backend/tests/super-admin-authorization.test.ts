@@ -1,4 +1,5 @@
 import type { Server } from "node:http";
+import { Readable } from "node:stream";
 
 import express, { type Express, type RequestHandler, type Router } from "express";
 import jwt from "jsonwebtoken";
@@ -16,6 +17,7 @@ import type {
   UserRecord
 } from "../src/repositories/types.js";
 import { createAuditRouter } from "../src/routes/audit.js";
+import { createDesignVersionsRouter } from "../src/routes/design-versions.js";
 import { createEvaluationsRouter } from "../src/routes/evaluations.js";
 import { createKpisRouter } from "../src/routes/kpis.js";
 import { createOrganizationRouter } from "../src/routes/organization.js";
@@ -23,6 +25,7 @@ import { createProjectsRouter } from "../src/routes/projects.js";
 import { createTasksRouter } from "../src/routes/tasks.js";
 import { demoSeedData } from "../src/seed/data.js";
 import type { AuditService } from "../src/services/audit.service.js";
+import type { DesignVersionService } from "../src/services/design-version.service.js";
 import {
   authorizationSnapshotFor,
   InvalidTokenError,
@@ -282,6 +285,24 @@ function createRouterServiceDoubles(calls: ServiceEntryCounters): {
   return { project, task, hierarchy, kpi, evaluation, audit, projectActivity };
 }
 
+function createDesignVersionServiceDouble(
+  calls: ServiceEntryCounters
+): DesignVersionService {
+  return {
+    upload: () => recordServiceEntry(calls, "designVersion.upload", {} as never),
+    list: () => recordServiceEntry(calls, "designVersion.list", emptyPage()),
+    listLatestForClient: () => recordServiceEntry(calls, "designVersion.listLatestForClient", []),
+    approve: () => recordServiceEntry(calls, "designVersion.approve", {} as never),
+    download: () => recordServiceEntry(calls, "designVersion.download", {
+      stream: Readable.from(Buffer.from("design-version")),
+      filename: "design-version.pdf",
+      mimeType: "application/pdf",
+      sizeBytes: 14
+    }),
+    getExtraction: () => recordServiceEntry(calls, "designVersion.getExtraction", {} as never)
+  };
+}
+
 function publicActor([id, role]: readonly [string, Role]): PublicUser {
   return {
     id,
@@ -350,6 +371,25 @@ function createRouterServiceEntryHarness(
       withoutOperationAuthorization ? removeOperationAuthorization(router) : router
     );
   }
+  app.use(errorHandler);
+  return { app, calls };
+}
+
+function createDesignVersionRouterServiceEntryHarness(
+  withoutOperationAuthorization = false
+): { app: Express; calls: ServiceEntryCounters } {
+  const calls: ServiceEntryCounters = new Map();
+  const router = createDesignVersionsRouter(
+    deterministicRouterAuth,
+    createDesignVersionServiceDouble(calls),
+    1024 * 1024
+  );
+  const app = express();
+  app.use(express.json());
+  app.use(
+    "/api/v1",
+    withoutOperationAuthorization ? removeOperationAuthorization(router) : router
+  );
   app.use(errorHandler);
   return { app, calls };
 }
@@ -913,6 +953,45 @@ const taskSixRouterServiceEntryCases: readonly RouterServiceEntryCase[] = [
   }
 ];
 
+const designVersionRouterServiceEntryCases: readonly RouterServiceEntryCase[] = [
+  {
+    label: "latest approved Design Versions",
+    method: "GET",
+    path: "/api/v1/client/latest-approved-versions?limit=20&offset=0",
+    serviceMethod: "designVersion.listLatestForClient",
+    successStatus: 200
+  },
+  {
+    label: "project Design Version list",
+    method: "GET",
+    path: "/api/v1/projects/project-router-fixture/design-versions?limit=20&offset=0",
+    serviceMethod: "designVersion.list",
+    successStatus: 200
+  },
+  {
+    label: "Design Version extraction",
+    method: "GET",
+    path: "/api/v1/design-versions/version-router-fixture/extraction",
+    serviceMethod: "designVersion.getExtraction",
+    successStatus: 200
+  },
+  {
+    label: "Design Version approval",
+    method: "PATCH",
+    path: "/api/v1/design-versions/version-router-fixture/approval",
+    body: { approvalStatus: "approved", clientVisible: true },
+    serviceMethod: "designVersion.approve",
+    successStatus: 200
+  },
+  {
+    label: "Design Version download",
+    method: "GET",
+    path: "/api/v1/design-versions/version-router-fixture/download",
+    serviceMethod: "designVersion.download",
+    successStatus: 200
+  }
+];
+
 const superAdminPersonalServiceEntryCases = taskSixRouterServiceEntryCases.filter(
   (entry) => entry.superAdminPersonal
 );
@@ -992,5 +1071,75 @@ describe("Task 6 router service-entry boundary", () => {
       ).expect(403);
       expect(serviceEntryDelta(calls, before), entry.label).toEqual({});
     }
+  });
+});
+
+describe("Design Version operations service-entry boundary", () => {
+  it.each(designVersionRouterServiceEntryCases.map((entry) => [entry.label, entry] as const))(
+    "proves valid future-role %s input reaches its service without operation authorization",
+    async (_label, entry) => {
+      const { app, calls } = createDesignVersionRouterServiceEntryHarness(true);
+      const before = snapshotServiceEntries(calls);
+
+      await routerAuthenticatedRequest(
+        app,
+        entry.method,
+        entry.path,
+        actors.procurement,
+        entry.body
+      ).expect(entry.successStatus);
+      expect(serviceEntryDelta(calls, before)).toEqual({
+        [entry.serviceMethod]: 1
+      });
+    }
+  );
+
+  it.each(designVersionRouterServiceEntryCases.map((entry) => [entry.label, entry] as const))(
+    "denies a future role before %s service entry",
+    async (_label, entry) => {
+      const { app, calls } = createDesignVersionRouterServiceEntryHarness();
+      const before = snapshotServiceEntries(calls);
+
+      await routerAuthenticatedRequest(
+        app,
+        entry.method,
+        entry.path,
+        actors.procurement,
+        entry.body
+      ).expect(403);
+      expect(serviceEntryDelta(calls, before)).toEqual({});
+    }
+  );
+
+  it("proves valid Super Admin upload reaches the service without operation authorization", async () => {
+    const { app, calls } = createDesignVersionRouterServiceEntryHarness(true);
+    const before = snapshotServiceEntries(calls);
+
+    await request(listeningServerFor(app))
+      .post("/api/v1/tasks/task-router-fixture/design-versions")
+      .set("Authorization", `Bearer ${actors.superAdmin[0]}`)
+      .attach("file", Buffer.from([
+        0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+        0x00, 0x00, 0x00, 0x00
+      ]), { filename: "router.png", contentType: "image/png" })
+      .expect(201);
+    expect(serviceEntryDelta(calls, before)).toEqual({
+      "designVersion.upload": 1
+    });
+  });
+
+  it("denies Super Admin upload before multipart or service entry", async () => {
+    const { app, calls } = createDesignVersionRouterServiceEntryHarness();
+    const before = snapshotServiceEntries(calls);
+
+    await request(listeningServerFor(app))
+      .post("/api/v1/tasks/task-router-fixture/design-versions")
+      .set("Authorization", `Bearer ${actors.superAdmin[0]}`)
+      .attach("file", Buffer.from("not parsed"), {
+        filename: "forbidden.pdf",
+        contentType: "application/pdf"
+      })
+      .expect(403);
+    expect(serviceEntryDelta(calls, before)).toEqual({});
   });
 });
