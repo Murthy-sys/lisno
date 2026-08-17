@@ -131,11 +131,29 @@ function estimateDocument(overrides: Record<string, unknown> = {}) {
   return document;
 }
 
-function estimateDto(record: Record<string, any>) {
-  const plain = Object.fromEntries(
-    Object.entries(record).filter(([key]) => key !== "save" && key !== "toObject" && key !== "_id")
+function plainEstimateRecord(record: Record<string, any>) {
+  return Object.fromEntries(
+    Object.entries(record).filter(([key]) => key !== "save" && key !== "toObject")
   );
-  return JSON.parse(JSON.stringify({ ...plain, id: record._id }));
+}
+
+function deepFreeze<T>(value: T): T {
+  if (value && typeof value === "object" && !Object.isFrozen(value)) {
+    for (const nested of Object.values(value as Record<string, unknown>)) {
+      deepFreeze(nested);
+    }
+    Object.freeze(value);
+  }
+  return value;
+}
+
+function immutableEstimateSnapshot(record: Record<string, any>) {
+  return deepFreeze(structuredClone(plainEstimateRecord(record)));
+}
+
+function estimateDto(record: Record<string, any>) {
+  const { _id, ...plain } = plainEstimateRecord(record);
+  return JSON.parse(JSON.stringify({ ...plain, id: _id }));
 }
 
 describe("lead API", () => {
@@ -369,6 +387,7 @@ describe("lead and owner-estimate route characterizations", () => {
   it("row 74 saves one exact calculated draft estimate", async () => {
     const { app, authorization, runInTransaction } = setupLeadCharacterization();
     const estimate = estimateDocument();
+    const before = immutableEstimateSnapshot(estimate);
     const findEstimate = vi
       .spyOn(EstimateModel, "findOne")
       .mockReturnValue(query(estimate) as never);
@@ -379,19 +398,8 @@ describe("lead and owner-estimate route characterizations", () => {
       .set("Authorization", authorization)
       .send(CHARACTERIZATION_ESTIMATE_BODY)
       .expect(200);
-
-    expect(response.body).toEqual({ data: estimateDto(estimate) });
-    expect({
-      propertyType: estimate.propertyType,
-      rooms: estimate.rooms,
-      scopes: estimate.scopes,
-      lineItems: estimate.lineItems,
-      subtotal: estimate.subtotal,
-      gst: estimate.gst,
-      total: estimate.total,
-      status: estimate.status,
-      version: estimate.version
-    }).toEqual({
+    const expected = {
+      ...before,
       propertyType: "villa",
       rooms: [],
       scopes: ["interiors"],
@@ -401,10 +409,12 @@ describe("lead and owner-estimate route characterizations", () => {
       }],
       subtotal: 1000,
       gst: 180,
-      total: 1180,
-      status: "draft",
-      version: 1
-    });
+      total: 1180
+    };
+
+    expect(response.body).toEqual({ data: estimateDto(expected) });
+    expect(plainEstimateRecord(estimate)).toEqual(expected);
+    expect(before).toEqual(estimateFixture());
     expect(findEstimate).toHaveBeenCalledOnce();
     expect(estimate.save).toHaveBeenCalledOnce();
     expect(updateLead).not.toHaveBeenCalled();
@@ -419,6 +429,7 @@ describe("lead and owner-estimate route characterizations", () => {
       gst: 180,
       total: 1180
     });
+    const before = immutableEstimateSnapshot(estimate);
     const findEstimate = vi
       .spyOn(EstimateModel, "findOne")
       .mockReturnValue(query(estimate) as never);
@@ -430,23 +441,57 @@ describe("lead and owner-estimate route characterizations", () => {
       .post("/api/v1/leads/lead-aurora/estimate/submit")
       .set("Authorization", authorization)
       .expect(200);
+    const expectedState = {
+      ...before,
+      approvalRequired: false,
+      status: "sent_to_client",
+      submittedAt: expect.any(Date),
+      sentToClientAt: expect.any(Date),
+      reviews: [{
+        actorId: "user-estimator-sales",
+        action: "submitted",
+        note: "",
+        occurredAt: expect.any(Date)
+      }],
+      notifications: [{
+        recipientEmail: "client@aurora.example",
+        recipientRole: "client",
+        event: "estimate_ready_for_review",
+        status: "queued",
+        queuedAt: expect.any(Date)
+      }]
+    };
+    const expectedResponse = {
+      ...estimateDto(before),
+      approvalRequired: false,
+      status: "sent_to_client",
+      submittedAt: expect.any(String),
+      sentToClientAt: expect.any(String),
+      reviews: [{
+        actorId: "user-estimator-sales",
+        action: "submitted",
+        note: "",
+        occurredAt: expect.any(String)
+      }],
+      notifications: [{
+        recipientEmail: "client@aurora.example",
+        recipientRole: "client",
+        event: "estimate_ready_for_review",
+        status: "queued",
+        queuedAt: expect.any(String)
+      }]
+    };
 
-    expect(response.body).toEqual({ data: estimateDto(estimate) });
-    expect(estimate.status).toBe("sent_to_client");
-    expect(estimate.approvalRequired).toBe(false);
-    expect(estimate.reviews).toEqual([{
-      actorId: "user-estimator-sales",
-      action: "submitted",
-      note: "",
-      occurredAt: expect.any(Date)
-    }]);
-    expect(estimate.notifications).toEqual([{
-      recipientEmail: "client@aurora.example",
-      recipientRole: "client",
-      event: "estimate_ready_for_review",
-      status: "queued",
-      queuedAt: expect.any(Date)
-    }]);
+    expect(response.body).toEqual({ data: expectedResponse });
+    expect(plainEstimateRecord(estimate)).toEqual(expectedState);
+    expect(response.body.data.submittedAt).toBe(estimate.submittedAt.toISOString());
+    expect(response.body.data.sentToClientAt).toBe(estimate.sentToClientAt.toISOString());
+    expect(response.body.data.reviews[0].occurredAt).toBe(
+      estimate.reviews[0].occurredAt.toISOString()
+    );
+    expect(response.body.data.notifications[0].queuedAt).toBe(
+      estimate.notifications[0].queuedAt.toISOString()
+    );
     expect(findEstimate).toHaveBeenCalledOnce();
     expect(estimate.save).toHaveBeenCalledOnce();
     expect(updateLead).toHaveBeenCalledOnce();

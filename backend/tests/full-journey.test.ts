@@ -399,6 +399,20 @@ function plainRecord(record: Record<string, any>) {
   );
 }
 
+function deepFreezeRecord<T>(value: T): T {
+  if (value && typeof value === "object" && !Object.isFrozen(value)) {
+    for (const nested of Object.values(value as Record<string, unknown>)) {
+      deepFreezeRecord(nested);
+    }
+    Object.freeze(value);
+  }
+  return value;
+}
+
+function immutableRecordSnapshot(record: Record<string, any>) {
+  return deepFreezeRecord(structuredClone(plainRecord(record)));
+}
+
 function estimateResponseDto(record: Record<string, any>) {
   const { _id, ...plain } = plainRecord(record);
   return JSON.parse(JSON.stringify({ ...plain, id: _id }));
@@ -545,30 +559,60 @@ describe("complete cross-role journey", () => {
       _id: "estimate-awaiting-assignment",
       status: "pending_manager_assignment"
     });
+    const before = immutableRecordSnapshot(fixture.estimate);
     const manager = await fixture.login("aarav@lisno.example");
     const response = await request(fixture.app)
       .post("/api/v1/estimates/estimate-awaiting-assignment/assign")
       .set("Authorization", manager)
       .send({ designerId: "user-designer-ananya" })
       .expect(200);
+    const expectedState = {
+      ...before,
+      assignedManagerId: "user-manager-aarav",
+      assignedDesignerId: "user-designer-ananya",
+      status: "pending_designer_approval",
+      reviews: [{
+        actorId: "user-manager-aarav",
+        action: "designer_assigned",
+        note: "Ananya Rao",
+        occurredAt: expect.any(Date)
+      }],
+      notifications: [{
+        recipientEmail: "ananya@lisno.example",
+        recipientRole: "designer",
+        event: "estimate_approval_assigned",
+        status: "queued",
+        queuedAt: expect.any(Date)
+      }]
+    };
+    const expectedResponse = {
+      ...estimateResponseDto(before),
+      assignedManagerId: "user-manager-aarav",
+      assignedDesignerId: "user-designer-ananya",
+      status: "pending_designer_approval",
+      reviews: [{
+        actorId: "user-manager-aarav",
+        action: "designer_assigned",
+        note: "Ananya Rao",
+        occurredAt: expect.any(String)
+      }],
+      notifications: [{
+        recipientEmail: "ananya@lisno.example",
+        recipientRole: "designer",
+        event: "estimate_approval_assigned",
+        status: "queued",
+        queuedAt: expect.any(String)
+      }]
+    };
 
-    expect(response.body).toEqual({ data: estimateResponseDto(fixture.estimate) });
-    expect(fixture.estimate.assignedManagerId).toBe("user-manager-aarav");
-    expect(fixture.estimate.assignedDesignerId).toBe("user-designer-ananya");
-    expect(fixture.estimate.status).toBe("pending_designer_approval");
-    expect(fixture.estimate.reviews).toEqual([{
-      actorId: "user-manager-aarav",
-      action: "designer_assigned",
-      note: "Ananya Rao",
-      occurredAt: expect.any(Date)
-    }]);
-    expect(fixture.estimate.notifications).toEqual([{
-      recipientEmail: "ananya@lisno.example",
-      recipientRole: "designer",
-      event: "estimate_approval_assigned",
-      status: "queued",
-      queuedAt: expect.any(Date)
-    }]);
+    expect(response.body).toEqual({ data: expectedResponse });
+    expect(plainRecord(fixture.estimate)).toEqual(expectedState);
+    expect(response.body.data.reviews[0].occurredAt).toBe(
+      fixture.estimate.reviews[0].occurredAt.toISOString()
+    );
+    expect(response.body.data.notifications[0].queuedAt).toBe(
+      fixture.estimate.notifications[0].queuedAt.toISOString()
+    );
     expect(fixture.estimate.save).toHaveBeenCalledOnce();
     expect(UserModel.findOne).toHaveBeenCalledOnce();
     expect(UserModel.findOne).toHaveBeenCalledWith({
@@ -589,22 +633,39 @@ describe("complete cross-role journey", () => {
       status: "pending_designer_approval",
       assignedDesignerId: "user-designer-ananya"
     });
+    const before = immutableRecordSnapshot(fixture.estimate);
     const designer = await fixture.login("ananya@lisno.example");
     const response = await request(fixture.app)
       .post("/api/v1/estimates/estimate-awaiting-designer/designer-decision")
       .set("Authorization", designer)
       .send({ decision: "approve", note: "Approved" })
       .expect(200);
+    const expectedState = {
+      ...before,
+      status: "ready_for_client",
+      reviews: [{
+        actorId: "user-designer-ananya",
+        action: "designer_approved",
+        note: "Approved",
+        occurredAt: expect.any(Date)
+      }]
+    };
+    const expectedResponse = {
+      ...estimateResponseDto(before),
+      status: "ready_for_client",
+      reviews: [{
+        actorId: "user-designer-ananya",
+        action: "designer_approved",
+        note: "Approved",
+        occurredAt: expect.any(String)
+      }]
+    };
 
-    expect(response.body).toEqual({ data: estimateResponseDto(fixture.estimate) });
-    expect(fixture.estimate.status).toBe("ready_for_client");
-    expect(fixture.estimate.reviews).toEqual([{
-      actorId: "user-designer-ananya",
-      action: "designer_approved",
-      note: "Approved",
-      occurredAt: expect.any(Date)
-    }]);
-    expect(fixture.estimate.notifications).toEqual([]);
+    expect(response.body).toEqual({ data: expectedResponse });
+    expect(plainRecord(fixture.estimate)).toEqual(expectedState);
+    expect(response.body.data.reviews[0].occurredAt).toBe(
+      fixture.estimate.reviews[0].occurredAt.toISOString()
+    );
     expect(fixture.estimate.save).toHaveBeenCalledOnce();
     expect(LeadModel.updateOne).not.toHaveBeenCalled();
     expect(EstimateModel.updateOne).not.toHaveBeenCalled();
@@ -614,23 +675,46 @@ describe("complete cross-role journey", () => {
 
   it("row 81 sends one ready estimate and updates its Lead exactly once", async () => {
     const fixture = setupWorkflowCharacterization({ _id: "estimate-ready", status: "ready_for_client" });
+    const before = immutableRecordSnapshot(fixture.estimate);
+    const leadBefore = deepFreezeRecord(structuredClone(fixture.lead));
     const estimator = await fixture.login("sales@lisno.example");
     const response = await request(fixture.app)
       .post("/api/v1/estimates/estimate-ready/send-client")
       .set("Authorization", estimator)
       .expect(200);
+    const expectedState = {
+      ...before,
+      status: "sent_to_client",
+      sentToClientAt: expect.any(Date),
+      notifications: [{
+        recipientEmail: "client@aurora.example",
+        recipientRole: "client",
+        event: "estimate_ready_for_review",
+        status: "queued",
+        queuedAt: expect.any(Date)
+      }]
+    };
+    const expectedResponse = {
+      ...estimateResponseDto(before),
+      status: "sent_to_client",
+      sentToClientAt: expect.any(String),
+      notifications: [{
+        recipientEmail: "client@aurora.example",
+        recipientRole: "client",
+        event: "estimate_ready_for_review",
+        status: "queued",
+        queuedAt: expect.any(String)
+      }]
+    };
 
-    expect(response.body).toEqual({ data: estimateResponseDto(fixture.estimate) });
-    expect(fixture.estimate.status).toBe("sent_to_client");
-    expect(fixture.estimate.sentToClientAt).toEqual(expect.any(Date));
-    expect(fixture.estimate.reviews).toEqual([]);
-    expect(fixture.estimate.notifications).toEqual([{
-      recipientEmail: "client@aurora.example",
-      recipientRole: "client",
-      event: "estimate_ready_for_review",
-      status: "queued",
-      queuedAt: expect.any(Date)
-    }]);
+    expect(response.body).toEqual({ data: expectedResponse });
+    expect(plainRecord(fixture.estimate)).toEqual(expectedState);
+    expect(response.body.data.sentToClientAt).toBe(
+      fixture.estimate.sentToClientAt.toISOString()
+    );
+    expect(response.body.data.notifications[0].queuedAt).toBe(
+      fixture.estimate.notifications[0].queuedAt.toISOString()
+    );
     expect(fixture.estimate.save).toHaveBeenCalledOnce();
     expect(LeadModel.updateOne).toHaveBeenCalledOnce();
     expect(LeadModel.updateOne).toHaveBeenCalledWith(
@@ -641,11 +725,8 @@ describe("complete cross-role journey", () => {
         nextActionAt: expect.any(Date)
       } }
     );
-    expect({
-      stage: fixture.lead.stage,
-      nextAction: fixture.lead.nextAction,
-      nextActionAt: fixture.lead.nextActionAt
-    }).toEqual({
+    expect(fixture.lead).toEqual({
+      ...leadBefore,
       stage: "estimate_sent",
       nextAction: "client estimate decision",
       nextActionAt: expect.any(Date)
@@ -692,7 +773,7 @@ describe("complete cross-role journey", () => {
       designFrozenAt: null,
       assignedDesignerId: "user-designer-ananya"
     });
-    const initialEstimate = structuredClone(plainRecord(fixture.estimate));
+    const initialEstimate = immutableRecordSnapshot(fixture.estimate);
     vi.spyOn(EstimateModel, "findOne").mockImplementation((filter) =>
       modelQuery(modelMatches(initialEstimate, filter as never) ? structuredClone(initialEstimate) : null) as never
     );
