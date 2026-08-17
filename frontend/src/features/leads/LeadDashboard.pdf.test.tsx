@@ -115,12 +115,10 @@ describe("LeadDashboard estimate PDF export", () => {
       name: "Cedar Loft",
       level: 3
     }).closest("article")!;
-    const draftActions = draftCard.querySelector<HTMLElement>(".lead-row__actions")!;
-    const sentActions = sentCard.querySelector<HTMLElement>(".lead-row__actions")!;
-    const draftExport = within(draftActions).getByRole("button", {
+    const draftExport = within(draftCard).getByRole("button", {
       name: "Export as PDF"
     });
-    const sentExport = within(sentActions).getByRole("button", {
+    const sentExport = within(sentCard).getByRole("button", {
       name: "Export as PDF"
     });
 

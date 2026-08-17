@@ -146,10 +146,53 @@ describe("LeadDashboard", () => {
     expect(within(overview).getByText("Saved value")).toBeVisible();
     expect(within(overview).getByText("₹3,54,000", { selector: "dd" })).toBeVisible();
     expect(screen.getByRole("heading", { name: "Leads", level: 2 })).toBeVisible();
-    expect(screen.queryByRole("heading", { name: "Saved estimates", level: 2 })).not.toBeInTheDocument();
+    const savedSection = screen.getByRole("region", { name: "Saved estimates" });
+    expect(
+      within(savedSection).getByRole("heading", {
+        name: "Saved estimates",
+        level: 2
+      })
+    ).toBeVisible();
+    expect(
+      within(savedSection).getAllByRole("button", { name: "Export as PDF" })
+    ).toHaveLength(2);
     expect(screen.getByText("Estimate", { selector: ".lead-list__header span" })).toBeVisible();
     expect(screen.queryByText("Contact architect")).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "New lead" }));
     expect(await screen.findByRole("dialog", { name: "New lead" })).toBeVisible();
+  });
+
+  it("keeps leads usable when saved estimates fail", async () => {
+    tokenStorage.set("sales-token");
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url === "/api/v1/auth/me") return Response.json({ data: salesUser });
+      if (url.startsWith("/api/v1/leads?")) {
+        return Response.json({
+          data: {
+            items: leads,
+            pagination: { limit: 20, offset: 0, total: 2, hasMore: false }
+          }
+        });
+      }
+      if (url === "/api/v1/estimates") {
+        return Response.json(
+          { error: { code: "ESTIMATES_FAILED", message: "Unavailable" } },
+          { status: 500 }
+        );
+      }
+      throw new Error("Unhandled request: " + url);
+    });
+
+    renderApp(["/estimator-sales"]);
+
+    expect(
+      await screen.findByRole("heading", { name: "Aurora Villa", level: 3 })
+    ).toBeVisible();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Saved estimates are unavailable."
+    );
+    expect(screen.getAllByText("Unavailable")).toHaveLength(2);
+    expect(screen.getByRole("button", { name: "Try again" })).toBeEnabled();
   });
 });
