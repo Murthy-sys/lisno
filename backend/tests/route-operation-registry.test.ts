@@ -109,6 +109,18 @@ describe("human JWT operation registry", () => {
     }
   });
 
+  it("classifies rows 21 through 23 on mounted routes after authentication", () => {
+    const mounted = mountedHumanOperations();
+
+    for (const { key } of EXPECTED_HUMAN_JWT_OPERATIONS.slice(20, 23)) {
+      const route = mounted.find((candidate) => candidate.key === key);
+      expect(route, key).toBeDefined();
+      expect(route?.operationKey, key).toBe(key);
+      expect(route?.authenticationIndex, key).toBeGreaterThanOrEqual(0);
+      expect(route?.operationIndex, key).toBeGreaterThan(route!.authenticationIndex);
+    }
+  });
+
   it("has unique keys and exactly 90 routed permissions", () => {
     expect(new Set(HUMAN_JWT_OPERATION_LIST.map(({ key }) => key)).size).toBe(93);
     expect(new Set(HUMAN_JWT_OPERATION_LIST.map(({ permission }) => permission)).size).toBe(90);

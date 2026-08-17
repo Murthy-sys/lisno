@@ -2206,3 +2206,34 @@ describe("evaluation and audit workflows", () => {
     ).resolves.toEqual([]);
   });
 });
+
+describe("Audit operations", () => {
+  it("keeps legacy audit filters scoped for Designer, Manager, and Head", async () => {
+    const { app } = setup();
+
+    const designer = await request(app)
+      .get("/api/v1/designers/user-designer-ananya/audit?limit=20&offset=0")
+      .set("Authorization", bearer(users.ananya));
+    const manager = await request(app)
+      .get("/api/v1/projects/project-aurora-villa/activity?limit=20&offset=0")
+      .set("Authorization", bearer(users.managerAarav));
+    const head = await request(app)
+      .get("/api/v1/audit?limit=20&offset=0")
+      .set("Authorization", bearer(users.head));
+
+    expect(designer.status).toBe(200);
+    expect(designer.body.data.items.every(
+      (event: { entityId: string }) => event.entityId === "task-furniture-layout"
+    )).toBe(true);
+    expect(manager.status).toBe(200);
+    expect(manager.body.data.items.every(
+      (event: { entityId: string }) => [
+        "project-aurora-villa",
+        "task-circulation",
+        "task-furniture-layout",
+        "version-aurora-plan-1"
+      ].includes(event.entityId)
+    )).toBe(true);
+    expect(head.status).toBe(200);
+  });
+});

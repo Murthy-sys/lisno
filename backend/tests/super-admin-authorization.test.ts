@@ -335,3 +335,92 @@ describe("Organization KPI and Evaluation operations", () => {
     expect(await repository.listEvaluationsForSubject("user-designer-arun")).toEqual(before);
   });
 });
+
+function sensitiveKeys(value: unknown): string[] {
+  if (Array.isArray(value)) return value.flatMap(sensitiveKeys);
+  if (!value || typeof value !== "object") return [];
+  return Object.entries(value as Record<string, unknown>).flatMap(([key, nested]) => [
+    ...(/password|hash|token|secret/i.test(key) ? [key] : []),
+    ...sensitiveKeys(nested)
+  ]);
+}
+
+describe("Audit operations", () => {
+  it("gives Super Admin global audit reads with recursive secret-key redaction", async () => {
+    const { app, repository } = setup();
+    await repository.appendAuditEvent({
+      id: "audit-super-admin-sensitive",
+      actorId: "user-manager-meera",
+      action: "task_progress_changed",
+      entityType: "task",
+      entityId: "task-furniture-layout",
+      occurredAt: "2026-08-01T00:00:00.000Z",
+      oldValues: {
+        password: "omit",
+        nested: { apiToken: "omit", safe: "keep" },
+        entries: [{ secretKey: "omit", note: "keep" }]
+      },
+      newValues: { passwordHash: "omit", progress: 75 },
+      reason: null
+    });
+
+    const activity = await authenticatedRequest(
+      app,
+      "GET",
+      "/api/v1/projects/project-aurora-villa/activity?limit=20&offset=0",
+      actors.superAdmin
+    );
+    const designer = await authenticatedRequest(
+      app,
+      "GET",
+      "/api/v1/designers/user-designer-ananya/audit?limit=20&offset=0&sort=desc",
+      actors.superAdmin
+    );
+    const audit = await authenticatedRequest(
+      app,
+      "GET",
+      "/api/v1/audit?limit=20&offset=0&sort=desc",
+      actors.superAdmin
+    );
+
+    for (const response of [activity, designer, audit]) {
+      expect(response.status).toBe(200);
+      expect(response.body.data.items).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ id: "audit-super-admin-sensitive" })
+        ])
+      );
+      expect(sensitiveKeys(response.body)).toEqual([]);
+    }
+    expect(audit.body.data.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ actorId: "user-manager-meera" })
+      ])
+    );
+    expect(audit.body.data.items.find(
+      (event: { id: string }) => event.id === "audit-super-admin-sensitive"
+    )).toMatchObject({
+      oldValues: { nested: { safe: "keep" }, entries: [{ note: "keep" }] },
+      newValues: { progress: 75 }
+    });
+  });
+
+  it.each([
+    [actors.procurement],
+    [actors.finance],
+    [actors.siteManager],
+    [actors.worker]
+  ])("denies future role %s before audit service entry", async (actor) => {
+    const { app, repository } = setup();
+    const before = await repository.listAuditEvents({});
+
+    for (const path of [
+      "/api/v1/projects/project-aurora-villa/activity?limit=20&offset=0",
+      "/api/v1/designers/user-designer-ananya/audit?limit=20&offset=0",
+      "/api/v1/audit?limit=20&offset=0"
+    ]) {
+      await authenticatedRequest(app, "GET", path, actor).expect(403);
+    }
+    expect(await repository.listAuditEvents({})).toEqual(before);
+  });
+});

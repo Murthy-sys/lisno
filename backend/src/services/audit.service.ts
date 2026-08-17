@@ -10,7 +10,7 @@ import type { ClientSession } from "mongoose";
 import { randomUUID } from "node:crypto";
 import { AuditEventModel } from "../models/AuditEvent.js";
 import type { PublicUser } from "./auth.service.js";
-import { forbidden, requireActor } from "./workflow.js";
+import { forbidden, requireActor, requireUser } from "./workflow.js";
 
 export interface AuditWrite {
   actorId: string;
@@ -86,19 +86,23 @@ export function createAuditService(repository: AppRepository): AuditService {
     async list(actor, filters, pagination) {
       await requireActor(repository, actor);
       if (actor.role === "client") forbidden();
-      if (actor.role === "design_head") {
-        return repository.pageAuditEvents(filters, pagination);
+      if (actor.role === "super_admin" || actor.role === "design_head") {
+        return sanitizeAuditPage(
+          await repository.pageAuditEvents(filters, pagination)
+        );
       }
 
       if (actor.role === "designer") {
         if (filters.actorId && filters.actorId !== actor.id) {
           return { items: [], total: 0 };
         }
-        return repository.pageAuditEvents(
+        return sanitizeAuditPage(await repository.pageAuditEvents(
           { ...filters, actorId: actor.id },
           pagination
-        );
+        ));
       }
+
+      if (actor.role !== "design_manager") forbidden();
 
       const users = await repository.listUsers();
       const directDesignerIds = new Set(
@@ -119,29 +123,71 @@ export function createAuditService(repository: AppRepository): AuditService {
           .flat()
           .map((task) => task.id)
       );
-      return repository.pageAuditEvents(
+      return sanitizeAuditPage(await repository.pageAuditEvents(
         {
           ...filters,
           visibleActorIds: [actor.id, ...directDesignerIds],
           visibleTaskIds: [...visibleTaskIds]
         },
         pagination
-      );
+      ));
     },
 
     async listForDesigner(actor, designerId, pagination, sort) {
       await requireActor(repository, actor);
       if (actor.role === "client") forbidden();
-      const users = await repository.listUsers();
-      const designer = users.find((user) => user.id === designerId && user.role === "designer");
+      const designer = await requireUser(repository, designerId);
       if (!designer) forbidden();
+      if (designer.role !== "designer") forbidden();
+      if (
+        actor.role !== "super_admin" &&
+        actor.role !== "design_head" &&
+        actor.role !== "design_manager" &&
+        actor.role !== "designer"
+      ) forbidden();
       if (actor.role === "design_manager" && designer.managerId !== actor.id) forbidden();
       if (actor.role === "designer" && actor.id !== designer.id) forbidden();
       const taskIds = (await repository.listTasks({ ownerId: designer.id })).map((task) => task.id);
-      return repository.pageAuditEvents(
-        { entityType: "task", entityIds: taskIds, visibleActorIds: actor.role === "design_head" ? undefined : [actor.id, designer.id], visibleTaskIds: taskIds, sort },
+      return sanitizeAuditPage(await repository.pageAuditEvents(
+        {
+          entityType: "task",
+          entityIds: taskIds,
+          visibleActorIds:
+            actor.role === "super_admin" || actor.role === "design_head"
+              ? undefined
+              : [actor.id, designer.id],
+          visibleTaskIds: taskIds,
+          sort
+        },
         pagination
-      );
+      ));
     }
   };
+}
+
+export function sanitizeAuditPage(
+  page: PageResult<AuditEventRecord>
+): PageResult<AuditEventRecord> {
+  return {
+    ...page,
+    items: page.items.map((event) => ({
+      ...event,
+      oldValues: sanitizeAuditObject(event.oldValues),
+      newValues: sanitizeAuditObject(event.newValues)
+    }))
+  };
+}
+
+function sanitizeAuditObject(value: JsonObject): JsonObject {
+  return sanitizeAuditValue(value) as JsonObject;
+}
+
+function sanitizeAuditValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sanitizeAuditValue);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .filter(([key]) => !/password|hash|token|secret/i.test(key))
+      .map(([key, nested]) => [key, sanitizeAuditValue(nested)])
+  );
 }
