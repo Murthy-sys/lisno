@@ -1,6 +1,7 @@
 import { Menu } from "lucide-react";
 import { useRef, useState } from "react";
 
+import type { AuthorizationSnapshot } from "../../api/authorization-contract";
 import type { PublicUser } from "../../api/types";
 import { BrandLogo } from "../ui/BrandLogo";
 import { Drawer } from "../ui/Drawer";
@@ -9,9 +10,11 @@ import { Sidebar } from "./Sidebar";
 
 export function MobileHeader({
   user,
+  authorization,
   onLogout
 }: {
   user: PublicUser;
+  authorization: AuthorizationSnapshot;
   onLogout: () => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -44,6 +47,7 @@ export function MobileHeader({
       >
         <Sidebar
           user={user}
+          authorization={authorization}
           onLogout={() => {
             setOpen(false);
             onLogout();

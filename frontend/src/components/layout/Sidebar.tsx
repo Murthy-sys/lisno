@@ -2,19 +2,24 @@ import { ArrowRight, LogOut } from "lucide-react";
 import { useState } from "react";
 import { NavLink } from "react-router-dom";
 
-import { ROLE_LABELS } from "../../api/authorization-contract";
+import {
+  ROLE_LABELS,
+  type AuthorizationSnapshot
+} from "../../api/authorization-contract";
 import type { PublicUser } from "../../api/types";
 import { BrandLogo } from "../ui/BrandLogo";
 import { IconButton } from "../ui/IconButton";
-import { navigationForRole } from "./navigation";
+import { navigationForAuthorization } from "./navigation";
 
 export function Sidebar({
   user,
+  authorization,
   onLogout,
   onNavigate,
   navigationLabel = "Primary navigation"
 }: {
   user: PublicUser;
+  authorization: AuthorizationSnapshot;
   onLogout: () => void | Promise<void>;
   onNavigate?: () => void;
   navigationLabel?: string;
@@ -49,7 +54,7 @@ export function Sidebar({
       </div>
 
       <nav aria-label={navigationLabel} className="ui-sidebar__nav">
-        {navigationForRole(user.role).map((item) => {
+        {navigationForAuthorization(user.role, authorization).map((item) => {
           const Icon = item.icon;
 
           return (

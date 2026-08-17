@@ -2,7 +2,11 @@ import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
-import { ROLE_CODES, type Role } from "../api/authorization-contract";
+import {
+  ROLE_CODES,
+  type PermissionCode,
+  type Role
+} from "../api/authorization-contract";
 import { tokenStorage } from "../api/client";
 import { authorizationFor } from "../test/authFixtures";
 import { renderApp } from "../test/render";
@@ -23,8 +27,6 @@ const estimatorSales = {
 };
 
 const neutralHomeRoles = [
-  "super_admin",
-  "admin",
   "procurement",
   "finance_head",
   "site_manager",
@@ -160,6 +162,30 @@ function installDesignerApi(
   });
 }
 
+function installAuthorizationSession(
+  role: Role,
+  permissions: readonly PermissionCode[]
+) {
+  tokenStorage.set(`${role}-route-token`);
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = apiRequestPath(input);
+    if (path === "/api/v1/auth/me") {
+      return Response.json({
+        data: {
+          id: `${role}-route-user`,
+          name: "Route User",
+          email: `${role}@lisno.example`,
+          role
+        }
+      });
+    }
+    if (path === "/api/v1/auth/authorization") {
+      return Response.json({ data: authorizationFor(role, permissions) });
+    }
+    throw new Error(`Unhandled request: ${path}`);
+  });
+}
+
 describe("role landing staging contract", () => {
   it.each(ROLE_CODES)("defines safe landing content for %s", (role) => {
     expect(roleHomeContentFor(role)).toEqual({
@@ -199,6 +225,78 @@ describe("role landing staging contract", () => {
       })
     ).toBeVisible();
     expect(router.state.location.pathname).toBe("/home");
+  });
+});
+
+describe("registered permission routes", () => {
+  it.each([
+    [
+      "admin",
+      "/admin/users",
+      ["identity.self.read", "identity.users.read"],
+      "User administration"
+    ],
+    [
+      "super_admin",
+      "/admin/access-requests",
+      ["identity.self.read", "access_request.review.read"],
+      "Access requests"
+    ],
+    [
+      "designer",
+      "/access-requests/mine",
+      ["identity.self.read", "access_request.self.read"],
+      "My access requests"
+    ]
+  ] as const)(
+    "mounts the staged %s page at %s without falling through to 404",
+    async (role, path, permissions, title) => {
+      installAuthorizationSession(role, permissions);
+      const { router } = renderApp([path]);
+
+      expect(await screen.findByRole("heading", { name: title })).toBeVisible();
+      expect(screen.queryByRole("heading", { name: "Page not found" })).not.toBeInTheDocument();
+      expect(router.state.location.pathname).toBe(path);
+    }
+  );
+
+  it.each([
+    ["super_admin", "/designer", "projects.list"],
+    ["admin", "/manager", "organization.team.read"]
+  ] as const)(
+    "denies %s entry to the personal presentation route %s despite read permission",
+    async (role, path, permission) => {
+      installAuthorizationSession(role, ["identity.self.read", permission]);
+      const { router } = renderApp([path]);
+
+      expect(
+        await screen.findByRole("heading", { name: "Access denied" })
+      ).toBeVisible();
+      expect(screen.queryByRole("link", { name: "Request access" })).not.toBeInTheDocument();
+      expect(router.state.location.pathname).toBe(path);
+    }
+  );
+
+  it("renders a generic denial in place when a registered permission is missing", async () => {
+    installAuthorizationSession("designer", ["identity.self.read"]);
+    const { router } = renderApp(["/designer"]);
+
+    expect(
+      await screen.findByRole("heading", { name: "Access denied" })
+    ).toBeVisible();
+    expect(screen.queryByRole("link", { name: "Request access" })).not.toBeInTheDocument();
+    expect(router.state.location.pathname).toBe("/designer");
+  });
+
+  it("keeps an unknown route as Not Found without request context", async () => {
+    installAuthorizationSession("designer", ["identity.self.read"]);
+    const { router } = renderApp(["/not-a-registered-page"]);
+
+    expect(
+      await screen.findByRole("heading", { name: "Page not found" })
+    ).toBeVisible();
+    expect(screen.queryByRole("link", { name: "Request access" })).not.toBeInTheDocument();
+    expect(router.state.location.pathname).toBe("/not-a-registered-page");
   });
 });
 
@@ -639,34 +737,38 @@ describe("protected role routing", () => {
     expect(router.state.location.pathname).toBe("/login");
   });
 
-  it("redirects a valid designer away from another role without destroying the session", async () => {
+  it("denies a valid designer another role's presentation without destroying the session", async () => {
     tokenStorage.set("valid-token");
     installDesignerApi();
 
     const { router } = renderApp(["/manager"]);
 
-    expect(
-      await screen.findByRole("heading", { name: "Good morning, Ananya." })
-    ).toBeVisible();
-    expect(router.state.location.pathname).toBe("/designer");
+    expect(await screen.findByRole("heading", { name: "Access denied" })).toBeVisible();
+    expect(router.state.location.pathname).toBe("/manager");
     expect(tokenStorage.get()).toBe("valid-token");
     expect(screen.queryByRole("heading", { name: "Team delivery pulse" })).not.toBeInTheDocument();
   });
 
-  it.each(["/", "/missing-route"])(
-    "redirects an authenticated wildcard entry %s to the role home",
-    async (path) => {
-      tokenStorage.set("valid-token");
-      installDesignerApi();
+  it("redirects an authenticated root entry to the role home", async () => {
+    tokenStorage.set("valid-token");
+    installDesignerApi();
 
-      const { router } = renderApp([path]);
+    const { router } = renderApp(["/"]);
 
-      expect(
-        await screen.findByRole("heading", { name: "Good morning, Ananya." })
-      ).toBeVisible();
-      expect(router.state.location.pathname).toBe("/designer");
-    }
-  );
+    expect(await screen.findByRole("heading", { name: "Good morning, Ananya." })).toBeVisible();
+    expect(router.state.location.pathname).toBe("/designer");
+  });
+
+  it("keeps an authenticated wildcard entry as Not Found", async () => {
+    tokenStorage.set("valid-token");
+    installDesignerApi();
+
+    const { router } = renderApp(["/missing-route"]);
+
+    expect(await screen.findByRole("heading", { name: "Page not found" })).toBeVisible();
+    expect(screen.queryByRole("link", { name: "Request access" })).not.toBeInTheDocument();
+    expect(router.state.location.pathname).toBe("/missing-route");
+  });
 
   it("unmounts the protected shell while one full-page signing-out state owns progress", async () => {
     tokenStorage.set("valid-token");

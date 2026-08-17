@@ -1,17 +1,13 @@
 import type { ReactNode } from "react";
 import { Navigate, useLocation } from "react-router-dom";
 
-import type { Role } from "../api/types";
-import { roleHomePath } from "../app/routePaths";
 import { AuthRouteState } from "./AuthRouteState";
 import { useAuth } from "./AuthProvider";
 
 export function ProtectedRoute({
-  children,
-  allowedRoles
+  children
 }: {
   children: ReactNode;
-  allowedRoles?: Role[];
 }) {
   const auth = useAuth();
   const location = useLocation();
@@ -47,12 +43,18 @@ export function ProtectedRoute({
     );
   }
 
-  if (auth.status !== "authenticated" || !auth.user) {
+  if (auth.status !== "authenticated") {
     return <Navigate to="/login" replace state={{ from: location.pathname }} />;
   }
 
-  if (allowedRoles && !allowedRoles.includes(auth.user.role)) {
-    return <Navigate to={roleHomePath(auth.user.role)} replace />;
+  if (!auth.user || !auth.authorization) {
+    return (
+      <AuthRouteState
+        title="Opening your workspace"
+        state="error"
+        message="Authorization could not be established."
+      />
+    );
   }
 
   return children;

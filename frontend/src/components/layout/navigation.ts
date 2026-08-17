@@ -1,62 +1,26 @@
-import {
-  BriefcaseBusiness,
-  Building2,
-  FolderKanban,
-  LayoutDashboard,
-  UsersRound
-} from "lucide-react";
-import type { LucideIcon } from "lucide-react";
+import type { AuthorizationSnapshot, Role } from "../../api/authorization-contract";
+import { ROUTE_REGISTRY, type NavigationItem } from "../../app/routeRegistry";
+import { hasFrontendPermission } from "../../auth/authorization";
 
-import type { Role } from "../../api/types";
+export type { NavigationItem } from "../../app/routeRegistry";
 
-export interface NavigationItem {
-  label: string;
-  to: string;
-  end: boolean;
-  icon: LucideIcon;
-}
+export function navigationForAuthorization(
+  role: Role,
+  authorization: AuthorizationSnapshot
+): readonly NavigationItem[] {
+  if (authorization.role !== role) return Object.freeze([]);
 
-function stableItems(items: NavigationItem[]): readonly NavigationItem[] {
-  items.forEach((item) => Object.freeze(item));
-  return Object.freeze(items);
-}
-
-const EMPTY_NAVIGATION: readonly NavigationItem[] = Object.freeze([]);
-
-const navigationByRole: Record<Role, readonly NavigationItem[]> = {
-  super_admin: EMPTY_NAVIGATION,
-  admin: EMPTY_NAVIGATION,
-  designer: stableItems([
-    { label: "Workspace", to: "/designer", end: true, icon: LayoutDashboard }
-  ]),
-  design_manager: stableItems([
-    { label: "Team", to: "/manager", end: true, icon: UsersRound }
-  ]),
-  design_head: stableItems([
-    { label: "Organization", to: "/head", end: true, icon: Building2 }
-  ]),
-  estimator_sales: stableItems([
-    {
-      label: "Leads & estimates",
-      to: "/estimator-sales",
-      end: true,
-      icon: BriefcaseBusiness
-    }
-  ]),
-  procurement: EMPTY_NAVIGATION,
-  finance_head: EMPTY_NAVIGATION,
-  site_manager: EMPTY_NAVIGATION,
-  worker_electrician: EMPTY_NAVIGATION,
-  worker_plumber: EMPTY_NAVIGATION,
-  worker_carpenter: EMPTY_NAVIGATION,
-  worker_painter: EMPTY_NAVIGATION,
-  worker_civil: EMPTY_NAVIGATION,
-  worker_other: EMPTY_NAVIGATION,
-  client: stableItems([
-    { label: "My projects", to: "/client", end: true, icon: FolderKanban }
-  ])
-};
-
-export function navigationForRole(role: Role): readonly NavigationItem[] {
-  return navigationByRole[role];
+  return Object.freeze(
+    ROUTE_REGISTRY
+      .filter((entry) => entry.navigation !== null)
+      .filter((entry) =>
+        (entry.navigation!.roles as readonly Role[]).includes(role)
+      )
+      .filter(
+        (entry) =>
+          entry.permission === null ||
+          hasFrontendPermission(authorization, entry.permission)
+      )
+      .map((entry) => Object.freeze({ ...entry.navigation!.item }))
+  );
 }

@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import { tokenStorage } from "../api/client";
-import type { Role } from "../api/authorization-contract";
+import type { PermissionCode, Role } from "../api/authorization-contract";
 import { authorizationFor } from "./authFixtures";
 import { renderApp } from "./render";
 import { renderWithQuery } from "./render";
@@ -77,11 +77,14 @@ const accessibleProject = {
   }]
 };
 
-function fixtureFetch(user: ReturnType<typeof userFor>) {
+function fixtureFetch(
+  user: ReturnType<typeof userFor>,
+  permissions?: readonly PermissionCode[]
+) {
   return vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const url = String(input);
     if (url === "/api/v1/auth/me") return Response.json({ data: user });
-    if (url === "/api/v1/auth/authorization") return Response.json({ data: authorizationFor(user.role) });
+    if (url === "/api/v1/auth/authorization") return Response.json({ data: authorizationFor(user.role, permissions) });
     if (url.startsWith("/api/v1/projects?")) return Response.json({ data: { items: [], pagination: { limit: 100, offset: 0, total: 0, hasMore: false } } });
     if (url === "/api/v1/projects/project-a11y") return Response.json({ data: accessibleProject });
     if (url.startsWith("/api/v1/tasks/task-a11y/events?")) return Response.json({ data: { items: [], pagination: { limit: 1, offset: 0, total: 0, hasMore: false } } });
@@ -313,6 +316,40 @@ describe("accessibility smoke coverage", () => {
     expect(screen.queryByRole("dialog", { name: "Navigation" })).not.toBeInTheDocument();
     expect(menu).toHaveFocus();
 
+    await expectNoAxeViolations();
+  });
+
+  it("keeps Access Denied generic, keyboard-visible, and free of axe violations", async () => {
+    tokenStorage.set("designer-denied-token");
+    fixtureFetch(userFor("designer"), ["identity.self.read"]);
+    renderApp(["/designer"]);
+
+    const heading = await screen.findByRole("heading", { name: "Access denied" });
+    heading.focus();
+    expect(heading).toHaveFocus();
+    expect(screen.queryByRole("link", { name: "Request access" })).not.toBeInTheDocument();
+    await expectNoAxeViolations();
+  });
+
+  it("keeps neutral Home and both registered navigation surfaces accessible", async () => {
+    tokenStorage.set("worker-token");
+    fixtureFetch(userFor("worker_electrician"));
+    renderApp(["/home"]);
+
+    expect(
+      await screen.findByRole("heading", { name: "Electrician workspace" })
+    ).toBeVisible();
+    const desktopHome = within(
+      screen.getByRole("navigation", { name: "Primary navigation" })
+    ).getByRole("link", { name: "Home" });
+    desktopHome.focus();
+    expect(desktopHome).toHaveFocus();
+
+    await userEvent.click(screen.getByRole("button", { name: "Open navigation" }));
+    const drawer = screen.getByRole("dialog", { name: "Navigation" });
+    const mobileHome = within(drawer).getByRole("link", { name: "Home" });
+    mobileHome.focus();
+    expect(mobileHome).toHaveFocus();
     await expectNoAxeViolations();
   });
 });

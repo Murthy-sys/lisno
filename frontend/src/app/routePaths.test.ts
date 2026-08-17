@@ -4,8 +4,8 @@ import { ROLE_CODES, type Role } from "../api/authorization-contract";
 import { roleHomePath, safeReturnPath } from "./routePaths";
 
 const expectedRoleHomes: Record<Role, string> = {
-  super_admin: "/home",
-  admin: "/home",
+  super_admin: "/admin/users",
+  admin: "/admin/users",
   estimator_sales: "/estimator-sales",
   designer: "/designer",
   procurement: "/home",

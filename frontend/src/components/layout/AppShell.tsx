@@ -8,15 +8,23 @@ import { SkipLink } from "./SkipLink";
 
 export function AppShell() {
   const auth = useAuth();
-  if (!auth.user) return null;
+  if (!auth.user || !auth.authorization) return null;
 
   return (
     <div className="ui-app-shell" data-role={auth.user.role}>
       <SkipLink />
       <aside className="ui-sidebar-rail" aria-label="Application sidebar">
-        <Sidebar user={auth.user} onLogout={auth.logout} />
+        <Sidebar
+          user={auth.user}
+          authorization={auth.authorization}
+          onLogout={auth.logout}
+        />
       </aside>
-      <MobileHeader user={auth.user} onLogout={auth.logout} />
+      <MobileHeader
+        user={auth.user}
+        authorization={auth.authorization}
+        onLogout={auth.logout}
+      />
       <main
         id="main-content"
         className="ui-workspace"

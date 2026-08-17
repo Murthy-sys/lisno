@@ -3,7 +3,10 @@ import userEvent from "@testing-library/user-event";
 import {
   BriefcaseBusiness,
   Building2,
+  ClipboardCheck,
   FolderKanban,
+  House,
+  KeyRound,
   LayoutDashboard,
   UsersRound
 } from "lucide-react";
@@ -13,22 +16,35 @@ import { describe, expect, it, vi } from "vitest";
 import type { PublicUser, Role } from "../../api/types";
 import { ROLE_CODES, ROLE_LABELS } from "../../api/authorization-contract";
 import { roleHomePath } from "../../app/routePaths";
+import { authorizationFor } from "../../test/authFixtures";
 import { Sidebar } from "./Sidebar";
-import { navigationForRole } from "./navigation";
+import { navigationForAuthorization } from "./navigation";
 
 const roleNavigation = [
-  ["designer", "Workspace", "/designer", LayoutDashboard],
-  ["design_manager", "Team", "/manager", UsersRound],
-  ["design_head", "Organization", "/head", Building2],
-  ["estimator_sales", "Leads & estimates", "/estimator-sales", BriefcaseBusiness],
-  ["client", "My projects", "/client", FolderKanban]
-] as const satisfies ReadonlyArray<
-  readonly [Role, string, string, typeof LayoutDashboard]
->;
+  ["super_admin", [["Users", "/admin/users", UsersRound], ["Access requests", "/admin/access-requests", ClipboardCheck]]],
+  ["admin", [["Users", "/admin/users", UsersRound], ["Access requests", "/admin/access-requests", ClipboardCheck]]],
+  ["estimator_sales", [["Leads & estimates", "/estimator-sales", BriefcaseBusiness]]],
+  ["designer", [["Workspace", "/designer", LayoutDashboard], ["My access requests", "/access-requests/mine", KeyRound]]],
+  ["procurement", [["My access requests", "/access-requests/mine", KeyRound], ["Home", "/home", House]]],
+  ["finance_head", [["My access requests", "/access-requests/mine", KeyRound], ["Home", "/home", House]]],
+  ["site_manager", [["My access requests", "/access-requests/mine", KeyRound], ["Home", "/home", House]]],
+  ["worker_electrician", [["Home", "/home", House]]],
+  ["worker_plumber", [["Home", "/home", House]]],
+  ["worker_carpenter", [["Home", "/home", House]]],
+  ["worker_painter", [["Home", "/home", House]]],
+  ["worker_civil", [["Home", "/home", House]]],
+  ["worker_other", [["Home", "/home", House]]],
+  ["design_manager", [["Team", "/manager", UsersRound]]],
+  ["design_head", [["Organization", "/head", Building2]]],
+  ["client", [["My projects", "/client", FolderKanban]]]
+] as const satisfies ReadonlyArray<readonly [
+  Role,
+  ReadonlyArray<readonly [string, string, typeof LayoutDashboard]>
+]>;
 
 describe("role navigation", () => {
   it.each(ROLE_CODES)("returns a frozen safe navigation array for %s", (role) => {
-    const items = navigationForRole(role);
+    const items = navigationForAuthorization(role, authorizationFor(role));
 
     expect(items).toBeDefined();
     expect(Object.isFrozen(items)).toBe(true);
@@ -48,46 +64,57 @@ describe("role navigation", () => {
 
     render(
       <MemoryRouter initialEntries={[roleHomePath(role)]}>
-        <Sidebar user={user} onLogout={vi.fn()} />
+        <Sidebar
+          user={user}
+          authorization={authorizationFor(role)}
+          onLogout={vi.fn()}
+        />
       </MemoryRouter>
     );
 
     expect(screen.getByText(ROLE_LABELS[role])).toBeVisible();
   });
 
-  it.each(
-    ROLE_CODES.filter((role) => !roleNavigation.some(([legacy]) => legacy === role))
-  )("does not expose future navigation for staged role %s", (role) => {
-    expect(navigationForRole(role)).toEqual([]);
-  });
-
   it.each(roleNavigation)(
-    "maps %s to its one stable role home",
-    (role, label, destination, icon) => {
-      const items = navigationForRole(role);
+    "derives the exact registered navigation for %s",
+    (role, expected) => {
+      const items = navigationForAuthorization(role, authorizationFor(role));
 
-      expect(roleHomePath(role)).toBe(destination);
-      expect(items).toHaveLength(1);
-      expect(items[0]).toEqual({ label, to: destination, end: true, icon });
-      expect(items[0].to).not.toContain(":");
+      expect(items).toEqual(
+        expected.map(([label, to, icon]) => ({ label, to, end: true, icon }))
+      );
+      expect(items.every((item) => !item.to.includes(":"))).toBe(true);
     }
   );
 
-  it("keeps shared navigation immutable in development", () => {
-    for (const [role] of roleNavigation) {
-      const items = navigationForRole(role);
+  it("keeps registry-derived navigation immutable", () => {
+    for (const role of ROLE_CODES) {
+      const items = navigationForAuthorization(role, authorizationFor(role));
 
       expect(Object.isFrozen(items)).toBe(true);
-      expect(Object.isFrozen(items[0])).toBe(true);
-      expect(() =>
-        (items as Array<(typeof items)[number]>).push(items[0])
-      ).toThrow(TypeError);
+      for (const item of items) expect(Object.isFrozen(item)).toBe(true);
+      expect(() => (items as Array<(typeof items)[number]>).push(items[0])).toThrow(
+        TypeError
+      );
     }
   });
 
+  it("fails closed for a role-mismatched or permission-missing snapshot", () => {
+    expect(
+      navigationForAuthorization("designer", authorizationFor("admin"))
+    ).toEqual([]);
+    expect(
+      navigationForAuthorization(
+        "designer",
+        authorizationFor("designer", ["identity.self.read"])
+      )
+    ).toEqual([]);
+  });
+
   it.each(roleNavigation)(
-    "renders the %s Lucide icon decoratively and preserves navigation callbacks",
-    async (role, label, destination) => {
+    "renders the first %s navigation icon decoratively and preserves callbacks",
+    async (role, expected) => {
+      const [label, destination] = expected[0];
       const onNavigate = vi.fn();
       const user: PublicUser = {
         id: `${role}-1`,
@@ -98,7 +125,12 @@ describe("role navigation", () => {
 
       render(
         <MemoryRouter initialEntries={[destination]}>
-          <Sidebar user={user} onLogout={vi.fn()} onNavigate={onNavigate} />
+          <Sidebar
+            user={user}
+            authorization={authorizationFor(role)}
+            onLogout={vi.fn()}
+            onNavigate={onNavigate}
+          />
         </MemoryRouter>
       );
 

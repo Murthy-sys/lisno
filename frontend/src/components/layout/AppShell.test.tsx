@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 import { MemoryRouter } from "react-router-dom";
 
 import type { PublicUser, Role } from "../../api/types";
+import type { PermissionCode } from "../../api/authorization-contract";
 import { tokenStorage } from "../../api/client";
 import { authorizationFor } from "../../test/authFixtures";
 import { renderApp } from "../../test/render";
@@ -72,7 +73,10 @@ function numericToken(css: string, name: string) {
   return Number(value);
 }
 
-function installAuthenticatedSession(user: PublicUser) {
+function installAuthenticatedSession(
+  user: PublicUser,
+  permissions?: readonly PermissionCode[]
+) {
   tokenStorage.set(`${user.role}-token`);
   vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
     const url =
@@ -88,7 +92,7 @@ function installAuthenticatedSession(user: PublicUser) {
     }
     if (pathname === "/api/v1/auth/authorization") {
       return Promise.resolve(
-        Response.json({ data: authorizationFor(user.role) })
+        Response.json({ data: authorizationFor(user.role, permissions) })
       );
     }
 
@@ -203,6 +207,34 @@ describe("AppShell", () => {
     );
     expect(await screen.findByRole("heading", { name: "Welcome back" })).toBeVisible();
   });
+
+  it("uses the same permission-filtered Admin links on desktop and mobile", async () => {
+    installAuthenticatedSession({
+      id: "admin-1",
+      name: "Admin User",
+      email: "admin@lisno.example",
+      role: "admin"
+    });
+    renderApp(["/admin/users"]);
+
+    expect(
+      await screen.findByRole("heading", { name: "User administration" })
+    ).toBeVisible();
+    const desktopNavigation = screen.getByRole("navigation", {
+      name: "Primary navigation"
+    });
+    expect(
+      within(desktopNavigation).getAllByRole("link").map((link) => link.textContent)
+    ).toEqual(["Users", "Access requests"]);
+
+    await userEvent.click(screen.getByRole("button", { name: "Open navigation" }));
+    const mobileNavigation = within(
+      screen.getByRole("dialog", { name: "Navigation" })
+    ).getByRole("navigation", { name: "Mobile navigation" });
+    expect(
+      within(mobileNavigation).getAllByRole("link").map((link) => link.textContent)
+    ).toEqual(["Users", "Access requests"]);
+  });
 });
 
 describe("Sidebar", () => {
@@ -224,6 +256,7 @@ describe("Sidebar", () => {
               email: "ananya@lisno.example",
               role: "designer"
             }}
+            authorization={authorizationFor("designer")}
             onLogout={onLogout}
           />
         </FeedbackProvider>

@@ -6,12 +6,19 @@ import {
   useLocation,
   useNavigationType,
 } from "react-router-dom";
+import type { ReactNode } from "react";
 
 import type { Role } from "../api/types";
 import { roleHomePath, safeReturnPath } from "./routePaths";
+import {
+  registeredRoute,
+  type RegisteredFrontendPath
+} from "./routeRegistry";
+import { AccessDeniedPage } from "../auth/AccessDeniedPage";
 import { AuthRouteState } from "../auth/AuthRouteState";
 import { useAuth } from "../auth/AuthProvider";
 import { LoginPage } from "../auth/LoginPage";
+import { PermissionRoute } from "../auth/PermissionRoute";
 import { SignupPage } from "../auth/SignupPage";
 import { ProtectedRoute } from "../auth/ProtectedRoute";
 import { AppShell } from "../components/layout/AppShell";
@@ -28,6 +35,7 @@ import { ClientProject } from "../features/client/ClientProject";
 import { LeadDashboard } from "../features/leads/LeadDashboard";
 import { LeadDetail } from "../features/leads/LeadDetail";
 import { LeadEstimateWorkspace } from "../features/leads/LeadEstimateWorkspace";
+import { NeutralHomePage } from "../features/home/NeutralHomePage";
 
 interface RoleHomeContent {
   heading: string;
@@ -133,20 +141,6 @@ const roleHomeContent: Record<Role, RoleHomeContent> = {
     status: "Ready for approved updates"
   }
 };
-
-const neutralHomeRoles: Role[] = [
-  "super_admin",
-  "admin",
-  "procurement",
-  "finance_head",
-  "site_manager",
-  "worker_electrician",
-  "worker_plumber",
-  "worker_carpenter",
-  "worker_painter",
-  "worker_civil",
-  "worker_other"
-];
 
 export function roleHomeContentFor(role: Role): Readonly<RoleHomeContent> {
   return roleHomeContent[role];
@@ -278,6 +272,41 @@ function HomeRedirect() {
   );
 }
 
+const stagedElements = {
+  "/admin/users": (
+    <NeutralHomePage
+      title="User administration"
+      description="User access management is loading in the next Prompt 1 task."
+    />
+  ),
+  "/admin/access-requests": (
+    <NeutralHomePage
+      title="Access requests"
+      description="Access-request review is loading in the final Prompt 1 interface task."
+    />
+  ),
+  "/access-requests/mine": (
+    <NeutralHomePage
+      title="My access requests"
+      description="Your request history is loading in the final Prompt 1 interface task."
+    />
+  )
+} as const satisfies Partial<Record<RegisteredFrontendPath, ReactNode>>;
+
+function registeredElement(path: RegisteredFrontendPath, children: ReactNode) {
+  const route = registeredRoute(path);
+  if (route.permission === null) return children;
+
+  return (
+    <PermissionRoute
+      permission={route.permission}
+      presentationRoles={route.presentationRoles}
+    >
+      {children}
+    </PermissionRoute>
+  );
+}
+
 export function AppRoutes() {
   return (
     <>
@@ -295,72 +324,116 @@ export function AppRoutes() {
       >
         <Route
           path="/home"
-          element={
-            <ProtectedRoute allowedRoles={neutralHomeRoles}>
-              <CurrentRoleLanding />
-            </ProtectedRoute>
-          }
+          element={registeredElement("/home", <CurrentRoleLanding />)}
         />
         <Route
           path="/designer"
-          element={
-            <ProtectedRoute allowedRoles={["designer"]}>
-              <DesignerDashboard />
-            </ProtectedRoute>
-          }
+          element={registeredElement("/designer", <DesignerDashboard />)}
         />
         <Route
           path="/designer/projects/:projectId"
-          element={
-            <ProtectedRoute allowedRoles={["designer"]}>
-              <ProjectWorkspace />
-            </ProtectedRoute>
-          }
+          element={registeredElement(
+            "/designer/projects/:projectId",
+            <ProjectWorkspace />
+          )}
         />
         <Route
           path="/manager"
-          element={
-            <ProtectedRoute allowedRoles={["design_manager"]}>
-              <ManagerDashboard />
-            </ProtectedRoute>
-          }
+          element={registeredElement("/manager", <ManagerDashboard />)}
         />
         <Route
           path="/manager/designers/:designerId"
-          element={
-            <ProtectedRoute allowedRoles={["design_manager", "design_head"]}>
-              <DesignerDetail />
-            </ProtectedRoute>
-          }
+          element={registeredElement(
+            "/manager/designers/:designerId",
+            <DesignerDetail />
+          )}
         />
-        <Route path="/manager/projects/:projectId" element={<ProtectedRoute allowedRoles={["design_manager"]}><ManagementProjectWorkspace /></ProtectedRoute>} />
+        <Route
+          path="/manager/projects/:projectId"
+          element={registeredElement(
+            "/manager/projects/:projectId",
+            <ManagementProjectWorkspace />
+          )}
+        />
         <Route
           path="/head"
-          element={
-            <ProtectedRoute allowedRoles={["design_head"]}>
-              <HeadDashboard />
-            </ProtectedRoute>
-          }
+          element={registeredElement("/head", <HeadDashboard />)}
         />
-        <Route path="/head/designers/:designerId" element={<ProtectedRoute allowedRoles={["design_head"]}><DesignerDetail /></ProtectedRoute>} />
-        <Route path="/head/projects/:projectId" element={<ProtectedRoute allowedRoles={["design_head"]}><ManagementProjectWorkspace /></ProtectedRoute>} />
+        <Route
+          path="/head/designers/:designerId"
+          element={registeredElement(
+            "/head/designers/:designerId",
+            <DesignerDetail />
+          )}
+        />
+        <Route
+          path="/head/projects/:projectId"
+          element={registeredElement(
+            "/head/projects/:projectId",
+            <ManagementProjectWorkspace />
+          )}
+        />
         <Route
           path="/estimator-sales"
-          element={<ProtectedRoute allowedRoles={["estimator_sales"]}><LeadDashboard /></ProtectedRoute>}
+          element={registeredElement("/estimator-sales", <LeadDashboard />)}
         />
-        <Route path="/estimator-sales/leads/:leadId" element={<ProtectedRoute allowedRoles={["estimator_sales"]}><LeadDetail /></ProtectedRoute>} />
-        <Route path="/estimator-sales/leads/:leadId/estimate" element={<ProtectedRoute allowedRoles={["estimator_sales"]}><LeadEstimateWorkspace /></ProtectedRoute>} />
+        <Route
+          path="/estimator-sales/leads/:leadId"
+          element={registeredElement(
+            "/estimator-sales/leads/:leadId",
+            <LeadDetail />
+          )}
+        />
+        <Route
+          path="/estimator-sales/leads/:leadId/estimate"
+          element={registeredElement(
+            "/estimator-sales/leads/:leadId/estimate",
+            <LeadEstimateWorkspace />
+          )}
+        />
         <Route
           path="/client"
+          element={registeredElement("/client", <ClientDashboard />)}
+        />
+        <Route
+          path="/client/projects/:projectId"
+          element={registeredElement(
+            "/client/projects/:projectId",
+            <ClientProject />
+          )}
+        />
+        <Route
+          path="/admin/users"
+          element={registeredElement("/admin/users", stagedElements["/admin/users"])}
+        />
+        <Route
+          path="/admin/access-requests"
+          element={registeredElement(
+            "/admin/access-requests",
+            stagedElements["/admin/access-requests"]
+          )}
+        />
+        <Route
+          path="/access-requests/mine"
+          element={registeredElement(
+            "/access-requests/mine",
+            stagedElements["/access-requests/mine"]
+          )}
+        />
+        <Route
+          path="/access-denied"
+          element={registeredElement("/access-denied", <AccessDeniedPage />)}
+        />
+        <Route
+          path="*"
           element={
-            <ProtectedRoute allowedRoles={["client"]}>
-              <ClientDashboard />
-            </ProtectedRoute>
+            <NeutralHomePage
+              title="Page not found"
+              description="The page you requested does not exist."
+            />
           }
         />
-        <Route path="/client/projects/:projectId" element={<ProtectedRoute allowedRoles={["client"]}><ClientProject /></ProtectedRoute>} />
       </Route>
-      <Route path="*" element={<HomeRedirect />} />
       </Routes>
     </>
   );
