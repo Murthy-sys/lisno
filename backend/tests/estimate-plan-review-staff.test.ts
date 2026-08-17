@@ -14,6 +14,7 @@ const estimator = { id: "owner-1", name: "Owner", email: "owner@example.com", ro
 const designer = { id: "designer-1", name: "Designer", email: "designer@example.com", role: "designer" as const };
 const outsider = { id: "owner-2", name: "Other", email: "other@example.com", role: "estimator_sales" as const };
 const client = { id: "client-1", name: "Client", email: "client@example.com", role: "client" as const };
+const superAdmin = { id: "super-admin-1", name: "Super Admin", email: "admin@example.com", role: "super_admin" as const };
 
 function service() {
   return createEstimatePlanReviewService({
@@ -51,6 +52,31 @@ beforeEach(async () => {
 });
 
 describe("estimate plan staff workflow", () => {
+  it("allows audited Super Admin global reads and administrative overrides", async () => {
+    const audit = vi.fn(async () => ({}));
+    const api = createEstimatePlanReviewService({
+      estimateDesigns: { listClient: vi.fn() },
+      storage: { open: vi.fn(), read: vi.fn(), save: vi.fn(), saveGenerated: vi.fn(), delete: vi.fn() },
+      audit: { appendInMongoTransaction: audit },
+      now: () => new Date("2026-08-03T12:00:00.000Z")
+    } as never);
+
+    await expect(api.listStaff(superAdmin, {})).resolves.toEqual([
+      expect.objectContaining({ id: "request-1", estimateId: "estimate-1" })
+    ]);
+    await expect(api.getStaff(superAdmin, "request-1")).resolves.toEqual(
+      expect.objectContaining({ id: "request-1" })
+    );
+    await api.updateTargets(superAdmin, "request-1", {
+      version: 1,
+      targetDrawingIds: ["drawing-a"]
+    });
+    expect(audit).toHaveBeenCalledWith(
+      expect.objectContaining({ actorId: superAdmin.id, action: "estimate_plan_targets_linked" }),
+      expect.anything()
+    );
+  });
+
   it("returns metadata-only queues to the owner and assigned designer", async () => {
     for (const user of [estimator, designer]) {
       const rows = await service().listStaff(user, {});

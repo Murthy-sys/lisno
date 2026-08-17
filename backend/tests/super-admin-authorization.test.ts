@@ -19,6 +19,8 @@ import type {
 import { createAuditRouter } from "../src/routes/audit.js";
 import { createDesignVersionsRouter } from "../src/routes/design-versions.js";
 import { createDesignSectionsRouter } from "../src/routes/design-sections.js";
+import { createEstimateDesignsRouter } from "../src/routes/estimate-designs.js";
+import { createEstimatePlanReviewRouter } from "../src/routes/estimate-plan-review.js";
 import { createEvaluationsRouter } from "../src/routes/evaluations.js";
 import { createKpisRouter } from "../src/routes/kpis.js";
 import { createOrganizationRouter } from "../src/routes/organization.js";
@@ -28,6 +30,8 @@ import { demoSeedData } from "../src/seed/data.js";
 import type { AuditService } from "../src/services/audit.service.js";
 import type { DesignVersionService } from "../src/services/design-version.service.js";
 import type { DesignSectionService } from "../src/services/design-section.service.js";
+import type { EstimateDesignService } from "../src/services/estimate-design.service.js";
+import type { createEstimatePlanReviewService } from "../src/services/estimate-plan-review.service.js";
 import {
   authorizationSnapshotFor,
   InvalidTokenError,
@@ -439,9 +443,55 @@ function createDesignSectionRouterServiceEntryHarness(
   return { app, calls };
 }
 
+function createEstimationRouterServiceEntryHarness(
+  family: "design" | "plan",
+  withoutOperationAuthorization = false
+): { app: Express; calls: ServiceEntryCounters } {
+  const calls: ServiceEntryCounters = new Map();
+  const record = <T>(key: string, result: T) => recordServiceEntry(calls, key, result);
+  const design = new Proxy({} as EstimateDesignService, {
+    get(_target, property) {
+      const key = `estimateDesign.${String(property)}`;
+      if (property === "sourceImage" || property === "revisionImage") {
+        return () => record(key, Readable.from(Buffer.from("image")));
+      }
+      if (property === "listClient") {
+        return () => record(key, { uploads: [], pages: [], drawings: [], revisions: [], readiness: { ready: true, total: 0, approved: 0, awaitingReview: 0, changesRequested: 0 } });
+      }
+      if (property === "listEstimator") {
+        return () => record(key, { uploads: [], pages: [], drawings: [], revisions: [] });
+      }
+      return () => record(key, {});
+    }
+  });
+  const plans = new Proxy({} as ReturnType<typeof createEstimatePlanReviewService>, {
+    get(_target, property) {
+      const key = `estimatePlan.${String(property)}`;
+      if (property === "pageImage" || property === "staffPageImage") {
+        return () => record(key, Readable.from(Buffer.from("image")));
+      }
+      if (property === "listStaff" || property === "listClient") {
+        return () => record(key, []);
+      }
+      return () => record(key, {});
+    }
+  });
+  const router = family === "design"
+    ? createEstimateDesignsRouter(deterministicRouterAuth, design, 1024 * 1024)
+    : createEstimatePlanReviewRouter(deterministicRouterAuth, plans);
+  const app = express();
+  app.use(express.json());
+  app.use(
+    "/api/v1",
+    withoutOperationAuthorization ? removeOperationAuthorization(router) : router
+  );
+  app.use(errorHandler);
+  return { app, calls };
+}
+
 function routerAuthenticatedRequest(
   app: Express,
-  method: "GET" | "POST" | "PATCH" | "DELETE",
+  method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE",
   path: string,
   actor: readonly [string, Role],
   body?: unknown
@@ -451,6 +501,8 @@ function routerAuthenticatedRequest(
     ? request(server).get(path)
     : method === "POST"
       ? request(server).post(path)
+      : method === "PUT"
+        ? request(server).put(path)
       : method === "PATCH"
         ? request(server).patch(path)
         : request(server).delete(path);
@@ -819,7 +871,7 @@ describe("Audit operations", () => {
 
 type RouterServiceEntryCase = {
   label: string;
-  method: "GET" | "POST" | "PATCH" | "DELETE";
+  method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   path: string;
   serviceMethod: string;
   successStatus: 200 | 201;
@@ -1129,6 +1181,82 @@ const designSectionRouterServiceEntryCases: readonly RouterServiceEntryCase[] = 
 const superAdminPersonalServiceEntryCases = taskSixRouterServiceEntryCases.filter(
   (entry) => entry.superAdminPersonal
 );
+
+const estimateDesignReadCases: readonly RouterServiceEntryCase[] = [
+  { label: "GET /estimates/:estimateId/design-uploads", method: "GET", path: "/api/v1/estimates/estimate-router-fixture/design-uploads", serviceMethod: "estimateDesign.listEstimator", successStatus: 200 },
+  { label: "GET /estimate-design-source-pages/:pageId/image", method: "GET", path: "/api/v1/estimate-design-source-pages/page-router-fixture/image", serviceMethod: "estimateDesign.sourceImage", successStatus: 200 },
+  { label: "GET /estimate-design-revisions/:revisionId/image", method: "GET", path: "/api/v1/estimate-design-revisions/revision-router-fixture/image", serviceMethod: "estimateDesign.revisionImage", successStatus: 200 },
+  { label: "GET /client/estimates/:estimateId/design-drawings", method: "GET", path: "/api/v1/client/estimates/estimate-router-fixture/design-drawings", serviceMethod: "estimateDesign.listClient", successStatus: 200 }
+];
+
+const estimateDesignPersonalCases = [
+  ["POST", "/api/v1/estimates/estimate-router-fixture/design-uploads"],
+  ["POST", "/api/v1/estimate-design-uploads/upload-router-fixture/retry"],
+  ["POST", "/api/v1/estimate-design-source-pages/page-router-fixture/drawings"],
+  ["PUT", "/api/v1/client/estimate-design-revisions/revision-router-fixture/annotation-draft"],
+  ["POST", "/api/v1/client/estimate-design-revisions/revision-router-fixture/decision"],
+  ["PATCH", "/api/v1/estimate-design-drawings/drawing-router-fixture"],
+  ["PUT", "/api/v1/estimate-design-drawings/drawing-router-fixture/estimate-item"],
+  ["DELETE", "/api/v1/estimate-design-drawings/drawing-router-fixture"],
+  ["POST", "/api/v1/estimate-design-drawings/drawing-router-fixture/replacement"],
+  ["POST", "/api/v1/estimates/estimate-router-fixture/design-drawings/submit"]
+] as const;
+
+const estimatePlanReadAdminCases: readonly RouterServiceEntryCase[] = [
+  { label: "GET /client/estimates/:estimateId/plan-review", method: "GET", path: "/api/v1/client/estimates/estimate-router-fixture/plan-review", serviceMethod: "estimatePlan.listClient", successStatus: 200 },
+  { label: "GET /client/estimate-plan-pages/:pageId/thumbnail", method: "GET", path: "/api/v1/client/estimate-plan-pages/page-router-fixture/thumbnail", serviceMethod: "estimatePlan.pageImage", successStatus: 200 },
+  { label: "GET /client/estimate-plan-pages/:pageId/current-image", method: "GET", path: "/api/v1/client/estimate-plan-pages/page-router-fixture/current-image", serviceMethod: "estimatePlan.pageImage", successStatus: 200 },
+  { label: "POST /client/estimate-plan-pages/:pageId/target-preview", method: "POST", path: "/api/v1/client/estimate-plan-pages/page-router-fixture/target-preview", body: { annotations: { schemaVersion: 1, imageWidth: 100, imageHeight: 100, elements: [] } }, serviceMethod: "estimatePlan.previewTargets", successStatus: 200 },
+  { label: "GET /estimate-plan-change-requests", method: "GET", path: "/api/v1/estimate-plan-change-requests", serviceMethod: "estimatePlan.listStaff", successStatus: 200 },
+  { label: "GET /estimate-plan-change-requests/:requestId", method: "GET", path: "/api/v1/estimate-plan-change-requests/request-router-fixture", serviceMethod: "estimatePlan.getStaff", successStatus: 200 },
+  { label: "PUT /estimate-plan-change-requests/:requestId/targets", method: "PUT", path: "/api/v1/estimate-plan-change-requests/request-router-fixture/targets", body: { version: 1, targetDrawingIds: ["drawing-router-fixture"] }, serviceMethod: "estimatePlan.updateTargets", successStatus: 200 },
+  { label: "POST /estimate-plan-change-requests/:requestId/resolve-page", method: "POST", path: "/api/v1/estimate-plan-change-requests/request-router-fixture/resolve-page", body: { version: 1, note: "Resolved by Super Admin" }, serviceMethod: "estimatePlan.resolvePage", successStatus: 200 },
+  { label: "GET /estimate-plan-pages/:pageId/current-image", method: "GET", path: "/api/v1/estimate-plan-pages/page-router-fixture/current-image", serviceMethod: "estimatePlan.staffPageImage", successStatus: 200 }
+];
+
+const estimatePlanPersonalCases = [
+  ["PUT", "/api/v1/client/estimate-plan-pages/page-router-fixture/annotation-draft"],
+  ["POST", "/api/v1/client/estimate-plan-pages/page-router-fixture/change-requests"],
+  ["PUT", "/api/v1/client/estimate-plan-change-requests/request-router-fixture"]
+] as const;
+
+describe("Estimate Design operations", () => {
+  it.each(estimateDesignReadCases.map((entry) => [entry.label, entry] as const))(
+    "allows Super Admin global read %s",
+    async (_label, entry) => {
+      const { app, calls } = createEstimationRouterServiceEntryHarness("design");
+      const before = snapshotServiceEntries(calls);
+      await routerAuthenticatedRequest(app, entry.method, entry.path, actors.superAdmin, entry.body).expect(entry.successStatus);
+      expect(serviceEntryDelta(calls, before)).toEqual({ [entry.serviceMethod]: 1 });
+    }
+  );
+
+  it.each(estimateDesignPersonalCases)("denies Super Admin personal %s %s before handler entry", async (method, path) => {
+    const { app, calls } = createEstimationRouterServiceEntryHarness("design");
+    const before = snapshotServiceEntries(calls);
+    await routerAuthenticatedRequest(app, method, path, actors.superAdmin).expect(403);
+    expect(serviceEntryDelta(calls, before)).toEqual({});
+  });
+});
+
+describe("Estimate Plan Review operations", () => {
+  it.each(estimatePlanReadAdminCases.map((entry) => [entry.label, entry] as const))(
+    "allows Super Admin read/admin operation %s",
+    async (_label, entry) => {
+      const { app, calls } = createEstimationRouterServiceEntryHarness("plan");
+      const before = snapshotServiceEntries(calls);
+      await routerAuthenticatedRequest(app, entry.method, entry.path, actors.superAdmin, entry.body).expect(entry.successStatus);
+      expect(serviceEntryDelta(calls, before)).toEqual({ [entry.serviceMethod]: 1 });
+    }
+  );
+
+  it.each(estimatePlanPersonalCases)("denies Super Admin personal %s %s before handler entry", async (method, path) => {
+    const { app, calls } = createEstimationRouterServiceEntryHarness("plan");
+    const before = snapshotServiceEntries(calls);
+    await routerAuthenticatedRequest(app, method, path, actors.superAdmin).expect(403);
+    expect(serviceEntryDelta(calls, before)).toEqual({});
+  });
+});
 
 describe("Task 6 router service-entry boundary", () => {
   it.each(taskSixRouterServiceEntryCases.map((entry) => [entry.label, entry] as const))(

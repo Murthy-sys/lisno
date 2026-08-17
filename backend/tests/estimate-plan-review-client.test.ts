@@ -8,6 +8,7 @@ import { EstimateDesignSourcePageModel } from "../src/models/EstimateDesignSourc
 import { EstimateDesignUploadModel } from "../src/models/EstimateDesignUpload.js";
 import { EstimatePlanChangeRequestModel } from "../src/models/EstimatePlanChangeRequest.js";
 import { EstimatePlanPageRevisionModel } from "../src/models/EstimatePlanPageRevision.js";
+import { LeadModel } from "../src/models/Lead.js";
 import { UserModel } from "../src/models/User.js";
 import { createEstimatePlanReviewService } from "../src/services/estimate-plan-review.service.js";
 import { createEstimateDesignService } from "../src/services/estimate-design.service.js";
@@ -15,6 +16,7 @@ import { startMongoReplicaSet } from "./helpers/mongo-replica-set.js";
 
 let replica: Awaited<ReturnType<typeof startMongoReplicaSet>>;
 const client = { id: "client-1", name: "Client", email: "client@example.com", role: "client" as const };
+const superAdmin = { id: "super-admin-1", name: "Super Admin", email: "admin@example.com", role: "super_admin" as const };
 const annotations = {
   schemaVersion: 1 as const, imageWidth: 1000, imageHeight: 500,
   elements: [{ id: "mark", type: "rectangle" as const, color: "#ff0000", strokeWidth: 2, x: .1, y: .1, width: .3, height: .3 }]
@@ -35,7 +37,16 @@ beforeAll(async () => { replica = await startMongoReplicaSet(); });
 afterAll(async () => { await replica.stop(); });
 beforeEach(async () => {
   await replica.clear();
-  await UserModel.create({ _id: "owner-1", name: "Owner", email: "owner@example.com", emailNormalized: "owner@example.com", passwordHash: "hash", role: "estimator_sales", active: true });
+  await UserModel.create([
+    { _id: "owner-1", name: "Owner", email: "owner@example.com", emailNormalized: "owner@example.com", passwordHash: "hash", role: "estimator_sales", active: true },
+    { _id: client.id, name: client.name, email: client.email, emailNormalized: client.email, passwordHash: "hash", role: "client", active: true }
+  ]);
+  await LeadModel.create({
+    _id: "lead-1", ownerId: "owner-1", clientName: "Client", clientEmail: client.email,
+    clientMobile: "9999999999", projectName: "Plan Review", location: "Pune",
+    propertyType: "apartment", source: "web", stage: "estimate_sent",
+    nextAction: "review", nextActionAt: new Date()
+  });
   await EstimateModel.create({ _id: "estimate-1", leadId: "lead-1", ownerId: "owner-1", status: "sent_to_client", propertyType: "apartment" });
   await EstimateDesignUploadModel.create({ _id: "upload-1", estimateId: "estimate-1", leadId: "lead-1", originalFilename: "plan.pdf", storedFileReference: "source.pdf", mimeType: "application/pdf", sizeBytes: 100, uploaderId: "estimator-1", uploadedAt: new Date(), extractionStatus: "submitted" });
   await EstimateDesignSourcePageModel.create({ _id: "page-1", uploadId: "upload-1", pageNumber: 1, normalizedFileReference: "base.png", width: 1000, height: 500 });
@@ -50,6 +61,22 @@ beforeEach(async () => {
 });
 
 describe("client estimate plan review service", () => {
+  it("uses the related Client identity for Super Admin client-shaped reads", async () => {
+    const api = service();
+    await EstimatePlanChangeRequestModel.create({
+      _id: "request-global", estimateId: "estimate-1", uploadId: "upload-1", sourcePageId: "page-1",
+      clientId: client.id, idempotencyKey: "global-read", version: 1, summary: "Related client request",
+      annotations, targets: [], unassigned: true, unassignedResolved: false, status: "open"
+    });
+
+    const workspace = await api.listClient(superAdmin, "estimate-1");
+
+    expect(workspace.openRequests).toEqual([
+      expect.objectContaining({ id: "request-global", summary: "Related client request" })
+    ]);
+    expect(await EstimatePlanChangeRequestModel.countDocuments({ clientId: superAdmin.id })).toBe(0);
+  });
+
   it("bootstraps one immutable page manifest and returns protected DTOs", async () => {
     await EstimateDesignSourcePageModel.create(Array.from({ length: 5 }, (_, index) => ({
       _id: `page-${index + 2}`,

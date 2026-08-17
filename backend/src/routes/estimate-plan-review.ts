@@ -4,7 +4,8 @@ import { Router, type NextFunction, type Request, type Response } from "express"
 import { z } from "zod";
 
 import { annotationDocumentSchema } from "../domain/estimate-design.js";
-import { authenticate, authorizeRoles } from "../middleware/auth.js";
+import { authenticate } from "../middleware/auth.js";
+import { requireOperation } from "../middleware/authorization.js";
 import { validateBody } from "../middleware/validate.js";
 import type { AuthService } from "../services/auth.service.js";
 import type { createEstimatePlanReviewService } from "../services/estimate-plan-review.service.js";
@@ -40,26 +41,25 @@ const resolvePageSchema = z.object({
 
 export function createEstimatePlanReviewRouter(auth: AuthService, plans: EstimatePlanReviewService) {
   const router = Router();
-  const clientOnly = [authenticate(auth), authorizeRoles("client")] as const;
-  router.get("/client/estimates/:estimateId/plan-review", ...clientOnly, async (request, response, next) => {
+  const protectedRoute = authenticate(auth);
+  router.get("/client/estimates/:estimateId/plan-review", protectedRoute, requireOperation("GET /client/estimates/:estimateId/plan-review"), async (request, response, next) => {
     try { response.json({ data: await plans.listClient(request.authenticatedUser!, request.params.estimateId as string) }); } catch (error) { next(error); }
   });
-  router.get("/client/estimate-plan-pages/:pageId/thumbnail", ...clientOnly, stream((user, pageId) => plans.pageImage(user, pageId, true)));
-  router.get("/client/estimate-plan-pages/:pageId/current-image", ...clientOnly, stream((user, pageId) => plans.pageImage(user, pageId, false)));
-  router.put("/client/estimate-plan-pages/:pageId/annotation-draft", ...clientOnly, validateBody(draftSchema), async (request, response, next) => {
+  router.get("/client/estimate-plan-pages/:pageId/thumbnail", protectedRoute, requireOperation("GET /client/estimate-plan-pages/:pageId/thumbnail"), stream((user, pageId) => plans.pageImage(user, pageId, true)));
+  router.get("/client/estimate-plan-pages/:pageId/current-image", protectedRoute, requireOperation("GET /client/estimate-plan-pages/:pageId/current-image"), stream((user, pageId) => plans.pageImage(user, pageId, false)));
+  router.put("/client/estimate-plan-pages/:pageId/annotation-draft", protectedRoute, requireOperation("PUT /client/estimate-plan-pages/:pageId/annotation-draft"), validateBody(draftSchema), async (request, response, next) => {
     try { response.json({ data: await plans.saveDraft(request.authenticatedUser!, request.params.pageId as string, request.body) }); } catch (error) { next(error); }
   });
-  router.post("/client/estimate-plan-pages/:pageId/target-preview", ...clientOnly, validateBody(previewSchema), async (request, response, next) => {
+  router.post("/client/estimate-plan-pages/:pageId/target-preview", protectedRoute, requireOperation("POST /client/estimate-plan-pages/:pageId/target-preview"), validateBody(previewSchema), async (request, response, next) => {
     try { response.json({ data: await plans.previewTargets(request.authenticatedUser!, request.params.pageId as string, request.body) }); } catch (error) { next(error); }
   });
-  router.post("/client/estimate-plan-pages/:pageId/change-requests", ...clientOnly, validateBody(requestSchema), async (request, response, next) => {
+  router.post("/client/estimate-plan-pages/:pageId/change-requests", protectedRoute, requireOperation("POST /client/estimate-plan-pages/:pageId/change-requests"), validateBody(requestSchema), async (request, response, next) => {
     try { response.status(201).json({ data: await plans.submitRequest(request.authenticatedUser!, request.params.pageId as string, request.body) }); } catch (error) { next(error); }
   });
-  router.put("/client/estimate-plan-change-requests/:requestId", ...clientOnly, validateBody(updateClientRequestSchema), async (request, response, next) => {
+  router.put("/client/estimate-plan-change-requests/:requestId", protectedRoute, requireOperation("PUT /client/estimate-plan-change-requests/:requestId"), validateBody(updateClientRequestSchema), async (request, response, next) => {
     try { response.json({ data: await plans.updateClientRequest(request.authenticatedUser!, request.params.requestId as string, request.body) }); } catch (error) { next(error); }
   });
-  const staffOnly = [authenticate(auth), authorizeRoles("estimator_sales", "designer", "design_manager", "design_head")] as const;
-  router.get("/estimate-plan-change-requests", ...staffOnly, async (request, response, next) => {
+  router.get("/estimate-plan-change-requests", protectedRoute, requireOperation("GET /estimate-plan-change-requests"), async (request, response, next) => {
     try {
       const filters: { estimateId?: string; status?: "open" | "resolved" } = {
         ...(typeof request.query.estimateId === "string" ? { estimateId: request.query.estimateId } : {}),
@@ -68,16 +68,16 @@ export function createEstimatePlanReviewRouter(auth: AuthService, plans: Estimat
       response.json({ data: await plans.listStaff(request.authenticatedUser!, filters) });
     } catch (error) { next(error); }
   });
-  router.get("/estimate-plan-change-requests/:requestId", ...staffOnly, async (request, response, next) => {
+  router.get("/estimate-plan-change-requests/:requestId", protectedRoute, requireOperation("GET /estimate-plan-change-requests/:requestId"), async (request, response, next) => {
     try { response.json({ data: await plans.getStaff(request.authenticatedUser!, request.params.requestId as string) }); } catch (error) { next(error); }
   });
-  router.put("/estimate-plan-change-requests/:requestId/targets", ...staffOnly, validateBody(targetSchema), async (request, response, next) => {
+  router.put("/estimate-plan-change-requests/:requestId/targets", protectedRoute, requireOperation("PUT /estimate-plan-change-requests/:requestId/targets"), validateBody(targetSchema), async (request, response, next) => {
     try { response.json({ data: await plans.updateTargets(request.authenticatedUser!, request.params.requestId as string, request.body) }); } catch (error) { next(error); }
   });
-  router.post("/estimate-plan-change-requests/:requestId/resolve-page", ...staffOnly, validateBody(resolvePageSchema), async (request, response, next) => {
+  router.post("/estimate-plan-change-requests/:requestId/resolve-page", protectedRoute, requireOperation("POST /estimate-plan-change-requests/:requestId/resolve-page"), validateBody(resolvePageSchema), async (request, response, next) => {
     try { response.json({ data: await plans.resolvePage(request.authenticatedUser!, request.params.requestId as string, request.body) }); } catch (error) { next(error); }
   });
-  router.get("/estimate-plan-pages/:pageId/current-image", ...staffOnly, stream((user, pageId) => plans.staffPageImage(user, pageId)));
+  router.get("/estimate-plan-pages/:pageId/current-image", protectedRoute, requireOperation("GET /estimate-plan-pages/:pageId/current-image"), stream((user, pageId) => plans.staffPageImage(user, pageId)));
   return router;
 }
 

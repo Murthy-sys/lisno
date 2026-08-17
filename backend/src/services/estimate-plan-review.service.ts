@@ -5,6 +5,7 @@ import mongoose from "mongoose";
 import sharp, { type OverlayOptions } from "sharp";
 
 import { annotationDocumentSchema, type AnnotationDocumentV1 } from "../domain/estimate-design.js";
+import { normalizeEmail } from "../domain/email.js";
 import { detectAnnotationTargets, projectAnnotationToCrop } from "../domain/estimate-plan-review.js";
 import { ApiError } from "../middleware/errors.js";
 import { EstimateDesignDrawingModel } from "../models/EstimateDesignDrawing.js";
@@ -13,6 +14,7 @@ import { EstimateDesignRevisionModel } from "../models/EstimateDesignRevision.js
 import { EstimateDesignSourcePageModel } from "../models/EstimateDesignSourcePage.js";
 import { EstimateDesignUploadModel } from "../models/EstimateDesignUpload.js";
 import { EstimateModel } from "../models/Estimate.js";
+import { LeadModel } from "../models/Lead.js";
 import { EstimatePlanAnnotationDraftModel } from "../models/EstimatePlanAnnotationDraft.js";
 import { EstimatePlanChangeRequestModel } from "../models/EstimatePlanChangeRequest.js";
 import { EstimatePlanPageRevisionModel } from "../models/EstimatePlanPageRevision.js";
@@ -200,7 +202,7 @@ export function createEstimatePlanReviewService(input: CreateEstimatePlanReviewS
   }
 
   function requireStaffRole(user: AuthenticatedUser) {
-    if (!["estimator_sales", "designer", "design_manager", "design_head"].includes(user.role)) {
+    if (!["super_admin", "estimator_sales", "designer", "design_manager", "design_head"].includes(user.role)) {
       throw new ApiError(403, "FORBIDDEN", "You do not have access to plan change requests.");
     }
   }
@@ -211,9 +213,9 @@ export function createEstimatePlanReviewService(input: CreateEstimatePlanReviewS
     if (session) query.session(session);
     const estimate = await query.lean();
     if (!estimate) throw notFound();
-    const allowed = user.role === "estimator_sales"
+    const allowed = user.role === "super_admin" || (user.role === "estimator_sales"
       ? dtoId(estimate.ownerId) === user.id
-      : [estimate.assignedDesignerId, estimate.assignedManagerId].filter(Boolean).map(dtoId).includes(user.id);
+      : [estimate.assignedDesignerId, estimate.assignedManagerId].filter(Boolean).map(dtoId).includes(user.id));
     if (!allowed) throw new ApiError(403, "FORBIDDEN", "You are not assigned to this estimate.");
     return estimate;
   }
@@ -301,6 +303,20 @@ export function createEstimatePlanReviewService(input: CreateEstimatePlanReviewS
     return { uploads, rows };
   }
 
+  async function clientReaderId(user: AuthenticatedUser, estimateId: string) {
+    if (user.role !== "super_admin") return user.id;
+    const estimate = await EstimateModel.findById(estimateId).lean();
+    if (!estimate) throw notFound();
+    const lead = await LeadModel.findById(estimate.leadId).lean();
+    if (!lead) throw notFound();
+    const client = await UserModel.findOne({
+      role: "client",
+      active: true,
+      emailNormalized: normalizeEmail(String(lead.clientEmail))
+    }).lean();
+    return client ? dtoId(client._id) : null;
+  }
+
   async function preview(user: AuthenticatedUser, pageId: string, annotations: AnnotationDocumentV1) {
     annotationDocumentSchema.parse(annotations);
     const { page, estimateId } = await requirePage(user, pageId);
@@ -374,7 +390,9 @@ export function createEstimatePlanReviewService(input: CreateEstimatePlanReviewS
   return {
     async listStaff(user: AuthenticatedUser, filters: { estimateId?: string; status?: "open" | "resolved" }) {
       requireStaffRole(user);
-      const estimateFilter = user.role === "estimator_sales"
+      const estimateFilter = user.role === "super_admin"
+        ? {}
+        : user.role === "estimator_sales"
         ? { ownerId: user.id }
         : { $or: [{ assignedDesignerId: user.id }, { assignedManagerId: user.id }] };
       const estimates = await EstimateModel.find(estimateFilter).select({ _id: 1 }).lean();
@@ -447,9 +465,14 @@ export function createEstimatePlanReviewService(input: CreateEstimatePlanReviewS
 
     async listClient(user: AuthenticatedUser, estimateId: string) {
       const { uploads, rows } = await pageRows(user, estimateId);
-      const drafts = await EstimatePlanAnnotationDraftModel.find({ clientId: user.id, sourcePageId: { $in: rows.map((row) => row.page._id) } }).lean();
+      const clientId = await clientReaderId(user, estimateId);
+      const drafts = clientId
+        ? await EstimatePlanAnnotationDraftModel.find({ clientId, sourcePageId: { $in: rows.map((row) => row.page._id) } }).lean()
+        : [];
       const draftByPage = new Map(drafts.map((draft) => [dtoId(draft.sourcePageId), draft]));
-      const requests = await EstimatePlanChangeRequestModel.find({ clientId: user.id, estimateId, status: "open" }).sort({ createdAt: 1 }).lean();
+      const requests = clientId
+        ? await EstimatePlanChangeRequestModel.find({ clientId, estimateId, status: "open" }).sort({ createdAt: 1 }).lean()
+        : [];
       const pages = rows.map(({ page, revision }) => ({
           id: dtoId(page._id), uploadId: dtoId(page.uploadId), pageNumber: Number(page.pageNumber),
           width: Number(page.width), height: Number(page.height), currentRevisionId: dtoId(revision._id),
