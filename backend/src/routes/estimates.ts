@@ -5,7 +5,8 @@ import { z } from "zod";
 
 import { normalizeEmail } from "../domain/email.js";
 import { ApiError } from "../middleware/errors.js";
-import { authenticate, authorizeRoles } from "../middleware/auth.js";
+import { authenticate } from "../middleware/auth.js";
+import { requireOperation } from "../middleware/authorization.js";
 import { validateBody } from "../middleware/validate.js";
 import { EstimateModel } from "../models/Estimate.js";
 import { LeadModel } from "../models/Lead.js";
@@ -37,18 +38,22 @@ export function createEstimatesRouter(
   estimateDesigns: EstimateDesignService,
   audit: AuditService
 ): Router {
-  const router = Router(); const protectedRoute = authenticate(auth); const allowed = authorizeRoles("estimator_sales");
-  router.get("/leads/:leadId/estimate", protectedRoute, allowed, async (req, res, next) => { try { const lead = await leads.get(req.authenticatedUser!, req.params.leadId as string); const estimate = await EstimateModel.findOne({ leadId: lead.id, ownerId: req.authenticatedUser!.id }).lean(); res.json({ data: estimate ? mapEstimate(estimate) : null }); } catch (error) { next(error); } });
-  router.get("/estimates", protectedRoute, allowed, async (req, res, next) => { try {
-    const estimates = await EstimateModel.find({ ownerId: req.authenticatedUser!.id }).sort({ updatedAt: -1 }).lean();
-    const leadItems = await LeadModel.find({ _id: { $in: estimates.map((estimate) => estimate.leadId) }, ownerId: req.authenticatedUser!.id }).lean();
+  const router = Router(); const protectedRoute = authenticate(auth);
+  router.get("/leads/:leadId/estimate", protectedRoute, requireOperation("GET /leads/:leadId/estimate"), async (req, res, next) => { try { const lead = await leads.get(req.authenticatedUser!, req.params.leadId as string); const estimateFilter = req.authenticatedUser!.role === "super_admin" ? { leadId: lead.id } : { leadId: lead.id, ownerId: req.authenticatedUser!.id }; const estimate = await EstimateModel.findOne(estimateFilter).lean(); res.json({ data: estimate ? mapEstimate(estimate) : null }); } catch (error) { next(error); } });
+  router.get("/estimates", protectedRoute, requireOperation("GET /estimates"), async (req, res, next) => { try {
+    const estimateFilter = req.authenticatedUser!.role === "super_admin" ? {} : { ownerId: req.authenticatedUser!.id };
+    const estimates = await EstimateModel.find(estimateFilter).sort({ updatedAt: -1 }).lean();
+    const leadFilter = req.authenticatedUser!.role === "super_admin"
+      ? { _id: { $in: estimates.map((estimate) => estimate.leadId) } }
+      : { _id: { $in: estimates.map((estimate) => estimate.leadId) }, ownerId: req.authenticatedUser!.id };
+    const leadItems = await LeadModel.find(leadFilter).lean();
     const byId = new Map(leadItems.map((lead) => [lead._id, lead]));
     res.json({ data: estimates.map((estimate) => {
       const lead = byId.get(estimate.leadId);
       return { ...mapEstimate(estimate), lead: lead ? { ...lead, id: lead._id, _id: undefined } : null };
     }) });
   } catch (error) { next(error); } });
-  router.put("/leads/:leadId/estimate", protectedRoute, allowed, validateBody(estimateSchema), async (req, res, next) => { try {
+  router.put("/leads/:leadId/estimate", protectedRoute, requireOperation("PUT /leads/:leadId/estimate"), validateBody(estimateSchema), async (req, res, next) => { try {
     const lead = await leads.get(req.authenticatedUser!, req.params.leadId as string);
     const lineItems = req.body.lineItems.map((line: z.infer<typeof estimateLineSchema>) => ({ ...line, amount: line.included ? Math.round(line.quantity * line.rate) : 0 }));
     const subtotal = lineItems.reduce((sum: number, line: { amount: number }) => sum + line.amount, 0);
@@ -74,7 +79,7 @@ export function createEstimatesRouter(
     await estimate.save();
     res.json({ data: mapEstimate(estimate.toObject()) });
   } catch (error) { next(error); } });
-  router.post("/leads/:leadId/estimate/submit", protectedRoute, allowed, async (req, res, next) => { try {
+  router.post("/leads/:leadId/estimate/submit", protectedRoute, requireOperation("POST /leads/:leadId/estimate/submit"), async (req, res, next) => { try {
     const lead = await leads.get(req.authenticatedUser!, req.params.leadId as string);
     const estimate = await EstimateModel.findOne({ leadId: lead.id, ownerId: req.authenticatedUser!.id });
     if (!estimate || estimate.lineItems.every((line: { included: boolean }) => !line.included)) throw new ApiError(409, "ESTIMATE_EMPTY", "Select at least one estimate item before submitting.");
@@ -92,8 +97,11 @@ export function createEstimatesRouter(
     res.json({ data: mapEstimate(estimate.toObject()) });
   } catch (error) { next(error); } });
 
-  router.get("/estimates/:estimateId/pdf", protectedRoute, allowed, async (req, res, next) => { try {
-    const estimate = await EstimateModel.findOne({ _id: req.params.estimateId, ownerId: req.authenticatedUser!.id }).lean();
+  router.get("/estimates/:estimateId/pdf", protectedRoute, requireOperation("GET /estimates/:estimateId/pdf"), async (req, res, next) => { try {
+    const filter = req.authenticatedUser!.role === "super_admin"
+      ? { _id: req.params.estimateId }
+      : { _id: req.params.estimateId, ownerId: req.authenticatedUser!.id };
+    const estimate = await EstimateModel.findOne(filter).lean();
     if (!estimate) throw estimateNotFound();
     const lead = await LeadModel.findById(estimate.leadId).lean();
     if (!lead) throw estimateNotFound();
@@ -101,9 +109,11 @@ export function createEstimatesRouter(
     res.set("Content-Type", "application/pdf").set("Content-Disposition", `attachment; filename="${pdf.filename}"`).send(pdf.bytes);
   } catch (error) { next(error); } });
 
-  router.get("/estimates/review-queue", protectedRoute, authorizeRoles("design_manager", "designer"), async (req, res, next) => { try {
+  router.get("/estimates/review-queue", protectedRoute, requireOperation("GET /estimates/review-queue"), async (req, res, next) => { try {
     const user = req.authenticatedUser!;
-    const filter = user.role === "design_manager"
+    const filter = user.role === "super_admin"
+      ? { status: { $in: ["pending_manager_assignment", "pending_designer_approval"] } }
+      : user.role === "design_manager"
       ? { status: "pending_manager_assignment" }
       : { status: "pending_designer_approval", assignedDesignerId: user.id };
     const estimates = await EstimateModel.find(filter).sort({ submittedAt: 1 }).lean();
@@ -113,26 +123,45 @@ export function createEstimatesRouter(
     res.json({ data: estimates.map((estimate) => ({ ...mapEstimate(estimate), lead: byId.get(estimate.leadId) ?? null })) });
   } catch (error) { next(error); } });
 
-  router.get("/estimates/designers", protectedRoute, authorizeRoles("design_manager"), async (req, res, next) => { try {
-    const designers = await UserModel.find({ role: "designer", managerId: req.authenticatedUser!.id, active: true }).select("_id name email title").lean();
+  router.get("/estimates/designers", protectedRoute, requireOperation("GET /estimates/designers"), async (req, res, next) => { try {
+    const filter = req.authenticatedUser!.role === "super_admin"
+      ? { role: "designer", active: true }
+      : { role: "designer", managerId: req.authenticatedUser!.id, active: true };
+    const designers = await UserModel.find(filter).select("_id name email title").lean();
     res.json({ data: designers.map((designer) => ({ id: designer._id, name: designer.name, email: designer.email, title: designer.title ?? null })) });
   } catch (error) { next(error); } });
 
-  router.post("/estimates/:estimateId/assign", protectedRoute, authorizeRoles("design_manager"), validateBody(assignmentSchema), async (req, res, next) => { try {
-    const designer = await UserModel.findOne({ _id: req.body.designerId, role: "designer", managerId: req.authenticatedUser!.id, active: true }).lean();
+  router.post("/estimates/:estimateId/assign", protectedRoute, requireOperation("POST /estimates/:estimateId/assign"), validateBody(assignmentSchema), async (req, res, next) => { try {
+    const designerFilter = req.authenticatedUser!.role === "super_admin"
+      ? { _id: req.body.designerId, role: "designer", active: true }
+      : { _id: req.body.designerId, role: "designer", managerId: req.authenticatedUser!.id, active: true };
+    const designer = await UserModel.findOne(designerFilter).lean();
     if (!designer) throw new ApiError(404, "DESIGNER_NOT_FOUND", "Choose an active designer from your team.");
+    const manager = designer.managerId
+      ? await UserModel.findOne({ _id: designer.managerId, role: "design_manager", active: true }).lean()
+      : null;
+    if (!manager) throw new ApiError(404, "DESIGNER_MANAGER_NOT_FOUND", "Choose a designer with an active accountable manager.");
     const estimate = await EstimateModel.findOne({ _id: req.params.estimateId, status: "pending_manager_assignment" });
     if (!estimate) throw new ApiError(409, "ESTIMATE_NOT_ASSIGNABLE", "This estimate is no longer awaiting assignment.");
-    estimate.assignedManagerId = req.authenticatedUser!.id;
+    estimate.assignedManagerId = manager._id;
     estimate.assignedDesignerId = designer._id;
     estimate.status = "pending_designer_approval";
     estimate.reviews.push({ actorId: req.authenticatedUser!.id, action: "designer_assigned", note: designer.name, occurredAt: new Date() });
     estimate.notifications.push({ recipientEmail: designer.email, recipientRole: "designer", event: "estimate_approval_assigned", status: "queued", queuedAt: new Date() });
     await estimate.save();
+    await audit.append({
+      actorId: req.authenticatedUser!.id,
+      action: "estimate_designer_assigned",
+      entityType: "estimate",
+      entityId: String(estimate._id),
+      occurredAt: new Date().toISOString(),
+      oldValues: { status: "pending_manager_assignment" },
+      newValues: { status: "pending_designer_approval", designerId: String(designer._id), managerId: String(manager._id) }
+    });
     res.json({ data: mapEstimate(estimate.toObject()) });
   } catch (error) { next(error); } });
 
-  router.post("/estimates/:estimateId/designer-decision", protectedRoute, authorizeRoles("designer"), validateBody(decisionSchema), async (req, res, next) => { try {
+  router.post("/estimates/:estimateId/designer-decision", protectedRoute, requireOperation("POST /estimates/:estimateId/designer-decision"), validateBody(decisionSchema), async (req, res, next) => { try {
     const estimate = await EstimateModel.findOne({ _id: req.params.estimateId, status: "pending_designer_approval", assignedDesignerId: req.authenticatedUser!.id });
     if (!estimate) throw new ApiError(409, "ESTIMATE_NOT_REVIEWABLE", "This estimate is not assigned to you for review.");
     estimate.status = req.body.decision === "approve" ? "ready_for_client" : "designer_changes_requested";
@@ -141,7 +170,7 @@ export function createEstimatesRouter(
     res.json({ data: mapEstimate(estimate.toObject()) });
   } catch (error) { next(error); } });
 
-  router.post("/estimates/:estimateId/send-client", protectedRoute, allowed, async (req, res, next) => { try {
+  router.post("/estimates/:estimateId/send-client", protectedRoute, requireOperation("POST /estimates/:estimateId/send-client"), async (req, res, next) => { try {
     const estimate = await EstimateModel.findOne({ _id: req.params.estimateId, ownerId: req.authenticatedUser!.id, status: "ready_for_client" });
     if (!estimate) throw new ApiError(409, "ESTIMATE_NOT_READY", "Complete required approvals before sending this estimate.");
     const lead = await LeadModel.findById(estimate.leadId).lean();
@@ -154,23 +183,34 @@ export function createEstimatesRouter(
     res.json({ data: mapEstimate(estimate.toObject()) });
   } catch (error) { next(error); } });
 
-  router.get("/client/estimates", protectedRoute, authorizeRoles("client"), async (req, res, next) => { try {
-    const leadsForClient = await LeadModel.find({ clientEmail: { $regex: `^${escapeRegex(req.authenticatedUser!.email)}$`, $options: "i" } }).lean();
-    const estimates = await EstimateModel.find({ leadId: { $in: leadsForClient.map((lead) => lead._id) }, status: { $in: ["sent_to_client", "client_changes_requested", "client_approved"] } }).lean();
+  router.get("/client/estimates", protectedRoute, requireOperation("GET /client/estimates"), async (req, res, next) => { try {
+    const globalReader = req.authenticatedUser!.role === "super_admin";
+    const estimates = globalReader
+      ? await EstimateModel.find({ status: { $in: clientVisibleEstimateStatuses } }).lean()
+      : [];
+    const leadsForClient = globalReader
+      ? await LeadModel.find({ _id: { $in: estimates.map((estimate) => estimate.leadId) } }).lean()
+      : await LeadModel.find({ clientEmail: { $regex: `^${escapeRegex(req.authenticatedUser!.email)}$`, $options: "i" } }).lean();
+    const visibleEstimates = globalReader
+      ? estimates
+      : await EstimateModel.find({ leadId: { $in: leadsForClient.map((lead) => lead._id) }, status: { $in: clientVisibleEstimateStatuses } }).lean();
     const byId = new Map(leadsForClient.map((lead) => [lead._id, lead]));
-    res.json({ data: estimates.map((estimate) => ({ ...mapEstimate(estimate), lead: byId.get(estimate.leadId) ?? null })) });
+    res.json({ data: visibleEstimates.map((estimate) => ({ ...mapEstimate(estimate), lead: byId.get(estimate.leadId) ?? null })) });
   } catch (error) { next(error); } });
 
-  router.get("/client/estimates/:estimateId/pdf", protectedRoute, authorizeRoles("client"), async (req, res, next) => { try {
+  router.get("/client/estimates/:estimateId/pdf", protectedRoute, requireOperation("GET /client/estimates/:estimateId/pdf"), async (req, res, next) => { try {
     const estimate = await EstimateModel.findOne({ _id: req.params.estimateId, status: { $in: clientVisibleEstimateStatuses } }).lean();
     if (!estimate) throw estimateNotFound();
-    const lead = await LeadModel.findOne({ _id: estimate.leadId, clientEmail: { $regex: `^${escapeRegex(req.authenticatedUser!.email)}$`, $options: "i" } }).lean();
+    const leadFilter = req.authenticatedUser!.role === "super_admin"
+      ? { _id: estimate.leadId }
+      : { _id: estimate.leadId, clientEmail: { $regex: `^${escapeRegex(req.authenticatedUser!.email)}$`, $options: "i" } };
+    const lead = await LeadModel.findOne(leadFilter).lean();
     if (!lead) throw estimateNotFound();
     const pdf = await estimatePdf.generate(toEstimatePdfInput(estimate, lead));
     res.set("Content-Type", "application/pdf").set("Content-Disposition", `attachment; filename="${pdf.filename}"`).send(pdf.bytes);
   } catch (error) { next(error); } });
 
-  router.post("/client/estimates/:estimateId/decision", protectedRoute, authorizeRoles("client"), validateBody(decisionSchema), async (req, res, next) => { try {
+  router.post("/client/estimates/:estimateId/decision", protectedRoute, requireOperation("POST /client/estimates/:estimateId/decision"), validateBody(decisionSchema), async (req, res, next) => { try {
     let responseEstimate: Record<string, any> | null = null;
     await withMongoTransaction(async (session) => {
       const estimate = await EstimateModel.findOne({

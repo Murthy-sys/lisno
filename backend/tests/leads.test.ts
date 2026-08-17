@@ -433,6 +433,103 @@ describe("lead and owner-estimate route characterizations", () => {
     expect(runInTransaction).not.toHaveBeenCalled();
   });
 
+  it("allows Super Admin global estimate, queue, designer, and client-visible reads without project grants", async () => {
+    const { app, superAdminAuthorization, projectGrantSpies } = setupLeadCharacterization();
+    const draft = estimateFixture();
+    const pendingAssignment = estimateFixture({ _id: "estimate-awaiting", status: "pending_manager_assignment" });
+    const clientVisible = estimateFixture({ _id: "estimate-visible", status: "sent_to_client" });
+    const mongoLead = {
+      _id: "lead-aurora",
+      ownerId: "user-estimator-sales",
+      clientName: "Rhea Kapoor",
+      clientEmail: "client@aurora.example",
+      projectName: "Aurora",
+      location: "Pune"
+    };
+    const findOne = vi.spyOn(EstimateModel, "findOne").mockImplementation((filter) =>
+      query((filter as Record<string, unknown>).leadId === "lead-aurora" ? draft : null) as never
+    );
+    const findEstimates = vi.spyOn(EstimateModel, "find").mockImplementation((filter) => {
+      if (Object.keys(filter as object).length === 0) return query([draft]) as never;
+      const status = (filter as Record<string, any>).status;
+      if (status?.$in?.includes("pending_manager_assignment")) return query([pendingAssignment]) as never;
+      if (status?.$in?.includes("sent_to_client")) return query([clientVisible]) as never;
+      return query([]) as never;
+    });
+    const findLeads = vi.spyOn(LeadModel, "find").mockReturnValue(query([mongoLead]) as never);
+    const findDesigners = vi.spyOn(UserModel, "find").mockReturnValue(query([{
+      _id: "designer-1", name: "Designer", email: "designer@example.com", title: "Designer"
+    }]) as never);
+
+    await request(app).get("/api/v1/leads/lead-aurora/estimate").set("Authorization", superAdminAuthorization).expect(200);
+    await request(app).get("/api/v1/estimates").set("Authorization", superAdminAuthorization).expect(200);
+    const queue = await request(app).get("/api/v1/estimates/review-queue").set("Authorization", superAdminAuthorization).expect(200);
+    const designers = await request(app).get("/api/v1/estimates/designers").set("Authorization", superAdminAuthorization).expect(200);
+    const visible = await request(app).get("/api/v1/client/estimates").set("Authorization", superAdminAuthorization).expect(200);
+
+    expect(findOne).toHaveBeenCalledWith({ leadId: "lead-aurora" });
+    expect(findEstimates).toHaveBeenCalledWith({});
+    expect(findEstimates).toHaveBeenCalledWith({ status: { $in: ["pending_manager_assignment", "pending_designer_approval"] } });
+    expect(findEstimates).toHaveBeenCalledWith({ status: { $in: ["sent_to_client", "client_changes_requested", "client_approved"] } });
+    expect(findDesigners).toHaveBeenCalledWith({ role: "designer", active: true });
+    expect(findLeads).toHaveBeenCalledWith({ _id: { $in: ["lead-aurora"] } });
+    expect(queue.body.data).toHaveLength(1);
+    expect(designers.body.data).toEqual([{ id: "designer-1", name: "Designer", email: "designer@example.com", title: "Designer" }]);
+    expect(visible.body.data).toHaveLength(1);
+    for (const spy of projectGrantSpies) expect(spy).not.toHaveBeenCalled();
+  });
+
+  it("assigns through a selected Designer's active manager and audits the real Super Admin", async () => {
+    const { app, superAdminAuthorization, repository, projectGrantSpies } = setupLeadCharacterization();
+    const estimate = estimateDocument({ _id: "estimate-awaiting", status: "pending_manager_assignment" });
+    const designer = { _id: "designer-1", name: "Designer One", email: "designer@example.com", role: "designer", active: true, managerId: "manager-1" };
+    const manager = { _id: "manager-1", name: "Manager One", email: "manager@example.com", role: "design_manager", active: true };
+    const findUser = vi.spyOn(UserModel, "findOne").mockImplementation((filter) =>
+      query((filter as Record<string, unknown>).role === "designer" ? designer : manager) as never
+    );
+    vi.spyOn(EstimateModel, "findOne").mockReturnValue(query(estimate) as never);
+
+    const response = await request(app)
+      .post("/api/v1/estimates/estimate-awaiting/assign")
+      .set("Authorization", superAdminAuthorization)
+      .send({ designerId: designer._id })
+      .expect(200);
+
+    expect(findUser).toHaveBeenNthCalledWith(1, { _id: designer._id, role: "designer", active: true });
+    expect(findUser).toHaveBeenNthCalledWith(2, { _id: manager._id, role: "design_manager", active: true });
+    expect(response.body.data).toMatchObject({
+      assignedDesignerId: designer._id,
+      assignedManagerId: manager._id,
+      status: "pending_designer_approval",
+      reviews: [expect.objectContaining({ actorId: "user-super-admin", action: "designer_assigned" })]
+    });
+    expect((await repository.listAuditEvents({})).at(-1)).toMatchObject({
+      actorId: "user-super-admin",
+      action: "estimate_designer_assigned",
+      entityId: "estimate-awaiting"
+    });
+    for (const spy of projectGrantSpies) expect(spy).not.toHaveBeenCalled();
+  });
+
+  it("denies every Super Admin personal Estimate mutation before validation or data access", async () => {
+    const { app, superAdminAuthorization } = setupLeadCharacterization();
+    const estimateFind = vi.spyOn(EstimateModel, "findOne");
+    const leadFind = vi.spyOn(LeadModel, "findById");
+
+    for (const [method, path] of [
+      ["put", "/api/v1/leads/lead-aurora/estimate"],
+      ["post", "/api/v1/leads/lead-aurora/estimate/submit"],
+      ["post", "/api/v1/estimates/estimate-awaiting/designer-decision"],
+      ["post", "/api/v1/estimates/estimate-ready/send-client"],
+      ["post", "/api/v1/client/estimates/estimate-visible/decision"]
+    ] as const) {
+      await request(app)[method](path).set("Authorization", superAdminAuthorization).send({}).expect(403);
+    }
+
+    expect(estimateFind).not.toHaveBeenCalled();
+    expect(leadFind).not.toHaveBeenCalled();
+  });
+
   it("row 74 saves one exact calculated draft estimate", async () => {
     const { app, authorization, runInTransaction } = setupLeadCharacterization();
     const estimate = estimateDocument();
@@ -559,12 +656,14 @@ describe("lead and owner-estimate route characterizations", () => {
 function query<T>(value: T) {
   const result = {
     sort: vi.fn(),
+    select: vi.fn(),
     session: vi.fn(),
     lean: vi.fn(async () => value),
     then: (resolve: (value: T) => unknown, reject?: (error: unknown) => unknown) =>
       Promise.resolve(value).then(resolve, reject)
   };
   result.sort.mockReturnValue(result);
+  result.select.mockReturnValue(result);
   result.session.mockReturnValue(result);
   return result;
 }

@@ -56,17 +56,33 @@ function setup() {
   const client = seed.users.find((user) => user.id === "user-client-aurora")!;
   client.email = "client@lisno.example";
   client.emailNormalized = "client@lisno.example";
+  seed.users.push({
+    ...seed.users[0]!,
+    id: "user-super-admin",
+    name: "Global Administrator",
+    email: "super-admin@lisno.example",
+    emailNormalized: "super-admin@lisno.example",
+    role: "super_admin",
+    managerId: null,
+    authorizedClientIds: []
+  });
   const generate = vi.fn(async () => ({
     bytes: pdfBytes,
     filename: "lisno-aurora-villa-estimate-v1.pdf"
   }));
+  const repository = createMemoryRepository(seed);
+  const projectGrantSpies = [
+    vi.spyOn(repository, "findActiveProjectAccessGrant"),
+    vi.spyOn(repository, "listProjectsForUserInModule"),
+    vi.spyOn(repository, "pageProjectsForUserInModule")
+  ] as const;
   const app = createApp({
-    repository: createMemoryRepository(seed),
+    repository,
     auth: { jwtSecret: SECRET, jwtExpiresInSeconds: 900 },
     estimatePdfService: { generate }
   });
 
-  return { app, generate };
+  return { app, generate, projectGrantSpies };
 }
 
 afterEach(() => {
@@ -74,6 +90,30 @@ afterEach(() => {
 });
 
 describe("estimate PDF download routes", () => {
+  it("allows Super Admin global owner and client-visible PDF reads without project grants", async () => {
+    const { app, generate, projectGrantSpies } = setup();
+    const readyEstimate = { ...estimate, status: "ready_for_client" };
+    const clientEstimate = { ...estimate, _id: "estimate-client-visible", status: "sent_to_client" };
+    const findEstimate = vi.spyOn(EstimateModel, "findOne")
+      .mockReturnValueOnce(lean(readyEstimate) as never)
+      .mockReturnValueOnce(lean(clientEstimate) as never);
+    vi.spyOn(LeadModel, "findById").mockReturnValue(lean(lead) as never);
+    const findClientLead = vi.spyOn(LeadModel, "findOne").mockReturnValue(lean(lead) as never);
+    const authorization = auth("user-super-admin", "super_admin");
+
+    await request(app).get("/api/v1/estimates/estimate-draft/pdf").set("Authorization", authorization).expect(200);
+    await request(app).get("/api/v1/client/estimates/estimate-client-visible/pdf").set("Authorization", authorization).expect(200);
+
+    expect(findEstimate).toHaveBeenNthCalledWith(1, { _id: "estimate-draft" });
+    expect(findEstimate).toHaveBeenNthCalledWith(2, {
+      _id: "estimate-client-visible",
+      status: { $in: ["sent_to_client", "client_changes_requested", "client_approved"] }
+    });
+    expect(findClientLead).toHaveBeenCalledWith({ _id: "lead-aurora" });
+    expect(generate).toHaveBeenCalledTimes(2);
+    for (const spy of projectGrantSpies) expect(spy).not.toHaveBeenCalled();
+  });
+
   it("row 76 exports the exact sales-owned PDF without writes", async () => {
     const { app, generate } = setup();
     const readyEstimate = { ...estimate, status: "ready_for_client" };

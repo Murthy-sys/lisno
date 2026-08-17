@@ -4,12 +4,14 @@ import { Readable } from "node:stream";
 import express, { type Express, type RequestHandler, type Router } from "express";
 import jwt from "jsonwebtoken";
 import request, { type Test } from "supertest";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createApp } from "../src/app.js";
 import type { Role } from "../src/contracts/domain.js";
 import { isHumanOperationHandler } from "../src/domain/route-operations.js";
 import { errorHandler } from "../src/middleware/errors.js";
+import { EstimateModel } from "../src/models/Estimate.js";
+import { LeadModel } from "../src/models/Lead.js";
 import { createMemoryRepository } from "../src/repositories/memory.js";
 import type {
   AppRepository,
@@ -190,7 +192,7 @@ afterEach(async () => {
 
 function authenticatedRequest(
   app: Express,
-  method: "GET" | "POST" | "PATCH",
+  method: "GET" | "POST" | "PUT" | "PATCH",
   path: string,
   actor: readonly [string, Role],
   body?: unknown
@@ -200,6 +202,8 @@ function authenticatedRequest(
     ? request(server).get(path)
     : method === "POST"
       ? request(server).post(path)
+      : method === "PUT"
+        ? request(server).put(path)
       : request(server).patch(path);
   pending.set("Authorization", bearer(actor));
   return body === undefined ? pending : pending.send(body);
@@ -1299,6 +1303,27 @@ describe("Lead operations", () => {
     const before = snapshotServiceEntries(calls);
     await routerAuthenticatedRequest(app, method, path, actors.superAdmin).send({}).expect(403);
     expect(serviceEntryDelta(calls, before)).toEqual({});
+  });
+});
+
+describe("Estimate operations", () => {
+  it.each([
+    ["PUT", "/api/v1/leads/lead-router-fixture/estimate"],
+    ["POST", "/api/v1/leads/lead-router-fixture/estimate/submit"],
+    ["POST", "/api/v1/estimates/estimate-router-fixture/designer-decision"],
+    ["POST", "/api/v1/estimates/estimate-router-fixture/send-client"],
+    ["POST", "/api/v1/client/estimates/estimate-router-fixture/decision"]
+  ] as const)("denies Super Admin personal %s %s before direct-Mongoose entry", async (method, path) => {
+    const { app } = setup();
+    const estimateFind = vi.spyOn(EstimateModel, "findOne");
+    const leadFind = vi.spyOn(LeadModel, "findById");
+
+    await authenticatedRequest(app, method, path, actors.superAdmin, {}).expect(403);
+
+    expect(estimateFind).not.toHaveBeenCalled();
+    expect(leadFind).not.toHaveBeenCalled();
+    estimateFind.mockRestore();
+    leadFind.mockRestore();
   });
 });
 

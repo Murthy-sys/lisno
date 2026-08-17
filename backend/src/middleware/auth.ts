@@ -1,7 +1,5 @@
 import type { RequestHandler } from "express";
 
-import type { Role } from "../contracts/domain.js";
-import { isRoleAuthorized } from "../domain/permissions.js";
 import {
   ExpiredTokenError,
   InvalidTokenError,
@@ -85,32 +83,4 @@ export function authenticate(authService: AuthService): RequestHandler {
     configurable: false
   });
   return handler;
-}
-
-export function authorizeRoles(...allowedRoles: Role[]): RequestHandler {
-  return (request, _response, next) => {
-    if (!request.authenticatedUser) {
-      next(
-        new ApiError(
-          401,
-          "AUTHENTICATION_REQUIRED",
-          "Authentication is required."
-        )
-      );
-      return;
-    }
-
-    if (!isRoleAuthorized(request.authenticatedUser.role, allowedRoles)) {
-      next(
-        new ApiError(
-          403,
-          "FORBIDDEN",
-          "You are not authorized to perform this action."
-        )
-      );
-      return;
-    }
-
-    next();
-  };
 }

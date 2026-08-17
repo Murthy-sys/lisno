@@ -5,8 +5,6 @@ import request from "supertest";
 import { describe, expect, it } from "vitest";
 
 import { createApp } from "../src/app.js";
-import { isRoleAuthorized } from "../src/domain/permissions.js";
-import { authenticate, authorizeRoles } from "../src/middleware/auth.js";
 import { createAuthRateLimit } from "../src/middleware/auth-rate-limit.js";
 import { errorHandler } from "../src/middleware/errors.js";
 import { createMemoryRepository } from "../src/repositories/memory.js";
@@ -560,75 +558,5 @@ describe("client signup API", () => {
     });
     now = new Date("2026-07-28T00:15:00.000Z");
     await request(app).post("/api/v1/auth/login").send({ email: "missing@example.com", password: "wrong" }).expect(401);
-  });
-});
-
-describe("role authorization", () => {
-  it("allows only explicitly listed roles", () => {
-    expect(isRoleAuthorized("design_head", ["design_head"])).toBe(true);
-    expect(isRoleAuthorized("design_manager", ["design_manager", "design_head"])).toBe(
-      true
-    );
-    expect(isRoleAuthorized("designer", ["design_manager", "design_head"])).toBe(false);
-    expect(isRoleAuthorized("client", [])).toBe(false);
-  });
-
-  it.each([
-    ["design_head", 200, { data: { authorized: true } }],
-    [
-      "client",
-      403,
-      {
-        error: {
-          code: "FORBIDDEN",
-          message: "You are not authorized to perform this action."
-        }
-      }
-    ]
-  ] as const)("enforces protected-route roles for %s", async (role, status, body) => {
-    const repository = createMemoryRepository(demoSeedData);
-    const authService = createAuthService(repository, {
-      jwtSecret: JWT_SECRET,
-      jwtExpiresInSeconds: 900
-    });
-    const app = express();
-    app.get(
-      "/head-only",
-      authenticate(authService),
-      authorizeRoles("design_head"),
-      (_request, response) => response.json({ data: { authorized: true } })
-    );
-    app.use(errorHandler);
-    const userId = role === "design_head" ? "user-head" : "user-client-aurora";
-    const token = jwt.sign({ id: userId, role }, JWT_SECRET, { expiresIn: 900 });
-
-    const response = await request(app)
-      .get("/head-only")
-      .set("Authorization", `Bearer ${token}`);
-
-    expect(response.status).toBe(status);
-    expect(response.body).toEqual(body);
-  });
-
-  it("returns the authentication envelope before evaluating a protected role", async () => {
-    const authService = createAuthService(createMemoryRepository(demoSeedData), {
-      jwtSecret: JWT_SECRET,
-      jwtExpiresInSeconds: 900
-    });
-    const app = express();
-    app.get(
-      "/head-only",
-      authenticate(authService),
-      authorizeRoles("design_head"),
-      (_request, response) => response.json({ data: { authorized: true } })
-    );
-    app.use(errorHandler);
-
-    const response = await request(app).get("/head-only");
-
-    expect(response.status).toBe(401);
-    expect(response.body).toEqual({
-      error: { code: "AUTHENTICATION_REQUIRED", message: "Authentication is required." }
-    });
   });
 });
