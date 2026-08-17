@@ -106,7 +106,10 @@ export function createDesignVersionService(
       }
       if (
         task.ownerId !== actor.id ||
-        !project.assignedDesignerIds.includes(actor.id)
+        (
+          project.initiatingDesignerId !== actor.id &&
+          !project.assignedDesignerIds.includes(actor.id)
+        )
       ) {
         forbidden();
       }

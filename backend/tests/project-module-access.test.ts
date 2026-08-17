@@ -1,10 +1,15 @@
 import { describe, expect, it } from "vitest";
 
 import { AuthorizationConfigurationError } from "../src/domain/authorization.js";
+import type { Role } from "../src/contracts/domain.js";
 import { runWithHumanOperation } from "../src/domain/operation-context.js";
 import { ApiError } from "../src/middleware/errors.js";
 import { createMemoryRepository } from "../src/repositories/memory.js";
-import type { UserRecord } from "../src/repositories/types.js";
+import type {
+  ProjectAccessGrantRecord,
+  SeedData,
+  UserRecord
+} from "../src/repositories/types.js";
 import { demoSeedData } from "../src/seed/data.js";
 import type { PublicUser } from "../src/services/auth.service.js";
 import {
@@ -21,7 +26,242 @@ function publicUser(user: UserRecord): PublicUser {
   };
 }
 
+const PROJECT_OPERATION = "GET /projects/:projectId" as const;
+const DESIGN_OPERATION = "GET /projects/:projectId/design-versions" as const;
+const TEST_NOW = "2026-08-17T08:00:00.000Z";
+
+function addUser(
+  seed: SeedData,
+  id: string,
+  role: Role,
+  active = true
+): UserRecord {
+  const record: UserRecord = {
+    ...structuredClone(seed.users[0]!),
+    id,
+    name: id,
+    email: `${id}@project-module.test`,
+    emailNormalized: `${id}@project-module.test`,
+    role,
+    active,
+    managerId: null,
+    authorizedClientIds: []
+  };
+  seed.users.push(record);
+  return record;
+}
+
+function grant(
+  id: string,
+  userId: string,
+  module: ProjectAccessGrantRecord["module"],
+  source: ProjectAccessGrantRecord["source"],
+  active = true
+): ProjectAccessGrantRecord {
+  return {
+    id,
+    projectId: "project-aurora-villa",
+    userId,
+    module,
+    source,
+    accessRequestId: source === "access_request" ? `request-${id}` : null,
+    grantedById: "user-head",
+    active,
+    grantedAt: TEST_NOW,
+    revokedAt: active ? null : TEST_NOW,
+    revokedById: active ? null : "user-head",
+    revocationReason: active ? null : "Revoked test grant",
+    version: active ? 1 : 2,
+    createdAt: TEST_NOW,
+    updatedAt: TEST_NOW
+  };
+}
+
+async function currentOperationAccess(
+  seed: SeedData,
+  userId: string,
+  operation: typeof PROJECT_OPERATION | typeof DESIGN_OPERATION,
+  projectId = "project-aurora-villa"
+): Promise<boolean> {
+  const repository = createMemoryRepository(structuredClone(seed));
+  const actor = await repository.findUserById(userId);
+  if (!actor) throw new Error(`Missing test actor ${userId}`);
+  return runWithHumanOperation(operation, () =>
+    canAccessProjectForCurrentOperation(
+      repository,
+      publicUser(actor),
+      projectId
+    )
+  );
+}
+
 describe("registry-bound project module access", () => {
+  it.each([
+    ["super_admin", true, true],
+    ["admin", false, false],
+    ["estimator_sales", false, false],
+    ["designer", false, false],
+    ["procurement", false, false],
+    ["finance_head", false, false],
+    ["site_manager", false, false],
+    ["worker_electrician", false, false],
+    ["worker_plumber", false, false],
+    ["worker_carpenter", false, false],
+    ["worker_painter", false, false],
+    ["worker_civil", false, false],
+    ["worker_other", false, false],
+    ["design_manager", false, false],
+    ["design_head", true, true],
+    ["client", false, false]
+  ] as const)(
+    "applies the literal unlinked %s baseline for Projects and Design",
+    async (role, projectsExpected, designExpected) => {
+      const seed = structuredClone(demoSeedData);
+      const actor = addUser(seed, `isolated-${role}`, role);
+
+      await expect(
+        currentOperationAccess(seed, actor.id, PROJECT_OPERATION)
+      ).resolves.toBe(projectsExpected);
+      await expect(
+        currentOperationAccess(seed, actor.id, DESIGN_OPERATION)
+      ).resolves.toBe(designExpected);
+    }
+  );
+
+  it("keeps Designer, Manager, and Client legacy relationships exact in both modules", async () => {
+    const seed = structuredClone(demoSeedData);
+    const designer = addUser(seed, "relationship-designer", "designer");
+    const manager = addUser(seed, "relationship-manager", "design_manager");
+    const client = addUser(seed, "relationship-client", "client");
+    const project = seed.projects.find(
+      (candidate) => candidate.id === "project-aurora-villa"
+    )!;
+    project.initiatingDesignerId = designer.id;
+    project.assignedDesignerIds = [];
+    project.managerId = manager.id;
+    project.clientId = client.id;
+
+    for (const [actor, projectsExpected, designExpected] of [
+      [designer, true, true],
+      [manager, true, true],
+      [client, true, true]
+    ] as const) {
+      await expect(
+        currentOperationAccess(seed, actor.id, PROJECT_OPERATION)
+      ).resolves.toBe(projectsExpected);
+      await expect(
+        currentOperationAccess(seed, actor.id, DESIGN_OPERATION)
+      ).resolves.toBe(designExpected);
+      await expect(
+        currentOperationAccess(
+          seed,
+          actor.id,
+          PROJECT_OPERATION,
+          "project-aurora-studio"
+        )
+      ).resolves.toBe(false);
+      await expect(
+        currentOperationAccess(
+          seed,
+          actor.id,
+          DESIGN_OPERATION,
+          "project-aurora-studio"
+        )
+      ).resolves.toBe(false);
+    }
+  });
+
+  it("accepts only exact policy-eligible Designer and Admin grants", async () => {
+    const seed = structuredClone(demoSeedData);
+    const designer = addUser(seed, "granted-designer", "designer");
+    const admin = addUser(seed, "granted-admin", "admin");
+    seed.projectAccessGrants.push(
+      grant(
+        "grant-designer-design",
+        designer.id,
+        "design",
+        "access_request"
+      ),
+      grant(
+        "grant-admin-projects",
+        admin.id,
+        "projects",
+        "admin_initiator"
+      )
+    );
+
+    await expect(
+      currentOperationAccess(seed, designer.id, DESIGN_OPERATION)
+    ).resolves.toBe(true);
+    await expect(
+      currentOperationAccess(seed, designer.id, PROJECT_OPERATION)
+    ).resolves.toBe(false);
+    await expect(
+      currentOperationAccess(seed, admin.id, PROJECT_OPERATION)
+    ).resolves.toBe(true);
+    await expect(
+      currentOperationAccess(seed, admin.id, DESIGN_OPERATION)
+    ).resolves.toBe(false);
+  });
+
+  it.each([
+    ["estimator_sales", "estimation"],
+    ["procurement", "procurement"],
+    ["finance_head", "finance"],
+    ["site_manager", "execution"],
+    ["worker_electrician", "execution"],
+    ["worker_plumber", "execution"],
+    ["worker_carpenter", "execution"],
+    ["worker_painter", "execution"],
+    ["worker_civil", "execution"],
+    ["worker_other", "execution"]
+  ] as const)(
+    "denies %s in Projects and Design despite a nonmatching %s grant",
+    async (role, module) => {
+      const seed = structuredClone(demoSeedData);
+      const actor = addUser(seed, `future-${role}`, role);
+      seed.projectAccessGrants.push(
+        grant(
+          `grant-future-${role}`,
+          actor.id,
+          module,
+          "access_request"
+        )
+      );
+
+      await expect(
+        currentOperationAccess(seed, actor.id, PROJECT_OPERATION)
+      ).resolves.toBe(false);
+      await expect(
+        currentOperationAccess(seed, actor.id, DESIGN_OPERATION)
+      ).resolves.toBe(false);
+    }
+  );
+
+  it.each([
+    ["direct assignment", "designer-direct", "designer", "design", "direct_assignment", true],
+    ["inactive grant", "designer-inactive-grant", "designer", "design", "access_request", false],
+    ["Designer module mismatch", "designer-module-mismatch", "designer", "projects", "access_request", true],
+    ["Admin access-request source", "admin-access-request", "admin", "projects", "access_request", true],
+    ["Admin module mismatch", "admin-module-mismatch", "admin", "design", "admin_initiator", true]
+  ] as const)(
+    "rejects %s instead of widening project scope",
+    async (_label, userId, role, module, source, active) => {
+      const seed = structuredClone(demoSeedData);
+      const actor = addUser(seed, userId, role);
+      seed.projectAccessGrants.push(
+        grant(`grant-${userId}`, actor.id, module, source, active)
+      );
+
+      await expect(
+        currentOperationAccess(seed, actor.id, PROJECT_OPERATION)
+      ).resolves.toBe(false);
+      await expect(
+        currentOperationAccess(seed, actor.id, DESIGN_OPERATION)
+      ).resolves.toBe(false);
+    }
+  );
+
   it("derives scope from the registered operation instead of a caller string", async () => {
     const seed = structuredClone(demoSeedData);
     const designer = seed.users.find((user) => user.id === "user-designer-kabir")!;

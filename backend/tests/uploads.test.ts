@@ -1266,6 +1266,41 @@ describe("design-version approval and client visibility", () => {
 });
 
 describe("Design Version operations", () => {
+  it("lets the task-owning initiating Designer upload when not assigned", async () => {
+    const seed = structuredClone(demoSeedData);
+    const project = seed.projects.find(
+      (candidate) => candidate.id === "project-aurora-villa"
+    )!;
+    project.assignedDesignerIds = project.assignedDesignerIds.filter(
+      (designerId) => designerId !== users.ananya[0]
+    );
+    const repository = createMemoryRepository(seed);
+    const storage = new TestStorage();
+    const { app } = setup({ repository, storage });
+    const before = await repository.listDesignVersions(project.id);
+
+    const response = await upload(
+      app,
+      users.ananya,
+      "task-furniture-layout",
+      PDF,
+      "initiator-plan.pdf",
+      "application/pdf"
+    );
+
+    expect(response.status).toBe(201);
+    expect(response.body.data).toMatchObject({
+      projectId: project.id,
+      taskId: "task-furniture-layout",
+      uploaderId: users.ananya[0],
+      originalFilename: "initiator-plan.pdf"
+    });
+    expect(await repository.listDesignVersions(project.id)).toHaveLength(
+      before.length + 1
+    );
+    expect(storage.objects.size).toBe(1);
+  });
+
   it("Super Admin reads latest approved versions without exposing drafts", async () => {
     const repository = createMemoryRepository(superAdminDesignSeed());
     const { app } = setup({ repository });
