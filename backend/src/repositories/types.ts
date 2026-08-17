@@ -682,7 +682,6 @@ export interface AppRepository {
   updateLead(id: string, change: LeadChange): Promise<LeadRecord>;
   appendLeadActivity(input: NewLeadActivity): Promise<LeadActivityRecord>;
   listLeadActivities(leadId: string): Promise<LeadActivityRecord[]>;
-  listProjectsForUser(user: UserRecord): Promise<ProjectRecord[]>;
   listProjectsForUserInModule(
     user: UserRecord,
     module: ProjectModule
@@ -691,10 +690,6 @@ export interface AppRepository {
     designerIds: string[],
     limit?: number
   ): Promise<ProjectRecord[]>;
-  pageProjectsForUser(
-    user: UserRecord,
-    pagination: PaginationInput
-  ): Promise<PageResult<ProjectRecord>>;
   pageProjectsForUserInModule(
     user: UserRecord,
     module: ProjectModule,

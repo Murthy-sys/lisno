@@ -175,14 +175,14 @@ describe("project workflows", () => {
       }
     });
 
-    for (const path of [
-      "/api/v1/projects/project-aurora-villa",
-      "/api/v1/projects/project-aurora-villa/design-versions"
-    ]) {
+    for (const [path, status] of [
+      ["/api/v1/projects/project-aurora-villa", 404],
+      ["/api/v1/projects/project-aurora-villa/design-versions", 403]
+    ] as const) {
       await request(app)
         .get(path)
         .set("Authorization", bearer(users.sales))
-        .expect(404);
+        .expect(status);
     }
   });
 
@@ -694,8 +694,9 @@ describe("project workflows", () => {
         .send(body);
 
       expect(response.status).toBe(500);
-      const projects = await base.listProjectsForUser(
-        (await base.findUserById("user-head"))!
+      const projects = await base.listProjectsForUserInModule(
+        (await base.findUserById("user-head"))!,
+        "projects"
       );
       const hierarchy = await base.getProjectHierarchy("project-aurora-villa");
       expect(JSON.stringify({ projects, hierarchy })).not.toContain(marker);
@@ -1356,14 +1357,6 @@ describe("organization and KPI workflows", () => {
     let eventBatchCalls = 0;
     const repository = new Proxy(base, {
       get(target, property, receiver) {
-        if (property === "listProjectsForUser") {
-          return async (user: { role: string }) => {
-            if (user.role === "design_head") {
-              throw new Error("head-wide project enumeration invoked");
-            }
-            return target.listProjectsForUser(user as never);
-          };
-        }
         if (property === "listEvaluationsForSubject") {
           return async () => {
             throw new Error("single-subject evaluation read invoked");

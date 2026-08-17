@@ -38,24 +38,6 @@ export async function requireUser(
   return user;
 }
 
-export async function requireAccessibleProject(
-  repository: AppRepository,
-  actor: PublicUser,
-  projectId: string
-): Promise<ProjectRecord> {
-  const user = await requireActor(repository, actor);
-  const project = await repository.findProjectById(projectId);
-  if (!project) {
-    throw new ApiError(404, "NOT_FOUND", "The requested resource was not found.");
-  }
-  const visibleProjects = await repository.listProjectsForUser(user);
-  if (!visibleProjects.some((candidate) => candidate.id === project.id)) {
-    // Entity isolation deliberately does not reveal that an inaccessible ID exists.
-    throw new ApiError(404, "NOT_FOUND", "The requested resource was not found.");
-  }
-  return project;
-}
-
 async function resolveProjectForCurrentOperation(
   repository: AppRepository,
   actor: PublicUser,

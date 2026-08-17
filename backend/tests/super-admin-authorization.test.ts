@@ -18,6 +18,7 @@ import type {
 } from "../src/repositories/types.js";
 import { createAuditRouter } from "../src/routes/audit.js";
 import { createDesignVersionsRouter } from "../src/routes/design-versions.js";
+import { createDesignSectionsRouter } from "../src/routes/design-sections.js";
 import { createEvaluationsRouter } from "../src/routes/evaluations.js";
 import { createKpisRouter } from "../src/routes/kpis.js";
 import { createOrganizationRouter } from "../src/routes/organization.js";
@@ -26,6 +27,7 @@ import { createTasksRouter } from "../src/routes/tasks.js";
 import { demoSeedData } from "../src/seed/data.js";
 import type { AuditService } from "../src/services/audit.service.js";
 import type { DesignVersionService } from "../src/services/design-version.service.js";
+import type { DesignSectionService } from "../src/services/design-section.service.js";
 import {
   authorizationSnapshotFor,
   InvalidTokenError,
@@ -303,6 +305,31 @@ function createDesignVersionServiceDouble(
   };
 }
 
+function createDesignSectionServiceDouble(
+  calls: ServiceEntryCounters
+): DesignSectionService {
+  return {
+    listDrafts: () => recordServiceEntry(calls, "designSection.listDrafts", {}),
+    add: () => recordServiceEntry(calls, "designSection.add", {}),
+    edit: () => recordServiceEntry(calls, "designSection.edit", {}),
+    remove: () => recordServiceEntry(calls, "designSection.remove", {}),
+    retry: () => recordServiceEntry(calls, "designSection.retry", {}),
+    submit: () => recordServiceEntry(calls, "designSection.submit", {}),
+    listReview: () => recordServiceEntry(calls, "designSection.listReview", {}),
+    decide: () => recordServiceEntry(calls, "designSection.decide", {}),
+    pageImage: () => recordServiceEntry(
+      calls,
+      "designSection.pageImage",
+      Readable.from(Buffer.from("page"))
+    ),
+    revisionImage: () => recordServiceEntry(
+      calls,
+      "designSection.revisionImage",
+      Readable.from(Buffer.from("revision"))
+    )
+  };
+}
+
 function publicActor([id, role]: readonly [string, Role]): PublicUser {
   return {
     id,
@@ -394,9 +421,27 @@ function createDesignVersionRouterServiceEntryHarness(
   return { app, calls };
 }
 
+function createDesignSectionRouterServiceEntryHarness(
+  withoutOperationAuthorization = false
+): { app: Express; calls: ServiceEntryCounters } {
+  const calls: ServiceEntryCounters = new Map();
+  const router = createDesignSectionsRouter(
+    deterministicRouterAuth,
+    createDesignSectionServiceDouble(calls)
+  );
+  const app = express();
+  app.use(express.json());
+  app.use(
+    "/api/v1",
+    withoutOperationAuthorization ? removeOperationAuthorization(router) : router
+  );
+  app.use(errorHandler);
+  return { app, calls };
+}
+
 function routerAuthenticatedRequest(
   app: Express,
-  method: "GET" | "POST" | "PATCH",
+  method: "GET" | "POST" | "PATCH" | "DELETE",
   path: string,
   actor: readonly [string, Role],
   body?: unknown
@@ -406,7 +451,9 @@ function routerAuthenticatedRequest(
     ? request(server).get(path)
     : method === "POST"
       ? request(server).post(path)
-      : request(server).patch(path);
+      : method === "PATCH"
+        ? request(server).patch(path)
+        : request(server).delete(path);
   pending.set("Authorization", `Bearer ${actor[0]}`);
   return body === undefined ? pending : pending.send(body);
 }
@@ -772,7 +819,7 @@ describe("Audit operations", () => {
 
 type RouterServiceEntryCase = {
   label: string;
-  method: "GET" | "POST" | "PATCH";
+  method: "GET" | "POST" | "PATCH" | "DELETE";
   path: string;
   serviceMethod: string;
   successStatus: 200 | 201;
@@ -992,6 +1039,93 @@ const designVersionRouterServiceEntryCases: readonly RouterServiceEntryCase[] = 
   }
 ];
 
+const designSectionRouterServiceEntryCases: readonly RouterServiceEntryCase[] = [
+  {
+    label: "draft section list",
+    method: "GET",
+    path: "/api/v1/design-versions/version-router-fixture/sections",
+    serviceMethod: "designSection.listDrafts",
+    successStatus: 200
+  },
+  {
+    label: "section create",
+    method: "POST",
+    path: "/api/v1/design-versions/version-router-fixture/sections",
+    body: {
+      sourcePageId: "page-router-fixture",
+      label: "Kitchen",
+      crop: { x: 0, y: 0, width: 100, height: 80 }
+    },
+    serviceMethod: "designSection.add",
+    successStatus: 201,
+    superAdminPersonal: true
+  },
+  {
+    label: "section update",
+    method: "PATCH",
+    path: "/api/v1/design-sections/section-router-fixture",
+    body: { version: 1, label: "Updated kitchen" },
+    serviceMethod: "designSection.edit",
+    successStatus: 200,
+    superAdminPersonal: true
+  },
+  {
+    label: "section delete",
+    method: "DELETE",
+    path: "/api/v1/design-sections/section-router-fixture",
+    body: { version: 1 },
+    serviceMethod: "designSection.remove",
+    successStatus: 200,
+    superAdminPersonal: true
+  },
+  {
+    label: "section extraction retry",
+    method: "POST",
+    path: "/api/v1/design-versions/version-router-fixture/retry-extraction",
+    serviceMethod: "designSection.retry",
+    successStatus: 200,
+    superAdminPersonal: true
+  },
+  {
+    label: "section submission",
+    method: "POST",
+    path: "/api/v1/design-versions/version-router-fixture/submit-sections",
+    serviceMethod: "designSection.submit",
+    successStatus: 200,
+    superAdminPersonal: true
+  },
+  {
+    label: "client section list",
+    method: "GET",
+    path: "/api/v1/client/projects/project-router-fixture/design-sections",
+    serviceMethod: "designSection.listReview",
+    successStatus: 200
+  },
+  {
+    label: "client section decision",
+    method: "POST",
+    path: "/api/v1/design-section-revisions/revision-router-fixture/decision",
+    body: { version: 1, decision: "approved", comment: "Looks good" },
+    serviceMethod: "designSection.decide",
+    successStatus: 200,
+    superAdminPersonal: true
+  },
+  {
+    label: "source page image",
+    method: "GET",
+    path: "/api/v1/design-source-pages/page-router-fixture/image",
+    serviceMethod: "designSection.pageImage",
+    successStatus: 200
+  },
+  {
+    label: "section revision image",
+    method: "GET",
+    path: "/api/v1/design-section-revisions/revision-router-fixture/image",
+    serviceMethod: "designSection.revisionImage",
+    successStatus: 200
+  }
+];
+
 const superAdminPersonalServiceEntryCases = taskSixRouterServiceEntryCases.filter(
   (entry) => entry.superAdminPersonal
 );
@@ -1142,4 +1276,86 @@ describe("Design Version operations service-entry boundary", () => {
       .expect(403);
     expect(serviceEntryDelta(calls, before)).toEqual({});
   });
+});
+
+describe("Design Section operations service-entry boundary", () => {
+  it.each(designSectionRouterServiceEntryCases.map((entry) => [entry.label, entry] as const))(
+    "proves valid future-role %s input reaches its service without operation authorization",
+    async (_label, entry) => {
+      const { app, calls } = createDesignSectionRouterServiceEntryHarness(true);
+      const before = snapshotServiceEntries(calls);
+
+      await routerAuthenticatedRequest(
+        app,
+        entry.method,
+        entry.path,
+        actors.procurement,
+        entry.body
+      ).expect(entry.successStatus);
+      expect(serviceEntryDelta(calls, before)).toEqual({
+        [entry.serviceMethod]: 1
+      });
+    }
+  );
+
+  it.each(designSectionRouterServiceEntryCases.map((entry) => [entry.label, entry] as const))(
+    "denies a future role before %s service entry",
+    async (_label, entry) => {
+      const { app, calls } = createDesignSectionRouterServiceEntryHarness();
+      const before = snapshotServiceEntries(calls);
+
+      await routerAuthenticatedRequest(
+        app,
+        entry.method,
+        entry.path,
+        actors.procurement,
+        entry.body
+      ).expect(403);
+      expect(serviceEntryDelta(calls, before)).toEqual({});
+    }
+  );
+
+  it.each(
+    designSectionRouterServiceEntryCases
+      .filter((entry) => entry.superAdminPersonal)
+      .map((entry) => [entry.label, entry] as const)
+  )(
+    "proves valid Super Admin personal %s input reaches its service without operation authorization",
+    async (_label, entry) => {
+      const { app, calls } = createDesignSectionRouterServiceEntryHarness(true);
+      const before = snapshotServiceEntries(calls);
+
+      await routerAuthenticatedRequest(
+        app,
+        entry.method,
+        entry.path,
+        actors.superAdmin,
+        entry.body
+      ).expect(entry.successStatus);
+      expect(serviceEntryDelta(calls, before)).toEqual({
+        [entry.serviceMethod]: 1
+      });
+    }
+  );
+
+  it.each(
+    designSectionRouterServiceEntryCases
+      .filter((entry) => entry.superAdminPersonal)
+      .map((entry) => [entry.label, entry] as const)
+  )(
+    "denies Super Admin personal %s before service entry",
+    async (_label, entry) => {
+      const { app, calls } = createDesignSectionRouterServiceEntryHarness();
+      const before = snapshotServiceEntries(calls);
+
+      await routerAuthenticatedRequest(
+        app,
+        entry.method,
+        entry.path,
+        actors.superAdmin,
+        entry.body
+      ).expect(403);
+      expect(serviceEntryDelta(calls, before)).toEqual({});
+    }
+  );
 });

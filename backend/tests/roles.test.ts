@@ -8,7 +8,6 @@ import {
   isRole,
   roleFamilyFor
 } from "../src/domain/roles.js";
-import { projectAccessScopeForUser } from "../src/domain/project-access.js";
 
 describe("canonical role catalog", () => {
   it("exposes the exact sixteen canonical role codes", () => {
@@ -70,18 +69,5 @@ describe("canonical role catalog", () => {
       "site_manager",
       ...WORKER_ROLES
     ]);
-  });
-
-  it.each([
-    "super_admin",
-    "admin",
-    "procurement",
-    "finance_head",
-    "site_manager",
-    ...WORKER_ROLES
-  ] as const)("keeps %s at no legacy project scope during catalog rollout", (role) => {
-    expect(projectAccessScopeForUser({ id: `user-${role}`, role })).toEqual({
-      kind: "none"
-    });
   });
 });

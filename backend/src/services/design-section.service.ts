@@ -9,13 +9,20 @@ import type {
   DesignSectionRecord,
   DesignSectionReviewProgress,
   DesignSectionRevisionRecord,
-  DesignSourcePageRecord
+  DesignSourcePageRecord,
+  DesignVersionRecord,
+  ProjectRecord,
+  TaskRecord
 } from "../repositories/types.js";
 import { RepositoryConflictError } from "../repositories/types.js";
 import type { FileStorage } from "../storage/storage.js";
 import type { AuditService } from "./audit.service.js";
 import type { PublicUser } from "./auth.service.js";
-import { requireAccessibleProject, requireActor, type Clock } from "./workflow.js";
+import {
+  requireActor,
+  requireProjectOperationAccess,
+  type Clock
+} from "./workflow.js";
 
 export interface DesignSectionService {
   listDrafts(actor: PublicUser, versionId: string): Promise<unknown>;
@@ -52,13 +59,28 @@ export interface SectionDecisionInput {
   comment?: string;
 }
 
+interface EditableDesignContext {
+  version: DesignVersionRecord;
+  task: TaskRecord;
+  project: ProjectRecord;
+}
+
+interface DesignReadContext {
+  version: DesignVersionRecord;
+  task: TaskRecord;
+  project: ProjectRecord;
+}
+
 export function createDesignSectionService(
   repository: AppRepository,
   audit: AuditService,
   storage: FileStorage,
   clock: Clock
 ): DesignSectionService {
-  async function requireOwner(actor: PublicUser, versionId: string) {
+  async function requireEditableOwner(
+    actor: PublicUser,
+    versionId: string
+  ): Promise<EditableDesignContext> {
     const user = await requireActor(repository, actor);
     const version = await repository.findDesignVersionById(versionId);
     if (!version || user.role !== "designer" || !version.taskId) notFound();
@@ -71,20 +93,54 @@ export function createDesignSectionService(
       !project ||
       task.ownerId !== actor.id ||
       version.uploaderId !== actor.id ||
-      !project.assignedDesignerIds.includes(actor.id)
+      (
+        project.initiatingDesignerId !== actor.id &&
+        !project.assignedDesignerIds.includes(actor.id)
+      )
     ) {
       notFound();
     }
-    return version;
+    return { version, task, project };
+  }
+
+  async function requireDraftReader(
+    actor: PublicUser,
+    versionId: string
+  ): Promise<DesignReadContext> {
+    const user = await requireActor(repository, actor);
+    const version = await repository.findDesignVersionById(versionId);
+    if (!version || !version.taskId) notFound();
+    const [task, project] = await Promise.all([
+      repository.findTaskById(version.taskId),
+      repository.findProjectById(version.projectId)
+    ]);
+    if (!task || !project) notFound();
+    if (user.role === "super_admin") {
+      await requireProjectOperationAccess(repository, actor, project.id);
+      return { version, task, project };
+    }
+    if (
+      user.role !== "designer" ||
+      task.ownerId !== actor.id ||
+      version.uploaderId !== actor.id ||
+      (
+        project.initiatingDesignerId !== actor.id &&
+        !project.assignedDesignerIds.includes(actor.id)
+      )
+    ) {
+      notFound();
+    }
+    return { version, task, project };
   }
 
   async function requireEditable(actor: PublicUser, versionId: string) {
-    const version = await requireOwner(actor, versionId);
+    const context = await requireEditableOwner(actor, versionId);
+    const { version } = context;
     const job = await repository.findExtractionJobByVersionId(version.id);
     if (!job || !["designer_review", "processing_failed", "changes_requested"].includes(job.status)) {
       throw new ApiError(409, "INVALID_EXTRACTION_STATE", "The extracted sections cannot be edited in their current state.");
     }
-    return { version, job };
+    return { ...context, job };
   }
 
   async function cropPage(page: DesignSourcePageRecord, crop: CropRect) {
@@ -110,7 +166,7 @@ export function createDesignSectionService(
 
   return {
     async listDrafts(actor, versionId) {
-      await requireOwner(actor, versionId);
+      await requireDraftReader(actor, versionId);
       const job = await repository.findExtractionJobByVersionId(versionId);
       if (!job || ["queued", "processing"].includes(job.status)) {
         throw new ApiError(409, "INVALID_EXTRACTION_STATE", "The extracted sections are not available yet.");
@@ -331,7 +387,7 @@ export function createDesignSectionService(
     },
 
     async listReview(actor, projectId) {
-      await requireAccessibleProject(repository, actor, projectId);
+      await requireProjectOperationAccess(repository, actor, projectId);
       const versions = await repository.listDesignVersions(projectId);
       const sections = [];
       const progress: DesignSectionReviewProgress = {
@@ -380,7 +436,11 @@ export function createDesignSectionService(
           if (!section || !section.active) notFound();
           const version = await transaction.findDesignVersionById(section.designVersionId);
           if (!version) notFound();
-          const project = await requireAccessibleProject(transaction, actor, version.projectId);
+          const project = await requireProjectOperationAccess(
+            transaction,
+            actor,
+            version.projectId
+          );
           if (actor.role !== "client") {
             throw new ApiError(403, "FORBIDDEN", "Only the assigned property client can review sections.");
           }
@@ -449,9 +509,9 @@ export function createDesignSectionService(
       ]);
       if (!version || !job) notFound();
       if (["submitted", "changes_requested", "approved"].includes(job.status)) {
-        await requireAccessibleProject(repository, actor, version.projectId);
+        await requireProjectOperationAccess(repository, actor, version.projectId);
       } else {
-        await requireOwner(actor, page.designVersionId);
+        await requireDraftReader(actor, page.designVersionId);
       }
       return storage.open(page.renderedFileReference);
     },
@@ -462,11 +522,11 @@ export function createDesignSectionService(
       const section = await repository.findDesignSectionById(revision.sectionId);
       if (!section) notFound();
       if (revision.reviewStatus === "draft") {
-        await requireOwner(actor, section.designVersionId);
+        await requireDraftReader(actor, section.designVersionId);
       } else {
         const version = await repository.findDesignVersionById(section.designVersionId);
         if (!version) notFound();
-        await requireAccessibleProject(repository, actor, version.projectId);
+        await requireProjectOperationAccess(repository, actor, version.projectId);
       }
       return storage.open(revision.croppedFileReference);
     }

@@ -753,7 +753,7 @@ describe("Mongo repository contracts", () => {
       (user) => user.id === "user-manager-aarav"
     )!;
 
-    await createMongoRepository().listProjectsForUser(manager);
+    await createMongoRepository().listProjectsForUserInModule(manager, "projects");
 
     expect(find).toHaveBeenCalledWith({ managerId: "user-manager-aarav" });
   });
@@ -773,9 +773,9 @@ describe("Mongo repository contracts", () => {
     )!;
     const repository = createMongoRepository();
 
-    await expect(repository.listProjectsForUser(sales)).resolves.toEqual([]);
+    await expect(repository.listProjectsForUserInModule(sales, "projects")).resolves.toEqual([]);
     await expect(
-      repository.pageProjectsForUser(sales, { limit: 20, offset: 0 })
+      repository.pageProjectsForUserInModule(sales, "projects", { limit: 20, offset: 0 })
     ).resolves.toEqual({ items: [], total: 0 });
 
     expect(find).not.toHaveBeenCalled();
@@ -789,7 +789,7 @@ describe("Mongo repository contracts", () => {
     const find = vi.spyOn(ProjectModel, "find").mockReturnValue({ sort } as never);
     const head = demoSeedData.users.find((user) => user.id === "user-head")!;
 
-    await createMongoRepository().listProjectsForUser(head);
+    await createMongoRepository().listProjectsForUserInModule(head, "projects");
 
     expect(find).toHaveBeenCalledWith({});
   });

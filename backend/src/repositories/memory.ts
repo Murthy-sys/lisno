@@ -7,9 +7,7 @@ import {
 } from "../domain/authorization.js";
 import {
   grantCanSupplyProjectModuleScope,
-  legacyRelationshipAllows,
-  projectAccessScopeForUser,
-  projectIsInAccessScope
+  legacyRelationshipAllows
 } from "../domain/project-access.js";
 import { demoSeedData } from "../seed/data.js";
 import {
@@ -525,14 +523,6 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
         .sort((left, right) => byDateThenId("occurredAt", right, left)));
     },
 
-    async listProjectsForUser(user) {
-      const scope = projectAccessScopeForUser(user);
-      const projects = state.projects
-        .filter((project) => projectIsInAccessScope(scope, project))
-        .sort(byNameThenId);
-      return clone(projects);
-    },
-
     async listProjectsForUserInModule(user, module) {
       if (!user.active) return [];
       if (user.role === "super_admin") {
@@ -568,11 +558,6 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
         )
         .sort(byNameThenId);
       return clone(limit === undefined ? projects : projects.slice(0, limit));
-    },
-
-    async pageProjectsForUser(user, pagination) {
-      const projects = await implementation.listProjectsForUser(user);
-      return paginate(projects, pagination);
     },
 
     async pageProjectsForUserInModule(user, module, pagination) {

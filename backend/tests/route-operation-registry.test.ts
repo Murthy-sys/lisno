@@ -62,6 +62,9 @@ const TASK_SIX_EXPECTED_ROUTE_GROUPS = [
 const DESIGN_VERSION_EXPECTED_ROUTES = EXPECTED_HUMAN_JWT_OPERATIONS
   .slice(23, 29)
   .map(({ key }) => key);
+const DESIGN_SECTION_EXPECTED_ROUTES = EXPECTED_HUMAN_JWT_OPERATIONS
+  .slice(29, 39)
+  .map(({ key }) => key);
 
 function mountedHumanRouters(): MountedRouter[] {
   const app = createApp({
@@ -165,6 +168,25 @@ describe("human JWT operation registry", () => {
     expect(matches).toHaveLength(1);
     expect(matches[0]!.routes.map(({ key }) => key).sort()).toEqual(
       [...DESIGN_VERSION_EXPECTED_ROUTES].sort()
+    );
+    for (const route of matches[0]!.routes) {
+      expect(route.authenticationIndices, `${route.key} authentication markers`).toHaveLength(1);
+      expect(route.operationMarkers, `${route.key} operation markers`).toHaveLength(1);
+      expect(route.operationMarkers[0]?.key, `${route.key} operation key`).toBe(route.key);
+      expect(route.operationMarkers[0]!.index, `${route.key} middleware order`).toBeGreaterThan(
+        route.authenticationIndices[0]!
+      );
+    }
+  });
+
+  it("classifies rows 30 through 39 with one ordered marker pair", () => {
+    const routers = mountedHumanRouters();
+    const matches = routers.filter((router) =>
+      router.routes.some(({ key }) => DESIGN_SECTION_EXPECTED_ROUTES.includes(key as never))
+    );
+    expect(matches).toHaveLength(1);
+    expect(matches[0]!.routes.map(({ key }) => key).sort()).toEqual(
+      [...DESIGN_SECTION_EXPECTED_ROUTES].sort()
     );
     for (const route of matches[0]!.routes) {
       expect(route.authenticationIndices, `${route.key} authentication markers`).toHaveLength(1);

@@ -594,21 +594,21 @@ describe("memory repository", () => {
     expect(manager).not.toBeNull();
     expect(head).not.toBeNull();
 
-    await expect(repository.listProjectsForUser(client!)).resolves.toMatchObject([
+    await expect(repository.listProjectsForUserInModule(client!, "projects")).resolves.toMatchObject([
       { id: "project-aurora-studio", clientId: "user-client-aurora" },
       { id: "project-aurora-villa", clientId: "user-client-aurora" }
     ]);
-    await expect(repository.listProjectsForUser(designer!)).resolves.toMatchObject([
+    await expect(repository.listProjectsForUserInModule(designer!, "projects")).resolves.toMatchObject([
       { id: "project-aurora-villa" },
       { id: "project-unclaimed-aurora-email" },
       { id: "project-celeste-office" }
     ]);
-    await expect(repository.listProjectsForUser(manager!)).resolves.toMatchObject([
+    await expect(repository.listProjectsForUserInModule(manager!, "projects")).resolves.toMatchObject([
       { id: "project-aurora-studio" },
       { id: "project-aurora-villa" },
       { id: "project-unclaimed-aurora-email" }
     ]);
-    await expect(repository.listProjectsForUser(head!)).resolves.toHaveLength(4);
+    await expect(repository.listProjectsForUserInModule(head!, "projects")).resolves.toHaveLength(4);
   });
 
   it("denies estimator sales projects even when legacy data names them as manager", async () => {
@@ -617,9 +617,9 @@ describe("memory repository", () => {
     seed.projects[0]!.managerId = sales.id;
     const repository = createMemoryRepository(seed);
 
-    await expect(repository.listProjectsForUser(sales)).resolves.toEqual([]);
+    await expect(repository.listProjectsForUserInModule(sales, "projects")).resolves.toEqual([]);
     await expect(
-      repository.pageProjectsForUser(sales, { limit: 20, offset: 0 })
+      repository.pageProjectsForUserInModule(sales, "projects", { limit: 20, offset: 0 })
     ).resolves.toEqual({ items: [], total: 0 });
   });
 
@@ -851,7 +851,7 @@ describe("memory repository", () => {
     const client = await repository.findUserById("user-client-aurora");
 
     await expect(
-      repository.pageProjectsForUser(client!, { limit: 1, offset: 1 })
+      repository.pageProjectsForUserInModule(client!, "projects", { limit: 1, offset: 1 })
     ).resolves.toMatchObject({
       items: [{ id: "project-aurora-villa" }],
       total: 2
@@ -916,7 +916,7 @@ describe("memory repository", () => {
     const repository = createMemoryRepository(seed);
     const manager = await repository.findUserById("user-manager-aarav");
 
-    const visibleProjectIds = (await repository.listProjectsForUser(manager!)).map(
+    const visibleProjectIds = (await repository.listProjectsForUserInModule(manager!, "projects")).map(
       (project) => project.id
     );
 

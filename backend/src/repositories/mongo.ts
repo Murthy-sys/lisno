@@ -2,9 +2,6 @@ import { randomUUID } from "node:crypto";
 import mongoose, { type ClientSession, type Model, type PipelineStage } from "mongoose";
 import { normalizeEmail } from "../domain/email.js";
 import {
-  projectAccessScopeForUser
-} from "../domain/project-access.js";
-import {
   REQUESTABLE_MODULES_BY_ROLE,
   type ProjectModule
 } from "../domain/authorization.js";
@@ -64,27 +61,6 @@ type PlainDocument = Record<string, any>;
 const MAX_DUPLICATE_KEY_TRANSACTION_ATTEMPTS = 2;
 
 export function createMongoRepository(session?: ClientSession): AppRepository {
-  const projectFilterForUser = (user: UserRecord): PlainDocument | null => {
-    const scope = projectAccessScopeForUser(user);
-    switch (scope.kind) {
-      case "all":
-        return {};
-      case "linked-client":
-        return { clientId: scope.clientId };
-      case "initiated-or-assigned-designer":
-        return {
-          $or: [
-            { initiatingDesignerId: scope.designerId },
-            { assignedDesignerIds: scope.designerId }
-          ]
-        };
-      case "accountable-manager":
-        return { managerId: scope.managerId };
-      case "none":
-        return null;
-    }
-  };
-
   const eligibleGrantSource = (
     user: UserRecord,
     module: ProjectModule
@@ -110,7 +86,23 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
     if (!user.active) return null;
     if (user.role === "super_admin") return {};
     if (module !== "projects" && module !== "design") return null;
-    return projectFilterForUser(user);
+    switch (user.role) {
+      case "design_head":
+        return {};
+      case "client":
+        return { clientId: user.id };
+      case "designer":
+        return {
+          $or: [
+            { initiatingDesignerId: user.id },
+            { assignedDesignerIds: user.id }
+          ]
+        };
+      case "design_manager":
+        return { managerId: user.id };
+      default:
+        return null;
+    }
   };
 
   const projectFilterForUserInModule = async (
@@ -628,16 +620,6 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
       return documents.map(mapLeadActivity);
     },
 
-    async listProjectsForUser(user) {
-      const filter = projectFilterForUser(user);
-      if (filter === null) return [];
-      const documents = await ProjectModel.find(filter)
-        .sort({ name: 1, _id: 1 })
-        .lean()
-        .exec();
-      return documents.map(mapProject);
-    },
-
     async listProjectsForUserInModule(user, module) {
       const filter = await projectFilterForUserInModule(user, module);
       if (filter === null) return [];
@@ -658,21 +640,6 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
       if (limit !== undefined) query.limit(limit);
       const documents = await query.lean().exec();
       return documents.map(mapProject);
-    },
-
-    async pageProjectsForUser(user, pagination) {
-      const filter = projectFilterForUser(user);
-      if (filter === null) return { items: [], total: 0 };
-      const [documents, total] = await Promise.all([
-        ProjectModel.find(filter)
-          .sort({ name: 1, _id: 1 })
-          .skip(pagination.offset)
-          .limit(pagination.limit)
-          .lean()
-          .exec(),
-        ProjectModel.countDocuments(filter).exec()
-      ]);
-      return { items: documents.map(mapProject), total };
     },
 
     async pageProjectsForUserInModule(user, module, pagination) {
