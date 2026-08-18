@@ -6,7 +6,7 @@ import request from "supertest";
 import sharp from "sharp";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
-import { createApp } from "../src/app.js";
+import { createApp as createApplication } from "../src/app.js";
 import {
   annotationDocumentSchema,
   type AnnotationDocumentV1
@@ -23,8 +23,15 @@ import { LeadModel } from "../src/models/Lead.js";
 import { UserModel } from "../src/models/User.js";
 import { createMemoryRepository } from "../src/repositories/memory.js";
 import { demoSeedData } from "../src/seed/data.js";
+import { developmentDemoAuthentication } from "./helpers/development-demo-authentication.js";
 import { createEstimateDesignService } from "../src/services/estimate-design.service.js";
 import { createAuditService } from "../src/services/audit.service.js";
+
+const createApp = (dependencies: Parameters<typeof createApplication>[0]) =>
+  createApplication({
+    ...dependencies,
+    developmentDemoAuthorization: developmentDemoAuthentication()
+  });
 
 const SECRET = "estimate-design-review-secret-at-least-32-characters";
 const NOW = new Date("2026-07-30T14:00:00.000Z");

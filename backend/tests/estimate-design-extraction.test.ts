@@ -6,7 +6,7 @@ import request from "supertest";
 import sharp from "sharp";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
-import { createApp } from "../src/app.js";
+import { createApp as createApplication } from "../src/app.js";
 import { AuditEventModel } from "../src/models/AuditEvent.js";
 import { EstimateDesignDrawingModel } from "../src/models/EstimateDesignDrawing.js";
 import { EstimateDesignExtractionJobModel } from "../src/models/EstimateDesignExtractionJob.js";
@@ -16,6 +16,13 @@ import { EstimateDesignUploadModel } from "../src/models/EstimateDesignUpload.js
 import { EstimateModel } from "../src/models/Estimate.js";
 import { createMemoryRepository } from "../src/repositories/memory.js";
 import { demoSeedData } from "../src/seed/data.js";
+import { developmentDemoAuthentication } from "./helpers/development-demo-authentication.js";
+
+const createApp = (dependencies: Parameters<typeof createApplication>[0]) =>
+  createApplication({
+    ...dependencies,
+    developmentDemoAuthorization: developmentDemoAuthentication()
+  });
 
 const SECRET = "estimate-extraction-test-secret-at-least-32-characters";
 const WORKER_TOKEN = "estimate-worker-token-with-at-least-32-characters";

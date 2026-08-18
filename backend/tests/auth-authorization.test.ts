@@ -20,7 +20,8 @@ function appFor(role: Role, active = true) {
     email: `${role}@authorization.lisno.example`,
     emailNormalized: `${role}@authorization.lisno.example`,
     role,
-    active
+    active,
+    accountKind: "standard" as const
   };
   seed.users = [user];
 

@@ -8,12 +8,19 @@ import { PDFDocument } from "pdf-lib";
 import request from "supertest";
 import { beforeAll, describe, expect, it } from "vitest";
 
-import { createApp } from "../src/app.js";
+import { createApp as createApplication } from "../src/app.js";
 import type { Role } from "../src/contracts/domain.js";
 import { isValidPdfDocument } from "../src/middleware/upload.js";
 import { createMemoryRepository } from "../src/repositories/memory.js";
 import type { AppRepository } from "../src/repositories/types.js";
 import { demoSeedData } from "../src/seed/data.js";
+import { developmentDemoAuthentication } from "./helpers/development-demo-authentication.js";
+
+const createApp = (dependencies: Parameters<typeof createApplication>[0]) =>
+  createApplication({
+    ...dependencies,
+    developmentDemoAuthorization: developmentDemoAuthentication()
+  });
 
 const JWT_SECRET = "upload-test-secret-with-at-least-32-characters";
 const auth = {

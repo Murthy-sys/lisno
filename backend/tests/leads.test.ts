@@ -3,7 +3,7 @@ import jwt from "jsonwebtoken";
 import mongoose from "mongoose";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { createApp } from "../src/app.js";
+import { createApp as createApplication } from "../src/app.js";
 import { EstimateDesignDrawingModel } from "../src/models/EstimateDesignDrawing.js";
 import { EstimateDesignRevisionModel } from "../src/models/EstimateDesignRevision.js";
 import { EstimateModel } from "../src/models/Estimate.js";
@@ -13,7 +13,14 @@ import { UserModel } from "../src/models/User.js";
 import { AuditEventModel } from "../src/models/AuditEvent.js";
 import { createMemoryRepository } from "../src/repositories/memory.js";
 import { demoSeedData } from "../src/seed/data.js";
+import { developmentDemoAuthentication } from "./helpers/development-demo-authentication.js";
 import { startMongoReplicaSet } from "./helpers/mongo-replica-set.js";
+
+const createApp = (dependencies: Parameters<typeof createApplication>[0]) =>
+  createApplication({
+    ...dependencies,
+    developmentDemoAuthorization: developmentDemoAuthentication()
+  });
 
 const LEAD_SECRET = "lead-test-secret-with-enough-entropy";
 const app = createApp({ repository: createMemoryRepository(demoSeedData), auth: { jwtSecret: LEAD_SECRET, jwtExpiresInSeconds: 900 } });

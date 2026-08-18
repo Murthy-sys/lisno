@@ -56,7 +56,9 @@ export function authenticate(authService: AuthService): RequestHandler {
     }
 
     try {
-      request.authenticatedUser = await authService.authenticate(match[1]!);
+      request.authenticatedUser = await authService.authenticate(match[1]!, {
+        remoteAddress: request.socket.remoteAddress
+      });
       next();
     } catch (error) {
       if (error instanceof ExpiredTokenError) {

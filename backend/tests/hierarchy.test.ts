@@ -3,10 +3,17 @@ import request from "supertest";
 import { describe, expect, it } from "vitest";
 
 import type { Role } from "../src/contracts/domain.js";
-import { createApp } from "../src/app.js";
+import { createApp as createApplication } from "../src/app.js";
 import { createMemoryRepository } from "../src/repositories/memory.js";
 import type { AppRepository, SeedData, UserRecord } from "../src/repositories/types.js";
 import { demoSeedData } from "../src/seed/data.js";
+import { developmentDemoAuthentication } from "./helpers/development-demo-authentication.js";
+
+const createApp = (dependencies: Parameters<typeof createApplication>[0]) =>
+  createApplication({
+    ...dependencies,
+    developmentDemoAuthorization: developmentDemoAuthentication()
+  });
 
 const JWT_SECRET = "hierarchy-test-secret-with-at-least-32-characters";
 const auth = { jwtSecret: JWT_SECRET, jwtExpiresInSeconds: 900 };

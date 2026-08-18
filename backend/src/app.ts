@@ -92,7 +92,8 @@ export function createApp(dependencies: AppDependencies) {
   const auditService = createAuditService(repository);
   const authService = createAuthService(repository, dependencies.auth, {
     auditService,
-    clock
+    clock,
+    developmentDemoAuthorization: dependencies.developmentDemoAuthorization
   });
   const authRateLimit = createAuthRateLimit({
     windowMs: dependencies.authRateLimit?.windowMs ?? 15 * 60_000,

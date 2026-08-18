@@ -68,6 +68,8 @@ const DEMO_URI = "mongodb://127.0.0.1:27017/lisno_demo?replicaSet=rs0";
 const STARTUP_NOW = new Date("2026-08-18T05:30:00.000Z");
 const ORIGINAL_CREATED_AT = new Date("2026-06-01T08:00:00.000Z");
 const ORIGINAL_UPDATED_AT = new Date("2026-07-15T08:00:00.000Z");
+const BUILT_IN_DEVELOPMENT_JWT_SECRET =
+  "local-development-jwt-secret-do-not-use-in-production";
 
 function authorization(): DevelopmentDemoAuthorization {
   return authorizeDevelopmentDemoStartup(
@@ -181,6 +183,28 @@ describe("development demo account preparation boundary", () => {
     await expect(
       compare(DEVELOPMENT_DEMO_PASSWORD, DEVELOPMENT_DEMO_PASSWORD_HASH)
     ).resolves.toBe(true);
+  });
+
+  it("hands the default built-in JWT secret and issued capability to the server", async () => {
+    let serverDependencies: ServerDependencies | undefined;
+
+    await startDevelopmentBackend({
+      environment: { MONGODB_URI: DEMO_URI },
+      loadServer: async () => ({
+        startServer: async (dependencies: ServerDependencies = {}) => {
+          serverDependencies = dependencies;
+          return { stop: async () => undefined };
+        }
+      })
+    });
+
+    expect(serverDependencies?.loadEnvironment?.().JWT_SECRET).toBe(
+      BUILT_IN_DEVELOPMENT_JWT_SECRET
+    );
+    expect(serverDependencies?.developmentDemoAuthorization).toMatchObject({
+      databaseName: "lisno_demo",
+      bindHost: "127.0.0.1"
+    });
   });
 
   it.each([

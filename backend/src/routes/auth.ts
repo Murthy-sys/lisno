@@ -54,7 +54,8 @@ export function createAuthRouter(
       try {
         response.status(200).json({ data: await authService.login(
           request.body.email,
-          request.body.password
+          request.body.password,
+          { remoteAddress: request.socket.remoteAddress }
         ) });
       } catch (error) {
         if (error instanceof InvalidCredentialsError) {
@@ -79,10 +80,24 @@ export function createAuthRouter(
     async (request, response, next) => {
       try {
         const { passwordConfirmation: _passwordConfirmation, ...input } = request.body;
-        response.status(201).json({ data: await authService.signupClient(input) });
+        response.status(201).json({
+          data: await authService.signupClient(input, {
+            remoteAddress: request.socket.remoteAddress
+          })
+        });
       } catch (error) {
         if (error instanceof AccountExistsError) {
           next(new ApiError(409, "ACCOUNT_EXISTS", "An account already exists for this email."));
+          return;
+        }
+        if (error instanceof InvalidCredentialsError) {
+          next(
+            new ApiError(
+              401,
+              "INVALID_CREDENTIALS",
+              "Invalid email or password."
+            )
+          );
           return;
         }
         next(error);

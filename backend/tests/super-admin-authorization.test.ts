@@ -7,7 +7,7 @@ import jwt from "jsonwebtoken";
 import request, { type Test } from "supertest";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { createApp } from "../src/app.js";
+import { createApp as createApplication } from "../src/app.js";
 import type { Role } from "../src/contracts/domain.js";
 import {
   isHumanOperationHandler,
@@ -34,7 +34,11 @@ import { createOrganizationRouter } from "../src/routes/organization.js";
 import { createProjectsRouter } from "../src/routes/projects.js";
 import { createTasksRouter } from "../src/routes/tasks.js";
 import { demoSeedData } from "../src/seed/data.js";
-import type { AuditService } from "../src/services/audit.service.js";
+import { developmentDemoAuthentication } from "./helpers/development-demo-authentication.js";
+import {
+  createAuditService,
+  type AuditService
+} from "../src/services/audit.service.js";
 import type { DesignVersionService } from "../src/services/design-version.service.js";
 import type { DesignSectionService } from "../src/services/design-section.service.js";
 import type { EstimateDesignService } from "../src/services/estimate-design.service.js";
@@ -59,6 +63,12 @@ import {
   splitExpectedHumanOperationKey,
   type ExpectedHumanJwtOperation
 } from "./fixtures/prompt-1-route-operations.js";
+
+const createApp = (dependencies: Parameters<typeof createApplication>[0]) =>
+  createApplication({
+    ...dependencies,
+    developmentDemoAuthorization: developmentDemoAuthentication()
+  });
 
 const JWT_SECRET = "super-admin-test-secret-with-at-least-32-characters";
 const auth = { jwtSecret: JWT_SECRET, jwtExpiresInSeconds: 900 };
@@ -160,7 +170,10 @@ function routerAuthorizationDependencies() {
   const repository = createMemoryRepository(taskSixSeed());
   const projectGrantSpies = projectGrantSpiesFor(repository);
   return {
-    authService: createAuthService(repository, auth),
+    authService: createAuthService(repository, auth, {
+      auditService: createAuditService(repository),
+      developmentDemoAuthorization: developmentDemoAuthentication()
+    }),
     projectGrantSpies
   };
 }
