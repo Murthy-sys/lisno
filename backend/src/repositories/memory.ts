@@ -111,6 +111,7 @@ export function createMemoryRepository(seed: SeedData = demoSeedData): AppReposi
   const normalizedSeed = clone(seed);
   normalizedSeed.users = normalizedSeed.users.map((user) => ({
     ...user,
+    accountKind: user.accountKind === "development_demo" ? "development_demo" : "standard",
     version: user.version ?? 1
   }));
   normalizedSeed.estimateResponsibilities ??= [];
@@ -465,6 +466,7 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
         passwordHash: input.passwordHash,
         role: input.role,
         active: input.active ?? true,
+        accountKind: input.accountKind ?? "standard",
         version: 1,
         managerId: input.managerId ?? null,
         authorizedClientIds: input.authorizedClientIds ?? [],

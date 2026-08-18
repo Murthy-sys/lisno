@@ -37,6 +37,7 @@ function addUser(
     emailNormalized: `${id}@access.lisno.example`,
     role,
     active: true,
+    accountKind: "standard",
     managerId: null,
     authorizedClientIds: [],
     ...overrides

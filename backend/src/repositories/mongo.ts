@@ -548,6 +548,7 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
           passwordHash: input.passwordHash,
           role: input.role,
           active: input.active ?? true,
+          accountKind: input.accountKind ?? "standard",
           version: 1,
           managerId: input.managerId ?? null,
           authorizedClientIds: input.authorizedClientIds ?? [],
@@ -2354,6 +2355,8 @@ function mapUser(document: PlainDocument): UserRecord {
     passwordHash: document.passwordHash,
     role: document.role,
     active: document.active,
+    accountKind:
+      document.accountKind === "development_demo" ? "development_demo" : "standard",
     version: document.version ?? 1,
     managerId: document.managerId ?? null,
     authorizedClientIds: [...(document.authorizedClientIds ?? [])],

@@ -701,6 +701,57 @@ describe("Mongo repository contracts", () => {
     expect(UserModel.schema.path("version").options.default).toBe(1);
   });
 
+  it("maps legacy Mongo users to standard and persists explicit account kinds", async () => {
+    const stored = {
+      _id: "user-legacy-account-kind",
+      name: "Legacy User",
+      email: "legacy-account-kind@example.com",
+      emailNormalized: "legacy-account-kind@example.com",
+      passwordHash: "hash",
+      role: "designer",
+      active: true,
+      managerId: null,
+      authorizedClientIds: [],
+      createdAt: new Date("2026-08-17T10:00:00.000Z"),
+      updatedAt: new Date("2026-08-17T10:00:00.000Z")
+    };
+    vi.spyOn(UserModel, "findById").mockReturnValueOnce({
+      select: () => ({ lean: () => ({ exec: vi.fn().mockResolvedValue(stored) }) })
+    } as never);
+
+    await expect(
+      createMongoRepository().findUserById(stored._id)
+    ).resolves.toMatchObject({ accountKind: "standard" });
+
+    const create = vi.spyOn(UserModel, "create").mockImplementation(async (input) => ({
+      toObject: () => input
+    }) as never);
+    await expect(
+      createMongoRepository().createUser({
+        name: "Standard User",
+        email: "standard-mongo@example.test",
+        passwordHash: "hash",
+        role: "designer"
+      })
+    ).resolves.toMatchObject({ accountKind: "standard" });
+    await expect(
+      createMongoRepository().createUser({
+        name: "Demo User",
+        email: "demo-mongo@example.test",
+        passwordHash: "hash",
+        role: "designer",
+        accountKind: "development_demo"
+      })
+    ).resolves.toMatchObject({ accountKind: "development_demo" });
+    expect(create).toHaveBeenCalledWith(
+      expect.objectContaining({ accountKind: "development_demo" })
+    );
+    expect(UserModel.schema.path("accountKind").options).toMatchObject({
+      enum: ["standard", "development_demo"],
+      default: "standard"
+    });
+  });
+
   it("uses legacy-aware version-one CAS then exact incrementing Mongo CAS", async () => {
     const session = {} as never;
     const document = (version: number, active: boolean) => ({

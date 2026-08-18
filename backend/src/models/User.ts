@@ -1,5 +1,6 @@
 import { model, models, Schema } from "./mongoose.js";
 import { ROLE_CODES } from "../domain/roles.js";
+import { ACCOUNT_KINDS } from "../domain/demo-identities.js";
 
 const userSchema = new Schema(
   {
@@ -16,6 +17,12 @@ const userSchema = new Schema(
       required: true
     },
     active: { type: Boolean, required: true, default: true },
+    accountKind: {
+      type: String,
+      enum: ACCOUNT_KINDS,
+      required: true,
+      default: "standard"
+    },
     version: { type: Number, required: true, default: 1, min: 1 },
     managerId: { type: String, ref: "User", default: null },
     authorizedClientIds: [{ type: String, ref: "User" }],

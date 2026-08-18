@@ -413,6 +413,13 @@ describe("deterministic demo seed", () => {
     expect(demoSeedData.projectAccessGrants).toEqual([]);
   });
 
+  it("marks every explicit seed user as a development demo account", () => {
+    expect(demoSeedData.users).toHaveLength(21);
+    expect(demoSeedData.users.every(({ accountKind }) => accountKind === "development_demo")).toBe(
+      true
+    );
+  });
+
   it("uses a configured hash compatible with the documented local password", async () => {
     expect(DEMO_SEED_PASSWORD).toBe("LisnoDemo2026!");
     await expect(

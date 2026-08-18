@@ -6,6 +6,33 @@ import { RepositoryConflictError } from "../src/repositories/types.js";
 import { demoSeedData } from "../src/seed/data.js";
 
 describe("memory repository", () => {
+  it("defaults legacy and new accounts to standard while retaining explicit demo markers", async () => {
+    const legacySeed = structuredClone(demoSeedData);
+    Reflect.deleteProperty(legacySeed.users[0]!, "accountKind");
+    const repository = createMemoryRepository(legacySeed);
+
+    await expect(repository.findUserById("user-head")).resolves.toMatchObject({
+      accountKind: "standard"
+    });
+    await expect(
+      repository.createUser({
+        name: "Standard User",
+        email: "standard@example.test",
+        passwordHash: "hash",
+        role: "designer"
+      })
+    ).resolves.toMatchObject({ accountKind: "standard" });
+    await expect(
+      repository.createUser({
+        name: "Demo User",
+        email: "demo@example.test",
+        passwordHash: "hash",
+        role: "designer",
+        accountKind: "development_demo"
+      })
+    ).resolves.toMatchObject({ accountKind: "development_demo" });
+  });
+
   it("pages only an owner's matching leads and orders activities newest first", async () => {
     const repository = createMemoryRepository(demoSeedData);
     const base = {

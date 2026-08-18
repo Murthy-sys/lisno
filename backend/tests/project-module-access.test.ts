@@ -44,6 +44,7 @@ function addUser(
     emailNormalized: `${id}@project-module.test`,
     role,
     active,
+    accountKind: "standard",
     managerId: null,
     authorizedClientIds: []
   };

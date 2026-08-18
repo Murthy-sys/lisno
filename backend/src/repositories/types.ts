@@ -1,4 +1,5 @@
 import type { Role, TaskStatus } from "../contracts/domain.js";
+import type { AccountKind } from "../domain/demo-identities.js";
 import type {
   ProjectModule,
   RequestableProjectModule
@@ -61,6 +62,7 @@ export interface UserRecord {
   passwordHash: string;
   role: Role;
   active: boolean;
+  accountKind: AccountKind;
   version: number;
   managerId: string | null;
   authorizedClientIds: string[];
@@ -636,6 +638,7 @@ export type NewUser = Pick<UserRecord, "name" | "email" | "passwordHash" | "role
       | "mobile"
       | "address"
       | "active"
+      | "accountKind"
       | "managerId"
       | "authorizedClientIds"
       | "avatar"

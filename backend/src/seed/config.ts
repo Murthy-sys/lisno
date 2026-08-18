@@ -1,32 +1,34 @@
 import { config as dotenvConfig } from "dotenv";
 
-import type { Role } from "../domain/roles.js";
+import {
+  DEVELOPMENT_DEMO_ACCOUNTS,
+  DEVELOPMENT_DEMO_PASSWORD,
+  DEVELOPMENT_DEMO_PASSWORD_HASH,
+  type DevelopmentDemoAccount
+} from "../development/demo-account-catalog.js";
 
-export const DEMO_SEED_PASSWORD = "LisnoDemo2026!";
-export const DEMO_SEED_PASSWORD_HASH =
-  "$2b$10$7EqJtq98hPqEX7fNZaFWoOhqP8D5iEyOH6v9mJEkjEBlrptHw28.O";
+export const DEMO_SEED_PASSWORD = DEVELOPMENT_DEMO_PASSWORD;
+export const DEMO_SEED_PASSWORD_HASH = DEVELOPMENT_DEMO_PASSWORD_HASH;
 
-export interface DemoRoleAccount {
-  id: string;
-  name: string;
-  email: string;
-  role: Role;
-  title: string;
-}
+export type DemoRoleAccount = DevelopmentDemoAccount;
 
-export const DEMO_ROLE_ACCOUNTS = Object.freeze([
-  { id: "user-super-admin", name: "Aditi Rao", email: "super-admin@lisno.example", role: "super_admin", title: "Super Admin" },
-  { id: "user-admin", name: "Arjun Patel", email: "admin@lisno.example", role: "admin", title: "Admin" },
-  { id: "user-procurement", name: "Nisha Verma", email: "procurement@lisno.example", role: "procurement", title: "Procurement" },
-  { id: "user-finance-head", name: "Rohan Gupta", email: "finance-head@lisno.example", role: "finance_head", title: "Finance Head" },
-  { id: "user-site-manager", name: "Imran Khan", email: "site-manager@lisno.example", role: "site_manager", title: "Site Manager" },
-  { id: "user-worker-electrician", name: "Aman Electrician", email: "worker-electrician@lisno.example", role: "worker_electrician", title: "Electrician" },
-  { id: "user-worker-plumber", name: "Bharat Plumber", email: "worker-plumber@lisno.example", role: "worker_plumber", title: "Plumber" },
-  { id: "user-worker-carpenter", name: "Charan Carpenter", email: "worker-carpenter@lisno.example", role: "worker_carpenter", title: "Carpenter" },
-  { id: "user-worker-painter", name: "Deepak Painter", email: "worker-painter@lisno.example", role: "worker_painter", title: "Painter" },
-  { id: "user-worker-civil", name: "Eshan Civil", email: "worker-civil@lisno.example", role: "worker_civil", title: "Civil Worker" },
-  { id: "user-worker-other", name: "Farah Worker", email: "worker-other@lisno.example", role: "worker_other", title: "Other Worker" }
-] as const satisfies readonly DemoRoleAccount[]);
+export const DEMO_ROLE_ACCOUNTS = Object.freeze(
+  DEVELOPMENT_DEMO_ACCOUNTS.filter(({ role }) =>
+    [
+      "super_admin",
+      "admin",
+      "procurement",
+      "finance_head",
+      "site_manager",
+      "worker_electrician",
+      "worker_plumber",
+      "worker_carpenter",
+      "worker_painter",
+      "worker_civil",
+      "worker_other"
+    ].includes(role)
+  )
+);
 
 export interface DemoSeedRuntime {
   NODE_ENV?: string;

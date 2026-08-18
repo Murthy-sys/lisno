@@ -90,6 +90,7 @@ function user(id: string, role: Role, overrides: Partial<UserRecord> = {}): User
     emailNormalized: `${id}@authorization.lisno.example`,
     role,
     active: true,
+    accountKind: "standard",
     managerId: null,
     authorizedClientIds: [],
     ...overrides

@@ -31,6 +31,7 @@ function manager(overrides: Partial<UserRecord>): UserRecord {
     mobile: null,
     role: "design_manager",
     active: true,
+    accountKind: "standard",
     managerId: null,
     ...overrides
   };

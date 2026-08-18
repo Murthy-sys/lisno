@@ -47,6 +47,7 @@ function addUser(
     emailNormalized: `${id}@admin.lisno.example`,
     role,
     active: true,
+    accountKind: "standard",
     version: 1,
     managerId: null,
     authorizedClientIds: [],
