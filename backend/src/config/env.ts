@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 const environmentSchema = z.object({
+  NODE_ENV: z.string().optional(),
   PORT: z.coerce.number().int().positive().default(3000),
   MONGODB_URI: z
     .string()

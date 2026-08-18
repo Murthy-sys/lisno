@@ -34,6 +34,8 @@ describe("combined backend and OCR development processes", () => {
     });
 
     expect(specs.map((spec) => spec.label)).toEqual(["backend", "ocr-worker"]);
+    expect(specs[0].env).toBe(specs[1].env);
+    expect(specs[0].env.NODE_ENV).toBe("development");
     expect(specs[0].env.OCR_WORKER_TOKEN).toBe(
       specs[1].env.OCR_WORKER_TOKEN
     );
@@ -73,6 +75,18 @@ describe("combined backend and OCR development processes", () => {
       spec.env.OCR_WORKER_TOKEN ===
       "explicit-worker-token-with-at-least-32-characters"
     )).toBe(true);
+  });
+
+  it("preserves one explicitly supplied runtime for both child processes", () => {
+    const specs = createDevelopmentProcessSpecs({
+      backendRoot: "/repo/backend",
+      environment: { NODE_ENV: "production" },
+      nodeExecutable: "/node",
+      platform: "linux"
+    });
+
+    expect(specs[0].env).toBe(specs[1].env);
+    expect(specs.every((spec) => spec.env.NODE_ENV === "production")).toBe(true);
   });
 
   it("reports the worker setup command before spawning when its Python is missing", async () => {

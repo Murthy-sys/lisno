@@ -50,12 +50,13 @@ export function createDevelopmentProcessSpecs({
     ".venv",
     platform === "win32" ? "Scripts/python.exe" : "bin/python"
   );
-  const credentials = withDevelopmentCredentials(environment);
-  const env = {
-    ...credentials,
+  const effectiveEnvironment: Record<string, string | undefined> =
+    withDevelopmentCredentials(environment);
+  const sharedEnvironment = {
+    ...effectiveEnvironment,
     OCR_API_BASE_URL:
-      credentials.OCR_API_BASE_URL ??
-      `http://127.0.0.1:${credentials.PORT ?? "3000"}/api/v1`
+      effectiveEnvironment.OCR_API_BASE_URL ??
+      `http://127.0.0.1:${effectiveEnvironment.PORT ?? "3000"}/api/v1`
   };
 
   return [
@@ -68,14 +69,14 @@ export function createDevelopmentProcessSpecs({
         "src/dev.ts"
       ],
       cwd: backendRoot,
-      env
+      env: sharedEnvironment
     },
     {
       label: "ocr-worker",
       command: workerPython,
       args: ["-m", "lisno_ocr.worker"],
       cwd: workerRoot,
-      env
+      env: sharedEnvironment
     }
   ];
 }
