@@ -6,13 +6,19 @@ import mongoose from "mongoose";
 
 import { createApp } from "./app.js";
 import { loadEnvironment } from "./config/env.js";
+import type { DevelopmentDemoAuthorization } from "./development/demo-account-authorization.js";
 import { createMongoRepository } from "./repositories/mongo.js";
 import type { AppRepository } from "./repositories/types.js";
 import { createLocalStorage } from "./storage/local-storage.js";
 
 type ServerApp = {
   listen(port: number, callback: (error?: Error) => void): Server;
+  listen(port: number, host: string, callback: (error?: Error) => void): Server;
 };
+
+export interface DatabasePreparationContext {
+  readonly mongodbUri: string;
+}
 
 export interface ServerDependencies {
   loadEnvironment?: typeof loadEnvironment;
@@ -20,6 +26,9 @@ export interface ServerDependencies {
   disconnect?: () => Promise<unknown>;
   repositoryFactory?: () => AppRepository;
   appFactory?: (dependencies: Parameters<typeof createApp>[0]) => ServerApp;
+  bindHost?: string;
+  prepareDatabase?: (context: DatabasePreparationContext) => Promise<void>;
+  developmentDemoAuthorization?: DevelopmentDemoAuthorization;
   writeOutput?: (message: string) => void;
   registerSignalHandlers?: boolean;
 }
@@ -37,10 +46,12 @@ export async function startServer(
   const repositoryFactory = dependencies.repositoryFactory ?? createMongoRepository;
   const appFactory = dependencies.appFactory ?? createApp;
 
-  await connect(env.MONGODB_URI);
-
+  let connected = false;
   let server: Server;
   try {
+    await connect(env.MONGODB_URI);
+    connected = true;
+    await dependencies.prepareDatabase?.({ mongodbUri: env.MONGODB_URI });
     const app = appFactory({
       repository: repositoryFactory(),
       auth: {
@@ -57,14 +68,15 @@ export async function startServer(
         maxDelayMs: env.OCR_RETRY_MAX_SECONDS * 1000
       },
       ocrConfidenceFloor: env.OCR_CONFIDENCE_FLOOR,
-      ocrWorkerToken: env.OCR_WORKER_TOKEN
+      ocrWorkerToken: env.OCR_WORKER_TOKEN,
+      developmentDemoAuthorization: dependencies.developmentDemoAuthorization
     });
-    server = await listen(app, env.PORT);
+    server = await listen(app, env.PORT, dependencies.bindHost);
     (dependencies.writeOutput ?? ((message) => process.stdout.write(message)))(
-      `Backend ready at http://localhost:${env.PORT}\n`
+      `Backend ready at http://${dependencies.bindHost ?? "localhost"}:${env.PORT}\n`
     );
   } catch (error) {
-    await disconnect();
+    if (connected) await disconnect();
     throw error;
   }
 
@@ -91,7 +103,7 @@ export async function startServer(
   return { stop };
 }
 
-function listen(app: ServerApp, port: number): Promise<Server> {
+function listen(app: ServerApp, port: number, host?: string): Promise<Server> {
   return new Promise((resolve, reject) => {
     let server: Server | undefined;
     const onListening = (error?: Error) => {
@@ -106,7 +118,10 @@ function listen(app: ServerApp, port: number): Promise<Server> {
       server.off("error", reject);
       resolve(server);
     };
-    server = app.listen(port, onListening);
+    server =
+      host === undefined
+        ? app.listen(port, onListening)
+        : app.listen(port, host, onListening);
     server.once("error", reject);
   });
 }

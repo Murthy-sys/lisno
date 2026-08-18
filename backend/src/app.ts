@@ -6,6 +6,7 @@ import {
   defaultExtractionRetryPolicy,
   type ExtractionRetryPolicy
 } from "./domain/extraction-lifecycle.js";
+import type { DevelopmentDemoAuthorization } from "./development/demo-account-authorization.js";
 import { createAuthRateLimit } from "./middleware/auth-rate-limit.js";
 import { createAccessRequestRateLimit } from "./middleware/access-request-rate-limit.js";
 import { allowCors } from "./middleware/cors.js";
@@ -75,6 +76,7 @@ export interface AppDependencies {
     maxEntries?: number;
   };
   estimatePdfService?: EstimatePdfService;
+  developmentDemoAuthorization?: DevelopmentDemoAuthorization;
 }
 
 export function createApp(dependencies: AppDependencies) {

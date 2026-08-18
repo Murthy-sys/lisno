@@ -11,6 +11,7 @@ import {
   DEVELOPMENT_DEMO_PASSWORD_HASH,
   type DevelopmentDemoAccount
 } from "../src/development/demo-account-catalog.js";
+import type { ServerDependencies } from "../src/server.js";
 
 const fakes = vi.hoisted(() => {
   const session = { id: "unit-session" };
@@ -61,6 +62,7 @@ vi.mock("../src/models/Project.js", () => ({
 }));
 
 import { ensureDevelopmentDemoAccounts } from "../src/development/demo-account-bootstrap.js";
+import { startDevelopmentBackend } from "../src/development/start.js";
 
 const DEMO_URI = "mongodb://127.0.0.1:27017/lisno_demo?replicaSet=rs0";
 const STARTUP_NOW = new Date("2026-08-18T05:30:00.000Z");
@@ -142,6 +144,39 @@ beforeEach(() => {
 });
 
 describe("development demo account preparation boundary", () => {
+  it("defers the first User access until post-connect preparation runs", async () => {
+    let serverDependencies: ServerDependencies | undefined;
+    const loadDemoAccounts = vi.fn(async () => ({
+      ensureDevelopmentDemoAccounts
+    }));
+
+    await startDevelopmentBackend({
+      environment: {
+        NODE_ENV: "development",
+        MONGODB_URI: DEMO_URI,
+        JWT_SECRET: "development-demo-secret-with-at-least-32-characters",
+        OCR_WORKER_TOKEN:
+          "development-demo-worker-token-with-at-least-32-characters"
+      },
+      loadServer: async () => ({
+        startServer: async (dependencies = {}) => {
+          serverDependencies = dependencies;
+          return { stop: async () => undefined };
+        }
+      }),
+      loadDemoAccounts
+    });
+
+    expect(loadDemoAccounts).not.toHaveBeenCalled();
+    expectNoUserIo();
+    expect(serverDependencies?.prepareDatabase).toBeTypeOf("function");
+
+    await serverDependencies?.prepareDatabase?.({ mongodbUri: DEMO_URI });
+
+    expect(loadDemoAccounts).toHaveBeenCalledOnce();
+    expect(fakes.userModel.find).toHaveBeenCalledOnce();
+  });
+
   it("proves the canonical password hash is bcrypt-compatible", async () => {
     await expect(
       compare(DEVELOPMENT_DEMO_PASSWORD, DEVELOPMENT_DEMO_PASSWORD_HASH)
