@@ -100,9 +100,39 @@ describe("development demo startup authorization", () => {
       "127.0.0.1"
     ],
     [
-      "URI fragment",
+      "non-empty URI fragment",
       { NODE_ENV: "development" },
       "mongodb://127.0.0.1:27017/lisno_demo#other",
+      "127.0.0.1"
+    ],
+    [
+      "empty URI fragment delimiter",
+      { NODE_ENV: "development" },
+      "mongodb://127.0.0.1:27017/lisno_demo#",
+      "127.0.0.1"
+    ],
+    [
+      "malformed query percent escape",
+      { NODE_ENV: "development" },
+      "mongodb://127.0.0.1:27017/lisno_demo?x=%",
+      "127.0.0.1"
+    ],
+    [
+      "truncated query percent escape",
+      { NODE_ENV: "development" },
+      "mongodb://127.0.0.1:27017/lisno_demo?x=%2",
+      "127.0.0.1"
+    ],
+    [
+      "malformed path percent escape",
+      { NODE_ENV: "development" },
+      "mongodb://127.0.0.1:27017/lisno_demo%",
+      "127.0.0.1"
+    ],
+    [
+      "malformed authority percent escape",
+      { NODE_ENV: "development" },
+      "mongodb://127.0.0.%:27017/lisno_demo",
       "127.0.0.1"
     ],
     [

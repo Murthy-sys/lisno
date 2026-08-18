@@ -96,6 +96,10 @@ export function isLoopbackRemoteAddress(
 }
 
 function validateMongoTarget(mongodbUri: string): void {
+  if (mongodbUri.includes("#") || /%(?![0-9a-fA-F]{2})/.test(mongodbUri)) {
+    denyAuthorization();
+  }
+
   const rawAuthority = /^mongodb:\/\/([^/?#]*)/.exec(mongodbUri)?.[1];
   if (
     !rawAuthority ||
