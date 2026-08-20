@@ -851,6 +851,44 @@ describe("human authentication request boundary", () => {
   });
 
   it.each([
+    ["missing", undefined, undefined],
+    ["malformed", "127.0.0.999", undefined],
+    ["remote despite a loopback X-Forwarded-For", "192.0.2.10", "127.0.0.1"]
+  ])(
+    "denies a signed reserved JWT for a %s direct socket address",
+    async (_name, remoteAddress, forwardedFor) => {
+      const seed = seedWithSingleUser({
+        id: "user-head",
+        email: "head@lisno.example",
+        emailNormalized: "head@lisno.example",
+        accountKind: "development_demo"
+      });
+      const user = seed.users[0]!;
+      const inner = createApp({
+        repository: createMemoryRepository(seed),
+        auth: { jwtSecret: JWT_SECRET, jwtExpiresInSeconds: 900 },
+        developmentDemoAuthorization: developmentDemoAuthentication()
+      });
+      inner.set("trust proxy", true);
+      const app = withRemoteAddress(inner, remoteAddress);
+      const token = jwt.sign({ id: user.id, role: user.role }, JWT_SECRET, {
+        expiresIn: 900
+      });
+      const reload = request(app)
+        .get("/api/v1/auth/me")
+        .set("Authorization", `Bearer ${token}`);
+      if (forwardedFor) reload.set("X-Forwarded-For", forwardedFor);
+
+      const response = await reload;
+
+      expect(response.status).toBe(401);
+      expect(response.body).toEqual({
+        error: { code: "INVALID_TOKEN", message: "Authentication token is invalid." }
+      });
+    }
+  );
+
+  it.each([
     ["without a capability", undefined],
     ["with a demo capability", developmentDemoAuthentication()]
   ])(

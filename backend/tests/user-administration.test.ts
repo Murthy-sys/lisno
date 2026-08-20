@@ -2,7 +2,7 @@ import jwt from "jsonwebtoken";
 import request from "supertest";
 import { describe, expect, it, vi } from "vitest";
 
-import { createApp as createApplication } from "../src/app.js";
+import { createApp } from "../src/app.js";
 import { OPERATIONAL_ROLES, ROLE_CODES, type Role } from "../src/domain/roles.js";
 import { createMemoryRepository } from "../src/repositories/memory.js";
 import type {
@@ -11,16 +11,9 @@ import type {
   UserRecord
 } from "../src/repositories/types.js";
 import { demoSeedData } from "../src/seed/data.js";
-import { developmentDemoAuthentication } from "./helpers/development-demo-authentication.js";
 import { createAuditService } from "../src/services/audit.service.js";
 import type { PublicUser } from "../src/services/auth.service.js";
 import { createUserAdministrationService } from "../src/services/user-administration.service.js";
-
-const createApp = (dependencies: Parameters<typeof createApplication>[0]) =>
-  createApplication({
-    ...dependencies,
-    developmentDemoAuthorization: developmentDemoAuthentication()
-  });
 
 const JWT_SECRET = "user-administration-test-secret-at-least-32-characters";
 const auth = { jwtSecret: JWT_SECRET, jwtExpiresInSeconds: 900 };
@@ -462,10 +455,29 @@ describe("user administration service", () => {
 });
 
 describe("user administration routes", () => {
+  it("does not implicitly authorize a canonical demo bearer identity", async () => {
+    const seed = emptyAdministrationSeed();
+    const demoAdmin = addUser(seed, "user-admin", "admin", {
+      email: "admin@lisno.example",
+      emailNormalized: "admin@lisno.example",
+      accountKind: "development_demo"
+    });
+    const app = createApp({ repository: createMemoryRepository(seed), auth, clock });
+
+    const response = await request(app)
+      .get("/api/v1/auth/me")
+      .set("Authorization", bearer(demoAdmin));
+
+    expect(response.status).toBe(401);
+    expect(response.body).toEqual({
+      error: { code: "INVALID_TOKEN", message: "Authentication token is invalid." }
+    });
+  });
+
   it("returns exact directory and mutation envelopes without credential fields", async () => {
     const seed = emptyAdministrationSeed();
     const superAdmin = addUser(seed, "user-super", "super_admin");
-    const admin = addUser(seed, "user-admin", "admin");
+    const admin = addUser(seed, "admin-operator", "admin");
     const designer = addUser(seed, "user-designer", "designer");
     addUser(seed, "user-client", "client");
     const repository = createMemoryRepository(seed);
@@ -520,7 +532,7 @@ describe("user administration routes", () => {
 
   it("rejects protected Admin filters and bodies that do not change exactly one field", async () => {
     const seed = emptyAdministrationSeed();
-    const admin = addUser(seed, "user-admin", "admin");
+    const admin = addUser(seed, "admin-operator", "admin");
     const designer = addUser(seed, "user-designer", "designer");
     const app = createApp({ repository: createMemoryRepository(seed), auth, clock });
 
@@ -545,14 +557,14 @@ describe("user administration routes", () => {
 
   it("returns one observable generic forbidden response for every protected Admin target", async () => {
     const seed = emptyAdministrationSeed();
-    const admin = addUser(seed, "user-admin", "admin");
+    const admin = addUser(seed, "admin-operator", "admin");
     const protectedUsers = [
       admin,
       addUser(seed, "user-admin-two", "admin"),
       addUser(seed, "user-super", "super_admin"),
       addUser(seed, "user-client", "client"),
       addUser(seed, "user-manager", "design_manager"),
-      addUser(seed, "user-head", "design_head")
+      addUser(seed, "design-head-target", "design_head")
     ];
     const designer = addUser(seed, "user-designer", "designer");
     const app = createApp({ repository: createMemoryRepository(seed), auth, clock });
