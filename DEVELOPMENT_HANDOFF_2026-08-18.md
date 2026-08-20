@@ -1,6 +1,6 @@
-# Lisno Development Handoff — 18 August 2026
+# Lisno Development Handoff — 18 August 2026 (updated 20 August 2026)
 
-This is the durable handoff for continuing work from another Codex account. It records the repository state, completed implementation, exact open review findings, remaining work, security decisions, test evidence, and resume procedure. Do not restart discovery or redesign unless new product requirements conflict with the approved specification.
+This is the durable handoff for continuing work from another Codex account. It records the repository state, completed implementation, remaining work, security decisions, test evidence, and resume procedure. Do not restart discovery or redesign unless new product requirements conflict with the approved specification.
 
 ## 1. Resume summary
 
@@ -14,11 +14,11 @@ Checkpoint:
 
 ```text
 Branch: feature/phase1_module1
-Implementation HEAD: aaa37ecdeef9efa4059d4e1dc767036182cc758b
-Subject: fix: confine demo authentication to local development
-Worktree before this report: clean
+Implementation HEAD: 67dc80c450fd3a910bcb77b9803cf2105c3e4a0e
+Subject: test: harden demo authentication boundaries
+Worktree before this report update: clean
 Remote: origin -> https://github.com/Murthy-sys/lisno.git
-Remote status at inspection: local branch was 64 commits ahead
+Remote status before committing this update: local branch was 66 commits ahead; the handoff update adds one more local commit
 ```
 
 The implementation commits are local and were not pushed during this handoff. A new Codex account should use this existing checkout. If a different machine/clone will be used, push or otherwise transfer the branch first.
@@ -26,11 +26,9 @@ The implementation commits are local and were not pushed during this handoff. A 
 Immediate resume point:
 
 1. Do **not** redo Prompt 1, the approved design, or Plans A/B.
-2. Resume Plan A Task 5 fix round 1 from `aaa37ec`.
-3. Fix the two test-scope findings in [Section 8](#8-plan-a-task-5-open-review-findings).
-4. Obtain a scoped re-review.
-5. Complete Plan A Task 6 and its full security/verification gate.
-6. Only then start Plan B Task 1 and execute its 12 tasks sequentially.
+2. Plan A Task 5 is complete and independently re-reviewed at `67dc80c`.
+3. Resume at Plan A Task 6: update the three documented setup files and run the full Plan A completion/security gate.
+4. Only after Plan A is independently approved and the worktree is clean, start Plan B Task 1 and execute its 12 tasks sequentially.
 
 Authoritative files:
 
@@ -53,7 +51,7 @@ The `.superpowers/sdd` artifacts are git-ignored scratch state. This tracked rep
 | Prompt 0 codebase audit | Complete |
 | Prompt 1 RBAC foundation | Complete and reported |
 | Prompt 2–10 | Not started |
-| Follow-up Plan A: automatic local demo accounts | Tasks 1–4 complete; Task 5 implemented but review fixes remain; Task 6 not started |
+| Follow-up Plan A: automatic local demo accounts | Tasks 1–5 complete and independently reviewed; Task 6 not started |
 | Follow-up Plan B: real staff invitations | Designed and planned; all 12 implementation tasks not started |
 
 ### Current follow-up task count
@@ -62,11 +60,12 @@ There are 18 implementation tasks across the two approved follow-up plans:
 
 - Plan A: 6 tasks.
 - Plan B: 12 tasks.
-- Fully completed and independently reviewed: 4.
-- Task 5: production implementation committed; two test-scope fixes remain.
+- Fully completed and independently reviewed: 5.
 - Not started: Plan A Task 6 and Plan B Tasks 1–12.
 
-In practical terms: 4 tasks are complete, 1 is nearly complete, and 13 are not started.
+In practical terms: 5 tasks are complete and 13 are not started.
+
+Estimated remaining focused engineering time is **15–23 hours**: Plan A Task 6 and final review about 1–2 hours; Plan B backend Tasks 1–7 about 8–12 hours; Plan B frontend Tasks 8–11 about 4–6 hours; Plan B Task 12 and final cross-stack gates about 2–3 hours. Real Mongo/SMTP race defects may extend this estimate because production fixes must return to their owning task and receive a new regression/review.
 
 ## 3. Approved requirements and boundaries
 
@@ -249,12 +248,13 @@ Evidence:
 - Typecheck passed.
 - Independent task review: clean, including import-graph verification.
 
-### Task 5 — request-time confinement implemented, review not complete
+### Task 5 — request-time confinement complete and reviewed
 
 Commit:
 
 ```text
 aaa37ec fix: confine demo authentication to local development
+67dc80c test: harden demo authentication boundaries
 ```
 
 Implemented production behavior:
@@ -275,9 +275,11 @@ Implemented production behavior:
 
 Evidence:
 
-- Focused auth/route-registry tests: 144/144.
+- Original focused auth/route-registry tests: 144/144.
+- Fix-round focused auth/admin/route-registry tests: 162/162.
 - Backend typecheck passed.
-- Full backend: 57 files / 1055 tests.
+- Latest full backend: 57 files / 1059 tests.
+- Scoped fix re-review: both Important findings `ADDRESSED`; no new Critical/Important breakage.
 - One earlier full run produced a transient 401; it passed isolated and in the immediate full rerun without a code change. This chronology is retained in the Task 5 report.
 
 ## 7. Local demo-account behavior and credentials
@@ -327,60 +329,16 @@ No manual seed command should be needed. `npm run seed` remains a separate, guar
 
 Current documentation warning: root `README.md` and `backend/README.md` still describe the old manual-seed workflow and omit Estimator/Sales from their tables. Updating those documents is unfinished Task 6. Until Task 6 lands, follow this report and Plan A rather than the README seed setup for ordinary local development.
 
-## 8. Plan A Task 5 open review findings
+## 8. Plan A Task 5 review closure
 
-The independent reviewer approved the production enforcement but found two Important test-scope gaps. Task 5 is not complete until both are fixed and re-reviewed.
+Fix commit `67dc80c` closed both prior Important test-scope findings:
 
-### Finding 1 — capability fixture is too broad in one test file
+- `backend/tests/user-administration.test.ts` no longer injects the demo capability through a file-wide wrapper. Standard/nonreserved apps run without it, while only fixtures that intentionally authenticate reserved identities receive it.
+- Bearer/JWT regressions now cover missing and malformed direct socket addresses and a remote socket with spoofed loopback `X-Forwarded-For`; all reject the signed reserved JWT as generic `401 INVALID_TOKEN`.
 
-`backend/tests/user-administration.test.ts` applies the demo capability through a file-level wrapper, including apps that use only standard, non-reserved Users.
+RED/GREEN evidence is preserved in `.superpowers/sdd/2026-08-18-local-demo-accounts/task-5-report.md`. The focused gate passed 162/162, backend typecheck passed, and the full backend suite passed 57/57 files and 1059/1059 tests. The scoped re-review verdict was: both findings `ADDRESSED`, no new Critical/Important breakage.
 
-Required fix:
-
-- Remove the blanket wrapper behavior.
-- Pass the capability only to individual app fixtures that authenticate canonical reserved demo identities.
-- Preserve at least one standard/non-reserved app path without a capability.
-- Add/adjust a regression that would fail if the capability is again injected globally.
-
-### Finding 2 — JWT peer-boundary matrix is incomplete
-
-Existing missing/malformed-address and spoofed-`X-Forwarded-For` cases cover login but not the bearer/JWT middleware path.
-
-Add JWT-path tests for:
-
-- missing `request.socket.remoteAddress`;
-- malformed socket address;
-- remote socket plus spoofed `X-Forwarded-For: 127.0.0.1`.
-
-Each must prove the signed demo/reserved JWT is rejected generically and that a forwarded header cannot override the direct socket.
-
-### Required Task 5 fix workflow
-
-Use the original Task 5 brief and strict RED/GREEN discipline:
-
-```text
-.superpowers/sdd/2026-08-18-local-demo-accounts/task-5-brief.md
-.superpowers/sdd/2026-08-18-local-demo-accounts/task-5-report.md
-```
-
-1. Add the focused failing regressions first.
-2. Run and record the expected RED.
-3. Make the minimum test-fixture/helper adjustment.
-4. Run:
-
-```bash
-cd backend
-npm test -- tests/auth.test.ts tests/auth-authorization.test.ts tests/development-demo-accounts.test.ts tests/user-administration.test.ts tests/route-operation-registry.test.ts --reporter=dot
-npm run typecheck
-npm test -- --reporter=dot
-```
-
-5. Commit the focused fix separately.
-6. Append Fix Round 1 evidence to the Task 5 report.
-7. Generate a diff package from `aaa37ec` to the fix HEAD and obtain scoped re-review.
-8. Mark Task 5 complete only when both findings are `ADDRESSED` with no new Critical/Important breakage.
-
-The reviewer also noted that default-startup coverage is compositional: Task 4 proves dependency handoff while Task 5 tests remote denial through a constructed app. This is not currently classified as a production finding; retain it as a review caveat for Plan A’s final security review.
+One review caveat remains for the final Plan A security review, not as an open defect: default-startup coverage is compositional—Task 4 proves dependency handoff and Task 5 proves denial through a constructed app.
 
 ## 9. Plan A Task 6 remaining work
 
@@ -602,7 +560,7 @@ Tasks must remain sequential because they share model/repository/service/API con
 
 | Scenario | Status at handoff |
 |---|---|
-| Local development with exact `lisno_demo` replica set | Automatic demo bootstrap implemented; Task 5 test hardening and final Task 6 verification still required |
+| Local development with exact `lisno_demo` replica set | Automatic demo bootstrap and request-time confinement implemented/reviewed; Task 6 documentation and final verification remain |
 | Manual local seed | Still available but destructive and not the normal intended workflow |
 | Remote demo-account login | Production enforcement implemented; final Plan A completion review still required |
 | Remote login for an existing real standard User with a real secret | Preserved |
@@ -671,9 +629,10 @@ npm run dev:backend
 Latest recorded Task 5 evidence:
 
 ```text
-Focused auth + route registry: 144/144 passed
-Backend full suite: 57/57 files, 1055/1055 tests passed
+Focused auth + admin + route registry: 162/162 passed
+Backend full suite: 57/57 files, 1059/1059 tests passed
 Backend typecheck: passed
+Scoped re-review: both findings addressed; no new Critical/Important breakage
 ```
 
 Known non-blocking warnings observed in earlier full gates:
@@ -694,6 +653,8 @@ e8582ab feat: authorize local demo startup
 414c081 feat: prepare demo accounts non-destructively
 345218d feat: bootstrap demo accounts before local listen
 aaa37ec fix: confine demo authentication to local development
+4ddd2a8 docs: add cross-account development handoff
+67dc80c test: harden demo authentication boundaries
 ```
 
 ## 15. Instructions for the next Codex account
@@ -709,20 +670,21 @@ git rev-parse HEAD
 git status --short
 ```
 
-Expected implementation checkpoint before the handoff-document commit:
+Expected checkout after this handoff update is committed:
 
 ```text
-feature/phase1_module1
-aaa37ecdeef9efa4059d4e1dc767036182cc758b
-clean status
+branch: feature/phase1_module1
+HEAD subject: docs: refresh cross-account development handoff
+HEAD parent: 67dc80c450fd3a910bcb77b9803cf2105c3e4a0e
+status: clean
 ```
 
 Read, in order:
 
 1. this handoff report;
 2. the approved design spec;
-3. Plan A Task 5 and Task 6;
-4. Plan A ledger and Task 5 report if the local `.superpowers` directory is present;
+3. Plan A Task 6;
+4. Plan A ledger, Task 5 report, and generated Task 6 brief if the local `.superpowers` directory is present;
 5. Plan B only after Plan A passes its completion gate.
 
 Do not:
