@@ -923,10 +923,15 @@ describe("protected role routing", () => {
     await screen.findByRole("heading", { name: "Good morning, Ananya." });
 
     const trigger = screen.getByRole("button", { name: "Open navigation" });
+    expect(trigger).toHaveAttribute("aria-controls", "mobile-navigation");
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
     await userEvent.click(trigger);
 
     const drawer = screen.getByRole("dialog", { name: "Navigation" });
     expect(drawer).toBeVisible();
+    expect(drawer).toHaveAttribute("id", "mobile-navigation");
+    expect(drawer).toHaveAttribute("aria-modal", "true");
+    expect(trigger).toHaveAttribute("aria-expanded", "true");
     await waitFor(() =>
       expect(within(drawer).getByRole("link", { name: "Workspace" })).toHaveFocus()
     );
@@ -947,6 +952,7 @@ describe("protected role routing", () => {
 
     fireEvent.keyDown(document, { key: "Escape" });
     expect(screen.queryByRole("dialog", { name: "Navigation" })).not.toBeInTheDocument();
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
     expect(trigger).toHaveFocus();
   });
 });

@@ -1,7 +1,11 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import axe from "axe-core";
-import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { HttpResponse, http } from "msw";
+import { StrictMode } from "react";
+import { BrowserRouter, Route, Routes } from "react-router-dom";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { tokenStorage } from "../api/client";
 import {
@@ -10,9 +14,18 @@ import {
   type PermissionCode,
   type Role
 } from "../api/authorization-contract";
+import type {
+  UserInvitationItem,
+  UserInvitationPage
+} from "../api/types";
+import { AuthProvider } from "../auth/AuthProvider";
+import { InvitationAcceptancePage } from "../auth/InvitationAcceptancePage";
+import { FeedbackProvider } from "../components/feedback/FeedbackProvider";
 import { authorizationFor } from "./authFixtures";
 import { renderApp } from "./render";
 import { renderWithQuery } from "./render";
+import { server } from "./server";
+import { UserInvitationsPanel } from "../features/admin/UserInvitationsPanel";
 import { DesignUploadsWorkspace } from "../features/designer/DesignUploadsWorkspace";
 import { DesignSectionReview } from "../features/client/DesignSectionReview";
 
@@ -82,6 +95,99 @@ const accessibleProject = {
     }]
   }]
 };
+
+const invitationToken = "abcdefghijklmnopqrstuvwxyzABCDEFGH123456789";
+const invitationExpiry = "2026-08-25T10:00:00.000Z";
+
+const accessibleInvitation: UserInvitationItem = {
+  id: "invitation-accessible",
+  name: "Accessible Invitee",
+  email: "invitee@lisno.example",
+  role: "designer",
+  mobile: "+91 98765 43210",
+  status: "pending",
+  currentLinkAvailable: true,
+  availableActions: ["resend", "revoke"],
+  invitedBy: {
+    id: "super-admin-accessible",
+    name: "Accessible Super Admin",
+    email: "super-admin@lisno.example",
+    role: "super_admin"
+  },
+  issuedAt: "2026-08-23T10:00:00.000Z",
+  expiresAt: invitationExpiry,
+  deliveryStatus: "sent",
+  deliveryAttemptedAt: "2026-08-23T10:00:01.000Z",
+  sentAt: "2026-08-23T10:00:01.000Z",
+  version: 2,
+  createdAt: "2026-08-23T10:00:00.000Z",
+  updatedAt: "2026-08-23T10:00:01.000Z"
+};
+
+function invitationPage(): UserInvitationPage {
+  return {
+    items: [
+      accessibleInvitation,
+      {
+        ...accessibleInvitation,
+        id: "invitation-delivery-failed",
+        name: "Delivery Failed Invitee",
+        email: "failed@lisno.example",
+        status: "delivery_failed",
+        deliveryStatus: "failed",
+        sentAt: null,
+        availableActions: []
+      }
+    ],
+    pagination: { limit: 20, offset: 0, total: 2, hasMore: false },
+    invitableRoles: ["site_manager", "finance_head", "designer"]
+  };
+}
+
+function deferredResponse() {
+  let resolve!: (response: Response) => void;
+  const promise = new Promise<Response>((complete) => {
+    resolve = complete;
+  });
+  return { promise, resolve };
+}
+
+function renderInvitationAcceptance(hash = `#token=${invitationToken}`) {
+  window.history.replaceState(
+    { marker: "accessibility-invitation" },
+    "",
+    `/accept-invitation${hash}`
+  );
+  const queryClient = new QueryClient({
+    defaultOptions: {
+      queries: { retry: false },
+      mutations: { retry: false }
+    }
+  });
+
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <FeedbackProvider>
+        <AuthProvider>
+          <StrictMode>
+            <BrowserRouter>
+              <Routes>
+                <Route
+                  path="/accept-invitation"
+                  element={<InvitationAcceptancePage />}
+                />
+              </Routes>
+            </BrowserRouter>
+          </StrictMode>
+        </AuthProvider>
+      </FeedbackProvider>
+    </QueryClientProvider>
+  );
+}
+
+afterEach(() => {
+  window.history.replaceState(null, "", "/");
+});
 
 function fixtureFetch(
   user: ReturnType<typeof userFor>,
@@ -520,6 +626,195 @@ describe("accessibility smoke coverage", () => {
     await user.click(trigger);
     const dialog = screen.getByRole("dialog", { name: "Manage Accessible Designer" });
     await waitFor(() => expect(within(dialog).getByRole("combobox", { name: "Role" })).toHaveFocus());
+    await expectNoAxeViolations();
+  });
+
+  it("keeps the Super Admin invitation panel and create, resend, and revoke dialogs accessible", async () => {
+    const revokeGate = deferredResponse();
+    server.use(
+      http.get("/api/v1/admin/user-invitations", () =>
+        HttpResponse.json({ data: invitationPage() })
+      ),
+      http.post(
+        "/api/v1/admin/user-invitations/invitation-accessible/revoke",
+        () => revokeGate.promise
+      )
+    );
+    const user = userEvent.setup();
+    renderWithQuery(
+      <UserInvitationsPanel
+        actorRole="super_admin"
+        permissions={[
+          "identity.user_invitations.read",
+          "identity.user_invitations.create",
+          "identity.user_invitations.resend",
+          "identity.user_invitations.revoke"
+        ]}
+      />
+    );
+
+    const panelHeading = await screen.findByRole("heading", {
+      name: "Pending invitations"
+    });
+    const pendingRow = await screen.findByRole("row", { name: /Accessible Invitee/ });
+    expect(within(pendingRow).getByText("Pending")).toBeVisible();
+    expect(within(pendingRow).getByText("Email sent")).toBeVisible();
+    const failedRow = screen.getByRole("row", { name: /Delivery Failed Invitee/ });
+    expect(within(failedRow).getByText("Delivery Failed")).toBeVisible();
+    expect(within(failedRow).getByText("Email delivery failed")).toBeVisible();
+    await expectNoAxeViolations();
+
+    const inviteTrigger = screen.getByRole("button", { name: "Invite user" });
+    await user.click(inviteTrigger);
+    let dialog = screen.getByRole("dialog", { name: "Invite user" });
+    await waitFor(() =>
+      expect(within(dialog).getByRole("textbox", { name: "Name" })).toHaveFocus()
+    );
+    await expectNoAxeViolations();
+    const createClose = within(dialog).getByRole("button", {
+      name: "Close Invite user"
+    });
+    createClose.focus();
+    fireEvent.keyDown(document, { key: "Tab", shiftKey: true });
+    expect(within(dialog).getByRole("button", { name: "Send invitation" })).toHaveFocus();
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog", { name: "Invite user" })).not.toBeInTheDocument();
+    expect(inviteTrigger).toHaveFocus();
+
+    await user.click(inviteTrigger);
+    dialog = screen.getByRole("dialog", { name: "Invite user" });
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    expect(inviteTrigger).toHaveFocus();
+
+    const resendTrigger = screen.getByRole("button", {
+      name: "Resend Accessible Invitee"
+    });
+    await user.click(resendTrigger);
+    dialog = screen.getByRole("dialog", {
+      name: "Resend invitation for Accessible Invitee"
+    });
+    await waitFor(() =>
+      expect(within(dialog).getByRole("button", { name: "Confirm resend" })).toHaveFocus()
+    );
+    await expectNoAxeViolations();
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    expect(resendTrigger).toHaveFocus();
+
+    await user.click(
+      screen.getByRole("button", { name: "Revoke Accessible Invitee" })
+    );
+    dialog = screen.getByRole("dialog", {
+      name: "Revoke invitation for Accessible Invitee"
+    });
+    await waitFor(() =>
+      expect(within(dialog).getByRole("button", { name: "Confirm revoke" })).toHaveFocus()
+    );
+    await expectNoAxeViolations();
+    await user.click(within(dialog).getByRole("button", { name: "Confirm revoke" }));
+    await waitFor(() =>
+      expect(within(dialog).getByText("Revoking invitation. Please wait.")).toBeVisible()
+    );
+    expect(
+      within(dialog).getByRole("button", {
+        name: "Close Revoke invitation for Accessible Invitee"
+      })
+    ).toBeDisabled();
+    expect(within(dialog).getByRole("button", { name: "Cancel" })).toBeDisabled();
+    await user.keyboard("{Escape}");
+    expect(dialog).toBeVisible();
+    await expectNoAxeViolations();
+
+    revokeGate.resolve(
+      HttpResponse.json({
+        data: {
+          ...accessibleInvitation,
+          status: "revoked",
+          currentLinkAvailable: false,
+          availableActions: [],
+          version: 3
+        }
+      })
+    );
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    await waitFor(() => expect(panelHeading).toHaveFocus());
+  });
+
+  it("keeps invitation acceptance loading, valid, pending, and success states accessible", async () => {
+    const inspectGate = deferredResponse();
+    const acceptGate = deferredResponse();
+    server.use(
+      http.post("/api/v1/auth/user-invitations/inspect", () => inspectGate.promise),
+      http.post("/api/v1/auth/user-invitations/accept", () => acceptGate.promise)
+    );
+    const user = userEvent.setup();
+    renderInvitationAcceptance();
+
+    expect(
+      await screen.findByRole("heading", { name: "Checking your invitation" })
+    ).toBeVisible();
+    await expectNoAxeViolations();
+
+    inspectGate.resolve(
+      HttpResponse.json({
+        data: {
+          name: "Accessible Invitee",
+          email: "invitee@lisno.example",
+          role: "designer",
+          expiresAt: invitationExpiry
+        }
+      })
+    );
+    expect(
+      await screen.findByRole("heading", { name: "Accept your invitation" })
+    ).toBeVisible();
+    await expectNoAxeViolations();
+
+    const password = screen.getByLabelText("Password");
+    const confirmation = screen.getByLabelText("Confirm password");
+    const showPassword = screen.getByRole("button", { name: "Show password" });
+    showPassword.focus();
+    await user.keyboard("{Enter}");
+    expect(password).toHaveAttribute("type", "text");
+    expect(showPassword).toHaveAttribute("aria-pressed", "true");
+    const showConfirmation = screen.getByRole("button", {
+      name: "Show confirmation password"
+    });
+    showConfirmation.focus();
+    await user.keyboard(" ");
+    expect(confirmation).toHaveAttribute("type", "text");
+    expect(showConfirmation).toHaveAttribute("aria-pressed", "true");
+
+    await user.type(password, "StrongPassword123!");
+    await user.type(confirmation, "StrongPassword123!");
+    await user.click(screen.getByRole("button", { name: "Accept invitation" }));
+    const pendingSubmit = await screen.findByRole("button", {
+      name: "Accepting invitation…"
+    });
+    expect(pendingSubmit).toBeDisabled();
+    expect(pendingSubmit).toHaveAttribute("aria-busy", "true");
+    await expectNoAxeViolations();
+
+    acceptGate.resolve(
+      HttpResponse.json({ data: { accepted: true } }, { status: 201 })
+    );
+    expect(
+      await screen.findByRole("heading", { name: "Invitation accepted" })
+    ).toBeVisible();
+    expect(screen.getByRole("link", { name: "Continue to sign in" })).toBeVisible();
+    await expectNoAxeViolations();
+  });
+
+  it("keeps the generic unavailable invitation state accessible", async () => {
+    renderInvitationAcceptance("#token=invalid");
+
+    expect(
+      await screen.findByRole("heading", { name: "Invitation unavailable" })
+    ).toBeVisible();
+    expect(
+      screen.getByText(
+        "This invitation is unavailable. Ask an administrator to send a new invitation."
+      )
+    ).toBeVisible();
     await expectNoAxeViolations();
   });
 
