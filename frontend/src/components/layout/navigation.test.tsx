@@ -22,7 +22,7 @@ import { navigationForAuthorization } from "./navigation";
 
 const roleNavigation = [
   ["super_admin", [["Users", "/admin/users", UsersRound], ["Access requests", "/admin/access-requests", ClipboardCheck]]],
-  ["admin", [["Users", "/admin/users", UsersRound], ["Access requests", "/admin/access-requests", ClipboardCheck]]],
+  ["admin", [["My Projects", "/admin/projects", FolderKanban], ["Access requests", "/admin/access-requests", ClipboardCheck]]],
   ["estimator_sales", [["Leads & estimates", "/estimator-sales", BriefcaseBusiness]]],
   ["designer", [["Workspace", "/designer", LayoutDashboard], ["My access requests", "/access-requests/mine", KeyRound]]],
   ["procurement", [["My access requests", "/access-requests/mine", KeyRound], ["Home", "/home", House]]],

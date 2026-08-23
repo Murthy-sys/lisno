@@ -130,6 +130,122 @@
   margin: 0;
 }
 
+.admin-projects {
+  min-inline-size: 0;
+}
+
+.admin-projects__workspace {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.admin-projects__list {
+  display: grid;
+  gap: var(--space-4);
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.admin-project-card {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.admin-project-card__heading {
+  align-items: flex-start;
+  display: flex;
+  gap: var(--space-3);
+  justify-content: space-between;
+}
+
+.admin-project-card__heading a {
+  color: var(--color-text);
+  font: var(--type-heading-3);
+}
+
+.admin-project-card__heading p,
+.admin-project-card__meta,
+.admin-project-detail dl {
+  margin: 0;
+}
+
+.admin-project-card__heading p,
+.admin-project-card__meta dt,
+.admin-project-detail dt {
+  color: var(--color-text-muted);
+}
+
+.admin-project-card__meta,
+.admin-project-detail__grid {
+  display: grid;
+  gap: var(--space-4);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.admin-project-card__meta div,
+.admin-project-detail dl,
+.admin-project-detail__grid section {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.admin-project-card__meta dd,
+.admin-project-detail dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.admin-project-detail,
+.admin-project-detail__surface {
+  display: grid;
+  gap: var(--space-5);
+}
+
+.admin-project-detail__grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.admin-project-detail__grid section {
+  border-block-end: 1px solid var(--color-border);
+  padding-block-end: var(--space-4);
+}
+
+.admin-project-detail__grid h2,
+.admin-project-detail__grid p {
+  margin: 0;
+}
+
+.admin-project-form {
+  display: grid;
+  gap: var(--space-4);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  padding: 0 var(--space-5) var(--space-5);
+}
+
+.admin-project-form__alert,
+.admin-project-form__estimator,
+.admin-project-form__actions {
+  grid-column: 1 / -1;
+}
+
+.admin-project-form__estimator,
+.admin-project-form__estimator-option {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.admin-project-form__estimator-option span {
+  color: var(--color-text-muted);
+}
+
+.admin-project-form__actions {
+  align-items: center;
+  display: flex;
+  gap: var(--space-3);
+  justify-content: flex-end;
+}
+
 .admin-user-dialog {
   display: grid;
   gap: var(--space-5);
@@ -183,6 +299,26 @@
   .admin-user-dialog__account {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .admin-project-card__meta,
+  .admin-project-detail__grid,
+  .admin-project-form {
+    grid-template-columns: 1fr;
+  }
+
+  .admin-project-card__heading {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .admin-project-form__actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .admin-project-form__actions button {
+    inline-size: 100%;
   }
 
   .access-administration__pagination > div,

@@ -192,6 +192,32 @@ function installAuthorizationSession(
         }
       });
     }
+    if (path === "/api/v1/admin/projects?limit=20&offset=0") {
+      return Response.json({
+        data: {
+          items: [],
+          pagination: { limit: 20, offset: 0, total: 0, hasMore: false }
+        }
+      });
+    }
+    if (path === "/api/v1/admin/projects/project-1") {
+      return Response.json({
+        data: {
+          id: "project-1",
+          name: "Admin residence",
+          status: "planning",
+          location: "Pune",
+          client: { name: "Asha Shah", email: "asha@example.com", mobile: "9000000000" },
+          propertyType: "3BHK",
+          budgetMin: 800000,
+          budgetMax: 1200000,
+          estimator: null,
+          lead: null,
+          estimate: null,
+          createdAt: "2026-08-23T10:00:00.000Z"
+        }
+      });
+    }
     if (path === "/api/v1/access-requests/mine?limit=20&offset=0") {
       return Response.json({
         data: {
@@ -258,6 +284,20 @@ describe("registered permission routes", () => {
   it.each([
     [
       "admin",
+      "/admin/projects",
+      ["identity.self.read", "projects.list"],
+      "My Projects",
+      "No projects initiated yet."
+    ],
+    [
+      "admin",
+      "/admin/projects/project-1",
+      ["identity.self.read", "projects.read"],
+      "Admin residence",
+      "No estimate yet"
+    ],
+    [
+      "super_admin",
       "/admin/users",
       ["identity.self.read", "identity.users.read"],
       "User administration",
@@ -289,6 +329,22 @@ describe("registered permission routes", () => {
       expect(router.state.location.pathname).toBe(path);
     }
   );
+
+  it("denies direct Admin user-directory access without calling the users API", async () => {
+    installAuthorizationSession("admin", [
+      "identity.self.read",
+      "identity.users.read"
+    ]);
+    const { router } = renderApp(["/admin/users"]);
+
+    expect(await screen.findByRole("heading", { name: "Access denied" })).toBeVisible();
+    expect(router.state.location.pathname).toBe("/admin/users");
+    expect(
+      vi.mocked(globalThis.fetch).mock.calls.some(([input]) =>
+        apiRequestPath(input).startsWith("/api/v1/admin/users")
+      )
+    ).toBe(false);
+  });
 
   it.each([
     ["super_admin", "/designer", "projects.list"],

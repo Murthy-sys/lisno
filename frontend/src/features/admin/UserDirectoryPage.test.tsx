@@ -102,47 +102,21 @@ function page(
 }
 
 describe("UserDirectoryPage", () => {
-  it("Admin sees only operational users and destinations", async () => {
+  it("denies Admin before the user-directory API can be called", async () => {
     installSession(admin);
-    const requestedUrls: string[] = [];
+    let userDirectoryRequests = 0;
     server.use(
-      http.get("/api/v1/admin/users", ({ request }) => {
-        const url = new URL(request.url);
-        requestedUrls.push(`${url.pathname}${url.search}`);
+      http.get("/api/v1/admin/users", () => {
+        userDirectoryRequests += 1;
         return HttpResponse.json(page([designer], OPERATIONAL_ROLES));
       })
     );
 
-    const user = userEvent.setup();
     renderApp(["/admin/users"]);
-
     expect(
-      await screen.findByRole("heading", { name: "User administration" })
+      await screen.findByRole("heading", { name: "Access denied" })
     ).toBeVisible();
-    expect(requestedUrls).toEqual([
-      "/api/v1/admin/users?limit=20&offset=0"
-    ]);
-    expect(
-      await screen.findByRole("button", { name: "Manage Arun Patel" })
-    ).toBeVisible();
-    expect(screen.queryByText("Sana Super Admin")).not.toBeInTheDocument();
-    expect(screen.queryByText("Maya Client")).not.toBeInTheDocument();
-
-    await user.click(
-      screen.getByRole("button", { name: "Manage Arun Patel" })
-    );
-    const dialog = screen.getByRole("dialog", { name: "Manage Arun Patel" });
-    const roleSelect = within(dialog).getByRole("combobox", { name: "Role" });
-    expect(
-      within(roleSelect).getAllByRole("option").map((option) => option.textContent)
-    ).toEqual(OPERATIONAL_ROLES.map((role) => ROLE_LABELS[role]));
-    expect(within(roleSelect).queryByRole("option", { name: "Admin" })).not.toBeInTheDocument();
-    expect(within(roleSelect).queryByRole("option", { name: "Client" })).not.toBeInTheDocument();
-
-    expect(document.body).not.toHaveTextContent(/password|credential/i);
-    expect(
-      screen.queryByRole("button", { name: /create|invite|impersonate/i })
-    ).not.toBeInTheDocument();
+    expect(userDirectoryRequests).toBe(0);
   });
 
   it("Super Admin sees every role", async () => {

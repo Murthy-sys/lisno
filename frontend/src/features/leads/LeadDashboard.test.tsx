@@ -17,6 +17,7 @@ const salesUser = {
 const leads: Lead[] = [
   {
     id: "lead-draft",
+    projectId: null,
     ownerId: "sales-1",
     clientName: "Aurora Homes",
     clientEmail: "aurora@example.com",
@@ -40,6 +41,7 @@ const leads: Lead[] = [
   },
   {
     id: "lead-sent",
+    projectId: null,
     ownerId: "sales-1",
     clientName: "Cedar Homes",
     clientEmail: "cedar@example.com",

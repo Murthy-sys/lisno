@@ -34,7 +34,7 @@ const expectedRoles = [
 ] as const;
 
 describe("frontend authorization contract", () => {
-  it("publishes the exact Prompt 1 role and module vocabulary", () => {
+  it("publishes the exact Prompt 2 role and module vocabulary", () => {
     expect(ROLE_CODES).toEqual(expectedRoles);
     expect(PROJECT_MODULES).toEqual([
       "projects",
@@ -50,12 +50,14 @@ describe("frontend authorization contract", () => {
       "finance",
       "execution"
     ]);
-    expect(AUTHORIZATION_POLICY_VERSION).toBe("2026-08-17.prompt-1");
+    expect(AUTHORIZATION_POLICY_VERSION).toBe("2026-08-23.prompt-2");
   });
 
-  it("publishes all 91 unique permissions including the reserved override", () => {
-    expect(PERMISSION_CODES).toHaveLength(91);
-    expect(new Set(PERMISSION_CODES)).toHaveLength(91);
+  it("publishes all 93 unique permissions including Admin project initiation", () => {
+    expect(PERMISSION_CODES).toHaveLength(93);
+    expect(new Set(PERMISSION_CODES)).toHaveLength(93);
+    expect(PERMISSION_CODES).toContain("projects.initiate");
+    expect(PERMISSION_CODES).toContain("organization.estimators.read");
     expect(PERMISSION_CODES.at(-1)).toBe(
       "execution.worker_assignment.override"
     );

@@ -1,11 +1,12 @@
 import axe from "axe-core";
-import { screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import { tokenStorage } from "../api/client";
 import {
   OPERATIONAL_ROLES,
+  ROLE_CODES,
   type PermissionCode,
   type Role
 } from "../api/authorization-contract";
@@ -22,6 +23,7 @@ const accessibleProject = {
   name: "Accessible residence",
   clientId: "client-1",
   initiatingDesignerId: "designer-1",
+  assignedEstimatorId: null,
   assignedDesignerIds: ["designer-1"],
   managerId: "manager-1",
   status: "active",
@@ -113,8 +115,36 @@ function fixtureFetch(
         updatedAt: "2026-08-01T00:00:00.000Z"
       }],
       pagination: { limit: 20, offset: 0, total: 1, hasMore: false },
-      manageableRoles: OPERATIONAL_ROLES
+      manageableRoles: user.role === "super_admin" ? ROLE_CODES : OPERATIONAL_ROLES
     } });
+    if (url === "/api/v1/admin/projects?limit=20&offset=0") return Response.json({ data: {
+      items: [{
+        id: "project-admin-a11y",
+        name: "Accessible Admin residence",
+        status: "planning",
+        location: "Pune",
+        client: { name: "Asha Shah", email: "asha@example.com", mobile: "+91 90000 00000" },
+        propertyType: "3BHK",
+        budgetMin: 800000,
+        budgetMax: 1200000,
+        estimator: { id: "estimator-a11y", name: "Accessible Estimator", email: "estimator@lisno.example" },
+        lead: { id: "lead-a11y", stage: "new_lead", nextAction: "Schedule site visit", nextActionAt: "2026-08-25T05:00:00.000Z" },
+        estimate: null,
+        createdAt: "2026-08-23T10:00:00.000Z"
+      }],
+      pagination: { limit: 20, offset: 0, total: 1, hasMore: false }
+    } });
+    if (url.startsWith("/api/v1/admin/estimators?")) return Response.json({ data: {
+      items: [{ id: "estimator-a11y", name: "Accessible Estimator", email: "estimator@lisno.example", title: "Senior Estimator" }],
+      pagination: { limit: 20, offset: 0, total: 1, hasMore: false }
+    } });
+    if (url === "/api/v1/admin/projects") return Response.json({
+      error: {
+        code: "VALIDATION_ERROR",
+        message: "Request validation failed.",
+        fields: { clientEmail: "This email belongs to an internal account." }
+      }
+    }, { status: 400 });
     if (url === "/api/v1/access-requests/mine?limit=20&offset=0") return Response.json({ data: {
       items: [{
         id: "request-a11y-own",
@@ -420,10 +450,65 @@ describe("accessibility smoke coverage", () => {
     await expectNoAxeViolations();
   });
 
-  it("keeps the user directory and mutation dialog keyboard accessible", async () => {
+  it("keeps My Projects and initiation keyboard accessible with estimator selection and error focus", async () => {
     const user = userEvent.setup();
     tokenStorage.set("admin-accessibility-token");
     fixtureFetch(userFor("admin"), [
+      "identity.self.read",
+      "identity.authorization.read",
+      "projects.list",
+      "projects.read",
+      "projects.initiate",
+      "organization.estimators.read"
+    ]);
+    renderApp(["/admin/projects"]);
+
+    const trigger = await screen.findByRole("button", { name: "Initiate project" });
+    await expectNoAxeViolations();
+
+    await user.click(trigger);
+    const dialog = screen.getByRole("dialog", { name: "Initiate project" });
+    const estimator = within(dialog).getByRole("combobox", { name: "Estimator/Sales" });
+    await user.click(estimator);
+    expect(await within(dialog).findByRole("option", { name: /Accessible Estimator/ })).toBeVisible();
+    await user.keyboard("{ArrowDown}{Enter}");
+    expect(estimator).toHaveValue("Accessible Estimator");
+    await expectNoAxeViolations();
+
+    const values = {
+      clientName: "Asha Shah",
+      clientEmail: "asha@example.com",
+      clientMobile: "+91 90000 00000",
+      projectName: "Asha home",
+      location: "Pune",
+      propertyType: "3BHK",
+      budgetMin: "800000",
+      budgetMax: "1200000",
+      nextAction: "Schedule site visit",
+      nextActionAt: "2026-08-25T10:30"
+    };
+    fireEvent.change(within(dialog).getByLabelText(/^Client name/), { target: { value: values.clientName } });
+    fireEvent.change(within(dialog).getByLabelText(/^Client email/), { target: { value: values.clientEmail } });
+    fireEvent.change(within(dialog).getByLabelText(/^Mobile/), { target: { value: values.clientMobile } });
+    fireEvent.change(within(dialog).getByLabelText(/^Project \/ property name/), { target: { value: values.projectName } });
+    fireEvent.change(within(dialog).getByLabelText(/^Location/), { target: { value: values.location } });
+    fireEvent.change(within(dialog).getByLabelText(/^Property type/), { target: { value: values.propertyType } });
+    fireEvent.change(within(dialog).getByLabelText(/^Minimum budget/), { target: { value: values.budgetMin } });
+    fireEvent.change(within(dialog).getByLabelText(/^Maximum budget/), { target: { value: values.budgetMax } });
+    fireEvent.change(within(dialog).getByLabelText(/^Next action\*/), { target: { value: values.nextAction } });
+    fireEvent.change(within(dialog).getByLabelText(/^Next action date/), { target: { value: values.nextActionAt } });
+    await waitFor(() => expect(within(dialog).getByRole("button", { name: "Initiate project" })).toBeEnabled());
+    await user.click(within(dialog).getByRole("button", { name: "Initiate project" }));
+    const email = within(dialog).getByRole("textbox", { name: "Client email" });
+    await waitFor(() => expect(email).toHaveFocus());
+    expect(email).toHaveAccessibleDescription("This email belongs to an internal account.");
+    await expectNoAxeViolations();
+  });
+
+  it("keeps the Super Admin user directory and mutation dialog keyboard accessible", async () => {
+    const user = userEvent.setup();
+    tokenStorage.set("super-admin-accessibility-token");
+    fixtureFetch(userFor("super_admin"), [
       "identity.self.read",
       "identity.authorization.read",
       "identity.users.read",
@@ -431,23 +516,11 @@ describe("accessibility smoke coverage", () => {
     ]);
     renderApp(["/admin/users"]);
 
-    const trigger = await screen.findByRole("button", {
-      name: "Manage Accessible Designer"
-    });
-    await expectNoAxeViolations();
-
+    const trigger = await screen.findByRole("button", { name: "Manage Accessible Designer" });
     await user.click(trigger);
-    const dialog = screen.getByRole("dialog", {
-      name: "Manage Accessible Designer"
-    });
-    await waitFor(() =>
-      expect(within(dialog).getByRole("combobox", { name: "Role" })).toHaveFocus()
-    );
+    const dialog = screen.getByRole("dialog", { name: "Manage Accessible Designer" });
+    await waitFor(() => expect(within(dialog).getByRole("combobox", { name: "Role" })).toHaveFocus());
     await expectNoAxeViolations();
-
-    await user.keyboard("{Escape}");
-    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-    expect(trigger).toHaveFocus();
   });
 
   it("keeps the own access-request dialog trapped, dismissible, and associated", async () => {

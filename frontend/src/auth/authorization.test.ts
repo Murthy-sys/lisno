@@ -29,7 +29,7 @@ describe("parseAuthorizationSnapshot", () => {
 
     expect(result).toEqual({
       role: "designer",
-      policyVersion: "2026-08-17.prompt-1",
+      policyVersion: "2026-08-23.prompt-2",
       permissions: ["identity.self.read", "projects.read"]
     });
     expect(Object.isFrozen(result)).toBe(true);
@@ -84,7 +84,7 @@ describe("parseAuthorizationSnapshot", () => {
   it("rejects an unbounded permission array", () => {
     expect(
       parseAuthorizationSnapshot(
-        { ...validSnapshot, permissions: Array(124).fill("unknown.action") },
+        { ...validSnapshot, permissions: Array(126).fill("unknown.action") },
         "designer"
       )
     ).toBeNull();

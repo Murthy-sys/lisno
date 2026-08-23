@@ -22,13 +22,6 @@ const actor = {
   role: "super_admin" as const
 };
 
-const adminActor = {
-  id: "user-admin-meera",
-  name: "Meera Admin",
-  email: "meera@lisno.example",
-  role: "admin" as const
-};
-
 const designer = {
   id: "user-designer-arun",
   name: "Arun Patel",
@@ -71,7 +64,7 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
-function installSession(user: typeof actor | typeof adminActor) {
+function installSession(user: typeof actor) {
   tokenStorage.set(`${user.role}-token`);
   server.use(
     http.get("/api/v1/auth/me", () => HttpResponse.json({ data: user })),
@@ -417,7 +410,7 @@ describe("UserMutationDialog", () => {
   });
 
   it("directory and dialog are keyboard accessible", async () => {
-    installSession(adminActor);
+    installSession(actor);
     let patchCount = 0;
     server.use(
       http.get("/api/v1/admin/users", () =>
@@ -451,7 +444,7 @@ describe("UserMutationDialog", () => {
   });
 
   it("moves focus into each deactivation confirmation and preserves its escape and cancel paths", async () => {
-    installSession(adminActor);
+    installSession(actor);
     server.use(
       http.get("/api/v1/admin/users", () =>
         HttpResponse.json(directoryResponse([designer], OPERATIONAL_ROLES))

@@ -4,7 +4,7 @@ import type { Lead, LeadActivity, LeadActivityType, LeadStage } from "../../api/
 export const leadKeys = { all: ["leads"] as const, page: (search: string, stage: LeadStage | "all") => ["leads", "page", search.trim().toLowerCase(), stage] as const, detail: (id: string) => ["leads", id] as const, activities: (id: string) => ["leads", id, "activities"] as const };
 export function getLeadPage(search = "", stage: LeadStage | "all" = "all") { const query = new URLSearchParams({ limit: "20", offset: "0" }); if (search.trim()) query.set("search", search.trim()); if (stage !== "all") query.set("stage", stage); return apiClient.get<PaginatedData<Lead>>(`/leads?${query}`); }
 export const getLead = (id: string) => apiClient.get<Lead>(`/leads/${encodeURIComponent(id)}`);
-export const createLead = (input: Omit<Lead, "id" | "ownerId" | "stage" | "latestActivityAt" | "createdAt" | "updatedAt" | "builder" | "areaSqft" | "targetHandoverAt" | "notes">) => apiClient.post<Lead>("/leads", input);
+export const createLead = (input: Omit<Lead, "id" | "projectId" | "ownerId" | "stage" | "latestActivityAt" | "createdAt" | "updatedAt" | "builder" | "areaSqft" | "targetHandoverAt" | "notes">) => apiClient.post<Lead>("/leads", input);
 export const updateLead = (id: string, input: Partial<Lead>) => apiClient.patch<Lead>(`/leads/${encodeURIComponent(id)}`, input);
 export const getLeadActivities = (id: string) => apiClient.get<PaginatedData<LeadActivity>>(`/leads/${encodeURIComponent(id)}/activities?limit=50&offset=0`);
 export const addLeadActivity = (id: string, input: { type: LeadActivityType; note: string; occurredAt: string }) => apiClient.post<LeadActivity>(`/leads/${encodeURIComponent(id)}/activities`, input);

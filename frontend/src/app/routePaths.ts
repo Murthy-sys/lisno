@@ -2,7 +2,7 @@ import type { Role } from "../api/types";
 
 const roleHomePaths: Record<Role, string> = {
   super_admin: "/admin/users",
-  admin: "/admin/users",
+  admin: "/admin/projects",
   designer: "/designer",
   procurement: "/home",
   finance_head: "/home",

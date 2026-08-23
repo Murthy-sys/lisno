@@ -21,7 +21,7 @@ export interface AuthPayload {
 
 export type LeadStage = "new_lead" | "contacted" | "site_visit" | "design_meeting" | "estimate_in_progress" | "estimate_sent" | "negotiation" | "won" | "lost";
 export type LeadActivityType = "call" | "whatsapp" | "meeting" | "email" | "note";
-export interface Lead { id: string; ownerId: string; clientName: string; clientEmail: string; clientMobile: string; projectName: string; location: string; propertyType: string; budgetMin: number | null; budgetMax: number | null; source: string; stage: LeadStage; nextAction: string; nextActionAt: string; builder: string | null; areaSqft: number | null; targetHandoverAt: string | null; notes: string | null; latestActivityAt: string | null; createdAt: string; updatedAt: string; }
+export interface Lead { id: string; projectId: string | null; ownerId: string; clientName: string; clientEmail: string; clientMobile: string; projectName: string; location: string; propertyType: string; budgetMin: number | null; budgetMax: number | null; source: string; stage: LeadStage; nextAction: string; nextActionAt: string; builder: string | null; areaSqft: number | null; targetHandoverAt: string | null; notes: string | null; latestActivityAt: string | null; createdAt: string; updatedAt: string; }
 export interface LeadActivity { id: string; leadId: string; actorId: string; type: LeadActivityType; note: string; occurredAt: string; createdAt: string; }
 
 export interface ClientSignupInput {
@@ -130,9 +130,10 @@ export interface Project {
   clientEmail: string;
   clientMobile: string;
   clientAddress: string;
-  initiatingDesignerId: string;
+  initiatingDesignerId: string | null;
+  assignedEstimatorId: string | null;
   assignedDesignerIds: string[];
-  managerId: string;
+  managerId: string | null;
   status: ProjectStatus;
   location: string;
   plannedStartAt: string;
@@ -235,6 +236,49 @@ export interface PageMetadata {
 export interface PageData<T> {
   items: T[];
   pagination: PageMetadata;
+}
+
+export interface EstimatorOption {
+  id: string;
+  name: string;
+  email: string;
+  title: string | null;
+}
+
+export interface AdminProjectSummary {
+  id: string;
+  name: string;
+  status: ProjectStatus;
+  location: string;
+  client: { name: string; email: string; mobile: string };
+  propertyType: string | null;
+  budgetMin: number | null;
+  budgetMax: number | null;
+  estimator: { id: string; name: string; email: string } | null;
+  lead: {
+    id: string;
+    stage: LeadStage;
+    nextAction: string;
+    nextActionAt: string;
+  } | null;
+  estimate: { id: string; status: string; total: number } | null;
+  createdAt: string;
+}
+
+export type AdminProjectPage = PageData<AdminProjectSummary>;
+
+export interface InitiateAdminProjectInput {
+  clientName: string;
+  clientEmail: string;
+  clientMobile: string;
+  projectName: string;
+  location: string;
+  propertyType: string;
+  budgetMin: number;
+  budgetMax: number;
+  nextAction: string;
+  nextActionAt: string;
+  estimatorId: string;
 }
 
 export interface UserDirectoryFilters {

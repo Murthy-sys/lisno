@@ -215,17 +215,17 @@ describe("AppShell", () => {
       email: "admin@lisno.example",
       role: "admin"
     });
-    renderApp(["/admin/users"]);
+    renderApp(["/admin/projects"]);
 
     expect(
-      await screen.findByRole("heading", { name: "User administration" })
+      await screen.findByRole("heading", { name: "My Projects" })
     ).toBeVisible();
     const desktopNavigation = screen.getByRole("navigation", {
       name: "Primary navigation"
     });
     expect(
       within(desktopNavigation).getAllByRole("link").map((link) => link.textContent)
-    ).toEqual(["Users", "Access requests"]);
+    ).toEqual(["My Projects", "Access requests"]);
 
     await userEvent.click(screen.getByRole("button", { name: "Open navigation" }));
     const mobileNavigation = within(
@@ -233,7 +233,7 @@ describe("AppShell", () => {
     ).getByRole("navigation", { name: "Mobile navigation" });
     expect(
       within(mobileNavigation).getAllByRole("link").map((link) => link.textContent)
-    ).toEqual(["Users", "Access requests"]);
+    ).toEqual(["My Projects", "Access requests"]);
   });
 });
 

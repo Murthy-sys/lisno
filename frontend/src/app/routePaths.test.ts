@@ -5,7 +5,7 @@ import { roleHomePath, safeReturnPath } from "./routePaths";
 
 const expectedRoleHomes: Record<Role, string> = {
   super_admin: "/admin/users",
-  admin: "/admin/users",
+  admin: "/admin/projects",
   estimator_sales: "/estimator-sales",
   designer: "/designer",
   procurement: "/home",
@@ -30,6 +30,7 @@ describe("roleHomePath", () => {
 
 describe("safeReturnPath", () => {
   it.each([
+    ["admin", "/admin/projects/project-1", "/admin/projects/project-1"],
     ["client", "/client", "/client"],
     ["client", "/client/projects/project-1", "/client/projects/project-1"],
     [
@@ -42,6 +43,7 @@ describe("safeReturnPath", () => {
   });
 
   it.each([
+    ["admin", "/admin/users"],
     ["client", "/manager"],
     ["designer", "/manager/designers/designer-1"],
     ["designer", "https://evil.example/designer"],
@@ -59,7 +61,7 @@ describe("safeReturnPath", () => {
     ["client", "#/client/projects/project-1"]
   ] as const)("falls back from an unsafe %s candidate %s", (role, candidate) => {
     expect(safeReturnPath(role, candidate)).toBe(
-      role === "client" ? "/client" : "/designer"
+      role === "client" ? "/client" : role === "admin" ? "/admin/projects" : "/designer"
     );
   });
 

@@ -13,14 +13,23 @@ const BASE_SESSION_PERMISSIONS = [
 const DEFAULT_PERMISSIONS_BY_ROLE = {
   super_admin: [
     ...BASE_SESSION_PERMISSIONS,
+    "projects.list",
+    "projects.read",
+    "organization.estimators.read",
     "identity.users.read",
+    "identity.users.update",
     "access_request.review.read",
     "access_request.self.read"
   ],
   admin: [
     ...BASE_SESSION_PERMISSIONS,
-    "identity.users.read",
-    "access_request.review.read"
+    "projects.list",
+    "projects.read",
+    "projects.initiate",
+    "organization.estimators.read",
+    "access_request.review.read",
+    "access_request.review.decide",
+    "project_access_grant.revoke"
   ],
   estimator_sales: [
     ...BASE_SESSION_PERMISSIONS,

@@ -36,6 +36,8 @@ import { LeadDashboard } from "../features/leads/LeadDashboard";
 import { LeadDetail } from "../features/leads/LeadDetail";
 import { LeadEstimateWorkspace } from "../features/leads/LeadEstimateWorkspace";
 import { UserDirectoryPage } from "../features/admin/UserDirectoryPage";
+import { AdminProjectsPage } from "../features/admin/AdminProjectsPage";
+import { AdminProjectDetailPage } from "../features/admin/AdminProjectDetailPage";
 import { AccessRequestInboxPage } from "../features/access/AccessRequestInboxPage";
 import { MyAccessRequestsPage } from "../features/access/MyAccessRequestsPage";
 import { NeutralHomePage } from "../features/home/NeutralHomePage";
@@ -276,6 +278,8 @@ function HomeRedirect() {
 }
 
 const stagedElements = {
+  "/admin/projects": <AdminProjectsPage />,
+  "/admin/projects/:projectId": <AdminProjectDetailPage />,
   "/admin/users": <UserDirectoryPage />,
   "/admin/access-requests": <AccessRequestInboxPage />,
   "/access-requests/mine": <MyAccessRequestsPage />
@@ -389,6 +393,14 @@ export function AppRoutes() {
             "/client/projects/:projectId",
             <ClientProject />
           )}
+        />
+        <Route
+          path="/admin/projects"
+          element={registeredElement("/admin/projects", stagedElements["/admin/projects"])}
+        />
+        <Route
+          path="/admin/projects/:projectId"
+          element={registeredElement("/admin/projects/:projectId", stagedElements["/admin/projects/:projectId"])}
         />
         <Route
           path="/admin/users"

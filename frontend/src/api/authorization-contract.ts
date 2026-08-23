@@ -106,6 +106,7 @@ export const PERMISSION_CODES = [
   "projects.client_summary.read",
   "projects.create",
   "projects.read",
+  "projects.initiate",
   "projects.floor.create",
   "projects.stage.create",
   "projects.task.create",
@@ -113,6 +114,7 @@ export const PERMISSION_CODES = [
   "design.task.self.update",
   "design.task_deadline.update",
   "organization.managers.read",
+  "organization.estimators.read",
   "organization.team.read",
   "organization.tree.read",
   "organization.manager_designers.read",
@@ -196,7 +198,7 @@ export const PERMISSION_CODES = [
 
 export type PermissionCode = (typeof PERMISSION_CODES)[number];
 
-export const AUTHORIZATION_POLICY_VERSION = "2026-08-17.prompt-1" as const;
+export const AUTHORIZATION_POLICY_VERSION = "2026-08-23.prompt-2" as const;
 
 export interface AuthorizationSnapshot {
   readonly role: Role;
