@@ -677,6 +677,8 @@ describe("accessibility smoke coverage", () => {
     createClose.focus();
     fireEvent.keyDown(document, { key: "Tab", shiftKey: true });
     expect(within(dialog).getByRole("button", { name: "Send invitation" })).toHaveFocus();
+    fireEvent.keyDown(document, { key: "Tab" });
+    expect(createClose).toHaveFocus();
     await user.keyboard("{Escape}");
     expect(screen.queryByRole("dialog", { name: "Invite user" })).not.toBeInTheDocument();
     expect(inviteTrigger).toHaveFocus();
