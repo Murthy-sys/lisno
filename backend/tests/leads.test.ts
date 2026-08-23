@@ -16,7 +16,6 @@ import { createMemoryRepository } from "../src/repositories/memory.js";
 import { demoSeedData } from "../src/seed/data.js";
 import { developmentDemoAuthentication } from "./helpers/development-demo-authentication.js";
 import { startMongoReplicaSet } from "./helpers/mongo-replica-set.js";
-import { resolveApprovalProject } from "../src/services/estimate-project-handoff.js";
 
 const createApp = (dependencies: Parameters<typeof createApplication>[0]) =>
   createApplication({
@@ -875,122 +874,14 @@ function clientToken() {
 
 afterEach(() => vi.restoreAllMocks());
 
-describe("linked estimate approval project conflicts", () => {
-  const baseProject = () => ({
-    _id: "project-admin-1",
-    name: "Aurora",
-    clientId: null,
-    clientName: "Rhea Kapoor",
-    clientEmail: "client@aurora.example",
-    clientEmailNormalized: "client@aurora.example",
-    clientMobile: "+91 90000 00000",
-    clientAddress: "Pune",
-    initiatingDesignerId: null,
-    assignedEstimatorId: "user-estimator-sales",
-    assignedDesignerIds: [],
-    managerId: null,
-    status: "planning",
-    location: "Pune"
-  });
-  const baseInput = () => ({
-    estimate: {
-      projectId: "project-admin-1",
-      ownerId: "user-estimator-sales"
-    },
-    lead: {
-      projectId: "project-admin-1",
-      ownerId: "user-estimator-sales",
-      projectName: "Aurora",
-      clientName: "Rhea Kapoor",
-      clientEmail: "client@aurora.example",
-      clientMobile: "+91 90000 00000",
-      location: "Pune"
-    },
-    clientId: "user-client-aurora",
-    assignedDesignerId: "designer-1",
-    managerId: "manager-1",
-    occurredAt: new Date("2026-08-23T10:00:00.000Z"),
-    session: {} as mongoose.ClientSession
-  });
+describe("linked estimate approval route Mongo transaction", () => {
+  const projectId = "project-admin-route";
+  const leadId = "lead-admin-route";
+  const estimateId = "estimate-admin-route";
 
-  it.each([
-    {
-      name: "missing linked Project",
-      mutate: (_input: ReturnType<typeof baseInput>, _project: ReturnType<typeof baseProject>) => undefined,
-      missing: true
-    },
-    {
-      name: "null Estimate link with a linked Lead",
-      mutate: (input: ReturnType<typeof baseInput>) => { input.estimate.projectId = null; }
-    },
-    {
-      name: "different non-null Lead and Estimate links",
-      mutate: (input: ReturnType<typeof baseInput>) => { input.lead.projectId = "project-other"; }
-    },
-    {
-      name: "mismatched Estimate and Lead owners",
-      mutate: (input: ReturnType<typeof baseInput>) => { input.estimate.ownerId = "user-other"; }
-    },
-    {
-      name: "mismatched assigned Estimator",
-      mutate: (_input: ReturnType<typeof baseInput>, project: ReturnType<typeof baseProject>) => { project.assignedEstimatorId = "user-other"; }
-    },
-    {
-      name: "non-null initiating Designer",
-      mutate: (_input: ReturnType<typeof baseInput>, project: ReturnType<typeof baseProject>) => { project.initiatingDesignerId = "designer-legacy"; }
-    },
-    {
-      name: "conflicting Project identity",
-      mutate: (_input: ReturnType<typeof baseInput>, project: ReturnType<typeof baseProject>) => { project.name = "Different project"; }
-    }
-  ])("fails closed for $name without mutating the Project", async ({ mutate, missing }) => {
-    const input = baseInput();
-    const project = baseProject();
-    const before = structuredClone(project);
-    mutate(input, project);
-    const expectedUnchanged = structuredClone(project);
-    const findProject = vi
-      .spyOn(ProjectModel, "findById")
-      .mockReturnValue(query(missing ? null : project) as never);
-    const updateProject = vi.spyOn(ProjectModel, "updateOne");
-    const createProject = vi.spyOn(ProjectModel, "create");
-
-    await expect(resolveApprovalProject(input)).rejects.toMatchObject({
-      status: 409,
-      code: "PROJECT_LINK_CONFLICT"
-    });
-
-    expect(project).toEqual(expectedUnchanged);
-    expect(updateProject).not.toHaveBeenCalled();
-    expect(createProject).not.toHaveBeenCalled();
-    if (input.estimate.projectId === null) {
-      expect(findProject).not.toHaveBeenCalled();
-    }
-    if (!missing && input.estimate.projectId !== null) {
-      expect(before._id).toBe(project._id);
-    }
-  });
-
-  it("fails closed when the linked Project compare-and-set loses a race", async () => {
-    const input = baseInput();
-    const project = baseProject();
-    vi.spyOn(ProjectModel, "findById").mockReturnValue(query(project) as never);
-    vi.spyOn(ProjectModel, "updateOne").mockResolvedValue({
-      matchedCount: 0,
-      modifiedCount: 0
-    } as never);
-
-    await expect(resolveApprovalProject(input)).rejects.toMatchObject({
-      status: 409,
-      code: "PROJECT_LINK_CONFLICT"
-    });
-  });
-});
-
-describe("linked estimate approval Mongo transaction", () => {
-  const linkedProject = () => ({
-    _id: "project-admin-replica",
-    name: "Replica Aurora",
+  const baseProject = (): Record<string, any> => ({
+    _id: projectId,
+    name: "Route Aurora",
     clientId: null,
     clientName: "Rhea Kapoor",
     clientEmail: "client@aurora.example",
@@ -1006,140 +897,204 @@ describe("linked estimate approval Mongo transaction", () => {
     plannedStartAt: new Date("2026-08-23T10:00:00.000Z"),
     plannedEndAt: new Date("2026-11-21T10:00:00.000Z")
   });
-  const resolverInput = (session: mongoose.ClientSession) => ({
-    estimate: {
-      projectId: "project-admin-replica",
-      ownerId: "user-estimator-sales"
-    },
-    lead: {
-      projectId: "project-admin-replica",
-      ownerId: "user-estimator-sales",
-      projectName: "Replica Aurora",
-      clientName: "Rhea Kapoor",
-      clientEmail: "client@aurora.example",
-      clientMobile: "+91 90000 00000",
-      location: "Pune"
-    },
-    clientId: "user-client-aurora",
-    assignedDesignerId: "designer-1",
-    managerId: "manager-1",
-    occurredAt: new Date("2026-08-24T10:00:00.000Z"),
-    session
-  });
-  const createGrant = () => ProjectAccessGrantModel.create({
-    _id: "grant-admin-replica",
-    projectId: "project-admin-replica",
-    userId: "user-admin",
-    module: "projects",
-    source: "admin_initiator",
-    accessRequestId: null,
-    grantedById: "user-admin",
-    active: true,
-    grantedAt: new Date("2026-08-23T10:00:00.000Z"),
-    revokedAt: null,
-    revokedById: null,
-    revocationReason: null
+
+  const baseLead = (): Record<string, any> => ({
+    _id: leadId,
+    projectId,
+    ownerId: "user-estimator-sales",
+    clientName: "Rhea Kapoor",
+    clientEmail: "client@aurora.example",
+    clientMobile: "+91 90000 00000",
+    projectName: "Route Aurora",
+    location: "Pune",
+    propertyType: "villa",
+    source: "admin_project",
+    stage: "estimate_sent",
+    nextAction: "client estimate decision",
+    nextActionAt: new Date("2026-08-24T10:00:00.000Z")
   });
 
-  it("updates the pre-created Project without increasing Project or initiator-grant counts", async () => {
+  const baseEstimate = (): Record<string, any> => ({
+    _id: estimateId,
+    leadId,
+    ownerId: "user-estimator-sales",
+    projectId,
+    assignedDesignerId: "designer-route",
+    status: "sent_to_client",
+    propertyType: "villa"
+  });
+
+  async function seedTeam() {
+    await UserModel.create([
+      {
+        _id: "manager-route",
+        name: "Route Manager",
+        email: "route-manager@example.com",
+        emailNormalized: "route-manager@example.com",
+        passwordHash: "not-used",
+        role: "design_manager",
+        active: true
+      },
+      {
+        _id: "designer-route",
+        name: "Route Designer",
+        email: "route-designer@example.com",
+        emailNormalized: "route-designer@example.com",
+        passwordHash: "not-used",
+        role: "designer",
+        active: true,
+        managerId: "manager-route"
+      }
+    ]);
+  }
+
+  async function seedGrantAndAudit() {
+    await ProjectAccessGrantModel.create({
+      _id: "grant-admin-route",
+      projectId,
+      userId: "user-admin",
+      module: "projects",
+      source: "admin_initiator",
+      accessRequestId: null,
+      grantedById: "user-admin",
+      active: true,
+      grantedAt: new Date("2026-08-23T10:00:00.000Z"),
+      revokedAt: null,
+      revokedById: null,
+      revocationReason: null
+    });
+    await AuditEventModel.create({
+      _id: "audit-admin-route",
+      actorId: "user-admin",
+      action: "project_created",
+      entityType: "project",
+      entityId: projectId,
+      occurredAt: new Date("2026-08-23T10:00:00.000Z"),
+      oldValues: {},
+      newValues: { status: "planning" },
+      reason: null
+    });
+  }
+
+  async function approvalRows() {
+    return Promise.all([
+      ProjectModel.find().sort({ _id: 1 }).lean(),
+      EstimateModel.find().sort({ _id: 1 }).lean(),
+      LeadModel.find().sort({ _id: 1 }).lean(),
+      ProjectAccessGrantModel.find().sort({ _id: 1 }).lean(),
+      AuditEventModel.find().sort({ _id: 1 }).lean()
+    ]);
+  }
+
+  it("reuses the linked Project through the approval route and retains the initiator grant", async () => {
     const replica = await startMongoReplicaSet();
     try {
-      await ProjectModel.create(linkedProject());
-      await createGrant();
+      await seedTeam();
+      await ProjectModel.create(baseProject());
+      await LeadModel.create(baseLead());
+      await EstimateModel.create(baseEstimate());
+      await seedGrantAndAudit();
       const projectCountBefore = await ProjectModel.countDocuments();
-      const session = await mongoose.startSession();
-      try {
-        let resolvedId: string | undefined;
-        await session.withTransaction(async () => {
-          resolvedId = await resolveApprovalProject(resolverInput(session));
-        });
-        expect(resolvedId).toBe("project-admin-replica");
-      } finally {
-        await session.endSession();
-      }
 
+      const response = await request(app)
+        .post(`/api/v1/client/estimates/${estimateId}/decision`)
+        .set("Authorization", `Bearer ${clientToken()}`)
+        .send({ decision: "approve", note: "Approved" })
+        .expect(200);
+
+      expect(response.body.data).toMatchObject({
+        status: "client_approved",
+        projectId
+      });
       expect(await ProjectModel.countDocuments()).toBe(projectCountBefore);
       expect(await ProjectAccessGrantModel.countDocuments({
-        projectId: "project-admin-replica",
+        projectId,
         source: "admin_initiator",
         active: true
       })).toBe(1);
-      expect(await ProjectModel.findById("project-admin-replica").lean()).toMatchObject({
+      expect(await ProjectModel.findById(projectId).lean()).toMatchObject({
         clientId: "user-client-aurora",
         initiatingDesignerId: null,
         assignedEstimatorId: "user-estimator-sales",
-        assignedDesignerIds: ["designer-1"],
-        managerId: "manager-1"
+        assignedDesignerIds: ["designer-route"],
+        managerId: "manager-route"
+      });
+      expect(await EstimateModel.findById(estimateId).lean()).toMatchObject({
+        status: "client_approved",
+        projectId
       });
     } finally {
       await replica.stop();
     }
   }, 30_000);
 
-  it("leaves Project, Estimate, Lead, grant, and audit rows unchanged on a link conflict", async () => {
+  it("returns PROJECT_LINK_CONFLICT and rolls back every linked row for the complete mismatch matrix", async () => {
+    const scenarios: Array<{
+      name: string;
+      omitProject?: boolean;
+      mutate: (
+        project: Record<string, any>,
+        lead: Record<string, any>,
+        estimate: Record<string, any>
+      ) => void;
+    }> = [
+      {
+        name: "missing linked Project",
+        omitProject: true,
+        mutate: () => undefined
+      },
+      {
+        name: "null Estimate link with a linked Lead",
+        mutate: (_project, _lead, estimate) => { estimate.projectId = null; }
+      },
+      {
+        name: "different non-null Lead and Estimate links",
+        mutate: (_project, lead) => { lead.projectId = "project-other"; }
+      },
+      {
+        name: "mismatched Estimate and Lead owners",
+        mutate: (project, lead) => {
+          lead.ownerId = "user-other-estimator";
+          project.assignedEstimatorId = "user-other-estimator";
+        }
+      },
+      {
+        name: "mismatched assigned Estimator",
+        mutate: (project) => { project.assignedEstimatorId = "user-other-estimator"; }
+      },
+      {
+        name: "non-null initiating Designer",
+        mutate: (project) => { project.initiatingDesignerId = "designer-legacy"; }
+      },
+      {
+        name: "conflicting Project identity",
+        mutate: (project) => { project.name = "Different project"; }
+      }
+    ];
     const replica = await startMongoReplicaSet();
     try {
-      await ProjectModel.create(linkedProject());
-      await createGrant();
-      await LeadModel.create({
-        _id: "lead-admin-replica",
-        projectId: "project-admin-replica",
-        ownerId: "user-estimator-sales",
-        clientName: "Rhea Kapoor",
-        clientEmail: "client@aurora.example",
-        clientMobile: "+91 90000 00000",
-        projectName: "Replica Aurora",
-        location: "Pune",
-        propertyType: "villa",
-        source: "admin_project",
-        stage: "estimate_sent",
-        nextAction: "client estimate decision",
-        nextActionAt: new Date("2026-08-24T10:00:00.000Z")
-      });
-      await EstimateModel.create({
-        _id: "estimate-admin-replica",
-        leadId: "lead-admin-replica",
-        ownerId: "user-estimator-sales",
-        projectId: "project-admin-replica",
-        status: "sent_to_client",
-        propertyType: "villa"
-      });
-      await AuditEventModel.create({
-        _id: "audit-admin-replica",
-        actorId: "user-admin",
-        action: "project_created",
-        entityType: "project",
-        entityId: "project-admin-replica",
-        occurredAt: new Date("2026-08-23T10:00:00.000Z"),
-        oldValues: {},
-        newValues: { status: "planning" },
-        reason: null
-      });
-      const before = await Promise.all([
-        ProjectModel.find().sort({ _id: 1 }).lean(),
-        EstimateModel.find().sort({ _id: 1 }).lean(),
-        LeadModel.find().sort({ _id: 1 }).lean(),
-        ProjectAccessGrantModel.find().sort({ _id: 1 }).lean(),
-        AuditEventModel.find().sort({ _id: 1 }).lean()
-      ]);
-      const session = await mongoose.startSession();
-      try {
-        const input = resolverInput(session);
-        input.lead.projectName = "Conflicting identity";
-        await expect(session.withTransaction(async () => {
-          await resolveApprovalProject(input);
-        })).rejects.toMatchObject({ status: 409, code: "PROJECT_LINK_CONFLICT" });
-      } finally {
-        await session.endSession();
+      for (const scenario of scenarios) {
+        await replica.clear();
+        const project = baseProject();
+        const lead = baseLead();
+        const estimate = baseEstimate();
+        scenario.mutate(project, lead, estimate);
+        await seedTeam();
+        if (!scenario.omitProject) await ProjectModel.create(project);
+        await LeadModel.create(lead);
+        await EstimateModel.create(estimate);
+        await seedGrantAndAudit();
+        const before = await approvalRows();
+
+        const response = await request(app)
+          .post(`/api/v1/client/estimates/${estimateId}/decision`)
+          .set("Authorization", `Bearer ${clientToken()}`)
+          .send({ decision: "approve", note: "Approved" });
+
+        expect(response.status, scenario.name).toBe(409);
+        expect(response.body.error.code, scenario.name).toBe("PROJECT_LINK_CONFLICT");
+        expect(await approvalRows(), scenario.name).toEqual(before);
       }
-      const after = await Promise.all([
-        ProjectModel.find().sort({ _id: 1 }).lean(),
-        EstimateModel.find().sort({ _id: 1 }).lean(),
-        LeadModel.find().sort({ _id: 1 }).lean(),
-        ProjectAccessGrantModel.find().sort({ _id: 1 }).lean(),
-        AuditEventModel.find().sort({ _id: 1 }).lean()
-      ]);
-      expect(after).toEqual(before);
     } finally {
       await replica.stop();
     }
