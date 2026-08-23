@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-18
 **Revised:** 2026-08-23
-**Status:** Revised design approved in chat; written-spec review pending
+**Status:** Approved in chat after independent written-spec review
 **Phase:** Identity provisioning extension; independent of existing project-initiation workflows
 
 **Related:** [Prompt 1 RBAC foundation design](./2026-08-17-prompt-1-rbac-foundation-design.md), [Prompt 1 route-operation matrix](./2026-08-17-prompt-1-route-operation-matrix.md), [Admin-initiated projects design](./2026-08-23-admin-initiated-projects-design.md), and [Prompt 1 implementation report](../../../PROMPT_1_IMPLEMENTATION_REPORT.md)
