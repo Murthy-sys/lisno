@@ -55,7 +55,6 @@ function invitation(overrides: Record<string, unknown> = {}) {
     deliveryAttemptedAt: null,
     sentAt: null,
     deliveryFailureCode: null,
-    version: 1,
     ...overrides
   });
 }
@@ -247,6 +246,22 @@ describe("user invitation domain", () => {
 });
 
 describe("UserInvitation model", () => {
+  it("uses Mongo __v zero as the sole persisted initial version for API version one", async () => {
+    expect(UserInvitationModel.schema.options.versionKey).toBe("__v");
+    expect(UserInvitationModel.schema.path("version")).toBeUndefined();
+
+    const document = invitation();
+    await expect(document.validate()).resolves.toBeUndefined();
+    const persisted = UserInvitationModel.hydrate({
+      ...document.toObject(),
+      __v: 0
+    });
+
+    expect(persisted.get("__v")).toBe(0);
+    expect(Number(persisted.get("__v")) + 1).toBe(1);
+    expect(persisted.toObject()).not.toHaveProperty("version");
+  });
+
   it("persists normalized identity fields without an invitation title", async () => {
     const document = invitation({ title: "Must be discarded" });
 

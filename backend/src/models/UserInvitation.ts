@@ -75,10 +75,9 @@ const userInvitationSchema = new Schema(
       default: null,
       match: USER_INVITATION_DELIVERY_FAILURE_CODE_PATTERN,
       maxlength: 64
-    },
-    version: { type: Number, required: true, default: 1, min: 1 }
+    }
   },
-  { timestamps: true, versionKey: false }
+  { timestamps: true }
 );
 
 userInvitationSchema.pre("validate", function normalizeIdentityFields() {
