@@ -100,6 +100,7 @@ function modelMatches(
     if (expected && typeof expected === "object" && !(expected instanceof Date)) {
       if ("$in" in expected && !expected.$in.includes(actual)) return false;
       if ("$gt" in expected && !(new Date(actual) > expected.$gt)) return false;
+      if ("$size" in expected && (!Array.isArray(actual) || actual.length !== expected.$size)) return false;
       continue;
     }
     if (actual !== expected) return false;
@@ -166,6 +167,7 @@ function setupEstimateDrawingJourneyModels() {
   const leads: Array<Record<string, any>> = [{
     _id: "lead-journey",
     ownerId: "user-estimator-sales",
+    projectId: null,
     clientName: "Rhea Kapoor",
     clientEmail: "client@aurora.example",
     clientMobile: "+91 90000 00000",
@@ -385,6 +387,14 @@ function setupEstimateDrawingJourneyModels() {
     projects.push(...(input as Array<Record<string, any>>));
     return input as never;
   });
+  vi.spyOn(ProjectModel, "findById").mockImplementation((id) =>
+    modelQuery(projects.find((record) => record._id === id) ?? null) as never
+  );
+  vi.spyOn(ProjectModel, "updateOne").mockImplementation(async (filter, update) => {
+    const record = projects.find((item) => modelMatches(item, filter as never));
+    if (record) applyModelUpdate(record, update as never);
+    return { matchedCount: record ? 1 : 0, modifiedCount: record ? 1 : 0 } as never;
+  });
 
   return {
     estimates,
@@ -433,6 +443,7 @@ function setupWorkflowCharacterization(
   const lead = Object.assign(state.leads[0]!, {
     _id: "lead-aurora",
     ownerId: "user-estimator-sales",
+    projectId: null,
     clientName: "Rhea Kapoor",
     clientEmail: "client@aurora.example",
     clientMobile: "+91 90000 00000",
@@ -903,6 +914,7 @@ describe("complete cross-role journey", () => {
       clientMobile: "+91 90000 00000",
       clientAddress: "Pune",
       initiatingDesignerId: "user-designer-ananya",
+      assignedEstimatorId: null,
       assignedDesignerIds: ["user-designer-ananya"],
       managerId: "user-manager-aarav",
       status: "planning",
@@ -952,6 +964,77 @@ describe("complete cross-role journey", () => {
           queuedAt: expect.any(Date)
         }
       ]
+    });
+  });
+
+  it("reuses the Admin-created Project during linked estimate approval", async () => {
+    const fixture = setupWorkflowCharacterization({
+      _id: "estimate-admin-linked",
+      status: "sent_to_client",
+      version: 1,
+      designLifecycleVersion: 0,
+      designFrozenAt: null,
+      assignedDesignerId: "user-designer-ananya",
+      projectId: "project-admin-1"
+    });
+    fixture.lead.projectId = "project-admin-1";
+    const adminProject = {
+      _id: "project-admin-1",
+      name: "Aurora",
+      clientId: null,
+      clientName: "Rhea Kapoor",
+      clientEmail: "client@aurora.example",
+      clientEmailNormalized: "client@aurora.example",
+      clientMobile: "+91 90000 00000",
+      clientAddress: "Pune",
+      initiatingDesignerId: null,
+      assignedEstimatorId: "user-estimator-sales",
+      assignedDesignerIds: [],
+      managerId: null,
+      status: "planning",
+      location: "Pune",
+      plannedStartAt: new Date("2026-07-01T00:00:00.000Z"),
+      plannedEndAt: new Date("2026-09-29T00:00:00.000Z")
+    };
+    fixture.state.projects.push(adminProject);
+    const projectCountBefore = fixture.state.projects.length;
+    const identityBefore = {
+      name: adminProject.name,
+      clientName: adminProject.clientName,
+      clientEmail: adminProject.clientEmail,
+      clientEmailNormalized: adminProject.clientEmailNormalized,
+      clientMobile: adminProject.clientMobile,
+      clientAddress: adminProject.clientAddress,
+      location: adminProject.location,
+      plannedStartAt: adminProject.plannedStartAt,
+      plannedEndAt: adminProject.plannedEndAt
+    };
+    const client = await fixture.login("client@aurora.example");
+
+    const response = await request(fixture.app)
+      .post("/api/v1/client/estimates/estimate-admin-linked/decision")
+      .set("Authorization", client)
+      .send({ decision: "approve", note: "Approved" })
+      .expect(200);
+
+    expect(fixture.state.projects).toHaveLength(projectCountBefore);
+    expect(ProjectModel.create).not.toHaveBeenCalled();
+    expect(adminProject).toMatchObject({
+      _id: "project-admin-1",
+      clientId: "user-client-aurora",
+      initiatingDesignerId: null,
+      assignedEstimatorId: "user-estimator-sales",
+      assignedDesignerIds: ["user-designer-ananya"],
+      managerId: "user-manager-aarav"
+    });
+    expect(adminProject).toMatchObject(identityBefore);
+    expect(fixture.estimate).toMatchObject({
+      status: "client_approved",
+      projectId: "project-admin-1"
+    });
+    expect(response.body.data).toMatchObject({
+      status: "client_approved",
+      projectId: "project-admin-1"
     });
   });
 

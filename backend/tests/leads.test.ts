@@ -9,12 +9,14 @@ import { EstimateDesignRevisionModel } from "../src/models/EstimateDesignRevisio
 import { EstimateModel } from "../src/models/Estimate.js";
 import { LeadModel } from "../src/models/Lead.js";
 import { ProjectModel } from "../src/models/Project.js";
+import { ProjectAccessGrantModel } from "../src/models/ProjectAccessGrant.js";
 import { UserModel } from "../src/models/User.js";
 import { AuditEventModel } from "../src/models/AuditEvent.js";
 import { createMemoryRepository } from "../src/repositories/memory.js";
 import { demoSeedData } from "../src/seed/data.js";
 import { developmentDemoAuthentication } from "./helpers/development-demo-authentication.js";
 import { startMongoReplicaSet } from "./helpers/mongo-replica-set.js";
+import { resolveApprovalProject } from "../src/services/estimate-project-handoff.js";
 
 const createApp = (dependencies: Parameters<typeof createApplication>[0]) =>
   createApplication({
@@ -36,6 +38,7 @@ const CHARACTERIZATION_NOW = "2026-08-17T12:00:00.000Z";
 const CHARACTERIZATION_LEAD = {
   id: "lead-aurora",
   ownerId: "user-estimator-sales",
+  projectId: null,
   clientName: "Rhea Kapoor",
   clientEmail: "client@aurora.example",
   clientMobile: "+91 90000 00000",
@@ -82,9 +85,11 @@ const CHARACTERIZATION_ESTIMATE_BODY = {
   }]
 };
 
-function setupLeadCharacterization() {
+function setupLeadCharacterization(
+  leadOverrides: Partial<typeof CHARACTERIZATION_LEAD> = {}
+) {
   const seed = structuredClone(demoSeedData);
-  seed.leads = [structuredClone(CHARACTERIZATION_LEAD)];
+  seed.leads = [{ ...structuredClone(CHARACTERIZATION_LEAD), ...leadOverrides }];
   seed.leadActivities = [];
   seed.users.push({
     ...seed.users[0]!,
@@ -202,6 +207,120 @@ describe("lead API", () => {
 });
 
 describe("lead and owner-estimate route characterizations", () => {
+  it.each([
+    "clientName",
+    "clientEmail",
+    "clientMobile",
+    "projectName",
+    "location",
+    "source"
+  ] as const)("rejects linked Lead identity mutation for %s", async (field) => {
+    const { app, authorization, runInTransaction } = setupLeadCharacterization({
+      projectId: "project-admin-1"
+    });
+    const value = field === "clientEmail" ? "changed@example.com" : "changed";
+
+    const response = await request(app)
+      .patch("/api/v1/leads/lead-aurora")
+      .set("Authorization", authorization)
+      .send({ [field]: value })
+      .expect(409);
+
+    expect(response.body.error).toMatchObject({
+      code: "LINKED_LEAD_IDENTITY_IMMUTABLE",
+      fields: { [field]: "This field is managed by the linked project." }
+    });
+    expect(runInTransaction).not.toHaveBeenCalled();
+  });
+
+  it("rejects public projectId and ownerId Lead changes as unknown fields", async () => {
+    const { app, authorization, runInTransaction } = setupLeadCharacterization({
+      projectId: "project-admin-1"
+    });
+
+    for (const body of [
+      { projectId: "project-other" },
+      { ownerId: "user-other-estimator" }
+    ]) {
+      const response = await request(app)
+        .patch("/api/v1/leads/lead-aurora")
+        .set("Authorization", authorization)
+        .send(body)
+        .expect(400);
+      expect(response.body.error.code).toBe("VALIDATION_ERROR");
+    }
+    expect(runInTransaction).not.toHaveBeenCalled();
+  });
+
+  it("allows live workflow fields to change on a linked Lead", async () => {
+    const { app, authorization } = setupLeadCharacterization({
+      projectId: "project-admin-1"
+    });
+
+    const response = await request(app)
+      .patch("/api/v1/leads/lead-aurora")
+      .set("Authorization", authorization)
+      .send({
+        propertyType: "4BHK",
+        budgetMin: 1_000_000,
+        budgetMax: 1_500_000,
+        stage: "contacted",
+        nextAction: "Confirm site visit",
+        nextActionAt: "2026-08-27T10:00:00+05:30"
+      })
+      .expect(200);
+
+    expect(response.body.data).toMatchObject({
+      projectId: "project-admin-1",
+      propertyType: "4BHK",
+      budgetMin: 1_000_000,
+      budgetMax: 1_500_000,
+      stage: "contacted",
+      nextAction: "Confirm site visit",
+      nextActionAt: "2026-08-27T10:00:00+05:30"
+    });
+  });
+
+  it("copies, backfills, and protects a linked Lead project on draft save", async () => {
+    const { app, authorization } = setupLeadCharacterization({
+      projectId: "project-admin-1"
+    });
+    const findEstimate = vi.spyOn(EstimateModel, "findOne");
+    const modelSave = vi
+      .spyOn(EstimateModel.prototype, "save")
+      .mockImplementation(async function () { return this; });
+
+    findEstimate.mockReturnValueOnce(query(null) as never);
+    const firstSave = await request(app)
+      .put("/api/v1/leads/lead-aurora/estimate")
+      .set("Authorization", authorization)
+      .send(CHARACTERIZATION_ESTIMATE_BODY)
+      .expect(200);
+    expect(firstSave.body.data.projectId).toBe("project-admin-1");
+
+    const legacyDraft = estimateDocument({ projectId: null });
+    findEstimate.mockReturnValueOnce(query(legacyDraft) as never);
+    const backfilledSave = await request(app)
+      .put("/api/v1/leads/lead-aurora/estimate")
+      .set("Authorization", authorization)
+      .send(CHARACTERIZATION_ESTIMATE_BODY)
+      .expect(200);
+    expect(backfilledSave.body.data.projectId).toBe("project-admin-1");
+
+    const conflictingDraft = estimateDocument({ projectId: "project-other" });
+    const conflictingBefore = immutableEstimateSnapshot(conflictingDraft);
+    findEstimate.mockReturnValueOnce(query(conflictingDraft) as never);
+    const conflictingSave = await request(app)
+      .put("/api/v1/leads/lead-aurora/estimate")
+      .set("Authorization", authorization)
+      .send(CHARACTERIZATION_ESTIMATE_BODY)
+      .expect(409);
+    expect(conflictingSave.body.error.code).toBe("ESTIMATE_PROJECT_CONFLICT");
+    expect(conflictingDraft.save).not.toHaveBeenCalled();
+    expect(plainEstimateRecord(conflictingDraft)).toEqual(conflictingBefore);
+    expect(modelSave).toHaveBeenCalledOnce();
+  });
+
   it("allows Super Admin global Lead reads and denies personal mutations before service entry", async () => {
     const { app, superAdminAuthorization, runInTransaction, projectGrantSpies } = setupLeadCharacterization();
 
@@ -262,6 +381,7 @@ describe("lead and owner-estimate route characterizations", () => {
       data: {
         id: expect.stringMatching(/^lead-/),
         ownerId: "user-estimator-sales",
+        projectId: null,
         ...CHARACTERIZATION_LEAD_BODY,
         budgetMin: null,
         budgetMax: null,
@@ -754,6 +874,277 @@ function clientToken() {
 }
 
 afterEach(() => vi.restoreAllMocks());
+
+describe("linked estimate approval project conflicts", () => {
+  const baseProject = () => ({
+    _id: "project-admin-1",
+    name: "Aurora",
+    clientId: null,
+    clientName: "Rhea Kapoor",
+    clientEmail: "client@aurora.example",
+    clientEmailNormalized: "client@aurora.example",
+    clientMobile: "+91 90000 00000",
+    clientAddress: "Pune",
+    initiatingDesignerId: null,
+    assignedEstimatorId: "user-estimator-sales",
+    assignedDesignerIds: [],
+    managerId: null,
+    status: "planning",
+    location: "Pune"
+  });
+  const baseInput = () => ({
+    estimate: {
+      projectId: "project-admin-1",
+      ownerId: "user-estimator-sales"
+    },
+    lead: {
+      projectId: "project-admin-1",
+      ownerId: "user-estimator-sales",
+      projectName: "Aurora",
+      clientName: "Rhea Kapoor",
+      clientEmail: "client@aurora.example",
+      clientMobile: "+91 90000 00000",
+      location: "Pune"
+    },
+    clientId: "user-client-aurora",
+    assignedDesignerId: "designer-1",
+    managerId: "manager-1",
+    occurredAt: new Date("2026-08-23T10:00:00.000Z"),
+    session: {} as mongoose.ClientSession
+  });
+
+  it.each([
+    {
+      name: "missing linked Project",
+      mutate: (_input: ReturnType<typeof baseInput>, _project: ReturnType<typeof baseProject>) => undefined,
+      missing: true
+    },
+    {
+      name: "null Estimate link with a linked Lead",
+      mutate: (input: ReturnType<typeof baseInput>) => { input.estimate.projectId = null; }
+    },
+    {
+      name: "different non-null Lead and Estimate links",
+      mutate: (input: ReturnType<typeof baseInput>) => { input.lead.projectId = "project-other"; }
+    },
+    {
+      name: "mismatched Estimate and Lead owners",
+      mutate: (input: ReturnType<typeof baseInput>) => { input.estimate.ownerId = "user-other"; }
+    },
+    {
+      name: "mismatched assigned Estimator",
+      mutate: (_input: ReturnType<typeof baseInput>, project: ReturnType<typeof baseProject>) => { project.assignedEstimatorId = "user-other"; }
+    },
+    {
+      name: "non-null initiating Designer",
+      mutate: (_input: ReturnType<typeof baseInput>, project: ReturnType<typeof baseProject>) => { project.initiatingDesignerId = "designer-legacy"; }
+    },
+    {
+      name: "conflicting Project identity",
+      mutate: (_input: ReturnType<typeof baseInput>, project: ReturnType<typeof baseProject>) => { project.name = "Different project"; }
+    }
+  ])("fails closed for $name without mutating the Project", async ({ mutate, missing }) => {
+    const input = baseInput();
+    const project = baseProject();
+    const before = structuredClone(project);
+    mutate(input, project);
+    const expectedUnchanged = structuredClone(project);
+    const findProject = vi
+      .spyOn(ProjectModel, "findById")
+      .mockReturnValue(query(missing ? null : project) as never);
+    const updateProject = vi.spyOn(ProjectModel, "updateOne");
+    const createProject = vi.spyOn(ProjectModel, "create");
+
+    await expect(resolveApprovalProject(input)).rejects.toMatchObject({
+      status: 409,
+      code: "PROJECT_LINK_CONFLICT"
+    });
+
+    expect(project).toEqual(expectedUnchanged);
+    expect(updateProject).not.toHaveBeenCalled();
+    expect(createProject).not.toHaveBeenCalled();
+    if (input.estimate.projectId === null) {
+      expect(findProject).not.toHaveBeenCalled();
+    }
+    if (!missing && input.estimate.projectId !== null) {
+      expect(before._id).toBe(project._id);
+    }
+  });
+
+  it("fails closed when the linked Project compare-and-set loses a race", async () => {
+    const input = baseInput();
+    const project = baseProject();
+    vi.spyOn(ProjectModel, "findById").mockReturnValue(query(project) as never);
+    vi.spyOn(ProjectModel, "updateOne").mockResolvedValue({
+      matchedCount: 0,
+      modifiedCount: 0
+    } as never);
+
+    await expect(resolveApprovalProject(input)).rejects.toMatchObject({
+      status: 409,
+      code: "PROJECT_LINK_CONFLICT"
+    });
+  });
+});
+
+describe("linked estimate approval Mongo transaction", () => {
+  const linkedProject = () => ({
+    _id: "project-admin-replica",
+    name: "Replica Aurora",
+    clientId: null,
+    clientName: "Rhea Kapoor",
+    clientEmail: "client@aurora.example",
+    clientEmailNormalized: "client@aurora.example",
+    clientMobile: "+91 90000 00000",
+    clientAddress: "Pune",
+    initiatingDesignerId: null,
+    assignedEstimatorId: "user-estimator-sales",
+    assignedDesignerIds: [],
+    managerId: null,
+    status: "planning",
+    location: "Pune",
+    plannedStartAt: new Date("2026-08-23T10:00:00.000Z"),
+    plannedEndAt: new Date("2026-11-21T10:00:00.000Z")
+  });
+  const resolverInput = (session: mongoose.ClientSession) => ({
+    estimate: {
+      projectId: "project-admin-replica",
+      ownerId: "user-estimator-sales"
+    },
+    lead: {
+      projectId: "project-admin-replica",
+      ownerId: "user-estimator-sales",
+      projectName: "Replica Aurora",
+      clientName: "Rhea Kapoor",
+      clientEmail: "client@aurora.example",
+      clientMobile: "+91 90000 00000",
+      location: "Pune"
+    },
+    clientId: "user-client-aurora",
+    assignedDesignerId: "designer-1",
+    managerId: "manager-1",
+    occurredAt: new Date("2026-08-24T10:00:00.000Z"),
+    session
+  });
+  const createGrant = () => ProjectAccessGrantModel.create({
+    _id: "grant-admin-replica",
+    projectId: "project-admin-replica",
+    userId: "user-admin",
+    module: "projects",
+    source: "admin_initiator",
+    accessRequestId: null,
+    grantedById: "user-admin",
+    active: true,
+    grantedAt: new Date("2026-08-23T10:00:00.000Z"),
+    revokedAt: null,
+    revokedById: null,
+    revocationReason: null
+  });
+
+  it("updates the pre-created Project without increasing Project or initiator-grant counts", async () => {
+    const replica = await startMongoReplicaSet();
+    try {
+      await ProjectModel.create(linkedProject());
+      await createGrant();
+      const projectCountBefore = await ProjectModel.countDocuments();
+      const session = await mongoose.startSession();
+      try {
+        let resolvedId: string | undefined;
+        await session.withTransaction(async () => {
+          resolvedId = await resolveApprovalProject(resolverInput(session));
+        });
+        expect(resolvedId).toBe("project-admin-replica");
+      } finally {
+        await session.endSession();
+      }
+
+      expect(await ProjectModel.countDocuments()).toBe(projectCountBefore);
+      expect(await ProjectAccessGrantModel.countDocuments({
+        projectId: "project-admin-replica",
+        source: "admin_initiator",
+        active: true
+      })).toBe(1);
+      expect(await ProjectModel.findById("project-admin-replica").lean()).toMatchObject({
+        clientId: "user-client-aurora",
+        initiatingDesignerId: null,
+        assignedEstimatorId: "user-estimator-sales",
+        assignedDesignerIds: ["designer-1"],
+        managerId: "manager-1"
+      });
+    } finally {
+      await replica.stop();
+    }
+  }, 30_000);
+
+  it("leaves Project, Estimate, Lead, grant, and audit rows unchanged on a link conflict", async () => {
+    const replica = await startMongoReplicaSet();
+    try {
+      await ProjectModel.create(linkedProject());
+      await createGrant();
+      await LeadModel.create({
+        _id: "lead-admin-replica",
+        projectId: "project-admin-replica",
+        ownerId: "user-estimator-sales",
+        clientName: "Rhea Kapoor",
+        clientEmail: "client@aurora.example",
+        clientMobile: "+91 90000 00000",
+        projectName: "Replica Aurora",
+        location: "Pune",
+        propertyType: "villa",
+        source: "admin_project",
+        stage: "estimate_sent",
+        nextAction: "client estimate decision",
+        nextActionAt: new Date("2026-08-24T10:00:00.000Z")
+      });
+      await EstimateModel.create({
+        _id: "estimate-admin-replica",
+        leadId: "lead-admin-replica",
+        ownerId: "user-estimator-sales",
+        projectId: "project-admin-replica",
+        status: "sent_to_client",
+        propertyType: "villa"
+      });
+      await AuditEventModel.create({
+        _id: "audit-admin-replica",
+        actorId: "user-admin",
+        action: "project_created",
+        entityType: "project",
+        entityId: "project-admin-replica",
+        occurredAt: new Date("2026-08-23T10:00:00.000Z"),
+        oldValues: {},
+        newValues: { status: "planning" },
+        reason: null
+      });
+      const before = await Promise.all([
+        ProjectModel.find().sort({ _id: 1 }).lean(),
+        EstimateModel.find().sort({ _id: 1 }).lean(),
+        LeadModel.find().sort({ _id: 1 }).lean(),
+        ProjectAccessGrantModel.find().sort({ _id: 1 }).lean(),
+        AuditEventModel.find().sort({ _id: 1 }).lean()
+      ]);
+      const session = await mongoose.startSession();
+      try {
+        const input = resolverInput(session);
+        input.lead.projectName = "Conflicting identity";
+        await expect(session.withTransaction(async () => {
+          await resolveApprovalProject(input);
+        })).rejects.toMatchObject({ status: 409, code: "PROJECT_LINK_CONFLICT" });
+      } finally {
+        await session.endSession();
+      }
+      const after = await Promise.all([
+        ProjectModel.find().sort({ _id: 1 }).lean(),
+        EstimateModel.find().sort({ _id: 1 }).lean(),
+        LeadModel.find().sort({ _id: 1 }).lean(),
+        ProjectAccessGrantModel.find().sort({ _id: 1 }).lean(),
+        AuditEventModel.find().sort({ _id: 1 }).lean()
+      ]);
+      expect(after).toEqual(before);
+    } finally {
+      await replica.stop();
+    }
+  }, 30_000);
+});
 
 describe("estimate final drawing approval gate", () => {
   it("rejects unresolved drawings transactionally without changing the estimate", async () => {

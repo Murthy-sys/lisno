@@ -10,7 +10,6 @@ import { requireOperation } from "../middleware/authorization.js";
 import { validateBody } from "../middleware/validate.js";
 import { EstimateModel } from "../models/Estimate.js";
 import { LeadModel } from "../models/Lead.js";
-import { ProjectModel } from "../models/Project.js";
 import { UserModel } from "../models/User.js";
 import type { AuditService } from "../services/audit.service.js";
 import type { AuthService } from "../services/auth.service.js";
@@ -20,6 +19,7 @@ import type {
   EstimatePdfService
 } from "../services/estimate-pdf.service.js";
 import type { LeadService } from "../services/lead.service.js";
+import { resolveApprovalProject } from "../services/estimate-project-handoff.js";
 
 const estimateLineSchema = z.object({ catalogueId: z.string().min(1), roomName: z.string().min(1), specification: z.string().min(1), unit: z.string().min(1), rate: z.number().nonnegative(), quantity: z.number().nonnegative(), included: z.boolean() }).strict();
 const estimateSchema = z.object({ propertyType: z.string().min(1), rooms: z.array(z.record(z.unknown())), scopes: z.array(z.string()), lineItems: z.array(estimateLineSchema) }).strict();
@@ -59,11 +59,26 @@ export function createEstimatesRouter(
     const subtotal = lineItems.reduce((sum: number, line: { amount: number }) => sum + line.amount, 0);
     const gst = Math.round(subtotal * .18);
     let estimate = await EstimateModel.findOne({ leadId: lead.id, ownerId: req.authenticatedUser!.id });
+    const leadProjectId = lead.projectId ?? null;
+    const estimateProjectId = estimate?.projectId ?? null;
+    if (
+      leadProjectId !== null &&
+      estimateProjectId !== null &&
+      leadProjectId !== estimateProjectId
+    ) {
+      throw new ApiError(
+        409,
+        "ESTIMATE_PROJECT_CONFLICT",
+        "The estimate and lead are linked to different projects."
+      );
+    }
     if (estimate && !["draft", "designer_changes_requested", "client_changes_requested"].includes(estimate.status)) {
       throw new ApiError(409, "ESTIMATE_LOCKED", "This estimate is locked while another person is reviewing it.");
     }
     if (!estimate) {
-      estimate = new EstimateModel({ _id: `estimate-${randomUUID()}`, leadId: lead.id, ownerId: req.authenticatedUser!.id, version: 1, status: "draft" });
+      estimate = new EstimateModel({ _id: `estimate-${randomUUID()}`, leadId: lead.id, ownerId: req.authenticatedUser!.id, projectId: leadProjectId, version: 1, status: "draft" });
+    } else if (estimate.projectId == null && leadProjectId !== null) {
+      estimate.projectId = leadProjectId;
     }
     estimate.propertyType = req.body.propertyType;
     estimate.rooms = req.body.rooms;
@@ -326,26 +341,26 @@ export function createEstimatesRouter(
           "A design manager must configure an active project team."
         );
       }
-      const plannedEndAt = new Date(occurredAt);
-      plannedEndAt.setDate(plannedEndAt.getDate() + 90);
-      const projectId = `project-${randomUUID()}`;
-      await ProjectModel.create([{
-        _id: projectId,
-        name: lead.projectName,
+      const projectId = await resolveApprovalProject({
+        estimate: {
+          projectId: estimate.projectId == null ? null : String(estimate.projectId),
+          ownerId: String(estimate.ownerId)
+        },
+        lead: {
+          projectId: lead.projectId == null ? null : String(lead.projectId),
+          ownerId: String(lead.ownerId),
+          projectName: lead.projectName,
+          clientName: lead.clientName,
+          clientEmail: lead.clientEmail,
+          clientMobile: lead.clientMobile,
+          location: lead.location
+        },
         clientId: req.authenticatedUser!.id,
-        clientName: lead.clientName,
-        clientEmail: lead.clientEmail,
-        clientEmailNormalized: normalizeEmail(lead.clientEmail),
-        clientMobile: lead.clientMobile,
-        clientAddress: lead.location,
-        initiatingDesignerId: assigned._id,
-        assignedDesignerIds: [assigned._id],
-        managerId: manager._id,
-        status: "planning",
-        location: lead.location,
-        plannedStartAt: occurredAt,
-        plannedEndAt
-      }], { session });
+        assignedDesignerId: String(assigned._id),
+        managerId: String(manager._id),
+        occurredAt,
+        session
+      });
       const recipients = [assigned, manager].map((user) => ({
         recipientEmail: user.email,
         recipientRole: user.role,
