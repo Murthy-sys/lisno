@@ -163,7 +163,7 @@ export function createSmtpInvitationMailer(
     deliveryKind: "external",
     async sendInvitation(input) {
       const invitationUrl =
-        `${config.publicFrontendUrl}/accept-invitation#${input.rawToken}`;
+        `${config.publicFrontendUrl}/accept-invitation#token=${input.rawToken}`;
       const recipientName = escapeHtml(input.recipient.name);
       const roleLabel = escapeHtml(input.roleLabel);
       const safeUrl = escapeHtml(invitationUrl);

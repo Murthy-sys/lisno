@@ -69,11 +69,12 @@ describe.sequential("SMTP invitation mailer", () => {
   it("builds a fragment-only escaped invitation and strict STARTTLS connection", async () => {
     const { createSmtpInvitationMailer } = await import("../src/services/smtp-invitation-mailer.js");
     const mailer = createSmtpInvitationMailer(smtpConfig);
+    const rawToken = "abcdefghijklmnopqrstuvwxyzABCDEFGH123456789";
 
     await mailer.sendInvitation({
       recipient: { name: "Asha <script>alert(1)</script>", email: "asha@example.com" },
       roleLabel: "Designer & Planner",
-      rawToken: "abcdefghijklmnopqrstuvwxyzABCDEFGH123456789",
+      rawToken,
       expiresAt: "2026-08-24T10:00:00.000Z"
     });
 
@@ -101,8 +102,15 @@ describe.sequential("SMTP invitation mailer", () => {
     const normalizedMessage = state.message!
       .replace(/=\r\n/gu, "")
       .replace(/=3D/gu, "=");
-    expect(normalizedMessage).toContain("https://app.lisno.example/accept-invitation#abcdefghijklmnopqrstuvwxyzABCDEFGH123456789");
-    expect(normalizedMessage).not.toContain("?token=");
+    const invitationUrl =
+      `https://app.lisno.example/accept-invitation#token=${rawToken}`;
+    expect(normalizedMessage).toContain(
+      `Accept your invitation: ${invitationUrl}`
+    );
+    expect(normalizedMessage).toContain(`href="${invitationUrl}"`);
+    expect(normalizedMessage.split(invitationUrl)).toHaveLength(3);
+    expect(normalizedMessage).not.toContain("/accept-invitation?token=");
+    expect(normalizedMessage).not.toContain(`/accept-invitation#${rawToken}`);
     expect(normalizedMessage).toContain("&lt;script&gt;alert(1)&lt;/script&gt;");
     expect(normalizedMessage).toContain("Designer &amp; Planner");
     expect(normalizedMessage.toLowerCase()).not.toContain("tracking");
