@@ -1,4 +1,5 @@
 import bcrypt from "bcryptjs";
+import mongoose from "mongoose";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -86,7 +87,9 @@ function fakeSeedModels(order: string[] = [], db: object = { name: "lisno_demo" 
     auditEvent: fakeSeedModel(order, "audit-event", db),
     accessRequest: fakeSeedModel(order, "access-request", db),
     projectAccessGrant: fakeSeedModel(order, "project-access-grant", db),
-    authorizationCoordination: fakeSeedModel(order, "authorization-coordination", db)
+    authorizationCoordination: fakeSeedModel(order, "authorization-coordination", db),
+    userInvitation: fakeSeedModel(order, "user-invitation", db),
+    emailCoordination: fakeSeedModel(order, "email-coordination", db)
   };
   return {
     models,
@@ -129,6 +132,69 @@ function commandHarness(input: {
 }
 
 describe("demo seed authorization", () => {
+  it("rebuilds the exact authorized collections and invalidates pre-reset invitations", async () => {
+    const environment = {
+      NODE_ENV: "test",
+      ALLOW_DEMO_SEED: "true",
+      DEMO_SEED_DATABASE: "lisno_test",
+      MONGODB_URI: "mongodb://localhost:27017/lisno_test"
+    };
+    setSeedEnvironment(environment);
+    const authorization = authorizeDemoSeed(environment, environment.MONGODB_URI);
+    const originalConnectionName = mongoose.connection.name;
+    mongoose.connection.name = environment.DEMO_SEED_DATABASE;
+    const deletedModels: string[] = [];
+    let preResetTokenAvailable = true;
+    let invitationAuditPresent = true;
+
+    vi.spyOn(mongoose.Model, "deleteMany").mockImplementation(async function () {
+      deletedModels.push(this.modelName);
+      if (this.modelName === "UserInvitation") preResetTokenAvailable = false;
+      if (this.modelName === "AuditEvent") invitationAuditPresent = false;
+      return {} as never;
+    });
+    vi.spyOn(mongoose.Model, "bulkWrite").mockResolvedValue({} as never);
+    vi.spyOn(mongoose.Model, "insertMany").mockImplementation(async function (documents) {
+      if (
+        this.modelName === "AuditEvent" &&
+        (documents as Array<{ action?: string }>).some(({ action }) =>
+          action?.startsWith("user_invitation.")
+        )
+      ) {
+        invitationAuditPresent = true;
+      }
+      return [] as never;
+    });
+
+    try {
+      await seedMongoDatabase(authorization);
+    } finally {
+      mongoose.connection.name = originalConnectionName;
+    }
+
+    expect(new Set(deletedModels)).toEqual(
+      new Set([
+        "User",
+        "Project",
+        "Floor",
+        "DesignStage",
+        "Task",
+        "TaskEvent",
+        "DesignVersion",
+        "DesignVersionSequence",
+        "Evaluation",
+        "AuditEvent",
+        "AccessRequest",
+        "ProjectAccessGrant",
+        "AuthorizationCoordination",
+        "UserInvitation",
+        "EmailCoordination"
+      ])
+    );
+    expect(preResetTokenAvailable).toBe(false);
+    expect(invitationAuditPresent).toBe(false);
+  });
+
   it("does not let callers redirect the production command with injected dependencies", async () => {
     const environment = {
       NODE_ENV: "development",
@@ -411,6 +477,7 @@ describe("deterministic demo seed", () => {
     }
     expect(demoSeedData.accessRequests).toEqual([]);
     expect(demoSeedData.projectAccessGrants).toEqual([]);
+    expect(demoSeedData.userInvitations).toEqual([]);
   });
 
   it("marks every explicit seed user as a development demo account", () => {

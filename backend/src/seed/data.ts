@@ -413,6 +413,7 @@ const tasks: TaskRecord[] = [
 
 export const demoSeedData: SeedData = {
   users,
+  userInvitations: [],
   leads: [],
   estimateResponsibilities: [],
   estimateSummaries: [],

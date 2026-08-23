@@ -66,9 +66,21 @@ export const PROMPT_1_AUDIT_ACTIONS = [
   "project_access.revoked"
 ] as const;
 
+export const USER_INVITATION_AUDIT_ACTIONS = [
+  "user_invitation.created",
+  "user_invitation.superseded",
+  "user_invitation.delivery_sent",
+  "user_invitation.delivery_failed",
+  "user_invitation.resent",
+  "user_invitation.revoked",
+  "user_invitation.accepted",
+  "user.invited_created"
+] as const;
+
 export const AUDIT_ACTIONS = [
   ...EXISTING_AUDIT_ACTIONS,
-  ...PROMPT_1_AUDIT_ACTIONS
+  ...PROMPT_1_AUDIT_ACTIONS,
+  ...USER_INVITATION_AUDIT_ACTIONS
 ] as const;
 
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];

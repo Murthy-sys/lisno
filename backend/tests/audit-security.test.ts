@@ -9,9 +9,19 @@ const nestedSensitiveValues = {
   displayName: "Safe Name",
   profile: {
     password_hash: "never persist",
+    passwordConfirmation: "never persist",
     preferences: [
-      { label: "safe", apiToken: "never persist" },
-      { "client-secret": "never persist", enabled: true }
+      {
+        label: "safe",
+        apiToken: "never persist",
+        rawToken: "never persist",
+        tokenHash: "never persist"
+      },
+      {
+        "client-secret": "never persist",
+        smtpPassword: "never persist",
+        enabled: true
+      }
     ]
   },
   reset: [{ "Password Hash": "never persist", status: "requested" }]

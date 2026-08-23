@@ -35,6 +35,8 @@ export interface SeedModels {
   accessRequest: Model<any>;
   projectAccessGrant: Model<any>;
   authorizationCoordination: Model<any>;
+  userInvitation: Model<any>;
+  emailCoordination: Model<any>;
 }
 
 interface SeedMongooseRuntime {
@@ -61,7 +63,9 @@ async function loadSeedModels(): Promise<SeedModels> {
     auditEvent,
     accessRequest,
     projectAccessGrant,
-    authorizationCoordination
+    authorizationCoordination,
+    userInvitation,
+    emailCoordination
   ] = await Promise.all([
     import("../models/User.js"),
     import("../models/Project.js"),
@@ -75,7 +79,9 @@ async function loadSeedModels(): Promise<SeedModels> {
     import("../models/AuditEvent.js"),
     import("../models/AccessRequest.js"),
     import("../models/ProjectAccessGrant.js"),
-    import("../models/AuthorizationCoordination.js")
+    import("../models/AuthorizationCoordination.js"),
+    import("../models/UserInvitation.js"),
+    import("../models/EmailCoordination.js")
   ]);
   return {
     user: user.UserModel,
@@ -91,7 +97,9 @@ async function loadSeedModels(): Promise<SeedModels> {
     accessRequest: accessRequest.AccessRequestModel,
     projectAccessGrant: projectAccessGrant.ProjectAccessGrantModel,
     authorizationCoordination:
-      authorizationCoordination.AuthorizationCoordinationModel
+      authorizationCoordination.AuthorizationCoordinationModel,
+    userInvitation: userInvitation.UserInvitationModel,
+    emailCoordination: emailCoordination.EmailCoordinationModel
   };
 }
 
@@ -145,7 +153,9 @@ async function resetAuthorizedSeedCollections(
     models.auditEvent,
     models.accessRequest,
     models.projectAccessGrant,
-    models.authorizationCoordination
+    models.authorizationCoordination,
+    models.userInvitation,
+    models.emailCoordination
   ].map((model) => model.deleteMany({})));
   await replaceAll(models.user, demoSeedData.users, userDocument);
   await replaceAll(models.project, demoSeedData.projects, projectDocument);

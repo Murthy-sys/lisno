@@ -1,6 +1,14 @@
 import type { Role, TaskStatus } from "../contracts/domain.js";
 import type { AccountKind } from "../domain/demo-identities.js";
 import type {
+  InvitableRole,
+  UserInvitationAction,
+  UserInvitationDeliveryStatus,
+  UserInvitationPresentationStatus,
+  UserInvitationStoredStatus,
+  UserInvitationTokenValidity
+} from "../domain/user-invitations.js";
+import type {
   ProjectModule,
   RequestableProjectModule
 } from "../domain/authorization.js";
@@ -71,6 +79,108 @@ export interface UserRecord {
   createdAt: string;
   updatedAt: string;
 }
+
+export interface UserInvitationRecord {
+  id: string;
+  name: string;
+  email: string;
+  emailNormalized: string;
+  role: InvitableRole;
+  mobile: string;
+  tokenHash: string | null;
+  tokenGeneration: number;
+  issuedAt: string;
+  expiresAt: string;
+  status: UserInvitationStoredStatus;
+  invitedById: string;
+  tokenIssuedById: string;
+  tokenIssuerVersion: number;
+  acceptedUserId: string | null;
+  acceptedAt: string | null;
+  revokedById: string | null;
+  revokedAt: string | null;
+  supersededByInvitationId: string | null;
+  supersededAt: string | null;
+  deliveryStatus: UserInvitationDeliveryStatus;
+  deliveryAttemptedAt: string | null;
+  sentAt: string | null;
+  deliveryFailureCode: string | null;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface UserInvitationFilters {
+  search?: string;
+  role?: InvitableRole;
+  status?: UserInvitationPresentationStatus;
+  deliveryStatus?: UserInvitationDeliveryStatus;
+}
+
+export interface UserInvitationAdminRecord {
+  id: string;
+  name: string;
+  email: string;
+  role: InvitableRole;
+  mobile: string;
+  tokenValidity: UserInvitationTokenValidity;
+  presentationStatus: UserInvitationPresentationStatus;
+  currentLinkAvailable: boolean;
+  availableActions: readonly UserInvitationAction[];
+  invitedBy: Pick<UserRecord, "id" | "name" | "email" | "role">;
+  issuedAt: string;
+  expiresAt: string;
+  deliveryStatus: UserInvitationDeliveryStatus;
+  deliveryAttemptedAt: string | null;
+  sentAt: string | null;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type NewUserInvitation = UserInvitationRecord;
+
+export interface SupersedeUserInvitationChange {
+  supersededByInvitationId: string;
+  supersededAt: string;
+  updatedAt: string;
+}
+
+export interface ResendUserInvitationChange {
+  tokenHash: string;
+  tokenGeneration: number;
+  issuedAt: string;
+  expiresAt: string;
+  tokenIssuedById: string;
+  tokenIssuerVersion: number;
+  updatedAt: string;
+}
+
+export interface RevokeUserInvitationChange {
+  revokedById: string;
+  revokedAt: string;
+  updatedAt: string;
+}
+
+export interface AcceptUserInvitationChange {
+  acceptedUserId: string;
+  acceptedAt: string;
+  updatedAt: string;
+}
+
+export type InvitationDeliveryChange =
+  | {
+      status: "sent";
+      attemptedAt: string;
+      sentAt: string;
+      updatedAt: string;
+    }
+  | {
+      status: "failed";
+      attemptedAt: string;
+      failureCode: string;
+      updatedAt: string;
+    };
 
 export interface UserDirectoryFilters {
   search?: string;
@@ -648,6 +758,7 @@ export interface GrantRevocation {
 
 export interface SeedData {
   users: UserRecord[];
+  userInvitations: UserInvitationRecord[];
   leads: LeadRecord[];
   estimateResponsibilities: EstimateResponsibilityRecord[];
   estimateSummaries?: EstimateSummaryRecord[];
