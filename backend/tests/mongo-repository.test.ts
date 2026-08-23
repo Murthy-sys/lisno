@@ -41,6 +41,31 @@ function recordedQuery(value: unknown) {
   return recorder;
 }
 
+type QueryExecution = {
+  active: string | null;
+  order: string[];
+  overlaps: string[];
+};
+
+function yieldingRecordedQuery(
+  value: unknown,
+  label: string,
+  execution: QueryExecution
+) {
+  const recorder = recordedQuery(value);
+  recorder.exec.mockImplementation(async () => {
+    if (execution.active !== null) {
+      execution.overlaps.push(`${execution.active}->${label}`);
+    }
+    execution.active = label;
+    execution.order.push(label);
+    await Promise.resolve();
+    if (execution.active === label) execution.active = null;
+    return value;
+  });
+  return recorder;
+}
+
 const validReplacement = (workerResultId = "result-1") => ({
   jobId: "job-replace",
   claimId: "claim-replace",
@@ -1259,6 +1284,7 @@ describe("Mongo repository contracts", () => {
 
   it("scopes and paginates Admin project summaries before bounded batched joins with one session", async () => {
     const session = { id: "admin-summary-session" } as never;
+    const execution: QueryExecution = { active: null, order: [], overlaps: [] };
     const grantQuery = recordedQuery([{ projectId: "project-admin-page" }]);
     const grantFind = vi.spyOn(ProjectAccessGrantModel, "find").mockReturnValueOnce(
       grantQuery as never
@@ -1285,11 +1311,13 @@ describe("Mongo repository contracts", () => {
       createdAt: new Date("2026-08-23T10:00:00.000Z"),
       updatedAt: new Date("2026-08-23T10:00:00.000Z")
     };
-    const projectQuery = recordedQuery([projectDocument]);
+    const projectQuery = yieldingRecordedQuery(
+      [projectDocument], "project-page", execution
+    );
     const projectFind = vi.spyOn(ProjectModel, "find").mockReturnValueOnce(
       projectQuery as never
     );
-    const countQuery = recordedQuery(2);
+    const countQuery = yieldingRecordedQuery(2, "project-count", execution);
     const count = vi.spyOn(ProjectModel, "countDocuments").mockReturnValueOnce(
       countQuery as never
     );
@@ -1317,19 +1345,19 @@ describe("Mongo repository contracts", () => {
       createdAt: new Date("2026-08-23T10:00:00.000Z"),
       updatedAt: new Date("2026-08-23T10:00:00.000Z")
     };
-    const leadQuery = recordedQuery([leadDocument]);
+    const leadQuery = yieldingRecordedQuery([leadDocument], "lead-join", execution);
     const leadFind = vi.spyOn(LeadModel, "find").mockReturnValueOnce(leadQuery as never);
-    const estimatorQuery = recordedQuery([{
+    const estimatorQuery = yieldingRecordedQuery([{
       _id: "estimator-page", name: "Asha Estimator", email: "estimator@example.com",
       title: "Estimator"
-    }]);
+    }], "estimator-join", execution);
     const userFind = vi.spyOn(UserModel, "find").mockReturnValueOnce(
       estimatorQuery as never
     );
-    const estimateQuery = recordedQuery([{
+    const estimateQuery = yieldingRecordedQuery([{
       _id: "estimate-admin-page", leadId: "lead-admin-page",
       projectId: "project-admin-page", status: "draft", total: 118000
-    }]);
+    }], "estimate-join", execution);
     const estimateFind = vi.spyOn(EstimateModel, "find").mockReturnValueOnce(
       estimateQuery as never
     );
@@ -1403,6 +1431,14 @@ describe("Mongo repository contracts", () => {
     ]) {
       expect(recorder.session).toHaveBeenCalledWith(session);
     }
+    expect(execution.overlaps).toEqual([]);
+    expect(execution.order).toEqual([
+      "project-page",
+      "project-count",
+      "lead-join",
+      "estimator-join",
+      "estimate-join"
+    ]);
   });
 
   it("combines Admin detail ID with exact scope before joining and hides out-of-scope IDs", async () => {
@@ -1441,16 +1477,17 @@ describe("Mongo repository contracts", () => {
 
   it("escapes estimator search and applies deterministic bounded projection and paging", async () => {
     const session = { id: "estimator-option-session" } as never;
-    const optionQuery = recordedQuery([{
+    const execution: QueryExecution = { active: null, order: [], overlaps: [] };
+    const optionQuery = yieldingRecordedQuery([{
       _id: "estimator-option",
       name: "Asha Rao",
       email: "asha@example.com",
       title: null,
       mobile: "must-not-map",
       address: "must-not-map"
-    }]);
+    }], "estimator-page", execution);
     const find = vi.spyOn(UserModel, "find").mockReturnValueOnce(optionQuery as never);
-    const countQuery = recordedQuery(1);
+    const countQuery = yieldingRecordedQuery(1, "estimator-count", execution);
     const count = vi.spyOn(UserModel, "countDocuments").mockReturnValueOnce(
       countQuery as never
     );
@@ -1488,6 +1525,8 @@ describe("Mongo repository contracts", () => {
     expect(optionQuery.limit).toHaveBeenCalledWith(7);
     expect(optionQuery.session).toHaveBeenCalledWith(session);
     expect(countQuery.session).toHaveBeenCalledWith(session);
+    expect(execution.overlaps).toEqual([]);
+    expect(execution.order).toEqual(["estimator-page", "estimator-count"]);
     expect(JSON.stringify(result)).not.toMatch(/mobile|address/);
   });
 

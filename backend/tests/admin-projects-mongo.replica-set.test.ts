@@ -248,6 +248,31 @@ describe("Admin project Mongo transactions", () => {
     expect(list.body.data.items).toHaveLength(1);
   });
 
+  it("reads the joined Admin summary inside an explicit Mongo transaction", async () => {
+    await Promise.all([
+      insertUser("mongo-admin", "admin"),
+      insertUser("mongo-estimator", "estimator_sales")
+    ]);
+    const repository = createMongoRepository();
+    const created = await request(createApp({ repository, auth, clock }))
+      .post("/api/v1/admin/projects")
+      .set("Authorization", bearer("mongo-admin", "admin"))
+      .send(input)
+      .expect(201);
+    const admin = await repository.findUserById("mongo-admin");
+    if (!admin) throw new Error("Expected the Admin fixture to exist.");
+
+    const summary = await repository.runInTransaction((transaction) =>
+      transaction.findAdminProject(admin, created.body.data.id)
+    );
+
+    expect(summary).toMatchObject({
+      id: created.body.data.id,
+      estimator: { id: "mongo-estimator" },
+      lead: { id: created.body.data.lead.id }
+    });
+  });
+
   it.each([
     ["createProject", 0],
     ["createProjectAccessGrant", 0],

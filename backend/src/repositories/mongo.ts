@@ -65,6 +65,16 @@ type PlainDocument = Record<string, any>;
 const MAX_DUPLICATE_KEY_TRANSACTION_ATTEMPTS = 2;
 
 export function createMongoRepository(session?: ClientSession): AppRepository {
+  const executeSessionCompatibleReadPair = async <First, Second>(
+    first: () => Promise<First>,
+    second: () => Promise<Second>
+  ): Promise<[First, Second]> => {
+    if (!session) return Promise.all([first(), second()]);
+    const firstResult = await first();
+    const secondResult = await second();
+    return [firstResult, secondResult];
+  };
+
   const eligibleGrantSource = (
     user: UserRecord,
     module: ProjectModule
@@ -170,10 +180,11 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
       estimatorQuery.session(session);
       estimateQuery.session(session);
     }
-    const [estimatorDocuments, estimateDocuments] = await Promise.all([
-      estimatorQuery.exec(),
-      estimateQuery.exec()
-    ]);
+    const [estimatorDocuments, estimateDocuments] =
+      await executeSessionCompatibleReadPair(
+        () => estimatorQuery.exec(),
+        () => estimateQuery.exec()
+      );
     const estimators = estimatorDocuments.map((document) => ({
       id: idOf(document),
       name: document.name,
@@ -882,10 +893,10 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
         itemQuery.session(session);
         countQuery.session(session);
       }
-      const [documents, total] = await Promise.all([
-        itemQuery.exec(),
-        countQuery.exec()
-      ]);
+      const [documents, total] = await executeSessionCompatibleReadPair(
+        () => itemQuery.exec(),
+        () => countQuery.exec()
+      );
       return {
         items: await loadAdminProjectSummaries(documents),
         total
@@ -921,10 +932,10 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
         itemQuery.session(session);
         countQuery.session(session);
       }
-      const [documents, total] = await Promise.all([
-        itemQuery.exec(),
-        countQuery.exec()
-      ]);
+      const [documents, total] = await executeSessionCompatibleReadPair(
+        () => itemQuery.exec(),
+        () => countQuery.exec()
+      );
       const items: EstimatorOption[] = documents.map((document) => ({
         id: idOf(document),
         name: document.name,
