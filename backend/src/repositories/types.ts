@@ -807,6 +807,50 @@ export interface AppRepository {
     operation: (repository: AppRepository) => Promise<T>
   ): Promise<T>;
   coordinateClientEmail(emailNormalized: string): Promise<void>;
+  findUserInvitationById(id: string): Promise<UserInvitationRecord | null>;
+  findPendingUserInvitationByEmail(
+    emailNormalized: string
+  ): Promise<UserInvitationRecord | null>;
+  findLatestUserInvitationIssuedAtByEmail(
+    emailNormalized: string
+  ): Promise<string | null>;
+  findPendingUserInvitationByTokenHash(
+    tokenHash: string
+  ): Promise<UserInvitationRecord | null>;
+  pageUserInvitations(
+    filters: UserInvitationFilters,
+    pagination: PaginationInput,
+    now: string
+  ): Promise<PageResult<UserInvitationAdminRecord>>;
+  hasUnclaimedClientProjectByEmail(emailNormalized: string): Promise<boolean>;
+  createUserInvitation(input: NewUserInvitation): Promise<UserInvitationRecord>;
+  supersedeUserInvitation(
+    id: string,
+    expectedVersion: number,
+    change: SupersedeUserInvitationChange
+  ): Promise<UserInvitationRecord>;
+  resendUserInvitation(
+    id: string,
+    expectedVersion: number,
+    change: ResendUserInvitationChange
+  ): Promise<UserInvitationRecord>;
+  revokeUserInvitation(
+    id: string,
+    expectedVersion: number,
+    change: RevokeUserInvitationChange
+  ): Promise<UserInvitationRecord>;
+  acceptUserInvitation(
+    id: string,
+    expectedVersion: number,
+    expectedGeneration: number,
+    expectedTokenHash: string,
+    change: AcceptUserInvitationChange
+  ): Promise<UserInvitationRecord>;
+  updateUserInvitationDelivery(
+    id: string,
+    tokenGeneration: number,
+    change: InvitationDeliveryChange
+  ): Promise<UserInvitationRecord | null>;
   coordinateAuthorizationMutation(): Promise<void>;
   findAccessRequestById(id: string): Promise<AccessRequestRecord | null>;
   findPendingAccessRequest(

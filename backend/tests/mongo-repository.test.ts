@@ -20,6 +20,7 @@ import { ProjectAccessGrantModel } from "../src/models/ProjectAccessGrant.js";
 import { TaskModel } from "../src/models/Task.js";
 import { TaskEventModel } from "../src/models/TaskEvent.js";
 import { UserModel } from "../src/models/User.js";
+import { UserInvitationModel } from "../src/models/UserInvitation.js";
 import { createMongoRepository } from "../src/repositories/mongo.js";
 import {
   RepositoryConflictError,
@@ -65,6 +66,37 @@ function yieldingRecordedQuery(
   });
   return recorder;
 }
+
+const invitationDocument = (overrides: Record<string, unknown> = {}) => ({
+  _id: "invitation-mongo-1",
+  name: "Asha Rao",
+  email: "asha@example.test",
+  emailNormalized: "asha@example.test",
+  role: "designer",
+  mobile: "+91 90000 00000",
+  tokenHash: "a".repeat(64),
+  tokenGeneration: 1,
+  issuedAt: new Date("2026-08-24T09:00:00.000Z"),
+  expiresAt: new Date("2026-08-25T09:00:00.000Z"),
+  status: "pending",
+  invitedById: "user-super-admin",
+  tokenIssuedById: "user-super-admin",
+  tokenIssuerVersion: 1,
+  acceptedUserId: null,
+  acceptedAt: null,
+  revokedById: null,
+  revokedAt: null,
+  supersededByInvitationId: null,
+  supersededAt: null,
+  deliveryStatus: "queued",
+  deliveryAttemptedAt: null,
+  sentAt: null,
+  deliveryFailureCode: null,
+  __v: 0,
+  createdAt: new Date("2026-08-24T09:00:00.000Z"),
+  updatedAt: new Date("2026-08-24T09:00:00.000Z"),
+  ...overrides
+});
 
 const validReplacement = (workerResultId = "result-1") => ({
   jobId: "job-replace",
@@ -2360,5 +2392,474 @@ describe("Mongo repository contracts", () => {
     }
     expect(session.withTransaction).toHaveBeenCalledOnce();
     expect(session.endSession).toHaveBeenCalledOnce();
+  });
+
+  it("selects invitation digests only for full-record locators and attaches their session", async () => {
+    const session = {} as never;
+    const byIdQuery = recordedQuery(invitationDocument());
+    const byEmailQuery = recordedQuery(invitationDocument());
+    const byTokenQuery = recordedQuery(invitationDocument());
+    const latestQuery = recordedQuery({
+      issuedAt: new Date("2026-08-24T09:00:00.000Z")
+    });
+    const findById = vi
+      .spyOn(UserInvitationModel, "findById")
+      .mockReturnValueOnce(byIdQuery as never);
+    const findOne = vi
+      .spyOn(UserInvitationModel, "findOne")
+      .mockReturnValueOnce(byEmailQuery as never)
+      .mockReturnValueOnce(latestQuery as never)
+      .mockReturnValueOnce(byTokenQuery as never);
+    const repository = createMongoRepository(session);
+
+    await expect(repository.findUserInvitationById("invitation-mongo-1"))
+      .resolves.toMatchObject({ id: "invitation-mongo-1", version: 1 });
+    await expect(
+      repository.findPendingUserInvitationByEmail(" ASHA@EXAMPLE.TEST ")
+    ).resolves.toMatchObject({ emailNormalized: "asha@example.test" });
+    await expect(
+      repository.findLatestUserInvitationIssuedAtByEmail(" ASHA@EXAMPLE.TEST ")
+    ).resolves.toBe("2026-08-24T09:00:00.000Z");
+    await expect(
+      repository.findPendingUserInvitationByTokenHash("a".repeat(64))
+    ).resolves.toMatchObject({ tokenHash: "a".repeat(64) });
+
+    expect(findById).toHaveBeenCalledWith("invitation-mongo-1");
+    expect(findOne).toHaveBeenNthCalledWith(1, {
+      emailNormalized: "asha@example.test",
+      status: "pending"
+    });
+    expect(findOne).toHaveBeenNthCalledWith(2, {
+      emailNormalized: "asha@example.test"
+    });
+    expect(findOne).toHaveBeenNthCalledWith(3, {
+      tokenHash: "a".repeat(64),
+      status: "pending"
+    });
+    for (const fullRecordQuery of [byIdQuery, byEmailQuery, byTokenQuery]) {
+      expect(fullRecordQuery.select).toHaveBeenCalledWith("+tokenHash");
+      expect(fullRecordQuery.session).toHaveBeenCalledWith(session);
+    }
+    expect(latestQuery.select).toHaveBeenCalledWith({ issuedAt: 1, _id: 0 });
+    expect(latestQuery.sort).toHaveBeenCalledWith({ issuedAt: -1, _id: -1 });
+    expect(latestQuery.session).toHaveBeenCalledWith(session);
+  });
+
+  it("creates an invitation with __v zero in the active session and maps API version one", async () => {
+    const session = {} as never;
+    const raw = invitationDocument();
+    const pendingLookup = recordedQuery(null);
+    vi.spyOn(UserInvitationModel, "findOne").mockReturnValueOnce(
+      pendingLookup as never
+    );
+    const create = vi.spyOn(UserInvitationModel, "create").mockResolvedValueOnce([
+      { toObject: () => raw }
+    ] as never);
+    const input = {
+      id: "invitation-mongo-1",
+      name: "  Asha Rao  ",
+      email: " ASHA@EXAMPLE.TEST ",
+      emailNormalized: "wrong@example.test",
+      role: "designer" as const,
+      mobile: " +91  90000 00000 ",
+      tokenHash: "a".repeat(64),
+      tokenGeneration: 1,
+      issuedAt: "2026-08-24T09:00:00.000Z",
+      expiresAt: "2026-08-25T09:00:00.000Z",
+      status: "pending" as const,
+      invitedById: "user-super-admin",
+      tokenIssuedById: "user-super-admin",
+      tokenIssuerVersion: 1,
+      acceptedUserId: null,
+      acceptedAt: null,
+      revokedById: null,
+      revokedAt: null,
+      supersededByInvitationId: null,
+      supersededAt: null,
+      deliveryStatus: "queued" as const,
+      deliveryAttemptedAt: null,
+      sentAt: null,
+      deliveryFailureCode: null,
+      version: 1,
+      createdAt: "2026-08-24T09:00:00.000Z",
+      updatedAt: "2026-08-24T09:00:00.000Z"
+    };
+
+    await expect(createMongoRepository(session).createUserInvitation(input))
+      .resolves.toMatchObject({ id: input.id, version: 1 });
+    expect(create).toHaveBeenCalledWith(
+      [
+        expect.objectContaining({
+          _id: input.id,
+          name: "Asha Rao",
+          email: "ASHA@EXAMPLE.TEST",
+          emailNormalized: "asha@example.test",
+          mobile: "+91 90000 00000",
+          __v: 0
+        })
+      ],
+      { session }
+    );
+    const stored = create.mock.calls[0]![0]![0] as Record<string, unknown>;
+    expect(stored).not.toHaveProperty("id");
+    expect(stored).not.toHaveProperty("version");
+    expect(pendingLookup.select).toHaveBeenCalledWith({ _id: 1 });
+    expect(pendingLookup.session).toHaveBeenCalledWith(session);
+  });
+
+  it("rejects a second stored-pending invitation for a normalized email before creating", async () => {
+    const session = {} as never;
+    const pendingLookup = recordedQuery({ _id: "existing-invitation" });
+    vi.spyOn(UserInvitationModel, "findOne").mockReturnValueOnce(
+      pendingLookup as never
+    );
+    const create = vi.spyOn(UserInvitationModel, "create");
+    const input = {
+      id: "invitation-mongo-2",
+      name: "Asha Rao",
+      email: " ASHA@EXAMPLE.TEST ",
+      emailNormalized: "wrong@example.test",
+      role: "designer" as const,
+      mobile: "+91 90000 00000",
+      tokenHash: "b".repeat(64),
+      tokenGeneration: 1,
+      issuedAt: "2026-08-24T09:00:00.000Z",
+      expiresAt: "2026-08-25T09:00:00.000Z",
+      status: "pending" as const,
+      invitedById: "user-super-admin",
+      tokenIssuedById: "user-super-admin",
+      tokenIssuerVersion: 1,
+      acceptedUserId: null,
+      acceptedAt: null,
+      revokedById: null,
+      revokedAt: null,
+      supersededByInvitationId: null,
+      supersededAt: null,
+      deliveryStatus: "queued" as const,
+      deliveryAttemptedAt: null,
+      sentAt: null,
+      deliveryFailureCode: null,
+      version: 1,
+      createdAt: "2026-08-24T09:00:00.000Z",
+      updatedAt: "2026-08-24T09:00:00.000Z"
+    };
+
+    await expect(
+      createMongoRepository(session).createUserInvitation(input)
+    ).rejects.toBeInstanceOf(RepositoryConflictError);
+    expect(UserInvitationModel.findOne).toHaveBeenCalledWith({
+      emailNormalized: "asha@example.test",
+      status: "pending"
+    });
+    expect(pendingLookup.select).toHaveBeenCalledWith({ _id: 1 });
+    expect(pendingLookup.session).toHaveBeenCalledWith(session);
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it("uses __v CAS filters, increments semantic transitions, matches accept generation/digest, and returns full records", async () => {
+    const session = {} as never;
+    const supersededQuery = recordedQuery(
+      invitationDocument({
+        status: "superseded",
+        tokenHash: null,
+        supersededByInvitationId: "invitation-mongo-2",
+        supersededAt: new Date("2026-08-24T10:00:00.000Z"),
+        __v: 1
+      })
+    );
+    const resentQuery = recordedQuery(
+      invitationDocument({ tokenHash: "b".repeat(64), tokenGeneration: 2, __v: 1 })
+    );
+    const revokedQuery = recordedQuery(
+      invitationDocument({
+        status: "revoked",
+        tokenHash: null,
+        revokedById: "user-super-admin",
+        revokedAt: new Date("2026-08-24T10:00:00.000Z"),
+        __v: 1
+      })
+    );
+    const acceptedQuery = recordedQuery(
+      invitationDocument({
+        status: "accepted",
+        tokenHash: null,
+        acceptedUserId: "new-user",
+        acceptedAt: new Date("2026-08-24T10:00:00.000Z"),
+        __v: 1
+      })
+    );
+    const update = vi
+      .spyOn(UserInvitationModel, "findOneAndUpdate")
+      .mockReturnValueOnce(supersededQuery as never)
+      .mockReturnValueOnce(resentQuery as never)
+      .mockReturnValueOnce(revokedQuery as never)
+      .mockReturnValueOnce(acceptedQuery as never);
+    const repository = createMongoRepository(session);
+
+    await repository.supersedeUserInvitation("invitation-mongo-1", 1, {
+      supersededByInvitationId: "invitation-mongo-2",
+      supersededAt: "2026-08-24T10:00:00.000Z",
+      updatedAt: "2026-08-24T10:00:00.000Z"
+    });
+    await repository.resendUserInvitation("invitation-mongo-1", 1, {
+      tokenHash: "b".repeat(64),
+      tokenGeneration: 2,
+      issuedAt: "2026-08-24T10:00:00.000Z",
+      expiresAt: "2026-08-25T10:00:00.000Z",
+      tokenIssuedById: "user-super-admin",
+      tokenIssuerVersion: 1,
+      updatedAt: "2026-08-24T10:00:00.000Z"
+    });
+    await repository.revokeUserInvitation("invitation-mongo-1", 1, {
+      revokedById: "user-super-admin",
+      revokedAt: "2026-08-24T10:00:00.000Z",
+      updatedAt: "2026-08-24T10:00:00.000Z"
+    });
+    await repository.acceptUserInvitation(
+      "invitation-mongo-1",
+      1,
+      1,
+      "a".repeat(64),
+      {
+        acceptedUserId: "new-user",
+        acceptedAt: "2026-08-24T10:00:00.000Z",
+        updatedAt: "2026-08-24T10:00:00.000Z"
+      }
+    );
+
+    for (let index = 1; index <= 4; index += 1) {
+      const [filter, mutation, options] = update.mock.calls[index - 1]!;
+      expect(filter).toMatchObject({
+        _id: "invitation-mongo-1",
+        status: "pending",
+        __v: 0
+      });
+      expect(mutation).toMatchObject({ $inc: { __v: 1 } });
+      expect(options).toMatchObject({
+        new: true,
+        runValidators: true,
+        timestamps: false
+      });
+    }
+    expect(update.mock.calls[3]![0]).toEqual({
+      _id: "invitation-mongo-1",
+      status: "pending",
+      __v: 0,
+      tokenGeneration: 1,
+      tokenHash: "a".repeat(64)
+    });
+    for (const transitionQuery of [
+      supersededQuery,
+      resentQuery,
+      revokedQuery,
+      acceptedQuery
+    ]) {
+      expect(transitionQuery.select).toHaveBeenCalledWith("+tokenHash");
+      expect(transitionQuery.session).toHaveBeenCalledWith(session);
+    }
+  });
+
+  it("updates exact queued delivery generation without incrementing __v and returns null when stale", async () => {
+    const session = {} as never;
+    const sentQuery = recordedQuery(
+      invitationDocument({
+        deliveryStatus: "sent",
+        deliveryAttemptedAt: new Date("2026-08-24T09:01:00.000Z"),
+        sentAt: new Date("2026-08-24T09:01:01.000Z")
+      })
+    );
+    const staleQuery = recordedQuery(null);
+    const update = vi
+      .spyOn(UserInvitationModel, "findOneAndUpdate")
+      .mockReturnValueOnce(sentQuery as never)
+      .mockReturnValueOnce(staleQuery as never);
+    const repository = createMongoRepository(session);
+    const change = {
+      status: "sent" as const,
+      attemptedAt: "2026-08-24T09:01:00.000Z",
+      sentAt: "2026-08-24T09:01:01.000Z",
+      updatedAt: "2026-08-24T09:01:01.000Z"
+    };
+
+    await expect(repository.updateUserInvitationDelivery("invitation-mongo-1", 1, change))
+      .resolves.toMatchObject({ deliveryStatus: "sent", version: 1 });
+    await expect(repository.updateUserInvitationDelivery("invitation-mongo-1", 2, change))
+      .resolves.toBeNull();
+
+    const [filter, mutation, options] = update.mock.calls[0]!;
+    expect(filter).toEqual({
+      _id: "invitation-mongo-1",
+      status: "pending",
+      tokenGeneration: 1,
+      deliveryStatus: "queued"
+    });
+    expect(mutation).not.toHaveProperty("$inc");
+    expect(options).toMatchObject({
+      new: true,
+      runValidators: true,
+      timestamps: false
+    });
+    for (const deliveryQuery of [sentQuery, staleQuery]) {
+      expect(deliveryQuery.select).toHaveBeenCalledWith("+tokenHash");
+      expect(deliveryQuery.session).toHaveBeenCalledWith(session);
+    }
+  });
+
+  it("keeps a session-bound semantic transition and its conflict probe sequential", async () => {
+    const session = {} as never;
+    const execution: QueryExecution = { active: null, order: [], overlaps: [] };
+    const transitionQuery = yieldingRecordedQuery(null, "transition", execution);
+    const existsQuery = yieldingRecordedQuery({ _id: "invitation-mongo-1" }, "exists", execution);
+    vi.spyOn(UserInvitationModel, "findOneAndUpdate").mockReturnValueOnce(
+      transitionQuery as never
+    );
+    vi.spyOn(UserInvitationModel, "exists").mockReturnValueOnce(existsQuery as never);
+
+    await expect(
+      createMongoRepository(session).revokeUserInvitation("invitation-mongo-1", 1, {
+        revokedById: "user-super-admin",
+        revokedAt: "2026-08-24T10:00:00.000Z",
+        updatedAt: "2026-08-24T10:00:00.000Z"
+      })
+    ).rejects.toBeInstanceOf(RepositoryConflictError);
+    expect(execution.order).toEqual(["transition", "exists"]);
+    expect(execution.overlaps).toEqual([]);
+    expect(transitionQuery.session).toHaveBeenCalledWith(session);
+    expect(existsQuery.session).toHaveBeenCalledWith(session);
+  });
+
+  it("builds session-bound invitation Admin pages with presentation-first filtering and an explicit safe projection", async () => {
+    const session = {} as never;
+    const adminItem = {
+      _id: "invitation-mongo-1",
+      name: "Asha Rao",
+      email: "asha@example.test",
+      role: "designer",
+      mobile: "+91 90000 00000",
+      tokenValidity: "current",
+      presentationStatus: "pending",
+      currentLinkAvailable: true,
+      availableActions: ["resend", "revoke"],
+      invitedBy: {
+        id: "user-super-admin",
+        name: "Aditi Rao",
+        email: "super-admin@lisno.example",
+        role: "super_admin"
+      },
+      issuedAt: new Date("2026-08-24T09:00:00.000Z"),
+      expiresAt: new Date("2026-08-25T09:00:00.000Z"),
+      deliveryStatus: "queued",
+      deliveryAttemptedAt: null,
+      sentAt: null,
+      version: 1,
+      createdAt: new Date("2026-08-24T09:00:00.000Z"),
+      updatedAt: new Date("2026-08-24T09:00:00.000Z")
+    };
+    const omittedStatusQuery = recordedQuery([
+      { items: [adminItem], count: [{ total: 1 }] }
+    ]);
+    const filteredStatusQuery = recordedQuery([
+      { items: [adminItem], count: [{ total: 1 }] }
+    ]);
+    const aggregate = vi
+      .spyOn(UserInvitationModel, "aggregate")
+      .mockReturnValueOnce(omittedStatusQuery as never)
+      .mockReturnValueOnce(filteredStatusQuery as never);
+    const repository = createMongoRepository(session);
+
+    await expect(
+      repository.pageUserInvitations({}, { limit: 20, offset: 0 }, "2026-08-24T12:00:00.000Z")
+    ).resolves.toEqual({
+      items: [
+        expect.objectContaining({
+          id: "invitation-mongo-1",
+          tokenValidity: "current",
+          presentationStatus: "pending",
+          issuedAt: "2026-08-24T09:00:00.000Z",
+          expiresAt: "2026-08-25T09:00:00.000Z",
+          createdAt: "2026-08-24T09:00:00.000Z",
+          updatedAt: "2026-08-24T09:00:00.000Z"
+        })
+      ],
+      total: 1
+    });
+    await repository.pageUserInvitations(
+      { status: "pending" },
+      { limit: 20, offset: 0 },
+      "2026-08-24T12:00:00.000Z"
+    );
+
+    const omittedPipeline = aggregate.mock.calls[0]![0] as Array<Record<string, any>>;
+    const filteredPipeline = aggregate.mock.calls[1]![0] as Array<Record<string, any>>;
+    expect(omittedPipeline[0]).toEqual({ $match: { status: "pending" } });
+    const filteredPresentationIndex = filteredPipeline.findIndex(
+      (stage) => stage.$match?.presentationStatus === "pending"
+    );
+    const derivedPresentationIndex = filteredPipeline.findIndex((stage) =>
+      JSON.stringify(stage).includes('"presentationStatus"') && Boolean(stage.$set || stage.$addFields)
+    );
+    expect(derivedPresentationIndex).toBeGreaterThanOrEqual(0);
+    expect(filteredPresentationIndex).toBeGreaterThan(derivedPresentationIndex);
+    expect(JSON.stringify(filteredPipeline)).toContain(
+      JSON.stringify({ $ifNull: ["$issuer.version", 1] })
+    );
+    expect(JSON.stringify(filteredPipeline)).toContain(
+      JSON.stringify({ createdAt: -1, _id: -1 })
+    );
+
+    const facetStage = filteredPipeline.find((stage) => stage.$facet)?.$facet;
+    expect(facetStage).toBeDefined();
+    const projection = [...facetStage.items]
+      .reverse()
+      .find((stage: Record<string, unknown>) => "$project" in stage)?.$project;
+    expect(projection).toEqual(
+      expect.objectContaining({
+        _id: 1,
+        name: 1,
+        email: 1,
+        role: 1,
+        mobile: 1,
+        tokenValidity: 1,
+        presentationStatus: 1,
+        currentLinkAvailable: 1,
+        availableActions: 1,
+        invitedBy: 1,
+        version: 1
+      })
+    );
+    for (const forbidden of [
+      "tokenHash",
+      "passwordHash",
+      "accountKind",
+      "deliveryFailureCode",
+      "providerMessageId",
+      "claimedUsers",
+      "reservedProjects"
+    ]) {
+      expect(projection).not.toHaveProperty(forbidden);
+    }
+    expect(JSON.stringify(filteredPipeline)).not.toContain('"tokenHash"');
+    for (const aggregateQuery of [omittedStatusQuery, filteredStatusQuery]) {
+      expect(aggregateQuery.session).toHaveBeenCalledWith(session);
+    }
+  });
+
+  it("normalizes and attaches the session when checking unclaimed Client-project email", async () => {
+    const session = {} as never;
+    const existsQuery = recordedQuery({ _id: "reserved-project" });
+    const exists = vi
+      .spyOn(ProjectModel, "exists")
+      .mockReturnValueOnce(existsQuery as never);
+
+    await expect(
+      createMongoRepository(session).hasUnclaimedClientProjectByEmail(
+        " RESERVED@EXAMPLE.TEST "
+      )
+    ).resolves.toBe(true);
+    expect(exists).toHaveBeenCalledWith({
+      clientId: null,
+      clientEmailNormalized: "reserved@example.test"
+    });
+    expect(existsQuery.session).toHaveBeenCalledWith(session);
   });
 });

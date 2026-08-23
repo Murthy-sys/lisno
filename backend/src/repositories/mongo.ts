@@ -2,6 +2,12 @@ import { randomUUID } from "node:crypto";
 import mongoose, { type ClientSession, type Model, type PipelineStage } from "mongoose";
 import { normalizeEmail } from "../domain/email.js";
 import {
+  invitationEmailSchema,
+  invitationNameSchema,
+  normalizeInvitationEmail,
+  normalizeInvitationMobile
+} from "../domain/user-invitations.js";
+import {
   REQUESTABLE_MODULES_BY_ROLE,
   type ProjectModule
 } from "../domain/authorization.js";
@@ -26,6 +32,7 @@ import { ProjectAccessGrantModel } from "../models/ProjectAccessGrant.js";
 import { TaskModel } from "../models/Task.js";
 import { TaskEventModel } from "../models/TaskEvent.js";
 import { UserModel } from "../models/User.js";
+import { UserInvitationModel } from "../models/UserInvitation.js";
 import { adminProjectSummary } from "./admin-project-summary.js";
 import {
   RepositoryConflictError,
@@ -58,6 +65,9 @@ import {
   type ProjectAccessGrantRecord,
   type TaskEventRecord,
   type TaskRecord,
+  type UserInvitationAdminRecord,
+  type UserInvitationFilters,
+  type UserInvitationRecord,
   type UserRecord
 } from "./types.js";
 
@@ -203,6 +213,37 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
     );
   };
 
+  const transitionUserInvitation = async (
+    id: string,
+    expectedVersion: number,
+    extraFilter: PlainDocument,
+    set: PlainDocument
+  ): Promise<UserInvitationRecord> =>
+    runAuthorizationWrite(session, "User invitation", async () => {
+      const query = UserInvitationModel.findOneAndUpdate(
+        {
+          _id: id,
+          status: "pending",
+          __v: expectedVersion - 1,
+          ...extraFilter
+        },
+        { $set: set, $inc: { __v: 1 } },
+        { new: true, runValidators: true, timestamps: false }
+      ).select("+tokenHash");
+      if (session) query.session(session);
+      const document = await query.lean().exec();
+      if (document) return mapUserInvitation(document);
+
+      const existsQuery = UserInvitationModel.exists({ _id: id });
+      if (session) existsQuery.session(session);
+      if (!(await existsQuery.exec())) {
+        throw new RepositoryNotFoundError(`User invitation ${id} was not found.`);
+      }
+      throw new RepositoryConflictError(
+        `User invitation ${id} cannot transition at version ${expectedVersion}.`
+      );
+    });
+
   const repository: AppRepository = {
     async runInTransaction(operation) {
       if (session) return operation(repository);
@@ -247,6 +288,164 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
       );
       if (session) query.session(session);
       await query.exec();
+    },
+
+    async findUserInvitationById(id) {
+      const query = UserInvitationModel.findById(id).select("+tokenHash");
+      if (session) query.session(session);
+      const document = await query.lean().exec();
+      return document ? mapUserInvitation(document) : null;
+    },
+
+    async findPendingUserInvitationByEmail(emailNormalized) {
+      const query = UserInvitationModel.findOne({
+        emailNormalized: normalizeInvitationEmail(emailNormalized),
+        status: "pending"
+      }).select("+tokenHash");
+      if (session) query.session(session);
+      const document = await query.lean().exec();
+      return document ? mapUserInvitation(document) : null;
+    },
+
+    async findLatestUserInvitationIssuedAtByEmail(emailNormalized) {
+      const query = UserInvitationModel.findOne({
+        emailNormalized: normalizeInvitationEmail(emailNormalized)
+      })
+        .sort({ issuedAt: -1, _id: -1 })
+        .select({ issuedAt: 1, _id: 0 });
+      if (session) query.session(session);
+      const document = await query.lean().exec();
+      return document ? iso(document.issuedAt) : null;
+    },
+
+    async findPendingUserInvitationByTokenHash(tokenHash) {
+      const query = UserInvitationModel.findOne({
+        tokenHash,
+        status: "pending"
+      }).select("+tokenHash");
+      if (session) query.session(session);
+      const document = await query.lean().exec();
+      return document ? mapUserInvitation(document) : null;
+    },
+
+    async pageUserInvitations(filters, pagination, now) {
+      return pageUserInvitations(filters, pagination, now, session);
+    },
+
+    async hasUnclaimedClientProjectByEmail(emailNormalized) {
+      const query = ProjectModel.exists({
+        clientId: null,
+        clientEmailNormalized: normalizeInvitationEmail(emailNormalized)
+      });
+      if (session) query.session(session);
+      return Boolean(await query.exec());
+    },
+
+    async createUserInvitation(input) {
+      return runAuthorizationWrite(session, "User invitation", async () => {
+        const emailNormalized = normalizeInvitationEmail(input.email);
+        const pendingQuery = UserInvitationModel.findOne({
+          emailNormalized,
+          status: "pending"
+        }).select({ _id: 1 });
+        if (session) pendingQuery.session(session);
+        if (await pendingQuery.lean().exec()) {
+          throw new RepositoryConflictError(
+            "Pending user invitation already exists for this email."
+          );
+        }
+        const document = await createDocument(
+          UserInvitationModel,
+          userInvitationForMongo(input),
+          session
+        );
+        return mapUserInvitation(document.toObject());
+      });
+    },
+
+    async supersedeUserInvitation(id, expectedVersion, change) {
+      return transitionUserInvitation(id, expectedVersion, {}, {
+        tokenHash: null,
+        status: "superseded",
+        supersededByInvitationId: change.supersededByInvitationId,
+        supersededAt: date(change.supersededAt),
+        updatedAt: date(change.updatedAt)
+      });
+    },
+
+    async resendUserInvitation(id, expectedVersion, change) {
+      return transitionUserInvitation(id, expectedVersion, {}, {
+        tokenHash: change.tokenHash,
+        tokenGeneration: change.tokenGeneration,
+        issuedAt: date(change.issuedAt),
+        expiresAt: date(change.expiresAt),
+        tokenIssuedById: change.tokenIssuedById,
+        tokenIssuerVersion: change.tokenIssuerVersion,
+        deliveryStatus: "queued",
+        deliveryAttemptedAt: null,
+        sentAt: null,
+        deliveryFailureCode: null,
+        updatedAt: date(change.updatedAt)
+      });
+    },
+
+    async revokeUserInvitation(id, expectedVersion, change) {
+      return transitionUserInvitation(id, expectedVersion, {}, {
+        tokenHash: null,
+        status: "revoked",
+        revokedById: change.revokedById,
+        revokedAt: date(change.revokedAt),
+        updatedAt: date(change.updatedAt)
+      });
+    },
+
+    async acceptUserInvitation(
+      id,
+      expectedVersion,
+      expectedGeneration,
+      expectedTokenHash,
+      change
+    ) {
+      return transitionUserInvitation(
+        id,
+        expectedVersion,
+        {
+          tokenGeneration: expectedGeneration,
+          tokenHash: expectedTokenHash
+        },
+        {
+          tokenHash: null,
+          status: "accepted",
+          acceptedUserId: change.acceptedUserId,
+          acceptedAt: date(change.acceptedAt),
+          updatedAt: date(change.updatedAt)
+        }
+      );
+    },
+
+    async updateUserInvitationDelivery(id, tokenGeneration, change) {
+      const query = UserInvitationModel.findOneAndUpdate(
+        {
+          _id: id,
+          status: "pending",
+          tokenGeneration,
+          deliveryStatus: "queued"
+        },
+        {
+          $set: {
+            deliveryStatus: change.status,
+            deliveryAttemptedAt: date(change.attemptedAt),
+            sentAt: change.status === "sent" ? date(change.sentAt) : null,
+            deliveryFailureCode:
+              change.status === "failed" ? change.failureCode : null,
+            updatedAt: date(change.updatedAt)
+          }
+        },
+        { new: true, runValidators: true, timestamps: false }
+      ).select("+tokenHash");
+      if (session) query.session(session);
+      const document = await query.lean().exec();
+      return document ? mapUserInvitation(document) : null;
     },
 
     async coordinateAuthorizationMutation() {
@@ -2321,6 +2520,40 @@ function projectAccessGrantForMongo(
   };
 }
 
+function userInvitationForMongo(input: UserInvitationRecord): PlainDocument {
+  return {
+    _id: input.id,
+    name: invitationNameSchema.parse(input.name),
+    email: invitationEmailSchema.parse(input.email),
+    emailNormalized: normalizeInvitationEmail(input.email),
+    role: input.role,
+    mobile: normalizeInvitationMobile(input.mobile),
+    tokenHash: input.tokenHash,
+    tokenGeneration: input.tokenGeneration,
+    issuedAt: date(input.issuedAt),
+    expiresAt: date(input.expiresAt),
+    status: input.status,
+    invitedById: input.invitedById,
+    tokenIssuedById: input.tokenIssuedById,
+    tokenIssuerVersion: input.tokenIssuerVersion,
+    acceptedUserId: input.acceptedUserId,
+    acceptedAt: input.acceptedAt ? date(input.acceptedAt) : null,
+    revokedById: input.revokedById,
+    revokedAt: input.revokedAt ? date(input.revokedAt) : null,
+    supersededByInvitationId: input.supersededByInvitationId,
+    supersededAt: input.supersededAt ? date(input.supersededAt) : null,
+    deliveryStatus: input.deliveryStatus,
+    deliveryAttemptedAt: input.deliveryAttemptedAt
+      ? date(input.deliveryAttemptedAt)
+      : null,
+    sentAt: input.sentAt ? date(input.sentAt) : null,
+    deliveryFailureCode: input.deliveryFailureCode,
+    __v: 0,
+    createdAt: date(input.createdAt),
+    updatedAt: date(input.updatedAt)
+  };
+}
+
 async function validateAccessRequestCandidate(candidate: PlainDocument) {
   await new AccessRequestModel(candidate).validate();
 }
@@ -2352,6 +2585,249 @@ async function pageAccessRequests(
     countQuery.exec()
   ]);
   return { items: documents.map(mapAccessRequest), total };
+}
+
+async function pageUserInvitations(
+  filters: UserInvitationFilters,
+  pagination: { limit: number; offset: number },
+  now: string,
+  session?: ClientSession
+) {
+  const initialMatch: PlainDocument = {};
+  if (filters.status === undefined) initialMatch.status = "pending";
+  if (filters.role !== undefined) initialMatch.role = filters.role;
+  if (filters.deliveryStatus !== undefined) {
+    initialMatch.deliveryStatus = filters.deliveryStatus;
+  }
+  if (filters.search?.trim()) {
+    const search = new RegExp(escapeRegex(filters.search.trim()), "i");
+    initialMatch.$or = [{ name: search }, { email: search }];
+  }
+
+  const nowDate = date(now);
+  const pipeline: PlainDocument[] = [];
+  if (Object.keys(initialMatch).length > 0) {
+    pipeline.push({ $match: initialMatch });
+  }
+  pipeline.push(
+    {
+      $lookup: {
+        from: UserModel.collection.name,
+        let: { issuerId: "$tokenIssuedById" },
+        pipeline: [
+          {
+            $match: {
+              $expr: { $eq: ["$_id", "$$issuerId"] }
+            }
+          },
+          { $project: { _id: 1, active: 1, role: 1, version: 1 } },
+          { $limit: 1 }
+        ],
+        as: "issuerRows"
+      }
+    },
+    {
+      $set: {
+        issuer: { $arrayElemAt: ["$issuerRows", 0] }
+      }
+    },
+    {
+      $set: {
+        issuerVersion: { $ifNull: ["$issuer.version", 1] },
+        issuerMatches: {
+          $and: [
+            { $eq: ["$issuer.active", true] },
+            { $eq: ["$issuer.role", "super_admin"] },
+            {
+              $eq: [
+                { $ifNull: ["$issuer.version", 1] },
+                "$tokenIssuerVersion"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      $set: {
+        tokenValidity: {
+          $switch: {
+            branches: [
+              {
+                case: { $ne: ["$status", "pending"] },
+                then: "unavailable"
+              },
+              { case: { $not: ["$issuerMatches"] }, then: "invalidated" },
+              { case: { $lte: ["$expiresAt", nowDate] }, then: "expired" }
+            ],
+            default: "current"
+          }
+        },
+        presentationStatus: {
+          $switch: {
+            branches: [
+              { case: { $eq: ["$status", "accepted"] }, then: "accepted" },
+              { case: { $eq: ["$status", "revoked"] }, then: "revoked" },
+              {
+                case: { $eq: ["$status", "superseded"] },
+                then: "superseded"
+              },
+              { case: { $lte: ["$expiresAt", nowDate] }, then: "expired" },
+              {
+                case: { $eq: ["$deliveryStatus", "failed"] },
+                then: "delivery_failed"
+              }
+            ],
+            default: "pending"
+          }
+        },
+        version: { $add: [{ $ifNull: ["$__v", 0] }, 1] }
+      }
+    }
+  );
+  if (filters.status !== undefined) {
+    pipeline.push({ $match: { presentationStatus: filters.status } });
+  }
+  pipeline.push(
+    {
+      $lookup: {
+        from: UserModel.collection.name,
+        let: { invitationEmail: "$emailNormalized" },
+        pipeline: [
+          {
+            $match: {
+              $expr: { $eq: ["$emailNormalized", "$$invitationEmail"] }
+            }
+          },
+          { $project: { _id: 1 } },
+          { $limit: 1 }
+        ],
+        as: "claimedUsers"
+      }
+    },
+    {
+      $lookup: {
+        from: ProjectModel.collection.name,
+        let: { invitationEmail: "$emailNormalized" },
+        pipeline: [
+          {
+            $match: {
+              clientId: null,
+              $expr: {
+                $eq: ["$clientEmailNormalized", "$$invitationEmail"]
+              }
+            }
+          },
+          { $project: { _id: 1 } },
+          { $limit: 1 }
+        ],
+        as: "reservedProjects"
+      }
+    },
+    {
+      $set: {
+        emailClaimedOrReserved: {
+          $or: [
+            { $gt: [{ $size: "$claimedUsers" }, 0] },
+            { $gt: [{ $size: "$reservedProjects" }, 0] }
+          ]
+        }
+      }
+    },
+    {
+      $set: {
+        currentLinkAvailable: {
+          $and: [
+            { $eq: ["$tokenValidity", "current"] },
+            { $not: ["$emailClaimedOrReserved"] }
+          ]
+        },
+        availableActions: {
+          $switch: {
+            branches: [
+              {
+                case: { $ne: ["$status", "pending"] },
+                then: []
+              },
+              {
+                case: "$emailClaimedOrReserved",
+                then: ["revoke"]
+              }
+            ],
+            default: ["resend", "revoke"]
+          }
+        }
+      }
+    },
+    { $sort: { createdAt: -1, _id: -1 } },
+    {
+      $facet: {
+        items: [
+          { $skip: pagination.offset },
+          { $limit: pagination.limit },
+          {
+            $lookup: {
+              from: UserModel.collection.name,
+              localField: "invitedById",
+              foreignField: "_id",
+              pipeline: [
+                { $project: { _id: 1, name: 1, email: 1, role: 1 } },
+                { $limit: 1 }
+              ],
+              as: "inviterRows"
+            }
+          },
+          {
+            $set: {
+              inviter: { $arrayElemAt: ["$inviterRows", 0] }
+            }
+          },
+          {
+            $set: {
+              invitedBy: {
+                id: "$inviter._id",
+                name: "$inviter.name",
+                email: "$inviter.email",
+                role: "$inviter.role"
+              }
+            }
+          },
+          {
+            $project: {
+              _id: 1,
+              name: 1,
+              email: 1,
+              role: 1,
+              mobile: 1,
+              tokenValidity: 1,
+              presentationStatus: 1,
+              currentLinkAvailable: 1,
+              availableActions: 1,
+              invitedBy: 1,
+              issuedAt: 1,
+              expiresAt: 1,
+              deliveryStatus: 1,
+              deliveryAttemptedAt: 1,
+              sentAt: 1,
+              version: 1,
+              createdAt: 1,
+              updatedAt: 1
+            }
+          }
+        ],
+        count: [{ $count: "total" }]
+      }
+    }
+  );
+  const aggregate = UserInvitationModel.aggregate(
+    pipeline as PipelineStage[]
+  );
+  if (session) aggregate.session(session);
+  const [result] = await aggregate.exec();
+  return {
+    items: (result?.items ?? []).map(mapUserInvitationAdmin),
+    total: result?.count?.[0]?.total ?? 0
+  };
 }
 
 function isMongoDuplicateKeyError(error: unknown): boolean {
@@ -2490,6 +2966,70 @@ function mapUser(document: PlainDocument): UserRecord {
     authorizedClientIds: [...(document.authorizedClientIds ?? [])],
     ...(document.avatar ? { avatar: document.avatar } : {}),
     ...(document.title ? { title: document.title } : {}),
+    createdAt: iso(document.createdAt),
+    updatedAt: iso(document.updatedAt)
+  };
+}
+
+function mapUserInvitation(document: PlainDocument): UserInvitationRecord {
+  return {
+    id: idOf(document),
+    name: document.name,
+    email: document.email,
+    emailNormalized:
+      document.emailNormalized ?? normalizeInvitationEmail(document.email),
+    role: document.role,
+    mobile: document.mobile,
+    tokenHash: document.tokenHash ?? null,
+    tokenGeneration: document.tokenGeneration,
+    issuedAt: iso(document.issuedAt),
+    expiresAt: iso(document.expiresAt),
+    status: document.status,
+    invitedById: document.invitedById,
+    tokenIssuedById: document.tokenIssuedById,
+    tokenIssuerVersion: document.tokenIssuerVersion,
+    acceptedUserId: document.acceptedUserId ?? null,
+    acceptedAt: nullableIso(document.acceptedAt),
+    revokedById: document.revokedById ?? null,
+    revokedAt: nullableIso(document.revokedAt),
+    supersededByInvitationId: document.supersededByInvitationId ?? null,
+    supersededAt: nullableIso(document.supersededAt),
+    deliveryStatus: document.deliveryStatus,
+    deliveryAttemptedAt: nullableIso(document.deliveryAttemptedAt),
+    sentAt: nullableIso(document.sentAt),
+    deliveryFailureCode: document.deliveryFailureCode ?? null,
+    version: (document.__v ?? 0) + 1,
+    createdAt: iso(document.createdAt),
+    updatedAt: iso(document.updatedAt)
+  };
+}
+
+function mapUserInvitationAdmin(
+  document: PlainDocument
+): UserInvitationAdminRecord {
+  const invitedBy = document.invitedBy ?? {};
+  return {
+    id: idOf(document),
+    name: document.name,
+    email: document.email,
+    role: document.role,
+    mobile: document.mobile,
+    tokenValidity: document.tokenValidity,
+    presentationStatus: document.presentationStatus,
+    currentLinkAvailable: document.currentLinkAvailable,
+    availableActions: [...(document.availableActions ?? [])],
+    invitedBy: {
+      id: String(invitedBy.id ?? invitedBy._id),
+      name: invitedBy.name,
+      email: invitedBy.email,
+      role: invitedBy.role
+    },
+    issuedAt: iso(document.issuedAt),
+    expiresAt: iso(document.expiresAt),
+    deliveryStatus: document.deliveryStatus,
+    deliveryAttemptedAt: nullableIso(document.deliveryAttemptedAt),
+    sentAt: nullableIso(document.sentAt),
+    version: document.version ?? (document.__v ?? 0) + 1,
     createdAt: iso(document.createdAt),
     updatedAt: iso(document.updatedAt)
   };

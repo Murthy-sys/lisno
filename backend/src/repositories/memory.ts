@@ -1,6 +1,19 @@
 import { AsyncLocalStorage } from "node:async_hooks";
+import { timingSafeEqual } from "node:crypto";
 
 import { normalizeEmail } from "../domain/email.js";
+import {
+  INVITABLE_ROLE_CODES,
+  USER_INVITATION_DELIVERY_FAILURE_CODE_PATTERN,
+  USER_INVITATION_TOKEN_HASH_PATTERN,
+  USER_INVITATION_TTL_MS,
+  invitationEmailSchema,
+  invitationNameSchema,
+  normalizeInvitationEmail,
+  normalizeInvitationMobile,
+  presentationStatusForInvitation,
+  tokenValidityForInvitation
+} from "../domain/user-invitations.js";
 import {
   PROJECT_MODULES,
   REQUESTABLE_PROJECT_MODULES
@@ -42,6 +55,8 @@ import {
   type TaskEventRecord,
   type TaskFilters,
   type TaskRecord,
+  type UserInvitationAdminRecord,
+  type UserInvitationRecord,
   type UserRecord
 } from "./types.js";
 
@@ -71,6 +86,12 @@ interface MemorySnapshot {
 const snapshotReaders = new WeakMap<AppRepository, () => MemorySnapshot>();
 const mutationMethods = new Set<keyof AppRepository>([
   "coordinateClientEmail",
+  "createUserInvitation",
+  "supersedeUserInvitation",
+  "resendUserInvitation",
+  "revokeUserInvitation",
+  "acceptUserInvitation",
+  "updateUserInvitationDelivery",
   "coordinateAuthorizationMutation",
   "createAccessRequest",
   "findOrCreatePendingAccessRequest",
@@ -114,6 +135,7 @@ const mutationMethods = new Set<keyof AppRepository>([
 
 export function createMemoryRepository(seed: SeedData = demoSeedData): AppRepository {
   const normalizedSeed = clone(seed);
+  normalizedSeed.userInvitations ??= [];
   normalizedSeed.users = normalizedSeed.users.map((user) => ({
     ...user,
     accountKind: user.accountKind === "development_demo" ? "development_demo" : "standard",
@@ -211,6 +233,239 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
 
     async coordinateClientEmail(emailNormalized) {
       normalizeEmail(emailNormalized);
+    },
+
+    async findUserInvitationById(id) {
+      return copyOrNull(
+        state.userInvitations.find((invitation) => invitation.id === id)
+      );
+    },
+
+    async findPendingUserInvitationByEmail(emailNormalized) {
+      const normalizedEmail = normalizeInvitationEmail(emailNormalized);
+      return copyOrNull(
+        state.userInvitations.find(
+          (invitation) =>
+            invitation.status === "pending" &&
+            invitation.emailNormalized === normalizedEmail
+        )
+      );
+    },
+
+    async findLatestUserInvitationIssuedAtByEmail(emailNormalized) {
+      const normalizedEmail = normalizeInvitationEmail(emailNormalized);
+      const latest = state.userInvitations
+        .filter((invitation) => invitation.emailNormalized === normalizedEmail)
+        .sort(
+          (left, right) =>
+            new Date(right.issuedAt).getTime() - new Date(left.issuedAt).getTime() ||
+            right.id.localeCompare(left.id)
+        )[0];
+      return latest?.issuedAt ?? null;
+    },
+
+    async findPendingUserInvitationByTokenHash(tokenHash) {
+      return copyOrNull(
+        state.userInvitations.find(
+          (invitation) =>
+            invitation.status === "pending" &&
+            invitation.tokenHash !== null &&
+            tokenHashesEqual(invitation.tokenHash, tokenHash)
+        )
+      );
+    },
+
+    async pageUserInvitations(filters, pagination, now) {
+      const search = filters.search?.trim().toLowerCase();
+      const presented = state.userInvitations
+        .filter((invitation) =>
+          filters.status === undefined ? invitation.status === "pending" : true
+        )
+        .map((invitation) => presentMemoryInvitation(invitation, state, now))
+        .filter(
+          (invitation) =>
+            (filters.status === undefined ||
+              invitation.presentationStatus === filters.status) &&
+            (filters.role === undefined || invitation.role === filters.role) &&
+            (filters.deliveryStatus === undefined ||
+              invitation.deliveryStatus === filters.deliveryStatus) &&
+            (!search ||
+              invitation.name.toLowerCase().includes(search) ||
+              invitation.email.toLowerCase().includes(search))
+        )
+        .sort(
+          (left, right) =>
+            new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime() ||
+            right.id.localeCompare(left.id)
+        );
+      return paginate(presented, pagination);
+    },
+
+    async hasUnclaimedClientProjectByEmail(emailNormalized) {
+      const normalizedEmail = normalizeInvitationEmail(emailNormalized);
+      return state.projects.some(
+        (project) =>
+          project.clientId === null &&
+          project.clientEmailNormalized === normalizedEmail
+      );
+    },
+
+    async createUserInvitation(input) {
+      const record = normalizeNewMemoryInvitation(input);
+      ensureUniqueId(state.userInvitations, record.id, "User invitation");
+      assertInvitationCanInsert(state, record);
+      state.userInvitations.push(record);
+      return clone(record);
+    },
+
+    async supersedeUserInvitation(id, expectedVersion, change) {
+      const { index, current } = pendingInvitationForTransition(
+        state.userInvitations,
+        id,
+        expectedVersion
+      );
+      const updated: UserInvitationRecord = {
+        ...current,
+        tokenHash: null,
+        status: "superseded",
+        supersededByInvitationId: change.supersededByInvitationId,
+        supersededAt: change.supersededAt,
+        updatedAt: change.updatedAt,
+        version: current.version + 1
+      };
+      assertUserInvitationState(updated);
+      state.userInvitations[index] = updated;
+      return clone(updated);
+    },
+
+    async resendUserInvitation(id, expectedVersion, change) {
+      const { index, current } = pendingInvitationForTransition(
+        state.userInvitations,
+        id,
+        expectedVersion
+      );
+      if (change.tokenGeneration !== current.tokenGeneration + 1) {
+        throw new RepositoryConflictError(
+          `User invitation ${id} has an invalid token generation.`
+        );
+      }
+      if (
+        state.userInvitations.some(
+          (invitation) =>
+            invitation.id !== id &&
+            invitation.tokenHash !== null &&
+            tokenHashesEqual(invitation.tokenHash, change.tokenHash)
+        )
+      ) {
+        throw new RepositoryConflictError("Invitation token hash already exists.");
+      }
+      const updated: UserInvitationRecord = {
+        ...current,
+        tokenHash: change.tokenHash,
+        tokenGeneration: change.tokenGeneration,
+        issuedAt: change.issuedAt,
+        expiresAt: change.expiresAt,
+        tokenIssuedById: change.tokenIssuedById,
+        tokenIssuerVersion: change.tokenIssuerVersion,
+        deliveryStatus: "queued",
+        deliveryAttemptedAt: null,
+        sentAt: null,
+        deliveryFailureCode: null,
+        updatedAt: change.updatedAt,
+        version: current.version + 1
+      };
+      assertUserInvitationState(updated);
+      state.userInvitations[index] = updated;
+      return clone(updated);
+    },
+
+    async revokeUserInvitation(id, expectedVersion, change) {
+      const { index, current } = pendingInvitationForTransition(
+        state.userInvitations,
+        id,
+        expectedVersion
+      );
+      const updated: UserInvitationRecord = {
+        ...current,
+        tokenHash: null,
+        status: "revoked",
+        revokedById: change.revokedById,
+        revokedAt: change.revokedAt,
+        updatedAt: change.updatedAt,
+        version: current.version + 1
+      };
+      assertUserInvitationState(updated);
+      state.userInvitations[index] = updated;
+      return clone(updated);
+    },
+
+    async acceptUserInvitation(
+      id,
+      expectedVersion,
+      expectedGeneration,
+      expectedTokenHash,
+      change
+    ) {
+      const { index, current } = pendingInvitationForTransition(
+        state.userInvitations,
+        id,
+        expectedVersion
+      );
+      if (
+        current.tokenGeneration !== expectedGeneration ||
+        current.tokenHash === null ||
+        !tokenHashesEqual(current.tokenHash, expectedTokenHash)
+      ) {
+        throw new RepositoryConflictError(
+          `User invitation ${id} token is no longer current.`
+        );
+      }
+      if (
+        state.userInvitations.some(
+          (invitation) => invitation.acceptedUserId === change.acceptedUserId
+        )
+      ) {
+        throw new RepositoryConflictError("Accepted invitation user already exists.");
+      }
+      const updated: UserInvitationRecord = {
+        ...current,
+        tokenHash: null,
+        status: "accepted",
+        acceptedUserId: change.acceptedUserId,
+        acceptedAt: change.acceptedAt,
+        updatedAt: change.updatedAt,
+        version: current.version + 1
+      };
+      assertUserInvitationState(updated);
+      state.userInvitations[index] = updated;
+      return clone(updated);
+    },
+
+    async updateUserInvitationDelivery(id, tokenGeneration, change) {
+      const index = state.userInvitations.findIndex(
+        (invitation) => invitation.id === id
+      );
+      if (index < 0) return null;
+      const current = state.userInvitations[index]!;
+      if (
+        current.status !== "pending" ||
+        current.tokenGeneration !== tokenGeneration ||
+        current.deliveryStatus !== "queued"
+      ) {
+        return null;
+      }
+      const updated: UserInvitationRecord = {
+        ...current,
+        deliveryStatus: change.status,
+        deliveryAttemptedAt: change.attemptedAt,
+        sentAt: change.status === "sent" ? change.sentAt : null,
+        deliveryFailureCode:
+          change.status === "failed" ? change.failureCode : null,
+        updatedAt: change.updatedAt
+      };
+      assertUserInvitationState(updated);
+      state.userInvitations[index] = updated;
+      return clone(updated);
     },
 
     async coordinateAuthorizationMutation() {
@@ -1780,6 +2035,289 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
   return repository;
 }
 
+function normalizeNewMemoryInvitation(
+  input: UserInvitationRecord
+): UserInvitationRecord {
+  const record: UserInvitationRecord = {
+    id: input.id,
+    name: invitationNameSchema.parse(input.name),
+    email: invitationEmailSchema.parse(input.email),
+    emailNormalized: normalizeInvitationEmail(input.email),
+    role: input.role,
+    mobile: normalizeInvitationMobile(input.mobile),
+    tokenHash: input.tokenHash,
+    tokenGeneration: input.tokenGeneration,
+    issuedAt: input.issuedAt,
+    expiresAt: input.expiresAt,
+    status: input.status,
+    invitedById: input.invitedById,
+    tokenIssuedById: input.tokenIssuedById,
+    tokenIssuerVersion: input.tokenIssuerVersion,
+    acceptedUserId: input.acceptedUserId,
+    acceptedAt: input.acceptedAt,
+    revokedById: input.revokedById,
+    revokedAt: input.revokedAt,
+    supersededByInvitationId: input.supersededByInvitationId,
+    supersededAt: input.supersededAt,
+    deliveryStatus: input.deliveryStatus,
+    deliveryAttemptedAt: input.deliveryAttemptedAt,
+    sentAt: input.sentAt,
+    deliveryFailureCode: input.deliveryFailureCode,
+    version: 1,
+    createdAt: input.createdAt,
+    updatedAt: input.updatedAt
+  };
+  assertUserInvitationState(record);
+  return record;
+}
+
+function pendingInvitationForTransition(
+  invitations: UserInvitationRecord[],
+  id: string,
+  expectedVersion: number
+) {
+  const index = invitations.findIndex((invitation) => invitation.id === id);
+  if (index < 0) {
+    throw new RepositoryNotFoundError(`User invitation ${id} was not found.`);
+  }
+  const current = invitations[index]!;
+  if (current.status !== "pending" || current.version !== expectedVersion) {
+    throw new RepositoryConflictError(
+      `User invitation ${id} cannot transition at version ${expectedVersion}.`
+    );
+  }
+  return { index, current };
+}
+
+function tokenHashesEqual(left: string, right: string): boolean {
+  if (
+    !USER_INVITATION_TOKEN_HASH_PATTERN.test(left) ||
+    !USER_INVITATION_TOKEN_HASH_PATTERN.test(right)
+  ) {
+    return false;
+  }
+  return timingSafeEqual(Buffer.from(left, "hex"), Buffer.from(right, "hex"));
+}
+
+function assertInvitationCanInsert(seed: SeedData, record: UserInvitationRecord) {
+  assertUserInvitationState(record);
+  if (
+    record.status === "pending" &&
+    seed.userInvitations.some(
+      (invitation) =>
+        invitation.status === "pending" &&
+        invitation.emailNormalized === record.emailNormalized
+    )
+  ) {
+    throw new RepositoryConflictError(
+      "Pending user invitation already exists for this email."
+    );
+  }
+  if (
+    record.tokenHash !== null &&
+    seed.userInvitations.some(
+      (invitation) =>
+        invitation.tokenHash !== null &&
+        tokenHashesEqual(invitation.tokenHash, record.tokenHash!)
+    )
+  ) {
+    throw new RepositoryConflictError("Invitation token hash already exists.");
+  }
+  if (
+    record.acceptedUserId !== null &&
+    seed.userInvitations.some(
+      (invitation) => invitation.acceptedUserId === record.acceptedUserId
+    )
+  ) {
+    throw new RepositoryConflictError("Accepted invitation user already exists.");
+  }
+}
+
+function assertUserInvitationState(invitation: UserInvitationRecord) {
+  const conflict = (message: string): never => {
+    throw new RepositoryConflictError(
+      `User invitation ${invitation.id} ${message}`
+    );
+  };
+  if (!invitation.id) conflict("requires an id.");
+  try {
+    if (invitation.name !== invitationNameSchema.parse(invitation.name)) {
+      conflict("has a non-canonical name.");
+    }
+    if (invitation.email !== invitationEmailSchema.parse(invitation.email)) {
+      conflict("has a non-canonical email.");
+    }
+    if (invitation.emailNormalized !== normalizeInvitationEmail(invitation.email)) {
+      conflict("has a non-canonical normalized email.");
+    }
+    if (invitation.mobile !== normalizeInvitationMobile(invitation.mobile)) {
+      conflict("has a non-canonical mobile.");
+    }
+  } catch (error) {
+    if (error instanceof RepositoryConflictError) throw error;
+    conflict("has invalid identity fields.");
+  }
+  if (!INVITABLE_ROLE_CODES.includes(invitation.role)) {
+    conflict("has a non-invitable role.");
+  }
+  if (
+    !Number.isInteger(invitation.tokenGeneration) ||
+    invitation.tokenGeneration < 1 ||
+    !Number.isInteger(invitation.tokenIssuerVersion) ||
+    invitation.tokenIssuerVersion < 1 ||
+    !Number.isInteger(invitation.version) ||
+    invitation.version < 1
+  ) {
+    conflict("has invalid generation or version metadata.");
+  }
+  const issuedAt = Date.parse(invitation.issuedAt);
+  const expiresAt = Date.parse(invitation.expiresAt);
+  if (
+    !Number.isFinite(issuedAt) ||
+    !Number.isFinite(expiresAt) ||
+    expiresAt - issuedAt !== USER_INVITATION_TTL_MS
+  ) {
+    conflict("must expire exactly 24 hours after issue.");
+  }
+  if (invitation.status === "pending") {
+    if (
+      invitation.tokenHash === null ||
+      !USER_INVITATION_TOKEN_HASH_PATTERN.test(invitation.tokenHash)
+    ) {
+      conflict("requires a valid pending token hash.");
+    }
+    if (
+      invitation.acceptedUserId !== null ||
+      invitation.acceptedAt !== null ||
+      invitation.revokedById !== null ||
+      invitation.revokedAt !== null ||
+      invitation.supersededByInvitationId !== null ||
+      invitation.supersededAt !== null
+    ) {
+      conflict("has terminal metadata while pending.");
+    }
+  } else {
+    if (invitation.tokenHash !== null) {
+      conflict("must clear token material when terminal.");
+    }
+    const accepted =
+      invitation.acceptedUserId !== null && invitation.acceptedAt !== null;
+    const revoked = invitation.revokedById !== null && invitation.revokedAt !== null;
+    const superseded =
+      invitation.supersededByInvitationId !== null &&
+      invitation.supersededAt !== null;
+    if (
+      (invitation.status === "accepted" &&
+        (!accepted || revoked || superseded)) ||
+      (invitation.status === "revoked" &&
+        (!revoked || accepted || superseded)) ||
+      (invitation.status === "superseded" &&
+        (!superseded || accepted || revoked))
+    ) {
+      conflict("has invalid terminal metadata.");
+    }
+  }
+  if (
+    invitation.deliveryStatus === "queued" &&
+    (invitation.deliveryAttemptedAt !== null ||
+      invitation.sentAt !== null ||
+      invitation.deliveryFailureCode !== null)
+  ) {
+    conflict("has telemetry while delivery is queued.");
+  }
+  if (
+    invitation.deliveryStatus === "sent" &&
+    (invitation.deliveryAttemptedAt === null ||
+      invitation.sentAt === null ||
+      invitation.deliveryFailureCode !== null)
+  ) {
+    conflict("has invalid sent delivery telemetry.");
+  }
+  if (
+    invitation.deliveryStatus === "failed" &&
+    (invitation.deliveryAttemptedAt === null ||
+      invitation.sentAt !== null ||
+      invitation.deliveryFailureCode === null ||
+      !USER_INVITATION_DELIVERY_FAILURE_CODE_PATTERN.test(
+        invitation.deliveryFailureCode
+      ))
+  ) {
+    conflict("has invalid failed delivery telemetry.");
+  }
+}
+
+function presentMemoryInvitation(
+  invitation: UserInvitationRecord,
+  seed: SeedData,
+  now: string
+): UserInvitationAdminRecord {
+  const inviter = seed.users.find((user) => user.id === invitation.invitedById);
+  if (!inviter) {
+    throw new RepositoryConflictError(
+      `User invitation ${invitation.id} has no inviter.`
+    );
+  }
+  const issuer = seed.users.find(
+    (user) => user.id === invitation.tokenIssuedById
+  );
+  const issuerMatches =
+    issuer?.active === true &&
+    issuer.role === "super_admin" &&
+    issuer.version === invitation.tokenIssuerVersion;
+  const tokenValidity = tokenValidityForInvitation({
+    storedStatus: invitation.status,
+    expiresAt: invitation.expiresAt,
+    issuerMatches,
+    now
+  });
+  const presentationStatus = presentationStatusForInvitation({
+    storedStatus: invitation.status,
+    expiresAt: invitation.expiresAt,
+    deliveryStatus: invitation.deliveryStatus,
+    now
+  });
+  const claimed = seed.users.some(
+    (user) => user.emailNormalized === invitation.emailNormalized
+  );
+  const reserved = seed.projects.some(
+    (project) =>
+      project.clientId === null &&
+      project.clientEmailNormalized === invitation.emailNormalized
+  );
+  const availableActions =
+    invitation.status !== "pending"
+      ? ([] as const)
+      : claimed || reserved
+        ? (["revoke"] as const)
+        : (["resend", "revoke"] as const);
+  return {
+    id: invitation.id,
+    name: invitation.name,
+    email: invitation.email,
+    role: invitation.role,
+    mobile: invitation.mobile,
+    tokenValidity,
+    presentationStatus,
+    currentLinkAvailable:
+      tokenValidity === "current" && !claimed && !reserved,
+    availableActions,
+    invitedBy: {
+      id: inviter.id,
+      name: inviter.name,
+      email: inviter.email,
+      role: inviter.role
+    },
+    issuedAt: invitation.issuedAt,
+    expiresAt: invitation.expiresAt,
+    deliveryStatus: invitation.deliveryStatus,
+    deliveryAttemptedAt: invitation.deliveryAttemptedAt,
+    sentAt: invitation.sentAt,
+    version: invitation.version,
+    createdAt: invitation.createdAt,
+    updatedAt: invitation.updatedAt
+  };
+}
+
 function compareLatestClientVisibleVersion(left: DesignVersionRecord, right: DesignVersionRecord) {
   return new Date(left.approvedAt ?? 0).getTime() - new Date(right.approvedAt ?? 0).getTime()
     || new Date(left.uploadedAt).getTime() - new Date(right.uploadedAt).getTime()
@@ -1943,6 +2481,7 @@ function assertAuthorizationUniqueness(seed: SeedData) {
   if (seed.users.filter(({ role }) => role === "super_admin").length > 1) {
     throw new RepositoryConflictError("Only one Super Admin account is allowed.");
   }
+  assertUserInvitationUniqueness(seed.userInvitations);
   const requestIds = new Set<string>();
   const pendingTuples = new Set<string>();
   for (const request of seed.accessRequests) {
@@ -1981,6 +2520,46 @@ function assertAuthorizationUniqueness(seed: SeedData) {
       throw new RepositoryConflictError("Active project access grant already exists.");
     }
     activeTuples.add(tuple);
+  }
+}
+
+function assertUserInvitationUniqueness(
+  invitations: UserInvitationRecord[]
+) {
+  const ids = new Set<string>();
+  const pendingEmails = new Set<string>();
+  const tokenHashes: string[] = [];
+  const acceptedUserIds = new Set<string>();
+  for (const invitation of invitations) {
+    assertUserInvitationState(invitation);
+    if (ids.has(invitation.id)) {
+      throw new RepositoryConflictError(
+        `User invitation ${invitation.id} already exists.`
+      );
+    }
+    ids.add(invitation.id);
+    if (invitation.status === "pending") {
+      if (pendingEmails.has(invitation.emailNormalized)) {
+        throw new RepositoryConflictError(
+          "Pending user invitation already exists for this email."
+        );
+      }
+      pendingEmails.add(invitation.emailNormalized);
+    }
+    if (invitation.tokenHash !== null) {
+      if (tokenHashes.some((hash) => tokenHashesEqual(hash, invitation.tokenHash!))) {
+        throw new RepositoryConflictError("Invitation token hash already exists.");
+      }
+      tokenHashes.push(invitation.tokenHash);
+    }
+    if (invitation.acceptedUserId !== null) {
+      if (acceptedUserIds.has(invitation.acceptedUserId)) {
+        throw new RepositoryConflictError(
+          "Accepted invitation user already exists."
+        );
+      }
+      acceptedUserIds.add(invitation.acceptedUserId);
+    }
   }
 }
 
@@ -2072,6 +2651,17 @@ function paginate<T>(
 function latestTimestamp(seed: SeedData): number {
   const timestamps = [
     ...seed.users.flatMap((record) => [record.createdAt, record.updatedAt]),
+    ...seed.userInvitations.flatMap((record) => [
+      record.issuedAt,
+      record.expiresAt,
+      record.acceptedAt,
+      record.revokedAt,
+      record.supersededAt,
+      record.deliveryAttemptedAt,
+      record.sentAt,
+      record.createdAt,
+      record.updatedAt
+    ]),
     ...seed.projects.flatMap((record) => [record.createdAt, record.updatedAt]),
     ...seed.floors.flatMap((record) => [record.createdAt, record.updatedAt]),
     ...seed.stages.flatMap((record) => [record.createdAt, record.updatedAt]),
