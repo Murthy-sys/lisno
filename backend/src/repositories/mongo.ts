@@ -374,19 +374,32 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
     },
 
     async resendUserInvitation(id, expectedVersion, change) {
-      return transitionUserInvitation(id, expectedVersion, {}, {
-        tokenHash: change.tokenHash,
-        tokenGeneration: change.tokenGeneration,
-        issuedAt: date(change.issuedAt),
-        expiresAt: date(change.expiresAt),
-        tokenIssuedById: change.tokenIssuedById,
-        tokenIssuerVersion: change.tokenIssuerVersion,
-        deliveryStatus: "queued",
-        deliveryAttemptedAt: null,
-        sentAt: null,
-        deliveryFailureCode: null,
-        updatedAt: date(change.updatedAt)
-      });
+      if (
+        !Number.isSafeInteger(change.tokenGeneration) ||
+        change.tokenGeneration < 2
+      ) {
+        throw new RepositoryConflictError(
+          `User invitation ${id} has an invalid resend generation.`
+        );
+      }
+      return transitionUserInvitation(
+        id,
+        expectedVersion,
+        { tokenGeneration: change.tokenGeneration - 1 },
+        {
+          tokenHash: change.tokenHash,
+          tokenGeneration: change.tokenGeneration,
+          issuedAt: date(change.issuedAt),
+          expiresAt: date(change.expiresAt),
+          tokenIssuedById: change.tokenIssuedById,
+          tokenIssuerVersion: change.tokenIssuerVersion,
+          deliveryStatus: "queued",
+          deliveryAttemptedAt: null,
+          sentAt: null,
+          deliveryFailureCode: null,
+          updatedAt: date(change.updatedAt)
+        }
+      );
     },
 
     async revokeUserInvitation(id, expectedVersion, change) {

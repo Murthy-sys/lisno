@@ -264,6 +264,74 @@ describe("memory user invitation repository", () => {
     ).rejects.toBeInstanceOf(RepositoryConflictError);
   });
 
+  it("requires an exact next resend generation and rejects stale delivery for the replaced generation", async () => {
+    const repository = repositoryWith(
+      pendingInvitation("resend-generation-1", {
+        tokenGeneration: 3,
+        deliveryStatus: "queued"
+      })
+    );
+
+    for (const tokenGeneration of [3, 2, 5]) {
+      await expect(
+        repository.resendUserInvitation("resend-generation-1", 1, {
+          tokenHash: hash(tokenGeneration),
+          tokenGeneration,
+          issuedAt: "2026-08-24T11:00:00.000Z",
+          expiresAt: "2026-08-25T11:00:00.000Z",
+          tokenIssuedById: "user-super-admin",
+          tokenIssuerVersion: 1,
+          updatedAt: "2026-08-24T11:00:00.000Z"
+        })
+      ).rejects.toBeInstanceOf(RepositoryConflictError);
+    }
+
+    await expect(
+      repository.findUserInvitationById("resend-generation-1")
+    ).resolves.toMatchObject({
+      tokenGeneration: 3,
+      deliveryStatus: "queued",
+      version: 1
+    });
+
+    await expect(
+      repository.resendUserInvitation("resend-generation-1", 1, {
+        tokenHash: hash(4),
+        tokenGeneration: 4,
+        issuedAt: "2026-08-24T11:00:00.000Z",
+        expiresAt: "2026-08-25T11:00:00.000Z",
+        tokenIssuedById: "user-super-admin",
+        tokenIssuerVersion: 1,
+        updatedAt: "2026-08-24T11:00:00.000Z"
+      })
+    ).resolves.toMatchObject({ tokenGeneration: 4, version: 2 });
+
+    const deliveryChange = {
+      status: "sent" as const,
+      attemptedAt: "2026-08-24T11:01:00.000Z",
+      sentAt: "2026-08-24T11:01:01.000Z",
+      updatedAt: "2026-08-24T11:01:01.000Z"
+    };
+    await expect(
+      repository.updateUserInvitationDelivery(
+        "resend-generation-1",
+        3,
+        deliveryChange
+      )
+    ).resolves.toBeNull();
+    await expect(
+      repository.updateUserInvitationDelivery(
+        "resend-generation-1",
+        4,
+        deliveryChange
+      )
+    ).resolves.toMatchObject({
+      tokenGeneration: 4,
+      deliveryStatus: "sent",
+      version: 2
+    });
+  });
+
   it("requires matching version, generation and digest to accept, then preserves terminality", async () => {
     const digest = hash(4);
     const repository = repositoryWith(

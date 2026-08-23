@@ -27,6 +27,7 @@ import {
   RepositoryNotFoundError
 } from "../src/repositories/types.js";
 import { demoSeedData } from "../src/seed/data.js";
+import { startMongoReplicaSet } from "./helpers/mongo-replica-set.js";
 
 const query = (value: unknown) => ({
   session: () => undefined,
@@ -96,6 +97,16 @@ const invitationDocument = (overrides: Record<string, unknown> = {}) => ({
   createdAt: new Date("2026-08-24T09:00:00.000Z"),
   updatedAt: new Date("2026-08-24T09:00:00.000Z"),
   ...overrides
+});
+
+const resendInvitationChange = (tokenGeneration: number) => ({
+  tokenHash: "b".repeat(64),
+  tokenGeneration,
+  issuedAt: "2026-08-24T10:00:00.000Z",
+  expiresAt: "2026-08-25T10:00:00.000Z",
+  tokenIssuedById: "user-super-admin",
+  tokenIssuerVersion: 1,
+  updatedAt: "2026-08-24T10:00:00.000Z"
 });
 
 const validReplacement = (workerResultId = "result-1") => ({
@@ -2659,6 +2670,124 @@ describe("Mongo repository contracts", () => {
     }
   });
 
+  it("rejects non-integral or non-resend token generations before issuing a Mongo write", async () => {
+    const update = vi
+      .spyOn(UserInvitationModel, "findOneAndUpdate")
+      .mockReturnValue(
+        recordedQuery(invitationDocument({ tokenGeneration: 2, __v: 1 })) as never
+      );
+    const repository = createMongoRepository();
+
+    for (const tokenGeneration of [
+      Number.NaN,
+      1,
+      0,
+      -1,
+      1.5,
+      Number.MAX_SAFE_INTEGER + 1
+    ]) {
+      await expect(
+        repository.resendUserInvitation(
+          "invitation-mongo-1",
+          1,
+          resendInvitationChange(tokenGeneration)
+        )
+      ).rejects.toBeInstanceOf(RepositoryConflictError);
+    }
+
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it("atomically requires the exact prior generation on resend and rejects stale delivery callbacks", async () => {
+    let stored = invitationDocument({ tokenGeneration: 3, __v: 0 });
+    const update = vi
+      .spyOn(UserInvitationModel, "findOneAndUpdate")
+      .mockImplementation(((rawFilter: unknown, rawMutation: unknown) => {
+        const filter = rawFilter as Record<string, any>;
+        const mutation = rawMutation as Record<string, any>;
+        const isDeliveryUpdate = Object.prototype.hasOwnProperty.call(
+          filter,
+          "deliveryStatus"
+        );
+        const matches = isDeliveryUpdate
+          ? filter._id === stored._id &&
+            filter.status === stored.status &&
+            filter.tokenGeneration === stored.tokenGeneration &&
+            filter.deliveryStatus === stored.deliveryStatus
+          : filter._id === stored._id &&
+            filter.status === stored.status &&
+            filter.__v === stored.__v &&
+            (filter.tokenGeneration === undefined ||
+              filter.tokenGeneration === stored.tokenGeneration);
+
+        if (!matches) return recordedQuery(null) as never;
+        stored = {
+          ...stored,
+          ...(mutation.$set ?? {}),
+          __v: stored.__v + (mutation.$inc?.__v ?? 0)
+        };
+        return recordedQuery(stored) as never;
+      }) as never);
+    vi.spyOn(UserInvitationModel, "exists").mockImplementation(
+      (() => recordedQuery({ _id: stored._id }) as never) as never
+    );
+    const repository = createMongoRepository();
+
+    for (const tokenGeneration of [3, 2, 5]) {
+      await expect(
+        repository.resendUserInvitation(
+          "invitation-mongo-1",
+          1,
+          resendInvitationChange(tokenGeneration)
+        )
+      ).rejects.toBeInstanceOf(RepositoryConflictError);
+    }
+    expect(stored).toMatchObject({
+      tokenGeneration: 3,
+      deliveryStatus: "queued",
+      __v: 0
+    });
+
+    await expect(
+      repository.resendUserInvitation(
+        "invitation-mongo-1",
+        1,
+        resendInvitationChange(4)
+      )
+    ).resolves.toMatchObject({ tokenGeneration: 4, version: 2 });
+
+    const deliveryChange = {
+      status: "sent" as const,
+      attemptedAt: "2026-08-24T10:01:00.000Z",
+      sentAt: "2026-08-24T10:01:01.000Z",
+      updatedAt: "2026-08-24T10:01:01.000Z"
+    };
+    await expect(
+      repository.updateUserInvitationDelivery(
+        "invitation-mongo-1",
+        3,
+        deliveryChange
+      )
+    ).resolves.toBeNull();
+    await expect(
+      repository.updateUserInvitationDelivery(
+        "invitation-mongo-1",
+        4,
+        deliveryChange
+      )
+    ).resolves.toMatchObject({
+      tokenGeneration: 4,
+      deliveryStatus: "sent",
+      version: 2
+    });
+
+    expect(
+      update.mock.calls.slice(0, 4).map(([filter]) =>
+        (filter as Record<string, unknown>).tokenGeneration
+      )
+    ).toEqual([2, 1, 4, 3]);
+  });
+
   it("updates exact queued delivery generation without incrementing __v and returns null when stale", async () => {
     const session = {} as never;
     const sentQuery = recordedQuery(
@@ -2843,6 +2972,92 @@ describe("Mongo repository contracts", () => {
       expect(aggregateQuery.session).toHaveBeenCalledWith(session);
     }
   });
+
+  it(
+    "executes legacy issuer fallback so a version-1 invitation stays Pending and current",
+    async () => {
+      const replicaSet = await startMongoReplicaSet(
+        "user-invitation-legacy-issuer-version"
+      );
+      try {
+        await UserModel.collection.insertOne({
+          _id: "legacy-super-admin",
+          name: "Legacy Super Admin",
+          email: "legacy-super@example.test",
+          emailNormalized: "legacy-super@example.test",
+          passwordHash: "not-used-by-this-aggregation",
+          role: "super_admin",
+          active: true,
+          accountKind: "standard",
+          managerId: null,
+          authorizedClientIds: [],
+          createdAt: new Date("2026-08-24T08:00:00.000Z"),
+          updatedAt: new Date("2026-08-24T08:00:00.000Z")
+        });
+        await UserInvitationModel.collection.insertOne({
+          _id: "legacy-version-one-invitation",
+          name: "Legacy Invitee",
+          email: "legacy-invitee@example.test",
+          emailNormalized: "legacy-invitee@example.test",
+          role: "designer",
+          mobile: "+91 90000 00000",
+          tokenHash: "c".repeat(64),
+          tokenGeneration: 1,
+          issuedAt: new Date("2026-08-24T09:00:00.000Z"),
+          expiresAt: new Date("2026-08-25T09:00:00.000Z"),
+          status: "pending",
+          invitedById: "legacy-super-admin",
+          tokenIssuedById: "legacy-super-admin",
+          tokenIssuerVersion: 1,
+          acceptedUserId: null,
+          acceptedAt: null,
+          revokedById: null,
+          revokedAt: null,
+          supersededByInvitationId: null,
+          supersededAt: null,
+          deliveryStatus: "queued",
+          deliveryAttemptedAt: null,
+          sentAt: null,
+          deliveryFailureCode: null,
+          __v: 0,
+          createdAt: new Date("2026-08-24T09:00:00.000Z"),
+          updatedAt: new Date("2026-08-24T09:00:00.000Z")
+        });
+
+        const rawIssuer = await UserModel.collection.findOne({
+          _id: "legacy-super-admin"
+        });
+        expect(rawIssuer).not.toHaveProperty("version");
+
+        await expect(
+          createMongoRepository().pageUserInvitations(
+            { status: "pending" },
+            { limit: 20, offset: 0 },
+            "2026-08-24T12:00:00.000Z"
+          )
+        ).resolves.toEqual({
+          items: [
+            expect.objectContaining({
+              id: "legacy-version-one-invitation",
+              tokenValidity: "current",
+              presentationStatus: "pending",
+              currentLinkAvailable: true,
+              availableActions: ["resend", "revoke"],
+              version: 1,
+              invitedBy: expect.objectContaining({
+                id: "legacy-super-admin",
+                role: "super_admin"
+              })
+            })
+          ],
+          total: 1
+        });
+      } finally {
+        await replicaSet.stop();
+      }
+    },
+    120_000
+  );
 
   it("normalizes and attaches the session when checking unclaimed Client-project email", async () => {
     const session = {} as never;
