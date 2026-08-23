@@ -11,6 +11,7 @@ import {
 import { tokenStorage } from "../api/client";
 import { authorizationFor } from "../test/authFixtures";
 import { renderApp } from "../test/render";
+import { ROUTE_REGISTRY } from "./routeRegistry";
 import { roleHomeContentFor } from "./router";
 
 const designer = {
@@ -278,6 +279,24 @@ describe("role landing staging contract", () => {
       })
     ).toBeVisible();
     expect(router.state.location.pathname).toBe("/home");
+  });
+});
+
+describe("public invitation route", () => {
+  it("mounts directly while staying outside the 20-route protected registry", async () => {
+    expect(ROUTE_REGISTRY).toHaveLength(20);
+    expect(ROUTE_REGISTRY.map(({ path }) => path)).not.toContain(
+      "/accept-invitation"
+    );
+
+    const { router } = renderApp(["/accept-invitation"]);
+
+    expect(
+      await screen.findByText(
+        "This invitation is unavailable. Ask an administrator to send a new invitation."
+      )
+    ).toBeVisible();
+    expect(router.state.location.pathname).toBe("/accept-invitation");
   });
 });
 
