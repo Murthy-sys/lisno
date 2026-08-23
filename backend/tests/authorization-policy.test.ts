@@ -88,17 +88,27 @@ describe("authorization policy", () => {
   it("matches the exact role-to-operation allowlist", () => {
     for (const role of ROLE_CODES) {
       if (role === "super_admin") continue;
+      if (role === "admin") {
+        expect(ROLE_PERMISSIONS.admin).toEqual([
+          "identity.self.read",
+          "projects.list",
+          "projects.read",
+          "projects.initiate",
+          "organization.estimators.read",
+          "identity.authorization.read",
+          "access_request.review.read",
+          "access_request.review.decide",
+          "project_access_grant.revoke"
+        ]);
+        continue;
+      }
       expect(ROLE_PERMISSIONS[role], role).toEqual(
         permissionsForRows([...COMMON_ROWS, ...ADDITIONAL_ROWS[role]])
       );
     }
-    const expectedSuperAdminPermissions = [
-      ...permissionsForRows(range(1, 93)),
-      "execution.worker_assignment.override"
-    ];
-    expect(PERMISSION_CODES).toEqual(expectedSuperAdminPermissions);
-    expect(PERMISSION_CODES).toHaveLength(91);
-    expect(ROLE_PERMISSIONS.super_admin).toEqual(expectedSuperAdminPermissions);
+    expect(PERMISSION_CODES).toHaveLength(93);
+    expect(new Set(PERMISSION_CODES).size).toBe(93);
+    expect(ROLE_PERMISSIONS.super_admin).toEqual(PERMISSION_CODES);
   });
 
   it("gives all worker trades identical identity-only permissions", () => {

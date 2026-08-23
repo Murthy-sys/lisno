@@ -16,6 +16,7 @@ import type { AppRepository } from "./repositories/types.js";
 import { createAuditRouter } from "./routes/audit.js";
 import { createAccessRequestsRouter } from "./routes/access-requests.js";
 import { createAdminUsersRouter } from "./routes/admin-users.js";
+import { createAdminProjectsRouter } from "./routes/admin-projects.js";
 import { createAuthRouter } from "./routes/auth.js";
 import { createEvaluationsRouter } from "./routes/evaluations.js";
 import { createDesignVersionsRouter } from "./routes/design-versions.js";
@@ -32,6 +33,7 @@ import { createProjectsRouter } from "./routes/projects.js";
 import { createTasksRouter } from "./routes/tasks.js";
 import { createAuditService } from "./services/audit.service.js";
 import { createAccessRequestService } from "./services/access-request.service.js";
+import { createAdminProjectService } from "./services/admin-project.service.js";
 import { createUserAdministrationService } from "./services/user-administration.service.js";
 import {
   createAuthService,
@@ -117,6 +119,11 @@ export function createApp(dependencies: AppDependencies) {
     auditService,
     clock
   );
+  const adminProjectService = createAdminProjectService(
+    repository,
+    auditService,
+    clock
+  );
   const projectActivityService = createProjectActivityService(repository);
   const projectService = createProjectService(repository, auditService, clock);
   const leadService = createLeadService(repository, auditService, clock);
@@ -192,6 +199,10 @@ export function createApp(dependencies: AppDependencies) {
   app.use(
     "/api/v1",
     createAdminUsersRouter(authService, userAdministrationService)
+  );
+  app.use(
+    "/api/v1",
+    createAdminProjectsRouter(authService, adminProjectService)
   );
   app.use(
     "/api/v1",

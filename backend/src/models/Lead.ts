@@ -1,7 +1,7 @@
 import { model, models, Schema } from "./mongoose.js";
 
 const leadSchema = new Schema({
-  _id: { type: String, required: true }, ownerId: { type: String, ref: "User", required: true },
+  _id: { type: String, required: true }, projectId: { type: String, ref: "Project", default: null }, ownerId: { type: String, ref: "User", required: true },
   clientName: { type: String, required: true }, clientEmail: { type: String, required: true }, clientMobile: { type: String, required: true },
   projectName: { type: String, required: true }, location: { type: String, required: true }, propertyType: { type: String, required: true },
   budgetMin: { type: Number, default: null }, budgetMax: { type: Number, default: null }, source: { type: String, required: true },
@@ -11,4 +11,8 @@ const leadSchema = new Schema({
 }, { timestamps: true, versionKey: false });
 leadSchema.index({ ownerId: 1, updatedAt: -1 });
 leadSchema.index({ ownerId: 1, stage: 1, updatedAt: -1 });
+leadSchema.index(
+  { projectId: 1 },
+  { unique: true, partialFilterExpression: { projectId: { $type: "string" } } }
+);
 export const LeadModel = models.Lead ?? model("Lead", leadSchema);

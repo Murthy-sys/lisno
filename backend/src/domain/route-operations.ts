@@ -26,7 +26,7 @@ export interface HumanJwtOperation {
     | "global_read"
     | "admin_override"
     | "deny_personal";
-  availability: "baseline" | "prompt_1";
+  availability: "baseline" | "prompt_1" | "prompt_2";
 }
 
 export const HUMAN_JWT_OPERATION_LIST = [
@@ -122,7 +122,11 @@ export const HUMAN_JWT_OPERATION_LIST = [
   { key: "POST /access-requests/:requestId/cancel", permission: "access_request.self.cancel", scope: { kind: "non_project", namespace: "access_administration" }, operationClass: "personal", superAdminBehavior: "deny_personal", availability: "prompt_1" },
   { key: "GET /access-requests/review", permission: "access_request.review.read", scope: { kind: "non_project", namespace: "access_administration", projectReviewScope: true }, operationClass: "read", superAdminBehavior: "global_read", availability: "prompt_1" },
   { key: "POST /access-requests/:requestId/decision", permission: "access_request.review.decide", scope: { kind: "non_project", namespace: "access_administration", projectReviewScope: true }, operationClass: "admin", superAdminBehavior: "admin_override", availability: "prompt_1" },
-  { key: "POST /project-access-grants/:grantId/revoke", permission: "project_access_grant.revoke", scope: { kind: "non_project", namespace: "access_administration", projectReviewScope: true }, operationClass: "admin", superAdminBehavior: "admin_override", availability: "prompt_1" }
+  { key: "POST /project-access-grants/:grantId/revoke", permission: "project_access_grant.revoke", scope: { kind: "non_project", namespace: "access_administration", projectReviewScope: true }, operationClass: "admin", superAdminBehavior: "admin_override", availability: "prompt_1" },
+  { key: "GET /admin/projects", permission: "projects.list", scope: { kind: "project", module: "projects" }, operationClass: "read", superAdminBehavior: "global_read", availability: "prompt_2" },
+  { key: "GET /admin/projects/:projectId", permission: "projects.read", scope: { kind: "project", module: "projects" }, operationClass: "read", superAdminBehavior: "global_read", availability: "prompt_2" },
+  { key: "POST /admin/projects", permission: "projects.initiate", scope: { kind: "project", module: "projects" }, operationClass: "personal", superAdminBehavior: "deny_personal", availability: "prompt_2" },
+  { key: "GET /admin/estimators", permission: "organization.estimators.read", scope: { kind: "non_project", namespace: "organization" }, operationClass: "read", superAdminBehavior: "global_read", availability: "prompt_2" }
 ] as const satisfies readonly HumanJwtOperation[];
 
 export type HumanJwtOperationKey =

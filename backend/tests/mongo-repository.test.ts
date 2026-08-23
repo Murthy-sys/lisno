@@ -133,6 +133,47 @@ afterEach(() => {
 });
 
 describe("Mongo repository contracts", () => {
+  it("maps missing legacy project relationships to null-safe values", async () => {
+    vi.spyOn(ProjectModel, "findById").mockReturnValueOnce({
+      lean: () => query({
+        _id: "project-legacy-null-team",
+        name: "Legacy project",
+        clientId: null,
+        clientName: "Legacy Client",
+        clientEmail: "legacy@example.com",
+        clientEmailNormalized: "legacy@example.com",
+        clientMobile: "9000000000",
+        clientAddress: "Pune",
+        status: "planning",
+        location: "Pune",
+        plannedStartAt: new Date("2026-08-23T10:00:00.000Z"),
+        plannedEndAt: new Date("2026-11-21T10:00:00.000Z"),
+        actualStartAt: null,
+        actualEndAt: null,
+        createdAt: new Date("2026-08-23T10:00:00.000Z"),
+        updatedAt: new Date("2026-08-23T10:00:00.000Z")
+      })
+    } as never);
+
+    await expect(createMongoRepository().findProjectById("project-legacy-null-team"))
+      .resolves.toMatchObject({
+        initiatingDesignerId: null,
+        assignedEstimatorId: null,
+        assignedDesignerIds: [],
+        managerId: null
+      });
+  });
+
+  it("enforces one Lead for each non-null project link at the schema boundary", () => {
+    expect(LeadModel.schema.indexes()).toContainEqual([
+      { projectId: 1 },
+      expect.objectContaining({
+        unique: true,
+        partialFilterExpression: { projectId: { $type: "string" } }
+      })
+    ]);
+  });
+
   it("coordinates authorization mutations in the active session", async () => {
     const session = {} as never;
     const coordinationQuery = {

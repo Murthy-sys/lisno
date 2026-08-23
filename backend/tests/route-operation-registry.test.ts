@@ -24,6 +24,12 @@ import {
   EXPECTED_HUMAN_JWT_OPERATIONS_66_84,
   EXPECTED_HUMAN_JWT_OPERATIONS_85_93
 } from "./fixtures/prompt-1-route-operations.js";
+import { EXPECTED_PROMPT_2_HUMAN_JWT_OPERATIONS } from "./fixtures/prompt-2-route-operations.js";
+
+const EXPECTED_ALL_HUMAN_JWT_OPERATIONS = [
+  ...EXPECTED_HUMAN_JWT_OPERATIONS,
+  ...EXPECTED_PROMPT_2_HUMAN_JWT_OPERATIONS
+] as const;
 
 const slices = [
   ["matches manifest rows 1 through 23", 0, 23, EXPECTED_HUMAN_JWT_OPERATIONS_1_23],
@@ -173,8 +179,8 @@ describe("human JWT operation registry", () => {
   });
 
   it("matches all normative operation rows", () => {
-    expect(Object.values(HUMAN_JWT_OPERATIONS)).toEqual(EXPECTED_HUMAN_JWT_OPERATIONS);
-    expect(Object.keys(HUMAN_JWT_OPERATIONS)).toHaveLength(93);
+    expect(Object.values(HUMAN_JWT_OPERATIONS)).toEqual(EXPECTED_ALL_HUMAN_JWT_OPERATIONS);
+    expect(Object.keys(HUMAN_JWT_OPERATIONS)).toHaveLength(97);
   });
 
   it("mounts rows 2 through 23 as exact router groups with one ordered marker pair", () => {
@@ -325,16 +331,29 @@ describe("human JWT operation registry", () => {
     }
   });
 
-  it("mounts the exact 93-operation manifest with one ordered marker pair each", () => {
+  it("mounts all four Prompt 2 Admin project operations in one authenticated router", () => {
+    const expected = EXPECTED_PROMPT_2_HUMAN_JWT_OPERATIONS.map(({ key }) => key);
+    const matches = mountedHumanRouters().filter((router) =>
+      router.routes.some(({ key }) => expected.includes(key as never))
+    );
+    expect(matches).toHaveLength(1);
+    expect(matches[0]!.routes.map(({ key }) => key).sort()).toEqual([...expected].sort());
+    for (const route of matches[0]!.routes) {
+      expect(route.authenticationIndices).toHaveLength(1);
+      expect(route.operationMarkers).toEqual([{ index: 1, key: route.key }]);
+    }
+  });
+
+  it("mounts the exact 97-operation manifest with one ordered marker pair each", () => {
     const mountedRoutes = mountedHumanRouters()
       .flatMap(({ routes }) => routes)
       .filter(({ operationMarkers }) => operationMarkers.length > 0);
     const mountedOperations = mountedRoutes.map(({ key }) => key);
-    const expectedKeys = EXPECTED_HUMAN_JWT_OPERATIONS.map(({ key }) => key).sort();
+    const expectedKeys = EXPECTED_ALL_HUMAN_JWT_OPERATIONS.map(({ key }) => key).sort();
 
     expect([...mountedOperations].sort()).toEqual(expectedKeys);
-    expect(expectedKeys).toHaveLength(93);
-    expect(new Set(expectedKeys).size).toBe(93);
+    expect(expectedKeys).toHaveLength(97);
+    expect(new Set(expectedKeys).size).toBe(97);
     expect(mountedOperations).not.toContain(
       "POST /execution/worker-assignments/override"
     );
@@ -381,9 +400,9 @@ describe("human JWT operation registry", () => {
     expect(() => assertTaskSixRouteMounts(routers)).toThrow();
   });
 
-  it("has unique keys and exactly 90 routed permissions", () => {
-    expect(new Set(HUMAN_JWT_OPERATION_LIST.map(({ key }) => key)).size).toBe(93);
-    expect(new Set(HUMAN_JWT_OPERATION_LIST.map(({ permission }) => permission)).size).toBe(90);
+  it("has unique keys and exactly 92 routed permissions", () => {
+    expect(new Set(HUMAN_JWT_OPERATION_LIST.map(({ key }) => key)).size).toBe(97);
+    expect(new Set(HUMAN_JWT_OPERATION_LIST.map(({ permission }) => permission)).size).toBe(92);
     expect(HUMAN_JWT_OPERATION_LIST.every(({ permission }) =>
       (PERMISSION_CODES as readonly string[]).includes(permission)
     )).toBe(true);

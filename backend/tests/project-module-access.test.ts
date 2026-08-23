@@ -97,6 +97,28 @@ async function currentOperationAccess(
 }
 
 describe("registry-bound project module access", () => {
+  it("does not fabricate legacy access from null team fields but honors the exact Admin grant", async () => {
+    const seed = structuredClone(demoSeedData);
+    const designer = addUser(seed, "null-team-designer", "designer");
+    const manager = addUser(seed, "null-team-manager", "design_manager");
+    const admin = addUser(seed, "null-team-admin", "admin");
+    const project = seed.projects.find((candidate) => candidate.id === "project-aurora-villa")!;
+    project.initiatingDesignerId = null;
+    project.assignedEstimatorId = null;
+    project.assignedDesignerIds = [];
+    project.managerId = null;
+    seed.projectAccessGrants.push(grant(
+      "grant-null-team-admin",
+      admin.id,
+      "projects",
+      "admin_initiator"
+    ));
+
+    await expect(currentOperationAccess(seed, designer.id, PROJECT_OPERATION)).resolves.toBe(false);
+    await expect(currentOperationAccess(seed, manager.id, PROJECT_OPERATION)).resolves.toBe(false);
+    await expect(currentOperationAccess(seed, admin.id, PROJECT_OPERATION)).resolves.toBe(true);
+  });
+
   it.each([
     ["super_admin", true, true],
     ["admin", false, false],

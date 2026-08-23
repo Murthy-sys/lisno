@@ -12,9 +12,9 @@ type ProjectAccessUser = {
 
 type ProjectAccessRecord = {
   clientId: string | null;
-  initiatingDesignerId: string;
+  initiatingDesignerId: string | null;
   assignedDesignerIds: string[];
-  managerId: string;
+  managerId: string | null;
 };
 
 export function grantCanSupplyProjectModuleScope(

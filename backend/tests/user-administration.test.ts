@@ -104,7 +104,7 @@ function setup(seed = emptyAdministrationSeed()) {
 }
 
 describe("user administration service", () => {
-  it("limits Admin directory and role filters to operational roles while Super Admin sees all", async () => {
+  it("denies Admin directory access while Super Admin sees all roles", async () => {
     const seed = emptyAdministrationSeed();
     const superAdmin = addUser(seed, "user-super", "super_admin");
     const admin = addUser(seed, "user-admin", "admin");
@@ -115,12 +115,9 @@ describe("user administration service", () => {
     }
     const { service } = setup(seed);
 
-    const adminPage = await service.list(publicUser(admin), {}, { limit: 20, offset: 0 });
-    expect(adminPage.items.map(({ role }) => role).sort()).toEqual(
-      [...OPERATIONAL_ROLES].sort()
-    );
-    expect(adminPage.manageableRoles).toEqual(OPERATIONAL_ROLES);
-    expect(JSON.stringify(adminPage)).not.toMatch(/password|hash|token|secret/i);
+    await expect(
+      service.list(publicUser(admin), {}, { limit: 20, offset: 0 })
+    ).rejects.toMatchObject({ status: 403, code: "FORBIDDEN" });
 
     const superPage = await service.list(
       publicUser(superAdmin),
@@ -130,9 +127,7 @@ describe("user administration service", () => {
     expect(new Set(superPage.items.map(({ role }) => role))).toEqual(new Set(ROLE_CODES));
     expect(superPage.manageableRoles).toEqual(ROLE_CODES);
 
-    await expect(
-      service.list(publicUser(admin), { role: "client" }, { limit: 20, offset: 0 })
-    ).rejects.toMatchObject({ status: 403, code: "FORBIDDEN" });
+    expect(JSON.stringify(superPage)).not.toMatch(/password|hash|token|secret/i);
   });
 
   it("requires both current and destination roles to be operational for Admin", async () => {
@@ -477,15 +472,15 @@ describe("user administration routes", () => {
   it("returns exact directory and mutation envelopes without credential fields", async () => {
     const seed = emptyAdministrationSeed();
     const superAdmin = addUser(seed, "user-super", "super_admin");
-    const admin = addUser(seed, "admin-operator", "admin");
+    addUser(seed, "admin-operator", "admin");
     const designer = addUser(seed, "user-designer", "designer");
     addUser(seed, "user-client", "client");
     const repository = createMemoryRepository(seed);
     const app = createApp({ repository, auth, clock });
 
     const directory = await request(app)
-      .get("/api/v1/admin/users?search=user&active=true&limit=20&offset=0")
-      .set("Authorization", bearer(admin));
+      .get("/api/v1/admin/users?search=designer&role=designer&active=true&limit=20&offset=0")
+      .set("Authorization", bearer(superAdmin));
     expect(directory.status).toBe(200);
     expect(directory.body).toEqual({
       data: {
@@ -500,7 +495,7 @@ describe("user administration routes", () => {
           })
         ],
         pagination: { limit: 20, offset: 0, total: 1, hasMore: false },
-        manageableRoles: OPERATIONAL_ROLES
+        manageableRoles: ROLE_CODES
       }
     });
     expect(JSON.stringify(directory.body)).not.toMatch(/password|hash|token|secret/i);
@@ -530,7 +525,7 @@ describe("user administration routes", () => {
     expect(JSON.stringify(mutation.body)).not.toMatch(/password|hash|token|secret/i);
   });
 
-  it("rejects protected Admin filters and bodies that do not change exactly one field", async () => {
+  it("rejects every Admin directory request before input validation", async () => {
     const seed = emptyAdministrationSeed();
     const admin = addUser(seed, "admin-operator", "admin");
     const designer = addUser(seed, "user-designer", "designer");
@@ -550,8 +545,8 @@ describe("user administration routes", () => {
         .patch(`/api/v1/admin/users/${designer.id}`)
         .set("Authorization", bearer(admin))
         .send(body);
-      expect(response.status).toBe(400);
-      expect(response.body.error.code).toBe("VALIDATION_ERROR");
+      expect(response.status).toBe(403);
+      expect(response.body.error.code).toBe("FORBIDDEN");
     }
   });
 

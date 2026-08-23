@@ -10,6 +10,7 @@ import {
   legacyRelationshipAllows
 } from "../domain/project-access.js";
 import { demoSeedData } from "../seed/data.js";
+import { adminProjectSummary } from "./admin-project-summary.js";
 import {
   RepositoryConflictError,
   RepositoryNotFoundError,
@@ -26,6 +27,7 @@ import {
   type ExtractionDraftReplacement,
   type DesignVersionRecord,
   type EvaluationRecord,
+  type EstimatorOption,
   type FloorRecord,
   type LeadActivityRecord,
   type LeadRecord,
@@ -56,6 +58,9 @@ const byDateThenId = <T extends { id: string }>(
   new Date(String(left[field])).getTime() -
     new Date(String(right[field])).getTime() ||
   left.id.localeCompare(right.id);
+const newestProjectFirst = (left: ProjectRecord, right: ProjectRecord) =>
+  new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime() ||
+  right.id.localeCompare(left.id);
 
 interface MemorySnapshot {
   state: SeedData;
@@ -115,6 +120,18 @@ export function createMemoryRepository(seed: SeedData = demoSeedData): AppReposi
     version: user.version ?? 1
   }));
   normalizedSeed.estimateResponsibilities ??= [];
+  normalizedSeed.estimateSummaries ??= [];
+  normalizedSeed.projects = normalizedSeed.projects.map((project) => ({
+    ...project,
+    initiatingDesignerId: project.initiatingDesignerId ?? null,
+    assignedEstimatorId: project.assignedEstimatorId ?? null,
+    assignedDesignerIds: project.assignedDesignerIds ?? [],
+    managerId: project.managerId ?? null
+  }));
+  normalizedSeed.leads = normalizedSeed.leads.map((lead) => ({
+    ...lead,
+    projectId: lead.projectId ?? null
+  }));
   assertAuthorizationUniqueness(normalizedSeed);
   return buildMemoryRepository({
     state: normalizedSeed,
@@ -595,6 +612,12 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
 
     async createLead(input) {
       ensureUniqueId(state.leads, input.id, "Lead");
+      if (
+        input.projectId !== null &&
+        state.leads.some((lead) => lead.projectId === input.projectId)
+      ) {
+        throw new RepositoryConflictError("A lead already exists for this project.");
+      }
       const record: LeadRecord = clone(input);
       state.leads.push(record);
       return clone(record);
@@ -650,7 +673,8 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
       const projects = state.projects
         .filter(
           (project) =>
-            ids.has(project.initiatingDesignerId) ||
+            (project.initiatingDesignerId !== null &&
+              ids.has(project.initiatingDesignerId)) ||
             project.assignedDesignerIds.some((id) => ids.has(id))
         )
         .sort(byNameThenId);
@@ -660,6 +684,61 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
     async pageProjectsForUserInModule(user, module, pagination) {
       const projects = await implementation.listProjectsForUserInModule(user, module);
       return paginate(projects, pagination);
+    },
+
+    async pageAdminProjects(actor, pagination) {
+      const visible = (await implementation.listProjectsForUserInModule(actor, "projects"))
+        .sort(newestProjectFirst);
+      const selected = visible.slice(
+        pagination.offset,
+        pagination.offset + pagination.limit
+      );
+      return {
+        items: selected.map((project) =>
+          adminProjectSummary(
+            project,
+            state.users,
+            state.leads,
+            state.estimateSummaries ?? []
+          )
+        ),
+        total: visible.length
+      };
+    },
+
+    async findAdminProject(actor, projectId) {
+      const project = (await implementation.listProjectsForUserInModule(
+        actor,
+        "projects"
+      )).find((candidate) => candidate.id === projectId);
+      return project
+        ? clone(adminProjectSummary(
+            project,
+            state.users,
+            state.leads,
+            state.estimateSummaries ?? []
+          ))
+        : null;
+    },
+
+    async pageActiveEstimatorOptions(search, pagination) {
+      const normalized = search.trim().toLowerCase();
+      const options: EstimatorOption[] = state.users
+        .filter((user) => user.active && user.role === "estimator_sales")
+        .filter(
+          (user) =>
+            !normalized ||
+            user.name.toLowerCase().includes(normalized) ||
+            user.email.toLowerCase().includes(normalized)
+        )
+        .sort(byNameThenId)
+        .map((user) => ({
+          id: user.id,
+          name: user.name,
+          email: user.email,
+          title: user.title ?? null
+        }));
+      return paginate(options, pagination);
     },
 
     async findProjectById(id) {

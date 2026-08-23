@@ -99,9 +99,10 @@ export interface ProjectRecord {
   clientEmailNormalized: string;
   clientMobile: string;
   clientAddress: string;
-  initiatingDesignerId: string;
+  initiatingDesignerId: string | null;
+  assignedEstimatorId: string | null;
   assignedDesignerIds: string[];
-  managerId: string;
+  managerId: string | null;
   status: ProjectStatus;
   location: string;
   plannedStartAt: string;
@@ -114,6 +115,7 @@ export interface ProjectRecord {
 
 export interface LeadRecord {
   id: string;
+  projectId: string | null;
   ownerId: string;
   clientName: string;
   clientEmail: string;
@@ -168,7 +170,44 @@ export interface LeadFilters {
 }
 
 export type NewLead = LeadRecord;
-export type LeadChange = Partial<Omit<LeadRecord, "id" | "ownerId" | "createdAt">>;
+export type LeadChange = Partial<
+  Omit<LeadRecord, "id" | "projectId" | "ownerId" | "createdAt">
+>;
+
+export interface EstimatorOption {
+  id: string;
+  name: string;
+  email: string;
+  title: string | null;
+}
+
+export interface EstimateSummaryRecord {
+  id: string;
+  leadId: string;
+  projectId: string | null;
+  status: string;
+  total: number;
+}
+
+export interface AdminProjectSummary {
+  id: string;
+  name: string;
+  status: ProjectStatus;
+  location: string;
+  client: { name: string; email: string; mobile: string };
+  propertyType: string | null;
+  budgetMin: number | null;
+  budgetMax: number | null;
+  estimator: { id: string; name: string; email: string } | null;
+  lead: {
+    id: string;
+    stage: LeadStage;
+    nextAction: string;
+    nextActionAt: string;
+  } | null;
+  estimate: { id: string; status: string; total: number } | null;
+  createdAt: string;
+}
 export type NewLeadActivity = LeadActivityRecord;
 
 export interface FloorRecord {
@@ -611,6 +650,7 @@ export interface SeedData {
   users: UserRecord[];
   leads: LeadRecord[];
   estimateResponsibilities: EstimateResponsibilityRecord[];
+  estimateSummaries?: EstimateSummaryRecord[];
   leadActivities: LeadActivityRecord[];
   projects: ProjectRecord[];
   floors: FloorRecord[];
@@ -746,6 +786,18 @@ export interface AppRepository {
     module: ProjectModule,
     pagination: PaginationInput
   ): Promise<PageResult<ProjectRecord>>;
+  pageAdminProjects(
+    actor: UserRecord,
+    pagination: PaginationInput
+  ): Promise<PageResult<AdminProjectSummary>>;
+  findAdminProject(
+    actor: UserRecord,
+    projectId: string
+  ): Promise<AdminProjectSummary | null>;
+  pageActiveEstimatorOptions(
+    search: string,
+    pagination: PaginationInput
+  ): Promise<PageResult<EstimatorOption>>;
   findProjectById(id: string): Promise<ProjectRecord | null>;
   linkUnclaimedProjectsToClient(
     emailNormalized: string,

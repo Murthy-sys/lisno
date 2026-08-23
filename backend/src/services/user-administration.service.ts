@@ -1,4 +1,4 @@
-import { OPERATIONAL_ROLES, ROLE_CODES, type Role } from "../domain/roles.js";
+import { ROLE_CODES, type Role } from "../domain/roles.js";
 import { ApiError } from "../middleware/errors.js";
 import {
   RepositoryConflictError,
@@ -77,7 +77,7 @@ export function createUserAdministrationService(
   return {
     async list(actor, filters, pagination) {
       const storedActor = await requireAdministrativeActor(repository, actor);
-      const visibleRoles = rolesManagedBy(storedActor.role);
+      const visibleRoles = ROLE_CODES;
       if (filters.role && !visibleRoles.includes(filters.role)) forbidden();
       const page = await repository.pageUsers(
         { ...filters, visibleRoles },
@@ -95,20 +95,7 @@ export function createUserAdministrationService(
         await transaction.coordinateAuthorizationMutation();
         const storedActor = await requireAdministrativeActor(transaction, actor);
         const target = await transaction.findUserById(userId);
-        if (!target) {
-          if (storedActor.role === "admin") forbidden();
-          notFound();
-        }
-
-        if (storedActor.role === "admin") {
-          if (
-            target.id === storedActor.id ||
-            !isOperationalRole(target.role) ||
-            (input.role !== undefined && !isOperationalRole(input.role))
-          ) {
-            forbidden();
-          }
-        }
+        if (!target) notFound();
         if (target.version !== input.version) versionConflict();
 
         const roleChanges = input.role !== undefined && input.role !== target.role;
@@ -245,24 +232,16 @@ export function createUserAdministrationService(
   };
 }
 
-function rolesManagedBy(role: "admin" | "super_admin"): readonly Role[] {
-  return role === "super_admin" ? ROLE_CODES : OPERATIONAL_ROLES;
-}
-
 async function requireAdministrativeActor(
   repository: AppRepository,
   actor: PublicUser
-): Promise<UserRecord & { role: "admin" | "super_admin" }> {
+): Promise<UserRecord & { role: "super_admin" }> {
   const stored = await repository.findUserById(actor.id);
   if (!stored || !stored.active || stored.role !== actor.role) {
     throw new ApiError(401, "INVALID_TOKEN", "Authentication token is invalid.");
   }
-  if (stored.role !== "admin" && stored.role !== "super_admin") forbidden();
-  return stored as UserRecord & { role: "admin" | "super_admin" };
-}
-
-function isOperationalRole(role: Role): boolean {
-  return (OPERATIONAL_ROLES as readonly Role[]).includes(role);
+  if (stored.role !== "super_admin") forbidden();
+  return stored as UserRecord & { role: "super_admin" };
 }
 
 function hasIncompatibleResponsibility(

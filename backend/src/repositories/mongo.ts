@@ -26,6 +26,7 @@ import { ProjectAccessGrantModel } from "../models/ProjectAccessGrant.js";
 import { TaskModel } from "../models/Task.js";
 import { TaskEventModel } from "../models/TaskEvent.js";
 import { UserModel } from "../models/User.js";
+import { adminProjectSummary } from "./admin-project-summary.js";
 import {
   RepositoryConflictError,
   RepositoryNotFoundError,
@@ -34,6 +35,7 @@ import {
   type AccessRequestRecord,
   type AuditEventRecord,
   type AuditFilters,
+  type EstimateSummaryRecord,
   type DesignExtractionJobRecord,
   type DesignSectionRecord,
   type DesignSectionRevisionRecord,
@@ -41,6 +43,7 @@ import {
   type DesignSourcePageRecord,
   type DesignVersionRecord,
   type EvaluationRecord,
+  type EstimatorOption,
   type FloorRecord,
   type LeadActivityRecord,
   type LeadRecord,
@@ -138,6 +141,55 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
     return {
       $or: [legacyFilter, { _id: { $in: grantProjectIds } }]
     };
+  };
+
+  const loadAdminProjectSummaries = async (
+    projectDocuments: PlainDocument[]
+  ) => {
+    if (projectDocuments.length === 0) return [];
+    const projectIds = projectDocuments.map((document) => idOf(document));
+    const leadQuery = LeadModel.find({ projectId: { $in: projectIds } }).lean();
+    if (session) leadQuery.session(session);
+    const leadDocuments = await leadQuery.exec();
+    const leadIds = leadDocuments.map((document) => idOf(document));
+    const estimatorIds = projectDocuments
+      .map((document) => document.assignedEstimatorId)
+      .filter((id): id is string => typeof id === "string");
+    const estimatorQuery = UserModel.find({ _id: { $in: estimatorIds } })
+      .select({ _id: 1, name: 1, email: 1, title: 1 })
+      .lean();
+    const estimateQuery = EstimateModel.find({
+      $or: [
+        { projectId: { $in: projectIds } },
+        { leadId: { $in: leadIds } }
+      ]
+    })
+      .select({ _id: 1, leadId: 1, projectId: 1, status: 1, total: 1 })
+      .lean();
+    if (session) {
+      estimatorQuery.session(session);
+      estimateQuery.session(session);
+    }
+    const [estimatorDocuments, estimateDocuments] = await Promise.all([
+      estimatorQuery.exec(),
+      estimateQuery.exec()
+    ]);
+    const estimators = estimatorDocuments.map((document) => ({
+      id: idOf(document),
+      name: document.name,
+      email: document.email
+    }));
+    const estimates: EstimateSummaryRecord[] = estimateDocuments.map((document) => ({
+      id: idOf(document),
+      leadId: String(document.leadId),
+      projectId: document.projectId == null ? null : String(document.projectId),
+      status: String(document.status),
+      total: Number(document.total)
+    }));
+    const leads = leadDocuments.map(mapLead);
+    return projectDocuments.map((document) =>
+      adminProjectSummary(mapProject(document), estimators, leads, estimates)
+    );
   };
 
   const repository: AppRepository = {
@@ -815,6 +867,71 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
         countQuery.exec()
       ]);
       return { items: documents.map(mapProject), total };
+    },
+
+    async pageAdminProjects(actor, pagination) {
+      const filter = await projectFilterForUserInModule(actor, "projects");
+      if (filter === null) return { items: [], total: 0 };
+      const itemQuery = ProjectModel.find(filter)
+        .sort({ createdAt: -1, _id: -1 })
+        .skip(pagination.offset)
+        .limit(pagination.limit)
+        .lean();
+      const countQuery = ProjectModel.countDocuments(filter);
+      if (session) {
+        itemQuery.session(session);
+        countQuery.session(session);
+      }
+      const [documents, total] = await Promise.all([
+        itemQuery.exec(),
+        countQuery.exec()
+      ]);
+      return {
+        items: await loadAdminProjectSummaries(documents),
+        total
+      };
+    },
+
+    async findAdminProject(actor, projectId) {
+      const filter = await projectFilterForUserInModule(actor, "projects");
+      if (filter === null) return null;
+      const query = ProjectModel.findOne({
+        $and: [{ _id: projectId }, filter]
+      }).lean();
+      if (session) query.session(session);
+      const document = await query.exec();
+      if (!document) return null;
+      return (await loadAdminProjectSummaries([document]))[0] ?? null;
+    },
+
+    async pageActiveEstimatorOptions(search, pagination) {
+      const filter: PlainDocument = { role: "estimator_sales", active: true };
+      if (search.trim()) {
+        const pattern = new RegExp(escapeRegex(search.trim()), "i");
+        filter.$or = [{ name: pattern }, { email: pattern }];
+      }
+      const itemQuery = UserModel.find(filter)
+        .select({ _id: 1, name: 1, email: 1, title: 1 })
+        .sort({ name: 1, _id: 1 })
+        .skip(pagination.offset)
+        .limit(pagination.limit)
+        .lean();
+      const countQuery = UserModel.countDocuments(filter);
+      if (session) {
+        itemQuery.session(session);
+        countQuery.session(session);
+      }
+      const [documents, total] = await Promise.all([
+        itemQuery.exec(),
+        countQuery.exec()
+      ]);
+      const items: EstimatorOption[] = documents.map((document) => ({
+        id: idOf(document),
+        name: document.name,
+        email: document.email,
+        title: document.title ?? null
+      }));
+      return { items, total };
     },
 
     async findProjectById(id) {
@@ -2417,9 +2534,14 @@ function mapProject(document: PlainDocument): ProjectRecord {
       document.clientEmailNormalized ?? normalizeEmail(document.clientEmail ?? ""),
     clientMobile: document.clientMobile ?? "",
     clientAddress: document.clientAddress ?? "",
-    initiatingDesignerId: document.initiatingDesignerId,
-    assignedDesignerIds: [...document.assignedDesignerIds],
-    managerId: document.managerId,
+    initiatingDesignerId:
+      document.initiatingDesignerId == null ? null : String(document.initiatingDesignerId),
+    assignedEstimatorId:
+      document.assignedEstimatorId == null ? null : String(document.assignedEstimatorId),
+    assignedDesignerIds: Array.isArray(document.assignedDesignerIds)
+      ? document.assignedDesignerIds.map(String)
+      : [],
+    managerId: document.managerId == null ? null : String(document.managerId),
     status: document.status,
     location: document.location,
     plannedStartAt: iso(document.plannedStartAt),
@@ -2441,7 +2563,7 @@ function leadActivityForMongo(input: LeadActivityRecord): PlainDocument {
   return { ...input, id: undefined, occurredAt: date(input.occurredAt), createdAt: date(input.createdAt) };
 }
 function mapLead(document: PlainDocument): LeadRecord {
-  return { id: idOf(document), ownerId: document.ownerId, clientName: document.clientName, clientEmail: document.clientEmail, clientMobile: document.clientMobile, projectName: document.projectName, location: document.location, propertyType: document.propertyType, budgetMin: document.budgetMin ?? null, budgetMax: document.budgetMax ?? null, source: document.source, stage: document.stage, nextAction: document.nextAction, nextActionAt: iso(document.nextActionAt), builder: document.builder ?? null, areaSqft: document.areaSqft ?? null, targetHandoverAt: nullableIso(document.targetHandoverAt), notes: document.notes ?? null, latestActivityAt: nullableIso(document.latestActivityAt), createdAt: iso(document.createdAt), updatedAt: iso(document.updatedAt) };
+  return { id: idOf(document), projectId: document.projectId == null ? null : String(document.projectId), ownerId: document.ownerId, clientName: document.clientName, clientEmail: document.clientEmail, clientMobile: document.clientMobile, projectName: document.projectName, location: document.location, propertyType: document.propertyType, budgetMin: document.budgetMin ?? null, budgetMax: document.budgetMax ?? null, source: document.source, stage: document.stage, nextAction: document.nextAction, nextActionAt: iso(document.nextActionAt), builder: document.builder ?? null, areaSqft: document.areaSqft ?? null, targetHandoverAt: nullableIso(document.targetHandoverAt), notes: document.notes ?? null, latestActivityAt: nullableIso(document.latestActivityAt), createdAt: iso(document.createdAt), updatedAt: iso(document.updatedAt) };
 }
 function mapLeadActivity(document: PlainDocument): LeadActivityRecord {
   return { id: idOf(document), leadId: document.leadId, actorId: document.actorId, type: document.type, note: document.note, occurredAt: iso(document.occurredAt), createdAt: iso(document.createdAt) };

@@ -6,6 +6,151 @@ import { RepositoryConflictError } from "../src/repositories/types.js";
 import { demoSeedData } from "../src/seed/data.js";
 
 describe("memory repository", () => {
+  it("stores nullable Admin project relationships and rejects duplicate linked leads", async () => {
+    const seed = structuredClone(demoSeedData);
+    const repository = createMemoryRepository(seed);
+    const project = await repository.createProject({
+      ...structuredClone(seed.projects[0]!),
+      id: "project-admin-1",
+      name: "Admin project",
+      initiatingDesignerId: null,
+      assignedEstimatorId: "user-estimator-sales",
+      assignedDesignerIds: [],
+      managerId: null,
+      createdAt: "2026-08-23T10:00:00.000Z",
+      updatedAt: "2026-08-23T10:00:00.000Z"
+    });
+    expect(project).toMatchObject({
+      initiatingDesignerId: null,
+      assignedEstimatorId: "user-estimator-sales",
+      assignedDesignerIds: [],
+      managerId: null
+    });
+
+    const lead = {
+      id: "lead-admin-1",
+      projectId: project.id,
+      ownerId: "user-estimator-sales",
+      clientName: "Asha Shah",
+      clientEmail: "asha@example.com",
+      clientMobile: "9000000000",
+      projectName: "Asha home",
+      location: "Pune",
+      propertyType: "3BHK",
+      budgetMin: 800000,
+      budgetMax: 1200000,
+      source: "admin_project",
+      stage: "new_lead" as const,
+      nextAction: "Schedule site visit",
+      nextActionAt: "2026-08-25T05:00:00.000Z",
+      builder: null,
+      areaSqft: null,
+      targetHandoverAt: null,
+      notes: null,
+      latestActivityAt: null,
+      createdAt: "2026-08-23T10:00:00.000Z",
+      updatedAt: "2026-08-23T10:00:00.000Z"
+    };
+    await repository.createLead(lead);
+    await expect(repository.createLead({ ...lead, id: "lead-admin-2" }))
+      .rejects.toBeInstanceOf(RepositoryConflictError);
+    await expect(repository.createLead({ ...lead, id: "lead-admin-3", projectId: null }))
+      .resolves.toMatchObject({ projectId: null });
+  });
+
+  it("pages scoped Admin project summaries newest-first and exposes only active estimator options", async () => {
+    const seed = structuredClone(demoSeedData);
+    const admin = seed.users.find((user) => user.id === "user-admin")!;
+    const estimator = seed.users.find((user) => user.id === "user-estimator-sales")!;
+    const baseProject = structuredClone(seed.projects[0]!);
+    seed.projects = [
+      {
+        ...baseProject,
+        id: "project-admin-a",
+        name: "Admin A",
+        initiatingDesignerId: null,
+        assignedEstimatorId: estimator.id,
+        assignedDesignerIds: [],
+        managerId: null,
+        createdAt: "2026-08-23T10:00:00.000Z"
+      },
+      {
+        ...baseProject,
+        id: "project-admin-b",
+        name: "Admin B",
+        initiatingDesignerId: null,
+        assignedEstimatorId: estimator.id,
+        assignedDesignerIds: [],
+        managerId: null,
+        createdAt: "2026-08-23T10:00:00.000Z"
+      }
+    ];
+    seed.leads = [{
+      id: "lead-admin-b",
+      projectId: "project-admin-b",
+      ownerId: estimator.id,
+      clientName: "Asha Shah",
+      clientEmail: "asha@example.com",
+      clientMobile: "9000000000",
+      projectName: "Admin B",
+      location: "Pune",
+      propertyType: "3BHK",
+      budgetMin: 800000,
+      budgetMax: 1200000,
+      source: "admin_project",
+      stage: "new_lead",
+      nextAction: "Schedule site visit",
+      nextActionAt: "2026-08-25T05:00:00.000Z",
+      builder: null,
+      areaSqft: null,
+      targetHandoverAt: null,
+      notes: null,
+      latestActivityAt: null,
+      createdAt: "2026-08-23T10:00:00.000Z",
+      updatedAt: "2026-08-23T10:00:00.000Z"
+    }];
+    seed.estimateSummaries = [{
+      id: "estimate-admin-b",
+      leadId: "lead-admin-b",
+      projectId: "project-admin-b",
+      status: "draft",
+      total: 118000
+    }];
+    seed.projectAccessGrants = seed.projects.map((project, index) => ({
+      id: `grant-admin-${index}`,
+      projectId: project.id,
+      userId: admin.id,
+      module: "projects" as const,
+      source: "admin_initiator" as const,
+      accessRequestId: null,
+      grantedById: admin.id,
+      active: true,
+      grantedAt: "2026-08-23T10:00:00.000Z",
+      revokedAt: null,
+      revokedById: null,
+      revocationReason: null,
+      version: 1,
+      createdAt: "2026-08-23T10:00:00.000Z",
+      updatedAt: "2026-08-23T10:00:00.000Z"
+    }));
+    const repository = createMemoryRepository(seed);
+
+    await expect(repository.pageAdminProjects(admin, { limit: 1, offset: 0 }))
+      .resolves.toEqual(expect.objectContaining({
+        total: 2,
+        items: [expect.objectContaining({
+          id: "project-admin-b",
+          estimator: { id: estimator.id, name: estimator.name, email: estimator.email },
+          lead: expect.objectContaining({ id: "lead-admin-b", stage: "new_lead" }),
+          estimate: { id: "estimate-admin-b", status: "draft", total: 118000 }
+        })]
+      }));
+    const options = await repository.pageActiveEstimatorOptions("sales@", { limit: 20, offset: 0 });
+    expect(options.items).toEqual([{ id: estimator.id, name: estimator.name, email: estimator.email, title: estimator.title ?? null }]);
+    expect(JSON.stringify(options)).not.toContain("mobile");
+    expect(JSON.stringify(options)).not.toContain("address");
+  });
+
   it("defaults legacy and new accounts to standard while retaining explicit demo markers", async () => {
     const legacySeed = structuredClone(demoSeedData);
     Reflect.deleteProperty(legacySeed.users[0]!, "accountKind");
@@ -36,7 +181,7 @@ describe("memory repository", () => {
   it("pages only an owner's matching leads and orders activities newest first", async () => {
     const repository = createMemoryRepository(demoSeedData);
     const base = {
-      ownerId: "user-estimator-sales", clientName: "Ramesh Nair", clientEmail: "ramesh@example.com", clientMobile: "9876500000",
+      projectId: null, ownerId: "user-estimator-sales", clientName: "Ramesh Nair", clientEmail: "ramesh@example.com", clientMobile: "9876500000",
       projectName: "Prestige Lakeside", location: "Bengaluru", propertyType: "3BHK", budgetMin: 1_000_000, budgetMax: 1_400_000,
       source: "Referral", stage: "negotiation" as const, nextAction: "Call client", nextActionAt: "2026-08-01T10:00:00.000Z",
       builder: null, areaSqft: null, targetHandoverAt: null, notes: null, latestActivityAt: null,
@@ -141,6 +286,7 @@ describe("memory repository", () => {
     const targetId = "user-estimator-sales";
     const baseLead = {
       id: "lead-responsibility-active",
+      projectId: null,
       ownerId: targetId,
       clientName: "Responsibility Client",
       clientEmail: "responsibility@example.com",

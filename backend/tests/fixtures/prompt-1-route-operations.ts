@@ -22,7 +22,7 @@ export interface ExpectedHumanJwtOperation {
     | "global_read"
     | "admin_override"
     | "deny_personal";
-  availability: "baseline" | "prompt_1";
+  availability: "baseline" | "prompt_1" | "prompt_2";
 }
 
 export function splitExpectedHumanOperationKey(

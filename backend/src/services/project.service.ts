@@ -267,6 +267,7 @@ export function createProjectService(
           clientMobile: input.clientMobile,
           clientAddress: input.clientAddress,
           initiatingDesignerId: actor.id,
+          assignedEstimatorId: null,
           assignedDesignerIds,
           managerId: manager.id,
           status: "planning",
