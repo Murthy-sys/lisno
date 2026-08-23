@@ -7,12 +7,15 @@ import { createAuditService } from "../src/services/audit.service.js";
 
 const nestedSensitiveValues = {
   displayName: "Safe Name",
+  tokenGeneration: 4,
   profile: {
+    tokenGeneration: 3,
     password_hash: "never persist",
     passwordConfirmation: "never persist",
     preferences: [
       {
         label: "safe",
+        tokenGeneration: 2,
         apiToken: "never persist",
         rawToken: "never persist",
         tokenHash: "never persist"
@@ -24,6 +27,10 @@ const nestedSensitiveValues = {
       }
     ]
   },
+  untrustedMetadata: {
+    tokenGeneration: "never persist",
+    status: "requested"
+  },
   reset: [{ "Password Hash": "never persist", status: "requested" }]
 };
 
@@ -32,7 +39,7 @@ describe("audit persistence security", () => {
     vi.restoreAllMocks();
   });
 
-  it("scrubs recursively normalized sensitive keys before repository persistence", async () => {
+  it("preserves numeric token-generation metadata while recursively scrubbing normalized secrets before repository persistence", async () => {
     const repository = createMemoryRepository(structuredClone(demoSeedData));
     const audit = createAuditService(repository);
 
@@ -53,9 +60,15 @@ describe("audit persistence security", () => {
     expect(rawPersistedPage.items).toHaveLength(1);
     expect(rawPersistedPage.items[0]?.oldValues).toEqual({
       displayName: "Safe Name",
+      tokenGeneration: 4,
       profile: {
-        preferences: [{ label: "safe" }, { enabled: true }]
+        tokenGeneration: 3,
+        preferences: [
+          { label: "safe", tokenGeneration: 2 },
+          { enabled: true }
+        ]
       },
+      untrustedMetadata: { status: "requested" },
       reset: [{ status: "requested" }]
     });
     expect(rawPersistedPage.items[0]?.newValues).toEqual(
@@ -102,16 +115,28 @@ describe("audit persistence security", () => {
         expect.objectContaining({
           oldValues: {
             displayName: "Safe Name",
+            tokenGeneration: 4,
             profile: {
-              preferences: [{ label: "safe" }, { enabled: true }]
+              tokenGeneration: 3,
+              preferences: [
+                { label: "safe", tokenGeneration: 2 },
+                { enabled: true }
+              ]
             },
+            untrustedMetadata: { status: "requested" },
             reset: [{ status: "requested" }]
           },
           newValues: {
             displayName: "Safe Name",
+            tokenGeneration: 4,
             profile: {
-              preferences: [{ label: "safe" }, { enabled: true }]
+              tokenGeneration: 3,
+              preferences: [
+                { label: "safe", tokenGeneration: 2 },
+                { enabled: true }
+              ]
             },
+            untrustedMetadata: { status: "requested" },
             reset: [{ status: "requested" }]
           }
         })

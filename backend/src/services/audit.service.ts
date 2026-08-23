@@ -188,16 +188,24 @@ function sanitizeAuditValue(value: unknown): unknown {
   if (!value || typeof value !== "object") return value;
   return Object.fromEntries(
     Object.entries(value as Record<string, unknown>)
-      .filter(([key]) => !isSensitiveAuditKey(key))
+      .filter(([key, nested]) => !isSensitiveAuditKey(key, nested))
       .map(([key, nested]) => [key, sanitizeAuditValue(nested)])
   );
 }
 
-function isSensitiveAuditKey(key: string): boolean {
+function isSensitiveAuditKey(key: string, value: unknown): boolean {
   const normalized = key
     .normalize("NFKC")
     .toLowerCase()
     .replace(/[^a-z0-9]/g, "");
+  if (
+    normalized === "tokengeneration" &&
+    typeof value === "number" &&
+    Number.isSafeInteger(value) &&
+    value >= 1
+  ) {
+    return false;
+  }
   return ["password", "hash", "token", "secret"].some((part) =>
     normalized.includes(part)
   );
