@@ -118,8 +118,12 @@ function createIsolatedTransport(
 
       connection.once("error", finish);
       connection.once("end", () => finish(new Error("SMTP connection ended.")));
-      connection.connect(() => {
+      connection.connect((connectError) => {
         if (settled) return;
+        if (connectError) {
+          finish(connectError);
+          return;
+        }
         if (!connection.allowsAuth) {
           finish(new InvitationDeliveryError("SMTP_AUTH_FAILED"));
           return;

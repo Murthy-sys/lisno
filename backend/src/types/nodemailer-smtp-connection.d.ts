@@ -29,7 +29,7 @@ declare module "nodemailer/lib/smtp-connection" {
   export default class SMTPConnection extends EventEmitter {
     constructor(options: SmtpConnectionOptions);
     readonly allowsAuth: boolean;
-    connect(callback: () => void): void;
+    connect(callback: (error?: Error | null) => void): void;
     login(
       auth: { user: string; pass: string },
       callback: (error?: Error | null) => void

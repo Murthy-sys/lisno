@@ -176,8 +176,25 @@ describe("environment authentication configuration", () => {
       });
     });
 
+    it("accepts credential-free origin-only HTTP frontend URLs", () => {
+      expect(loadEnvironment({
+        ...base,
+        PUBLIC_FRONTEND_URL: "http://app.lisno.example"
+      }).invitationDelivery).toMatchObject({
+        kind: "smtp",
+        publicFrontendUrl: "http://app.lisno.example"
+      });
+    });
+
+    it("rejects the TLS verification setting when the rest of the SMTP group is absent", () => {
+      expect(() => loadEnvironment({
+        JWT_SECRET: base.JWT_SECRET,
+        OCR_WORKER_TOKEN,
+        SMTP_TLS_REJECT_UNAUTHORIZED: "true"
+      })).toThrow("Invitation delivery configuration must be supplied as one complete group.");
+    });
+
     it.each([
-      ["PUBLIC_FRONTEND_URL", "http://app.lisno.example"],
       ["PUBLIC_FRONTEND_URL", "https://user:pass@app.lisno.example"],
       ["PUBLIC_FRONTEND_URL", "https://app.lisno.example/path"],
       ["PUBLIC_FRONTEND_URL", "https://app.lisno.example?source=email"],

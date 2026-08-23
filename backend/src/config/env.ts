@@ -23,13 +23,17 @@ const SMTP_KEYS = [
   "SMTP_PASSWORD",
   "SMTP_FROM"
 ] as const;
+const SMTP_RELATED_KEYS = [
+  ...SMTP_KEYS,
+  "SMTP_TLS_REJECT_UNAUTHORIZED"
+] as const;
 
 const CONTROL_CHARACTERS = /[\u0000-\u001F\u007F-\u009F]/u;
 
-function isHttpsOrigin(value: string): boolean {
+function isHttpOrigin(value: string): boolean {
   try {
     const url = new URL(value);
-    return url.protocol === "https:" &&
+    return (url.protocol === "http:" || url.protocol === "https:") &&
       url.username === "" &&
       url.password === "" &&
       url.pathname === "/" &&
@@ -89,7 +93,10 @@ const environmentSchema = z.object({
     });
   }
   const supplied = SMTP_KEYS.filter((key) => environment[key] !== undefined);
-  if (supplied.length > 0 && supplied.length !== SMTP_KEYS.length) {
+  const anySmtpSettingSupplied = SMTP_RELATED_KEYS.some(
+    (key) => environment[key] !== undefined
+  );
+  if (anySmtpSettingSupplied && supplied.length !== SMTP_KEYS.length) {
     context.addIssue({
       code: z.ZodIssueCode.custom,
       path: ["SMTP_HOST"],
@@ -97,22 +104,10 @@ const environmentSchema = z.object({
     });
     return;
   }
-  if (supplied.length === 0) {
-    if (
-      environment.SMTP_TLS_REJECT_UNAUTHORIZED !== undefined &&
-      environment.SMTP_TLS_REJECT_UNAUTHORIZED !== "true"
-    ) {
-      context.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["SMTP_TLS_REJECT_UNAUTHORIZED"],
-        message: "SMTP certificate verification cannot be disabled."
-      });
-    }
-    return;
-  }
+  if (!anySmtpSettingSupplied) return;
 
-  if (!isHttpsOrigin(environment.PUBLIC_FRONTEND_URL!)) {
-    context.addIssue({ code: z.ZodIssueCode.custom, path: ["PUBLIC_FRONTEND_URL"], message: "PUBLIC_FRONTEND_URL must be an HTTPS origin." });
+  if (!isHttpOrigin(environment.PUBLIC_FRONTEND_URL!)) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ["PUBLIC_FRONTEND_URL"], message: "PUBLIC_FRONTEND_URL must be an HTTP(S) origin." });
   }
   if (
     !environment.SMTP_HOST!.trim() ||

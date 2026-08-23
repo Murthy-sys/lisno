@@ -11,7 +11,8 @@ const connectionState = vi.hoisted(() => ({
     envelope?: unknown;
     message?: string;
   }>,
-  failure: null as Error | null
+  failure: null as Error | null,
+  connectFailure: null as Error | null
 }));
 
 vi.mock("nodemailer/lib/smtp-connection", async () => {
@@ -27,7 +28,9 @@ vi.mock("nodemailer/lib/smtp-connection", async () => {
         connectionState.instances.push(this.state);
       }
 
-      connect(callback: () => void) { queueMicrotask(callback); }
+      connect(callback: (error?: Error | null) => void) {
+        queueMicrotask(() => callback(connectionState.connectFailure));
+      }
       login(_auth: unknown, callback: (error?: Error | null) => void) {
         queueMicrotask(() => callback(connectionState.failure));
       }
@@ -59,6 +62,7 @@ const smtpConfig = {
 afterEach(() => {
   connectionState.instances.length = 0;
   connectionState.failure = null;
+  connectionState.connectFailure = null;
 });
 
 describe.sequential("SMTP invitation mailer", () => {
@@ -155,6 +159,28 @@ describe.sequential("SMTP invitation mailer", () => {
     expect(failure).toMatchObject({ failureCode: "SMTP_AUTH_FAILED" });
     expect(USER_INVITATION_DELIVERY_FAILURE_CODE_PATTERN.test(failure.failureCode)).toBe(true);
     expect(String(failure)).not.toMatch(/victim|provider|AUTH PLAIN|550/i);
+  });
+
+  it("classifies a connect callback error and closes the isolated connection once", async () => {
+    connectionState.connectFailure = Object.assign(
+      new Error("connect failed with provider detail"),
+      { code: "ECONNREFUSED" }
+    );
+    const { createSmtpInvitationMailer, InvitationDeliveryError } = await import(
+      "../src/services/smtp-invitation-mailer.js"
+    );
+    const mailer = createSmtpInvitationMailer(smtpConfig);
+
+    const failure = await mailer.sendInvitation({
+      recipient: { name: "Asha", email: "asha@example.com" },
+      roleLabel: "Designer",
+      rawToken: "abcdefghijklmnopqrstuvwxyzABCDEFGH123456789",
+      expiresAt: "2026-08-24T10:00:00.000Z"
+    }).catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(InvitationDeliveryError);
+    expect(failure).toMatchObject({ failureCode: "SMTP_CONNECTION_FAILED" });
+    expect(connectionState.instances[0]?.closeCount).toBe(1);
   });
 
   it("closes the exact real socket at the wall-clock deadline and settles once", async () => {
