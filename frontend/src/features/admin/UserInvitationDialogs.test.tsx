@@ -240,6 +240,35 @@ describe("invitation dialogs", () => {
     expect(resendCount).toBe(1);
   });
 
+  it("updates the accessible dialog title when switching to the alternate action", async () => {
+    server.use(
+      http.get("/api/v1/admin/user-invitations", () =>
+        HttpResponse.json({ data: page() })
+      )
+    );
+    const user = userEvent.setup();
+    renderWithQuery(
+      <UserInvitationsPanel
+        actorRole="super_admin"
+        permissions={[
+          "identity.user_invitations.read",
+          "identity.user_invitations.resend",
+          "identity.user_invitations.revoke"
+        ]}
+      />
+    );
+
+    await user.click(await screen.findByRole("button", { name: "Resend Asha Rao" }));
+    const resendDialog = screen.getByRole("dialog", {
+      name: "Resend invitation for Asha Rao"
+    });
+    await user.click(within(resendDialog).getByRole("button", { name: "Revoke instead" }));
+
+    expect(
+      screen.getByRole("dialog", { name: "Revoke invitation for Asha Rao" })
+    ).toBeVisible();
+  });
+
   it("retains the safe resend snapshot after a one-shot delivery 503", async () => {
     let resendCount = 0;
     server.use(

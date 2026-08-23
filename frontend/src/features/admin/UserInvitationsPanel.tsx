@@ -1,5 +1,5 @@
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 
 import {
   ROLE_LABELS,
@@ -100,6 +100,7 @@ function AuthorizedUserInvitationsPanel({
   });
   const [inviteOpen, setInviteOpen] = useState(false);
   const [selection, setSelection] = useState<Selection | null>(null);
+  const panelHeadingRef = useRef<HTMLHeadingElement>(null);
   const normalizedFilters = useMemo<UserInvitationFilters>(
     () => ({
       ...(filters.role ? { role: filters.role } : {}),
@@ -138,6 +139,13 @@ function AuthorizedUserInvitationsPanel({
     invitation.availableActions.includes(action) &&
     (action === "resend" ? canResend : canRevoke);
 
+  const closeActionDialog = (options?: { focusPanelHeading?: boolean }) => {
+    setSelection(null);
+    if (options?.focusPanelHeading) {
+      window.setTimeout(() => panelHeadingRef.current?.focus(), 0);
+    }
+  };
+
   return (
     <Surface
       as="section"
@@ -149,7 +157,13 @@ function AuthorizedUserInvitationsPanel({
       <header className="user-invitations__header">
         <div>
           <p className="eyebrow">Secure account setup</p>
-          <h2 id="pending-invitations-title">Pending invitations</h2>
+          <h2
+            ref={panelHeadingRef}
+            id="pending-invitations-title"
+            tabIndex={-1}
+          >
+            Pending invitations
+          </h2>
           <p>Review invitation history without exposing invitation links.</p>
         </div>
         {canCreate && page ? (
@@ -325,7 +339,7 @@ function AuthorizedUserInvitationsPanel({
           action={selection.action}
           canResend={canResend}
           canRevoke={canRevoke}
-          onClose={() => setSelection(null)}
+          onClose={closeActionDialog}
         />
       ) : null}
     </Surface>

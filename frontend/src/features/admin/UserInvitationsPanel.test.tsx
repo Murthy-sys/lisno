@@ -298,5 +298,10 @@ describe("UserInvitationsPanel", () => {
     expect(
       within(screen.getByRole("row", { name: /Asha Rao/ })).getByText("Revoked")
     ).toBeVisible();
+    await waitFor(() =>
+      expect(
+        screen.getByRole("heading", { name: "Pending invitations" })
+      ).toHaveFocus()
+    );
   });
 });

@@ -22,7 +22,7 @@ interface InvitationActionDialogProps {
   action: UserInvitationAction;
   canResend: boolean;
   canRevoke: boolean;
-  onClose(): void;
+  onClose(options?: { focusPanelHeading?: boolean }): void;
 }
 
 function title(action: UserInvitationAction, name: string): string {
@@ -73,7 +73,7 @@ export function InvitationActionDialog({
           ? { title: "Invitation revoked." }
           : { title: "Invitation resent.", message: deliveryMessage(result) }
       );
-      onClose();
+      onClose({ focusPanelHeading: candidate === "revoke" });
     },
     onError: async (failure) => {
       if (failure instanceof ApiError && failure.code === "VERSION_CONFLICT") {
@@ -99,7 +99,7 @@ export function InvitationActionDialog({
 
   return (
     <Dialog
-      title={title(action, snapshot.name)}
+      title={title(selectedAction, snapshot.name)}
       eyebrow="Invitation administration"
       description="Review the selected invitation before continuing."
       busy={mutation.isPending}
@@ -138,7 +138,7 @@ export function InvitationActionDialog({
           <Button
             variant="quiet"
             disabled={mutation.isPending}
-            onClick={onClose}
+            onClick={() => onClose()}
           >
             Cancel
           </Button>
