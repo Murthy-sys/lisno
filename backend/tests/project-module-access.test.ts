@@ -140,7 +140,9 @@ describe("registry-bound project module access", () => {
     "applies the literal unlinked %s baseline for Projects and Design",
     async (role, projectsExpected, designExpected) => {
       const seed = structuredClone(demoSeedData);
-      const actor = addUser(seed, `isolated-${role}`, role);
+      const actor = role === "super_admin"
+        ? seed.users.find(({ id }) => id === "user-super-admin")!
+        : addUser(seed, `isolated-${role}`, role);
 
       await expect(
         currentOperationAccess(seed, actor.id, PROJECT_OPERATION)

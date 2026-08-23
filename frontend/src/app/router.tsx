@@ -91,7 +91,7 @@ const roleHomeContent: Record<Role, RoleHomeContent> = {
     status: "Ready for staged access"
   },
   finance_head: {
-    heading: "Finance Head workspace",
+    heading: "Finance Manager workspace",
     eyebrow: "Project finance",
     description: "Your authorized finance work will appear here.",
     status: "Ready for staged access"

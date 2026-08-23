@@ -33,17 +33,6 @@ const designer = {
   updatedAt: "2026-08-01T09:00:00.000Z"
 };
 
-const lastSuperAdmin = {
-  id: "user-super-admin",
-  name: "Sana Root",
-  email: "root@lisno.example",
-  role: "super_admin" as const,
-  active: true,
-  version: 1,
-  createdAt: "2026-06-01T09:00:00.000Z",
-  updatedAt: "2026-08-01T09:00:00.000Z"
-};
-
 const zeroCounts = {
   ownedActiveLeads: 0,
   ownedActiveEstimates: 0,
@@ -83,7 +72,9 @@ function installSession(user: typeof actor) {
 
 function directoryResponse(
   users: ReadonlyArray<UserDirectoryItem>,
-  manageableRoles: readonly Role[] = ROLE_CODES
+  manageableRoles: readonly Exclude<Role, "super_admin">[] = ROLE_CODES.filter(
+    (role): role is Exclude<Role, "super_admin"> => role !== "super_admin"
+  )
 ) {
   return {
     data: {
@@ -94,6 +85,7 @@ function directoryResponse(
         total: users.length,
         hasMore: false
       },
+      filterRoles: ROLE_CODES,
       manageableRoles
     }
   };
@@ -370,43 +362,33 @@ describe("UserMutationDialog", () => {
     expect(patchCount).toBe(1);
   });
 
-  it("last Super Admin error is explicit", async () => {
+  it("does not offer or submit a Super Admin destination", async () => {
     installSession(actor);
     let patchCount = 0;
     server.use(
       http.get("/api/v1/admin/users", () =>
-        HttpResponse.json(directoryResponse([lastSuperAdmin]))
+        HttpResponse.json(directoryResponse([designer]))
       ),
-      http.patch("/api/v1/admin/users/user-super-admin", async ({ request }) => {
+      http.patch("/api/v1/admin/users/:userId", () => {
         patchCount += 1;
-        expect(await request.json()).toEqual({ version: 1, active: false });
-        return HttpResponse.json(
-          {
-            error: {
-              code: "LAST_SUPER_ADMIN",
-              message: "At least one active Super Admin is required."
-            }
-          },
-          { status: 409 }
-        );
+        return HttpResponse.error();
       })
     );
 
-    const user = userEvent.setup();
-    renderApp(["/admin/users"]);
-    await user.click(
-      await screen.findByRole("button", { name: "Manage Sana Root" })
-    );
-    await user.click(screen.getByRole("button", { name: "Deactivate user" }));
-    await user.click(
-      screen.getByRole("button", { name: "Confirm deactivation" })
-    );
-
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "At least one active Super Admin is required."
-    );
-    expect(screen.getByRole("dialog")).toBeVisible();
-    expect(patchCount).toBe(1);
+    const { dialog } = await openDesignerDialog();
+    expect(
+      within(dialog).queryByRole("option", { name: "Super Admin" })
+    ).not.toBeInTheDocument();
+    expect(
+      within(dialog).getByRole("option", { name: "Site Manager" })
+    ).toBeInTheDocument();
+    expect(
+      within(dialog).getByRole("option", { name: "Finance Manager" })
+    ).toBeInTheDocument();
+    expect(
+      within(dialog).getByRole("button", { name: "Save role" })
+    ).toBeDisabled();
+    expect(patchCount).toBe(0);
   });
 
   it("directory and dialog are keyboard accessible", async () => {

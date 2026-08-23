@@ -996,17 +996,6 @@ describe("task workflows", () => {
 describe("Projects and Tasks operations", () => {
   it("allows a Super Admin deadline override without bypassing workflow", async () => {
     const seed = structuredClone(demoSeedData);
-    seed.users.push({
-      ...seed.users[0]!,
-      id: "user-super-admin",
-      name: "Super Admin",
-      email: "super-admin@lisno.example",
-      emailNormalized: "super-admin@lisno.example",
-      role: "super_admin",
-      active: true,
-      managerId: null,
-      authorizedClientIds: []
-    });
     const { app, repository } = setup(seed);
 
     const response = await request(app)

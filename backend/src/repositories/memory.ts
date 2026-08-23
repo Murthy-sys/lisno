@@ -472,6 +472,12 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
       if (state.users.some((user) => user.emailNormalized === emailNormalized)) {
         throw new RepositoryConflictError(`User email ${emailNormalized} already exists.`);
       }
+      if (
+        input.role === "super_admin" &&
+        state.users.some((user) => user.role === "super_admin")
+      ) {
+        throw new RepositoryConflictError("Only one Super Admin account is allowed.");
+      }
       const createdAt = input.createdAt ?? nextIso();
       const record: UserRecord = {
         id: input.id ?? nextId("user"),
@@ -573,6 +579,13 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
       const current = state.users[index]!;
       if (current.version !== expectedVersion) {
         throw new RepositoryConflictError(`User ${userId} changed concurrently.`);
+      }
+      if (
+        change.role === "super_admin" &&
+        current.role !== "super_admin" &&
+        state.users.some((user) => user.role === "super_admin")
+      ) {
+        throw new RepositoryConflictError("Only one Super Admin account is allowed.");
       }
       const updated: UserRecord = {
         ...current,
@@ -1927,6 +1940,9 @@ function compareAccessRequestChronology(
 }
 
 function assertAuthorizationUniqueness(seed: SeedData) {
+  if (seed.users.filter(({ role }) => role === "super_admin").length > 1) {
+    throw new RepositoryConflictError("Only one Super Admin account is allowed.");
+  }
   const requestIds = new Set<string>();
   const pendingTuples = new Set<string>();
   for (const request of seed.accessRequests) {

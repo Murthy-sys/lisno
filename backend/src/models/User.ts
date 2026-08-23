@@ -33,6 +33,14 @@ const userSchema = new Schema(
 );
 
 userSchema.index({ emailNormalized: 1 }, { unique: true });
+userSchema.index(
+  { role: 1 },
+  {
+    unique: true,
+    partialFilterExpression: { role: "super_admin" },
+    name: "one_super_admin"
+  }
+);
 userSchema.index({ role: 1, active: 1 });
 userSchema.index({ managerId: 1, role: 1 });
 

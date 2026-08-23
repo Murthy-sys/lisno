@@ -16,7 +16,7 @@ const expected = [
   ["user-estimator-sales", "Priya Sharma", "sales@lisno.example", "estimator_sales", "Estimator / Sales", null, []],
   ["user-designer-ananya", "Ananya Rao", "ananya@lisno.example", "designer", "Senior Designer", "user-manager-aarav", ["user-client-aurora", "user-client-celeste"]],
   ["user-procurement", "Nisha Verma", "procurement@lisno.example", "procurement", "Procurement", null, []],
-  ["user-finance-head", "Rohan Gupta", "finance-head@lisno.example", "finance_head", "Finance Head", null, []],
+  ["user-finance-head", "Rohan Gupta", "finance-head@lisno.example", "finance_head", "Finance Manager", null, []],
   ["user-site-manager", "Imran Khan", "site-manager@lisno.example", "site_manager", "Site Manager", null, []],
   ["user-worker-electrician", "Aman Electrician", "worker-electrician@lisno.example", "worker_electrician", "Electrician", null, []],
   ["user-worker-plumber", "Bharat Plumber", "worker-plumber@lisno.example", "worker_plumber", "Plumber", null, []],

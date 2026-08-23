@@ -48,7 +48,7 @@ export const DEVELOPMENT_DEMO_ACCOUNTS = Object.freeze([
   account("user-estimator-sales", "Priya Sharma", "sales@lisno.example", "estimator_sales", "Estimator / Sales"),
   account("user-designer-ananya", "Ananya Rao", "ananya@lisno.example", "designer", "Senior Designer", "user-manager-aarav", ["user-client-aurora", "user-client-celeste"]),
   account("user-procurement", "Nisha Verma", "procurement@lisno.example", "procurement", "Procurement"),
-  account("user-finance-head", "Rohan Gupta", "finance-head@lisno.example", "finance_head", "Finance Head"),
+  account("user-finance-head", "Rohan Gupta", "finance-head@lisno.example", "finance_head", "Finance Manager"),
   account("user-site-manager", "Imran Khan", "site-manager@lisno.example", "site_manager", "Site Manager"),
   account("user-worker-electrician", "Aman Electrician", "worker-electrician@lisno.example", "worker_electrician", "Electrician"),
   account("user-worker-plumber", "Bharat Plumber", "worker-plumber@lisno.example", "worker_plumber", "Plumber"),

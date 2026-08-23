@@ -177,13 +177,6 @@ describe("active manager directory", () => {
 describe("Organization KPI and Evaluation operations", () => {
   it("uses pageActiveDesigners for a Super Admin global team", async () => {
     const seed = structuredClone(demoSeedData);
-    seed.users.push(manager({
-      id: "user-super-admin",
-      name: "Super Admin",
-      email: "super-admin@lisno.example",
-      emailNormalized: "super-admin@lisno.example",
-      role: "super_admin"
-    }));
     const base = createMemoryRepository(seed);
     let activeDesignerPages = 0;
     let managerDesignerPages = 0;

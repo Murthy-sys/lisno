@@ -365,17 +365,6 @@ describe("calculateKpi", () => {
 describe("Organization KPI and Evaluation operations", () => {
   it("limits Super Admin KPI reads to active Designer or Design Manager subjects", async () => {
     const seed = structuredClone(demoSeedData);
-    seed.users.push({
-      ...seed.users[0]!,
-      id: "user-super-admin",
-      name: "Super Admin",
-      email: "super-admin@lisno.example",
-      emailNormalized: "super-admin@lisno.example",
-      role: "super_admin",
-      active: true,
-      managerId: null,
-      authorizedClientIds: []
-    });
     seed.users.find((candidate) => candidate.id === "user-designer-kabir")!.active = false;
     const app = createApp({
       repository: createMemoryRepository(seed),

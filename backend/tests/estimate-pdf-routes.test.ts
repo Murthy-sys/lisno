@@ -63,16 +63,6 @@ function setup() {
   const client = seed.users.find((user) => user.id === "user-client-aurora")!;
   client.email = "client@lisno.example";
   client.emailNormalized = "client@lisno.example";
-  seed.users.push({
-    ...seed.users[0]!,
-    id: "user-super-admin",
-    name: "Global Administrator",
-    email: "super-admin@lisno.example",
-    emailNormalized: "super-admin@lisno.example",
-    role: "super_admin",
-    managerId: null,
-    authorizedClientIds: []
-  });
   const generate = vi.fn(async () => ({
     bytes: pdfBytes,
     filename: "lisno-aurora-villa-estimate-v1.pdf"

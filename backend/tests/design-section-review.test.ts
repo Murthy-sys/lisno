@@ -55,16 +55,6 @@ function token(id: string, role: string) {
 
 function reviewSeed(): SeedData {
   const seed = structuredClone(demoSeedData);
-  seed.users.push({
-    ...structuredClone(seed.users[0]!),
-    id: "user-super-admin",
-    name: "Super Admin",
-    email: "super-admin@lisno.example",
-    emailNormalized: "super-admin@lisno.example",
-    role: "super_admin",
-    managerId: null,
-    authorizedClientIds: []
-  });
   seed.extractionJobs.push({
     id: "job-review",
     designVersionId: "version-aurora-plan-1",

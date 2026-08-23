@@ -188,7 +188,8 @@ function installAuthorizationSession(
         data: {
           items: [],
           pagination: { limit: 20, offset: 0, total: 0, hasMore: false },
-          manageableRoles: role === "super_admin" ? ROLE_CODES : OPERATIONAL_ROLES
+          filterRoles: ROLE_CODES,
+          manageableRoles: OPERATIONAL_ROLES
         }
       });
     }

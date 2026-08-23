@@ -38,7 +38,7 @@ describe("canonical role catalog", () => {
       estimator_sales: "Estimator/Sales",
       designer: "Designer",
       procurement: "Procurement",
-      finance_head: "Finance Head",
+      finance_head: "Finance Manager",
       site_manager: "Site Manager",
       worker_electrician: "Electrician",
       worker_plumber: "Plumber",

@@ -39,7 +39,8 @@ export interface ManagedUserMutationResult {
 export interface UserDirectoryPage {
   items: UserDirectoryItem[];
   total: number;
-  manageableRoles: readonly Role[];
+  filterRoles: readonly Role[];
+  manageableRoles: readonly Exclude<Role, "super_admin">[];
 }
 
 export interface UserAdministrationService {
@@ -69,6 +70,11 @@ const responsibilityRole: Readonly<
   adminInitiatorGrants: "admin"
 };
 
+const FILTER_ROLES: readonly Role[] = [...ROLE_CODES];
+const MANAGEABLE_ROLES: readonly Exclude<Role, "super_admin">[] = ROLE_CODES.filter(
+  (role): role is Exclude<Role, "super_admin"> => role !== "super_admin"
+);
+
 export function createUserAdministrationService(
   repository: AppRepository,
   auditService: AuditService,
@@ -77,7 +83,7 @@ export function createUserAdministrationService(
   return {
     async list(actor, filters, pagination) {
       const storedActor = await requireAdministrativeActor(repository, actor);
-      const visibleRoles = ROLE_CODES;
+      const visibleRoles = FILTER_ROLES;
       if (filters.role && !visibleRoles.includes(filters.role)) forbidden();
       const page = await repository.pageUsers(
         { ...filters, visibleRoles },
@@ -86,7 +92,8 @@ export function createUserAdministrationService(
       return {
         items: page.items.map(toUserDirectoryItem),
         total: page.total,
-        manageableRoles: [...visibleRoles]
+        filterRoles: [...FILTER_ROLES],
+        manageableRoles: [...MANAGEABLE_ROLES]
       };
     },
 
@@ -96,22 +103,26 @@ export function createUserAdministrationService(
         const storedActor = await requireAdministrativeActor(transaction, actor);
         const target = await transaction.findUserById(userId);
         if (!target) notFound();
+        if (target.role === "super_admin") {
+          throw new ApiError(
+            409,
+            "SOLE_SUPER_ADMIN_IMMUTABLE",
+            "The sole Super Admin account cannot be changed."
+          );
+        }
         if (target.version !== input.version) versionConflict();
+
+        if (input.role === "super_admin") {
+          throw new ApiError(
+            400,
+            "ROLE_NOT_MANAGEABLE",
+            "This role cannot be assigned."
+          );
+        }
 
         const roleChanges = input.role !== undefined && input.role !== target.role;
         const activeChanges = input.active !== undefined && input.active !== target.active;
         const deactivates = activeChanges && input.active === false;
-
-        if (
-          target.role === "super_admin" &&
-          target.active &&
-          (deactivates || (roleChanges && input.role !== "super_admin"))
-        ) {
-          const activeSuperAdmins = await transaction.countActiveUsersByRole(
-            "super_admin"
-          );
-          if (activeSuperAdmins <= 1) lastSuperAdmin();
-        }
 
         const responsibilities = await transaction.countUserResponsibilities(target.id);
         if (
@@ -285,12 +296,4 @@ function notFound(): never {
 
 function versionConflict(): never {
   throw new ApiError(409, "VERSION_CONFLICT", "The user changed elsewhere.");
-}
-
-function lastSuperAdmin(): never {
-  throw new ApiError(
-    409,
-    "LAST_SUPER_ADMIN",
-    "At least one active Super Admin is required."
-  );
 }

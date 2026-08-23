@@ -90,16 +90,6 @@ function setupLeadCharacterization(
   const seed = structuredClone(demoSeedData);
   seed.leads = [{ ...structuredClone(CHARACTERIZATION_LEAD), ...leadOverrides }];
   seed.leadActivities = [];
-  seed.users.push({
-    ...seed.users[0]!,
-    id: "user-super-admin",
-    name: "Global Administrator",
-    email: "super-admin@lisno.example",
-    emailNormalized: "super-admin@lisno.example",
-    role: "super_admin",
-    managerId: null,
-    authorizedClientIds: []
-  });
   const repository = createMemoryRepository(seed);
   const runInTransaction = vi.spyOn(repository, "runInTransaction");
   const projectGrantSpies = [

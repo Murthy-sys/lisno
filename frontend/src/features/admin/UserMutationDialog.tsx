@@ -17,10 +17,12 @@ import { adminUserKeys, updateManagedUser } from "./adminApi";
 
 export interface UserMutationDialogProps {
   user: UserDirectoryItem;
-  manageableRoles: readonly Role[];
+  manageableRoles: readonly Exclude<Role, "super_admin">[];
   isCurrentPageUser: boolean;
   onClose(): void;
 }
+
+type ManageableRole = Exclude<Role, "super_admin">;
 
 const missingCurrentPageMessage =
   "This user is no longer in the current directory view. Close this dialog and locate the account again.";
@@ -129,7 +131,7 @@ export function UserMutationDialog({
         }
         if (
           failure.code === "RESPONSIBILITY_REASSIGNMENT_REQUIRED" ||
-          failure.code === "LAST_SUPER_ADMIN"
+          failure.code === "SOLE_SUPER_ADMIN_IMMUTABLE"
         ) {
           setError(failure.message);
           return;
@@ -149,7 +151,7 @@ export function UserMutationDialog({
     if (
       interactionBlocked ||
       selectedRole === user.role ||
-      !manageableRoles.includes(selectedRole)
+      !manageableRoles.includes(selectedRole as ManageableRole)
     ) {
       return;
     }
@@ -236,7 +238,7 @@ export function UserMutationDialog({
               disabled={interactionBlocked}
               onChange={(event) => {
                 setError("");
-                setSelectedRole(event.target.value as Role);
+                setSelectedRole(event.target.value as ManageableRole);
               }}
             >
               {manageableRoles.map((role) => (
@@ -255,7 +257,7 @@ export function UserMutationDialog({
             disabled={
               interactionBlocked ||
               selectedRole === user.role ||
-              !manageableRoles.includes(selectedRole)
+              !manageableRoles.includes(selectedRole as ManageableRole)
             }
             onClick={submitRole}
           >

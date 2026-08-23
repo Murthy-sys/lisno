@@ -52,6 +52,7 @@ export function createAdminUsersRouter(
               { items: result.items, total: result.total },
               pagination
             ),
+            filterRoles: result.filterRoles,
             manageableRoles: result.manageableRoles
           }
         });

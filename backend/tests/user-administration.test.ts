@@ -14,6 +14,7 @@ import { demoSeedData } from "../src/seed/data.js";
 import { createAuditService } from "../src/services/audit.service.js";
 import type { PublicUser } from "../src/services/auth.service.js";
 import { createUserAdministrationService } from "../src/services/user-administration.service.js";
+import { developmentDemoAuthentication } from "./helpers/development-demo-authentication.js";
 
 const JWT_SECRET = "user-administration-test-secret-at-least-32-characters";
 const auth = { jwtSecret: JWT_SECRET, jwtExpiresInSeconds: 900 };
@@ -21,7 +22,7 @@ const clock = () => new Date("2026-08-17T12:00:00.000Z");
 
 function emptyAdministrationSeed(): SeedData {
   const seed = structuredClone(demoSeedData);
-  seed.users = [];
+  seed.users = seed.users.filter(({ id }) => id === "user-super-admin");
   seed.leads = [];
   seed.estimateResponsibilities = [];
   seed.projects = [];
@@ -30,6 +31,10 @@ function emptyAdministrationSeed(): SeedData {
   seed.projectAccessGrants = [];
   seed.auditEvents = [];
   return seed;
+}
+
+function canonicalSuperAdmin(seed: SeedData): UserRecord {
+  return seed.users.find(({ id }) => id === "user-super-admin")!;
 }
 
 function addUser(
@@ -106,7 +111,7 @@ function setup(seed = emptyAdministrationSeed()) {
 describe("user administration service", () => {
   it("denies Admin directory access while Super Admin sees all roles", async () => {
     const seed = emptyAdministrationSeed();
-    const superAdmin = addUser(seed, "user-super", "super_admin");
+    const superAdmin = canonicalSuperAdmin(seed);
     const admin = addUser(seed, "user-admin", "admin");
     for (const role of ROLE_CODES) {
       if (role !== "super_admin" && role !== "admin") {
@@ -125,7 +130,10 @@ describe("user administration service", () => {
       { limit: 20, offset: 0 }
     );
     expect(new Set(superPage.items.map(({ role }) => role))).toEqual(new Set(ROLE_CODES));
-    expect(superPage.manageableRoles).toEqual(ROLE_CODES);
+    expect(superPage.filterRoles).toEqual(ROLE_CODES);
+    expect(superPage.manageableRoles).toEqual(
+      ROLE_CODES.filter((role) => role !== "super_admin")
+    );
 
     expect(JSON.stringify(superPage)).not.toMatch(/password|hash|token|secret/i);
   });
@@ -137,7 +145,7 @@ describe("user administration service", () => {
     const protectedUsers = [
       admin,
       addUser(seed, "user-admin-two", "admin"),
-      addUser(seed, "user-super", "super_admin"),
+      canonicalSuperAdmin(seed),
       addUser(seed, "user-client", "client"),
       addUser(seed, "user-manager", "design_manager"),
       addUser(seed, "user-head", "design_head")
@@ -167,7 +175,7 @@ describe("user administration service", () => {
     const protectedUsers = [
       admin,
       addUser(seed, "user-admin-two", "admin"),
-      addUser(seed, "user-super", "super_admin"),
+      canonicalSuperAdmin(seed),
       addUser(seed, "user-client", "client"),
       addUser(seed, "user-manager", "design_manager"),
       addUser(seed, "user-head", "design_head")
@@ -228,7 +236,7 @@ describe("user administration service", () => {
 
   it("retains Super Admin global missing-target and stale-version distinctions", async () => {
     const seed = emptyAdministrationSeed();
-    const superAdmin = addUser(seed, "user-super", "super_admin");
+    const superAdmin = canonicalSuperAdmin(seed);
     const designer = addUser(seed, "user-designer", "designer");
     const { service } = setup(seed);
 
@@ -254,9 +262,39 @@ describe("user administration service", () => {
     });
   });
 
+  it("rejects a Super Admin destination before responsibility checks or writes", async () => {
+    const seed = emptyAdministrationSeed();
+    const superAdmin = canonicalSuperAdmin(seed);
+    const designer = addUser(seed, "user-designer", "designer");
+    seed.tasks.push({
+      ...structuredClone(demoSeedData.tasks[0]!),
+      id: "task-blocking-promotion",
+      ownerId: designer.id,
+      status: "in_progress",
+      completedAt: null
+    });
+    const { repository, service } = setup(seed);
+
+    await expect(
+      service.update(publicUser(superAdmin), designer.id, {
+        version: designer.version,
+        role: "super_admin"
+      })
+    ).rejects.toMatchObject({
+      status: 400,
+      code: "ROLE_NOT_MANAGEABLE",
+      message: "This role cannot be assigned."
+    });
+    await expect(repository.findUserById(designer.id)).resolves.toMatchObject({
+      role: "designer",
+      version: 1
+    });
+    await expect(repository.listAuditEvents({ entityId: designer.id })).resolves.toEqual([]);
+  });
+
   it("rejects role change while dependent responsibilities remain", async () => {
     const seed = emptyAdministrationSeed();
-    const superAdmin = addUser(seed, "user-super", "super_admin");
+    const superAdmin = canonicalSuperAdmin(seed);
     const designer = addUser(seed, "user-designer", "designer");
     seed.tasks.push({
       ...structuredClone(demoSeedData.tasks[0]!),
@@ -281,7 +319,7 @@ describe("user administration service", () => {
 
   it("keeps inactive direct-report relationships valid across later reactivation", async () => {
     const seed = emptyAdministrationSeed();
-    const superAdmin = addUser(seed, "user-super", "super_admin");
+    const superAdmin = canonicalSuperAdmin(seed);
     const manager = addUser(seed, "user-manager", "design_manager");
     const report = addUser(seed, "user-report", "designer", {
       active: false,
@@ -311,7 +349,7 @@ describe("user administration service", () => {
 
   it("deactivates despite active work, preserves links, revokes grants, and never restores them", async () => {
     const seed = emptyAdministrationSeed();
-    const superAdmin = addUser(seed, "user-super", "super_admin");
+    const superAdmin = canonicalSuperAdmin(seed);
     const designer = addUser(seed, "user-designer", "designer");
     seed.tasks.push({
       ...structuredClone(demoSeedData.tasks[0]!),
@@ -360,7 +398,7 @@ describe("user administration service", () => {
 
   it("performs safe role changes with CAS and revokes every additive grant", async () => {
     const seed = emptyAdministrationSeed();
-    const superAdmin = addUser(seed, "user-super", "super_admin");
+    const superAdmin = canonicalSuperAdmin(seed);
     const designer = addUser(seed, "user-designer", "designer");
     seed.projectAccessGrants.push(grant("grant-safe-role", designer.id));
     const { repository, service } = setup(seed);
@@ -390,7 +428,7 @@ describe("user administration service", () => {
 
   it("rolls back the user, grants, and audits when audit persistence fails", async () => {
     const seed = emptyAdministrationSeed();
-    const superAdmin = addUser(seed, "user-super", "super_admin");
+    const superAdmin = canonicalSuperAdmin(seed);
     const designer = addUser(seed, "user-designer", "designer");
     seed.projectAccessGrants.push(grant("grant-rollback", designer.id));
     const repository = createMemoryRepository(seed);
@@ -416,36 +454,34 @@ describe("user administration service", () => {
     await expect(repository.listAuditEvents({})).resolves.toEqual([]);
   });
 
-  it("protects the last active Super Admin and serializes concurrent demotions", async () => {
-    const oneSeed = emptyAdministrationSeed();
-    const onlySuper = addUser(oneSeed, "user-only-super", "super_admin");
-    const one = setup(oneSeed);
-    await expect(
-      one.service.update(publicUser(onlySuper), onlySuper.id, {
-        version: onlySuper.version,
-        active: false
-      })
-    ).rejects.toMatchObject({
-      status: 409,
-      code: "LAST_SUPER_ADMIN",
-      message: "At least one active Super Admin is required."
-    });
-
+  it("rejects every sole Super Admin mutation before version checks and writes", async () => {
     const seed = emptyAdministrationSeed();
-    const first = addUser(seed, "user-super-first", "super_admin");
-    const second = addUser(seed, "user-super-second", "super_admin");
+    const onlySuper = canonicalSuperAdmin(seed);
+    seed.projectAccessGrants.push(grant("grant-super-immutable", onlySuper.id));
     const { repository, service } = setup(seed);
-    const settled = await Promise.allSettled([
-      service.update(publicUser(first), first.id, { version: 1, role: "admin" }),
-      service.update(publicUser(second), second.id, { version: 1, role: "admin" })
-    ]);
-    expect(settled.filter(({ status }) => status === "fulfilled")).toHaveLength(1);
-    const rejection = settled.find(({ status }) => status === "rejected");
-    expect(rejection).toMatchObject({
-      status: "rejected",
-      reason: { code: "LAST_SUPER_ADMIN" }
-    });
-    await expect(repository.countActiveUsersByRole("super_admin")).resolves.toBe(1);
+    const attempts = [
+      { version: onlySuper.version, role: "admin" as const },
+      { version: onlySuper.version, role: "super_admin" as const },
+      { version: onlySuper.version, active: false },
+      { version: onlySuper.version, active: true },
+      { version: onlySuper.version + 99, active: false }
+    ];
+
+    for (const input of attempts) {
+      await expect(
+        service.update(publicUser(onlySuper), onlySuper.id, input)
+      ).rejects.toMatchObject({
+        status: 409,
+        code: "SOLE_SUPER_ADMIN_IMMUTABLE",
+        message: "The sole Super Admin account cannot be changed."
+      });
+    }
+
+    await expect(repository.findUserById(onlySuper.id)).resolves.toEqual(onlySuper);
+    await expect(
+      repository.listActiveProjectAccessGrants(onlySuper.id, "design")
+    ).resolves.toHaveLength(1);
+    await expect(repository.listAuditEvents({})).resolves.toEqual([]);
   });
 });
 
@@ -471,12 +507,17 @@ describe("user administration routes", () => {
 
   it("returns exact directory and mutation envelopes without credential fields", async () => {
     const seed = emptyAdministrationSeed();
-    const superAdmin = addUser(seed, "user-super", "super_admin");
+    const superAdmin = canonicalSuperAdmin(seed);
     addUser(seed, "admin-operator", "admin");
     const designer = addUser(seed, "user-designer", "designer");
     addUser(seed, "user-client", "client");
     const repository = createMemoryRepository(seed);
-    const app = createApp({ repository, auth, clock });
+    const app = createApp({
+      repository,
+      auth,
+      clock,
+      developmentDemoAuthorization: developmentDemoAuthentication()
+    });
 
     const directory = await request(app)
       .get("/api/v1/admin/users?search=designer&role=designer&active=true&limit=20&offset=0")
@@ -495,7 +536,8 @@ describe("user administration routes", () => {
           })
         ],
         pagination: { limit: 20, offset: 0, total: 1, hasMore: false },
-        manageableRoles: ROLE_CODES
+        filterRoles: ROLE_CODES,
+        manageableRoles: ROLE_CODES.filter((role) => role !== "super_admin")
       }
     });
     expect(JSON.stringify(directory.body)).not.toMatch(/password|hash|token|secret/i);
@@ -529,7 +571,12 @@ describe("user administration routes", () => {
     const seed = emptyAdministrationSeed();
     const admin = addUser(seed, "admin-operator", "admin");
     const designer = addUser(seed, "user-designer", "designer");
-    const app = createApp({ repository: createMemoryRepository(seed), auth, clock });
+    const app = createApp({
+      repository: createMemoryRepository(seed),
+      auth,
+      clock,
+      developmentDemoAuthorization: developmentDemoAuthentication()
+    });
 
     const protectedFilter = await request(app)
       .get("/api/v1/admin/users?role=client")
@@ -556,13 +603,18 @@ describe("user administration routes", () => {
     const protectedUsers = [
       admin,
       addUser(seed, "user-admin-two", "admin"),
-      addUser(seed, "user-super", "super_admin"),
+      canonicalSuperAdmin(seed),
       addUser(seed, "user-client", "client"),
       addUser(seed, "user-manager", "design_manager"),
       addUser(seed, "design-head-target", "design_head")
     ];
     const designer = addUser(seed, "user-designer", "designer");
-    const app = createApp({ repository: createMemoryRepository(seed), auth, clock });
+    const app = createApp({
+      repository: createMemoryRepository(seed),
+      auth,
+      clock,
+      developmentDemoAuthorization: developmentDemoAuthentication()
+    });
     const token = bearer(admin);
     const cases = [
       { userId: "user-missing", body: { version: 1, active: false } },
@@ -613,9 +665,14 @@ describe("user administration routes", () => {
 
   it("keeps global Super Admin missing and stale errors distinct", async () => {
     const seed = emptyAdministrationSeed();
-    const superAdmin = addUser(seed, "user-super", "super_admin");
+    const superAdmin = canonicalSuperAdmin(seed);
     const designer = addUser(seed, "user-designer", "designer");
-    const app = createApp({ repository: createMemoryRepository(seed), auth, clock });
+    const app = createApp({
+      repository: createMemoryRepository(seed),
+      auth,
+      clock,
+      developmentDemoAuthorization: developmentDemoAuthentication()
+    });
 
     const missing = await request(app)
       .patch("/api/v1/admin/users/user-missing")

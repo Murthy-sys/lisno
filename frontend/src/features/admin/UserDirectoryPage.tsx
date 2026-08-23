@@ -137,7 +137,7 @@ export function UserDirectoryPage() {
               }}
             >
               <option value="">All roles</option>
-              {(pageData?.manageableRoles ?? []).map((role) => (
+              {(pageData?.filterRoles ?? []).map((role) => (
                 <option key={role} value={role}>
                   {ROLE_LABELS[role]}
                 </option>
@@ -228,13 +228,15 @@ export function UserDirectoryPage() {
                       </time>
                     </td>
                     <td>
-                      <Button
-                        size="compact"
-                        variant="secondary"
-                        onClick={() => setSelectedUser(user)}
-                      >
-                        Manage <span className="sr-only">{user.name}</span>
-                      </Button>
+                      {user.role === "super_admin" ? null : (
+                        <Button
+                          size="compact"
+                          variant="secondary"
+                          onClick={() => setSelectedUser(user)}
+                        >
+                          Manage <span className="sr-only">{user.name}</span>
+                        </Button>
+                      )}
                     </td>
                   </tr>
                 ))}
@@ -285,7 +287,7 @@ export function UserDirectoryPage() {
         </Surface>
       )}
 
-      {selectedUser && pageData ? (
+      {selectedUser && selectedUser.role !== "super_admin" && pageData ? (
         <UserMutationDialog
           user={selectedUser}
           manageableRoles={pageData.manageableRoles}

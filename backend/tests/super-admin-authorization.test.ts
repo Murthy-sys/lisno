@@ -110,7 +110,6 @@ function user(id: string, role: Role, overrides: Partial<UserRecord> = {}): User
 function taskSixSeed(): SeedData {
   const seed = structuredClone(demoSeedData);
   seed.users.push(
-    user(...actors.superAdmin),
     user(...actors.procurement),
     user(...actors.finance),
     user(...actors.siteManager),

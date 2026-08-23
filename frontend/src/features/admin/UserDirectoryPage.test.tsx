@@ -87,7 +87,8 @@ function installSession(actor: typeof admin | typeof superAdmin) {
 
 function page(
   items: typeof directoryRows,
-  manageableRoles: readonly Role[],
+  filterRoles: readonly Role[],
+  manageableRoles: readonly Exclude<Role, "super_admin">[],
   offset = 0,
   total = items.length,
   hasMore = false
@@ -96,6 +97,7 @@ function page(
     data: {
       items,
       pagination: { limit: 20, offset, total, hasMore },
+      filterRoles,
       manageableRoles
     }
   };
@@ -108,7 +110,7 @@ describe("UserDirectoryPage", () => {
     server.use(
       http.get("/api/v1/admin/users", () => {
         userDirectoryRequests += 1;
-        return HttpResponse.json(page([designer], OPERATIONAL_ROLES));
+        return HttpResponse.json(page([designer], ROLE_CODES, OPERATIONAL_ROLES));
       })
     );
 
@@ -127,7 +129,15 @@ describe("UserDirectoryPage", () => {
         expect(`${url.pathname}${url.search}`).toBe(
           "/api/v1/admin/users?limit=20&offset=0"
         );
-        return HttpResponse.json(page(directoryRows, ROLE_CODES));
+        return HttpResponse.json(
+          page(
+            directoryRows,
+            ROLE_CODES,
+            ROLE_CODES.filter((role): role is Exclude<Role, "super_admin"> =>
+              role !== "super_admin"
+            )
+          )
+        );
       })
     );
 
@@ -138,7 +148,10 @@ describe("UserDirectoryPage", () => {
     const directory = await screen.findByRole("region", {
       name: "User directory"
     });
-    for (const row of directoryRows) {
+    expect(
+      within(directory).queryByRole("button", { name: "Manage Sana Super Admin" })
+    ).not.toBeInTheDocument();
+    for (const row of directoryRows.filter(({ role }) => role !== "super_admin")) {
       expect(
         within(directory).getByRole("button", { name: `Manage ${row.name}` })
       ).toBeVisible();
@@ -152,7 +165,14 @@ describe("UserDirectoryPage", () => {
     ).getByRole("combobox", { name: "Role" });
     expect(
       within(roleSelect).getAllByRole("option").map((option) => option.textContent)
-    ).toEqual(ROLE_CODES.map((role) => ROLE_LABELS[role]));
+    ).toEqual(
+      ROLE_CODES.filter((role) => role !== "super_admin").map(
+        (role) => ROLE_LABELS[role]
+      )
+    );
+    expect(
+      screen.getByRole("combobox", { name: "Filter by role" })
+    ).toContainElement(screen.getByRole("option", { name: "Super Admin" }));
   });
 
   it("directory sends canonical filters and pagination", async () => {
@@ -165,7 +185,16 @@ describe("UserDirectoryPage", () => {
         requestedPaths.push(path);
         const offset = Number(url.searchParams.get("offset"));
         return HttpResponse.json(
-          page([designer], ROLE_CODES, offset, 21, offset === 0)
+          page(
+            [designer],
+            ROLE_CODES,
+            ROLE_CODES.filter((role): role is Exclude<Role, "super_admin"> =>
+              role !== "super_admin"
+            ),
+            offset,
+            21,
+            offset === 0
+          )
         );
       })
     );

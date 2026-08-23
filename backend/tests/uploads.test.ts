@@ -149,17 +149,6 @@ class TestStorage {
 
 function superAdminDesignSeed() {
   const seed = structuredClone(demoSeedData);
-  const template = structuredClone(seed.users[0]!);
-  seed.users.push({
-    ...template,
-    id: users.superAdmin[0],
-    name: "Super Admin",
-    email: "super-admin@lisno.example",
-    emailNormalized: "super-admin@lisno.example",
-    role: users.superAdmin[1],
-    managerId: null,
-    authorizedClientIds: []
-  });
   seed.designVersions.push({
     ...structuredClone(seed.designVersions[0]!),
     id: "version-super-admin-submitted",

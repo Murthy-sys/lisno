@@ -6,6 +6,37 @@ import { RepositoryConflictError } from "../src/repositories/types.js";
 import { demoSeedData } from "../src/seed/data.js";
 
 describe("memory repository", () => {
+  it("rejects a second Super Admin in seeds and direct repository mutations", async () => {
+    const duplicateSeed = structuredClone(demoSeedData);
+    duplicateSeed.users.push({
+      ...structuredClone(duplicateSeed.users[0]!),
+      id: "user-super-admin-second",
+      email: "second-super-admin@example.test",
+      emailNormalized: "second-super-admin@example.test",
+      role: "super_admin"
+    });
+    expect(() => createMemoryRepository(duplicateSeed)).toThrow(
+      "Only one Super Admin account is allowed."
+    );
+
+    const repository = createMemoryRepository(structuredClone(demoSeedData));
+    await expect(
+      repository.createUser({
+        name: "Second Super Admin",
+        email: "second-super-admin@example.test",
+        passwordHash: "hash",
+        role: "super_admin"
+      })
+    ).rejects.toThrow("Only one Super Admin account is allowed.");
+    await expect(
+      repository.updateUser("user-admin", 1, {
+        role: "super_admin",
+        updatedAt: "2026-08-23T12:00:00.000Z"
+      })
+    ).rejects.toThrow("Only one Super Admin account is allowed.");
+    await expect(repository.countActiveUsersByRole("super_admin")).resolves.toBe(1);
+  });
+
   it("stores nullable Admin project relationships and rejects duplicate linked leads", async () => {
     const seed = structuredClone(demoSeedData);
     const repository = createMemoryRepository(seed);
@@ -973,7 +1004,7 @@ describe("memory repository", () => {
       });
       return seed.users.at(-1)!;
     };
-    const superAdmin = addUser("user-super-admin-scope", "super_admin");
+    const superAdmin = seed.users.find(({ id }) => id === "user-super-admin")!;
     const admin = addUser("user-admin-scope", "admin");
     const procurement = addUser("user-procurement-scope", "procurement");
     const directDesigner = addUser("user-direct-designer", "designer");

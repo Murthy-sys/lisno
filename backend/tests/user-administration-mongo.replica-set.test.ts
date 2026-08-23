@@ -143,33 +143,29 @@ async function expectNoIneligibleActiveGrant(
 }
 
 describe("user administration Mongo replica-set transactions", () => {
-  it("serializes concurrent demotions so one active Super Admin remains", async () => {
-    await Promise.all([
-      insertUser("user-super-first", "super_admin"),
-      insertUser("user-super-second", "super_admin")
-    ]);
-    const app = application();
-
-    const responses = await Promise.all([
-      request(app)
-        .patch("/api/v1/admin/users/user-super-first")
-        .set("Authorization", bearer("user-super-first", "super_admin"))
-        .send({ version: 1, role: "admin" }),
-      request(app)
-        .patch("/api/v1/admin/users/user-super-second")
-        .set("Authorization", bearer("user-super-second", "super_admin"))
-        .send({ version: 1, role: "admin" })
-    ]);
-
-    expect(responses.map(({ status }) => status).sort()).toEqual([200, 409]);
-    const conflict = responses.find(({ status }) => status === 409)!;
-    expect(conflict.body).toEqual({
-      error: {
-        code: "LAST_SUPER_ADMIN",
-        message: "At least one active Super Admin is required."
+  it("defines the sole Super Admin persistence backstop", () => {
+    expect(UserModel.schema.indexes()).toContainEqual([
+      { role: 1 },
+      {
+        unique: true,
+        partialFilterExpression: { role: "super_admin" },
+        name: "one_super_admin"
       }
-    });
-    expect(await UserModel.countDocuments({ role: "super_admin", active: true })).toBe(1);
+    ]);
+  });
+
+  it("rejects concurrent second Super Admin inserts and preserves the original row", async () => {
+    await insertUser("user-super-admin", "super_admin");
+
+    const attempts = await Promise.allSettled([
+      insertUser("user-super-second", "super_admin"),
+      insertUser("user-super-third", "super_admin")
+    ]);
+
+    expect(attempts.every(({ status }) => status === "rejected")).toBe(true);
+    expect(await UserModel.find({ role: "super_admin" }).lean().exec()).toEqual([
+      expect.objectContaining({ _id: "user-super-admin", role: "super_admin" })
+    ]);
   });
 
   it("serializes access approval against requester deactivation", async () => {

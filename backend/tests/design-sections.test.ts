@@ -55,16 +55,6 @@ function token(id: string, role: string) {
 
 function sectionSeed(status: "designer_review" | "processing_failed" = "designer_review"): SeedData {
   const seed = structuredClone(demoSeedData);
-  seed.users.push({
-    ...structuredClone(seed.users[0]!),
-    id: "user-super-admin",
-    name: "Super Admin",
-    email: "super-admin@lisno.example",
-    emailNormalized: "super-admin@lisno.example",
-    role: "super_admin",
-    managerId: null,
-    authorizedClientIds: []
-  });
   seed.projectAccessGrants.push({
     id: "grant-vikram-aurora-design-sections",
     projectId: "project-aurora-villa",

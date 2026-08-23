@@ -60,9 +60,8 @@ function setup(
   const seed = structuredClone(demoSeedData);
   addUser(seed, "user-requester-two", "designer");
   addUser(seed, "user-requester-three", "designer");
-  addUser(seed, "user-super-admin", "super_admin");
-  addUser(seed, "user-super-admin-two", "super_admin");
   addUser(seed, "user-admin", "admin");
+  addUser(seed, "user-admin-reviewer-two", "admin");
   addUser(seed, "user-procurement", "procurement");
   addUser(seed, "user-inactive-requester", "designer", { active: false });
   const repository = createMemoryRepository(seed);
@@ -774,7 +773,6 @@ describe("access-request review decisions and grant revocation", () => {
 
   it("rolls back grant, request transition, and audits when decision audit storage fails", async () => {
     const seed = structuredClone(demoSeedData);
-    addUser(seed, "user-super-admin", "super_admin");
     addUser(seed, "user-requester-two", "designer");
     const repository = createMemoryRepository(seed);
     const pending = await createPending(repository, {
@@ -978,9 +976,22 @@ describe("access-request review decisions and grant revocation", () => {
     expect(terminalRetry.status).toBe(200);
     expect(terminalRetry.body.data.grant).toBeNull();
 
+    await repository.createProjectAccessGrant({
+      id: "grant-other-admin-initiator",
+      projectId: pending.projectId,
+      userId: "user-admin-reviewer-two",
+      module: "projects",
+      source: "admin_initiator",
+      accessRequestId: null,
+      grantedById: "user-super-admin",
+      grantedAt: now,
+      createdAt: now,
+      updatedAt: now
+    });
+
     const otherReviewer = await request(app)
       .post(`/api/v1/project-access-grants/${grant.id}/revoke`)
-      .set("Authorization", bearer("user-super-admin-two", "super_admin"))
+      .set("Authorization", bearer("user-admin-reviewer-two", "admin"))
       .send(revokeInput);
     expect(otherReviewer.status).toBe(409);
     const differentReason = await request(app)

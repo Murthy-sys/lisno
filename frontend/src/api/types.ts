@@ -306,7 +306,8 @@ export interface UserDirectoryItem {
 }
 
 export interface UserDirectoryPage extends PageData<UserDirectoryItem> {
-  manageableRoles: Role[];
+  filterRoles: Role[];
+  manageableRoles: Exclude<Role, "super_admin">[];
 }
 
 export type UpdateManagedUserInput =
