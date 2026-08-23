@@ -10,6 +10,7 @@ import {
 import { Link } from "react-router-dom";
 
 import { ROLE_LABELS } from "../api/authorization-contract";
+import { ApiError } from "../api/client";
 import type { UserInvitationInspection } from "../api/types";
 import { BrandLogo } from "../components/ui/BrandLogo";
 import { acceptUserInvitation, inspectUserInvitation } from "./userInvitationsApi";
@@ -164,8 +165,15 @@ export function InvitationAcceptancePage() {
     try {
       await acceptUserInvitation({ token, password, passwordConfirmation });
       setAccepted(true);
-    } catch {
-      setAcceptanceError(true);
+    } catch (error) {
+      if (
+        error instanceof ApiError &&
+        error.code === "INVITATION_UNAVAILABLE"
+      ) {
+        setInspection({ status: "unavailable" });
+      } else {
+        setAcceptanceError(true);
+      }
     } finally {
       acceptingRef.current = false;
       setAccepting(false);

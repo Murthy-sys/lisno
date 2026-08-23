@@ -297,6 +297,90 @@ describe("InvitationAcceptancePage", () => {
     expect(acceptCalls).toBe(1);
   });
 
+  it("moves acceptance-time INVITATION_UNAVAILABLE to the generic unavailable state", async () => {
+    installInspection();
+    let acceptCalls = 0;
+    server.use(
+      http.post("/api/v1/auth/user-invitations/accept", () => {
+        acceptCalls += 1;
+        return HttpResponse.json(
+          {
+            error: {
+              code: "INVITATION_UNAVAILABLE",
+              message: "The invitation was claimed after inspection."
+            }
+          },
+          { status: 409 }
+        );
+      })
+    );
+    const user = userEvent.setup();
+    renderPage();
+    await user.type(await screen.findByLabelText("Password"), "StrongPassword123!");
+    await user.type(
+      screen.getByLabelText("Confirm password"),
+      "StrongPassword123!"
+    );
+
+    await user.click(screen.getByRole("button", { name: "Accept invitation" }));
+
+    expect(
+      await screen.findByRole("heading", { name: "Invitation unavailable" })
+    ).toBeVisible();
+    expect(screen.getByText(UNAVAILABLE_MESSAGE)).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Accept invitation" })).not.toBeInTheDocument();
+    expect(document.documentElement.innerHTML).not.toContain(RAW_TOKEN);
+    expect(window.location.href).not.toContain(RAW_TOKEN);
+    expect(JSON.stringify(storageContents(window.localStorage))).not.toContain(RAW_TOKEN);
+    expect(JSON.stringify(storageContents(window.sessionStorage))).not.toContain(RAW_TOKEN);
+    expect(tokenStorage.get()).toBeNull();
+    expect(acceptCalls).toBe(1);
+  });
+
+  it("keeps transient acceptance failures retryable", async () => {
+    installInspection();
+    let acceptCalls = 0;
+    server.use(
+      http.post("/api/v1/auth/user-invitations/accept", () => {
+        acceptCalls += 1;
+        if (acceptCalls === 1) {
+          return HttpResponse.json(
+            {
+              error: {
+                code: "DELIVERY_TEMPORARILY_UNAVAILABLE",
+                message: "Try later."
+              }
+            },
+            { status: 503 }
+          );
+        }
+        return HttpResponse.json({ data: { accepted: true } }, { status: 201 });
+      })
+    );
+    const user = userEvent.setup();
+    renderPage();
+    await user.type(await screen.findByLabelText("Password"), "StrongPassword123!");
+    await user.type(
+      screen.getByLabelText("Confirm password"),
+      "StrongPassword123!"
+    );
+    const submit = screen.getByRole("button", { name: "Accept invitation" });
+
+    await user.click(submit);
+
+    expect(
+      await screen.findByText("We couldn't accept this invitation. Please try again.")
+    ).toBeVisible();
+    expect(submit).toBeEnabled();
+    expect(acceptCalls).toBe(1);
+
+    await user.click(submit);
+    expect(
+      await screen.findByRole("heading", { name: "Invitation accepted" })
+    ).toBeVisible();
+    expect(acceptCalls).toBe(2);
+  });
+
   it("keeps an authenticated session mounted and requires explicit logout before acceptance", async () => {
     tokenStorage.set("existing-session-token");
     installInspection();
