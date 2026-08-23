@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-23
 
-**Status:** Approved in chat; awaiting written-spec review
+**Status:** Approved
 
 **Scope:** Admin project initiation and estimator handoff only
 
