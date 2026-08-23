@@ -693,9 +693,20 @@ describe("accessibility smoke coverage", () => {
     dialog = screen.getByRole("dialog", {
       name: "Resend invitation for Accessible Invitee"
     });
+    const resendConfirm = within(dialog).getByRole("button", {
+      name: "Confirm resend"
+    });
     await waitFor(() =>
-      expect(within(dialog).getByRole("button", { name: "Confirm resend" })).toHaveFocus()
+      expect(resendConfirm).toHaveFocus()
     );
+    fireEvent.keyDown(document, { key: "Tab" });
+    expect(
+      within(dialog).getByRole("button", {
+        name: "Close Resend invitation for Accessible Invitee"
+      })
+    ).toHaveFocus();
+    fireEvent.keyDown(document, { key: "Tab", shiftKey: true });
+    expect(resendConfirm).toHaveFocus();
     await expectNoAxeViolations();
     await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
     expect(resendTrigger).toHaveFocus();
@@ -706,11 +717,22 @@ describe("accessibility smoke coverage", () => {
     dialog = screen.getByRole("dialog", {
       name: "Revoke invitation for Accessible Invitee"
     });
+    const revokeConfirm = within(dialog).getByRole("button", {
+      name: "Confirm revoke"
+    });
+    const revokeClose = within(dialog).getByRole("button", {
+      name: "Close Revoke invitation for Accessible Invitee"
+    });
     await waitFor(() =>
-      expect(within(dialog).getByRole("button", { name: "Confirm revoke" })).toHaveFocus()
+      expect(revokeConfirm).toHaveFocus()
     );
+    revokeClose.focus();
+    fireEvent.keyDown(document, { key: "Tab", shiftKey: true });
+    expect(revokeConfirm).toHaveFocus();
+    fireEvent.keyDown(document, { key: "Tab" });
+    expect(revokeClose).toHaveFocus();
     await expectNoAxeViolations();
-    await user.click(within(dialog).getByRole("button", { name: "Confirm revoke" }));
+    await user.click(revokeConfirm);
     await waitFor(() =>
       expect(within(dialog).getByText("Revoking invitation. Please wait.")).toBeVisible()
     );

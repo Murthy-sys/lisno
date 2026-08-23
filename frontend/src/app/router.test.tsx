@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
@@ -64,6 +66,39 @@ function apiRequestPath(input: RequestInfo | URL): string {
   } catch {
     return input;
   }
+}
+
+function escapeCssPattern(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function cssRuleBodies(css: string, prelude: string) {
+  const matches = css.matchAll(
+    new RegExp(`${escapeCssPattern(prelude)}\\s*\\{`, "g")
+  );
+
+  return [...matches].map((match) => {
+    const openingBrace = css.indexOf("{", match.index ?? 0);
+    let depth = 1;
+    let cursor = openingBrace + 1;
+    while (cursor < css.length && depth > 0) {
+      if (css[cursor] === "{") depth += 1;
+      if (css[cursor] === "}") depth -= 1;
+      cursor += 1;
+    }
+    if (depth !== 0) throw new Error(`Unclosed CSS block for ${prelude}`);
+    return css.slice(openingBrace + 1, cursor - 1);
+  });
+}
+
+function cssDeclarations(css: string, selector: string) {
+  const body = cssRuleBodies(css, selector)[0];
+  if (!body) throw new Error(`Missing CSS rule for ${selector}`);
+  return new Map(
+    [...body.matchAll(/([\w-]+)\s*:\s*([^;]+);/g)].map(
+      ([, property, value]) => [property, value.trim().replace(/\s+/g, " ")]
+    )
+  );
 }
 
 describe("apiRequestPath", () => {
@@ -914,6 +949,20 @@ describe("protected role routing", () => {
     expect(await screen.findByRole("heading", { name: "Welcome back" })).toBeVisible();
     expect(router.state.location.pathname).toBe("/login");
     expect(tokenStorage.get()).toBeNull();
+  });
+
+  it("preserves the actual 767px mobile shell breakpoint", () => {
+    const shell = readFileSync(
+      resolve(process.cwd(), "src/styles/shell.css"),
+      "utf8"
+    );
+    const mobileRules = cssRuleBodies(shell, "@media (max-width: 767px)");
+
+    expect(mobileRules).toHaveLength(1);
+    const mobile = mobileRules[0]!;
+    expect(cssDeclarations(shell, ".ui-mobile-header").get("display")).toBe("none");
+    expect(cssDeclarations(mobile, ".ui-sidebar-rail").get("display")).toBe("none");
+    expect(cssDeclarations(mobile, ".ui-mobile-header").get("display")).toBe("flex");
   });
 
   it("opens an accessible mobile drawer, wraps focus in both directions, and closes on Escape", async () => {
