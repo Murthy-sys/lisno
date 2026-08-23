@@ -134,4 +134,77 @@ describe("environment authentication configuration", () => {
       }).OCR_WORKER_TOKEN
     ).toBe(OCR_WORKER_TOKEN);
   });
+
+  describe("invitation delivery", () => {
+    const base = {
+      JWT_SECRET: "runtime-secret-with-at-least-32-characters",
+      OCR_WORKER_TOKEN,
+      PUBLIC_FRONTEND_URL: "https://app.lisno.example",
+      SMTP_HOST: "smtp.lisno.example",
+      SMTP_PORT: "587",
+      SMTP_TLS_MODE: "starttls",
+      SMTP_USERNAME: "mailer-user",
+      SMTP_PASSWORD: "mailer-password",
+      SMTP_FROM: "Lisno Invitations <invitations@lisno.example>"
+    } as const;
+
+    it("returns disabled only when the entire SMTP group is absent", () => {
+      expect(loadEnvironment({
+        JWT_SECRET: base.JWT_SECRET,
+        OCR_WORKER_TOKEN
+      }).invitationDelivery).toEqual({ kind: "disabled" });
+
+      for (const key of Object.keys(base).filter((key) =>
+        key === "PUBLIC_FRONTEND_URL" || key.startsWith("SMTP_")
+      )) {
+        const partial = { ...base } as Record<string, string | undefined>;
+        delete partial[key];
+        expect(() => loadEnvironment(partial), key).toThrow();
+      }
+    });
+
+    it("parses the complete SMTP group into the public delivery union", () => {
+      expect(loadEnvironment(base).invitationDelivery).toEqual({
+        kind: "smtp",
+        publicFrontendUrl: "https://app.lisno.example",
+        host: "smtp.lisno.example",
+        port: 587,
+        tlsMode: "starttls",
+        username: "mailer-user",
+        password: "mailer-password",
+        from: "Lisno Invitations <invitations@lisno.example>"
+      });
+    });
+
+    it.each([
+      ["PUBLIC_FRONTEND_URL", "http://app.lisno.example"],
+      ["PUBLIC_FRONTEND_URL", "https://user:pass@app.lisno.example"],
+      ["PUBLIC_FRONTEND_URL", "https://app.lisno.example/path"],
+      ["PUBLIC_FRONTEND_URL", "https://app.lisno.example?source=email"],
+      ["PUBLIC_FRONTEND_URL", "https://app.lisno.example#invite"],
+      ["SMTP_PORT", "0"],
+      ["SMTP_PORT", "65536"],
+      ["SMTP_PORT", "587.5"],
+      ["SMTP_TLS_MODE", "optional"],
+      ["SMTP_FROM", "not-an-address"],
+      ["SMTP_FROM", "one@example.com, two@example.com"],
+      ["SMTP_FROM", "Sender\r\nBcc: victim@example.com <sender@example.com>"],
+      ["SMTP_HOST", "smtp.example.com\nunsafe"],
+      ["SMTP_USERNAME", "mailer\ruser"],
+      ["SMTP_PASSWORD", "password\nunsafe"]
+    ])("rejects unsafe %s configuration", (key, value) => {
+      expect(() => loadEnvironment({ ...base, [key]: value })).toThrow();
+    });
+
+    it("does not permit TLS certificate verification to be disabled", () => {
+      expect(() => loadEnvironment({
+        ...base,
+        SMTP_TLS_REJECT_UNAUTHORIZED: "false"
+      })).toThrow();
+      expect(loadEnvironment({
+        ...base,
+        SMTP_TLS_REJECT_UNAUTHORIZED: "true"
+      }).invitationDelivery.kind).toBe("smtp");
+    });
+  });
 });
