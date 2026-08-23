@@ -62,6 +62,7 @@ export const tokenStorage = {
 };
 
 type JsonRequestOptions = Omit<RequestInit, "body"> & { body?: unknown };
+type RequestOptions = Omit<RequestInit, "body" | "method">;
 
 async function parseApiError(response: Response): Promise<ApiError> {
   let body: ApiErrorBody | undefined;
@@ -153,6 +154,22 @@ async function request<T>(
   return envelope.data;
 }
 
+async function publicRequest<T>(
+  path: string,
+  { body, headers, ...options }: JsonRequestOptions = {}
+): Promise<T> {
+  const hasBody = body !== undefined;
+  const publicHeaders = new Headers(headers);
+  publicHeaders.delete("Authorization");
+  const response = await fetchApi(path, {
+    ...options,
+    headers: buildHeaders(publicHeaders, hasBody, null),
+    ...(hasBody ? { body: JSON.stringify(body) } : {})
+  }, null);
+  const envelope = (await response.json()) as ApiResponse<T>;
+  return envelope.data;
+}
+
 function filenameFromDisposition(disposition: string | null): string | undefined {
   if (!disposition) return undefined;
 
@@ -163,11 +180,14 @@ function filenameFromDisposition(disposition: string | null): string | undefined
 }
 
 export const apiClient = {
-  get<T>(path: string, options?: Omit<RequestInit, "body" | "method">): Promise<T> {
+  get<T>(path: string, options?: RequestOptions): Promise<T> {
     return request<T>(path, { ...options, method: "GET" });
   },
-  post<T>(path: string, body?: unknown): Promise<T> {
-    return request<T>(path, { method: "POST", body });
+  post<T>(path: string, body?: unknown, options?: RequestOptions): Promise<T> {
+    return request<T>(path, { ...options, method: "POST", body });
+  },
+  postPublic<T>(path: string, body?: unknown, options?: RequestOptions): Promise<T> {
+    return publicRequest<T>(path, { ...options, method: "POST", body });
   },
   patch<T>(path: string, body?: unknown): Promise<T> {
     return request<T>(path, { method: "PATCH", body });

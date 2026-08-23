@@ -292,6 +292,78 @@ export interface PaginationInput {
   offset: number;
 }
 
+export type InvitableRole = Exclude<Role, "client" | "super_admin">;
+
+export type UserInvitationPresentationStatus =
+  | "pending"
+  | "delivery_failed"
+  | "expired"
+  | "accepted"
+  | "revoked"
+  | "superseded";
+
+export type UserInvitationDeliveryStatus = "queued" | "sent" | "failed";
+export type UserInvitationAction = "resend" | "revoke";
+
+export interface UserInvitationFilters {
+  search?: string;
+  role?: InvitableRole;
+  status?: UserInvitationPresentationStatus;
+  deliveryStatus?: UserInvitationDeliveryStatus;
+}
+
+export interface CreateUserInvitationInput {
+  name: string;
+  email: string;
+  role: InvitableRole;
+  mobile: string;
+}
+
+export interface UserInvitationInspection {
+  name: string;
+  email: string;
+  role: InvitableRole;
+  expiresAt: string;
+}
+
+export interface UserInvitationItem {
+  id: string;
+  name: string;
+  email: string;
+  role: InvitableRole;
+  mobile: string;
+  status: UserInvitationPresentationStatus;
+  currentLinkAvailable: boolean;
+  availableActions: UserInvitationAction[];
+  invitedBy: Pick<PublicUser, "id" | "name" | "email" | "role">;
+  issuedAt: string;
+  expiresAt: string;
+  deliveryStatus: UserInvitationDeliveryStatus;
+  deliveryAttemptedAt: string | null;
+  sentAt: string | null;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface UserInvitationPage extends PageData<UserInvitationItem> {
+  invitableRoles: InvitableRole[];
+}
+
+export interface InvitationVersionInput {
+  version: number;
+}
+
+export interface AcceptUserInvitationInput {
+  token: string;
+  password: string;
+  passwordConfirmation: string;
+}
+
+export interface AcceptUserInvitationResult {
+  accepted: true;
+}
+
 export interface UserDirectoryItem {
   id: string;
   name: string;

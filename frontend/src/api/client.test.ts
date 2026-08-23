@@ -53,6 +53,61 @@ afterEach(() => {
 });
 
 describe("apiClient", () => {
+  it("passes authenticated POST request options without changing its JSON body", async () => {
+    tokenStorage.set("post-options-token");
+    server.use(
+      http.post("/api/v1/example-options", async ({ request }) => {
+        expect(request.headers.get("authorization")).toBe(
+          "Bearer post-options-token"
+        );
+        expect(request.headers.get("x-request-purpose")).toBe("invitation");
+        expect(await request.json()).toEqual({ version: 2 });
+        return HttpResponse.json({ data: { accepted: true } });
+      })
+    );
+
+    await expect(
+      apiClient.post<{ accepted: true }>(
+        "/example-options",
+        { version: 2 },
+        { headers: { "X-Request-Purpose": "invitation" } }
+      )
+    ).resolves.toEqual({ accepted: true });
+  });
+
+  it("keeps public POST isolated from the stored session and its 401 handling", async () => {
+    tokenStorage.set("existing-session-token");
+    const listener = vi.fn();
+    window.addEventListener("lisno:unauthorized", listener);
+    server.use(
+      http.post("/api/v1/auth/public-example", async ({ request }) => {
+        expect(request.headers.get("authorization")).toBeNull();
+        expect(await request.json()).toEqual({ token: "fragment-token" });
+        return HttpResponse.json(
+          {
+            error: {
+              code: "INVITATION_UNAVAILABLE",
+              message: "This invitation is unavailable."
+            }
+          },
+          { status: 401 }
+        );
+      })
+    );
+
+    await expect(
+      apiClient.postPublic(
+        "/auth/public-example",
+        { token: "fragment-token" },
+        { cache: "no-store", referrerPolicy: "no-referrer" }
+      )
+    ).rejects.toMatchObject({ status: 401, code: "INVITATION_UNAVAILABLE" });
+
+    expect(tokenStorage.get()).toBe("existing-session-token");
+    expect(listener).not.toHaveBeenCalled();
+    window.removeEventListener("lisno:unauthorized", listener);
+  });
+
   it("unwraps JSON data and attaches the persisted bearer token", async () => {
     tokenStorage.set("valid-token");
     server.use(
