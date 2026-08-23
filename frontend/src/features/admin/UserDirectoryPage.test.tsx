@@ -68,18 +68,25 @@ const directoryRows = [
   }
 ];
 
-function installSession(actor: typeof admin | typeof superAdmin) {
+function installSession(
+  actor: typeof admin | typeof superAdmin,
+  extraPermissions: readonly string[] = []
+) {
   tokenStorage.set(`${actor.role}-token`);
+  const authorization = authorizationFor(actor.role, [
+    "identity.self.read",
+    "identity.authorization.read",
+    "identity.users.read",
+    "identity.users.update"
+  ]);
   server.use(
     http.get("/api/v1/auth/me", () => HttpResponse.json({ data: actor })),
     http.get("/api/v1/auth/authorization", () =>
       HttpResponse.json({
-        data: authorizationFor(actor.role, [
-          "identity.self.read",
-          "identity.authorization.read",
-          "identity.users.read",
-          "identity.users.update"
-        ])
+        data: {
+          ...authorization,
+          permissions: [...authorization.permissions, ...extraPermissions]
+        }
       })
     )
   );
@@ -104,13 +111,29 @@ function page(
 }
 
 describe("UserDirectoryPage", () => {
-  it("denies Admin before the user-directory API can be called", async () => {
-    installSession(admin);
+  it("denies Admin before user or invitation APIs even with malformed invitation permissions", async () => {
+    installSession(admin, [
+      "identity.user_invitations.read",
+      "identity.user_invitations.create",
+      "identity.user_invitations.resend",
+      "identity.user_invitations.revoke"
+    ]);
     let userDirectoryRequests = 0;
+    let invitationRequests = 0;
     server.use(
       http.get("/api/v1/admin/users", () => {
         userDirectoryRequests += 1;
         return HttpResponse.json(page([designer], ROLE_CODES, OPERATIONAL_ROLES));
+      }),
+      http.get("/api/v1/admin/user-invitations", () => {
+        invitationRequests += 1;
+        return HttpResponse.json({
+          data: {
+            items: [],
+            pagination: { limit: 20, offset: 0, total: 0, hasMore: false },
+            invitableRoles: []
+          }
+        });
       })
     );
 
@@ -119,6 +142,7 @@ describe("UserDirectoryPage", () => {
       await screen.findByRole("heading", { name: "Access denied" })
     ).toBeVisible();
     expect(userDirectoryRequests).toBe(0);
+    expect(invitationRequests).toBe(0);
   });
 
   it("Super Admin sees every role", async () => {

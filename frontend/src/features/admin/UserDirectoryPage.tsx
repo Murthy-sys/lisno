@@ -14,7 +14,9 @@ import { PageHeader } from "../../components/ui/PageHeader";
 import { PageState } from "../../components/ui/PageState";
 import { StatusBadge } from "../../components/ui/StatusBadge";
 import { Surface } from "../../components/ui/Surface";
+import { useAuth } from "../../auth/AuthProvider";
 import { adminUserKeys, getManagedUsers } from "./adminApi";
+import { UserInvitationsPanel } from "./UserInvitationsPanel";
 import { UserMutationDialog } from "./UserMutationDialog";
 
 const PAGE_SIZE = 20;
@@ -35,6 +37,7 @@ function requestErrorMessage(error: unknown) {
 }
 
 export function UserDirectoryPage() {
+  const auth = useAuth();
   const [filters, setFilters] = useState<UserDirectoryFilters>({});
   const [pagination, setPagination] = useState<PaginationInput>({
     limit: PAGE_SIZE,
@@ -286,6 +289,13 @@ export function UserDirectoryPage() {
           </nav>
         </Surface>
       )}
+
+      {auth.user && auth.authorization ? (
+        <UserInvitationsPanel
+          actorRole={auth.user.role}
+          permissions={auth.authorization.permissions}
+        />
+      ) : null}
 
       {selectedUser && selectedUser.role !== "super_admin" && pageData ? (
         <UserMutationDialog

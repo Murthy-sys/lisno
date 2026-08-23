@@ -290,9 +290,94 @@
   justify-content: flex-end;
 }
 
+.user-invitations {
+  display: grid;
+  gap: var(--space-4);
+  min-inline-size: 0;
+}
+
+.user-invitations__header,
+.user-invitations__actions,
+.user-invitation-dialog__actions {
+  align-items: center;
+  display: flex;
+  gap: var(--space-3);
+}
+
+.user-invitations__header {
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.user-invitations__header h2,
+.user-invitations__header p,
+.user-invitation-dialog p {
+  margin: 0;
+}
+
+.user-invitations__header > div,
+.user-invitation-dialog__identity,
+.user-invitations__table td:nth-child(4) {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.user-invitations__filters {
+  display: grid;
+  gap: var(--space-4);
+  grid-template-columns: repeat(2, minmax(12rem, 1fr));
+}
+
+.user-invitations__table {
+  min-inline-size: 78rem;
+}
+
+.user-invitations__hint,
+.user-invitations__table td small,
+.user-invitation-dialog__identity span {
+  color: var(--color-text-muted);
+  display: block;
+  margin-block-start: var(--space-1);
+}
+
+.user-invitations__actions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.user-invitation-dialog {
+  display: grid;
+  gap: var(--space-4);
+  padding: 0 var(--space-5) var(--space-5);
+}
+
+.user-invitation-dialog__error {
+  border: 1px solid var(--color-danger);
+  border-radius: var(--radius-control);
+  color: var(--color-danger);
+  padding: var(--space-3);
+}
+
+.user-invitation-dialog__actions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
 @media (max-width: 760px) {
-  .access-administration__filters {
+  .access-administration__filters,
+  .user-invitations__filters {
     grid-template-columns: 1fr;
+  }
+
+  .user-invitations__header,
+  .user-invitation-dialog__actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .user-invitations__header button,
+  .user-invitation-dialog__actions button {
+    inline-size: 100%;
   }
 
   .access-administration__pagination,
