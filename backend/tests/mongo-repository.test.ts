@@ -32,6 +32,15 @@ const query = (value: unknown) => ({
   exec: vi.fn().mockResolvedValue(value)
 });
 
+function recordedQuery(value: unknown) {
+  const recorder: Record<string, ReturnType<typeof vi.fn>> = {};
+  for (const method of ["select", "sort", "skip", "limit", "lean", "session"]) {
+    recorder[method] = vi.fn(() => recorder);
+  }
+  recorder.exec = vi.fn().mockResolvedValue(value);
+  return recorder;
+}
+
 const validReplacement = (workerResultId = "result-1") => ({
   jobId: "job-replace",
   claimId: "claim-replace",
@@ -1246,6 +1255,240 @@ describe("Mongo repository contracts", () => {
     const expectedFilter = { _id: { $in: ["project-celeste-office"] } };
     expect(projectFind).toHaveBeenCalledWith(expectedFilter);
     expect(count).toHaveBeenCalledWith(expectedFilter);
+  });
+
+  it("scopes and paginates Admin project summaries before bounded batched joins with one session", async () => {
+    const session = { id: "admin-summary-session" } as never;
+    const grantQuery = recordedQuery([{ projectId: "project-admin-page" }]);
+    const grantFind = vi.spyOn(ProjectAccessGrantModel, "find").mockReturnValueOnce(
+      grantQuery as never
+    );
+    const projectDocument = {
+      _id: "project-admin-page",
+      name: "Admin Project",
+      clientId: null,
+      clientName: "Asha Shah",
+      clientEmail: "asha@example.com",
+      clientEmailNormalized: "asha@example.com",
+      clientMobile: "9000000000",
+      clientAddress: "Pune",
+      initiatingDesignerId: null,
+      assignedEstimatorId: "estimator-page",
+      assignedDesignerIds: [],
+      managerId: null,
+      status: "planning",
+      location: "Pune",
+      plannedStartAt: new Date("2026-08-23T10:00:00.000Z"),
+      plannedEndAt: new Date("2026-11-21T10:00:00.000Z"),
+      actualStartAt: null,
+      actualEndAt: null,
+      createdAt: new Date("2026-08-23T10:00:00.000Z"),
+      updatedAt: new Date("2026-08-23T10:00:00.000Z")
+    };
+    const projectQuery = recordedQuery([projectDocument]);
+    const projectFind = vi.spyOn(ProjectModel, "find").mockReturnValueOnce(
+      projectQuery as never
+    );
+    const countQuery = recordedQuery(2);
+    const count = vi.spyOn(ProjectModel, "countDocuments").mockReturnValueOnce(
+      countQuery as never
+    );
+    const leadDocument = {
+      _id: "lead-admin-page",
+      projectId: "project-admin-page",
+      ownerId: "estimator-page",
+      clientName: "Asha Shah",
+      clientEmail: "asha@example.com",
+      clientMobile: "9000000000",
+      projectName: "Admin Project",
+      location: "Pune",
+      propertyType: "3BHK",
+      budgetMin: 800000,
+      budgetMax: 1200000,
+      source: "admin_project",
+      stage: "new_lead",
+      nextAction: "Visit",
+      nextActionAt: new Date("2026-08-25T05:00:00.000Z"),
+      builder: null,
+      areaSqft: null,
+      targetHandoverAt: null,
+      notes: null,
+      latestActivityAt: null,
+      createdAt: new Date("2026-08-23T10:00:00.000Z"),
+      updatedAt: new Date("2026-08-23T10:00:00.000Z")
+    };
+    const leadQuery = recordedQuery([leadDocument]);
+    const leadFind = vi.spyOn(LeadModel, "find").mockReturnValueOnce(leadQuery as never);
+    const estimatorQuery = recordedQuery([{
+      _id: "estimator-page", name: "Asha Estimator", email: "estimator@example.com",
+      title: "Estimator"
+    }]);
+    const userFind = vi.spyOn(UserModel, "find").mockReturnValueOnce(
+      estimatorQuery as never
+    );
+    const estimateQuery = recordedQuery([{
+      _id: "estimate-admin-page", leadId: "lead-admin-page",
+      projectId: "project-admin-page", status: "draft", total: 118000
+    }]);
+    const estimateFind = vi.spyOn(EstimateModel, "find").mockReturnValueOnce(
+      estimateQuery as never
+    );
+    const admin = {
+      ...demoSeedData.users[0]!,
+      id: "admin-page",
+      role: "admin" as const,
+      active: true
+    };
+
+    await expect(
+      createMongoRepository(session).pageAdminProjects(
+        admin,
+        { limit: 1, offset: 1 }
+      )
+    ).resolves.toEqual({
+      total: 2,
+      items: [expect.objectContaining({
+        id: "project-admin-page",
+        estimator: {
+          id: "estimator-page",
+          name: "Asha Estimator",
+          email: "estimator@example.com"
+        },
+        lead: expect.objectContaining({ id: "lead-admin-page" }),
+        estimate: { id: "estimate-admin-page", status: "draft", total: 118000 }
+      })]
+    });
+
+    const scope = { _id: { $in: ["project-admin-page"] } };
+    expect(grantFind).toHaveBeenCalledWith({
+      userId: admin.id,
+      module: "projects",
+      active: true,
+      source: "admin_initiator"
+    });
+    expect(projectFind).toHaveBeenCalledWith(scope);
+    expect(count).toHaveBeenCalledWith(scope);
+    expect(projectQuery.sort).toHaveBeenCalledWith({ createdAt: -1, _id: -1 });
+    expect(projectQuery.skip).toHaveBeenCalledWith(1);
+    expect(projectQuery.limit).toHaveBeenCalledWith(1);
+    expect(grantQuery.exec.mock.invocationCallOrder[0]).toBeLessThan(
+      projectFind.mock.invocationCallOrder[0]!
+    );
+    expect(projectQuery.exec.mock.invocationCallOrder[0]).toBeLessThan(
+      leadFind.mock.invocationCallOrder[0]!
+    );
+    expect(leadFind).toHaveBeenCalledWith({
+      projectId: { $in: ["project-admin-page"] }
+    });
+    expect(userFind).toHaveBeenCalledWith({ _id: { $in: ["estimator-page"] } });
+    expect(estimatorQuery.select).toHaveBeenCalledWith({
+      _id: 1, name: 1, email: 1, title: 1
+    });
+    expect(estimateFind).toHaveBeenCalledWith({
+      $or: [
+        { projectId: { $in: ["project-admin-page"] } },
+        { leadId: { $in: ["lead-admin-page"] } }
+      ]
+    });
+    expect(estimateQuery.select).toHaveBeenCalledWith({
+      _id: 1, leadId: 1, projectId: 1, status: 1, total: 1
+    });
+    for (const recorder of [
+      grantQuery,
+      projectQuery,
+      countQuery,
+      leadQuery,
+      estimatorQuery,
+      estimateQuery
+    ]) {
+      expect(recorder.session).toHaveBeenCalledWith(session);
+    }
+  });
+
+  it("combines Admin detail ID with exact scope before joining and hides out-of-scope IDs", async () => {
+    const session = { id: "admin-detail-session" } as never;
+    const grantQuery = recordedQuery([{ projectId: "project-admin-detail" }]);
+    vi.spyOn(ProjectAccessGrantModel, "find").mockReturnValueOnce(grantQuery as never);
+    const projectQuery = recordedQuery(null);
+    const projectFindOne = vi.spyOn(ProjectModel, "findOne").mockReturnValueOnce(
+      projectQuery as never
+    );
+    const leadFind = vi.spyOn(LeadModel, "find");
+    const userFind = vi.spyOn(UserModel, "find");
+    const estimateFind = vi.spyOn(EstimateModel, "find");
+    const admin = {
+      ...demoSeedData.users[0]!,
+      id: "admin-detail",
+      role: "admin" as const,
+      active: true
+    };
+
+    await expect(
+      createMongoRepository(session).findAdminProject(admin, "project-guessed")
+    ).resolves.toBeNull();
+    expect(projectFindOne).toHaveBeenCalledWith({
+      $and: [
+        { _id: "project-guessed" },
+        { _id: { $in: ["project-admin-detail"] } }
+      ]
+    });
+    expect(grantQuery.session).toHaveBeenCalledWith(session);
+    expect(projectQuery.session).toHaveBeenCalledWith(session);
+    expect(leadFind).not.toHaveBeenCalled();
+    expect(userFind).not.toHaveBeenCalled();
+    expect(estimateFind).not.toHaveBeenCalled();
+  });
+
+  it("escapes estimator search and applies deterministic bounded projection and paging", async () => {
+    const session = { id: "estimator-option-session" } as never;
+    const optionQuery = recordedQuery([{
+      _id: "estimator-option",
+      name: "Asha Rao",
+      email: "asha@example.com",
+      title: null,
+      mobile: "must-not-map",
+      address: "must-not-map"
+    }]);
+    const find = vi.spyOn(UserModel, "find").mockReturnValueOnce(optionQuery as never);
+    const countQuery = recordedQuery(1);
+    const count = vi.spyOn(UserModel, "countDocuments").mockReturnValueOnce(
+      countQuery as never
+    );
+
+    const result = await createMongoRepository(session).pageActiveEstimatorOptions(
+      "Asha.*",
+      { limit: 7, offset: 2 }
+    );
+
+    expect(result).toEqual({
+      items: [{
+        id: "estimator-option",
+        name: "Asha Rao",
+        email: "asha@example.com",
+        title: null
+      }],
+      total: 1
+    });
+    const filter = find.mock.calls[0]![0] as {
+      role: string;
+      active: boolean;
+      $or: Array<Record<string, RegExp>>;
+    };
+    expect(filter.role).toBe("estimator_sales");
+    expect(filter.active).toBe(true);
+    expect(filter.$or[0]!.name.source).toBe("Asha\\.\\*");
+    expect(filter.$or[0]!.name.flags).toContain("i");
+    expect(filter.$or[1]!.email).toBe(filter.$or[0]!.name);
+    expect(count).toHaveBeenCalledWith(filter);
+    expect(optionQuery.select).toHaveBeenCalledWith({
+      _id: 1, name: 1, email: 1, title: 1
+    });
+    expect(optionQuery.sort).toHaveBeenCalledWith({ name: 1, _id: 1 });
+    expect(optionQuery.skip).toHaveBeenCalledWith(2);
+    expect(optionQuery.limit).toHaveBeenCalledWith(7);
+    expect(optionQuery.session).toHaveBeenCalledWith(session);
+    expect(countQuery.session).toHaveBeenCalledWith(session);
+    expect(JSON.stringify(result)).not.toMatch(/mobile|address/);
   });
 
   it("rejects a stale extraction completion with the current-lease filter", async () => {

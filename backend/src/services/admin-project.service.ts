@@ -64,6 +64,7 @@ export function createAdminProjectService(
 
     async initiate(actor, input) {
       return repository.runInTransaction(async (transaction) => {
+        await transaction.coordinateAuthorizationMutation();
         const admin = await requireActor(transaction, actor);
         if (admin.role !== "admin") forbidden();
         const estimator = await transaction.findUserById(input.estimatorId);
