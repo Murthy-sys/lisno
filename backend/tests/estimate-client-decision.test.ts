@@ -43,17 +43,27 @@ const PROOF = {
 type RecordValue = Record<string, any>;
 type DecisionInput = Parameters<EstimateDecisionService["decide"]>[0];
 
-function query<T>(value: T) {
+function query<T>(value: T, expectedSession: unknown) {
+  let attachedSession: unknown;
   const result = {
     sort: vi.fn(),
     select: vi.fn(),
     session: vi.fn(),
-    lean: vi.fn(async () => structuredClone(value)),
-    exec: vi.fn(async () => structuredClone(value))
+    lean: vi.fn(async () => {
+      expect(attachedSession).toBe(expectedSession);
+      return structuredClone(value);
+    }),
+    exec: vi.fn(async () => {
+      expect(attachedSession).toBe(expectedSession);
+      return structuredClone(value);
+    })
   };
   result.sort.mockReturnValue(result);
   result.select.mockReturnValue(result);
-  result.session.mockReturnValue(result);
+  result.session.mockImplementation((actualSession) => {
+    attachedSession = actualSession;
+    return result;
+  });
   return result;
 }
 
@@ -238,49 +248,55 @@ function setup(options: {
   vi.spyOn(mongoose, "startSession").mockResolvedValue(session as never);
 
   vi.spyOn(EstimateModel, "findById").mockImplementation((id) =>
-    query(estimates.find((item) => item._id === id) ?? null) as never
+    query(estimates.find((item) => item._id === id) ?? null, session) as never
   );
   vi.spyOn(EstimateModel, "findOne").mockImplementation((filter) =>
-    query(estimates.find((item) => matches(item, filter as RecordValue)) ?? null) as never
+    query(
+      estimates.find((item) => matches(item, filter as RecordValue)) ?? null,
+      session
+    ) as never
   );
-  vi.spyOn(EstimateModel, "updateOne").mockImplementation(async (filter, update) => {
+  vi.spyOn(EstimateModel, "updateOne").mockImplementation(async (filter, update, updateOptions) => {
+    expect((updateOptions as RecordValue)?.session).toBe(session);
     const item = estimates.find((candidate) => matches(candidate, filter as RecordValue));
     if (item) applyUpdate(item, update as RecordValue);
     return { matchedCount: item ? 1 : 0, modifiedCount: item ? 1 : 0 } as never;
   });
 
   vi.spyOn(LeadModel, "findById").mockImplementation((id) =>
-    query(leads.find((item) => item._id === id) ?? null) as never
+    query(leads.find((item) => item._id === id) ?? null, session) as never
   );
   vi.spyOn(LeadModel, "findOne").mockImplementation((filter) =>
-    query(leads.find((item) => matches(item, filter as RecordValue)) ?? null) as never
+    query(leads.find((item) => matches(item, filter as RecordValue)) ?? null, session) as never
   );
-  vi.spyOn(LeadModel, "updateOne").mockImplementation(async (filter, update) => {
+  vi.spyOn(LeadModel, "updateOne").mockImplementation(async (filter, update, updateOptions) => {
+    expect((updateOptions as RecordValue)?.session).toBe(session);
     const item = leads.find((candidate) => matches(candidate, filter as RecordValue));
     if (item) applyUpdate(item, update as RecordValue);
     return { matchedCount: item ? 1 : 0, modifiedCount: item ? 1 : 0 } as never;
   });
 
   vi.spyOn(EstimateClientReviewRoundModel, "findById").mockImplementation((id) =>
-    query(rounds.find((item) => item._id === id) ?? null) as never
+    query(rounds.find((item) => item._id === id) ?? null, session) as never
   );
   vi.spyOn(EstimateClientReviewRoundModel, "findOne").mockImplementation((filter) =>
-    query(rounds.find((item) => matches(item, filter as RecordValue)) ?? null) as never
+    query(rounds.find((item) => matches(item, filter as RecordValue)) ?? null, session) as never
   );
-  vi.spyOn(EstimateClientReviewRoundModel, "updateOne").mockImplementation(async (filter, update) => {
+  vi.spyOn(EstimateClientReviewRoundModel, "updateOne").mockImplementation(async (filter, update, updateOptions) => {
+    expect((updateOptions as RecordValue)?.session).toBe(session);
     const item = rounds.find((candidate) => matches(candidate, filter as RecordValue));
     if (item) applyUpdate(item, update as RecordValue);
     return { matchedCount: item ? 1 : 0, modifiedCount: item ? 1 : 0 } as never;
   });
 
   vi.spyOn(UserModel, "findById").mockImplementation((id) =>
-    query(users.find((item) => item._id === id) ?? null) as never
+    query(users.find((item) => item._id === id) ?? null, session) as never
   );
   vi.spyOn(UserModel, "findOne").mockImplementation((filter) => {
     const found = users
       .filter((item) => matches(item, filter as RecordValue))
       .sort((left, right) => Number(left.createdAt) - Number(right.createdAt))[0] ?? null;
-    return query(found) as never;
+    return query(found, session) as never;
   });
 
   vi.spyOn(ProjectModel, "create").mockImplementation(async (input, createOptions) => {
@@ -289,9 +305,10 @@ function setup(options: {
     return input as never;
   });
   vi.spyOn(ProjectModel, "findById").mockImplementation((id) =>
-    query(projects.find((item) => item._id === id) ?? null) as never
+    query(projects.find((item) => item._id === id) ?? null, session) as never
   );
-  vi.spyOn(ProjectModel, "updateOne").mockImplementation(async (filter, update) => {
+  vi.spyOn(ProjectModel, "updateOne").mockImplementation(async (filter, update, updateOptions) => {
+    expect((updateOptions as RecordValue)?.session).toBe(session);
     const item = projects.find((candidate) => matches(candidate, filter as RecordValue));
     if (item) applyUpdate(item, update as RecordValue);
     return { matchedCount: item ? 1 : 0, modifiedCount: item ? 1 : 0 } as never;
@@ -323,7 +340,9 @@ function setup(options: {
     })
   };
   const reviews = {
-    requireDecisionScope: vi.fn(async () => undefined)
+    requireDecisionScope: vi.fn(async (_actor, _roundId, reviewSession) => {
+      expect(reviewSession).toBe(session);
+    })
   };
   const service = createEstimateDecisionService({
     audit,
@@ -346,6 +365,33 @@ function setup(options: {
     estimateDesigns,
     reviews
   };
+}
+
+function linkExistingProject(
+  state: ReturnType<typeof setup>,
+  clientId: string | null
+): void {
+  state.estimates[0].projectId = "project-linked";
+  state.leads[0].projectId = "project-linked";
+  state.rounds[0].projectId = "project-linked";
+  state.projects.push({
+    _id: "project-linked",
+    name: "Aurora Residence",
+    clientId,
+    clientName: "Asha Rao",
+    clientEmail: "asha.rao@example.com",
+    clientEmailNormalized: "asha.rao@example.com",
+    clientMobile: "+919999999999",
+    clientAddress: "Bengaluru",
+    initiatingDesignerId: null,
+    assignedEstimatorId: "estimator-1",
+    assignedDesignerIds: [],
+    managerId: null,
+    status: "planning",
+    location: "Bengaluru",
+    plannedStartAt: new Date("2026-08-23T00:00:00.000Z"),
+    plannedEndAt: new Date("2026-11-21T00:00:00.000Z")
+  });
 }
 
 function portalInput(overrides: Partial<DecisionInput> = {}): DecisionInput {
@@ -730,6 +776,137 @@ describe("EstimateDecisionService Admin proof decisions", () => {
 
     expect(state.projects[0]).toMatchObject({ clientId: null });
     expect(state.projects[0].clientId).not.toBe(SUPER_ADMIN.id);
+  });
+
+  it.each([
+    ["a nullable unclaimed identity", false, null],
+    ["the matching active Client identity", true, "client-1"]
+  ] as const)(
+    "reuses an existing linked project with %s",
+    async (_case, activeClient, storedClientId) => {
+      const state = setup({ activeClient });
+      linkExistingProject(state, storedClientId);
+
+      const result = await state.service.decide(adminInput());
+
+      expect(result.estimate).toMatchObject({
+        status: "client_approved",
+        projectId: "project-linked"
+      });
+      expect(state.projects).toHaveLength(1);
+      expect(state.projects[0]).toMatchObject({
+        _id: "project-linked",
+        clientId: storedClientId,
+        assignedDesignerIds: ["designer-1"],
+        managerId: "manager-1"
+      });
+    }
+  );
+
+  it("rejects an existing linked project owned by a different Client", async () => {
+    const state = setup({ activeClient: false });
+    linkExistingProject(state, "client-other");
+
+    await state.service.decide(adminInput()).then(
+      () => expect.fail("Expected a different linked Client identity to conflict."),
+      (error) => expectApiError(error, "PROJECT_LINK_CONFLICT", 409)
+    );
+
+    expect(state.projects[0]).toMatchObject({
+      _id: "project-linked",
+      clientId: "client-other",
+      assignedDesignerIds: [],
+      managerId: null
+    });
+    expect(state.estimates[0]).toMatchObject({
+      status: "sent_to_client",
+      projectId: "project-linked",
+      version: 7
+    });
+    expect(state.rounds[0]).toMatchObject({ status: "pending", version: 4 });
+    expect(state.proofs).toEqual([]);
+    expect(state.audits).toEqual([]);
+  });
+
+  it("rechecks linked Client identity in the Project update CAS", async () => {
+    const state = setup();
+    linkExistingProject(state, null);
+    let projectFilter: RecordValue | null = null;
+    vi.mocked(ProjectModel.updateOne).mockImplementationOnce(
+      async (filter, _update, updateOptions) => {
+        expect((updateOptions as RecordValue)?.session).toBe(state.session);
+        projectFilter = structuredClone(filter as RecordValue);
+        return { matchedCount: 0, modifiedCount: 0 } as never;
+      }
+    );
+
+    await state.service.decide(adminInput()).then(
+      () => expect.fail("Expected concurrent linked Client ownership to conflict."),
+      (error) => expectApiError(error, "PROJECT_LINK_CONFLICT", 409)
+    );
+
+    expect(projectFilter).toEqual(expect.objectContaining({
+      _id: "project-linked",
+      clientId: { $in: [null, "client-1"] }
+    }));
+    expect(state.projects[0]).toMatchObject({
+      clientId: null,
+      assignedDesignerIds: [],
+      managerId: null
+    });
+    expect(state.estimates[0]).toMatchObject({ status: "sent_to_client", version: 7 });
+    expect(state.rounds[0]).toMatchObject({ status: "pending", version: 4 });
+    expect(state.proofs).toEqual([]);
+    expect(state.audits).toEqual([]);
+  });
+
+  it("rolls back all semantic state when the final proof audit fails", async () => {
+    const state = setup();
+    const lateFailure = new Error("late proof audit failure");
+    state.audit.appendInMongoTransaction.mockImplementation(
+      async (event: RecordValue, auditSession: unknown) => {
+        expect(auditSession).toBe(state.session);
+        state.audits.push(structuredClone(event));
+        if (event.action === "estimate_client_proof_stored") throw lateFailure;
+        return event;
+      }
+    );
+
+    await expect(state.service.decide(adminInput())).rejects.toBe(lateFailure);
+
+    expect(EstimateModel.updateOne).toHaveBeenCalledOnce();
+    expect(LeadModel.updateOne).toHaveBeenCalledOnce();
+    expect(EstimateClientReviewRoundModel.updateOne).toHaveBeenCalledOnce();
+    expect(ProjectModel.create).toHaveBeenCalledOnce();
+    expect(EstimateClientResponseProofModel.create).toHaveBeenCalledOnce();
+    expect(state.audit.appendInMongoTransaction).toHaveBeenCalledTimes(3);
+    expect(state.estimates[0]).toMatchObject({
+      status: "sent_to_client",
+      projectId: null,
+      version: 7,
+      designLifecycleVersion: 3,
+      designFrozenAt: null,
+      clientDecisionAt: null,
+      reviews: [],
+      notifications: []
+    });
+    expect(state.leads[0]).toMatchObject({
+      projectId: null,
+      stage: "estimate_sent",
+      nextAction: "client estimate decision"
+    });
+    expect(state.rounds[0]).toMatchObject({
+      status: "pending",
+      decision: null,
+      decisionSource: null,
+      decisionNote: null,
+      decidedById: null,
+      decidedAt: null,
+      version: 4
+    });
+    expect(state.projects).toEqual([]);
+    expect(state.proofs).toEqual([]);
+    expect(state.audits).toEqual([]);
   });
 
   it("rolls back proof, round, Estimate, Lead, and audit writes when the shared Estimate CAS loses", async () => {
