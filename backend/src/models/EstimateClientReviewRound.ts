@@ -12,6 +12,11 @@ import type { Query } from "mongoose";
 import { EstimateClientResponseProofModel } from "./EstimateClientResponseProof.js";
 import { model, models, Schema } from "./mongoose.js";
 
+const safeIntegerValidator = {
+  validator: (value: unknown) => Number.isSafeInteger(value),
+  message: "{PATH} must be a safe integer."
+};
+
 const decisionStatePaths = [
   "status",
   "decision",
@@ -59,8 +64,20 @@ const estimateClientReviewRoundSchema = new Schema(
     estimateId: { type: String, ref: "Estimate", required: true, immutable: true },
     leadId: { type: String, ref: "Lead", required: true, immutable: true },
     projectId: { type: String, ref: "Project", default: null, immutable: true },
-    estimateVersion: { type: Number, required: true, immutable: true, min: 1 },
-    sendGeneration: { type: Number, required: true, immutable: true, min: 1 },
+    estimateVersion: {
+      type: Number,
+      required: true,
+      immutable: true,
+      min: 1,
+      validate: safeIntegerValidator
+    },
+    sendGeneration: {
+      type: Number,
+      required: true,
+      immutable: true,
+      min: 1,
+      validate: safeIntegerValidator
+    },
     dedupeKey: {
       type: String,
       required: true,
@@ -99,8 +116,18 @@ const estimateClientReviewRoundSchema = new Schema(
       enum: ESTIMATE_DELIVERY_STATUSES,
       required: true
     },
-    deliveryAttemptGeneration: { type: Number, required: true, min: 1 },
-    deliveryAttemptCount: { type: Number, required: true, min: 0 },
+    deliveryAttemptGeneration: {
+      type: Number,
+      required: true,
+      min: 1,
+      validate: safeIntegerValidator
+    },
+    deliveryAttemptCount: {
+      type: Number,
+      required: true,
+      min: 0,
+      validate: safeIntegerValidator
+    },
     deliveryAttemptedAt: { type: Date, default: null },
     deliveryLeaseExpiresAt: { type: Date, default: null },
     deliveredAt: { type: Date, default: null },
@@ -129,7 +156,12 @@ const estimateClientReviewRoundSchema = new Schema(
     },
     decidedById: { type: String, ref: "User", default: null },
     decidedAt: { type: Date, default: null },
-    version: { type: Number, required: true, min: 1 }
+    version: {
+      type: Number,
+      required: true,
+      min: 1,
+      validate: safeIntegerValidator
+    }
   },
   { timestamps: true, versionKey: false }
 );

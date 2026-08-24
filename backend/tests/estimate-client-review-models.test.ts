@@ -124,6 +124,49 @@ describe("EstimateClientReviewRound persistence model", () => {
     await expect(round(overrides).validate()).rejects.toThrow();
   });
 
+  it.each([
+    ["estimateVersion", 1.5],
+    ["estimateVersion", Number.NaN],
+    ["estimateVersion", Number.POSITIVE_INFINITY],
+    ["estimateVersion", Number.NEGATIVE_INFINITY],
+    ["estimateVersion", Number.MAX_SAFE_INTEGER + 1],
+    ["sendGeneration", 1.5],
+    ["sendGeneration", Number.NaN],
+    ["sendGeneration", Number.POSITIVE_INFINITY],
+    ["sendGeneration", Number.NEGATIVE_INFINITY],
+    ["sendGeneration", Number.MAX_SAFE_INTEGER + 1],
+    ["deliveryAttemptGeneration", 1.5],
+    ["deliveryAttemptGeneration", Number.NaN],
+    ["deliveryAttemptGeneration", Number.POSITIVE_INFINITY],
+    ["deliveryAttemptGeneration", Number.NEGATIVE_INFINITY],
+    ["deliveryAttemptGeneration", Number.MAX_SAFE_INTEGER + 1],
+    ["deliveryAttemptCount", 0.5],
+    ["deliveryAttemptCount", Number.NaN],
+    ["deliveryAttemptCount", Number.POSITIVE_INFINITY],
+    ["deliveryAttemptCount", Number.NEGATIVE_INFINITY],
+    ["deliveryAttemptCount", Number.MAX_SAFE_INTEGER + 1],
+    ["version", 1.5],
+    ["version", Number.NaN],
+    ["version", Number.POSITIVE_INFINITY],
+    ["version", Number.NEGATIVE_INFINITY],
+    ["version", Number.MAX_SAFE_INTEGER + 1]
+  ])("rejects non-safe-integer %s value %s", async (path, value) => {
+    await expect(round({ [path]: value }).validate()).rejects.toThrow();
+  });
+
+  it("accepts safe-integer generation, attempt-count, and optimistic-version boundaries", async () => {
+    await expect(
+      round({
+        estimateVersion: Number.MAX_SAFE_INTEGER,
+        sendGeneration: Number.MAX_SAFE_INTEGER,
+        deliveryAttemptGeneration: Number.MAX_SAFE_INTEGER,
+        deliveryAttemptCount: Number.MAX_SAFE_INTEGER,
+        version: Number.MAX_SAFE_INTEGER
+      }).validate()
+    ).resolves.toBeUndefined();
+    await expect(round({ deliveryAttemptCount: 0 }).validate()).resolves.toBeUndefined();
+  });
+
   it.each(["queued", "sent", "failed", "disabled"])(
     "accepts the closed delivery status %s",
     async (deliveryStatus) => {
