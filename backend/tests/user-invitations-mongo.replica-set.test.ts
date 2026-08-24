@@ -8,6 +8,7 @@ import { ProjectModel } from "../src/models/Project.js";
 import { ProjectAccessGrantModel } from "../src/models/ProjectAccessGrant.js";
 import { UserModel } from "../src/models/User.js";
 import { UserInvitationModel } from "../src/models/UserInvitation.js";
+import { ApiError } from "../src/middleware/errors.js";
 import { createMongoRepository } from "../src/repositories/mongo.js";
 import {
   RepositoryConflictError,
@@ -368,6 +369,127 @@ function gateTransactionMethod(
   };
 }
 
+function gateFirstCoordinationByCaller(
+  method: "coordinateAuthorizationMutation" | "coordinateClientEmail",
+  callerCount: number
+) {
+  const reached = deferred<void>();
+  const releases = Array.from({ length: callerCount }, () => deferred<void>());
+  const attempts = Array.from({ length: callerCount }, () => 0);
+  let firstArrivals = 0;
+  const repositories = attempts.map((_attempt, callerIndex) => {
+    const repository = createMongoRepository();
+    return new Proxy(repository, {
+      get(target, property, receiver) {
+        if (property !== "runInTransaction") {
+          return Reflect.get(target, property, receiver);
+        }
+        return <T>(operation: (transaction: AppRepository) => Promise<T>) =>
+          target.runInTransaction((transaction) =>
+            operation(new Proxy(transaction, {
+              get(inner, key, innerReceiver) {
+                if (key !== method) return Reflect.get(inner, key, innerReceiver);
+                return async (...args: unknown[]) => {
+                  attempts[callerIndex] += 1;
+                  if (attempts[callerIndex] === 1) {
+                    firstArrivals += 1;
+                    if (firstArrivals === callerCount) reached.resolve();
+                    await releases[callerIndex]!.promise;
+                  }
+                  return (inner[key] as (...values: unknown[]) => Promise<unknown>)(
+                    ...args
+                  );
+                };
+              }
+            }))
+          );
+      }
+    });
+  });
+  return {
+    repositories,
+    attempts,
+    reached: reached.promise,
+    release: (callerIndex: number) => releases[callerIndex]!.resolve()
+  };
+}
+
+function expectExactDomainError(
+  error: unknown,
+  expected: {
+    type: typeof ApiError;
+    status: number;
+    code: string;
+    message: string;
+    headers?: { "Retry-After": string };
+    fields?: Record<string, string>;
+  }
+) {
+  expect(error).toBeInstanceOf(expected.type);
+  expect(error).toMatchObject({
+    status: expected.status,
+    code: expected.code,
+    message: expected.message,
+    headers: expected.headers,
+    fields: expected.fields
+  });
+  expect(String(error)).not.toMatch(
+    /E11000|duplicate key|Mongo(?:Server|DB)?|write conflict|transaction/i
+  );
+}
+
+interface ExpectedAudit {
+  action: string;
+  actorId: string;
+  entityType: string;
+  entityId: string;
+  oldValues?: Record<string, unknown>;
+  newValues: Record<string, unknown>;
+}
+
+async function expectExactAudits(
+  expected: ExpectedAudit[],
+  forbiddenValues: string[] = []
+) {
+  const audits = await AuditEventModel.find().lean().exec();
+  const normalized = audits
+    .map(({ action, actorId, entityType, entityId, oldValues, newValues }) => ({
+      action,
+      actorId,
+      entityType,
+      entityId,
+      oldValues,
+      newValues
+    }))
+    .sort((left, right) => {
+      const leftKey = `${left.action}:${left.entityType}:${left.entityId}`;
+      const rightKey = `${right.action}:${right.entityType}:${right.entityId}`;
+      return leftKey.localeCompare(rightKey);
+    });
+  const normalizedExpected = expected
+    .map((audit) => ({
+      ...audit,
+      oldValues: audit.oldValues
+    }))
+    .sort((left, right) => {
+      const leftKey = `${left.action}:${left.entityType}:${left.entityId}`;
+      const rightKey = `${right.action}:${right.entityType}:${right.entityId}`;
+      return leftKey.localeCompare(rightKey);
+    });
+  expect(normalized).toEqual(normalizedExpected);
+
+  const serialized = JSON.stringify(audits);
+  expect(serialized).not.toMatch(
+    /"[^"]*(?:tokenHash|rawToken|password|passwordHash|secret)[^"]*"\s*:/i
+  );
+  expect(serialized).not.toMatch(
+    /E11000|duplicate key|Mongo(?:Server|DB)?|write conflict|provider-secret/i
+  );
+  for (const forbidden of forbiddenValues) {
+    expect(serialized).not.toContain(forbidden);
+  }
+}
+
 async function expectIssuerMutationInvalidatesAccept(
   testId: string,
   mutateIssuer: (issuerId: string) => Promise<unknown>
@@ -472,23 +594,33 @@ describe("user invitation Mongo replica-set races", () => {
       __v: 1
     });
 
-    const audits = await AuditEventModel.find().lean().exec();
-    expect(
-      audits
-        .map(({ action, actorId, entityType }) => ({ action, actorId, entityType }))
-        .sort((left, right) => left.action < right.action ? -1 : 1)
-    ).toEqual([
+    await expectExactAudits([
       {
         action: "user.invited_created",
         actorId: users[0]!._id,
-        entityType: "user"
+        entityType: "user",
+        entityId: users[0]!._id,
+        newValues: {
+          invitationId: "race-two-accepts",
+          userId: users[0]!._id,
+          emailNormalized: INVITEE_EMAIL,
+          role: "designer"
+        }
       },
       {
         action: "user_invitation.accepted",
         actorId: users[0]!._id,
-        entityType: "user_invitation"
+        entityType: "user_invitation",
+        entityId: "race-two-accepts",
+        newValues: {
+          invitationId: "race-two-accepts",
+          acceptedUserId: users[0]!._id,
+          emailNormalized: INVITEE_EMAIL,
+          role: "designer"
+        }
       }
-    ]);
+    ], [RAW_TOKEN, ACCEPTED_PASSWORD, ACCEPTED_PASSWORD_HASH]);
+    const audits = await AuditEventModel.find().lean().exec();
     const persisted = JSON.stringify({ users, invitation, audits });
     expect(persisted).not.toContain(RAW_TOKEN);
     expect(persisted).not.toContain(ACCEPTED_PASSWORD);
@@ -571,6 +703,72 @@ describe("user invitation Mongo replica-set races", () => {
     }
     expect(await EmailCoordinationModel.countDocuments({ _id: INVITEE_EMAIL })).toBe(1);
     expect(await UserModel.countDocuments({ role: "super_admin" })).toBe(1);
+  });
+
+  it("A2 signup-first: a claimed email leaves the pending invitation revoke-only and publicly unavailable", async () => {
+    const issuerId = "signup-first-super-admin";
+    const invitationId = "signup-first-invitation";
+    await insertUser(issuerId, "super_admin", {
+      email: "signup-first-super-admin@example.test",
+      version: 3
+    });
+    await insertPendingInvitation(invitationId, issuerId, {
+      tokenIssuerVersion: 3
+    });
+    const repository = createMongoRepository();
+    const audit = createAuditService(repository);
+    const auth = createAuthService(
+      repository,
+      {
+        jwtSecret: "task-eight-signup-first-secret-at-least-32-characters",
+        jwtExpiresInSeconds: 900
+      },
+      { auditService: audit, clock: () => new Date(NOW) }
+    );
+    const invitations = invitationService(repository);
+
+    await auth.signupClient({
+      name: "Race Invitee",
+      email: INVITEE_EMAIL,
+      mobile: "+91 90000 00000",
+      address: "Pune",
+      password: ACCEPTED_PASSWORD
+    }, { remoteAddress: "203.0.113.11" });
+
+    const users = await UserModel.find({ emailNormalized: INVITEE_EMAIL }).lean().exec();
+    expect(users).toHaveLength(1);
+    expect(users[0]).toMatchObject({ role: "client", accountKind: "standard" });
+    const page = await invitations.list(
+      publicUser(issuerId),
+      { status: "pending" },
+      { limit: 20, offset: 0 }
+    );
+    expect(page.items).toEqual([
+      expect.objectContaining({
+        id: invitationId,
+        currentLinkAvailable: false,
+        availableActions: ["revoke"]
+      })
+    ]);
+    await expect(invitations.inspect(RAW_TOKEN)).rejects.toMatchObject({
+      status: 410,
+      code: "INVITATION_UNAVAILABLE"
+    });
+    await expect(invitations.accept({
+      rawToken: RAW_TOKEN,
+      password: ACCEPTED_PASSWORD
+    })).rejects.toMatchObject({
+      status: 410,
+      code: "INVITATION_UNAVAILABLE"
+    });
+    expect(await ProjectAccessGrantModel.countDocuments()).toBe(0);
+    await expectExactAudits([{
+      action: "client_signed_up",
+      actorId: users[0]!._id,
+      entityType: "user",
+      entityId: users[0]!._id,
+      newValues: { role: "client", email: INVITEE_EMAIL }
+    }], [RAW_TOKEN, ACCEPTED_PASSWORD]);
   });
 
   it("P1: project create versus invitation create serializes and leaves a revoke-only reservation", async () => {
@@ -792,12 +990,70 @@ describe("user invitation Mongo replica-set races", () => {
       .lean()
       .exec();
     if (staffCount === 1) {
+      expect(settled[0]).toMatchObject({ status: "fulfilled", value: { accepted: true } });
+      expect(settled[1]!.status).toBe("rejected");
+      if (settled[1]!.status === "rejected") {
+        expectExactDomainError(settled[1]!.reason, {
+          type: ApiError,
+          status: 400,
+          code: "INVALID_PROJECT",
+          message: "Client email is unavailable.",
+          fields: { clientEmail: "This email belongs to an internal account." }
+        });
+      }
       expect(invitation).toMatchObject({ status: "accepted", tokenHash: null });
+      const user = await UserModel.findOne({ emailNormalized: INVITEE_EMAIL }).lean().exec();
+      await expectExactAudits([
+        {
+          action: "user.invited_created",
+          actorId: user!._id,
+          entityType: "user",
+          entityId: user!._id,
+          newValues: {
+            invitationId: "race-project-accept",
+            userId: user!._id,
+            emailNormalized: INVITEE_EMAIL,
+            role: "designer"
+          }
+        },
+        {
+          action: "user_invitation.accepted",
+          actorId: user!._id,
+          entityType: "user_invitation",
+          entityId: "race-project-accept",
+          newValues: {
+            invitationId: "race-project-accept",
+            acceptedUserId: user!._id,
+            emailNormalized: INVITEE_EMAIL,
+            role: "designer"
+          }
+        }
+      ], [RAW_TOKEN, ACCEPTED_PASSWORD, ACCEPTED_PASSWORD_HASH]);
     } else {
+      expect(settled[1]!.status).toBe("fulfilled");
+      expect(settled[0]!.status).toBe("rejected");
+      if (settled[0]!.status === "rejected") {
+        expectExactDomainError(settled[0]!.reason, {
+          type: ApiError,
+          status: 410,
+          code: "INVITATION_UNAVAILABLE",
+          message: "This invitation is unavailable."
+        });
+      }
       expect(invitation).toMatchObject({ status: "pending" });
       await expect(invitations.inspect(RAW_TOKEN)).rejects.toBeInstanceOf(
         InvitationUnavailableError
       );
+      const storedProject = await ProjectModel.findOne({
+        clientEmailNormalized: INVITEE_EMAIL
+      }).lean().exec();
+      await expectExactAudits([{
+        action: "project_created",
+        actorId: projectFixture.designer.id,
+        entityType: "project",
+        entityId: storedProject!._id,
+        newValues: { name: "Race Project", status: "planning" }
+      }], [RAW_TOKEN, ACCEPTED_PASSWORD, ACCEPTED_PASSWORD_HASH]);
     }
   });
 
@@ -837,12 +1093,70 @@ describe("user invitation Mongo replica-set races", () => {
     expect(invitation).toMatchObject({ tokenHash: null, __v: 1 });
     const users = await UserModel.find({ emailNormalized: INVITEE_EMAIL }).lean().exec();
     expect(users).toHaveLength(invitation!.status === "accepted" ? 1 : 0);
-    const actions = (await AuditEventModel.find().lean().exec()).map(({ action }) => action).sort();
-    expect(actions).toEqual(
-      invitation!.status === "accepted"
-        ? ["user.invited_created", "user_invitation.accepted"]
-        : ["user_invitation.revoked"]
-    );
+    if (invitation!.status === "accepted") {
+      expect(settled[1]).toMatchObject({ status: "fulfilled", value: { accepted: true } });
+      expect(settled[0]!.status).toBe("rejected");
+      if (settled[0]!.status === "rejected") {
+        expectExactDomainError(settled[0]!.reason, {
+          type: ApiError,
+          status: 409,
+          code: "INVITATION_NOT_ACTIONABLE",
+          message: "The invitation is not actionable."
+        });
+      }
+      await expectExactAudits([
+        {
+          action: "user.invited_created",
+          actorId: users[0]!._id,
+          entityType: "user",
+          entityId: users[0]!._id,
+          newValues: {
+            invitationId: "race-revoke-accept",
+            userId: users[0]!._id,
+            emailNormalized: INVITEE_EMAIL,
+            role: "designer"
+          }
+        },
+        {
+          action: "user_invitation.accepted",
+          actorId: users[0]!._id,
+          entityType: "user_invitation",
+          entityId: "race-revoke-accept",
+          newValues: {
+            invitationId: "race-revoke-accept",
+            acceptedUserId: users[0]!._id,
+            emailNormalized: INVITEE_EMAIL,
+            role: "designer"
+          }
+        }
+      ], [RAW_TOKEN, ACCEPTED_PASSWORD, ACCEPTED_PASSWORD_HASH]);
+    } else {
+      expect(settled[0]!.status).toBe("fulfilled");
+      expect(settled[1]!.status).toBe("rejected");
+      if (settled[1]!.status === "rejected") {
+        expectExactDomainError(settled[1]!.reason, {
+          type: ApiError,
+          status: 410,
+          code: "INVITATION_UNAVAILABLE",
+          message: "This invitation is unavailable."
+        });
+      }
+      await expectExactAudits([{
+        action: "user_invitation.revoked",
+        actorId: issuerId,
+        entityType: "user_invitation",
+        entityId: "race-revoke-accept",
+        newValues: {
+          invitationId: "race-revoke-accept",
+          emailNormalized: INVITEE_EMAIL,
+          role: "designer",
+          tokenGeneration: 1,
+          expiresAt: new Date(
+            Date.parse(NOW) - 120_000 + USER_INVITATION_TTL_MS
+          ).toISOString()
+        }
+      }], [RAW_TOKEN, ACCEPTED_PASSWORD, ACCEPTED_PASSWORD_HASH]);
+    }
     await expect(service.inspect(RAW_TOKEN)).rejects.toBeInstanceOf(
       InvitationUnavailableError
     );
@@ -891,13 +1205,90 @@ describe("user invitation Mongo replica-set races", () => {
     expect(invitation).toMatchObject({ __v: 1 });
     expect(["pending", "accepted"]).toContain(invitation!.status);
     if (invitation!.status === "pending") {
+      expect(settled[0]!.status).toBe("fulfilled");
+      expect(settled[1]!.status).toBe("rejected");
+      if (settled[1]!.status === "rejected") {
+        expectExactDomainError(settled[1]!.reason, {
+          type: ApiError,
+          status: 410,
+          code: "INVITATION_UNAVAILABLE",
+          message: "This invitation is unavailable."
+        });
+      }
       expect(invitation).toMatchObject({ tokenGeneration: 2 });
       await expect(service.inspect(RESENT_RAW_TOKEN)).resolves.toMatchObject({
         email: INVITEE_EMAIL
       });
+      await expectExactAudits([
+        {
+          action: "user_invitation.resent",
+          actorId: issuerId,
+          entityType: "user_invitation",
+          entityId: "race-resend-accept",
+          newValues: {
+            invitationId: "race-resend-accept",
+            emailNormalized: INVITEE_EMAIL,
+            role: "designer",
+            tokenGeneration: 2,
+            expiresAt: new Date(Date.parse(NOW) + USER_INVITATION_TTL_MS).toISOString(),
+            deliveryState: "queued"
+          }
+        },
+        {
+          action: "user_invitation.delivery_sent",
+          actorId: issuerId,
+          entityType: "user_invitation",
+          entityId: "race-resend-accept",
+          newValues: {
+            invitationId: "race-resend-accept",
+            emailNormalized: INVITEE_EMAIL,
+            role: "designer",
+            tokenGeneration: 2,
+            expiresAt: new Date(Date.parse(NOW) + USER_INVITATION_TTL_MS).toISOString(),
+            deliveryState: "sent"
+          }
+        }
+      ], [RAW_TOKEN, RESENT_RAW_TOKEN, ACCEPTED_PASSWORD_HASH]);
     } else {
+      expect(settled[1]).toMatchObject({ status: "fulfilled", value: { accepted: true } });
+      expect(settled[0]!.status).toBe("rejected");
+      if (settled[0]!.status === "rejected") {
+        expectExactDomainError(settled[0]!.reason, {
+          type: ApiError,
+          status: 409,
+          code: "INVITATION_NOT_ACTIONABLE",
+          message: "The invitation is not actionable."
+        });
+      }
       expect(invitation).toMatchObject({ tokenHash: null });
-      expect(await UserModel.countDocuments({ emailNormalized: INVITEE_EMAIL })).toBe(1);
+      const user = await UserModel.findOne({ emailNormalized: INVITEE_EMAIL }).lean().exec();
+      expect(user).not.toBeNull();
+      await expectExactAudits([
+        {
+          action: "user.invited_created",
+          actorId: user!._id,
+          entityType: "user",
+          entityId: user!._id,
+          newValues: {
+            invitationId: "race-resend-accept",
+            userId: user!._id,
+            emailNormalized: INVITEE_EMAIL,
+            role: "designer"
+          }
+        },
+        {
+          action: "user_invitation.accepted",
+          actorId: user!._id,
+          entityType: "user_invitation",
+          entityId: "race-resend-accept",
+          newValues: {
+            invitationId: "race-resend-accept",
+            acceptedUserId: user!._id,
+            emailNormalized: INVITEE_EMAIL,
+            role: "designer"
+          }
+        }
+      ], [RAW_TOKEN, ACCEPTED_PASSWORD, ACCEPTED_PASSWORD_HASH]);
     }
     await expect(service.inspect(RAW_TOKEN)).rejects.toBeInstanceOf(
       InvitationUnavailableError
@@ -913,35 +1304,64 @@ describe("user invitation Mongo replica-set races", () => {
     await insertPendingInvitation("race-create-resend", issuerId, {
       tokenIssuerVersion: 2
     });
-    const gate = gateTransactionMethod(
+    const createGate = gateTransactionMethod(
       createMongoRepository(),
       "coordinateAuthorizationMutation",
-      2
+      1
     );
-    const audit = createAuditService(gate.repository);
-    const service = createUserInvitationService({
-      repository: gate.repository,
-      audit,
+    const resendGate = gateTransactionMethod(
+      createMongoRepository(),
+      "coordinateAuthorizationMutation",
+      1
+    );
+    const createAudit = createAuditService(createGate.repository);
+    const resendAudit = createAuditService(resendGate.repository);
+    const createService = createUserInvitationService({
+      repository: createGate.repository,
+      audit: createAudit,
+      mailer: immediateMailer(),
+      clock: () => new Date(NOW),
+      randomBytes: (size) => Buffer.alloc(size, 18),
+      passwordHasher: async () => ACCEPTED_PASSWORD_HASH
+    });
+    const resendService = createUserInvitationService({
+      repository: resendGate.repository,
+      audit: resendAudit,
       mailer: immediateMailer(),
       clock: () => new Date(NOW),
       randomBytes: (size) => Buffer.alloc(size, 18),
       passwordHasher: async () => ACCEPTED_PASSWORD_HASH
     });
 
-    const create = service.create(publicUser(issuerId), {
+    const create = createService.create(publicUser(issuerId), {
       name: "Race Invitee Replacement",
       email: INVITEE_EMAIL,
       role: "designer",
       mobile: "+91 90000 00000"
     });
-    const resend = service.resend(publicUser(issuerId), "race-create-resend", {
+    const resend = resendService.resend(publicUser(issuerId), "race-create-resend", {
       version: 1
     });
-    await gate.reached;
-    gate.release();
+    await Promise.all([createGate.reached, resendGate.reached]);
+    createGate.release();
+    await expect(create).resolves.toMatchObject({
+      status: "pending",
+      currentLinkAvailable: true,
+      version: 1
+    });
+    resendGate.release();
     const settled = await Promise.allSettled([create, resend]);
 
-    expect(settled.filter(({ status }) => status === "fulfilled")).toHaveLength(1);
+    expect(settled[0]!.status).toBe("fulfilled");
+    expect(settled[1]!.status).toBe("rejected");
+    if (settled[1]!.status === "rejected") {
+      expectExactDomainError(settled[1]!.reason, {
+        type: ApiError,
+        status: 409,
+        code: "INVITATION_NOT_ACTIONABLE",
+        message: "The invitation is not actionable."
+      });
+    }
     expect(await UserInvitationModel.countDocuments({
       emailNormalized: INVITEE_EMAIL,
       status: "pending"
@@ -955,9 +1375,77 @@ describe("user invitation Mongo replica-set races", () => {
       emailNormalized: INVITEE_EMAIL,
       issuedAt: new Date(NOW)
     })).toBe(1);
-    await expect(service.inspect(RAW_TOKEN)).rejects.toBeInstanceOf(
+    const rows = await UserInvitationModel.find({
+      emailNormalized: INVITEE_EMAIL
+    }).select("+tokenHash").lean().exec();
+    expect(rows).toHaveLength(2);
+    const old = rows.find(({ _id }) => _id === "race-create-resend");
+    expect(old).toMatchObject({
+      status: "superseded",
+      tokenHash: null,
+      tokenGeneration: 1,
+      supersededByInvitationId: pending!._id,
+      __v: 1
+    });
+    expect(pending).toMatchObject({
+      status: "pending",
+      tokenHash: hashUserInvitationToken(RESENT_RAW_TOKEN),
+      tokenGeneration: 1,
+      __v: 0
+    });
+    await expect(createService.inspect(RAW_TOKEN)).rejects.toBeInstanceOf(
       InvitationUnavailableError
     );
+    await expect(createService.inspect(RESENT_RAW_TOKEN)).resolves.toMatchObject({
+      email: INVITEE_EMAIL
+    });
+    const oldExpiresAt = new Date(
+      Date.parse(NOW) - 120_000 + USER_INVITATION_TTL_MS
+    ).toISOString();
+    const newExpiresAt = new Date(Date.parse(NOW) + USER_INVITATION_TTL_MS).toISOString();
+    await expectExactAudits([
+      {
+        action: "user_invitation.superseded",
+        actorId: issuerId,
+        entityType: "user_invitation",
+        entityId: "race-create-resend",
+        newValues: {
+          invitationId: "race-create-resend",
+          emailNormalized: INVITEE_EMAIL,
+          role: "designer",
+          tokenGeneration: 1,
+          expiresAt: oldExpiresAt
+        }
+      },
+      {
+        action: "user_invitation.created",
+        actorId: issuerId,
+        entityType: "user_invitation",
+        entityId: pending!._id,
+        newValues: {
+          invitationId: pending!._id,
+          emailNormalized: INVITEE_EMAIL,
+          role: "designer",
+          tokenGeneration: 1,
+          expiresAt: newExpiresAt,
+          deliveryState: "queued"
+        }
+      },
+      {
+        action: "user_invitation.delivery_sent",
+        actorId: issuerId,
+        entityType: "user_invitation",
+        entityId: pending!._id,
+        newValues: {
+          invitationId: pending!._id,
+          emailNormalized: INVITEE_EMAIL,
+          role: "designer",
+          tokenGeneration: 1,
+          expiresAt: newExpiresAt,
+          deliveryState: "sent"
+        }
+      }
+    ], [RAW_TOKEN, RESENT_RAW_TOKEN, ACCEPTED_PASSWORD_HASH]);
   });
 
   it("T4/C3: resend versus resend increments generation and semantic version once", async () => {
@@ -993,6 +1481,16 @@ describe("user invitation Mongo replica-set races", () => {
     const settled = await Promise.allSettled(resends);
 
     expect(settled.filter(({ status }) => status === "fulfilled")).toHaveLength(1);
+    const loser = settled.find((result) => result.status === "rejected");
+    expect(loser?.status).toBe("rejected");
+    if (loser?.status === "rejected") {
+      expectExactDomainError(loser.reason, {
+        type: ApiError,
+        status: 409,
+        code: "VERSION_CONFLICT",
+        message: "The invitation changed elsewhere."
+      });
+    }
     const invitation = await UserInvitationModel.findById("race-double-resend")
       .select("+tokenHash")
       .lean()
@@ -1006,9 +1504,37 @@ describe("user invitation Mongo replica-set races", () => {
       emailNormalized: INVITEE_EMAIL,
       status: "pending"
     })).toBe(1);
-    const actions = (await AuditEventModel.find().lean().exec()).map(({ action }) => action);
-    expect(actions.filter((action) => action === "user_invitation.resent")).toHaveLength(1);
-    expect(actions.filter((action) => action === "user_invitation.delivery_sent")).toHaveLength(1);
+    const expiresAt = new Date(Date.parse(NOW) + USER_INVITATION_TTL_MS).toISOString();
+    await expectExactAudits([
+      {
+        action: "user_invitation.resent",
+        actorId: issuerId,
+        entityType: "user_invitation",
+        entityId: "race-double-resend",
+        newValues: {
+          invitationId: "race-double-resend",
+          emailNormalized: INVITEE_EMAIL,
+          role: "designer",
+          tokenGeneration: 2,
+          expiresAt,
+          deliveryState: "queued"
+        }
+      },
+      {
+        action: "user_invitation.delivery_sent",
+        actorId: issuerId,
+        entityType: "user_invitation",
+        entityId: "race-double-resend",
+        newValues: {
+          invitationId: "race-double-resend",
+          emailNormalized: INVITEE_EMAIL,
+          role: "designer",
+          tokenGeneration: 2,
+          expiresAt,
+          deliveryState: "sent"
+        }
+      }
+    ], [RAW_TOKEN, RESENT_RAW_TOKEN, ACCEPTED_PASSWORD_HASH]);
     await expect(service.inspect(RAW_TOKEN)).rejects.toBeInstanceOf(
       InvitationUnavailableError
     );
@@ -1073,6 +1599,19 @@ describe("user invitation Mongo replica-set races", () => {
     });
     discoveryGate.release();
     await expect(staleAccept).rejects.toBeInstanceOf(InvitationUnavailableError);
+    expect(await UserModel.countDocuments({ emailNormalized: INVITEE_EMAIL })).toBe(0);
+    expect(await AuditEventModel.countDocuments()).toBe(0);
+    expect(await UserInvitationModel.findById("race-issuer-replacement")
+      .select("+tokenHash")
+      .lean()
+      .exec()).toMatchObject({
+      status: "pending",
+      tokenHash: hashUserInvitationToken(RAW_TOKEN),
+      tokenGeneration: 1,
+      tokenIssuedById: oldIssuerId,
+      tokenIssuerVersion: 2,
+      __v: 0
+    });
 
     const repository = createMongoRepository();
     const audit = createAuditService(repository);
@@ -1113,6 +1652,92 @@ describe("user invitation Mongo replica-set races", () => {
     await expect(currentService.inspect(RESENT_RAW_TOKEN)).resolves.toMatchObject({
       email: INVITEE_EMAIL
     });
+    await expect(currentService.accept({
+      rawToken: RESENT_RAW_TOKEN,
+      password: ACCEPTED_PASSWORD
+    })).resolves.toEqual({ accepted: true });
+    await expect(currentService.accept({
+      rawToken: RESENT_RAW_TOKEN,
+      password: ACCEPTED_PASSWORD
+    })).rejects.toMatchObject({
+      status: 410,
+      code: "INVITATION_UNAVAILABLE"
+    });
+    const acceptedUser = await UserModel.findOne({
+      emailNormalized: INVITEE_EMAIL
+    }).lean().exec();
+    expect(acceptedUser).toMatchObject({
+      role: "designer",
+      accountKind: "standard",
+      active: true
+    });
+    expect(await UserInvitationModel.findById("race-issuer-replacement")
+      .select("+tokenHash")
+      .lean()
+      .exec()).toMatchObject({
+      status: "accepted",
+      tokenHash: null,
+      acceptedUserId: acceptedUser!._id,
+      tokenGeneration: 2,
+      tokenIssuedById: newIssuerId,
+      tokenIssuerVersion: 9,
+      __v: 2
+    });
+    const expiresAt = new Date(Date.parse(NOW) + USER_INVITATION_TTL_MS).toISOString();
+    await expectExactAudits([
+      {
+        action: "user_invitation.resent",
+        actorId: newIssuerId,
+        entityType: "user_invitation",
+        entityId: "race-issuer-replacement",
+        newValues: {
+          invitationId: "race-issuer-replacement",
+          emailNormalized: INVITEE_EMAIL,
+          role: "designer",
+          tokenGeneration: 2,
+          expiresAt,
+          deliveryState: "queued"
+        }
+      },
+      {
+        action: "user_invitation.delivery_sent",
+        actorId: newIssuerId,
+        entityType: "user_invitation",
+        entityId: "race-issuer-replacement",
+        newValues: {
+          invitationId: "race-issuer-replacement",
+          emailNormalized: INVITEE_EMAIL,
+          role: "designer",
+          tokenGeneration: 2,
+          expiresAt,
+          deliveryState: "sent"
+        }
+      },
+      {
+        action: "user.invited_created",
+        actorId: acceptedUser!._id,
+        entityType: "user",
+        entityId: acceptedUser!._id,
+        newValues: {
+          invitationId: "race-issuer-replacement",
+          userId: acceptedUser!._id,
+          emailNormalized: INVITEE_EMAIL,
+          role: "designer"
+        }
+      },
+      {
+        action: "user_invitation.accepted",
+        actorId: acceptedUser!._id,
+        entityType: "user_invitation",
+        entityId: "race-issuer-replacement",
+        newValues: {
+          invitationId: "race-issuer-replacement",
+          acceptedUserId: acceptedUser!._id,
+          emailNormalized: INVITEE_EMAIL,
+          role: "designer"
+        }
+      }
+    ], [RAW_TOKEN, RESENT_RAW_TOKEN, ACCEPTED_PASSWORD, ACCEPTED_PASSWORD_HASH]);
   });
 
   it("S1: the unique index rejects concurrent second Super Admin repository inserts", async () => {
@@ -1200,6 +1825,7 @@ describe("user invitation Mongo replica-set races", () => {
       role: "designer",
       version: 1
     });
+    expect(await ProjectAccessGrantModel.countDocuments()).toBe(0);
     expect(await AuditEventModel.countDocuments()).toBe(0);
   });
 
@@ -1286,9 +1912,11 @@ describe("user invitation Mongo replica-set races", () => {
     const loser = settled.find(({ status }) => status === "rejected");
     expect(loser?.status).toBe("rejected");
     if (loser?.status === "rejected") {
-      expect(loser.reason).toMatchObject({
+      expectExactDomainError(loser.reason, {
+        type: ApiError,
         status: 429,
         code: "TOO_MANY_ATTEMPTS",
+        message: "Please try again later.",
         headers: { "Retry-After": "60" }
       });
     }
@@ -1302,9 +1930,41 @@ describe("user invitation Mongo replica-set races", () => {
     })).toBe(1);
     expect(await EmailCoordinationModel.countDocuments({ _id: INVITEE_EMAIL })).toBe(1);
     expect(await AuthorizationCoordinationModel.countDocuments()).toBe(1);
-    const actions = (await AuditEventModel.find().lean().exec()).map(({ action }) => action);
-    expect(actions.filter((action) => action === "user_invitation.created")).toHaveLength(1);
-    expect(actions.filter((action) => action === "user_invitation.delivery_sent")).toHaveLength(1);
+    const invitation = await UserInvitationModel.findOne({
+      emailNormalized: INVITEE_EMAIL,
+      status: "pending"
+    }).lean().exec();
+    const expiresAt = new Date(Date.parse(NOW) + USER_INVITATION_TTL_MS).toISOString();
+    await expectExactAudits([
+      {
+        action: "user_invitation.created",
+        actorId: issuerId,
+        entityType: "user_invitation",
+        entityId: invitation!._id,
+        newValues: {
+          invitationId: invitation!._id,
+          emailNormalized: INVITEE_EMAIL,
+          role: "designer",
+          tokenGeneration: 1,
+          expiresAt,
+          deliveryState: "queued"
+        }
+      },
+      {
+        action: "user_invitation.delivery_sent",
+        actorId: issuerId,
+        entityType: "user_invitation",
+        entityId: invitation!._id,
+        newValues: {
+          invitationId: invitation!._id,
+          emailNormalized: INVITEE_EMAIL,
+          role: "designer",
+          tokenGeneration: 1,
+          expiresAt,
+          deliveryState: "sent"
+        }
+      }
+    ], [CREATED_RAW_TOKEN, ACCEPTED_PASSWORD_HASH]);
   });
 
   it.each(["success", "failure"] as const)(
@@ -1367,8 +2027,62 @@ describe("user invitation Mongo replica-set races", () => {
         deliveryStatus: "sent",
         __v: 1
       });
-      const audits = await AuditEventModel.find().lean().exec();
-      expect(JSON.stringify({ invitation, audits, originalResponse })).not.toContain(
+      const initialExpiresAt = new Date(
+        Date.parse(NOW) + USER_INVITATION_TTL_MS
+      ).toISOString();
+      const resentExpiresAt = new Date(
+        Date.parse(NOW) + 61_000 + USER_INVITATION_TTL_MS
+      ).toISOString();
+      await expectExactAudits([
+        {
+          action: "user_invitation.created",
+          actorId: issuerId,
+          entityType: "user_invitation",
+          entityId: committed!._id,
+          newValues: {
+            invitationId: committed!._id,
+            emailNormalized: INVITEE_EMAIL,
+            role: "designer",
+            tokenGeneration: 1,
+            expiresAt: initialExpiresAt,
+            deliveryState: "queued"
+          }
+        },
+        {
+          action: "user_invitation.resent",
+          actorId: issuerId,
+          entityType: "user_invitation",
+          entityId: committed!._id,
+          newValues: {
+            invitationId: committed!._id,
+            emailNormalized: INVITEE_EMAIL,
+            role: "designer",
+            tokenGeneration: 2,
+            expiresAt: resentExpiresAt,
+            deliveryState: "queued"
+          }
+        },
+        {
+          action: "user_invitation.delivery_sent",
+          actorId: issuerId,
+          entityType: "user_invitation",
+          entityId: committed!._id,
+          newValues: {
+            invitationId: committed!._id,
+            emailNormalized: INVITEE_EMAIL,
+            role: "designer",
+            tokenGeneration: 2,
+            expiresAt: resentExpiresAt,
+            deliveryState: "sent"
+          }
+        }
+      ], [
+        CREATED_RAW_TOKEN,
+        RESENT_RAW_TOKEN,
+        ACCEPTED_PASSWORD_HASH,
+        "provider-secret-old-generation"
+      ]);
+      expect(JSON.stringify({ invitation, originalResponse })).not.toContain(
         "provider-secret-old-generation"
       );
       await expect(resendService.inspect(CREATED_RAW_TOKEN)).rejects.toBeInstanceOf(
@@ -1380,103 +2094,226 @@ describe("user invitation Mongo replica-set races", () => {
     }
   );
 
-  it("D2: deferred old SMTP completion cannot resurrect an accepted invitation", async () => {
-    const issuerId = "deferred-accept-super-admin";
-    await insertUser(issuerId, "super_admin", {
-      email: "deferred-accept-super-admin@example.test",
-      version: 3
-    });
-    const repository = createMongoRepository();
-    const audit = createAuditService(repository);
-    const oldDelivery = controlledMailer();
-    const creatingService = createUserInvitationService({
-      repository,
-      audit,
-      mailer: oldDelivery.mailer,
-      clock: () => new Date(NOW),
-      randomBytes: (size) => Buffer.alloc(size, 17),
-      passwordHasher: async () => ACCEPTED_PASSWORD_HASH
-    });
-    const create = creatingService.create(publicUser(issuerId), {
-      name: "Race Invitee",
-      email: INVITEE_EMAIL,
-      role: "designer",
-      mobile: "+91 90000 00000"
-    });
-    await oldDelivery.reached;
-    const service = invitationService(repository);
-    await service.accept({
-      rawToken: CREATED_RAW_TOKEN,
-      password: ACCEPTED_PASSWORD
-    });
-    oldDelivery.completion.resolve();
-    await create;
+  it.each(["success", "failure"] as const)(
+    "D2: deferred old SMTP %s cannot alter an accepted terminal invitation",
+    async (completionKind) => {
+      const issuerId = `deferred-accept-${completionKind}-super-admin`;
+      await insertUser(issuerId, "super_admin", {
+        email: `${issuerId}@example.test`,
+        version: 3
+      });
+      const repository = createMongoRepository();
+      const audit = createAuditService(repository);
+      const oldDelivery = controlledMailer();
+      const creatingService = createUserInvitationService({
+        repository,
+        audit,
+        mailer: oldDelivery.mailer,
+        clock: () => new Date(NOW),
+        randomBytes: (size) => Buffer.alloc(size, 17),
+        passwordHasher: async () => ACCEPTED_PASSWORD_HASH
+      });
+      const create = creatingService.create(publicUser(issuerId), {
+        name: "Race Invitee",
+        email: INVITEE_EMAIL,
+        role: "designer",
+        mobile: "+91 90000 00000"
+      });
+      await oldDelivery.reached;
+      const committed = await UserInvitationModel.findOne({
+        emailNormalized: INVITEE_EMAIL
+      }).lean().exec();
+      const service = invitationService(repository);
+      await service.accept({
+        rawToken: CREATED_RAW_TOKEN,
+        password: ACCEPTED_PASSWORD
+      });
+      if (completionKind === "success") oldDelivery.completion.resolve();
+      else oldDelivery.completion.reject(new Error("provider-secret-old-generation"));
+      const originalResponse = await create;
 
-    const invitation = await UserInvitationModel.findOne({
-      emailNormalized: INVITEE_EMAIL
-    }).select("+tokenHash").lean().exec();
-    expect(invitation).toMatchObject({
-      status: "accepted",
-      tokenHash: null,
-      tokenGeneration: 1,
-      deliveryStatus: "queued",
-      __v: 1
-    });
-    expect(await UserModel.countDocuments({ emailNormalized: INVITEE_EMAIL })).toBe(1);
-  });
+      const invitation = await UserInvitationModel.findById(committed!._id)
+        .select("+tokenHash")
+        .lean()
+        .exec();
+      expect(invitation).toMatchObject({
+        status: "accepted",
+        tokenHash: null,
+        tokenGeneration: 1,
+        deliveryStatus: "queued",
+        deliveryAttemptedAt: null,
+        sentAt: null,
+        deliveryFailureCode: null,
+        __v: 1
+      });
+      const users = await UserModel.find({ emailNormalized: INVITEE_EMAIL }).lean().exec();
+      expect(users).toHaveLength(1);
+      const expiresAt = new Date(Date.parse(NOW) + USER_INVITATION_TTL_MS).toISOString();
+      await expectExactAudits([
+        {
+          action: "user_invitation.created",
+          actorId: issuerId,
+          entityType: "user_invitation",
+          entityId: committed!._id,
+          newValues: {
+            invitationId: committed!._id,
+            emailNormalized: INVITEE_EMAIL,
+            role: "designer",
+            tokenGeneration: 1,
+            expiresAt,
+            deliveryState: "queued"
+          }
+        },
+        {
+          action: "user.invited_created",
+          actorId: users[0]!._id,
+          entityType: "user",
+          entityId: users[0]!._id,
+          newValues: {
+            invitationId: committed!._id,
+            userId: users[0]!._id,
+            emailNormalized: INVITEE_EMAIL,
+            role: "designer"
+          }
+        },
+        {
+          action: "user_invitation.accepted",
+          actorId: users[0]!._id,
+          entityType: "user_invitation",
+          entityId: committed!._id,
+          newValues: {
+            invitationId: committed!._id,
+            acceptedUserId: users[0]!._id,
+            emailNormalized: INVITEE_EMAIL,
+            role: "designer"
+          }
+        }
+      ], [
+        CREATED_RAW_TOKEN,
+        ACCEPTED_PASSWORD,
+        ACCEPTED_PASSWORD_HASH,
+        "provider-secret-old-generation"
+      ]);
+      expect(JSON.stringify({ invitation, originalResponse })).not.toContain(
+        "provider-secret-old-generation"
+      );
+    }
+  );
 
-  it("D3: deferred old SMTP failure cannot resurrect a revoked invitation", async () => {
-    const issuerId = "deferred-revoke-super-admin";
-    await insertUser(issuerId, "super_admin", {
-      email: "deferred-revoke-super-admin@example.test",
-      version: 3
-    });
-    const repository = createMongoRepository();
-    const audit = createAuditService(repository);
-    const oldDelivery = controlledMailer();
-    const creatingService = createUserInvitationService({
-      repository,
-      audit,
-      mailer: oldDelivery.mailer,
-      clock: () => new Date(NOW),
-      randomBytes: (size) => Buffer.alloc(size, 17),
-      passwordHasher: async () => ACCEPTED_PASSWORD_HASH
-    });
-    const create = creatingService.create(publicUser(issuerId), {
-      name: "Race Invitee",
-      email: INVITEE_EMAIL,
-      role: "designer",
-      mobile: "+91 90000 00000"
-    });
-    await oldDelivery.reached;
-    const committed = await UserInvitationModel.findOne({
-      emailNormalized: INVITEE_EMAIL
-    }).lean().exec();
-    const service = invitationService(repository);
-    await service.revoke(publicUser(issuerId), String(committed!._id), { version: 1 });
-    oldDelivery.completion.reject(new Error("provider-secret-old-generation"));
-    const originalResponse = await create;
+  it.each(["success", "failure"] as const)(
+    "D3: deferred old SMTP %s cannot alter a revoked terminal invitation",
+    async (completionKind) => {
+      const issuerId = `deferred-revoke-${completionKind}-super-admin`;
+      await insertUser(issuerId, "super_admin", {
+        email: `${issuerId}@example.test`,
+        version: 3
+      });
+      const repository = createMongoRepository();
+      const audit = createAuditService(repository);
+      const oldDelivery = controlledMailer();
+      const creatingService = createUserInvitationService({
+        repository,
+        audit,
+        mailer: oldDelivery.mailer,
+        clock: () => new Date(NOW),
+        randomBytes: (size) => Buffer.alloc(size, 17),
+        passwordHasher: async () => ACCEPTED_PASSWORD_HASH
+      });
+      const create = creatingService.create(publicUser(issuerId), {
+        name: "Race Invitee",
+        email: INVITEE_EMAIL,
+        role: "designer",
+        mobile: "+91 90000 00000"
+      });
+      await oldDelivery.reached;
+      const committed = await UserInvitationModel.findOne({
+        emailNormalized: INVITEE_EMAIL
+      }).lean().exec();
+      const service = invitationService(repository);
+      await service.revoke(publicUser(issuerId), String(committed!._id), { version: 1 });
+      if (completionKind === "success") oldDelivery.completion.resolve();
+      else oldDelivery.completion.reject(new Error("provider-secret-old-generation"));
+      const originalResponse = await create;
 
-    const invitation = await UserInvitationModel.findById(committed!._id)
-      .select("+tokenHash")
-      .lean()
-      .exec();
-    expect(invitation).toMatchObject({
-      status: "revoked",
-      tokenHash: null,
-      tokenGeneration: 1,
-      deliveryStatus: "queued",
-      __v: 1
-    });
-    const audits = await AuditEventModel.find().lean().exec();
-    expect(JSON.stringify({ invitation, audits, originalResponse })).not.toContain(
-      "provider-secret-old-generation"
+      const invitation = await UserInvitationModel.findById(committed!._id)
+        .select("+tokenHash")
+        .lean()
+        .exec();
+      expect(invitation).toMatchObject({
+        status: "revoked",
+        tokenHash: null,
+        tokenGeneration: 1,
+        deliveryStatus: "queued",
+        deliveryAttemptedAt: null,
+        sentAt: null,
+        deliveryFailureCode: null,
+        __v: 1
+      });
+      expect(await UserModel.countDocuments({ emailNormalized: INVITEE_EMAIL })).toBe(0);
+      const expiresAt = new Date(Date.parse(NOW) + USER_INVITATION_TTL_MS).toISOString();
+      await expectExactAudits([
+        {
+          action: "user_invitation.created",
+          actorId: issuerId,
+          entityType: "user_invitation",
+          entityId: committed!._id,
+          newValues: {
+            invitationId: committed!._id,
+            emailNormalized: INVITEE_EMAIL,
+            role: "designer",
+            tokenGeneration: 1,
+            expiresAt,
+            deliveryState: "queued"
+          }
+        },
+        {
+          action: "user_invitation.revoked",
+          actorId: issuerId,
+          entityType: "user_invitation",
+          entityId: committed!._id,
+          newValues: {
+            invitationId: committed!._id,
+            emailNormalized: INVITEE_EMAIL,
+            role: "designer",
+            tokenGeneration: 1,
+            expiresAt
+          }
+        }
+      ], [
+        CREATED_RAW_TOKEN,
+        ACCEPTED_PASSWORD_HASH,
+        "provider-secret-old-generation"
+      ]);
+      expect(JSON.stringify({ invitation, originalResponse })).not.toContain(
+        "provider-secret-old-generation"
+      );
+    }
+  );
+
+  it("R1: two signup callers collide on first EmailCoordination use without duplicate effects", async () => {
+    const gate = gateFirstCoordinationByCaller("coordinateClientEmail", 2);
+    const services = gate.repositories.map((repository, index) =>
+      createAuthService(
+        repository,
+        {
+          jwtSecret: `task-eight-r1-caller-${index}-secret-at-least-32-characters`,
+          jwtExpiresInSeconds: 900
+        },
+        {
+          auditService: createAuditService(repository),
+          clock: () => new Date(NOW)
+        }
+      )
     );
-  });
+    const signups = services.map((service, index) => service.signupClient({
+      name: `R1 Client ${index}`,
+      email: INVITEE_EMAIL,
+      mobile: "+91 90000 00000",
+      address: "Pune",
+      password: ACCEPTED_PASSWORD
+    }, { remoteAddress: `203.0.113.${20 + index}` }));
 
-  it("R1: a real first-use EmailCoordination E11000 retries the whole transaction", async () => {
-    const repository = createMongoRepository();
-    let attempts = 0;
+    await gate.reached;
     await replica.admin().command({
       configureFailPoint: "failCommand",
       mode: { times: 1 },
@@ -1489,11 +2326,12 @@ describe("user invitation Mongo replica-set races", () => {
         }
       }
     });
+    let settled: PromiseSettledResult<Awaited<(typeof signups)[number]>>[];
     try {
-      await repository.runInTransaction(async (transaction) => {
-        attempts += 1;
-        await transaction.coordinateClientEmail(INVITEE_EMAIL);
-      });
+      gate.release(0);
+      await signups[0];
+      gate.release(1);
+      settled = await Promise.allSettled(signups);
     } finally {
       await replica.admin().command({
         configureFailPoint: "failCommand",
@@ -1501,13 +2339,76 @@ describe("user invitation Mongo replica-set races", () => {
       });
     }
 
-    expect(attempts).toBe(2);
-    expect(await EmailCoordinationModel.countDocuments({ _id: INVITEE_EMAIL })).toBe(1);
+    const fulfilled = settled.filter(
+      (result): result is PromiseFulfilledResult<Awaited<(typeof signups)[number]>> =>
+        result.status === "fulfilled"
+    );
+    const rejected = settled.filter(
+      (result): result is PromiseRejectedResult => result.status === "rejected"
+    );
+    expect(fulfilled).toHaveLength(1);
+    expect(fulfilled[0]!.value.user).toMatchObject({
+      email: INVITEE_EMAIL,
+      role: "client"
+    });
+    expect(rejected).toHaveLength(1);
+    expect(rejected[0]!.reason).toBeInstanceOf(AccountExistsError);
+    expect(rejected[0]!.reason).toMatchObject({
+      name: "AccountExistsError",
+      message: "An account already exists for this email."
+    });
+    expect(String(rejected[0]!.reason)).not.toMatch(
+      /E11000|duplicate key|Mongo(?:Server|DB)?|write conflict|transaction/i
+    );
+    expect([...gate.attempts].sort()).toEqual([1, 2]);
+    const coordination = await EmailCoordinationModel.find({
+      _id: INVITEE_EMAIL
+    }).lean().exec();
+    expect(coordination).toEqual([expect.objectContaining({
+      _id: INVITEE_EMAIL,
+      revision: 1
+    })]);
+    const users = await UserModel.find({ emailNormalized: INVITEE_EMAIL }).lean().exec();
+    expect(users).toHaveLength(1);
+    expect(await ProjectAccessGrantModel.countDocuments()).toBe(0);
+    await expectExactAudits([{
+      action: "client_signed_up",
+      actorId: users[0]!._id,
+      entityType: "user",
+      entityId: users[0]!._id,
+      newValues: { role: "client", email: INVITEE_EMAIL }
+    }], [ACCEPTED_PASSWORD, ACCEPTED_PASSWORD_HASH]);
   });
 
-  it("R2: a real first-use AuthorizationCoordination E11000 retries the whole transaction", async () => {
-    const repository = createMongoRepository();
-    let attempts = 0;
+  it("R2: two invitation callers collide on first AuthorizationCoordination use without duplicate effects", async () => {
+    const issuerId = "r2-collision-super-admin";
+    await insertUser(issuerId, "super_admin", {
+      email: "r2-collision-super-admin@example.test",
+      version: 4
+    });
+    const gate = gateFirstCoordinationByCaller("coordinateAuthorizationMutation", 2);
+    const emails = ["r2-first@example.test", "r2-second@example.test"];
+    const services = gate.repositories.map((repository, index) =>
+      createUserInvitationService({
+        repository,
+        audit: createAuditService(repository),
+        mailer: immediateMailer(),
+        clock: () => new Date(NOW),
+        randomBytes: (size) => Buffer.alloc(size, 61 + index),
+        passwordHasher: async () => ACCEPTED_PASSWORD_HASH
+      })
+    );
+    const creates = services.map((service, index) => service.create(
+      publicUser(issuerId),
+      {
+        name: `R2 Invitee ${index}`,
+        email: emails[index]!,
+        role: "designer",
+        mobile: "+91 90000 00000"
+      }
+    ));
+
+    await gate.reached;
     await replica.admin().command({
       configureFailPoint: "failCommand",
       mode: { times: 1 },
@@ -1520,11 +2421,12 @@ describe("user invitation Mongo replica-set races", () => {
         }
       }
     });
+    let settled: PromiseSettledResult<Awaited<(typeof creates)[number]>>[];
     try {
-      await repository.runInTransaction(async (transaction) => {
-        attempts += 1;
-        await transaction.coordinateAuthorizationMutation();
-      });
+      gate.release(0);
+      await creates[0];
+      gate.release(1);
+      settled = await Promise.allSettled(creates);
     } finally {
       await replica.admin().command({
         configureFailPoint: "failCommand",
@@ -1532,8 +2434,49 @@ describe("user invitation Mongo replica-set races", () => {
       });
     }
 
-    expect(attempts).toBe(2);
-    expect(await AuthorizationCoordinationModel.countDocuments()).toBe(1);
+    expect(settled.every(({ status }) => status === "fulfilled")).toBe(true);
+    expect([...gate.attempts].sort()).toEqual([1, 2]);
+    expect(await AuthorizationCoordinationModel.find().lean().exec()).toEqual([
+      expect.objectContaining({ _id: "authorization", revision: 2 })
+    ]);
+    expect(await UserModel.countDocuments({ role: "super_admin" })).toBe(1);
+    expect(await UserInvitationModel.countDocuments({ status: "pending" })).toBe(2);
+    const invitations = await UserInvitationModel.find().lean().exec();
+    expect(invitations.map(({ emailNormalized }) => emailNormalized).sort()).toEqual(emails);
+    const expiresAt = new Date(Date.parse(NOW) + USER_INVITATION_TTL_MS).toISOString();
+    await expectExactAudits(invitations.flatMap((invitation) => [
+      {
+        action: "user_invitation.created",
+        actorId: issuerId,
+        entityType: "user_invitation",
+        entityId: invitation._id,
+        newValues: {
+          invitationId: invitation._id,
+          emailNormalized: invitation.emailNormalized,
+          role: "designer",
+          tokenGeneration: 1,
+          expiresAt,
+          deliveryState: "queued"
+        }
+      },
+      {
+        action: "user_invitation.delivery_sent",
+        actorId: issuerId,
+        entityType: "user_invitation",
+        entityId: invitation._id,
+        newValues: {
+          invitationId: invitation._id,
+          emailNormalized: invitation.emailNormalized,
+          role: "designer",
+          tokenGeneration: 1,
+          expiresAt,
+          deliveryState: "sent"
+        }
+      }
+    ]), [ACCEPTED_PASSWORD_HASH]);
+    expect(JSON.stringify(settled)).not.toMatch(
+      /E11000|duplicate key|Mongo(?:Server|DB)?|write conflict|transaction/i
+    );
   });
 
   it("F1: a forced create audit failure rolls back invitation state and delivery", async () => {
@@ -1655,7 +2598,9 @@ describe("user invitation Mongo replica-set races", () => {
       email: "presentation-super-admin@example.test"
     });
     const fixtures = [
-      ["presentation-pending", "pending", "2026-08-24T11:59:00.000Z", 51],
+      ["presentation-pending-z", "pending", "2026-08-24T11:59:00.000Z", 51],
+      ["presentation-pending-a", "pending", "2026-08-24T11:59:00.000Z", 57],
+      ["presentation-pending-old", "pending", "2026-08-24T11:54:00.000Z", 58],
       ["presentation-failed", "delivery_failed", "2026-08-24T11:58:00.000Z", 52],
       ["presentation-expired", "expired", "2026-08-23T11:59:59.000Z", 53],
       ["presentation-accepted", "accepted", "2026-08-24T11:57:00.000Z", 54],
@@ -1677,11 +2622,40 @@ describe("user invitation Mongo replica-set races", () => {
 
     const omitted = await service.list(actor, {}, pagination);
     expect(omitted.items.map(({ id }) => id)).toEqual([
-      "presentation-pending",
+      "presentation-pending-z",
+      "presentation-pending-a",
       "presentation-failed",
+      "presentation-pending-old",
       "presentation-expired"
     ]);
-    for (const [id, presentation] of fixtures) {
+    const expectedPendingOrder = [
+      "presentation-pending-z",
+      "presentation-pending-a",
+      "presentation-pending-old"
+    ];
+    const pendingFirstRead = await service.list(
+      actor,
+      { status: "pending" },
+      pagination
+    );
+    const pendingSecondRead = await service.list(
+      actor,
+      { status: "pending" },
+      pagination
+    );
+    expect(pendingFirstRead.items.map(({ id }) => id)).toEqual(expectedPendingOrder);
+    expect(pendingSecondRead.items.map(({ id }) => id)).toEqual(expectedPendingOrder);
+    const pendingPages = await Promise.all([0, 1, 2].map((offset) =>
+      service.list(actor, { status: "pending" }, { limit: 1, offset })
+    ));
+    expect(pendingPages.flatMap(({ items }) => items.map(({ id }) => id))).toEqual(
+      expectedPendingOrder
+    );
+    expect(pendingPages.map(({ total }) => total)).toEqual([3, 3, 3]);
+
+    for (const [id, presentation] of fixtures.filter(
+      (fixture) => fixture[1] !== "pending"
+    )) {
       const filtered = await service.list(actor, { status: presentation }, pagination);
       expect(filtered.items.map((item) => [item.id, item.status])).toEqual([
         [id, presentation]
@@ -1709,6 +2683,30 @@ describe("user invitation Mongo replica-set races", () => {
         /tokenHash|rawToken|passwordHash|acceptedUserId|deliveryFailureCode|tokenIssuer/i
       );
     }
+    for (const item of pendingFirstRead.items) {
+      expect(Object.keys(item).sort()).toEqual([
+        "availableActions",
+        "createdAt",
+        "currentLinkAvailable",
+        "deliveryAttemptedAt",
+        "deliveryStatus",
+        "email",
+        "expiresAt",
+        "id",
+        "invitedBy",
+        "issuedAt",
+        "mobile",
+        "name",
+        "role",
+        "sentAt",
+        "status",
+        "updatedAt",
+        "version"
+      ]);
+    }
+    expect(JSON.stringify({ pendingFirstRead, pendingSecondRead, pendingPages })).not.toMatch(
+      /tokenHash|rawToken|passwordHash|acceptedUserId|deliveryFailureCode|tokenIssuer/i
+    );
   });
 
   it("V2: accepted secrets stay absent from Mongo, DTOs, errors, and captured output", async () => {
@@ -1722,6 +2720,7 @@ describe("user invitation Mongo replica-set races", () => {
     });
     const stdout: string[] = [];
     const stderr: string[] = [];
+    const consoleOutput: string[] = [];
     const stdoutSpy = vi.spyOn(process.stdout, "write").mockImplementation(((chunk: unknown) => {
       stdout.push(String(chunk));
       return true;
@@ -1730,11 +2729,24 @@ describe("user invitation Mongo replica-set races", () => {
       stderr.push(String(chunk));
       return true;
     }) as typeof process.stderr.write);
+    const captureConsole = (...args: unknown[]) => {
+      consoleOutput.push(args.map((argument) => {
+        if (argument instanceof Error) {
+          return `${argument.name}: ${argument.message} ${JSON.stringify(argument)}`;
+        }
+        if (typeof argument === "string") return argument;
+        try {
+          return JSON.stringify(argument);
+        } catch {
+          return String(argument);
+        }
+      }).join(" "));
+    };
     const consoleSpies = [
-      vi.spyOn(console, "log").mockImplementation(() => undefined),
-      vi.spyOn(console, "info").mockImplementation(() => undefined),
-      vi.spyOn(console, "warn").mockImplementation(() => undefined),
-      vi.spyOn(console, "error").mockImplementation(() => undefined)
+      vi.spyOn(console, "log").mockImplementation(captureConsole),
+      vi.spyOn(console, "info").mockImplementation(captureConsole),
+      vi.spyOn(console, "warn").mockImplementation(captureConsole),
+      vi.spyOn(console, "error").mockImplementation(captureConsole)
     ];
     const service = invitationService();
     let accepted: { accepted: true } | undefined;
@@ -1768,15 +2780,26 @@ describe("user invitation Mongo replica-set races", () => {
       replayError,
       persisted,
       stdout,
-      stderr
+      stderr,
+      consoleOutput
     });
     expect(accepted).toEqual({ accepted: true });
     expect(replayError).toBeInstanceOf(InvitationUnavailableError);
     expect(exposed).not.toContain(RAW_TOKEN);
     expect(exposed).not.toContain(ACCEPTED_PASSWORD);
-    expect(JSON.stringify({ accepted, replayError, stdout, stderr })).not.toContain(
-      ACCEPTED_PASSWORD_HASH
+    const capturedOutput = stdout.join("") + stderr.join("") + consoleOutput.join("");
+    expect(JSON.stringify({
+      accepted,
+      replayError,
+      stdout,
+      stderr,
+      consoleOutput
+    })).not.toContain(ACCEPTED_PASSWORD_HASH);
+    expect(capturedOutput).not.toContain(RAW_TOKEN);
+    expect(capturedOutput).not.toContain(ACCEPTED_PASSWORD);
+    expect(capturedOutput).not.toContain(ACCEPTED_PASSWORD_HASH);
+    expect(capturedOutput).not.toMatch(
+      /token|password|secret|E11000|duplicate key|write conflict|transaction aborted/i
     );
-    expect(stdout.join("") + stderr.join("")).not.toMatch(/token|password|secret/i);
   });
 });
