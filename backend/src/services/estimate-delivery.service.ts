@@ -349,8 +349,6 @@ export function createEstimateDeliveryService(input: {
 function initialRoundFilter(round: DeliveryRoundRow) {
   return {
     _id: round._id,
-    version: round.version,
-    status: "pending" as const,
     deliveryStatus: "queued" as const,
     deliveryAttemptGeneration: 1,
     deliveryAttemptCount: 0

@@ -404,10 +404,8 @@ describe("initial Estimate PDF delivery", () => {
 
     expect(harness.findOneAndUpdate).toHaveBeenCalledOnce();
     const [leaseFilter, leaseUpdate] = harness.findOneAndUpdate.mock.calls[0]!;
-    expect(leaseFilter).toMatchObject({
+    expect(leaseFilter).toEqual({
       _id: ROUND_ID,
-      version: 1,
-      status: "pending",
       deliveryStatus: "queued",
       deliveryAttemptGeneration: 1,
       deliveryAttemptCount: 0

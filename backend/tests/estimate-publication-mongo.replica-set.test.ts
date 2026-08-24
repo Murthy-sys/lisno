@@ -426,6 +426,167 @@ describe("Estimate publication and delivery on a Mongo replica set", () => {
     ]);
   });
 
+  it("completes initial delivery when the Client decides before the first lease is acquired", async () => {
+    const fixture = await seedPublication();
+    const storage = createReviewStorage();
+    const mail = createSequencedMailer();
+    const initialDeliveryReached = deferred<string>();
+    const releaseInitialDelivery = deferred<void>();
+    let harness!: ReturnType<typeof createHarness>;
+    harness = createHarness({
+      storage: storage.storage,
+      mailer: mail.mailer,
+      now: () => new Date(BASE_TIME),
+      deliverInitial: async (roundId) => {
+        initialDeliveryReached.resolve(roundId);
+        await releaseInitialDelivery.promise;
+        return harness.delivery.deliverInitial(roundId, ESTIMATOR.id);
+      }
+    });
+    const publication = harness.publication.publishEstimateToClient(
+      publicationInput(fixture)
+    );
+    const roundId = await initialDeliveryReached.promise;
+    const publishedRound = await EstimateClientReviewRoundModel.findById(roundId)
+      .lean();
+    const decision = createEstimateDecisionService({
+      audit: harness.audit,
+      reviews: harness.reviews,
+      estimateDesigns: {
+        async approvalReadinessForDecision() {
+          throw new Error("Request changes does not inspect approval readiness.");
+        }
+      },
+      now: () => new Date(BASE_TIME)
+    });
+
+    await decision.decide({
+      estimateId: fixture.estimateId,
+      round: {
+        id: roundId,
+        expectedVersion: publishedRound!.version
+      },
+      decision: "request_changes",
+      note: "Please revise.",
+      context: { source: "client_portal", actor: CLIENT, proof: null }
+    });
+    expect(await EstimateClientReviewRoundModel.findById(roundId).lean())
+      .toMatchObject({
+        status: "changes_requested",
+        deliveryStatus: "queued",
+        deliveryAttemptGeneration: 1,
+        deliveryAttemptCount: 0
+      });
+
+    releaseInitialDelivery.resolve();
+    const result = await publication;
+    const completedRound = await EstimateClientReviewRoundModel.findById(roundId)
+      .select("+pdfStorageReference")
+      .lean();
+
+    expect(result.clientReview).toMatchObject({
+      id: roundId,
+      status: "changes_requested",
+      deliveryStatus: "sent",
+      deliveryAttemptCount: 1
+    });
+    expect(completedRound).toMatchObject({
+      status: "changes_requested",
+      deliveryStatus: "sent",
+      deliveryAttemptGeneration: 1,
+      deliveryAttemptCount: 1,
+      deliveryLeaseExpiresAt: null
+    });
+    expect(mail.calls).toHaveLength(1);
+    expect(mail.attachments).toEqual([
+      storage.objects.get(String(completedRound!.pdfStorageReference))
+    ]);
+    expect(await AuditEventModel.countDocuments({
+      action: "estimate_email_delivery_sent"
+    })).toBe(1);
+  });
+
+  it("marks initial delivery disabled when the Client decides before the status update", async () => {
+    const fixture = await seedPublication();
+    const storage = createReviewStorage();
+    const initialDeliveryReached = deferred<string>();
+    const releaseInitialDelivery = deferred<void>();
+    let harness!: ReturnType<typeof createHarness>;
+    harness = createHarness({
+      storage: storage.storage,
+      mailer: { deliveryKind: "disabled" },
+      now: () => new Date(BASE_TIME),
+      deliverInitial: async (roundId) => {
+        initialDeliveryReached.resolve(roundId);
+        await releaseInitialDelivery.promise;
+        return harness.delivery.deliverInitial(roundId, ESTIMATOR.id);
+      }
+    });
+    const publication = harness.publication.publishEstimateToClient(
+      publicationInput(fixture)
+    );
+    const roundId = await initialDeliveryReached.promise;
+    const publishedRound = await EstimateClientReviewRoundModel.findById(roundId)
+      .lean();
+    const decision = createEstimateDecisionService({
+      audit: harness.audit,
+      reviews: harness.reviews,
+      estimateDesigns: {
+        async approvalReadinessForDecision() {
+          throw new Error("Request changes does not inspect approval readiness.");
+        }
+      },
+      now: () => new Date(BASE_TIME)
+    });
+
+    await decision.decide({
+      estimateId: fixture.estimateId,
+      round: {
+        id: roundId,
+        expectedVersion: publishedRound!.version
+      },
+      decision: "request_changes",
+      note: "Please revise.",
+      context: { source: "client_portal", actor: CLIENT, proof: null }
+    });
+    expect(await EstimateClientReviewRoundModel.findById(roundId).lean())
+      .toMatchObject({
+        status: "changes_requested",
+        deliveryStatus: "queued",
+        deliveryAttemptGeneration: 1,
+        deliveryAttemptCount: 0
+      });
+
+    releaseInitialDelivery.resolve();
+    const result = await publication;
+    const completedRound = await EstimateClientReviewRoundModel.findById(roundId)
+      .lean();
+
+    expect(result.clientReview).toMatchObject({
+      id: roundId,
+      status: "changes_requested",
+      deliveryStatus: "disabled",
+      deliveryAttemptCount: 0
+    });
+    expect(completedRound).toMatchObject({
+      status: "changes_requested",
+      deliveryStatus: "disabled",
+      deliveryAttemptGeneration: 1,
+      deliveryAttemptCount: 0,
+      deliveryAttemptedAt: null,
+      deliveryLeaseExpiresAt: null,
+      deliveredAt: null,
+      deliveryFailureCode: null
+    });
+    expect(await AuditEventModel.countDocuments({
+      action: { $in: [
+        "estimate_email_delivery_sent",
+        "estimate_email_delivery_failed",
+        "estimate_email_retry_requested"
+      ] }
+    })).toBe(0);
+  });
+
   it("rejects stale and above-threshold draft publication while allowing the exact approved send once", async () => {
     const fixture = await seedPublication({
       estimateStatus: "ready_for_client",
