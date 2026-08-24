@@ -977,6 +977,46 @@ describe("publication cleanup and idempotency", () => {
     expect(harness.deliverInitial).not.toHaveBeenCalled();
   });
 
+  it("retains a possibly committed snapshot when the callback completed but both ambiguity probes return null", async () => {
+    const harness = setupHarness({
+      transactionErrorAfterCallback: Object.assign(
+        new Error("unknown commit result: raw-driver-secret"),
+        { errorLabels: ["UnknownTransactionCommitResult"] }
+      )
+    });
+
+    const outcome = harness.publication.publishEstimateToClient(publicationInput());
+
+    await expect(outcome).rejects.toMatchObject({
+      status: 500,
+      code: "ESTIMATE_PUBLICATION_RECOVERY_FAILED",
+      message: "Estimate publication state could not be confirmed safely."
+    });
+    await expect(outcome).rejects.not.toThrow(/raw-driver-secret/i);
+    expect(harness.fileStorage.delete).not.toHaveBeenCalled();
+    expect(harness.objects.get("new-snapshot-1.pdf")).toEqual(PDF_BYTES);
+    expect(harness.deliverInitial).not.toHaveBeenCalled();
+  });
+
+  it("cleans a known precommit orphan while bounding an unknown driver failure", async () => {
+    const harness = setupHarness({
+      transactionError: new Error("transaction start failed: raw-driver-secret")
+    });
+
+    const outcome = harness.publication.publishEstimateToClient(publicationInput());
+
+    await expect(outcome).rejects.toMatchObject({
+      status: 500,
+      code: "ESTIMATE_PUBLICATION_RECOVERY_FAILED",
+      message: "Estimate publication state could not be confirmed safely."
+    });
+    await expect(outcome).rejects.not.toThrow(/raw-driver-secret/i);
+    expect(harness.fileStorage.delete).toHaveBeenCalledOnce();
+    expect(harness.fileStorage.delete).toHaveBeenCalledWith("new-snapshot-1.pdf");
+    expect(harness.objects.has("new-snapshot-1.pdf")).toBe(false);
+    expect(harness.deliverInitial).not.toHaveBeenCalled();
+  });
+
   it("deletes the losing snapshot and returns the matching committed round without a second initial delivery", async () => {
     const duplicate = Object.assign(new Error("E11000 duplicate key"), { code: 11000 });
     const committedRound = roundDocument({

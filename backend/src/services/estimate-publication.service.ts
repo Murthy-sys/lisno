@@ -165,8 +165,10 @@ export function createEstimatePublicationService(input: {
       });
 
       let committedRound: RoundRow;
+      let transactionBodyCompleted = false;
       try {
         committedRound = await inMongoTransaction(async (session) => {
+          transactionBodyCompleted = false;
           const currentEstimate = await findEstimateForPublication(
             publication,
             session
@@ -326,6 +328,7 @@ export function createEstimatePublicationService(input: {
           }, session);
 
           const createdObject = createdRound.toObject() as unknown as RoundRow;
+          transactionBodyCompleted = true;
           return {
             ...createdObject,
             _id: String(createdRound._id)
@@ -350,9 +353,11 @@ export function createEstimatePublicationService(input: {
           };
         } else {
           retainedPdfBytes = null;
+          if (transactionBodyCompleted) publicationRecoveryFailed();
           await input.storage.deleteQuietly(stored.storageReference);
           if (isDuplicateKeyError(error)) publicationConflict();
-          throw error;
+          if (error instanceof ApiError) throw error;
+          publicationRecoveryFailed();
         }
       }
 
