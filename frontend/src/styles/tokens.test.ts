@@ -96,6 +96,26 @@ function ruleBodies(css: string, prelude: string) {
   });
 }
 
+function declarationValue(css: string, prelude: string, property: string) {
+  const bodies = ruleBodies(css, prelude);
+  expect(bodies).toHaveLength(1);
+
+  const escapedProperty = property.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const declaration = bodies[0].match(new RegExp(`(?:^|;)\\s*${escapedProperty}\\s*:\\s*([^;]+)`, "m"));
+  expect(declaration, `${prelude} must declare ${property}`).not.toBeNull();
+  return declaration![1].trim();
+}
+
+function literalHexColor(value: string) {
+  const match = value.match(/#[\da-f]{3}(?:[\da-f]{3})?\b/i);
+  if (!match) throw new Error(`${value} must contain a literal hex color`);
+
+  const channels = match[0].slice(1);
+  return channels.length === 3
+    ? `#${[...channels].map((channel) => `${channel}${channel}`).join("")}`
+    : match[0].toLowerCase();
+}
+
 const expectedColors = {
   "--color-brand-midnight": "#111a39",
   "--color-brand-midnight-raised": "#192448",
@@ -205,6 +225,35 @@ describe("semantic UI foundation", () => {
     ]) {
       expect(contrast(muted, colorToken(tokens, background))).toBeGreaterThanOrEqual(4.5);
     }
+  });
+
+  it("keeps invitation summary labels readable at normal-text contrast", () => {
+    const invitations = readStyle("invitations.css");
+    const summaryBackground = literalHexColor(declarationValue(invitations, ".invitation-summary", "background"));
+    const summaryLabel = literalHexColor(declarationValue(invitations, ".invitation-summary dt", "color"));
+
+    expect(contrast(summaryLabel, summaryBackground)).toBeGreaterThanOrEqual(4.5);
+  });
+
+  it("keeps the invitation password input boundary visible in every state", () => {
+    const invitations = readStyle("invitations.css");
+    const inputBackground = literalHexColor(
+      declarationValue(invitations, ".invitation-password-control input", "background")
+    );
+    const defaultBorder = literalHexColor(
+      declarationValue(invitations, ".invitation-password-control input", "border")
+    );
+    const focusBorder = literalHexColor(
+      declarationValue(invitations, ".invitation-password-control input:focus-visible", "border-color")
+    );
+    const invalidBorder = literalHexColor(
+      declarationValue(invitations, '.invitation-password-control input[aria-invalid="true"]', "border-color")
+    );
+
+    const defaultContrast = contrast(defaultBorder, inputBackground);
+    expect(defaultContrast).toBeGreaterThanOrEqual(3);
+    expect(contrast(focusBorder, inputBackground)).toBeGreaterThan(defaultContrast);
+    expect(contrast(invalidBorder, inputBackground)).toBeGreaterThan(defaultContrast);
   });
 
   it("keeps the focus indicator distinguishable on every foundation surface", () => {

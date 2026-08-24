@@ -51,7 +51,7 @@
   }
 
   .invitation-summary dt {
-    color: #777e91;
+    color: #666f83;
     font-size: .8rem;
     font-weight: 800;
   }
@@ -106,7 +106,7 @@
     width: 100%;
     min-height: 2.9rem;
     padding: .7rem 3.25rem .7rem .8rem;
-    border: 1px solid #cbc6dd;
+    border: 1px solid #918aa3;
     border-radius: .7rem;
     background: #fff;
     color: #1e2433;
