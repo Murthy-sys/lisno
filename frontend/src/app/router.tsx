@@ -39,6 +39,8 @@ import { LeadEstimateWorkspace } from "../features/leads/LeadEstimateWorkspace";
 import { UserDirectoryPage } from "../features/admin/UserDirectoryPage";
 import { AdminProjectsPage } from "../features/admin/AdminProjectsPage";
 import { AdminProjectDetailPage } from "../features/admin/AdminProjectDetailPage";
+import { ClientResponseInboxPage } from "../features/admin/ClientResponseInboxPage";
+import { ClientResponseTaskDetailPage } from "../features/admin/ClientResponseTaskDetailPage";
 import { AccessRequestInboxPage } from "../features/access/AccessRequestInboxPage";
 import { MyAccessRequestsPage } from "../features/access/MyAccessRequestsPage";
 import { NeutralHomePage } from "../features/home/NeutralHomePage";
@@ -282,6 +284,8 @@ const stagedElements = {
   "/admin/projects": <AdminProjectsPage />,
   "/admin/projects/:projectId": <AdminProjectDetailPage />,
   "/admin/users": <UserDirectoryPage />,
+  "/admin/client-responses": <ClientResponseInboxPage />,
+  "/admin/client-responses/:roundId": <ClientResponseTaskDetailPage />,
   "/admin/access-requests": <AccessRequestInboxPage />,
   "/access-requests/mine": <MyAccessRequestsPage />
 } as const satisfies Partial<Record<RegisteredFrontendPath, ReactNode>>;
@@ -407,6 +411,20 @@ export function AppRoutes() {
         <Route
           path="/admin/users"
           element={registeredElement("/admin/users", stagedElements["/admin/users"])}
+        />
+        <Route
+          path="/admin/client-responses"
+          element={registeredElement(
+            "/admin/client-responses",
+            stagedElements["/admin/client-responses"]
+          )}
+        />
+        <Route
+          path="/admin/client-responses/:roundId"
+          element={registeredElement(
+            "/admin/client-responses/:roundId",
+            stagedElements["/admin/client-responses/:roundId"]
+          )}
         />
         <Route
           path="/admin/access-requests"

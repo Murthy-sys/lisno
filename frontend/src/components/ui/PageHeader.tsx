@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import type { ReactNode, Ref } from "react";
 
 export interface PageHeaderProps {
   id: string;
@@ -8,6 +8,8 @@ export interface PageHeaderProps {
   breadcrumb?: ReactNode;
   metadata?: ReactNode;
   actions?: ReactNode;
+  headingRef?: Ref<HTMLHeadingElement>;
+  headingTabIndex?: number;
 }
 
 export function PageHeader({
@@ -17,14 +19,23 @@ export function PageHeader({
   description,
   breadcrumb,
   metadata,
-  actions
+  actions,
+  headingRef,
+  headingTabIndex
 }: PageHeaderProps) {
   return (
     <header className="ui-page-header" aria-labelledby={id}>
       {breadcrumb ? <div className="ui-page-header__breadcrumb">{breadcrumb}</div> : null}
       <div className="ui-page-header__content">
         {eyebrow ? <div className="ui-page-header__eyebrow">{eyebrow}</div> : null}
-        <h1 className="ui-page-header__title" id={id}>{title}</h1>
+        <h1
+          ref={headingRef}
+          className="ui-page-header__title"
+          id={id}
+          tabIndex={headingTabIndex}
+        >
+          {title}
+        </h1>
         {description ? <p className="ui-page-header__description">{description}</p> : null}
         {metadata ? <div className="ui-page-header__metadata">{metadata}</div> : null}
       </div>

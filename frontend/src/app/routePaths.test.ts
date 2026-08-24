@@ -72,4 +72,36 @@ describe("safeReturnPath", () => {
       expect(safeReturnPath("client", candidate)).toBe("/client");
     }
   );
+
+  it.each([
+    ["admin", "/admin/client-responses"],
+    ["admin", "/admin/client-responses/round-1?from=project#decision"],
+    ["super_admin", "/admin/client-responses"],
+    ["super_admin", "/admin/client-responses/round%20one"]
+  ] as const)(
+    "allows an authenticated %s to return to the exact Client response boundary",
+    (role, candidate) => {
+      expect(safeReturnPath(role, candidate)).toBe(candidate);
+    }
+  );
+
+  it.each(ROLE_CODES.filter((role) => role !== "admin" && role !== "super_admin"))(
+    "rejects the Client response return boundary for %s",
+    (role) => {
+      expect(safeReturnPath(role, "/admin/client-responses/round-1")).toBe(
+        roleHomePath(role)
+      );
+    }
+  );
+
+  it.each([
+    ["admin", "/admin/client-responses-archive"],
+    ["admin", "/admin/client-responses/%2e%2e/projects/project-1"],
+    ["admin", "/admin/client-responses/%252e%252e/projects/project-1"],
+    ["super_admin", "/admin/client-responses/%2e%2e/users"],
+    ["super_admin", "//evil.example/admin/client-responses"],
+    ["super_admin", "/admin/client-responses\\round-1"]
+  ] as const)("rejects boundary confusion or traversal for %s: %s", (role, candidate) => {
+    expect(safeReturnPath(role, candidate)).toBe(roleHomePath(role));
+  });
 });

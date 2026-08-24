@@ -15,6 +15,16 @@ function label(value: string) {
   return value.split("_").map((part) => part[0]?.toUpperCase() + part.slice(1)).join(" ");
 }
 
+function deliveryLabel(value: string) {
+  return value === "sent"
+    ? "Email sent"
+    : value === "failed"
+      ? "Email delivery failed"
+      : value === "disabled"
+        ? "Email unavailable"
+        : "Email queued";
+}
+
 function errorMessage(error: unknown) {
   return error instanceof ApiError ? error.message : "We couldn't load this project.";
 }
@@ -53,6 +63,39 @@ export function AdminProjectDetailPage() {
           <section><h2>Estimate</h2>{project.estimate ? <dl><div><dt>Status</dt><dd>{label(project.estimate.status)}</dd></div><div><dt>Value</dt><dd>{money.format(project.estimate.total)}</dd></div></dl> : <p>No estimate yet</p>}</section>
         </div>
       </Surface>
+      {project.estimate?.clientReview ? (
+        <Surface
+          as="section"
+          className="admin-project-detail__surface admin-project-detail__client-response"
+          aria-label="Client response"
+        >
+          <div>
+            <h2>Client response</h2>
+            <p>
+              <StatusBadge
+                tone={
+                  project.estimate.clientReview.status === "approved"
+                    ? "success"
+                    : project.estimate.clientReview.status === "changes_requested"
+                      ? "danger"
+                      : "warning"
+                }
+                label={label(project.estimate.clientReview.status)}
+              />
+            </p>
+            <p>{deliveryLabel(project.estimate.clientReview.deliveryStatus)}</p>
+          </div>
+          {project.estimate.hasPendingClientResponseTask ? (
+            <Link
+              to={`/admin/client-responses/${encodeURIComponent(project.estimate.clientReview.id)}`}
+            >
+              Review Client response
+            </Link>
+          ) : (
+            <p>Read-only Client response history</p>
+          )}
+        </Surface>
+      ) : null}
     </section>
   );
 }

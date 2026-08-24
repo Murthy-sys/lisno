@@ -6,6 +6,7 @@ import "./styles/index.css";
 import "./styles/role-themes.css";
 import "./styles/access-administration.css";
 import "./styles/invitations.css";
+import "./styles/client-responses.css";
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>

@@ -6,6 +6,7 @@ import {
   House,
   KeyRound,
   LayoutDashboard,
+  MailCheck,
   UsersRound,
   type LucideIcon
 } from "lucide-react";
@@ -51,6 +52,8 @@ export const ROUTE_REGISTRY = [
   { path: "/admin/projects", permission: "projects.list", presentationRoles: ["admin"], navigation: { roles: ["admin"], item: { label: "My Projects", to: "/admin/projects", end: true, icon: FolderKanban } } },
   { path: "/admin/projects/:projectId", permission: "projects.read", presentationRoles: ["admin"], navigation: null },
   { path: "/admin/users", permission: "identity.users.read", presentationRoles: ["super_admin"], navigation: { roles: ["super_admin"], item: { label: "Users", to: "/admin/users", end: true, icon: UsersRound } } },
+  { path: "/admin/client-responses", permission: "estimation.client_response_tasks.read", presentationRoles: ["admin", "super_admin"], navigation: { roles: ["admin", "super_admin"], item: { label: "Client responses", to: "/admin/client-responses", end: true, icon: MailCheck } } },
+  { path: "/admin/client-responses/:roundId", permission: "estimation.client_response_tasks.read", presentationRoles: ["admin", "super_admin"], navigation: null },
   { path: "/admin/access-requests", permission: "access_request.review.read", presentationRoles: ["admin", "super_admin"], navigation: { roles: ["admin", "super_admin"], item: { label: "Access requests", to: "/admin/access-requests", end: true, icon: ClipboardCheck } } },
   { path: "/access-requests/mine", permission: "access_request.self.read", presentationRoles: ["designer", "procurement", "finance_head", "site_manager", "super_admin"], navigation: { roles: ["designer", "procurement", "finance_head", "site_manager"], item: { label: "My access requests", to: "/access-requests/mine", end: true, icon: KeyRound } } },
   { path: "/home", permission: "identity.self.read", presentationRoles: ["procurement", "finance_head", "site_manager", ...WORKER_ROLES], navigation: { roles: ["procurement", "finance_head", "site_manager", ...WORKER_ROLES], item: { label: "Home", to: "/home", end: true, icon: House } } },

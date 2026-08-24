@@ -8,6 +8,7 @@ import {
   House,
   KeyRound,
   LayoutDashboard,
+  MailCheck,
   UsersRound
 } from "lucide-react";
 import { MemoryRouter } from "react-router-dom";
@@ -21,8 +22,8 @@ import { Sidebar } from "./Sidebar";
 import { navigationForAuthorization } from "./navigation";
 
 const roleNavigation = [
-  ["super_admin", [["Users", "/admin/users", UsersRound], ["Access requests", "/admin/access-requests", ClipboardCheck]]],
-  ["admin", [["My Projects", "/admin/projects", FolderKanban], ["Access requests", "/admin/access-requests", ClipboardCheck]]],
+  ["super_admin", [["Users", "/admin/users", UsersRound], ["Client responses", "/admin/client-responses", MailCheck], ["Access requests", "/admin/access-requests", ClipboardCheck]]],
+  ["admin", [["My Projects", "/admin/projects", FolderKanban], ["Client responses", "/admin/client-responses", MailCheck], ["Access requests", "/admin/access-requests", ClipboardCheck]]],
   ["estimator_sales", [["Leads & estimates", "/estimator-sales", BriefcaseBusiness]]],
   ["designer", [["Workspace", "/designer", LayoutDashboard], ["My access requests", "/access-requests/mine", KeyRound]]],
   ["procurement", [["My access requests", "/access-requests/mine", KeyRound], ["Home", "/home", House]]],
@@ -41,6 +42,14 @@ const roleNavigation = [
   Role,
   ReadonlyArray<readonly [string, string, typeof LayoutDashboard]>
 ]>;
+
+function navigationAuthorization(role: Role) {
+  if (role !== "admin" && role !== "super_admin") return authorizationFor(role);
+  return authorizationFor(role, [
+    ...authorizationFor(role).permissions,
+    "estimation.client_response_tasks.read"
+  ]);
+}
 
 describe("role navigation", () => {
   it.each(ROLE_CODES)("returns a frozen safe navigation array for %s", (role) => {
@@ -78,7 +87,7 @@ describe("role navigation", () => {
   it.each(roleNavigation)(
     "derives the exact registered navigation for %s",
     (role, expected) => {
-      const items = navigationForAuthorization(role, authorizationFor(role));
+      const items = navigationForAuthorization(role, navigationAuthorization(role));
 
       expect(items).toEqual(
         expected.map(([label, to, icon]) => ({ label, to, end: true, icon }))
@@ -89,7 +98,7 @@ describe("role navigation", () => {
 
   it("keeps registry-derived navigation immutable", () => {
     for (const role of ROLE_CODES) {
-      const items = navigationForAuthorization(role, authorizationFor(role));
+      const items = navigationForAuthorization(role, navigationAuthorization(role));
 
       expect(Object.isFrozen(items)).toBe(true);
       for (const item of items) expect(Object.isFrozen(item)).toBe(true);
@@ -127,7 +136,7 @@ describe("role navigation", () => {
         <MemoryRouter initialEntries={[destination]}>
           <Sidebar
             user={user}
-            authorization={authorizationFor(role)}
+            authorization={navigationAuthorization(role)}
             onLogout={vi.fn()}
             onNavigate={onNavigate}
           />
@@ -142,4 +151,37 @@ describe("role navigation", () => {
       expect(onNavigate).toHaveBeenCalledOnce();
     }
   );
+
+  it("shows Client responses only to permitted Admin presentations", () => {
+    for (const role of ["admin", "super_admin"] as const) {
+      expect(
+        navigationForAuthorization(role, navigationAuthorization(role)).filter(
+          ({ label }) => label === "Client responses"
+        )
+      ).toEqual([
+        expect.objectContaining({
+          label: "Client responses",
+          to: "/admin/client-responses",
+          end: true,
+          icon: MailCheck
+        })
+      ]);
+      expect(
+        navigationForAuthorization(
+          role,
+          authorizationFor(role, ["identity.self.read"])
+        ).some(({ label }) => label === "Client responses")
+      ).toBe(false);
+    }
+
+    for (const role of ROLE_CODES.filter(
+      (candidate) => candidate !== "admin" && candidate !== "super_admin"
+    )) {
+      expect(
+        navigationForAuthorization(role, authorizationFor(role)).some(
+          ({ label }) => label === "Client responses"
+        )
+      ).toBe(false);
+    }
+  });
 });

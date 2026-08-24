@@ -99,7 +99,16 @@ describe("AdminProjectDetailPage", () => {
       "href",
       "/admin/projects"
     );
-    for (const name of ["Edit", "Reassign", "Approve", "Start estimate", "Continue estimate"]) {
+    for (const name of [
+      "Edit",
+      "Edit estimate",
+      "Reassign",
+      "Approve",
+      "Start estimate",
+      "Continue estimate",
+      "Act as Client",
+      "Decide as Client"
+    ]) {
       expect(screen.queryByRole("button", { name })).not.toBeInTheDocument();
       expect(screen.queryByRole("link", { name })).not.toBeInTheDocument();
     }
@@ -119,5 +128,108 @@ describe("AdminProjectDetailPage", () => {
     expect(await screen.findByRole("heading", { name: "Asha home" })).toBeVisible();
     expect(screen.getAllByText("Unassigned handoff")).toHaveLength(2);
     expect(screen.getByText("No estimate yet")).toBeVisible();
+  });
+
+  it("links the assigned current pending Client response task from the project summary", async () => {
+    installSession();
+    server.use(
+      http.get("/api/v1/admin/projects/project-1", () =>
+        HttpResponse.json({
+          data: {
+            ...project,
+            estimate: {
+              ...project.estimate,
+              clientReview: {
+                id: "round-1",
+                sendGeneration: 2,
+                estimateVersion: 4,
+                version: 3,
+                deliveryStatus: "sent",
+                deliveryAttemptCount: 1,
+                deliveredAt: "2026-08-23T10:00:02.000Z",
+                status: "pending"
+              },
+              hasPendingClientResponseTask: true
+            }
+          }
+        })
+      )
+    );
+
+    renderApp(["/admin/projects/project-1"]);
+
+    expect(await screen.findByRole("heading", { name: "Asha home" })).toBeVisible();
+    const response = screen.getByRole("region", { name: "Client response" });
+    expect(within(response).getByText("Pending")).toBeVisible();
+    expect(within(response).getByText("Email sent")).toBeVisible();
+    expect(within(response).getByRole("link", { name: "Review Client response" })).toHaveAttribute(
+      "href",
+      "/admin/client-responses/round-1"
+    );
+    for (const name of ["Edit estimate", "Decide as Client", "Approve for Client"]) {
+      expect(screen.queryByRole("button", { name })).not.toBeInTheDocument();
+      expect(screen.queryByRole("link", { name })).not.toBeInTheDocument();
+    }
+  });
+
+  it("renders a terminal Client response as read-only history", async () => {
+    installSession();
+    server.use(
+      http.get("/api/v1/admin/projects/project-1", () =>
+        HttpResponse.json({
+          data: {
+            ...project,
+            estimate: {
+              ...project.estimate,
+              clientReview: {
+                id: "round-terminal",
+                sendGeneration: 2,
+                estimateVersion: 4,
+                version: 4,
+                deliveryStatus: "sent",
+                deliveryAttemptCount: 1,
+                deliveredAt: "2026-08-23T10:00:02.000Z",
+                status: "approved"
+              },
+              hasPendingClientResponseTask: false
+            }
+          }
+        })
+      )
+    );
+
+    renderApp(["/admin/projects/project-1"]);
+
+    expect(await screen.findByRole("region", { name: "Client response" })).toHaveTextContent(
+      "Approved"
+    );
+    expect(screen.getByText("Read-only Client response history")).toBeVisible();
+    expect(screen.queryByRole("link", { name: "Review Client response" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /approve|reject|edit/i })).not.toBeInTheDocument();
+  });
+
+  it("renders no Client response section or action when no review round exists", async () => {
+    installSession();
+    server.use(
+      http.get("/api/v1/admin/projects/project-1", () =>
+        HttpResponse.json({
+          data: {
+            ...project,
+            estimate: {
+              ...project.estimate,
+              clientReview: null,
+              hasPendingClientResponseTask: false
+            }
+          }
+        })
+      )
+    );
+
+    renderApp(["/admin/projects/project-1"]);
+
+    expect(await screen.findByRole("heading", { name: "Asha home" })).toBeVisible();
+    expect(screen.queryByRole("region", { name: "Client response" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Review Client response" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /approve|reject|edit|act as client/i })).not.toBeInTheDocument();
   });
 });

@@ -42,6 +42,13 @@ const neutralHomeRoles = [
   "worker_other"
 ] as const satisfies readonly Role[];
 
+const nonAdminClientResponsePresentationCases = ROLE_CODES
+  .filter((role) => role !== "admin" && role !== "super_admin")
+  .flatMap((role) => [
+    [role, "/admin/client-responses"],
+    [role, "/admin/client-responses/round-1"]
+  ] as const);
+
 function deferred() {
   let resolve!: () => void;
   const promise = new Promise<void>((complete) => {
@@ -255,6 +262,57 @@ function installAuthorizationSession(
         }
       });
     }
+    if (
+      path ===
+      "/api/v1/admin/estimate-client-response-tasks?status=pending&limit=20&offset=0"
+    ) {
+      return Response.json({
+        data: {
+          items: [],
+          pagination: { limit: 20, offset: 0, total: 0, hasMore: false }
+        }
+      });
+    }
+    if (path === "/api/v1/admin/estimate-client-response-tasks/round-1") {
+      return Response.json({
+        data: {
+          id: "round-1",
+          version: 3,
+          sendGeneration: 2,
+          project: { id: "project-1", name: "Admin residence" },
+          client: { name: "Asha Shah", email: "asha@example.com" },
+          estimate: { id: "estimate-1", version: 4, total: 1416 },
+          assignedAdmin: { id: "admin-1", name: "Route User" },
+          deliveryStatus: "sent",
+          deliveryAttemptCount: 1,
+          deliveryAttemptedAt: "2026-08-23T10:00:01.000Z",
+          deliveredAt: "2026-08-23T10:00:02.000Z",
+          status: "pending",
+          decision: null,
+          proofAvailable: false,
+          createdAt: "2026-08-23T10:00:00.000Z",
+          estimateSnapshot: {
+            clientName: "Asha Shah",
+            projectName: "Admin residence",
+            location: "Pune",
+            propertyType: "3BHK",
+            lineItems: [],
+            subtotal: 1200,
+            gst: 216,
+            total: 1416
+          },
+          pdf: {
+            filename: "estimate-v4.pdf",
+            mimeType: "application/pdf",
+            byteSize: 2048,
+            sha256: "a".repeat(64)
+          },
+          decisionSource: null,
+          decisionNote: null,
+          decidedAt: null
+        }
+      });
+    }
     if (path === "/api/v1/access-requests/mine?limit=20&offset=0") {
       return Response.json({
         data: {
@@ -318,8 +376,8 @@ describe("role landing staging contract", () => {
 });
 
 describe("public invitation route", () => {
-  it("mounts directly while staying outside the 20-route protected registry", async () => {
-    expect(ROUTE_REGISTRY).toHaveLength(20);
+  it("mounts directly while staying outside the 22-route protected registry", async () => {
+    expect(ROUTE_REGISTRY).toHaveLength(22);
     expect(ROUTE_REGISTRY.map(({ path }) => path)).not.toContain(
       "/accept-invitation"
     );
@@ -336,6 +394,32 @@ describe("public invitation route", () => {
 });
 
 describe("registered permission routes", () => {
+  it("registers only the list route in Admin navigation and keeps detail non-navigation", () => {
+    expect(
+      ROUTE_REGISTRY.filter(({ path }) => path.startsWith("/admin/client-responses"))
+    ).toMatchObject([
+      {
+        path: "/admin/client-responses",
+        permission: "estimation.client_response_tasks.read",
+        presentationRoles: ["admin", "super_admin"],
+        navigation: {
+          roles: ["admin", "super_admin"],
+          item: {
+            label: "Client responses",
+            to: "/admin/client-responses",
+            end: true
+          }
+        }
+      },
+      {
+        path: "/admin/client-responses/:roundId",
+        permission: "estimation.client_response_tasks.read",
+        presentationRoles: ["admin", "super_admin"],
+        navigation: null
+      }
+    ]);
+  });
+
   it.each([
     [
       "admin",
@@ -371,6 +455,13 @@ describe("registered permission routes", () => {
       ["identity.self.read", "access_request.self.read"],
       "My access requests",
       "You have no access requests."
+    ],
+    [
+      "admin",
+      "/admin/client-responses",
+      ["identity.self.read", "estimation.client_response_tasks.read"],
+      "Client responses",
+      "There are no pending Client responses assigned to you."
     ]
   ] as const)(
     "mounts the registered %s page at %s with its successful empty state",
@@ -382,6 +473,43 @@ describe("registered permission routes", () => {
       expect(await screen.findByText(emptyState)).toBeVisible();
       expect(screen.queryByRole("heading", { name: "Page not found" })).not.toBeInTheDocument();
       expect(router.state.location.pathname).toBe(path);
+    }
+  );
+
+  it("mounts the Client response detail for Super Admin with the registered read permission", async () => {
+    installAuthorizationSession("super_admin", [
+      "identity.self.read",
+      "estimation.client_response_tasks.read"
+    ]);
+    const { router } = renderApp(["/admin/client-responses/round-1"]);
+
+    expect(
+      await screen.findByRole("heading", { name: "Asha Shah response" })
+    ).toBeVisible();
+    expect(screen.getByText("estimate-v4.pdf")).toBeVisible();
+    expect(router.state.location.pathname).toBe("/admin/client-responses/round-1");
+  });
+
+  it.each(nonAdminClientResponsePresentationCases)(
+    "denies the %s presentation role at %s even when a read code is supplied",
+    async (role, path) => {
+      installAuthorizationSession(role, [
+        "identity.self.read",
+        "estimation.client_response_tasks.read"
+      ]);
+      const { router } = renderApp([path]);
+
+      expect(await screen.findByRole("heading", { name: "Access denied" })).toBeVisible();
+      expect(screen.queryByRole("heading", { name: "Client responses" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("heading", { name: /response$/i })).not.toBeInTheDocument();
+      expect(router.state.location.pathname).toBe(path);
+      expect(
+        vi.mocked(globalThis.fetch).mock.calls.some(([input]) =>
+          apiRequestPath(input).startsWith(
+            "/api/v1/admin/estimate-client-response-tasks"
+          )
+        )
+      ).toBe(false);
     }
   );
 

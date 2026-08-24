@@ -245,6 +245,79 @@ export interface EstimatorOption {
   title: string | null;
 }
 
+export interface EstimateClientReviewSummary {
+  id: string;
+  sendGeneration: number;
+  estimateVersion: number;
+  version: number;
+  deliveryStatus: "queued" | "sent" | "failed" | "disabled";
+  deliveryAttemptCount: number;
+  deliveredAt: string | null;
+  status: "pending" | "approved" | "changes_requested";
+}
+
+export interface EstimateClientReviewSnapshot {
+  clientName: string;
+  projectName: string;
+  location: string;
+  propertyType: string;
+  lineItems: Array<{
+    catalogueId: string;
+    roomName: string;
+    specification: string;
+    unit: string;
+    rate: number;
+    quantity: number;
+    included: boolean;
+    amount: number;
+  }>;
+  subtotal: number;
+  gst: number;
+  total: number;
+}
+
+export interface EstimateClientResponseTaskListItem {
+  id: string;
+  version: number;
+  sendGeneration: number;
+  project: { id: string; name: string } | null;
+  client: { name: string; email: string };
+  estimate: { id: string; version: number; total: number };
+  assignedAdmin: { id: string; name: string };
+  deliveryStatus: EstimateClientReviewSummary["deliveryStatus"];
+  deliveryAttemptCount: number;
+  deliveryAttemptedAt: string | null;
+  deliveredAt: string | null;
+  status: EstimateClientReviewSummary["status"];
+  decision: "approve" | "request_changes" | null;
+  proofAvailable: boolean;
+  createdAt: string;
+}
+
+export interface EstimateClientResponseTaskDetail
+  extends EstimateClientResponseTaskListItem {
+  estimateSnapshot: EstimateClientReviewSnapshot;
+  pdf: {
+    filename: string;
+    mimeType: "application/pdf";
+    byteSize: number;
+    sha256: string;
+  };
+  decisionSource: "client_portal" | "admin_proof" | null;
+  decisionNote: string | null;
+  decidedAt: string | null;
+}
+
+export interface EstimateClientResponseDecisionResult {
+  estimate: {
+    id: string;
+    status: string;
+    version: number;
+    projectId: string | null;
+  };
+  clientReview: EstimateClientReviewSummary;
+}
+
 export interface AdminProjectSummary {
   id: string;
   name: string;
@@ -261,7 +334,13 @@ export interface AdminProjectSummary {
     nextAction: string;
     nextActionAt: string;
   } | null;
-  estimate: { id: string; status: string; total: number } | null;
+  estimate: {
+    id: string;
+    status: string;
+    total: number;
+    clientReview?: EstimateClientReviewSummary | null;
+    hasPendingClientResponseTask?: boolean;
+  } | null;
   createdAt: string;
 }
 

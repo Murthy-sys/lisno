@@ -53,11 +53,20 @@ export function safeReturnPath(
 
   try {
     decodeURI(candidate);
+    const rawPathname = candidate.split(/[?#]/u, 1)[0] ?? candidate;
+    if (hasEncodedTraversal(rawPathname)) return home;
+
     const parsed = new URL(candidate, returnPathOrigin);
+    const canReturnToRoleHome =
+      parsed.pathname === home || parsed.pathname.startsWith(`${home}/`);
+    const canReturnToClientResponses =
+      (role === "admin" || role === "super_admin") &&
+      (parsed.pathname === "/admin/client-responses" ||
+        parsed.pathname.startsWith("/admin/client-responses/"));
     if (
       parsed.origin !== returnPathOrigin ||
       hasEncodedTraversal(parsed.pathname) ||
-      (parsed.pathname !== home && !parsed.pathname.startsWith(`${home}/`))
+      (!canReturnToRoleHome && !canReturnToClientResponses)
     ) {
       return home;
     }
