@@ -73,6 +73,17 @@ export function createEstimateClientReviewStorage(
   };
 }
 
+/**
+ * Keeps proof persistence details inside the storage boundary while preserving
+ * the same best-effort cleanup used by other stored review artifacts.
+ */
+export function deleteStoredProofQuietly(
+  storage: Pick<EstimateClientReviewStorage, "deleteQuietly">,
+  proof: StoredEstimateClientResponseProof
+): Promise<void> {
+  return storage.deleteQuietly(proof.storageReference);
+}
+
 function isEstimateClientProofMimeType(
   mimeType: ValidatedUpload["mimeType"]
 ): mimeType is EstimateClientProofMimeType {

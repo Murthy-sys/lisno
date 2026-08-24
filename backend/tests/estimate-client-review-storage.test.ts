@@ -2,7 +2,10 @@ import { describe, expect, it, vi } from "vitest";
 
 import { sha256Hex } from "../src/domain/estimate-client-review.js";
 import type { ValidatedUpload } from "../src/middleware/upload.js";
-import { createEstimateClientReviewStorage } from "../src/services/estimate-client-review-storage.js";
+import {
+  createEstimateClientReviewStorage,
+  deleteStoredProofQuietly
+} from "../src/services/estimate-client-review-storage.js";
 
 function storageDouble() {
   const objects = new Map<string, Buffer>();
@@ -102,5 +105,24 @@ describe("estimate client review storage", () => {
     await reviewStorage.deleteQuietly(saved.storageReference);
 
     expect(storage.delete).toHaveBeenCalledTimes(2);
+  });
+
+  it("cleans up a stored proof without exposing its reference beyond the storage boundary", async () => {
+    const storage = storageDouble();
+    const reviewStorage = createEstimateClientReviewStorage(storage);
+    const saved = await reviewStorage.saveProof({
+      data: Buffer.from([0x89, 0x50, 0x4e, 0x47]),
+      extension: ".png",
+      originalFilename: "client-response.png",
+      mimeType: "image/png",
+      sizeBytes: 4
+    });
+
+    await deleteStoredProofQuietly(reviewStorage, saved);
+    await deleteStoredProofQuietly(reviewStorage, saved);
+
+    await expect(reviewStorage.read(saved.storageReference)).rejects.toThrow(
+      "missing stored object"
+    );
   });
 });

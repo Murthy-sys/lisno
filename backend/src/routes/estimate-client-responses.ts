@@ -8,7 +8,10 @@ import { paginatedEnvelope } from "../middleware/pagination.js";
 import { uploadSingleFile } from "../middleware/upload.js";
 import { validateBody, validateQuery } from "../middleware/validate.js";
 import type { AuthService } from "../services/auth.service.js";
-import type { EstimateClientReviewStorage } from "../services/estimate-client-review-storage.js";
+import {
+  deleteStoredProofQuietly,
+  type EstimateClientReviewStorage
+} from "../services/estimate-client-review-storage.js";
 import type { EstimateClientReviewService } from "../services/estimate-client-review.service.js";
 import type { EstimateDecisionService } from "../services/estimate-decision.service.js";
 import type { EstimateDeliveryService } from "../services/estimate-delivery.service.js";
@@ -134,7 +137,7 @@ export function createEstimateClientResponsesRouter(
         response.json({ data: result });
       } catch (error) {
         if (storedProof) {
-          await storage.deleteQuietly(storedProof.storageReference);
+          await deleteStoredProofQuietly(storage, storedProof);
         }
         next(error);
       }

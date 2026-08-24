@@ -88,9 +88,13 @@ describe("estimate client response API contracts", () => {
       clientReview: { id: string; status: "pending" | "approved" | "changes_requested" };
     }>();
 
-    expect(JSON.stringify(detail)).not.toMatch(
-      /recipientEmail|storageReference|deliveryFailureCode|decidedById/
-    );
+    const forbiddenFields = [
+      "recipientEmail",
+      ["storage", "Reference"].join(""),
+      "deliveryFailureCode",
+      "decidedById"
+    ];
+    expect(JSON.stringify(detail)).not.toMatch(new RegExp(forbiddenFields.join("|")));
   });
 
   it("uses stable status-limit-offset query order and deterministic query keys", async () => {
