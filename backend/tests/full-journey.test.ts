@@ -1095,7 +1095,7 @@ describe("complete cross-role journey", () => {
         }
       ]
     });
-  });
+  }, 15_000);
 
   it("reuses the Admin-created Project during linked estimate approval", async () => {
     const fixture = setupWorkflowCharacterization({

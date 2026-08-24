@@ -12,6 +12,7 @@ import { DesignVersionModel } from "../src/models/DesignVersion.js";
 import { DesignVersionSequenceModel } from "../src/models/DesignVersionSequence.js";
 import { EmailCoordinationModel } from "../src/models/EmailCoordination.js";
 import { EvaluationModel } from "../src/models/Evaluation.js";
+import { EstimateClientReviewRoundModel } from "../src/models/EstimateClientReviewRound.js";
 import { EstimateModel } from "../src/models/Estimate.js";
 import { FloorModel } from "../src/models/Floor.js";
 import { LeadModel } from "../src/models/Lead.js";
@@ -1404,6 +1405,9 @@ describe("Mongo repository contracts", () => {
     const estimateFind = vi.spyOn(EstimateModel, "find").mockReturnValueOnce(
       estimateQuery as never
     );
+    const roundQuery = yieldingRecordedQuery([], "review-round-join", execution);
+    const roundFind = vi.spyOn(EstimateClientReviewRoundModel, "find")
+      .mockReturnValueOnce(roundQuery as never);
     const admin = {
       ...demoSeedData.users[0]!,
       id: "admin-page",
@@ -1426,7 +1430,13 @@ describe("Mongo repository contracts", () => {
           email: "estimator@example.com"
         },
         lead: expect.objectContaining({ id: "lead-admin-page" }),
-        estimate: { id: "estimate-admin-page", status: "draft", total: 118000 }
+        estimate: {
+          id: "estimate-admin-page",
+          status: "draft",
+          total: 118000,
+          clientReview: null,
+          hasPendingClientResponseTask: false
+        }
       })]
     });
 
@@ -1464,13 +1474,33 @@ describe("Mongo repository contracts", () => {
     expect(estimateQuery.select).toHaveBeenCalledWith({
       _id: 1, leadId: 1, projectId: 1, status: 1, total: 1
     });
+    expect(roundFind).toHaveBeenCalledWith({
+      estimateId: { $in: ["estimate-admin-page"] }
+    });
+    expect(roundQuery.select).toHaveBeenCalledWith({
+      _id: 1,
+      estimateId: 1,
+      sendGeneration: 1,
+      estimateVersion: 1,
+      version: 1,
+      deliveryStatus: 1,
+      deliveryAttemptCount: 1,
+      deliveredAt: 1,
+      status: 1
+    });
+    expect(roundQuery.sort).toHaveBeenCalledWith({
+      estimateId: 1,
+      sendGeneration: -1,
+      _id: 1
+    });
     for (const recorder of [
       grantQuery,
       projectQuery,
       countQuery,
       leadQuery,
       estimatorQuery,
-      estimateQuery
+      estimateQuery,
+      roundQuery
     ]) {
       expect(recorder.session).toHaveBeenCalledWith(session);
     }
@@ -1480,7 +1510,8 @@ describe("Mongo repository contracts", () => {
       "project-count",
       "lead-join",
       "estimator-join",
-      "estimate-join"
+      "estimate-join",
+      "review-round-join"
     ]);
   });
 
