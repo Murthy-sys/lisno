@@ -213,7 +213,7 @@ export function createEstimateDecisionService(input: {
             estimateId,
             roundId: round!.id,
             decision,
-            status: String(estimateResult.status),
+            estimateStatus: String(estimateResult.status),
             noteLength: note.length,
             occurredAt,
             session,
@@ -241,7 +241,7 @@ export function createEstimateDecisionService(input: {
             estimateId,
             roundId: round?.id ?? null,
             decision,
-            status: String(estimateResult.status),
+            estimateStatus: String(estimateResult.status),
             noteLength: note.length,
             occurredAt,
             session,
@@ -553,7 +553,7 @@ async function appendSourceAudit(input: {
   estimateId: string;
   roundId: string | null;
   decision: EstimateClientDecision;
-  status: string;
+  estimateStatus: string;
   noteLength: number;
   occurredAt: Date;
   session: mongoose.ClientSession;
@@ -564,15 +564,21 @@ async function appendSourceAudit(input: {
     : input.decision === "approve"
       ? "estimate_client_approval_recorded_by_admin"
       : "estimate_client_changes_recorded_by_admin";
+  const targetsReviewRound = input.roundId !== null;
   await input.audit.appendInMongoTransaction({
     actorId: input.actor.id,
     action,
-    entityType: input.roundId ? "estimate_client_review_round" : "estimate",
+    entityType: targetsReviewRound ? "estimate_client_review_round" : "estimate",
     entityId: input.roundId ?? input.estimateId,
     occurredAt: input.occurredAt.toISOString(),
-    oldValues: input.roundId ? { status: "pending" } : { status: "sent_to_client" },
+    oldValues: targetsReviewRound ? { status: "pending" } : { status: "sent_to_client" },
     newValues: {
-      status: input.status,
+      status: targetsReviewRound
+        ? input.decision === "approve"
+          ? "approved"
+          : "changes_requested"
+        : input.estimateStatus,
+      ...(targetsReviewRound ? { estimateStatus: input.estimateStatus } : {}),
       decision: input.decision,
       decisionSource: input.source,
       noteLength: input.noteLength,

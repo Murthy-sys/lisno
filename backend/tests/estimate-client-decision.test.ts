@@ -525,6 +525,21 @@ describe("EstimateDecisionService Client compatibility", () => {
         noteLength: 29
       })
     });
+    expect(state.audits[1]).toEqual({
+      actorId: "client-1",
+      action: "estimate_client_response_recorded_through_portal",
+      entityType: "estimate_client_review_round",
+      entityId: "round-1",
+      occurredAt: NOW.toISOString(),
+      oldValues: { status: "pending" },
+      newValues: {
+        status: "changes_requested",
+        estimateStatus: "client_changes_requested",
+        decision: "request_changes",
+        decisionSource: "client_portal",
+        noteLength: 29
+      }
+    });
   });
 
   it("uses normalized Lead email ownership and preserves the not-found boundary", async () => {
@@ -558,6 +573,20 @@ describe("EstimateDecisionService Client compatibility", () => {
     expect(result.clientReview).toBeNull();
     expect(state.rounds).toEqual([]);
     expect(state.proofs).toEqual([]);
+    expect(state.audits[1]).toEqual({
+      actorId: "client-1",
+      action: "estimate_client_response_recorded_through_portal",
+      entityType: "estimate",
+      entityId: "estimate-1",
+      occurredAt: NOW.toISOString(),
+      oldValues: { status: "sent_to_client" },
+      newValues: {
+        status: "client_changes_requested",
+        decision: "request_changes",
+        decisionSource: "client_portal",
+        noteLength: 33
+      }
+    });
   });
 
   it("rejects a null portal round when a current review round exists", async () => {
@@ -653,6 +682,21 @@ describe("EstimateDecisionService Client compatibility", () => {
       "estimate_design_final_approved",
       "estimate_client_response_recorded_through_portal"
     ]);
+    expect(state.audits[1]).toEqual({
+      actorId: "client-1",
+      action: "estimate_client_response_recorded_through_portal",
+      entityType: "estimate_client_review_round",
+      entityId: "round-1",
+      occurredAt: NOW.toISOString(),
+      oldValues: { status: "pending" },
+      newValues: {
+        status: "approved",
+        estimateStatus: "client_approved",
+        decision: "approve",
+        decisionSource: "client_portal",
+        noteLength: 11
+      }
+    });
     expect(state.proofs).toEqual([]);
   });
 });
@@ -779,13 +823,21 @@ describe("EstimateDecisionService Admin proof decisions", () => {
       "estimate_client_changes_recorded_by_admin",
       "estimate_client_proof_stored"
     ]);
-    expect(state.audits[1]).toMatchObject({
+    expect(state.audits[1]).toEqual({
       actorId: "admin-1",
-      newValues: expect.objectContaining({
-        status: "client_changes_requested",
-        recordedOnBehalfOf: "client",
-        noteLength: 28
-      })
+      action: "estimate_client_changes_recorded_by_admin",
+      entityType: "estimate_client_review_round",
+      entityId: "round-1",
+      occurredAt: NOW.toISOString(),
+      oldValues: { status: "pending" },
+      newValues: {
+        status: "changes_requested",
+        estimateStatus: "client_changes_requested",
+        decision: "request_changes",
+        decisionSource: "admin_proof",
+        noteLength: 28,
+        recordedOnBehalfOf: "client"
+      }
     });
     const serializedAudit = JSON.stringify(state.audits);
     expect(serializedAudit).not.toContain(PROOF.storageReference);
