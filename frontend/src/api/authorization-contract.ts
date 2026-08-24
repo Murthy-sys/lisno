@@ -187,6 +187,10 @@ export const PERMISSION_CODES = [
   "identity.authorization.read",
   "identity.users.read",
   "identity.users.update",
+  "identity.user_invitations.read",
+  "identity.user_invitations.create",
+  "identity.user_invitations.resend",
+  "identity.user_invitations.revoke",
   "access_request.create",
   "access_request.self.read",
   "access_request.self.cancel",
@@ -198,7 +202,8 @@ export const PERMISSION_CODES = [
 
 export type PermissionCode = (typeof PERMISSION_CODES)[number];
 
-export const AUTHORIZATION_POLICY_VERSION = "2026-08-23.prompt-2" as const;
+export const AUTHORIZATION_POLICY_VERSION =
+  "2026-08-23.staff-invitations.v1" as const;
 
 export interface AuthorizationSnapshot {
   readonly role: Role;

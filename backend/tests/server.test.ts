@@ -3,10 +3,17 @@ import { EventEmitter } from "node:events";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const createMongoRepository = vi.hoisted(() => vi.fn());
+const createSmtpInvitationMailer = vi.hoisted(() => vi.fn());
 
 vi.mock("../src/repositories/mongo.js", () => ({ createMongoRepository }));
+vi.mock("../src/services/smtp-invitation-mailer.js", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../src/services/smtp-invitation-mailer.js")>(),
+  createSmtpInvitationMailer
+}));
 
 import { startServer } from "../src/server.js";
+import { UserModel } from "../src/models/User.js";
+import { UserInvitationModel } from "../src/models/UserInvitation.js";
 import type { AppRepository } from "../src/repositories/types.js";
 
 const env = {
@@ -17,11 +24,18 @@ const env = {
   UPLOADS_DIR: "uploads",
   MAX_UPLOAD_MB: 25,
   OCR_LEASE_SECONDS: 300,
-  OCR_WORKER_TOKEN: "server-worker-token-with-at-least-32-characters"
+  OCR_MAX_ATTEMPTS: 5,
+  OCR_RETRY_INITIAL_SECONDS: 30,
+  OCR_RETRY_MAX_SECONDS: 900,
+  OCR_CONFIDENCE_FLOOR: 0.2,
+  OCR_WORKER_TOKEN: "server-worker-token-with-at-least-32-characters",
+  invitationDelivery: { kind: "disabled" as const }
 };
 
 afterEach(() => {
   createMongoRepository.mockReset();
+  createSmtpInvitationMailer.mockReset();
+  vi.restoreAllMocks();
 });
 
 function fakeServer(onClose?: () => void) {
@@ -62,6 +76,9 @@ describe("production server bootstrap", () => {
         events.push("prepare");
         expect(context).toEqual({ mongodbUri: env.MONGODB_URI });
       },
+      prepareIdentityIndexes: async () => {
+        events.push("indexes");
+      },
       repositoryFactory: () => {
         events.push("repository");
         return repository;
@@ -78,7 +95,14 @@ describe("production server bootstrap", () => {
       registerSignalHandlers: false
     });
 
-    expect(events).toEqual(["connect", "prepare", "repository", "app", "listen"]);
+    expect(events).toEqual([
+      "connect",
+      "prepare",
+      "indexes",
+      "repository",
+      "app",
+      "listen"
+    ]);
     expect(app.listen).toHaveBeenCalledWith(
       env.PORT,
       "127.0.0.1",
@@ -102,6 +126,7 @@ describe("production server bootstrap", () => {
       loadEnvironment: () => env,
       connect: async () => undefined,
       disconnect: async () => undefined,
+      prepareIdentityIndexes: async () => undefined,
       repositoryFactory: () => ({} as AppRepository),
       appFactory: () => ({ listen }),
       writeOutput,
@@ -123,6 +148,7 @@ describe("production server bootstrap", () => {
       loadEnvironment: () => env,
       connect: async () => undefined,
       disconnect: async () => undefined,
+      prepareIdentityIndexes: async () => undefined,
       repositoryFactory: () => ({} as AppRepository),
       appFactory: () => ({
         listen: vi.fn(
@@ -187,6 +213,7 @@ describe("production server bootstrap", () => {
       loadEnvironment: () => env,
       connect: async () => undefined,
       disconnect: async () => undefined,
+      prepareIdentityIndexes: async () => undefined,
       appFactory,
       writeOutput,
       registerSignalHandlers: false
@@ -221,6 +248,7 @@ describe("production server bootstrap", () => {
       loadEnvironment: () => env,
       connect,
       disconnect,
+      prepareIdentityIndexes: async () => undefined,
       repositoryFactory,
       appFactory,
       writeOutput,
@@ -285,6 +313,7 @@ describe("production server bootstrap", () => {
         loadEnvironment: () => env,
         connect: async () => undefined,
         disconnect,
+        prepareIdentityIndexes: async () => undefined,
         repositoryFactory: () => ({} as AppRepository),
         appFactory,
         writeOutput,
@@ -293,5 +322,162 @@ describe("production server bootstrap", () => {
     ).rejects.toBe(listenError);
     expect(disconnect).toHaveBeenCalledOnce();
     expect(writeOutput).not.toHaveBeenCalled();
+  });
+
+  it("initializes User and UserInvitation indexes before repository creation and listen", async () => {
+    const events: string[] = [];
+    const server = fakeServer();
+    vi.spyOn(UserModel, "init").mockImplementation(async () => {
+      events.push("user-index");
+      return UserModel as never;
+    });
+    vi.spyOn(UserInvitationModel, "init").mockImplementation(async () => {
+      events.push("invitation-index");
+      return UserInvitationModel as never;
+    });
+
+    const runtime = await startServer({
+      loadEnvironment: () => env,
+      connect: async () => {
+        events.push("connect");
+      },
+      disconnect: async () => undefined,
+      repositoryFactory: () => {
+        events.push("repository");
+        return {} as AppRepository;
+      },
+      appFactory: () => {
+        events.push("app");
+        return {
+          listen: vi.fn((_port: number, callback: () => void) => {
+            events.push("listen");
+            callback();
+            return server;
+          })
+        };
+      },
+      writeOutput: () => undefined,
+      registerSignalHandlers: false
+    });
+
+    expect(events).toEqual([
+      "connect",
+      "user-index",
+      "invitation-index",
+      "repository",
+      "app",
+      "listen"
+    ]);
+    await runtime.stop();
+  });
+
+  it("disconnects exactly once and never constructs or listens when identity index readiness fails", async () => {
+    const failure = new Error("identity index collision");
+    const disconnect = vi.fn(async () => undefined);
+    const repositoryFactory = vi.fn();
+    const appFactory = vi.fn();
+    const writeOutput = vi.fn();
+
+    await expect(startServer({
+      loadEnvironment: () => env,
+      connect: async () => undefined,
+      disconnect,
+      prepareIdentityIndexes: async () => {
+        throw failure;
+      },
+      repositoryFactory,
+      appFactory,
+      writeOutput,
+      registerSignalHandlers: false
+    })).rejects.toBe(failure);
+
+    expect(disconnect).toHaveBeenCalledOnce();
+    expect(repositoryFactory).not.toHaveBeenCalled();
+    expect(appFactory).not.toHaveBeenCalled();
+    expect(writeOutput).not.toHaveBeenCalled();
+  });
+
+  it("injects disabled delivery without constructing SMTP", async () => {
+    const server = fakeServer();
+    const appFactory = vi.fn(() => ({
+      listen: vi.fn((_port: number, callback: () => void) => {
+        callback();
+        return server;
+      })
+    }));
+
+    const runtime = await startServer({
+      loadEnvironment: () => env,
+      connect: async () => undefined,
+      disconnect: async () => undefined,
+      prepareIdentityIndexes: async () => undefined,
+      repositoryFactory: () => ({} as AppRepository),
+      appFactory,
+      writeOutput: () => undefined,
+      registerSignalHandlers: false
+    });
+
+    expect(createSmtpInvitationMailer).not.toHaveBeenCalled();
+    expect(appFactory).toHaveBeenCalledWith(expect.objectContaining({
+      invitationMailer: { deliveryKind: "disabled" }
+    }));
+    await runtime.stop();
+  });
+
+  it("maps the complete SMTP union through the dedicated factory", async () => {
+    const smtp = {
+      kind: "smtp" as const,
+      publicFrontendUrl: "https://app.example.test",
+      host: "smtp.example.test",
+      port: 587,
+      tlsMode: "starttls" as const,
+      username: "smtp-user",
+      password: "smtp-password",
+      from: "Lisno Invitations <invitations@example.test>"
+    };
+    const externalMailer = {
+      deliveryKind: "external" as const,
+      sendInvitation: vi.fn(async () => undefined)
+    };
+    createSmtpInvitationMailer.mockReturnValue(externalMailer);
+    const server = fakeServer();
+    const appFactory = vi.fn(() => ({
+      listen: vi.fn((_port: number, callback: () => void) => {
+        callback();
+        return server;
+      })
+    }));
+
+    const runtime = await startServer({
+      loadEnvironment: () => ({ ...env, invitationDelivery: smtp }),
+      connect: async () => undefined,
+      disconnect: async () => undefined,
+      prepareIdentityIndexes: async () => undefined,
+      repositoryFactory: () => ({} as AppRepository),
+      appFactory,
+      writeOutput: () => undefined,
+      registerSignalHandlers: false
+    });
+
+    expect(createSmtpInvitationMailer).toHaveBeenCalledOnce();
+    expect(createSmtpInvitationMailer).toHaveBeenCalledWith(smtp);
+    expect(appFactory).toHaveBeenCalledWith(expect.objectContaining({
+      invitationMailer: externalMailer
+    }));
+    await runtime.stop();
+  });
+
+  it("does not connect when environment loading rejects a partial SMTP group", async () => {
+    const connect = vi.fn();
+
+    await expect(startServer({
+      loadEnvironment: () => {
+        throw new Error("Invitation delivery configuration must be supplied as one complete group.");
+      },
+      connect,
+      registerSignalHandlers: false
+    })).rejects.toThrow("Invitation delivery configuration must be supplied as one complete group.");
+
+    expect(connect).not.toHaveBeenCalled();
   });
 });

@@ -18,6 +18,10 @@ const DEFAULT_PERMISSIONS_BY_ROLE = {
     "organization.estimators.read",
     "identity.users.read",
     "identity.users.update",
+    "identity.user_invitations.read",
+    "identity.user_invitations.create",
+    "identity.user_invitations.resend",
+    "identity.user_invitations.revoke",
     "access_request.review.read",
     "access_request.self.read"
   ],

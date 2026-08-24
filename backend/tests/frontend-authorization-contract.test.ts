@@ -25,6 +25,13 @@ import {
   WORKER_ROLES as FRONTEND_WORKER_ROLES
 } from "../../frontend/src/api/authorization-contract.ts";
 
+const STAFF_INVITATION_PERMISSIONS = [
+  "identity.user_invitations.read",
+  "identity.user_invitations.create",
+  "identity.user_invitations.resend",
+  "identity.user_invitations.revoke"
+] as const;
+
 describe("frontend authorization contract parity", () => {
   it("matches the backend role vocabulary and labels", () => {
     expect(FRONTEND_ROLE_CODES).toEqual(ROLE_CODES);
@@ -39,5 +46,18 @@ describe("frontend authorization contract parity", () => {
     expect(FRONTEND_REQUESTABLE_MODULES).toEqual(REQUESTABLE_PROJECT_MODULES);
     expect(FRONTEND_REQUESTABLE_BY_ROLE).toEqual(REQUESTABLE_MODULES_BY_ROLE);
     expect(FRONTEND_POLICY_VERSION).toBe(AUTHORIZATION_POLICY_VERSION);
+  });
+
+  it("publishes the exact 97-code staff-invitation policy on both sides", () => {
+    expect(AUTHORIZATION_POLICY_VERSION).toBe("2026-08-23.staff-invitations.v1");
+    expect(FRONTEND_POLICY_VERSION).toBe("2026-08-23.staff-invitations.v1");
+    expect(PERMISSION_CODES).toHaveLength(97);
+    expect(FRONTEND_PERMISSION_CODES).toHaveLength(97);
+    expect(new Set(PERMISSION_CODES).size).toBe(97);
+    expect(new Set(FRONTEND_PERMISSION_CODES).size).toBe(97);
+    for (const permission of STAFF_INVITATION_PERMISSIONS) {
+      expect(PERMISSION_CODES).toContain(permission);
+      expect(FRONTEND_PERMISSION_CODES).toContain(permission);
+    }
   });
 });

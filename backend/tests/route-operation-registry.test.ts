@@ -25,10 +25,22 @@ import {
   EXPECTED_HUMAN_JWT_OPERATIONS_85_93
 } from "./fixtures/prompt-1-route-operations.js";
 import { EXPECTED_PROMPT_2_HUMAN_JWT_OPERATIONS } from "./fixtures/prompt-2-route-operations.js";
+import { EXPECTED_STAFF_INVITATION_HUMAN_JWT_OPERATIONS } from "./fixtures/staff-invitation-route-operations.js";
 
 const EXPECTED_ALL_HUMAN_JWT_OPERATIONS = [
   ...EXPECTED_HUMAN_JWT_OPERATIONS,
-  ...EXPECTED_PROMPT_2_HUMAN_JWT_OPERATIONS
+  ...EXPECTED_STAFF_INVITATION_HUMAN_JWT_OPERATIONS
+] as const;
+const EXPECTED_STAFF_INVITATION_OPERATIONS =
+  EXPECTED_STAFF_INVITATION_HUMAN_JWT_OPERATIONS.slice(
+    EXPECTED_PROMPT_2_HUMAN_JWT_OPERATIONS.length
+  );
+const STAFF_INVITATION_PROTECTED_KEYS = EXPECTED_STAFF_INVITATION_OPERATIONS.map(
+  ({ key }) => key
+);
+const STAFF_INVITATION_PUBLIC_KEYS = [
+  "POST /auth/user-invitations/inspect",
+  "POST /auth/user-invitations/accept"
 ] as const;
 
 const slices = [
@@ -178,9 +190,9 @@ describe("human JWT operation registry", () => {
     expect(HUMAN_JWT_OPERATION_LIST.slice(start, end)).toEqual(expected);
   });
 
-  it("matches all normative operation rows", () => {
+  it("matches all 101 normative operation rows", () => {
     expect(Object.values(HUMAN_JWT_OPERATIONS)).toEqual(EXPECTED_ALL_HUMAN_JWT_OPERATIONS);
-    expect(Object.keys(HUMAN_JWT_OPERATIONS)).toHaveLength(97);
+    expect(Object.keys(HUMAN_JWT_OPERATIONS)).toHaveLength(101);
   });
 
   it("mounts rows 2 through 23 as exact router groups with one ordered marker pair", () => {
@@ -344,7 +356,39 @@ describe("human JWT operation registry", () => {
     }
   });
 
-  it("mounts the exact 97-operation manifest with one ordered marker pair each", () => {
+  it("appends exactly four identity-provisioning operations with the approved scope and access metadata", () => {
+    expect(HUMAN_JWT_OPERATION_LIST.slice(97)).toEqual(
+      EXPECTED_STAFF_INVITATION_OPERATIONS
+    );
+    expect(
+      HUMAN_JWT_OPERATION_LIST.filter(
+        ({ availability }) => availability === "identity_provisioning"
+      )
+    ).toEqual(EXPECTED_STAFF_INVITATION_OPERATIONS);
+  });
+
+  it("mounts four protected invitation operations and two explicit public non-human routes in one router", () => {
+    const matches = mountedHumanRouters().filter((router) =>
+      router.routes.some(({ key }) => STAFF_INVITATION_PROTECTED_KEYS.includes(key as never))
+    );
+    expect(matches).toHaveLength(1);
+    expect(matches[0]!.routes.map(({ key }) => key).sort()).toEqual(
+      [...STAFF_INVITATION_PROTECTED_KEYS, ...STAFF_INVITATION_PUBLIC_KEYS].sort()
+    );
+    for (const route of matches[0]!.routes) {
+      if (STAFF_INVITATION_PUBLIC_KEYS.includes(route.key as never)) {
+        expect(route.authenticationIndices, `${route.key} authentication markers`).toEqual([]);
+        expect(route.operationMarkers, `${route.key} operation markers`).toEqual([]);
+        continue;
+      }
+      expect(route.authenticationIndices, `${route.key} authentication markers`).toHaveLength(1);
+      expect(route.operationMarkers, `${route.key} operation markers`).toEqual([
+        { index: 1, key: route.key }
+      ]);
+    }
+  });
+
+  it("mounts the exact 101-operation manifest with one ordered marker pair each", () => {
     const mountedRoutes = mountedHumanRouters()
       .flatMap(({ routes }) => routes)
       .filter(({ operationMarkers }) => operationMarkers.length > 0);
@@ -352,8 +396,8 @@ describe("human JWT operation registry", () => {
     const expectedKeys = EXPECTED_ALL_HUMAN_JWT_OPERATIONS.map(({ key }) => key).sort();
 
     expect([...mountedOperations].sort()).toEqual(expectedKeys);
-    expect(expectedKeys).toHaveLength(97);
-    expect(new Set(expectedKeys).size).toBe(97);
+    expect(expectedKeys).toHaveLength(101);
+    expect(new Set(expectedKeys).size).toBe(101);
     expect(mountedOperations).not.toContain(
       "POST /execution/worker-assignments/override"
     );
@@ -400,9 +444,9 @@ describe("human JWT operation registry", () => {
     expect(() => assertTaskSixRouteMounts(routers)).toThrow();
   });
 
-  it("has unique keys and exactly 92 routed permissions", () => {
-    expect(new Set(HUMAN_JWT_OPERATION_LIST.map(({ key }) => key)).size).toBe(97);
-    expect(new Set(HUMAN_JWT_OPERATION_LIST.map(({ permission }) => permission)).size).toBe(92);
+  it("has 101 unique keys and exactly 96 routed permissions", () => {
+    expect(new Set(HUMAN_JWT_OPERATION_LIST.map(({ key }) => key)).size).toBe(101);
+    expect(new Set(HUMAN_JWT_OPERATION_LIST.map(({ permission }) => permission)).size).toBe(96);
     expect(HUMAN_JWT_OPERATION_LIST.every(({ permission }) =>
       (PERMISSION_CODES as readonly string[]).includes(permission)
     )).toBe(true);
@@ -413,6 +457,7 @@ describe("human JWT operation registry", () => {
       "GET /health",
       "POST /auth/login",
       "POST /auth/client-signup",
+      ...STAFF_INVITATION_PUBLIC_KEYS,
       "POST /internal/extraction-jobs/:jobId/complete"
     ];
     for (const key of nonHumanKeys) {
@@ -425,10 +470,14 @@ describe("human JWT operation registry", () => {
         key === "GET /health" ||
         key === "POST /auth/login" ||
         key === "POST /auth/client-signup" ||
+        STAFF_INVITATION_PUBLIC_KEYS.includes(key as never) ||
         key.startsWith("POST /internal/extraction-jobs") ||
         key.startsWith("GET /internal/extraction-jobs")
     );
     expect(publicRoutes.length).toBeGreaterThanOrEqual(8);
+    for (const key of STAFF_INVITATION_PUBLIC_KEYS) {
+      expect(publicRoutes.filter((route) => route.key === key), `${key} mount count`).toHaveLength(1);
+    }
     for (const route of publicRoutes) {
       expect(route.authenticationIndices, `${route.key} authentication markers`).toEqual([]);
       expect(route.operationMarkers, `${route.key} operation markers`).toEqual([]);

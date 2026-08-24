@@ -1,4 +1,4 @@
-import express from "express";
+import express, { type RequestHandler } from "express";
 import mongoose from "mongoose";
 import path from "node:path";
 
@@ -9,6 +9,11 @@ import {
 import type { DevelopmentDemoAuthorization } from "./development/demo-account-authorization.js";
 import { createAuthRateLimit } from "./middleware/auth-rate-limit.js";
 import { createAccessRequestRateLimit } from "./middleware/access-request-rate-limit.js";
+import {
+  createInvitationDeliveryRateLimit,
+  createInvitationPublicRateLimit,
+  type InvitationRateLimitOptions
+} from "./middleware/invitation-rate-limit.js";
 import { allowCors } from "./middleware/cors.js";
 import { errorHandler, notFoundHandler } from "./middleware/errors.js";
 import { createMemoryRepository } from "./repositories/memory.js";
@@ -31,6 +36,7 @@ import { createLeadsRouter } from "./routes/leads.js";
 import { createOrganizationRouter } from "./routes/organization.js";
 import { createProjectsRouter } from "./routes/projects.js";
 import { createTasksRouter } from "./routes/tasks.js";
+import { createUserInvitationsRouter } from "./routes/user-invitations.js";
 import { createAuditService } from "./services/audit.service.js";
 import { createAccessRequestService } from "./services/access-request.service.js";
 import { createAdminProjectService } from "./services/admin-project.service.js";
@@ -55,6 +61,8 @@ import {
   type EstimatePdfService
 } from "./services/estimate-pdf.service.js";
 import { createTaskService } from "./services/task.service.js";
+import type { InvitationMailer } from "./services/invitation-mailer.js";
+import { createUserInvitationService } from "./services/user-invitation.service.js";
 import { systemClock, type Clock } from "./services/workflow.js";
 import { createLocalStorage } from "./storage/local-storage.js";
 import type { FileStorage } from "./storage/storage.js";
@@ -77,6 +85,9 @@ export interface AppDependencies {
     maxAttempts?: number;
     maxEntries?: number;
   };
+  invitationMailer?: InvitationMailer;
+  invitationPublicRateLimit?: InvitationRateLimitOptions;
+  invitationDeliveryRateLimit?: InvitationRateLimitOptions;
   estimatePdfService?: EstimatePdfService;
   developmentDemoAuthorization?: DevelopmentDemoAuthorization;
 }
@@ -109,6 +120,18 @@ export function createApp(dependencies: AppDependencies) {
     maxEntries: dependencies.accessRequestRateLimit?.maxEntries ?? 10_000,
     clock: () => clock().getTime()
   });
+  const invitationPublicRateLimit = createInvitationPublicRateLimit({
+    ...dependencies.invitationPublicRateLimit,
+    clock:
+      dependencies.invitationPublicRateLimit?.clock ??
+      (() => clock().getTime())
+  });
+  const invitationDeliveryRateLimit = createInvitationDeliveryRateLimit({
+    ...dependencies.invitationDeliveryRateLimit,
+    clock:
+      dependencies.invitationDeliveryRateLimit?.clock ??
+      (() => clock().getTime())
+  });
   const accessRequestService = createAccessRequestService(
     repository,
     auditService,
@@ -119,6 +142,12 @@ export function createApp(dependencies: AppDependencies) {
     auditService,
     clock
   );
+  const userInvitationService = createUserInvitationService({
+    repository,
+    audit: auditService,
+    mailer: dependencies.invitationMailer ?? { deliveryKind: "disabled" },
+    clock
+  });
   const adminProjectService = createAdminProjectService(
     repository,
     auditService,
@@ -184,10 +213,20 @@ export function createApp(dependencies: AppDependencies) {
       )
     );
   }
+  app.use(exactPublicInvitationPath(noStore));
+  app.use(exactPublicInvitationPath(invitationPublicRateLimit));
   // Annotation documents are capped at 256 KiB by their domain schema.
   app.use(express.json({ limit: "300kb" }));
   app.use("/api/v1", healthRouter);
   app.use("/api/v1", createAuthRouter(authService, authRateLimit));
+  app.use(
+    "/api/v1",
+    createUserInvitationsRouter(
+      authService,
+      userInvitationService,
+      invitationDeliveryRateLimit
+    )
+  );
   app.use(
     "/api/v1",
     createAccessRequestsRouter(
@@ -251,4 +290,27 @@ export function createApp(dependencies: AppDependencies) {
   app.use(errorHandler);
 
   return app;
+}
+
+const publicInvitationPaths = new Set([
+  "/api/v1/auth/user-invitations/inspect",
+  "/api/v1/auth/user-invitations/accept"
+]);
+
+const noStore: RequestHandler = (_request, response, next) => {
+  response.setHeader("Cache-Control", "no-store");
+  next();
+};
+
+function exactPublicInvitationPath(handler: RequestHandler): RequestHandler {
+  return (request, response, next) => {
+    if (
+      request.method === "POST" &&
+      publicInvitationPaths.has(request.path)
+    ) {
+      handler(request, response, next);
+      return;
+    }
+    next();
+  };
 }

@@ -13,6 +13,7 @@ import {
   isFrontendRole,
   roleMayRequestModule
 } from "./authorization-contract";
+import { ROUTE_REGISTRY } from "../app/routeRegistry";
 
 const expectedRoles = [
   "super_admin",
@@ -33,6 +34,13 @@ const expectedRoles = [
   "client"
 ] as const;
 
+const invitationPermissions = [
+  "identity.user_invitations.read",
+  "identity.user_invitations.create",
+  "identity.user_invitations.resend",
+  "identity.user_invitations.revoke"
+] as const;
+
 describe("frontend authorization contract", () => {
   it("publishes the exact Prompt 2 role and module vocabulary", () => {
     expect(ROLE_CODES).toEqual(expectedRoles);
@@ -50,16 +58,35 @@ describe("frontend authorization contract", () => {
       "finance",
       "execution"
     ]);
-    expect(AUTHORIZATION_POLICY_VERSION).toBe("2026-08-23.prompt-2");
+    expect(AUTHORIZATION_POLICY_VERSION).toBe(
+      "2026-08-23.staff-invitations.v1"
+    );
   });
 
-  it("publishes all 93 unique permissions including Admin project initiation", () => {
-    expect(PERMISSION_CODES).toHaveLength(93);
-    expect(new Set(PERMISSION_CODES)).toHaveLength(93);
+  it("publishes all 97 unique permissions with invitation permissions in canonical order", () => {
+    expect(PERMISSION_CODES).toHaveLength(97);
+    expect(new Set(PERMISSION_CODES)).toHaveLength(97);
     expect(PERMISSION_CODES).toContain("projects.initiate");
     expect(PERMISSION_CODES).toContain("organization.estimators.read");
+    const identityMutationIndex = PERMISSION_CODES.indexOf(
+      "identity.users.update"
+    );
+    expect(
+      PERMISSION_CODES.slice(identityMutationIndex, identityMutationIndex + 6)
+    ).toEqual([
+      "identity.users.update",
+      ...invitationPermissions,
+      "access_request.create"
+    ]);
     expect(PERMISSION_CODES.at(-1)).toBe(
       "execution.worker_assignment.override"
+    );
+  });
+
+  it("keeps the protected frontend registry at exactly 20 routes", () => {
+    expect(ROUTE_REGISTRY).toHaveLength(20);
+    expect(ROUTE_REGISTRY.map(({ path }) => path)).not.toContain(
+      "/accept-invitation"
     );
   });
 

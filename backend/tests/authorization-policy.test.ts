@@ -16,6 +16,13 @@ import {
 import { ROLE_CODES, WORKER_ROLES, type Role } from "../src/domain/roles.js";
 import { EXPECTED_HUMAN_JWT_OPERATIONS } from "./fixtures/prompt-1-route-operations.js";
 
+const STAFF_INVITATION_PERMISSIONS = [
+  "identity.user_invitations.read",
+  "identity.user_invitations.create",
+  "identity.user_invitations.resend",
+  "identity.user_invitations.revoke"
+] as const;
+
 const COMMON_ROWS = [1, 85] as const;
 const ADDITIONAL_ROWS = {
   admin: [2, 5, 86, 87, 91, 92, 93],
@@ -106,9 +113,24 @@ describe("authorization policy", () => {
         permissionsForRows([...COMMON_ROWS, ...ADDITIONAL_ROWS[role]])
       );
     }
-    expect(PERMISSION_CODES).toHaveLength(93);
-    expect(new Set(PERMISSION_CODES).size).toBe(93);
+    expect(PERMISSION_CODES).toHaveLength(97);
+    expect(new Set(PERMISSION_CODES).size).toBe(97);
     expect(ROLE_PERMISSIONS.super_admin).toEqual(PERMISSION_CODES);
+  });
+
+  it("places the four staff-invitation permissions exactly after user mutation and grants them only to Super Admin", () => {
+    const usersUpdateIndex = PERMISSION_CODES.indexOf("identity.users.update");
+    expect(PERMISSION_CODES.slice(usersUpdateIndex + 1, usersUpdateIndex + 5)).toEqual(
+      STAFF_INVITATION_PERMISSIONS
+    );
+    expect(PERMISSION_CODES[usersUpdateIndex + 5]).toBe("access_request.create");
+    expect(ROLE_PERMISSIONS.super_admin).toEqual(PERMISSION_CODES);
+    for (const role of ROLE_CODES.filter((candidate) => candidate !== "super_admin")) {
+      for (const permission of STAFF_INVITATION_PERMISSIONS) {
+        expect(hasPermission(role, permission), `${role} ${permission}`).toBe(false);
+        expect(ROLE_PERMISSIONS[role], `${role} ${permission}`).not.toContain(permission);
+      }
+    }
   });
 
   it("gives all worker trades identical identity-only permissions", () => {

@@ -7,8 +7,11 @@ import mongoose from "mongoose";
 import { createApp } from "./app.js";
 import { loadEnvironment } from "./config/env.js";
 import type { DevelopmentDemoAuthorization } from "./development/demo-account-authorization.js";
+import { UserModel } from "./models/User.js";
+import { UserInvitationModel } from "./models/UserInvitation.js";
 import { createMongoRepository } from "./repositories/mongo.js";
 import type { AppRepository } from "./repositories/types.js";
+import { createSmtpInvitationMailer } from "./services/smtp-invitation-mailer.js";
 import { createLocalStorage } from "./storage/local-storage.js";
 
 type ServerApp = {
@@ -28,6 +31,7 @@ export interface ServerDependencies {
   appFactory?: (dependencies: Parameters<typeof createApp>[0]) => ServerApp;
   bindHost?: string;
   prepareDatabase?: (context: DatabasePreparationContext) => Promise<void>;
+  prepareIdentityIndexes?: () => Promise<void>;
   developmentDemoAuthorization?: DevelopmentDemoAuthorization;
   writeOutput?: (message: string) => void;
   registerSignalHandlers?: boolean;
@@ -45,6 +49,8 @@ export async function startServer(
   const disconnect = dependencies.disconnect ?? (() => mongoose.disconnect());
   const repositoryFactory = dependencies.repositoryFactory ?? createMongoRepository;
   const appFactory = dependencies.appFactory ?? createApp;
+  const prepareIdentityIndexes =
+    dependencies.prepareIdentityIndexes ?? initializeIdentityIndexes;
 
   let connected = false;
   let server: Server;
@@ -52,6 +58,10 @@ export async function startServer(
     await connect(env.MONGODB_URI);
     connected = true;
     await dependencies.prepareDatabase?.({ mongodbUri: env.MONGODB_URI });
+    await prepareIdentityIndexes();
+    const invitationMailer = env.invitationDelivery.kind === "smtp"
+      ? createSmtpInvitationMailer(env.invitationDelivery)
+      : { deliveryKind: "disabled" as const };
     const app = appFactory({
       repository: repositoryFactory(),
       auth: {
@@ -69,6 +79,7 @@ export async function startServer(
       },
       ocrConfidenceFloor: env.OCR_CONFIDENCE_FLOOR,
       ocrWorkerToken: env.OCR_WORKER_TOKEN,
+      invitationMailer,
       developmentDemoAuthorization: dependencies.developmentDemoAuthorization
     });
     server = await listen(app, env.PORT, dependencies.bindHost);
@@ -101,6 +112,11 @@ export async function startServer(
   }
 
   return { stop };
+}
+
+async function initializeIdentityIndexes(): Promise<void> {
+  await UserModel.init();
+  await UserInvitationModel.init();
 }
 
 function listen(app: ServerApp, port: number, host?: string): Promise<Server> {

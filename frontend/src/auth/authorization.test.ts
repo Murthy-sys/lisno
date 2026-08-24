@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { AUTHORIZATION_POLICY_VERSION } from "../api/authorization-contract";
+import {
+  AUTHORIZATION_POLICY_VERSION,
+  ROLE_CODES
+} from "../api/authorization-contract";
+import { authorizationFor } from "../test/authFixtures";
 import {
   InvalidAuthorizationSnapshotError,
   hasFrontendPermission,
@@ -12,6 +16,13 @@ const validSnapshot = {
   policyVersion: AUTHORIZATION_POLICY_VERSION,
   permissions: ["projects.read", "identity.self.read"]
 };
+
+const invitationPermissions = [
+  "identity.user_invitations.read",
+  "identity.user_invitations.create",
+  "identity.user_invitations.resend",
+  "identity.user_invitations.revoke"
+] as const;
 
 describe("parseAuthorizationSnapshot", () => {
   it("accepts an exact role and policy version and canonicalizes permissions", () => {
@@ -29,7 +40,7 @@ describe("parseAuthorizationSnapshot", () => {
 
     expect(result).toEqual({
       role: "designer",
-      policyVersion: "2026-08-23.prompt-2",
+      policyVersion: "2026-08-23.staff-invitations.v1",
       permissions: ["identity.self.read", "projects.read"]
     });
     expect(Object.isFrozen(result)).toBe(true);
@@ -81,13 +92,40 @@ describe("parseAuthorizationSnapshot", () => {
     expect(parseAuthorizationSnapshot(snapshot, "designer")).toBeNull();
   });
 
-  it("rejects an unbounded permission array", () => {
+  it("accepts the 129-item permission ceiling and rejects 130 items", () => {
     expect(
       parseAuthorizationSnapshot(
-        { ...validSnapshot, permissions: Array(126).fill("unknown.action") },
+        { ...validSnapshot, permissions: Array(129).fill("unknown.action") },
+        "designer"
+      )
+    ).toEqual({
+      role: "designer",
+      policyVersion: "2026-08-23.staff-invitations.v1",
+      permissions: []
+    });
+    expect(
+      parseAuthorizationSnapshot(
+        { ...validSnapshot, permissions: Array(130).fill("unknown.action") },
         "designer"
       )
     ).toBeNull();
+  });
+
+  it("retains the four canonical invitation permissions in catalog order", () => {
+    expect(
+      parseAuthorizationSnapshot(
+        {
+          role: "super_admin",
+          policyVersion: AUTHORIZATION_POLICY_VERSION,
+          permissions: [...invitationPermissions].reverse()
+        },
+        "super_admin"
+      )
+    ).toEqual({
+      role: "super_admin",
+      policyVersion: "2026-08-23.staff-invitations.v1",
+      permissions: invitationPermissions
+    });
   });
 });
 
@@ -108,5 +146,23 @@ describe("frontend permission checks", () => {
       code: "INVALID_AUTHORIZATION_SNAPSHOT",
       message: "The authorization policy could not be established."
     });
+  });
+
+  it("grants invitation permissions only to the Super Admin fixture", () => {
+    expect(
+      authorizationFor("super_admin").permissions.filter((permission) =>
+        permission.startsWith("identity.user_invitations.")
+      )
+    ).toEqual(invitationPermissions);
+
+    for (const role of ROLE_CODES) {
+      if (role === "super_admin") continue;
+      expect(
+        authorizationFor(role).permissions.some((permission) =>
+          permission.startsWith("identity.user_invitations.")
+        ),
+        role
+      ).toBe(false);
+    }
   });
 });

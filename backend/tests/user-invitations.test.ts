@@ -1,6 +1,10 @@
 import { createHash } from "node:crypto";
+import express from "express";
+import jwt from "jsonwebtoken";
+import request from "supertest";
 import { describe, expect, it, vi } from "vitest";
 
+import { createApp } from "../src/app.js";
 import { PROJECT_MODULES } from "../src/domain/authorization.js";
 import {
   INVITABLE_ROLE_CODES,
@@ -36,6 +40,7 @@ const PUBLIC_RAW_TOKEN = Buffer.alloc(32, 41).toString("base64url");
 const REPLACEMENT_RAW_TOKEN = Buffer.alloc(32, 42).toString("base64url");
 const ACCEPTED_PASSWORD = "StrongInvitationPassword!23";
 const ACCEPTED_PASSWORD_HASH = "$2b$12$accepted-invitation-password-hash";
+const HTTP_AUTH_SECRET = "staff-invitation-route-secret-at-least-32-characters";
 
 function invitationHash(id: string): string {
   return createHash("sha256").update(id).digest("hex");
@@ -137,6 +142,19 @@ function standardSeed(): { seed: SeedData; operator: UserRecord } {
   return { seed, operator };
 }
 
+function standardUserForRole(seed: SeedData, role: Role): UserRecord {
+  const stored = seed.users.find((user) => user.role === role)!;
+  const standard = {
+    ...stored,
+    id: `standard-${role.replaceAll("_", "-")}-route-user`,
+    email: `${role.replaceAll("_", ".")}@company.test`,
+    emailNormalized: `${role.replaceAll("_", ".")}@company.test`,
+    accountKind: "standard" as const
+  };
+  seed.users = seed.users.map((user) => user.id === stored.id ? standard : user);
+  return standard;
+}
+
 function publicUser(user: UserRecord, role: Role = user.role): PublicUser {
   return {
     id: user.id,
@@ -181,6 +199,62 @@ function setup(
     ...(options.passwordHasher ? { passwordHasher: options.passwordHasher } : {})
   });
   return { repository, audit, service, sendInvitation: local.sendInvitation };
+}
+
+function bearerFor(user: UserRecord): string {
+  return `Bearer ${jwt.sign(
+    { id: user.id, role: user.role },
+    HTTP_AUTH_SECRET,
+    { expiresIn: 900 }
+  )}`;
+}
+
+function httpSetup(
+  seed = standardSeed().seed,
+  options: {
+    mailer?: InvitationMailer;
+    publicLimit?: { windowMs?: number; maxAttempts?: number; maxEntries?: number };
+    deliveryLimit?: { windowMs?: number; maxAttempts?: number; maxEntries?: number };
+    clock?: () => Date;
+  } = {}
+) {
+  const repository = createMemoryRepository(seed);
+  let deliveredToken = "";
+  const sendInvitation = vi.fn(async ({ rawToken }: { rawToken: string }) => {
+    deliveredToken = rawToken;
+  });
+  const mailer = options.mailer ?? {
+    deliveryKind: "local_test" as const,
+    sendInvitation
+  };
+  const app = createApp({
+    repository,
+    auth: { jwtSecret: HTTP_AUTH_SECRET, jwtExpiresInSeconds: 900 },
+    clock: options.clock ?? (() => new Date(NOW)),
+    invitationMailer: mailer,
+    invitationPublicRateLimit: options.publicLimit,
+    invitationDeliveryRateLimit: options.deliveryLimit
+  });
+  return {
+    app,
+    api: request(app),
+    repository,
+    sendInvitation,
+    deliveredToken: () => deliveredToken
+  };
+}
+
+function remoteGateway(app: ReturnType<typeof createApp>) {
+  const gateway = express();
+  gateway.use((incoming, _response, next) => {
+    Object.defineProperty(incoming.socket, "remoteAddress", {
+      configurable: true,
+      value: "192.0.2.10"
+    });
+    next();
+  });
+  gateway.use(app);
+  return gateway;
 }
 
 const createInput = {
@@ -1484,5 +1558,427 @@ describe("public user invitation inspection and acceptance", () => {
         total: 0
       });
     }
+  });
+});
+
+describe("user invitation HTTP integration", () => {
+  const validCreateBody = {
+    name: "Asha Rao",
+    email: "asha.route@example.test",
+    role: "designer",
+    mobile: "+91 98765 43210"
+  };
+
+  it("returns the exact redacted protected list/create/resend/revoke envelopes", async () => {
+    const { seed, operator } = standardSeed();
+    seed.userInvitations = [
+      invitation("route-pending", operator),
+      terminalInvitation("route-accepted", operator, "accepted")
+    ];
+    const authorization = bearerFor(operator);
+    const listed = await httpSetup(structuredClone(seed)).api
+      .get("/api/v1/admin/user-invitations?limit=10&offset=0")
+      .set("Authorization", authorization);
+
+    expect(listed.status).toBe(200);
+    expect(listed.body).toEqual({
+      data: {
+        items: [expect.objectContaining({
+          id: "route-pending",
+          status: "pending",
+          deliveryStatus: "queued",
+          version: 1
+        })],
+        pagination: { limit: 10, offset: 0, total: 1, hasMore: false },
+        invitableRoles: INVITABLE_ROLE_CODES
+      }
+    });
+    expect(JSON.stringify(listed.body)).not.toMatch(
+      /tokenHash|tokenGeneration|deliveryFailureCode|emailNormalized|claimed|reserved/i
+    );
+
+    const deliveryFailure = vi.fn(async () => {
+      throw new Error("provider response must stay internal");
+    });
+    const { seed: createSeed, operator: createOperator } = standardSeed();
+    const createContext = httpSetup(createSeed, {
+      mailer: { deliveryKind: "local_test", sendInvitation: deliveryFailure }
+    });
+    const created = await createContext.api
+      .post("/api/v1/admin/user-invitations")
+      .set("Authorization", bearerFor(createOperator))
+      .send(validCreateBody);
+    expect(created.status).toBe(201);
+    expect(created.body.data).toMatchObject({
+      name: validCreateBody.name,
+      email: validCreateBody.email,
+      role: validCreateBody.role,
+      mobile: validCreateBody.mobile,
+      status: "delivery_failed",
+      deliveryStatus: "failed",
+      version: 1
+    });
+    expect(JSON.stringify(created.body)).not.toMatch(
+      /provider|response|token|hash|failureCode|emailNormalized/i
+    );
+
+    const resendContext = httpSetup(structuredClone(seed));
+    const resent = await resendContext.api
+      .post("/api/v1/admin/user-invitations/route-pending/resend")
+      .set("Authorization", authorization)
+      .send({ version: 1 });
+    expect(resent.status).toBe(200);
+    expect(resent.body.data).toMatchObject({
+      id: "route-pending",
+      deliveryStatus: "sent",
+      version: 2
+    });
+    expect(JSON.stringify(resent.body)).not.toMatch(/token|hash|failureCode|emailNormalized/i);
+
+    const revokeContext = httpSetup(structuredClone(seed));
+    const revoked = await revokeContext.api
+      .post("/api/v1/admin/user-invitations/route-pending/revoke")
+      .set("Authorization", authorization)
+      .send({ version: 1 });
+    expect(revoked.status).toBe(200);
+    expect(revoked.body.data).toMatchObject({
+      id: "route-pending",
+      status: "revoked",
+      availableActions: [],
+      currentLinkAvailable: false,
+      version: 2
+    });
+  });
+
+  it("accepts exact create boundaries and rejects every out-of-contract field/value", async () => {
+    const emailOfLength = (length: 254 | 255) => {
+      const finalLabelLength = length - (64 + 1 + 63 + 1 + 63 + 1);
+      return `${"a".repeat(64)}@${"b".repeat(63)}.${"c".repeat(63)}.${"d".repeat(finalLabelLength)}`;
+    };
+    const mobile30 = "+123 456 789 012 345----------";
+    expect(emailOfLength(254)).toHaveLength(254);
+    expect(emailOfLength(255)).toHaveLength(255);
+    expect(mobile30).toHaveLength(30);
+
+    const validBoundaries = [
+      { ...validCreateBody, name: "N".repeat(120), email: "name-boundary@example.test" },
+      { ...validCreateBody, email: emailOfLength(254) },
+      { ...validCreateBody, email: "mobile-boundary@example.test", mobile: mobile30 }
+    ];
+    for (const body of validBoundaries) {
+      const { seed, operator } = standardSeed();
+      const { api } = httpSetup(seed);
+      const response = await api
+        .post("/api/v1/admin/user-invitations")
+        .set("Authorization", bearerFor(operator))
+        .send(body);
+      expect(response.status, JSON.stringify(body)).toBe(201);
+    }
+
+    const controls = ["\r", "\n", "\u0000", "\u007f", "\u0080"];
+    const invalidBodies: unknown[] = [
+      { ...validCreateBody, name: "N".repeat(121) },
+      { ...validCreateBody, email: emailOfLength(255) },
+      { ...validCreateBody, mobile: `${mobile30}-` },
+      { ...validCreateBody, mobile: "123+456789" },
+      { ...validCreateBody, mobile: "++123456789" },
+      { ...validCreateBody, mobile: "+९१ ९८७६५४३२१०" },
+      { ...validCreateBody, role: "client" },
+      { ...validCreateBody, role: "super_admin" },
+      { ...validCreateBody, title: "Forbidden title" },
+      { ...validCreateBody, unexpected: true },
+      { email: validCreateBody.email, role: "designer", mobile: validCreateBody.mobile },
+      { name: validCreateBody.name, role: "designer", mobile: validCreateBody.mobile },
+      { name: validCreateBody.name, email: validCreateBody.email, mobile: validCreateBody.mobile },
+      { name: validCreateBody.name, email: validCreateBody.email, role: "designer" },
+      ...controls.flatMap((control) => [
+        { ...validCreateBody, name: `Asha${control}Rao` },
+        { ...validCreateBody, email: `asha${control}@example.test` },
+        { ...validCreateBody, mobile: `+91${control}9876543210` }
+      ])
+    ];
+    for (const body of invalidBodies) {
+      const { seed, operator } = standardSeed();
+      const { api } = httpSetup(seed, {
+        deliveryLimit: { maxAttempts: 100 }
+      });
+      const response = await api
+        .post("/api/v1/admin/user-invitations")
+        .set("Authorization", bearerFor(operator))
+        .send(body);
+      expect(response.status, JSON.stringify(body)).toBe(400);
+      expect(response.body.error.code).toBe("VALIDATION_ERROR");
+    }
+  });
+
+  it("keeps all public outcomes no-store and makes token validity indistinguishable", async () => {
+    const { seed, operator } = standardSeed();
+    const record = publicInvitation("route-public", operator, PUBLIC_RAW_TOKEN, {
+      name: "Public Invitee",
+      email: "Public.Invitee@example.test",
+      emailNormalized: "public.invitee@example.test",
+      mobile: "+91 98765 43210"
+    });
+    seed.userInvitations = [record];
+
+    const inspected = await httpSetup(structuredClone(seed)).api
+      .post("/api/v1/auth/user-invitations/inspect")
+      .send({ token: PUBLIC_RAW_TOKEN });
+    expect(inspected.status).toBe(200);
+    expect(inspected.headers["cache-control"]).toBe("no-store");
+    expect(inspected.body).toEqual({
+      data: {
+        name: record.name,
+        email: record.email,
+        role: record.role,
+        expiresAt: record.expiresAt
+      }
+    });
+    expect(JSON.stringify(inspected.body)).not.toMatch(/mobile|token|hash|version|issuer/i);
+
+    const malformed = await httpSetup(structuredClone(seed)).api
+      .post("/api/v1/auth/user-invitations/inspect")
+      .send({ token: "not-a-token" });
+    const unknown = await httpSetup(structuredClone(seed)).api
+      .post("/api/v1/auth/user-invitations/inspect")
+      .send({ token: REPLACEMENT_RAW_TOKEN });
+    expect(malformed.status).toBe(410);
+    expect(unknown.status).toBe(410);
+    expect(malformed.body).toEqual(unknown.body);
+    expect(malformed.headers["cache-control"]).toBe("no-store");
+    expect(unknown.headers["cache-control"]).toBe("no-store");
+
+    const schemaFailure = await httpSetup(structuredClone(seed)).api
+      .post("/api/v1/auth/user-invitations/inspect")
+      .send({ token: 42 });
+    expect(schemaFailure.status).toBe(400);
+    expect(schemaFailure.body.error.code).toBe("VALIDATION_ERROR");
+    expect(schemaFailure.headers["cache-control"]).toBe("no-store");
+
+    for (const body of [
+      {
+        token: PUBLIC_RAW_TOKEN,
+        password: "too-short",
+        passwordConfirmation: "too-short"
+      },
+      {
+        token: PUBLIC_RAW_TOKEN,
+        password: ACCEPTED_PASSWORD,
+        passwordConfirmation: `${ACCEPTED_PASSWORD}-mismatch`
+      }
+    ]) {
+      const response = await httpSetup(structuredClone(seed)).api
+        .post("/api/v1/auth/user-invitations/accept")
+        .send(body);
+      expect(response.status).toBe(400);
+      expect(response.body.error.code).toBe("VALIDATION_ERROR");
+      expect(response.headers["cache-control"]).toBe("no-store");
+    }
+
+    const failingContext = httpSetup(structuredClone(seed));
+    vi.spyOn(
+      failingContext.repository,
+      "findPendingUserInvitationByTokenHash"
+    ).mockRejectedValue(new Error("database detail"));
+    const internal = await failingContext.api
+      .post("/api/v1/auth/user-invitations/inspect")
+      .send({ token: PUBLIC_RAW_TOKEN });
+    expect(internal.status).toBe(500);
+    expect(internal.body).toEqual({
+      error: {
+        code: "INTERNAL_ERROR",
+        message: "An unexpected error occurred."
+      }
+    });
+    expect(internal.headers["cache-control"]).toBe("no-store");
+  });
+
+  it("charges malformed JSON to the shared public bucket before parsing and never reaches the service", async () => {
+    const { seed } = standardSeed();
+    const context = httpSetup(seed, {
+      publicLimit: { maxAttempts: 2, windowMs: 60_000 }
+    });
+    const lookup = vi.spyOn(
+      context.repository,
+      "findPendingUserInvitationByTokenHash"
+    );
+
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const malformed = await context.api
+        .post("/api/v1/auth/user-invitations/inspect")
+        .set("Content-Type", "application/json")
+        .send('{"token":');
+      expect(malformed.status).toBe(400);
+      expect(malformed.body).toEqual({
+        error: {
+          code: "INVALID_JSON",
+          message: "Request body must contain valid JSON."
+        }
+      });
+      expect(malformed.headers["cache-control"]).toBe("no-store");
+    }
+
+    const limited = await context.api
+      .post("/api/v1/auth/user-invitations/accept")
+      .send({
+        token: PUBLIC_RAW_TOKEN,
+        password: ACCEPTED_PASSWORD,
+        passwordConfirmation: ACCEPTED_PASSWORD
+      });
+    expect(limited.status).toBe(429);
+    expect(limited.body.error.code).toBe("TOO_MANY_ATTEMPTS");
+    expect(limited.headers["cache-control"]).toBe("no-store");
+    expect(limited.headers["retry-after"]).toBe("60");
+    expect(lookup).not.toHaveBeenCalled();
+  });
+
+  it("orders protected authentication, authorization, delivery limiting, validation, and service use", async () => {
+    const { seed, operator } = standardSeed();
+    seed.userInvitations = [invitation("ordered-route", operator)];
+    const admin = standardUserForRole(seed, "admin");
+    const context = httpSetup(seed, {
+      deliveryLimit: { maxAttempts: 1, windowMs: 60_000 }
+    });
+    const path = "/api/v1/admin/user-invitations";
+
+    const unauthenticated = await context.api.post(path).send({});
+    expect(unauthenticated.status).toBe(401);
+
+    const unauthorized = await context.api
+      .post(path)
+      .set("Authorization", bearerFor(admin))
+      .send({});
+    expect(unauthorized.status).toBe(403);
+
+    const validation = await context.api
+      .post(path)
+      .set("Authorization", bearerFor(operator))
+      .send({});
+    expect(validation.status).toBe(400);
+    expect(validation.body.error.code).toBe("VALIDATION_ERROR");
+
+    const limited = await context.api
+      .post(path)
+      .set("Authorization", bearerFor(operator))
+      .send(validCreateBody);
+    expect(limited.status).toBe(429);
+    expect(limited.body.error.code).toBe("TOO_MANY_ATTEMPTS");
+
+    const listed = await context.api
+      .get("/api/v1/admin/user-invitations")
+      .set("Authorization", bearerFor(operator));
+    expect(listed.status).toBe(200);
+
+    const revoked = await context.api
+      .post("/api/v1/admin/user-invitations/ordered-route/revoke")
+      .set("Authorization", bearerFor(operator))
+      .send({ version: 1 });
+    expect(revoked.status).toBe(200);
+
+    const resendLimitedBeforeValidation = await context.api
+      .post("/api/v1/admin/user-invitations/ordered-route/resend")
+      .set("Authorization", bearerFor(operator))
+      .send({});
+    expect(resendLimitedBeforeValidation.status).toBe(429);
+  });
+
+  it("denies Admin on all protected routes before invitation service or mail work", async () => {
+    const { seed } = standardSeed();
+    const admin = standardUserForRole(seed, "admin");
+    const context = httpSetup(seed);
+    const list = vi.spyOn(context.repository, "pageUserInvitations");
+    const transaction = vi.spyOn(context.repository, "runInTransaction");
+    const invitationRead = vi.spyOn(context.repository, "findUserInvitationById");
+
+    const responses = await Promise.all([
+      context.api
+        .get("/api/v1/admin/user-invitations")
+        .set("Authorization", bearerFor(admin)),
+      context.api
+        .post("/api/v1/admin/user-invitations")
+        .set("Authorization", bearerFor(admin))
+        .send(validCreateBody),
+      context.api
+        .post("/api/v1/admin/user-invitations/blocked/resend")
+        .set("Authorization", bearerFor(admin))
+        .send({ version: 1 }),
+      context.api
+        .post("/api/v1/admin/user-invitations/blocked/revoke")
+        .set("Authorization", bearerFor(admin))
+        .send({ version: 1 })
+    ]);
+
+    expect(responses.map(({ status }) => status)).toEqual([403, 403, 403, 403]);
+    expect(list).not.toHaveBeenCalled();
+    expect(transaction).not.toHaveBeenCalled();
+    expect(invitationRead).not.toHaveBeenCalled();
+    expect(context.sendInvitation).not.toHaveBeenCalled();
+  });
+
+  it("accepts once without auth installation, then permits ordinary remote login and snapshots", async () => {
+    const { seed, operator } = standardSeed();
+    const context = httpSetup(seed);
+    const gateway = request(remoteGateway(context.app));
+    const created = await gateway
+      .post("/api/v1/admin/user-invitations")
+      .set("Authorization", bearerFor(operator))
+      .send({
+        name: "Remote Designer",
+        email: "remote.designer@example.test",
+        role: "designer",
+        mobile: "+91 98765 43210"
+      });
+    expect(created.status).toBe(201);
+    expect(context.deliveredToken()).toMatch(/^[A-Za-z0-9_-]{43}$/u);
+
+    const accepted = await gateway
+      .post("/api/v1/auth/user-invitations/accept")
+      .send({
+        token: context.deliveredToken(),
+        password: ACCEPTED_PASSWORD,
+        passwordConfirmation: ACCEPTED_PASSWORD
+      });
+    expect(accepted.status).toBe(201);
+    expect(accepted.body).toEqual({ data: { accepted: true } });
+    expect(JSON.stringify(accepted.body)).not.toMatch(/jwt|token|session|user|password/i);
+
+    const replay = await gateway
+      .post("/api/v1/auth/user-invitations/accept")
+      .send({
+        token: context.deliveredToken(),
+        password: ACCEPTED_PASSWORD,
+        passwordConfirmation: ACCEPTED_PASSWORD
+      });
+    expect(replay.status).toBe(410);
+    expect(replay.headers["cache-control"]).toBe("no-store");
+
+    const login = await gateway
+      .post("/api/v1/auth/login")
+      .send({
+        email: "remote.designer@example.test",
+        password: ACCEPTED_PASSWORD
+      });
+    expect(login.status).toBe(200);
+    expect(login.body.data.user).toMatchObject({
+      name: "Remote Designer",
+      email: "remote.designer@example.test",
+      role: "designer"
+    });
+    const loginAuthorization = `Bearer ${login.body.data.token as string}`;
+
+    const me = await gateway
+      .get("/api/v1/auth/me")
+      .set("Authorization", loginAuthorization);
+    expect(me.status).toBe(200);
+    expect(me.body.data).toEqual(login.body.data.user);
+
+    const snapshot = await gateway
+      .get("/api/v1/auth/authorization")
+      .set("Authorization", loginAuthorization);
+    expect(snapshot.status).toBe(200);
+    expect(snapshot.body.data).toMatchObject({
+      role: "designer"
+    });
+    expect(snapshot.body.data.permissions).toEqual(expect.any(Array));
   });
 });
