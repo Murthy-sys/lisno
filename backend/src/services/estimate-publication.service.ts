@@ -80,6 +80,7 @@ interface RoundRow {
   sendGeneration: number;
   dedupeKey: string;
   recipientEmailNormalized: string;
+  pdfStorageReference: string;
   deliveryStatus: EstimateClientReviewSummary["deliveryStatus"];
   deliveryAttemptCount: number;
   deliveredAt: Date | string | null;
@@ -154,7 +155,7 @@ export function createEstimatePublicationService(input: {
         note: "",
         occurredAt: submittedAt
       };
-      const responseEstimate = mapPublishedEstimate({
+      let resultEstimate = mapPublishedEstimate({
         estimate: preflightEstimate,
         expectedStatus: publication.expectedStatus,
         occurredAt,
@@ -331,23 +332,28 @@ export function createEstimatePublicationService(input: {
           };
         });
       } catch (error) {
-        retainedPdfBytes = null;
-        await input.storage.deleteQuietly(stored.storageReference);
-        if (!isDuplicateKeyError(error)) throw error;
-
-        const winner = await EstimateClientReviewRoundModel.findOne({ dedupeKey }).lean();
-        if (!isMatchingWinner(
-          winner as unknown as RoundRow | null,
+        const recovery = await probeCommittedRound({
           publication,
           recipientEmailNormalized,
-          dedupeKey
-        )) {
-          publicationConflict();
+          dedupeKey,
+          storageReference: stored.storageReference
+        });
+        if (recovery?.pdfStorageReference === stored.storageReference) {
+          resultEstimate = await loadCommittedEstimate(publication);
+          committedRound = recovery;
+        } else if (recovery) {
+          retainedPdfBytes = null;
+          await input.storage.deleteQuietly(stored.storageReference);
+          return {
+            estimate: await loadCommittedEstimate(publication),
+            clientReview: mapRoundSummary(recovery)
+          };
+        } else {
+          retainedPdfBytes = null;
+          await input.storage.deleteQuietly(stored.storageReference);
+          if (isDuplicateKeyError(error)) publicationConflict();
+          throw error;
         }
-        return {
-          estimate: responseEstimate,
-          clientReview: mapRoundSummary(winner as unknown as RoundRow)
-        };
       }
 
       const preDeliverySummary = mapRoundSummary(committedRound);
@@ -368,7 +374,7 @@ export function createEstimatePublicationService(input: {
         retainedPdfBytes = null;
       }
 
-      return { estimate: responseEstimate, clientReview };
+      return { estimate: resultEstimate, clientReview };
     }
   };
 }
@@ -492,6 +498,75 @@ function mapRoundSummary(round: RoundRow): EstimateClientReviewSummary {
   };
 }
 
+async function probeCommittedRound(input: {
+  publication: PublishEstimateToClientInput;
+  recipientEmailNormalized: string;
+  dedupeKey: string;
+  storageReference: string;
+}): Promise<RoundRow | null> {
+  const identity = {
+    dedupeKey: input.dedupeKey,
+    estimateId: input.publication.estimateId,
+    estimateVersion: input.publication.expectedEstimateVersion,
+    recipientEmailNormalized: input.recipientEmailNormalized
+  };
+  try {
+    const ownRound = await EstimateClientReviewRoundModel.findOne({
+      ...identity,
+      pdfStorageReference: input.storageReference
+    })
+      .select("+pdfStorageReference")
+      .lean();
+    if (isMatchingWinner(
+      ownRound as unknown as RoundRow | null,
+      input.publication,
+      input.recipientEmailNormalized,
+      input.dedupeKey
+    ) && String(ownRound.pdfStorageReference) === input.storageReference) {
+      return ownRound as unknown as RoundRow;
+    }
+
+    const winner = await EstimateClientReviewRoundModel.findOne(identity)
+      .select("+pdfStorageReference")
+      .lean();
+    return isMatchingWinner(
+      winner as unknown as RoundRow | null,
+      input.publication,
+      input.recipientEmailNormalized,
+      input.dedupeKey
+    )
+      ? winner as unknown as RoundRow
+      : null;
+  } catch {
+    publicationRecoveryFailed();
+  }
+}
+
+async function loadCommittedEstimate(
+  input: PublishEstimateToClientInput
+): Promise<Record<string, unknown>> {
+  try {
+    const estimate = await EstimateModel.findOne({
+      _id: input.estimateId,
+      leadId: input.leadId,
+      ownerId: input.actorId,
+      status: "sent_to_client",
+      version: input.expectedEstimateVersion
+    }).lean();
+    if (!estimate) publicationRecoveryFailed();
+    const { _id, ...persisted } = estimate as unknown as PublicationEstimate;
+    return { ...persisted, id: String(_id) };
+  } catch (error) {
+    if (
+      error instanceof ApiError &&
+      error.code === "ESTIMATE_PUBLICATION_RECOVERY_FAILED"
+    ) {
+      throw error;
+    }
+    publicationRecoveryFailed();
+  }
+}
+
 function publicationActor(actorId: string): PublicUser {
   return {
     id: actorId,
@@ -545,5 +620,13 @@ function publicationConflict(): never {
     409,
     "ESTIMATE_PUBLICATION_CONFLICT",
     "This estimate changed before it could be sent. Refresh and try again."
+  );
+}
+
+function publicationRecoveryFailed(): never {
+  throw new ApiError(
+    500,
+    "ESTIMATE_PUBLICATION_RECOVERY_FAILED",
+    "Estimate publication state could not be confirmed safely."
   );
 }

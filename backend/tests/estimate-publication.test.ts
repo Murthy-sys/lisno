@@ -139,18 +139,29 @@ function roundDocument(value: Record<string, unknown>) {
   };
 }
 
+function mappedEstimate(record: Record<string, unknown>) {
+  const { _id, ...persisted } = record;
+  return { ...persisted, id: _id };
+}
+
 interface HarnessOptions {
   estimate?: Record<string, unknown>;
   transactionEstimate?: Record<string, unknown>;
+  committedEstimate?: Record<string, unknown>;
   lead?: Record<string, unknown>;
   transactionLead?: Record<string, unknown>;
   latestRound?: Record<string, unknown> | null;
   duplicateRound?: Record<string, unknown> | null;
+  probeRound?:
+    | Record<string, unknown>
+    | ((createdRound: Record<string, unknown> | null) => Record<string, unknown> | null);
+  probeError?: unknown;
   transitionMatchedCount?: number;
   roundCreateError?: unknown;
   assigneeError?: unknown;
   auditErrorAtCall?: number;
   transactionError?: unknown;
+  transactionErrorAfterCallback?: unknown;
   storageSaveError?: unknown;
   deliverResult?: EstimateClientReviewSummary;
   deliverError?: unknown;
@@ -230,6 +241,10 @@ function setupHarness(options: HarnessOptions = {}) {
       events.push("transaction:start");
       if (options.transactionError) throw options.transactionError;
       const result = await operation();
+      if (options.transactionErrorAfterCallback) {
+        events.push("transaction:commit-ambiguous");
+        throw options.transactionErrorAfterCallback;
+      }
       events.push("transaction:commit");
       return result;
     }),
@@ -238,10 +253,31 @@ function setupHarness(options: HarnessOptions = {}) {
   vi.spyOn(mongoose, "startSession").mockResolvedValue(session as never);
 
   let estimateReadCount = 0;
+  const defaultCommittedEstimate = estimate({
+    status: "sent_to_client",
+    submittedAt: SUBMITTED_AT,
+    sentToClientAt: NOW,
+    reviews: [{
+      actorId: ACTOR_ID,
+      action: "submitted",
+      note: "",
+      occurredAt: SUBMITTED_AT
+    }],
+    notifications: [{
+      recipientEmail: "Client@Example.COM",
+      recipientRole: "client",
+      event: "estimate_ready_for_review",
+      status: "queued",
+      queuedAt: NOW
+    }]
+  });
   const findEstimate = vi
     .spyOn(EstimateModel, "findOne")
-    .mockImplementation(() => {
+    .mockImplementation((filter: Record<string, unknown>) => {
       estimateReadCount += 1;
+      if (filter.status === "sent_to_client") {
+        return query(options.committedEstimate ?? defaultCommittedEstimate) as never;
+      }
       return query(
         estimateReadCount === 1
           ? estimateRecord
@@ -269,17 +305,32 @@ function setupHarness(options: HarnessOptions = {}) {
   const updateLead = vi
     .spyOn(LeadModel, "updateOne")
     .mockResolvedValue({ acknowledged: true, matchedCount: 1, modifiedCount: 1 } as never);
+  let createdRoundInput: Record<string, unknown> | null = null;
   const findRound = vi
     .spyOn(EstimateClientReviewRoundModel, "findOne")
     .mockImplementation((filter: Record<string, unknown>) => {
-      const value = Object.hasOwn(filter, "dedupeKey")
-        ? options.duplicateRound ?? null
+      if (Object.hasOwn(filter, "dedupeKey") && options.probeError) {
+        throw options.probeError;
+      }
+      const configuredProbe = typeof options.probeRound === "function"
+        ? options.probeRound(createdRoundInput)
+        : options.probeRound;
+      let value = Object.hasOwn(filter, "dedupeKey")
+        ? configuredProbe ?? options.duplicateRound ?? null
         : options.latestRound ?? null;
+      if (
+        value &&
+        Object.hasOwn(filter, "pdfStorageReference") &&
+        value.pdfStorageReference !== filter.pdfStorageReference
+      ) {
+        value = null;
+      }
       return query(value) as never;
     });
   const createRound = vi
     .spyOn(EstimateClientReviewRoundModel, "create")
     .mockImplementation(async (values: Record<string, unknown>[]) => {
+      createdRoundInput = values[0] ?? null;
       if (options.roundCreateError) throw options.roundCreateError;
       return [roundDocument(values[0] ?? {})] as never;
     });
@@ -752,6 +803,180 @@ describe("publication cleanup and idempotency", () => {
     }
   );
 
+  it.each([
+    Object.assign(new Error("commit result unknown: provider-secret"), {
+      errorLabels: ["UnknownTransactionCommitResult"]
+    }),
+    Object.assign(new Error("commit acknowledgement timed out: provider-secret"), {
+      code: "ETIMEDOUT"
+    })
+  ])("retains and delivers this call's committed snapshot after an ambiguous commit rejection", async (ambiguousError) => {
+    const committedAt = new Date("2026-08-24T10:00:30.000Z");
+    const committedSubmittedAt = new Date("2026-08-24T10:00:20.000Z");
+    const persistedEstimate = estimate({
+      status: "sent_to_client",
+      submittedAt: committedSubmittedAt,
+      sentToClientAt: committedAt,
+      rooms: [{ id: "persisted-room" }],
+      reviews: [{
+        actorId: ACTOR_ID,
+        action: "submitted",
+        note: "persisted winner review",
+        occurredAt: committedSubmittedAt
+      }],
+      notifications: [{
+        recipientEmail: "Client@Example.COM",
+        recipientRole: "client",
+        event: "estimate_ready_for_review",
+        status: "queued",
+        queuedAt: committedAt
+      }],
+      persistedOnlyField: "from-database"
+    });
+    const delivered = summary({
+      id: "delivered-after-ambiguous-commit",
+      deliveryStatus: "sent",
+      deliveryAttemptCount: 1,
+      deliveredAt: committedAt.toISOString()
+    });
+    const harness = setupHarness({
+      transactionErrorAfterCallback: ambiguousError,
+      committedEstimate: persistedEstimate,
+      probeRound: (createdRound) => createdRound
+        ? roundDocument({
+            ...createdRound,
+            pdfStorageReference: "new-snapshot-1.pdf"
+          })
+        : null,
+      deliverResult: delivered
+    });
+
+    const result = await harness.publication.publishEstimateToClient(publicationInput());
+
+    const createdRound = harness.createRound.mock.calls[0]![0][0];
+    expect(harness.findRound).toHaveBeenCalledWith({
+      dedupeKey: createdRound.dedupeKey,
+      estimateId: ESTIMATE_ID,
+      estimateVersion: 3,
+      recipientEmailNormalized: "client@example.com",
+      pdfStorageReference: "new-snapshot-1.pdf"
+    });
+    expect(harness.fileStorage.delete).not.toHaveBeenCalled();
+    expect(harness.objects.get("new-snapshot-1.pdf")).toEqual(PDF_BYTES);
+    expect(harness.deliverInitial).toHaveBeenCalledOnce();
+    expect(harness.deliverInitial).toHaveBeenCalledWith(String(createdRound._id));
+    expect(harness.events.indexOf("transaction:commit-ambiguous"))
+      .toBeLessThan(harness.events.indexOf("delivery:initial"));
+    expect(result).toEqual({
+      estimate: mappedEstimate(persistedEstimate),
+      clientReview: delivered
+    });
+    expect(JSON.stringify(result)).not.toContain("provider-secret");
+  });
+
+  it("cleans this call's loser snapshot and returns a different identical winner after an ambiguous rejection", async () => {
+    const winnerAt = new Date("2026-08-24T09:45:00.000Z");
+    const persistedWinner = estimate({
+      status: "sent_to_client",
+      submittedAt: winnerAt,
+      sentToClientAt: winnerAt,
+      rooms: [{ id: "winner-room" }],
+      reviews: [{
+        actorId: ACTOR_ID,
+        action: "submitted",
+        note: "winner persisted review",
+        occurredAt: winnerAt
+      }],
+      notifications: [{
+        recipientEmail: "Client@Example.COM",
+        recipientRole: "client",
+        event: "estimate_ready_for_review",
+        status: "queued",
+        queuedAt: winnerAt
+      }],
+      persistedOnlyField: "winner-database-state"
+    });
+    const winnerRound = roundDocument({
+      _id: "round-other-winner",
+      estimateId: ESTIMATE_ID,
+      leadId: LEAD_ID,
+      projectId: PROJECT_ID,
+      estimateVersion: 3,
+      sendGeneration: 1,
+      dedupeKey: buildEstimateClientReviewDedupeKey({
+        estimateId: ESTIMATE_ID,
+        estimateVersion: 3,
+        recipientEmailNormalized: "client@example.com"
+      }),
+      recipientEmailNormalized: "client@example.com",
+      pdfStorageReference: "winner-snapshot.pdf",
+      deliveryStatus: "queued",
+      deliveryAttemptCount: 0,
+      deliveredAt: null,
+      status: "pending",
+      version: 1
+    });
+    const harness = setupHarness({
+      transactionErrorAfterCallback: Object.assign(
+        new Error("commit acknowledgement timed out"),
+        { code: "ETIMEDOUT" }
+      ),
+      probeRound: winnerRound,
+      committedEstimate: persistedWinner
+    });
+
+    const result = await harness.publication.publishEstimateToClient(publicationInput());
+
+    expect(harness.findRound).toHaveBeenCalledWith(expect.objectContaining({
+      dedupeKey: winnerRound.dedupeKey,
+      pdfStorageReference: "new-snapshot-1.pdf"
+    }));
+    expect(harness.findRound).toHaveBeenCalledWith({
+      dedupeKey: winnerRound.dedupeKey,
+      estimateId: ESTIMATE_ID,
+      estimateVersion: 3,
+      recipientEmailNormalized: "client@example.com"
+    });
+    expect(harness.fileStorage.delete).toHaveBeenCalledOnce();
+    expect(harness.fileStorage.delete).toHaveBeenCalledWith("new-snapshot-1.pdf");
+    expect(harness.deliverInitial).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      estimate: mappedEstimate(persistedWinner),
+      clientReview: {
+        id: "round-other-winner",
+        sendGeneration: 1,
+        estimateVersion: 3,
+        version: 1,
+        deliveryStatus: "queued",
+        deliveryAttemptCount: 0,
+        deliveredAt: null,
+        status: "pending"
+      }
+    });
+  });
+
+  it("retains the snapshot and returns a bounded error when committed state cannot be probed safely", async () => {
+    const harness = setupHarness({
+      transactionErrorAfterCallback: Object.assign(
+        new Error("commit result unknown: driver-payload"),
+        { errorLabels: ["UnknownTransactionCommitResult"] }
+      ),
+      probeError: new Error("probe failed: provider-secret")
+    });
+
+    await expect(
+      harness.publication.publishEstimateToClient(publicationInput())
+    ).rejects.toMatchObject({
+      status: 500,
+      code: "ESTIMATE_PUBLICATION_RECOVERY_FAILED",
+      message: "Estimate publication state could not be confirmed safely."
+    });
+
+    expect(harness.fileStorage.delete).not.toHaveBeenCalled();
+    expect(harness.objects.get("new-snapshot-1.pdf")).toEqual(PDF_BYTES);
+    expect(harness.deliverInitial).not.toHaveBeenCalled();
+  });
+
   it("deletes the losing snapshot and returns the matching committed round without a second initial delivery", async () => {
     const duplicate = Object.assign(new Error("E11000 duplicate key"), { code: 11000 });
     const committedRound = roundDocument({
@@ -768,15 +993,38 @@ describe("publication cleanup and idempotency", () => {
       }),
       recipientEmail: "Client@Example.COM",
       recipientEmailNormalized: "client@example.com",
+      pdfStorageReference: "winner-snapshot.pdf",
       deliveryStatus: "queued",
       deliveryAttemptCount: 0,
       deliveredAt: null,
       status: "pending",
       version: 1
     });
+    const winnerAt = new Date("2026-08-24T09:30:00.000Z");
+    const persistedWinner = estimate({
+      status: "sent_to_client",
+      submittedAt: winnerAt,
+      sentToClientAt: winnerAt,
+      rooms: [{ id: "winner-room" }],
+      reviews: [{
+        actorId: ACTOR_ID,
+        action: "submitted",
+        note: "persisted winner review",
+        occurredAt: winnerAt
+      }],
+      notifications: [{
+        recipientEmail: "Client@Example.COM",
+        recipientRole: "client",
+        event: "estimate_ready_for_review",
+        status: "queued",
+        queuedAt: winnerAt
+      }],
+      persistedOnlyField: "not-from-loser-preflight"
+    });
     const harness = setupHarness({
       roundCreateError: duplicate,
-      duplicateRound: committedRound
+      duplicateRound: committedRound,
+      committedEstimate: persistedWinner
     });
 
     const result = await harness.publication.publishEstimateToClient(publicationInput());
@@ -785,6 +1033,11 @@ describe("publication cleanup and idempotency", () => {
     expect(harness.fileStorage.delete).toHaveBeenCalledWith("new-snapshot-1.pdf");
     expect(harness.objects.get("pre-existing.pdf")).toEqual(Buffer.from("keep"));
     expect(harness.deliverInitial).not.toHaveBeenCalled();
+    expect(result.estimate).toEqual(mappedEstimate(persistedWinner));
+    expect(result.estimate).not.toMatchObject({
+      submittedAt: SUBMITTED_AT,
+      sentToClientAt: NOW
+    });
     expect(result.clientReview).toEqual({
       id: "round-winner",
       sendGeneration: 1,
