@@ -173,7 +173,13 @@ describe("memory repository", () => {
           id: "project-admin-b",
           estimator: { id: estimator.id, name: estimator.name, email: estimator.email },
           lead: expect.objectContaining({ id: "lead-admin-b", stage: "new_lead" }),
-          estimate: { id: "estimate-admin-b", status: "draft", total: 118000 }
+          estimate: {
+            id: "estimate-admin-b",
+            status: "draft",
+            total: 118000,
+            clientReview: null,
+            hasPendingClientResponseTask: false
+          }
         })]
       }));
     const options = await repository.pageActiveEstimatorOptions("sales@", { limit: 20, offset: 0 });

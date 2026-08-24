@@ -218,6 +218,14 @@ function isSensitiveAuditKey(
     return false;
   }
   if (
+    normalized === "sizebytes" &&
+    typeof value === "number" &&
+    Number.isSafeInteger(value) &&
+    value >= 0
+  ) {
+    return false;
+  }
+  if (
     normalizedPath.includes("storagereference") ||
     normalizedPath.includes("recipientemail") ||
     normalizedPath.includes("providerresponse") ||
