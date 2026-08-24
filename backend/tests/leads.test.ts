@@ -5,7 +5,7 @@ import mongoose from "mongoose";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createApp as createApplication } from "../src/app.js";
-import { errorHandler } from "../src/middleware/errors.js";
+import { ApiError, errorHandler } from "../src/middleware/errors.js";
 import { EstimateDesignDrawingModel } from "../src/models/EstimateDesignDrawing.js";
 import { EstimateDesignRevisionModel } from "../src/models/EstimateDesignRevision.js";
 import { EstimateClientReviewRoundModel } from "../src/models/EstimateClientReviewRound.js";
@@ -397,7 +397,15 @@ describe("lead and owner-estimate route characterizations", () => {
       endSession: vi.fn(async () => undefined)
     };
     vi.spyOn(mongoose, "startSession").mockResolvedValue(session as never);
-    vi.spyOn(EstimateModel, "findOne").mockReturnValue(query(null) as never);
+    vi.spyOn(EstimateModel, "findOne").mockReturnValue(query({
+      _id: "estimate-client-visible",
+      leadId: "lead-aurora",
+      status: "sent_to_client"
+    }) as never);
+    vi.spyOn(LeadModel, "findById").mockReturnValue(query({
+      _id: "lead-aurora",
+      clientEmail: " CLIENT@AURORA.EXAMPLE "
+    }) as never);
 
     const response = await request(app)
       .post("/api/v1/client/estimates/estimate-client-visible/decision")
@@ -430,6 +438,98 @@ describe("lead and owner-estimate route characterizations", () => {
       })
     });
     expect(response.body.data).not.toHaveProperty("clientReview");
+  });
+
+  it.each([
+    {
+      label: "missing estimate",
+      estimate: null,
+      lead: null
+    },
+    {
+      label: "foreign Client email",
+      estimate: {
+        _id: "estimate-client-visible",
+        leadId: "lead-foreign",
+        status: "sent_to_client"
+      },
+      lead: {
+        _id: "lead-foreign",
+        clientEmail: "someone-else@example.com"
+      }
+    }
+  ])("preserves the exact legacy not-found envelope for a $label before round lookup", async ({ estimate, lead }) => {
+    const { app, decisions, reviews } = setupEstimateRouteCollaborators({
+      id: "user-client-aurora",
+      name: "Aurora Client",
+      email: "client@aurora.example",
+      role: "client"
+    });
+    const findEstimate = vi.spyOn(EstimateModel, "findOne").mockReturnValue(
+      query(estimate) as never
+    );
+    const findLead = vi.spyOn(LeadModel, "findById").mockReturnValue(
+      query(lead) as never
+    );
+    reviews.currentRoundForClientEstimate.mockRejectedValue(
+      new ApiError(404, "NOT_FOUND", "The requested resource was not found.")
+    );
+
+    const response = await request(app)
+      .post("/api/v1/client/estimates/estimate-client-visible/decision")
+      .set("Authorization", "Bearer route-test")
+      .send({ decision: "approve", note: "Approved." })
+      .expect(404);
+
+    expect(response.body).toEqual({
+      error: { code: "ESTIMATE_NOT_FOUND", message: "Estimate not found." }
+    });
+    expect(findEstimate).toHaveBeenCalledWith({ _id: "estimate-client-visible" });
+    if (estimate) {
+      expect(findLead).toHaveBeenCalledWith("lead-foreign");
+    } else {
+      expect(findLead).not.toHaveBeenCalled();
+    }
+    expect(reviews.currentRoundForClientEstimate).not.toHaveBeenCalled();
+    expect(decisions.decide).not.toHaveBeenCalled();
+  });
+
+  it("delegates a same-Client non-reviewable estimate so the shared 409 remains unchanged", async () => {
+    const { app, decisions, reviews } = setupEstimateRouteCollaborators({
+      id: "user-client-aurora",
+      name: "Aurora Client",
+      email: "client@aurora.example",
+      role: "client"
+    });
+    vi.spyOn(EstimateModel, "findOne").mockReturnValue(query({
+      _id: "estimate-client-visible",
+      leadId: "lead-aurora",
+      status: "client_approved"
+    }) as never);
+    vi.spyOn(LeadModel, "findById").mockReturnValue(query({
+      _id: "lead-aurora",
+      clientEmail: " Client@Aurora.Example "
+    }) as never);
+    reviews.currentRoundForClientEstimate.mockResolvedValue(null);
+    decisions.decide.mockRejectedValue(new ApiError(
+      409,
+      "ESTIMATE_NOT_REVIEWABLE",
+      "This estimate is no longer awaiting your review."
+    ));
+
+    const response = await request(app)
+      .post("/api/v1/client/estimates/estimate-client-visible/decision")
+      .set("Authorization", "Bearer route-test")
+      .send({ decision: "approve", note: "Approved." })
+      .expect(409);
+
+    expect(response.body).toEqual({
+      error: {
+        code: "ESTIMATE_NOT_REVIEWABLE",
+        message: "This estimate is no longer awaiting your review."
+      }
+    });
+    expect(decisions.decide).toHaveBeenCalledOnce();
   });
 
   it.each([

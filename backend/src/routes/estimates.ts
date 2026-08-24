@@ -3,6 +3,7 @@ import mongoose from "mongoose";
 import { Router } from "express";
 import { z } from "zod";
 
+import { normalizeEmail } from "../domain/email.js";
 import { ApiError } from "../middleware/errors.js";
 import { authenticate } from "../middleware/auth.js";
 import { requireOperation } from "../middleware/authorization.js";
@@ -259,16 +260,15 @@ export function createEstimatesRouter(
       : { _id: estimate.leadId, clientEmail: { $regex: `^${escapeRegex(req.authenticatedUser!.email)}$`, $options: "i" } };
     const lead = await LeadModel.findOne(leadFilter).lean();
     if (!lead) throw estimateNotFound();
-    if (req.authenticatedUser!.role === "client") {
-      const currentRound = await reviews.currentRoundForClientEstimate(
-        req.authenticatedUser!,
-        String(estimate._id)
-      );
+    const actor = req.authenticatedUser!;
+    if (actor.role === "client" || actor.role === "super_admin") {
+      const currentRound = actor.role === "client"
+        ? await reviews.currentRoundForClientEstimate(actor, String(estimate._id))
+        : await reviews.currentSummaryForEstimate(actor, String(estimate._id));
       if (currentRound) {
-        const download = await reviews.readClientPdf(
-          req.authenticatedUser!,
-          currentRound.id
-        );
+        const download = actor.role === "client"
+          ? await reviews.readClientPdf(actor, currentRound.id)
+          : await reviews.readPdf(actor, currentRound.id);
         sendDownload(res, download);
         return;
       }
@@ -280,6 +280,15 @@ export function createEstimatesRouter(
   router.post("/client/estimates/:estimateId/decision", protectedRoute, requireOperation("POST /client/estimates/:estimateId/decision"), validateBody(decisionSchema), async (req, res, next) => { try {
     const actor = req.authenticatedUser!;
     const estimateId = String(req.params.estimateId);
+    const estimate = await EstimateModel.findOne({ _id: estimateId }).lean();
+    if (!estimate) throw estimateNotFound();
+    const lead = await LeadModel.findById(estimate.leadId).lean();
+    if (
+      !lead ||
+      normalizeEmail(String(lead.clientEmail)) !== normalizeEmail(actor.email)
+    ) {
+      throw estimateNotFound();
+    }
     const currentRound = await reviews.currentRoundForClientEstimate(
       actor,
       estimateId

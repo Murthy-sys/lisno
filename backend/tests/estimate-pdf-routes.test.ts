@@ -94,7 +94,7 @@ afterEach(() => {
 });
 
 describe("estimate PDF download routes", () => {
-  it("allows Super Admin global owner and client-visible PDF reads without project grants", async () => {
+  it("allows Super Admin global owner and legacy client-visible PDF reads without project grants", async () => {
     const { app, generate, projectGrantSpies } = setup();
     const readyEstimate = { ...estimate, status: "ready_for_client" };
     const clientEstimate = { ...estimate, _id: "estimate-client-visible", status: "sent_to_client" };
@@ -103,6 +103,12 @@ describe("estimate PDF download routes", () => {
       .mockReturnValueOnce(lean(clientEstimate) as never);
     vi.spyOn(LeadModel, "findById").mockReturnValue(lean(lead) as never);
     const findClientLead = vi.spyOn(LeadModel, "findOne").mockReturnValue(lean(lead) as never);
+    vi.spyOn(EstimateModel, "aggregate").mockReturnValue(
+      aggregate([{ _id: "estimate-client-visible" }]) as never
+    );
+    vi.spyOn(EstimateClientReviewRoundModel, "aggregate").mockReturnValue(
+      aggregate([]) as never
+    );
     const authorization = auth("user-super-admin", "super_admin");
 
     await request(app).get("/api/v1/estimates/estimate-draft/pdf").set("Authorization", authorization).expect(200);
@@ -309,6 +315,58 @@ describe("estimate PDF download routes", () => {
     expect(response.body).toEqual(storedBytes);
     expect(storage.read).toHaveBeenCalledOnce();
     expect(generate).not.toHaveBeenCalled();
+  });
+
+  it("serves the immutable current-round Client PDF to Super Admin without regenerating", async () => {
+    const storedBytes = Buffer.from("%PDF-1.7\nimmutable-super-admin-round\n%%EOF");
+    const storage = {
+      save: vi.fn(),
+      saveGenerated: vi.fn(),
+      read: vi.fn(async (reference: string) => {
+        expect(reference).toBe("estimate-client-pdfs/round-current.pdf");
+        return storedBytes;
+      }),
+      delete: vi.fn(),
+      open: vi.fn()
+    } as unknown as FileStorage;
+    const { app, generate, projectGrantSpies } = setup(storage);
+    vi.spyOn(EstimateModel, "findOne").mockReturnValue(
+      lean({ ...estimate, _id: "estimate-client-visible", status: "sent_to_client" }) as never
+    );
+    vi.spyOn(LeadModel, "findOne").mockReturnValue(lean(lead) as never);
+    vi.spyOn(EstimateModel, "aggregate").mockReturnValue(
+      aggregate([{ _id: "estimate-client-visible" }]) as never
+    );
+    vi.spyOn(EstimateClientReviewRoundModel, "aggregate")
+      .mockReturnValueOnce(aggregate([{
+        id: "round-current",
+        sendGeneration: 2,
+        estimateVersion: 2,
+        version: 4,
+        deliveryStatus: "sent",
+        deliveryAttemptCount: 1,
+        deliveredAt: "2026-08-24T10:00:02.000Z",
+        status: "pending"
+      }]) as never)
+      .mockReturnValueOnce(aggregate([{
+        storageReference: "estimate-client-pdfs/round-current.pdf",
+        filename: "lisno-estimate-sent-v2.pdf",
+        mimeType: "application/pdf"
+      }]) as never);
+
+    const response = await request(app)
+      .get("/api/v1/client/estimates/estimate-client-visible/pdf")
+      .set("Authorization", auth("user-super-admin", "super_admin"))
+      .expect(200);
+
+    expect(response.headers["content-type"]).toBe("application/pdf");
+    expect(response.headers["content-disposition"]).toBe(
+      'attachment; filename="lisno-estimate-sent-v2.pdf"'
+    );
+    expect(response.body).toEqual(storedBytes);
+    expect(storage.read).toHaveBeenCalledOnce();
+    expect(generate).not.toHaveBeenCalled();
+    for (const spy of projectGrantSpies) expect(spy).not.toHaveBeenCalled();
   });
 
   it("hides draft, foreign-email, and missing client exports behind the same not-found response", async () => {

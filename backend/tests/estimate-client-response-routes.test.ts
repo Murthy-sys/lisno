@@ -178,6 +178,26 @@ describe("estimate client response routes", () => {
     expect(proof.body).toEqual(PROOF);
   });
 
+  it("serves a Unicode immutable filename with an ASCII fallback and RFC 5987 encoding", async () => {
+    const harness = createHarness();
+    harness.reviews.readProof.mockResolvedValueOnce({
+      filename: "✓-proof.png",
+      mimeType: "image/png",
+      bytes: PROOF
+    });
+
+    const response = await request(harness.app)
+      .get("/api/v1/admin/estimate-client-response-tasks/round-pending/proof")
+      .set(authorization(actors.estimator))
+      .expect(200);
+
+    expect(response.headers["content-type"]).toBe("image/png");
+    expect(response.headers["content-disposition"]).toBe(
+      "attachment; filename=\"_-proof.png\"; filename*=UTF-8''%E2%9C%93-proof.png"
+    );
+    expect(response.body).toEqual(PROOF);
+  });
+
   it("requires authentication and coarse permissions before any service or upload work", async () => {
     const harness = createHarness();
 

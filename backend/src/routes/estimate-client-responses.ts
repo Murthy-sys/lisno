@@ -200,9 +200,29 @@ export function sendDownload(
   response: Response,
   downloadValue: { filename: string; mimeType: string; bytes: Buffer }
 ): void {
-  const filename = downloadValue.filename.replace(/["\r\n]/gu, "_");
   response
     .set("Content-Type", downloadValue.mimeType)
-    .set("Content-Disposition", `attachment; filename="${filename}"`)
+    .set("Content-Disposition", safeContentDisposition(downloadValue.filename))
     .send(downloadValue.bytes);
+}
+
+function safeContentDisposition(filename: string): string {
+  const safeAscii = filename.length > 0 &&
+    /^[\x20-\x7e]+$/u.test(filename) &&
+    !/["\\/]/u.test(filename);
+  if (safeAscii) return `attachment; filename="${filename}"`;
+
+  const fallback =
+    filename
+      .normalize("NFKD")
+      .replace(/[^\x20-\x7e]/g, "_")
+      .replace(/["\\/]/g, "_")
+      .replace(/[\r\n]/g, "")
+      .trim() || "download";
+  const encoded = encodeURIComponent(filename.replace(/[\r\n]/g, "")).replace(
+    /['()*]/g,
+    (character) =>
+      `%${character.charCodeAt(0).toString(16).toUpperCase()}`
+  );
+  return `attachment; filename="${fallback}"; filename*=UTF-8''${encoded}`;
 }
