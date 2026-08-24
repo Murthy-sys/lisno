@@ -1,14 +1,22 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 
-import { INVITABLE_ROLE_CODES, USER_INVITATION_TTL_MS } from "../src/domain/user-invitations.js";
+import { PROJECT_MODULES } from "../src/domain/authorization.js";
+import {
+  INVITABLE_ROLE_CODES,
+  USER_INVITATION_TTL_MS,
+  hashUserInvitationToken
+} from "../src/domain/user-invitations.js";
 import { ROLE_CODES, type Role } from "../src/domain/roles.js";
 import { createMemoryRepository } from "../src/repositories/memory.js";
-import type {
-  AppRepository,
-  SeedData,
-  UserInvitationRecord,
-  UserRecord
+import {
+  RepositoryConflictError,
+  RepositoryNotFoundError,
+  type AppRepository,
+  type NewUser,
+  type SeedData,
+  type UserInvitationRecord,
+  type UserRecord
 } from "../src/repositories/types.js";
 import { demoSeedData } from "../src/seed/data.js";
 import {
@@ -24,6 +32,10 @@ import { startTricklingSmtpServer } from "./helpers/trickling-smtp-server.js";
 
 const NOW = "2026-08-24T12:00:00.000Z";
 const MINUTE = 60_000;
+const PUBLIC_RAW_TOKEN = Buffer.alloc(32, 41).toString("base64url");
+const REPLACEMENT_RAW_TOKEN = Buffer.alloc(32, 42).toString("base64url");
+const ACCEPTED_PASSWORD = "StrongInvitationPassword!23";
+const ACCEPTED_PASSWORD_HASH = "$2b$12$accepted-invitation-password-hash";
 
 function invitationHash(id: string): string {
   return createHash("sha256").update(id).digest("hex");
@@ -92,6 +104,18 @@ function terminalInvitation(
   };
 }
 
+function publicInvitation(
+  id: string,
+  operator: UserRecord,
+  rawToken = PUBLIC_RAW_TOKEN,
+  overrides: Partial<UserInvitationRecord> = {}
+): UserInvitationRecord {
+  return invitation(id, operator, {
+    tokenHash: hashUserInvitationToken(rawToken),
+    ...overrides
+  });
+}
+
 function standardSeed(): { seed: SeedData; operator: UserRecord } {
   const seed = structuredClone(demoSeedData);
   const canonical = seed.users.find(({ role }) => role === "super_admin")!;
@@ -142,6 +166,7 @@ function setup(
     audit?: AuditService;
     randomBytes?: (size: number) => Buffer;
     clock?: () => Date;
+    passwordHasher?: (password: string, cost: number) => Promise<string>;
   } = {}
 ) {
   const repository = createMemoryRepository(seed);
@@ -152,7 +177,8 @@ function setup(
     audit,
     mailer: options.mailer ?? local.mailer,
     clock: options.clock ?? (() => new Date(NOW)),
-    randomBytes: options.randomBytes ?? randomSource()
+    randomBytes: options.randomBytes ?? randomSource(),
+    ...(options.passwordHasher ? { passwordHasher: options.passwordHasher } : {})
   });
   return { repository, audit, service, sendInvitation: local.sendInvitation };
 }
@@ -965,4 +991,498 @@ describe("protected user invitation administration", () => {
       await server.close();
     }
   }, 15_000);
+});
+
+describe("public user invitation inspection and acceptance", () => {
+  const unavailable = {
+    status: 410,
+    code: "INVITATION_UNAVAILABLE",
+    message: "This invitation is unavailable."
+  };
+
+  it("makes every cheap-invalid token state uniformly unavailable before password hashing", async () => {
+    const cases: Array<{
+      name: string;
+      rawToken: string;
+      build(seed: SeedData, operator: UserRecord): UserInvitationRecord;
+    }> = [
+      {
+        name: "malformed token",
+        rawToken: "not-a-token",
+        build: (_seed, operator) => publicInvitation("malformed", operator)
+      },
+      {
+        name: "unknown digest",
+        rawToken: REPLACEMENT_RAW_TOKEN,
+        build: (_seed, operator) => publicInvitation("unknown", operator)
+      },
+      {
+        name: "expiry equal to now",
+        rawToken: PUBLIC_RAW_TOKEN,
+        build: (_seed, operator) => {
+          const issuedAt = new Date(Date.parse(NOW) - USER_INVITATION_TTL_MS).toISOString();
+          return publicInvitation("expired-equality", operator, PUBLIC_RAW_TOKEN, {
+            issuedAt,
+            expiresAt: NOW,
+            createdAt: issuedAt,
+            updatedAt: issuedAt
+          });
+        }
+      },
+      {
+        name: "invalidated issuer",
+        rawToken: PUBLIC_RAW_TOKEN,
+        build: (_seed, operator) => publicInvitation("invalidated", operator, PUBLIC_RAW_TOKEN, {
+          tokenIssuerVersion: operator.version + 1
+        })
+      },
+      {
+        name: "revoked invitation",
+        rawToken: PUBLIC_RAW_TOKEN,
+        build: (_seed, operator) => terminalInvitation("public-revoked", operator, "revoked")
+      },
+      {
+        name: "accepted invitation",
+        rawToken: PUBLIC_RAW_TOKEN,
+        build: (_seed, operator) => terminalInvitation("public-accepted", operator, "accepted")
+      },
+      {
+        name: "superseded invitation",
+        rawToken: PUBLIC_RAW_TOKEN,
+        build: (_seed, operator) => terminalInvitation("public-superseded", operator, "superseded")
+      },
+      {
+        name: "old token generation",
+        rawToken: PUBLIC_RAW_TOKEN,
+        build: (_seed, operator) => publicInvitation(
+          "old-generation",
+          operator,
+          REPLACEMENT_RAW_TOKEN,
+          { tokenGeneration: 2, version: 2 }
+        )
+      },
+      {
+        name: "email already claimed by a User",
+        rawToken: PUBLIC_RAW_TOKEN,
+        build: (seed, operator) => {
+          const record = publicInvitation("claimed-public", operator);
+          const existing = seed.users.find(({ role }) => role === "designer")!;
+          existing.email = record.email;
+          existing.emailNormalized = record.emailNormalized;
+          return record;
+        }
+      },
+      {
+        name: "email reserved by an unclaimed Client project",
+        rawToken: PUBLIC_RAW_TOKEN,
+        build: (seed, operator) => {
+          const record = publicInvitation("project-public", operator);
+          seed.projects.push({
+            ...structuredClone(seed.projects[0]!),
+            id: "public-invitation-project",
+            clientId: null,
+            clientEmail: record.email,
+            clientEmailNormalized: record.emailNormalized
+          });
+          return record;
+        }
+      }
+    ];
+
+    for (const testCase of cases) {
+      const { seed, operator } = standardSeed();
+      const record = testCase.build(seed, operator);
+      seed.userInvitations = [record];
+      const passwordHasher = vi.fn(async () => ACCEPTED_PASSWORD_HASH);
+      const { repository, service } = setup(seed, { passwordHasher });
+      const tokenLookup = vi.spyOn(repository, "findPendingUserInvitationByTokenHash");
+      const usersBefore = await repository.listUsers();
+      const invitationBefore = await repository.findUserInvitationById(record.id);
+
+      await expect(service.inspect(testCase.rawToken), testCase.name).rejects.toMatchObject(
+        unavailable
+      );
+      await expect(
+        service.accept({ rawToken: testCase.rawToken, password: ACCEPTED_PASSWORD }),
+        testCase.name
+      ).rejects.toMatchObject(unavailable);
+
+      expect(passwordHasher, testCase.name).not.toHaveBeenCalled();
+      if (testCase.name === "malformed token") {
+        expect(tokenLookup).not.toHaveBeenCalled();
+      }
+      expect(await repository.listUsers(), testCase.name).toEqual(usersBefore);
+      expect(await repository.findUserInvitationById(record.id), testCase.name).toEqual(
+        invitationBefore
+      );
+      expect(await invitationAudits(repository), testCase.name).toEqual([]);
+    }
+  });
+
+  it("returns the exact safe public inspection without mobile or lifecycle internals", async () => {
+    const { seed, operator } = standardSeed();
+    const record = publicInvitation("inspect-current", operator, PUBLIC_RAW_TOKEN, {
+      name: "Asha Rao",
+      email: "Asha.Rao@Example.Test",
+      emailNormalized: "asha.rao@example.test",
+      role: "finance_head",
+      mobile: "+91 98765 43210"
+    });
+    seed.userInvitations = [record];
+    const passwordHasher = vi.fn(async () => ACCEPTED_PASSWORD_HASH);
+    const { service } = setup(seed, { passwordHasher });
+
+    const inspected = await service.inspect(PUBLIC_RAW_TOKEN);
+
+    expect(inspected).toEqual({
+      name: "Asha Rao",
+      email: "Asha.Rao@Example.Test",
+      role: "finance_head",
+      expiresAt: record.expiresAt
+    });
+    expect(Object.keys(inspected).sort()).toEqual(["email", "expiresAt", "name", "role"]);
+    expect(JSON.stringify(inspected)).not.toMatch(
+      /mobile|emailNormalized|token|hash|generation|issuer|version/i
+    );
+    expect(passwordHasher).not.toHaveBeenCalled();
+  });
+
+  it("uses one authoritative transaction timestamp for expiry validation and acceptance writes", async () => {
+    const { seed, operator } = standardSeed();
+    const expiresAt = new Date(Date.parse(NOW) + 1).toISOString();
+    const issuedAt = new Date(
+      Date.parse(expiresAt) - USER_INVITATION_TTL_MS
+    ).toISOString();
+    const record = publicInvitation("expires-during-hash", operator, PUBLIC_RAW_TOKEN, {
+      issuedAt,
+      expiresAt,
+      createdAt: issuedAt,
+      updatedAt: issuedAt
+    });
+    seed.userInvitations = [record];
+    const passwordHasher = vi.fn(async () => ACCEPTED_PASSWORD_HASH);
+    const clock = vi
+      .fn<() => Date>()
+      .mockReturnValueOnce(new Date(NOW))
+      .mockReturnValueOnce(new Date(NOW))
+      .mockReturnValue(new Date(expiresAt));
+    const { repository, service } = setup(seed, { passwordHasher, clock });
+    await expect(
+      service.accept({ rawToken: PUBLIC_RAW_TOKEN, password: ACCEPTED_PASSWORD })
+    ).resolves.toEqual({ accepted: true });
+
+    expect(passwordHasher).toHaveBeenCalledOnce();
+    expect(clock).toHaveBeenCalledTimes(2);
+    expect(await repository.findUserInvitationById(record.id)).toMatchObject({
+      status: "accepted",
+      acceptedAt: NOW,
+      updatedAt: NOW
+    });
+  });
+
+  it("hashes at cost 12, accepts once under ordered locks and CAS, and creates only the standard User plus two safe self-audits", async () => {
+    const { seed, operator } = standardSeed();
+    const record = publicInvitation("accept-current", operator, PUBLIC_RAW_TOKEN, {
+      name: "Asha Rao",
+      email: "Asha.Rao@Example.Test",
+      emailNormalized: "asha.rao@example.test",
+      role: "site_manager",
+      mobile: "+91 98765 43210"
+    });
+    seed.userInvitations = [record];
+    const repository = createMemoryRepository(seed);
+    const audit = createAuditService(repository);
+    const timeline: string[] = [];
+    const createdInputs: NewUser[] = [];
+    const passwordHasher = vi.fn(async () => {
+      timeline.push("passwordHasher");
+      return ACCEPTED_PASSWORD_HASH;
+    });
+    const tracked = new Set([
+      "coordinateAuthorizationMutation",
+      "coordinateClientEmail",
+      "findUserInvitationById",
+      "findUserById",
+      "countActiveUsersByRole",
+      "findUserByEmail",
+      "hasUnclaimedClientProjectByEmail",
+      "createUser",
+      "acceptUserInvitation",
+      "appendAuditEvent"
+    ]);
+    const originalTransaction = repository.runInTransaction.bind(repository);
+    vi.spyOn(repository, "runInTransaction").mockImplementation(async (operation) => {
+      timeline.push("transaction");
+      return originalTransaction((transaction) =>
+        operation(new Proxy(transaction, {
+          get(target, property, receiver) {
+            const value = Reflect.get(target, property, receiver);
+            if (typeof value !== "function" || !tracked.has(String(property))) return value;
+            return async (...args: unknown[]) => {
+              timeline.push(String(property));
+              if (property === "createUser") {
+                createdInputs.push(structuredClone(args[0] as NewUser));
+              }
+              return value.apply(target, args);
+            };
+          }
+        }) as AppRepository)
+      );
+    });
+    const service = createUserInvitationService({
+      repository,
+      audit,
+      mailer: localMailer().mailer,
+      clock: () => new Date(NOW),
+      passwordHasher
+    });
+
+    const result = await service.accept({
+      rawToken: PUBLIC_RAW_TOKEN,
+      password: ACCEPTED_PASSWORD
+    });
+
+    expect(result).toEqual({ accepted: true });
+    expect(Object.keys(result)).toEqual(["accepted"]);
+    expect(JSON.stringify(result)).not.toMatch(/jwt|token|user|password/i);
+    expect(passwordHasher).toHaveBeenCalledOnce();
+    expect(passwordHasher).toHaveBeenCalledWith(ACCEPTED_PASSWORD, 12);
+    expect(timeline).toEqual([
+      "passwordHasher",
+      "transaction",
+      "coordinateAuthorizationMutation",
+      "coordinateClientEmail",
+      "findUserInvitationById",
+      "findUserById",
+      "countActiveUsersByRole",
+      "findUserByEmail",
+      "hasUnclaimedClientProjectByEmail",
+      "createUser",
+      "acceptUserInvitation",
+      "appendAuditEvent",
+      "appendAuditEvent"
+    ]);
+    expect(createdInputs).toEqual([{
+      name: "Asha Rao",
+      email: "Asha.Rao@Example.Test",
+      mobile: "+91 98765 43210",
+      passwordHash: ACCEPTED_PASSWORD_HASH,
+      role: "site_manager",
+      active: true,
+      accountKind: "standard",
+      address: null,
+      managerId: null,
+      authorizedClientIds: [],
+      createdAt: NOW,
+      updatedAt: NOW
+    }]);
+    expect(createdInputs[0]).not.toHaveProperty("title");
+    const created = await repository.findUserByEmail(record.emailNormalized);
+    expect(created).toMatchObject({
+      name: record.name,
+      email: record.email,
+      emailNormalized: record.emailNormalized,
+      mobile: record.mobile,
+      passwordHash: ACCEPTED_PASSWORD_HASH,
+      role: record.role,
+      active: true,
+      accountKind: "standard",
+      address: null,
+      managerId: null,
+      authorizedClientIds: [],
+      version: 1
+    });
+    expect(created).not.toHaveProperty("title");
+    expect(created).not.toHaveProperty("avatar");
+    expect(
+      Object.values(await repository.countUserResponsibilities(created!.id)).every(
+        (count) => count === 0
+      )
+    ).toBe(true);
+    for (const module of PROJECT_MODULES) {
+      await expect(repository.listActiveProjectAccessGrants(created!.id, module)).resolves.toEqual(
+        []
+      );
+    }
+    const accepted = await repository.findUserInvitationById(record.id);
+    expect(accepted).toMatchObject({
+      status: "accepted",
+      tokenHash: null,
+      acceptedUserId: created!.id,
+      acceptedAt: NOW,
+      version: 2
+    });
+    const audits = (
+      await repository.pageAuditEvents({}, { limit: 10, offset: 0 })
+    ).items;
+    expect(audits.map(({ action, actorId, entityType, entityId, newValues }) => ({
+      action,
+      actorId,
+      entityType,
+      entityId,
+      newValues
+    }))).toEqual([
+      {
+        action: "user.invited_created",
+        actorId: created!.id,
+        entityType: "user",
+        entityId: created!.id,
+        newValues: {
+          invitationId: record.id,
+          userId: created!.id,
+          emailNormalized: record.emailNormalized,
+          role: record.role
+        }
+      },
+      {
+        action: "user_invitation.accepted",
+        actorId: created!.id,
+        entityType: "user_invitation",
+        entityId: record.id,
+        newValues: {
+          invitationId: record.id,
+          acceptedUserId: created!.id,
+          emailNormalized: record.emailNormalized,
+          role: record.role
+        }
+      }
+    ]);
+    expect(JSON.stringify(audits)).not.toContain(PUBLIC_RAW_TOKEN);
+    expect(JSON.stringify(audits)).not.toContain(ACCEPTED_PASSWORD);
+    expect(JSON.stringify(audits)).not.toContain(ACCEPTED_PASSWORD_HASH);
+
+    const usersAfterFirstAccept = await repository.listUsers();
+    const invitationAfterFirstAccept = await repository.findUserInvitationById(record.id);
+    const auditsAfterFirstAccept = await repository.pageAuditEvents({}, { limit: 10, offset: 0 });
+    await expect(
+      service.accept({ rawToken: PUBLIC_RAW_TOKEN, password: ACCEPTED_PASSWORD })
+    ).rejects.toMatchObject(unavailable);
+    expect(passwordHasher).toHaveBeenCalledOnce();
+    expect(await repository.listUsers()).toEqual(usersAfterFirstAccept);
+    expect(await repository.findUserInvitationById(record.id)).toEqual(
+      invitationAfterFirstAccept
+    );
+    expect(await repository.pageAuditEvents({}, { limit: 10, offset: 0 })).toEqual(
+      auditsAfterFirstAccept
+    );
+  });
+
+  it("maps every post-hash reload, ownership, CAS, and audit race to unavailable with full rollback", async () => {
+    const raceKinds = [
+      "missing_reload",
+      "version_changed",
+      "generation_changed",
+      "digest_changed",
+      "terminal_state",
+      "issuer_invalidated",
+      "existing_user",
+      "project_reserved",
+      "duplicate_user",
+      "accept_conflict",
+      "accept_not_found",
+      "second_audit_conflict"
+    ] as const;
+
+    for (const raceKind of raceKinds) {
+      const { seed, operator } = standardSeed();
+      const record = publicInvitation(`race-${raceKind}`, operator);
+      seed.userInvitations = [record];
+      const repository = createMemoryRepository(seed);
+      const audit = createAuditService(repository);
+      const passwordHasher = vi.fn(async () => ACCEPTED_PASSWORD_HASH);
+      const usersBefore = await repository.listUsers();
+      const invitationBefore = await repository.findUserInvitationById(record.id);
+      let auditAppendCount = 0;
+      const originalTransaction = repository.runInTransaction.bind(repository);
+      vi.spyOn(repository, "runInTransaction").mockImplementation((operation) =>
+        originalTransaction((transaction) =>
+          operation(new Proxy(transaction, {
+            get(target, property, receiver) {
+              const value = Reflect.get(target, property, receiver);
+              if (typeof value !== "function") return value;
+              if (property === "findUserInvitationById") {
+                return async (...args: unknown[]) => {
+                  const current = await value.apply(target, args) as UserInvitationRecord | null;
+                  if (raceKind === "missing_reload") return null;
+                  if (!current) return current;
+                  if (raceKind === "version_changed") {
+                    return { ...current, version: current.version + 1 };
+                  }
+                  if (raceKind === "generation_changed") {
+                    return { ...current, tokenGeneration: current.tokenGeneration + 1 };
+                  }
+                  if (raceKind === "digest_changed") {
+                    return { ...current, tokenHash: hashUserInvitationToken(REPLACEMENT_RAW_TOKEN) };
+                  }
+                  if (raceKind === "terminal_state") {
+                    return { ...current, status: "accepted", tokenHash: null };
+                  }
+                  return current;
+                };
+              }
+              if (property === "findUserById" && raceKind === "issuer_invalidated") {
+                return async () => ({ ...operator, active: false });
+              }
+              if (property === "findUserByEmail" && raceKind === "existing_user") {
+                return async () => structuredClone(operator);
+              }
+              if (
+                property === "hasUnclaimedClientProjectByEmail" &&
+                raceKind === "project_reserved"
+              ) {
+                return async () => true;
+              }
+              if (property === "createUser" && raceKind === "duplicate_user") {
+                return async () => {
+                  throw new RepositoryConflictError("duplicate user race");
+                };
+              }
+              if (property === "acceptUserInvitation" && raceKind === "accept_conflict") {
+                return async () => {
+                  throw new RepositoryConflictError("acceptance CAS race");
+                };
+              }
+              if (property === "acceptUserInvitation" && raceKind === "accept_not_found") {
+                return async () => {
+                  throw new RepositoryNotFoundError("invitation removed during acceptance");
+                };
+              }
+              if (property === "appendAuditEvent" && raceKind === "second_audit_conflict") {
+                return async (...args: unknown[]) => {
+                  auditAppendCount += 1;
+                  if (auditAppendCount === 2) {
+                    throw new RepositoryConflictError("acceptance audit race");
+                  }
+                  return value.apply(target, args);
+                };
+              }
+              return value;
+            }
+          }) as AppRepository)
+        )
+      );
+      const service = createUserInvitationService({
+        repository,
+        audit,
+        mailer: localMailer().mailer,
+        clock: () => new Date(NOW),
+        passwordHasher
+      });
+
+      await expect(
+        service.accept({ rawToken: PUBLIC_RAW_TOKEN, password: ACCEPTED_PASSWORD }),
+        raceKind
+      ).rejects.toMatchObject(unavailable);
+
+      expect(passwordHasher, raceKind).toHaveBeenCalledOnce();
+      expect(await repository.listUsers(), raceKind).toEqual(usersBefore);
+      expect(await repository.findUserInvitationById(record.id), raceKind).toEqual(
+        invitationBefore
+      );
+      expect(await repository.pageAuditEvents({}, { limit: 10, offset: 0 }), raceKind).toEqual({
+        items: [],
+        total: 0
+      });
+    }
+  });
 });

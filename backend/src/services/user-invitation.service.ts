@@ -1,9 +1,11 @@
 import { randomBytes as cryptoRandomBytes, randomUUID } from "node:crypto";
+import bcrypt from "bcryptjs";
 
 import { isReservedDemoEmail, isReservedDevelopmentDemoIdentity } from "../domain/demo-identities.js";
 import {
   INVITABLE_ROLE_CODES,
   USER_INVITATION_RECIPIENT_COOLDOWN_MS,
+  USER_INVITATION_TOKEN_PATTERN,
   expiresAtForInvitation,
   hashUserInvitationToken,
   invitationEmailSchema,
@@ -76,6 +78,13 @@ export interface UserInvitationInspection {
   expiresAt: string;
 }
 
+export class InvitationUnavailableError extends ApiError {
+  constructor() {
+    super(410, "INVITATION_UNAVAILABLE", "This invitation is unavailable.");
+    this.name = "InvitationUnavailableError";
+  }
+}
+
 export interface UserInvitationService {
   list(
     actor: PublicUser,
@@ -128,12 +137,16 @@ interface DeliveryAttempt {
 
 const CREATE_KEYS = ["name", "email", "role", "mobile"] as const;
 const INVITATION_NOT_ACTIONABLE_MESSAGE = "The invitation is not actionable.";
+const INVITATION_PASSWORD_HASH_COST = 12;
 
 export function createUserInvitationService(
   input: CreateUserInvitationServiceInput
 ): UserInvitationService {
   const { repository, audit, mailer, clock } = input;
   const randomBytes = input.randomBytes ?? cryptoRandomBytes;
+  const passwordHasher =
+    input.passwordHasher ??
+    ((password: string, cost: number) => bcrypt.hash(password, cost));
 
   return {
     async list(actor, filters, pagination) {
@@ -358,14 +371,214 @@ export function createUserInvitationService(
       return presentRecord(repository, revoked, clock().toISOString());
     },
 
-    async inspect(_rawToken) {
-      invitationUnavailable();
+    async inspect(rawToken) {
+      try {
+        const { invitation } = await findAvailablePublicInvitation(
+          repository,
+          rawToken,
+          clock().toISOString()
+        );
+        return {
+          name: invitation.name,
+          email: invitation.email,
+          role: invitation.role,
+          expiresAt: invitation.expiresAt
+        };
+      } catch (error) {
+        mapPublicInvitationError(error);
+      }
     },
 
-    async accept(_acceptInput) {
-      invitationUnavailable();
+    async accept(acceptInput) {
+      let discovered: PublicInvitationMatch;
+      try {
+        discovered = await findAvailablePublicInvitation(
+          repository,
+          acceptInput.rawToken,
+          clock().toISOString()
+        );
+      } catch (error) {
+        mapPublicInvitationError(error);
+      }
+
+      const passwordHash = await passwordHasher(
+        acceptInput.password,
+        INVITATION_PASSWORD_HASH_COST
+      );
+
+      try {
+        await repository.runInTransaction(async (transaction) => {
+          await transaction.coordinateAuthorizationMutation();
+          await transaction.coordinateClientEmail(
+            discovered.invitation.emailNormalized
+          );
+          const current = await transaction.findUserInvitationById(
+            discovered.invitation.id
+          );
+          assertSamePublicInvitation(current, discovered);
+          const acceptedAt = clock().toISOString();
+          await assertPublicInvitationAvailable(
+            transaction,
+            current!,
+            discovered.tokenHash,
+            acceptedAt
+          );
+
+          const createdUser = await transaction.createUser({
+            name: current!.name,
+            email: current!.email,
+            mobile: current!.mobile,
+            passwordHash,
+            role: current!.role,
+            active: true,
+            accountKind: "standard",
+            address: null,
+            managerId: null,
+            authorizedClientIds: [],
+            createdAt: acceptedAt,
+            updatedAt: acceptedAt
+          });
+          if (createdUser.emailNormalized !== current!.emailNormalized) {
+            invitationUnavailable();
+          }
+
+          await transaction.acceptUserInvitation(
+            current!.id,
+            current!.version,
+            current!.tokenGeneration,
+            discovered.tokenHash,
+            {
+              acceptedUserId: createdUser.id,
+              acceptedAt,
+              updatedAt: acceptedAt
+            }
+          );
+          await audit.append(
+            {
+              actorId: createdUser.id,
+              action: "user.invited_created",
+              entityType: "user",
+              entityId: createdUser.id,
+              occurredAt: acceptedAt,
+              newValues: {
+                invitationId: current!.id,
+                userId: createdUser.id,
+                emailNormalized: current!.emailNormalized,
+                role: current!.role
+              }
+            },
+            transaction
+          );
+          await audit.append(
+            {
+              actorId: createdUser.id,
+              action: "user_invitation.accepted",
+              entityType: "user_invitation",
+              entityId: current!.id,
+              occurredAt: acceptedAt,
+              newValues: {
+                invitationId: current!.id,
+                acceptedUserId: createdUser.id,
+                emailNormalized: current!.emailNormalized,
+                role: current!.role
+              }
+            },
+            transaction
+          );
+        });
+      } catch (error) {
+        mapPublicInvitationError(error);
+      }
+
+      return { accepted: true };
     }
   };
+}
+
+interface PublicInvitationMatch {
+  invitation: UserInvitationRecord;
+  tokenHash: string;
+}
+
+async function findAvailablePublicInvitation(
+  repository: AppRepository,
+  rawToken: string,
+  now: string
+): Promise<PublicInvitationMatch> {
+  if (
+    typeof rawToken !== "string" ||
+    !USER_INVITATION_TOKEN_PATTERN.test(rawToken)
+  ) {
+    invitationUnavailable();
+  }
+  const tokenHash = hashUserInvitationToken(rawToken);
+  const invitation = await repository.findPendingUserInvitationByTokenHash(tokenHash);
+  if (!invitation) invitationUnavailable();
+  await assertPublicInvitationAvailable(repository, invitation, tokenHash, now);
+  return { invitation, tokenHash };
+}
+
+async function assertPublicInvitationAvailable(
+  repository: AppRepository,
+  invitation: UserInvitationRecord,
+  tokenHash: string,
+  now: string
+): Promise<void> {
+  if (
+    invitation.status !== "pending" ||
+    invitation.tokenHash !== tokenHash ||
+    Date.parse(invitation.expiresAt) <= Date.parse(now)
+  ) {
+    invitationUnavailable();
+  }
+  const issuer = await repository.findUserById(invitation.tokenIssuedById);
+  if (
+    !issuer ||
+    !issuer.active ||
+    issuer.role !== "super_admin" ||
+    issuer.version !== invitation.tokenIssuerVersion ||
+    (await repository.countActiveUsersByRole("super_admin")) !== 1
+  ) {
+    invitationUnavailable();
+  }
+  if (
+    (await repository.findUserByEmail(invitation.emailNormalized)) ||
+    (await repository.hasUnclaimedClientProjectByEmail(
+      invitation.emailNormalized
+    ))
+  ) {
+    invitationUnavailable();
+  }
+}
+
+function assertSamePublicInvitation(
+  current: UserInvitationRecord | null,
+  discovered: PublicInvitationMatch
+): asserts current is UserInvitationRecord {
+  if (
+    !current ||
+    current.id !== discovered.invitation.id ||
+    current.status !== "pending" ||
+    current.tokenHash !== discovered.tokenHash ||
+    current.tokenGeneration !== discovered.invitation.tokenGeneration ||
+    current.version !== discovered.invitation.version ||
+    current.emailNormalized !== discovered.invitation.emailNormalized ||
+    current.tokenIssuedById !== discovered.invitation.tokenIssuedById ||
+    current.tokenIssuerVersion !== discovered.invitation.tokenIssuerVersion
+  ) {
+    invitationUnavailable();
+  }
+}
+
+function mapPublicInvitationError(error: unknown): never {
+  if (error instanceof InvitationUnavailableError) throw error;
+  if (
+    error instanceof RepositoryConflictError ||
+    error instanceof RepositoryNotFoundError
+  ) {
+    invitationUnavailable();
+  }
+  throw error;
 }
 
 function parseCreateInput(input: CreateUserInvitationInput): NormalizedCreateInput {
@@ -786,9 +999,5 @@ function notActionable(): never {
 }
 
 function invitationUnavailable(): never {
-  throw new ApiError(
-    410,
-    "INVITATION_UNAVAILABLE",
-    "This invitation is unavailable."
-  );
+  throw new InvitationUnavailableError();
 }
