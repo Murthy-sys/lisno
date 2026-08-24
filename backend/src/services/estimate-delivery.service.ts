@@ -139,14 +139,7 @@ export function createEstimateDeliveryService(input: {
 
     const current = await loadCurrentRound(retryInput.estimateId);
     const attemptedAt = now();
-    if (
-      !current ||
-      String(current._id) !== retryInput.roundId ||
-      current.estimateId !== retryInput.estimateId ||
-      current.version !== retryInput.version ||
-      current.status !== "pending" ||
-      !isRetryable(current, attemptedAt)
-    ) {
+    if (!isRetryCandidate(current, retryInput, attemptedAt)) {
       retryConflict();
     }
 
@@ -154,14 +147,23 @@ export function createEstimateDeliveryService(input: {
       attemptedAt.getTime() + DELIVERY_ATTEMPT_DEADLINE_MS
     );
     const leased = await inMongoTransaction(async (session) => {
+      const transactionalCurrent = await loadCurrentRound(
+        retryInput.estimateId,
+        session
+      );
+      if (!isRetryCandidate(transactionalCurrent, retryInput, attemptedAt)) {
+        retryConflict();
+      }
+
       const acquired = await EstimateClientReviewRoundModel.findOneAndUpdate(
         {
           _id: retryInput.roundId,
           estimateId: retryInput.estimateId,
-          sendGeneration: current.sendGeneration,
+          sendGeneration: transactionalCurrent.sendGeneration,
           version: retryInput.version,
           status: "pending",
-          deliveryAttemptGeneration: current.deliveryAttemptGeneration,
+          deliveryAttemptGeneration:
+            transactionalCurrent.deliveryAttemptGeneration,
           $or: [
             { deliveryStatus: { $in: ["failed", "disabled"] } },
             {
@@ -196,9 +198,10 @@ export function createEstimateDeliveryService(input: {
         entityId: retryInput.roundId,
         occurredAt: attemptedAt.toISOString(),
         oldValues: {
-          deliveryStatus: current.deliveryStatus,
-          deliveryAttemptGeneration: current.deliveryAttemptGeneration,
-          deliveryAttemptCount: current.deliveryAttemptCount
+          deliveryStatus: transactionalCurrent.deliveryStatus,
+          deliveryAttemptGeneration:
+            transactionalCurrent.deliveryAttemptGeneration,
+          deliveryAttemptCount: transactionalCurrent.deliveryAttemptCount
         },
         newValues: {
           deliveryStatus: "queued",
@@ -210,13 +213,25 @@ export function createEstimateDeliveryService(input: {
       return lease;
     });
 
-    return deliverLease(leased, actor.id);
+    return deliverLease(leased, actor.id, async () => {
+      try {
+        await input.reviews.requireRetryScope(
+          actor,
+          retryInput.estimateId,
+          retryInput.roundId
+        );
+      } catch {
+        retryConflict();
+      }
+    });
   }
 
   async function deliverLease(
     lease: AttemptLease,
-    actorId: string
+    actorId: string,
+    reauthorizeBeforePayload?: () => Promise<void>
   ): Promise<EstimateClientReviewSummary> {
+    await reauthorizeBeforePayload?.();
     const payload = await loadAttemptPayload(lease);
     if (!payload) return loadRequiredSummary(lease._id);
 
@@ -362,6 +377,21 @@ function isRetryable(round: DeliveryRoundRow, attemptedAt: Date): boolean {
     round.deliveryLeaseExpiresAt.getTime() <= attemptedAt.getTime();
 }
 
+function isRetryCandidate(
+  round: DeliveryRoundRow | null,
+  input: { estimateId: string; roundId: string; version: number },
+  attemptedAt: Date
+): round is DeliveryRoundRow {
+  return Boolean(
+    round &&
+    String(round._id) === input.roundId &&
+    round.estimateId === input.estimateId &&
+    round.version === input.version &&
+    round.status === "pending" &&
+    isRetryable(round, attemptedAt)
+  );
+}
+
 function boundedFailureCode(value: unknown): string {
   return typeof value === "string" && ESTIMATE_DELIVERY_FAILURE_CODE.test(value)
     ? value
@@ -374,11 +404,13 @@ async function loadRound(roundId: string): Promise<DeliveryRoundRow | null> {
 }
 
 async function loadCurrentRound(
-  estimateId: string
+  estimateId: string,
+  session?: mongoose.ClientSession
 ): Promise<DeliveryRoundRow | null> {
-  const round = await EstimateClientReviewRoundModel.findOne({ estimateId })
-    .sort({ sendGeneration: -1, _id: 1 })
-    .lean();
+  let query = EstimateClientReviewRoundModel.findOne({ estimateId })
+    .sort({ sendGeneration: -1, _id: 1 });
+  if (session) query = query.session(session);
+  const round = await query.lean();
   return round as unknown as DeliveryRoundRow | null;
 }
 

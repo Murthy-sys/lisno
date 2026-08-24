@@ -183,10 +183,12 @@ function replace(target: Row, source: Row): void {
 interface HarnessOptions {
   round?: Row;
   currentRound?: Row;
+  currentRounds?: Row[];
   mailer?: EstimateMailer;
   bytes?: Buffer;
   storageError?: unknown;
   scopeError?: unknown;
+  scopeErrorAtCall?: { call: number; error: unknown };
   auditErrorAction?: string;
   beforeAcquire?: (record: Row) => void;
   onSend?: (record: Row) => void | Promise<void>;
@@ -203,9 +205,12 @@ function setup(options: HarnessOptions = {}) {
   const currentRecord = options.currentRound
     ? round(options.currentRound)
     : record;
+  const currentRecords = options.currentRounds?.map((value) => round(value));
   const audits: Row[] = [];
   const transactions: string[] = [];
   let beforeAcquirePending = true;
+  let currentRoundReadCount = 0;
+  let scopeCallCount = 0;
   let transactionTail = Promise.resolve();
 
   const session = {
@@ -240,7 +245,9 @@ function setup(options: HarnessOptions = {}) {
     .mockImplementation(((filter: Row = {}) => query(() => {
       const selected = Object.hasOwn(filter, "estimateId") &&
         !Object.hasOwn(filter, "_id")
-        ? currentRecord
+        ? currentRecords?.[
+            Math.min(currentRoundReadCount++, currentRecords.length - 1)
+          ] ?? currentRecord
         : record;
       return matches(selected, filter) ? structuredClone(selected) : null;
     })) as never);
@@ -284,6 +291,10 @@ function setup(options: HarnessOptions = {}) {
   };
   const reviews = {
     requireRetryScope: vi.fn(async () => {
+      scopeCallCount += 1;
+      if (options.scopeErrorAtCall?.call === scopeCallCount) {
+        throw options.scopeErrorAtCall.error;
+      }
       if (options.scopeError) throw options.scopeError;
     })
   };
@@ -351,7 +362,10 @@ async function expectRetryConflict(operation: Promise<unknown>): Promise<void> {
   }
   expect(error).toBeDefined();
   expect(error).toBeInstanceOf(ApiError);
-  expect(error).toMatchObject({ status: 409 });
+  expect(error).toMatchObject({
+    status: 409,
+    code: "ESTIMATE_EMAIL_RETRY_CONFLICT"
+  });
   expect(JSON.stringify(error)).not.toMatch(
     /Client@Example|client@example|opaque\/review|provider|secret/i
   );
@@ -377,6 +391,7 @@ describe("initial Estimate PDF delivery", () => {
       deliveryFailureCode: null
     });
     expect(harness.storage.read).not.toHaveBeenCalled();
+    expect(harness.reviews.requireRetryScope).not.toHaveBeenCalled();
     expect(harness.audits).toEqual([]);
     expectSafeSummary(result, harness.record);
   });
@@ -471,6 +486,7 @@ describe("initial Estimate PDF delivery", () => {
       version: 3
     });
     expect(harness.estimateUpdate).not.toHaveBeenCalled();
+    expect(harness.reviews.requireRetryScope).not.toHaveBeenCalled();
     expectSafeSummary(result, harness.record);
   });
 
@@ -639,12 +655,11 @@ describe("authorized retry leasing", () => {
       version: requestedVersion
     });
 
-    expect(harness.reviews.requireRetryScope).toHaveBeenCalledOnce();
-    expect(harness.reviews.requireRetryScope).toHaveBeenCalledWith(
-      actor,
-      ESTIMATE_ID,
-      ROUND_ID
-    );
+    expect(harness.reviews.requireRetryScope).toHaveBeenCalledTimes(2);
+    expect(harness.reviews.requireRetryScope.mock.calls).toEqual([
+      [actor, ESTIMATE_ID, ROUND_ID],
+      [actor, ESTIMATE_ID, ROUND_ID]
+    ]);
     const [filter, update] = harness.findOneAndUpdate.mock.calls[0]!;
     expect(filter).toMatchObject({
       _id: ROUND_ID,
@@ -709,6 +724,52 @@ describe("authorized retry leasing", () => {
     expect(harness.storage.read).not.toHaveBeenCalled();
     expect("send" in harness.mailer ? harness.mailer.send : undefined)
       .not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [
+      "actor deactivation",
+      new ApiError(404, "NOT_FOUND", "The requested resource was not found.")
+    ],
+    [
+      "Estimate ownership revocation",
+      new Error("new owner secret-estimator-2 must not leak")
+    ]
+  ])("re-authorizes after leasing and blocks storage on %s", async (_label, scopeError) => {
+    const send = vi.fn(async () => ({ kind: "sent" as const }));
+    const harness = setup({
+      round: {
+        deliveryStatus: "failed",
+        deliveryAttemptCount: 1,
+        deliveryFailureCode: "SMTP_TIMEOUT",
+        version: 4
+      },
+      mailer: enabledMailer(send),
+      scopeErrorAtCall: { call: 2, error: scopeError }
+    });
+
+    await expectRetryConflict(harness.delivery.retry(OWNER, {
+      estimateId: ESTIMATE_ID,
+      roundId: ROUND_ID,
+      version: 4
+    }));
+
+    expect(harness.reviews.requireRetryScope).toHaveBeenCalledTimes(2);
+    expect(harness.record).toMatchObject({
+      deliveryStatus: "queued",
+      deliveryAttemptGeneration: 2,
+      deliveryAttemptCount: 2,
+      deliveryAttemptedAt: NOW,
+      deliveryLeaseExpiresAt: DEADLINE,
+      deliveredAt: null,
+      deliveryFailureCode: null,
+      version: 5
+    });
+    expect(harness.audits.map((audit) => audit.action)).toEqual([
+      "estimate_email_retry_requested"
+    ]);
+    expect(harness.storage.read).not.toHaveBeenCalled();
+    expect(send).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -827,6 +888,47 @@ describe("authorized retry leasing", () => {
     expect(harness.findOneAndUpdate).not.toHaveBeenCalled();
     expect(harness.storage.read).not.toHaveBeenCalled();
     expect(harness.audits).toEqual([]);
+  });
+
+  it("rechecks the latest round inside acquisition when send generation changes at the boundary", async () => {
+    const historical = {
+      deliveryStatus: "failed",
+      deliveryAttemptCount: 1,
+      deliveryFailureCode: "SMTP_TIMEOUT",
+      version: 4
+    };
+    const harness = setup({
+      round: historical,
+      currentRounds: [
+        historical,
+        {
+          _id: "round-2",
+          sendGeneration: 2,
+          deliveryStatus: "failed",
+          deliveryAttemptCount: 1,
+          deliveryFailureCode: "SMTP_TIMEOUT",
+          version: 3
+        }
+      ]
+    });
+
+    await expectRetryConflict(harness.delivery.retry(OWNER, {
+      estimateId: ESTIMATE_ID,
+      roundId: ROUND_ID,
+      version: 4
+    }));
+
+    expect(harness.findOne).toHaveBeenCalledTimes(2);
+    const transactionalCurrentQuery = harness.findOne.mock.results[1]?.value as {
+      session: ReturnType<typeof vi.fn>;
+    };
+    expect(transactionalCurrentQuery.session).toHaveBeenCalledWith(harness.session);
+    expect(harness.findOneAndUpdate).not.toHaveBeenCalled();
+    expect(harness.record).toMatchObject(historical);
+    expect(harness.audits).toEqual([]);
+    expect(harness.storage.read).not.toHaveBeenCalled();
+    expect("send" in harness.mailer ? harness.mailer.send : undefined)
+      .not.toHaveBeenCalled();
   });
 
   it("rejects a CAS loser whose attempt generation changed after validation", async () => {
