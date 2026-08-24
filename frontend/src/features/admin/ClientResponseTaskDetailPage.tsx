@@ -43,6 +43,16 @@ const statusPresentation: Record<
   changes_requested: { label: "Changes requested", tone: "danger" }
 };
 
+const deliveryPresentation: Record<
+  EstimateClientResponseTaskDetail["deliveryStatus"],
+  { label: string; tone: StatusTone }
+> = {
+  queued: { label: "Email queued", tone: "info" },
+  sent: { label: "Email sent", tone: "success" },
+  failed: { label: "Email delivery failed", tone: "danger" },
+  disabled: { label: "Email unavailable", tone: "warning" }
+};
+
 function detailErrorMessage(error: unknown): string {
   if (error instanceof ApiError && error.status === 404) {
     return "The requested Client response task was not found.";
@@ -112,6 +122,7 @@ export function ClientResponseTaskDetailPage() {
   }
 
   const presentation = statusPresentation[task.status];
+  const delivery = deliveryPresentation[task.deliveryStatus];
   const pendingDecision = task.status === "pending" && canDecide;
   const selectedTaskIsCurrent = Boolean(
     selected?.task.id === task.id &&
@@ -160,11 +171,25 @@ export function ClientResponseTaskDetailPage() {
           <div><dt>Project</dt><dd>{task.project?.name ?? "Project unavailable"}</dd></div>
           <div><dt>Client email</dt><dd>{task.client.email}</dd></div>
           <div><dt>Assigned Admin</dt><dd>{task.assignedAdmin.name}</dd></div>
+          <div>
+            <dt>Delivery status</dt>
+            <dd><StatusBadge tone={delivery.tone} label={delivery.label} /></dd>
+          </div>
           <div><dt>Delivery attempts</dt><dd>{task.deliveryAttemptCount}</dd></div>
+          <div>
+            <dt>Last delivery attempt</dt>
+            <dd>
+              {task.deliveryAttemptedAt ? (
+                <time dateTime={task.deliveryAttemptedAt}>
+                  {dateTime.format(new Date(task.deliveryAttemptedAt))}
+                </time>
+              ) : "Not attempted"}
+            </dd>
+          </div>
           <div>
             <dt>Delivered</dt>
             <dd>
-              {task.deliveredAt ? (
+              {task.deliveryStatus === "sent" && task.deliveredAt ? (
                 <time dateTime={task.deliveredAt}>
                   {dateTime.format(new Date(task.deliveredAt))}
                 </time>
@@ -172,6 +197,18 @@ export function ClientResponseTaskDetailPage() {
             </dd>
           </div>
           <div><dt>Decision source</dt><dd>{decisionSourceLabel(task.decisionSource)}</dd></div>
+          {task.status !== "pending" ? (
+            <div>
+              <dt>Decided</dt>
+              <dd>
+                {task.decidedAt ? (
+                  <time dateTime={task.decidedAt}>
+                    {dateTime.format(new Date(task.decidedAt))}
+                  </time>
+                ) : "Time unavailable"}
+              </dd>
+            </div>
+          ) : null}
         </dl>
         {task.decisionNote ? (
           <p className="client-response-detail__decision-note">

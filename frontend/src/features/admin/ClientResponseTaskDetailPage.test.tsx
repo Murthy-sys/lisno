@@ -96,6 +96,94 @@ function installAdmin(
 }
 
 describe("ClientResponseTaskDetailPage", () => {
+  it.each([
+    {
+      deliveryStatus: "queued" as const,
+      deliveryAttemptCount: 1,
+      deliveryAttemptedAt: "2026-08-23T10:05:00.000Z",
+      deliveredAt: null,
+      label: "Email queued",
+      attempts: "1",
+      attempted: "23 Aug 2026, 10:05",
+      delivered: "Not delivered"
+    },
+    {
+      deliveryStatus: "sent" as const,
+      deliveryAttemptCount: 1,
+      deliveryAttemptedAt: "2026-08-23T10:05:00.000Z",
+      deliveredAt: "2026-08-23T10:07:00.000Z",
+      label: "Email sent",
+      attempts: "1",
+      attempted: "23 Aug 2026, 10:05",
+      delivered: "23 Aug 2026, 10:07"
+    },
+    {
+      deliveryStatus: "failed" as const,
+      deliveryAttemptCount: 2,
+      deliveryAttemptedAt: "2026-08-23T10:09:00.000Z",
+      deliveredAt: null,
+      label: "Email delivery failed",
+      attempts: "2",
+      attempted: "23 Aug 2026, 10:09",
+      delivered: "Not delivered"
+    },
+    {
+      deliveryStatus: "disabled" as const,
+      deliveryAttemptCount: 0,
+      deliveryAttemptedAt: null,
+      deliveredAt: null,
+      label: "Email unavailable",
+      attempts: "0",
+      attempted: "Not attempted",
+      delivered: "Not delivered"
+    }
+  ])(
+    "renders persisted $deliveryStatus delivery history",
+    async ({
+      deliveryStatus,
+      deliveryAttemptCount,
+      deliveryAttemptedAt,
+      deliveredAt,
+      label,
+      attempts,
+      attempted,
+      delivered
+    }) => {
+      installAdmin();
+      server.use(
+        http.get("/api/v1/admin/estimate-client-response-tasks/round-1", () =>
+          HttpResponse.json({
+            data: {
+              ...pendingDetail,
+              deliveryStatus,
+              deliveryAttemptCount,
+              deliveryAttemptedAt,
+              deliveredAt
+            }
+          })
+        )
+      );
+
+      renderApp(["/admin/client-responses/round-1"]);
+      const summary = await screen.findByRole("region", {
+        name: "Response task summary"
+      });
+      expect(within(summary).getByText("Delivery status").parentElement).toHaveTextContent(
+        `Delivery status${label}`
+      );
+      expect(within(summary).getByText("Delivery attempts").parentElement).toHaveTextContent(
+        `Delivery attempts${attempts}`
+      );
+      expect(within(summary).getByText("Last delivery attempt").parentElement).toHaveTextContent(
+        `Last delivery attempt${attempted}`
+      );
+      expect(within(summary).getByText("Delivered").parentElement).toHaveTextContent(
+        `Delivered${delivered}`
+      );
+      expect(within(summary).queryByText("Decided")).not.toBeInTheDocument();
+    }
+  );
+
   it("renders only the immutable snapshot line items and totals", async () => {
     installAdmin();
     server.use(
@@ -249,6 +337,9 @@ describe("ClientResponseTaskDetailPage", () => {
     expect(await screen.findByText("Changes requested")).toBeVisible();
     expect(screen.getByText("Please revise the kitchen finish.")).toBeVisible();
     expect(screen.getByText("Recorded with Admin proof")).toBeVisible();
+    expect(screen.getByText("Decided").parentElement).toHaveTextContent(
+      "Decided24 Aug 2026, 08:30"
+    );
     expect(screen.getByRole("button", { name: "Download decision proof" })).toBeVisible();
     expect(screen.queryByRole("button", { name: "Approve" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Reject" })).not.toBeInTheDocument();
