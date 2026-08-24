@@ -63,7 +63,7 @@ describe("UserInvitationsPanel", () => {
         requestCount += 1;
         const url = new URL(request.url);
         expect(`${url.pathname}${url.search}`).toBe(
-          "/api/v1/admin/user-invitations?status=pending&limit=20&offset=0"
+          "/api/v1/admin/user-invitations?limit=20&offset=0"
         );
         return HttpResponse.json({ data: invitationPage([baseInvitation]) });
       })
@@ -75,7 +75,7 @@ describe("UserInvitationsPanel", () => {
         permissions={allPermissions}
       />
     );
-    expect(screen.queryByText("Pending invitations")).not.toBeInTheDocument();
+    expect(screen.queryByText("User invitations")).not.toBeInTheDocument();
     expect(requestCount).toBe(0);
     unmount();
 
@@ -86,12 +86,71 @@ describe("UserInvitationsPanel", () => {
       />
     );
     expect(
-      await screen.findByRole("heading", { name: "Pending invitations" })
+      await screen.findByRole("heading", { name: "User invitations" })
     ).toBeVisible();
     expect(requestCount).toBe(1);
     expect(screen.queryByRole("button", { name: "Invite user" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Resend Asha Rao" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Revoke Asha Rao" })).not.toBeInTheDocument();
+  });
+
+  it("defaults to all actionable invitations without a status query", async () => {
+    const actionableItems = [
+      baseInvitation,
+      invitation("invitation-delivery-failed", {
+        name: "Delivery Failed Invite",
+        email: "delivery-failed@example.com",
+        status: "delivery_failed",
+        deliveryStatus: "failed",
+        sentAt: null
+      }),
+      invitation("invitation-expired", {
+        name: "Expired Invite",
+        email: "expired@example.com",
+        status: "expired",
+        currentLinkAvailable: false,
+        expiresAt: "2026-08-23T09:00:00.000Z"
+      })
+    ];
+    const paths: string[] = [];
+    server.use(
+      http.get("/api/v1/admin/user-invitations", ({ request }) => {
+        const url = new URL(request.url);
+        const status = url.searchParams.get("status");
+        paths.push(`${url.pathname}${url.search}`);
+        return HttpResponse.json({
+          data: invitationPage(
+            status
+              ? actionableItems.filter((item) => item.status === status)
+              : actionableItems
+          )
+        });
+      })
+    );
+
+    renderWithQuery(
+      <UserInvitationsPanel
+        actorRole="super_admin"
+        permissions={allPermissions}
+      />
+    );
+
+    expect(
+      await screen.findByRole("heading", { name: "User invitations" })
+    ).toBeVisible();
+    expect(
+      screen.getByRole("combobox", { name: "Filter invitations by status" })
+    ).toHaveValue("");
+    expect(await screen.findByRole("row", { name: /Asha Rao/ })).toBeVisible();
+    expect(
+      await screen.findByRole("row", { name: /Delivery Failed Invite/ })
+    ).toBeVisible();
+    expect(
+      await screen.findByRole("row", { name: /Expired Invite/ })
+    ).toBeVisible();
+    expect(paths).toEqual([
+      "/api/v1/admin/user-invitations?limit=20&offset=0"
+    ]);
   });
 
   it("uses server role order, exact status filters, safe delivery text, and both action gates", async () => {
@@ -144,7 +203,16 @@ describe("UserInvitationsPanel", () => {
       http.get("/api/v1/admin/user-invitations", ({ request }) => {
         const url = new URL(request.url);
         paths.push(`${url.pathname}${url.search}`);
-        return HttpResponse.json({ data: invitationPage(items) });
+        const status = url.searchParams.get("status");
+        return HttpResponse.json({
+          data: invitationPage(
+            status
+              ? items.filter((item) => item.status === status)
+              : items.filter((item) =>
+                  ["pending", "delivery_failed", "expired"].includes(item.status)
+                )
+          )
+        });
       })
     );
 
@@ -155,7 +223,7 @@ describe("UserInvitationsPanel", () => {
         permissions={allPermissions}
       />
     );
-    await screen.findByRole("heading", { name: "Pending invitations" });
+    await screen.findByRole("heading", { name: "User invitations" });
     await screen.findByRole("button", { name: "Resend Asha Rao" });
 
     expect(
@@ -168,6 +236,7 @@ describe("UserInvitationsPanel", () => {
         .getAllByRole("option")
         .map((option) => option.textContent)
     ).toEqual([
+      "All actionable",
       "Pending",
       "Delivery Failed",
       "Expired",
@@ -179,10 +248,7 @@ describe("UserInvitationsPanel", () => {
     expect(screen.getAllByText("Pending")).toHaveLength(4);
     for (const [name, status] of [
       ["Failed Invite", "Delivery Failed"],
-      ["Expired Invite", "Expired"],
-      ["Revoked Invite", "Revoked"],
-      ["Superseded Invite", "Superseded"],
-      ["Accepted Invite", "Accepted"]
+      ["Expired Invite", "Expired"]
     ]) {
       expect(
         within(screen.getByRole("row", { name: new RegExp(name!) })).getByText(status!)
@@ -208,19 +274,26 @@ describe("UserInvitationsPanel", () => {
     expect(claimedRow).toHaveTextContent("This invitation can no longer be resent—revoke it");
     expect(within(claimedRow).queryByRole("button", { name: /Resend/ })).not.toBeInTheDocument();
     expect(within(claimedRow).getByRole("button", { name: "Revoke Claimed Invite" })).toBeVisible();
-    for (const name of ["Failed Invite", "Expired Invite", "Revoked Invite", "Superseded Invite", "Accepted Invite"]) {
+    for (const name of ["Failed Invite", "Expired Invite"]) {
       expect(within(screen.getByRole("row", { name: new RegExp(name) })).queryByRole("button")).not.toBeInTheDocument();
     }
 
-    await user.selectOptions(
-      screen.getByRole("combobox", { name: "Filter invitations by status" }),
-      "accepted"
-    );
-    await waitFor(() =>
-      expect(paths).toContain(
-        "/api/v1/admin/user-invitations?status=accepted&limit=20&offset=0"
-      )
-    );
+    const statusFilter = screen.getByRole("combobox", {
+      name: "Filter invitations by status"
+    });
+    for (const [status, name] of [
+      ["revoked", "Revoked Invite"],
+      ["superseded", "Superseded Invite"],
+      ["accepted", "Accepted Invite"]
+    ] as const) {
+      await user.selectOptions(statusFilter, status);
+      await waitFor(() =>
+        expect(paths).toContain(
+          `/api/v1/admin/user-invitations?status=${status}&limit=20&offset=0`
+        )
+      );
+      expect(await screen.findByRole("row", { name: new RegExp(name) })).toBeVisible();
+    }
   });
 
   it("applies each exact permission as a second gate over server actions", async () => {
@@ -300,7 +373,7 @@ describe("UserInvitationsPanel", () => {
     ).toBeVisible();
     await waitFor(() =>
       expect(
-        screen.getByRole("heading", { name: "Pending invitations" })
+        screen.getByRole("heading", { name: "User invitations" })
       ).toHaveFocus()
     );
   });

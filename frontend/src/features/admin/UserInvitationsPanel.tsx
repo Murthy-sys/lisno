@@ -93,7 +93,7 @@ function invitationError(error: unknown): string {
 function AuthorizedUserInvitationsPanel({
   permissions
 }: Pick<UserInvitationsPanelProps, "permissions">) {
-  const [filters, setFilters] = useState<UserInvitationFilters>({ status: "pending" });
+  const [filters, setFilters] = useState<UserInvitationFilters>({});
   const [pagination, setPagination] = useState<PaginationInput>({
     limit: PAGE_SIZE,
     offset: 0
@@ -151,7 +151,7 @@ function AuthorizedUserInvitationsPanel({
       as="section"
       padding="compact"
       className="user-invitations"
-      aria-labelledby="pending-invitations-title"
+      aria-labelledby="user-invitations-title"
       aria-busy={invitationsQuery.isFetching || undefined}
     >
       <header className="user-invitations__header">
@@ -159,10 +159,10 @@ function AuthorizedUserInvitationsPanel({
           <p className="eyebrow">Secure account setup</p>
           <h2
             ref={panelHeadingRef}
-            id="pending-invitations-title"
+            id="user-invitations-title"
             tabIndex={-1}
           >
-            Pending invitations
+            User invitations
           </h2>
           <p>Review invitation history without exposing invitation links.</p>
         </div>
@@ -192,11 +192,15 @@ function AuthorizedUserInvitationsPanel({
           {(controlProps) => (
             <Select
               {...controlProps}
-              value={filters.status ?? "pending"}
+              value={filters.status ?? ""}
               onChange={(event) =>
-                setFilter("status", event.target.value as UserInvitationPresentationStatus)
+                setFilter(
+                  "status",
+                  (event.target.value || undefined) as UserInvitationFilters["status"]
+                )
               }
             >
+              <option value="">All actionable</option>
               {statusOptions.map((option) => (
                 <option key={option.value} value={option.value}>{option.label}</option>
               ))}
