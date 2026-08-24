@@ -16,7 +16,7 @@ export interface ResolveApprovalProjectInput {
     clientMobile: string;
     location: string;
   };
-  clientId: string;
+  clientId: string | null;
   assignedDesignerId: string;
   managerId: string;
   occurredAt: Date;
@@ -86,7 +86,9 @@ export async function resolveApprovalProject(
     Array.isArray(project.assignedDesignerIds) &&
     project.assignedDesignerIds.length === 0 &&
     project.status === "planning" &&
-    (project.clientId == null || String(project.clientId) === clientId) &&
+    (clientId === null
+      ? project.clientId == null
+      : project.clientId == null || String(project.clientId) === clientId) &&
     project.name === lead.projectName &&
     project.clientName === lead.clientName &&
     project.clientEmailNormalized === normalizeEmail(lead.clientEmail) &&
@@ -102,7 +104,8 @@ export async function resolveApprovalProject(
       initiatingDesignerId: null,
       assignedDesignerIds: { $size: 0 },
       managerId: null,
-      status: "planning"
+      status: "planning",
+      clientId: clientId === null ? { $in: [null] } : { $in: [null, clientId] }
     },
     {
       $set: {

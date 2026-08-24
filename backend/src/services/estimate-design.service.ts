@@ -247,16 +247,18 @@ export interface EstimateDesignService {
     estimateId: string,
     session?: mongoose.ClientSession
   ): Promise<EstimateDesignApprovalReadiness>;
+  approvalReadinessForDecision(
+    estimateId: string,
+    session: mongoose.ClientSession
+  ): Promise<EstimateDesignApprovalReadiness>;
 }
 
 export function createEstimateDesignService(input: CreateEstimateDesignServiceInput): EstimateDesignService {
   const now = input.now ?? (() => new Date());
-  const calculateApprovalReadiness = async (
-    user: AuthenticatedUser,
+  const calculateApprovalReadinessForDecision = async (
     estimateId: string,
     session?: mongoose.ClientSession
   ): Promise<EstimateDesignApprovalReadiness> => {
-    await requireClientVisibleEstimateReader(user, estimateId, session);
     const drawingQuery = EstimateDesignDrawingModel.find({
       estimateId,
       active: true
@@ -443,7 +445,7 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
         pages: [...pages.values()],
         drawings: visibleDrawings,
         revisions,
-        readiness: await calculateApprovalReadiness(user, estimateId)
+        readiness: await calculateApprovalReadinessForDecision(estimateId)
       };
     },
 
@@ -837,7 +839,13 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
     },
 
     approvalReadiness(user, estimateId, session) {
-      return calculateApprovalReadiness(user, estimateId, session);
+      return requireClientVisibleEstimateReader(user, estimateId, session).then(() =>
+        calculateApprovalReadinessForDecision(estimateId, session)
+      );
+    },
+
+    approvalReadinessForDecision(estimateId, session) {
+      return calculateApprovalReadinessForDecision(estimateId, session);
     },
 
     async sourceImage(user, pageId) {
