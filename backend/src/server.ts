@@ -59,8 +59,8 @@ export async function startServer(
     connected = true;
     await dependencies.prepareDatabase?.({ mongodbUri: env.MONGODB_URI });
     await prepareIdentityIndexes();
-    const invitationMailer = env.invitationDelivery.kind === "smtp"
-      ? createSmtpInvitationMailer(env.invitationDelivery)
+    const invitationMailer = env.mailDelivery.kind === "smtp"
+      ? createSmtpInvitationMailer(env.mailDelivery)
       : { deliveryKind: "disabled" as const };
     const app = appFactory({
       repository: repositoryFactory(),

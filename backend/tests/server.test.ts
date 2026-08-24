@@ -29,7 +29,7 @@ const env = {
   OCR_RETRY_MAX_SECONDS: 900,
   OCR_CONFIDENCE_FLOOR: 0.2,
   OCR_WORKER_TOKEN: "server-worker-token-with-at-least-32-characters",
-  invitationDelivery: { kind: "disabled" as const }
+  mailDelivery: { kind: "disabled" as const }
 };
 
 afterEach(() => {
@@ -449,7 +449,7 @@ describe("production server bootstrap", () => {
     }));
 
     const runtime = await startServer({
-      loadEnvironment: () => ({ ...env, invitationDelivery: smtp }),
+      loadEnvironment: () => ({ ...env, mailDelivery: smtp }),
       connect: async () => undefined,
       disconnect: async () => undefined,
       prepareIdentityIndexes: async () => undefined,
@@ -472,11 +472,11 @@ describe("production server bootstrap", () => {
 
     await expect(startServer({
       loadEnvironment: () => {
-        throw new Error("Invitation delivery configuration must be supplied as one complete group.");
+        throw new Error("Mail delivery configuration must be supplied as one complete group.");
       },
       connect,
       registerSignalHandlers: false
-    })).rejects.toThrow("Invitation delivery configuration must be supplied as one complete group.");
+    })).rejects.toThrow("Mail delivery configuration must be supplied as one complete group.");
 
     expect(connect).not.toHaveBeenCalled();
   });

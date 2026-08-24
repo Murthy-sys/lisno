@@ -1,18 +1,9 @@
 import addressparser from "nodemailer/lib/addressparser/index.js";
 import { z } from "zod";
 
-export type InvitationDeliveryConfig =
-  | { kind: "disabled" }
-  | {
-      kind: "smtp";
-      publicFrontendUrl: string;
-      host: string;
-      port: number;
-      tlsMode: "implicit" | "starttls";
-      username: string;
-      password: string;
-      from: string;
-    };
+import type { MailDeliveryConfig } from "../services/smtp-transport.js";
+
+export type { MailDeliveryConfig } from "../services/smtp-transport.js";
 
 const SMTP_KEYS = [
   "PUBLIC_FRONTEND_URL",
@@ -100,7 +91,7 @@ const environmentSchema = z.object({
     context.addIssue({
       code: z.ZodIssueCode.custom,
       path: ["SMTP_HOST"],
-      message: "Invitation delivery configuration must be supplied as one complete group."
+      message: "Mail delivery configuration must be supplied as one complete group."
     });
     return;
   }
@@ -154,7 +145,7 @@ const environmentSchema = z.object({
     SMTP_TLS_REJECT_UNAUTHORIZED: _tlsVerification,
     ...base
   } = environment;
-  const invitationDelivery: InvitationDeliveryConfig = SMTP_HOST === undefined
+  const mailDelivery: MailDeliveryConfig = SMTP_HOST === undefined
     ? { kind: "disabled" }
     : {
         kind: "smtp",
@@ -166,7 +157,7 @@ const environmentSchema = z.object({
         password: SMTP_PASSWORD!,
         from: SMTP_FROM!.trim()
       };
-  return { ...base, invitationDelivery };
+  return { ...base, mailDelivery };
 });
 
 export type LoadedEnvironment = z.infer<typeof environmentSchema>;

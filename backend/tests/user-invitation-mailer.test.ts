@@ -15,6 +15,29 @@ const connectionState = vi.hoisted(() => ({
   connectFailure: null as Error | null
 }));
 
+const messageState = vi.hoisted(() => ({
+  options: null as Record<string, unknown> | null
+}));
+
+vi.mock("nodemailer", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("nodemailer")>();
+  return {
+    ...actual,
+    default: {
+      ...actual.default,
+      createTransport(...args: Parameters<typeof actual.default.createTransport>) {
+        const transporter = actual.default.createTransport(...args);
+        const sendMail = transporter.sendMail.bind(transporter);
+        transporter.sendMail = ((options: Record<string, unknown>) => {
+          messageState.options = options;
+          return sendMail(options);
+        }) as typeof transporter.sendMail;
+        return transporter;
+      }
+    }
+  };
+});
+
 vi.mock("nodemailer/lib/smtp-connection", async () => {
   const { EventEmitter } = await import("node:events");
   return {
@@ -63,6 +86,7 @@ afterEach(() => {
   connectionState.instances.length = 0;
   connectionState.failure = null;
   connectionState.connectFailure = null;
+  messageState.options = null;
 });
 
 describe.sequential("SMTP invitation mailer", () => {
@@ -92,7 +116,18 @@ describe.sequential("SMTP invitation mailer", () => {
       connectionTimeout: 10_000,
       greetingTimeout: 10_000,
       socketTimeout: 10_000,
+      dnsTimeout: 10_000,
       tls: { rejectUnauthorized: true }
+    });
+    expect(messageState.options).toMatchObject({
+      from: {
+        name: "Lisno Invitations",
+        address: "invitations@lisno.example"
+      },
+      to: { name: "Asha <script>alert(1)</script>", address: "asha@example.com" },
+      disableFileAccess: true,
+      disableUrlAccess: true,
+      xMailer: false
     });
     expect(state.closeCount).toBe(1);
     expect(state.envelope).toEqual({
@@ -167,6 +202,17 @@ describe.sequential("SMTP invitation mailer", () => {
     expect(failure).toMatchObject({ failureCode: "SMTP_AUTH_FAILED" });
     expect(USER_INVITATION_DELIVERY_FAILURE_CODE_PATTERN.test(failure.failureCode)).toBe(true);
     expect(String(failure)).not.toMatch(/victim|provider|AUTH PLAIN|550/i);
+  });
+
+  it("keeps the invitation delivery error export as the shared transport class", async () => {
+    const { InvitationDeliveryError } = await import(
+      "../src/services/smtp-invitation-mailer.js"
+    );
+    const { MailDeliveryError } = await import("../src/services/smtp-transport.js");
+
+    expect(InvitationDeliveryError).toBe(MailDeliveryError);
+    expect(new InvitationDeliveryError("SMTP_DELIVERY_FAILED"))
+      .toBeInstanceOf(MailDeliveryError);
   });
 
   it("classifies a connect callback error and closes the isolated connection once", async () => {

@@ -135,7 +135,7 @@ describe("environment authentication configuration", () => {
     ).toBe(OCR_WORKER_TOKEN);
   });
 
-  describe("invitation delivery", () => {
+  describe("mail delivery", () => {
     const base = {
       JWT_SECRET: "runtime-secret-with-at-least-32-characters",
       OCR_WORKER_TOKEN,
@@ -152,7 +152,7 @@ describe("environment authentication configuration", () => {
       expect(loadEnvironment({
         JWT_SECRET: base.JWT_SECRET,
         OCR_WORKER_TOKEN
-      }).invitationDelivery).toEqual({ kind: "disabled" });
+      }).mailDelivery).toEqual({ kind: "disabled" });
 
       for (const key of Object.keys(base).filter((key) =>
         key === "PUBLIC_FRONTEND_URL" || key.startsWith("SMTP_")
@@ -164,7 +164,7 @@ describe("environment authentication configuration", () => {
     });
 
     it("parses the complete SMTP group into the public delivery union", () => {
-      expect(loadEnvironment(base).invitationDelivery).toEqual({
+      expect(loadEnvironment(base).mailDelivery).toEqual({
         kind: "smtp",
         publicFrontendUrl: "https://app.lisno.example",
         host: "smtp.lisno.example",
@@ -180,7 +180,7 @@ describe("environment authentication configuration", () => {
       expect(loadEnvironment({
         ...base,
         PUBLIC_FRONTEND_URL: "http://app.lisno.example"
-      }).invitationDelivery).toMatchObject({
+      }).mailDelivery).toMatchObject({
         kind: "smtp",
         publicFrontendUrl: "http://app.lisno.example"
       });
@@ -191,7 +191,7 @@ describe("environment authentication configuration", () => {
         JWT_SECRET: base.JWT_SECRET,
         OCR_WORKER_TOKEN,
         SMTP_TLS_REJECT_UNAUTHORIZED: "true"
-      })).toThrow("Invitation delivery configuration must be supplied as one complete group.");
+      })).toThrow("Mail delivery configuration must be supplied as one complete group.");
     });
 
     it.each([
@@ -221,7 +221,7 @@ describe("environment authentication configuration", () => {
       expect(loadEnvironment({
         ...base,
         SMTP_TLS_REJECT_UNAUTHORIZED: "true"
-      }).invitationDelivery.kind).toBe("smtp");
+      }).mailDelivery.kind).toBe("smtp");
     });
   });
 });
