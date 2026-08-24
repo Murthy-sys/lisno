@@ -169,19 +169,41 @@ Frontend deployments may set `VITE_API_URL` to a full versioned API base URL
 (for example, `https://api.example.com/api/v1`) when the API uses a separate
 origin. Local Vite development uses its `/api` proxy without this variable.
 
-Staff invitation email delivery uses one all-or-nothing group:
+Staff invitations and Estimate attachments use one all-or-nothing mail group:
 `PUBLIC_FRONTEND_URL`, `SMTP_HOST`, `SMTP_PORT`, `SMTP_TLS_MODE`,
-`SMTP_USERNAME`, `SMTP_PASSWORD`, and `SMTP_FROM`. `SMTP_TLS_MODE` must be
-`implicit` or `starttls`. `SMTP_TLS_REJECT_UNAUTHORIZED` is optional and, when
-present, must be exactly `true`; certificate verification remains required when
-it is omitted. With every SMTP-related variable absent, invitation delivery is
-disabled. Supplying any incomplete group, including the optional variable by
-itself, stops startup before the database connection or listener. A complete,
-valid group enables external SMTP delivery without opportunistic plaintext
-fallback. `PUBLIC_FRONTEND_URL` must be a single credential-free HTTP or HTTPS
-origin with no path, query, or fragment; use HTTPS for real remote deployments.
-See [backend/README.md](backend/README.md#staff-invitation-delivery) for the
-delivery and failure behavior.
+`SMTP_USERNAME`, `SMTP_PASSWORD`, and `SMTP_FROM`. `SMTP_FROM` is the general
+Lisno sender for staff invitations and Estimate attachments. `SMTP_TLS_MODE`
+must be `implicit` or `starttls`. `SMTP_TLS_REJECT_UNAUTHORIZED` is optional
+and, when present, must be exactly `true`; certificate verification cannot be
+disabled and remains required when the variable is omitted. With every
+SMTP-related variable absent, external mail is disabled. Supplying any
+incomplete group, including the optional variable by itself, stops startup
+before the database connection or listener. A complete, valid group enables
+external SMTP delivery without opportunistic plaintext fallback.
+`PUBLIC_FRONTEND_URL` must be a single credential-free HTTP or HTTPS origin
+with no path, query, or fragment. Remote production requires HTTPS for both the
+frontend origin and API. See
+[backend/README.md](backend/README.md#mail-delivery-and-client-response-operations)
+for delivery and failure behavior.
+
+## Estimate delivery and Client responses
+
+Estimate publication succeeds into the Client portal when SMTP is disabled or
+delivery fails, records a safe delivery state, and does not roll back the
+published response round. The authorized Estimate owner or a Super Admin can
+explicitly retry the same stored PDF; retry does not regenerate the PDF or
+create a new review round, task, Estimate semantic version, or send generation;
+it does update delivery attempt telemetry.
+
+The initiating active Admin receives the Client-response task; otherwise the
+sole active Super Admin does. Admin Approve and Reject each require exactly one
+PDF, JPEG, PNG, or WebP proof. Reject means Request changes and does not mark
+the lead lost.
+
+The existing Client Dashboard, PDF, Approve, Request changes, drawing, and plan
+behavior remains unchanged. Historical estimates are not backfilled and retain
+their established legacy behavior. Estimate email links lead to `/client` and
+carry no token, email, Estimate ID, or other credential.
 
 ## Staff invitations
 

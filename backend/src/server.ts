@@ -7,10 +7,10 @@ import mongoose from "mongoose";
 import { createApp } from "./app.js";
 import { loadEnvironment } from "./config/env.js";
 import type { DevelopmentDemoAuthorization } from "./development/demo-account-authorization.js";
-import { UserModel } from "./models/User.js";
-import { UserInvitationModel } from "./models/UserInvitation.js";
+import { initializeApplicationIndexes } from "./models/application-indexes.js";
 import { createMongoRepository } from "./repositories/mongo.js";
 import type { AppRepository } from "./repositories/types.js";
+import { createSmtpEstimateMailer } from "./services/smtp-estimate-mailer.js";
 import { createSmtpInvitationMailer } from "./services/smtp-invitation-mailer.js";
 import { createLocalStorage } from "./storage/local-storage.js";
 
@@ -31,6 +31,8 @@ export interface ServerDependencies {
   appFactory?: (dependencies: Parameters<typeof createApp>[0]) => ServerApp;
   bindHost?: string;
   prepareDatabase?: (context: DatabasePreparationContext) => Promise<void>;
+  prepareApplicationIndexes?: () => Promise<void>;
+  /** @deprecated Use prepareApplicationIndexes for the complete index boundary. */
   prepareIdentityIndexes?: () => Promise<void>;
   developmentDemoAuthorization?: DevelopmentDemoAuthorization;
   writeOutput?: (message: string) => void;
@@ -49,8 +51,10 @@ export async function startServer(
   const disconnect = dependencies.disconnect ?? (() => mongoose.disconnect());
   const repositoryFactory = dependencies.repositoryFactory ?? createMongoRepository;
   const appFactory = dependencies.appFactory ?? createApp;
-  const prepareIdentityIndexes =
-    dependencies.prepareIdentityIndexes ?? initializeIdentityIndexes;
+  const prepareApplicationIndexes =
+    dependencies.prepareApplicationIndexes ??
+    dependencies.prepareIdentityIndexes ??
+    initializeApplicationIndexes;
 
   let connected = false;
   let server: Server;
@@ -58,10 +62,18 @@ export async function startServer(
     await connect(env.MONGODB_URI);
     connected = true;
     await dependencies.prepareDatabase?.({ mongodbUri: env.MONGODB_URI });
-    await prepareIdentityIndexes();
-    const invitationMailer = env.mailDelivery.kind === "smtp"
-      ? createSmtpInvitationMailer(env.mailDelivery)
+    await prepareApplicationIndexes();
+    const mailDelivery = env.mailDelivery;
+    const invitationMailer = mailDelivery.kind === "smtp"
+      ? createSmtpInvitationMailer(mailDelivery)
       : { deliveryKind: "disabled" as const };
+    const estimateMailer = mailDelivery.kind === "smtp"
+      ? createSmtpEstimateMailer(mailDelivery)
+      : { deliveryKind: "disabled" as const };
+    const clientPortalUrl = mailDelivery.kind === "smtp"
+      ? new URL("/client", mailDelivery.publicFrontendUrl).toString()
+      : "http://localhost:5173/client";
+    const storage = createLocalStorage(env.UPLOADS_DIR);
     const app = appFactory({
       repository: repositoryFactory(),
       auth: {
@@ -69,7 +81,7 @@ export async function startServer(
         jwtExpiresInSeconds: 900
       },
       corsOrigins: env.CORS_ORIGIN,
-      storage: createLocalStorage(env.UPLOADS_DIR),
+      storage,
       maxUploadBytes: Math.floor(env.MAX_UPLOAD_MB * 1024 * 1024),
       ocrLeaseSeconds: env.OCR_LEASE_SECONDS,
       ocrRetryPolicy: {
@@ -80,6 +92,8 @@ export async function startServer(
       ocrConfidenceFloor: env.OCR_CONFIDENCE_FLOOR,
       ocrWorkerToken: env.OCR_WORKER_TOKEN,
       invitationMailer,
+      estimateMailer,
+      clientPortalUrl,
       developmentDemoAuthorization: dependencies.developmentDemoAuthorization
     });
     server = await listen(app, env.PORT, dependencies.bindHost);
@@ -112,11 +126,6 @@ export async function startServer(
   }
 
   return { stop };
-}
-
-async function initializeIdentityIndexes(): Promise<void> {
-  await UserModel.init();
-  await UserInvitationModel.init();
 }
 
 function listen(app: ServerApp, port: number, host?: string): Promise<Server> {

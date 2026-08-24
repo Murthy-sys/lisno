@@ -49,11 +49,11 @@ See [the workflow runbook](../docs/estimate-design-image-review.md) and
 [the worker README](../ocr-worker/README.md) for supported formats, native HEIF
 requirements, processing limits, and verification commands.
 
-## Staff invitation delivery
+## Mail delivery and Client response operations
 
-### SMTP configuration
+### Shared SMTP configuration
 
-External invitation email requires the complete configuration group below:
+Staff invitations and Estimate attachments use one complete configuration group:
 
 - `PUBLIC_FRONTEND_URL`;
 - `SMTP_HOST`;
@@ -61,23 +61,46 @@ External invitation email requires the complete configuration group below:
 - `SMTP_TLS_MODE`, set to `implicit` or `starttls`;
 - `SMTP_USERNAME`;
 - `SMTP_PASSWORD`;
-- `SMTP_FROM`, containing one mailbox with an optional display name.
+- `SMTP_FROM`, the general Lisno sender for staff invitations and Estimate
+  attachments, containing one mailbox with an optional display name.
 
-`SMTP_TLS_REJECT_UNAUTHORIZED` is separate and optional. When supplied, its
-only accepted value is `true`. Omitting it does not turn off certificate
-verification, and `false` is rejected.
+`SMTP_TLS_REJECT_UNAUTHORIZED` is separate and optional. Certificate
+verification cannot be disabled: when supplied, its only accepted value is
+`true`; omitting it keeps verification enabled, and `false` is rejected.
 
-When every SMTP-related variable is absent, invitation delivery is disabled;
-create and resend return `503 INVITATION_DELIVERY_UNAVAILABLE` before any token,
-invitation, audit, or email write. Supplying any SMTP-related variable without
-the complete required group—including supplying
+When every SMTP-related variable is absent, external mail delivery is disabled.
+Staff invitation create and resend return
+`503 INVITATION_DELIVERY_UNAVAILABLE` before any token, invitation, audit, or
+email write. Estimate publication still succeeds into the Client portal and
+records a safe delivery state. Supplying any SMTP-related variable without the
+complete required group—including supplying
 `SMTP_TLS_REJECT_UNAUTHORIZED` alone—fails environment loading before the
 database connection or listener starts. A complete, valid group enables
 external SMTP delivery with certificate verification and forbids opportunistic
 plaintext fallback.
 
 `PUBLIC_FRONTEND_URL` must be one credential-free HTTP or HTTPS origin with no
-path, query, or fragment. Use HTTPS for every real remote deployment.
+path, query, or fragment. Remote production requires HTTPS for both this
+frontend origin and the API. Estimate email links lead to `/client` and carry no
+token, email, Estimate ID, or other credential.
+
+### Estimate publication and Client response
+
+Publishing an Estimate succeeds into the Client portal even when SMTP is
+disabled or delivery fails. The committed publication records a safe delivery
+state and is not rolled back by external mail. The authorized Estimate owner or
+a Super Admin can explicitly retry delivery of the same stored PDF; retry does
+not regenerate the PDF or create a new review round, task, Estimate semantic
+version, or send generation; it does update delivery attempt telemetry.
+
+The Client-response task goes to the initiating active Admin. When there is no
+such Admin, it goes to the sole active Super Admin. Admin Approve and Reject
+both require exactly one PDF, JPEG, PNG, or WebP proof. Reject means Request
+changes; it does not mark the lead lost.
+
+The existing Client Dashboard, PDF, Approve, Request changes, drawing, and plan
+behavior remains unchanged. Historical estimates are not backfilled and
+continue through their established legacy behavior.
 
 ### Staff invitation workflow
 

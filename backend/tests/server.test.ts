@@ -4,11 +4,21 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 const createMongoRepository = vi.hoisted(() => vi.fn());
 const createSmtpInvitationMailer = vi.hoisted(() => vi.fn());
+const createSmtpEstimateMailer = vi.hoisted(() => vi.fn());
+const prepareEstimateClientReviewIndexes = vi.hoisted(() => vi.fn());
 
 vi.mock("../src/repositories/mongo.js", () => ({ createMongoRepository }));
 vi.mock("../src/services/smtp-invitation-mailer.js", async (importOriginal) => ({
   ...await importOriginal<typeof import("../src/services/smtp-invitation-mailer.js")>(),
   createSmtpInvitationMailer
+}));
+vi.mock("../src/services/smtp-estimate-mailer.js", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../src/services/smtp-estimate-mailer.js")>(),
+  createSmtpEstimateMailer
+}));
+vi.mock("../src/models/EstimateClientReviewRound.js", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../src/models/EstimateClientReviewRound.js")>(),
+  prepareEstimateClientReviewIndexes
 }));
 
 import { startServer } from "../src/server.js";
@@ -35,6 +45,8 @@ const env = {
 afterEach(() => {
   createMongoRepository.mockReset();
   createSmtpInvitationMailer.mockReset();
+  createSmtpEstimateMailer.mockReset();
+  prepareEstimateClientReviewIndexes.mockReset();
   vi.restoreAllMocks();
 });
 
@@ -324,7 +336,7 @@ describe("production server bootstrap", () => {
     expect(writeOutput).not.toHaveBeenCalled();
   });
 
-  it("initializes User and UserInvitation indexes before repository creation and listen", async () => {
+  it("initializes every application index before repository creation and listen", async () => {
     const events: string[] = [];
     const server = fakeServer();
     vi.spyOn(UserModel, "init").mockImplementation(async () => {
@@ -334,6 +346,9 @@ describe("production server bootstrap", () => {
     vi.spyOn(UserInvitationModel, "init").mockImplementation(async () => {
       events.push("invitation-index");
       return UserInvitationModel as never;
+    });
+    prepareEstimateClientReviewIndexes.mockImplementation(async () => {
+      events.push("estimate-client-review-indexes");
     });
 
     const runtime = await startServer({
@@ -364,11 +379,117 @@ describe("production server bootstrap", () => {
       "connect",
       "user-index",
       "invitation-index",
+      "estimate-client-review-indexes",
       "repository",
       "app",
       "listen"
     ]);
     await runtime.stop();
+  });
+
+  it("prepares all application indexes after optional database preparation and before construction or listen", async () => {
+    const events: string[] = [];
+    const server = fakeServer();
+
+    const runtime = await startServer({
+      loadEnvironment: () => env,
+      connect: async () => {
+        events.push("connect");
+      },
+      prepareDatabase: async () => {
+        events.push("database-preparation");
+      },
+      // The application-wide seam takes precedence over the historical alias.
+      prepareIdentityIndexes: async () => undefined,
+      prepareApplicationIndexes: async () => {
+        events.push("application-indexes");
+      },
+      repositoryFactory: () => {
+        events.push("repository");
+        return {} as AppRepository;
+      },
+      appFactory: () => {
+        events.push("app");
+        return {
+          listen: vi.fn((_port: number, callback: () => void) => {
+            events.push("listen");
+            callback();
+            return server;
+          })
+        };
+      },
+      disconnect: async () => undefined,
+      writeOutput: () => undefined,
+      registerSignalHandlers: false
+    });
+
+    expect(events).toEqual([
+      "connect",
+      "database-preparation",
+      "application-indexes",
+      "repository",
+      "app",
+      "listen"
+    ]);
+    await runtime.stop();
+  });
+
+  it("disconnects and never constructs or listens when application index readiness fails", async () => {
+    const failure = new Error("application index collision");
+    const disconnect = vi.fn(async () => undefined);
+    const repositoryFactory = vi.fn();
+    const server = fakeServer();
+    const listen = vi.fn((_port: number, callback: () => void) => {
+      callback();
+      return server;
+    });
+    const appFactory = vi.fn(() => ({ listen }));
+    const writeOutput = vi.fn();
+    const smtpPassword = "index-failure-smtp-password";
+    const smtpUsername = "index-failure-smtp-user";
+
+    const outcome = await startServer({
+      loadEnvironment: () => ({
+        ...env,
+        mailDelivery: {
+          kind: "smtp" as const,
+          publicFrontendUrl: "https://app.example.test",
+          host: "smtp.example.test",
+          port: 587,
+          tlsMode: "starttls" as const,
+          username: smtpUsername,
+          password: smtpPassword,
+          from: "Lisno <mail@example.test>"
+        }
+      }),
+      connect: async () => undefined,
+      disconnect,
+      prepareIdentityIndexes: async () => undefined,
+      prepareApplicationIndexes: async () => {
+        throw failure;
+      },
+      repositoryFactory,
+      appFactory,
+      writeOutput,
+      registerSignalHandlers: false
+    }).then(
+      (runtime) => ({ kind: "started" as const, runtime }),
+      (error: unknown) => ({ kind: "failed" as const, error })
+    );
+
+    if (outcome.kind === "started") await outcome.runtime.stop();
+
+    expect(outcome.kind).toBe("failed");
+    if (outcome.kind === "failed") {
+      expect(outcome.error).toBe(failure);
+      expect(String(outcome.error)).not.toContain(smtpUsername);
+      expect(String(outcome.error)).not.toContain(smtpPassword);
+    }
+    expect(disconnect).toHaveBeenCalledOnce();
+    expect(repositoryFactory).not.toHaveBeenCalled();
+    expect(appFactory).not.toHaveBeenCalled();
+    expect(listen).not.toHaveBeenCalled();
+    expect(writeOutput).not.toHaveBeenCalled();
   });
 
   it("disconnects exactly once and never constructs or listens when identity index readiness fails", async () => {
@@ -397,7 +518,7 @@ describe("production server bootstrap", () => {
     expect(writeOutput).not.toHaveBeenCalled();
   });
 
-  it("injects disabled delivery without constructing SMTP", async () => {
+  it("injects both disabled delivery boundaries without constructing SMTP", async () => {
     const server = fakeServer();
     const appFactory = vi.fn(() => ({
       listen: vi.fn((_port: number, callback: () => void) => {
@@ -418,13 +539,16 @@ describe("production server bootstrap", () => {
     });
 
     expect(createSmtpInvitationMailer).not.toHaveBeenCalled();
+    expect(createSmtpEstimateMailer).not.toHaveBeenCalled();
     expect(appFactory).toHaveBeenCalledWith(expect.objectContaining({
-      invitationMailer: { deliveryKind: "disabled" }
+      invitationMailer: { deliveryKind: "disabled" },
+      estimateMailer: { deliveryKind: "disabled" },
+      clientPortalUrl: "http://localhost:5173/client"
     }));
     await runtime.stop();
   });
 
-  it("maps the complete SMTP union through the dedicated factory", async () => {
+  it("maps one complete SMTP union through both factories without exposing credentials to the app", async () => {
     const smtp = {
       kind: "smtp" as const,
       publicFrontendUrl: "https://app.example.test",
@@ -439,7 +563,12 @@ describe("production server bootstrap", () => {
       deliveryKind: "external" as const,
       sendInvitation: vi.fn(async () => undefined)
     };
+    const externalEstimateMailer = {
+      deliveryKind: "external" as const,
+      send: vi.fn(async () => ({ kind: "sent" as const }))
+    };
     createSmtpInvitationMailer.mockReturnValue(externalMailer);
+    createSmtpEstimateMailer.mockReturnValue(externalEstimateMailer);
     const server = fakeServer();
     const appFactory = vi.fn(() => ({
       listen: vi.fn((_port: number, callback: () => void) => {
@@ -461,9 +590,32 @@ describe("production server bootstrap", () => {
 
     expect(createSmtpInvitationMailer).toHaveBeenCalledOnce();
     expect(createSmtpInvitationMailer).toHaveBeenCalledWith(smtp);
+    expect(createSmtpEstimateMailer).toHaveBeenCalledOnce();
+    expect(createSmtpEstimateMailer).toHaveBeenCalledWith(smtp);
     expect(appFactory).toHaveBeenCalledWith(expect.objectContaining({
-      invitationMailer: externalMailer
+      invitationMailer: externalMailer,
+      estimateMailer: externalEstimateMailer,
+      clientPortalUrl: "https://app.example.test/client"
     }));
+
+    const capturedDependencies = appFactory.mock.calls[0]?.[0];
+    const capturedJson = JSON.stringify(capturedDependencies);
+    expect(capturedJson).not.toContain(smtp.username);
+    expect(capturedJson).not.toContain(smtp.password);
+    const portalUrl = new URL(String(capturedDependencies?.clientPortalUrl));
+    expect({
+      username: portalUrl.username,
+      password: portalUrl.password,
+      search: portalUrl.search,
+      hash: portalUrl.hash,
+      pathname: portalUrl.pathname
+    }).toEqual({
+      username: "",
+      password: "",
+      search: "",
+      hash: "",
+      pathname: "/client"
+    });
     await runtime.stop();
   });
 
