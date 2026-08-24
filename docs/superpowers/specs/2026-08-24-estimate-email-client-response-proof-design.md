@@ -180,6 +180,26 @@ interface EstimateClientReviewRoundRecord {
   recipientEmail: string;
   recipientEmailNormalized: string;
 
+  estimateSnapshot: {
+    clientName: string;
+    projectName: string;
+    location: string;
+    propertyType: string;
+    lineItems: Array<{
+      catalogueId: string;
+      roomName: string;
+      specification: string;
+      unit: string;
+      rate: number;
+      quantity: number;
+      included: boolean;
+      amount: number;
+    }>;
+    subtotal: number;
+    gst: number;
+    total: number;
+  };
+
   pdfFilename: string;
   pdfMimeType: "application/pdf";
   pdfByteSize: number;
@@ -187,8 +207,10 @@ interface EstimateClientReviewRoundRecord {
   pdfStorageReference: string;
 
   deliveryStatus: EstimateDeliveryStatus;
+  deliveryAttemptGeneration: number;
   deliveryAttemptCount: number;
   deliveryAttemptedAt: Date | null;
+  deliveryLeaseExpiresAt: Date | null;
   deliveredAt: Date | null;
   deliveryFailureCode: string | null;
 
@@ -217,6 +239,11 @@ recipient. A unique index on `dedupeKey` prevents repeated submission requests
 from sending twice. A second unique index on `(estimateId, sendGeneration)`
 protects ordering. Queue indexes cover `(assignedAdminId, status, createdAt,
 id)` and `(estimateId, createdAt, id)`.
+
+`estimateSnapshot` is the immutable safe presentation snapshot for Admin task
+detail after the mutable Estimate is revised. `deliveryAttemptGeneration` and
+`deliveryLeaseExpiresAt` provide the exact attempt lease required to serialize
+retry and reject stale SMTP completions.
 
 The review-round `version` is the optimistic decision and delivery-control
 version. Delivery telemetry updates must not change the Estimate's semantic
@@ -436,9 +463,11 @@ type EstimateDecisionContext =
 ```
 
 The existing Client endpoint retains its request and response contract. It
-resolves the current pending review round, validates normalized Lead email and
-Client identity exactly as today, and invokes the shared service with
-`client_portal`.
+resolves the current pending review round when one exists, validates normalized
+Lead email and Client identity exactly as today, and invokes the shared service
+with `client_portal`. A legacy Client-visible Estimate without a review round
+uses the same service's legacy-compatible Estimate compare-and-set path; it
+does not synthesize a historical round or proof record.
 
 The Admin endpoint independently validates assignment, current initiator
 scope, round version, proof, and decision input before invoking the service
@@ -506,12 +535,17 @@ interface EstimateClientReviewSummary {
   id: string;
   sendGeneration: number;
   estimateVersion: number;
+  version: number;
   deliveryStatus: EstimateDeliveryStatus;
   deliveryAttemptCount: number;
   deliveredAt: string | null;
   status: EstimateClientReviewStatus;
 }
 ```
+
+Return the same optional summary from estimator Estimate reads so the existing
+post-mutation refetch does not discard delivery state or the exact retry
+version.
 
 Add these routes:
 
@@ -762,6 +796,10 @@ No existing Estimate status or route is removed. The new collections require
 no data rewrite. Existing estimates have no review-round history and continue
 using the current on-demand Client PDF fallback. Do not synthesize historical
 delivery or proof records.
+
+Their existing direct Client decision remains available without creating a
+review round; only the pre-existing Estimate, Lead, design, and project effects
+are committed.
 
 Existing queued embedded Estimate notifications remain readable for
 compatibility but are not evidence of actual SMTP delivery. New publication
