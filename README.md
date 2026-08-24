@@ -160,14 +160,51 @@ Backend: `PORT`, `NODE_ENV`, `MONGODB_URI`, `JWT_SECRET`, `CORS_ORIGIN`,
 `UPLOADS_DIR`, `MAX_UPLOAD_MB`, `OCR_WORKER_TOKEN`, `OCR_LEASE_SECONDS`,
 `ALLOW_DEMO_SEED`, and `DEMO_SEED_DATABASE`. The two demo-seed variables are
 only for an intentional local destructive reset; the database name must match
-the URI exactly. The worker uses
-the matching token, `OCR_API_BASE_URL`, `OCR_POLL_SECONDS`, and
+the URI exactly. The worker uses the matching token, `OCR_API_BASE_URL`,
+`OCR_POLL_SECONDS`, and
 `OCR_REQUEST_TIMEOUT_SECONDS`. `CORS_ORIGIN` is a comma-separated allow-list of
 full browser origins. The server connects to `MONGODB_URI` before listening and
 exits on a connection failure; the shipped server never uses the in-memory repository.
 Frontend deployments may set `VITE_API_URL` to a full versioned API base URL
 (for example, `https://api.example.com/api/v1`) when the API uses a separate
 origin. Local Vite development uses its `/api` proxy without this variable.
+
+Staff invitation email delivery uses one all-or-nothing group:
+`PUBLIC_FRONTEND_URL`, `SMTP_HOST`, `SMTP_PORT`, `SMTP_TLS_MODE`,
+`SMTP_USERNAME`, `SMTP_PASSWORD`, and `SMTP_FROM`. `SMTP_TLS_MODE` must be
+`implicit` or `starttls`. `SMTP_TLS_REJECT_UNAUTHORIZED` is optional and, when
+present, must be exactly `true`; certificate verification remains required when
+it is omitted. With every SMTP-related variable absent, invitation delivery is
+disabled. Supplying any incomplete group, including the optional variable by
+itself, stops startup before the database connection or listener. A complete,
+valid group enables external SMTP delivery without opportunistic plaintext
+fallback. `PUBLIC_FRONTEND_URL` must be a single credential-free HTTP or HTTPS
+origin with no path, query, or fragment; use HTTPS for real remote deployments.
+See [backend/README.md](backend/README.md#staff-invitation-delivery) for the
+delivery and failure behavior.
+
+## Staff invitations
+
+Production begins with one Super Admin provisioned through a separately
+reviewed operator process; the local seed is not a production privileged-user
+bootstrap. Only the current sole active Super Admin can list, create, resend,
+or revoke staff invitations. Creating one requires exactly Name, Email, Role,
+and Mobile, with no title. Every canonical staff and trade role is eligible
+except Client and Super Admin.
+
+An invitation expires after 24 hours and can be accepted only once. Resending
+rotates the token and supersedes the earlier link; revoking makes the current
+link unavailable. Tokens are transient and carried only in the URL fragment,
+only their SHA-256 digests are stored, and raw tokens or links must never be
+logged or included in audit or email-provider metadata. Acceptance creates an
+ordinary active user but does not install a session, so the new staff member
+signs in through the normal login flow.
+
+Accepted real staff users can use allowed remote frontend and backend
+deployments. Reserved demo identities and their JWTs are local-only, and the
+application blocks external invitation delivery to them. Client provisioning
+remains separate: Clients use the signup and project-linking flow above and are
+never created through a staff invitation.
 
 ## Demo accounts
 
@@ -180,7 +217,7 @@ All accounts use `LisnoDemo2026!`.
 - Super Admin — `super-admin@lisno.example`
 - Admin — `admin@lisno.example`
 - Procurement — `procurement@lisno.example`
-- Finance Head — `finance-head@lisno.example`
+- Finance Manager — `finance-head@lisno.example`
 - Site Manager — `site-manager@lisno.example`
 - Electrician — `worker-electrician@lisno.example`
 - Plumber — `worker-plumber@lisno.example`
@@ -200,6 +237,8 @@ through a separately reviewed operational process.
 - Managers view direct reports, revise deadlines with a reason, approve plans,
   and record separate evaluations.
 - Heads inspect the organization, approvals, and evaluations.
+- The sole active Super Admin administers staff invitations; Finance Manager
+  and Site Manager remain ordinary staff roles after acceptance.
 - Clients view their projects, floor progress, and only approved,
   client-visible files. Drafts, internal notes, KPI details, and evaluations
   are never exposed to the client UI or API responses.

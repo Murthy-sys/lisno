@@ -49,6 +49,59 @@ See [the workflow runbook](../docs/estimate-design-image-review.md) and
 [the worker README](../ocr-worker/README.md) for supported formats, native HEIF
 requirements, processing limits, and verification commands.
 
+## Staff invitation delivery
+
+### SMTP configuration
+
+External invitation email requires the complete configuration group below:
+
+- `PUBLIC_FRONTEND_URL`;
+- `SMTP_HOST`;
+- `SMTP_PORT`;
+- `SMTP_TLS_MODE`, set to `implicit` or `starttls`;
+- `SMTP_USERNAME`;
+- `SMTP_PASSWORD`;
+- `SMTP_FROM`, containing one mailbox with an optional display name.
+
+`SMTP_TLS_REJECT_UNAUTHORIZED` is separate and optional. When supplied, its
+only accepted value is `true`. Omitting it does not turn off certificate
+verification, and `false` is rejected.
+
+When every SMTP-related variable is absent, invitation delivery is disabled;
+create and resend return `503 INVITATION_DELIVERY_UNAVAILABLE` before any token,
+invitation, audit, or email write. Supplying any SMTP-related variable without
+the complete required group—including supplying
+`SMTP_TLS_REJECT_UNAUTHORIZED` alone—fails environment loading before the
+database connection or listener starts. A complete, valid group enables
+external SMTP delivery with certificate verification and forbids opportunistic
+plaintext fallback.
+
+`PUBLIC_FRONTEND_URL` must be one credential-free HTTP or HTTPS origin with no
+path, query, or fragment. Use HTTPS for every real remote deployment.
+
+### Staff invitation workflow
+
+Production starts with one Super Admin provisioned through a separately
+reviewed operator process; the demo seed is not a production privileged-user
+bootstrap. Only the current sole active Super Admin can list, create, resend,
+or revoke staff invitations. Creation accepts exactly Name, Email, Role, and
+Mobile, with no title. Client and Super Admin cannot be invited; every other
+canonical staff and trade role is eligible.
+
+Invitations expire after 24 hours and are single-use. Resending rotates the
+token and supersedes the previous link, while revoking makes the current link
+unavailable. Raw tokens and links are transient and fragment-only. Only a
+SHA-256 token digest is persisted; never log a raw token or link or add one to
+audit or email-provider metadata.
+
+Acceptance creates one ordinary active standard User and does not install an
+authenticated session. The accepted staff member signs in through the normal
+login flow. Real accepted staff can use allowed remote frontend and backend
+deployments. Reserved demo identities and JWTs remain local-only, and external
+invitation delivery to reserved demos is blocked. Clients continue to use the
+separate signup and project-linking flow and are never provisioned through
+staff invitations.
+
 ## Local demo seed
 
 The demo seed is a destructive local reset. Its URI comes from `backend/.env`
@@ -76,7 +129,7 @@ Every local demo account uses `LisnoDemo2026!`:
 | Super Admin | `super-admin@lisno.example` |
 | Admin | `admin@lisno.example` |
 | Procurement | `procurement@lisno.example` |
-| Finance Head | `finance-head@lisno.example` |
+| Finance Manager | `finance-head@lisno.example` |
 | Site Manager | `site-manager@lisno.example` |
 | Electrician | `worker-electrician@lisno.example` |
 | Plumber | `worker-plumber@lisno.example` |
