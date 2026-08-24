@@ -32,6 +32,28 @@ export type EstimateDecisionContext =
       proof: StoredEstimateClientResponseProof;
     };
 
+export interface EstimateDecisionResult {
+  estimate: Record<string, unknown>;
+  clientReview: EstimateClientReviewSummary | null;
+}
+
+export class EstimateDecisionProofRetentionError extends ApiError {
+  constructor() {
+    super(
+      500,
+      "ESTIMATE_DECISION_RECOVERY_FAILED",
+      "Estimate decision state could not be confirmed safely."
+    );
+    this.name = "EstimateDecisionProofRetentionError";
+  }
+}
+
+export function isEstimateDecisionProofRetentionError(
+  error: unknown
+): error is EstimateDecisionProofRetentionError {
+  return error instanceof EstimateDecisionProofRetentionError;
+}
+
 export interface EstimateDecisionService {
   decide(input: {
     estimateId: string;
@@ -39,10 +61,13 @@ export interface EstimateDecisionService {
     decision: EstimateClientDecision;
     note: string;
     context: EstimateDecisionContext;
-  }): Promise<{
-    estimate: Record<string, unknown>;
-    clientReview: EstimateClientReviewSummary | null;
-  }>;
+  }): Promise<EstimateDecisionResult>;
+}
+
+interface CompletedAdminDecision {
+  result: EstimateDecisionResult;
+  roundIdentity: Record<string, unknown>;
+  proofIdentity: Record<string, unknown>;
 }
 
 export function createEstimateDecisionService(input: {
@@ -56,9 +81,14 @@ export function createEstimateDecisionService(input: {
   return {
     async decide(decisionInput) {
       validateDecisionInput(decisionInput);
-      return withMongoTransaction(async (session) => {
-        const { estimateId, round, decision, context } = decisionInput;
-        const note = decisionInput.note.trim();
+      const recoveryState: { completed: CompletedAdminDecision | null } = {
+        completed: null
+      };
+      try {
+        return await withMongoTransaction(async (session) => {
+          recoveryState.completed = null;
+          const { estimateId, round, decision, context } = decisionInput;
+          const note = decisionInput.note.trim();
 
         if (context.source === "admin_proof") {
           await input.reviews.requireDecisionScope(context.actor, round!.id, session);
@@ -162,8 +192,9 @@ export function createEstimateDecisionService(input: {
           });
         }
 
+        let proofId: string | null = null;
         if (context.source === "admin_proof") {
-          const proofId = `estimate-client-proof-${randomUUID()}`;
+          proofId = `estimate-client-proof-${randomUUID()}`;
           await EstimateClientResponseProofModel.create([{
             _id: proofId,
             reviewRoundId: round!.id,
@@ -218,11 +249,60 @@ export function createEstimateDecisionService(input: {
           });
         }
 
-        return {
+        const result = {
           estimate: mapEstimate(estimateResult),
           clientReview
         };
-      });
+        if (context.source === "admin_proof") {
+          recoveryState.completed = {
+            result,
+            roundIdentity: {
+              _id: round!.id,
+              estimateId,
+              leadId: String(reviewRound!.leadId),
+              estimateVersion: Number(estimate.version),
+              sendGeneration: Number(reviewRound!.sendGeneration),
+              status: decision === "approve" ? "approved" : "changes_requested",
+              decision,
+              decisionSource: "admin_proof",
+              decisionNote: note,
+              decidedById: context.actor.id,
+              decidedAt: occurredAt,
+              version: round!.expectedVersion + 1
+            },
+            proofIdentity: {
+              _id: proofId!,
+              reviewRoundId: round!.id,
+              estimateId,
+              storageReference: context.proof.storageReference,
+              originalFilename: context.proof.originalFilename,
+              mimeType: context.proof.mimeType,
+              byteSize: context.proof.byteSize,
+              sha256: context.proof.sha256,
+              uploadedById: context.actor.id,
+              uploadedAt: occurredAt
+            }
+          };
+        }
+        return result;
+        });
+      } catch (error) {
+        const completed = recoveryState.completed;
+        if (completed) {
+          let recovery: Awaited<ReturnType<typeof probeCompletedAdminDecision>>;
+          try {
+            recovery = await probeCompletedAdminDecision(completed);
+          } catch {
+            throw new EstimateDecisionProofRetentionError();
+          }
+          if (recovery === "committed") {
+            return completed.result;
+          }
+          if (recovery === "not_committed") estimateNotReviewable();
+          throw new EstimateDecisionProofRetentionError();
+        }
+        throw error;
+      }
     }
   };
 }
@@ -554,6 +634,67 @@ function estimateNotReviewable(): never {
     "ESTIMATE_NOT_REVIEWABLE",
     "This estimate is no longer awaiting your review."
   );
+}
+
+async function probeCompletedAdminDecision(
+  completed: CompletedAdminDecision
+): Promise<"committed" | "not_committed" | "indeterminate"> {
+  const [round, proof] = await Promise.all([
+    EstimateClientReviewRoundModel.findOne(completed.roundIdentity).lean(),
+    EstimateClientResponseProofModel.findOne(completed.proofIdentity)
+      .select("+storageReference")
+      .lean()
+  ]);
+  if (
+    hasExactIdentity(round, completed.roundIdentity) &&
+    hasExactIdentity(proof, completed.proofIdentity)
+  ) {
+    return "committed";
+  }
+  if (proof) return "indeterminate";
+
+  const [terminalRound, currentProof] = await Promise.all([
+    EstimateClientReviewRoundModel.findOne({
+      _id: completed.roundIdentity._id,
+      estimateId: completed.roundIdentity.estimateId,
+      status: { $in: ["approved", "changes_requested"] }
+    }).lean(),
+    EstimateClientResponseProofModel.findOne({
+      reviewRoundId: completed.proofIdentity.reviewRoundId,
+      estimateId: completed.proofIdentity.estimateId
+    })
+      .select("+storageReference")
+      .lean()
+  ]);
+  if (!terminalRound) return "indeterminate";
+
+  const roundMatches = hasExactIdentity(
+    terminalRound,
+    completed.roundIdentity
+  );
+  const proofMatches = hasExactIdentity(
+    currentProof,
+    completed.proofIdentity
+  );
+  if (proofMatches) return roundMatches ? "committed" : "indeterminate";
+  return currentProof || !roundMatches ? "not_committed" : "indeterminate";
+}
+
+function hasExactIdentity(
+  value: unknown,
+  identity: Record<string, unknown>
+): boolean {
+  const record = asRecord(value);
+  if (!record) return false;
+  return Object.entries(identity).every(([key, expected]) => {
+    const actual = record[key];
+    if (expected instanceof Date) {
+      const actualDate = actual instanceof Date ? actual : new Date(actual);
+      return !Number.isNaN(actualDate.getTime()) &&
+        actualDate.getTime() === expected.getTime();
+    }
+    return actual === expected;
+  });
 }
 
 async function withMongoTransaction<T>(

@@ -6,7 +6,10 @@ import { authorizationSnapshotFor, type PublicUser } from "../src/services/auth.
 import type { AuthService } from "../src/services/auth.service.js";
 import type { EstimateClientReviewService } from "../src/services/estimate-client-review.service.js";
 import type { EstimateClientReviewStorage } from "../src/services/estimate-client-review-storage.js";
-import type { EstimateDecisionService } from "../src/services/estimate-decision.service.js";
+import {
+  EstimateDecisionProofRetentionError,
+  type EstimateDecisionService
+} from "../src/services/estimate-decision.service.js";
 import type { EstimateDeliveryService } from "../src/services/estimate-delivery.service.js";
 import { ApiError, errorHandler } from "../src/middleware/errors.js";
 import { createEstimateClientResponsesRouter } from "../src/routes/estimate-client-responses.js";
@@ -253,7 +256,12 @@ describe("estimate client response routes", () => {
 
     expect(response.body).toEqual({
       data: {
-        estimate: { id: "estimate-1", status: "client_approved", version: 4 },
+        estimate: {
+          id: "estimate-1",
+          status: "client_approved",
+          version: 4,
+          projectId: "project-1"
+        },
         clientReview: {
           id: "round-pending",
           sendGeneration: 2,
@@ -344,6 +352,60 @@ describe("estimate client response routes", () => {
 
     expect(harness.storage.deleteQuietly).toHaveBeenCalledOnce();
     expect(harness.storage.deleteQuietly).toHaveBeenCalledWith("proofs/approval.jpg");
+  });
+
+  it("retains the uploaded proof when the decision outcome cannot be confirmed", async () => {
+    const harness = createHarness();
+    harness.decisions.decide.mockRejectedValueOnce(
+      new EstimateDecisionProofRetentionError()
+    );
+
+    const response = await validDecisionRequest(harness, actors.superAdmin)
+      .field("decision", "approve")
+      .field("note", "")
+      .field("version", "4")
+      .attach("proof", JPEG, { filename: "approval.jpg", contentType: "image/jpeg" })
+      .expect(500);
+
+    expect(response.body).toEqual({
+      error: {
+        code: "ESTIMATE_DECISION_RECOVERY_FAILED",
+        message: "Estimate decision state could not be confirmed safely."
+      }
+    });
+    expect(harness.storage.deleteQuietly).not.toHaveBeenCalled();
+  });
+
+  it("retains the committed proof when response serialization fails after the decision", async () => {
+    const harness = createHarness();
+    harness.decisions.decide.mockResolvedValueOnce({
+      estimate: {
+        id: "estimate-1",
+        status: "client_approved",
+        version: 4,
+        projectId: "project-1"
+      },
+      clientReview: {
+        id: "round-pending",
+        sendGeneration: 2,
+        estimateVersion: 3,
+        version: BigInt(5) as unknown as number,
+        deliveryStatus: "sent",
+        deliveryAttemptCount: 1,
+        deliveredAt: "2026-08-24T10:00:02.000Z",
+        status: "approved"
+      }
+    });
+
+    await validDecisionRequest(harness, actors.superAdmin)
+      .field("decision", "approve")
+      .field("note", "")
+      .field("version", "4")
+      .attach("proof", JPEG, { filename: "approval.jpg", contentType: "image/jpeg" })
+      .expect(500);
+
+    expect(harness.decisions.decide).toHaveBeenCalledOnce();
+    expect(harness.storage.deleteQuietly).not.toHaveBeenCalled();
   });
 
   it("validates retry JSON and delegates only owner-scoped Estimator/Sales or Super Admin", async () => {
@@ -493,7 +555,15 @@ function createHarness() {
   } satisfies EstimateClientReviewStorage;
   const decisions = {
     decide: vi.fn(async () => ({
-      estimate: { id: "estimate-1", status: "client_approved", version: 4 },
+      estimate: {
+        id: "estimate-1",
+        status: "client_approved",
+        version: 4,
+        projectId: "project-1",
+        ownerId: "internal-owner",
+        rooms: [{ name: "Internal room" }],
+        reviews: [{ recipientEmail: "private@example.com" }]
+      },
       clientReview: {
         id: "round-pending",
         sendGeneration: 2,

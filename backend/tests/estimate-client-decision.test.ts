@@ -10,6 +10,7 @@ import { ProjectModel } from "../src/models/Project.js";
 import { UserModel } from "../src/models/User.js";
 import {
   createEstimateDecisionService,
+  isEstimateDecisionProofRetentionError,
   type EstimateDecisionService
 } from "../src/services/estimate-decision.service.js";
 
@@ -43,7 +44,7 @@ const PROOF = {
 type RecordValue = Record<string, any>;
 type DecisionInput = Parameters<EstimateDecisionService["decide"]>[0];
 
-function query<T>(value: T, expectedSession: unknown) {
+function query<T>(value: T, expectedSession: unknown, failure?: unknown) {
   let attachedSession: unknown;
   const result = {
     sort: vi.fn(),
@@ -51,10 +52,12 @@ function query<T>(value: T, expectedSession: unknown) {
     session: vi.fn(),
     lean: vi.fn(async () => {
       expect(attachedSession).toBe(expectedSession);
+      if (failure !== undefined) throw failure;
       return structuredClone(value);
     }),
     exec: vi.fn(async () => {
       expect(attachedSession).toBe(expectedSession);
+      if (failure !== undefined) throw failure;
       return structuredClone(value);
     })
   };
@@ -70,6 +73,10 @@ function query<T>(value: T, expectedSession: unknown) {
 function matches(record: RecordValue, filter: RecordValue): boolean {
   for (const [key, expected] of Object.entries(filter)) {
     const actual = record[key];
+    if (actual instanceof Date && expected instanceof Date) {
+      if (actual.getTime() !== expected.getTime()) return false;
+      continue;
+    }
     if (expected && typeof expected === "object" && !Array.isArray(expected)) {
       if ("$in" in expected) {
         if (!(expected.$in as unknown[]).some((item) => item === actual)) return false;
@@ -108,6 +115,11 @@ function setup(options: {
   round?: boolean;
   activeClient?: boolean;
   readiness?: { ready: boolean; total: number; approved: number; awaitingReview: number; changesRequested: number };
+  transactionErrorAfterCallback?: unknown;
+  rollbackAfterCallback?: boolean;
+  recoveryProbeError?: unknown;
+  competingRoundAfterCallback?: RecordValue;
+  competingProofAfterCallback?: RecordValue;
 } = {}) {
   const estimates: RecordValue[] = [{
     _id: "estimate-1",
@@ -236,10 +248,27 @@ function setup(options: {
   const session = {
     withTransaction: vi.fn(async (operation: () => Promise<unknown>) => {
       const snapshot = snapshots();
+      let callbackCompleted = false;
       try {
-        return await operation();
+        const result = await operation();
+        callbackCompleted = true;
+        if (options.transactionErrorAfterCallback !== undefined) {
+          throw options.transactionErrorAfterCallback;
+        }
+        return result;
       } catch (error) {
-        restore(snapshot);
+        if (!callbackCompleted || options.rollbackAfterCallback) {
+          restore(snapshot);
+          if (callbackCompleted && options.competingRoundAfterCallback) {
+            Object.assign(
+              rounds[0],
+              structuredClone(options.competingRoundAfterCallback)
+            );
+          }
+          if (callbackCompleted && options.competingProofAfterCallback) {
+            proofs.push(structuredClone(options.competingProofAfterCallback));
+          }
+        }
         throw error;
       }
     }),
@@ -279,9 +308,21 @@ function setup(options: {
   vi.spyOn(EstimateClientReviewRoundModel, "findById").mockImplementation((id) =>
     query(rounds.find((item) => item._id === id) ?? null, session) as never
   );
-  vi.spyOn(EstimateClientReviewRoundModel, "findOne").mockImplementation((filter) =>
-    query(rounds.find((item) => matches(item, filter as RecordValue)) ?? null, session) as never
-  );
+  vi.spyOn(EstimateClientReviewRoundModel, "findOne").mockImplementation((filter) => {
+    const filterRecord = filter as RecordValue;
+    const recoveryProbe = filterRecord.decisionSource === "admin_proof" ||
+      Array.isArray(filterRecord.status?.$in);
+    const expectedSession = recoveryProbe
+      ? undefined
+      : session;
+    return query(
+      rounds.find((item) => matches(item, filterRecord)) ?? null,
+      expectedSession,
+      recoveryProbe
+        ? options.recoveryProbeError
+        : undefined
+    ) as never;
+  });
   vi.spyOn(EstimateClientReviewRoundModel, "updateOne").mockImplementation(async (filter, update, updateOptions) => {
     expect((updateOptions as RecordValue)?.session).toBe(session);
     const item = rounds.find((candidate) => matches(candidate, filter as RecordValue));
@@ -319,6 +360,12 @@ function setup(options: {
     proofs.push(...structuredClone(input as RecordValue[]));
     return input as never;
   });
+  vi.spyOn(EstimateClientResponseProofModel, "findOne").mockImplementation((filter) =>
+    query(
+      proofs.find((item) => matches(item, filter as RecordValue)) ?? null,
+      undefined
+    ) as never
+  );
 
   const audit = {
     append: vi.fn(),
@@ -419,6 +466,13 @@ function adminInput(overrides: Partial<DecisionInput> = {}): DecisionInput {
 function expectApiError(error: unknown, code: string, status?: number): void {
   expect(error).toBeInstanceOf(ApiError);
   expect(error).toMatchObject({ code, ...(status === undefined ? {} : { status }) });
+}
+
+function expectProofRetentionSignal(
+  error: unknown,
+  expected: boolean
+): void {
+  expect(isEstimateDecisionProofRetentionError(error)).toBe(expected);
 }
 
 afterEach(() => {
@@ -739,6 +793,190 @@ describe("EstimateDecisionService Admin proof decisions", () => {
     expect(serializedAudit).not.toContain("Replace the laminate finish.");
   });
 
+  it("returns the committed Admin result after an ambiguous commit acknowledgement", async () => {
+    const rawDriverError = Object.assign(
+      new Error("commit result unknown: raw-provider-secret"),
+      { errorLabels: ["UnknownTransactionCommitResult"] }
+    );
+    const state = setup({ transactionErrorAfterCallback: rawDriverError });
+
+    const result = await state.service.decide(adminInput({
+      decision: "request_changes",
+      note: "  Replace the laminate finish.  "
+    }));
+
+    expect(result).toMatchObject({
+      estimate: {
+        id: "estimate-1",
+        status: "client_changes_requested",
+        version: 8
+      },
+      clientReview: {
+        id: "round-1",
+        estimateVersion: 7,
+        version: 5,
+        status: "changes_requested"
+      }
+    });
+    expect(EstimateClientReviewRoundModel.findOne).toHaveBeenCalledWith(
+      expect.objectContaining({
+        _id: "round-1",
+        estimateId: "estimate-1",
+        estimateVersion: 7,
+        status: "changes_requested",
+        decision: "request_changes",
+        decisionSource: "admin_proof",
+        decisionNote: "Replace the laminate finish.",
+        decidedById: "admin-1",
+        decidedAt: NOW,
+        version: 5
+      })
+    );
+    expect(EstimateClientResponseProofModel.findOne).toHaveBeenCalledWith(
+      expect.objectContaining({
+        reviewRoundId: "round-1",
+        estimateId: "estimate-1",
+        storageReference: PROOF.storageReference,
+        originalFilename: PROOF.originalFilename,
+        mimeType: PROOF.mimeType,
+        byteSize: PROOF.byteSize,
+        sha256: PROOF.sha256,
+        uploadedById: "admin-1",
+        uploadedAt: NOW
+      })
+    );
+    expect(JSON.stringify(result)).not.toContain("raw-provider-secret");
+  });
+
+  it.each([
+    ["the exact committed tuple is not yet visible", { rollbackAfterCallback: true }],
+    [
+      "the exact committed tuple probe fails",
+      { recoveryProbeError: new Error("probe failed: raw-probe-secret") }
+    ]
+  ] as const)(
+    "returns a bounded proof-retention signal when %s",
+    async (_case, recoveryOptions) => {
+      const rawDriverError = Object.assign(
+        new Error("commit result unknown: raw-driver-secret"),
+        { errorLabels: ["UnknownTransactionCommitResult"] }
+      );
+      const state = setup({
+        transactionErrorAfterCallback: rawDriverError,
+        ...recoveryOptions
+      });
+
+      const error = await state.service.decide(adminInput()).then(
+        () => expect.fail("Expected an indeterminate decision outcome."),
+        (caught) => caught
+      );
+
+      expect(error).toMatchObject({
+        status: 500,
+        code: "ESTIMATE_DECISION_RECOVERY_FAILED",
+        message: "Estimate decision state could not be confirmed safely."
+      });
+      expect(String(error)).not.toMatch(/raw-(?:driver|probe)-secret/u);
+      expect(error).not.toHaveProperty("cause");
+      expectProofRetentionSignal(error, true);
+    }
+  );
+
+  it("keeps a confirmed competing terminal decision cleanup-eligible", async () => {
+    const rawDriverError = Object.assign(
+      new Error("commit rejected: raw-driver-secret"),
+      { errorLabels: ["UnknownTransactionCommitResult"] }
+    );
+    const state = setup({
+      transactionErrorAfterCallback: rawDriverError,
+      rollbackAfterCallback: true,
+      competingRoundAfterCallback: {
+        status: "approved",
+        decision: "approve",
+        decisionSource: "client_portal",
+        decisionNote: "Approved in the Client portal.",
+        decidedById: "client-1",
+        decidedAt: new Date("2026-08-24T09:30:01.000Z"),
+        version: 5
+      }
+    });
+
+    const error = await state.service.decide(adminInput({
+      decision: "request_changes",
+      note: "Replace the laminate finish."
+    })).then(
+      () => expect.fail("Expected the competing terminal decision to win."),
+      (caught) => caught
+    );
+
+    expectApiError(error, "ESTIMATE_NOT_REVIEWABLE", 409);
+    expect(String(error)).not.toContain("raw-driver-secret");
+    expectProofRetentionSignal(error, false);
+    expect(state.rounds[0]).toMatchObject({
+      status: "approved",
+      decision: "approve",
+      decisionSource: "client_portal",
+      decidedById: "client-1",
+      version: 5
+    });
+    expect(state.proofs).toEqual([]);
+  });
+
+  it("treats an identical Admin tuple with a different one-to-one proof as a confirmed loser", async () => {
+    const rawDriverError = Object.assign(
+      new Error("commit rejected: raw-driver-secret"),
+      { errorLabels: ["UnknownTransactionCommitResult"] }
+    );
+    const state = setup({
+      transactionErrorAfterCallback: rawDriverError,
+      rollbackAfterCallback: true,
+      competingRoundAfterCallback: {
+        status: "changes_requested",
+        decision: "request_changes",
+        decisionSource: "admin_proof",
+        decisionNote: "Replace the laminate finish.",
+        decidedById: "admin-1",
+        decidedAt: new Date(NOW),
+        version: 5
+      },
+      competingProofAfterCallback: {
+        _id: "estimate-client-proof-competing",
+        reviewRoundId: "round-1",
+        estimateId: "estimate-1",
+        storageReference: "estimate-client-proofs/competing-proof.pdf",
+        originalFilename: "competing signed response.pdf",
+        mimeType: "application/pdf",
+        byteSize: 8_192,
+        sha256: "b".repeat(64),
+        uploadedById: "admin-1",
+        uploadedAt: new Date(NOW)
+      }
+    });
+
+    const error = await state.service.decide(adminInput({
+      decision: "request_changes",
+      note: "Replace the laminate finish."
+    })).then(
+      () => expect.fail("Expected the proof-owning Admin decision to win."),
+      (caught) => caught
+    );
+
+    expectApiError(error, "ESTIMATE_NOT_REVIEWABLE", 409);
+    expectProofRetentionSignal(error, false);
+    expect(String(error)).not.toContain("raw-driver-secret");
+    expect(EstimateClientResponseProofModel.findOne).toHaveBeenCalledWith({
+      reviewRoundId: "round-1",
+      estimateId: "estimate-1"
+    });
+    expect(state.proofs).toEqual([
+      expect.objectContaining({
+        _id: "estimate-client-proof-competing",
+        storageReference: "estimate-client-proofs/competing-proof.pdf",
+        sha256: "b".repeat(64)
+      })
+    ]);
+  });
+
   it("links Admin approval to the matching active standard Client, never the Admin actor", async () => {
     const state = setup();
     const findClient = vi.mocked(UserModel.findOne);
@@ -860,7 +1098,7 @@ describe("EstimateDecisionService Admin proof decisions", () => {
     expect(state.audits).toEqual([]);
   });
 
-  it("rolls back all semantic state when the final proof audit fails", async () => {
+  it("rolls back final-audit failure and keeps its uploaded proof cleanup-eligible", async () => {
     const state = setup();
     const lateFailure = new Error("late proof audit failure");
     state.audit.appendInMongoTransaction.mockImplementation(
@@ -872,7 +1110,14 @@ describe("EstimateDecisionService Admin proof decisions", () => {
       }
     );
 
-    await expect(state.service.decide(adminInput())).rejects.toBe(lateFailure);
+    const error = await state.service.decide(adminInput()).then(
+      () => expect.fail("Expected the transactional audit failure."),
+      (caught) => caught
+    );
+
+    expect(error).toBe(lateFailure);
+    expectProofRetentionSignal(error, false);
+    expect(EstimateClientResponseProofModel.findOne).not.toHaveBeenCalled();
 
     expect(EstimateModel.updateOne).toHaveBeenCalledOnce();
     expect(LeadModel.updateOne).toHaveBeenCalledOnce();

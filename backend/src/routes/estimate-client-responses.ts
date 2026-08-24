@@ -13,7 +13,10 @@ import {
   type EstimateClientReviewStorage
 } from "../services/estimate-client-review-storage.js";
 import type { EstimateClientReviewService } from "../services/estimate-client-review.service.js";
-import type { EstimateDecisionService } from "../services/estimate-decision.service.js";
+import {
+  isEstimateDecisionProofRetentionError,
+  type EstimateDecisionService
+} from "../services/estimate-decision.service.js";
 import type { EstimateDeliveryService } from "../services/estimate-delivery.service.js";
 
 const listQuerySchema = z.object({
@@ -134,9 +137,10 @@ export function createEstimateClientResponsesRouter(
           note: request.body.note,
           context: { source: "admin_proof", actor, proof: storedProof }
         });
-        response.json({ data: result });
+        storedProof = null;
+        response.json({ data: mapAdminDecisionResult(result) });
       } catch (error) {
-        if (storedProof) {
+        if (storedProof && !isEstimateDecisionProofRetentionError(error)) {
           await deleteStoredProofQuietly(storage, storedProof);
         }
         next(error);
@@ -165,6 +169,22 @@ export function createEstimateClientResponsesRouter(
   );
 
   return router;
+}
+
+function mapAdminDecisionResult(
+  result: Awaited<ReturnType<EstimateDecisionService["decide"]>>
+) {
+  return {
+    estimate: {
+      id: String(result.estimate.id),
+      status: String(result.estimate.status),
+      version: Number(result.estimate.version),
+      projectId: result.estimate.projectId == null
+        ? null
+        : String(result.estimate.projectId)
+    },
+    clientReview: result.clientReview
+  };
 }
 
 function decisionScope(reviews: EstimateClientReviewService): RequestHandler {
