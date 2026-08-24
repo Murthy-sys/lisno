@@ -184,12 +184,18 @@ function sanitizeAuditObject(value: JsonObject): JsonObject {
 }
 
 function sanitizeAuditValue(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(sanitizeAuditValue);
+  if (isBytePayload(value)) return undefined;
+  if (Array.isArray(value)) {
+    return value
+      .map(sanitizeAuditValue)
+      .filter((nested) => nested !== undefined);
+  }
   if (!value || typeof value !== "object") return value;
   return Object.fromEntries(
     Object.entries(value as Record<string, unknown>)
       .filter(([key, nested]) => !isSensitiveAuditKey(key, nested))
-      .map(([key, nested]) => [key, sanitizeAuditValue(nested)])
+      .map(([key, nested]) => [key, sanitizeAuditValue(nested)] as const)
+      .filter(([, nested]) => nested !== undefined)
   );
 }
 
@@ -206,7 +212,25 @@ function isSensitiveAuditKey(key: string, value: unknown): boolean {
   ) {
     return false;
   }
+  if (
+    normalized.includes("storagereference") ||
+    normalized.includes("recipientemail") ||
+    normalized.includes("providerresponse") ||
+    normalized.includes("providermessage") ||
+    normalized === "bytes" ||
+    normalized.endsWith("bytes") ||
+    normalized.includes("bytebuffer") ||
+    isBytePayload(value)
+  ) {
+    return true;
+  }
   return ["password", "hash", "token", "secret"].some((part) =>
     normalized.includes(part)
   );
+}
+
+function isBytePayload(value: unknown): boolean {
+  return Buffer.isBuffer(value) ||
+    value instanceof ArrayBuffer ||
+    ArrayBuffer.isView(value);
 }

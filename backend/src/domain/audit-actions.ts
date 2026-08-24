@@ -77,10 +77,23 @@ export const USER_INVITATION_AUDIT_ACTIONS = [
   "user.invited_created"
 ] as const;
 
+export const ESTIMATE_CLIENT_REVIEW_AUDIT_ACTIONS = [
+  "estimate_client_review_published",
+  "estimate_email_delivery_sent",
+  "estimate_email_delivery_failed",
+  "estimate_email_retry_requested",
+  "estimate_client_response_task_assigned",
+  "estimate_client_approval_recorded_by_admin",
+  "estimate_client_changes_recorded_by_admin",
+  "estimate_client_response_recorded_through_portal",
+  "estimate_client_proof_stored"
+] as const;
+
 export const AUDIT_ACTIONS = [
   ...EXISTING_AUDIT_ACTIONS,
   ...PROMPT_1_AUDIT_ACTIONS,
-  ...USER_INVITATION_AUDIT_ACTIONS
+  ...USER_INVITATION_AUDIT_ACTIONS,
+  ...ESTIMATE_CLIENT_REVIEW_AUDIT_ACTIONS
 ] as const;
 
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
