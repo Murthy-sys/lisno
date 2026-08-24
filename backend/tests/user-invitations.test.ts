@@ -992,33 +992,88 @@ describe("protected user invitation administration", () => {
     expect(JSON.stringify(writes)).not.toMatch(/provider|credential|response|matched|link|body/i);
   });
 
-  it("lets a stale delivery completion append generation audit without changing a revoked row", async () => {
-    const { seed, operator } = standardSeed();
-    let settle!: () => void;
-    const sending = new Promise<void>((resolve) => { settle = resolve; });
-    const sendInvitation = vi.fn(() => sending);
-    const { repository, service } = setup(seed, {
-      mailer: { deliveryKind: "local_test", sendInvitation }
-    });
+  for (const terminalAction of ["accept", "revoke"] as const) {
+    for (const deliveryOutcome of ["success", "failure"] as const) {
+      it(`ignores a stale mail ${deliveryOutcome} after ${terminalAction} without changing terminal state or appending a delivery audit`, async () => {
+        const { seed, operator } = standardSeed();
+        const providerMarker = `SMTP_PROVIDER_SECRET_${terminalAction}_${deliveryOutcome}`;
+        let resolveDelivery!: () => void;
+        let rejectDelivery!: (error: Error) => void;
+        const deferredDelivery = new Promise<void>((resolve, reject) => {
+          resolveDelivery = resolve;
+          rejectDelivery = reject;
+        });
+        let attemptedRawToken = "";
+        const sendInvitation = vi.fn(async ({ rawToken }: { rawToken: string }) => {
+          attemptedRawToken = rawToken;
+          await deferredDelivery;
+        });
+        const { repository, service } = setup(seed, {
+          mailer: { deliveryKind: "local_test", sendInvitation },
+          passwordHasher: async () => ACCEPTED_PASSWORD_HASH
+        });
 
-    const creating = service.create(publicUser(operator), createInput);
-    await vi.waitFor(() => expect(sendInvitation).toHaveBeenCalledOnce());
-    const pendingPage = await service.list(publicUser(operator), {}, { limit: 20, offset: 0 });
-    const current = pendingPage.items[0]!;
-    const revoked = await service.revoke(publicUser(operator), current.id, {
-      version: current.version
-    });
-    settle();
-    await creating;
+        const creating = service.create(publicUser(operator), createInput);
+        await vi.waitFor(() => expect(sendInvitation).toHaveBeenCalledOnce());
+        const pendingPage = await service.list(
+          publicUser(operator),
+          {},
+          { limit: 20, offset: 0 }
+        );
+        const current = pendingPage.items[0]!;
 
-    expect(await repository.findUserInvitationById(current.id)).toMatchObject({
-      status: "revoked",
-      deliveryStatus: "queued",
-      version: revoked.version
-    });
-    const audits = await invitationAudits(repository);
-    expect(audits.map(({ action }) => action)).toContain("user_invitation.delivery_sent");
-  });
+        if (terminalAction === "accept") {
+          await service.accept({
+            rawToken: attemptedRawToken,
+            password: ACCEPTED_PASSWORD
+          });
+        } else {
+          await service.revoke(publicUser(operator), current.id, {
+            version: current.version
+          });
+        }
+
+        const terminalBeforeCompletion = await repository.findUserInvitationById(
+          current.id
+        );
+        expect(terminalBeforeCompletion).toMatchObject({
+          status: terminalAction === "accept" ? "accepted" : "revoked",
+          tokenHash: null,
+          version: 2,
+          deliveryStatus: "queued",
+          deliveryAttemptedAt: null,
+          sentAt: null,
+          deliveryFailureCode: null
+        });
+
+        if (deliveryOutcome === "success") {
+          resolveDelivery();
+        } else {
+          rejectDelivery(new Error(providerMarker));
+        }
+        const createResult = await creating;
+
+        const terminalAfterCompletion = await repository.findUserInvitationById(
+          current.id
+        );
+        const audits = await invitationAudits(repository);
+        expect(terminalAfterCompletion).toEqual(terminalBeforeCompletion);
+        expect(
+          audits
+            .map(({ action }) => action)
+            .filter((action) =>
+              [
+                "user_invitation.delivery_sent",
+                "user_invitation.delivery_failed"
+              ].includes(action)
+            )
+        ).toEqual([]);
+        expect(
+          JSON.stringify({ createResult, terminalAfterCompletion, audits })
+        ).not.toContain(providerMarker);
+      });
+    }
+  }
 
   it("persists a real trickling SMTP wall-deadline failure and leaves no pending socket work", async () => {
     const server = await startTricklingSmtpServer();

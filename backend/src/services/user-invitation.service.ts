@@ -773,6 +773,7 @@ async function deliverGeneration(
               updatedAt: attemptedAt
             }
       );
+      if (!updated) return null;
       await audit.append(
         {
           actorId: attempt.actorId,
