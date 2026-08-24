@@ -379,7 +379,7 @@ describe("initial Estimate PDF delivery", () => {
   it("marks an unpublished queued attempt disabled without leasing or contacting SMTP", async () => {
     const harness = setup({ mailer: { deliveryKind: "disabled" } });
 
-    const result = await harness.delivery.deliverInitial(ROUND_ID);
+    const result = await harness.delivery.deliverInitial(ROUND_ID, OWNER.id);
 
     expect(harness.record).toMatchObject({
       deliveryStatus: "disabled",
@@ -400,7 +400,7 @@ describe("initial Estimate PDF delivery", () => {
     const send = vi.fn(async () => ({ kind: "sent" as const }));
     const harness = setup({ mailer: enabledMailer(send) });
 
-    const result = await harness.delivery.deliverInitial(ROUND_ID);
+    const result = await harness.delivery.deliverInitial(ROUND_ID, OWNER.id);
 
     expect(harness.findOneAndUpdate).toHaveBeenCalledOnce();
     const [leaseFilter, leaseUpdate] = harness.findOneAndUpdate.mock.calls[0]!;
@@ -470,6 +470,7 @@ describe("initial Estimate PDF delivery", () => {
     );
     expect(harness.audits).toHaveLength(1);
     expect(harness.audits[0]).toMatchObject({
+      actorId: OWNER.id,
       action: "estimate_email_delivery_sent",
       entityType: "estimate_client_review_round",
       entityId: ROUND_ID,
@@ -499,7 +500,7 @@ describe("initial Estimate PDF delivery", () => {
     }));
     const harness = setup({ mailer: enabledMailer(send) });
 
-    const result = await harness.delivery.deliverInitial(ROUND_ID);
+    const result = await harness.delivery.deliverInitial(ROUND_ID, OWNER.id);
 
     expect(harness.record).toMatchObject({
       deliveryStatus: "failed",
@@ -513,6 +514,7 @@ describe("initial Estimate PDF delivery", () => {
       .toBe(true);
     expect(harness.audits).toHaveLength(1);
     expect(harness.audits[0]).toMatchObject({
+      actorId: OWNER.id,
       action: "estimate_email_delivery_failed",
       newValues: expect.objectContaining({ failureCode: "SMTP_REJECTED" })
     });
@@ -531,7 +533,7 @@ describe("initial Estimate PDF delivery", () => {
       })))
     });
 
-    const result = await harness.delivery.deliverInitial(ROUND_ID);
+    const result = await harness.delivery.deliverInitial(ROUND_ID, OWNER.id);
 
     expect(harness.record.deliveryFailureCode).toBe("ESTIMATE_MAILER_FAILED");
     expect(harness.audits[0]).toMatchObject({
@@ -575,7 +577,7 @@ describe("initial Estimate PDF delivery", () => {
   ])("maps $label to bounded failed telemetry and never leaks dependency text", async ({ options, failureCode }) => {
     const harness = setup(options);
 
-    const result = await harness.delivery.deliverInitial(ROUND_ID);
+    const result = await harness.delivery.deliverInitial(ROUND_ID, OWNER.id);
 
     expect(harness.record).toMatchObject({
       deliveryStatus: "failed",
@@ -599,7 +601,7 @@ describe("initial Estimate PDF delivery", () => {
   it("rolls back completion telemetry with its audit and returns the prior safe leased state", async () => {
     const harness = setup({ auditErrorAction: "estimate_email_delivery_sent" });
 
-    const result = await harness.delivery.deliverInitial(ROUND_ID);
+    const result = await harness.delivery.deliverInitial(ROUND_ID, OWNER.id);
 
     expect(harness.transactions).toContain("rollback");
     expect(harness.record).toMatchObject({
@@ -697,6 +699,10 @@ describe("authorized retry leasing", () => {
     expect(harness.audits.map((audit) => audit.action)).toEqual([
       "estimate_email_retry_requested",
       "estimate_email_delivery_sent"
+    ]);
+    expect(harness.audits.map((audit) => audit.actorId)).toEqual([
+      actor.id,
+      actor.id
     ]);
     expect(harness.record).toMatchObject({
       deliveryStatus: "sent",
@@ -1035,7 +1041,7 @@ describe("exact-generation completion races", () => {
       }
     });
 
-    const result = await harness.delivery.deliverInitial(ROUND_ID);
+    const result = await harness.delivery.deliverInitial(ROUND_ID, OWNER.id);
 
     expect(harness.updateOne).toHaveBeenCalledWith(
       {
@@ -1075,7 +1081,7 @@ describe("exact-generation completion races", () => {
       }
     });
 
-    const result = await harness.delivery.deliverInitial(ROUND_ID);
+    const result = await harness.delivery.deliverInitial(ROUND_ID, OWNER.id);
 
     expect(harness.updateOne).toHaveBeenCalledWith(
       {

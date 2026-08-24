@@ -55,7 +55,10 @@ type AttemptOutcome =
   | { status: "failed"; failureCode: string };
 
 export interface EstimateDeliveryService {
-  deliverInitial(roundId: string): Promise<EstimateClientReviewSummary>;
+  deliverInitial(
+    roundId: string,
+    actorId: string
+  ): Promise<EstimateClientReviewSummary>;
   retry(
     actor: PublicUser,
     input: { estimateId: string; roundId: string; version: number }
@@ -73,7 +76,8 @@ export function createEstimateDeliveryService(input: {
   const now = input.now ?? (() => new Date());
 
   async function deliverInitial(
-    roundId: string
+    roundId: string,
+    actorId: string
   ): Promise<EstimateClientReviewSummary> {
     try {
       const current = await loadRound(roundId);
@@ -119,7 +123,7 @@ export function createEstimateDeliveryService(input: {
 
       return await deliverLease(
         leased as unknown as AttemptLease,
-        current.assignedAdminId
+        actorId
       );
     } catch {
       return loadRequiredSummaryOrFail(roundId);

@@ -514,7 +514,10 @@ describe("ordinary transactional Estimate publication", () => {
     expect(harness.session.withTransaction).toHaveBeenCalledOnce();
     expect(harness.session.endSession).toHaveBeenCalledOnce();
     expect(harness.deliverInitial).toHaveBeenCalledOnce();
-    expect(harness.deliverInitial).toHaveBeenCalledWith(String(createdRound._id));
+    expect(harness.deliverInitial).toHaveBeenCalledWith(
+      String(createdRound._id),
+      ACTOR_ID
+    );
     expect(harness.events.indexOf("storage:save"))
       .toBeLessThan(harness.events.indexOf("transaction:start"));
     expect(harness.events.indexOf("transaction:commit"))
@@ -864,7 +867,10 @@ describe("publication cleanup and idempotency", () => {
     expect(harness.fileStorage.delete).not.toHaveBeenCalled();
     expect(harness.objects.get("new-snapshot-1.pdf")).toEqual(PDF_BYTES);
     expect(harness.deliverInitial).toHaveBeenCalledOnce();
-    expect(harness.deliverInitial).toHaveBeenCalledWith(String(createdRound._id));
+    expect(harness.deliverInitial).toHaveBeenCalledWith(
+      String(createdRound._id),
+      ACTOR_ID
+    );
     expect(harness.events.indexOf("transaction:commit-ambiguous"))
       .toBeLessThan(harness.events.indexOf("delivery:initial"));
     expect(result).toEqual({

@@ -93,7 +93,10 @@ export function createEstimatePublicationService(input: {
   storage: EstimateClientReviewStorage;
   reviews: EstimateClientReviewService;
   audit: AuditService;
-  deliverInitial: (roundId: string) => Promise<EstimateClientReviewSummary>;
+  deliverInitial: (
+    roundId: string,
+    actorId: string
+  ) => Promise<EstimateClientReviewSummary>;
   now?: () => Date;
 }): EstimatePublicationService {
   const now = input.now ?? (() => new Date());
@@ -364,7 +367,10 @@ export function createEstimatePublicationService(input: {
       const preDeliverySummary = mapRoundSummary(committedRound);
       let clientReview = preDeliverySummary;
       try {
-        clientReview = await input.deliverInitial(committedRound._id);
+        clientReview = await input.deliverInitial(
+          committedRound._id,
+          publication.actorId
+        );
       } catch {
         try {
           clientReview =
