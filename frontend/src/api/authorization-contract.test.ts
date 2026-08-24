@@ -95,8 +95,8 @@ describe("frontend authorization contract", () => {
     ).toEqual(estimateClientResponsePermissions);
   });
 
-  it("keeps the protected frontend registry at exactly 20 routes", () => {
-    expect(ROUTE_REGISTRY).toHaveLength(20);
+  it("keeps the protected frontend registry at exactly 22 routes", () => {
+    expect(ROUTE_REGISTRY).toHaveLength(22);
     expect(ROUTE_REGISTRY.map(({ path }) => path)).not.toContain(
       "/accept-invitation"
     );

@@ -40,7 +40,7 @@ describe("parseAuthorizationSnapshot", () => {
 
     expect(result).toEqual({
       role: "designer",
-      policyVersion: "2026-08-23.staff-invitations.v1",
+      policyVersion: AUTHORIZATION_POLICY_VERSION,
       permissions: ["identity.self.read", "projects.read"]
     });
     expect(Object.isFrozen(result)).toBe(true);
@@ -92,20 +92,20 @@ describe("parseAuthorizationSnapshot", () => {
     expect(parseAuthorizationSnapshot(snapshot, "designer")).toBeNull();
   });
 
-  it("accepts the 129-item permission ceiling and rejects 130 items", () => {
+  it("accepts the 133-item permission ceiling and rejects 134 items", () => {
     expect(
       parseAuthorizationSnapshot(
-        { ...validSnapshot, permissions: Array(129).fill("unknown.action") },
+        { ...validSnapshot, permissions: Array(133).fill("unknown.action") },
         "designer"
       )
     ).toEqual({
       role: "designer",
-      policyVersion: "2026-08-23.staff-invitations.v1",
+      policyVersion: AUTHORIZATION_POLICY_VERSION,
       permissions: []
     });
     expect(
       parseAuthorizationSnapshot(
-        { ...validSnapshot, permissions: Array(130).fill("unknown.action") },
+        { ...validSnapshot, permissions: Array(134).fill("unknown.action") },
         "designer"
       )
     ).toBeNull();
@@ -123,7 +123,7 @@ describe("parseAuthorizationSnapshot", () => {
       )
     ).toEqual({
       role: "super_admin",
-      policyVersion: "2026-08-23.staff-invitations.v1",
+      policyVersion: AUTHORIZATION_POLICY_VERSION,
       permissions: invitationPermissions
     });
   });
