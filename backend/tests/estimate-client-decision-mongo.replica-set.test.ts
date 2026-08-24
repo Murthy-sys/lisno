@@ -120,12 +120,15 @@ async function seedDecisionFixture(input: Partial<{
   roundVersion: number;
   sendGeneration: number;
   roundStatus: "pending" | "approved" | "changes_requested";
+  projectLink: "linked" | "unlinked";
 }> = {}) {
   const roundId = input.roundId ?? "task12-round";
   const estimateVersion = input.estimateVersion ?? 7;
   const roundVersion = input.roundVersion ?? 4;
   const roundStatus = input.roundStatus ?? "pending";
-  const projectId = "task12-decision-project";
+  const projectId = input.projectLink === "unlinked"
+    ? null
+    : "task12-decision-project";
   const leadId = "task12-decision-lead";
   const estimateId = "task12-decision-estimate";
 
@@ -137,42 +140,44 @@ async function seedDecisionFixture(input: Partial<{
     insertUser(ACTORS.designer, ACTORS.manager.id),
     insertUser(ACTORS.manager)
   ]);
-  await ProjectModel.create({
-    _id: projectId,
-    name: "Task 12 Residence",
-    clientId: ACTORS.client.id,
-    clientName: "Task 12 Client",
-    clientEmail: ACTORS.client.email,
-    clientEmailNormalized: ACTORS.client.email,
-    clientMobile: "9999999999",
-    clientAddress: "Pune",
-    initiatingDesignerId: null,
-    assignedEstimatorId: ACTORS.estimator.id,
-    assignedDesignerIds: [],
-    managerId: null,
-    status: "planning",
-    location: "Pune",
-    plannedStartAt: NOW,
-    plannedEndAt: new Date("2026-11-24T11:00:00.000Z"),
-    createdAt: NOW,
-    updatedAt: NOW
-  });
-  await ProjectAccessGrantModel.create({
-    _id: "task12-decision-grant",
-    projectId,
-    userId: ACTORS.admin.id,
-    module: "projects",
-    source: "admin_initiator",
-    accessRequestId: null,
-    grantedById: ACTORS.superAdmin.id,
-    active: true,
-    grantedAt: NOW,
-    revokedAt: null,
-    revokedById: null,
-    revocationReason: null,
-    createdAt: NOW,
-    updatedAt: NOW
-  });
+  if (projectId !== null) {
+    await ProjectModel.create({
+      _id: projectId,
+      name: "Task 12 Residence",
+      clientId: ACTORS.client.id,
+      clientName: "Task 12 Client",
+      clientEmail: ACTORS.client.email,
+      clientEmailNormalized: ACTORS.client.email,
+      clientMobile: "9999999999",
+      clientAddress: "Pune",
+      initiatingDesignerId: null,
+      assignedEstimatorId: ACTORS.estimator.id,
+      assignedDesignerIds: [],
+      managerId: null,
+      status: "planning",
+      location: "Pune",
+      plannedStartAt: NOW,
+      plannedEndAt: new Date("2026-11-24T11:00:00.000Z"),
+      createdAt: NOW,
+      updatedAt: NOW
+    });
+    await ProjectAccessGrantModel.create({
+      _id: "task12-decision-grant",
+      projectId,
+      userId: ACTORS.admin.id,
+      module: "projects",
+      source: "admin_initiator",
+      accessRequestId: null,
+      grantedById: ACTORS.superAdmin.id,
+      active: true,
+      grantedAt: NOW,
+      revokedAt: null,
+      revokedById: null,
+      revocationReason: null,
+      createdAt: NOW,
+      updatedAt: NOW
+    });
+  }
   await LeadModel.create({
     _id: leadId,
     projectId,
@@ -270,7 +275,9 @@ async function seedDecisionFixture(input: Partial<{
     deliveryLeaseExpiresAt: null,
     deliveredAt: NOW,
     deliveryFailureCode: null,
-    assignedAdminId: ACTORS.admin.id,
+    assignedAdminId: projectId === null
+      ? ACTORS.superAdmin.id
+      : ACTORS.admin.id,
     status: roundStatus,
     decision: terminal ? decision : null,
     decisionSource: terminal ? "client_portal" : null,
@@ -454,7 +461,11 @@ function expectApiError(error: unknown, code: string, status: number) {
 async function assertSingleDecision(
   fixture: Awaited<ReturnType<typeof seedDecisionFixture>>,
   decision: EstimateClientDecision,
-  storage: ReturnType<typeof createProofStorage>
+  storage: ReturnType<typeof createProofStorage>,
+  expectations: {
+    expectedAdminActorId?: string;
+    expectedAdminNotes?: readonly string[];
+  } = {}
 ) {
   const round = await EstimateClientReviewRoundModel.findById(fixture.roundId).lean();
   const estimate = await EstimateModel.findById(fixture.estimateId).lean();
@@ -468,13 +479,160 @@ async function assertSingleDecision(
     version: fixture.estimateVersion + 1,
     designLifecycleVersion: 4
   });
-  expect(estimate!.reviews).toHaveLength(1);
   expect(["client_portal", "admin_proof"]).toContain(round!.decisionSource);
   const source = round!.decisionSource as "client_portal" | "admin_proof";
   const expectedActorId = source === "admin_proof"
-    ? ACTORS.admin.id
+    ? expectations.expectedAdminActorId ?? ACTORS.admin.id
     : ACTORS.client.id;
-  expect(round!.decidedById).toBe(expectedActorId);
+  const expectedClientNote = decision === "approve"
+    ? ""
+    : "Move the ceiling edge inward.";
+  const expectedAdminNotes = expectations.expectedAdminNotes ?? [
+    decision === "approve"
+      ? "Signed approval received."
+      : "Please revise."
+  ];
+  const expectedNotes = source === "client_portal"
+    ? [expectedClientNote]
+    : expectedAdminNotes;
+  expect(expectedNotes).toContain(round!.decisionNote);
+  expect(round).toMatchObject({
+    decidedById: expectedActorId,
+    decidedAt: NOW
+  });
+  const expectedReview = {
+    actorId: expectedActorId,
+    action: decision === "approve"
+      ? "client_approved"
+      : "client_changes_requested",
+    note: round!.decisionNote,
+    occurredAt: NOW
+  };
+  expect(estimate!.reviews).toEqual([expectedReview]);
+  const projects = await ProjectModel.find().lean();
+  const lead = await LeadModel.findById(fixture.leadId).lean();
+
+  if (decision === "approve") {
+    const committedProjectId = String(estimate!.projectId);
+
+    expect(estimate).toMatchObject({
+      leadId: fixture.leadId,
+      projectId: committedProjectId,
+      clientDecisionAt: NOW,
+      designFrozenAt: NOW,
+      designLifecycleVersion: 4,
+      reviews: [expectedReview]
+    });
+    expect(estimate!.notifications).toHaveLength(2);
+    expect(estimate!.notifications).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        recipientEmail: ACTORS.designer.email,
+        recipientRole: "designer",
+        event: "project_kickoff_created",
+        status: "queued",
+        queuedAt: NOW
+      }),
+      expect.objectContaining({
+        recipientEmail: ACTORS.manager.email,
+        recipientRole: "design_manager",
+        event: "project_kickoff_created",
+        status: "queued",
+        queuedAt: NOW
+      })
+    ]));
+    expect(projects).toHaveLength(1);
+    expect(String(projects[0]!._id)).toBe(committedProjectId);
+    expect(projects[0]).toMatchObject({
+      clientId: ACTORS.client.id,
+      clientEmailNormalized: ACTORS.client.email,
+      assignedDesignerIds: [ACTORS.designer.id],
+      managerId: ACTORS.manager.id,
+      status: "planning"
+    });
+    expect([ACTORS.admin.id, ACTORS.superAdmin.id]).not.toContain(
+      projects[0]!.clientId
+    );
+    if (fixture.projectId === null) {
+      expect(committedProjectId).toMatch(/^project-/);
+      expect(lead).toMatchObject({
+        _id: fixture.leadId,
+        projectId: null,
+        clientName: "Task 12 Client",
+        clientEmail: ACTORS.client.email,
+        clientMobile: "9999999999",
+        projectName: "Task 12 Residence",
+        location: "Pune",
+        stage: "won",
+        nextAction: "project kickoff",
+        nextActionAt: NOW
+      });
+      expect(projects[0]).toMatchObject({
+        name: "Task 12 Residence",
+        clientName: "Task 12 Client",
+        clientEmail: ACTORS.client.email,
+        clientMobile: "9999999999",
+        clientAddress: "Pune",
+        initiatingDesignerId: ACTORS.designer.id,
+        assignedEstimatorId: null,
+        location: "Pune",
+        plannedStartAt: NOW
+      });
+    } else {
+      expect(committedProjectId).toBe(fixture.projectId);
+      expect(lead).toMatchObject({
+        _id: fixture.leadId,
+        projectId: fixture.projectId,
+        stage: "won",
+        nextAction: "project kickoff",
+        nextActionAt: NOW
+      });
+      expect(projects[0]).toMatchObject({
+        _id: fixture.projectId,
+        initiatingDesignerId: null,
+        assignedEstimatorId: ACTORS.estimator.id
+      });
+    }
+  } else {
+    expect(estimate).toMatchObject({
+      leadId: fixture.leadId,
+      projectId: fixture.projectId,
+      clientDecisionAt: NOW,
+      designFrozenAt: null,
+      designLifecycleVersion: 4,
+      reviews: [expectedReview]
+    });
+    expect(estimate!.notifications).toEqual([]);
+    expect(lead).toMatchObject({
+      _id: fixture.leadId,
+      projectId: fixture.projectId,
+      stage: "estimate_sent",
+      nextAction: "client estimate decision",
+      nextActionAt: NOW
+    });
+    if (fixture.projectId === null) {
+      expect(projects).toEqual([]);
+    } else {
+      expect(projects).toHaveLength(1);
+      expect(projects[0]).toMatchObject({
+        _id: fixture.projectId,
+        name: "Task 12 Residence",
+        clientId: ACTORS.client.id,
+        clientName: "Task 12 Client",
+        clientEmail: ACTORS.client.email,
+        clientEmailNormalized: ACTORS.client.email,
+        clientMobile: "9999999999",
+        clientAddress: "Pune",
+        initiatingDesignerId: null,
+        assignedEstimatorId: ACTORS.estimator.id,
+        assignedDesignerIds: [],
+        managerId: null,
+        status: "planning",
+        location: "Pune",
+        plannedStartAt: NOW,
+        plannedEndAt: new Date("2026-11-24T11:00:00.000Z")
+      });
+    }
+  }
   const proofs = await EstimateClientResponseProofModel.find()
     .select("+storageReference")
     .lean();
@@ -631,10 +789,60 @@ describe("Estimate decision races on a Mongo replica set", () => {
         result.status === "fulfilled" ? result.value.status : -1
       ).sort();
       expect(statuses).toEqual([200, 409]);
-      await assertSingleDecision(fixture, decision, storage);
+      await assertSingleDecision(fixture, decision, storage, {
+        expectedAdminNotes: decision === "approve"
+          ? ["First signed approval.", "Second signed approval."]
+          : ["First revision.", "Second revision."]
+      });
       await assertWinningProofIsOnlyReadableObject(storage);
     }
   );
+
+  it("creates exactly one linked Project across two unlinked Super Admin approvals", async () => {
+    const fixture = await seedDecisionFixture({
+      roundId: "task12-unlinked-round",
+      projectLink: "unlinked"
+    });
+    const storage = createProofStorage(2);
+    const harness = createDecisionHarness({ storage: storage.storage });
+    const app = createRouter({ ...harness, storage: storage.storage });
+    const requests = [
+      adminDecisionRequest(
+        app,
+        ACTORS.superAdmin,
+        fixture,
+        "approve",
+        "first-unlinked-approval.jpg",
+        "First unlinked signed approval."
+      ),
+      adminDecisionRequest(
+        app,
+        ACTORS.superAdmin,
+        fixture,
+        "approve",
+        "second-unlinked-approval.jpg",
+        "Second unlinked signed approval."
+      )
+    ];
+    const settledPromise = Promise.allSettled(requests);
+    await storage.savesReached;
+    storage.releaseSaves();
+    const settled = await settledPromise;
+
+    expect(settled.every(({ status }) => status === "fulfilled")).toBe(true);
+    const statuses = settled.map((result) =>
+      result.status === "fulfilled" ? result.value.status : -1
+    ).sort();
+    expect(statuses).toEqual([200, 409]);
+    await assertSingleDecision(fixture, "approve", storage, {
+      expectedAdminActorId: ACTORS.superAdmin.id,
+      expectedAdminNotes: [
+        "First unlinked signed approval.",
+        "Second unlinked signed approval."
+      ]
+    });
+    await assertWinningProofIsOnlyReadableObject(storage);
+  });
 
   it.each(["grant", "admin"] as const)(
     "rechecks %s eligibility after task detail and lets Super Admin retain oversight",
