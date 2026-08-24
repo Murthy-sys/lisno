@@ -299,6 +299,7 @@ export interface EstimateSummaryRecord {
   status: string;
   total: number;
   clientReview: EstimateClientReviewSummary | null;
+  assignedAdminId: string | null;
 }
 
 export interface AdminProjectEstimateSummary {

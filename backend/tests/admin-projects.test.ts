@@ -25,7 +25,7 @@ function bearer(id: string, role: string): string {
 }
 
 describe("Admin-initiated projects", () => {
-  it("projects only a safe current Client-response summary for scoped Admin readers", async () => {
+  it("keeps fallback-assigned Client-response history safe while exposing the task only to its assignee or Super Admin", async () => {
     const seed = structuredClone(demoSeedData);
     seed.projects = seed.projects.filter(({ id }) =>
       ["project-aurora-villa", "project-aurora-studio"].includes(id)
@@ -97,7 +97,8 @@ describe("Admin-initiated projects", () => {
         projectId: "project-aurora-villa",
         status: "sent_to_client",
         total: 1_180_000,
-        clientReview: safeRound
+        clientReview: safeRound,
+        assignedAdminId: "user-super-admin"
       },
       {
         id: "estimate-admin-legacy",
@@ -105,7 +106,8 @@ describe("Admin-initiated projects", () => {
         projectId: "project-aurora-studio",
         status: "sent_to_client",
         total: 590_000,
-        clientReview: null
+        clientReview: null,
+        assignedAdminId: null
       }
     ];
     seed.projectAccessGrants = seed.projects.map((project, index) => ({
@@ -127,31 +129,93 @@ describe("Admin-initiated projects", () => {
     }));
     const app = createApp({ repository: createMemoryRepository(seed), auth, clock });
 
+    const reactivatedInitiator = await request(app)
+      .get("/api/v1/admin/projects/project-aurora-villa")
+      .set("Authorization", bearer("user-admin", "admin"))
+      .expect(200);
+    expect(reactivatedInitiator.body.data.estimate).toEqual({
+      id: "estimate-admin-round",
+      status: "sent_to_client",
+      total: 1_180_000,
+      clientReview: safeRound,
+      hasPendingClientResponseTask: false
+    });
+    expect(JSON.stringify(reactivatedInitiator.body.data.estimate)).not.toMatch(
+      /assignedAdminId|recipient|decisionNote|storageReference|filename|proof/i
+    );
+
+    const superAdmin = await request(app)
+      .get("/api/v1/admin/projects/project-aurora-villa")
+      .set("Authorization", bearer("user-super-admin", "super_admin"))
+      .expect(200);
+    expect(superAdmin.body.data.estimate).toEqual({
+      id: "estimate-admin-round",
+      status: "sent_to_client",
+      total: 1_180_000,
+      clientReview: safeRound,
+      hasPendingClientResponseTask: true
+    });
+    expect(JSON.stringify(superAdmin.body.data.estimate)).not.toMatch(
+      /assignedAdminId|recipient|decisionNote|storageReference|filename|proof/i
+    );
+
     for (const [id, role] of [
       ["user-admin", "admin"],
       ["user-super-admin", "super_admin"]
     ] as const) {
-      const current = await request(app)
-        .get("/api/v1/admin/projects/project-aurora-villa")
-        .set("Authorization", bearer(id, role))
-        .expect(200);
-      expect(current.body.data.estimate).toEqual({
-        id: "estimate-admin-round",
-        status: "sent_to_client",
-        total: 1_180_000,
-        clientReview: safeRound,
-        hasPendingClientResponseTask: true
-      });
-      expect(JSON.stringify(current.body.data.estimate)).not.toMatch(
-        /recipient|decisionNote|storageReference|filename|proof/i
-      );
-
       const legacy = await request(app)
         .get("/api/v1/admin/projects/project-aurora-studio")
         .set("Authorization", bearer(id, role))
         .expect(200);
       expect(legacy.body.data.estimate).toMatchObject({
         clientReview: null,
+        hasPendingClientResponseTask: false
+      });
+    }
+
+    seed.estimateSummaries[0]!.assignedAdminId = "user-admin";
+    const assignedApp = createApp({
+      repository: createMemoryRepository(seed),
+      auth,
+      clock
+    });
+    const assignedInitiator = await request(assignedApp)
+      .get("/api/v1/admin/projects/project-aurora-villa")
+      .set("Authorization", bearer("user-admin", "admin"))
+      .expect(200);
+    expect(assignedInitiator.body.data.estimate).toMatchObject({
+      clientReview: safeRound,
+      hasPendingClientResponseTask: true
+    });
+    expect(JSON.stringify(assignedInitiator.body.data.estimate)).not.toContain(
+      "assignedAdminId"
+    );
+
+    const terminalRound = {
+      ...safeRound,
+      version: 4,
+      status: "approved" as const
+    };
+    seed.estimateSummaries[0] = {
+      ...seed.estimateSummaries[0]!,
+      clientReview: terminalRound,
+      assignedAdminId: "user-admin"
+    };
+    const terminalApp = createApp({
+      repository: createMemoryRepository(seed),
+      auth,
+      clock
+    });
+    for (const [id, role] of [
+      ["user-admin", "admin"],
+      ["user-super-admin", "super_admin"]
+    ] as const) {
+      const terminal = await request(terminalApp)
+        .get("/api/v1/admin/projects/project-aurora-villa")
+        .set("Authorization", bearer(id, role))
+        .expect(200);
+      expect(terminal.body.data.estimate).toMatchObject({
+        clientReview: terminalRound,
         hasPendingClientResponseTask: false
       });
     }

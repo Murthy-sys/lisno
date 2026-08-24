@@ -143,7 +143,11 @@ export function createMemoryRepository(seed: SeedData = demoSeedData): AppReposi
   }));
   normalizedSeed.estimateResponsibilities ??= [];
   normalizedSeed.estimateSummaries = (normalizedSeed.estimateSummaries ?? []).map(
-    (estimate) => ({ ...estimate, clientReview: estimate.clientReview ?? null })
+    (estimate) => ({
+      ...estimate,
+      clientReview: estimate.clientReview ?? null,
+      assignedAdminId: estimate.assignedAdminId ?? null
+    })
   );
   normalizedSeed.projects = normalizedSeed.projects.map((project) => ({
     ...project,
@@ -969,7 +973,8 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
             project,
             state.users,
             state.leads,
-            state.estimateSummaries ?? []
+            state.estimateSummaries ?? [],
+            actor
           )
         ),
         total: visible.length
@@ -986,7 +991,8 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
             project,
             state.users,
             state.leads,
-            state.estimateSummaries ?? []
+            state.estimateSummaries ?? [],
+            actor
           ))
         : null;
     },

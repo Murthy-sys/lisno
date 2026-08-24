@@ -165,7 +165,8 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
   };
 
   const loadAdminProjectSummaries = async (
-    projectDocuments: PlainDocument[]
+    projectDocuments: PlainDocument[],
+    actor: UserRecord
   ) => {
     if (projectDocuments.length === 0) return [];
     const projectIds = projectDocuments.map((document) => idOf(document));
@@ -209,25 +210,32 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
         deliveryStatus: 1,
         deliveryAttemptCount: 1,
         deliveredAt: 1,
-        status: 1
+        status: 1,
+        assignedAdminId: 1
       })
       .sort({ estimateId: 1, sendGeneration: -1, _id: 1 })
       .lean();
     if (session) roundQuery.session(session);
     const roundDocuments = await roundQuery.exec();
-    const currentRoundByEstimateId = new Map<string, EstimateSummaryRecord["clientReview"]>();
+    const currentRoundByEstimateId = new Map<
+      string,
+      Pick<EstimateSummaryRecord, "clientReview" | "assignedAdminId">
+    >();
     for (const document of roundDocuments) {
       const estimateId = String(document.estimateId);
       if (currentRoundByEstimateId.has(estimateId)) continue;
       currentRoundByEstimateId.set(estimateId, {
-        id: idOf(document),
-        sendGeneration: Number(document.sendGeneration),
-        estimateVersion: Number(document.estimateVersion),
-        version: Number(document.version),
-        deliveryStatus: document.deliveryStatus,
-        deliveryAttemptCount: Number(document.deliveryAttemptCount),
-        deliveredAt: nullableIso(document.deliveredAt),
-        status: document.status
+        clientReview: {
+          id: idOf(document),
+          sendGeneration: Number(document.sendGeneration),
+          estimateVersion: Number(document.estimateVersion),
+          version: Number(document.version),
+          deliveryStatus: document.deliveryStatus,
+          deliveryAttemptCount: Number(document.deliveryAttemptCount),
+          deliveredAt: nullableIso(document.deliveredAt),
+          status: document.status
+        },
+        assignedAdminId: String(document.assignedAdminId)
       });
     }
     const estimators = estimatorDocuments.map((document) => ({
@@ -235,17 +243,21 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
       name: document.name,
       email: document.email
     }));
-    const estimates: EstimateSummaryRecord[] = estimateDocuments.map((document) => ({
-      id: idOf(document),
-      leadId: String(document.leadId),
-      projectId: document.projectId == null ? null : String(document.projectId),
-      status: String(document.status),
-      total: Number(document.total),
-      clientReview: currentRoundByEstimateId.get(idOf(document)) ?? null
-    }));
+    const estimates: EstimateSummaryRecord[] = estimateDocuments.map((document) => {
+      const currentRound = currentRoundByEstimateId.get(idOf(document));
+      return {
+        id: idOf(document),
+        leadId: String(document.leadId),
+        projectId: document.projectId == null ? null : String(document.projectId),
+        status: String(document.status),
+        total: Number(document.total),
+        clientReview: currentRound?.clientReview ?? null,
+        assignedAdminId: currentRound?.assignedAdminId ?? null
+      };
+    });
     const leads = leadDocuments.map(mapLead);
     return projectDocuments.map((document) =>
-      adminProjectSummary(mapProject(document), estimators, leads, estimates)
+      adminProjectSummary(mapProject(document), estimators, leads, estimates, actor)
     );
   };
 
@@ -1146,7 +1158,7 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
         () => countQuery.exec()
       );
       return {
-        items: await loadAdminProjectSummaries(documents),
+        items: await loadAdminProjectSummaries(documents, actor),
         total
       };
     },
@@ -1160,7 +1172,7 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
       if (session) query.session(session);
       const document = await query.exec();
       if (!document) return null;
-      return (await loadAdminProjectSummaries([document]))[0] ?? null;
+      return (await loadAdminProjectSummaries([document], actor))[0] ?? null;
     },
 
     async pageActiveEstimatorOptions(search, pagination) {

@@ -145,7 +145,9 @@ describe("memory repository", () => {
       leadId: "lead-admin-b",
       projectId: "project-admin-b",
       status: "draft",
-      total: 118000
+      total: 118000,
+      clientReview: null,
+      assignedAdminId: null
     }];
     seed.projectAccessGrants = seed.projects.map((project, index) => ({
       id: `grant-admin-${index}`,

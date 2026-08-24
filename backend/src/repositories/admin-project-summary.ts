@@ -10,7 +10,8 @@ export function adminProjectSummary(
   project: ProjectRecord,
   users: Array<Pick<UserRecord, "id" | "name" | "email">>,
   leads: LeadRecord[],
-  estimates: EstimateSummaryRecord[]
+  estimates: EstimateSummaryRecord[],
+  actor: Pick<UserRecord, "id" | "role">
 ): AdminProjectSummary {
   const lead = leads.find((candidate) => candidate.projectId === project.id) ?? null;
   const estimator = project.assignedEstimatorId === null
@@ -51,7 +52,9 @@ export function adminProjectSummary(
           total: estimate.total,
           clientReview: estimate.clientReview ?? null,
           hasPendingClientResponseTask:
-            estimate.clientReview?.status === "pending"
+            estimate.clientReview?.status === "pending" &&
+            (actor.role === "super_admin" ||
+              (actor.role === "admin" && estimate.assignedAdminId === actor.id))
         }
       : null,
     createdAt: project.createdAt

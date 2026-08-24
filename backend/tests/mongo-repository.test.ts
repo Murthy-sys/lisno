@@ -1405,7 +1405,18 @@ describe("Mongo repository contracts", () => {
     const estimateFind = vi.spyOn(EstimateModel, "find").mockReturnValueOnce(
       estimateQuery as never
     );
-    const roundQuery = yieldingRecordedQuery([], "review-round-join", execution);
+    const roundQuery = yieldingRecordedQuery([{
+      _id: "round-admin-page",
+      estimateId: "estimate-admin-page",
+      sendGeneration: 2,
+      estimateVersion: 4,
+      version: 3,
+      deliveryStatus: "sent",
+      deliveryAttemptCount: 1,
+      deliveredAt: new Date("2026-08-24T09:00:00.000Z"),
+      status: "pending",
+      assignedAdminId: "admin-page"
+    }], "review-round-join", execution);
     const roundFind = vi.spyOn(EstimateClientReviewRoundModel, "find")
       .mockReturnValueOnce(roundQuery as never);
     const admin = {
@@ -1434,8 +1445,17 @@ describe("Mongo repository contracts", () => {
           id: "estimate-admin-page",
           status: "draft",
           total: 118000,
-          clientReview: null,
-          hasPendingClientResponseTask: false
+          clientReview: {
+            id: "round-admin-page",
+            sendGeneration: 2,
+            estimateVersion: 4,
+            version: 3,
+            deliveryStatus: "sent",
+            deliveryAttemptCount: 1,
+            deliveredAt: "2026-08-24T09:00:00.000Z",
+            status: "pending"
+          },
+          hasPendingClientResponseTask: true
         }
       })]
     });
@@ -1486,7 +1506,8 @@ describe("Mongo repository contracts", () => {
       deliveryStatus: 1,
       deliveryAttemptCount: 1,
       deliveredAt: 1,
-      status: 1
+      status: 1,
+      assignedAdminId: 1
     });
     expect(roundQuery.sort).toHaveBeenCalledWith({
       estimateId: 1,
