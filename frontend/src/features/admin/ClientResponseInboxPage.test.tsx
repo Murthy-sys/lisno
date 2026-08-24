@@ -1,4 +1,4 @@
-import { screen, waitFor, within } from "@testing-library/react";
+import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { describe, expect, it } from "vitest";
@@ -172,6 +172,68 @@ describe("ClientResponseInboxPage", () => {
         "?limit=20&offset=0"
       ])
     );
+  });
+
+  it("locks both pagination controls until the requested page becomes canonical", async () => {
+    installAdmin();
+    const requests: string[] = [];
+    let releaseSecondPage!: () => void;
+    const secondPageGate = new Promise<void>((resolve) => {
+      releaseSecondPage = resolve;
+    });
+    server.use(
+      http.get("/api/v1/admin/estimate-client-response-tasks", async ({ request }) => {
+        const url = new URL(request.url);
+        const offset = Number(url.searchParams.get("offset"));
+        requests.push(url.search);
+        if (offset === 20) await secondPageGate;
+        return HttpResponse.json(
+          page(
+            [
+              {
+                ...pendingTask,
+                id: `round-${offset}`,
+                client: {
+                  ...pendingTask.client,
+                  name: offset === 0 ? "First page Client" : "Second page Client"
+                }
+              }
+            ],
+            {
+              offset,
+              total: 40,
+              hasMore: offset === 0
+            }
+          )
+        );
+      })
+    );
+    const user = userEvent.setup();
+
+    renderApp(["/admin/client-responses"]);
+    expect(await screen.findByText("First page Client")).toBeVisible();
+    const next = screen.getByRole("button", { name: "Next page" });
+    await user.click(next);
+    await waitFor(() =>
+      expect(requests).toContain("?status=pending&limit=20&offset=20")
+    );
+
+    try {
+      expect(screen.getByRole("button", { name: "Previous page" })).toBeDisabled();
+      expect(screen.getByRole("button", { name: "Next page" })).toBeDisabled();
+      await user.click(screen.getByRole("button", { name: "Next page" }));
+      expect(requests).toEqual([
+        "?status=pending&limit=20&offset=0",
+        "?status=pending&limit=20&offset=20"
+      ]);
+    } finally {
+      await act(async () => releaseSecondPage());
+    }
+
+    expect(await screen.findByText("Second page Client")).toBeVisible();
+    expect(screen.getByText("Showing 21–21 of 40")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Previous page" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Next page" })).toBeDisabled();
   });
 
   it("shows persisted delivery/task states, timestamps, and encoded detail links", async () => {

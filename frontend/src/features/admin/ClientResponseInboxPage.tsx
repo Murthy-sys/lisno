@@ -105,6 +105,8 @@ export function ClientResponseInboxPage() {
     currentTask?.status === "pending" &&
       currentTask.version === selected?.task.version
   );
+  const paginationIsLocked =
+    taskQuery.isFetching || taskQuery.isPlaceholderData;
   const canDecide = hasFrontendPermission(
     auth.authorization,
     "estimation.client_response_tasks.decide"
@@ -268,7 +270,7 @@ export function ClientResponseInboxPage() {
               <Button
                 size="compact"
                 variant="quiet"
-                disabled={pagination.offset === 0}
+                disabled={paginationIsLocked || pagination.offset === 0}
                 onClick={() =>
                   setPagination((current) => ({
                     ...current,
@@ -281,7 +283,7 @@ export function ClientResponseInboxPage() {
               <Button
                 size="compact"
                 variant="secondary"
-                disabled={!page.pagination.hasMore}
+                disabled={paginationIsLocked || !page.pagination.hasMore}
                 onClick={() =>
                   setPagination((current) => ({
                     ...current,

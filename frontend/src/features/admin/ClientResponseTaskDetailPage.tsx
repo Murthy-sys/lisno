@@ -61,12 +61,16 @@ function decisionSourceLabel(
 }
 
 type Decision = "approve" | "request_changes";
+type SelectedDecision = {
+  decision: Decision;
+  task: EstimateClientResponseTaskDetail;
+};
 
 export function ClientResponseTaskDetailPage() {
   const { roundId = "" } = useParams();
   const auth = useAuth();
   const headingRef = useRef<HTMLHeadingElement>(null);
-  const [decision, setDecision] = useState<Decision | null>(null);
+  const [selected, setSelected] = useState<SelectedDecision | null>(null);
   const taskQuery = useQuery({
     queryKey: estimateClientResponseKeys.detail(roundId),
     queryFn: () => getEstimateClientResponse(roundId),
@@ -109,6 +113,12 @@ export function ClientResponseTaskDetailPage() {
 
   const presentation = statusPresentation[task.status];
   const pendingDecision = task.status === "pending" && canDecide;
+  const selectedTaskIsCurrent = Boolean(
+    selected?.task.id === task.id &&
+      selected.task.status === task.status &&
+      selected.task.version === task.version &&
+      task.status === "pending"
+  );
 
   return (
     <section
@@ -127,10 +137,14 @@ export function ClientResponseTaskDetailPage() {
         actions={
           pendingDecision ? (
             <>
-              <Button onClick={() => setDecision("approve")}>Approve</Button>
+              <Button onClick={() => setSelected({ decision: "approve", task })}>
+                Approve
+              </Button>
               <Button
                 variant="destructive"
-                onClick={() => setDecision("request_changes")}
+                onClick={() =>
+                  setSelected({ decision: "request_changes", task })
+                }
               >
                 Reject
               </Button>
@@ -236,13 +250,13 @@ export function ClientResponseTaskDetailPage() {
         </dl>
       </Surface>
 
-      {decision ? (
+      {selected ? (
         <ClientResponseDecisionDialog
-          task={task}
-          decision={decision}
-          isCurrentRow={task.status === "pending"}
+          task={selected.task}
+          decision={selected.decision}
+          isCurrentRow={selectedTaskIsCurrent}
           onSaved={() => undefined}
-          onClose={() => setDecision(null)}
+          onClose={() => setSelected(null)}
           returnFocusRef={headingRef}
         />
       ) : null}

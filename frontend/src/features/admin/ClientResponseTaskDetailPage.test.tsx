@@ -1,4 +1,4 @@
-import { screen, within } from "@testing-library/react";
+import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { describe, expect, it } from "vitest";
@@ -132,6 +132,78 @@ describe("ClientResponseTaskDetailPage", () => {
     expect(screen.getByRole("button", { name: "Approve" })).toBeVisible();
     expect(screen.getByRole("button", { name: "Reject" })).toBeVisible();
     expect(screen.queryByRole("button", { name: "Download decision proof" })).not.toBeInTheDocument();
+  });
+
+  it("keeps an open decision pinned to its selected task version after a pending refetch", async () => {
+    installAdmin();
+    let detailRequests = 0;
+    let decisionPosts = 0;
+    let releaseRefresh!: () => void;
+    const refreshGate = new Promise<void>((resolve) => {
+      releaseRefresh = resolve;
+    });
+    server.use(
+      http.get("/api/v1/admin/estimate-client-response-tasks/round-1", async () => {
+        detailRequests += 1;
+        if (detailRequests === 1) {
+          return HttpResponse.json({ data: pendingDetail });
+        }
+        await refreshGate;
+        return HttpResponse.json({
+          data: {
+            ...pendingDetail,
+            version: 4,
+            deliveryAttemptCount: 2
+          }
+        });
+      }),
+      http.post(
+        "/api/v1/admin/estimate-client-response-tasks/round-1/decision",
+        () => {
+          decisionPosts += 1;
+          return HttpResponse.json({ data: {} });
+        }
+      )
+    );
+    const user = userEvent.setup();
+    const { queryClient } = renderApp(["/admin/client-responses/round-1"]);
+
+    await user.click(await screen.findByRole("button", { name: "Approve" }));
+    const dialog = screen.getByRole("dialog", { name: "Approve Client response" });
+    await user.upload(
+      within(dialog).getByLabelText("Decision proof"),
+      new File(["proof"], "proof.pdf", { type: "application/pdf" })
+    );
+
+    let refresh: Promise<void> | undefined;
+    act(() => {
+      refresh = queryClient.invalidateQueries({
+        queryKey: ["estimate-client-responses", "detail", "round-1"]
+      });
+    });
+    await waitFor(() => expect(detailRequests).toBe(2));
+    expect(within(dialog).getByRole("button", { name: "Approve" })).toBeEnabled();
+
+    await act(async () => {
+      releaseRefresh();
+      await refresh;
+    });
+    await waitFor(() =>
+      expect(screen.getByText("Delivery attempts").parentElement).toHaveTextContent(
+        "Delivery attempts2"
+      )
+    );
+
+    expect(within(dialog).getByText("Task version").parentElement).toHaveTextContent(
+      "Task version3"
+    );
+    expect(
+      within(dialog).getByText("This task is no longer pending in the current inbox view.")
+    ).toBeVisible();
+    const approve = within(dialog).getByRole("button", { name: "Approve" });
+    expect(approve).toBeDisabled();
+    await user.click(approve);
+    expect(decisionPosts).toBe(0);
   });
 
   it("renders a terminal task read-only with its persisted decision and proof", async () => {
