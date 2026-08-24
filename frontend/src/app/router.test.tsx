@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { FolderKanban } from "lucide-react";
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -48,6 +49,41 @@ const nonAdminClientResponsePresentationCases = ROLE_CODES
     [role, "/admin/client-responses"],
     [role, "/admin/client-responses/round-1"]
   ] as const);
+
+const historicalProtectedPaths = [
+  "/designer",
+  "/designer/projects/:projectId",
+  "/manager",
+  "/manager/designers/:designerId",
+  "/manager/projects/:projectId",
+  "/head",
+  "/head/designers/:designerId",
+  "/head/projects/:projectId",
+  "/estimator-sales",
+  "/estimator-sales/leads/:leadId",
+  "/estimator-sales/leads/:leadId/estimate",
+  "/client",
+  "/client/projects/:projectId",
+  "/admin/projects",
+  "/admin/projects/:projectId",
+  "/admin/users",
+  "/admin/access-requests",
+  "/access-requests/mine",
+  "/home",
+  "/access-denied"
+] as const;
+
+const clientResponsePaths = [
+  "/admin/client-responses",
+  "/admin/client-responses/:roundId"
+] as const;
+
+const estimateResponsePermissions = [
+  "estimation.client_response_tasks.read",
+  "estimation.client_response_tasks.decide",
+  "estimation.client_response_proof.read",
+  "estimation.estimate_email.retry"
+] as const satisfies readonly PermissionCode[];
 
 function deferred() {
   let resolve!: () => void;
@@ -394,6 +430,55 @@ describe("public invitation route", () => {
 });
 
 describe("registered permission routes", () => {
+  it("adds only the two Admin response routes and preserves both Client route contracts", () => {
+    const paths = ROUTE_REGISTRY.map(({ path }) => path);
+    const additions = paths.filter(
+      (path) => !(historicalProtectedPaths as readonly string[]).includes(path)
+    );
+
+    expect(paths).toHaveLength(historicalProtectedPaths.length + 2);
+    expect(additions).toEqual(clientResponsePaths);
+    expect(paths.filter(
+      (path) => !(clientResponsePaths as readonly string[]).includes(path)
+    )).toEqual(historicalProtectedPaths);
+    expect(ROUTE_REGISTRY.filter(({ path }) => path.startsWith("/client")))
+      .toEqual([
+        {
+          path: "/client",
+          permission: "projects.client_summary.read",
+          presentationRoles: ["client"],
+          navigation: {
+            roles: ["client"],
+            item: {
+              label: "My projects",
+              to: "/client",
+              end: true,
+              icon: FolderKanban
+            }
+          }
+        },
+        {
+          path: "/client/projects/:projectId",
+          permission: "projects.read",
+          presentationRoles: ["client"],
+          navigation: null
+        }
+      ]);
+
+    const clientAuthorization = authorizationFor("client");
+    for (const permission of estimateResponsePermissions) {
+      expect(clientAuthorization.permissions).not.toContain(permission);
+    }
+    expect(
+      ROUTE_REGISTRY.filter(
+        ({ permission, presentationRoles }) =>
+          (presentationRoles as readonly string[]).includes("client") &&
+          permission !== null &&
+          (estimateResponsePermissions as readonly string[]).includes(permission)
+      )
+    ).toEqual([]);
+  });
+
   it("registers only the list route in Admin navigation and keeps detail non-navigation", () => {
     expect(
       ROUTE_REGISTRY.filter(({ path }) => path.startsWith("/admin/client-responses"))

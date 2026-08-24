@@ -1,6 +1,13 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import axe from "axe-core";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { HttpResponse, http } from "msw";
 import { StrictMode } from "react";
@@ -15,6 +22,10 @@ import {
   type Role
 } from "../api/authorization-contract";
 import type {
+  EstimateClientResponseDecisionResult,
+  EstimateClientResponseTaskDetail,
+  EstimateClientResponseTaskListItem,
+  EstimateClientReviewSummary,
   UserInvitationItem,
   UserInvitationPage
 } from "../api/types";
@@ -28,6 +39,7 @@ import { server } from "./server";
 import { UserInvitationsPanel } from "../features/admin/UserInvitationsPanel";
 import { DesignUploadsWorkspace } from "../features/designer/DesignUploadsWorkspace";
 import { DesignSectionReview } from "../features/client/DesignSectionReview";
+import { EstimateDeliveryStatus } from "../features/leads/EstimateDeliveryStatus";
 
 const userFor = (role: Role) => ({ id: `${role}-1`, name: "Accessible Person", email: `${role}@lisno.example`, role });
 
@@ -124,6 +136,75 @@ const accessibleInvitation: UserInvitationItem = {
   updatedAt: "2026-08-23T10:00:01.000Z"
 };
 
+const accessibleResponseTask: EstimateClientResponseTaskListItem = {
+  id: "round-accessible",
+  version: 3,
+  sendGeneration: 2,
+  project: { id: "project-response-accessible", name: "Accessible villa" },
+  client: { name: "Priya Shah", email: "priya@example.com" },
+  estimate: { id: "estimate-accessible", version: 4, total: 1416 },
+  assignedAdmin: { id: "admin-response-accessible", name: "Meera Admin" },
+  deliveryStatus: "sent",
+  deliveryAttemptCount: 1,
+  deliveryAttemptedAt: "2026-08-23T10:00:01.000Z",
+  deliveredAt: "2026-08-23T10:00:02.000Z",
+  status: "pending",
+  decision: null,
+  proofAvailable: false,
+  createdAt: "2026-08-23T10:00:00.000Z"
+};
+
+const accessibleResponseDetail: EstimateClientResponseTaskDetail = {
+  ...accessibleResponseTask,
+  estimateSnapshot: {
+    clientName: "Priya Shah",
+    projectName: "Accessible villa",
+    location: "Bengaluru",
+    propertyType: "Villa",
+    lineItems: [{
+      catalogueId: "FC01",
+      roomName: "Living room",
+      specification: "Premium finish",
+      unit: "sqft",
+      rate: 120,
+      quantity: 10,
+      included: true,
+      amount: 1200
+    }],
+    subtotal: 1200,
+    gst: 216,
+    total: 1416
+  },
+  pdf: {
+    filename: "accessible-estimate-v4.pdf",
+    mimeType: "application/pdf",
+    byteSize: 2048,
+    sha256: "a".repeat(64)
+  },
+  decisionSource: null,
+  decisionNote: null,
+  decidedAt: null
+};
+
+const accessibleDecisionResult: EstimateClientResponseDecisionResult = {
+  estimate: {
+    id: "estimate-accessible",
+    status: "client_changes_requested",
+    version: 5,
+    projectId: "project-response-accessible"
+  },
+  clientReview: {
+    id: "round-accessible",
+    sendGeneration: 2,
+    estimateVersion: 4,
+    version: 4,
+    deliveryStatus: "sent",
+    deliveryAttemptCount: 1,
+    deliveredAt: "2026-08-23T10:00:02.000Z",
+    status: "changes_requested"
+  }
+};
+
 function invitationPage(): UserInvitationPage {
   return {
     items: [
@@ -150,6 +231,113 @@ function deferredResponse() {
     resolve = complete;
   });
   return { promise, resolve };
+}
+
+class AccessibleXMLHttpRequest {
+  static instances: AccessibleXMLHttpRequest[] = [];
+
+  upload: { onprogress: ((event: ProgressEvent) => void) | null } = {
+    onprogress: null
+  };
+  onload: (() => void) | null = null;
+  onerror: (() => void) | null = null;
+  onabort: (() => void) | null = null;
+  status = 0;
+  responseText = "";
+  method = "";
+  url = "";
+  sentBody: XMLHttpRequestBodyInit | Document | null = null;
+  headers = new Headers();
+
+  constructor() {
+    AccessibleXMLHttpRequest.instances.push(this);
+  }
+
+  open(method: string, url: string) {
+    this.method = method;
+    this.url = url;
+  }
+
+  setRequestHeader(name: string, value: string) {
+    this.headers.set(name, value);
+  }
+
+  send(body: XMLHttpRequestBodyInit | Document | null) {
+    this.sentBody = body;
+  }
+
+  reportProgress(loaded: number, total: number) {
+    this.upload.onprogress?.({
+      lengthComputable: true,
+      loaded,
+      total
+    } as ProgressEvent);
+  }
+
+  respond(status: number, body: unknown) {
+    this.status = status;
+    this.responseText = JSON.stringify(body);
+    this.onload?.();
+  }
+}
+
+const clientResponsePermissions = [
+  "identity.self.read",
+  "identity.authorization.read",
+  "estimation.client_response_tasks.read",
+  "estimation.client_response_tasks.decide",
+  "estimation.client_response_proof.read"
+] as const satisfies readonly PermissionCode[];
+
+function installAccessibleResponseAdmin() {
+  tokenStorage.set("admin-response-accessibility-token");
+  server.use(
+    http.get("/api/v1/auth/me", () =>
+      HttpResponse.json({
+        data: {
+          id: "admin-response-accessible",
+          name: "Meera Admin",
+          email: "meera@lisno.example",
+          role: "admin"
+        }
+      })
+    ),
+    http.get("/api/v1/auth/authorization", () =>
+      HttpResponse.json({
+        data: authorizationFor("admin", clientResponsePermissions)
+      })
+    )
+  );
+}
+
+function responseTaskPage(items: EstimateClientResponseTaskListItem[]) {
+  return {
+    data: {
+      items,
+      pagination: {
+        limit: 20,
+        offset: 0,
+        total: items.length,
+        hasMore: false
+      }
+    }
+  };
+}
+
+function estimateReview(
+  overrides: Partial<EstimateClientReviewSummary> = {}
+): EstimateClientReviewSummary {
+  return {
+    id: "round-delivery-accessible",
+    sendGeneration: 1,
+    estimateVersion: 4,
+    version: 3,
+    deliveryStatus: "failed",
+    deliveryAttemptCount: 1,
+    deliveredAt: null,
+    status: "pending",
+    ...overrides
+  };
 }
 
 function renderInvitationAcceptance(hash = `#token=${invitationToken}`) {
@@ -187,6 +375,8 @@ function renderInvitationAcceptance(hash = `#token=${invitationToken}`) {
 
 afterEach(() => {
   window.history.replaceState(null, "", "/");
+  AccessibleXMLHttpRequest.instances = [];
+  vi.unstubAllGlobals();
 });
 
 function fixtureFetch(
@@ -920,5 +1110,286 @@ describe("accessibility smoke coverage", () => {
     await expectNoAxeViolations();
     await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
     expect(revoke).toHaveFocus();
+  });
+
+  it("keeps the Admin response inbox accessible through loading, narrow content, and a stale terminal refresh", async () => {
+    vi.stubGlobal("XMLHttpRequest", AccessibleXMLHttpRequest);
+    installAccessibleResponseAdmin();
+    const initialResponse = deferredResponse();
+    let firstRequest = true;
+    let currentTask = accessibleResponseTask;
+    server.use(
+      http.get(
+        "/api/v1/admin/estimate-client-response-tasks",
+        () => {
+          if (firstRequest) {
+            firstRequest = false;
+            return initialResponse.promise;
+          }
+          return HttpResponse.json(responseTaskPage([currentTask]));
+        }
+      )
+    );
+    const user = userEvent.setup();
+    const narrowContainer = document.createElement("div");
+    narrowContainer.style.width = "320px";
+    document.body.append(narrowContainer);
+
+    renderApp(["/admin/client-responses"], { container: narrowContainer });
+    const inbox = await screen.findByRole("region", {
+      name: "Client responses"
+    });
+    expect(inbox).toHaveAttribute("aria-busy", "true");
+    await expectNoAxeViolations();
+
+    initialResponse.resolve(
+      HttpResponse.json(responseTaskPage([accessibleResponseTask]))
+    );
+    const table = await screen.findByRole("table", {
+      name: "Client response tasks"
+    });
+    expect(narrowContainer).toHaveStyle({ width: "320px" });
+    expect(within(table).getByText("Accessible villa")).toBeVisible();
+    expect(inbox).toHaveAttribute("aria-busy", "false");
+    await expectNoAxeViolations();
+
+    await user.click(
+      within(table).getByRole("button", {
+        name: "Approve Priya Shah response"
+      })
+    );
+    const dialog = screen.getByRole("dialog", {
+      name: "Approve Client response"
+    });
+    const approvalProof = within(dialog).getByLabelText(
+      "Decision proof"
+    ) as HTMLInputElement;
+    await user.upload(
+      approvalProof,
+      new File(["proof"], "client-approval.pdf", {
+        type: "application/pdf"
+      })
+    );
+    expect(approvalProof.files).toHaveLength(1);
+    await user.click(within(dialog).getByRole("button", { name: "Approve" }));
+    expect(
+      within(dialog).queryByText("Upload proof of the Client's decision.")
+    ).not.toBeInTheDocument();
+    await waitFor(() =>
+      expect(AccessibleXMLHttpRequest.instances).toHaveLength(1)
+    );
+
+    currentTask = {
+      ...accessibleResponseTask,
+      version: 4,
+      status: "approved",
+      decision: "approve",
+      proofAvailable: true
+    };
+    await act(async () => {
+      AccessibleXMLHttpRequest.instances[0]!.respond(409, {
+        error: {
+          code: "VERSION_CONFLICT",
+          message: "The task changed elsewhere."
+        }
+      });
+    });
+
+    expect(
+      await within(dialog).findByText(
+        "This task is no longer pending in the current inbox view."
+      )
+    ).toBeVisible();
+    expect(within(dialog).getByRole("button", { name: "Approve" })).toBeDisabled();
+    expect(await within(table).findByText("Approved")).toBeVisible();
+    expect(AccessibleXMLHttpRequest.instances).toHaveLength(1);
+    await expectNoAxeViolations();
+  });
+
+  it("keeps a terminal response detail and its visible download error accessible", async () => {
+    installAccessibleResponseAdmin();
+    const terminalDetail: EstimateClientResponseTaskDetail = {
+      ...accessibleResponseDetail,
+      version: 4,
+      status: "changes_requested",
+      decision: "request_changes",
+      proofAvailable: true,
+      decisionSource: "admin_proof",
+      decisionNote: "Please revise the living-room finish.",
+      decidedAt: "2026-08-24T08:30:00.000Z"
+    };
+    server.use(
+      http.get(
+        "/api/v1/admin/estimate-client-response-tasks/round-accessible",
+        () => HttpResponse.json({ data: terminalDetail })
+      ),
+      http.get(
+        "/api/v1/admin/estimate-client-response-tasks/round-accessible/pdf",
+        () =>
+          HttpResponse.json(
+            {
+              error: {
+                code: "NOT_FOUND",
+                message: "The requested resource was not found."
+              }
+            },
+            { status: 404 }
+          )
+      )
+    );
+    const user = userEvent.setup();
+
+    renderApp(["/admin/client-responses/round-accessible"]);
+    expect(
+      await screen.findByRole("heading", { name: "Priya Shah response" })
+    ).toBeVisible();
+    expect(screen.getByText("Please revise the living-room finish.")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Approve" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Reject" })).not.toBeInTheDocument();
+    await expectNoAxeViolations();
+
+    await user.click(
+      screen.getByRole("button", { name: "Download exact estimate PDF" })
+    );
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "This task's exact estimate PDF could not be downloaded."
+    );
+    await expectNoAxeViolations();
+  });
+
+  it("traps and restores decision focus, focuses validation, and announces upload success", async () => {
+    vi.stubGlobal("XMLHttpRequest", AccessibleXMLHttpRequest);
+    installAccessibleResponseAdmin();
+    server.use(
+      http.get(
+        "/api/v1/admin/estimate-client-response-tasks/round-accessible",
+        () => HttpResponse.json({ data: accessibleResponseDetail })
+      )
+    );
+    const user = userEvent.setup();
+
+    renderApp(["/admin/client-responses/round-accessible"]);
+    const heading = await screen.findByRole("heading", {
+      name: "Priya Shah response"
+    });
+    const trigger = screen.getByRole("button", { name: "Reject" });
+    await user.click(trigger);
+    let dialog = screen.getByRole("dialog", {
+      name: "Reject Client response"
+    });
+    const reason = within(dialog).getByRole("textbox", { name: "Reason" });
+    await waitFor(() => expect(reason).toHaveFocus());
+
+    const close = within(dialog).getByRole("button", {
+      name: "Close Reject Client response"
+    });
+    const reject = within(dialog).getByRole("button", { name: "Reject" });
+    close.focus();
+    fireEvent.keyDown(document, { key: "Tab", shiftKey: true });
+    expect(reject).toHaveFocus();
+    fireEvent.keyDown(document, { key: "Tab" });
+    expect(close).toHaveFocus();
+
+    await user.click(reject);
+    expect(reason).toHaveFocus();
+    expect(within(dialog).getByText("Explain what the Client wants changed."))
+      .toBeVisible();
+    expect(within(dialog).getByText("Upload proof of the Client's decision."))
+      .toBeVisible();
+    expect(AccessibleXMLHttpRequest.instances).toHaveLength(0);
+    await expectNoAxeViolations();
+
+    await user.keyboard("{Escape}");
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("dialog", { name: "Reject Client response" })
+      ).not.toBeInTheDocument()
+    );
+    expect(trigger).toHaveFocus();
+
+    await user.click(trigger);
+    dialog = screen.getByRole("dialog", { name: "Reject Client response" });
+    await user.type(
+      within(dialog).getByRole("textbox", { name: "Reason" }),
+      "Please revise the finish."
+    );
+    const decisionProof = within(dialog).getByLabelText(
+      "Decision proof"
+    ) as HTMLInputElement;
+    await user.upload(
+      decisionProof,
+      new File(["proof bytes"], "client-response.webp", {
+        type: "image/webp"
+      })
+    );
+    expect(decisionProof.files).toHaveLength(1);
+    await user.click(within(dialog).getByRole("button", { name: "Reject" }));
+    expect(
+      within(dialog).queryByText("Upload proof of the Client's decision.")
+    ).not.toBeInTheDocument();
+    await waitFor(() =>
+      expect(AccessibleXMLHttpRequest.instances).toHaveLength(1)
+    );
+    const upload = AccessibleXMLHttpRequest.instances[0]!;
+    act(() => upload.reportProgress(1, 2));
+
+    const progress = await within(dialog).findByRole("progressbar", {
+      name: "Decision proof upload"
+    });
+    expect(progress).toHaveAttribute("aria-valuemin", "0");
+    expect(progress).toHaveAttribute("aria-valuemax", "100");
+    expect(progress).toHaveAttribute("aria-valuenow", "50");
+    expect(within(dialog).getByRole("button", { name: "Recording decision…" }))
+      .toHaveAttribute("aria-busy", "true");
+    await expectNoAxeViolations();
+
+    await act(async () => {
+      upload.respond(200, { data: accessibleDecisionResult });
+    });
+    expect(
+      await screen.findByRole("status", { name: "Application announcements" })
+    ).toHaveTextContent("Client response recorded.");
+    await waitFor(() => expect(heading).toHaveFocus());
+    expect(
+      screen.queryByRole("dialog", { name: "Reject Client response" })
+    ).not.toBeInTheDocument();
+    expect(AccessibleXMLHttpRequest.instances).toHaveLength(1);
+  });
+
+  it("keeps failed and sent Estimator delivery states live and accessible", async () => {
+    const failed = renderWithQuery(
+      <EstimateDeliveryStatus
+        review={estimateReview()}
+        retrying={false}
+        onRetry={vi.fn()}
+      />
+    );
+    let delivery = screen.getByRole("region", {
+      name: "Estimate email delivery"
+    });
+    expect(within(delivery).getByRole("alert")).toHaveTextContent(
+      "Email delivery failed"
+    );
+    expect(within(delivery).getByRole("button", { name: "Retry email" }))
+      .toBeEnabled();
+    await expectNoAxeViolations();
+
+    failed.unmount();
+    renderWithQuery(
+      <EstimateDeliveryStatus
+        review={estimateReview({
+          deliveryStatus: "sent",
+          deliveredAt: "2026-08-24T15:30:00.000Z"
+        })}
+        retrying={false}
+        onRetry={vi.fn()}
+      />
+    );
+    delivery = screen.getByRole("region", { name: "Estimate email delivery" });
+    expect(within(delivery).getByRole("status")).toHaveTextContent("Email sent");
+    expect(within(delivery).getByText("24 Aug 2026, 15:30")).toBeVisible();
+    expect(within(delivery).queryByRole("button", { name: "Retry email" }))
+      .not.toBeInTheDocument();
+    await expectNoAxeViolations();
   });
 });
