@@ -1,16 +1,30 @@
-import type mongoose from "mongoose";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import mongoose from "mongoose";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi
+} from "vitest";
 
+import { sha256Hex } from "../src/domain/estimate-client-review.js";
 import { ApiError } from "../src/middleware/errors.js";
 import { EstimateModel } from "../src/models/Estimate.js";
+import { EstimateClientResponseProofModel } from "../src/models/EstimateClientResponseProof.js";
 import { EstimateClientReviewRoundModel } from "../src/models/EstimateClientReviewRound.js";
+import { LeadModel } from "../src/models/Lead.js";
 import { ProjectAccessGrantModel } from "../src/models/ProjectAccessGrant.js";
+import { ProjectModel } from "../src/models/Project.js";
 import { UserModel } from "../src/models/User.js";
 import {
   createEstimateClientReviewService
 } from "../src/services/estimate-client-review.service.js";
 import type { EstimateClientReviewStorage } from "../src/services/estimate-client-review-storage.js";
 import type { PublicUser } from "../src/services/auth.service.js";
+import { startMongoReplicaSet } from "./helpers/mongo-replica-set.js";
 
 const NOW = new Date("2026-08-24T10:00:00.000Z");
 const LATER = new Date("2026-08-24T11:00:00.000Z");
@@ -132,6 +146,7 @@ function detailRow() {
     },
     decisionSource: null,
     decisionNote: null,
+    decidedBy: null,
     decidedAt: null
   };
 }
@@ -387,7 +402,9 @@ describe("estimate client review scoped queries", () => {
     );
     const aggregateSpy = vi
       .spyOn(EstimateClientReviewRoundModel, "aggregate")
-      .mockReturnValue(aggregateResult([{ id: "round-3", version: 4 }]) as never);
+      .mockReturnValue(
+        aggregateResult([{ id: "round-3", version: 4, scopeMatches: true }]) as never
+      );
     const service = createEstimateClientReviewService({ storage: storageDouble() });
 
     await expect(
@@ -537,5 +554,579 @@ describe("estimate client review scoped queries", () => {
       service.readProof(actors.admin, "foreign-round").catch((value) => value)
     ]);
     errors.forEach(expectSafeNotFound);
+  });
+});
+
+const MONGO_NOW = new Date("2026-08-24T12:00:00.000Z");
+const MONGO_LATER = new Date("2026-08-24T13:00:00.000Z");
+let replica: Awaited<ReturnType<typeof startMongoReplicaSet>>;
+
+async function seedMongoUser(input: {
+  id: string;
+  role: PublicUser["role"];
+  active?: boolean;
+  email?: string;
+  name?: string;
+}): Promise<PublicUser> {
+  const email = input.email ?? `${input.id}@review.test`;
+  const user = {
+    id: input.id,
+    name: input.name ?? input.id,
+    email,
+    role: input.role
+  } satisfies PublicUser;
+  await UserModel.create({
+    _id: user.id,
+    name: user.name,
+    email: user.email,
+    emailNormalized: user.email.trim().toLowerCase(),
+    passwordHash: "unused",
+    role: user.role,
+    active: input.active ?? true,
+    accountKind: "standard",
+    version: 1,
+    managerId: null,
+    authorizedClientIds: [],
+    createdAt: MONGO_NOW,
+    updatedAt: MONGO_NOW
+  });
+  return user;
+}
+
+async function seedMongoGrant(input: {
+  id: string;
+  projectId: string;
+  userId: string;
+  module?: "projects" | "design";
+  active?: boolean;
+}) {
+  const active = input.active ?? true;
+  await ProjectAccessGrantModel.create({
+    _id: input.id,
+    projectId: input.projectId,
+    userId: input.userId,
+    module: input.module ?? "projects",
+    source: "admin_initiator",
+    accessRequestId: null,
+    grantedById: "system:review-test",
+    active,
+    grantedAt: MONGO_NOW,
+    revokedAt: active ? null : MONGO_LATER,
+    revokedById: active ? null : "system:review-test",
+    revocationReason: active ? null : "Test revocation",
+    createdAt: MONGO_NOW,
+    updatedAt: active ? MONGO_NOW : MONGO_LATER
+  });
+}
+
+async function seedMongoProject(id: string, name = id) {
+  await ProjectModel.create({
+    _id: id,
+    name,
+    clientId: null,
+    clientName: "Priya Client",
+    clientEmail: "client@example.com",
+    clientEmailNormalized: "client@example.com",
+    clientMobile: "9000000000",
+    clientAddress: "Bengaluru",
+    initiatingDesignerId: null,
+    assignedEstimatorId: null,
+    assignedDesignerIds: [],
+    managerId: null,
+    status: "active",
+    location: "Bengaluru",
+    plannedStartAt: MONGO_NOW,
+    plannedEndAt: new Date("2026-09-24T12:00:00.000Z"),
+    actualStartAt: null,
+    actualEndAt: null,
+    createdAt: MONGO_NOW,
+    updatedAt: MONGO_NOW
+  });
+}
+
+async function seedMongoLeadEstimate(input: {
+  leadId: string;
+  estimateId: string;
+  ownerId: string;
+  clientEmail?: string;
+}) {
+  const clientEmail = input.clientEmail ?? "client@example.com";
+  await LeadModel.create({
+    _id: input.leadId,
+    projectId: null,
+    ownerId: input.ownerId,
+    clientName: "Priya Client",
+    clientEmail,
+    clientMobile: "9000000000",
+    projectName: "Aurora Villa",
+    location: "Bengaluru",
+    propertyType: "Villa",
+    budgetMin: null,
+    budgetMax: null,
+    source: "review-test",
+    stage: "estimate_sent",
+    nextAction: "Await Client response",
+    nextActionAt: MONGO_LATER,
+    builder: null,
+    areaSqft: null,
+    targetHandoverAt: null,
+    notes: null,
+    latestActivityAt: MONGO_NOW,
+    createdAt: MONGO_NOW,
+    updatedAt: MONGO_NOW
+  });
+  await EstimateModel.create({
+    _id: input.estimateId,
+    leadId: input.leadId,
+    ownerId: input.ownerId,
+    version: 1,
+    designLifecycleVersion: 0,
+    designFrozenAt: null,
+    designLifecycleUpdatedAt: null,
+    status: "sent_to_client",
+    propertyType: "Villa",
+    rooms: [],
+    scopes: [],
+    lineItems: [],
+    subtotal: 1200,
+    gst: 216,
+    total: 1416,
+    approvalRequired: false,
+    assignedManagerId: null,
+    assignedDesignerId: null,
+    submittedAt: MONGO_NOW,
+    sentToClientAt: MONGO_NOW,
+    clientDecisionAt: null,
+    projectId: null,
+    reviews: [],
+    notifications: [],
+    createdAt: MONGO_NOW,
+    updatedAt: MONGO_NOW
+  });
+}
+
+function mongoSnapshot() {
+  return {
+    clientName: "Priya Client",
+    projectName: "Aurora Villa",
+    location: "Bengaluru",
+    propertyType: "Villa",
+    lineItems: [
+      {
+        catalogueId: "catalogue-1",
+        roomName: "Living Room",
+        specification: "Premium finish",
+        unit: "sqft",
+        rate: 120,
+        quantity: 10,
+        included: true,
+        amount: 1200
+      }
+    ],
+    subtotal: 1200,
+    gst: 216,
+    total: 1416
+  };
+}
+
+async function seedMongoRound(input: {
+  id: string;
+  estimateId?: string;
+  leadId?: string;
+  projectId?: string | null;
+  assignedAdminId: string;
+  recipientEmail?: string;
+  sendGeneration?: number;
+  createdAt?: Date;
+  status?: "pending" | "approved" | "changes_requested";
+  decisionSource?: "admin_proof" | "client_portal";
+  decisionNote?: string;
+  decidedById?: string;
+  deliveryFailureCode?: string | null;
+}) {
+  const status = input.status ?? "pending";
+  const terminal = status === "pending"
+    ? {
+        decision: null,
+        decisionSource: null,
+        decisionNote: null,
+        decidedById: null,
+        decidedAt: null
+      }
+    : {
+        decision: status === "approved" ? "approve" : "request_changes",
+        decisionSource: input.decisionSource,
+        decisionNote: input.decisionNote ?? "",
+        decidedById: input.decidedById,
+        decidedAt: MONGO_LATER
+      };
+  await EstimateClientReviewRoundModel.create({
+    _id: input.id,
+    estimateId: input.estimateId ?? `estimate-${input.id}`,
+    leadId: input.leadId ?? `lead-${input.id}`,
+    projectId: input.projectId ?? null,
+    estimateVersion: 1,
+    sendGeneration: input.sendGeneration ?? 1,
+    dedupeKey: sha256Hex(`dedupe:${input.id}`),
+    recipientEmail: input.recipientEmail ?? "client@example.com",
+    recipientEmailNormalized: "model-normalizes-this@example.com",
+    estimateSnapshot: mongoSnapshot(),
+    pdfFilename: `${input.id}.pdf`,
+    pdfMimeType: "application/pdf",
+    pdfByteSize: 2048,
+    pdfSha256: sha256Hex(`pdf:${input.id}`),
+    pdfStorageReference: `private/${input.id}.pdf`,
+    deliveryStatus: input.deliveryFailureCode ? "failed" : "sent",
+    deliveryAttemptGeneration: 1,
+    deliveryAttemptCount: 1,
+    deliveryAttemptedAt: MONGO_NOW,
+    deliveryLeaseExpiresAt: null,
+    deliveredAt: input.deliveryFailureCode ? null : MONGO_NOW,
+    deliveryFailureCode: input.deliveryFailureCode ?? null,
+    assignedAdminId: input.assignedAdminId,
+    status,
+    ...terminal,
+    version: 1,
+    createdAt: input.createdAt ?? MONGO_NOW,
+    updatedAt: input.createdAt ?? MONGO_NOW
+  });
+}
+
+async function resolveMongoAssignee(
+  service: ReturnType<typeof createEstimateClientReviewService>,
+  projectId: string | null
+) {
+  const mongoSession = await mongoose.startSession();
+  try {
+    return await service.resolveReviewAssignee(projectId, mongoSession);
+  } finally {
+    await mongoSession.endSession();
+  }
+}
+
+describe.sequential("estimate client review Mongo-backed scope behavior", () => {
+  beforeAll(async () => {
+    replica = await startMongoReplicaSet("estimate_client_review_service");
+    await Promise.all([
+      UserModel.syncIndexes(),
+      ProjectAccessGrantModel.syncIndexes(),
+      ProjectModel.syncIndexes(),
+      LeadModel.syncIndexes(),
+      EstimateModel.syncIndexes(),
+      EstimateClientReviewRoundModel.syncIndexes(),
+      EstimateClientResponseProofModel.syncIndexes()
+    ]);
+  }, 120_000);
+
+  beforeEach(async () => {
+    vi.restoreAllMocks();
+    await replica.clear();
+  });
+
+  afterAll(async () => replica.stop());
+
+  it("resolves only an active Admin initiator and safely falls back for every ineligible grant", async () => {
+    await Promise.all([
+      seedMongoUser({ id: "mongo-super", role: "super_admin" }),
+      seedMongoUser({ id: "mongo-admin-active", role: "admin" }),
+      seedMongoUser({ id: "mongo-admin-inactive", role: "admin", active: false }),
+      seedMongoUser({ id: "mongo-admin-revoked", role: "admin" }),
+      seedMongoUser({ id: "mongo-admin-wrong-module", role: "admin" }),
+      seedMongoUser({ id: "mongo-estimator-grantee", role: "estimator_sales" })
+    ]);
+    await Promise.all([
+      seedMongoGrant({
+        id: "grant-active",
+        projectId: "project-active",
+        userId: "mongo-admin-active"
+      }),
+      seedMongoGrant({
+        id: "grant-inactive-user",
+        projectId: "project-inactive-user",
+        userId: "mongo-admin-inactive"
+      }),
+      seedMongoGrant({
+        id: "grant-revoked",
+        projectId: "project-revoked",
+        userId: "mongo-admin-revoked",
+        active: false
+      }),
+      seedMongoGrant({
+        id: "grant-wrong-module",
+        projectId: "project-wrong-module",
+        userId: "mongo-admin-wrong-module",
+        module: "design"
+      }),
+      seedMongoGrant({
+        id: "grant-wrong-role",
+        projectId: "project-wrong-role",
+        userId: "mongo-estimator-grantee"
+      })
+    ]);
+    const service = createEstimateClientReviewService({ storage: storageDouble() });
+
+    await expect(resolveMongoAssignee(service, "project-active")).resolves.toEqual({
+      assignedAdminId: "mongo-admin-active",
+      source: "admin_initiator"
+    });
+    for (const projectId of [
+      "project-inactive-user",
+      "project-revoked",
+      "project-wrong-module",
+      "project-wrong-role"
+    ]) {
+      await expect(resolveMongoAssignee(service, projectId)).resolves.toEqual({
+        assignedAdminId: "mongo-super",
+        source: "super_admin_fallback"
+      });
+    }
+  });
+
+  it("fails closed when two active Admin initiators are persisted for one project", async () => {
+    await Promise.all([
+      seedMongoUser({ id: "mongo-admin-one", role: "admin" }),
+      seedMongoUser({ id: "mongo-admin-two", role: "admin" })
+    ]);
+    await Promise.all([
+      seedMongoGrant({
+        id: "grant-one",
+        projectId: "project-ambiguous",
+        userId: "mongo-admin-one"
+      }),
+      seedMongoGrant({
+        id: "grant-two",
+        projectId: "project-ambiguous",
+        userId: "mongo-admin-two"
+      })
+    ]);
+    const service = createEstimateClientReviewService({ storage: storageDouble() });
+
+    await expect(
+      resolveMongoAssignee(service, "project-ambiguous")
+    ).rejects.toMatchObject({
+      status: 409,
+      code: "REVIEW_ASSIGNMENT_CONFLICT"
+    });
+  });
+
+  it("counts every scoped Admin row before returning one deterministic page item", async () => {
+    const admin = await seedMongoUser({ id: "mongo-admin", role: "admin" });
+    await Promise.all([
+      seedMongoUser({ id: "mongo-foreign-admin", role: "admin" }),
+      seedMongoProject("project-visible", "Visible project"),
+      seedMongoProject("project-unscoped", "Unscoped project")
+    ]);
+    await seedMongoGrant({
+      id: "grant-visible",
+      projectId: "project-visible",
+      userId: admin.id
+    });
+    await Promise.all([
+      seedMongoRound({
+        id: "round-visible-old",
+        projectId: "project-visible",
+        assignedAdminId: admin.id,
+        createdAt: MONGO_NOW
+      }),
+      seedMongoRound({
+        id: "round-visible-new",
+        projectId: "project-visible",
+        assignedAdminId: admin.id,
+        createdAt: MONGO_LATER
+      }),
+      seedMongoRound({
+        id: "round-unscoped-project",
+        projectId: "project-unscoped",
+        assignedAdminId: admin.id,
+        createdAt: MONGO_LATER
+      }),
+      seedMongoRound({
+        id: "round-foreign-assignment",
+        projectId: "project-visible",
+        assignedAdminId: "mongo-foreign-admin",
+        createdAt: MONGO_LATER
+      }),
+      seedMongoRound({
+        id: "round-projectless",
+        projectId: null,
+        assignedAdminId: admin.id,
+        createdAt: MONGO_LATER
+      })
+    ]);
+    const service = createEstimateClientReviewService({ storage: storageDouble() });
+
+    await expect(service.list(admin, {}, { limit: 1, offset: 0 })).resolves.toMatchObject({
+      items: [{ id: "round-visible-new" }],
+      total: 2
+    });
+  });
+
+  it("returns null only for a truly legacy Client estimate and 404 for an existing foreign-recipient latest round", async () => {
+    const client = await seedMongoUser({
+      id: "mongo-client",
+      role: "client",
+      email: "  CLIENT@Example.COM "
+    });
+    await seedMongoUser({ id: "mongo-estimator", role: "estimator_sales" });
+    await Promise.all([
+      seedMongoLeadEstimate({
+        leadId: "lead-foreign-round",
+        estimateId: "estimate-foreign-round",
+        ownerId: "mongo-estimator"
+      }),
+      seedMongoLeadEstimate({
+        leadId: "lead-legacy",
+        estimateId: "estimate-legacy",
+        ownerId: "mongo-estimator"
+      })
+    ]);
+    await seedMongoRound({
+      id: "round-latest-foreign-recipient",
+      estimateId: "estimate-foreign-round",
+      leadId: "lead-foreign-round",
+      assignedAdminId: "mongo-estimator",
+      recipientEmail: "foreign@example.com",
+      sendGeneration: 1
+    });
+    const service = createEstimateClientReviewService({ storage: storageDouble() });
+
+    const error = await service
+      .currentRoundForClientEstimate(client, "estimate-foreign-round")
+      .catch((value) => value);
+    expectSafeNotFound(error);
+    await expect(
+      service.currentRoundForClientEstimate(client, "estimate-legacy")
+    ).resolves.toBeNull();
+  });
+
+  it("maps inactive Admin and active Client decision actors without persistence leakage", async () => {
+    const viewer = await seedMongoUser({ id: "mongo-viewer", role: "admin" });
+    await Promise.all([
+      seedMongoUser({
+        id: "mongo-admin-decision-actor",
+        role: "admin",
+        active: false,
+        name: "Former Admin"
+      }),
+      seedMongoUser({
+        id: "mongo-client-decision-actor",
+        role: "client",
+        name: "Priya Client",
+        email: "client@example.com"
+      }),
+      seedMongoProject("project-detail", "Detail project")
+    ]);
+    await seedMongoGrant({
+      id: "grant-detail",
+      projectId: "project-detail",
+      userId: viewer.id
+    });
+    await Promise.all([
+      seedMongoRound({
+        id: "round-admin-decision",
+        projectId: "project-detail",
+        assignedAdminId: viewer.id,
+        status: "changes_requested",
+        decisionSource: "admin_proof",
+        decisionNote: "Please revise the finish.",
+        decidedById: "mongo-admin-decision-actor",
+        deliveryFailureCode: "SMTP_TIMEOUT"
+      }),
+      seedMongoRound({
+        id: "round-client-decision",
+        projectId: "project-detail",
+        assignedAdminId: viewer.id,
+        status: "approved",
+        decisionSource: "client_portal",
+        decisionNote: "",
+        decidedById: "mongo-client-decision-actor"
+      }),
+      seedMongoRound({
+        id: "round-pending-decision",
+        projectId: "project-detail",
+        assignedAdminId: viewer.id
+      })
+    ]);
+    await EstimateClientResponseProofModel.create({
+      _id: "proof-admin-decision",
+      reviewRoundId: "round-admin-decision",
+      estimateId: "estimate-round-admin-decision",
+      storageReference: "private/proof-admin-decision.png",
+      originalFilename: "client-response.png",
+      mimeType: "image/png",
+      byteSize: 1024,
+      sha256: sha256Hex("proof-admin-decision"),
+      uploadedById: viewer.id,
+      uploadedAt: MONGO_LATER
+    });
+    const service = createEstimateClientReviewService({ storage: storageDouble() });
+
+    const adminDetail = await service.detail(viewer, "round-admin-decision");
+    const clientDetail = await service.detail(viewer, "round-client-decision");
+    const pendingDetail = await service.detail(viewer, "round-pending-decision");
+
+    expect(adminDetail.decidedBy).toEqual({
+      id: "mongo-admin-decision-actor",
+      name: "Former Admin"
+    });
+    expect(clientDetail.decidedBy).toEqual({
+      id: "mongo-client-decision-actor",
+      name: "Priya Client"
+    });
+    expect(pendingDetail.decidedBy).toBeNull();
+    expect(adminDetail.proofAvailable).toBe(true);
+    const serialized = JSON.stringify(adminDetail);
+    expect(serialized).not.toContain("private/round-admin-decision.pdf");
+    expect(serialized).not.toContain("private/proof-admin-decision.png");
+    expect(serialized).not.toContain("SMTP_TIMEOUT");
+    expect(serialized).not.toContain("storageReference");
+    expect(serialized).not.toContain("deliveryFailureCode");
+  });
+
+  it("allows owner retry and denies non-owner retry/proof before storage", async () => {
+    const owner = await seedMongoUser({ id: "mongo-owner", role: "estimator_sales" });
+    const foreign = await seedMongoUser({
+      id: "mongo-foreign-estimator",
+      role: "estimator_sales"
+    });
+    await seedMongoLeadEstimate({
+      leadId: "lead-retry",
+      estimateId: "estimate-retry",
+      ownerId: owner.id
+    });
+    await seedMongoRound({
+      id: "round-retry",
+      estimateId: "estimate-retry",
+      leadId: "lead-retry",
+      assignedAdminId: owner.id
+    });
+    await EstimateClientResponseProofModel.create({
+      _id: "proof-retry",
+      reviewRoundId: "round-retry",
+      estimateId: "estimate-retry",
+      storageReference: "private/proof-retry.pdf",
+      originalFilename: "proof-retry.pdf",
+      mimeType: "application/pdf",
+      byteSize: 1024,
+      sha256: sha256Hex("proof-retry"),
+      uploadedById: owner.id,
+      uploadedAt: MONGO_LATER
+    });
+    const storage = storageDouble();
+    const service = createEstimateClientReviewService({ storage });
+
+    await expect(
+      service.requireRetryScope(owner, "estimate-retry", "round-retry")
+    ).resolves.toBeUndefined();
+    const retryError = await service
+      .requireRetryScope(foreign, "estimate-retry", "round-retry")
+      .catch((value) => value);
+    const proofError = await service
+      .readProof(foreign, "round-retry")
+      .catch((value) => value);
+
+    expectSafeNotFound(retryError);
+    expectSafeNotFound(proofError);
+    expect(storage.read).not.toHaveBeenCalled();
   });
 });

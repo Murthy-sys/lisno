@@ -142,6 +142,7 @@ export interface EstimateClientReviewDetail extends EstimateClientReviewListItem
   };
   decisionSource: EstimateClientDecisionSource | null;
   decisionNote: string | null;
+  decidedBy: { id: string; name: string } | null;
   decidedAt: string | null;
 }
 

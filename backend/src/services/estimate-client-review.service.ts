@@ -166,19 +166,37 @@ export function createEstimateClientReviewService(input: {
       ...activeActorStages(actor, "clientActor", {
         emailNormalized: normalizeEmail(actor.email)
       }),
-      ...clientLeadScopeStages("clientActor"),
+      ...clientLeadScopeStages("clientActor", false),
       {
-        $match: {
-          $expr: {
-            $eq: ["$recipientEmailNormalized", "$clientActor.emailNormalized"]
+        $project: {
+          _id: 0,
+          id: "$_id",
+          version: 1,
+          scopeMatches: {
+            $and: [
+              {
+                $eq: [
+                  "$recipientEmailNormalized",
+                  "$clientActor.emailNormalized"
+                ]
+              },
+              {
+                $eq: [
+                  "$clientLead.clientEmailNormalized",
+                  "$clientActor.emailNormalized"
+                ]
+              }
+            ]
           }
         }
-      },
-      { $project: { _id: 0, id: "$_id", version: 1 } }
+      }
     ]);
-    return rows[0]
-      ? { id: stringField(rows[0], "id"), version: numberField(rows[0], "version") }
-      : null;
+    if (!rows[0]) return null;
+    if (!booleanField(rows[0], "scopeMatches")) notFound();
+    return {
+      id: stringField(rows[0], "id"),
+      version: numberField(rows[0], "version")
+    };
   }
 
   async function list(
@@ -582,8 +600,11 @@ function activeActorStages(
   ];
 }
 
-function clientLeadScopeStages(clientAlias: string): Pipeline {
-  return [
+function clientLeadScopeStages(
+  clientAlias: string,
+  requireMatch = true
+): Pipeline {
+  const stages: Pipeline = [
     {
       $lookup: {
         from: LeadModel.collection.name,
@@ -607,8 +628,10 @@ function clientLeadScopeStages(clientAlias: string): Pipeline {
         as: "clientLeadRows"
       }
     },
-    { $set: { clientLead: { $arrayElemAt: ["$clientLeadRows", 0] } } },
-    {
+    { $set: { clientLead: { $arrayElemAt: ["$clientLeadRows", 0] } } }
+  ];
+  if (requireMatch) {
+    stages.push({
       $match: {
         $expr: {
           $eq: [
@@ -617,8 +640,9 @@ function clientLeadScopeStages(clientAlias: string): Pipeline {
           ]
         }
       }
-    }
-  ];
+    });
+  }
+  return stages;
 }
 
 function roundPresentationStages(includeDetail: boolean): Pipeline {
@@ -666,6 +690,13 @@ function roundPresentationStages(includeDetail: boolean): Pipeline {
     };
     projection.decisionSource = 1;
     projection.decisionNote = 1;
+    projection.decidedBy = {
+      $cond: [
+        { $eq: [{ $type: "$decidedBy._id" }, "string"] },
+        { id: "$decidedBy._id", name: "$decidedBy.name" },
+        null
+      ]
+    };
     projection.decidedAt = 1;
   }
   return [
@@ -699,11 +730,27 @@ function roundPresentationStages(includeDetail: boolean): Pipeline {
         as: "proofRows"
       }
     },
+    ...(includeDetail
+      ? [
+          {
+            $lookup: {
+              from: UserModel.collection.name,
+              localField: "decidedById",
+              foreignField: "_id",
+              pipeline: [{ $project: { _id: 1, name: 1 } }],
+              as: "decidedByRows"
+            }
+          }
+        ]
+      : []),
     {
       $set: {
         project: { $arrayElemAt: ["$projectRows", 0] },
         assignedAdmin: { $arrayElemAt: ["$assignedAdminRows", 0] },
-        proof: { $arrayElemAt: ["$proofRows", 0] }
+        proof: { $arrayElemAt: ["$proofRows", 0] },
+        ...(includeDetail
+          ? { decidedBy: { $arrayElemAt: ["$decidedByRows", 0] } }
+          : {})
       }
     },
     { $project: projection }
@@ -790,6 +837,7 @@ function mapListItem(row: Row): EstimateClientReviewListItem {
 function mapDetail(row: Row): EstimateClientReviewDetail {
   const list = mapListItem(row);
   const pdf = recordField(row, "pdf");
+  const decidedBy = nullableRecordField(row, "decidedBy");
   return {
     id: list.id,
     version: list.version,
@@ -815,6 +863,12 @@ function mapDetail(row: Row): EstimateClientReviewDetail {
     },
     decisionSource: nullableStringField(row, "decisionSource") as EstimateClientReviewDetail["decisionSource"],
     decisionNote: nullableStringField(row, "decisionNote"),
+    decidedBy: decidedBy
+      ? {
+          id: stringField(decidedBy, "id"),
+          name: stringField(decidedBy, "name")
+        }
+      : null,
     decidedAt: nullableIsoField(row, "decidedAt")
   };
 }
