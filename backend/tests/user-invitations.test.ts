@@ -1832,6 +1832,86 @@ describe("user invitation HTTP integration", () => {
     expect(lookup).not.toHaveBeenCalled();
   });
 
+
+  it.each([
+    [
+      "inspect canonical",
+      "/api/v1/auth/user-invitations/inspect",
+      "/api/v1/auth/user-invitations/inspect",
+      { token: REPLACEMENT_RAW_TOKEN }
+    ],
+    [
+      "inspect trailing slash",
+      "/api/v1/auth/user-invitations/inspect/",
+      "/api/v1/auth/user-invitations/inspect",
+      { token: REPLACEMENT_RAW_TOKEN }
+    ],
+    [
+      "inspect case variant",
+      "/API/V1/AUTH/USER-INVITATIONS/INSPECT",
+      "/api/v1/auth/user-invitations/inspect",
+      { token: REPLACEMENT_RAW_TOKEN }
+    ],
+    [
+      "accept canonical",
+      "/api/v1/auth/user-invitations/accept",
+      "/api/v1/auth/user-invitations/accept",
+      {
+        token: REPLACEMENT_RAW_TOKEN,
+        password: ACCEPTED_PASSWORD,
+        passwordConfirmation: ACCEPTED_PASSWORD
+      }
+    ],
+    [
+      "accept trailing slash",
+      "/api/v1/auth/user-invitations/accept/",
+      "/api/v1/auth/user-invitations/accept",
+      {
+        token: REPLACEMENT_RAW_TOKEN,
+        password: ACCEPTED_PASSWORD,
+        passwordConfirmation: ACCEPTED_PASSWORD
+      }
+    ],
+    [
+      "accept case variant",
+      "/API/V1/AUTH/USER-INVITATIONS/ACCEPT",
+      "/api/v1/auth/user-invitations/accept",
+      {
+        token: REPLACEMENT_RAW_TOKEN,
+        password: ACCEPTED_PASSWORD,
+        passwordConfirmation: ACCEPTED_PASSWORD
+      }
+    ]
+  ])(
+    "applies one shared no-store public bucket to %s",
+    async (_name, firstPath, canonicalPath, body) => {
+      const context = httpSetup(undefined, {
+        publicLimit: { maxAttempts: 1, windowMs: 60_000 }
+      });
+      const lookup = vi.spyOn(
+        context.repository,
+        "findPendingUserInvitationByTokenHash"
+      );
+
+      const first = await context.api.post(firstPath).send(body);
+      expect(first.status).toBe(410);
+      expect(first.body).toEqual({
+        error: {
+          code: "INVITATION_UNAVAILABLE",
+          message: "This invitation is unavailable."
+        }
+      });
+      expect(first.headers["cache-control"]).toBe("no-store");
+
+      const canonical = await context.api.post(canonicalPath).send(body);
+      expect(canonical.status).toBe(429);
+      expect(canonical.body.error.code).toBe("TOO_MANY_ATTEMPTS");
+      expect(canonical.headers["cache-control"]).toBe("no-store");
+      expect(lookup).toHaveBeenCalledOnce();
+    }
+  );
+
+
   it("orders protected authentication, authorization, delivery limiting, validation, and service use", async () => {
     const { seed, operator } = standardSeed();
     seed.userInvitations = [invitation("ordered-route", operator)];

@@ -213,8 +213,7 @@ export function createApp(dependencies: AppDependencies) {
       )
     );
   }
-  app.use(exactPublicInvitationPath(noStore));
-  app.use(exactPublicInvitationPath(invitationPublicRateLimit));
+  app.post(publicInvitationPaths, noStore, invitationPublicRateLimit);
   // Annotation documents are capped at 256 KiB by their domain schema.
   app.use(express.json({ limit: "300kb" }));
   app.use("/api/v1", healthRouter);
@@ -292,25 +291,12 @@ export function createApp(dependencies: AppDependencies) {
   return app;
 }
 
-const publicInvitationPaths = new Set([
+const publicInvitationPaths = [
   "/api/v1/auth/user-invitations/inspect",
   "/api/v1/auth/user-invitations/accept"
-]);
+];
 
 const noStore: RequestHandler = (_request, response, next) => {
   response.setHeader("Cache-Control", "no-store");
   next();
 };
-
-function exactPublicInvitationPath(handler: RequestHandler): RequestHandler {
-  return (request, response, next) => {
-    if (
-      request.method === "POST" &&
-      publicInvitationPaths.has(request.path)
-    ) {
-      handler(request, response, next);
-      return;
-    }
-    next();
-  };
-}
