@@ -12,6 +12,7 @@ import { EstimateDesignExtractionJobModel } from "../src/models/EstimateDesignEx
 import { EstimateDesignRevisionModel } from "../src/models/EstimateDesignRevision.js";
 import { EstimateDesignSourcePageModel } from "../src/models/EstimateDesignSourcePage.js";
 import { EstimateDesignUploadModel } from "../src/models/EstimateDesignUpload.js";
+import { EstimateClientReviewRoundModel } from "../src/models/EstimateClientReviewRound.js";
 import { EstimateModel } from "../src/models/Estimate.js";
 import { LeadModel } from "../src/models/Lead.js";
 import { ProjectModel } from "../src/models/Project.js";
@@ -69,7 +70,7 @@ function modelQuery<T>(value: T) {
     sort: vi.fn(),
     select: vi.fn(),
     session: vi.fn(),
-    lean: vi.fn(async () => value),
+    lean: vi.fn(async () => detachedLeanValue(value)),
     exec: vi.fn(async () => value)
   };
   result.sort.mockReturnValue(result);
@@ -80,6 +81,20 @@ function modelQuery<T>(value: T) {
     reject: (error: unknown) => unknown
   ) => Promise.resolve(value).then(resolve, reject);
   return result;
+}
+
+function detachedLeanValue<T>(value: T): T {
+  if (Array.isArray(value)) {
+    return structuredClone(value.map((item) =>
+      item && typeof item === "object"
+        ? plainRecord(item as Record<string, any>)
+        : item
+    )) as T;
+  }
+  if (value && typeof value === "object") {
+    return structuredClone(plainRecord(value as Record<string, any>)) as T;
+  }
+  return value;
 }
 
 function modelMatches(
@@ -134,8 +149,10 @@ function setupEstimateDrawingJourneyModels() {
     _id: "estimate-journey",
     leadId: "lead-journey",
     ownerId: "user-estimator-sales",
+    projectId: null,
     status: "draft",
     version: 1,
+    propertyType: "Apartment",
     designLifecycleVersion: 0,
     designFrozenAt: null,
     assignedDesignerId: "user-designer-ananya",
@@ -154,6 +171,8 @@ function setupEstimateDrawingJourneyModels() {
       included: true,
       amount: 1000
     }],
+    subtotal: 1000,
+    gst: 180,
     total: 1180,
     reviews: [],
     notifications: [],
@@ -181,6 +200,7 @@ function setupEstimateDrawingJourneyModels() {
   const drawings: Array<Record<string, any>> = [];
   const revisions: Array<Record<string, any>> = [];
   const drafts: Array<Record<string, any>> = [];
+  const clientReviewRounds: Array<Record<string, any>> = [];
   const projects: Array<Record<string, any>> = [];
   const auditEvents: Array<Record<string, any>> = [];
   const session = {
@@ -215,6 +235,12 @@ function setupEstimateDrawingJourneyModels() {
     const record = estimates.find((item) => modelMatches(item, filter as never));
     if (record) applyModelUpdate(record, update as never);
     return { matchedCount: record ? 1 : 0, modifiedCount: record ? 1 : 0 } as never;
+  });
+  vi.spyOn(EstimateModel, "aggregate").mockImplementation((pipeline) => {
+    const match = (pipeline as Array<Record<string, any>>)
+      .find((stage) => stage.$match)?.$match ?? {};
+    const record = estimates.find((candidate) => modelMatches(candidate, match));
+    return modelQuery(record ? [{ _id: record._id }] : []) as never;
   });
   vi.spyOn(LeadModel, "findById").mockImplementation((id) =>
     modelQuery(leads.find((record) => record._id === id) ?? null) as never
@@ -383,6 +409,61 @@ function setupEstimateDrawingJourneyModels() {
       [...team.values()].filter((record) => modelMatches(record, filter as never))
     ) as never
   );
+  vi.spyOn(UserModel, "aggregate").mockReturnValue(
+    modelQuery([{ assignedAdminId: "user-super-admin" }]) as never
+  );
+  vi.spyOn(EstimateClientReviewRoundModel, "findOne").mockImplementation((filter) => {
+    const candidates = clientReviewRounds
+      .filter((record) => modelMatches(record, filter as never))
+      .sort((left, right) =>
+        Number(right.sendGeneration ?? 0) - Number(left.sendGeneration ?? 0) ||
+        String(left._id).localeCompare(String(right._id))
+      );
+    return modelQuery(candidates[0] ?? null) as never;
+  });
+  vi.spyOn(EstimateClientReviewRoundModel, "create").mockImplementation(async (input) => {
+    const created = (input as Array<Record<string, any>>).map((value) => {
+      const record: Record<string, any> = { ...value };
+      record.toObject = () => plainRecord(record);
+      clientReviewRounds.push(record);
+      return record;
+    });
+    return created as never;
+  });
+  vi.spyOn(EstimateClientReviewRoundModel, "findOneAndUpdate").mockImplementation((filter, update) => {
+    const record = clientReviewRounds.find((candidate) =>
+      modelMatches(candidate, filter as never)
+    ) ?? null;
+    if (record) applyModelUpdate(record, update as never);
+    return modelQuery(record) as never;
+  });
+  vi.spyOn(EstimateClientReviewRoundModel, "updateOne").mockImplementation(async (filter, update) => {
+    const record = clientReviewRounds.find((candidate) =>
+      modelMatches(candidate, filter as never)
+    );
+    if (record) applyModelUpdate(record, update as never);
+    return {
+      matchedCount: record ? 1 : 0,
+      modifiedCount: record ? 1 : 0
+    } as never;
+  });
+  vi.spyOn(EstimateClientReviewRoundModel, "aggregate").mockImplementation(() => {
+    const current = [...clientReviewRounds].sort((left, right) =>
+      Number(right.sendGeneration ?? 0) - Number(left.sendGeneration ?? 0) ||
+      String(left._id).localeCompare(String(right._id))
+    )[0];
+    return modelQuery(current ? [{
+      id: current._id,
+      sendGeneration: current.sendGeneration,
+      estimateVersion: current.estimateVersion,
+      version: current.version,
+      deliveryStatus: current.deliveryStatus,
+      deliveryAttemptCount: current.deliveryAttemptCount,
+      deliveredAt: current.deliveredAt,
+      status: current.status,
+      scopeMatches: true
+    }] : []) as never;
+  });
   vi.spyOn(ProjectModel, "create").mockImplementation(async (input) => {
     projects.push(...(input as Array<Record<string, any>>));
     return input as never;
@@ -405,6 +486,7 @@ function setupEstimateDrawingJourneyModels() {
     drawings,
     revisions,
     drafts,
+    clientReviewRounds,
     projects,
     auditEvents
   };
@@ -733,7 +815,17 @@ describe("complete cross-role journey", () => {
         event: "estimate_ready_for_review",
         status: "queued",
         queuedAt: expect.any(String)
-      }]
+      }],
+      clientReview: {
+        id: expect.stringMatching(/^estimate-client-review-/),
+        sendGeneration: 1,
+        estimateVersion: 1,
+        version: 2,
+        deliveryStatus: "disabled",
+        deliveryAttemptCount: 0,
+        deliveredAt: null,
+        status: "pending"
+      }
     };
 
     expect(response.body).toEqual({ data: expectedResponse });
@@ -744,15 +836,20 @@ describe("complete cross-role journey", () => {
     expect(response.body.data.notifications[0].queuedAt).toBe(
       fixture.estimate.notifications[0].queuedAt.toISOString()
     );
-    expect(fixture.estimate.save).toHaveBeenCalledOnce();
+    expect(fixture.estimate.save).not.toHaveBeenCalled();
     expect(LeadModel.updateOne).toHaveBeenCalledOnce();
     expect(LeadModel.updateOne).toHaveBeenCalledWith(
-      { _id: "lead-aurora" },
+      {
+        _id: "lead-aurora",
+        ownerId: "user-estimator-sales",
+        projectId: null
+      },
       { $set: {
         stage: "estimate_sent",
         nextAction: "client estimate decision",
         nextActionAt: expect.any(Date)
-      } }
+      } },
+      { session: expect.anything() }
     );
     expect(fixture.lead).toEqual({
       ...leadBefore,
@@ -760,9 +857,24 @@ describe("complete cross-role journey", () => {
       nextAction: "client estimate decision",
       nextActionAt: expect.any(Date)
     });
-    expect(EstimateModel.updateOne).not.toHaveBeenCalled();
+    expect(EstimateModel.updateOne).toHaveBeenCalledOnce();
+    expect(fixture.state.clientReviewRounds).toEqual([
+      expect.objectContaining({
+        estimateId: "estimate-ready",
+        sendGeneration: 1,
+        status: "pending",
+        deliveryStatus: "disabled",
+        pdfStorageReference: expect.any(String)
+      })
+    ]);
     expect(ProjectModel.create).not.toHaveBeenCalled();
-    expect(AuditEventModel.create).not.toHaveBeenCalled();
+    expect(fixture.state.auditEvents.map((event) => event.action)).toEqual([
+      "estimate_client_review_published",
+      "estimate_client_response_task_assigned"
+    ]);
+    expect(JSON.stringify(response.body.data.clientReview)).not.toMatch(
+      /recipientEmail|pdfStorageReference|pdfFilename/i
+    );
   });
 
   it("row 82 returns only the exact client-visible estimates without writes", async () => {
@@ -922,18 +1034,36 @@ describe("complete cross-role journey", () => {
       plannedStartAt: expect.any(Date),
       plannedEndAt: expect.any(Date)
     }]);
-    expect(AuditEventModel.create).toHaveBeenCalledOnce();
-    expect(fixture.state.auditEvents).toEqual([{
-      _id: expect.stringMatching(/^audit-/),
-      actorId: "user-client-aurora",
-      action: "estimate_design_final_approved",
-      entityType: "estimate",
-      entityId: "estimate-client-visible",
-      occurredAt: decisionAt,
-      oldValues: { status: "sent_to_client" },
-      newValues: { status: "client_approved", projectId, approvedDrawingCount: 0 },
-      reason: null
-    }]);
+    expect(AuditEventModel.create).toHaveBeenCalledTimes(2);
+    expect(fixture.state.auditEvents).toEqual([
+      {
+        _id: expect.stringMatching(/^audit-/),
+        actorId: "user-client-aurora",
+        action: "estimate_design_final_approved",
+        entityType: "estimate",
+        entityId: "estimate-client-visible",
+        occurredAt: decisionAt,
+        oldValues: { status: "sent_to_client" },
+        newValues: { status: "client_approved", projectId, approvedDrawingCount: 0 },
+        reason: null
+      },
+      {
+        _id: expect.stringMatching(/^audit-/),
+        actorId: "user-client-aurora",
+        action: "estimate_client_response_recorded_through_portal",
+        entityType: "estimate",
+        entityId: "estimate-client-visible",
+        occurredAt: decisionAt,
+        oldValues: { status: "sent_to_client" },
+        newValues: {
+          status: "client_approved",
+          decision: "approve",
+          decisionSource: "client_portal",
+          noteLength: 8
+        },
+        reason: null
+      }
+    ]);
     expect(plainRecord(fixture.estimate)).toEqual({
       ...initialEstimate,
       status: "client_approved",
@@ -1800,11 +1930,14 @@ describe("complete cross-role journey", () => {
       .send()
       .expect(200);
     expect(submitted.body.data).toEqual({ submittedCount: 2 });
-    await request(app)
+    const publishedEstimate = await request(app)
       .post("/api/v1/leads/lead-journey/estimate/submit")
       .set("Authorization", estimator)
-      .send()
-      .expect(200);
+      .send();
+    expect(
+      publishedEstimate.status,
+      JSON.stringify(publishedEstimate.body)
+    ).toBe(200);
 
     const clientWorkspace = await request(app)
       .get("/api/v1/client/estimates/estimate-journey/design-drawings")
@@ -1905,8 +2038,13 @@ describe("complete cross-role journey", () => {
     const finalApproval = await request(app)
       .post("/api/v1/client/estimates/estimate-journey/decision")
       .set("Authorization", client)
-      .send({ decision: "approve", note: "" })
-      .expect(200);
+      .send({ decision: "approve", note: "" });
+    expect(finalApproval.status, JSON.stringify({
+      body: finalApproval.body,
+      estimate: plainRecord(state.estimates[0]!),
+      rounds: state.clientReviewRounds.map(plainRecord),
+      roundUpdates: vi.mocked(EstimateClientReviewRoundModel.updateOne).mock.calls
+    })).toBe(200);
 
     expect(finalApproval.body.data).toMatchObject({
       status: "client_approved",

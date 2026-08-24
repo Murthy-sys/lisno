@@ -1,11 +1,14 @@
+import express from "express";
 import request from "supertest";
 import jwt from "jsonwebtoken";
 import mongoose from "mongoose";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createApp as createApplication } from "../src/app.js";
+import { errorHandler } from "../src/middleware/errors.js";
 import { EstimateDesignDrawingModel } from "../src/models/EstimateDesignDrawing.js";
 import { EstimateDesignRevisionModel } from "../src/models/EstimateDesignRevision.js";
+import { EstimateClientReviewRoundModel } from "../src/models/EstimateClientReviewRound.js";
 import { EstimateModel } from "../src/models/Estimate.js";
 import { LeadModel } from "../src/models/Lead.js";
 import { ProjectModel } from "../src/models/Project.js";
@@ -13,6 +16,7 @@ import { ProjectAccessGrantModel } from "../src/models/ProjectAccessGrant.js";
 import { UserModel } from "../src/models/User.js";
 import { AuditEventModel } from "../src/models/AuditEvent.js";
 import { createMemoryRepository } from "../src/repositories/memory.js";
+import { createEstimatesRouter } from "../src/routes/estimates.js";
 import { demoSeedData } from "../src/seed/data.js";
 import { developmentDemoAuthentication } from "./helpers/development-demo-authentication.js";
 import { startMongoReplicaSet } from "./helpers/mongo-replica-set.js";
@@ -178,6 +182,59 @@ function estimateDto(record: Record<string, any>) {
   return JSON.parse(JSON.stringify({ ...plain, id: _id }));
 }
 
+const CLIENT_REVIEW_SUMMARY = {
+  id: "estimate-client-review-round-1",
+  sendGeneration: 1,
+  estimateVersion: 1,
+  version: 2,
+  deliveryStatus: "disabled" as const,
+  deliveryAttemptCount: 0,
+  deliveredAt: null,
+  status: "pending" as const
+};
+
+function setupEstimateRouteCollaborators(actorOverride: Record<string, unknown> = {}) {
+  const actor = {
+    id: "user-estimator-sales",
+    name: "Sales User",
+    email: "sales@lisno.example",
+    role: "estimator_sales" as const,
+    ...actorOverride
+  };
+  const publication = {
+    publishEstimateToClient: vi.fn()
+  };
+  const reviews = {
+    currentSummaryForEstimate: vi.fn(async () => null),
+    currentRoundForClientEstimate: vi.fn(async () => null),
+    readClientPdf: vi.fn()
+  };
+  const decisions = {
+    decide: vi.fn()
+  };
+  const app = express();
+  app.use(express.json());
+  app.use(
+    "/api/v1",
+    createEstimatesRouter(
+      {
+        authenticate: vi.fn(async () => actor)
+      } as never,
+      {
+        get: vi.fn(async () => structuredClone(CHARACTERIZATION_LEAD))
+      } as never,
+      { generate: vi.fn() } as never,
+      {} as never,
+      {} as never,
+      publication as never,
+      decisions as never,
+      reviews as never
+    )
+  );
+  app.use(errorHandler);
+  return { app, publication, decisions, reviews };
+}
+
 describe("lead API", () => {
   it("creates, lists, updates and logs an owner activity", async () => {
     const token = await salesToken();
@@ -196,6 +253,185 @@ describe("lead API", () => {
 });
 
 describe("lead and owner-estimate route characterizations", () => {
+  it("publishes a low-value draft through the shared immutable publication service", async () => {
+    const { app, publication } = setupEstimateRouteCollaborators();
+    const estimate = estimateDocument({
+      lineItems: [{ ...CHARACTERIZATION_ESTIMATE_BODY.lineItems[0], amount: 1000 }],
+      subtotal: 1000,
+      gst: 180,
+      total: 1180
+    });
+    vi.spyOn(EstimateModel, "findOne").mockReturnValue(query(estimate) as never);
+    vi.spyOn(LeadModel, "updateOne").mockResolvedValue({
+      matchedCount: 1,
+      modifiedCount: 1
+    } as never);
+    const publishedEstimate = {
+      ...estimateDto(estimate),
+      approvalRequired: false,
+      status: "sent_to_client",
+      submittedAt: CHARACTERIZATION_NOW,
+      sentToClientAt: CHARACTERIZATION_NOW
+    };
+    publication.publishEstimateToClient.mockResolvedValue({
+      estimate: publishedEstimate,
+      clientReview: CLIENT_REVIEW_SUMMARY
+    });
+
+    const response = await request(app)
+      .post("/api/v1/leads/lead-aurora/estimate/submit")
+      .set("Authorization", "Bearer route-test")
+      .expect(200);
+
+    expect(publication.publishEstimateToClient).toHaveBeenCalledOnce();
+    expect(publication.publishEstimateToClient).toHaveBeenCalledWith({
+      estimateId: "estimate-draft",
+      leadId: "lead-aurora",
+      actorId: "user-estimator-sales",
+      expectedEstimateVersion: 1,
+      expectedStatus: "draft",
+      submittedAt: expect.any(Date)
+    });
+    expect(response.body).toEqual({
+      data: { ...publishedEstimate, clientReview: CLIENT_REVIEW_SUMMARY }
+    });
+    expect(estimate.save).not.toHaveBeenCalled();
+  });
+
+  it("publishes a ready high-value estimate through the same publication service", async () => {
+    const { app, publication } = setupEstimateRouteCollaborators();
+    const estimate = estimateDocument({
+      _id: "estimate-ready",
+      version: 7,
+      status: "ready_for_client",
+      total: 1_800_000
+    });
+    vi.spyOn(EstimateModel, "findOne").mockReturnValue(query(estimate) as never);
+    vi.spyOn(LeadModel, "findById").mockReturnValue(query(CHARACTERIZATION_LEAD) as never);
+    const updateLead = vi.spyOn(LeadModel, "updateOne").mockResolvedValue({
+      matchedCount: 1,
+      modifiedCount: 1
+    } as never);
+    const publishedEstimate = {
+      ...estimateDto(estimate),
+      status: "sent_to_client",
+      sentToClientAt: CHARACTERIZATION_NOW
+    };
+    publication.publishEstimateToClient.mockResolvedValue({
+      estimate: publishedEstimate,
+      clientReview: CLIENT_REVIEW_SUMMARY
+    });
+
+    const response = await request(app)
+      .post("/api/v1/estimates/estimate-ready/send-client")
+      .set("Authorization", "Bearer route-test")
+      .expect(200);
+
+    expect(publication.publishEstimateToClient).toHaveBeenCalledWith({
+      estimateId: "estimate-ready",
+      leadId: "lead-aurora",
+      actorId: "user-estimator-sales",
+      expectedEstimateVersion: 7,
+      expectedStatus: "ready_for_client"
+    });
+    expect(response.body).toEqual({
+      data: { ...publishedEstimate, clientReview: CLIENT_REVIEW_SUMMARY }
+    });
+    expect(estimate.save).not.toHaveBeenCalled();
+    expect(updateLead).not.toHaveBeenCalled();
+  });
+
+  it("attaches only the safe current client-review summary to an estimator read", async () => {
+    const { app, reviews } = setupEstimateRouteCollaborators();
+    const estimate = estimateFixture();
+    vi.spyOn(EstimateModel, "findOne").mockReturnValue(query(estimate) as never);
+    reviews.currentSummaryForEstimate.mockResolvedValue(CLIENT_REVIEW_SUMMARY);
+
+    const response = await request(app)
+      .get("/api/v1/leads/lead-aurora/estimate")
+      .set("Authorization", "Bearer route-test")
+      .expect(200);
+
+    expect(reviews.currentSummaryForEstimate).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "user-estimator-sales" }),
+      "estimate-draft"
+    );
+    expect(response.body).toEqual({
+      data: { ...estimateDto(estimate), clientReview: CLIENT_REVIEW_SUMMARY }
+    });
+    expect(JSON.stringify(response.body)).not.toMatch(
+      /recipient|decisionNote|storageReference|filename|proof/i
+    );
+  });
+
+  it.each([
+    {
+      label: "current immutable round",
+      currentRound: { id: "estimate-client-review-round-1", version: 4 }
+    },
+    { label: "legacy Estimate", currentRound: null }
+  ])("adapts an unchanged Client decision for a $label", async ({ currentRound }) => {
+    const { app, decisions, reviews } = setupEstimateRouteCollaborators({
+      id: "user-client-aurora",
+      name: "Aurora Client",
+      email: "client@aurora.example",
+      role: "client"
+    });
+    reviews.currentRoundForClientEstimate.mockResolvedValue(currentRound);
+    decisions.decide.mockResolvedValue({
+      estimate: {
+        ...estimateFixture({
+          _id: "estimate-client-visible",
+          status: "client_changes_requested",
+          version: 2
+        })
+      },
+      clientReview: currentRound ? {
+        ...CLIENT_REVIEW_SUMMARY,
+        status: "changes_requested",
+        version: 5
+      } : null
+    });
+    const session = {
+      withTransaction: vi.fn(async (operation: () => Promise<unknown>) => operation()),
+      endSession: vi.fn(async () => undefined)
+    };
+    vi.spyOn(mongoose, "startSession").mockResolvedValue(session as never);
+    vi.spyOn(EstimateModel, "findOne").mockReturnValue(query(null) as never);
+
+    const response = await request(app)
+      .post("/api/v1/client/estimates/estimate-client-visible/decision")
+      .set("Authorization", "Bearer route-test")
+      .send({ decision: "request_changes", note: "Move the island." })
+      .expect(200);
+
+    expect(reviews.currentRoundForClientEstimate).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "user-client-aurora" }),
+      "estimate-client-visible"
+    );
+    expect(decisions.decide).toHaveBeenCalledWith({
+      estimateId: "estimate-client-visible",
+      round: currentRound
+        ? { id: currentRound.id, expectedVersion: currentRound.version }
+        : null,
+      decision: "request_changes",
+      note: "Move the island.",
+      context: {
+        source: "client_portal",
+        actor: expect.objectContaining({ id: "user-client-aurora" }),
+        proof: null
+      }
+    });
+    expect(response.body).toEqual({
+      data: expect.objectContaining({
+        id: "estimate-client-visible",
+        status: "client_changes_requested",
+        version: 2
+      })
+    });
+    expect(response.body.data).not.toHaveProperty("clientReview");
+  });
+
   it.each([
     "clientName",
     "clientEmail",
@@ -271,6 +507,7 @@ describe("lead and owner-estimate route characterizations", () => {
   });
 
   it("copies, backfills, and protects a linked Lead project on draft save", async () => {
+    mockNoClientReviewSummary();
     const { app, authorization } = setupLeadCharacterization({
       projectId: "project-admin-1"
     });
@@ -503,6 +740,7 @@ describe("lead and owner-estimate route characterizations", () => {
   });
 
   it("row 73 returns the exact owner estimate list without writes", async () => {
+    mockNoClientReviewSummary();
     const { app, authorization, runInTransaction } = setupLeadCharacterization();
     const estimate = estimateFixture();
     const mongoLead = {
@@ -717,6 +955,7 @@ describe("lead and owner-estimate route characterizations", () => {
   });
 
   it("row 74 saves one exact calculated draft estimate", async () => {
+    mockNoClientReviewSummary();
     const { app, authorization, runInTransaction } = setupLeadCharacterization();
     const estimate = estimateDocument();
     const before = immutableEstimateSnapshot(estimate);
@@ -753,21 +992,20 @@ describe("lead and owner-estimate route characterizations", () => {
     expect(runInTransaction).not.toHaveBeenCalled();
   });
 
-  it("row 75 submits once with exact status, review, notification, and Lead effect", async () => {
+  it("row 75 keeps a high-value initial submit in pre-publication review", async () => {
+    mockNoClientReviewSummary();
     const { app, authorization, runInTransaction } = setupLeadCharacterization();
     const estimate = estimateDocument({
       lineItems: [{ ...CHARACTERIZATION_ESTIMATE_BODY.lineItems[0], amount: 1000 }],
-      subtotal: 1000,
-      gst: 180,
-      total: 1180
+      subtotal: 1_500_001,
+      gst: 270_000,
+      total: 1_770_001
     });
     const before = immutableEstimateSnapshot(estimate);
     const findEstimate = vi
       .spyOn(EstimateModel, "findOne")
       .mockReturnValue(query(estimate) as never);
-    const updateLead = vi
-      .spyOn(LeadModel, "updateOne")
-      .mockResolvedValue({ matchedCount: 1, modifiedCount: 1 } as never);
+    const updateLead = vi.spyOn(LeadModel, "updateOne");
 
     const response = await request(app)
       .post("/api/v1/leads/lead-aurora/estimate/submit")
@@ -775,66 +1013,38 @@ describe("lead and owner-estimate route characterizations", () => {
       .expect(200);
     const expectedState = {
       ...before,
-      approvalRequired: false,
-      status: "sent_to_client",
+      approvalRequired: true,
+      status: "pending_manager_assignment",
       submittedAt: expect.any(Date),
-      sentToClientAt: expect.any(Date),
       reviews: [{
         actorId: "user-estimator-sales",
         action: "submitted",
         note: "",
         occurredAt: expect.any(Date)
-      }],
-      notifications: [{
-        recipientEmail: "client@aurora.example",
-        recipientRole: "client",
-        event: "estimate_ready_for_review",
-        status: "queued",
-        queuedAt: expect.any(Date)
       }]
     };
     const expectedResponse = {
       ...estimateDto(before),
-      approvalRequired: false,
-      status: "sent_to_client",
+      approvalRequired: true,
+      status: "pending_manager_assignment",
       submittedAt: expect.any(String),
-      sentToClientAt: expect.any(String),
       reviews: [{
         actorId: "user-estimator-sales",
         action: "submitted",
         note: "",
         occurredAt: expect.any(String)
-      }],
-      notifications: [{
-        recipientEmail: "client@aurora.example",
-        recipientRole: "client",
-        event: "estimate_ready_for_review",
-        status: "queued",
-        queuedAt: expect.any(String)
       }]
     };
 
     expect(response.body).toEqual({ data: expectedResponse });
     expect(plainEstimateRecord(estimate)).toEqual(expectedState);
     expect(response.body.data.submittedAt).toBe(estimate.submittedAt.toISOString());
-    expect(response.body.data.sentToClientAt).toBe(estimate.sentToClientAt.toISOString());
     expect(response.body.data.reviews[0].occurredAt).toBe(
       estimate.reviews[0].occurredAt.toISOString()
     );
-    expect(response.body.data.notifications[0].queuedAt).toBe(
-      estimate.notifications[0].queuedAt.toISOString()
-    );
     expect(findEstimate).toHaveBeenCalledOnce();
     expect(estimate.save).toHaveBeenCalledOnce();
-    expect(updateLead).toHaveBeenCalledOnce();
-    expect(updateLead).toHaveBeenCalledWith(
-      { _id: "lead-aurora" },
-      { $set: {
-        stage: "estimate_sent",
-        nextAction: "client estimate decision",
-        nextActionAt: expect.any(Date)
-      } }
-    );
+    expect(updateLead).not.toHaveBeenCalled();
     expect(runInTransaction).not.toHaveBeenCalled();
   });
 });
@@ -852,6 +1062,36 @@ function query<T>(value: T) {
   result.select.mockReturnValue(result);
   result.session.mockReturnValue(result);
   return result;
+}
+
+function aggregateQuery<T>(value: T) {
+  const result = {
+    session: vi.fn(),
+    exec: vi.fn(async () => value)
+  };
+  result.session.mockReturnValue(result);
+  return result;
+}
+
+function mockNoClientReviewSummary() {
+  vi.spyOn(EstimateModel, "aggregate").mockReturnValue(
+    aggregateQuery([{ _id: "authorized-estimate" }]) as never
+  );
+  vi.spyOn(EstimateClientReviewRoundModel, "aggregate").mockReturnValue(
+    aggregateQuery([]) as never
+  );
+}
+
+function mockLegacyClientDecisionLookup() {
+  vi.spyOn(EstimateModel, "aggregate").mockReturnValue(
+    aggregateQuery([{ _id: "authorized-client-estimate" }]) as never
+  );
+  vi.spyOn(EstimateClientReviewRoundModel, "aggregate").mockReturnValue(
+    aggregateQuery([]) as never
+  );
+  vi.spyOn(EstimateClientReviewRoundModel, "findOne").mockReturnValue(
+    query(null) as never
+  );
 }
 
 function clientToken() {
@@ -916,6 +1156,15 @@ describe("linked estimate approval route Mongo transaction", () => {
 
   async function seedTeam() {
     await UserModel.create([
+      {
+        _id: "user-client-aurora",
+        name: "Aurora Client",
+        email: "client@aurora.example",
+        emailNormalized: "client@aurora.example",
+        passwordHash: "not-used",
+        role: "client",
+        active: true
+      },
       {
         _id: "manager-route",
         name: "Route Manager",
@@ -1093,6 +1342,7 @@ describe("linked estimate approval route Mongo transaction", () => {
 
 describe("estimate final drawing approval gate", () => {
   it("rejects unresolved drawings transactionally without changing the estimate", async () => {
+    mockLegacyClientDecisionLookup();
     const estimate = {
       _id: "estimate-gated",
       leadId: "lead-gated",
@@ -1153,6 +1403,7 @@ describe("estimate final drawing approval gate", () => {
   });
 
   it("keeps legacy estimates with no drawings approvable", async () => {
+    mockLegacyClientDecisionLookup();
     const estimate = {
       _id: "estimate-no-drawings",
       leadId: "lead-no-drawings",
@@ -1253,6 +1504,7 @@ describe("estimate final drawing approval gate", () => {
   });
 
   it("returns the same not-found response for a foreign locked estimate", async () => {
+    mockLegacyClientDecisionLookup();
     const estimate = {
       _id: "estimate-foreign-locked",
       leadId: "lead-foreign",

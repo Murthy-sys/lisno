@@ -142,7 +142,9 @@ export function createMemoryRepository(seed: SeedData = demoSeedData): AppReposi
     version: user.version ?? 1
   }));
   normalizedSeed.estimateResponsibilities ??= [];
-  normalizedSeed.estimateSummaries ??= [];
+  normalizedSeed.estimateSummaries = (normalizedSeed.estimateSummaries ?? []).map(
+    (estimate) => ({ ...estimate, clientReview: estimate.clientReview ?? null })
+  );
   normalizedSeed.projects = normalizedSeed.projects.map((project) => ({
     ...project,
     initiatingDesignerId: project.initiatingDesignerId ?? null,

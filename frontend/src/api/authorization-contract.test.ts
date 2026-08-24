@@ -41,6 +41,13 @@ const invitationPermissions = [
   "identity.user_invitations.revoke"
 ] as const;
 
+const estimateClientResponsePermissions = [
+  "estimation.client_response_tasks.read",
+  "estimation.client_response_tasks.decide",
+  "estimation.client_response_proof.read",
+  "estimation.estimate_email.retry"
+] as const;
+
 describe("frontend authorization contract", () => {
   it("publishes the exact Prompt 2 role and module vocabulary", () => {
     expect(ROLE_CODES).toEqual(expectedRoles);
@@ -59,13 +66,13 @@ describe("frontend authorization contract", () => {
       "execution"
     ]);
     expect(AUTHORIZATION_POLICY_VERSION).toBe(
-      "2026-08-23.staff-invitations.v1"
+      "2026-08-24.estimate-client-response.v1"
     );
   });
 
-  it("publishes all 97 unique permissions with invitation permissions in canonical order", () => {
-    expect(PERMISSION_CODES).toHaveLength(97);
-    expect(new Set(PERMISSION_CODES)).toHaveLength(97);
+  it("publishes all 101 unique permissions with response and invitation permissions in canonical order", () => {
+    expect(PERMISSION_CODES).toHaveLength(101);
+    expect(new Set(PERMISSION_CODES)).toHaveLength(101);
     expect(PERMISSION_CODES).toContain("projects.initiate");
     expect(PERMISSION_CODES).toContain("organization.estimators.read");
     const identityMutationIndex = PERMISSION_CODES.indexOf(
@@ -81,6 +88,11 @@ describe("frontend authorization contract", () => {
     expect(PERMISSION_CODES.at(-1)).toBe(
       "execution.worker_assignment.override"
     );
+    expect(
+      PERMISSION_CODES.filter((permission) =>
+        estimateClientResponsePermissions.includes(permission as never)
+      )
+    ).toEqual(estimateClientResponsePermissions);
   });
 
   it("keeps the protected frontend registry at exactly 20 routes", () => {

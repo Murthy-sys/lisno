@@ -45,7 +45,14 @@ export function adminProjectSummary(
         }
       : null,
     estimate: estimate
-      ? { id: estimate.id, status: estimate.status, total: estimate.total }
+      ? {
+          id: estimate.id,
+          status: estimate.status,
+          total: estimate.total,
+          clientReview: estimate.clientReview ?? null,
+          hasPendingClientResponseTask:
+            estimate.clientReview?.status === "pending"
+        }
       : null,
     createdAt: project.createdAt
   };

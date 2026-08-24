@@ -3,7 +3,6 @@ import mongoose from "mongoose";
 import { Router } from "express";
 import { z } from "zod";
 
-import { normalizeEmail } from "../domain/email.js";
 import { ApiError } from "../middleware/errors.js";
 import { authenticate } from "../middleware/auth.js";
 import { requireOperation } from "../middleware/authorization.js";
@@ -19,7 +18,10 @@ import type {
   EstimatePdfService
 } from "../services/estimate-pdf.service.js";
 import type { LeadService } from "../services/lead.service.js";
-import { resolveApprovalProject } from "../services/estimate-project-handoff.js";
+import type { EstimateClientReviewService } from "../services/estimate-client-review.service.js";
+import type { EstimateDecisionService } from "../services/estimate-decision.service.js";
+import type { EstimatePublicationService } from "../services/estimate-publication.service.js";
+import { sendDownload } from "./estimate-client-responses.js";
 
 const estimateLineSchema = z.object({ catalogueId: z.string().min(1), roomName: z.string().min(1), specification: z.string().min(1), unit: z.string().min(1), rate: z.number().nonnegative(), quantity: z.number().nonnegative(), included: z.boolean() }).strict();
 const estimateSchema = z.object({ propertyType: z.string().min(1), rooms: z.array(z.record(z.unknown())), scopes: z.array(z.string()), lineItems: z.array(estimateLineSchema) }).strict();
@@ -36,10 +38,25 @@ export function createEstimatesRouter(
   leads: LeadService,
   estimatePdf: EstimatePdfService,
   estimateDesigns: EstimateDesignService,
-  audit: AuditService
+  audit: AuditService,
+  publication: EstimatePublicationService,
+  decisions: EstimateDecisionService,
+  reviews: EstimateClientReviewService
 ): Router {
   const router = Router(); const protectedRoute = authenticate(auth);
-  router.get("/leads/:leadId/estimate", protectedRoute, requireOperation("GET /leads/:leadId/estimate"), async (req, res, next) => { try { const lead = await leads.get(req.authenticatedUser!, req.params.leadId as string); const estimateFilter = req.authenticatedUser!.role === "super_admin" ? { leadId: lead.id } : { leadId: lead.id, ownerId: req.authenticatedUser!.id }; const estimate = await EstimateModel.findOne(estimateFilter).lean(); res.json({ data: estimate ? mapEstimate(estimate) : null }); } catch (error) { next(error); } });
+  const estimatorEstimate = async (
+    actor: Parameters<EstimateClientReviewService["currentSummaryForEstimate"]>[0],
+    value: Record<string, unknown> | null
+  ) => {
+    const estimate = mapEstimate(value);
+    if (!estimate || actor.role !== "estimator_sales") return estimate;
+    const clientReview = await reviews.currentSummaryForEstimate(
+      actor,
+      String(estimate.id)
+    );
+    return clientReview ? { ...estimate, clientReview } : estimate;
+  };
+  router.get("/leads/:leadId/estimate", protectedRoute, requireOperation("GET /leads/:leadId/estimate"), async (req, res, next) => { try { const lead = await leads.get(req.authenticatedUser!, req.params.leadId as string); const estimateFilter = req.authenticatedUser!.role === "super_admin" ? { leadId: lead.id } : { leadId: lead.id, ownerId: req.authenticatedUser!.id }; const estimate = await EstimateModel.findOne(estimateFilter).lean(); res.json({ data: await estimatorEstimate(req.authenticatedUser!, estimate) }); } catch (error) { next(error); } });
   router.get("/estimates", protectedRoute, requireOperation("GET /estimates"), async (req, res, next) => { try {
     const estimateFilter = req.authenticatedUser!.role === "super_admin" ? {} : { ownerId: req.authenticatedUser!.id };
     const estimates = await EstimateModel.find(estimateFilter).sort({ updatedAt: -1 }).lean();
@@ -48,10 +65,10 @@ export function createEstimatesRouter(
       : { _id: { $in: estimates.map((estimate) => estimate.leadId) }, ownerId: req.authenticatedUser!.id };
     const leadItems = await LeadModel.find(leadFilter).lean();
     const byId = new Map(leadItems.map((lead) => [lead._id, lead]));
-    res.json({ data: estimates.map((estimate) => {
+    res.json({ data: await Promise.all(estimates.map(async (estimate) => {
       const lead = byId.get(estimate.leadId);
-      return { ...mapEstimate(estimate), lead: lead ? { ...lead, id: lead._id, _id: undefined } : null };
-    }) });
+      return { ...await estimatorEstimate(req.authenticatedUser!, estimate), lead: lead ? { ...lead, id: lead._id, _id: undefined } : null };
+    })) });
   } catch (error) { next(error); } });
   router.put("/leads/:leadId/estimate", protectedRoute, requireOperation("PUT /leads/:leadId/estimate"), validateBody(estimateSchema), async (req, res, next) => { try {
     const lead = await leads.get(req.authenticatedUser!, req.params.leadId as string);
@@ -92,24 +109,34 @@ export function createEstimatesRouter(
       estimate.version += 1;
     }
     await estimate.save();
-    res.json({ data: mapEstimate(estimate.toObject()) });
+    res.json({ data: await estimatorEstimate(req.authenticatedUser!, estimate.toObject()) });
   } catch (error) { next(error); } });
   router.post("/leads/:leadId/estimate/submit", protectedRoute, requireOperation("POST /leads/:leadId/estimate/submit"), async (req, res, next) => { try {
     const lead = await leads.get(req.authenticatedUser!, req.params.leadId as string);
     const estimate = await EstimateModel.findOne({ leadId: lead.id, ownerId: req.authenticatedUser!.id });
     if (!estimate || estimate.lineItems.every((line: { included: boolean }) => !line.included)) throw new ApiError(409, "ESTIMATE_EMPTY", "Select at least one estimate item before submitting.");
     const approvalRequired = estimate.total > 1_500_000;
-    estimate.approvalRequired = approvalRequired;
-    estimate.status = approvalRequired ? "pending_manager_assignment" : "sent_to_client";
-    estimate.submittedAt = new Date();
+    const submittedAt = new Date();
     if (!approvalRequired) {
-      estimate.sentToClientAt = new Date();
-      estimate.notifications.push({ recipientEmail: lead.clientEmail, recipientRole: "client", event: "estimate_ready_for_review", status: "queued", queuedAt: new Date() });
-      await LeadModel.updateOne({ _id: lead.id }, { $set: { stage: "estimate_sent", nextAction: "client estimate decision", nextActionAt: new Date() } });
+      const published = await publication.publishEstimateToClient({
+        estimateId: String(estimate._id),
+        leadId: lead.id,
+        actorId: req.authenticatedUser!.id,
+        expectedEstimateVersion: Number(estimate.version),
+        expectedStatus: "draft",
+        submittedAt
+      });
+      res.json({
+        data: { ...published.estimate, clientReview: published.clientReview }
+      });
+      return;
     }
+    estimate.approvalRequired = approvalRequired;
+    estimate.status = "pending_manager_assignment";
+    estimate.submittedAt = submittedAt;
     estimate.reviews.push({ actorId: req.authenticatedUser!.id, action: "submitted", note: "", occurredAt: new Date() });
     await estimate.save();
-    res.json({ data: mapEstimate(estimate.toObject()) });
+    res.json({ data: await estimatorEstimate(req.authenticatedUser!, estimate.toObject()) });
   } catch (error) { next(error); } });
 
   router.get("/estimates/:estimateId/pdf", protectedRoute, requireOperation("GET /estimates/:estimateId/pdf"), async (req, res, next) => { try {
@@ -197,14 +224,16 @@ export function createEstimatesRouter(
   router.post("/estimates/:estimateId/send-client", protectedRoute, requireOperation("POST /estimates/:estimateId/send-client"), async (req, res, next) => { try {
     const estimate = await EstimateModel.findOne({ _id: req.params.estimateId, ownerId: req.authenticatedUser!.id, status: "ready_for_client" });
     if (!estimate) throw new ApiError(409, "ESTIMATE_NOT_READY", "Complete required approvals before sending this estimate.");
-    const lead = await LeadModel.findById(estimate.leadId).lean();
-    if (!lead) throw new ApiError(404, "LEAD_NOT_FOUND", "Lead not found.");
-    estimate.status = "sent_to_client";
-    estimate.sentToClientAt = new Date();
-    estimate.notifications.push({ recipientEmail: lead.clientEmail, recipientRole: "client", event: "estimate_ready_for_review", status: "queued", queuedAt: new Date() });
-    await estimate.save();
-    await LeadModel.updateOne({ _id: lead._id }, { $set: { stage: "estimate_sent", nextAction: "client estimate decision", nextActionAt: new Date() } });
-    res.json({ data: mapEstimate(estimate.toObject()) });
+    const published = await publication.publishEstimateToClient({
+      estimateId: String(estimate._id),
+      leadId: String(estimate.leadId),
+      actorId: req.authenticatedUser!.id,
+      expectedEstimateVersion: Number(estimate.version),
+      expectedStatus: "ready_for_client"
+    });
+    res.json({
+      data: { ...published.estimate, clientReview: published.clientReview }
+    });
   } catch (error) { next(error); } });
 
   router.get("/client/estimates", protectedRoute, requireOperation("GET /client/estimates"), async (req, res, next) => { try {
@@ -230,229 +259,52 @@ export function createEstimatesRouter(
       : { _id: estimate.leadId, clientEmail: { $regex: `^${escapeRegex(req.authenticatedUser!.email)}$`, $options: "i" } };
     const lead = await LeadModel.findOne(leadFilter).lean();
     if (!lead) throw estimateNotFound();
+    if (req.authenticatedUser!.role === "client") {
+      const currentRound = await reviews.currentRoundForClientEstimate(
+        req.authenticatedUser!,
+        String(estimate._id)
+      );
+      if (currentRound) {
+        const download = await reviews.readClientPdf(
+          req.authenticatedUser!,
+          currentRound.id
+        );
+        sendDownload(res, download);
+        return;
+      }
+    }
     const pdf = await estimatePdf.generate(toEstimatePdfInput(estimate, lead));
-    res.set("Content-Type", "application/pdf").set("Content-Disposition", `attachment; filename="${pdf.filename}"`).send(pdf.bytes);
+    sendDownload(res, { ...pdf, mimeType: "application/pdf" });
   } catch (error) { next(error); } });
 
   router.post("/client/estimates/:estimateId/decision", protectedRoute, requireOperation("POST /client/estimates/:estimateId/decision"), validateBody(decisionSchema), async (req, res, next) => { try {
-    let responseEstimate: Record<string, any> | null = null;
-    await withMongoTransaction(async (session) => {
-      const estimate = await EstimateModel.findOne({
-        _id: req.params.estimateId
-      }).session(session).lean();
-      if (!estimate) throw estimateNotFound();
-      const lead = await LeadModel.findById(estimate.leadId).session(session).lean();
-      if (
-        !lead ||
-        normalizeEmail(lead.clientEmail) !==
-          normalizeEmail(req.authenticatedUser!.email)
-      ) {
-        throw estimateNotFound();
-      }
-      if (estimate.status !== "sent_to_client") {
-        throw new ApiError(
-          409,
-          "ESTIMATE_NOT_REVIEWABLE",
-          "This estimate is no longer awaiting your review."
-        );
-      }
-      const occurredAt = new Date();
-      const review = {
-        actorId: req.authenticatedUser!.id,
-        action: req.body.decision === "approve"
-          ? "client_approved"
-          : "client_changes_requested",
-        note: req.body.note,
-        occurredAt
-      };
-      if (req.body.decision === "request_changes") {
-        const updated = await EstimateModel.updateOne(
-          {
-            _id: estimate._id,
-            status: "sent_to_client",
-            version: estimate.version,
-            designLifecycleVersion: lifecycleVersionFilter(
-              Number(estimate.designLifecycleVersion ?? 0)
-            ),
-            designFrozenAt: { $in: [null] }
-          },
-          {
-            $set: {
-              status: "client_changes_requested",
-              clientDecisionAt: occurredAt
-            },
-            $inc: { version: 1, designLifecycleVersion: 1 },
-            $push: { reviews: review }
-          },
-          { session }
-        );
-        requireMatchedEstimate(updated);
-        await audit.appendInMongoTransaction({
-          actorId: req.authenticatedUser!.id,
-          action: "estimate_design_final_changes_requested",
-          entityType: "estimate",
-          entityId: String(estimate._id),
-          occurredAt: occurredAt.toISOString(),
-          oldValues: { status: "sent_to_client" },
-          newValues: {
-            status: "client_changes_requested",
-            noteLength: req.body.note.length
-          }
-        }, session);
-        responseEstimate = {
-          ...estimate,
-          status: "client_changes_requested",
-          version: Number(estimate.version) + 1,
-          designLifecycleVersion:
-            Number(estimate.designLifecycleVersion ?? 0) + 1,
-          clientDecisionAt: occurredAt,
-          reviews: [...(estimate.reviews ?? []), review]
-        };
-        return;
-      }
-      const readiness = await estimateDesigns.approvalReadiness(
-        req.authenticatedUser!,
-        String(estimate._id),
-        session
-      );
-      if (!readiness.ready) {
-        throw new ApiError(
-          409,
-          "ESTIMATE_DRAWINGS_UNRESOLVED",
-          "Every submitted drawing must be approved before approving the estimate."
-        );
-      }
-      const assigned = estimate.assignedDesignerId
-        ? await UserModel.findById(estimate.assignedDesignerId).session(session).lean()
-        : await UserModel.findOne({ role: "designer", active: true })
-            .sort({ createdAt: 1 })
-            .session(session)
-            .lean();
-      const manager = assigned?.managerId
-        ? await UserModel.findById(assigned.managerId).session(session).lean()
-        : await UserModel.findOne({ role: "design_manager", active: true })
-            .sort({ createdAt: 1 })
-            .session(session)
-            .lean();
-      if (!assigned || !manager) {
-        throw new ApiError(
-          409,
-          "PROJECT_TEAM_REQUIRED",
-          "A design manager must configure an active project team."
-        );
-      }
-      const projectId = await resolveApprovalProject({
-        estimate: {
-          projectId: estimate.projectId == null ? null : String(estimate.projectId),
-          ownerId: String(estimate.ownerId)
-        },
-        lead: {
-          projectId: lead.projectId == null ? null : String(lead.projectId),
-          ownerId: String(lead.ownerId),
-          projectName: lead.projectName,
-          clientName: lead.clientName,
-          clientEmail: lead.clientEmail,
-          clientMobile: lead.clientMobile,
-          location: lead.location
-        },
-        clientId: req.authenticatedUser!.id,
-        assignedDesignerId: String(assigned._id),
-        managerId: String(manager._id),
-        occurredAt,
-        session
-      });
-      const recipients = [assigned, manager].map((user) => ({
-        recipientEmail: user.email,
-        recipientRole: user.role,
-        event: "project_kickoff_created",
-        status: "queued" as const,
-        queuedAt: occurredAt
-      }));
-      const updated = await EstimateModel.updateOne(
-        {
-          _id: estimate._id,
-          status: "sent_to_client",
-          version: estimate.version,
-          designLifecycleVersion: lifecycleVersionFilter(
-            Number(estimate.designLifecycleVersion ?? 0)
-          ),
-          designFrozenAt: { $in: [null] }
-        },
-        {
-          $set: {
-            status: "client_approved",
-            projectId,
-            clientDecisionAt: occurredAt,
-            designFrozenAt: occurredAt
-          },
-          $inc: { version: 1, designLifecycleVersion: 1 },
-          $push: {
-            reviews: review,
-            notifications: { $each: recipients }
-          }
-        },
-        { session }
-      );
-      requireMatchedEstimate(updated);
-      const leadUpdated = await LeadModel.updateOne(
-        { _id: lead._id, clientEmail: lead.clientEmail },
-        {
-          $set: {
-            stage: "won",
-            nextAction: "project kickoff",
-            nextActionAt: occurredAt
-          }
-        },
-        { session }
-      );
-      if (leadUpdated.matchedCount !== 1) throw estimateNotFound();
-      await audit.appendInMongoTransaction({
-        actorId: req.authenticatedUser!.id,
-        action: "estimate_design_final_approved",
-        entityType: "estimate",
-        entityId: String(estimate._id),
-        occurredAt: occurredAt.toISOString(),
-        oldValues: { status: "sent_to_client" },
-        newValues: {
-          status: "client_approved",
-          projectId,
-          approvedDrawingCount: readiness.approved
-        }
-      }, session);
-      responseEstimate = {
-        ...estimate,
-        status: "client_approved",
-        version: Number(estimate.version) + 1,
-        designLifecycleVersion:
-          Number(estimate.designLifecycleVersion ?? 0) + 1,
-        designFrozenAt: occurredAt,
-        projectId,
-        clientDecisionAt: occurredAt,
-        reviews: [...(estimate.reviews ?? []), review],
-        notifications: [...(estimate.notifications ?? []), ...recipients]
-      };
+    const actor = req.authenticatedUser!;
+    const estimateId = String(req.params.estimateId);
+    const currentRound = await reviews.currentRoundForClientEstimate(
+      actor,
+      estimateId
+    );
+    const result = await decisions.decide({
+      estimateId,
+      round: currentRound
+        ? { id: currentRound.id, expectedVersion: currentRound.version }
+        : null,
+      decision: req.body.decision,
+      note: req.body.note,
+      context: { source: "client_portal", actor, proof: null }
     });
-    if (!responseEstimate) throw new Error("Estimate decision transaction did not complete.");
-    res.json({ data: mapEstimate(responseEstimate) });
+    res.json({ data: mapEstimate(result.estimate) });
   } catch (error) { next(error); } });
   return router;
 }
 
-function mapEstimate(value: Record<string, unknown> | null) { if (!value) return null; return { ...value, id: value._id, _id: undefined }; }
+function mapEstimate(value: Record<string, unknown> | null) {
+  if (!value) return null;
+  const { _id, ...estimate } = value;
+  return { ...estimate, id: _id ?? value.id };
+}
 function escapeRegex(value: string) { return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
 function estimateNotFound() { return new ApiError(404, "ESTIMATE_NOT_FOUND", "Estimate not found."); }
-function requireMatchedEstimate(result: { matchedCount: number }) {
-  if (result.matchedCount !== 1) {
-    throw new ApiError(
-      409,
-      "ESTIMATE_NOT_REVIEWABLE",
-      "This estimate is no longer awaiting your review."
-    );
-  }
-}
-function lifecycleVersionFilter(version: number) {
-  return version === 0 ? { $in: [0, null] } : version;
-}
 async function withMongoTransaction<T>(
   operation: (session: mongoose.ClientSession) => Promise<T>
 ) {

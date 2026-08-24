@@ -25,6 +25,138 @@ function bearer(id: string, role: string): string {
 }
 
 describe("Admin-initiated projects", () => {
+  it("projects only a safe current Client-response summary for scoped Admin readers", async () => {
+    const seed = structuredClone(demoSeedData);
+    seed.projects = seed.projects.filter(({ id }) =>
+      ["project-aurora-villa", "project-aurora-studio"].includes(id)
+    );
+    seed.leads = [
+      {
+        id: "lead-admin-round",
+        ownerId: "user-estimator-sales",
+        projectId: "project-aurora-villa",
+        clientName: "Rhea Kapoor",
+        clientEmail: "client@aurora.example",
+        clientMobile: "+91 90000 00000",
+        projectName: "Aurora Villa",
+        location: "Bengaluru",
+        propertyType: "villa",
+        budgetMin: 1_000_000,
+        budgetMax: 2_000_000,
+        source: "admin_project",
+        stage: "estimate_sent",
+        nextAction: "client estimate decision",
+        nextActionAt: "2026-08-25T10:00:00.000Z",
+        builder: null,
+        areaSqft: null,
+        targetHandoverAt: null,
+        notes: null,
+        latestActivityAt: null,
+        createdAt: "2026-08-23T10:00:00.000Z",
+        updatedAt: "2026-08-23T10:00:00.000Z"
+      },
+      {
+        id: "lead-admin-legacy",
+        ownerId: "user-estimator-sales",
+        projectId: "project-aurora-studio",
+        clientName: "Rhea Kapoor",
+        clientEmail: "client@aurora.example",
+        clientMobile: "+91 90000 00000",
+        projectName: "Aurora Studio",
+        location: "Mumbai",
+        propertyType: "studio",
+        budgetMin: null,
+        budgetMax: null,
+        source: "admin_project",
+        stage: "estimate_sent",
+        nextAction: "client estimate decision",
+        nextActionAt: "2026-08-25T10:00:00.000Z",
+        builder: null,
+        areaSqft: null,
+        targetHandoverAt: null,
+        notes: null,
+        latestActivityAt: null,
+        createdAt: "2026-08-23T10:00:00.000Z",
+        updatedAt: "2026-08-23T10:00:00.000Z"
+      }
+    ];
+    const safeRound = {
+      id: "estimate-client-review-round-safe",
+      sendGeneration: 2,
+      estimateVersion: 4,
+      version: 3,
+      deliveryStatus: "sent" as const,
+      deliveryAttemptCount: 1,
+      deliveredAt: "2026-08-24T09:00:00.000Z",
+      status: "pending" as const
+    };
+    seed.estimateSummaries = [
+      {
+        id: "estimate-admin-round",
+        leadId: "lead-admin-round",
+        projectId: "project-aurora-villa",
+        status: "sent_to_client",
+        total: 1_180_000,
+        clientReview: safeRound
+      },
+      {
+        id: "estimate-admin-legacy",
+        leadId: "lead-admin-legacy",
+        projectId: "project-aurora-studio",
+        status: "sent_to_client",
+        total: 590_000,
+        clientReview: null
+      }
+    ];
+    seed.projectAccessGrants = seed.projects.map((project, index) => ({
+      id: `grant-admin-summary-${index}`,
+      projectId: project.id,
+      userId: "user-admin",
+      module: "projects" as const,
+      source: "admin_initiator" as const,
+      accessRequestId: null,
+      grantedById: "user-admin",
+      active: true,
+      grantedAt: "2026-08-23T10:00:00.000Z",
+      revokedAt: null,
+      revokedById: null,
+      revocationReason: null,
+      version: 1,
+      createdAt: "2026-08-23T10:00:00.000Z",
+      updatedAt: "2026-08-23T10:00:00.000Z"
+    }));
+    const app = createApp({ repository: createMemoryRepository(seed), auth, clock });
+
+    for (const [id, role] of [
+      ["user-admin", "admin"],
+      ["user-super-admin", "super_admin"]
+    ] as const) {
+      const current = await request(app)
+        .get("/api/v1/admin/projects/project-aurora-villa")
+        .set("Authorization", bearer(id, role))
+        .expect(200);
+      expect(current.body.data.estimate).toEqual({
+        id: "estimate-admin-round",
+        status: "sent_to_client",
+        total: 1_180_000,
+        clientReview: safeRound,
+        hasPendingClientResponseTask: true
+      });
+      expect(JSON.stringify(current.body.data.estimate)).not.toMatch(
+        /recipient|decisionNote|storageReference|filename|proof/i
+      );
+
+      const legacy = await request(app)
+        .get("/api/v1/admin/projects/project-aurora-studio")
+        .set("Authorization", bearer(id, role))
+        .expect(200);
+      expect(legacy.body.data.estimate).toMatchObject({
+        clientReview: null,
+        hasPendingClientResponseTask: false
+      });
+    }
+  });
+
   it("atomically initiates and returns the Admin-scoped project handoff", async () => {
     const seed = structuredClone(demoSeedData);
     seed.projects = [];

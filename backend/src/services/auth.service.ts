@@ -64,7 +64,8 @@ export interface AuthPayload {
   user: PublicUser;
 }
 
-export const AUTHORIZATION_POLICY_VERSION = "2026-08-23.staff-invitations.v1" as const;
+export const AUTHORIZATION_POLICY_VERSION =
+  "2026-08-24.estimate-client-response.v1" as const;
 
 export interface AuthorizationSnapshot {
   readonly role: Role;

@@ -26,10 +26,11 @@ import {
 } from "./fixtures/prompt-1-route-operations.js";
 import { EXPECTED_PROMPT_2_HUMAN_JWT_OPERATIONS } from "./fixtures/prompt-2-route-operations.js";
 import { EXPECTED_STAFF_INVITATION_HUMAN_JWT_OPERATIONS } from "./fixtures/staff-invitation-route-operations.js";
+import { EXPECTED_ESTIMATE_CLIENT_RESPONSE_HUMAN_JWT_OPERATIONS } from "./fixtures/estimate-client-response-route-operations.js";
 
 const EXPECTED_ALL_HUMAN_JWT_OPERATIONS = [
   ...EXPECTED_HUMAN_JWT_OPERATIONS,
-  ...EXPECTED_STAFF_INVITATION_HUMAN_JWT_OPERATIONS
+  ...EXPECTED_ESTIMATE_CLIENT_RESPONSE_HUMAN_JWT_OPERATIONS
 ] as const;
 const EXPECTED_STAFF_INVITATION_OPERATIONS =
   EXPECTED_STAFF_INVITATION_HUMAN_JWT_OPERATIONS.slice(
@@ -42,6 +43,10 @@ const STAFF_INVITATION_PUBLIC_KEYS = [
   "POST /auth/user-invitations/inspect",
   "POST /auth/user-invitations/accept"
 ] as const;
+const EXPECTED_ESTIMATE_CLIENT_RESPONSE_OPERATIONS =
+  EXPECTED_ESTIMATE_CLIENT_RESPONSE_HUMAN_JWT_OPERATIONS.slice(
+    EXPECTED_STAFF_INVITATION_HUMAN_JWT_OPERATIONS.length
+  );
 
 const slices = [
   ["matches manifest rows 1 through 23", 0, 23, EXPECTED_HUMAN_JWT_OPERATIONS_1_23],
@@ -190,9 +195,9 @@ describe("human JWT operation registry", () => {
     expect(HUMAN_JWT_OPERATION_LIST.slice(start, end)).toEqual(expected);
   });
 
-  it("matches all 101 normative operation rows", () => {
+  it("matches all 107 normative operation rows", () => {
     expect(Object.values(HUMAN_JWT_OPERATIONS)).toEqual(EXPECTED_ALL_HUMAN_JWT_OPERATIONS);
-    expect(Object.keys(HUMAN_JWT_OPERATIONS)).toHaveLength(101);
+    expect(Object.keys(HUMAN_JWT_OPERATIONS)).toHaveLength(107);
   });
 
   it("mounts rows 2 through 23 as exact router groups with one ordered marker pair", () => {
@@ -357,7 +362,7 @@ describe("human JWT operation registry", () => {
   });
 
   it("appends exactly four identity-provisioning operations with the approved scope and access metadata", () => {
-    expect(HUMAN_JWT_OPERATION_LIST.slice(97)).toEqual(
+    expect(HUMAN_JWT_OPERATION_LIST.slice(97, 101)).toEqual(
       EXPECTED_STAFF_INVITATION_OPERATIONS
     );
     expect(
@@ -365,6 +370,24 @@ describe("human JWT operation registry", () => {
         ({ availability }) => availability === "identity_provisioning"
       )
     ).toEqual(EXPECTED_STAFF_INVITATION_OPERATIONS);
+  });
+
+  it("composes exactly six estimate-client-response operations after the staff-invitation layer", () => {
+    expect(HUMAN_JWT_OPERATION_LIST.slice(101)).toEqual(
+      EXPECTED_ESTIMATE_CLIENT_RESPONSE_OPERATIONS
+    );
+    expect(
+      HUMAN_JWT_OPERATION_LIST.filter(
+        ({ availability }) => availability === "estimate_client_response"
+      )
+    ).toEqual(EXPECTED_ESTIMATE_CLIENT_RESPONSE_OPERATIONS);
+    for (const operation of EXPECTED_ESTIMATE_CLIENT_RESPONSE_OPERATIONS) {
+      expect(operation.scope).toEqual({
+        kind: "non_project",
+        namespace: "estimate_client_response"
+      });
+      expect(operation.availability).toBe("estimate_client_response");
+    }
   });
 
   it("mounts four protected invitation operations and two explicit public non-human routes in one router", () => {
@@ -388,16 +411,18 @@ describe("human JWT operation registry", () => {
     }
   });
 
-  it("mounts the exact 101-operation manifest with one ordered marker pair each", () => {
+  it("mounts the exact 107-operation manifest with one ordered marker pair each", () => {
+    const expectedKeys = EXPECTED_ALL_HUMAN_JWT_OPERATIONS.map(
+      ({ key }) => key
+    ).sort();
     const mountedRoutes = mountedHumanRouters()
       .flatMap(({ routes }) => routes)
       .filter(({ operationMarkers }) => operationMarkers.length > 0);
     const mountedOperations = mountedRoutes.map(({ key }) => key);
-    const expectedKeys = EXPECTED_ALL_HUMAN_JWT_OPERATIONS.map(({ key }) => key).sort();
 
     expect([...mountedOperations].sort()).toEqual(expectedKeys);
-    expect(expectedKeys).toHaveLength(101);
-    expect(new Set(expectedKeys).size).toBe(101);
+    expect(expectedKeys).toHaveLength(107);
+    expect(new Set(expectedKeys).size).toBe(107);
     expect(mountedOperations).not.toContain(
       "POST /execution/worker-assignments/override"
     );
@@ -444,9 +469,9 @@ describe("human JWT operation registry", () => {
     expect(() => assertTaskSixRouteMounts(routers)).toThrow();
   });
 
-  it("has 101 unique keys and exactly 96 routed permissions", () => {
-    expect(new Set(HUMAN_JWT_OPERATION_LIST.map(({ key }) => key)).size).toBe(101);
-    expect(new Set(HUMAN_JWT_OPERATION_LIST.map(({ permission }) => permission)).size).toBe(96);
+  it("has 107 unique keys and exactly 100 routed permissions", () => {
+    expect(new Set(HUMAN_JWT_OPERATION_LIST.map(({ key }) => key)).size).toBe(107);
+    expect(new Set(HUMAN_JWT_OPERATION_LIST.map(({ permission }) => permission)).size).toBe(100);
     expect(HUMAN_JWT_OPERATION_LIST.every(({ permission }) =>
       (PERMISSION_CODES as readonly string[]).includes(permission)
     )).toBe(true);
@@ -490,7 +515,9 @@ describe("human JWT operation registry", () => {
         expect(["projects", "design"]).toContain(operation.scope.module);
       }
       if (operation.permission.startsWith("estimation.") && operation.scope.kind === "non_project") {
-        expect(["estimation_ownership", "organization"]).toContain(operation.scope.namespace);
+        expect(["estimation_ownership", "organization", "estimate_client_response"]).toContain(
+          operation.scope.namespace
+        );
         expect(operation.scope).not.toHaveProperty("module");
       }
     }

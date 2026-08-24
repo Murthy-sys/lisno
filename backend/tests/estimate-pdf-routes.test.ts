@@ -4,9 +4,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createApp as createApplication } from "../src/app.js";
 import { EstimateModel } from "../src/models/Estimate.js";
+import { EstimateClientReviewRoundModel } from "../src/models/EstimateClientReviewRound.js";
 import { LeadModel } from "../src/models/Lead.js";
 import { createMemoryRepository } from "../src/repositories/memory.js";
 import { demoSeedData } from "../src/seed/data.js";
+import type { FileStorage } from "../src/storage/storage.js";
 import { developmentDemoAuthentication } from "./helpers/development-demo-authentication.js";
 
 const createApp = (dependencies: Parameters<typeof createApplication>[0]) =>
@@ -58,7 +60,11 @@ function auth(id: string, role: string) {
   return `Bearer ${jwt.sign({ id, role }, SECRET, { expiresIn: 900 })}`;
 }
 
-function setup() {
+function aggregate(value: unknown) {
+  return { exec: vi.fn().mockResolvedValue(value) };
+}
+
+function setup(storage?: FileStorage) {
   const seed = structuredClone(demoSeedData);
   const client = seed.users.find((user) => user.id === "user-client-aurora")!;
   client.email = "client@lisno.example";
@@ -76,7 +82,8 @@ function setup() {
   const app = createApp({
     repository,
     auth: { jwtSecret: SECRET, jwtExpiresInSeconds: 900 },
-    estimatePdfService: { generate }
+    estimatePdfService: { generate },
+    ...(storage ? { storage } : {})
   });
 
   return { app, generate, projectGrantSpies };
@@ -193,6 +200,12 @@ describe("estimate PDF download routes", () => {
     "row 83 exports a %s client-visible PDF exactly and without writes",
     async (status) => {
     const { app, generate } = setup();
+    vi.spyOn(EstimateModel, "aggregate").mockReturnValue(
+      aggregate([{ _id: "estimate-client-visible" }]) as never
+    );
+    vi.spyOn(EstimateClientReviewRoundModel, "aggregate").mockReturnValue(
+      aggregate([]) as never
+    );
     const clientEstimate = {
       ...estimate,
       _id: "estimate-client-visible",
@@ -251,6 +264,52 @@ describe("estimate PDF download routes", () => {
     expect(updateLead).not.toHaveBeenCalled();
     }
   );
+
+  it("serves the immutable current-round Client PDF bytes and stored filename", async () => {
+    const storedBytes = Buffer.from("%PDF-1.7\nimmutable-round\n%%EOF");
+    const storage = {
+      save: vi.fn(),
+      saveGenerated: vi.fn(),
+      read: vi.fn(async (reference: string) => {
+        expect(reference).toBe("estimate-client-pdfs/round-current.pdf");
+        return storedBytes;
+      }),
+      delete: vi.fn(),
+      open: vi.fn()
+    } as unknown as FileStorage;
+    const { app, generate } = setup(storage);
+    vi.spyOn(EstimateModel, "findOne").mockReturnValue(
+      lean({ ...estimate, _id: "estimate-client-visible", status: "sent_to_client" }) as never
+    );
+    vi.spyOn(LeadModel, "findOne").mockReturnValue(lean(lead) as never);
+    vi.spyOn(EstimateModel, "aggregate").mockReturnValue(
+      aggregate([{ _id: "estimate-client-visible" }]) as never
+    );
+    vi.spyOn(EstimateClientReviewRoundModel, "aggregate")
+      .mockReturnValueOnce(aggregate([{
+        id: "round-current",
+        version: 4,
+        scopeMatches: true
+      }]) as never)
+      .mockReturnValueOnce(aggregate([{
+        storageReference: "estimate-client-pdfs/round-current.pdf",
+        filename: "lisno-estimate-sent-v3.pdf",
+        mimeType: "application/pdf"
+      }]) as never);
+
+    const response = await request(app)
+      .get("/api/v1/client/estimates/estimate-client-visible/pdf")
+      .set("Authorization", auth("user-client-aurora", "client"))
+      .expect(200);
+
+    expect(response.headers["content-type"]).toBe("application/pdf");
+    expect(response.headers["content-disposition"]).toBe(
+      'attachment; filename="lisno-estimate-sent-v3.pdf"'
+    );
+    expect(response.body).toEqual(storedBytes);
+    expect(storage.read).toHaveBeenCalledOnce();
+    expect(generate).not.toHaveBeenCalled();
+  });
 
   it("hides draft, foreign-email, and missing client exports behind the same not-found response", async () => {
     const { app, generate } = setup();

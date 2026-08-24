@@ -184,6 +184,10 @@ export const PERMISSION_CODES = [
   "estimation.client_estimate.list",
   "estimation.client_estimate_pdf.download",
   "estimation.client_estimate.decision",
+  "estimation.client_response_tasks.read",
+  "estimation.client_response_tasks.decide",
+  "estimation.client_response_proof.read",
+  "estimation.estimate_email.retry",
   "identity.authorization.read",
   "identity.users.read",
   "identity.users.update",
@@ -203,7 +207,7 @@ export const PERMISSION_CODES = [
 export type PermissionCode = (typeof PERMISSION_CODES)[number];
 
 export const AUTHORIZATION_POLICY_VERSION =
-  "2026-08-23.staff-invitations.v1" as const;
+  "2026-08-24.estimate-client-response.v1" as const;
 
 export interface AuthorizationSnapshot {
   readonly role: Role;

@@ -24,6 +24,7 @@ import { DesignVersionSequenceModel } from "../models/DesignVersionSequence.js";
 import { EmailCoordinationModel } from "../models/EmailCoordination.js";
 import { EvaluationModel } from "../models/Evaluation.js";
 import { EstimateModel } from "../models/Estimate.js";
+import { EstimateClientReviewRoundModel } from "../models/EstimateClientReviewRound.js";
 import { FloorModel } from "../models/Floor.js";
 import { LeadModel } from "../models/Lead.js";
 import { LeadActivityModel } from "../models/LeadActivity.js";
@@ -195,6 +196,40 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
         () => estimatorQuery.exec(),
         () => estimateQuery.exec()
       );
+    const estimateIds = estimateDocuments.map((document) => idOf(document));
+    const roundQuery = EstimateClientReviewRoundModel.find({
+      estimateId: { $in: estimateIds }
+    })
+      .select({
+        _id: 1,
+        estimateId: 1,
+        sendGeneration: 1,
+        estimateVersion: 1,
+        version: 1,
+        deliveryStatus: 1,
+        deliveryAttemptCount: 1,
+        deliveredAt: 1,
+        status: 1
+      })
+      .sort({ estimateId: 1, sendGeneration: -1, _id: 1 })
+      .lean();
+    if (session) roundQuery.session(session);
+    const roundDocuments = await roundQuery.exec();
+    const currentRoundByEstimateId = new Map<string, EstimateSummaryRecord["clientReview"]>();
+    for (const document of roundDocuments) {
+      const estimateId = String(document.estimateId);
+      if (currentRoundByEstimateId.has(estimateId)) continue;
+      currentRoundByEstimateId.set(estimateId, {
+        id: idOf(document),
+        sendGeneration: Number(document.sendGeneration),
+        estimateVersion: Number(document.estimateVersion),
+        version: Number(document.version),
+        deliveryStatus: document.deliveryStatus,
+        deliveryAttemptCount: Number(document.deliveryAttemptCount),
+        deliveredAt: nullableIso(document.deliveredAt),
+        status: document.status
+      });
+    }
     const estimators = estimatorDocuments.map((document) => ({
       id: idOf(document),
       name: document.name,
@@ -205,7 +240,8 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
       leadId: String(document.leadId),
       projectId: document.projectId == null ? null : String(document.projectId),
       status: String(document.status),
-      total: Number(document.total)
+      total: Number(document.total),
+      clientReview: currentRoundByEstimateId.get(idOf(document)) ?? null
     }));
     const leads = leadDocuments.map(mapLead);
     return projectDocuments.map((document) =>

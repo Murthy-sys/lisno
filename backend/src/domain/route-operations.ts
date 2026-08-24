@@ -17,6 +17,7 @@ export interface HumanJwtOperation {
           | "organization"
           | "audit"
           | "estimation_ownership"
+          | "estimate_client_response"
           | "access_administration";
         projectReviewScope?: boolean;
       };
@@ -26,7 +27,12 @@ export interface HumanJwtOperation {
     | "global_read"
     | "admin_override"
     | "deny_personal";
-  availability: "baseline" | "prompt_1" | "prompt_2" | "identity_provisioning";
+  availability:
+    | "baseline"
+    | "prompt_1"
+    | "prompt_2"
+    | "identity_provisioning"
+    | "estimate_client_response";
 }
 
 export const HUMAN_JWT_OPERATION_LIST = [
@@ -130,7 +136,13 @@ export const HUMAN_JWT_OPERATION_LIST = [
   { key: "GET /admin/user-invitations", permission: "identity.user_invitations.read", scope: { kind: "non_project", namespace: "identity" }, operationClass: "read", superAdminBehavior: "global_read", availability: "identity_provisioning" },
   { key: "POST /admin/user-invitations", permission: "identity.user_invitations.create", scope: { kind: "non_project", namespace: "identity" }, operationClass: "admin", superAdminBehavior: "admin_override", availability: "identity_provisioning" },
   { key: "POST /admin/user-invitations/:invitationId/resend", permission: "identity.user_invitations.resend", scope: { kind: "non_project", namespace: "identity" }, operationClass: "admin", superAdminBehavior: "admin_override", availability: "identity_provisioning" },
-  { key: "POST /admin/user-invitations/:invitationId/revoke", permission: "identity.user_invitations.revoke", scope: { kind: "non_project", namespace: "identity" }, operationClass: "admin", superAdminBehavior: "admin_override", availability: "identity_provisioning" }
+  { key: "POST /admin/user-invitations/:invitationId/revoke", permission: "identity.user_invitations.revoke", scope: { kind: "non_project", namespace: "identity" }, operationClass: "admin", superAdminBehavior: "admin_override", availability: "identity_provisioning" },
+  { key: "GET /admin/estimate-client-response-tasks", permission: "estimation.client_response_tasks.read", scope: { kind: "non_project", namespace: "estimate_client_response" }, operationClass: "read", superAdminBehavior: "global_read", availability: "estimate_client_response" },
+  { key: "GET /admin/estimate-client-response-tasks/:roundId", permission: "estimation.client_response_tasks.read", scope: { kind: "non_project", namespace: "estimate_client_response" }, operationClass: "read", superAdminBehavior: "global_read", availability: "estimate_client_response" },
+  { key: "GET /admin/estimate-client-response-tasks/:roundId/pdf", permission: "estimation.client_response_tasks.read", scope: { kind: "non_project", namespace: "estimate_client_response" }, operationClass: "read", superAdminBehavior: "global_read", availability: "estimate_client_response" },
+  { key: "GET /admin/estimate-client-response-tasks/:roundId/proof", permission: "estimation.client_response_proof.read", scope: { kind: "non_project", namespace: "estimate_client_response" }, operationClass: "read", superAdminBehavior: "global_read", availability: "estimate_client_response" },
+  { key: "POST /admin/estimate-client-response-tasks/:roundId/decision", permission: "estimation.client_response_tasks.decide", scope: { kind: "non_project", namespace: "estimate_client_response" }, operationClass: "admin", superAdminBehavior: "admin_override", availability: "estimate_client_response" },
+  { key: "POST /estimates/:estimateId/client-email/retry", permission: "estimation.estimate_email.retry", scope: { kind: "non_project", namespace: "estimate_client_response" }, operationClass: "personal", superAdminBehavior: "admin_override", availability: "estimate_client_response" }
 ] as const satisfies readonly HumanJwtOperation[];
 
 export type HumanJwtOperationKey =

@@ -23,6 +23,31 @@ const STAFF_INVITATION_PERMISSIONS = [
   "identity.user_invitations.revoke"
 ] as const;
 
+const ESTIMATE_CLIENT_RESPONSE_PERMISSIONS = [
+  "estimation.client_response_tasks.read",
+  "estimation.client_response_tasks.decide",
+  "estimation.client_response_proof.read",
+  "estimation.estimate_email.retry"
+] as const;
+
+const ESTIMATE_CLIENT_RESPONSE_ADDITIONS = {
+  admin: [
+    "estimation.client_response_tasks.read",
+    "estimation.client_response_tasks.decide",
+    "estimation.client_response_proof.read"
+  ],
+  super_admin: [
+    "estimation.client_response_tasks.read",
+    "estimation.client_response_tasks.decide",
+    "estimation.client_response_proof.read",
+    "estimation.estimate_email.retry"
+  ],
+  estimator_sales: [
+    "estimation.client_response_proof.read",
+    "estimation.estimate_email.retry"
+  ]
+} as const;
+
 const COMMON_ROWS = [1, 85] as const;
 const ADDITIONAL_ROWS = {
   admin: [2, 5, 86, 87, 91, 92, 93],
@@ -95,8 +120,11 @@ describe("authorization policy", () => {
   it("matches the exact role-to-operation allowlist", () => {
     for (const role of ROLE_CODES) {
       if (role === "super_admin") continue;
+      const historicalPermissions = ROLE_PERMISSIONS[role].filter(
+        (permission) => !ESTIMATE_CLIENT_RESPONSE_PERMISSIONS.includes(permission as never)
+      );
       if (role === "admin") {
-        expect(ROLE_PERMISSIONS.admin).toEqual([
+        expect(historicalPermissions).toEqual([
           "identity.self.read",
           "projects.list",
           "projects.read",
@@ -109,13 +137,40 @@ describe("authorization policy", () => {
         ]);
         continue;
       }
-      expect(ROLE_PERMISSIONS[role], role).toEqual(
+      expect(historicalPermissions, role).toEqual(
         permissionsForRows([...COMMON_ROWS, ...ADDITIONAL_ROWS[role]])
       );
     }
-    expect(PERMISSION_CODES).toHaveLength(97);
-    expect(new Set(PERMISSION_CODES).size).toBe(97);
+    expect(PERMISSION_CODES).toHaveLength(101);
+    expect(new Set(PERMISSION_CODES).size).toBe(101);
     expect(ROLE_PERMISSIONS.super_admin).toEqual(PERMISSION_CODES);
+  });
+
+  it("adds the four estimate-client-response permissions to exactly the approved roles", () => {
+    expect(
+      PERMISSION_CODES.filter((permission) =>
+        ESTIMATE_CLIENT_RESPONSE_PERMISSIONS.includes(permission as never)
+      )
+    ).toEqual(ESTIMATE_CLIENT_RESPONSE_PERMISSIONS);
+
+    for (const role of ROLE_CODES) {
+      const expected = role in ESTIMATE_CLIENT_RESPONSE_ADDITIONS
+        ? ESTIMATE_CLIENT_RESPONSE_ADDITIONS[
+            role as keyof typeof ESTIMATE_CLIENT_RESPONSE_ADDITIONS
+          ]
+        : [];
+      expect(
+        ROLE_PERMISSIONS[role].filter((permission) =>
+          ESTIMATE_CLIENT_RESPONSE_PERMISSIONS.includes(permission as never)
+        ),
+        role
+      ).toEqual(expected);
+      for (const permission of ESTIMATE_CLIENT_RESPONSE_PERMISSIONS) {
+        expect(hasPermission(role, permission), `${role} ${permission}`).toBe(
+          expected.includes(permission as never)
+        );
+      }
+    }
   });
 
   it("places the four staff-invitation permissions exactly after user mutation and grants them only to Super Admin", () => {

@@ -29,6 +29,7 @@ import { createDesignSectionsRouter } from "./routes/design-sections.js";
 import { createExtractionWorkerRouter } from "./routes/extraction-worker.js";
 import { createEstimateDesignsRouter } from "./routes/estimate-designs.js";
 import { createEstimatePlanReviewRouter } from "./routes/estimate-plan-review.js";
+import { createEstimateClientResponsesRouter } from "./routes/estimate-client-responses.js";
 import { createEstimatesRouter } from "./routes/estimates.js";
 import { healthRouter } from "./routes/health.js";
 import { createKpisRouter } from "./routes/kpis.js";
@@ -51,6 +52,12 @@ import { createDesignSectionService } from "./services/design-section.service.js
 import { createExtractionWorkerService } from "./services/extraction-worker.service.js";
 import { createEstimateDesignService } from "./services/estimate-design.service.js";
 import { createEstimatePlanReviewService } from "./services/estimate-plan-review.service.js";
+import { createEstimateClientReviewStorage } from "./services/estimate-client-review-storage.js";
+import { createEstimateClientReviewService } from "./services/estimate-client-review.service.js";
+import { createEstimateDecisionService } from "./services/estimate-decision.service.js";
+import { createEstimateDeliveryService } from "./services/estimate-delivery.service.js";
+import type { EstimateMailer } from "./services/estimate-mailer.js";
+import { createEstimatePublicationService } from "./services/estimate-publication.service.js";
 import { createHierarchyService } from "./services/hierarchy.service.js";
 import { createKpiService } from "./services/kpi.service.js";
 import { createLeadService } from "./services/lead.service.js";
@@ -89,6 +96,8 @@ export interface AppDependencies {
   invitationPublicRateLimit?: InvitationRateLimitOptions;
   invitationDeliveryRateLimit?: InvitationRateLimitOptions;
   estimatePdfService?: EstimatePdfService;
+  estimateMailer?: EstimateMailer;
+  clientPortalUrl?: string;
   developmentDemoAuthorization?: DevelopmentDemoAuthorization;
 }
 
@@ -187,6 +196,32 @@ export function createApp(dependencies: AppDependencies) {
     audit: auditService,
     now: clock
   });
+  const estimateClientReviewStorage = createEstimateClientReviewStorage(storage);
+  const estimateClientReviewService = createEstimateClientReviewService({
+    storage: estimateClientReviewStorage
+  });
+  const estimateDeliveryService = createEstimateDeliveryService({
+    reviews: estimateClientReviewService,
+    storage: estimateClientReviewStorage,
+    mailer: dependencies.estimateMailer ?? { deliveryKind: "disabled" },
+    portalUrl: dependencies.clientPortalUrl ?? "http://localhost:5173/client",
+    audit: auditService,
+    now: clock
+  });
+  const estimatePublicationService = createEstimatePublicationService({
+    pdf: estimatePdfService,
+    storage: estimateClientReviewStorage,
+    reviews: estimateClientReviewService,
+    audit: auditService,
+    deliverInitial: estimateDeliveryService.deliverInitial,
+    now: clock
+  });
+  const estimateDecisionService = createEstimateDecisionService({
+    audit: auditService,
+    estimateDesigns: estimateDesignService,
+    reviews: estimateClientReviewService,
+    now: clock
+  });
   const extractionWorkerService = dependencies.ocrWorkerToken
     ? createExtractionWorkerService(
         repository,
@@ -247,6 +282,17 @@ export function createApp(dependencies: AppDependencies) {
     createEstimateDesignsRouter(authService, estimateDesignService, maxUploadBytes)
   );
   app.use("/api/v1", createEstimatePlanReviewRouter(authService, estimatePlanReviewService));
+  app.use(
+    "/api/v1",
+    createEstimateClientResponsesRouter(
+      authService,
+      estimateClientReviewService,
+      estimateClientReviewStorage,
+      estimateDecisionService,
+      estimateDeliveryService,
+      maxUploadBytes
+    )
+  );
   app.use("/api/v1", createProjectsRouter(authService, projectService));
   app.use(
     "/api/v1",
@@ -262,7 +308,10 @@ export function createApp(dependencies: AppDependencies) {
       leadService,
       estimatePdfService,
       estimateDesignService,
-      auditService
+      auditService,
+      estimatePublicationService,
+      estimateDecisionService,
+      estimateClientReviewService
     )
   );
   app.use("/api/v1", createTasksRouter(authService, taskService));

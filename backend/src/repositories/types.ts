@@ -1,5 +1,6 @@
 import type { Role, TaskStatus } from "../contracts/domain.js";
 import type { AccountKind } from "../domain/demo-identities.js";
+import type { EstimateClientReviewSummary } from "../domain/estimate-client-review.js";
 import type {
   InvitableRole,
   UserInvitationAction,
@@ -297,6 +298,15 @@ export interface EstimateSummaryRecord {
   projectId: string | null;
   status: string;
   total: number;
+  clientReview: EstimateClientReviewSummary | null;
+}
+
+export interface AdminProjectEstimateSummary {
+  id: string;
+  status: string;
+  total: number;
+  clientReview: EstimateClientReviewSummary | null;
+  hasPendingClientResponseTask: boolean;
 }
 
 export interface AdminProjectSummary {
@@ -315,7 +325,7 @@ export interface AdminProjectSummary {
     nextAction: string;
     nextActionAt: string;
   } | null;
-  estimate: { id: string; status: string; total: number } | null;
+  estimate: AdminProjectEstimateSummary | null;
   createdAt: string;
 }
 export type NewLeadActivity = LeadActivityRecord;

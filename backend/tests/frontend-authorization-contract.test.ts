@@ -32,6 +32,13 @@ const STAFF_INVITATION_PERMISSIONS = [
   "identity.user_invitations.revoke"
 ] as const;
 
+const ESTIMATE_CLIENT_RESPONSE_PERMISSIONS = [
+  "estimation.client_response_tasks.read",
+  "estimation.client_response_tasks.decide",
+  "estimation.client_response_proof.read",
+  "estimation.estimate_email.retry"
+] as const;
+
 describe("frontend authorization contract parity", () => {
   it("matches the backend role vocabulary and labels", () => {
     expect(FRONTEND_ROLE_CODES).toEqual(ROLE_CODES);
@@ -48,16 +55,26 @@ describe("frontend authorization contract parity", () => {
     expect(FRONTEND_POLICY_VERSION).toBe(AUTHORIZATION_POLICY_VERSION);
   });
 
-  it("publishes the exact 97-code staff-invitation policy on both sides", () => {
-    expect(AUTHORIZATION_POLICY_VERSION).toBe("2026-08-23.staff-invitations.v1");
-    expect(FRONTEND_POLICY_VERSION).toBe("2026-08-23.staff-invitations.v1");
-    expect(PERMISSION_CODES).toHaveLength(97);
-    expect(FRONTEND_PERMISSION_CODES).toHaveLength(97);
-    expect(new Set(PERMISSION_CODES).size).toBe(97);
-    expect(new Set(FRONTEND_PERMISSION_CODES).size).toBe(97);
+  it("publishes the exact 101-code estimate-client-response policy on both sides", () => {
+    expect(AUTHORIZATION_POLICY_VERSION).toBe("2026-08-24.estimate-client-response.v1");
+    expect(FRONTEND_POLICY_VERSION).toBe("2026-08-24.estimate-client-response.v1");
+    expect(PERMISSION_CODES).toHaveLength(101);
+    expect(FRONTEND_PERMISSION_CODES).toHaveLength(101);
+    expect(new Set(PERMISSION_CODES).size).toBe(101);
+    expect(new Set(FRONTEND_PERMISSION_CODES).size).toBe(101);
     for (const permission of STAFF_INVITATION_PERMISSIONS) {
       expect(PERMISSION_CODES).toContain(permission);
       expect(FRONTEND_PERMISSION_CODES).toContain(permission);
     }
+    expect(
+      PERMISSION_CODES.filter((permission) =>
+        ESTIMATE_CLIENT_RESPONSE_PERMISSIONS.includes(permission as never)
+      )
+    ).toEqual(ESTIMATE_CLIENT_RESPONSE_PERMISSIONS);
+    expect(
+      FRONTEND_PERMISSION_CODES.filter((permission) =>
+        ESTIMATE_CLIENT_RESPONSE_PERMISSIONS.includes(permission as never)
+      )
+    ).toEqual(ESTIMATE_CLIENT_RESPONSE_PERMISSIONS);
   });
 });
