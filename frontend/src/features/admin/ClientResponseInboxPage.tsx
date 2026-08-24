@@ -91,6 +91,9 @@ export function ClientResponseInboxPage() {
     limit: PAGE_SIZE,
     offset: 0
   });
+  const [correctionTargetOffset, setCorrectionTargetOffset] = useState<
+    number | null
+  >(null);
   const [selected, setSelected] = useState<SelectedDecision | null>(null);
   const taskQuery = useQuery({
     queryKey: estimateClientResponseKeys.list(status, pagination),
@@ -107,18 +110,22 @@ export function ClientResponseInboxPage() {
   );
   const paginationIsLocked =
     taskQuery.isFetching || taskQuery.isPlaceholderData;
+  const hasCanonicalEmptyLaterPage = Boolean(
+    !taskQuery.isError &&
+      page &&
+      !taskQuery.isPlaceholderData &&
+      page.items.length === 0 &&
+      page.pagination.offset > 0
+  );
+  const isCorrectingEmptyPage =
+    hasCanonicalEmptyLaterPage || correctionTargetOffset !== null;
   const canDecide = hasFrontendPermission(
     auth.authorization,
     "estimation.client_response_tasks.decide"
   );
 
   useEffect(() => {
-    if (
-      !page ||
-      taskQuery.isPlaceholderData ||
-      page.items.length > 0 ||
-      page.pagination.offset === 0
-    ) {
+    if (!page || !hasCanonicalEmptyLaterPage) {
       return;
     }
 
@@ -130,16 +137,38 @@ export function ClientResponseInboxPage() {
         : 0;
     const validOffset = Math.min(previousOffset, lastOffset);
 
+    setCorrectionTargetOffset(validOffset);
     setPagination((current) =>
       current.offset === page.pagination.offset && current.offset !== validOffset
         ? { ...current, offset: validOffset }
         : current
     );
-  }, [page, taskQuery.isPlaceholderData]);
+  }, [hasCanonicalEmptyLaterPage, page]);
+
+  useEffect(() => {
+    if (
+      correctionTargetOffset === null ||
+      pagination.offset !== correctionTargetOffset ||
+      taskQuery.isPlaceholderData ||
+      taskQuery.isFetching ||
+      hasCanonicalEmptyLaterPage
+    ) {
+      return;
+    }
+
+    setCorrectionTargetOffset(null);
+  }, [
+    correctionTargetOffset,
+    hasCanonicalEmptyLaterPage,
+    pagination.offset,
+    taskQuery.isFetching,
+    taskQuery.isPlaceholderData
+  ]);
 
   const selectFilter = (
     nextStatus: EstimateClientResponseStatus | undefined
   ) => {
+    setCorrectionTargetOffset(null);
     setStatus(nextStatus);
     setPagination({ limit: PAGE_SIZE, offset: 0 });
   };
@@ -148,7 +177,10 @@ export function ClientResponseInboxPage() {
     <section
       className="client-responses client-responses--inbox"
       aria-labelledby="client-response-inbox-title"
-      aria-busy={taskQuery.isPending || taskQuery.isFetching}
+      aria-busy={
+        !taskQuery.isError &&
+        (taskQuery.isPending || taskQuery.isFetching || isCorrectingEmptyPage)
+      }
     >
       <PageHeader
         id="client-response-inbox-title"
@@ -183,6 +215,11 @@ export function ClientResponseInboxPage() {
             label: "Try again",
             onAction: () => void taskQuery.refetch()
           }}
+        />
+      ) : isCorrectingEmptyPage ? (
+        <PageState
+          state="loading"
+          message="Loading previous Client responses…"
         />
       ) : !page || page.items.length === 0 ? (
         <PageState state="empty" message={emptyMessage(status)} />

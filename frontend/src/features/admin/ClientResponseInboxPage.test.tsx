@@ -8,6 +8,7 @@ import type { EstimateClientResponseTaskListItem } from "../../api/types";
 import { authorizationFor } from "../../test/authFixtures";
 import { renderApp } from "../../test/render";
 import { server } from "../../test/server";
+import { estimateClientResponseKeys } from "./estimateClientResponsesApi";
 
 const pendingTask: EstimateClientResponseTaskListItem = {
   id: "round-pending",
@@ -240,20 +241,34 @@ describe("ClientResponseInboxPage", () => {
     installAdmin();
     const requests: string[] = [];
     let firstPageRequests = 0;
+    let secondPageRequests = 0;
+    let releaseCorrectedPage!: () => void;
+    const correctedPageGate = new Promise<void>((resolve) => {
+      releaseCorrectedPage = resolve;
+    });
     server.use(
-      http.get("/api/v1/admin/estimate-client-response-tasks", ({ request }) => {
+      http.get("/api/v1/admin/estimate-client-response-tasks", async ({ request }) => {
         const url = new URL(request.url);
         const offset = Number(url.searchParams.get("offset"));
         requests.push(url.search);
         if (offset === 20) {
-          return HttpResponse.json(
-            page([], { offset: 20, total: 20, hasMore: false })
-          );
+          secondPageRequests += 1;
+          return HttpResponse.json(secondPageRequests === 1
+            ? page([{
+                ...pendingTask,
+                id: "round-second-page",
+                client: { ...pendingTask.client, name: "Second page Client" }
+              }], { offset: 20, total: 21, hasMore: false })
+            : page([], { offset: 20, total: 20, hasMore: false }));
         }
 
         firstPageRequests += 1;
+        if (firstPageRequests > 1) await correctedPageGate;
         return HttpResponse.json(
-          page([pendingTask], {
+          page([{
+            ...pendingTask,
+            client: { ...pendingTask.client, name: "First page Client" }
+          }], {
             offset: 0,
             total: firstPageRequests === 1 ? 21 : 20,
             hasMore: firstPageRequests === 1
@@ -263,17 +278,45 @@ describe("ClientResponseInboxPage", () => {
     );
     const user = userEvent.setup();
 
-    renderApp(["/admin/client-responses"]);
-    await user.click(await screen.findByRole("button", { name: "Next page" }));
+    const { queryClient } = renderApp(["/admin/client-responses"]);
+    expect(await screen.findByText("First page Client")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Next page" }));
+    expect(await screen.findByText("Second page Client")).toBeVisible();
 
-    await waitFor(() =>
-      expect(requests).toEqual([
-        "?status=pending&limit=20&offset=0",
-        "?status=pending&limit=20&offset=20",
-        "?status=pending&limit=20&offset=0"
-      ])
-    );
-    expect(await screen.findByText("Priya Shah")).toBeVisible();
+    const firstPageKey = estimateClientResponseKeys.list("pending", {
+      limit: 20,
+      offset: 0
+    });
+    const secondPageKey = estimateClientResponseKeys.list("pending", {
+      limit: 20,
+      offset: 20
+    });
+    queryClient.removeQueries({ queryKey: firstPageKey, exact: true });
+    await act(async () => {
+      await queryClient.invalidateQueries({ queryKey: secondPageKey, exact: true });
+    });
+
+    try {
+      await waitFor(() =>
+        expect(requests).toEqual([
+          "?status=pending&limit=20&offset=0",
+          "?status=pending&limit=20&offset=20",
+          "?status=pending&limit=20&offset=20",
+          "?status=pending&limit=20&offset=0"
+        ])
+      );
+      expect(screen.getByText("Loading previous Client responses…")).toBeVisible();
+      expect(
+        screen.getByRole("region", { name: "Client responses" })
+      ).toHaveAttribute("aria-busy", "true");
+      expect(
+        screen.queryByText("There are no pending Client responses assigned to you.")
+      ).not.toBeInTheDocument();
+    } finally {
+      await act(async () => releaseCorrectedPage());
+    }
+
+    expect(await screen.findByText("First page Client")).toBeVisible();
     expect(screen.getByText("Showing 1–1 of 20")).toBeVisible();
     expect(screen.getByRole("button", { name: "Previous page" })).toBeDisabled();
   });
