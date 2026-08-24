@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   ESTIMATE_CLIENT_DECISION_NOTE_MAX,
@@ -101,6 +101,10 @@ describe("estimate client review domain helpers", () => {
 });
 
 describe("EstimateClientReviewRound persistence model", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it("normalizes the persisted recipient and validates a complete pending round", async () => {
     const document = round();
 
@@ -153,6 +157,83 @@ describe("EstimateClientReviewRound persistence model", () => {
       await expect(round({ status, ...terminal }).validate()).resolves.toBeUndefined();
     }
   );
+
+  it("preserves Client-portal request-changes decisions with an empty note", async () => {
+    await expect(
+      round({
+        status: "changes_requested",
+        decision: "request_changes",
+        decisionSource: "client_portal",
+        decisionNote: "",
+        decidedById: "client-1",
+        decidedAt: NOW
+      }).validate()
+    ).resolves.toBeUndefined();
+  });
+
+  it.each([
+    ["terminal status without terminal metadata", { $set: { status: "approved" } }],
+    [
+      "pending status with decision metadata",
+      {
+        $set: {
+          status: "pending",
+          decision: "approve",
+          decisionSource: "admin_proof",
+          decisionNote: "",
+          decidedById: "admin-1",
+          decidedAt: NOW
+        }
+      }
+    ]
+  ])("rejects an atomic CAS update with %s", async (_label, update) => {
+    vi.spyOn(EstimateClientReviewRoundModel.collection, "updateOne").mockResolvedValue({
+      acknowledged: true,
+      matchedCount: 1,
+      modifiedCount: 1,
+      upsertedCount: 0,
+      upsertedId: null
+    } as never);
+
+    await expect(
+      EstimateClientReviewRoundModel.updateOne(
+        { _id: "review-round-1", status: "pending", version: 1 },
+        update,
+        { runValidators: true }
+      )
+    ).rejects.toThrow(/decision|status/i);
+  });
+
+  it.each([
+    ["Admin proof", "admin_proof", "Please revise the finish."],
+    ["Client portal", "client_portal", ""]
+  ])("allows a complete %s request-changes CAS update", async (_label, decisionSource, decisionNote) => {
+    vi.spyOn(EstimateClientReviewRoundModel.collection, "updateOne").mockResolvedValue({
+      acknowledged: true,
+      matchedCount: 1,
+      modifiedCount: 1,
+      upsertedCount: 0,
+      upsertedId: null
+    } as never);
+
+    await expect(
+      EstimateClientReviewRoundModel.updateOne(
+        { _id: "review-round-1", status: "pending", version: 1 },
+        {
+          $set: {
+            status: "changes_requested",
+            decision: "request_changes",
+            decisionSource,
+            decisionNote,
+            decidedById: decisionSource === "admin_proof" ? "admin-1" : "client-1",
+            decidedAt: NOW
+          },
+          $inc: { version: 1 }
+        },
+        { runValidators: true }
+      )
+    ).resolves.toEqual(expect.objectContaining({ matchedCount: 1 }));
+  });
 
   it.each([
     ["pending decision", { decision: "approve" }],

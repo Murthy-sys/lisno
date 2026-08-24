@@ -8,8 +8,18 @@ import {
   ESTIMATE_DELIVERY_STATUSES
 } from "../domain/estimate-client-review.js";
 import { emailSchema, normalizeEmail } from "../domain/email.js";
+import type { Query } from "mongoose";
 import { EstimateClientResponseProofModel } from "./EstimateClientResponseProof.js";
 import { model, models, Schema } from "./mongoose.js";
+
+const decisionStatePaths = [
+  "status",
+  "decision",
+  "decisionSource",
+  "decisionNote",
+  "decidedById",
+  "decidedAt"
+] as const;
 
 const estimateClientReviewLineItemSchema = new Schema(
   {
@@ -135,36 +145,21 @@ estimateClientReviewRoundSchema.pre("validate", function normalizeRecipient() {
 });
 
 estimateClientReviewRoundSchema.pre("validate", function validateDecisionState() {
-  const status = this.get("status");
-  const decision = this.get("decision");
-  const source = this.get("decisionSource");
-  const note = this.get("decisionNote");
-  const decidedById = this.get("decidedById");
-  const decidedAt = this.get("decidedAt");
-
-  if (status === "pending") {
-    if ([decision, source, note, decidedById, decidedAt].some((value) => value !== null)) {
-      this.invalidate("status", "Pending review rounds cannot contain decision metadata.");
-    }
-    return;
-  }
-
-  const expectedDecision = status === "approved" ? "approve" : "request_changes";
-  if (
-    decision !== expectedDecision ||
-    typeof source !== "string" ||
-    typeof note !== "string" ||
-    typeof decidedById !== "string" ||
-    decidedById.length === 0 ||
-    !isDate(decidedAt) ||
-    (decision === "request_changes" && note.trim().length === 0)
-  ) {
-    this.invalidate(
-      "status",
-      "Terminal review rounds require complete, status-consistent decision metadata."
-    );
-  }
+  const error = decisionStateError({
+    status: this.get("status"),
+    decision: this.get("decision"),
+    decisionSource: this.get("decisionSource"),
+    decisionNote: this.get("decisionNote"),
+    decidedById: this.get("decidedById"),
+    decidedAt: this.get("decidedAt")
+  });
+  if (error) this.invalidate("status", error);
 });
+
+estimateClientReviewRoundSchema.pre(
+  ["updateOne", "updateMany", "findOneAndUpdate"],
+  validateDecisionStateUpdate
+);
 
 estimateClientReviewRoundSchema.index({ dedupeKey: 1 }, { unique: true });
 estimateClientReviewRoundSchema.index(
@@ -181,6 +176,88 @@ estimateClientReviewRoundSchema.index({ estimateId: 1, createdAt: -1, _id: 1 });
 
 function isDate(value: unknown): value is Date {
   return value instanceof Date && !Number.isNaN(value.getTime());
+}
+
+function decisionStateError(input: Record<string, unknown>) {
+  const {
+    status,
+    decision,
+    decisionSource,
+    decisionNote,
+    decidedById,
+    decidedAt
+  } = input;
+  if (status === "pending") {
+    return [decision, decisionSource, decisionNote, decidedById, decidedAt].some(
+      (value) => value !== null
+    )
+      ? "Pending review rounds cannot contain decision metadata."
+      : null;
+  }
+
+  const expectedDecision = status === "approved" ? "approve" : "request_changes";
+  if (
+    !["approved", "changes_requested"].includes(String(status)) ||
+    decision !== expectedDecision ||
+    !["client_portal", "admin_proof"].includes(String(decisionSource)) ||
+    typeof decisionNote !== "string" ||
+    typeof decidedById !== "string" ||
+    decidedById.length === 0 ||
+    !isDate(decidedAt) ||
+    (decision === "request_changes" &&
+      decisionSource === "admin_proof" &&
+      decisionNote.trim().length === 0)
+  ) {
+    return "Terminal review rounds require complete, status-consistent decision metadata.";
+  }
+  return null;
+}
+
+function validateDecisionStateUpdate(this: Query<unknown, unknown>) {
+  const update = this.getUpdate();
+  if (!updateTouchesDecisionState(update)) return;
+  if (!update || Array.isArray(update)) {
+    throw new Error("Decision state updates must set the complete decision tuple.");
+  }
+
+  const updateObject = update as Record<string, unknown>;
+  const set = {
+    ...Object.fromEntries(
+      Object.entries(updateObject).filter(([key]) => !key.startsWith("$"))
+    ),
+    ...asRecord(updateObject.$set)
+  };
+  const nonSetMutation = Object.entries(updateObject).some(
+    ([operator, value]) =>
+      operator.startsWith("$") &&
+      operator !== "$set" &&
+      updateTouchesDecisionState(value)
+  );
+  if (
+    nonSetMutation ||
+    !decisionStatePaths.every((path) => Object.hasOwn(set, path))
+  ) {
+    throw new Error("Decision state updates must set the complete decision tuple.");
+  }
+
+  const error = decisionStateError(set);
+  if (error) throw new Error(error);
+}
+
+function updateTouchesDecisionState(value: unknown): boolean {
+  if (Array.isArray(value)) return value.some(updateTouchesDecisionState);
+  if (!value || typeof value !== "object") return false;
+  return Object.entries(value as Record<string, unknown>).some(
+    ([path, nested]) =>
+      decisionStatePaths.includes(path.split(".")[0] as (typeof decisionStatePaths)[number]) ||
+      updateTouchesDecisionState(nested)
+  );
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
 }
 
 export const EstimateClientReviewRoundModel =

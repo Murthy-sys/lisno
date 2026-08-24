@@ -183,27 +183,32 @@ function sanitizeAuditObject(value: JsonObject): JsonObject {
   return sanitizeAuditValue(value) as JsonObject;
 }
 
-function sanitizeAuditValue(value: unknown): unknown {
+function sanitizeAuditValue(value: unknown, path: readonly string[] = []): unknown {
   if (isBytePayload(value)) return undefined;
   if (Array.isArray(value)) {
     return value
-      .map(sanitizeAuditValue)
+      .map((nested) => sanitizeAuditValue(nested, path))
       .filter((nested) => nested !== undefined);
   }
   if (!value || typeof value !== "object") return value;
   return Object.fromEntries(
     Object.entries(value as Record<string, unknown>)
-      .filter(([key, nested]) => !isSensitiveAuditKey(key, nested))
-      .map(([key, nested]) => [key, sanitizeAuditValue(nested)] as const)
+      .filter(([key, nested]) => !isSensitiveAuditKey(key, nested, path))
+      .map(([key, nested]) => [
+        key,
+        sanitizeAuditValue(nested, [...path, normalizeAuditKey(key)])
+      ] as const)
       .filter(([, nested]) => nested !== undefined)
   );
 }
 
-function isSensitiveAuditKey(key: string, value: unknown): boolean {
-  const normalized = key
-    .normalize("NFKC")
-    .toLowerCase()
-    .replace(/[^a-z0-9]/g, "");
+function isSensitiveAuditKey(
+  key: string,
+  value: unknown,
+  path: readonly string[]
+): boolean {
+  const normalized = normalizeAuditKey(key);
+  const normalizedPath = [...path, normalized].join("");
   if (
     normalized === "tokengeneration" &&
     typeof value === "number" &&
@@ -213,10 +218,10 @@ function isSensitiveAuditKey(key: string, value: unknown): boolean {
     return false;
   }
   if (
-    normalized.includes("storagereference") ||
-    normalized.includes("recipientemail") ||
-    normalized.includes("providerresponse") ||
-    normalized.includes("providermessage") ||
+    normalizedPath.includes("storagereference") ||
+    normalizedPath.includes("recipientemail") ||
+    normalizedPath.includes("providerresponse") ||
+    normalizedPath.includes("providermessage") ||
     normalized === "bytes" ||
     normalized.endsWith("bytes") ||
     normalized.includes("bytebuffer") ||
@@ -227,6 +232,13 @@ function isSensitiveAuditKey(key: string, value: unknown): boolean {
   return ["password", "hash", "token", "secret"].some((part) =>
     normalized.includes(part)
   );
+}
+
+function normalizeAuditKey(key: string): string {
+  return key
+    .normalize("NFKC")
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "");
 }
 
 function isBytePayload(value: unknown): boolean {

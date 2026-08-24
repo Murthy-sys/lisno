@@ -201,4 +201,38 @@ describe("audit persistence security", () => {
       mimeType: "application/pdf"
     });
   });
+
+  it("rejects recipient and provider leaks expressed as natural nested audit paths", async () => {
+    const repository = createMemoryRepository(structuredClone(demoSeedData));
+    const audit = createAuditService(repository);
+
+    await audit.append({
+      actorId: "user-super-admin",
+      action: "estimate_email_delivery_failed",
+      entityType: "estimate_client_review",
+      entityId: "review-round-nested-leak",
+      occurredAt: "2026-08-24T12:30:00.000Z",
+      newValues: {
+        recipient: { email: "client@example.com" },
+        provider: {
+          response: "550 rejected client@example.com",
+          message: "private SMTP diagnostic"
+        },
+        failureCode: "SMTP_REJECTED"
+      }
+    });
+
+    const page = await repository.pageAuditEvents(
+      {
+        entityType: "estimate_client_review",
+        entityId: "review-round-nested-leak"
+      },
+      { limit: 20, offset: 0 }
+    );
+    expect(page.items[0]?.newValues).toEqual({
+      recipient: {},
+      provider: {},
+      failureCode: "SMTP_REJECTED"
+    });
+  });
 });
