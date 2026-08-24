@@ -654,7 +654,7 @@ describe("accessibility smoke coverage", () => {
     );
 
     const panelHeading = await screen.findByRole("heading", {
-      name: "Pending invitations"
+      name: "User invitations"
     });
     const pendingRow = await screen.findByRole("row", { name: /Accessible Invitee/ });
     expect(within(pendingRow).getByText("Pending")).toBeVisible();
