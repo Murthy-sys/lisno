@@ -469,25 +469,93 @@ async function assertSingleDecision(
     designLifecycleVersion: 4
   });
   expect(estimate!.reviews).toHaveLength(1);
-  expect(await EstimateClientResponseProofModel.countDocuments()).toBe(
-    round!.decisionSource === "admin_proof" ? 1 : 0
-  );
-  expect(storage.objects.size).toBe(
-    round!.decisionSource === "admin_proof" ? 1 : 0
-  );
+  expect(["client_portal", "admin_proof"]).toContain(round!.decisionSource);
+  const source = round!.decisionSource as "client_portal" | "admin_proof";
+  const expectedActorId = source === "admin_proof"
+    ? ACTORS.admin.id
+    : ACTORS.client.id;
+  expect(round!.decidedById).toBe(expectedActorId);
+  const proofs = await EstimateClientResponseProofModel.find()
+    .select("+storageReference")
+    .lean();
+  expect(proofs).toHaveLength(source === "admin_proof" ? 1 : 0);
+  const proof = proofs[0] ?? null;
+  expect(storage.objects.size).toBe(source === "admin_proof" ? 1 : 0);
   const semanticAction = decision === "approve"
     ? "estimate_design_final_approved"
     : "estimate_design_final_changes_requested";
-  expect(await AuditEventModel.countDocuments({ action: semanticAction })).toBe(1);
-  expect(await AuditEventModel.countDocuments({
-    action: {
-      $in: [
-        "estimate_client_response_recorded_through_portal",
-        "estimate_client_approval_recorded_by_admin",
-        "estimate_client_changes_recorded_by_admin"
-      ]
-    }
-  })).toBe(1);
+  const sourceAction = source === "client_portal"
+    ? "estimate_client_response_recorded_through_portal"
+    : decision === "approve"
+      ? "estimate_client_approval_recorded_by_admin"
+      : "estimate_client_changes_recorded_by_admin";
+  const expectedAudits = [
+    {
+      action: semanticAction,
+      actorId: expectedActorId,
+      entityType: "estimate",
+      entityId: fixture.estimateId,
+      decisionSource: null
+    },
+    {
+      action: sourceAction,
+      actorId: expectedActorId,
+      entityType: "estimate_client_review_round",
+      entityId: fixture.roundId,
+      decisionSource: source
+    },
+    ...(source === "admin_proof"
+      ? [{
+          action: "estimate_client_proof_stored",
+          actorId: expectedActorId,
+          entityType: "estimate_client_response_proof",
+          entityId: String(proof!._id),
+          decisionSource: null
+        }]
+      : [])
+  ].sort((left, right) => left.action.localeCompare(right.action));
+  const actualAudits = (await AuditEventModel.find().lean())
+    .map((event) => ({
+      action: event.action,
+      actorId: event.actorId,
+      entityType: event.entityType,
+      entityId: event.entityId,
+      decisionSource:
+        (event.newValues as Record<string, unknown>).decisionSource ?? null
+    }))
+    .sort((left, right) => left.action.localeCompare(right.action));
+  expect(actualAudits).toHaveLength(source === "admin_proof" ? 3 : 2);
+  expect(actualAudits).toEqual(expectedAudits);
+}
+
+async function assertWinningProofIsOnlyReadableObject(
+  storage: ReturnType<typeof createProofStorage>
+) {
+  const proofs = await EstimateClientResponseProofModel.find()
+    .select("+storageReference")
+    .lean();
+  expect(proofs).toHaveLength(1);
+  const proof = proofs[0]!;
+  const winningReference = String(proof.storageReference);
+  const losingReferences = storage.saved.filter(
+    (reference) => reference !== winningReference
+  );
+
+  expect(storage.saved).toHaveLength(2);
+  expect(losingReferences).toHaveLength(1);
+  expect(storage.deleted).toEqual(losingReferences);
+  expect([...storage.objects.keys()]).toEqual([winningReference]);
+  const persistedBytes = await storage.storage.read(winningReference);
+  expect(persistedBytes).toEqual(JPEG);
+  expect(proof).toMatchObject({
+    storageReference: winningReference,
+    byteSize: persistedBytes.byteLength,
+    sha256: sha256Hex(persistedBytes)
+  });
+  expect(storage.objects.has(losingReferences[0]!)).toBe(false);
+  await expect(storage.storage.read(losingReferences[0]!)).rejects.toThrow(
+    "Stored proof not found."
+  );
 }
 
 describe("Estimate decision races on a Mongo replica set", () => {
@@ -563,9 +631,8 @@ describe("Estimate decision races on a Mongo replica set", () => {
         result.status === "fulfilled" ? result.value.status : -1
       ).sort();
       expect(statuses).toEqual([200, 409]);
-      expect(storage.saved).toHaveLength(2);
-      expect(storage.deleted).toHaveLength(1);
       await assertSingleDecision(fixture, decision, storage);
+      await assertWinningProofIsOnlyReadableObject(storage);
     }
   );
 

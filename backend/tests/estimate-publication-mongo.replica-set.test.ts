@@ -526,16 +526,35 @@ describe("Estimate publication and delivery on a Mongo replica set", () => {
     });
     const secondRound = await selectedRound(second.clientReview.id);
     const reloadedFirst = await selectedRound(first.clientReview.id);
+    const secondReference = String(secondRound!.pdfStorageReference);
+    const expectedSecondBytes = Buffer.from(
+      `%PDF-1.7\nestimate=${fixture.estimateId};version=5;total=1475000\n%%EOF`
+    );
 
     expect(reloadedFirst).toMatchObject(firstMetadata);
-    expect(storage.objects.get(firstReference)).toEqual(firstBytes);
-    expect(secondRound).toMatchObject({ sendGeneration: 2, estimateVersion: 5 });
-    expect(secondRound!.pdfStorageReference).not.toBe(firstReference);
+    await expect(storage.storage.read(firstReference)).resolves.toEqual(firstBytes);
+    expect(secondRound).toMatchObject({
+      sendGeneration: 2,
+      estimateVersion: 5,
+      pdfStorageReference: secondReference,
+      pdfByteSize: expectedSecondBytes.byteLength,
+      pdfSha256: sha256Hex(expectedSecondBytes)
+    });
+    expect(secondReference).not.toBe(firstReference);
     expect(secondRound!.pdfSha256).not.toBe(firstRound!.pdfSha256);
-    expect(storage.objects.get(String(secondRound!.pdfStorageReference)))
-      .not.toEqual(firstBytes);
+    expect(storage.objects.has(secondReference)).toBe(true);
+    await expect(storage.storage.read(secondReference)).resolves.toEqual(
+      expectedSecondBytes
+    );
+    expect(storage.objects.get(secondReference)).not.toEqual(firstBytes);
+    expect([...storage.objects.keys()].sort()).toEqual(
+      [firstReference, secondReference].sort()
+    );
+    expect(storage.saved).toHaveLength(2);
+    expect(storage.deleted).toHaveLength(0);
     expect(await EstimateClientReviewRoundModel.countDocuments()).toBe(2);
     expect(mail.calls).toHaveLength(2);
+    expect(mail.attachments).toEqual([firstBytes, expectedSecondBytes]);
   });
 
   it("rolls back publication and deletes the saved snapshot when a transactional audit fails", async () => {
@@ -620,8 +639,16 @@ describe("Estimate publication and delivery on a Mongo replica set", () => {
     retryGate.resolve();
     const settled = await settledPromise;
 
-    expect(settled.filter(({ status }) => status === "fulfilled")).toHaveLength(1);
-    expect(settled.filter(({ status }) => status === "rejected")).toHaveLength(1);
+    const fulfilled = settled.filter(({ status }) => status === "fulfilled");
+    const rejected = settled.filter(
+      (result): result is PromiseRejectedResult => result.status === "rejected"
+    );
+    expect(fulfilled).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+    expectApiError(rejected[0]!.reason, "ESTIMATE_EMAIL_RETRY_CONFLICT", 409);
+    expect((rejected[0]!.reason as Error).message).toBe(
+      "Email delivery state changed. Refresh and try again."
+    );
     const round = await EstimateClientReviewRoundModel.findById(
       published.clientReview.id
     ).select("+pdfStorageReference").lean();
@@ -740,26 +767,39 @@ describe("Estimate publication and delivery on a Mongo replica set", () => {
       version: oldLease!.version
     });
     expect(newer).toMatchObject({ deliveryStatus: "sent" });
-    const auditCountBeforeOldCompletion = await AuditEventModel.countDocuments();
+    const roundBeforeOldCompletion = await EstimateClientReviewRoundModel.findById(
+      published.clientReview.id
+    ).select("+pdfStorageReference").lean();
+    const auditsBeforeOldCompletion = await AuditEventModel.find()
+      .sort({ _id: 1 })
+      .lean();
     oldGate.resolve();
     await oldRetry;
 
-    const round = await EstimateClientReviewRoundModel.findById(
+    const roundAfterOldCompletion = await EstimateClientReviewRoundModel.findById(
       published.clientReview.id
-    ).lean();
-    expect(round).toMatchObject({
+    ).select("+pdfStorageReference").lean();
+    const auditsAfterOldCompletion = await AuditEventModel.find()
+      .sort({ _id: 1 })
+      .lean();
+    expect(roundBeforeOldCompletion).toMatchObject({
       deliveryStatus: "sent",
       deliveryAttemptGeneration: 3,
       deliveryAttemptCount: 3
     });
-    expect(await AuditEventModel.countDocuments()).toBe(
-      auditCountBeforeOldCompletion
+    expect(roundAfterOldCompletion).toEqual(roundBeforeOldCompletion);
+    expect(auditsAfterOldCompletion).toEqual(auditsBeforeOldCompletion);
+    expect(auditsBeforeOldCompletion.map(({ action }) => action)).toEqual(
+      expect.arrayContaining([
+        "estimate_email_retry_requested",
+        "estimate_email_delivery_sent"
+      ])
     );
-    expect(await AuditEventModel.countDocuments({
-      action: "estimate_email_retry_requested"
-    })).toBe(2);
-    expect(await AuditEventModel.countDocuments({
-      action: "estimate_email_delivery_sent"
-    })).toBe(1);
+    expect(auditsBeforeOldCompletion.filter(
+      ({ action }) => action === "estimate_email_retry_requested"
+    )).toHaveLength(2);
+    expect(auditsBeforeOldCompletion.filter(
+      ({ action }) => action === "estimate_email_delivery_sent"
+    )).toHaveLength(1);
   });
 });
