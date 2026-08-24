@@ -4,6 +4,7 @@ import { http, HttpResponse } from "msw";
 import { describe, expect, it } from "vitest";
 
 import { AUTHORIZATION_POLICY_VERSION } from "../../api/authorization-contract";
+import type { PermissionCode } from "../../api/authorization-contract";
 import { tokenStorage } from "../../api/client";
 import { renderApp } from "../../test/render";
 import { server } from "../../test/server";
@@ -28,7 +29,15 @@ const project = {
   createdAt: "2026-08-23T10:00:00.000Z"
 };
 
-function installSession() {
+function installSession(
+  permissions: readonly PermissionCode[] = [
+    "identity.self.read",
+    "identity.authorization.read",
+    "projects.read",
+    "projects.list",
+    "estimation.client_response_tasks.read"
+  ]
+) {
   tokenStorage.set("admin-detail-token");
   server.use(
     http.get("/api/v1/auth/me", () =>
@@ -41,7 +50,7 @@ function installSession() {
         data: {
           role: "admin",
           policyVersion: AUTHORIZATION_POLICY_VERSION,
-          permissions: ["identity.self.read", "identity.authorization.read", "projects.read", "projects.list"]
+          permissions
         }
       })
     )
@@ -170,6 +179,81 @@ describe("AdminProjectDetailPage", () => {
       expect(screen.queryByRole("button", { name })).not.toBeInTheDocument();
       expect(screen.queryByRole("link", { name })).not.toBeInTheDocument();
     }
+  });
+
+  it("keeps the pending Client response task link hidden without task read permission", async () => {
+    installSession([
+      "identity.self.read",
+      "identity.authorization.read",
+      "projects.read",
+      "projects.list"
+    ]);
+    server.use(
+      http.get("/api/v1/admin/projects/project-1", () =>
+        HttpResponse.json({
+          data: {
+            ...project,
+            estimate: {
+              ...project.estimate,
+              clientReview: {
+                id: "round-1",
+                sendGeneration: 2,
+                estimateVersion: 4,
+                version: 3,
+                deliveryStatus: "sent",
+                deliveryAttemptCount: 1,
+                deliveredAt: "2026-08-23T10:00:02.000Z",
+                status: "pending"
+              },
+              hasPendingClientResponseTask: true
+            }
+          }
+        })
+      )
+    );
+
+    renderApp(["/admin/projects/project-1"]);
+
+    const response = await screen.findByRole("region", { name: "Client response" });
+    expect(within(response).getByText("Pending")).toBeVisible();
+    expect(
+      within(response).queryByRole("link", { name: "Review Client response" })
+    ).not.toBeInTheDocument();
+  });
+
+  it("keeps an unassigned pending Client response round read-only", async () => {
+    installSession();
+    server.use(
+      http.get("/api/v1/admin/projects/project-1", () =>
+        HttpResponse.json({
+          data: {
+            ...project,
+            estimate: {
+              ...project.estimate,
+              clientReview: {
+                id: "round-unassigned",
+                sendGeneration: 2,
+                estimateVersion: 4,
+                version: 3,
+                deliveryStatus: "sent",
+                deliveryAttemptCount: 1,
+                deliveredAt: "2026-08-23T10:00:02.000Z",
+                status: "pending"
+              },
+              hasPendingClientResponseTask: false
+            }
+          }
+        })
+      )
+    );
+
+    renderApp(["/admin/projects/project-1"]);
+
+    const response = await screen.findByRole("region", { name: "Client response" });
+    expect(within(response).getByText("Pending")).toBeVisible();
+    expect(
+      within(response).queryByRole("link", { name: "Review Client response" })
+    ).not.toBeInTheDocument();
   });
 
   it("renders a terminal Client response as read-only history", async () => {

@@ -2,6 +2,8 @@ import { useQuery } from "@tanstack/react-query";
 import { Link, useParams } from "react-router-dom";
 
 import { ApiError } from "../../api/client";
+import { useAuth } from "../../auth/AuthProvider";
+import { hasFrontendPermission } from "../../auth/authorization";
 import { PageHeader } from "../../components/ui/PageHeader";
 import { PageState } from "../../components/ui/PageState";
 import { StatusBadge } from "../../components/ui/StatusBadge";
@@ -31,12 +33,17 @@ function errorMessage(error: unknown) {
 
 export function AdminProjectDetailPage() {
   const { projectId = "" } = useParams();
+  const auth = useAuth();
   const projectQuery = useQuery({
     queryKey: adminProjectKeys.detail(projectId),
     queryFn: () => getAdminProject(projectId),
     enabled: Boolean(projectId)
   });
   const project = projectQuery.data;
+  const canReadClientResponses = hasFrontendPermission(
+    auth.authorization,
+    "estimation.client_response_tasks.read"
+  );
 
   if (projectQuery.isPending) return <PageState state="loading" message="Loading project details…" />;
   if (projectQuery.isError) {
@@ -85,7 +92,7 @@ export function AdminProjectDetailPage() {
             </p>
             <p>{deliveryLabel(project.estimate.clientReview.deliveryStatus)}</p>
           </div>
-          {project.estimate.hasPendingClientResponseTask ? (
+          {project.estimate.hasPendingClientResponseTask && canReadClientResponses ? (
             <Link
               to={`/admin/client-responses/${encodeURIComponent(project.estimate.clientReview.id)}`}
             >

@@ -214,7 +214,12 @@ export function ClientResponseTaskDetailPage() {
           </div>
         </header>
 
-        <div className="client-response-detail__table-scroll">
+        <div
+          className="client-response-detail__table-scroll"
+          role="region"
+          aria-label="Estimate line items table"
+          tabIndex={0}
+        >
           <table className="client-response-detail__line-items">
             <thead>
               <tr>

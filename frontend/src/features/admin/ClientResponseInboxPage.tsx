@@ -1,5 +1,5 @@
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 
 import { ApiError } from "../../api/client";
@@ -112,6 +112,31 @@ export function ClientResponseInboxPage() {
     "estimation.client_response_tasks.decide"
   );
 
+  useEffect(() => {
+    if (
+      !page ||
+      taskQuery.isPlaceholderData ||
+      page.items.length > 0 ||
+      page.pagination.offset === 0
+    ) {
+      return;
+    }
+
+    const pageSize = Math.max(1, page.pagination.limit);
+    const previousOffset = Math.max(0, page.pagination.offset - pageSize);
+    const lastOffset =
+      page.pagination.total > 0
+        ? Math.floor((page.pagination.total - 1) / pageSize) * pageSize
+        : 0;
+    const validOffset = Math.min(previousOffset, lastOffset);
+
+    setPagination((current) =>
+      current.offset === page.pagination.offset && current.offset !== validOffset
+        ? { ...current, offset: validOffset }
+        : current
+    );
+  }, [page, taskQuery.isPlaceholderData]);
+
   const selectFilter = (
     nextStatus: EstimateClientResponseStatus | undefined
   ) => {
@@ -168,7 +193,12 @@ export function ClientResponseInboxPage() {
           className="client-responses__directory"
           aria-label="Client response inbox"
         >
-          <div className="client-responses__table-scroll">
+          <div
+            className="client-responses__table-scroll"
+            role="region"
+            aria-label="Client response tasks table"
+            tabIndex={0}
+          >
             <table
               className="client-responses__table"
               aria-label="Client response tasks"

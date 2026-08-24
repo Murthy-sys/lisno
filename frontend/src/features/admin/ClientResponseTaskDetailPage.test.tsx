@@ -118,6 +118,27 @@ describe("ClientResponseTaskDetailPage", () => {
     expect(within(estimate).queryByRole("spinbutton")).not.toBeInTheDocument();
   });
 
+  it("makes the horizontal estimate table a labeled keyboard focus target", async () => {
+    installAdmin();
+    server.use(
+      http.get("/api/v1/admin/estimate-client-response-tasks/round-1", () =>
+        HttpResponse.json({ data: pendingDetail })
+      )
+    );
+    const user = userEvent.setup();
+
+    renderApp(["/admin/client-responses/round-1"]);
+    const download = await screen.findByRole("button", {
+      name: "Download exact estimate PDF"
+    });
+    download.focus();
+    await user.tab();
+
+    expect(
+      screen.getByRole("region", { name: "Estimate line items table" })
+    ).toHaveFocus();
+  });
+
   it("offers exact PDF and pending decision controls, with proof only when available", async () => {
     installAdmin();
     server.use(

@@ -188,6 +188,8 @@
 
 .client-responses a:focus-visible,
 .client-responses button:focus-visible,
+.client-responses__table-scroll:focus-visible,
+.client-response-detail__table-scroll:focus-visible,
 .client-response-dialog input:focus-visible,
 .client-response-dialog textarea:focus-visible,
 .admin-project-detail__client-response a:focus-visible {

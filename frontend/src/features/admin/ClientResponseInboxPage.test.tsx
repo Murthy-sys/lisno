@@ -236,6 +236,48 @@ describe("ClientResponseInboxPage", () => {
     expect(screen.getByRole("button", { name: "Next page" })).toBeDisabled();
   });
 
+  it("returns to a valid page when a nonzero server page becomes empty", async () => {
+    installAdmin();
+    const requests: string[] = [];
+    let firstPageRequests = 0;
+    server.use(
+      http.get("/api/v1/admin/estimate-client-response-tasks", ({ request }) => {
+        const url = new URL(request.url);
+        const offset = Number(url.searchParams.get("offset"));
+        requests.push(url.search);
+        if (offset === 20) {
+          return HttpResponse.json(
+            page([], { offset: 20, total: 20, hasMore: false })
+          );
+        }
+
+        firstPageRequests += 1;
+        return HttpResponse.json(
+          page([pendingTask], {
+            offset: 0,
+            total: firstPageRequests === 1 ? 21 : 20,
+            hasMore: firstPageRequests === 1
+          })
+        );
+      })
+    );
+    const user = userEvent.setup();
+
+    renderApp(["/admin/client-responses"]);
+    await user.click(await screen.findByRole("button", { name: "Next page" }));
+
+    await waitFor(() =>
+      expect(requests).toEqual([
+        "?status=pending&limit=20&offset=0",
+        "?status=pending&limit=20&offset=20",
+        "?status=pending&limit=20&offset=0"
+      ])
+    );
+    expect(await screen.findByText("Priya Shah")).toBeVisible();
+    expect(screen.getByText("Showing 1–1 of 20")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Previous page" })).toBeDisabled();
+  });
+
   it("shows persisted delivery/task states, timestamps, and encoded detail links", async () => {
     installAdmin();
     server.use(
@@ -255,6 +297,26 @@ describe("ClientResponseInboxPage", () => {
       "href",
       "/admin/client-responses/round-pending"
     );
+  });
+
+  it("makes the horizontal task table a labeled keyboard focus target", async () => {
+    installAdmin();
+    server.use(
+      http.get("/api/v1/admin/estimate-client-response-tasks", () =>
+        HttpResponse.json(page([pendingTask]))
+      )
+    );
+    const user = userEvent.setup();
+
+    renderApp(["/admin/client-responses"]);
+    await screen.findByRole("table", { name: "Client response tasks" });
+    const lastFilter = await screen.findByRole("button", { name: "All" });
+    lastFilter.focus();
+    await user.tab();
+
+    expect(
+      screen.getByRole("region", { name: "Client response tasks table" })
+    ).toHaveFocus();
   });
 
   it("does not retarget or replay an open decision after the selected row refreshes", async () => {
