@@ -168,7 +168,14 @@ export function createEstimateDeliveryService(input: {
             { deliveryStatus: { $in: ["failed", "disabled"] } },
             {
               deliveryStatus: "queued",
-              deliveryLeaseExpiresAt: { $lte: attemptedAt }
+              $or: [
+                {
+                  deliveryAttemptCount: 0,
+                  deliveryAttemptedAt: null,
+                  deliveryLeaseExpiresAt: null
+                },
+                { deliveryLeaseExpiresAt: { $lte: attemptedAt } }
+              ]
             }
           ]
         },
@@ -372,9 +379,13 @@ function isRetryable(round: DeliveryRoundRow, attemptedAt: Date): boolean {
   if (round.deliveryStatus === "failed" || round.deliveryStatus === "disabled") {
     return true;
   }
-  return round.deliveryStatus === "queued" &&
-    round.deliveryLeaseExpiresAt instanceof Date &&
+  if (round.deliveryStatus !== "queued") return false;
+  const neverLeased = round.deliveryAttemptCount === 0 &&
+    round.deliveryAttemptedAt === null &&
+    round.deliveryLeaseExpiresAt === null;
+  const leaseExpired = round.deliveryLeaseExpiresAt instanceof Date &&
     round.deliveryLeaseExpiresAt.getTime() <= attemptedAt.getTime();
+  return neverLeased || leaseExpired;
 }
 
 function isRetryCandidate(

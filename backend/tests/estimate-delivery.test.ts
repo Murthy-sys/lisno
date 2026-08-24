@@ -620,6 +620,17 @@ describe("initial Estimate PDF delivery", () => {
 describe("authorized retry leasing", () => {
   it.each([
     {
+      label: "queued before any lease was acquired",
+      overrides: {
+        deliveryStatus: "queued",
+        deliveryAttemptGeneration: 1,
+        deliveryAttemptCount: 0,
+        deliveryAttemptedAt: null,
+        deliveryLeaseExpiresAt: null,
+        version: 1
+      }
+    },
+    {
       label: "failed",
       overrides: {
         deliveryStatus: "failed",

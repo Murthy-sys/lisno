@@ -2,6 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import {
   sha256Hex,
+  type EstimateClientReviewSummary,
   type StoredEstimateClientResponseProof
 } from "../src/domain/estimate-client-review.js";
 import { ApiError } from "../src/middleware/errors.js";
@@ -299,6 +300,7 @@ function createHarness(input: {
   mailer: EstimateMailer;
   now: () => Date;
   audit?: AuditService;
+  deliverInitial?: (roundId: string) => Promise<EstimateClientReviewSummary>;
 }) {
   const audit = input.audit ?? createAuditService(createMongoRepository());
   const reviews = createEstimateClientReviewService({ storage: input.storage });
@@ -326,7 +328,7 @@ function createHarness(input: {
     storage: input.storage,
     reviews,
     audit,
-    deliverInitial: delivery.deliverInitial,
+    deliverInitial: input.deliverInitial ?? delivery.deliverInitial,
     now: input.now
   });
   return { audit, reviews, delivery, publication, pdfInputs };
@@ -669,6 +671,86 @@ describe("Estimate publication and delivery on a Mongo replica set", () => {
     })).toBe(1);
     expect((await EstimateModel.findById(fixture.estimateId).lean())!.version)
       .toBe(fixture.estimateVersion);
+  });
+
+  it("recovers a committed queued publication that was never leased with one exact stored-byte retry", async () => {
+    const fixture = await seedPublication();
+    const storage = createReviewStorage();
+    const mail = createSequencedMailer();
+    const harness = createHarness({
+      storage: storage.storage,
+      mailer: mail.mailer,
+      now: () => new Date(BASE_TIME),
+      deliverInitial: async (roundId) => ({
+        id: roundId,
+        sendGeneration: 1,
+        estimateVersion: fixture.estimateVersion,
+        version: 1,
+        deliveryStatus: "queued",
+        deliveryAttemptCount: 0,
+        deliveredAt: null,
+        status: "pending"
+      })
+    });
+    const published = await harness.publication.publishEstimateToClient(
+      publicationInput(fixture)
+    );
+    const queued = await EstimateClientReviewRoundModel.findById(
+      published.clientReview.id
+    ).select("+pdfStorageReference").lean();
+    expect(queued).toMatchObject({
+      deliveryStatus: "queued",
+      deliveryAttemptGeneration: 1,
+      deliveryAttemptCount: 0,
+      deliveryAttemptedAt: null,
+      deliveryLeaseExpiresAt: null,
+      version: 1,
+      status: "pending"
+    });
+    expect(mail.calls).toHaveLength(0);
+
+    const attempts = [
+      harness.delivery.retry(ESTIMATOR, {
+        estimateId: fixture.estimateId,
+        roundId: published.clientReview.id,
+        version: queued!.version
+      }),
+      harness.delivery.retry(ESTIMATOR, {
+        estimateId: fixture.estimateId,
+        roundId: published.clientReview.id,
+        version: queued!.version
+      })
+    ];
+    const settled = await Promise.allSettled(attempts);
+
+    const fulfilled = settled.filter(({ status }) => status === "fulfilled");
+    const rejected = settled.filter(
+      (result): result is PromiseRejectedResult => result.status === "rejected"
+    );
+    expect(fulfilled).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+    expectApiError(rejected[0]!.reason, "ESTIMATE_EMAIL_RETRY_CONFLICT", 409);
+    const recovered = await EstimateClientReviewRoundModel.findById(
+      published.clientReview.id
+    ).select("+pdfStorageReference").lean();
+    expect(recovered).toMatchObject({
+      deliveryStatus: "sent",
+      deliveryAttemptGeneration: 2,
+      deliveryAttemptCount: 1,
+      deliveryLeaseExpiresAt: null,
+      version: 3,
+      status: "pending"
+    });
+    expect(mail.calls).toHaveLength(1);
+    expect(mail.attachments).toEqual([
+      storage.objects.get(String(recovered!.pdfStorageReference))
+    ]);
+    expect(await AuditEventModel.countDocuments({
+      action: "estimate_email_retry_requested"
+    })).toBe(1);
+    expect(await AuditEventModel.countDocuments({
+      action: "estimate_email_delivery_sent"
+    })).toBe(1);
   });
 
   it("completes the exact in-flight generation after the review resolves", async () => {
