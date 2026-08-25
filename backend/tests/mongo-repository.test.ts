@@ -1455,7 +1455,10 @@ describe("Mongo repository contracts", () => {
             deliveredAt: "2026-08-24T09:00:00.000Z",
             status: "pending"
           },
-          hasPendingClientResponseTask: true
+          hasPendingClientResponseTask: true,
+          designPlanStatus: null,
+          designPlanVersion: 0,
+          designPlanDesigner: null
         }
       })]
     });
@@ -1492,7 +1495,14 @@ describe("Mongo repository contracts", () => {
       ]
     });
     expect(estimateQuery.select).toHaveBeenCalledWith({
-      _id: 1, leadId: 1, projectId: 1, status: 1, total: 1
+      _id: 1,
+      leadId: 1,
+      projectId: 1,
+      status: 1,
+      total: 1,
+      designPlanStatus: 1,
+      designPlanVersion: 1,
+      designPlanDesignerId: 1
     });
     expect(roundFind).toHaveBeenCalledWith({
       estimateId: { $in: ["estimate-admin-page"] }

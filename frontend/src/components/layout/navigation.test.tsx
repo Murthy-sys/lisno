@@ -9,6 +9,7 @@ import {
   KeyRound,
   LayoutDashboard,
   MailCheck,
+  Palette,
   UsersRound
 } from "lucide-react";
 import { MemoryRouter } from "react-router-dom";
@@ -22,10 +23,10 @@ import { Sidebar } from "./Sidebar";
 import { navigationForAuthorization } from "./navigation";
 
 const roleNavigation = [
-  ["super_admin", [["Users", "/admin/users", UsersRound], ["Client responses", "/admin/client-responses", MailCheck], ["Access requests", "/admin/access-requests", ClipboardCheck]]],
-  ["admin", [["My Projects", "/admin/projects", FolderKanban], ["Client responses", "/admin/client-responses", MailCheck], ["Access requests", "/admin/access-requests", ClipboardCheck]]],
+  ["super_admin", [["All Projects", "/admin/projects", FolderKanban], ["Users", "/admin/users", UsersRound], ["Client responses", "/admin/client-responses", MailCheck], ["Design approvals", "/admin/design-approvals", Palette], ["Access requests", "/admin/access-requests", ClipboardCheck]]],
+  ["admin", [["My Projects", "/admin/projects", FolderKanban], ["Client responses", "/admin/client-responses", MailCheck], ["Design approvals", "/admin/design-approvals", Palette], ["Access requests", "/admin/access-requests", ClipboardCheck]]],
   ["estimator_sales", [["Leads & estimates", "/estimator-sales", BriefcaseBusiness]]],
-  ["designer", [["Workspace", "/designer", LayoutDashboard], ["My access requests", "/access-requests/mine", KeyRound]]],
+  ["designer", [["Workspace", "/designer", LayoutDashboard], ["Design plans", "/designer/design-plans", Palette], ["My access requests", "/access-requests/mine", KeyRound]]],
   ["procurement", [["My access requests", "/access-requests/mine", KeyRound], ["Home", "/home", House]]],
   ["finance_head", [["My access requests", "/access-requests/mine", KeyRound], ["Home", "/home", House]]],
   ["site_manager", [["My access requests", "/access-requests/mine", KeyRound], ["Home", "/home", House]]],
@@ -47,7 +48,8 @@ function navigationAuthorization(role: Role) {
   if (role !== "admin" && role !== "super_admin") return authorizationFor(role);
   return authorizationFor(role, [
     ...authorizationFor(role).permissions,
-    "estimation.client_response_tasks.read"
+    "estimation.client_response_tasks.read",
+    "design.plan_response_tasks.read"
   ]);
 }
 

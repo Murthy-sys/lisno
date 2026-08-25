@@ -45,26 +45,30 @@ const DEFAULT_PERMISSIONS_BY_ROLE = {
     ...BASE_SESSION_PERMISSIONS,
     "projects.list",
     "projects.read",
+    "design.plan_task.read",
     "access_request.self.read"
   ],
   procurement: [
     ...BASE_SESSION_PERMISSIONS,
+    "workflow.tasks.read",
     "access_request.self.read"
   ],
   finance_head: [
     ...BASE_SESSION_PERMISSIONS,
+    "workflow.tasks.read",
     "access_request.self.read"
   ],
   site_manager: [
     ...BASE_SESSION_PERMISSIONS,
+    "workflow.tasks.read",
     "access_request.self.read"
   ],
-  worker_electrician: BASE_SESSION_PERMISSIONS,
-  worker_plumber: BASE_SESSION_PERMISSIONS,
-  worker_carpenter: BASE_SESSION_PERMISSIONS,
-  worker_painter: BASE_SESSION_PERMISSIONS,
-  worker_civil: BASE_SESSION_PERMISSIONS,
-  worker_other: BASE_SESSION_PERMISSIONS,
+  worker_electrician: [...BASE_SESSION_PERMISSIONS, "workflow.tasks.read"],
+  worker_plumber: [...BASE_SESSION_PERMISSIONS, "workflow.tasks.read"],
+  worker_carpenter: [...BASE_SESSION_PERMISSIONS, "workflow.tasks.read"],
+  worker_painter: [...BASE_SESSION_PERMISSIONS, "workflow.tasks.read"],
+  worker_civil: [...BASE_SESSION_PERMISSIONS, "workflow.tasks.read"],
+  worker_other: [...BASE_SESSION_PERMISSIONS, "workflow.tasks.read"],
   design_manager: [
     ...BASE_SESSION_PERMISSIONS,
     "organization.team.read",

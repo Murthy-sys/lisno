@@ -15,6 +15,8 @@ import type {
   UserRecord
 } from "../src/repositories/types.js";
 import { demoSeedData } from "../src/seed/data.js";
+import { createAuditService } from "../src/services/audit.service.js";
+import { createProjectService } from "../src/services/project.service.js";
 import { developmentDemoAuthentication } from "./helpers/development-demo-authentication.js";
 
 const JWT_SECRET = "auth-test-secret-with-enough-entropy";
@@ -581,18 +583,20 @@ describe("client signup API", () => {
       auth: { jwtSecret: JWT_SECRET, jwtExpiresInSeconds: 900 },
       developmentDemoAuthorization: developmentDemoAuthentication()
     });
+    const projectService = createProjectService(
+      interleaving.repository,
+      createAuditService(interleaving.repository),
+      () => new Date("2026-07-28T12:00:00.000Z")
+    );
     const projectRequest = Promise.resolve(
-      request(app)
-        .post("/api/v1/projects")
-        .set(
-          "Authorization",
-          `Bearer ${jwt.sign(
-            { id: "user-designer-ananya", role: "designer" },
-            JWT_SECRET,
-            { expiresIn: 900 }
-          )}`
-        )
-        .send({
+      projectService.create(
+        {
+          id: "user-designer-ananya",
+          name: "Ananya Rao",
+          email: "ananya@lisno.example",
+          role: "designer"
+        },
+        {
           name: "Interleaved project",
           clientName: "Interleaved Client",
           clientEmail: " Interleaved@Example.COM ",
@@ -603,7 +607,8 @@ describe("client signup API", () => {
           location: "Bengaluru",
           plannedStartAt: "2026-08-01T09:00:00.000Z",
           plannedEndAt: "2026-10-01T17:00:00.000Z"
-        })
+        }
+      )
     );
     const firstOperation = await Promise.race([
       interleaving.observed.then(() => "lookup" as const),
@@ -623,9 +628,8 @@ describe("client signup API", () => {
     }
     const projectResponse = await projectRequest;
 
-    expect(projectResponse.status).toBe(201);
     expect(signupResponse.status).toBe(201);
-    expect(await base.findProjectById(projectResponse.body.data.id)).toMatchObject({
+    expect(await base.findProjectById(projectResponse.id)).toMatchObject({
       clientId: signupResponse.body.data.user.id,
       clientEmailNormalized: "interleaved@example.com"
     });

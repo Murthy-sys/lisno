@@ -387,6 +387,18 @@ function fixtureFetch(
     const url = String(input);
     if (url === "/api/v1/auth/me") return Response.json({ data: user });
     if (url === "/api/v1/auth/authorization") return Response.json({ data: authorizationFor(user.role, permissions) });
+    if (url === "/api/v1/designer/design-plan-tasks") return Response.json({ data: [{
+      id: "estimate-a11y:design-plan-upload",
+      estimateId: "estimate-a11y",
+      projectId: "project-designer-a11y",
+      projectName: "Accessible residence",
+      clientName: "Asha Shah",
+      status: "assigned",
+      designPlanVersion: 0,
+      rooms: [],
+      scopes: ["EL"],
+      lineItems: []
+    }] });
     if (url.startsWith("/api/v1/projects?")) return Response.json({ data: { items: [], pagination: { limit: 100, offset: 0, total: 0, hasMore: false } } });
     if (url === "/api/v1/projects/project-a11y") return Response.json({ data: accessibleProject });
     if (url.startsWith("/api/v1/tasks/task-a11y/events?")) return Response.json({ data: { items: [], pagination: { limit: 1, offset: 0, total: 0, hasMore: false } } });
@@ -636,25 +648,32 @@ describe("accessibility smoke coverage", () => {
     await expectNoAxeViolations();
   });
 
-  it("keeps project manager selection labelled and keyboard-accessible", async () => {
-    const user = userEvent.setup();
+  it("keeps the Designer dashboard upload-only, labelled, and keyboard-accessible", async () => {
     tokenStorage.set("designer-token");
     fixtureFetch(userFor("designer"));
     renderApp(["/designer"]);
-    await user.click(await screen.findByRole("button", { name: "Create project" }));
-    const dialog = screen.getByRole("dialog", { name: "Create project" });
-    const manager = within(dialog).getByRole("combobox", { name: "Project manager" });
-    expect(manager).not.toHaveAttribute("aria-controls");
-    await user.click(manager);
-    const option = await within(dialog).findByRole("option", { name: /Aarav Mehta/i });
-    expect(option).toHaveAttribute("tabindex", "-1");
-    await user.keyboard("{ArrowDown}{Enter}");
-    expect(manager).toHaveValue("Aarav Mehta");
+
+    const title = await screen.findByRole("heading", {
+      name: "Design workspace"
+    });
+    const hero = title.closest("header")!;
+    // The hero carries no actions now; uploading starts from the project row.
+    expect(within(hero).queryAllByRole("link")).toHaveLength(0);
+    expect(screen.queryByText("Estimate approvals")).not.toBeInTheDocument();
+    const project = screen.getByRole("article", { name: "Accessible residence" });
+    const upload = within(project).getByRole("link", {
+      name: "Upload design for Accessible residence"
+    });
+    upload.focus();
+    expect(upload).toHaveFocus();
+    const kpiToggle = screen.getByRole("button", { name: "Show breakdown" });
+    kpiToggle.focus();
+    expect(kpiToggle).toHaveFocus();
     await expectNoAxeViolations();
   });
 
   it.each([
-    ["designer", "/designer", "Good morning, Accessible.", "Workspace"],
+    ["designer", "/designer", "Design workspace", "Workspace"],
     ["design_manager", "/manager", "Team delivery pulse", "Team"],
     ["design_head", "/head", "Organization delivery health", "Organization"],
     ["estimator_sales", "/estimator-sales", "Lead workspace", "Leads & estimates"],

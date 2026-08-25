@@ -196,6 +196,11 @@
   overflow-wrap: anywhere;
 }
 
+.admin-project-card__actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
 .admin-project-detail,
 .admin-project-detail__surface {
   display: grid;
@@ -214,6 +219,31 @@
 .admin-project-detail__grid h2,
 .admin-project-detail__grid p {
   margin: 0;
+}
+
+/*
+ * The Designer picker sat as a bare <label><select> and read as running text.
+ * It now uses Field/Select; this only sets the panel layout — a stacked
+ * label + control capped to a readable measure, with the submit below it.
+ */
+.admin-design-assignment__form {
+  display: grid;
+  gap: var(--space-4);
+  justify-items: start;
+}
+
+.admin-design-assignment__form .ui-field {
+  inline-size: min(100%, 26rem);
+}
+
+.admin-design-assignment__form p[role="alert"] {
+  margin: 0;
+  color: var(--color-danger);
+}
+
+.admin-design-assignment__form p[role="status"] {
+  margin: 0;
+  color: var(--color-success);
 }
 
 .admin-project-form {
@@ -395,6 +425,11 @@
   .admin-project-card__heading {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .admin-project-card__actions,
+  .admin-project-card__actions a {
+    inline-size: 100%;
   }
 
   .admin-project-form__actions {

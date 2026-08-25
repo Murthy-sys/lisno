@@ -236,7 +236,8 @@ export function ClientResponseDecisionDialog({
 
         <div className="client-response-dialog__actions">
           <Button
-            variant="quiet"
+            className="client-response-dialog__cancel"
+            variant="secondary"
             disabled={mutation.isPending}
             onClick={onClose}
           >
@@ -244,7 +245,7 @@ export function ClientResponseDecisionDialog({
           </Button>
           <Button
             type="submit"
-            variant={rejected ? "destructive" : "primary"}
+            variant={rejected ? "destructive" : "success"}
             busy={mutation.isPending}
             disabled={!isCurrentRow}
           >

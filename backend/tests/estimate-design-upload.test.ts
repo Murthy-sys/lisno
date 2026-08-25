@@ -81,8 +81,23 @@ class TestStorage {
   }
 }
 
-function bearer() {
+function designerBearer() {
+  return `Bearer ${jwt.sign({ id: "user-designer-ananya", role: "designer" }, SECRET, { expiresIn: 900 })}`;
+}
+
+function estimatorBearer() {
   return `Bearer ${jwt.sign({ id: "user-estimator-sales", role: "estimator_sales" }, SECRET, { expiresIn: 900 })}`;
+}
+
+function legacyEstimatorEstimate() {
+  return {
+    _id: "estimate-draft",
+    leadId: "lead-aurora",
+    ownerId: "user-estimator-sales",
+    status: "draft",
+    designLifecycleVersion: 0,
+    designFrozenAt: null
+  };
 }
 
 function lean(value: unknown) {
@@ -131,7 +146,9 @@ function setup(options: { maxUploadBytes?: number } = {}) {
     _id: "estimate-draft",
     leadId: "lead-aurora",
     ownerId: "user-estimator-sales",
-    status: "draft",
+    status: "client_approved",
+    designPlanDesignerId: "user-designer-ananya",
+    designPlanStatus: "assigned",
     designLifecycleVersion: 0,
     designFrozenAt: null
   };
@@ -184,11 +201,12 @@ function upload(
   app: ReturnType<typeof createApp>,
   data: Buffer,
   filename: string,
-  contentType: string
+  contentType: string,
+  authorization = designerBearer()
 ) {
   return request(app)
     .post("/api/v1/estimates/estimate-draft/design-uploads")
-    .set("Authorization", bearer())
+    .set("Authorization", authorization)
     .attach("file", data, { filename, contentType });
 }
 
@@ -245,7 +263,7 @@ describe("estimate design uploads", () => {
 
     const response = await request(app)
       .post("/api/v1/estimates/foreign/design-uploads")
-      .set("Authorization", bearer())
+      .set("Authorization", designerBearer())
       .attach("file", PNG, { filename: "plan.png", contentType: "image/png" });
 
     expect(response.status).toBe(404);
@@ -254,15 +272,18 @@ describe("estimate design uploads", () => {
     });
   });
 
-  it.each(["sent_to_client", "client_approved"])(
-    "does not accept uploads for a %s estimate",
-    async (status) => {
+  it.each(["ready_for_client", "approved"])(
+    "does not accept uploads when the Design plan is %s",
+    async (designPlanStatus) => {
       const { app, storage, setEstimate } = setup();
       setEstimate({
         _id: "estimate-draft",
         leadId: "lead-aurora",
         ownerId: "user-estimator-sales",
-        status
+        status: "client_approved",
+        designPlanDesignerId: "user-designer-ananya",
+        designPlanStatus,
+        designFrozenAt: designPlanStatus === "approved" ? now() : null
       });
 
       const response = await upload(app, PNG, "plan.png", "image/png");
@@ -272,6 +293,25 @@ describe("estimate design uploads", () => {
       expect(storage.objects.size).toBe(0);
     }
   );
+
+  it("denies Estimator uploads before persisting a file or queue record", async () => {
+    const { app, storage, uploads, jobs, session } = setup();
+
+    const response = await upload(
+      app,
+      PNG,
+      "plan.png",
+      "image/png",
+      estimatorBearer()
+    );
+
+    expect(response.status).toBe(403);
+    expect(response.body.error.code).toBe("FORBIDDEN");
+    expect(storage.objects.size).toBe(0);
+    expect(uploads).toEqual([]);
+    expect(jobs).toEqual([]);
+    expect(session.withTransaction).not.toHaveBeenCalled();
+  });
 
   it("rejects content whose claimed type does not match its signature", async () => {
     const { app, storage } = setup();
@@ -312,7 +352,8 @@ describe("estimate design uploads", () => {
   });
 
   it("does not expose stored object references from the estimator workspace", async () => {
-    const { app } = setup();
+    const { app, setEstimate } = setup();
+    setEstimate(legacyEstimatorEstimate());
     vi.spyOn(EstimateDesignUploadModel, "find").mockReturnValue(sortedLean([{
       _id: "upload-1",
       estimateId: "estimate-draft",
@@ -367,7 +408,7 @@ describe("estimate design uploads", () => {
 
     const response = await request(app)
       .get("/api/v1/estimates/estimate-draft/design-uploads")
-      .set("Authorization", bearer());
+      .set("Authorization", estimatorBearer());
 
     expect(response.status).toBe(200);
     expect(response.body.data.uploads[0]).not.toHaveProperty("storedFileReference");
@@ -390,7 +431,8 @@ describe("estimate design uploads", () => {
   });
 
   it("collapses incoherent legacy mappings to the null Misc tuple in workspace DTOs", async () => {
-    const { app } = setup();
+    const { app, setEstimate } = setup();
+    setEstimate(legacyEstimatorEstimate());
     vi.spyOn(EstimateDesignUploadModel, "find").mockReturnValue(sortedLean([]) as never);
     vi.spyOn(EstimateDesignSourcePageModel, "find").mockReturnValue(sortedLean([]) as never);
     vi.spyOn(EstimateDesignDrawingModel, "find").mockReturnValue(sortedLean([{
@@ -421,7 +463,7 @@ describe("estimate design uploads", () => {
 
     const response = await request(app)
       .get("/api/v1/estimates/estimate-draft/design-uploads")
-      .set("Authorization", bearer());
+      .set("Authorization", estimatorBearer());
 
     expect(response.status).toBe(200);
     expect(response.body.data.drawings[0]).toMatchObject({
@@ -439,7 +481,8 @@ describe("estimate design uploads", () => {
   });
 
   it("does not serialize legacy mapping sentinels as mapped identifiers", async () => {
-    const { app } = setup();
+    const { app, setEstimate } = setup();
+    setEstimate(legacyEstimatorEstimate());
     vi.spyOn(EstimateDesignUploadModel, "find").mockReturnValue(sortedLean([]) as never);
     vi.spyOn(EstimateDesignSourcePageModel, "find").mockReturnValue(sortedLean([]) as never);
     vi.spyOn(EstimateDesignDrawingModel, "find").mockReturnValue(sortedLean([{
@@ -474,7 +517,7 @@ describe("estimate design uploads", () => {
 
     const response = await request(app)
       .get("/api/v1/estimates/estimate-draft/design-uploads")
-      .set("Authorization", bearer());
+      .set("Authorization", estimatorBearer());
 
     expect(response.status).toBe(200);
     for (const record of [response.body.data.drawings[0], response.body.data.revisions[0]]) {

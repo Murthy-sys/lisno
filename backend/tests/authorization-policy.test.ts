@@ -48,11 +48,38 @@ const ESTIMATE_CLIENT_RESPONSE_ADDITIONS = {
   ]
 } as const;
 
+const PROJECT_WORKFLOW_PERMISSIONS = [
+  "design.plan_assignment.manage",
+  "design.plan_task.read",
+  "design.plan_response_tasks.read",
+  "design.plan_response_tasks.decide",
+  "workflow.tasks.read"
+] as const;
+
+const PROJECT_WORKFLOW_ADDITIONS = {
+  super_admin: PROJECT_WORKFLOW_PERMISSIONS,
+  admin: [
+    "design.plan_assignment.manage",
+    "design.plan_response_tasks.read",
+    "design.plan_response_tasks.decide"
+  ],
+  designer: ["design.plan_task.read"],
+  procurement: ["workflow.tasks.read"],
+  finance_head: ["workflow.tasks.read"],
+  site_manager: ["workflow.tasks.read"],
+  worker_electrician: ["workflow.tasks.read"],
+  worker_plumber: ["workflow.tasks.read"],
+  worker_carpenter: ["workflow.tasks.read"],
+  worker_painter: ["workflow.tasks.read"],
+  worker_civil: ["workflow.tasks.read"],
+  worker_other: ["workflow.tasks.read"]
+} as const;
+
 const COMMON_ROWS = [1, 85] as const;
 const ADDITIONAL_ROWS = {
   admin: [2, 5, 86, 87, 91, 92, 93],
-  estimator_sales: [2, 5, ...range(40, 45), ...range(49, 53), ...range(61, 76), 81],
-  designer: [2, ...range(4, 10), 12, ...range(16, 18), 20, 22, 23, ...range(25, 27), ...range(29, 35), 38, 39, ...range(61, 65), 77, 80, 88, 89, 90],
+  estimator_sales: [2, 5, ...range(41, 45), ...range(49, 53), ...range(61, 76), 81],
+  designer: [2, ...range(5, 10), 12, ...range(16, 18), 20, 22, 23, ...range(25, 27), ...range(29, 35), 38, 39, ...range(40, 45), ...range(49, 53), ...range(61, 65), 88, 89, 90],
   design_manager: [2, 5, 9, 11, 13, ...range(16, 23), ...range(26, 29), 38, 39, ...range(61, 65), ...range(77, 79)],
   design_head: [2, 5, 9, 11, ...range(14, 23), ...range(26, 29), 38, 39, ...range(61, 65)],
   client: [2, 3, 5, 24, ...range(26, 27), 29, ...range(36, 39), ...range(45, 48), ...range(54, 60), ...range(82, 84)],
@@ -104,6 +131,26 @@ describe("authorization policy", () => {
     expect(hasPermission("designer", "projects.destroy")).toBe(false);
   });
 
+  it("reserves estimate design-plan upload creation for Designers while preserving Estimator review access", () => {
+    expect(hasPermission("designer", "projects.create")).toBe(false);
+    expect(hasPermission("designer", "estimation.review_queue.read")).toBe(false);
+    expect(hasPermission("designer", "estimation.designer_assignment.decision")).toBe(false);
+    expect(hasPermission("estimator_sales", "estimation.design_upload.create")).toBe(false);
+    expect(hasPermission("designer", "estimation.design_upload.create")).toBe(true);
+    expect(ROLE_PERMISSIONS.estimator_sales).toEqual(expect.arrayContaining([
+      "estimation.design_upload.read",
+      "estimation.design_upload.retry",
+      "estimation.source_page_image.read",
+      "estimation.drawing.create",
+      "estimation.design_revision_image.read",
+      "estimation.drawing.update",
+      "estimation.drawing.estimate_item.assign",
+      "estimation.drawing.delete",
+      "estimation.drawing.replace",
+      "estimation.drawing.submit"
+    ]));
+  });
+
   it.each([
     ["worker_electrician", "finance.expense.read"],
     ["worker_plumber", "procurement.purchase_order.read"],
@@ -121,7 +168,9 @@ describe("authorization policy", () => {
     for (const role of ROLE_CODES) {
       if (role === "super_admin") continue;
       const historicalPermissions = ROLE_PERMISSIONS[role].filter(
-        (permission) => !ESTIMATE_CLIENT_RESPONSE_PERMISSIONS.includes(permission as never)
+        (permission) =>
+          !ESTIMATE_CLIENT_RESPONSE_PERMISSIONS.includes(permission as never) &&
+          !PROJECT_WORKFLOW_PERMISSIONS.includes(permission as never)
       );
       if (role === "admin") {
         expect(historicalPermissions).toEqual([
@@ -141,9 +190,36 @@ describe("authorization policy", () => {
         permissionsForRows([...COMMON_ROWS, ...ADDITIONAL_ROWS[role]])
       );
     }
-    expect(PERMISSION_CODES).toHaveLength(101);
-    expect(new Set(PERMISSION_CODES).size).toBe(101);
+    expect(PERMISSION_CODES).toHaveLength(106);
+    expect(new Set(PERMISSION_CODES).size).toBe(106);
     expect(ROLE_PERMISSIONS.super_admin).toEqual(PERMISSION_CODES);
+  });
+
+  it("adds the five project-workflow permissions to exactly the participating roles", () => {
+    expect(
+      PERMISSION_CODES.filter((permission) =>
+        PROJECT_WORKFLOW_PERMISSIONS.includes(permission as never)
+      )
+    ).toEqual(PROJECT_WORKFLOW_PERMISSIONS);
+
+    for (const role of ROLE_CODES) {
+      const expected = role in PROJECT_WORKFLOW_ADDITIONS
+        ? PROJECT_WORKFLOW_ADDITIONS[
+            role as keyof typeof PROJECT_WORKFLOW_ADDITIONS
+          ]
+        : [];
+      expect(
+        ROLE_PERMISSIONS[role].filter((permission) =>
+          PROJECT_WORKFLOW_PERMISSIONS.includes(permission as never)
+        ),
+        role
+      ).toEqual(expected);
+      for (const permission of PROJECT_WORKFLOW_PERMISSIONS) {
+        expect(hasPermission(role, permission), `${role} ${permission}`).toBe(
+          expected.includes(permission as never)
+        );
+      }
+    }
   });
 
   it("adds the four estimate-client-response permissions to exactly the approved roles", () => {
@@ -188,10 +264,10 @@ describe("authorization policy", () => {
     }
   });
 
-  it("gives all worker trades identical identity-only permissions", () => {
+  it("gives all worker trades identical identity and workflow-task permissions", () => {
     for (const role of WORKER_ROLES) {
       expect(ROLE_PERMISSIONS[role]).toEqual([
-        "identity.self.read", "identity.authorization.read"
+        "identity.self.read", "identity.authorization.read", "workflow.tasks.read"
       ]);
     }
   });

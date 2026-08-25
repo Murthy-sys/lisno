@@ -19,6 +19,8 @@ import { ProjectModel } from "../src/models/Project.js";
 import { UserModel } from "../src/models/User.js";
 import { createMemoryRepository } from "../src/repositories/memory.js";
 import { demoSeedData } from "../src/seed/data.js";
+import { createAuditService } from "../src/services/audit.service.js";
+import { createProjectService } from "../src/services/project.service.js";
 import { developmentDemoAuthentication } from "./helpers/development-demo-authentication.js";
 
 const createApp = (dependencies: Parameters<typeof createApplication>[0]) =>
@@ -738,7 +740,7 @@ describe("complete cross-role journey", () => {
     ], { session: expect.anything() });
   });
 
-  it("row 80 records one assigned Designer approval", async () => {
+  it("row 80 keeps legacy estimate approval out of the Designer role", async () => {
     const fixture = setupWorkflowCharacterization({
       _id: "estimate-awaiting-designer",
       status: "pending_designer_approval",
@@ -746,38 +748,14 @@ describe("complete cross-role journey", () => {
     });
     const before = immutableRecordSnapshot(fixture.estimate);
     const designer = await fixture.login("ananya@lisno.example");
-    const response = await request(fixture.app)
+    await request(fixture.app)
       .post("/api/v1/estimates/estimate-awaiting-designer/designer-decision")
       .set("Authorization", designer)
       .send({ decision: "approve", note: "Approved" })
-      .expect(200);
-    const expectedState = {
-      ...before,
-      status: "ready_for_client",
-      reviews: [{
-        actorId: "user-designer-ananya",
-        action: "designer_approved",
-        note: "Approved",
-        occurredAt: expect.any(Date)
-      }]
-    };
-    const expectedResponse = {
-      ...estimateResponseDto(before),
-      status: "ready_for_client",
-      reviews: [{
-        actorId: "user-designer-ananya",
-        action: "designer_approved",
-        note: "Approved",
-        occurredAt: expect.any(String)
-      }]
-    };
+      .expect(403);
 
-    expect(response.body).toEqual({ data: expectedResponse });
-    expect(plainRecord(fixture.estimate)).toEqual(expectedState);
-    expect(response.body.data.reviews[0].occurredAt).toBe(
-      fixture.estimate.reviews[0].occurredAt.toISOString()
-    );
-    expect(fixture.estimate.save).toHaveBeenCalledOnce();
+    expect(plainRecord(fixture.estimate)).toEqual(before);
+    expect(fixture.estimate.save).not.toHaveBeenCalled();
     expect(LeadModel.updateOne).not.toHaveBeenCalled();
     expect(EstimateModel.updateOne).not.toHaveBeenCalled();
     expect(ProjectModel.create).not.toHaveBeenCalled();
@@ -935,7 +913,16 @@ describe("complete cross-role journey", () => {
       status: "client_approved",
       version: 2,
       designLifecycleVersion: 1,
-      designFrozenAt: decisionAt,
+      designFrozenAt: null,
+      designPlanStatus: "pending_assignment",
+      designPlanVersion: 0,
+      designPlanDesignerId: null,
+      designPlanAssignedById: null,
+      designPlanAssignedAt: null,
+      designPlanSubmittedAt: null,
+      designPlanApprovedAt: null,
+      designPlanApprovedById: null,
+      designPlanApprovalSource: null,
       projectId: expect.stringMatching(/^project-/),
       clientDecisionAt: decisionAt,
       reviews: [{
@@ -944,22 +931,7 @@ describe("complete cross-role journey", () => {
         note: "Approved",
         occurredAt: decisionAt
       }],
-      notifications: [
-        {
-          recipientEmail: "ananya@lisno.example",
-          recipientRole: "designer",
-          event: "project_kickoff_created",
-          status: "queued",
-          queuedAt: decisionAt
-        },
-        {
-          recipientEmail: "aarav@lisno.example",
-          recipientRole: "design_manager",
-          event: "project_kickoff_created",
-          status: "queued",
-          queuedAt: decisionAt
-        }
-      ]
+      notifications: []
     } });
     expect(EstimateModel.updateOne).toHaveBeenCalledOnce();
     expect(EstimateModel.updateOne).toHaveBeenCalledWith(
@@ -975,7 +947,16 @@ describe("complete cross-role journey", () => {
           status: "client_approved",
           projectId,
           clientDecisionAt: expect.any(Date),
-          designFrozenAt: expect.any(Date)
+          designFrozenAt: null,
+          designPlanStatus: "pending_assignment",
+          designPlanVersion: 0,
+          designPlanDesignerId: null,
+          designPlanAssignedById: null,
+          designPlanAssignedAt: null,
+          designPlanSubmittedAt: null,
+          designPlanApprovedAt: null,
+          designPlanApprovedById: null,
+          designPlanApprovalSource: null
         },
         $inc: { version: 1, designLifecycleVersion: 1 },
         $push: {
@@ -984,33 +965,22 @@ describe("complete cross-role journey", () => {
             action: "client_approved",
             note: "Approved",
             occurredAt: expect.any(Date)
-          },
-          notifications: { $each: [
-            {
-              recipientEmail: "ananya@lisno.example",
-              recipientRole: "designer",
-              event: "project_kickoff_created",
-              status: "queued",
-              queuedAt: expect.any(Date)
-            },
-            {
-              recipientEmail: "aarav@lisno.example",
-              recipientRole: "design_manager",
-              event: "project_kickoff_created",
-              status: "queued",
-              queuedAt: expect.any(Date)
-            }
-          ] }
+          }
         }
       },
       expect.any(Object)
     );
     expect(LeadModel.updateOne).toHaveBeenCalledOnce();
     expect(LeadModel.updateOne).toHaveBeenCalledWith(
-      { _id: "lead-aurora", clientEmail: "client@aurora.example" },
+      {
+        _id: "lead-aurora",
+        clientEmail: "client@aurora.example",
+        projectId: { $in: [null, projectId] }
+      },
       { $set: {
+        projectId,
         stage: "won",
-        nextAction: "project kickoff",
+          nextAction: "Assign Designer for design plan",
         nextActionAt: expect.any(Date)
       } },
       expect.any(Object)
@@ -1025,10 +995,10 @@ describe("complete cross-role journey", () => {
       clientEmailNormalized: "client@aurora.example",
       clientMobile: "+91 90000 00000",
       clientAddress: "Pune",
-      initiatingDesignerId: "user-designer-ananya",
-      assignedEstimatorId: null,
-      assignedDesignerIds: ["user-designer-ananya"],
-      managerId: "user-manager-aarav",
+      initiatingDesignerId: null,
+      assignedEstimatorId: "user-estimator-sales",
+      assignedDesignerIds: [],
+      managerId: null,
       status: "planning",
       location: "Pune",
       plannedStartAt: expect.any(Date),
@@ -1044,7 +1014,11 @@ describe("complete cross-role journey", () => {
         entityId: "estimate-client-visible",
         occurredAt: decisionAt,
         oldValues: { status: "sent_to_client" },
-        newValues: { status: "client_approved", projectId, approvedDrawingCount: 0 },
+        newValues: {
+          status: "client_approved",
+          projectId,
+          designPlanStatus: "pending_assignment"
+        },
         reason: null
       },
       {
@@ -1069,7 +1043,16 @@ describe("complete cross-role journey", () => {
       status: "client_approved",
       version: 2,
       designLifecycleVersion: 1,
-      designFrozenAt: expect.any(Date),
+      designFrozenAt: null,
+      designPlanStatus: "pending_assignment",
+      designPlanVersion: 0,
+      designPlanDesignerId: null,
+      designPlanAssignedById: null,
+      designPlanAssignedAt: null,
+      designPlanSubmittedAt: null,
+      designPlanApprovedAt: null,
+      designPlanApprovedById: null,
+      designPlanApprovalSource: null,
       projectId,
       clientDecisionAt: expect.any(Date),
       reviews: [{
@@ -1078,22 +1061,7 @@ describe("complete cross-role journey", () => {
         note: "Approved",
         occurredAt: expect.any(Date)
       }],
-      notifications: [
-        {
-          recipientEmail: "ananya@lisno.example",
-          recipientRole: "designer",
-          event: "project_kickoff_created",
-          status: "queued",
-          queuedAt: expect.any(Date)
-        },
-        {
-          recipientEmail: "aarav@lisno.example",
-          recipientRole: "design_manager",
-          event: "project_kickoff_created",
-          status: "queued",
-          queuedAt: expect.any(Date)
-        }
-      ]
+      notifications: []
     });
   }, 15_000);
 
@@ -1154,8 +1122,8 @@ describe("complete cross-role journey", () => {
       clientId: "user-client-aurora",
       initiatingDesignerId: null,
       assignedEstimatorId: "user-estimator-sales",
-      assignedDesignerIds: ["user-designer-ananya"],
-      managerId: "user-manager-aarav"
+      assignedDesignerIds: [],
+      managerId: null
     });
     expect(adminProject).toMatchObject(identityBefore);
     expect(fixture.estimate).toMatchObject({
@@ -1204,14 +1172,23 @@ describe("complete cross-role journey", () => {
     ]);
     const managerId = managerSearch.body.data.items[0].id as string;
 
+    const projectService = createProjectService(
+      repository,
+      createAuditService(repository),
+      () => new Date("2026-07-28T12:00:00.000Z")
+    );
     const createProject = async (name: string, clientEmail: string) => {
-      const response = await request(app)
-        .post("/api/v1/projects")
-        .set("Authorization", designer)
-        .send({
+      const project = await projectService.create(
+        {
+          id: "user-designer-ananya",
+          name: "Ananya Rao",
+          email: "ananya@lisno.example",
+          role: "designer"
+        },
+        {
           name,
           clientName: "Journey Client",
-          clientEmail,
+          clientEmail: clientEmail.trim(),
           clientMobile: "+91 91234 56789",
           clientAddress: "42 Linking Lane, Bengaluru",
           assignedDesignerIds: ["user-designer-ananya"],
@@ -1219,16 +1196,16 @@ describe("complete cross-role journey", () => {
           location: "Bengaluru",
           plannedStartAt: "2026-08-01T09:00:00.000Z",
           plannedEndAt: "2026-12-15T17:00:00.000Z"
-        })
-        .expect(201);
-      expect(response.body.data).toMatchObject({
+        }
+      );
+      expect(project).toMatchObject({
         name,
         clientId: null,
         clientEmail: clientEmail.trim(),
         clientEmailNormalized: "journey.client@example.com",
         managerId
       });
-      return response.body.data;
+      return project;
     };
     const residence = await createProject(
       "Journey Residence",
@@ -1801,15 +1778,56 @@ describe("complete cross-role journey", () => {
     const estimator = await login("sales@lisno.example");
     const client = await login("client@aurora.example");
 
-    const uploaded = await request(app)
+    const forbiddenUpload = await request(app)
       .post("/api/v1/estimates/estimate-journey/design-uploads")
       .set("Authorization", estimator)
       .attach("file", PDF, {
         filename: "estimate-review.pdf",
         contentType: "application/pdf"
-      })
-      .expect(201);
-    const job = state.jobs.find((item) => item.uploadId === uploaded.body.data.id)!;
+      });
+    expect(forbiddenUpload.status, JSON.stringify(forbiddenUpload.body)).toBe(403);
+    expect(state.uploads).toEqual([]);
+    expect(state.jobs).toEqual([]);
+    expect(state.auditEvents).toEqual([]);
+    expect(storage.files.size).toBe(0);
+
+    const seededAt = new Date("2026-07-30T15:00:00.000Z");
+    const seededSource = await storage.save({ data: PDF, extension: ".pdf" });
+    const seededUploadId = "estimate-design-upload-seeded-by-designer";
+    const job = {
+      _id: "estimate-design-job-seeded-by-designer",
+      uploadId: seededUploadId,
+      status: "queued",
+      attemptCount: 0,
+      queuedAt: seededAt,
+      nextAttemptAt: seededAt,
+      claimGeneration: 0,
+      startedAt: null,
+      completedAt: null,
+      leaseExpiresAt: null,
+      claimId: null,
+      failureCode: null,
+      failureMessage: null,
+      workerResultId: null
+    };
+    state.uploads.push({
+      _id: seededUploadId,
+      estimateId: "estimate-journey",
+      leadId: "lead-journey",
+      originalFilename: "estimate-review.pdf",
+      storedFileReference: seededSource.reference,
+      mimeType: "application/pdf",
+      sizeBytes: PDF.length,
+      uploaderId: "user-designer-ananya",
+      uploadedAt: seededAt,
+      extractionStatus: "queued",
+      replacementDrawingId: null,
+      replacesRevisionId: null,
+      replacementVersion: null,
+      failureCode: null,
+      failureMessage: null
+    });
+    state.jobs.push(job);
 
     const claim = await request(app)
       .post("/api/v1/internal/extraction-jobs/claim")
@@ -2048,13 +2066,20 @@ describe("complete cross-role journey", () => {
 
     expect(finalApproval.body.data).toMatchObject({
       status: "client_approved",
+      designFrozenAt: null,
+      designPlanStatus: "pending_assignment",
+      designPlanVersion: 0,
+      designPlanDesignerId: null,
       projectId: expect.stringMatching(/^project-/)
     });
     expect(state.projects).toContainEqual(expect.objectContaining({
       _id: finalApproval.body.data.projectId,
       name: "Estimate Drawing Journey",
       clientId: "user-client-aurora",
-      managerId: "user-manager-aarav"
+      initiatingDesignerId: null,
+      assignedEstimatorId: "user-estimator-sales",
+      assignedDesignerIds: [],
+      managerId: null
     }));
     expect(
       state.revisions.filter((revision) => revision.drawingId === bedroom.id)
@@ -2078,7 +2103,6 @@ describe("complete cross-role journey", () => {
     ]));
     const auditActions = state.auditEvents.map((event) => event.action);
     expect(auditActions).toEqual(expect.arrayContaining([
-      "estimate_design_uploaded",
       "estimate_design_extraction_claimed",
       "estimate_design_extraction_completed",
       "estimate_design_verified",
@@ -2089,6 +2113,7 @@ describe("complete cross-role journey", () => {
       "estimate_design_replacement_created",
       "estimate_design_final_approved"
     ]));
+    expect(auditActions).not.toContain("estimate_design_uploaded");
     const serializedAudit = JSON.stringify(state.auditEvents);
     expect(serializedAudit).not.toContain("estimate-review.pdf");
     expect(serializedAudit).not.toContain("bedroom-flooring-v2.png");

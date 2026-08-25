@@ -1,4 +1,5 @@
 import { model, models, Schema } from "./mongoose.js";
+import { DESIGN_PLAN_STATUSES } from "../domain/project-workflow.js";
 
 const estimateLineSchema = new Schema({
   catalogueId: { type: String, required: true }, roomName: { type: String, required: true }, specification: { type: String, required: true },
@@ -39,6 +40,23 @@ const estimateSchema = new Schema({
   approvalRequired: { type: Boolean, required: true, default: false },
   assignedManagerId: { type: String, ref: "User", default: null },
   assignedDesignerId: { type: String, ref: "User", default: null },
+  designPlanStatus: {
+    type: String,
+    enum: [...DESIGN_PLAN_STATUSES, null],
+    default: null
+  },
+  designPlanVersion: { type: Number, required: true, default: 0, min: 0 },
+  designPlanDesignerId: { type: String, ref: "User", default: null },
+  designPlanAssignedById: { type: String, ref: "User", default: null },
+  designPlanAssignedAt: { type: Date, default: null },
+  designPlanSubmittedAt: { type: Date, default: null },
+  designPlanApprovedAt: { type: Date, default: null },
+  designPlanApprovedById: { type: String, ref: "User", default: null },
+  designPlanApprovalSource: {
+    type: String,
+    enum: ["client_portal", "admin_proof", null],
+    default: null
+  },
   submittedAt: { type: Date, default: null },
   sentToClientAt: { type: Date, default: null },
   clientDecisionAt: { type: Date, default: null },
@@ -48,4 +66,6 @@ const estimateSchema = new Schema({
 }, { timestamps: true, versionKey: false });
 estimateSchema.index({ ownerId: 1, updatedAt: -1 });
 estimateSchema.index({ status: 1, assignedManagerId: 1, assignedDesignerId: 1 });
+estimateSchema.index({ projectId: 1, designPlanStatus: 1 });
+estimateSchema.index({ designPlanDesignerId: 1, designPlanStatus: 1 });
 export const EstimateModel = models.Estimate ?? model("Estimate", estimateSchema);

@@ -63,10 +63,20 @@ export function safeReturnPath(
       (role === "admin" || role === "super_admin") &&
       (parsed.pathname === "/admin/client-responses" ||
         parsed.pathname.startsWith("/admin/client-responses/"));
+    const canReturnToDesignApprovals =
+      (role === "admin" || role === "super_admin") &&
+      parsed.pathname === "/admin/design-approvals";
+    const canReturnToSuperAdminProjects =
+      role === "super_admin" &&
+      (parsed.pathname === "/admin/projects" ||
+        parsed.pathname.startsWith("/admin/projects/"));
     if (
       parsed.origin !== returnPathOrigin ||
       hasEncodedTraversal(parsed.pathname) ||
-      (!canReturnToRoleHome && !canReturnToClientResponses)
+      (!canReturnToRoleHome &&
+        !canReturnToClientResponses &&
+        !canReturnToDesignApprovals &&
+        !canReturnToSuperAdminProjects)
     ) {
       return home;
     }

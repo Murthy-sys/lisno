@@ -250,7 +250,7 @@ export interface EstimateClientReviewSummary {
   sendGeneration: number;
   estimateVersion: number;
   version: number;
-  deliveryStatus: "queued" | "sent" | "failed" | "disabled";
+  deliveryStatus: "queued" | "sending" | "sent" | "failed" | "disabled";
   deliveryAttemptCount: number;
   deliveredAt: string | null;
   status: "pending" | "approved" | "changes_requested";
@@ -338,10 +338,81 @@ export interface AdminProjectSummary {
     id: string;
     status: string;
     total: number;
+    designPlanStatus?: DesignPlanStatus | null;
+    designPlanVersion?: number;
+    designPlanDesigner?: { id: string; name: string; email: string } | null;
     clientReview?: EstimateClientReviewSummary | null;
     hasPendingClientResponseTask?: boolean;
   } | null;
   createdAt: string;
+}
+
+export type DesignPlanStatus =
+  | "pending_assignment"
+  | "assigned"
+  | "in_progress"
+  | "ready_for_client"
+  | "changes_requested"
+  | "approved";
+
+export interface DesignPlanTask {
+  id: string;
+  estimateId: string;
+  projectId: string;
+  projectName: string;
+  clientName: string;
+  status: DesignPlanStatus;
+  designPlanVersion: number;
+  rooms: Array<Record<string, unknown>>;
+  scopes: string[];
+  lineItems: Array<{
+    catalogueId: string;
+    roomName: string;
+    specification: string;
+    unit: string;
+    quantity: number;
+    included: boolean;
+  }>;
+}
+
+export interface DesignPlanReviewTask {
+  id: string;
+  estimateId: string;
+  projectId: string;
+  projectName: string;
+  clientName: string;
+  designPlanVersion: number;
+  status: "pending" | "approved" | "changes_requested";
+  deliveryStatus: "queued" | "sent" | "failed" | "disabled";
+  submittedAt: string;
+  version: number;
+  attachmentNames: string[];
+}
+
+export interface ProjectWorkflowTask {
+  id: string;
+  projectId: string;
+  projectName: string;
+  estimateId: string;
+  kind:
+    | "design_plan_upload"
+    | "procurement"
+    | "finance"
+    | "site_execution"
+    | "trade_execution";
+  title: string;
+  description: string;
+  assigneeRole: Role;
+  sourceSectionId: string | null;
+  roomName: string | null;
+  status: "open" | "in_progress" | "completed";
+  openedAt: string;
+}
+
+export interface DesignerAssignmentOption {
+  id: string;
+  name: string;
+  email: string;
 }
 
 export type AdminProjectPage = PageData<AdminProjectSummary>;

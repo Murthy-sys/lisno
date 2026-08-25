@@ -89,11 +89,21 @@ export const ESTIMATE_CLIENT_REVIEW_AUDIT_ACTIONS = [
   "estimate_client_proof_stored"
 ] as const;
 
+export const DESIGN_PLAN_WORKFLOW_AUDIT_ACTIONS = [
+  "design_plan_designer_assigned",
+  "design_plan_submitted_for_client_review",
+  "design_plan_email_delivery_sent",
+  "design_plan_email_delivery_failed",
+  "design_plan_client_proof_stored",
+  "design_plan_approved"
+] as const;
+
 export const AUDIT_ACTIONS = [
   ...EXISTING_AUDIT_ACTIONS,
   ...PROMPT_1_AUDIT_ACTIONS,
   ...USER_INVITATION_AUDIT_ACTIONS,
-  ...ESTIMATE_CLIENT_REVIEW_AUDIT_ACTIONS
+  ...ESTIMATE_CLIENT_REVIEW_AUDIT_ACTIONS,
+  ...DESIGN_PLAN_WORKFLOW_AUDIT_ACTIONS
 ] as const;
 
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];

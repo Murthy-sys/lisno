@@ -43,6 +43,8 @@ const clientEstimates = [
     gst: 36000,
     total: 236000,
     status: "client_approved",
+    designPlanStatus: "ready_for_client",
+    designPlanVersion: 1,
     approvalRequired: false,
     projectId: "project-loft",
     lead: { _id: "lead-loft", clientName: "Aurora Homes", clientEmail: "client@lisno.example", projectName: "Cedar Loft", location: "Mysuru" }
@@ -233,15 +235,15 @@ describe("EstimateReviewPanel client disclosures", () => {
     expect(screen.getByRole("button", { name: "Save as draft" })).toBeVisible();
   });
 
-  it("keeps full-design annotations read-only after estimate approval", async () => {
+  it("opens full-design annotations after the Designer submits the plan", async () => {
     tokenStorage.set("client-token");
     installClientApi();
     renderApp(["/client"]);
     await userEvent.click(await screen.findByRole("button", { name: /Cedar Loft/i }));
     await userEvent.click(await screen.findByRole("button", { name: "Open uploaded plan client-design.pdf" }));
 
-    expect(await screen.findByText("Client markings are shown as a read-only overlay.")).toBeVisible();
-    expect(screen.queryByRole("toolbar", { name: "Annotation tools" })).not.toBeInTheDocument();
+    expect(await screen.findByText("Mark the drawing or add a text note before requesting changes.")).toBeVisible();
+    expect(screen.getByRole("toolbar", { name: "Annotation tools" })).toBeVisible();
   });
 
   it("keeps client estimate details collapsed until each project is opened independently", async () => {
@@ -436,16 +438,13 @@ describe("EstimateReviewPanel client disclosures", () => {
     expect(screen.queryByRole("button", { name: /Harbor House/ })).not.toBeInTheDocument();
   });
 
-  it("keeps designer estimate metadata and review actions immediately visible without a disclosure toggle", async () => {
+  it("does not surface estimate approval work on the Designer dashboard", async () => {
     tokenStorage.set("designer-token");
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = String(input);
       if (url.endsWith("/api/v1/auth/me")) return Response.json({ data: { id: "designer-1", name: "Ananya Shah", email: "ananya@lisno.example", role: "designer" } });
       if (url.endsWith("/api/v1/auth/authorization")) return Response.json({ data: authorizationFor("designer") });
-      if (url.endsWith("/api/v1/estimates/review-queue")) return Response.json({ data: [{
-        id: "estimate-designer", leadId: "lead-designer", propertyType: "3BHK", rooms: [], scopes: [], lineItems: [], subtotal: 100000, gst: 18000, total: 118000, status: "pending_designer_approval", approvalRequired: true, projectId: "project-designer",
-        lead: { _id: "lead-designer", clientName: "Orchid Studio", clientEmail: "orchid@lisno.example", projectName: "Harbor House", location: "Kochi" }
-      }] });
+      if (url.endsWith("/api/v1/designer/design-plan-tasks")) return Response.json({ data: [] });
       if (url.startsWith("/api/v1/projects?")) return Response.json({ data: { items: [], pagination: { limit: 100, offset: 0, total: 0, hasMore: false } } });
       if (url.startsWith("/api/v1/kpis/users/designer-1/tasks?")) return Response.json({ data: { items: [], pagination: { limit: 20, offset: 0, total: 0, hasMore: false } } });
       if (url.startsWith("/api/v1/kpis/users/designer-1?")) return Response.json({ data: { score: 0, components: [], aggregates: { taskCounts: { total: 0, completed: 0, active: 0 }, riskCounts: { gray: 0, green: 0, yellow: 0, red: 0 }, effort: { planned: 0, completed: 0, remaining: 0, workloadPercentage: 0 }, projects: [], recentActivity: [] } } });
@@ -454,13 +453,10 @@ describe("EstimateReviewPanel client disclosures", () => {
 
     renderApp(["/designer"]);
 
-    const card = (await screen.findByRole("heading", { name: "Harbor House", level: 3 })).closest("article")!;
-    expect(within(card).getByText("Kochi")).toBeVisible();
-    expect(within(card).getByText("Orchid Studio")).toBeVisible();
-    expect(within(card).getByText("0 items · GST included")).toBeVisible();
-    expect(within(card).getByLabelText("Review note")).toBeVisible();
-    expect(within(card).getByRole("button", { name: "Request changes" })).toBeVisible();
-    expect(within(card).getByRole("button", { name: "Approve for client" })).toBeVisible();
-    expect(within(card).queryByRole("button", { name: /Harbor House/ })).not.toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Design workspace" })).toBeVisible();
+    expect(screen.queryByText("Estimate approvals")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Review note")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Request changes" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Approve for client" })).not.toBeInTheDocument();
   });
 });

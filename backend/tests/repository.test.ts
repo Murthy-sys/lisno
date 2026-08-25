@@ -180,7 +180,10 @@ describe("memory repository", () => {
             status: "draft",
             total: 118000,
             clientReview: null,
-            hasPendingClientResponseTask: false
+            hasPendingClientResponseTask: false,
+            designPlanStatus: null,
+            designPlanVersion: 0,
+            designPlanDesigner: null
           }
         })]
       }));

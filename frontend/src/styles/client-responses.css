@@ -134,6 +134,24 @@
   justify-content: flex-end;
 }
 
+/*
+ * The teak role theme retints `.ui-button--secondary` at (0,3,0), so the
+ * red Cancel needs to match that weight to land. The approve/reject submit
+ * uses the shared `success`/`destructive` variants, which the theme leaves
+ * alone, so those need no override here.
+ */
+.client-response-dialog .client-response-dialog__actions .client-response-dialog__cancel {
+  background: var(--color-surface);
+  border-color: var(--color-danger);
+  color: var(--color-danger);
+}
+
+.client-response-dialog .client-response-dialog__actions .client-response-dialog__cancel:not(:disabled):hover {
+  background: color-mix(in srgb, var(--color-danger) 8%, var(--color-surface));
+  border-color: var(--color-danger);
+  color: var(--color-danger);
+}
+
 .client-response-detail__summary dl {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }

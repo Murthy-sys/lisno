@@ -1552,7 +1552,6 @@ const TASK_NINE_CLIENT_CONTROL_KEYS = new Set<ExpectedHumanJwtOperation["key"]>(
 ]);
 const TASK_NINE_DESIGNER_CONTROL_KEYS = new Set<ExpectedHumanJwtOperation["key"]>([
   "GET /estimate-plan-change-requests/:requestId",
-  "GET /estimates/review-queue",
   "POST /estimates/:estimateId/designer-decision"
 ]);
 const TASK_NINE_MANAGER_CONTROL_KEYS = new Set<ExpectedHumanJwtOperation["key"]>([
@@ -1565,7 +1564,11 @@ const TASK_NINE_MANAGER_CONTROL_KEYS = new Set<ExpectedHumanJwtOperation["key"]>
 function existingActorFor(
   operation: ExpectedHumanJwtOperation
 ): readonly [string, Role] {
+  if (operation.key === "POST /estimates/:estimateId/design-uploads") {
+    return actors.designer;
+  }
   if (TASK_NINE_CLIENT_CONTROL_KEYS.has(operation.key)) return actors.client;
+  if (operation.key === "GET /estimates/review-queue") return actors.manager;
   if (TASK_NINE_DESIGNER_CONTROL_KEYS.has(operation.key)) return actors.designer;
   if (TASK_NINE_MANAGER_CONTROL_KEYS.has(operation.key)) return actors.manager;
   return actors.estimator;
@@ -1717,6 +1720,22 @@ async function expectEstimateOperationBoundary(entry: TaskNineRequestCase): Prom
   }
   expectProjectGrantSpiesUntouched(normal.projectGrantSpies);
 
+  if (entry.key === "POST /estimates/:estimateId/designer-decision") {
+    const beforeFormerDesigner = snapshotServiceEntries(normal.calls);
+    await taskNineRequest(normal.app, entry, actors.designer).expect(403);
+    expect(serviceEntryDelta(normal.calls, beforeFormerDesigner)).toEqual({});
+    expectProjectGrantSpiesUntouched(normal.projectGrantSpies);
+
+    const stripped = createEstimateRouterHandlerEntryHarness(true);
+    const beforeStripped = snapshotServiceEntries(stripped.calls);
+    await taskNineRequest(stripped.app, entry, actors.superAdmin).expect(204);
+    expect(serviceEntryDelta(stripped.calls, beforeStripped)).toEqual({
+      [entry.key]: 1
+    });
+    expectProjectGrantSpiesUntouched(stripped.projectGrantSpies);
+    return;
+  }
+
   const beforeExistingRole = snapshotServiceEntries(normal.calls);
   await taskNineRequest(normal.app, entry, entry.existingActor).expect(204);
   expect(serviceEntryDelta(normal.calls, beforeExistingRole)).toEqual({
@@ -1740,6 +1759,23 @@ describe("Estimate Design operations", () => {
     "%s enforces the fixture-derived operation boundary",
     async (_key, entry) => expectServiceOperationBoundary(entry)
   );
+
+  it("denies Estimator design-plan upload before multipart parsing or service entry", async () => {
+    const { app, calls, projectGrantSpies } = createEstimationRouterServiceEntryHarness("design");
+    const before = snapshotServiceEntries(calls);
+
+    await request(listeningServerFor(app))
+      .post("/api/v1/estimates/estimate-router-fixture/design-uploads")
+      .set("Authorization", bearer(actors.estimator))
+      .attach("file", Buffer.from("must not be parsed"), {
+        filename: "forbidden.pdf",
+        contentType: "application/pdf"
+      })
+      .expect(403);
+
+    expect(serviceEntryDelta(calls, before)).toEqual({});
+    expectProjectGrantSpiesUntouched(projectGrantSpies);
+  });
 });
 
 describe("Estimate Plan Review operations", () => {

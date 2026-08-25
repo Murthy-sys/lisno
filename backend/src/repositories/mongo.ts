@@ -186,7 +186,16 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
         { leadId: { $in: leadIds } }
       ]
     })
-      .select({ _id: 1, leadId: 1, projectId: 1, status: 1, total: 1 })
+      .select({
+        _id: 1,
+        leadId: 1,
+        projectId: 1,
+        status: 1,
+        total: 1,
+        designPlanStatus: 1,
+        designPlanVersion: 1,
+        designPlanDesignerId: 1
+      })
       .lean();
     if (session) {
       estimatorQuery.session(session);
@@ -197,6 +206,21 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
         () => estimatorQuery.exec(),
         () => estimateQuery.exec()
       );
+    const designerIds = [
+      ...new Set(
+        estimateDocuments
+          .map((document) => document.designPlanDesignerId)
+          .filter((id): id is string => typeof id === "string")
+      )
+    ];
+    let designerDocuments: Array<Record<string, any>> = [];
+    if (designerIds.length > 0) {
+      const designerQuery = UserModel.find({
+        _id: { $in: designerIds }
+      }).select({ _id: 1, name: 1, email: 1 }).lean();
+      if (session) designerQuery.session(session);
+      designerDocuments = await designerQuery.exec();
+    }
     const estimateIds = estimateDocuments.map((document) => idOf(document));
     const roundQuery = EstimateClientReviewRoundModel.find({
       estimateId: { $in: estimateIds }
@@ -238,7 +262,7 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
         assignedAdminId: String(document.assignedAdminId)
       });
     }
-    const estimators = estimatorDocuments.map((document) => ({
+    const projectUsers = [...estimatorDocuments, ...designerDocuments].map((document) => ({
       id: idOf(document),
       name: document.name,
       email: document.email
@@ -252,12 +276,19 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
         status: String(document.status),
         total: Number(document.total),
         clientReview: currentRound?.clientReview ?? null,
-        assignedAdminId: currentRound?.assignedAdminId ?? null
+        assignedAdminId: currentRound?.assignedAdminId ?? null,
+        designPlanStatus: document.designPlanStatus == null
+          ? null
+          : String(document.designPlanStatus),
+        designPlanVersion: Number(document.designPlanVersion ?? 0),
+        designPlanDesignerId: document.designPlanDesignerId == null
+          ? null
+          : String(document.designPlanDesignerId)
       };
     });
     const leads = leadDocuments.map(mapLead);
     return projectDocuments.map((document) =>
-      adminProjectSummary(mapProject(document), estimators, leads, estimates, actor)
+      adminProjectSummary(mapProject(document), projectUsers, leads, estimates, actor)
     );
   };
 

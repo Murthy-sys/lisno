@@ -61,6 +61,57 @@ beforeEach(async () => {
 });
 
 describe("client estimate plan review service", () => {
+  it("hides a commercially approved full plan until ready, then keeps the approved plan read-only", async () => {
+    const api = service();
+    await EstimateModel.updateOne(
+      { _id: "estimate-1" },
+      {
+        $set: {
+          status: "client_approved",
+          designPlanStatus: "in_progress",
+          designPlanVersion: 1
+        }
+      }
+    );
+
+    await expect(api.listClient(client, "estimate-1")).rejects.toMatchObject({
+      status: 409,
+      code: "DESIGN_PLAN_NOT_REVIEWABLE"
+    });
+    await expect(
+      api.saveDraft(client, "page-1", { version: 0, annotations })
+    ).rejects.toMatchObject({
+      status: 409,
+      code: "DESIGN_PLAN_NOT_REVIEWABLE"
+    });
+    expect(await EstimatePlanPageRevisionModel.countDocuments()).toBe(0);
+
+    await EstimateModel.updateOne(
+      { _id: "estimate-1" },
+      { $set: { designPlanStatus: "ready_for_client" } }
+    );
+    await expect(api.listClient(client, "estimate-1")).resolves.toMatchObject({
+      pages: [expect.objectContaining({ id: "page-1" })]
+    });
+    await expect(
+      api.saveDraft(client, "page-1", { version: 0, annotations })
+    ).resolves.toMatchObject({ version: 1, annotations });
+
+    await EstimateModel.updateOne(
+      { _id: "estimate-1" },
+      { $set: { designPlanStatus: "approved" } }
+    );
+    await expect(api.listClient(client, "estimate-1")).resolves.toMatchObject({
+      pages: [expect.objectContaining({ id: "page-1" })]
+    });
+    await expect(
+      api.saveDraft(client, "page-1", { version: 1, annotations })
+    ).rejects.toMatchObject({
+      status: 409,
+      code: "DESIGN_PLAN_NOT_REVIEWABLE"
+    });
+  });
+
   it("runs Super Admin Plan Review through the real related-Client Estimate Design reader", async () => {
     await EstimateDesignAnnotationDraftModel.create({
       _id: "design-draft-related-client",

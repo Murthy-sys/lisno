@@ -1,5 +1,6 @@
 import { apiClient, type PaginatedData } from "../../api/client";
 import type {
+  DesignPlanStatus,
   EstimateClientReviewSummary,
   Lead,
   LeadActivity,
@@ -22,7 +23,7 @@ export const getLeadActivities = (id: string) => apiClient.get<PaginatedData<Lea
 export const addLeadActivity = (id: string, input: { type: LeadActivityType; note: string; occurredAt: string }) => apiClient.post<LeadActivity>(`/leads/${encodeURIComponent(id)}/activities`, input);
 export interface EstimateDraftInput { propertyType: string; rooms: Array<Record<string, unknown>>; scopes: string[]; lineItems: Array<{ catalogueId: string; roomName: string; specification: string; unit: string; rate: number; quantity: number; included: boolean }>; }
 export type EstimateStatus = "draft" | "pending_manager_assignment" | "pending_designer_approval" | "designer_changes_requested" | "ready_for_client" | "sent_to_client" | "client_changes_requested" | "client_approved";
-export interface EstimateDraft extends EstimateDraftInput { id: string; subtotal: number; gst: number; total: number; status: EstimateStatus; approvalRequired: boolean; assignedDesignerId?: string | null; projectId?: string | null; clientReview?: EstimateClientReviewSummary | null; }
+export interface EstimateDraft extends EstimateDraftInput { id: string; subtotal: number; gst: number; total: number; status: EstimateStatus; approvalRequired: boolean; assignedDesignerId?: string | null; projectId?: string | null; clientReview?: EstimateClientReviewSummary | null; designPlanStatus?: DesignPlanStatus | null; designPlanVersion?: number; }
 export interface SavedEstimate extends EstimateDraft {
   leadId: string;
   updatedAt: string;

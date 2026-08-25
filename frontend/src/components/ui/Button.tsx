@@ -2,7 +2,7 @@ import { forwardRef, type ButtonHTMLAttributes, type ReactNode } from "react";
 
 import { Spinner } from "./Spinner";
 
-export type ButtonVariant = "primary" | "secondary" | "quiet" | "destructive";
+export type ButtonVariant = "primary" | "secondary" | "quiet" | "destructive" | "success";
 export type ButtonSize = "compact" | "default" | "large";
 
 export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {

@@ -31,6 +31,12 @@ describe("roleHomePath", () => {
 describe("safeReturnPath", () => {
   it.each([
     ["admin", "/admin/projects/project-1", "/admin/projects/project-1"],
+    ["super_admin", "/admin/projects", "/admin/projects"],
+    [
+      "super_admin",
+      "/admin/projects/project-1?tab=estimate#summary",
+      "/admin/projects/project-1?tab=estimate#summary"
+    ],
     ["client", "/client", "/client"],
     ["client", "/client/projects/project-1", "/client/projects/project-1"],
     [
@@ -103,5 +109,15 @@ describe("safeReturnPath", () => {
     ["super_admin", "/admin/client-responses\\round-1"]
   ] as const)("rejects boundary confusion or traversal for %s: %s", (role, candidate) => {
     expect(safeReturnPath(role, candidate)).toBe(roleHomePath(role));
+  });
+
+  it.each([
+    "/admin/projects-archive",
+    "/admin/projects/%2e%2e/users",
+    "/admin/projects/%252e%252e/users",
+    "//evil.example/admin/projects",
+    "/admin/projects\\project-1"
+  ])("rejects a confused or traversing Super Admin project boundary: %s", (candidate) => {
+    expect(safeReturnPath("super_admin", candidate)).toBe("/admin/users");
   });
 });

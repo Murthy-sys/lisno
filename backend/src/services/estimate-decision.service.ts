@@ -13,6 +13,7 @@ import { EstimateModel } from "../models/Estimate.js";
 import { EstimateClientResponseProofModel } from "../models/EstimateClientResponseProof.js";
 import { EstimateClientReviewRoundModel } from "../models/EstimateClientReviewRound.js";
 import { LeadModel } from "../models/Lead.js";
+import { ProjectAccessGrantModel } from "../models/ProjectAccessGrant.js";
 import { UserModel } from "../models/User.js";
 import type { AuditService } from "./audit.service.js";
 import type { PublicUser } from "./auth.service.js";
@@ -155,7 +156,11 @@ export function createEstimateDecisionService(input: {
               occurredAt,
               session,
               audit: input.audit,
-              estimateDesigns: input.estimateDesigns
+              assignedAdminId: reviewRound?.assignedAdminId == null
+                ? context.source === "admin_proof" && context.actor.role === "admin"
+                  ? context.actor.id
+                  : null
+                : String(reviewRound.assignedAdminId)
             });
 
         let clientReview: EstimateClientReviewSummary | null = null;
@@ -408,7 +413,7 @@ async function approve(input: {
   occurredAt: Date;
   session: mongoose.ClientSession;
   audit: AuditService;
-  estimateDesigns: Pick<EstimateDesignService, "approvalReadinessForDecision">;
+  assignedAdminId: string | null;
 }): Promise<Row> {
   const {
     estimate,
@@ -418,38 +423,8 @@ async function approve(input: {
     occurredAt,
     session,
     audit,
-    estimateDesigns
+    assignedAdminId
   } = input;
-  const readiness = await estimateDesigns.approvalReadinessForDecision(
-    String(estimate._id),
-    session
-  );
-  if (!readiness.ready) {
-    throw new ApiError(
-      409,
-      "ESTIMATE_DRAWINGS_UNRESOLVED",
-      "Every submitted drawing must be approved before approving the estimate."
-    );
-  }
-  const assigned = estimate.assignedDesignerId
-    ? await UserModel.findById(estimate.assignedDesignerId).session(session).lean()
-    : await UserModel.findOne({ role: "designer", active: true })
-        .sort({ createdAt: 1 })
-        .session(session)
-        .lean();
-  const manager = assigned?.managerId
-    ? await UserModel.findById(assigned.managerId).session(session).lean()
-    : await UserModel.findOne({ role: "design_manager", active: true })
-        .sort({ createdAt: 1 })
-        .session(session)
-        .lean();
-  if (!assigned || !manager) {
-    throw new ApiError(
-      409,
-      "PROJECT_TEAM_REQUIRED",
-      "A design manager must configure an active project team."
-    );
-  }
   const clientId = context.source === "client_portal"
     ? context.actor.id
     : (await UserModel.findOne({
@@ -473,24 +448,46 @@ async function approve(input: {
       location: String(lead.location)
     },
     clientId: clientId == null ? null : String(clientId),
-    assignedDesignerId: String(assigned._id),
-    managerId: String(manager._id),
     occurredAt,
     session
   });
+  if (assignedAdminId) {
+    const admin = await UserModel.findOne({
+      _id: assignedAdminId,
+      role: "admin",
+      active: true
+    }).session(session).lean();
+    if (admin) {
+      const existingGrant = await ProjectAccessGrantModel.findOne({
+        projectId,
+        userId: assignedAdminId,
+        module: "projects",
+        active: true
+      }).session(session).lean();
+      if (!existingGrant) {
+        await ProjectAccessGrantModel.create([{
+          _id: `grant-${randomUUID()}`,
+          projectId,
+          userId: assignedAdminId,
+          module: "projects",
+          source: "admin_initiator",
+          accessRequestId: null,
+          grantedById: assignedAdminId,
+          active: true,
+          grantedAt: occurredAt,
+          revokedAt: null,
+          revokedById: null,
+          revocationReason: null
+        }], { session });
+      }
+    }
+  }
   const review = {
     actorId: context.actor.id,
     action: "client_approved",
     note,
     occurredAt
   };
-  const recipients = [assigned, manager].map((user) => ({
-    recipientEmail: user.email,
-    recipientRole: user.role,
-    event: "project_kickoff_created",
-    status: "queued" as const,
-    queuedAt: occurredAt
-  }));
   const updated = await EstimateModel.updateOne(
     estimateCasFilter(estimate),
     {
@@ -498,23 +495,36 @@ async function approve(input: {
         status: "client_approved",
         projectId,
         clientDecisionAt: occurredAt,
-        designFrozenAt: occurredAt
+        designFrozenAt: null,
+        designPlanStatus: "pending_assignment",
+        designPlanVersion: 0,
+        designPlanDesignerId: null,
+        designPlanAssignedById: null,
+        designPlanAssignedAt: null,
+        designPlanSubmittedAt: null,
+        designPlanApprovedAt: null,
+        designPlanApprovedById: null,
+        designPlanApprovalSource: null
       },
       $inc: { version: 1, designLifecycleVersion: 1 },
       $push: {
-        reviews: review,
-        notifications: { $each: recipients }
+        reviews: review
       }
     },
     { session }
   );
   requireMatched(updated);
   const leadUpdated = await LeadModel.updateOne(
-    { _id: lead._id, clientEmail: lead.clientEmail },
+    {
+      _id: lead._id,
+      clientEmail: lead.clientEmail,
+      projectId: { $in: [null, projectId] }
+    },
     {
       $set: {
+        projectId,
         stage: "won",
-        nextAction: "project kickoff",
+        nextAction: "Assign Designer for design plan",
         nextActionAt: occurredAt
       }
     },
@@ -531,7 +541,7 @@ async function approve(input: {
     newValues: {
       status: "client_approved",
       projectId,
-      approvedDrawingCount: readiness.approved
+      designPlanStatus: "pending_assignment"
     }
   }, session);
   return {
@@ -539,11 +549,19 @@ async function approve(input: {
     status: "client_approved",
     version: Number(estimate.version) + 1,
     designLifecycleVersion: Number(estimate.designLifecycleVersion ?? 0) + 1,
-    designFrozenAt: occurredAt,
+    designFrozenAt: null,
+    designPlanStatus: "pending_assignment",
+    designPlanVersion: 0,
+    designPlanDesignerId: null,
+    designPlanAssignedById: null,
+    designPlanAssignedAt: null,
+    designPlanSubmittedAt: null,
+    designPlanApprovedAt: null,
+    designPlanApprovedById: null,
+    designPlanApprovalSource: null,
     projectId,
     clientDecisionAt: occurredAt,
-    reviews: [...(estimate.reviews ?? []), review],
-    notifications: [...(estimate.notifications ?? []), ...recipients]
+    reviews: [...(estimate.reviews ?? []), review]
   };
 }
 

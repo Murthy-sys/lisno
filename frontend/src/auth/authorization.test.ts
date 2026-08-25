@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   AUTHORIZATION_POLICY_VERSION,
+  PERMISSION_CODES,
   ROLE_CODES
 } from "../api/authorization-contract";
 import { authorizationFor } from "../test/authFixtures";
@@ -92,10 +93,11 @@ describe("parseAuthorizationSnapshot", () => {
     expect(parseAuthorizationSnapshot(snapshot, "designer")).toBeNull();
   });
 
-  it("accepts the 133-item permission ceiling and rejects 134 items", () => {
+  it("accepts the permission ceiling and rejects one item above it", () => {
+    const permissionCeiling = PERMISSION_CODES.length + 32;
     expect(
       parseAuthorizationSnapshot(
-        { ...validSnapshot, permissions: Array(133).fill("unknown.action") },
+        { ...validSnapshot, permissions: Array(permissionCeiling).fill("unknown.action") },
         "designer"
       )
     ).toEqual({
@@ -105,7 +107,7 @@ describe("parseAuthorizationSnapshot", () => {
     });
     expect(
       parseAuthorizationSnapshot(
-        { ...validSnapshot, permissions: Array(134).fill("unknown.action") },
+        { ...validSnapshot, permissions: Array(permissionCeiling + 1).fill("unknown.action") },
         "designer"
       )
     ).toBeNull();

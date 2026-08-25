@@ -300,6 +300,9 @@ export interface EstimateSummaryRecord {
   total: number;
   clientReview: EstimateClientReviewSummary | null;
   assignedAdminId: string | null;
+  designPlanStatus?: string | null;
+  designPlanVersion?: number;
+  designPlanDesignerId?: string | null;
 }
 
 export interface AdminProjectEstimateSummary {
@@ -308,6 +311,9 @@ export interface AdminProjectEstimateSummary {
   total: number;
   clientReview: EstimateClientReviewSummary | null;
   hasPendingClientResponseTask: boolean;
+  designPlanStatus: string | null;
+  designPlanVersion: number;
+  designPlanDesigner: { id: string; name: string; email: string } | null;
 }
 
 export interface AdminProjectSummary {

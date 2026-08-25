@@ -4,6 +4,7 @@ import { useState } from "react";
 import { ProtectedImage } from "../../components/design/ProtectedImage";
 import { AnnotationOverlay } from "../../components/design/ImageAnnotationEditor";
 import {
+  estimateDesignKeys,
   getEstimatePlanChangeRequest,
   getEstimatePlanChangeRequests,
   replaceEstimateDrawing,
@@ -29,6 +30,9 @@ export function EstimatePlanChangeRequests({ estimateId }: { estimateId?: string
   async function refresh() {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: keys.queue(estimateId) }),
+      estimateId
+        ? queryClient.invalidateQueries({ queryKey: estimateDesignKeys.workspace(estimateId) })
+        : Promise.resolve(),
       selectedId ? queryClient.invalidateQueries({ queryKey: keys.detail(selectedId) }) : Promise.resolve()
     ]);
   }

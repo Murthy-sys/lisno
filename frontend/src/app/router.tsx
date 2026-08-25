@@ -26,6 +26,7 @@ import { AppShell } from "../components/layout/AppShell";
 import { RouteFocusManager } from "../components/layout/RouteFocusManager";
 import { StatusBadge } from "../components/ui/StatusBadge";
 import { DesignerDashboard } from "../features/designer/DesignerDashboard";
+import { DesignerDesignPlanTasksPage } from "../features/designer/DesignerDesignPlanTasksPage";
 import { ProjectWorkspace } from "../features/designer/ProjectWorkspace";
 import { ManagerDashboard } from "../features/manager/ManagerDashboard";
 import { DesignerDetail } from "../features/manager/DesignerDetail";
@@ -41,9 +42,11 @@ import { AdminProjectsPage } from "../features/admin/AdminProjectsPage";
 import { AdminProjectDetailPage } from "../features/admin/AdminProjectDetailPage";
 import { ClientResponseInboxPage } from "../features/admin/ClientResponseInboxPage";
 import { ClientResponseTaskDetailPage } from "../features/admin/ClientResponseTaskDetailPage";
+import { DesignPlanResponseInboxPage } from "../features/admin/DesignPlanResponseInboxPage";
 import { AccessRequestInboxPage } from "../features/access/AccessRequestInboxPage";
 import { MyAccessRequestsPage } from "../features/access/MyAccessRequestsPage";
 import { NeutralHomePage } from "../features/home/NeutralHomePage";
+import { OperationalTaskQueue } from "../features/workflow/OperationalTaskQueue";
 
 interface RoleHomeContent {
   heading: string;
@@ -177,6 +180,17 @@ function RoleLanding({ role }: { role: Role }) {
           <p>{content.description}</p>
         </div>
       </div>
+      {[
+        "procurement",
+        "finance_head",
+        "site_manager",
+        "worker_electrician",
+        "worker_plumber",
+        "worker_carpenter",
+        "worker_painter",
+        "worker_civil",
+        "worker_other"
+      ].includes(role) ? <OperationalTaskQueue /> : null}
     </section>
   );
 }
@@ -286,6 +300,7 @@ const stagedElements = {
   "/admin/users": <UserDirectoryPage />,
   "/admin/client-responses": <ClientResponseInboxPage />,
   "/admin/client-responses/:roundId": <ClientResponseTaskDetailPage />,
+  "/admin/design-approvals": <DesignPlanResponseInboxPage />,
   "/admin/access-requests": <AccessRequestInboxPage />,
   "/access-requests/mine": <MyAccessRequestsPage />
 } as const satisfies Partial<Record<RegisteredFrontendPath, ReactNode>>;
@@ -327,6 +342,13 @@ export function AppRoutes() {
         <Route
           path="/designer"
           element={registeredElement("/designer", <DesignerDashboard />)}
+        />
+        <Route
+          path="/designer/design-plans"
+          element={registeredElement(
+            "/designer/design-plans",
+            <DesignerDesignPlanTasksPage />
+          )}
         />
         <Route
           path="/designer/projects/:projectId"
@@ -424,6 +446,13 @@ export function AppRoutes() {
           element={registeredElement(
             "/admin/client-responses/:roundId",
             stagedElements["/admin/client-responses/:roundId"]
+          )}
+        />
+        <Route
+          path="/admin/design-approvals"
+          element={registeredElement(
+            "/admin/design-approvals",
+            stagedElements["/admin/design-approvals"]
           )}
         />
         <Route

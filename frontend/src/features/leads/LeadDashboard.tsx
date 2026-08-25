@@ -6,7 +6,6 @@ import type { Lead, LeadStage } from "../../api/types";
 import { AsyncState } from "../../components/ui/AsyncState";
 import { DownloadButton } from "../../components/ui/DownloadButton";
 import "../../styles/estimator-dashboard.css";
-import { LeadCreateDialog } from "./LeadCreateDialog";
 import {
   downloadEstimatePdf,
   getLeadPage,
@@ -31,7 +30,6 @@ const money = (value: number) => `₹${value.toLocaleString("en-IN")}`;
 export function LeadDashboard() {
   const [search, setSearch] = useState("");
   const [stage, setStage] = useState<LeadStage | "all">("all");
-  const [creating, setCreating] = useState(false);
   const query = useQuery({
     queryKey: leadKeys.page(search, stage),
     queryFn: () => getLeadPage(search, stage)
@@ -55,7 +53,6 @@ export function LeadDashboard() {
         <h1 id="lead-title">Lead workspace</h1>
         <p>Track client conversations and continue every saved estimate.</p>
       </div>
-      <button className="button button--primary" onClick={() => setCreating(true)}>New lead</button>
     </header>
 
     <section className="estimator-dashboard__overview" aria-label="Pipeline overview">
@@ -65,37 +62,12 @@ export function LeadDashboard() {
         <div><dt>Draft estimates</dt><dd>{estimates.isSuccess ? draftEstimates : "—"}</dd></div>
         <div><dt>Saved value</dt><dd>{estimates.isSuccess ? money(savedValue) : "—"}</dd></div>
       </dl>
-    </section>
-
-    <section
-      className="saved-estimates estimator-dashboard__section"
-      aria-labelledby="saved-estimates-title"
-    >
-      <header className="estimator-dashboard__section-heading">
-        <div>
-          <p className="eyebrow">Estimate pipeline</p>
-          <h2 id="saved-estimates-title">Saved estimates</h2>
-        </div>
-        {estimates.data ? <strong>{estimates.data.length} total</strong> : null}
-      </header>
-      {estimates.isPending ? <p>Loading saved estimates…</p> : null}
       {estimates.isError ? (
         <p role="alert">
           Saved estimates are unavailable.{" "}
           <button type="button" onClick={() => void estimates.refetch()}>
             Try again
           </button>
-        </p>
-      ) : null}
-      {estimates.data?.length ? (
-        <div className="saved-estimate-grid">
-          {estimates.data.map((estimate) => (
-            <SavedEstimateCard key={estimate.id} estimate={estimate} />
-          ))}
-        </div>
-      ) : estimates.isSuccess ? (
-        <p className="inline-empty">
-          No saved estimates yet. Start one from a lead.
         </p>
       ) : null}
     </section>
@@ -121,10 +93,8 @@ export function LeadDashboard() {
           estimatesPending={estimates.isPending}
           estimatesUnavailable={estimates.isError}
         />)}
-      </div> : <div className="inline-empty"><h2>No leads yet</h2><p>Create a lead to start tracking an opportunity.</p></div>}
+      </div> : <div className="inline-empty"><h2>No leads yet</h2><p>Leads appear here once an admin initiates a project.</p></div>}
     </section>
-
-    {creating ? <LeadCreateDialog onClose={() => setCreating(false)} /> : null}
   </section>;
 }
 
@@ -181,47 +151,4 @@ function LeadRow({
       </> : <Link className="secondary-button lead-row__open" to={leadPath}>Open lead</Link>}
     </span>
   </article>;
-}
-
-function SavedEstimateCard({ estimate }: { estimate: SavedEstimate }) {
-  const projectName = estimate.lead?.projectName ?? "Saved estimate";
-  const estimatePath =
-    "/estimator-sales/leads/" + estimate.leadId + "/estimate";
-
-  return (
-    <article className="saved-estimate-card">
-      <div className="saved-estimate-card__top">
-        <div className="saved-estimate-card__summary">
-          <span className="estimate-status">
-            {estimate.status.replaceAll("_", " ")}
-          </span>
-          <strong>{money(estimate.total)}</strong>
-        </div>
-        <DownloadButton
-          className="button button--secondary saved-estimate-card__export"
-          label="Export as PDF"
-          loadingLabel="Preparing PDF..."
-          errorMessage={
-            "PDF export failed for " + projectName + ". Try again."
-          }
-          fallbackFilename={"lisno-" + estimate.id + ".pdf"}
-          getFile={() => downloadEstimatePdf(estimate.id)}
-        />
-      </div>
-      <h3>{projectName}</h3>
-      <dl>
-        <div>
-          <dt>Client</dt>
-          <dd>{estimate.lead?.clientName ?? "—"}</dd>
-        </div>
-        <div>
-          <dt>Property</dt>
-          <dd>{estimate.propertyType}</dd>
-        </div>
-      </dl>
-      <Link className="button button--primary" to={estimatePath}>
-        {estimate.status === "draft" ? "Continue estimate" : "View estimate"}
-      </Link>
-    </article>
-  );
 }

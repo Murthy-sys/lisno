@@ -39,6 +39,14 @@ const ESTIMATE_CLIENT_RESPONSE_PERMISSIONS = [
   "estimation.estimate_email.retry"
 ] as const;
 
+const PROJECT_WORKFLOW_PERMISSIONS = [
+  "design.plan_assignment.manage",
+  "design.plan_task.read",
+  "design.plan_response_tasks.read",
+  "design.plan_response_tasks.decide",
+  "workflow.tasks.read"
+] as const;
+
 describe("frontend authorization contract parity", () => {
   it("matches the backend role vocabulary and labels", () => {
     expect(FRONTEND_ROLE_CODES).toEqual(ROLE_CODES);
@@ -55,13 +63,13 @@ describe("frontend authorization contract parity", () => {
     expect(FRONTEND_POLICY_VERSION).toBe(AUTHORIZATION_POLICY_VERSION);
   });
 
-  it("publishes the exact 101-code estimate-client-response policy on both sides", () => {
-    expect(AUTHORIZATION_POLICY_VERSION).toBe("2026-08-24.estimate-client-response.v1");
-    expect(FRONTEND_POLICY_VERSION).toBe("2026-08-24.estimate-client-response.v1");
-    expect(PERMISSION_CODES).toHaveLength(101);
-    expect(FRONTEND_PERMISSION_CODES).toHaveLength(101);
-    expect(new Set(PERMISSION_CODES).size).toBe(101);
-    expect(new Set(FRONTEND_PERMISSION_CODES).size).toBe(101);
+  it("publishes the exact 106-code project-workflow policy on both sides", () => {
+    expect(AUTHORIZATION_POLICY_VERSION).toBe("2026-08-25.project-workflow.v2");
+    expect(FRONTEND_POLICY_VERSION).toBe("2026-08-25.project-workflow.v2");
+    expect(PERMISSION_CODES).toHaveLength(106);
+    expect(FRONTEND_PERMISSION_CODES).toHaveLength(106);
+    expect(new Set(PERMISSION_CODES).size).toBe(106);
+    expect(new Set(FRONTEND_PERMISSION_CODES).size).toBe(106);
     for (const permission of STAFF_INVITATION_PERMISSIONS) {
       expect(PERMISSION_CODES).toContain(permission);
       expect(FRONTEND_PERMISSION_CODES).toContain(permission);
@@ -76,5 +84,15 @@ describe("frontend authorization contract parity", () => {
         ESTIMATE_CLIENT_RESPONSE_PERMISSIONS.includes(permission as never)
       )
     ).toEqual(ESTIMATE_CLIENT_RESPONSE_PERMISSIONS);
+    expect(
+      PERMISSION_CODES.filter((permission) =>
+        PROJECT_WORKFLOW_PERMISSIONS.includes(permission as never)
+      )
+    ).toEqual(PROJECT_WORKFLOW_PERMISSIONS);
+    expect(
+      FRONTEND_PERMISSION_CODES.filter((permission) =>
+        PROJECT_WORKFLOW_PERMISSIONS.includes(permission as never)
+      )
+    ).toEqual(PROJECT_WORKFLOW_PERMISSIONS);
   });
 });

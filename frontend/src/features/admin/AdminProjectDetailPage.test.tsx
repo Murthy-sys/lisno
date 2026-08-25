@@ -35,6 +35,7 @@ function installSession(
     "identity.authorization.read",
     "projects.read",
     "projects.list",
+    "design.plan_assignment.manage",
     "estimation.client_response_tasks.read"
   ]
 ) {
@@ -137,6 +138,56 @@ describe("AdminProjectDetailPage", () => {
     expect(await screen.findByRole("heading", { name: "Asha home" })).toBeVisible();
     expect(screen.getAllByText("Unassigned handoff")).toHaveLength(2);
     expect(screen.getByText("No estimate yet")).toBeVisible();
+  });
+
+  it("normalizes a legacy approved handoff and exposes Designer assignment", async () => {
+    installSession();
+    server.use(
+      http.get("/api/v1/admin/projects/project-1", () =>
+        HttpResponse.json({
+          data: {
+            ...project,
+            lead: {
+              ...project.lead,
+              stage: "won",
+              nextAction: "project kickoff"
+            },
+            estimate: {
+              ...project.estimate,
+              status: "client_approved"
+            }
+          }
+        })
+      ),
+      http.get("/api/v1/admin/designers", () =>
+        HttpResponse.json({
+          data: [
+            {
+              id: "designer-1",
+              name: "Ananya Designer",
+              email: "ananya@lisno.example"
+            }
+          ]
+        })
+      )
+    );
+
+    renderApp(["/admin/projects/project-1"]);
+
+    expect(await screen.findByText("Estimation Approval")).toBeVisible();
+    const detail = screen.getByRole("region", { name: "Project details" });
+    expect(within(detail).getByText("Assign Designer to upload design")).toBeVisible();
+    expect(within(detail).queryByText("project kickoff")).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Assign Designer" })).toHaveAttribute(
+      "href",
+      "#design-assignment-title"
+    );
+    expect(
+      await screen.findByRole("combobox", { name: "Assigned Designer" })
+    ).toBeEnabled();
+    expect(
+      screen.getByRole("option", { name: "Ananya Designer · ananya@lisno.example" })
+    ).toBeVisible();
   });
 
   it("links the assigned current pending Client response task from the project summary", async () => {

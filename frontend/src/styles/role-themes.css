@@ -262,6 +262,8 @@
 .ui-app-shell[data-role] .estimate-panel,
 .ui-app-shell[data-role] .estimate-review-panel,
 .ui-app-shell[data-role] .estimate-review-card,
+.ui-app-shell[data-role] .designer-kpi,
+.ui-app-shell[data-role] .designer-project-row,
 .ui-app-shell[data-role] .estimate-design-uploads,
 .ui-app-shell[data-role] .estimate-design-uploads__placement,
 .ui-app-shell[data-role] .estimate-design-uploads__group,
@@ -285,6 +287,7 @@
 .ui-app-shell[data-role] .estimate-design-uploads .estimate-design-uploads__misc,
 .ui-app-shell[data-role] .estimate-design-uploads .estimate-design-uploads__status-list li,
 .ui-app-shell[data-role] .saved-estimates .saved-estimate-card,
+.ui-app-shell[data-role] .designer-kpi .kpi-component,
 .ui-app-shell[data-role] .estimate-review-panel .estimate-review-card {
   border-color: var(--role-glass-edge);
   background-color: var(--role-glass-strong);
@@ -486,13 +489,26 @@
   color: var(--role-band-ink-muted);
 }
 
-.ui-app-shell[data-role] .kpi-score__icon,
 .ui-app-shell[data-role] .kpi-component__heading b {
   color: var(--role-accent-bright);
 }
 
 .ui-app-shell[data-role] .kpi-component .progress > span {
   background: linear-gradient(90deg, var(--role-accent), var(--role-accent-bright));
+}
+
+/* The Designer dashboard uses KPI cards on the light canvas, not the dark
+   management band. Keep its compact strip on the ordinary role ink scale. */
+.ui-app-shell[data-role] .designer-kpi .kpi-score p,
+.ui-app-shell[data-role] .designer-kpi .kpi-score span,
+.ui-app-shell[data-role] .designer-kpi .kpi-component__heading span,
+.ui-app-shell[data-role] .designer-kpi .kpi-component p,
+.ui-app-shell[data-role] .designer-kpi .kpi-component__unavailable {
+  color: var(--role-ink-muted);
+}
+
+.ui-app-shell[data-role] .designer-kpi .kpi-component__heading b {
+  color: var(--role-accent);
 }
 
 /* ------------------------------------------------------- violet holdouts */

@@ -22,7 +22,9 @@ import { UserModel } from "../models/User.js";
 import type { Storage } from "../storage/storage.js";
 import type { PublicUser as AuthenticatedUser } from "./auth.service.js";
 import type { AuditService } from "./audit.service.js";
+import { synchronizeEstimateDesignReviewState } from "./estimate-design-review-state.js";
 import type { EstimateDesignService } from "./estimate-design.service.js";
+import type { ProjectWorkflowService } from "./project-workflow.service.js";
 
 type ClientDesignAccess = Pick<EstimateDesignService, "listClient">;
 type PlanAudit = Pick<AuditService, "appendInMongoTransaction">;
@@ -32,6 +34,7 @@ export interface CreateEstimatePlanReviewServiceInput {
   storage: Storage;
   audit: PlanAudit;
   now?: () => Date;
+  projectWorkflow?: Pick<ProjectWorkflowService, "recordClientDrawingDecision">;
 }
 
 export interface SavePlanDraftInput {
@@ -192,12 +195,47 @@ export async function approvePlanTargetsForDrawingRevision(
 export function createEstimatePlanReviewService(input: CreateEstimatePlanReviewServiceInput) {
   const now = input.now ?? (() => new Date());
 
-  async function requirePage(user: AuthenticatedUser, pageId: string) {
+  async function requireDesignPlanState(
+    estimateId: string,
+    mode: "visible" | "reviewable",
+    session?: mongoose.ClientSession
+  ) {
+    const query = EstimateModel.findById(estimateId);
+    if (session) query.session(session);
+    const estimate = await query.lean();
+    if (!estimate) throw notFound();
+    const status = String(estimate.status);
+    if (["sent_to_client", "client_changes_requested"].includes(status)) {
+      return estimate;
+    }
+    const designPlanStatus = String(estimate.designPlanStatus);
+    const allowed = status === "client_approved" && (
+      designPlanStatus === "ready_for_client" ||
+      (mode === "visible" && designPlanStatus === "approved")
+    );
+    if (!allowed) {
+      throw new ApiError(
+        409,
+        "DESIGN_PLAN_NOT_REVIEWABLE",
+        mode === "reviewable"
+          ? "This Design plan is not awaiting Client review."
+          : "The current Design plan has not been submitted to the Client."
+      );
+    }
+    return estimate;
+  }
+
+  async function requirePage(
+    user: AuthenticatedUser,
+    pageId: string,
+    mode: "visible" | "reviewable" = "visible"
+  ) {
     const page = await EstimateDesignSourcePageModel.findById(pageId).lean();
     if (!page) throw notFound();
     const upload = await EstimateDesignUploadModel.findById(page.uploadId).lean();
     if (!upload) throw notFound();
     await input.estimateDesigns.listClient(user, dtoId(upload.estimateId));
+    await requireDesignPlanState(dtoId(upload.estimateId), mode);
     return { page, estimateId: dtoId(upload.estimateId) };
   }
 
@@ -213,9 +251,15 @@ export function createEstimatePlanReviewService(input: CreateEstimatePlanReviewS
     if (session) query.session(session);
     const estimate = await query.lean();
     if (!estimate) throw notFound();
-    const allowed = user.role === "super_admin" || (user.role === "estimator_sales"
-      ? dtoId(estimate.ownerId) === user.id
-      : [estimate.assignedDesignerId, estimate.assignedManagerId].filter(Boolean).map(dtoId).includes(user.id));
+    const postApprovalDesign = String(estimate.status) === "client_approved";
+    const allowed = user.role === "super_admin" || (postApprovalDesign
+      ? user.role === "designer" && dtoId(estimate.designPlanDesignerId) === user.id
+      : user.role === "estimator_sales"
+        ? dtoId(estimate.ownerId) === user.id
+        : [estimate.assignedDesignerId, estimate.assignedManagerId]
+            .filter(Boolean)
+            .map(dtoId)
+            .includes(user.id));
     if (!allowed) throw new ApiError(403, "FORBIDDEN", "You are not assigned to this estimate.");
     return estimate;
   }
@@ -287,6 +331,7 @@ export function createEstimatePlanReviewService(input: CreateEstimatePlanReviewS
 
   async function pageRows(user: AuthenticatedUser, estimateId: string) {
     await input.estimateDesigns.listClient(user, estimateId);
+    await requireDesignPlanState(estimateId, "visible");
     const uploads = await EstimateDesignUploadModel.find({
       estimateId,
       replacementDrawingId: null,
@@ -319,7 +364,7 @@ export function createEstimatePlanReviewService(input: CreateEstimatePlanReviewS
 
   async function preview(user: AuthenticatedUser, pageId: string, annotations: AnnotationDocumentV1) {
     annotationDocumentSchema.parse(annotations);
-    const { page, estimateId } = await requirePage(user, pageId);
+    const { page, estimateId } = await requirePage(user, pageId, "reviewable");
     if (annotations.imageWidth !== Number(page.width) || annotations.imageHeight !== Number(page.height)) {
       throw new ApiError(400, "INVALID_ANNOTATIONS", "Annotation dimensions must match the source page.");
     }
@@ -390,11 +435,25 @@ export function createEstimatePlanReviewService(input: CreateEstimatePlanReviewS
   return {
     async listStaff(user: AuthenticatedUser, filters: { estimateId?: string; status?: "open" | "resolved" }) {
       requireStaffRole(user);
+      const legacyScope = user.role === "estimator_sales"
+        ? { status: { $ne: "client_approved" }, ownerId: user.id }
+        : {
+            status: { $ne: "client_approved" },
+            $or: [
+              { assignedDesignerId: user.id },
+              { assignedManagerId: user.id }
+            ]
+          };
       const estimateFilter = user.role === "super_admin"
         ? {}
-        : user.role === "estimator_sales"
-        ? { ownerId: user.id }
-        : { $or: [{ assignedDesignerId: user.id }, { assignedManagerId: user.id }] };
+        : {
+            $or: [
+              legacyScope,
+              ...(user.role === "designer"
+                ? [{ status: "client_approved", designPlanDesignerId: user.id }]
+                : [])
+            ]
+          };
       const estimates = await EstimateModel.find(estimateFilter).select({ _id: 1 }).lean();
       const estimateIds = estimates.map((estimate) => dtoId(estimate._id));
       const query: Record<string, any> = { estimateId: filters.estimateId ? { $in: estimateIds.filter((id) => id === filters.estimateId) } : { $in: estimateIds } };
@@ -517,7 +576,7 @@ export function createEstimatePlanReviewService(input: CreateEstimatePlanReviewS
     advanceForDrawingRevision,
 
     async saveDraft(user: AuthenticatedUser, pageId: string, draft: SavePlanDraftInput) {
-      await requirePage(user, pageId);
+      const { estimateId } = await requirePage(user, pageId, "reviewable");
       annotationDocumentSchema.parse(draft.annotations);
       const existing = await EstimatePlanAnnotationDraftModel.findOne({ clientId: user.id, sourcePageId: pageId }).lean();
       if (!existing && draft.version !== 0) throw conflict("The plan annotation draft changed. Refresh and try again.");
@@ -528,7 +587,7 @@ export function createEstimatePlanReviewService(input: CreateEstimatePlanReviewS
             { $set: { annotations: draft.annotations }, $inc: { version: 1 } },
             { returnDocument: "after", runValidators: true }
           ).lean()
-        : (await EstimatePlanAnnotationDraftModel.create({ _id: `plan-draft-${randomUUID()}`, estimateId: (await requirePage(user, pageId)).estimateId, sourcePageId: pageId, clientId: user.id, version: 1, annotations: draft.annotations })).toObject();
+        : (await EstimatePlanAnnotationDraftModel.create({ _id: `plan-draft-${randomUUID()}`, estimateId, sourcePageId: pageId, clientId: user.id, version: 1, annotations: draft.annotations })).toObject();
       if (!saved) throw conflict("The plan annotation draft changed. Refresh and try again.");
       return draftDto(saved);
     },
@@ -546,6 +605,7 @@ export function createEstimatePlanReviewService(input: CreateEstimatePlanReviewS
       return mongoose.connection.transaction(async (session) => {
         const request = await EstimatePlanChangeRequestModel.findOne({ _id: requestId, clientId: user.id }).session(session);
         if (!request) throw new ApiError(404, "PLAN_REQUEST_NOT_FOUND", "The plan change request was not found.");
+        await requireDesignPlanState(dtoId(request.estimateId), "reviewable", session);
         if (request.status !== "open" || request.version !== change.version) {
           throw conflict("The plan request changed. Refresh and try again.");
         }
@@ -608,6 +668,7 @@ export function createEstimatePlanReviewService(input: CreateEstimatePlanReviewS
         if (again) return again;
         const open = await EstimatePlanChangeRequestModel.findOne({ clientId: user.id, sourcePageId: pageId, status: "open" }).session(session).lean();
         if (open) throw alreadyOpen(dtoId(open._id));
+        await requireDesignPlanState(estimateId, "reviewable", session);
         const [created] = await EstimatePlanChangeRequestModel.create([{
           _id: `plan-request-${randomUUID()}`, estimateId, uploadId: dtoId(page!.uploadId), sourcePageId: pageId,
           clientId: user.id, idempotencyKey: request.idempotencyKey, version: 1,
@@ -650,7 +711,34 @@ export function createEstimatePlanReviewService(input: CreateEstimatePlanReviewS
         }
         const estimate = await EstimateModel.findById(estimateId).session(session).lean();
         if (estimate) {
-          const recipientIds = [estimate.ownerId, estimate.assignedManagerId, estimate.assignedDesignerId]
+          const occurredAt = now();
+          const postApprovalDesignReview =
+            String(estimate.status) === "client_approved" &&
+            String(estimate.designPlanStatus) === "ready_for_client";
+          if (postApprovalDesignReview && input.projectWorkflow) {
+            await synchronizeEstimateDesignReviewState(
+              estimateId,
+              "changes_requested",
+              session
+            );
+            await input.projectWorkflow.recordClientDrawingDecision(
+              estimateId,
+              user,
+              "request_changes",
+              request.summary.trim(),
+              occurredAt,
+              session
+            );
+          } else if (String(estimate.status) !== "client_approved") {
+            await EstimateModel.updateOne(
+              { _id: estimateId },
+              { $set: { status: "client_changes_requested" } },
+              { session }
+            );
+          }
+          const recipientIds = (postApprovalDesignReview
+            ? [estimate.designPlanDesignerId]
+            : [estimate.ownerId, estimate.assignedManagerId, estimate.assignedDesignerId])
             .filter(Boolean).map(dtoId);
           const recipients = await UserModel.find({ _id: { $in: recipientIds }, active: true }).session(session).lean();
           for (const recipient of recipients) {
@@ -658,8 +746,7 @@ export function createEstimatePlanReviewService(input: CreateEstimatePlanReviewS
             await EstimateModel.updateOne(
               { _id: estimateId, "notifications.dedupeKey": { $ne: dedupeKey } },
               {
-                $set: { status: "client_changes_requested" },
-                $push: { notifications: { dedupeKey, recipientEmail: recipient.email, recipientRole: recipient.role, event: "estimate_plan_changes_requested", status: "queued", queuedAt: now() } }
+                $push: { notifications: { dedupeKey, recipientEmail: recipient.email, recipientRole: recipient.role, event: "estimate_plan_changes_requested", status: "queued", queuedAt: occurredAt } }
               },
               { session }
             );

@@ -142,6 +142,10 @@ export const PERMISSION_CODES = [
   "design.client_section_decision",
   "design.source_page_image.read",
   "design.section_revision_image.read",
+  "design.plan_assignment.manage",
+  "design.plan_task.read",
+  "design.plan_response_tasks.read",
+  "design.plan_response_tasks.decide",
   "estimation.design_upload.create",
   "estimation.design_upload.read",
   "estimation.design_upload.retry",
@@ -201,13 +205,14 @@ export const PERMISSION_CODES = [
   "access_request.review.read",
   "access_request.review.decide",
   "project_access_grant.revoke",
-  "execution.worker_assignment.override"
+  "execution.worker_assignment.override",
+  "workflow.tasks.read"
 ] as const;
 
 export type PermissionCode = (typeof PERMISSION_CODES)[number];
 
 export const AUTHORIZATION_POLICY_VERSION =
-  "2026-08-24.estimate-client-response.v1" as const;
+  "2026-08-25.project-workflow.v2" as const;
 
 export interface AuthorizationSnapshot {
   readonly role: Role;

@@ -615,33 +615,42 @@ describe("EstimateDecisionService Client compatibility", () => {
     });
   });
 
-  it("preserves the drawing-readiness error and rolls back a portal approval", async () => {
+  it("approves the commercial estimate without consulting drawing readiness", async () => {
     const state = setup({
       readiness: { ready: false, total: 2, approved: 1, awaitingReview: 1, changesRequested: 0 }
     });
 
-    await state.service.decide(portalInput({ decision: "approve", note: "" })).then(
-      () => expect.fail("Expected unresolved drawings to block approval."),
-      (error) => expectApiError(error, "ESTIMATE_DRAWINGS_UNRESOLVED", 409)
+    const result = await state.service.decide(
+      portalInput({ decision: "approve", note: "" })
     );
 
-    expect(state.estimates[0]).toMatchObject({
-      status: "sent_to_client",
-      version: 7,
-      designLifecycleVersion: 3,
-      designFrozenAt: null
+    expect(result.estimate).toMatchObject({
+      status: "client_approved",
+      version: 8,
+      designLifecycleVersion: 4,
+      designFrozenAt: null,
+      designPlanStatus: "pending_assignment",
+      designPlanVersion: 0,
+      designPlanDesignerId: null
     });
-    expect(state.rounds[0]).toMatchObject({ status: "pending", version: 4 });
-    expect(state.projects).toEqual([]);
-    expect(state.audits).toEqual([]);
-    expect(state.estimateDesigns.approvalReadinessForDecision).toHaveBeenCalledWith(
-      "estimate-1",
-      state.session
-    );
+    expect(state.projects).toEqual([
+      expect.objectContaining({
+        assignedEstimatorId: "estimator-1",
+        initiatingDesignerId: null,
+        assignedDesignerIds: [],
+        managerId: null,
+        status: "planning"
+      })
+    ]);
+    expect(state.rounds[0]).toMatchObject({
+      status: "approved",
+      version: 5
+    });
+    expect(state.estimateDesigns.approvalReadinessForDecision).not.toHaveBeenCalled();
     expect(state.estimateDesigns.approvalReadiness).not.toHaveBeenCalled();
   });
 
-  it("preserves Client approval project, freeze, Lead-won, kickoff, review, and audit effects", async () => {
+  it("opens pending design assignment after Client commercial approval", async () => {
     const state = setup();
 
     const result = await state.service.decide(portalInput({ decision: "approve", note: "Looks good." }));
@@ -651,21 +660,25 @@ describe("EstimateDecisionService Client compatibility", () => {
       status: "client_approved",
       version: 8,
       designLifecycleVersion: 4,
-      designFrozenAt: NOW,
+      designFrozenAt: null,
+      designPlanStatus: "pending_assignment",
+      designPlanVersion: 0,
+      designPlanDesignerId: null,
       clientDecisionAt: NOW
     });
     expect(state.projects).toHaveLength(1);
     expect(state.projects[0]).toMatchObject({
       clientId: "client-1",
       clientEmailNormalized: "asha.rao@example.com",
-      initiatingDesignerId: "designer-1",
-      assignedDesignerIds: ["designer-1"],
-      managerId: "manager-1",
+      initiatingDesignerId: null,
+      assignedEstimatorId: "estimator-1",
+      assignedDesignerIds: [],
+      managerId: null,
       status: "planning"
     });
     expect(state.leads[0]).toMatchObject({
       stage: "won",
-      nextAction: "project kickoff",
+      nextAction: "Assign Designer for design plan",
       nextActionAt: NOW
     });
     expect(state.estimates[0].reviews.at(-1)).toMatchObject({
@@ -674,10 +687,7 @@ describe("EstimateDecisionService Client compatibility", () => {
       note: "Looks good.",
       occurredAt: NOW
     });
-    expect(state.estimates[0].notifications).toEqual([
-      expect.objectContaining({ recipientRole: "designer", event: "project_kickoff_created", queuedAt: NOW }),
-      expect.objectContaining({ recipientRole: "design_manager", event: "project_kickoff_created", queuedAt: NOW })
-    ]);
+    expect(state.estimates[0].notifications).toEqual([]);
     expect(state.audits.map((event) => event.action)).toEqual([
       "estimate_design_final_approved",
       "estimate_client_response_recorded_through_portal"
@@ -1087,8 +1097,8 @@ describe("EstimateDecisionService Admin proof decisions", () => {
       expect(state.projects[0]).toMatchObject({
         _id: "project-linked",
         clientId: storedClientId,
-        assignedDesignerIds: ["designer-1"],
-        managerId: "manager-1"
+        assignedDesignerIds: [],
+        managerId: null
       });
     }
   );

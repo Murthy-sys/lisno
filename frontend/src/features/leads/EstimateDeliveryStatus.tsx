@@ -19,6 +19,7 @@ const presentation: Record<
   { label: string; role: "status" | "alert"; tone: StatusTone }
 > = {
   queued: { label: "Email queued", role: "status", tone: "info" },
+  sending: { label: "Email sending", role: "status", tone: "info" },
   sent: { label: "Email sent", role: "status", tone: "success" },
   failed: { label: "Email delivery failed", role: "alert", tone: "danger" },
   disabled: { label: "Email unavailable", role: "alert", tone: "warning" }

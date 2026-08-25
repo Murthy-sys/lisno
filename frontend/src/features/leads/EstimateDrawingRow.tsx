@@ -16,6 +16,7 @@ export interface EstimateDrawingRowProps {
   changeSummary?: string | null;
   focusOnRender?: boolean;
   onFocused?: () => void;
+  readOnly?: boolean;
 }
 
 type EstimateDrawingRowWithRevisionProps = EstimateDrawingRowProps & {
@@ -38,6 +39,7 @@ export function EstimateDrawingRow({
   changeSummary,
   focusOnRender = false,
   onFocused,
+  readOnly = false,
   revisionId,
   reviewStatus = "draft",
   onVerify,
@@ -51,7 +53,8 @@ export function EstimateDrawingRow({
     : reviewStatus === "approved" ? "Approved"
       : reviewStatus === "submitted" ? "Awaiting client review"
         : drawing.verified ? "Ready for client" : "Needs review";
-  const correctionAvailable = reviewStatus === "draft" || reviewStatus === "changes_requested";
+  const correctionAvailable = !readOnly &&
+    (reviewStatus === "draft" || reviewStatus === "changes_requested");
   const unverified = !drawing.verified || needsCorrection;
 
   useEffect(() => {
@@ -97,7 +100,7 @@ export function EstimateDrawingRow({
             {correctionAvailable && unverified ? <button type="button" role="menuitem" onClick={() => { setMenuOpen(false); (onVerify ?? onCorrect)(); }}>Verify drawing</button> : null}
             {correctionAvailable && onAssignItem ? <button type="button" role="menuitem" onClick={() => { setMenuOpen(false); onAssignItem(); }}>{drawing.mappingStatus === "misc" ? "Assign estimate item" : "Change estimate item"}</button> : null}
             {correctionAvailable && !drawing.verified && onRemove ? <button type="button" role="menuitem" onClick={() => { setMenuOpen(false); onRemove(); }}>Remove drawing</button> : null}
-            {reviewStatus === "changes_requested" ? <button type="button" role="menuitem" onClick={() => { setMenuOpen(false); onReplace(); }}>Upload replacement</button> : null}
+            {!readOnly && reviewStatus === "changes_requested" ? <button type="button" role="menuitem" onClick={() => { setMenuOpen(false); onReplace(); }}>Upload replacement</button> : null}
             <button type="button" role="menuitem" onClick={() => { setMenuOpen(false); onHistory(); }}>History</button>
           </div>
         ) : null}

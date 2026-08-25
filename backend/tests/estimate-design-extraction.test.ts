@@ -394,6 +394,13 @@ function owner(requestBuilder: request.Test) {
   );
 }
 
+function designer(requestBuilder: request.Test, id = "user-designer-ananya") {
+  return requestBuilder.set(
+    "Authorization",
+    `Bearer ${jwt.sign({ id, role: "designer" }, SECRET, { expiresIn: 900 })}`
+  );
+}
+
 async function claim(app: ReturnType<typeof createApp>) {
   return worker(request(app).post("/api/v1/internal/extraction-jobs/claim")).send();
 }
@@ -716,7 +723,7 @@ describe("estimate design extraction and estimator verification", () => {
       `Bearer ${jwt.sign({ id: "user-designer-vikram", role: "designer" }, SECRET, { expiresIn: 900 })}`
     );
 
-    await stranger.expect(403);
+    await stranger.expect(404);
     expect(uploads[0]!.extractionStatus).toBe("processing_failed");
   });
 
@@ -910,6 +917,51 @@ describe("estimate design extraction and estimator verification", () => {
     expect([...storage.objects.keys()]).toHaveLength(7);
     expect(revisions.map((revision) => revision.croppedFileReference))
       .toEqual(pages.map((page) => page.normalizedFileReference));
+  });
+
+  it("serves an extracted revision image only to the assigned Designer in readable workflow states", async () => {
+    const { app, estimates, revisions } = setup();
+    const leased = await claim(app);
+    await complete(app, leased.body.data.claimToken, completeBody(1));
+    Object.assign(estimates[0]!, {
+      status: "client_approved",
+      designPlanDesignerId: "user-designer-ananya",
+      designPlanStatus: "assigned"
+    });
+    vi.mocked(EstimateModel.findOne).mockImplementation((filter) =>
+      query(estimates.find((item) => matches(item, filter as never)) ?? null) as never
+    );
+    const revisionId = revisions[0]!._id;
+
+    for (const designPlanStatus of [
+      "assigned",
+      "in_progress",
+      "ready_for_client",
+      "changes_requested",
+      "approved"
+    ]) {
+      estimates[0]!.designPlanStatus = designPlanStatus;
+      const assigned = await designer(
+        request(app).get(`/api/v1/estimate-design-revisions/${revisionId}/image`)
+      );
+      expect(assigned.status).toBe(200);
+      expect(assigned.headers["content-type"]).toContain("image/png");
+      expect(assigned.body).toEqual(PAGE_ONE);
+    }
+
+    estimates[0]!.designPlanStatus = "pending_assignment";
+    const unassigned = await designer(
+      request(app).get(`/api/v1/estimate-design-revisions/${revisionId}/image`)
+    );
+    expect(unassigned.status).toBe(404);
+
+    estimates[0]!.designPlanStatus = "in_progress";
+
+    const foreign = await designer(
+      request(app).get(`/api/v1/estimate-design-revisions/${revisionId}/image`),
+      "user-designer-kabir"
+    );
+    expect(foreign.status).toBe(404);
   });
 
   it("does not impose a six-page backend cap", async () => {
@@ -1832,7 +1884,7 @@ describe("estimate design extraction and estimator verification", () => {
     ]));
   });
 
-  it("submits draft drawings without changing a processing upload or job", async () => {
+  it("blocks submission without changing a processing upload or job", async () => {
     const { app, drawings, revisions, uploads, jobs } = setup();
     const leased = await claim(app);
     await complete(app, leased.body.data.claimToken, completeBody(2));
@@ -1845,11 +1897,11 @@ describe("estimate design extraction and estimator verification", () => {
       request(app).post("/api/v1/estimates/estimate-1/design-drawings/submit")
     ).send();
 
-    expect(submitted.status).toBe(200);
-    expect(submitted.body.data).toEqual({ submittedCount: 2 });
+    expect(submitted.status).toBe(409);
+    expect(submitted.body.error.code).toBe("ESTIMATE_DESIGN_EXTRACTION_PENDING");
     expect(drawings.every((drawing) => drawing.verified === false)).toBe(true);
     expect(revisions.every(
-      (revision) => revision.reviewStatus === "submitted"
+      (revision) => revision.reviewStatus === "draft"
     )).toBe(true);
     expect(uploads[0]).toMatchObject({ extractionStatus: "processing" });
     expect(jobs[0]).toMatchObject({
@@ -1859,7 +1911,34 @@ describe("estimate design extraction and estimator verification", () => {
     });
   });
 
-  it("submits when extraction becomes processing before the transaction without cancelling its claim", async () => {
+  it("blocks submission without changing a queued upload or job", async () => {
+    const { app, drawings, revisions, uploads, jobs } = setup();
+    const leased = await claim(app);
+    await complete(app, leased.body.data.claimToken, completeBody(2));
+    uploads[0]!.extractionStatus = "queued";
+    jobs[0]!.status = "queued";
+    jobs[0]!.claimId = null;
+    jobs[0]!.leaseExpiresAt = null;
+
+    const submitted = await owner(
+      request(app).post("/api/v1/estimates/estimate-1/design-drawings/submit")
+    ).send();
+
+    expect(submitted.status).toBe(409);
+    expect(submitted.body.error.code).toBe("ESTIMATE_DESIGN_EXTRACTION_PENDING");
+    expect(drawings.every((drawing) => drawing.verified === false)).toBe(true);
+    expect(revisions.every(
+      (revision) => revision.reviewStatus === "draft"
+    )).toBe(true);
+    expect(uploads[0]).toMatchObject({ extractionStatus: "queued" });
+    expect(jobs[0]).toMatchObject({
+      status: "queued",
+      claimId: null,
+      leaseExpiresAt: null
+    });
+  });
+
+  it("blocks when extraction becomes processing before the transaction without cancelling its claim", async () => {
     const {
       app,
       revisions,
@@ -1886,10 +1965,10 @@ describe("estimate design extraction and estimator verification", () => {
       request(app).post("/api/v1/estimates/estimate-1/design-drawings/submit")
     ).send();
 
-    expect(submitted.status).toBe(200);
-    expect(submitted.body.data).toEqual({ submittedCount: 2 });
+    expect(submitted.status).toBe(409);
+    expect(submitted.body.error.code).toBe("ESTIMATE_DESIGN_EXTRACTION_PENDING");
     expect(revisions.every(
-      (revision) => revision.reviewStatus === "submitted"
+      (revision) => revision.reviewStatus === "draft"
     )).toBe(true);
     expect(uploads[0]).toMatchObject({ extractionStatus: "processing" });
     expect(jobs[0]).toMatchObject({

@@ -48,6 +48,14 @@ const estimateClientResponsePermissions = [
   "estimation.estimate_email.retry"
 ] as const;
 
+const projectWorkflowPermissions = [
+  "design.plan_assignment.manage",
+  "design.plan_task.read",
+  "design.plan_response_tasks.read",
+  "design.plan_response_tasks.decide",
+  "workflow.tasks.read"
+] as const;
+
 describe("frontend authorization contract", () => {
   it("publishes the exact Prompt 2 role and module vocabulary", () => {
     expect(ROLE_CODES).toEqual(expectedRoles);
@@ -66,13 +74,13 @@ describe("frontend authorization contract", () => {
       "execution"
     ]);
     expect(AUTHORIZATION_POLICY_VERSION).toBe(
-      "2026-08-24.estimate-client-response.v1"
+      "2026-08-25.project-workflow.v2"
     );
   });
 
-  it("publishes all 101 unique permissions with response and invitation permissions in canonical order", () => {
-    expect(PERMISSION_CODES).toHaveLength(101);
-    expect(new Set(PERMISSION_CODES)).toHaveLength(101);
+  it("publishes all 106 unique permissions with workflow, response, and invitation permissions in canonical order", () => {
+    expect(PERMISSION_CODES).toHaveLength(106);
+    expect(new Set(PERMISSION_CODES)).toHaveLength(106);
     expect(PERMISSION_CODES).toContain("projects.initiate");
     expect(PERMISSION_CODES).toContain("organization.estimators.read");
     const identityMutationIndex = PERMISSION_CODES.indexOf(
@@ -85,18 +93,30 @@ describe("frontend authorization contract", () => {
       ...invitationPermissions,
       "access_request.create"
     ]);
-    expect(PERMISSION_CODES.at(-1)).toBe(
-      "execution.worker_assignment.override"
-    );
+    expect(PERMISSION_CODES.slice(-2)).toEqual([
+      "execution.worker_assignment.override",
+      "workflow.tasks.read"
+    ]);
     expect(
       PERMISSION_CODES.filter((permission) =>
         estimateClientResponsePermissions.includes(permission as never)
       )
     ).toEqual(estimateClientResponsePermissions);
+    expect(
+      PERMISSION_CODES.filter((permission) =>
+        projectWorkflowPermissions.includes(permission as never)
+      )
+    ).toEqual(projectWorkflowPermissions);
   });
 
-  it("keeps the protected frontend registry at exactly 22 routes", () => {
-    expect(ROUTE_REGISTRY).toHaveLength(22);
+  it("keeps the protected frontend registry at exactly 24 routes", () => {
+    expect(ROUTE_REGISTRY).toHaveLength(24);
+    expect(ROUTE_REGISTRY.map(({ path }) => path)).toEqual(
+      expect.arrayContaining([
+        "/designer/design-plans",
+        "/admin/design-approvals"
+      ])
+    );
     expect(ROUTE_REGISTRY.map(({ path }) => path)).not.toContain(
       "/accept-invitation"
     );

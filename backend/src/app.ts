@@ -36,6 +36,7 @@ import { createKpisRouter } from "./routes/kpis.js";
 import { createLeadsRouter } from "./routes/leads.js";
 import { createOrganizationRouter } from "./routes/organization.js";
 import { createProjectsRouter } from "./routes/projects.js";
+import { createProjectWorkflowRouter } from "./routes/project-workflow.js";
 import { createTasksRouter } from "./routes/tasks.js";
 import { createUserInvitationsRouter } from "./routes/user-invitations.js";
 import { createAuditService } from "./services/audit.service.js";
@@ -57,12 +58,14 @@ import { createEstimateClientReviewService } from "./services/estimate-client-re
 import { createEstimateDecisionService } from "./services/estimate-decision.service.js";
 import { createEstimateDeliveryService } from "./services/estimate-delivery.service.js";
 import type { EstimateMailer } from "./services/estimate-mailer.js";
+import type { DesignPlanMailer } from "./services/design-plan-mailer.js";
 import { createEstimatePublicationService } from "./services/estimate-publication.service.js";
 import { createHierarchyService } from "./services/hierarchy.service.js";
 import { createKpiService } from "./services/kpi.service.js";
 import { createLeadService } from "./services/lead.service.js";
 import { createProjectActivityService } from "./services/project-activity.service.js";
 import { createProjectService } from "./services/project.service.js";
+import { createProjectWorkflowService } from "./services/project-workflow.service.js";
 import {
   createEstimatePdfService,
   type EstimatePdfService
@@ -98,6 +101,7 @@ export interface AppDependencies {
   invitationDeliveryRateLimit?: InvitationRateLimitOptions;
   estimatePdfService?: EstimatePdfService;
   estimateMailer?: EstimateMailer;
+  designPlanMailer?: DesignPlanMailer;
   clientPortalUrl?: string;
   developmentDemoAuthorization?: DevelopmentDemoAuthorization;
 }
@@ -185,20 +189,30 @@ export function createApp(dependencies: AppDependencies) {
     storage,
     clock
   );
+  const clientPortalUrl = dependencies.clientPortalUrl ?? "http://localhost:5173/client";
+  const estimateClientReviewStorage = createEstimateClientReviewStorage(storage);
+  const projectWorkflowService = createProjectWorkflowService({
+    storage,
+    mailer: dependencies.designPlanMailer ?? { deliveryKind: "disabled" },
+    portalUrl: clientPortalUrl,
+    audit: auditService,
+    now: clock
+  });
   const estimateDesignService = createEstimateDesignService({
     storage,
     audit: auditService,
     maxUploadBytes,
     ocrRetryPolicy,
-    now: clock
+    now: clock,
+    projectWorkflow: projectWorkflowService
   });
   const estimatePlanReviewService = createEstimatePlanReviewService({
     estimateDesigns: estimateDesignService,
     storage,
     audit: auditService,
-    now: clock
+    now: clock,
+    projectWorkflow: projectWorkflowService
   });
-  const estimateClientReviewStorage = createEstimateClientReviewStorage(storage);
   const estimateClientReviewService = createEstimateClientReviewService({
     storage: estimateClientReviewStorage
   });
@@ -206,7 +220,7 @@ export function createApp(dependencies: AppDependencies) {
     reviews: estimateClientReviewService,
     storage: estimateClientReviewStorage,
     mailer: dependencies.estimateMailer ?? { deliveryKind: "disabled" },
-    portalUrl: dependencies.clientPortalUrl ?? "http://localhost:5173/client",
+    portalUrl: clientPortalUrl,
     audit: auditService,
     now: clock
   });
@@ -278,6 +292,15 @@ export function createApp(dependencies: AppDependencies) {
   app.use(
     "/api/v1",
     createAdminProjectsRouter(authService, adminProjectService)
+  );
+  app.use(
+    "/api/v1",
+    createProjectWorkflowRouter(
+      authService,
+      projectWorkflowService,
+      estimateClientReviewStorage,
+      maxUploadBytes
+    )
   );
   app.use(
     "/api/v1",

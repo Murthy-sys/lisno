@@ -18,6 +18,7 @@ export interface HumanJwtOperation {
           | "audit"
           | "estimation_ownership"
           | "estimate_client_response"
+          | "project_workflow"
           | "access_administration";
         projectReviewScope?: boolean;
       };
@@ -31,8 +32,9 @@ export interface HumanJwtOperation {
     | "baseline"
     | "prompt_1"
     | "prompt_2"
-    | "identity_provisioning"
-    | "estimate_client_response";
+      | "identity_provisioning"
+      | "estimate_client_response"
+      | "project_workflow";
 }
 
 export const HUMAN_JWT_OPERATION_LIST = [
@@ -142,7 +144,13 @@ export const HUMAN_JWT_OPERATION_LIST = [
   { key: "GET /admin/estimate-client-response-tasks/:roundId/pdf", permission: "estimation.client_response_tasks.read", scope: { kind: "non_project", namespace: "estimate_client_response" }, operationClass: "read", superAdminBehavior: "global_read", availability: "estimate_client_response" },
   { key: "GET /admin/estimate-client-response-tasks/:roundId/proof", permission: "estimation.client_response_proof.read", scope: { kind: "non_project", namespace: "estimate_client_response" }, operationClass: "read", superAdminBehavior: "global_read", availability: "estimate_client_response" },
   { key: "POST /admin/estimate-client-response-tasks/:roundId/decision", permission: "estimation.client_response_tasks.decide", scope: { kind: "non_project", namespace: "estimate_client_response" }, operationClass: "admin", superAdminBehavior: "admin_override", availability: "estimate_client_response" },
-  { key: "POST /estimates/:estimateId/client-email/retry", permission: "estimation.estimate_email.retry", scope: { kind: "non_project", namespace: "estimate_client_response" }, operationClass: "personal", superAdminBehavior: "admin_override", availability: "estimate_client_response" }
+  { key: "POST /estimates/:estimateId/client-email/retry", permission: "estimation.estimate_email.retry", scope: { kind: "non_project", namespace: "estimate_client_response" }, operationClass: "personal", superAdminBehavior: "admin_override", availability: "estimate_client_response" },
+  { key: "GET /admin/designers", permission: "design.plan_assignment.manage", scope: { kind: "non_project", namespace: "organization" }, operationClass: "read", superAdminBehavior: "global_read", availability: "project_workflow" },
+  { key: "POST /admin/projects/:projectId/design-assignment", permission: "design.plan_assignment.manage", scope: { kind: "project", module: "projects" }, operationClass: "admin", superAdminBehavior: "admin_override", availability: "project_workflow" },
+  { key: "GET /designer/design-plan-tasks", permission: "design.plan_task.read", scope: { kind: "non_project", namespace: "estimation_ownership" }, operationClass: "personal", superAdminBehavior: "deny_personal", availability: "project_workflow" },
+  { key: "GET /admin/design-plan-response-tasks", permission: "design.plan_response_tasks.read", scope: { kind: "non_project", namespace: "estimate_client_response" }, operationClass: "read", superAdminBehavior: "global_read", availability: "project_workflow" },
+  { key: "POST /admin/design-plan-response-tasks/:roundId/decision", permission: "design.plan_response_tasks.decide", scope: { kind: "non_project", namespace: "estimate_client_response" }, operationClass: "admin", superAdminBehavior: "admin_override", availability: "project_workflow" },
+  { key: "GET /workflow-tasks", permission: "workflow.tasks.read", scope: { kind: "non_project", namespace: "project_workflow" }, operationClass: "personal", superAdminBehavior: "deny_personal", availability: "project_workflow" }
 ] as const satisfies readonly HumanJwtOperation[];
 
 export type HumanJwtOperationKey =

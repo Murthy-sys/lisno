@@ -11,6 +11,7 @@ import { initializeApplicationIndexes } from "./models/application-indexes.js";
 import { createMongoRepository } from "./repositories/mongo.js";
 import type { AppRepository } from "./repositories/types.js";
 import { createSmtpEstimateMailer } from "./services/smtp-estimate-mailer.js";
+import { createSmtpDesignPlanMailer } from "./services/smtp-design-plan-mailer.js";
 import { createSmtpInvitationMailer } from "./services/smtp-invitation-mailer.js";
 import { createLocalStorage } from "./storage/local-storage.js";
 
@@ -70,6 +71,9 @@ export async function startServer(
     const estimateMailer = mailDelivery.kind === "smtp"
       ? createSmtpEstimateMailer(mailDelivery)
       : { deliveryKind: "disabled" as const };
+    const designPlanMailer = mailDelivery.kind === "smtp"
+      ? createSmtpDesignPlanMailer(mailDelivery)
+      : { deliveryKind: "disabled" as const };
     const clientPortalUrl = mailDelivery.kind === "smtp"
       ? new URL("/client", mailDelivery.publicFrontendUrl).toString()
       : "http://localhost:5173/client";
@@ -94,6 +98,7 @@ export async function startServer(
       invitationMailer,
       allowDemoAccountExternalEmail: env.allowDemoAccountExternalEmail,
       estimateMailer,
+      designPlanMailer,
       clientPortalUrl,
       developmentDemoAuthorization: dependencies.developmentDemoAuthorization
     });

@@ -4,6 +4,7 @@ import mongoose from "mongoose";
 import sharp from "sharp";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { EstimateModel } from "../src/models/Estimate.js";
 import { EstimateDesignDrawingModel } from "../src/models/EstimateDesignDrawing.js";
 import { EstimateDesignRevisionModel } from "../src/models/EstimateDesignRevision.js";
 import { EstimateDesignSourcePageModel } from "../src/models/EstimateDesignSourcePage.js";
@@ -52,6 +53,13 @@ afterAll(async () => { await replica.stop(); });
 
 beforeEach(async () => {
   await replica.clear();
+  await EstimateModel.create({
+    _id: "estimate-1",
+    leadId: "lead-1",
+    ownerId: "estimator-1",
+    status: "sent_to_client",
+    propertyType: "apartment"
+  });
   await EstimateDesignUploadModel.create({ _id: "upload-1", estimateId: "estimate-1", leadId: "lead-1", originalFilename: "plan.pdf", storedFileReference: "source.pdf", mimeType: "application/pdf", sizeBytes: 100, uploaderId: "estimator-1", uploadedAt: new Date(), extractionStatus: "submitted" });
   await EstimateDesignSourcePageModel.create({ _id: "page-1", uploadId: "upload-1", pageNumber: 1, normalizedFileReference: "base.png", width: 100, height: 50 });
   await EstimateDesignDrawingModel.create([

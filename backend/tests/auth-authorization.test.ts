@@ -9,7 +9,7 @@ import { createMemoryRepository } from "../src/repositories/memory.js";
 import { demoSeedData } from "../src/seed/data.js";
 
 const JWT_SECRET = "auth-test-secret-with-enough-entropy";
-const POLICY_VERSION = "2026-08-24.estimate-client-response.v1";
+const POLICY_VERSION = "2026-08-25.project-workflow.v2";
 
 function appFor(role: Role, active = true) {
   const seed = structuredClone(demoSeedData);

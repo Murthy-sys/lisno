@@ -66,6 +66,13 @@ const savedEstimates = [
   }
 ];
 
+const leads = savedEstimates.map((estimate) => ({
+  ...estimate.lead,
+  stage: "estimate_in_progress" as const,
+  createdAt: estimate.updatedAt,
+  updatedAt: estimate.updatedAt
+}));
+
 function deferredResponse() {
   let resolve!: (response: Response) => void;
   const promise = new Promise<Response>((promiseResolve) => {
@@ -84,8 +91,8 @@ function installSalesApi(
     if (url.startsWith("/api/v1/leads?")) {
       return Response.json({
         data: {
-          items: [],
-          pagination: { limit: 20, offset: 0, total: 0, hasMore: false }
+          items: leads,
+          pagination: { limit: 20, offset: 0, total: leads.length, hasMore: false }
         }
       });
     }

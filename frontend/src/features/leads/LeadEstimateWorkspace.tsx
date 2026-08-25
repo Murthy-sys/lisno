@@ -8,7 +8,6 @@ import { AsyncState } from "../../components/ui/AsyncState";
 import { calculateEstimateTotals, defaultQuantity, resolveRate, type QuantityBasis } from "./estimateEngine";
 import { estimateBuilderSections } from "./estimateBuilderCatalogue";
 import { EstimateDeliveryStatus } from "./EstimateDeliveryStatus";
-import { EstimateDesignUploads } from "./EstimateDesignUploads";
 import { EstimatePlanChangeRequests } from "./EstimatePlanChangeRequests";
 import { getLead, getLeadEstimate, leadKeys, retryEstimateClientEmail, saveLeadEstimate, sendEstimateToClient, submitLeadEstimate } from "./leadsApi";
 
@@ -50,6 +49,7 @@ const catalogueRows: BuilderRow[] = estimateBuilderSections.flatMap(
 const money = (value: number) => `₹${value.toLocaleString("en-IN")}`;
 const deliveryCopy: Record<EstimateClientReviewSummary["deliveryStatus"], string> = {
   queued: "Email queued",
+  sending: "Email sending",
   sent: "Email sent",
   failed: "Email delivery failed",
   disabled: "Email unavailable"
@@ -98,22 +98,6 @@ export function LeadEstimateWorkspace() {
   }, [saved.data]);
 
   const totals = useMemo(() => calculateEstimateTotals(lines), [lines]);
-  const persistedRooms = (saved.data?.rooms ?? []) as RoomDraft[];
-  const designItemOptions = (saved.data?.lineItems ?? []).flatMap((line) => {
-    if (!line.included) return [];
-    const room = persistedRooms.find((item) => item.label === line.roomName);
-    const section = estimateBuilderSections.find((candidate) =>
-      candidate.rows.some((row) => row.id === line.catalogueId)
-    );
-    const row = section?.rows.find((candidate) => candidate.id === line.catalogueId);
-    if (!room || !section || !row) return [];
-    return [{
-      roomId: room.id,
-      catalogueId: line.catalogueId,
-      label: `${line.catalogueId} · ${row.description}`,
-      scopeLabel: section.label
-    }];
-  });
   const selectedLines = lines.filter((line) => line.included);
   const editable = !saved.data || ["draft", "designer_changes_requested", "client_changes_requested"].includes(saved.data.status);
   const draftInput = () => ({
@@ -218,7 +202,6 @@ export function LeadEstimateWorkspace() {
     <Link to={`/estimator-sales/leads/${leadId}`} className="estimate-workspace__back">← Back to {leadItem.clientName}</Link>
     <header className="estimate-workspace__header"><div><p className="eyebrow">Estimate draft · {leadItem.clientName}</p><h1 id="estimate-title">{tab === "configure" ? "Configure estimate" : "Select estimate items"}</h1><p>{leadItem.projectName} · {leadItem.location}</p></div><div className="estimate-workspace__summary"><strong>{money(totals.total)}</strong><span>Total including GST</span></div></header>
     {saved.data?.clientReview ? <EstimateDeliveryStatus review={saved.data.clientReview} retrying={retryEmail.isPending} onRetry={() => retryEmail.mutate()} /> : null}
-    {saved.data ? <EstimateDesignUploads estimateId={saved.data.id} rooms={persistedRooms.map((room) => ({ id: room.id, label: room.label }))} scopes={estimateBuilderSections.filter((section) => saved.data!.scopes.includes(section.id)).map((section) => ({ id: section.id, label: section.label }))} items={designItemOptions} /> : null}
     {saved.data?.status === "client_changes_requested" ? <EstimatePlanChangeRequests estimateId={saved.data.id} /> : null}
     {tab !== "configure" ? <nav className="estimate-tabs" aria-label="Estimate views">{(["builder", "summary", "proposal"] as const).map((value) => <button type="button" className={tab === value ? "is-active" : ""} onClick={() => setTab(value)} key={value}>{value === "builder" ? "📋 Estimate Builder" : value === "summary" ? "📊 Summary" : "📄 Proposal"}</button>)}<button type="button" onClick={() => setTab("configure")}>⚙ Rooms</button></nav> : null}
     {tab === "configure" ? <><section className="estimate-panel"><h2>Property type</h2><div className="estimate-chip-grid">{propertyTypes.map((type) => <button type="button" className={`estimate-chip ${(propertyType || leadItem.propertyType) === type ? "estimate-chip--active" : ""}`} onClick={() => setPropertyType(type)} key={type}>{type}</button>)}</div><h2>Rooms</h2><div className="estimate-room-grid">{roomDefinitions.map((definition) => <button type="button" className="estimate-room" onClick={() => addRoom(definition)} key={definition.typeId}>{definition.icon} {definition.label}</button>)}</div>{rooms.length ? <div className="estimate-dimensions">{rooms.map((room) => <div className="estimate-dimension-row" key={room.id}><span>{room.icon} <strong>{room.label}</strong></span><div><label>Length<input aria-label={`${room.label} length`} type="number" value={room.length ?? ""} onChange={(event) => updateRoom(room.id, { length: Number(event.target.value) || null })} placeholder="L ft" /></label><span>×</span><label>Width<input aria-label={`${room.label} width`} type="number" value={room.width ?? ""} onChange={(event) => updateRoom(room.id, { width: Number(event.target.value) || null })} placeholder="W ft" /></label><b>{room.sqft} sqft</b><button type="button" aria-label={`Remove ${room.label}`} onClick={() => setRooms((current) => current.filter((item) => item.id !== room.id))}>×</button></div></div>)}</div> : null}</section><section className="estimate-panel"><h2>Scope sections</h2><div className="estimate-scope-list">{estimateBuilderSections.map((section) => <label className={`estimate-scope ${enabledSections.has(section.id) ? "estimate-scope--active" : ""}`} key={section.id}><span>{section.icon}</span><span><strong>{section.label}</strong><small>{scopeDescriptions[section.id]}</small></span><input type="checkbox" checked={enabledSections.has(section.id)} onChange={() => setEnabledSections((current) => { const next = new Set(current); next.has(section.id) ? next.delete(section.id) : next.add(section.id); return next; })} /><i>{enabledSections.has(section.id) ? "On" : "Off"}</i></label>)}</div></section><button type="button" className="button button--primary estimate-continue" disabled={!rooms.length || !enabledSections.size} onClick={buildLines}>Continue to item selection →</button></> : null}

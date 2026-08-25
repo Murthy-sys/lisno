@@ -17,6 +17,13 @@ const admin = {
   role: "admin" as const
 };
 
+const superAdmin = {
+  id: "super-admin-1",
+  name: "Sanjay Super Admin",
+  email: "sanjay@lisno.example",
+  role: "super_admin" as const
+};
+
 const project: AdminProjectSummary = {
   id: "project/one",
   name: "Asha home",
@@ -53,7 +60,31 @@ function installSession() {
             "projects.read",
             "projects.initiate",
             "organization.estimators.read",
+            "design.plan_assignment.manage",
             "access_request.review.read"
+          ]
+        }
+      })
+    )
+  );
+}
+
+function installSuperAdminSession() {
+  tokenStorage.set("super-admin-token");
+  server.use(
+    http.get("/api/v1/auth/me", () => HttpResponse.json({ data: superAdmin })),
+    http.get("/api/v1/auth/authorization", () =>
+      HttpResponse.json({
+        data: {
+          role: "super_admin",
+          policyVersion: AUTHORIZATION_POLICY_VERSION,
+          permissions: [
+            "identity.self.read",
+            "identity.authorization.read",
+            "projects.list",
+            "projects.read",
+            "projects.initiate",
+            "design.plan_assignment.manage"
           ]
         }
       })
@@ -91,6 +122,62 @@ describe("Admin project API paths", () => {
 });
 
 describe("AdminProjectsPage", () => {
+  it("renders the global Super Admin collection and never offers initiation", async () => {
+    installSuperAdminSession();
+    server.use(
+      http.get("/api/v1/admin/projects", () => HttpResponse.json(page([project])))
+    );
+
+    renderApp(["/admin/projects"]);
+
+    expect(await screen.findByRole("heading", { name: "All Projects" })).toBeVisible();
+    expect(screen.getByText("All projects across the organization.")).toBeVisible();
+    expect(await screen.findByRole("list", { name: "All Projects" })).toBeVisible();
+    expect(screen.getByRole("navigation", { name: "All Projects pages" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Initiate project" })).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ["Admin", installSession, "My Projects"],
+    ["Super Admin", installSuperAdminSession, "All Projects"]
+  ] as const)(
+    "shows Estimation Approval and Designer assignment for %s on a legacy approved estimate",
+    async (_role, install, collectionName) => {
+      install();
+      const legacyApprovedProject: AdminProjectSummary = {
+        ...project,
+        lead: {
+          ...project.lead!,
+          stage: "won",
+          nextAction: "project kickoff"
+        },
+        estimate: {
+          id: "estimate-approved",
+          status: "client_approved",
+          total: 278704
+        }
+      };
+      server.use(
+        http.get("/api/v1/admin/projects", () =>
+          HttpResponse.json(page([legacyApprovedProject]))
+        )
+      );
+
+      renderApp(["/admin/projects"]);
+
+      const list = await screen.findByRole("list", { name: collectionName });
+      expect(within(list).getByText("Estimation Approval")).toBeVisible();
+      expect(within(list).getByText("Assign Designer to upload design")).toBeVisible();
+      expect(within(list).getByText(/Client Approved · ₹2,78,704/)).toBeVisible();
+      expect(within(list).queryByText("project kickoff")).not.toBeInTheDocument();
+      expect(within(list).queryByText("Planning")).not.toBeInTheDocument();
+      expect(within(list).getByRole("link", { name: "Assign Designer" })).toHaveAttribute(
+        "href",
+        "/admin/projects/project%2Fone#design-assignment-title"
+      );
+    }
+  );
+
   it("renders loading, retryable error, and empty states", async () => {
     installSession();
     let requests = 0;

@@ -2,87 +2,105 @@ import {
   AlertTriangle,
   ArrowUpRight,
   BriefcaseBusiness,
-  Clock3,
-  FolderKanban,
-  Plus
+  ChevronDown,
+  FolderKanban
 } from "lucide-react";
-import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
-import { Link, useNavigate } from "react-router-dom";
-import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { Link } from "react-router-dom";
+import { useState, type ReactNode } from "react";
 
 import type {
-  KpiProjectAggregate,
-  Project,
-  ProjectStatus,
-  TaskEvent
+  DesignPlanStatus,
+  DesignPlanTask,
+  KpiProjectAggregate
 } from "../../api/types";
 import { useAuth } from "../../auth/AuthProvider";
 import { KpiBreakdown } from "../../components/kpi/KpiBreakdown";
 import { KpiScore } from "../../components/kpi/KpiScore";
-import { RiskBadge } from "../../components/tasks/RiskBadge";
 import { AsyncState } from "../../components/ui/AsyncState";
-import { MetricCard } from "../../components/ui/MetricCard";
+import { Field, Select } from "../../components/ui/Field";
+import { PageHeader } from "../../components/ui/PageHeader";
 import { StatusBadge } from "../../components/ui/StatusBadge";
-import { ProjectCreateDialog } from "./ProjectCreateDialog";
+import { Surface } from "../../components/ui/Surface";
 import {
   designerKeys,
   getAllProjects,
   getKpi,
-  getKpiTaskPage,
   reviewPeriod
 } from "./designerApi";
-import { EstimateReviewPanel } from "../estimates/EstimateReviewPanel";
+import {
+  getDesignerPlanTasks,
+  projectWorkflowKeys
+} from "../workflow/projectWorkflowApi";
 
-const statusLabels: Record<ProjectStatus, string> = {
-  planning: "Planning",
-  active: "Active",
-  on_hold: "On hold",
-  completed: "Completed"
+const designStatusLabels: Record<DesignPlanStatus, string> = {
+  pending_assignment: "Awaiting assignment",
+  assigned: "Ready to upload",
+  in_progress: "Extraction in progress",
+  ready_for_client: "Awaiting Client approval",
+  changes_requested: "Changes requested",
+  approved: "Approved"
 };
 
-const statusTones = {
-  planning: "info",
-  active: "success",
-  on_hold: "warning",
-  completed: "neutral"
+const designStatusTones = {
+  pending_assignment: "neutral",
+  assigned: "info",
+  in_progress: "warning",
+  ready_for_client: "info",
+  changes_requested: "danger",
+  approved: "success"
 } as const;
 
-const projectDate = new Intl.DateTimeFormat("en-GB", {
-  day: "2-digit",
-  month: "short",
-  year: "numeric",
-  timeZone: "UTC"
-});
+/*
+ * Priority replaces the standalone red/yellow queue: a project carrying red
+ * tasks sorts above one carrying yellow, and both sort above the rest, so the
+ * work needing attention is at the top of the one list the Designer reads.
+ */
+type ProjectPriority = "red" | "yellow" | null;
+
+function projectPriority(aggregate: KpiProjectAggregate | undefined): ProjectPriority {
+  if (!aggregate) return null;
+  if (aggregate.riskCounts.red > 0) return "red";
+  if (aggregate.riskCounts.yellow > 0) return "yellow";
+  return null;
+}
+
+const priorityRank: Record<"red" | "yellow" | "none", number> = {
+  red: 0,
+  yellow: 1,
+  none: 2
+};
 
 export function DesignerDashboard() {
   const auth = useAuth();
-  const navigate = useNavigate();
-  const [createOpen, setCreateOpen] = useState(false);
   const [periodOffset, setPeriodOffset] = useState(0);
+  const [kpiExpanded, setKpiExpanded] = useState(false);
   const user = auth.user!;
   const period = reviewPeriod(periodOffset);
   const projectsQuery = useQuery({
     queryKey: designerKeys.projects(),
     queryFn: getAllProjects
   });
+  const designTasksQuery = useQuery({
+    queryKey: projectWorkflowKeys.designerPlans,
+    queryFn: getDesignerPlanTasks
+  });
   const kpiQuery = useQuery({
     queryKey: [...designerKeys.kpi(user.id), period.from, period.to],
     queryFn: () => getKpi(user.id, period)
   });
-  const taskFeedQuery = useInfiniteQuery({
-    queryKey: [...designerKeys.kpiTasks(user.id), period.from, period.to],
-    queryFn: ({ pageParam }) => getKpiTaskPage(user.id, pageParam, period),
-    initialPageParam: 0,
-    getNextPageParam: (lastPage) =>
-      lastPage.pagination.hasMore
-        ? lastPage.pagination.offset + lastPage.pagination.limit
-        : undefined
-  });
-
-  if (projectsQuery.isPending || kpiQuery.isPending || taskFeedQuery.isPending) {
+  if (
+    projectsQuery.isPending ||
+    designTasksQuery.isPending ||
+    kpiQuery.isPending
+  ) {
     return <AsyncState state="loading" message="Loading your design operations…" />;
   }
-  if (projectsQuery.isError || kpiQuery.isError || taskFeedQuery.isError) {
+  if (
+    projectsQuery.isError ||
+    designTasksQuery.isError ||
+    kpiQuery.isError
+  ) {
     return (
       <AsyncState
         state="error"
@@ -90,78 +108,104 @@ export function DesignerDashboard() {
         actionLabel="Try again"
         onAction={() => {
           void projectsQuery.refetch();
+          void designTasksQuery.refetch();
           void kpiQuery.refetch();
-          void taskFeedQuery.refetch();
         }}
       />
     );
   }
 
   const projects = projectsQuery.data;
+  const designTasks = designTasksQuery.data;
   const kpi = kpiQuery.data;
-  const kpiTasks = taskFeedQuery.data.pages.flatMap((page) => page.items);
   const aggregates = kpi.aggregates;
   const activeProjectCount = projects.filter(
     (project) => project.status === "active"
   ).length;
-  const redTasks = kpiTasks.filter((task) => task.risk.level === "red");
-  const yellowTasks = kpiTasks.filter(
-    (task) => task.risk.level === "yellow"
-  );
-  const riskQueue = [...redTasks, ...yellowTasks];
   const atRiskCount = aggregates.riskCounts.red + aggregates.riskCounts.yellow;
+  const rankedTasks = designTasks
+    .map((task) => {
+      const aggregate = aggregates.projects.find(
+        (candidate) => candidate.projectId === task.projectId
+      );
+      return { task, aggregate, priority: projectPriority(aggregate) };
+    })
+    .sort(
+      (first, second) =>
+        priorityRank[first.priority ?? "none"] -
+        priorityRank[second.priority ?? "none"]
+    );
+  const priorityCount = rankedTasks.filter((entry) => entry.priority).length;
 
   return (
-    <section className="designer-page" aria-labelledby="designer-title">
-      <header className="designer-hero">
-        <div>
-          <p className="eyebrow">My design operations</p>
-          <h1 id="designer-title">Good morning, {user.name.split(" ")[0]}.</h1>
-          <p>Here’s what needs your eye across active client work.</p>
-          <label className="sr-only" htmlFor="reporting-period">Reporting period</label>
-          <select id="reporting-period" value={periodOffset} onChange={(event) => setPeriodOffset(Number(event.target.value))}>
-            <option value={0}>Current month</option>
-            <option value={-1}>Previous month</option>
-          </select>
-        </div>
-        <button
-          type="button"
-          className="button button--primary"
-          onClick={() => setCreateOpen(true)}
-        >
-          <Plus aria-hidden="true" />
-          New project
-        </button>
-      </header>
+    <section className="designer-page designer-dashboard" aria-labelledby="designer-title">
+      <PageHeader
+        id="designer-title"
+        eyebrow="My design operations"
+        title="Design workspace"
+        description={`Good morning, ${user.name.split(" ")[0]}. Here’s what needs your eye across active client work.`}
+        metadata={(
+          <StatusBadge tone="info" label={`${designTasks.length} assigned`} />
+        )}
+      />
 
-      <EstimateReviewPanel />
-
-      <section className="kpi-panel" aria-labelledby="kpi-title">
-        <div className="kpi-panel__intro">
-          <p className="eyebrow">Personal performance</p>
-          <h2 id="kpi-title">Your KPI, component by component</h2>
-          <p>
-            Scores and eligibility come directly from Lisno’s delivery record.
-          </p>
+      <Surface as="section" className="designer-kpi" aria-labelledby="kpi-title">
+        <div className="designer-kpi__summary">
+          <div className="designer-kpi__identity">
+            <p className="eyebrow">Personal performance</p>
+            <h2 id="kpi-title">KPI overview</h2>
+          </div>
           <KpiScore score={kpi.score} />
+          <div className="designer-kpi__controls">
+            <Field
+              id="reporting-period"
+              className="designer-kpi__period"
+              label="Reporting period"
+            >
+              {(controlProps) => (
+                <Select
+                  {...controlProps}
+                  value={periodOffset}
+                  onChange={(event) => setPeriodOffset(Number(event.target.value))}
+                >
+                  <option value={0}>Current month</option>
+                  <option value={-1}>Previous month</option>
+                </Select>
+              )}
+            </Field>
+            <button
+              type="button"
+              className="designer-kpi__toggle"
+              aria-expanded={kpiExpanded}
+              aria-controls="designer-kpi-breakdown"
+              onClick={() => setKpiExpanded((current) => !current)}
+            >
+              {kpiExpanded ? "Hide breakdown" : "Show breakdown"}
+              <ChevronDown aria-hidden="true" />
+            </button>
+          </div>
         </div>
-        <KpiBreakdown components={kpi.components} />
-      </section>
+        {kpiExpanded ? (
+          <div className="designer-kpi__content" id="designer-kpi-breakdown">
+            <KpiBreakdown components={kpi.components} />
+          </div>
+        ) : null}
+      </Surface>
 
-      <div className="metrics-grid">
-        <MetricCard
+      <div className="designer-metrics">
+        <MetricChip
           label="Active projects"
           value={activeProjectCount}
           detail={`${aggregates.taskCounts.active} active · ${aggregates.taskCounts.completed} completed tasks`}
           icon={<FolderKanban />}
         />
-        <MetricCard
+        <MetricChip
           label="At-risk queue"
           value={atRiskCount}
           detail={`${aggregates.riskCounts.red} red · ${aggregates.riskCounts.yellow} yellow`}
           icon={<AlertTriangle />}
         />
-        <MetricCard
+        <MetricChip
           label="Open workload"
           value={`${aggregates.effort.remaining}h`}
           detail={`${aggregates.effort.completed}h completed of ${aggregates.effort.planned}h · ${aggregates.effort.workloadPercentage}% remains`}
@@ -169,169 +213,147 @@ export function DesignerDashboard() {
         />
       </div>
 
-      <div className="dashboard-columns">
-        <section className="dashboard-section" aria-labelledby="risk-queue-title">
-          <div className="section-heading">
-            <div>
-              <p className="eyebrow">Priority queue</p>
-              <h2 id="risk-queue-title">Red and yellow tasks</h2>
-            </div>
-            <span>{atRiskCount} open</span>
-          </div>
-          {riskQueue.length ? (
-            <div className="risk-list">
-              {riskQueue.map((task) => (
-                <article key={task.id} className="risk-item">
-                  <div>
-                    <strong>{task.title}</strong>
-                    <span>{projectName(projects, task.projectId)}</span>
-                  </div>
-                  <RiskBadge risk={task.risk} />
-                  <p>{task.risk.reason}</p>
-                  <Link to={`/designer/projects/${task.projectId}`}>
-                    Review task <ArrowUpRight aria-hidden="true" />
-                  </Link>
-                </article>
-              ))}
-            </div>
-          ) : (
-            <p className="inline-empty">No red or yellow tasks right now.</p>
-          )}
-        </section>
-
-        <section className="dashboard-section" aria-labelledby="activity-title">
-          <div className="section-heading">
-            <div>
-              <p className="eyebrow">Latest signals</p>
-              <h2 id="activity-title">Recent activity</h2>
-            </div>
-          </div>
-          {aggregates.recentActivity.length ? (
-            <ol className="activity-list">
-              {aggregates.recentActivity.map(({ taskTitle, event }) => (
-                <li key={event.id}>
-                  <span className="activity-list__icon"><Clock3 aria-hidden="true" /></span>
-                  <div>
-                    <strong>{event.note ?? eventLabel(event)}</strong>
-                    <span>
-                      {taskTitle} · {projectDate.format(new Date(event.occurredAt))}
-                    </span>
-                  </div>
-                </li>
-              ))}
-            </ol>
-          ) : (
-            <p className="inline-empty">No recent task activity yet.</p>
-          )}
-        </section>
-      </div>
-
-      {taskFeedQuery.hasNextPage ? (
-        <div className="dashboard-load-more">
-          <button
-            type="button"
-            className="button button--secondary"
-            onClick={() => void taskFeedQuery.fetchNextPage()}
-            disabled={taskFeedQuery.isFetchingNextPage}
-          >
-            {taskFeedQuery.isFetchingNextPage ? "Loading more tasks…" : "Load more tasks"}
-          </button>
-        </div>
-      ) : null}
-
-      <section className="projects-section" aria-labelledby="projects-title">
+      <Surface as="section" className="designer-projects" aria-labelledby="projects-title">
         <div className="section-heading">
           <div>
             <p className="eyebrow">Assigned work</p>
-            <h2 id="projects-title">Your projects</h2>
+            <h2 id="projects-title">Design projects</h2>
           </div>
+          <span>
+            {priorityCount
+              ? `${priorityCount} priority · ${designTasks.length} assigned`
+              : `${designTasks.length} assigned`}
+          </span>
         </div>
-        {projects.length ? (
-          <div className="project-grid">
-            {projects.map((project) => (
-              <ProjectCard
-                key={project.id}
-                project={project}
-                aggregate={aggregates.projects.find(
-                  (candidate) => candidate.projectId === project.id
-                )}
+        {designTasks.length ? (
+          <div className="designer-project-list">
+            <div className="designer-project-list__header" aria-hidden="true">
+              <span>Client</span>
+              <span>Project</span>
+              <span>Design status</span>
+              <span>Health</span>
+              <span>Action</span>
+            </div>
+            {rankedTasks.map(({ task, aggregate, priority }) => (
+              <DesignProjectRow
+                key={task.id}
+                task={task}
+                aggregate={aggregate}
+                priority={priority}
               />
             ))}
           </div>
         ) : (
-          <div className="project-empty">
+          <div className="project-empty designer-projects__empty">
             <span aria-hidden="true">01</span>
             <div>
-              <h3>No projects yet</h3>
-              <p>Create your first project to start planning design work.</p>
-              <button
-                type="button"
-                className="button button--primary"
-                onClick={() => setCreateOpen(true)}
-              >
-                Create project
-              </button>
+              <h3>No design projects assigned</h3>
+              <p>
+                Approved estimates will appear after an Admin or Super Admin assigns you.
+              </p>
             </div>
           </div>
         )}
-      </section>
+      </Surface>
 
-      {createOpen ? (
-        <ProjectCreateDialog
-          user={user}
-          onClose={() => setCreateOpen(false)}
-          onCreated={(project) =>
-            navigate(`/designer/projects/${project.id}`)
-          }
-        />
-      ) : null}
     </section>
   );
 }
 
-function ProjectCard({
-  project,
-  aggregate
+function MetricChip({
+  label,
+  value,
+  detail,
+  icon
 }: {
-  project: Project;
-  aggregate?: KpiProjectAggregate;
+  label: string;
+  value: string | number;
+  detail: string;
+  icon: ReactNode;
 }) {
-  const red = aggregate?.riskCounts.red ?? 0;
-  const yellow = aggregate?.riskCounts.yellow ?? 0;
-  const progress = aggregate?.progress ?? 0;
-
   return (
-    <article className="project-card" aria-label={project.name}>
-      <div className="project-card__top">
-        <StatusBadge
-          label={statusLabels[project.status]}
-          tone={statusTones[project.status]}
-        />
-        <span>{project.location}</span>
-      </div>
-      <h3>{project.name}</h3>
-      <p>Delivery target {projectDate.format(new Date(project.plannedEndAt))}</p>
-      <div className="project-card__health">
-        <span><b>{progress}%</b> task completion</span>
-        <span>{red} red</span>
-        <span>{yellow} yellow</span>
-      </div>
-      <Link to={`/designer/projects/${project.id}`} className="project-card__link">
-        Open project <ArrowUpRight aria-hidden="true" />
-      </Link>
+    <article className="designer-metric-chip">
+      <span className="designer-metric-chip__icon" aria-hidden="true">{icon}</span>
+      <span className="designer-metric-chip__copy">
+        <span className="designer-metric-chip__label">{label}</span>
+        <span className="designer-metric-chip__detail">{detail}</span>
+      </span>
+      <strong className="designer-metric-chip__value">{value}</strong>
     </article>
   );
 }
 
-function eventLabel(event: TaskEvent): string {
-  return {
-    status_changed: "Task status changed",
-    progress_changed: "Task progress updated",
-    note_added: "Task note added",
-    deadline_revised: "Task deadline revised"
-  }[event.type];
+function DesignProjectRow({
+  task,
+  aggregate,
+  priority
+}: {
+  task: DesignPlanTask;
+  aggregate?: KpiProjectAggregate;
+  priority: ProjectPriority;
+}) {
+  const headingId = `designer-project-${task.projectId}`;
+  const action = designTaskAction(task.status);
+
+  return (
+    <article
+      className={`designer-project-row${priority ? ` designer-project-row--priority designer-project-row--priority-${priority}` : ""}`}
+      aria-labelledby={headingId}
+    >
+      <div className="designer-project-row__client" data-label="Client">
+        <span className="sr-only">Client: </span>
+        <strong>{task.clientName}</strong>
+      </div>
+      <div className="designer-project-row__project" data-label="Project">
+        <h3 id={headingId}>{task.projectName}</h3>
+        {priority ? (
+          <StatusBadge
+            tone={priority === "red" ? "danger" : "warning"}
+            label={priority === "red" ? "High priority" : "Priority"}
+          />
+        ) : null}
+        <small>
+          {task.designPlanVersion > 0
+            ? `Design plan v${task.designPlanVersion}`
+            : "No design plan uploaded"}
+        </small>
+      </div>
+      <div className="designer-project-row__status" data-label="Design status">
+        <span className="sr-only">Design status: </span>
+        <StatusBadge
+          label={designStatusLabels[task.status]}
+          tone={designStatusTones[task.status]}
+        />
+      </div>
+      <div className="designer-project-row__health" data-label="Health">
+        <span className="sr-only">Health: </span>
+        {aggregate ? (
+          <>
+            <span><b>{aggregate.progress}%</b> task completion</span>
+            <small>
+              {aggregate.riskCounts.red} red · {aggregate.riskCounts.yellow} yellow
+            </small>
+          </>
+        ) : (
+          <span><b>Not available</b></span>
+        )}
+      </div>
+      <div className="designer-project-row__actions" data-label="Actions">
+        <Link
+          to={`/designer/design-plans?estimate=${encodeURIComponent(task.estimateId)}`}
+          className="button button--primary designer-project-row__action"
+          aria-label={`${action} for ${task.projectName}`}
+        >
+          {action} <ArrowUpRight aria-hidden="true" />
+        </Link>
+      </div>
+    </article>
+  );
 }
 
-function projectName(projects: Project[], projectId: string): string {
-  return projects.find((project) => project.id === projectId)?.name ?? "Project";
+function designTaskAction(status: DesignPlanStatus) {
+  if (status === "assigned") return "Upload design";
+  if (status === "changes_requested") return "Update design";
+  if (status === "ready_for_client" || status === "approved") return "View images";
+  return "Continue design";
 }

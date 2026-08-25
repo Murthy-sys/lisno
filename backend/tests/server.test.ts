@@ -24,6 +24,9 @@ vi.mock("../src/models/EstimateClientReviewRound.js", async (importOriginal) => 
 import { startServer } from "../src/server.js";
 import { UserModel } from "../src/models/User.js";
 import { UserInvitationModel } from "../src/models/UserInvitation.js";
+import { DesignPlanReviewRoundModel } from "../src/models/DesignPlanReviewRound.js";
+import { DesignPlanResponseProofModel } from "../src/models/DesignPlanResponseProof.js";
+import { ProjectWorkflowTaskModel } from "../src/models/ProjectWorkflowTask.js";
 import type { AppRepository } from "../src/repositories/types.js";
 
 const env = {
@@ -350,6 +353,18 @@ describe("production server bootstrap", () => {
     prepareEstimateClientReviewIndexes.mockImplementation(async () => {
       events.push("estimate-client-review-indexes");
     });
+    vi.spyOn(DesignPlanReviewRoundModel, "init").mockImplementation(async () => {
+      events.push("design-plan-review-index");
+      return DesignPlanReviewRoundModel as never;
+    });
+    vi.spyOn(DesignPlanResponseProofModel, "init").mockImplementation(async () => {
+      events.push("design-plan-proof-index");
+      return DesignPlanResponseProofModel as never;
+    });
+    vi.spyOn(ProjectWorkflowTaskModel, "init").mockImplementation(async () => {
+      events.push("project-workflow-task-index");
+      return ProjectWorkflowTaskModel as never;
+    });
 
     const runtime = await startServer({
       loadEnvironment: () => env,
@@ -380,6 +395,9 @@ describe("production server bootstrap", () => {
       "user-index",
       "invitation-index",
       "estimate-client-review-indexes",
+      "design-plan-review-index",
+      "design-plan-proof-index",
+      "project-workflow-task-index",
       "repository",
       "app",
       "listen"

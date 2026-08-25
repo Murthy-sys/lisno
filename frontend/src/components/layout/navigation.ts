@@ -21,6 +21,12 @@ export function navigationForAuthorization(
           entry.permission === null ||
           hasFrontendPermission(authorization, entry.permission)
       )
-      .map((entry) => Object.freeze({ ...entry.navigation!.item }))
+      .map((entry) => {
+        const navigation = entry.navigation!;
+        const labels: Readonly<Partial<Record<Role, string>>> | undefined =
+          "labels" in navigation ? navigation.labels : undefined;
+        const label = labels?.[role] ?? navigation.item.label;
+        return Object.freeze({ ...navigation.item, label });
+      })
   );
 }

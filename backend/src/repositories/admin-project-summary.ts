@@ -21,6 +21,9 @@ export function adminProjectSummary(
     (lead ? estimates.find((candidate) => candidate.leadId === lead.id) : undefined) ??
     estimates.find((candidate) => candidate.projectId === project.id) ??
     null;
+  const designPlanDesigner = estimate?.designPlanDesignerId == null
+    ? null
+    : users.find((candidate) => candidate.id === estimate.designPlanDesignerId) ?? null;
   return {
     id: project.id,
     name: project.name,
@@ -51,6 +54,15 @@ export function adminProjectSummary(
           status: estimate.status,
           total: estimate.total,
           clientReview: estimate.clientReview ?? null,
+          designPlanStatus: estimate.designPlanStatus ?? null,
+          designPlanVersion: estimate.designPlanVersion ?? 0,
+          designPlanDesigner: designPlanDesigner
+            ? {
+                id: designPlanDesigner.id,
+                name: designPlanDesigner.name,
+                email: designPlanDesigner.email
+              }
+            : null,
           hasPendingClientResponseTask:
             estimate.clientReview?.status === "pending" &&
             (actor.role === "super_admin" ||

@@ -519,34 +519,21 @@ async function assertSingleDecision(
       leadId: fixture.leadId,
       projectId: committedProjectId,
       clientDecisionAt: NOW,
-      designFrozenAt: NOW,
+      designFrozenAt: null,
+      designPlanStatus: "pending_assignment",
+      designPlanVersion: 0,
+      designPlanDesignerId: null,
       designLifecycleVersion: 4,
       reviews: [expectedReview]
     });
-    expect(estimate!.notifications).toHaveLength(2);
-    expect(estimate!.notifications).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        recipientEmail: ACTORS.designer.email,
-        recipientRole: "designer",
-        event: "project_kickoff_created",
-        status: "queued",
-        queuedAt: NOW
-      }),
-      expect.objectContaining({
-        recipientEmail: ACTORS.manager.email,
-        recipientRole: "design_manager",
-        event: "project_kickoff_created",
-        status: "queued",
-        queuedAt: NOW
-      })
-    ]));
+    expect(estimate!.notifications).toEqual([]);
     expect(projects).toHaveLength(1);
     expect(String(projects[0]!._id)).toBe(committedProjectId);
     expect(projects[0]).toMatchObject({
       clientId: ACTORS.client.id,
       clientEmailNormalized: ACTORS.client.email,
-      assignedDesignerIds: [ACTORS.designer.id],
-      managerId: ACTORS.manager.id,
+      assignedDesignerIds: [],
+      managerId: null,
       status: "planning"
     });
     expect([ACTORS.admin.id, ACTORS.superAdmin.id]).not.toContain(
@@ -556,14 +543,14 @@ async function assertSingleDecision(
       expect(committedProjectId).toMatch(/^project-/);
       expect(lead).toMatchObject({
         _id: fixture.leadId,
-        projectId: null,
+        projectId: committedProjectId,
         clientName: "Task 12 Client",
         clientEmail: ACTORS.client.email,
         clientMobile: "9999999999",
         projectName: "Task 12 Residence",
         location: "Pune",
         stage: "won",
-        nextAction: "project kickoff",
+        nextAction: "Assign Designer for design plan",
         nextActionAt: NOW
       });
       expect(projects[0]).toMatchObject({
@@ -572,8 +559,8 @@ async function assertSingleDecision(
         clientEmail: ACTORS.client.email,
         clientMobile: "9999999999",
         clientAddress: "Pune",
-        initiatingDesignerId: ACTORS.designer.id,
-        assignedEstimatorId: null,
+        initiatingDesignerId: null,
+        assignedEstimatorId: ACTORS.estimator.id,
         location: "Pune",
         plannedStartAt: NOW
       });
@@ -583,7 +570,7 @@ async function assertSingleDecision(
         _id: fixture.leadId,
         projectId: fixture.projectId,
         stage: "won",
-        nextAction: "project kickoff",
+        nextAction: "Assign Designer for design plan",
         nextActionAt: NOW
       });
       expect(projects[0]).toMatchObject({

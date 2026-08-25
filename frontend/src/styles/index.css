@@ -1011,7 +1011,6 @@
   margin: 0 auto;
 }
 
-.designer-hero,
 .project-hero {
   display: flex;
   align-items: flex-end;
@@ -1020,7 +1019,6 @@
   padding-bottom: 2rem;
 }
 
-.designer-hero h1,
 .project-hero h1 {
   margin: 0;
   color: var(--color-lisno-navy);
@@ -1031,18 +1029,338 @@
   line-height: 0.98;
 }
 
-.designer-hero > div > p:last-child {
-  margin: 1rem 0 0;
-  color: var(--color-lisno-muted);
-  font-size: 1rem;
-}
-
-.designer-hero .button,
 .task-row__actions .button {
   gap: 0.5rem;
 }
 
-.designer-hero .button svg,
+.designer-dashboard {
+  display: grid;
+  gap: var(--space-6);
+}
+
+.designer-kpi {
+  display: grid;
+  gap: var(--space-4);
+}
+
+/* Collapsed by default: the summary row is the whole panel until the
+   designer opens the breakdown, so the dashboard leads with assigned work. */
+.designer-kpi__summary {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+}
+
+.designer-kpi__identity {
+  flex: 1 1 12rem;
+}
+
+.designer-kpi__identity h2,
+.designer-kpi__identity p {
+  margin: 0;
+}
+
+.designer-kpi__identity h2 {
+  font: var(--type-section-title);
+}
+
+.designer-kpi__controls {
+  display: flex;
+  align-items: end;
+  gap: var(--space-3);
+  margin-inline-start: auto;
+}
+
+.designer-kpi__toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-block-size: 44px;
+  padding-inline: var(--space-4);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-control);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font: var(--type-body);
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.designer-kpi__toggle svg {
+  inline-size: var(--space-4);
+  transition: transform var(--duration-fast) var(--ease-standard);
+}
+
+.designer-kpi__toggle[aria-expanded="true"] svg {
+  transform: rotate(180deg);
+}
+
+/* The score sits inline in the summary row, so it drops the standalone
+   card metrics it carried when it was the first cell of the grid. */
+.designer-kpi__summary .kpi-score {
+  flex: 0 0 auto;
+  margin: 0;
+  gap: var(--space-3);
+}
+
+.designer-kpi__summary .kpi-score p {
+  margin: 0;
+}
+
+/* Layout only: the label and the select take their type, chrome and states
+   from Field/Select, so this stops repainting the control by hand. */
+.designer-kpi__period {
+  min-inline-size: 12rem;
+}
+
+.designer-kpi__content {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.designer-kpi .kpi-component {
+  min-block-size: 10.5rem;
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-field);
+  background: var(--color-surface-subtle);
+}
+
+.designer-kpi .kpi-score {
+  margin: 0;
+}
+
+.designer-kpi .kpi-score p,
+.designer-kpi .kpi-score span,
+.designer-kpi .kpi-component__heading span,
+.designer-kpi .kpi-component p,
+.designer-kpi .kpi-component__unavailable {
+  color: var(--color-text-muted);
+}
+
+.designer-kpi .kpi-score strong,
+.designer-kpi .kpi-component__heading strong {
+  color: var(--color-text);
+}
+
+.designer-kpi .kpi-score strong {
+  font-size: 3rem;
+}
+
+.designer-kpi .kpi-component__heading b {
+  color: var(--role-accent, var(--color-brand-violet));
+}
+
+.designer-kpi .kpi-breakdown {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: var(--space-3);
+}
+
+.designer-kpi .kpi-component:last-child {
+  grid-column: auto;
+}
+
+.designer-projects {
+  display: grid;
+  gap: var(--space-4);
+}
+
+/* The project rows sit inside a Surface now, so they read as list items
+   rather than a second stack of floating cards. */
+.designer-projects .designer-project-row {
+  box-shadow: none;
+}
+
+.designer-project-list {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.designer-project-list__header,
+.designer-project-row {
+  display: grid;
+  grid-template-columns:
+    minmax(0, 1.05fr)
+    minmax(0, 1.25fr)
+    minmax(0, 0.95fr)
+    minmax(0, 1.1fr)
+    10.5rem;
+  gap: var(--space-3);
+}
+
+.designer-project-list__header {
+  padding-inline: 1.1rem;
+  color: var(--color-text-muted);
+  font: var(--type-metadata);
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.designer-project-row {
+  align-items: center;
+  min-block-size: 5.5rem;
+  padding: var(--space-3) 1.1rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-field);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-soft);
+  transition:
+    border-color var(--duration-fast) var(--ease-standard),
+    background var(--duration-fast) var(--ease-standard);
+}
+
+.designer-project-row:hover {
+  border-color: var(--color-border-strong);
+  background: var(--color-surface-subtle);
+}
+
+/* Priority rows sort to the top of the list; the accent edge makes the break
+   between them and the rest readable without a separate heading. */
+.designer-project-row--priority {
+  border-inline-start-width: 3px;
+}
+
+.designer-project-row--priority-red {
+  border-inline-start-color: var(--color-danger);
+}
+
+.designer-project-row--priority-yellow {
+  border-inline-start-color: var(--color-warning);
+}
+
+.designer-project-row__project .ui-status {
+  inline-size: max-content;
+}
+
+.designer-project-row__client,
+.designer-project-row__project,
+.designer-project-row__health {
+  display: grid;
+  min-inline-size: 0;
+  gap: var(--space-1);
+}
+
+.designer-project-row__client strong,
+.designer-project-row__project h3,
+.designer-project-row__project small,
+.designer-project-row__health span,
+.designer-project-row__health small {
+  overflow-wrap: anywhere;
+}
+
+.designer-project-row__project h3 {
+  margin: 0;
+  font: inherit;
+  font-weight: 800;
+}
+
+.designer-project-row__project small,
+.designer-project-row__health small {
+  color: var(--color-text-muted);
+}
+
+.designer-project-row__health b {
+  color: var(--color-text);
+}
+
+.designer-project-row__status .ui-status {
+  inline-size: max-content;
+}
+
+.designer-project-row__actions {
+  min-inline-size: 0;
+}
+
+.designer-project-row__action {
+  inline-size: 100%;
+  min-block-size: 44px;
+  justify-content: center;
+  white-space: nowrap;
+}
+
+.designer-project-row__action svg {
+  inline-size: 1rem;
+  block-size: 1rem;
+}
+
+.designer-projects__empty {
+  margin-block-start: 0;
+}
+
+@media (max-width: 1100px) {
+  .designer-kpi__content {
+    grid-template-columns: 1fr;
+  }
+
+  .designer-kpi .kpi-breakdown {
+    grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+  }
+
+  .designer-project-list__header {
+    display: none;
+  }
+
+  .designer-project-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: start;
+  }
+
+  .designer-project-row > [data-label] {
+    display: grid;
+    gap: var(--space-1);
+  }
+
+  .designer-project-row > [data-label]::before {
+    content: attr(data-label);
+    color: var(--color-text-muted);
+    font: var(--type-metadata);
+    font-weight: 800;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+
+  .designer-project-row__actions {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 760px) {
+  .designer-kpi,
+  .designer-kpi .kpi-component {
+    padding: var(--space-3);
+  }
+
+  .designer-kpi__summary {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .designer-kpi__controls {
+    margin-inline-start: 0;
+  }
+
+  .designer-kpi__period {
+    inline-size: 100%;
+  }
+
+  .designer-kpi .kpi-breakdown {
+    grid-template-columns: 1fr;
+  }
+
+}
+
+@media (max-width: 520px) {
+  .designer-project-row {
+    grid-template-columns: 1fr;
+  }
+
+  .designer-project-row__actions {
+    grid-column: auto;
+  }
+}
+
 .task-row__actions .button svg,
 .project-card__link svg,
 .risk-item a svg,
@@ -1091,20 +1409,6 @@
   align-items: center;
   gap: 1rem;
   margin-top: 2.5rem;
-}
-
-.kpi-score__icon {
-  display: grid;
-  width: 3.1rem;
-  height: 3.1rem;
-  place-items: center;
-  border-radius: 1rem;
-  background: rgb(255 255 255 / 10%);
-  color: #c9c0ff;
-}
-
-.kpi-score__icon svg {
-  width: 1.25rem;
 }
 
 .kpi-score p {
@@ -1232,8 +1536,62 @@
   margin-top: 1rem;
 }
 
+.designer-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+.designer-metric-chip {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 1 auto;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-pill);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-soft);
+}
+
+.designer-metric-chip__icon {
+  display: grid;
+  place-items: center;
+  block-size: var(--space-8);
+  inline-size: var(--space-8);
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--role-accent, var(--color-brand-violet)) 10%, transparent);
+  color: var(--role-accent, var(--color-brand-violet));
+}
+
+.designer-metric-chip__icon svg {
+  block-size: var(--space-5);
+  inline-size: var(--space-5);
+}
+
+.designer-metric-chip__copy {
+  display: grid;
+  gap: var(--space-1);
+  min-inline-size: 0;
+}
+
+.designer-metric-chip__label {
+  color: var(--color-text);
+  font: var(--type-body);
+  font-weight: 750;
+}
+
+.designer-metric-chip__detail {
+  color: var(--color-text-muted);
+  font: var(--type-metadata);
+}
+
+.designer-metric-chip__value {
+  color: var(--color-text);
+  font: 700 1.75rem/1 var(--font-editorial);
+}
+
 .metric-card,
-.dashboard-section,
 .project-card,
 .floor-card {
   border: 1px solid #dedbe2;
@@ -1278,16 +1636,9 @@
   font-size: 0.72rem;
 }
 
-.dashboard-columns {
-  display: grid;
-  grid-template-columns: minmax(0, 1.12fr) minmax(18rem, 0.88fr);
-  gap: 1rem;
-  margin-top: 2.5rem;
-}
-
 .dashboard-section {
-  border-radius: 1.2rem;
-  padding: 1.35rem;
+  display: grid;
+  gap: var(--space-4);
 }
 
 .section-heading {
@@ -1306,12 +1657,6 @@
   color: var(--color-lisno-muted);
   font-size: 0.75rem;
   font-weight: 750;
-}
-
-.risk-list {
-  display: grid;
-  gap: 0.65rem;
-  margin-top: 1.25rem;
 }
 
 .risk-item {
@@ -1880,12 +2225,6 @@
   text-align: right;
 }
 
-.dashboard-load-more {
-  display: flex;
-  justify-content: center;
-  margin-top: 1.25rem;
-}
-
 .project-empty--compact {
   min-height: auto;
   grid-template-columns: 1fr;
@@ -2154,7 +2493,6 @@
     font-size: 5rem;
   }
 
-  .designer-hero,
   .project-hero {
     display: grid;
     align-items: start;
@@ -2162,13 +2500,8 @@
     padding-bottom: 1.5rem;
   }
 
-  .designer-hero h1,
   .project-hero h1 {
     font-size: 2.65rem;
-  }
-
-  .designer-hero .button {
-    width: 100%;
   }
 
   .kpi-panel {
@@ -2178,7 +2511,6 @@
 
   .kpi-breakdown,
   .metrics-grid,
-  .dashboard-columns,
   .project-grid,
   .workspace-overview {
     grid-template-columns: 1fr;

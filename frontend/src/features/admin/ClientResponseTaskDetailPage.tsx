@@ -48,6 +48,7 @@ const deliveryPresentation: Record<
   { label: string; tone: StatusTone }
 > = {
   queued: { label: "Email queued", tone: "info" },
+  sending: { label: "Email sending", tone: "info" },
   sent: { label: "Email sent", tone: "success" },
   failed: { label: "Email delivery failed", tone: "danger" },
   disabled: { label: "Email unavailable", tone: "warning" }

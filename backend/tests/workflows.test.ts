@@ -254,187 +254,45 @@ describe("project workflows", () => {
     });
   });
 
-  it("lets a designer initiate a project and then exposes it in their project list", async () => {
+  it("denies Designers generic project creation before request validation", async () => {
     const { app } = setup();
-    const created = await request(app)
+    const response = await request(app)
       .post("/api/v1/projects")
       .set("Authorization", bearer(users.ananya))
       .send(projectInput());
 
-    expect(created.status).toBe(201);
-    expect(created.body.data).toMatchObject({
-      id: expect.any(String),
-      name: "Courtyard Residence",
-      initiatingDesignerId: "user-designer-ananya",
-      assignedDesignerIds: ["user-designer-ananya"],
-      clientId: "user-client-aurora",
-      clientEmailNormalized: "client@aurora.example",
-      status: "planning"
-    });
-
-    const listed = await request(app)
-      .get("/api/v1/projects")
-      .set("Authorization", bearer(users.ananya));
-
-    expect(listed.status).toBe(200);
-    expect(
-      listed.body.data.items.map((project: { id: string }) => project.id)
-    ).toContain(created.body.data.id);
-  });
-
-  it("validates project timestamps as ISO datetimes", async () => {
-    const { app } = setup();
-    const response = await request(app)
-      .post("/api/v1/projects")
-      .set("Authorization", bearer(users.ananya))
-      .send(projectInput({
-        name: "Invalid Schedule",
-        plannedStartAt: "next Tuesday",
-        plannedEndAt: "2026-10-31"
-      }));
-
-    expect(response.status).toBe(400);
-    expect(response.body).toMatchObject({
-      error: {
-        code: "VALIDATION_ERROR",
-        fields: {
-          plannedStartAt: expect.any(String),
-          plannedEndAt: expect.any(String)
-        }
-      }
-    });
-  });
-
-  it("links a known client through a mixed-case email and keeps contact details as a snapshot", async () => {
-    const { app } = setup();
-    const created = await request(app)
-      .post("/api/v1/projects")
-      .set("Authorization", bearer(users.ananya))
-      .send(projectInput({
-        clientEmail: "  CLIENT@AURORA.EXAMPLE ",
-        clientMobile: "+91 90000 00000",
-        clientAddress: "A snapshot address"
-      }));
-
-    expect(created.status).toBe(201);
-    expect(created.body.data).toMatchObject({
-      clientId: "user-client-aurora",
-      clientName: "Rhea Kapoor",
-      clientEmail: "CLIENT@AURORA.EXAMPLE",
-      clientEmailNormalized: "client@aurora.example",
-      clientMobile: "+91 90000 00000",
-      clientAddress: "A snapshot address"
-    });
-  });
-
-  it("creates an unclaimed project when the client email has no account", async () => {
-    const { app } = setup();
-    const created = await request(app)
-      .post("/api/v1/projects")
-      .set("Authorization", bearer(users.ananya))
-      .send(projectInput({
-        name: "Unclaimed Project",
-        clientName: "New Contact",
-        clientEmail: "new-contact@example.com"
-      }));
-
-    expect(created.status).toBe(201);
-    expect(created.body.data).toMatchObject({
-      clientId: null,
-      clientEmail: "new-contact@example.com",
-      clientEmailNormalized: "new-contact@example.com"
-    });
-  });
-
-  it("rejects an invalid project client email with a field error", async () => {
-    const { app } = setup();
-
-    const response = await request(app)
-      .post("/api/v1/projects")
-      .set("Authorization", bearer(users.ananya))
-      .send(projectInput({ clientEmail: "not-an-email" }));
-
-    expect(response.status).toBe(400);
+    expect(response.status).toBe(403);
     expect(response.body).toEqual({
       error: {
-        code: "VALIDATION_ERROR",
-        message: "Request validation failed.",
-        fields: { clientEmail: "Enter a valid email address." }
+        code: "FORBIDDEN",
+        message: "You are not authorized to perform this action."
       }
     });
   });
 
-  it("rejects an internal account email as a client contact", async () => {
+  it("keeps estimate approval and assignment decisions out of the Designer API", async () => {
     const { app } = setup();
-    const response = await request(app)
-      .post("/api/v1/projects")
+
+    await request(app)
+      .get("/api/v1/estimates/review-queue")
       .set("Authorization", bearer(users.ananya))
-      .send(projectInput({ clientEmail: "aarav@lisno.example" }));
+      .expect(403, {
+        error: {
+          code: "FORBIDDEN",
+          message: "You are not authorized to perform this action."
+        }
+      });
 
-    expect(response.status).toBe(400);
-    expect(response.body.error).toMatchObject({
-      code: "INVALID_PROJECT",
-      fields: { clientEmail: expect.any(String) }
-    });
-  });
-
-  it("accepts any active manager and active cross-team designers without changing reporting lines", async () => {
-    const seed = structuredClone(demoSeedData);
-    const { app } = setup(seed);
-    const created = await request(app)
-      .post("/api/v1/projects")
+    await request(app)
+      .post("/api/v1/estimates/estimate-aurora-villa/designer-decision")
       .set("Authorization", bearer(users.ananya))
-      .send(projectInput({
-        assignedDesignerIds: ["user-designer-ishita"],
-        managerId: "user-manager-meera"
-      }));
-
-    expect(created.status).toBe(201);
-    expect(created.body.data).toMatchObject({
-      initiatingDesignerId: "user-designer-ananya",
-      assignedDesignerIds: ["user-designer-ishita", "user-designer-ananya"],
-      managerId: "user-manager-meera"
-    });
-    expect(seed.users.find((user) => user.id === "user-designer-ananya")?.managerId).toBe(
-      "user-manager-aarav"
-    );
-    expect(seed.users.find((user) => user.id === "user-designer-ishita")?.managerId).toBe(
-      "user-manager-meera"
-    );
-  });
-
-  it("rejects inactive managers and inactive or non-designer assignees", async () => {
-    const inactiveManagerSeed = structuredClone(demoSeedData);
-    inactiveManagerSeed.users.find((user) => user.id === "user-manager-meera")!.active = false;
-    const inactiveManager = await request(setup(inactiveManagerSeed).app)
-      .post("/api/v1/projects")
-      .set("Authorization", bearer(users.ananya))
-      .send(projectInput({ managerId: "user-manager-meera" }));
-    expect(inactiveManager.status).toBe(400);
-    expect(inactiveManager.body.error.fields).toHaveProperty("managerId");
-
-    const nonManager = await request(setup().app)
-      .post("/api/v1/projects")
-      .set("Authorization", bearer(users.ananya))
-      .send(projectInput({ managerId: "user-designer-ishita" }));
-    expect(nonManager.status).toBe(400);
-    expect(nonManager.body.error.fields).toHaveProperty("managerId");
-
-    const inactiveDesignerSeed = structuredClone(demoSeedData);
-    inactiveDesignerSeed.users.find((user) => user.id === "user-designer-ishita")!.active = false;
-    const inactiveDesigner = await request(setup(inactiveDesignerSeed).app)
-      .post("/api/v1/projects")
-      .set("Authorization", bearer(users.ananya))
-      .send(projectInput({ assignedDesignerIds: ["user-designer-ananya", "user-designer-ishita"] }));
-    expect(inactiveDesigner.status).toBe(400);
-    expect(inactiveDesigner.body.error.fields).toHaveProperty("assignedDesignerIds");
-
-    const nonDesigner = await request(setup().app)
-      .post("/api/v1/projects")
-      .set("Authorization", bearer(users.ananya))
-      .send(projectInput({ assignedDesignerIds: ["user-client-aurora"] }));
-    expect(nonDesigner.status).toBe(400);
-    expect(nonDesigner.body.error.fields).toHaveProperty("assignedDesignerIds");
+      .send({ decision: "approve" })
+      .expect(403, {
+        error: {
+          code: "FORBIDDEN",
+          message: "You are not authorized to perform this action."
+        }
+      });
   });
 
   it("isolates client projects and removes internal project hierarchy fields", async () => {
@@ -654,18 +512,6 @@ describe("project workflows", () => {
   });
 
   it.each([
-    ["project", "/api/v1/projects", {
-      name: "Atomic Project",
-      clientName: "Rhea Kapoor",
-      clientEmail: "client@aurora.example",
-      clientMobile: "+91 98765 43210",
-      clientAddress: "12 Aurora Lane, Bengaluru",
-      assignedDesignerIds: ["user-designer-ananya"],
-      managerId: "user-manager-aarav",
-      location: "Bengaluru",
-      plannedStartAt: "2026-08-01T09:00:00.000Z",
-      plannedEndAt: "2026-10-31T17:00:00.000Z"
-    }, "Atomic Project"],
     ["floor", "/api/v1/projects/project-aurora-villa/floors", {
       name: "Atomic Floor",
       number: "A",

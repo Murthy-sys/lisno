@@ -17,8 +17,6 @@ export interface ResolveApprovalProjectInput {
     location: string;
   };
   clientId: string | null;
-  assignedDesignerId: string;
-  managerId: string;
   occurredAt: Date;
   session: ClientSession;
 }
@@ -38,8 +36,6 @@ export async function resolveApprovalProject(
     estimate,
     lead,
     clientId,
-    assignedDesignerId,
-    managerId,
     occurredAt,
     session
   } = input;
@@ -58,10 +54,10 @@ export async function resolveApprovalProject(
       clientEmailNormalized: normalizeEmail(lead.clientEmail),
       clientMobile: lead.clientMobile,
       clientAddress: lead.location,
-      initiatingDesignerId: assignedDesignerId,
-      assignedEstimatorId: null,
-      assignedDesignerIds: [assignedDesignerId],
-      managerId,
+      initiatingDesignerId: null,
+      assignedEstimatorId: estimate.ownerId,
+      assignedDesignerIds: [],
+      managerId: null,
       status: "planning",
       location: lead.location,
       plannedStartAt: occurredAt,
@@ -110,8 +106,6 @@ export async function resolveApprovalProject(
     {
       $set: {
         clientId,
-        assignedDesignerIds: [assignedDesignerId],
-        managerId,
         updatedAt: occurredAt
       }
     },

@@ -882,7 +882,7 @@ describe("estimate drawing review journey", () => {
     const estimateApproval = within(approvedCard).getByRole("button", {
       name: "Approve estimate",
     });
-    expect(estimateApproval).toBeDisabled();
+    expect(estimateApproval).toBeEnabled();
     await user.click(within(approvedBedroom).getByRole("button", {
       name: "Approve Bedroom Flooring",
     }));

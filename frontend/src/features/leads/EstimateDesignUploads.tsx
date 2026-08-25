@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useId, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import type {
@@ -44,6 +44,10 @@ interface EstimateDesignUploadsProps {
   rooms: EstimateDesignPlacementOption[];
   scopes: EstimateDesignPlacementOption[];
   items: EstimateDesignItemOption[];
+  variant?: "estimator" | "designer";
+  readOnly?: boolean;
+  onUploaded?: () => void;
+  onSubmitted?: () => void;
 }
 
 type DrawingSelection = { drawing: EstimateDesignDrawing; revision: EstimateDesignRevision };
@@ -64,7 +68,7 @@ function cropIsWithinPage(crop: CropRect, page: { width: number; height: number 
 }
 
 function statusLabel(status: string) {
-  if (status === "estimator_review") return "Ready for estimator review";
+  if (status === "estimator_review") return "Ready for drawing review";
   if (status === "processing_failed") return "Extraction failed";
   return status.replaceAll("_", " ").replace(/^./, (letter) => letter.toUpperCase());
 }
@@ -75,8 +79,20 @@ function formatBytes(bytes: number) {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
-export function EstimateDesignUploads({ estimateId, rooms, scopes, items }: EstimateDesignUploadsProps) {
+export function EstimateDesignUploads({
+  estimateId,
+  rooms,
+  scopes,
+  items,
+  variant = "estimator",
+  readOnly = false,
+  onUploaded,
+  onSubmitted
+}: EstimateDesignUploadsProps) {
   const client = useQueryClient();
+  const titleId = useId();
+  const fileInputId = useId();
+  const extractedImagesTitleId = useId();
   const [file, setFile] = useState<File>();
   const [uploadProgress, setUploadProgress] = useState<number>();
   const [selection, setSelection] = useState<DrawingSelection>();
@@ -103,6 +119,7 @@ export function EstimateDesignUploads({ estimateId, rooms, scopes, items }: Esti
     onSuccess: () => {
       setFile(undefined);
       void client.invalidateQueries({ queryKey: estimateDesignKeys.workspace(estimateId) });
+      onUploaded?.();
     },
     onSettled: () => setUploadProgress(undefined)
   });
@@ -155,7 +172,7 @@ export function EstimateDesignUploads({ estimateId, rooms, scopes, items }: Esti
     }) => createManualEstimateDrawing(pageId, input),
     onSuccess: () => {
       setManualOpen(false);
-      setActionNotice("Missing drawing added for estimator review.");
+      setActionNotice("Missing drawing added for drawing review.");
       void client.invalidateQueries({
         queryKey: estimateDesignKeys.workspace(estimateId)
       });
@@ -164,11 +181,17 @@ export function EstimateDesignUploads({ estimateId, rooms, scopes, items }: Esti
   const remove = useMutation({ mutationFn: ({ drawing, revision }: DrawingSelection) => removeEstimateDrawing(drawing.id, revision.revisionNumber), onSuccess: () => void client.invalidateQueries({ queryKey: estimateDesignKeys.workspace(estimateId) }) });
   const submit = useMutation({
     mutationFn: () => submitEstimateDrawings(estimateId),
-    onSuccess: () => void client.invalidateQueries({ queryKey: estimateDesignKeys.workspace(estimateId) })
+    onSuccess: () => {
+      void client.invalidateQueries({ queryKey: estimateDesignKeys.workspace(estimateId) });
+      onSubmitted?.();
+    }
   });
 
   const latest = useMemo(() => latestRevisions(workspace.data?.revisions ?? []), [workspace.data?.revisions]);
   const activeDrawings = (workspace.data?.drawings ?? []).filter((drawing) => drawing.active && latest.has(drawing.id));
+  const extractionPending = (workspace.data?.uploads ?? []).some((item) =>
+    item.extractionStatus === "queued" || item.extractionStatus === "processing"
+  );
   const roomIds = new Set(rooms.map((room) => room.id));
   const scopeIds = new Set(scopes.map((scope) => scope.id));
   const miscDrawings = activeDrawings.filter((drawing) => drawing.mappingStatus === "misc");
@@ -218,6 +241,7 @@ export function EstimateDesignUploads({ estimateId, rooms, scopes, items }: Esti
       }
       onFocused={clearDrawingFocus}
       needsCorrection={false}
+      readOnly={readOnly}
       onPreview={() => open({ drawing, revision }, "preview")}
       onCorrect={() => open({ drawing, revision }, "correct")}
       onVerify={() => open({ drawing, revision }, "correct", true)}
@@ -227,17 +251,75 @@ export function EstimateDesignUploads({ estimateId, rooms, scopes, items }: Esti
       onHistory={() => open({ drawing, revision }, "history")}
     />;
   };
+  const designerExperience = variant === "designer";
+  const uploadButtonLabel = designerExperience ? "Upload design" : "Upload design plan";
+  const uploadProgressLabel = designerExperience ? "Uploading design" : "Uploading design plan";
+
   return (
-    <section className="estimate-design-uploads" aria-labelledby="estimate-design-uploads-title">
+    <section
+      className={`estimate-design-uploads${designerExperience ? " estimate-design-uploads--designer" : ""}`}
+      aria-labelledby={titleId}
+    >
       <header className="estimate-design-uploads__header">
-        <div><p className="eyebrow">Plans and drawing review</p><h2 id="estimate-design-uploads-title">Upload design plans</h2><p>Extracted drawings remain private until they are submitted to the client.</p></div>
-        <form onSubmit={(event) => { event.preventDefault(); if (file) { setUploadProgress(0); upload.mutate(file); } }}>
-          <input className="estimate-design-uploads__file-input" id="estimate-design-upload-file" aria-label="Design plan file" type="file" accept="application/pdf,image/png,image/jpeg,image/webp,image/tiff,image/heic,image/heif,.heif" onChange={(event) => setFile(event.target.files?.[0])} />
-          <label className="button secondary-button estimate-design-uploads__file-picker" htmlFor="estimate-design-upload-file">Choose file</label>
-          {file ? <p className="estimate-design-uploads__file-summary"><span>{file.name}</span><small>{formatBytes(file.size)}</small></p> : null}
-          <button type="submit" className="button button--primary" disabled={!file || upload.isPending}>{upload.isPending ? "Uploading…" : "Upload design plan"}</button>
-          {uploadProgress !== undefined ? <div className="estimate-design-uploads__progress"><ProgressBar value={uploadProgress} label="Uploading design plan" /></div> : null}
-        </form>
+        <div>
+          <p className="eyebrow">
+            {designerExperience ? "Assigned design work" : "Plans and drawing review"}
+          </p>
+          <h2 id={titleId}>
+            {designerExperience ? "Upload design" : "Upload design plans"}
+          </h2>
+          <p>
+            {readOnly
+              ? "The submitted design and extracted images remain available for review."
+              : designerExperience
+                ? "Upload a PDF or plan image. Lisno will extract each drawing for your review."
+                : "Extracted drawings remain private until they are submitted to the client."}
+          </p>
+        </div>
+        {!readOnly ? (
+          <form
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (file) {
+                setUploadProgress(0);
+                upload.mutate(file);
+              }
+            }}
+          >
+            <input
+              className="estimate-design-uploads__file-input"
+              id={fileInputId}
+              aria-label="Design plan file"
+              type="file"
+              accept="application/pdf,image/png,image/jpeg,image/webp,image/tiff,image/heic,image/heif,.heif"
+              onChange={(event) => setFile(event.target.files?.[0])}
+            />
+            <label
+              className="button secondary-button estimate-design-uploads__file-picker"
+              htmlFor={fileInputId}
+            >
+              {designerExperience ? "Select design file" : "Choose file"}
+            </label>
+            {file ? (
+              <p className="estimate-design-uploads__file-summary">
+                <span>{file.name}</span>
+                <small>{formatBytes(file.size)}</small>
+              </p>
+            ) : null}
+            <button
+              type="submit"
+              className="button button--primary"
+              disabled={!file || upload.isPending}
+            >
+              {upload.isPending ? "Uploading…" : uploadButtonLabel}
+            </button>
+            {uploadProgress !== undefined ? (
+              <div className="estimate-design-uploads__progress">
+                <ProgressBar value={uploadProgress} label={uploadProgressLabel} />
+              </div>
+            ) : null}
+          </form>
+        ) : null}
       </header>
       {upload.isError ? <p role="alert" className="estimate-design-uploads__error">The plan could not be uploaded. Try the selected file again.</p> : null}
       {retry.isError ? <p role="alert" className="estimate-design-uploads__error">The extraction could not be retried. Try again shortly.</p> : null}
@@ -246,21 +328,143 @@ export function EstimateDesignUploads({ estimateId, rooms, scopes, items }: Esti
       {actionNotice ? <p role="status" className="estimate-notice">{actionNotice}</p> : null}
       {workspace.isPending ? <p role="status">Loading design plans…</p> : null}
       {workspace.isError ? <p role="alert">We couldn't load design plans. <button type="button" className="secondary-button" onClick={() => void workspace.refetch()}>Try again</button></p> : null}
-      {workspace.data ? <>
-        {workspace.data.uploads.length ? <ul className="estimate-design-uploads__status-list" aria-label="Design upload status">{workspace.data.uploads.map((item) => <li key={item.id}><span>{item.originalFilename}</span><strong>{statusLabel(item.extractionStatus)}</strong>{item.failureMessage ? <small>{item.failureMessage}</small> : null}{item.extractionStatus === "processing_failed" && item.canRetry ? <button type="button" className="secondary-button estimate-design-uploads__retry" disabled={retry.isPending} onClick={() => retry.mutate(item.id)}>{retry.isPending ? "Retrying extraction…" : "Retry extraction"}</button> : null}</li>)}</ul> : <p className="estimate-design-uploads__empty">Upload a PDF or plan image to extract drawings for this estimate.</p>}
-        {workspace.data.pages.length ? <button type="button" className="secondary-button" onClick={() => setManualOpen(true)}>Add missing drawing</button> : null}
-        {placementDrawings.length ? <section className="estimate-design-uploads__placement" aria-label="Needs placement"><header><h3>Needs placement</h3><p>These extracted drawings need a complete estimate item assignment.</p></header>{placementDrawings.map((drawing) => row(drawing, drawing.roomId ? rooms.find((room) => room.id === drawing.roomId)?.label ?? "Unknown room" : "Unassigned room", drawing.scopeSectionId ? scopes.find((scope) => scope.id === drawing.scopeSectionId)?.label ?? "Unknown scope" : "Unassigned scope"))}</section> : null}
-        {miscDrawings.length ? <section className="estimate-design-uploads__misc" aria-label="Miscellaneous drawings"><header><h3>Miscellaneous</h3><p>No exact estimate item is assigned. You can still submit this drawing.</p></header>{miscDrawings.map((drawing) => row(drawing, "Miscellaneous", "Unassigned item"))}</section> : null}
-        {rooms.flatMap((room) => scopes.map((scope) => ({ room, scope, drawings: grouped.get(`${room.id}\u0000${scope.id}`) ?? [] }))).filter((group) => group.drawings.length).map((group) => <section className="estimate-design-uploads__group" aria-label={`${group.room.label}, ${group.scope.label} drawings`} key={`${group.room.id}:${group.scope.id}`}><h3>{group.room.label} <span>→</span> {group.scope.label}</h3>{group.drawings.map((drawing) => row(drawing, group.room.label, group.scope.label))}</section>)}
-        {activeDrawings.length ? <footer className="estimate-design-uploads__footer"><span>{unverifiedDrawings.length ? `${unverifiedDrawings.length} drawing${unverifiedDrawings.length === 1 ? "" : "s"} can be submitted now. Verification is optional for this milestone.` : miscDrawings.length ? `${miscDrawings.length} verified Miscellaneous drawing${miscDrawings.length === 1 ? "" : "s"} can be submitted without assignment.` : "All drawings are verified and assigned."}</span><button type="button" className="button button--primary" onClick={() => submit.mutate()}>{submit.isPending ? "Submitting…" : "Submit drawings to client"}</button></footer> : null}
-        {submit.isError ? <p role="alert" className="estimate-design-uploads__error">The drawings could not be submitted. Try again.</p> : null}
-      </> : null}
+      {workspace.data ? (
+        <>
+          {workspace.data.uploads.length ? (
+            <ul className="estimate-design-uploads__status-list" aria-label="Design upload status">
+              {workspace.data.uploads.map((item) => (
+                <li key={item.id}>
+                  <span>{item.originalFilename}</span>
+                  <strong>{statusLabel(item.extractionStatus)}</strong>
+                  {item.failureMessage ? <small>{item.failureMessage}</small> : null}
+                  {!readOnly && item.extractionStatus === "processing_failed" && item.canRetry ? (
+                    <button
+                      type="button"
+                      className="secondary-button estimate-design-uploads__retry"
+                      disabled={retry.isPending}
+                      onClick={() => retry.mutate(item.id)}
+                    >
+                      {retry.isPending ? "Retrying extraction…" : "Retry extraction"}
+                    </button>
+                  ) : null}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="estimate-design-uploads__empty">
+              Upload a PDF or plan image to extract drawings for this project.
+            </p>
+          )}
+          {!readOnly && workspace.data.pages.length ? (
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={() => setManualOpen(true)}
+            >
+              Add missing drawing
+            </button>
+          ) : null}
+          {activeDrawings.length ? (
+            <section
+              className="estimate-design-uploads__results"
+              aria-labelledby={extractedImagesTitleId}
+            >
+              <header className="estimate-design-uploads__results-heading">
+                <div>
+                  <p className="eyebrow">Extraction result</p>
+                  <h3 id={extractedImagesTitleId}>Extracted images</h3>
+                </div>
+                <span>
+                  {activeDrawings.length} image{activeDrawings.length === 1 ? "" : "s"}
+                </span>
+              </header>
+              {placementDrawings.length ? (
+                <section className="estimate-design-uploads__placement" aria-label="Needs placement">
+                  <header>
+                    <h3>Needs placement</h3>
+                    <p>These extracted drawings need a complete estimate item assignment.</p>
+                  </header>
+                  {placementDrawings.map((drawing) => row(
+                    drawing,
+                    drawing.roomId
+                      ? rooms.find((room) => room.id === drawing.roomId)?.label ?? "Unknown room"
+                      : "Unassigned room",
+                    drawing.scopeSectionId
+                      ? scopes.find((scope) => scope.id === drawing.scopeSectionId)?.label ?? "Unknown scope"
+                      : "Unassigned scope"
+                  ))}
+                </section>
+              ) : null}
+              {miscDrawings.length ? (
+                <section className="estimate-design-uploads__misc" aria-label="Miscellaneous drawings">
+                  <header>
+                    <h3>Miscellaneous</h3>
+                    <p>No exact estimate item is assigned. You can still submit this drawing.</p>
+                  </header>
+                  {miscDrawings.map((drawing) => row(drawing, "Miscellaneous", "Unassigned item"))}
+                </section>
+              ) : null}
+              {rooms
+                .flatMap((room) => scopes.map((scope) => ({
+                  room,
+                  scope,
+                  drawings: grouped.get(`${room.id}\u0000${scope.id}`) ?? []
+                })))
+                .filter((group) => group.drawings.length)
+                .map((group) => (
+                  <section
+                    className="estimate-design-uploads__group"
+                    aria-label={`${group.room.label}, ${group.scope.label} drawings`}
+                    key={`${group.room.id}:${group.scope.id}`}
+                  >
+                    <h3>{group.room.label} <span>→</span> {group.scope.label}</h3>
+                    {group.drawings.map((drawing) => row(
+                      drawing,
+                      group.room.label,
+                      group.scope.label
+                    ))}
+                  </section>
+                ))}
+            </section>
+          ) : null}
+          {activeDrawings.length ? (
+            <footer className="estimate-design-uploads__footer">
+              <span>
+                {readOnly
+                  ? "The submitted design and extracted images are read-only."
+                  : extractionPending
+                    ? "Wait for every uploaded plan to finish extracting before submission."
+                    : unverifiedDrawings.length
+                      ? `${unverifiedDrawings.length} drawing${unverifiedDrawings.length === 1 ? "" : "s"} can be submitted now. Verification is optional for this milestone.`
+                      : miscDrawings.length
+                        ? `${miscDrawings.length} verified Miscellaneous drawing${miscDrawings.length === 1 ? "" : "s"} can be submitted without assignment.`
+                        : "All drawings are verified and assigned."}
+              </span>
+              {!readOnly ? (
+                <button
+                  type="button"
+                  className="button button--primary"
+                  disabled={extractionPending || submit.isPending}
+                  onClick={() => submit.mutate()}
+                >
+                  {submit.isPending ? "Submitting…" : "Submit drawings to client"}
+                </button>
+              ) : null}
+            </footer>
+          ) : null}
+          {!readOnly && submit.isError ? (
+            <p role="alert" className="estimate-design-uploads__error">
+              The drawings could not be submitted. Try again.
+            </p>
+          ) : null}
+        </>
+      ) : null}
       {selection && mode === "preview" ? <PreviewDialog selection={selection} onClose={closeDialog} /> : null}
-      {selection && mode === "correct" ? <CorrectionDialog selection={selection} defaultVerified={verifyOnOpen} page={workspace.data?.pages.find((page) => page.id === selection.revision.sourcePageId) ?? workspace.data?.pages.find((page) => page.id === selection.drawing.sourcePageId)} busy={correct.isPending} error={correct.isError ? "The correction was not saved." : ""} onSubmit={(input) => correct.mutate({ ...selection, input })} onClose={closeDialog} /> : null}
-      {selection && mode === "assign" ? <EstimateItemAssignmentDialog selection={selection} rooms={rooms} items={items} busy={assign.isPending} error={assign.isError ? "The estimate item was not assigned." : ""} onSubmit={(input) => assign.mutate({ ...selection, input })} onClose={closeDialog} /> : null}
+      {!readOnly && selection && mode === "correct" ? <CorrectionDialog selection={selection} defaultVerified={verifyOnOpen} page={workspace.data?.pages.find((page) => page.id === selection.revision.sourcePageId) ?? workspace.data?.pages.find((page) => page.id === selection.drawing.sourcePageId)} busy={correct.isPending} error={correct.isError ? "The correction was not saved." : ""} onSubmit={(input) => correct.mutate({ ...selection, input })} onClose={closeDialog} /> : null}
+      {!readOnly && selection && mode === "assign" ? <EstimateItemAssignmentDialog selection={selection} rooms={rooms} items={items} busy={assign.isPending} error={assign.isError ? "The estimate item was not assigned." : ""} onSubmit={(input) => assign.mutate({ ...selection, input })} onClose={closeDialog} /> : null}
       {selection && mode === "history" ? <HistoryDialog revisions={(workspace.data?.revisions ?? []).filter((revision) => revision.drawingId === selection.drawing.id)} onClose={closeDialog} /> : null}
-      {selection && mode === "replace" ? <ReplacementDialog file={replacement} busy={replace.isPending} error={replace.isError ? "The replacement was not uploaded." : ""} onChange={setReplacement} onSubmit={() => replacement && replace.mutate({ ...selection, file: replacement })} onClose={closeDialog} /> : null}
-      {manualOpen && workspace.data?.pages.length ? <ManualDrawingDialog
+      {!readOnly && selection && mode === "replace" ? <ReplacementDialog file={replacement} busy={replace.isPending} error={replace.isError ? "The replacement was not uploaded." : ""} onChange={setReplacement} onSubmit={() => replacement && replace.mutate({ ...selection, file: replacement })} onClose={closeDialog} /> : null}
+      {!readOnly && manualOpen && workspace.data?.pages.length ? <ManualDrawingDialog
         pages={workspace.data.pages}
         rooms={rooms}
         items={items}

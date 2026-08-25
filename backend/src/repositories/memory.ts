@@ -146,7 +146,10 @@ export function createMemoryRepository(seed: SeedData = demoSeedData): AppReposi
     (estimate) => ({
       ...estimate,
       clientReview: estimate.clientReview ?? null,
-      assignedAdminId: estimate.assignedAdminId ?? null
+      assignedAdminId: estimate.assignedAdminId ?? null,
+      designPlanStatus: estimate.designPlanStatus ?? null,
+      designPlanVersion: estimate.designPlanVersion ?? 0,
+      designPlanDesignerId: estimate.designPlanDesignerId ?? null
     })
   );
   normalizedSeed.projects = normalizedSeed.projects.map((project) => ({

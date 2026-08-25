@@ -138,7 +138,10 @@ describe("Admin-initiated projects", () => {
       status: "sent_to_client",
       total: 1_180_000,
       clientReview: safeRound,
-      hasPendingClientResponseTask: false
+      hasPendingClientResponseTask: false,
+      designPlanStatus: null,
+      designPlanVersion: 0,
+      designPlanDesigner: null
     });
     expect(JSON.stringify(reactivatedInitiator.body.data.estimate)).not.toMatch(
       /assignedAdminId|recipient|decisionNote|storageReference|filename|proof/i
@@ -153,7 +156,10 @@ describe("Admin-initiated projects", () => {
       status: "sent_to_client",
       total: 1_180_000,
       clientReview: safeRound,
-      hasPendingClientResponseTask: true
+      hasPendingClientResponseTask: true,
+      designPlanStatus: null,
+      designPlanVersion: 0,
+      designPlanDesigner: null
     });
     expect(JSON.stringify(superAdmin.body.data.estimate)).not.toMatch(
       /assignedAdminId|recipient|decisionNote|storageReference|filename|proof/i

@@ -7,6 +7,7 @@ import {
   KeyRound,
   LayoutDashboard,
   MailCheck,
+  Palette,
   UsersRound,
   type LucideIcon
 } from "lucide-react";
@@ -32,11 +33,13 @@ export interface RegisteredFrontendRoute {
   readonly navigation: {
     readonly roles: readonly Role[];
     readonly item: NavigationItem;
+    readonly labels?: Readonly<Partial<Record<Role, string>>>;
   } | null;
 }
 
 export const ROUTE_REGISTRY = [
   { path: "/designer", permission: "projects.list", presentationRoles: ["designer"], navigation: { roles: ["designer"], item: { label: "Workspace", to: "/designer", end: true, icon: LayoutDashboard } } },
+  { path: "/designer/design-plans", permission: "design.plan_task.read", presentationRoles: ["designer"], navigation: { roles: ["designer"], item: { label: "Design plans", to: "/designer/design-plans", end: true, icon: Palette } } },
   { path: "/designer/projects/:projectId", permission: "projects.read", presentationRoles: ["designer"], navigation: null },
   { path: "/manager", permission: "organization.team.read", presentationRoles: ["design_manager"], navigation: { roles: ["design_manager"], item: { label: "Team", to: "/manager", end: true, icon: UsersRound } } },
   { path: "/manager/designers/:designerId", permission: "organization.designer_summary.read", presentationRoles: ["design_manager"], navigation: null },
@@ -49,14 +52,15 @@ export const ROUTE_REGISTRY = [
   { path: "/estimator-sales/leads/:leadId/estimate", permission: "estimation.estimate.read", presentationRoles: ["estimator_sales"], navigation: null },
   { path: "/client", permission: "projects.client_summary.read", presentationRoles: ["client"], navigation: { roles: ["client"], item: { label: "My projects", to: "/client", end: true, icon: FolderKanban } } },
   { path: "/client/projects/:projectId", permission: "projects.read", presentationRoles: ["client"], navigation: null },
-  { path: "/admin/projects", permission: "projects.list", presentationRoles: ["admin"], navigation: { roles: ["admin"], item: { label: "My Projects", to: "/admin/projects", end: true, icon: FolderKanban } } },
-  { path: "/admin/projects/:projectId", permission: "projects.read", presentationRoles: ["admin"], navigation: null },
+  { path: "/admin/projects", permission: "projects.list", presentationRoles: ["admin", "super_admin"], navigation: { roles: ["admin", "super_admin"], item: { label: "My Projects", to: "/admin/projects", end: true, icon: FolderKanban }, labels: { super_admin: "All Projects" } } },
+  { path: "/admin/projects/:projectId", permission: "projects.read", presentationRoles: ["admin", "super_admin"], navigation: null },
   { path: "/admin/users", permission: "identity.users.read", presentationRoles: ["super_admin"], navigation: { roles: ["super_admin"], item: { label: "Users", to: "/admin/users", end: true, icon: UsersRound } } },
   { path: "/admin/client-responses", permission: "estimation.client_response_tasks.read", presentationRoles: ["admin", "super_admin"], navigation: { roles: ["admin", "super_admin"], item: { label: "Client responses", to: "/admin/client-responses", end: true, icon: MailCheck } } },
   { path: "/admin/client-responses/:roundId", permission: "estimation.client_response_tasks.read", presentationRoles: ["admin", "super_admin"], navigation: null },
+  { path: "/admin/design-approvals", permission: "design.plan_response_tasks.read", presentationRoles: ["admin", "super_admin"], navigation: { roles: ["admin", "super_admin"], item: { label: "Design approvals", to: "/admin/design-approvals", end: true, icon: Palette } } },
   { path: "/admin/access-requests", permission: "access_request.review.read", presentationRoles: ["admin", "super_admin"], navigation: { roles: ["admin", "super_admin"], item: { label: "Access requests", to: "/admin/access-requests", end: true, icon: ClipboardCheck } } },
   { path: "/access-requests/mine", permission: "access_request.self.read", presentationRoles: ["designer", "procurement", "finance_head", "site_manager", "super_admin"], navigation: { roles: ["designer", "procurement", "finance_head", "site_manager"], item: { label: "My access requests", to: "/access-requests/mine", end: true, icon: KeyRound } } },
-  { path: "/home", permission: "identity.self.read", presentationRoles: ["procurement", "finance_head", "site_manager", ...WORKER_ROLES], navigation: { roles: ["procurement", "finance_head", "site_manager", ...WORKER_ROLES], item: { label: "Home", to: "/home", end: true, icon: House } } },
+  { path: "/home", permission: "workflow.tasks.read", presentationRoles: ["procurement", "finance_head", "site_manager", ...WORKER_ROLES], navigation: { roles: ["procurement", "finance_head", "site_manager", ...WORKER_ROLES], item: { label: "Home", to: "/home", end: true, icon: House } } },
   { path: "/access-denied", permission: null, presentationRoles: ROLE_CODES, navigation: null }
 ] as const satisfies readonly RegisteredFrontendRoute[];
 

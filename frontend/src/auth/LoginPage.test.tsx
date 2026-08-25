@@ -43,6 +43,9 @@ const designer = {
 
 function installDesignerDashboardHandlers() {
   server.use(
+    http.get("/api/v1/designer/design-plan-tasks", () =>
+      HttpResponse.json({ data: [] })
+    ),
     http.get("/api/v1/projects", () =>
       HttpResponse.json({
         data: {
@@ -218,6 +221,9 @@ describe("LoginPage", () => {
       if (pathname === "/api/v1/auth/authorization") {
         return Response.json({ data: authorizationFor(designer.role) });
       }
+      if (pathname === "/api/v1/designer/design-plan-tasks") {
+        return Response.json({ data: [] });
+      }
       if (pathname === "/api/v1/auth/login") {
         return Response.json(
           {
@@ -278,7 +284,7 @@ describe("LoginPage", () => {
       throw new Error(`Unhandled request: ${pathname}`);
     });
     renderApp(["/designer"]);
-    await screen.findByRole("heading", { name: "Good morning, Ananya." });
+    await screen.findByRole("heading", { name: "Design workspace" });
 
     tokenStorage.clear();
     window.dispatchEvent(
@@ -371,7 +377,7 @@ describe("LoginPage", () => {
     await signIn();
 
     const heading = await screen.findByRole("heading", {
-      name: "Good morning, Ananya."
+      name: "Design workspace"
     });
     expect(router.state.location.pathname).toBe("/designer");
     expect(heading).toHaveFocus();
@@ -521,7 +527,7 @@ describe("LoginPage", () => {
   });
 
   it.each([
-    ["designer", "/designer", "Good morning, Demo."],
+    ["designer", "/designer", "Design workspace"],
     ["design_manager", "/manager", "Team delivery pulse"],
     ["design_head", "/head", "Organization delivery health"],
     ["client", "/client", "Your design plans"]
@@ -549,6 +555,9 @@ describe("LoginPage", () => {
         }),
         http.get("/api/v1/auth/authorization", () =>
           HttpResponse.json({ data: authorizationFor(role) })
+        ),
+        http.get("/api/v1/designer/design-plan-tasks", () =>
+          HttpResponse.json({ data: [] })
         ),
         http.get("/api/v1/projects", () =>
           HttpResponse.json({

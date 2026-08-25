@@ -25,6 +25,8 @@ import {
   submitClientPlanChangeRequest,
   updateClientPlanChangeRequest
 } from "../leads/estimateDesignApi";
+import { clientKeys } from "../client/clientApi";
+import { estimateWorkflowKeys } from "./estimateWorkflowApi";
 
 export interface ClientEstimateDrawingOption {
   id: string;
@@ -363,9 +365,14 @@ function ClientDrawingRow({
             annotations: AnnotationDocumentV1;
           }
     ) => decideClientDrawing(revision.id, input),
-    onSuccess: () => queryClient.invalidateQueries({
-      queryKey: estimateDesignKeys.clientWorkspace(estimateId)
-    })
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: estimateDesignKeys.clientWorkspace(estimateId) }),
+        queryClient.invalidateQueries({ queryKey: estimateDesignKeys.clientPlanWorkspace(estimateId) }),
+        queryClient.invalidateQueries({ queryKey: estimateWorkflowKeys.client }),
+        queryClient.invalidateQueries({ queryKey: clientKeys.projects })
+      ]);
+    }
   });
   const planRequest = useMutation({
     mutationFn: async ({ document, summary }: { document: AnnotationDocumentV1; summary: string }) => {
@@ -394,7 +401,8 @@ function ClientDrawingRow({
     onSuccess: async () => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: estimateDesignKeys.clientWorkspace(estimateId) }),
-        queryClient.invalidateQueries({ queryKey: estimateDesignKeys.clientPlanWorkspace(estimateId) })
+        queryClient.invalidateQueries({ queryKey: estimateDesignKeys.clientPlanWorkspace(estimateId) }),
+        queryClient.invalidateQueries({ queryKey: estimateWorkflowKeys.client })
       ]);
     }
   });
@@ -416,7 +424,8 @@ function ClientDrawingRow({
     onSuccess: async () => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: estimateDesignKeys.clientWorkspace(estimateId) }),
-        queryClient.invalidateQueries({ queryKey: estimateDesignKeys.clientPlanWorkspace(estimateId) })
+        queryClient.invalidateQueries({ queryKey: estimateDesignKeys.clientPlanWorkspace(estimateId) }),
+        queryClient.invalidateQueries({ queryKey: estimateWorkflowKeys.client })
       ]);
     }
   });

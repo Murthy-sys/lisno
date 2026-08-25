@@ -55,6 +55,22 @@
   color: var(--color-surface);
 }
 
+.ui-button--success,
+.ui-icon-button--success {
+  background: var(--color-success);
+  color: var(--color-surface);
+}
+
+.ui-button--success:not(:disabled):hover,
+.ui-icon-button--success:not(:disabled):hover {
+  background: var(--color-success-strong);
+}
+
+.ui-button--destructive:not(:disabled):hover,
+.ui-icon-button--destructive:not(:disabled):hover {
+  background: var(--color-danger-strong);
+}
+
 .ui-button:not(:disabled):hover,
 .ui-icon-button:not(:disabled):hover {
   box-shadow: var(--shadow-soft);
@@ -448,6 +464,11 @@
   opacity: 0.72;
 }
 
+.ui-select {
+  cursor: pointer;
+  padding-inline-end: var(--space-2);
+}
+
 .ui-textarea {
   min-block-size: calc(var(--space-10) + var(--space-10));
   padding-block: var(--space-3);
@@ -486,7 +507,43 @@
 }
 
 .ui-file-input {
+  cursor: pointer;
+  color: var(--color-text-muted);
   padding-block: var(--space-2);
+}
+
+.ui-file-input::file-selector-button {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-control);
+  color: var(--color-brand-midnight);
+  cursor: pointer;
+  font: var(--type-body);
+  font-weight: 600;
+  margin-inline-end: var(--space-3);
+  min-block-size: 36px;
+  padding: 0 var(--space-4);
+  transition: background-color var(--duration-fast) var(--ease-standard), border-color var(--duration-fast) var(--ease-standard), box-shadow var(--duration-fast) var(--ease-standard), color var(--duration-fast) var(--ease-standard);
+}
+
+.ui-file-input:not(:disabled):hover::file-selector-button {
+  background: var(--color-surface-subtle);
+  box-shadow: var(--shadow-soft);
+  color: var(--color-brand-violet);
+}
+
+.ui-file-input:focus-visible::file-selector-button {
+  border-color: var(--color-brand-violet);
+}
+
+.ui-file-input[aria-invalid="true"]::file-selector-button {
+  border-color: var(--color-danger);
+  color: var(--color-danger);
+}
+
+.ui-file-input:disabled::file-selector-button {
+  cursor: not-allowed;
+  opacity: 0.72;
 }
 
 .ui-checkbox {
@@ -517,7 +574,8 @@
   }
 
   .ui-surface--interactive,
-  .ui-progress__value {
+  .ui-progress__value,
+  .ui-file-input::file-selector-button {
     transition-duration: 0.01ms;
   }
 

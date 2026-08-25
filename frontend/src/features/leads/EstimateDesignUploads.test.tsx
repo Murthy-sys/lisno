@@ -292,7 +292,7 @@ describe("EstimateDesignUploads", () => {
     expect(screen.getByText("Could not read plan")).toBeVisible();
   });
 
-  it("renders six extracted rows and keeps submission enabled while processing and pending", async () => {
+  it("renders six extracted rows and blocks submission while extraction is pending", async () => {
     const sixPages = Array.from({ length: 6 }, (_, index) => ({
       ...page,
       id: `page-${index + 1}`,
@@ -367,18 +367,8 @@ describe("EstimateDesignUploads", () => {
       label: definition.title,
       reviewStatus: "draft" as const
     }));
-    let settleSubmission!: (response: Response) => void;
-    const pendingSubmission = new Promise<Response>((resolve) => {
-      settleSubmission = resolve;
-    });
-    vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
       const url = String(input);
-      if (
-        url.endsWith("/estimates/estimate-1/design-drawings/submit") &&
-        init?.method === "POST"
-      ) {
-        return pendingSubmission;
-      }
       if (url.endsWith("/estimates/estimate-1/design-uploads")) {
         return Promise.resolve(response({
           uploads: [{
@@ -467,32 +457,15 @@ describe("EstimateDesignUploads", () => {
     const submit = screen.getByRole("button", {
       name: "Submit drawings to client"
     });
-    expect(submit).toBeEnabled();
-    expect(submit).not.toHaveAttribute("disabled");
-    expect(submit).not.toHaveAttribute("aria-disabled");
-    await user.click(submit);
-
-    const pendingButton = screen.getByRole("button", {
-      name: "Submitting…"
-    });
-    expect(pendingButton).toBeEnabled();
-    expect(pendingButton).not.toHaveAttribute("disabled");
-    expect(pendingButton).not.toHaveAttribute("aria-disabled");
+    expect(submit).toBeDisabled();
 
     expect(screen.getByText(
       "Extracted drawings remain private until they are submitted to the client."
     )).toBeVisible();
     expect(misc).toHaveTextContent("No exact estimate item is assigned.");
     expect(screen.getByText(
-      "6 drawings can be submitted now. Verification is optional for this milestone."
+      "Wait for every uploaded plan to finish extracting before submission."
     )).toBeVisible();
-
-    settleSubmission(Response.json({
-      error: { code: "SUBMISSION_FAILED", message: "Try again." }
-    }, { status: 500 }));
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "The drawings could not be submitted. Try again."
-    );
   });
 
   it("uploads through multipart, polls while queued or processing, and stops once review is ready", async () => {
@@ -520,7 +493,7 @@ describe("EstimateDesignUploads", () => {
     post.responseText = JSON.stringify({ data: { id: "upload-1", estimateId: "estimate-1", leadId: "lead-1", originalFilename: "plan.pdf", mimeType: "application/pdf", sizeBytes: 12, uploaderId: "user-1", uploadedAt: "2026-07-30T00:00:00.000Z", extractionStatus: "queued", failureCode: null, failureMessage: null } });
     post.onload?.();
 
-    expect(await screen.findByText("Ready for estimator review", {}, { timeout: 8_000 })).toBeVisible();
+    expect(await screen.findByText("Ready for drawing review", {}, { timeout: 8_000 })).toBeVisible();
     expect(post.method).toBe("POST");
     expect(post.sentBody).toBeInstanceOf(FormData);
     const terminalRequests = getCount;

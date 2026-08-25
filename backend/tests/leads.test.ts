@@ -1355,8 +1355,8 @@ describe("linked estimate approval route Mongo transaction", () => {
         clientId: "user-client-aurora",
         initiatingDesignerId: null,
         assignedEstimatorId: "user-estimator-sales",
-        assignedDesignerIds: ["designer-route"],
-        managerId: "manager-route"
+        assignedDesignerIds: [],
+        managerId: null
       });
       expect(await EstimateModel.findById(estimateId).lean()).toMatchObject({
         status: "client_approved",
@@ -1440,8 +1440,8 @@ describe("linked estimate approval route Mongo transaction", () => {
   }, 30_000);
 });
 
-describe("estimate final drawing approval gate", () => {
-  it("rejects unresolved drawings transactionally without changing the estimate", async () => {
+describe("commercial estimate approval handoff", () => {
+  it("approves without reading drawing state and opens pending design assignment", async () => {
     mockLegacyClientDecisionLookup();
     const estimate = {
       _id: "estimate-gated",
@@ -1459,8 +1459,13 @@ describe("estimate final drawing approval gate", () => {
     };
     const lead = {
       _id: "lead-gated",
+      projectId: null,
+      ownerId: "user-estimator-sales",
       clientEmail: "client@aurora.example",
-      projectName: "Gated project"
+      clientName: "Aurora Client",
+      clientMobile: "9000000000",
+      projectName: "Gated project",
+      location: "Bengaluru"
     };
     const drawings = [
       { _id: "drawing-approved", estimateId: estimate._id, active: true },
@@ -1479,7 +1484,8 @@ describe("estimate final drawing approval gate", () => {
     vi.spyOn(EstimateModel, "findById").mockReturnValue(query(estimate) as never);
     vi.spyOn(LeadModel, "findById").mockReturnValue(query(lead) as never);
     vi.spyOn(LeadModel, "findOne").mockReturnValue(query(lead) as never);
-    vi.spyOn(EstimateDesignDrawingModel, "find").mockReturnValue(query(drawings) as never);
+    const drawingFind = vi.spyOn(EstimateDesignDrawingModel, "find")
+      .mockReturnValue(query(drawings) as never);
     vi.spyOn(EstimateDesignRevisionModel, "findOne").mockImplementation((filter) =>
       query(revisions.get(String(filter.drawingId)) ?? null) as never
     );
@@ -1490,19 +1496,65 @@ describe("estimate final drawing approval gate", () => {
     );
     const projectCreate = vi.spyOn(ProjectModel, "create").mockResolvedValue({} as never);
     vi.spyOn(LeadModel, "updateOne").mockResolvedValue({ matchedCount: 1, modifiedCount: 1 } as never);
+    const estimateUpdate = vi.spyOn(EstimateModel, "updateOne")
+      .mockImplementation(async (_filter, update) => {
+        const operation = update as Record<string, any>;
+        Object.assign(estimate, operation.$set ?? {});
+        estimate.version += Number(operation.$inc?.version ?? 0);
+        estimate.designLifecycleVersion += Number(
+          operation.$inc?.designLifecycleVersion ?? 0
+        );
+        if (operation.$push?.reviews) {
+          estimate.reviews.push(operation.$push.reviews);
+        }
+        return { matchedCount: 1, modifiedCount: 1 } as never;
+      });
+    vi.spyOn(AuditEventModel, "create").mockImplementation(async (events) =>
+      (events as Array<Record<string, any>>).map((event) => ({
+        toObject: () => ({ ...event, id: event._id })
+      })) as never
+    );
 
     const response = await request(app)
       .post("/api/v1/client/estimates/estimate-gated/decision")
       .set("Authorization", `Bearer ${clientToken()}`)
       .send({ decision: "approve", note: "" });
 
-    expect(response.status).toBe(409);
-    expect(response.body.error.code).toBe("ESTIMATE_DRAWINGS_UNRESOLVED");
-    expect(estimate.status).toBe("sent_to_client");
-    expect(projectCreate).not.toHaveBeenCalled();
+    expect(response.status).toBe(200);
+    expect(response.body.data).toMatchObject({
+      status: "client_approved",
+      designFrozenAt: null,
+      designPlanStatus: "pending_assignment",
+      designPlanVersion: 0,
+      designPlanDesignerId: null
+    });
+    expect(drawingFind).not.toHaveBeenCalled();
+    expect(projectCreate).toHaveBeenCalledOnce();
+    expect(projectCreate.mock.calls[0]![0]).toEqual([
+      expect.objectContaining({
+        initiatingDesignerId: null,
+        assignedEstimatorId: "user-estimator-sales",
+        assignedDesignerIds: [],
+        managerId: null,
+        status: "planning"
+      })
+    ]);
+    expect(estimateUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ _id: "estimate-gated" }),
+      expect.objectContaining({
+        $set: expect.objectContaining({
+          status: "client_approved",
+          designFrozenAt: null,
+          designPlanStatus: "pending_assignment",
+          designPlanVersion: 0,
+          designPlanDesignerId: null
+        })
+      }),
+      expect.any(Object)
+    );
   });
 
-  it("keeps legacy estimates with no drawings approvable", async () => {
+  it("keeps estimates with no prior drawings approvable", async () => {
     mockLegacyClientDecisionLookup();
     const estimate = {
       _id: "estimate-no-drawings",
@@ -1550,7 +1602,7 @@ describe("estimate final drawing approval gate", () => {
     vi.spyOn(UserModel, "findById").mockImplementation((id) =>
       query(id === "designer-1" ? designer : manager) as never
     );
-    vi.spyOn(ProjectModel, "create").mockResolvedValue({} as never);
+    const projectCreate = vi.spyOn(ProjectModel, "create").mockResolvedValue({} as never);
     vi.spyOn(LeadModel, "updateOne").mockResolvedValue({ matchedCount: 1, modifiedCount: 1 } as never);
     vi.spyOn(EstimateModel, "updateOne").mockImplementation(async () => {
       estimate.status = "client_approved";
@@ -1569,15 +1621,30 @@ describe("estimate final drawing approval gate", () => {
       .send({ decision: "approve", note: "" });
 
     expect(response.status).toBe(200);
-    expect(response.body.data.status).toBe("client_approved");
-    expect(ProjectModel.create).toHaveBeenCalledOnce();
+    expect(response.body.data).toMatchObject({
+      status: "client_approved",
+      designFrozenAt: null,
+      designPlanStatus: "pending_assignment",
+      designPlanVersion: 0,
+      designPlanDesignerId: null
+    });
+    expect(projectCreate).toHaveBeenCalledOnce();
+    expect(projectCreate.mock.calls[0]![0]).toEqual([
+      expect.objectContaining({
+        initiatingDesignerId: null,
+        assignedEstimatorId: "user-estimator-sales",
+        assignedDesignerIds: [],
+        managerId: null,
+        status: "planning"
+      })
+    ]);
     expect(auditCreate).toHaveBeenCalledWith(
       [expect.objectContaining({
         action: "estimate_design_final_approved",
         entityId: "estimate-no-drawings",
         newValues: expect.objectContaining({
           status: "client_approved",
-          approvedDrawingCount: 0
+          designPlanStatus: "pending_assignment"
         })
       })],
       { session }
@@ -1595,7 +1662,10 @@ describe("estimate final drawing approval gate", () => {
       expect.objectContaining({
         $set: expect.objectContaining({
           status: "client_approved",
-          designFrozenAt: expect.any(Date)
+          designFrozenAt: null,
+          designPlanStatus: "pending_assignment",
+          designPlanVersion: 0,
+          designPlanDesignerId: null
         }),
         $inc: expect.objectContaining({ designLifecycleVersion: 1 })
       }),

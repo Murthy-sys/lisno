@@ -839,7 +839,7 @@ describe("client estimate drawings", () => {
     resolveApproval?.(json(revisions[0]));
   });
 
-  it("uses backend readiness for final approval and preserves a concurrent conflict", async () => {
+  it("keeps commercial approval independent from drawing readiness after a concurrent conflict", async () => {
     let workspaceReads = 0;
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const url = String(input);
@@ -899,11 +899,10 @@ describe("client estimate drawings", () => {
     expect(await within(card).findByRole("alert")).toHaveTextContent(
       "Every submitted drawing must be approved before approving the estimate."
     );
-    await waitFor(() => expect(approve).toBeDisabled());
-    const explanationId = approve.getAttribute("aria-describedby");
-    expect(explanationId).toBeTruthy();
-    expect(document.getElementById(explanationId!)).toHaveTextContent(
+    await waitFor(() => expect(workspaceReads).toBe(2));
+    expect(approve).toBeEnabled();
+    expect(within(card).getByText(
       "1 drawing unresolved: 1 awaiting review."
-    );
+    )).toBeVisible();
   });
 });

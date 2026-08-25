@@ -1,5 +1,4 @@
 import { screen, within } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import type { Lead } from "../../api/types";
@@ -136,8 +135,6 @@ describe("LeadDashboard", () => {
       if (url === "/api/v1/estimates") return Response.json({ data: savedEstimates });
       throw new Error(`Unhandled request: ${url}`);
     });
-    const user = userEvent.setup();
-
     renderApp(["/estimator-sales"]);
 
     expect(await screen.findByRole("heading", { name: "Lead workspace" })).toBeVisible();
@@ -150,20 +147,17 @@ describe("LeadDashboard", () => {
     expect(within(overview).getByText("Saved value")).toBeVisible();
     expect(within(overview).getByText("₹3,54,000", { selector: "dd" })).toBeVisible();
     expect(screen.getByRole("heading", { name: "Leads", level: 2 })).toBeVisible();
-    const savedSection = screen.getByRole("region", { name: "Saved estimates" });
+    // Saved estimates live in the lead list only: the duplicate card grid is gone.
     expect(
-      within(savedSection).getByRole("heading", {
-        name: "Saved estimates",
-        level: 2
-      })
-    ).toBeVisible();
+      screen.queryByRole("region", { name: "Saved estimates" })
+    ).not.toBeInTheDocument();
     expect(
-      within(savedSection).getAllByRole("button", { name: "Export as PDF" })
+      screen.getAllByRole("button", { name: "Export as PDF" })
     ).toHaveLength(2);
     expect(screen.getByText("Estimate", { selector: ".lead-list__header span" })).toBeVisible();
     expect(screen.queryByText("Contact architect")).not.toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "New lead" }));
-    expect(await screen.findByRole("dialog", { name: "New lead" })).toBeVisible();
+    // Leads now arrive from admin project initiation, not from this screen.
+    expect(screen.queryByRole("button", { name: "New lead" })).not.toBeInTheDocument();
   });
 
   it("keeps leads usable when saved estimates fail", async () => {

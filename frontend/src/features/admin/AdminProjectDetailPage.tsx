@@ -8,14 +8,17 @@ import { PageHeader } from "../../components/ui/PageHeader";
 import { PageState } from "../../components/ui/PageState";
 import { StatusBadge } from "../../components/ui/StatusBadge";
 import { Surface } from "../../components/ui/Surface";
+import {
+  adminProjectNextAction,
+  adminProjectStatusLabel,
+  formatWorkflowLabel,
+  isDesignerAssignmentPending
+} from "./adminProjectPresentation";
 import { adminProjectKeys, getAdminProject } from "./adminProjectsApi";
+import { DesignAssignmentPanel } from "./DesignAssignmentPanel";
 
 const money = new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 });
 const dateTime = new Intl.DateTimeFormat("en-GB", { dateStyle: "medium", timeStyle: "short", timeZone: "UTC" });
-
-function label(value: string) {
-  return value.split("_").map((part) => part[0]?.toUpperCase() + part.slice(1)).join(" ");
-}
 
 function deliveryLabel(value: string) {
   return value === "sent"
@@ -44,6 +47,10 @@ export function AdminProjectDetailPage() {
     auth.authorization,
     "estimation.client_response_tasks.read"
   );
+  const canAssignDesigner = hasFrontendPermission(
+    auth.authorization,
+    "design.plan_assignment.manage"
+  );
 
   if (projectQuery.isPending) return <PageState state="loading" message="Loading project details…" />;
   if (projectQuery.isError) {
@@ -51,25 +58,34 @@ export function AdminProjectDetailPage() {
   }
   if (!project) return <PageState state="empty" message="Project details are unavailable." />;
 
+  const nextAction = adminProjectNextAction(project);
+  const assignmentPending = isDesignerAssignmentPending(project);
+
   return (
     <section className="access-administration admin-project-detail" aria-labelledby="admin-project-detail-title">
       <PageHeader
         id="admin-project-detail-title"
         eyebrow="Project administration"
         title={project.name}
-        description="Read-only project and handoff details."
-        breadcrumb={<Link to="/admin/projects">Back to My Projects</Link>}
-        metadata={<StatusBadge tone="info" label={label(project.status)} />}
+        description="Review the commercial handoff and assign approved design work."
+        breadcrumb={<Link to="/admin/projects">Back to {auth.user?.role === "super_admin" ? "All Projects" : "My Projects"}</Link>}
+        metadata={<StatusBadge tone="info" label={adminProjectStatusLabel(project)} />}
+        actions={assignmentPending && canAssignDesigner ? (
+          <a className="button button--primary" href="#design-assignment-title">
+            Assign Designer
+          </a>
+        ) : undefined}
       />
       <Surface as="section" className="admin-project-detail__surface" aria-label="Project details">
         <div className="admin-project-detail__grid">
           <section><h2>Project</h2><dl><div><dt>Location</dt><dd>{project.location}</dd></div><div><dt>Property type</dt><dd>{project.propertyType ?? "Not captured"}</dd></div><div><dt>Budget</dt><dd>{project.budgetMin === null || project.budgetMax === null ? "Not captured" : `${money.format(project.budgetMin)} – ${money.format(project.budgetMax)}`}</dd></div></dl></section>
           <section><h2>Client</h2><dl><div><dt>Name</dt><dd>{project.client.name}</dd></div><div><dt>Email</dt><dd>{project.client.email}</dd></div><div><dt>Mobile</dt><dd>{project.client.mobile}</dd></div></dl></section>
           <section><h2>Estimator/Sales</h2><dl><div><dt>Assigned to</dt><dd>{project.estimator?.name ?? "Unassigned handoff"}</dd></div>{project.estimator ? <div><dt>Email</dt><dd>{project.estimator.email}</dd></div> : null}</dl></section>
-          <section><h2>Lead progress</h2>{project.lead ? <dl><div><dt>Stage</dt><dd>{label(project.lead.stage)}</dd></div><div><dt>Next action</dt><dd>{project.lead.nextAction}</dd></div><div><dt>Next action date</dt><dd><time dateTime={project.lead.nextActionAt}>{dateTime.format(new Date(project.lead.nextActionAt))}</time></dd></div></dl> : <p>Unassigned handoff</p>}</section>
-          <section><h2>Estimate</h2>{project.estimate ? <dl><div><dt>Status</dt><dd>{label(project.estimate.status)}</dd></div><div><dt>Value</dt><dd>{money.format(project.estimate.total)}</dd></div></dl> : <p>No estimate yet</p>}</section>
+          <section><h2>Lead progress</h2>{project.lead ? <dl><div><dt>Stage</dt><dd>{formatWorkflowLabel(project.lead.stage)}</dd></div><div><dt>Next action</dt><dd>{nextAction}</dd></div><div><dt>Next action date</dt><dd><time dateTime={project.lead.nextActionAt}>{dateTime.format(new Date(project.lead.nextActionAt))}</time></dd></div></dl> : <p>Unassigned handoff</p>}</section>
+          <section><h2>Estimate</h2>{project.estimate ? <dl><div><dt>Status</dt><dd>{formatWorkflowLabel(project.estimate.status)}</dd></div><div><dt>Value</dt><dd>{money.format(project.estimate.total)}</dd></div></dl> : <p>No estimate yet</p>}</section>
         </div>
       </Surface>
+      <DesignAssignmentPanel project={project} />
       {project.estimate?.clientReview ? (
         <Surface
           as="section"
@@ -87,7 +103,7 @@ export function AdminProjectDetailPage() {
                       ? "danger"
                       : "warning"
                 }
-                label={label(project.estimate.clientReview.status)}
+                label={formatWorkflowLabel(project.estimate.clientReview.status)}
               />
             </p>
             <p>{deliveryLabel(project.estimate.clientReview.deliveryStatus)}</p>

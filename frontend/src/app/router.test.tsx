@@ -195,6 +195,9 @@ function installDesignerApi(
     if (url === "/api/v1/auth/authorization") {
       return Response.json({ data: authorizationFor(designer.role) });
     }
+    if (url === "/api/v1/designer/design-plan-tasks") {
+      return Response.json({ data: [] });
+    }
     if (url.startsWith("/api/v1/projects?")) {
       return Response.json({
         data: {
@@ -412,8 +415,8 @@ describe("role landing staging contract", () => {
 });
 
 describe("public invitation route", () => {
-  it("mounts directly while staying outside the 22-route protected registry", async () => {
-    expect(ROUTE_REGISTRY).toHaveLength(22);
+  it("mounts directly while staying outside the protected registry", async () => {
+    expect(ROUTE_REGISTRY).toHaveLength(24);
     expect(ROUTE_REGISTRY.map(({ path }) => path)).not.toContain(
       "/accept-invitation"
     );
@@ -430,16 +433,24 @@ describe("public invitation route", () => {
 });
 
 describe("registered permission routes", () => {
-  it("adds only the two Admin response routes and preserves both Client route contracts", () => {
+  it("adds the workflow routes and preserves both Client route contracts", () => {
     const paths = ROUTE_REGISTRY.map(({ path }) => path);
     const additions = paths.filter(
       (path) => !(historicalProtectedPaths as readonly string[]).includes(path)
     );
 
-    expect(paths).toHaveLength(historicalProtectedPaths.length + 2);
-    expect(additions).toEqual(clientResponsePaths);
+    expect(paths).toHaveLength(historicalProtectedPaths.length + 4);
+    expect(additions).toEqual([
+      "/designer/design-plans",
+      ...clientResponsePaths,
+      "/admin/design-approvals"
+    ]);
     expect(paths.filter(
-      (path) => !(clientResponsePaths as readonly string[]).includes(path)
+      (path) => ![
+        "/designer/design-plans",
+        ...clientResponsePaths,
+        "/admin/design-approvals"
+      ].includes(path)
     )).toEqual(historicalProtectedPaths);
     expect(ROUTE_REGISTRY.filter(({ path }) => path.startsWith("/client")))
       .toEqual([
@@ -505,6 +516,34 @@ describe("registered permission routes", () => {
     ]);
   });
 
+  it("presents Admin project list and detail routes to Admin and Super Admin", () => {
+    expect(
+      ROUTE_REGISTRY.filter(({ path }) => path.startsWith("/admin/projects"))
+    ).toEqual([
+      {
+        path: "/admin/projects",
+        permission: "projects.list",
+        presentationRoles: ["admin", "super_admin"],
+        navigation: {
+          roles: ["admin", "super_admin"],
+          item: {
+            label: "My Projects",
+            to: "/admin/projects",
+            end: true,
+            icon: FolderKanban
+          },
+          labels: { super_admin: "All Projects" }
+        }
+      },
+      {
+        path: "/admin/projects/:projectId",
+        permission: "projects.read",
+        presentationRoles: ["admin", "super_admin"],
+        navigation: null
+      }
+    ]);
+  });
+
   it.each([
     [
       "admin",
@@ -515,6 +554,20 @@ describe("registered permission routes", () => {
     ],
     [
       "admin",
+      "/admin/projects/project-1",
+      ["identity.self.read", "projects.read"],
+      "Admin residence",
+      "No estimate yet"
+    ],
+    [
+      "super_admin",
+      "/admin/projects",
+      ["identity.self.read", "projects.list"],
+      "All Projects",
+      "No projects available."
+    ],
+    [
+      "super_admin",
       "/admin/projects/project-1",
       ["identity.self.read", "projects.read"],
       "Admin residence",
@@ -966,7 +1019,7 @@ describe("protected role routing", () => {
       })
     ).toHaveTextContent("Restoring your session");
     expect(
-      await screen.findByRole("heading", { name: "Good morning, Ananya." })
+      await screen.findByRole("heading", { name: "Design workspace" })
     ).toBeVisible();
     expect(screen.getAllByRole("main")).toHaveLength(1);
     expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
@@ -1075,7 +1128,7 @@ describe("protected role routing", () => {
     tokenStorage.set("valid-token");
     installDesignerApi();
     const { router } = renderApp(["/designer"]);
-    await screen.findByRole("heading", { name: "Good morning, Ananya." });
+    await screen.findByRole("heading", { name: "Design workspace" });
 
     tokenStorage.clear();
     window.dispatchEvent(
@@ -1086,7 +1139,7 @@ describe("protected role routing", () => {
 
     expect(await screen.findByRole("heading", { name: "Welcome back" })).toBeVisible();
     expect(screen.getByText("Your session expired. Sign in again.")).toBeVisible();
-    expect(screen.queryByRole("heading", { name: "Good morning, Ananya." })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Design workspace" })).not.toBeInTheDocument();
     expect(screen.getAllByRole("main")).toHaveLength(1);
     expect(router.state.location.pathname).toBe("/login");
   });
@@ -1109,7 +1162,7 @@ describe("protected role routing", () => {
 
     const { router } = renderApp(["/"]);
 
-    expect(await screen.findByRole("heading", { name: "Good morning, Ananya." })).toBeVisible();
+    expect(await screen.findByRole("heading", { name: "Design workspace" })).toBeVisible();
     expect(router.state.location.pathname).toBe("/designer");
   });
 
@@ -1129,7 +1182,7 @@ describe("protected role routing", () => {
     installDesignerApi();
     const cleanupGate = deferred();
     const { queryClient, router } = renderApp(["/designer"]);
-    await screen.findByRole("heading", { name: "Good morning, Ananya." });
+    await screen.findByRole("heading", { name: "Design workspace" });
     vi.spyOn(queryClient, "cancelQueries").mockImplementation(async () => {
       await cleanupGate.promise;
     });
@@ -1155,7 +1208,7 @@ describe("protected role routing", () => {
     tokenStorage.set("valid-token");
     installDesignerApi();
     const { router } = renderApp(["/designer"]);
-    await screen.findByRole("heading", { name: "Good morning, Ananya." });
+    await screen.findByRole("heading", { name: "Design workspace" });
 
     await userEvent.click(screen.getByRole("button", { name: "Sign out" }));
 
@@ -1182,7 +1235,7 @@ describe("protected role routing", () => {
     tokenStorage.set("valid-token");
     installDesignerApi();
     renderApp(["/designer"]);
-    await screen.findByRole("heading", { name: "Good morning, Ananya." });
+    await screen.findByRole("heading", { name: "Design workspace" });
 
     const trigger = screen.getByRole("button", { name: "Open navigation" });
     expect(trigger).toHaveAttribute("aria-controls", "mobile-navigation");
