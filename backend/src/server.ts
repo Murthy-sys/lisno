@@ -92,6 +92,7 @@ export async function startServer(
       ocrConfidenceFloor: env.OCR_CONFIDENCE_FLOOR,
       ocrWorkerToken: env.OCR_WORKER_TOKEN,
       invitationMailer,
+      allowDemoAccountExternalEmail: env.allowDemoAccountExternalEmail,
       estimateMailer,
       clientPortalUrl,
       developmentDemoAuthorization: dependencies.developmentDemoAuthorization

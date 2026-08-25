@@ -93,6 +93,7 @@ export interface AppDependencies {
     maxEntries?: number;
   };
   invitationMailer?: InvitationMailer;
+  allowDemoAccountExternalEmail?: boolean;
   invitationPublicRateLimit?: InvitationRateLimitOptions;
   invitationDeliveryRateLimit?: InvitationRateLimitOptions;
   estimatePdfService?: EstimatePdfService;
@@ -155,6 +156,7 @@ export function createApp(dependencies: AppDependencies) {
     repository,
     audit: auditService,
     mailer: dependencies.invitationMailer ?? { deliveryKind: "disabled" },
+    allowDemoAccountExternalEmail: dependencies.allowDemoAccountExternalEmail,
     clock
   });
   const adminProjectService = createAdminProjectService(

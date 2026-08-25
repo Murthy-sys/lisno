@@ -74,7 +74,8 @@ const environmentSchema = z.object({
   SMTP_USERNAME: z.string().optional(),
   SMTP_PASSWORD: z.string().optional(),
   SMTP_FROM: z.string().optional(),
-  SMTP_TLS_REJECT_UNAUTHORIZED: z.string().optional()
+  SMTP_TLS_REJECT_UNAUTHORIZED: z.string().optional(),
+  ALLOW_DEMO_ACCOUNT_EXTERNAL_EMAIL: z.string().optional()
 }).superRefine((environment, context) => {
   if (environment.OCR_RETRY_MAX_SECONDS < environment.OCR_RETRY_INITIAL_SECONDS) {
     context.addIssue({
@@ -143,8 +144,11 @@ const environmentSchema = z.object({
     SMTP_PASSWORD,
     SMTP_FROM,
     SMTP_TLS_REJECT_UNAUTHORIZED: _tlsVerification,
+    ALLOW_DEMO_ACCOUNT_EXTERNAL_EMAIL,
     ...base
   } = environment;
+  const allowDemoAccountExternalEmail =
+    ALLOW_DEMO_ACCOUNT_EXTERNAL_EMAIL === "true";
   const mailDelivery: MailDeliveryConfig = SMTP_HOST === undefined
     ? { kind: "disabled" }
     : {
@@ -157,7 +161,7 @@ const environmentSchema = z.object({
         password: SMTP_PASSWORD!,
         from: SMTP_FROM!.trim()
       };
-  return { ...base, mailDelivery };
+  return { ...base, mailDelivery, allowDemoAccountExternalEmail };
 });
 
 export type LoadedEnvironment = z.infer<typeof environmentSchema>;

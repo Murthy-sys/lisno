@@ -117,6 +117,12 @@ export interface CreateUserInvitationServiceInput {
   audit: AuditService;
   mailer: InvitationMailer;
   clock: Clock;
+  /*
+   * Opt-in escape hatch for local testing only. Reserved development demo
+   * identities are barred from sending real external mail because their
+   * credentials ship in the repository; setting this permits it.
+   */
+  allowDemoAccountExternalEmail?: boolean;
   randomBytes?: (size: number) => Buffer;
   passwordHasher?: (password: string, cost: number) => Promise<string>;
 }
@@ -143,6 +149,8 @@ export function createUserInvitationService(
   input: CreateUserInvitationServiceInput
 ): UserInvitationService {
   const { repository, audit, mailer, clock } = input;
+  const allowDemoAccountExternalEmail =
+    input.allowDemoAccountExternalEmail ?? false;
   const randomBytes = input.randomBytes ?? cryptoRandomBytes;
   const passwordHasher =
     input.passwordHasher ??
@@ -259,7 +267,8 @@ export function createUserInvitationService(
         audit,
         enabledMailer,
         clock,
-        { record: created, rawToken, actorId: created.tokenIssuedById }
+        { record: created, rawToken, actorId: created.tokenIssuedById },
+        allowDemoAccountExternalEmail
       );
     },
 
@@ -324,7 +333,8 @@ export function createUserInvitationService(
         audit,
         enabledMailer,
         clock,
-        { record: resent, rawToken, actorId: resent.tokenIssuedById }
+        { record: resent, rawToken, actorId: resent.tokenIssuedById },
+        allowDemoAccountExternalEmail
       );
     },
 
@@ -709,7 +719,8 @@ async function deliverGeneration(
   audit: AuditService,
   mailer: Exclude<InvitationMailer, { deliveryKind: "disabled" }>,
   clock: Clock,
-  attempt: DeliveryAttempt
+  attempt: DeliveryAttempt,
+  allowDemoAccountExternalEmail = false
 ): Promise<UserInvitationDto> {
   const issuingActor = await repository.findUserById(attempt.actorId);
   let delivery:
@@ -723,7 +734,8 @@ async function deliverGeneration(
     };
   } else if (
     mailer.deliveryKind === "external" &&
-    isReservedDevelopmentDemoIdentity(issuingActor)
+    isReservedDevelopmentDemoIdentity(issuingActor) &&
+    !allowDemoAccountExternalEmail
   ) {
     delivery = {
       status: "failed",
