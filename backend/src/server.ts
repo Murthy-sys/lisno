@@ -100,7 +100,8 @@ export async function startServer(
       estimateMailer,
       designPlanMailer,
       clientPortalUrl,
-      developmentDemoAuthorization: dependencies.developmentDemoAuthorization
+      developmentDemoAuthorization: dependencies.developmentDemoAuthorization,
+      apiDocsEnabled: env.apiDocsEnabled
     });
     server = await listen(app, env.PORT, dependencies.bindHost);
     (dependencies.writeOutput ?? ((message) => process.stdout.write(message)))(

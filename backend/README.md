@@ -34,6 +34,33 @@ Start the API and worker together with `npm run dev`, or start the compiled API
 with `npm start` and run `python -m lisno_ocr.worker` separately. Both processes
 must use the same worker token.
 
+## OpenAPI and Swagger UI
+
+With the backend running on its default port, open the interactive API
+documentation at:
+
+- Swagger UI: `http://localhost:3000/api-docs/`
+- OpenAPI JSON: `http://localhost:3000/openapi.json`
+
+Documentation is enabled by default in development and test, and disabled when
+`NODE_ENV=production`. Set `API_DOCS_ENABLED=true` in production only when the
+documentation endpoints are protected by a private reverse proxy, an IP
+allow-list, or equivalent access control. Set it to `false` to disable the
+endpoints explicitly in any environment.
+
+Use `POST /auth/login` in Swagger, copy the raw JWT from `data.token`, select
+**Authorize**, and paste only the token. Swagger adds the `Bearer` prefix.
+Authorization is not persisted when the page is refreshed. The documentation
+is readable without signing in when enabled, but every protected API operation
+continues to enforce its role and permission policy.
+
+The protected path inventory is generated from the canonical route-operation
+registry. Each operation exposes its required permission as
+`x-lisno-permission`. Core workflow request schemas are documented exactly;
+operations marked `x-lisno-schema-completeness: generic` still use their source
+Zod validation at runtime and should be treated as discovery-level documentation
+until their private schema is exported.
+
 Extraction failures retain the original upload. The estimator retry endpoint
 resets only a failed upload/job pair; lease expiry permits safe reclaim, while
 claim tokens and result IDs prevent stale or duplicate publication. Repeated

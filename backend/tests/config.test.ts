@@ -135,6 +135,27 @@ describe("environment authentication configuration", () => {
     ).toBe(OCR_WORKER_TOKEN);
   });
 
+  it("enables API docs outside production and requires a production opt-in", () => {
+    const base = {
+      JWT_SECRET: "runtime-secret-with-at-least-32-characters",
+      OCR_WORKER_TOKEN
+    };
+
+    expect(loadEnvironment({ ...base, NODE_ENV: "development" }).apiDocsEnabled)
+      .toBe(true);
+    expect(loadEnvironment({ ...base, NODE_ENV: "production" }).apiDocsEnabled)
+      .toBe(false);
+    expect(loadEnvironment({
+      ...base,
+      NODE_ENV: "production",
+      API_DOCS_ENABLED: "true"
+    }).apiDocsEnabled).toBe(true);
+    expect(loadEnvironment({ ...base, API_DOCS_ENABLED: "false" }).apiDocsEnabled)
+      .toBe(false);
+    expect(() => loadEnvironment({ ...base, API_DOCS_ENABLED: "yes" }))
+      .toThrow();
+  });
+
   describe("mail delivery", () => {
     const base = {
       JWT_SECRET: "runtime-secret-with-at-least-32-characters",

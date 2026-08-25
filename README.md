@@ -60,14 +60,18 @@ model files on its first real extraction, so the first job can take longer. See
 [ocr-worker/README.md](ocr-worker/README.md) for worker settings, supported
 formats, model-cache behavior, and recovery.
 
+Once the backend is running, its interactive Swagger documentation is available
+at `http://localhost:3000/api-docs/`; the raw OpenAPI document is available at
+`http://localhost:3000/openapi.json`.
+
 ## Client signup and project linking
 
 Clients create an account at `http://localhost:5173/signup`. The form requires
 name, email, mobile number, address, password, and password confirmation;
 passwords must be 12–128 characters and both password fields must match.
 
-When a designer creates a project, they enter the client's contact details even
-if that client does not have a Lisno account yet. Lisno stores those details as
+When an Admin initiates a project, they enter the Client's contact details even
+if that Client does not have a Lisno account yet. Lisno stores those details as
 a project snapshot and normalizes the email for linking. Client signup
 atomically claims every unclaimed project with the same normalized email, so
 capitalization and surrounding whitespace do not affect the match. Existing
@@ -80,10 +84,10 @@ internal account cannot be selected as a project client.
 > project. This warning documents the blocker without changing current Client
 > behavior.
 
-Designers choose the project manager from the active-manager search in the
-project creation dialog. The selection is independent of the designer's
-reporting line: any active design manager can own the project, while inactive
-or non-manager accounts are rejected.
+Admins assign an Estimator during project initiation. After Estimate approval,
+an Admin or Super Admin assigns the Designer who uploads the design plan; the
+Designer cannot create projects or approve Estimates. Inactive Estimator and
+Designer accounts cannot be assigned.
 
 ### Existing database migration
 
@@ -157,7 +161,7 @@ this title taxonomy.
 ## Environment variables
 
 Backend: `PORT`, `NODE_ENV`, `MONGODB_URI`, `JWT_SECRET`, `CORS_ORIGIN`,
-`UPLOADS_DIR`, `MAX_UPLOAD_MB`, `OCR_WORKER_TOKEN`, `OCR_LEASE_SECONDS`,
+`UPLOADS_DIR`, `MAX_UPLOAD_MB`, `API_DOCS_ENABLED`, `OCR_WORKER_TOKEN`, `OCR_LEASE_SECONDS`,
 `ALLOW_DEMO_SEED`, and `DEMO_SEED_DATABASE`. The two demo-seed variables are
 only for an intentional local destructive reset; the database name must match
 the URI exactly. The worker uses the matching token, `OCR_API_BASE_URL`,

@@ -22,6 +22,7 @@ import { createAuditRouter } from "./routes/audit.js";
 import { createAccessRequestsRouter } from "./routes/access-requests.js";
 import { createAdminUsersRouter } from "./routes/admin-users.js";
 import { createAdminProjectsRouter } from "./routes/admin-projects.js";
+import { apiDocsRouter } from "./routes/api-docs.js";
 import { createAuthRouter } from "./routes/auth.js";
 import { createEvaluationsRouter } from "./routes/evaluations.js";
 import { createDesignVersionsRouter } from "./routes/design-versions.js";
@@ -104,6 +105,7 @@ export interface AppDependencies {
   designPlanMailer?: DesignPlanMailer;
   clientPortalUrl?: string;
   developmentDemoAuthorization?: DevelopmentDemoAuthorization;
+  apiDocsEnabled?: boolean;
 }
 
 export function createApp(dependencies: AppDependencies) {
@@ -255,6 +257,9 @@ export function createApp(dependencies: AppDependencies) {
     : null;
 
   app.use(allowCors(dependencies.corsOrigins ?? []));
+  if (dependencies.apiDocsEnabled ?? true) {
+    app.use(apiDocsRouter);
+  }
   if (extractionWorkerService && dependencies.ocrWorkerToken) {
     app.use(
       "/api/v1",
