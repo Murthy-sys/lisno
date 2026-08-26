@@ -50,6 +50,32 @@ export interface WorkflowTaskBlueprint {
   sourceSectionId: string | null;
   sourceLineItemKey: string | null;
   roomName: string | null;
+  dueInDays: number;
+  plannedEffort: number;
+}
+
+/*
+ * A workflow task needs a deadline and a planned effort for the shared KPI to
+ * score it the same way a design task is scored. Neither is captured per line
+ * item today, so each kind carries the standard turnaround the handoff assumes.
+ */
+export const WORKFLOW_TASK_SCHEDULE: Readonly<
+  Record<ProjectWorkflowTaskKind, { dueInDays: number; plannedEffort: number }>
+> = {
+  design_plan_upload: { dueInDays: 5, plannedEffort: 12 },
+  procurement: { dueInDays: 5, plannedEffort: 8 },
+  finance: { dueInDays: 3, plannedEffort: 4 },
+  site_execution: { dueInDays: 7, plannedEffort: 12 },
+  trade_execution: { dueInDays: 10, plannedEffort: 6 }
+};
+
+export function workflowTaskDueAt(
+  kind: ProjectWorkflowTaskKind,
+  openedAt: Date
+): Date {
+  const due = new Date(openedAt);
+  due.setUTCDate(due.getUTCDate() + WORKFLOW_TASK_SCHEDULE[kind].dueInDays);
+  return due;
 }
 
 const SECTION_LABELS: Readonly<Record<string, string>> = {
@@ -112,7 +138,8 @@ export function projectWorkflowBlueprints(input: {
         : "Prepare materials and sourcing for the approved estimate.",
       sourceSectionId: null,
       sourceLineItemKey: null,
-      roomName: null
+      roomName: null,
+      ...WORKFLOW_TASK_SCHEDULE.procurement
     },
     {
       dedupeKey: `${input.estimateId}:finance`,
@@ -122,7 +149,8 @@ export function projectWorkflowBlueprints(input: {
       description: "Review the approved estimate and establish financial controls.",
       sourceSectionId: null,
       sourceLineItemKey: null,
-      roomName: null
+      roomName: null,
+      ...WORKFLOW_TASK_SCHEDULE.finance
     },
     {
       dedupeKey: `${input.estimateId}:site`,
@@ -134,7 +162,8 @@ export function projectWorkflowBlueprints(input: {
         : "Coordinate execution for the approved design.",
       sourceSectionId: null,
       sourceLineItemKey: null,
-      roomName: null
+      roomName: null,
+      ...WORKFLOW_TASK_SCHEDULE.site_execution
     }
   ];
 
@@ -150,7 +179,8 @@ export function projectWorkflowBlueprints(input: {
       description: `${catalogueId} · ${line.specification} · ${line.quantity} ${line.unit}`,
       sourceSectionId: sectionId,
       sourceLineItemKey,
-      roomName: line.roomName
+      roomName: line.roomName,
+      ...WORKFLOW_TASK_SCHEDULE.trade_execution
     });
   }
 

@@ -14,6 +14,7 @@ import {
   PROMPT_1_AUDIT_ACTIONS
 } from "../src/domain/audit-actions.js";
 import { ROLE_CODES, WORKER_ROLES, type Role } from "../src/domain/roles.js";
+import { HUMAN_JWT_OPERATION_LIST } from "../src/domain/route-operations.js";
 import { EXPECTED_HUMAN_JWT_OPERATIONS } from "./fixtures/prompt-1-route-operations.js";
 
 const STAFF_INVITATION_PERMISSIONS = [
@@ -53,7 +54,8 @@ const PROJECT_WORKFLOW_PERMISSIONS = [
   "design.plan_task.read",
   "design.plan_response_tasks.read",
   "design.plan_response_tasks.decide",
-  "workflow.tasks.read"
+  "workflow.tasks.read",
+  "workflow.tasks.update"
 ] as const;
 
 const PROJECT_WORKFLOW_ADDITIONS = {
@@ -64,16 +66,22 @@ const PROJECT_WORKFLOW_ADDITIONS = {
     "design.plan_response_tasks.decide"
   ],
   designer: ["design.plan_task.read"],
-  procurement: ["workflow.tasks.read"],
-  finance_head: ["workflow.tasks.read"],
-  site_manager: ["workflow.tasks.read"],
-  worker_electrician: ["workflow.tasks.read"],
-  worker_plumber: ["workflow.tasks.read"],
-  worker_carpenter: ["workflow.tasks.read"],
-  worker_painter: ["workflow.tasks.read"],
-  worker_civil: ["workflow.tasks.read"],
-  worker_other: ["workflow.tasks.read"]
+  procurement: ["workflow.tasks.read", "workflow.tasks.update"],
+  finance_head: ["workflow.tasks.read", "workflow.tasks.update"],
+  site_manager: ["workflow.tasks.read", "workflow.tasks.update"],
+  worker_electrician: ["workflow.tasks.read", "workflow.tasks.update"],
+  worker_plumber: ["workflow.tasks.read", "workflow.tasks.update"],
+  worker_carpenter: ["workflow.tasks.read", "workflow.tasks.update"],
+  worker_painter: ["workflow.tasks.read", "workflow.tasks.update"],
+  worker_civil: ["workflow.tasks.read", "workflow.tasks.update"],
+  worker_other: ["workflow.tasks.read", "workflow.tasks.update"]
 } as const;
+
+const PROJECT_FINANCE_PERMISSIONS = [
+  "finance.bucket.read",
+  "finance.entry.read",
+  "finance.entry.create"
+] as const;
 
 const COMMON_ROWS = [1, 85] as const;
 const ADDITIONAL_ROWS = {
@@ -83,15 +91,15 @@ const ADDITIONAL_ROWS = {
   design_manager: [2, 5, 9, 11, 13, ...range(16, 23), ...range(26, 29), 38, 39, ...range(61, 65), ...range(77, 79)],
   design_head: [2, 5, 9, 11, ...range(14, 23), ...range(26, 29), 38, 39, ...range(61, 65)],
   client: [2, 3, 5, 24, ...range(26, 27), 29, ...range(36, 39), ...range(45, 48), ...range(54, 60), ...range(82, 84)],
-  procurement: [88, 89, 90],
-  finance_head: [88, 89, 90],
-  site_manager: [88, 89, 90],
-  worker_electrician: [],
-  worker_plumber: [],
-  worker_carpenter: [],
-  worker_painter: [],
-  worker_civil: [],
-  worker_other: []
+  procurement: [17, 18, 88, 89, 90],
+  finance_head: [17, 18, 88, 89, 90],
+  site_manager: [17, 18, 88, 89, 90],
+  worker_electrician: [17, 18],
+  worker_plumber: [17, 18],
+  worker_carpenter: [17, 18],
+  worker_painter: [17, 18],
+  worker_civil: [17, 18],
+  worker_other: [17, 18]
 } as const satisfies Record<Exclude<Role, "super_admin">, readonly number[]>;
 
 function range(start: number, end: number): number[] {
@@ -170,7 +178,8 @@ describe("authorization policy", () => {
       const historicalPermissions = ROLE_PERMISSIONS[role].filter(
         (permission) =>
           !ESTIMATE_CLIENT_RESPONSE_PERMISSIONS.includes(permission as never) &&
-          !PROJECT_WORKFLOW_PERMISSIONS.includes(permission as never)
+          !PROJECT_WORKFLOW_PERMISSIONS.includes(permission as never) &&
+          !PROJECT_FINANCE_PERMISSIONS.includes(permission as never)
       );
       if (role === "admin") {
         expect(historicalPermissions).toEqual([
@@ -190,12 +199,12 @@ describe("authorization policy", () => {
         permissionsForRows([...COMMON_ROWS, ...ADDITIONAL_ROWS[role]])
       );
     }
-    expect(PERMISSION_CODES).toHaveLength(106);
-    expect(new Set(PERMISSION_CODES).size).toBe(106);
+    expect(PERMISSION_CODES).toHaveLength(110);
+    expect(new Set(PERMISSION_CODES).size).toBe(110);
     expect(ROLE_PERMISSIONS.super_admin).toEqual(PERMISSION_CODES);
   });
 
-  it("adds the five project-workflow permissions to exactly the participating roles", () => {
+  it("adds the six project-workflow permissions to exactly the participating roles", () => {
     expect(
       PERMISSION_CODES.filter((permission) =>
         PROJECT_WORKFLOW_PERMISSIONS.includes(permission as never)
@@ -267,20 +276,46 @@ describe("authorization policy", () => {
   it("gives all worker trades identical identity and workflow-task permissions", () => {
     for (const role of WORKER_ROLES) {
       expect(ROLE_PERMISSIONS[role]).toEqual([
-        "identity.self.read", "identity.authorization.read", "workflow.tasks.read"
+        "identity.self.read",
+        // Workers share the Designer KPI over their own record.
+        "organization.user_tasks.read",
+        "organization.user_kpi.read",
+        "identity.authorization.read",
+        "workflow.tasks.read",
+        "workflow.tasks.update"
       ]);
     }
   });
 
-  it("keeps the reserved worker-assignment override route-less and Super Admin-only", () => {
+  it("routes the worker-assignment override only for Super Admin", () => {
     expect(PERMISSION_CODES).toContain("execution.worker_assignment.override");
     expect(ROLE_PERMISSIONS.super_admin).toContain("execution.worker_assignment.override");
     for (const role of ROLE_CODES.filter((candidate) => candidate !== "super_admin")) {
       expect(ROLE_PERMISSIONS[role]).not.toContain("execution.worker_assignment.override");
     }
-    expect(EXPECTED_HUMAN_JWT_OPERATIONS.map(({ permission }) => permission)).not.toContain(
-      "execution.worker_assignment.override"
-    );
+    expect(
+      HUMAN_JWT_OPERATION_LIST
+        .filter(({ permission }) => permission === "execution.worker_assignment.override")
+        .map(({ key }) => key)
+    ).toEqual([
+      "GET /admin/workers",
+      "GET /admin/projects/:projectId/workflow-tasks",
+      "POST /execution/worker-assignments/override"
+    ]);
+  });
+
+  it("grants project finance only to Finance Manager and Super Admin", () => {
+    for (const role of ROLE_CODES) {
+      const expected = role === "finance_head" || role === "super_admin"
+        ? PROJECT_FINANCE_PERMISSIONS
+        : [];
+      expect(
+        ROLE_PERMISSIONS[role].filter((permission) =>
+          PROJECT_FINANCE_PERMISSIONS.includes(permission as never)
+        ),
+        role
+      ).toEqual(expected);
+    }
   });
 
   it("registers all nine Prompt 1 audit actions", () => {

@@ -5,6 +5,7 @@ import {
   PROJECT_WORKFLOW_TASK_KINDS,
   PROJECT_WORKFLOW_TASK_STATUSES,
   projectWorkflowBlueprints,
+  WORKFLOW_TASK_SCHEDULE,
   workerRoleForCatalogueId,
   type EstimateWorkflowLine
 } from "../src/domain/project-workflow.js";
@@ -123,7 +124,8 @@ describe("project workflow task blueprints", () => {
           "Prepare materials and sourcing for: Carpentry, Civil & Plumbing, Electrical.",
         sourceSectionId: null,
         sourceLineItemKey: null,
-        roomName: null
+        roomName: null,
+        ...WORKFLOW_TASK_SCHEDULE.procurement
       },
       {
         dedupeKey: "estimate-1:finance",
@@ -134,7 +136,8 @@ describe("project workflow task blueprints", () => {
           "Review the approved estimate and establish financial controls.",
         sourceSectionId: null,
         sourceLineItemKey: null,
-        roomName: null
+        roomName: null,
+        ...WORKFLOW_TASK_SCHEDULE.finance
       },
       {
         dedupeKey: "estimate-1:site",
@@ -145,7 +148,8 @@ describe("project workflow task blueprints", () => {
           "Coordinate execution for: Carpentry, Civil & Plumbing, Electrical.",
         sourceSectionId: null,
         sourceLineItemKey: null,
-        roomName: null
+        roomName: null,
+        ...WORKFLOW_TASK_SCHEDULE.site_execution
       }
     ]);
 
@@ -158,7 +162,8 @@ describe("project workflow task blueprints", () => {
         description: "CA01 · Specification for ca01 · 2 nos",
         sourceSectionId: "CA",
         sourceLineItemKey: "Living Room::CA01",
-        roomName: "Living Room"
+        roomName: "Living Room",
+        ...WORKFLOW_TASK_SCHEDULE.trade_execution
       },
       {
         dedupeKey: "estimate-1:trade:Kitchen%3A%3ACV02",
@@ -168,7 +173,8 @@ describe("project workflow task blueprints", () => {
         description: "CV02 · Specification for CV02 · 2 nos",
         sourceSectionId: "CV",
         sourceLineItemKey: "Kitchen::CV02",
-        roomName: "Kitchen"
+        roomName: "Kitchen",
+        ...WORKFLOW_TASK_SCHEDULE.trade_execution
       },
       {
         dedupeKey: "estimate-1:trade:Bedroom%3A%3AEL03",
@@ -178,7 +184,8 @@ describe("project workflow task blueprints", () => {
         description: "EL03 · Specification for EL03 · 2 nos",
         sourceSectionId: "EL",
         sourceLineItemKey: "Bedroom::EL03",
-        roomName: "Bedroom"
+        roomName: "Bedroom",
+        ...WORKFLOW_TASK_SCHEDULE.trade_execution
       }
     ]);
     expect(new Set(blueprints.map(({ dedupeKey }) => dedupeKey)).size).toBe(

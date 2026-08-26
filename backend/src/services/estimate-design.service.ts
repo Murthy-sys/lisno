@@ -247,6 +247,7 @@ export interface EstimateDesignService {
     submittedCount: number;
     reviewRoundId?: string | null;
     designPlanVersion?: number | null;
+    deliveryStatus?: "queued" | "sending" | "sent" | "failed" | "disabled";
   }>;
   listClient(user: AuthenticatedUser, estimateId: string): Promise<EstimateDesignWorkspaceDto & {
     readiness: EstimateDesignApprovalReadiness;
@@ -2263,14 +2264,25 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
         roundId: string;
         designPlanVersion: number;
       } | null;
+      let deliveryStatus:
+        | "queued"
+        | "sending"
+        | "sent"
+        | "failed"
+        | "disabled"
+        | undefined;
       if (review && input.projectWorkflow) {
-        await input.projectWorkflow.deliverDesignReview(review.roundId, user.id);
+        deliveryStatus = await input.projectWorkflow.deliverDesignReview(
+          review.roundId,
+          user.id
+        );
       }
       return review
         ? {
             submittedCount,
             reviewRoundId: review.roundId,
-            designPlanVersion: review.designPlanVersion
+            designPlanVersion: review.designPlanVersion,
+            ...(deliveryStatus ? { deliveryStatus } : {})
           }
         : { submittedCount };
     }

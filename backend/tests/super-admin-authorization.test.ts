@@ -938,8 +938,6 @@ describe("Organization KPI and Evaluation operations", () => {
       ["GET", "/api/v1/organization/tree?limit=20&offset=0"],
       ["GET", "/api/v1/organization/managers/user-manager-maya/designers?limit=20&offset=0"],
       ["GET", "/api/v1/designers/user-designer-arun/summary"],
-      ["GET", `/api/v1/kpis/users/user-designer-arun/tasks?${kpiQuery}`],
-      ["GET", `/api/v1/kpis/users/user-designer-arun?${kpiQuery}`],
       ["POST", "/api/v1/evaluations", evaluationInput],
       ["GET", "/api/v1/evaluations/user-designer-arun?limit=20&offset=0"]
     ] as const;
@@ -950,6 +948,33 @@ describe("Organization KPI and Evaluation operations", () => {
       expectDeniedBeforeServiceRepositoryEntry(calls, before);
     }
     expect(await repository.listEvaluationsForSubject("user-designer-arun")).toEqual(before);
+  });
+
+  it.each([
+    [actors.procurement],
+    [actors.finance],
+    [actors.siteManager],
+    [actors.worker]
+  ])("denies %s another user's KPI even though it now holds the permission", async (actor) => {
+    const { app } = setupWithRepositoryCounters();
+
+    /*
+     * These roles carry organization.user_kpi.read so they can read their own
+     * shared KPI, so the gate no longer stops them. The service must still
+     * refuse any subject other than themselves.
+     */
+    await authenticatedRequest(
+      app,
+      "GET",
+      `/api/v1/kpis/users/user-designer-arun?${kpiQuery}`,
+      actor
+    ).expect(403);
+    await authenticatedRequest(
+      app,
+      "GET",
+      `/api/v1/kpis/users/user-designer-arun/tasks?${kpiQuery}`,
+      actor
+    ).expect(403);
   });
 });
 
@@ -1883,7 +1908,16 @@ describe("Task 6 router service-entry boundary", () => {
     const { app, calls } = createRouterServiceEntryHarness();
     await readyListeningServerFor(app);
 
-    for (const entry of taskSixRouterServiceEntryCases) {
+    /*
+     * These roles now hold the KPI permissions so they can read their own
+     * shared KPI, so the two KPI routes are denied inside the service on
+     * subject identity rather than at the permission gate. "lets %s read only
+     * its own shared KPI" covers that boundary instead.
+     */
+    const gateDeniedCases = taskSixRouterServiceEntryCases.filter(
+      (entry) => !entry.label.startsWith("KPI ")
+    );
+    for (const entry of gateDeniedCases) {
       const before = snapshotServiceEntries(calls);
       await routerAuthenticatedRequest(
         app,

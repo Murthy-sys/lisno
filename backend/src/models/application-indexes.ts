@@ -2,6 +2,8 @@ import { prepareEstimateClientReviewIndexes } from "./EstimateClientReviewRound.
 import { DesignPlanResponseProofModel } from "./DesignPlanResponseProof.js";
 import { DesignPlanReviewRoundModel } from "./DesignPlanReviewRound.js";
 import { ProjectWorkflowTaskModel } from "./ProjectWorkflowTask.js";
+import { ProjectFinanceBucketModel } from "./ProjectFinanceBucket.js";
+import { FinanceLedgerEntryModel } from "./FinanceLedgerEntry.js";
 import { UserModel } from "./User.js";
 import { UserInvitationModel } from "./UserInvitation.js";
 
@@ -12,4 +14,6 @@ export async function initializeApplicationIndexes(): Promise<void> {
   await DesignPlanReviewRoundModel.init();
   await DesignPlanResponseProofModel.init();
   await ProjectWorkflowTaskModel.init();
+  await ProjectFinanceBucketModel.init();
+  await FinanceLedgerEntryModel.init();
 }

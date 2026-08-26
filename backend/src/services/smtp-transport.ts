@@ -15,6 +15,7 @@ export type MailDeliveryConfig =
       username: string;
       password: string;
       from: string;
+      deliveryTimeoutMs: number;
     };
 
 export class MailDeliveryError extends Error {
@@ -32,7 +33,8 @@ type ProviderError = Error & {
   responseCode?: unknown;
 };
 
-const SMTP_TIMEOUT_MS = 10_000;
+const SMTP_CONNECTION_TIMEOUT_MS = 15_000;
+const SMTP_SOCKET_TIMEOUT_MS = 60_000;
 
 function classifyFailure(error: unknown): string {
   if (error instanceof MailDeliveryError) return error.failureCode;
@@ -101,10 +103,10 @@ export function createIsolatedSmtpTransport(
         ignoreTLS: false,
         logger: false,
         debug: false,
-        connectionTimeout: SMTP_TIMEOUT_MS,
-        greetingTimeout: SMTP_TIMEOUT_MS,
-        socketTimeout: SMTP_TIMEOUT_MS,
-        dnsTimeout: SMTP_TIMEOUT_MS,
+        connectionTimeout: SMTP_CONNECTION_TIMEOUT_MS,
+        greetingTimeout: SMTP_CONNECTION_TIMEOUT_MS,
+        socketTimeout: SMTP_SOCKET_TIMEOUT_MS,
+        dnsTimeout: SMTP_CONNECTION_TIMEOUT_MS,
         tls: { rejectUnauthorized: true }
       });
       let settled = false;
@@ -124,7 +126,7 @@ export function createIsolatedSmtpTransport(
 
       timer = setTimeout(() => {
         finish(new MailDeliveryError("SMTP_TIMEOUT"));
-      }, SMTP_TIMEOUT_MS);
+      }, config.deliveryTimeoutMs);
       timer.unref?.();
 
       connection.once("error", finish);

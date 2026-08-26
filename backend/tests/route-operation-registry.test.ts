@@ -28,10 +28,11 @@ import { EXPECTED_PROMPT_2_HUMAN_JWT_OPERATIONS } from "./fixtures/prompt-2-rout
 import { EXPECTED_STAFF_INVITATION_HUMAN_JWT_OPERATIONS } from "./fixtures/staff-invitation-route-operations.js";
 import { EXPECTED_ESTIMATE_CLIENT_RESPONSE_HUMAN_JWT_OPERATIONS } from "./fixtures/estimate-client-response-route-operations.js";
 import { EXPECTED_PROJECT_WORKFLOW_HUMAN_JWT_OPERATIONS } from "./fixtures/project-workflow-route-operations.js";
+import { EXPECTED_PROJECT_FINANCE_HUMAN_JWT_OPERATIONS } from "./fixtures/project-finance-route-operations.js";
 
 const EXPECTED_ALL_HUMAN_JWT_OPERATIONS = [
   ...EXPECTED_HUMAN_JWT_OPERATIONS,
-  ...EXPECTED_PROJECT_WORKFLOW_HUMAN_JWT_OPERATIONS
+  ...EXPECTED_PROJECT_FINANCE_HUMAN_JWT_OPERATIONS
 ] as const;
 const EXPECTED_STAFF_INVITATION_OPERATIONS =
   EXPECTED_STAFF_INVITATION_HUMAN_JWT_OPERATIONS.slice(
@@ -51,6 +52,10 @@ const EXPECTED_ESTIMATE_CLIENT_RESPONSE_OPERATIONS =
 const EXPECTED_PROJECT_WORKFLOW_OPERATIONS =
   EXPECTED_PROJECT_WORKFLOW_HUMAN_JWT_OPERATIONS.slice(
     EXPECTED_ESTIMATE_CLIENT_RESPONSE_HUMAN_JWT_OPERATIONS.length
+  );
+const EXPECTED_PROJECT_FINANCE_OPERATIONS =
+  EXPECTED_PROJECT_FINANCE_HUMAN_JWT_OPERATIONS.slice(
+    EXPECTED_PROJECT_WORKFLOW_HUMAN_JWT_OPERATIONS.length
   );
 
 const slices = [
@@ -200,9 +205,9 @@ describe("human JWT operation registry", () => {
     expect(HUMAN_JWT_OPERATION_LIST.slice(start, end)).toEqual(expected);
   });
 
-  it("matches all 113 normative operation rows", () => {
+  it("matches all 123 normative operation rows", () => {
     expect(Object.values(HUMAN_JWT_OPERATIONS)).toEqual(EXPECTED_ALL_HUMAN_JWT_OPERATIONS);
-    expect(Object.keys(HUMAN_JWT_OPERATIONS)).toHaveLength(113);
+    expect(Object.keys(HUMAN_JWT_OPERATIONS)).toHaveLength(123);
   });
 
   it("mounts rows 2 through 23 as exact router groups with one ordered marker pair", () => {
@@ -395,8 +400,8 @@ describe("human JWT operation registry", () => {
     }
   });
 
-  it("appends exactly six project-workflow operations with explicit scope and access metadata", () => {
-    expect(HUMAN_JWT_OPERATION_LIST.slice(107)).toEqual(
+  it("appends exactly twelve project-workflow operations with explicit scope and access metadata", () => {
+    expect(HUMAN_JWT_OPERATION_LIST.slice(107, 119)).toEqual(
       EXPECTED_PROJECT_WORKFLOW_OPERATIONS
     );
     expect(
@@ -406,7 +411,7 @@ describe("human JWT operation registry", () => {
     ).toEqual(EXPECTED_PROJECT_WORKFLOW_OPERATIONS);
   });
 
-  it("mounts all six project-workflow operations in one authenticated router", () => {
+  it("mounts all twelve project-workflow operations in one authenticated router", () => {
     const expectedKeys = EXPECTED_PROJECT_WORKFLOW_OPERATIONS.map(({ key }) => key);
     const matches = mountedHumanRouters().filter((router) =>
       router.routes.some(({ key }) => expectedKeys.includes(key as never))
@@ -421,6 +426,23 @@ describe("human JWT operation registry", () => {
         { index: 1, key: route.key }
       ]);
     }
+  });
+
+  it("appends and mounts four project-finance operations in one authenticated router", () => {
+    expect(HUMAN_JWT_OPERATION_LIST.slice(119)).toEqual(
+      EXPECTED_PROJECT_FINANCE_OPERATIONS
+    );
+    expect(HUMAN_JWT_OPERATION_LIST.filter(
+      ({ availability }) => availability === "project_finance"
+    )).toEqual(EXPECTED_PROJECT_FINANCE_OPERATIONS);
+    const expectedKeys = EXPECTED_PROJECT_FINANCE_OPERATIONS.map(({ key }) => key);
+    const matches = mountedHumanRouters().filter((router) =>
+      router.routes.some(({ key }) => expectedKeys.includes(key as never))
+    );
+    expect(matches).toHaveLength(1);
+    expect(matches[0]!.routes.map(({ key }) => key).sort()).toEqual(
+      [...expectedKeys].sort()
+    );
   });
 
   it("mounts four protected invitation operations and two explicit public non-human routes in one router", () => {
@@ -444,7 +466,7 @@ describe("human JWT operation registry", () => {
     }
   });
 
-  it("mounts the exact 113-operation manifest with one ordered marker pair each", () => {
+  it("mounts the exact 123-operation manifest with one ordered marker pair each", () => {
     const expectedKeys = EXPECTED_ALL_HUMAN_JWT_OPERATIONS.map(
       ({ key }) => key
     ).sort();
@@ -454,9 +476,9 @@ describe("human JWT operation registry", () => {
     const mountedOperations = mountedRoutes.map(({ key }) => key);
 
     expect([...mountedOperations].sort()).toEqual(expectedKeys);
-    expect(expectedKeys).toHaveLength(113);
-    expect(new Set(expectedKeys).size).toBe(113);
-    expect(mountedOperations).not.toContain(
+    expect(expectedKeys).toHaveLength(123);
+    expect(new Set(expectedKeys).size).toBe(123);
+    expect(mountedOperations).toContain(
       "POST /execution/worker-assignments/override"
     );
     for (const route of mountedRoutes) {
@@ -502,9 +524,9 @@ describe("human JWT operation registry", () => {
     expect(() => assertTaskSixRouteMounts(routers)).toThrow();
   });
 
-  it("has 113 unique keys and exactly 105 routed permissions", () => {
-    expect(new Set(HUMAN_JWT_OPERATION_LIST.map(({ key }) => key)).size).toBe(113);
-    expect(new Set(HUMAN_JWT_OPERATION_LIST.map(({ permission }) => permission)).size).toBe(105);
+  it("has 123 unique keys and exactly 110 routed permissions", () => {
+    expect(new Set(HUMAN_JWT_OPERATION_LIST.map(({ key }) => key)).size).toBe(123);
+    expect(new Set(HUMAN_JWT_OPERATION_LIST.map(({ permission }) => permission)).size).toBe(110);
     expect(HUMAN_JWT_OPERATION_LIST.every(({ permission }) =>
       (PERMISSION_CODES as readonly string[]).includes(permission)
     )).toBe(true);
@@ -545,7 +567,7 @@ describe("human JWT operation registry", () => {
   it("classifies project and estimation scopes without wildcard inference", () => {
     for (const operation of HUMAN_JWT_OPERATION_LIST) {
       if (operation.scope.kind === "project") {
-        expect(["projects", "design"]).toContain(operation.scope.module);
+        expect(["projects", "design", "finance"]).toContain(operation.scope.module);
       }
       if (operation.permission.startsWith("estimation.") && operation.scope.kind === "non_project") {
         expect(["estimation_ownership", "organization", "estimate_client_response"]).toContain(

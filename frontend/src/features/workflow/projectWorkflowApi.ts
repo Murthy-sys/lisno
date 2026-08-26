@@ -3,7 +3,8 @@ import type {
   DesignPlanReviewTask,
   DesignPlanTask,
   DesignerAssignmentOption,
-  ProjectWorkflowTask
+  ProjectWorkflowTask,
+  WorkerAssignmentOption
 } from "../../api/types";
 
 export const projectWorkflowKeys = {
@@ -12,7 +13,10 @@ export const projectWorkflowKeys = {
   designerOptions: ["project-workflow", "designer-options"] as const,
   designReviews: (status = "pending") =>
     ["project-workflow", "design-reviews", status] as const,
-  operational: ["project-workflow", "operational"] as const
+  operational: ["project-workflow", "operational"] as const,
+  workers: ["project-workflow", "workers"] as const,
+  projectTasks: (projectId: string) =>
+    ["project-workflow", "project-tasks", projectId] as const
 };
 
 export const getDesignerPlanTasks = () =>
@@ -34,6 +38,21 @@ export const getDesignPlanReviewTasks = (
     `/admin/design-plan-response-tasks?status=${encodeURIComponent(status)}`
   );
 
+export const downloadDesignPlanReviewAttachment = (
+  roundId: string,
+  attachmentIndex: number
+) => apiClient.getBlob(
+  `/admin/design-plan-response-tasks/${encodeURIComponent(roundId)}/attachments/${attachmentIndex}`
+);
+
+export const retryDesignPlanReviewEmail = (
+  roundId: string,
+  expectedVersion: number
+) => apiClient.post<DesignPlanReviewTask>(
+  `/admin/design-plan-response-tasks/${encodeURIComponent(roundId)}/email/retry`,
+  { expectedVersion }
+);
+
 export function decideDesignPlanReview(input: {
   roundId: string;
   expectedVersion: number;
@@ -54,3 +73,30 @@ export function decideDesignPlanReview(input: {
 
 export const getOperationalWorkflowTasks = () =>
   apiClient.get<ProjectWorkflowTask[]>("/workflow-tasks");
+
+export const updateOperationalWorkflowTask = (
+  taskId: string,
+  version: number,
+  progress: number
+) => apiClient.patch<ProjectWorkflowTask>(
+  `/workflow-tasks/${encodeURIComponent(taskId)}`,
+  { version, progress }
+);
+
+export const getWorkerAssignmentOptions = () =>
+  apiClient.get<WorkerAssignmentOption[]>("/admin/workers");
+
+export const getAdminProjectWorkflowTasks = (projectId: string) =>
+  apiClient.get<ProjectWorkflowTask[]>(
+    `/admin/projects/${encodeURIComponent(projectId)}/workflow-tasks`
+  );
+
+export const overrideWorkerAssignment = (input: {
+  projectId: string;
+  taskId: string;
+  expectedVersion: number;
+  workerId: string | null;
+}) => apiClient.post<ProjectWorkflowTask>(
+  "/execution/worker-assignments/override",
+  input
+);

@@ -4,6 +4,7 @@ import { z } from "zod";
 import { ESTIMATE_CLIENT_PROOF_MIME_TYPES } from "../domain/estimate-client-review.js";
 import { authenticate } from "../middleware/auth.js";
 import { requireOperation } from "../middleware/authorization.js";
+import { ApiError } from "../middleware/errors.js";
 import { uploadSingleFile } from "../middleware/upload.js";
 import { validateBody, validateQuery } from "../middleware/validate.js";
 import type { AuthService } from "../services/auth.service.js";
@@ -12,6 +13,7 @@ import {
   type EstimateClientReviewStorage
 } from "../services/estimate-client-review-storage.js";
 import type { ProjectWorkflowService } from "../services/project-workflow.service.js";
+import { sendDownload } from "./estimate-client-responses.js";
 
 const assignmentSchema = z.object({
   designerId: z.string().trim().min(1)
@@ -34,6 +36,22 @@ const reviewDecisionSchema = z.object({
     });
   }
 });
+
+const reviewDeliveryRetrySchema = z.object({
+  expectedVersion: z.number().int().positive()
+}).strict();
+
+const operationalProgressSchema = z.object({
+  version: z.number().int().positive(),
+  progress: z.number().int().min(0).max(100)
+}).strict();
+
+const workerAssignmentOverrideSchema = z.object({
+  projectId: z.string().trim().min(1),
+  taskId: z.string().trim().min(1),
+  expectedVersion: z.number().int().positive(),
+  workerId: z.string().trim().min(1).nullable()
+}).strict();
 
 const proofUploadOptions = {
   fieldName: "proof",
@@ -121,6 +139,65 @@ export function createProjectWorkflowRouter(
     }
   );
 
+  router.get(
+    "/admin/design-plan-response-tasks/:roundId/attachments/:attachmentIndex",
+    protectedRoute,
+    requireOperation("GET /admin/design-plan-response-tasks/:roundId/attachments/:attachmentIndex"),
+    async (request, response, next) => {
+      try {
+        const rawIndex = String(request.params.attachmentIndex);
+        if (!/^(?:0|[1-9]\d*)$/u.test(rawIndex)) {
+          throw new ApiError(
+            400,
+            "INVALID_ATTACHMENT_INDEX",
+            "Choose a valid Design plan attachment."
+          );
+        }
+        const attachmentIndex = Number(rawIndex);
+        if (!Number.isSafeInteger(attachmentIndex)) {
+          throw new ApiError(
+            400,
+            "INVALID_ATTACHMENT_INDEX",
+            "Choose a valid Design plan attachment."
+          );
+        }
+        response
+          .set("Cache-Control", "private, no-store")
+          .set("X-Content-Type-Options", "nosniff");
+        sendDownload(
+          response,
+          await service.readDesignReviewAttachment(
+            request.authenticatedUser!,
+            String(request.params.roundId),
+            attachmentIndex
+          )
+        );
+      } catch (error) {
+        next(error);
+      }
+    }
+  );
+
+  router.post(
+    "/admin/design-plan-response-tasks/:roundId/email/retry",
+    protectedRoute,
+    requireOperation("POST /admin/design-plan-response-tasks/:roundId/email/retry"),
+    validateBody(reviewDeliveryRetrySchema),
+    async (request, response, next) => {
+      try {
+        response.json({
+          data: await service.retryDesignReviewDelivery(
+            request.authenticatedUser!,
+            String(request.params.roundId),
+            request.body.expectedVersion
+          )
+        });
+      } catch (error) {
+        next(error);
+      }
+    }
+  );
+
   router.post(
     "/admin/design-plan-response-tasks/:roundId/decision",
     protectedRoute,
@@ -153,6 +230,61 @@ export function createProjectWorkflowRouter(
   );
 
   router.get(
+    "/admin/workers",
+    protectedRoute,
+    requireOperation("GET /admin/workers"),
+    async (request, response, next) => {
+      try {
+        response.json({
+          data: await service.listAssignableWorkers(request.authenticatedUser!)
+        });
+      } catch (error) {
+        next(error);
+      }
+    }
+  );
+
+  router.get(
+    "/admin/projects/:projectId/workflow-tasks",
+    protectedRoute,
+    requireOperation("GET /admin/projects/:projectId/workflow-tasks"),
+    async (request, response, next) => {
+      try {
+        response.json({
+          data: await service.listProjectWorkflowTasks(
+            request.authenticatedUser!,
+            String(request.params.projectId)
+          )
+        });
+      } catch (error) {
+        next(error);
+      }
+    }
+  );
+
+  router.post(
+    "/execution/worker-assignments/override",
+    protectedRoute,
+    requireOperation("POST /execution/worker-assignments/override"),
+    validateBody(workerAssignmentOverrideSchema),
+    async (request, response, next) => {
+      try {
+        response.json({
+          data: await service.overrideWorkerAssignment({
+            actor: request.authenticatedUser!,
+            projectId: request.body.projectId,
+            taskId: request.body.taskId,
+            expectedVersion: request.body.expectedVersion,
+            workerId: request.body.workerId
+          })
+        });
+      } catch (error) {
+        next(error);
+      }
+    }
+  );
+
+  router.get(
     "/workflow-tasks",
     protectedRoute,
     requireOperation("GET /workflow-tasks"),
@@ -160,6 +292,27 @@ export function createProjectWorkflowRouter(
       try {
         response.json({
           data: await service.listOperationalTasks(request.authenticatedUser!)
+        });
+      } catch (error) {
+        next(error);
+      }
+    }
+  );
+
+  router.patch(
+    "/workflow-tasks/:taskId",
+    protectedRoute,
+    requireOperation("PATCH /workflow-tasks/:taskId"),
+    validateBody(operationalProgressSchema),
+    async (request, response, next) => {
+      try {
+        response.json({
+          data: await service.updateOperationalTask(
+            request.authenticatedUser!,
+            String(request.params.taskId),
+            request.body.version,
+            request.body.progress
+          )
         });
       } catch (error) {
         next(error);

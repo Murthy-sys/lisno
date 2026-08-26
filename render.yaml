@@ -1,0 +1,95 @@
+# Render deployment for the Lisno monorepo.
+#
+# MongoDB is intentionally not defined here. Create a transaction-capable
+# MongoDB Atlas cluster and supply its connection URI when Render prompts for
+# MONGODB_URI. Do not commit any secret values to this file.
+services:
+  - type: web
+    name: lisno-api
+    runtime: node
+    plan: starter
+    region: singapore
+    rootDir: backend
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/v1/health
+    disk:
+      name: lisno-uploads
+      mountPath: /var/data
+      sizeGB: 10
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: JWT_SECRET
+        generateValue: true
+      - key: MONGODB_URI
+        sync: false
+      - key: CORS_ORIGIN
+        sync: false
+      - key: UPLOADS_DIR
+        value: /var/data/uploads
+      - key: MAX_UPLOAD_MB
+        value: "25"
+      - key: API_DOCS_ENABLED
+        value: "false"
+      - key: OCR_WORKER_TOKEN
+        generateValue: true
+      - key: OCR_LEASE_SECONDS
+        value: "300"
+      - key: OCR_MAX_ATTEMPTS
+        value: "5"
+      - key: OCR_RETRY_INITIAL_SECONDS
+        value: "30"
+      - key: OCR_RETRY_MAX_SECONDS
+        value: "900"
+      - key: OCR_CONFIDENCE_FLOOR
+        value: "0.2"
+
+  - type: worker
+    name: lisno-ocr-worker
+    runtime: python
+    plan: starter
+    region: singapore
+    rootDir: ocr-worker
+    buildCommand: pip install --upgrade pip && pip install ".[model]"
+    startCommand: lisno-ocr-worker
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11.11"
+      - key: OCR_API_BASE_URL
+        sync: false
+      - key: OCR_WORKER_TOKEN
+        fromService:
+          type: web
+          name: lisno-api
+          envVarKey: OCR_WORKER_TOKEN
+      - key: OCR_POLL_SECONDS
+        value: "5"
+      - key: OCR_REQUEST_TIMEOUT_SECONDS
+        value: "60"
+      - key: OCR_CONFIDENCE_FLOOR
+        value: "0.2"
+      - key: OCR_MAX_PDF_PAGES
+        value: "50"
+      - key: OCR_MAX_PAGE_PIXELS
+        value: "40000000"
+      - key: OCR_MAX_OUTPUT_BYTES
+        value: "41943040"
+      - key: OCR_MAX_PROCESSING_SECONDS
+        value: "900"
+
+  - type: web
+    name: lisno-frontend
+    runtime: static
+    rootDir: frontend
+    buildCommand: npm ci && npm run build
+    staticPublishPath: dist
+    envVars:
+      # This is embedded in the Vite build. It is public and must be the API's
+      # complete public URL, including /api/v1 (never use a private hostname).
+      - key: VITE_API_URL
+        sync: false
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html

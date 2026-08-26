@@ -154,7 +154,7 @@ function detailRow() {
 describe("estimate client review assignee resolution", () => {
   afterEach(() => vi.restoreAllMocks());
 
-  it("assigns the only active projects-module admin initiator", async () => {
+  it("assigns the only active projects-module Admin or Super Admin initiator", async () => {
     const grantAggregate = aggregateResult([{ assignedAdminId: "admin-1" }]);
     const grantSpy = vi
       .spyOn(ProjectAccessGrantModel, "aggregate")
@@ -176,7 +176,7 @@ describe("estimate client review assignee resolution", () => {
         active: true
       }
     });
-    expect(pipelineText(pipeline)).toContain('"role":"admin"');
+    expect(pipelineText(pipeline)).toContain('"role":{"$in":["admin","super_admin"]}');
     expect(pipelineText(pipeline)).toContain('"active":true');
     expect(pipelineText(pipeline)).toContain('"$limit":2');
     expect(grantAggregate.session).toHaveBeenCalledWith(session);
@@ -204,7 +204,7 @@ describe("estimate client review assignee resolution", () => {
         active: true
       }
     });
-    expect(pipelineText(grantPipeline)).toContain('"role":"admin"');
+    expect(pipelineText(grantPipeline)).toContain('"role":{"$in":["admin","super_admin"]}');
     expect(pipelineText(grantPipeline)).toContain('"active":true');
     expect(superAggregate.session).toHaveBeenCalledWith(session);
   });
@@ -825,7 +825,7 @@ describe.sequential("estimate client review Mongo-backed scope behavior", () => 
 
   afterAll(async () => replica.stop());
 
-  it("resolves only an active Admin initiator and safely falls back for every ineligible grant", async () => {
+  it("resolves an active Admin or Super Admin initiator and safely falls back for every ineligible grant", async () => {
     await Promise.all([
       seedMongoUser({ id: "mongo-super", role: "super_admin" }),
       seedMongoUser({ id: "mongo-admin-active", role: "admin" }),
@@ -839,6 +839,11 @@ describe.sequential("estimate client review Mongo-backed scope behavior", () => 
         id: "grant-active",
         projectId: "project-active",
         userId: "mongo-admin-active"
+      }),
+      seedMongoGrant({
+        id: "grant-super-active",
+        projectId: "project-super-active",
+        userId: "mongo-super"
       }),
       seedMongoGrant({
         id: "grant-inactive-user",
@@ -867,6 +872,10 @@ describe.sequential("estimate client review Mongo-backed scope behavior", () => 
 
     await expect(resolveMongoAssignee(service, "project-active")).resolves.toEqual({
       assignedAdminId: "mongo-admin-active",
+      source: "admin_initiator"
+    });
+    await expect(resolveMongoAssignee(service, "project-super-active")).resolves.toEqual({
+      assignedAdminId: "mongo-super",
       source: "admin_initiator"
     });
     for (const projectId of [

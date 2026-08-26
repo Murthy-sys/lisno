@@ -80,7 +80,8 @@ requirements, processing limits, and verification commands.
 
 ### Shared SMTP configuration
 
-Staff invitations and Estimate attachments use one complete configuration group:
+Staff invitations, Estimate attachments, and Design plan attachments use one
+complete configuration group:
 
 - `PUBLIC_FRONTEND_URL`;
 - `SMTP_HOST`;
@@ -88,12 +89,15 @@ Staff invitations and Estimate attachments use one complete configuration group:
 - `SMTP_TLS_MODE`, set to `implicit` or `starttls`;
 - `SMTP_USERNAME`;
 - `SMTP_PASSWORD`;
-- `SMTP_FROM`, the general Lisno sender for staff invitations and Estimate
-  attachments, containing one mailbox with an optional display name.
+- `SMTP_FROM`, the general Lisno sender for staff invitations and Estimate and
+  Design plan attachments, containing one mailbox with an optional display name.
 
 `SMTP_TLS_REJECT_UNAUTHORIZED` is separate and optional. Certificate
 verification cannot be disabled: when supplied, its only accepted value is
 `true`; omitting it keeps verification enabled, and `false` is rejected.
+`SMTP_DELIVERY_TIMEOUT_SECONDS` is also optional. It defaults to 120 seconds
+and accepts 30-600 seconds for the complete delivery, including attachment
+upload. Connection and greeting setup retain shorter fail-fast limits.
 
 When every SMTP-related variable is absent, external mail delivery is disabled.
 Staff invitation create and resend return
@@ -204,3 +208,64 @@ npm run migrate:estimate-design-mapping -- --dry-run
 The command prints one JSON report. Review every `conflicts` entry; the final
 dry run must report `drawingsChanged: 0` and `revisionsChanged: 0`. Do not run
 `npm run seed` for this operation.
+
+### Approved-project finance backfill
+
+For an existing database, back up first and inspect the dry-run JSON before any
+writes:
+
+```bash
+npm run migrate:project-finance-backfill -- --dry-run
+npm run migrate:project-finance-backfill
+npm run migrate:project-finance-backfill -- --dry-run
+```
+
+The migration creates a finance bucket for every project with complete Estimate
+approval evidence. Buckets remain `pending_design` until Design approval; a
+verifiably approved Design opens the bucket. It prefers the immutable approved
+Estimate review snapshot, refuses conflicting existing baselines, and is
+idempotent. Review every non-zero `skipCounts` value and `conflicts` entry; the
+final dry run should report only `alreadyPending` or `alreadyOpen` projects and
+no unresolved conflicts. `--batch-size=N` accepts values from 1 through 1000.
+The Finance read API already includes Client-approved Estimate values before
+backfill; this command materializes the durable bucket required for ledger
+posting. Do not seed as part of this migration.
+
+### Super Admin Finance labels and calculations
+
+The Finance portfolio contains every project with a Client-approved Estimate,
+including projects whose Design is still pending. Project cards are paginated,
+but the portfolio summary is calculated across the complete authorized project
+set, not only the visible page. Amounts in the API are integer paise.
+
+| Finance label | API field | Calculation |
+| --- | --- | --- |
+| Client-approved amount | `approvedContractTotalPaise` | Approved Estimate subtotal plus approved GST; this is the value shown as Client Approved in Projects. |
+| Approved GST (18%) | `approvedGstPaise` | GST stored in the approved Estimate; excluded from revenue, profit, and cost budget. |
+| Net approved revenue | `approvedSubtotalPaise` | Client-approved amount minus approved GST. |
+| Target profit (20%) | `targetProfitPaise` | Net approved revenue multiplied by 20%, rounded to the nearest paise per project. |
+| Cost budget (80%) | `costBudgetPaise` | Net approved revenue minus target profit. |
+| Procurement costs | `procurementCostPaise` | Posted direct spend classified as `procurement`. |
+| Employee payments | `employeePaymentPaise` | Posted direct spend classified as `employee_payment`. |
+| Other direct expenses | `otherExpensePaise` | Explicit `other` spend plus legacy unclassified direct spend. |
+| Total direct expenses | `directSpendPaise` | Procurement costs plus employee payments plus other direct expenses. |
+| Recorded overheads | `overheadPaise` | Explicitly posted overhead ledger entries only. |
+| Total recorded costs | `recordedCostPaise` | Total direct expenses plus recorded overheads. |
+| Remaining cost budget | `remainingBudgetPaise` | Cost budget minus total recorded costs; a negative value is an overrun. |
+| Current profit (live) | `currentProfitPaise` | Net approved revenue minus total recorded costs posted so far. |
+| Current margin (live) | `currentMarginBps` | Current profit divided by net approved revenue, expressed in basis points. |
+
+Portfolio currency values are the sum of those project-level fields. Portfolio
+current margin is the accumulated current profit divided by accumulated net
+approved revenue; it is not an average of individual project margins.
+
+`currentProfitPaise` must be labelled **Current profit (live)** while a project
+or its cost capture remains open. It can be described as **Final actual profit**
+only after the project is closed and all direct expenses and overheads have
+been posted. An unspent cost budget makes the live profit appear higher than
+the fixed target and is not evidence that the final profit has been earned.
+
+Deadline status, overdue days, overdue-project counts, and overdue-task counts
+are operational risk signals. Missing a deadline never creates a monetary
+overhead automatically; `overheadPaise` changes only when an authorized Finance
+user explicitly posts an overhead entry.

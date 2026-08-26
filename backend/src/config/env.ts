@@ -16,8 +16,11 @@ const SMTP_KEYS = [
 ] as const;
 const SMTP_RELATED_KEYS = [
   ...SMTP_KEYS,
-  "SMTP_TLS_REJECT_UNAUTHORIZED"
+  "SMTP_TLS_REJECT_UNAUTHORIZED",
+  "SMTP_DELIVERY_TIMEOUT_SECONDS"
 ] as const;
+
+const DEFAULT_SMTP_DELIVERY_TIMEOUT_SECONDS = 120;
 
 const CONTROL_CHARACTERS = /[\u0000-\u001F\u007F-\u009F]/u;
 
@@ -76,6 +79,7 @@ const environmentSchema = z.object({
   SMTP_PASSWORD: z.string().optional(),
   SMTP_FROM: z.string().optional(),
   SMTP_TLS_REJECT_UNAUTHORIZED: z.string().optional(),
+  SMTP_DELIVERY_TIMEOUT_SECONDS: z.coerce.number().int().min(30).max(600).optional(),
   ALLOW_DEMO_ACCOUNT_EXTERNAL_EMAIL: z.string().optional()
 }).superRefine((environment, context) => {
   if (environment.OCR_RETRY_MAX_SECONDS < environment.OCR_RETRY_INITIAL_SECONDS) {
@@ -145,6 +149,7 @@ const environmentSchema = z.object({
     SMTP_PASSWORD,
     SMTP_FROM,
     SMTP_TLS_REJECT_UNAUTHORIZED: _tlsVerification,
+    SMTP_DELIVERY_TIMEOUT_SECONDS,
     ALLOW_DEMO_ACCOUNT_EXTERNAL_EMAIL,
     API_DOCS_ENABLED,
     ...base
@@ -164,7 +169,9 @@ const environmentSchema = z.object({
         tlsMode: SMTP_TLS_MODE as "implicit" | "starttls",
         username: SMTP_USERNAME!,
         password: SMTP_PASSWORD!,
-        from: SMTP_FROM!.trim()
+        from: SMTP_FROM!.trim(),
+        deliveryTimeoutMs:
+          (SMTP_DELIVERY_TIMEOUT_SECONDS ?? DEFAULT_SMTP_DELIVERY_TIMEOUT_SECONDS) * 1_000
       };
   return {
     ...base,

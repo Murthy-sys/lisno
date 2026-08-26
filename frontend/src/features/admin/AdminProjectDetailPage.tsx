@@ -16,6 +16,8 @@ import {
 } from "./adminProjectPresentation";
 import { adminProjectKeys, getAdminProject } from "./adminProjectsApi";
 import { DesignAssignmentPanel } from "./DesignAssignmentPanel";
+import { WorkerAssignmentPanel } from "./WorkerAssignmentPanel";
+import { ProjectFinancePanel } from "../finance/ProjectFinancePanel";
 
 const money = new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 });
 const dateTime = new Intl.DateTimeFormat("en-GB", { dateStyle: "medium", timeStyle: "short", timeZone: "UTC" });
@@ -50,6 +52,14 @@ export function AdminProjectDetailPage() {
   const canAssignDesigner = hasFrontendPermission(
     auth.authorization,
     "design.plan_assignment.manage"
+  );
+  const canAssignWorkers = hasFrontendPermission(
+    auth.authorization,
+    "execution.worker_assignment.override"
+  );
+  const canReadFinance = hasFrontendPermission(
+    auth.authorization,
+    "finance.bucket.read"
   );
 
   if (projectQuery.isPending) return <PageState state="loading" message="Loading project details…" />;
@@ -86,6 +96,14 @@ export function AdminProjectDetailPage() {
         </div>
       </Surface>
       <DesignAssignmentPanel project={project} />
+      {canAssignWorkers ? <WorkerAssignmentPanel project={project} /> : null}
+      {canReadFinance ? (
+        <ProjectFinancePanel
+          projectId={project.id}
+          enabled={project.estimate?.designPlanStatus === "approved"}
+          title="Project finance"
+        />
+      ) : null}
       {project.estimate?.clientReview ? (
         <Surface
           as="section"

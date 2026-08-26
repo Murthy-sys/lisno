@@ -65,7 +65,7 @@ export interface AuthPayload {
 }
 
 export const AUTHORIZATION_POLICY_VERSION =
-  "2026-08-25.project-workflow.v2" as const;
+  "2026-08-26.super-admin-finance.v4" as const;
 
 export interface AuthorizationSnapshot {
   readonly role: Role;

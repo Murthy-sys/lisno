@@ -25,6 +25,16 @@
   --type-body: 1rem/1.5 var(--font-interface);
   --type-metadata: 0.8125rem/1.35 var(--font-interface);
 
+  --text-xs: 0.75rem;
+  --text-sm: 0.8125rem;
+  --text-md: 0.9375rem;
+  --text-base: 1rem;
+  --text-lg: 1.125rem;
+  --text-xl: 1.3125rem;
+  --text-2xl: 1.5rem;
+  --text-3xl: 2rem;
+  --text-4xl: 2.5rem;
+
   --space-1: 4px;
   --space-2: 8px;
   --space-3: 12px;

@@ -104,7 +104,12 @@ export const removeEstimateDrawing = (drawingId: string, version: number) => api
 );
 
 export const submitEstimateDrawings = (estimateId: string) =>
-  apiClient.post<{ submittedCount: number }>(
+  apiClient.post<{
+    submittedCount: number;
+    reviewRoundId?: string | null;
+    designPlanVersion?: number | null;
+    deliveryStatus?: "queued" | "sending" | "sent" | "failed" | "disabled";
+  }>(
     `/estimates/${encodeURIComponent(estimateId)}/design-drawings/submit`
   );
 

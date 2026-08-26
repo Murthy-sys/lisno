@@ -181,7 +181,25 @@ export function EstimateDesignUploads({
   const remove = useMutation({ mutationFn: ({ drawing, revision }: DrawingSelection) => removeEstimateDrawing(drawing.id, revision.revisionNumber), onSuccess: () => void client.invalidateQueries({ queryKey: estimateDesignKeys.workspace(estimateId) }) });
   const submit = useMutation({
     mutationFn: () => submitEstimateDrawings(estimateId),
-    onSuccess: () => {
+    onSuccess: (result) => {
+      if (result.deliveryStatus === "sent") {
+        setActionNotice("Design submitted and emailed to the Client.");
+      } else if (result.deliveryStatus === "failed") {
+        setActionNotice(
+          "Design submitted, but the Client email was not delivered. An Admin can retry it."
+        );
+      } else if (result.deliveryStatus === "disabled") {
+        setActionNotice(
+          "Design submitted, but Client email is unavailable. An Admin can retry it after email is configured."
+        );
+      } else if (
+        result.deliveryStatus === "queued" ||
+        result.deliveryStatus === "sending"
+      ) {
+        setActionNotice("Design submitted. The Client email is being delivered.");
+      } else {
+        setActionNotice("Drawings submitted.");
+      }
       void client.invalidateQueries({ queryKey: estimateDesignKeys.workspace(estimateId) });
       onSubmitted?.();
     }

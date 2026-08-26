@@ -206,13 +206,17 @@ export const PERMISSION_CODES = [
   "access_request.review.decide",
   "project_access_grant.revoke",
   "execution.worker_assignment.override",
-  "workflow.tasks.read"
+  "finance.bucket.read",
+  "finance.entry.read",
+  "finance.entry.create",
+  "workflow.tasks.read",
+  "workflow.tasks.update"
 ] as const;
 
 export type PermissionCode = (typeof PERMISSION_CODES)[number];
 
 export const AUTHORIZATION_POLICY_VERSION =
-  "2026-08-25.project-workflow.v2" as const;
+  "2026-08-26.super-admin-finance.v4" as const;
 
 export interface AuthorizationSnapshot {
   readonly role: Role;

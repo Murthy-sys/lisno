@@ -10,7 +10,8 @@ import {
   LayoutDashboard,
   MailCheck,
   Palette,
-  UsersRound
+  UsersRound,
+  WalletCards
 } from "lucide-react";
 import { MemoryRouter } from "react-router-dom";
 import { describe, expect, it, vi } from "vitest";
@@ -23,12 +24,12 @@ import { Sidebar } from "./Sidebar";
 import { navigationForAuthorization } from "./navigation";
 
 const roleNavigation = [
-  ["super_admin", [["All Projects", "/admin/projects", FolderKanban], ["Users", "/admin/users", UsersRound], ["Client responses", "/admin/client-responses", MailCheck], ["Design approvals", "/admin/design-approvals", Palette], ["Access requests", "/admin/access-requests", ClipboardCheck]]],
+  ["super_admin", [["All Projects", "/admin/projects", FolderKanban], ["Users", "/admin/users", UsersRound], ["Client responses", "/admin/client-responses", MailCheck], ["Design approvals", "/admin/design-approvals", Palette], ["Access requests", "/admin/access-requests", ClipboardCheck], ["Finance", "/finance", WalletCards]]],
   ["admin", [["My Projects", "/admin/projects", FolderKanban], ["Client responses", "/admin/client-responses", MailCheck], ["Design approvals", "/admin/design-approvals", Palette], ["Access requests", "/admin/access-requests", ClipboardCheck]]],
   ["estimator_sales", [["Leads & estimates", "/estimator-sales", BriefcaseBusiness]]],
   ["designer", [["Workspace", "/designer", LayoutDashboard], ["Design plans", "/designer/design-plans", Palette], ["My access requests", "/access-requests/mine", KeyRound]]],
   ["procurement", [["My access requests", "/access-requests/mine", KeyRound], ["Home", "/home", House]]],
-  ["finance_head", [["My access requests", "/access-requests/mine", KeyRound], ["Home", "/home", House]]],
+  ["finance_head", [["Finance", "/finance", WalletCards], ["My access requests", "/access-requests/mine", KeyRound], ["Home", "/home", House]]],
   ["site_manager", [["My access requests", "/access-requests/mine", KeyRound], ["Home", "/home", House]]],
   ["worker_electrician", [["Home", "/home", House]]],
   ["worker_plumber", [["Home", "/home", House]]],

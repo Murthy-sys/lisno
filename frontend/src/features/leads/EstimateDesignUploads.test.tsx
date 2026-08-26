@@ -141,7 +141,7 @@ describe("EstimateDesignUploads", () => {
         });
       }
       if (url.endsWith("/estimates/estimate-1/design-drawings/submit")) {
-        return response({ submittedCount: 1 });
+        return response({ submittedCount: 1, deliveryStatus: "sent" });
       }
       if (url.endsWith("/estimates/estimate-1/design-uploads")) {
         return response({
@@ -714,7 +714,7 @@ describe("EstimateDesignUploads", () => {
         return response({ ...unverified, verified: true, revision: { ...reviewRevision, revisionNumber: 2 } });
       }
       if (url.endsWith("/estimates/estimate-1/design-drawings/submit")) {
-        return response({ submittedCount: 1 });
+        return response({ submittedCount: 1, deliveryStatus: "sent" });
       }
       if (url.endsWith("/estimates/estimate-1/design-uploads")) {
         return response({
@@ -751,6 +751,9 @@ describe("EstimateDesignUploads", () => {
     });
     expect(submit.init?.method).toBe("POST");
     expect(submit.init?.body).toBeUndefined();
+    expect(
+      await screen.findByText("Design submitted and emailed to the Client.")
+    ).toBeVisible();
   });
 
   it("removes an unverified draft through the versioned delete endpoint and refreshes the drawing list", async () => {

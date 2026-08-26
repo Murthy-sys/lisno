@@ -30,6 +30,12 @@ import { LeadModel } from "../models/Lead.js";
 import { LeadActivityModel } from "../models/LeadActivity.js";
 import { ProjectModel } from "../models/Project.js";
 import { ProjectAccessGrantModel } from "../models/ProjectAccessGrant.js";
+import {
+  WORKFLOW_TASK_SCHEDULE,
+  workflowTaskDueAt,
+  type ProjectWorkflowTaskKind
+} from "../domain/project-workflow.js";
+import { ProjectWorkflowTaskModel } from "../models/ProjectWorkflowTask.js";
 import { TaskModel } from "../models/Task.js";
 import { TaskEventModel } from "../models/TaskEvent.js";
 import { UserModel } from "../models/User.js";
@@ -1546,6 +1552,32 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
       if (limit !== undefined) query.limit(limit);
       const documents = await query.lean().exec();
       return documents.map(mapTask);
+    },
+
+    async listWorkflowKpiTasksForPeriod(
+      assigneeUserIds,
+      periodStartAt,
+      periodEndAt,
+      limit
+    ) {
+      if (assigneeUserIds.length === 0) return [];
+      const periodStart = date(periodStartAt);
+      const periodEnd = date(periodEndAt);
+      const query = ProjectWorkflowTaskModel.find({
+        assigneeUserId: { $in: assigneeUserIds },
+        $or: [
+          { openedAt: { $lte: periodEnd } },
+          { completedAt: { $gte: periodStart, $lte: periodEnd } }
+        ]
+      }).sort({ openedAt: -1, _id: 1 });
+      if (limit !== undefined) query.limit(limit);
+      const documents = await query.lean().exec();
+      return documents
+        .map(mapWorkflowTaskToKpiRecord)
+        .filter((task) =>
+          new Date(task.plannedStartAt) <= periodEnd &&
+          new Date(task.currentDeadlineAt) >= periodStart
+        );
     },
 
     async pageKpiTasksForPeriod(
@@ -3292,6 +3324,53 @@ function mapTask(document: PlainDocument): TaskRecord {
     : {
         ...base,
         status: document.status,
+        completedAt: null
+      };
+}
+
+/*
+ * Presents a ProjectWorkflowTask in TaskRecord shape so the KPI scores design
+ * and operational work through one path. Rows created before the KPI rollout
+ * carry no dueAt/plannedEffort, so both fall back to the standard turnaround
+ * for the task kind rather than dropping the task from the report.
+ */
+function mapWorkflowTaskToKpiRecord(document: PlainDocument): TaskRecord {
+  const kind = String(document.kind) as ProjectWorkflowTaskKind;
+  const openedAt = new Date(document.openedAt);
+  const schedule = WORKFLOW_TASK_SCHEDULE[kind];
+  const deadline = document.dueAt
+    ? iso(document.dueAt)
+    : iso(workflowTaskDueAt(kind, openedAt));
+  const base = {
+    id: idOf(document),
+    projectId: document.projectId,
+    floorId: "",
+    stageId: "",
+    title: document.title,
+    description: document.description ?? "",
+    order: 0,
+    ownerId: document.assigneeUserId ?? "",
+    plannedStartAt: iso(document.openedAt),
+    originalDeadlineAt: deadline,
+    currentDeadlineAt: deadline,
+    plannedEffort: document.plannedEffort ?? schedule?.plannedEffort ?? null,
+    progress: document.progress ?? 0,
+    dependencyTaskIds: [],
+    latestUpdateAt: nullableIso(document.updatedAt),
+    version: document.version ?? 1,
+    createdAt: iso(document.createdAt ?? document.openedAt),
+    updatedAt: iso(document.updatedAt ?? document.openedAt)
+  };
+
+  return document.status === "completed"
+    ? {
+        ...base,
+        status: "completed" as const,
+        completedAt: iso(document.completedAt ?? document.updatedAt)
+      }
+    : {
+        ...base,
+        status: document.status === "in_progress" ? ("in_progress" as const) : ("not_started" as const),
         completedAt: null
       };
 }

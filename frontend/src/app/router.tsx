@@ -46,7 +46,11 @@ import { DesignPlanResponseInboxPage } from "../features/admin/DesignPlanRespons
 import { AccessRequestInboxPage } from "../features/access/AccessRequestInboxPage";
 import { MyAccessRequestsPage } from "../features/access/MyAccessRequestsPage";
 import { NeutralHomePage } from "../features/home/NeutralHomePage";
+import { KpiPanel } from "../components/kpi/KpiPanel";
+import { PageHeader } from "../components/ui/PageHeader";
 import { OperationalTaskQueue } from "../features/workflow/OperationalTaskQueue";
+import { FinanceOverviewPage } from "../features/finance/FinanceOverviewPage";
+import { FinanceProjectPage } from "../features/finance/FinanceProjectPage";
 
 interface RoleHomeContent {
   heading: string;
@@ -163,23 +167,19 @@ function RoleLanding({ role }: { role: Role }) {
 
   return (
     <section className="role-landing" aria-labelledby="workspace-title">
-      <header className="workspace-header">
-        <div>
-          <p className="eyebrow">{content.eyebrow}</p>
-          <h1 id="workspace-title">{content.heading}</h1>
-          <p>Welcome, {auth.user?.name}.</p>
-        </div>
-        <StatusBadge label={content.status} tone="success" />
-      </header>
-
-      <div className="placeholder-card">
-        <span className="placeholder-card__index">01</span>
-        <div>
-          <p className="eyebrow">Role landing</p>
-          <h2>Your overview is the next step.</h2>
-          <p>{content.description}</p>
-        </div>
-      </div>
+      <PageHeader
+        id="workspace-title"
+        eyebrow={content.eyebrow}
+        title={content.heading}
+        description={`Welcome, ${auth.user?.name ?? ""}.`}
+        metadata={<StatusBadge label={content.status} tone="success" />}
+      />
+      {/*
+        No placeholder panel here: every role that reaches /home also renders
+        the queue below, which carries its own empty state. The old card sat
+        above real tasks announcing that work "will appear here".
+      */}
+      {auth.user ? <KpiPanel userId={auth.user.id} /> : null}
       {[
         "procurement",
         "finance_head",
@@ -190,7 +190,7 @@ function RoleLanding({ role }: { role: Role }) {
         "worker_painter",
         "worker_civil",
         "worker_other"
-      ].includes(role) ? <OperationalTaskQueue /> : null}
+      ].includes(role) ? <OperationalTaskQueue role={role} /> : null}
     </section>
   );
 }
@@ -302,6 +302,8 @@ const stagedElements = {
   "/admin/client-responses/:roundId": <ClientResponseTaskDetailPage />,
   "/admin/design-approvals": <DesignPlanResponseInboxPage />,
   "/admin/access-requests": <AccessRequestInboxPage />,
+  "/finance": <FinanceOverviewPage />,
+  "/finance/projects/:projectId": <FinanceProjectPage />,
   "/access-requests/mine": <MyAccessRequestsPage />
 } as const satisfies Partial<Record<RegisteredFrontendPath, ReactNode>>;
 
@@ -460,6 +462,17 @@ export function AppRoutes() {
           element={registeredElement(
             "/admin/access-requests",
             stagedElements["/admin/access-requests"]
+          )}
+        />
+        <Route
+          path="/finance"
+          element={registeredElement("/finance", stagedElements["/finance"])}
+        />
+        <Route
+          path="/finance/projects/:projectId"
+          element={registeredElement(
+            "/finance/projects/:projectId",
+            stagedElements["/finance/projects/:projectId"]
           )}
         />
         <Route

@@ -44,7 +44,14 @@ const PROJECT_WORKFLOW_PERMISSIONS = [
   "design.plan_task.read",
   "design.plan_response_tasks.read",
   "design.plan_response_tasks.decide",
-  "workflow.tasks.read"
+  "workflow.tasks.read",
+  "workflow.tasks.update"
+] as const;
+
+const PROJECT_FINANCE_PERMISSIONS = [
+  "finance.bucket.read",
+  "finance.entry.read",
+  "finance.entry.create"
 ] as const;
 
 describe("frontend authorization contract parity", () => {
@@ -63,13 +70,13 @@ describe("frontend authorization contract parity", () => {
     expect(FRONTEND_POLICY_VERSION).toBe(AUTHORIZATION_POLICY_VERSION);
   });
 
-  it("publishes the exact 106-code project-workflow policy on both sides", () => {
-    expect(AUTHORIZATION_POLICY_VERSION).toBe("2026-08-25.project-workflow.v2");
-    expect(FRONTEND_POLICY_VERSION).toBe("2026-08-25.project-workflow.v2");
-    expect(PERMISSION_CODES).toHaveLength(106);
-    expect(FRONTEND_PERMISSION_CODES).toHaveLength(106);
-    expect(new Set(PERMISSION_CODES).size).toBe(106);
-    expect(new Set(FRONTEND_PERMISSION_CODES).size).toBe(106);
+  it("publishes the exact 110-code Super Admin finance policy on both sides", () => {
+    expect(AUTHORIZATION_POLICY_VERSION).toBe("2026-08-26.super-admin-finance.v4");
+    expect(FRONTEND_POLICY_VERSION).toBe("2026-08-26.super-admin-finance.v4");
+    expect(PERMISSION_CODES).toHaveLength(110);
+    expect(FRONTEND_PERMISSION_CODES).toHaveLength(110);
+    expect(new Set(PERMISSION_CODES).size).toBe(110);
+    expect(new Set(FRONTEND_PERMISSION_CODES).size).toBe(110);
     for (const permission of STAFF_INVITATION_PERMISSIONS) {
       expect(PERMISSION_CODES).toContain(permission);
       expect(FRONTEND_PERMISSION_CODES).toContain(permission);
@@ -94,5 +101,15 @@ describe("frontend authorization contract parity", () => {
         PROJECT_WORKFLOW_PERMISSIONS.includes(permission as never)
       )
     ).toEqual(PROJECT_WORKFLOW_PERMISSIONS);
+    expect(
+      PERMISSION_CODES.filter((permission) =>
+        PROJECT_FINANCE_PERMISSIONS.includes(permission as never)
+      )
+    ).toEqual(PROJECT_FINANCE_PERMISSIONS);
+    expect(
+      FRONTEND_PERMISSION_CODES.filter((permission) =>
+        PROJECT_FINANCE_PERMISSIONS.includes(permission as never)
+      )
+    ).toEqual(PROJECT_FINANCE_PERMISSIONS);
   });
 });

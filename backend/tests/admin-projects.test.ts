@@ -339,7 +339,7 @@ describe("Admin-initiated projects", () => {
     expect(detail.body.error.code).toBe("NOT_FOUND");
   });
 
-  it("locks the staff directory to Super Admin while exposing purpose-built estimator options", async () => {
+  it("locks the staff directory to Super Admin, exposes estimator options, and lets Super Admin initiate", async () => {
     const repository = createMemoryRepository(structuredClone(demoSeedData));
     const app = createApp({ repository, auth, clock });
     await request(app).get("/api/v1/admin/users")
@@ -351,7 +351,7 @@ describe("Admin-initiated projects", () => {
     ]);
     expect(JSON.stringify(response.body)).not.toContain("mobile");
     expect(JSON.stringify(response.body)).not.toContain("address");
-    await request(app).post("/api/v1/admin/projects")
+    const initiated = await request(app).post("/api/v1/admin/projects")
       .set("Authorization", bearer("user-super-admin", "super_admin"))
       .send({
         clientName: "Asha", clientEmail: "asha@example.com", clientMobile: "1",
@@ -359,7 +359,16 @@ describe("Admin-initiated projects", () => {
         budgetMin: 1, budgetMax: 2, nextAction: "Visit",
         nextActionAt: "2026-08-25T10:30:00+05:30",
         estimatorId: "user-estimator-sales"
-      }).expect(403);
+      }).expect(201);
+    await expect(
+      repository.listActiveProjectAccessGrants("user-super-admin", "projects")
+    ).resolves.toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        projectId: initiated.body.data.id,
+        source: "admin_initiator",
+        active: true
+      })
+    ]));
   });
 
   it("returns field-addressable errors for the strict initiation contract and safe estimator validation", async () => {

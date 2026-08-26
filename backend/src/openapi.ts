@@ -7,6 +7,14 @@ import {
   PROJECT_WORKFLOW_TASK_KINDS,
   PROJECT_WORKFLOW_TASK_STATUSES
 } from "./domain/project-workflow.js";
+import {
+  FINANCE_EXPENSE_CLASSES,
+  FINANCE_LEDGER_ENTRY_TYPES,
+  PROJECT_DEADLINE_STATUSES,
+  PROJECT_FINANCE_BUCKET_STATUSES,
+  PROJECT_FINANCE_CURRENCY,
+  PROJECT_FINANCE_TARGET_MARGIN_BPS
+} from "./domain/project-finance.js";
 import { ROLE_CODES } from "./domain/roles.js";
 import { INVITABLE_ROLE_CODES } from "./domain/user-invitations.js";
 import {
@@ -110,6 +118,18 @@ const requestBodiesByOperation: Readonly<Record<string, OpenApiRequestBody>> = {
     multipartRequest("EstimateProxyDecisionRequest"),
   "POST /admin/design-plan-response-tasks/:roundId/decision":
     multipartRequest("DesignPlanProxyDecisionRequest"),
+  "POST /admin/design-plan-response-tasks/:roundId/email/retry": jsonRequest(
+    "DesignPlanEmailRetryRequest"
+  ),
+  "PATCH /workflow-tasks/:taskId": jsonRequest(
+    "WorkflowTaskProgressRequest"
+  ),
+  "POST /execution/worker-assignments/override": jsonRequest(
+    "WorkerAssignmentOverrideRequest"
+  ),
+  "POST /finance/projects/:projectId/entries": jsonRequest(
+    "FinanceLedgerEntryRequest"
+  ),
   "POST /estimates/:estimateId/client-email/retry": jsonRequest(
     "EstimateEmailRetryRequest"
   ),
@@ -143,7 +163,17 @@ const responseSchemaByOperation: Readonly<Record<string, string>> = {
   "GET /admin/design-plan-response-tasks": "DesignPlanReviewTaskList",
   "POST /admin/design-plan-response-tasks/:roundId/decision":
     "DesignPlanReviewTask",
-  "GET /workflow-tasks": "ProjectWorkflowTaskList"
+  "POST /admin/design-plan-response-tasks/:roundId/email/retry":
+    "DesignPlanReviewTask",
+  "GET /admin/workers": "WorkerAssignmentOptionList",
+  "GET /admin/projects/:projectId/workflow-tasks": "ProjectWorkflowTaskList",
+  "POST /execution/worker-assignments/override": "ProjectWorkflowTask",
+  "GET /finance/projects": "ProjectFinanceBucketPage",
+  "GET /finance/projects/:projectId": "ProjectFinanceBucket",
+  "GET /finance/projects/:projectId/entries": "FinanceLedgerEntryPage",
+  "POST /finance/projects/:projectId/entries": "PostFinanceEntryResult",
+  "GET /workflow-tasks": "ProjectWorkflowTaskList",
+  "PATCH /workflow-tasks/:taskId": "ProjectWorkflowTask"
 };
 
 const pdfOperations = new Set<string>([
@@ -165,6 +195,7 @@ const imageOperations = new Set<string>([
 const attachmentOperations = new Set<string>([
   "GET /design-versions/:versionId/download",
   "GET /admin/estimate-client-response-tasks/:roundId/proof",
+  "GET /admin/design-plan-response-tasks/:roundId/attachments/:attachmentIndex",
   "GET /internal/extraction-jobs/:jobId/source"
 ]);
 
@@ -203,9 +234,23 @@ const operationSummaries: Readonly<Record<string, string>> = {
   "GET /designer/design-plan-tasks": "List the current Designer's plan work",
   "GET /admin/design-plan-response-tasks":
     "List design-plan Client response tasks",
+  "GET /admin/design-plan-response-tasks/:roundId/attachments/:attachmentIndex":
+    "Download a submitted design-plan attachment",
   "POST /admin/design-plan-response-tasks/:roundId/decision":
     "Record a Client-proxy design-plan decision with proof",
+  "POST /admin/design-plan-response-tasks/:roundId/email/retry":
+    "Retry failed design-plan email delivery",
   "GET /workflow-tasks": "List role-specific execution tasks",
+  "PATCH /workflow-tasks/:taskId": "Update execution-task progress",
+  "GET /admin/workers": "List active trade workers for assignment",
+  "GET /admin/projects/:projectId/workflow-tasks":
+    "Monitor a project's workflow tasks",
+  "POST /execution/worker-assignments/override":
+    "Assign, reassign, or unassign a trade worker",
+  "GET /finance/projects": "List authorized project finance buckets",
+  "GET /finance/projects/:projectId": "Read project budget and margin position",
+  "GET /finance/projects/:projectId/entries": "List project spending and overheads",
+  "POST /finance/projects/:projectId/entries": "Record project spending or overhead",
   "POST /estimates/:estimateId/design-uploads":
     "Upload a design plan for extraction",
   "GET /estimates/:estimateId/design-uploads":
@@ -243,7 +288,9 @@ const paginationOperationKeys = new Set<string>([
   "GET /designers/:designerId/audit",
   "GET /audit",
   "GET /projects/:projectId/design-versions",
-  "GET /admin/estimate-client-response-tasks"
+  "GET /admin/estimate-client-response-tasks",
+  "GET /finance/projects",
+  "GET /finance/projects/:projectId/entries"
 ]);
 
 const statusFilterOperationKeys = new Set<string>([
@@ -556,6 +603,10 @@ export const openApiDocument: LisnoOpenApiDocument = Object.freeze({
     tag("Administration", "User and access administration."),
     tag("Projects", "Project initiation, hierarchy, and project reads."),
     tag("Project workflow", "Design assignment, Designer upload work, approvals, and execution handoff."),
+    tag(
+      "Project finance",
+      "Client-approved project values, GST-exclusive revenue, fixed 20% target profit, live recorded costs, and deadline risk. Monetary overhead is ledger-posted only."
+    ),
     tag("Leads", "Estimator/Sales lead management."),
     tag("Estimates", "Estimate drafting, publication, and Client decisions."),
     tag("Estimate design", "Estimate plan uploads, extraction, drawings, and annotations."),
@@ -834,6 +885,39 @@ function multipartRequest(schemaName: string): OpenApiRequestBody {
   };
 }
 
+function financeLedgerRequestSchema(
+  type: "direct_spend" | "overhead",
+  requiresExpenseClass: boolean
+): OpenApiSchema {
+  return {
+    type: "object",
+    additionalProperties: false,
+    required: [
+      "type",
+      ...(requiresExpenseClass ? ["expenseClass"] : []),
+      "category",
+      "amountPaise",
+      "incurredAt",
+      "description",
+      "idempotencyKey"
+    ],
+    properties: {
+      type: { type: "string", enum: [type] },
+      expenseClass: requiresExpenseClass
+        ? { type: "string", enum: [...FINANCE_EXPENSE_CLASSES] }
+        : { type: "string", nullable: true, enum: [null] },
+      category: { type: "string", minLength: 1, maxLength: 100 },
+      amountPaise: { type: "integer", minimum: 1 },
+      incurredAt: { type: "string", format: "date-time" },
+      description: { type: "string", minLength: 1, maxLength: 1000 },
+      vendor: { type: "string", minLength: 1, maxLength: 200, nullable: true },
+      reference: { type: "string", minLength: 1, maxLength: 200, nullable: true },
+      sourceSectionId: { type: "string", minLength: 1, maxLength: 64, nullable: true },
+      idempotencyKey: { type: "string", minLength: 8, maxLength: 128 }
+    }
+  };
+}
+
 function addOperation(
   target: Record<string, OpenApiPathItem>,
   path: string,
@@ -851,7 +935,9 @@ function pathParameters(path: string): OpenApiParameter[] {
     name: match[1],
     in: "path",
     required: true,
-    schema: { type: "string", minLength: 1 }
+    schema: match[1] === "attachmentIndex"
+      ? { type: "integer", minimum: 0 }
+      : { type: "string", minLength: 1 }
   }));
 }
 
@@ -869,6 +955,7 @@ function protectedDescription(operation: HumanJwtOperation): string {
 function tagFor(operation: HumanJwtOperation): string {
   const { path } = splitHumanOperationKey(operation.key);
   if (operation.availability === "project_workflow") return "Project workflow";
+  if (operation.availability === "project_finance") return "Project finance";
   if (operation.availability === "identity_provisioning") return "Invitations";
   if (path.startsWith("/auth")) return "Authentication";
   if (path.startsWith("/access-requests") || path.startsWith("/project-access-grants") || path.startsWith("/admin/users")) return "Administration";
@@ -1115,6 +1202,41 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
     },
     EstimateProxyDecisionRequest: proofDecisionSchema("version"),
     DesignPlanProxyDecisionRequest: proofDecisionSchema("expectedVersion"),
+    DesignPlanEmailRetryRequest: {
+      type: "object",
+      additionalProperties: false,
+      required: ["expectedVersion"],
+      properties: {
+        expectedVersion: { type: "integer", minimum: 1 }
+      }
+    },
+    WorkflowTaskProgressRequest: {
+      type: "object",
+      additionalProperties: false,
+      required: ["version", "progress"],
+      properties: {
+        version: { type: "integer", minimum: 1 },
+        progress: { type: "integer", minimum: 0, maximum: 100 }
+      }
+    },
+    WorkerAssignmentOverrideRequest: {
+      type: "object",
+      additionalProperties: false,
+      required: ["projectId", "taskId", "expectedVersion", "workerId"],
+      properties: {
+        projectId: id,
+        taskId: id,
+        expectedVersion: { type: "integer", minimum: 1 },
+        workerId: { type: "string", minLength: 1, nullable: true }
+      }
+    },
+    FinanceLedgerEntryRequest: {
+      oneOf: [
+        financeLedgerRequestSchema("direct_spend", true),
+        financeLedgerRequestSchema("overhead", false)
+      ],
+      discriminator: { propertyName: "type" }
+    },
     EstimateEmailRetryRequest: {
       type: "object",
       additionalProperties: false,
@@ -1139,6 +1261,20 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
     DesignerOptionList: {
       type: "array",
       items: { $ref: "#/components/schemas/DesignerOption" }
+    },
+    WorkerAssignmentOption: {
+      type: "object",
+      required: ["id", "name", "email", "role"],
+      properties: {
+        id,
+        name: { type: "string", minLength: 1 },
+        email: { type: "string", format: "email" },
+        role: { $ref: "#/components/schemas/Role" }
+      }
+    },
+    WorkerAssignmentOptionList: {
+      type: "array",
+      items: { $ref: "#/components/schemas/WorkerAssignmentOption" }
     },
     DesignPlanTask: {
       type: "object",
@@ -1192,7 +1328,7 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
     },
     ProjectWorkflowTask: {
       type: "object",
-      required: ["id", "projectId", "projectName", "estimateId", "kind", "title", "description", "assigneeRole", "sourceSectionId", "roomName", "status", "openedAt"],
+      required: ["id", "projectId", "projectName", "estimateId", "kind", "title", "description", "assigneeRole", "assignedWorker", "sourceSectionId", "roomName", "status", "progress", "version", "openedAt", "updatedAt"],
       properties: {
         id,
         projectId: id,
@@ -1203,14 +1339,367 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
         title: { type: "string" },
         description: { type: "string" },
         assigneeRole: { $ref: "#/components/schemas/Role" },
+        assignedWorker: {
+          type: "object",
+          nullable: true,
+          required: ["id", "name", "email", "role", "active"],
+          properties: {
+            id,
+            name: { type: "string", minLength: 1 },
+            email: { type: "string" },
+            role: { $ref: "#/components/schemas/Role" },
+            active: { type: "boolean" }
+          }
+        },
         sourceSectionId: { type: "string", nullable: true },
         roomName: { type: "string", nullable: true },
-        openedAt: dateTime
+        progress: { type: "integer", minimum: 0, maximum: 100 },
+        version: { type: "integer", minimum: 1 },
+        openedAt: dateTime,
+        updatedAt: dateTime
       }
     },
     ProjectWorkflowTaskList: {
       type: "array",
       items: { $ref: "#/components/schemas/ProjectWorkflowTask" }
+    },
+    ProjectFinanceBucket: {
+      type: "object",
+      description: "Project-wise finance view sourced from the Client-approved Estimate. Before a durable bucket is opened, approved value remains visible while spending stays locked. Amounts are integer paise. Current profit is a live ledger position, not finalized actual profit until the project is closed and all costs are posted.",
+      required: [
+        "id", "projectId", "projectName", "projectStatus", "estimateId",
+        "estimateVersion", "estimateReviewRoundId", "designPlanVersion", "currency",
+        "approvedSubtotalPaise", "approvedGstPaise", "approvedContractTotalPaise",
+        "targetMarginBps", "targetProfitPaise", "costBudgetPaise",
+        "procurementCostPaise", "employeePaymentPaise", "otherExpensePaise", "directSpendPaise",
+        "overheadPaise", "recordedCostPaise", "remainingBudgetPaise", "currentProfitPaise",
+        "currentMarginBps", "overBudget", "deadlineAt", "overdueDays", "deadlineStatus",
+        "overdueTaskCount", "status", "version", "openedAt", "closedAt",
+        "createdAt", "updatedAt"
+      ],
+      properties: {
+        id,
+        projectId: id,
+        projectName: { type: "string", minLength: 1 },
+        projectStatus: { type: "string" },
+        estimateId: id,
+        estimateVersion: { type: "integer", minimum: 1 },
+        estimateReviewRoundId: { type: "string", nullable: true },
+        designPlanVersion: { type: "integer", minimum: 0 },
+        currency: { type: "string", enum: [PROJECT_FINANCE_CURRENCY] },
+        approvedSubtotalPaise: {
+          type: "integer",
+          minimum: 0,
+          title: "Net approved revenue (excluding GST)",
+          description: "Client-approved contract total minus approved GST. This is the base for target and current margin calculations."
+        },
+        approvedGstPaise: {
+          type: "integer",
+          minimum: 0,
+          title: "Approved GST (18%)",
+          description: "GST captured in the approved Estimate. It is included in the Client-approved amount but excluded from revenue, profit, and cost budget calculations."
+        },
+        approvedContractTotalPaise: {
+          type: "integer",
+          minimum: 0,
+          title: "Client-approved amount (including GST)",
+          description: "approvedSubtotalPaise + approvedGstPaise. This is the amount shown as Client Approved in the Projects list."
+        },
+        targetMarginBps: {
+          type: "integer",
+          enum: [PROJECT_FINANCE_TARGET_MARGIN_BPS],
+          title: "Target margin",
+          description: "Fixed at 2,000 basis points (20%)."
+        },
+        targetProfitPaise: {
+          type: "integer",
+          minimum: 0,
+          title: "Target profit (20%)",
+          description: "approvedSubtotalPaise x 20%, rounded to the nearest paise."
+        },
+        costBudgetPaise: {
+          type: "integer",
+          minimum: 0,
+          title: "Cost budget (80%)",
+          description: "approvedSubtotalPaise - targetProfitPaise."
+        },
+        procurementCostPaise: {
+          type: "integer",
+          minimum: 0,
+          title: "Procurement costs",
+          description: "Sum of posted direct-spend entries classified as procurement."
+        },
+        employeePaymentPaise: {
+          type: "integer",
+          minimum: 0,
+          title: "Employee payments",
+          description: "Sum of posted direct-spend entries classified as employee_payment."
+        },
+        otherExpensePaise: {
+          type: "integer",
+          minimum: 0,
+          title: "Other direct expenses",
+          description: "Remaining posted direct spend after Procurement costs and Employee payments, including explicit other and legacy unclassified entries."
+        },
+        directSpendPaise: {
+          type: "integer",
+          minimum: 0,
+          title: "Total direct expenses",
+          description: "procurementCostPaise + employeePaymentPaise + otherExpensePaise."
+        },
+        overheadPaise: {
+          type: "integer",
+          minimum: 0,
+          title: "Recorded overheads",
+          description: "Sum of explicitly posted overhead ledger entries. Deadline risk never fabricates or estimates a monetary overhead."
+        },
+        recordedCostPaise: {
+          type: "integer",
+          minimum: 0,
+          title: "Total recorded costs",
+          description: "directSpendPaise + overheadPaise."
+        },
+        remainingBudgetPaise: {
+          type: "integer",
+          title: "Remaining cost budget",
+          description: "costBudgetPaise - recordedCostPaise. A negative value is a budget overrun."
+        },
+        currentProfitPaise: {
+          type: "integer",
+          title: "Current profit (live)",
+          description: "approvedSubtotalPaise - recordedCostPaise. This is a live position based only on costs posted so far; label it Final actual profit only after the project is closed and cost posting is complete."
+        },
+        currentMarginBps: {
+          type: "integer",
+          nullable: true,
+          title: "Current margin (live)",
+          description: "currentProfitPaise / approvedSubtotalPaise, expressed in basis points and rounded to the nearest basis point; null when approvedSubtotalPaise is zero."
+        },
+        overBudget: {
+          type: "boolean",
+          description: "True when remainingBudgetPaise is below zero."
+        },
+        deadlineAt: {
+          ...dateTime,
+          title: "Planned project deadline"
+        },
+        overdueDays: {
+          type: "integer",
+          minimum: 0,
+          title: "Project overdue days",
+          description: "Calendar days beyond the planned deadline for an active overdue or completed-late project. This is a risk signal, not a monetary cost."
+        },
+        deadlineStatus: {
+          type: "string",
+          enum: [...PROJECT_DEADLINE_STATUSES],
+          title: "Deadline risk status",
+          description: "Derived at response time: on_track or overdue for active projects; completed_on_time or completed_late when actualEndAt is known; completed_date_unknown when a completed project has no actualEndAt. It does not change overheadPaise."
+        },
+        overdueTaskCount: {
+          type: "integer",
+          minimum: 0,
+          title: "Overdue workflow tasks",
+          description: "Open or in-progress workflow tasks whose due time has passed. This is a risk count, not a monetary cost."
+        },
+        status: { type: "string", enum: [...PROJECT_FINANCE_BUCKET_STATUSES] },
+        version: { type: "integer", minimum: 1 },
+        openedAt: { ...dateTime, nullable: true },
+        closedAt: { ...dateTime, nullable: true },
+        createdAt: dateTime,
+        updatedAt: dateTime
+      }
+    },
+    ProjectFinanceBucketPage: {
+      type: "object",
+      description: "Paginated project cards plus a portfolio summary calculated across every authorized Client-approved project, not only the current page.",
+      required: ["items", "summary", "pagination"],
+      properties: {
+        items: {
+          type: "array",
+          items: { $ref: "#/components/schemas/ProjectFinanceBucket" }
+        },
+        summary: { $ref: "#/components/schemas/ProjectFinancePortfolioSummary" },
+        pagination: { $ref: "#/components/schemas/Pagination" }
+      }
+    },
+    ProjectFinancePortfolioSummary: {
+      type: "object",
+      description: "Live accumulated portfolio across all authorized projects with a Client-approved Estimate. Every amount is the sum of its project-level value across the full result set, independent of pagination. Current profit is not finalized actual profit while costs remain unposted or a project remains open.",
+      required: [
+        "projectCount", "approvedContractTotalPaise", "approvedGstPaise",
+        "approvedSubtotalPaise", "targetProfitPaise", "costBudgetPaise",
+        "procurementCostPaise", "employeePaymentPaise", "otherExpensePaise",
+        "directSpendPaise", "overheadPaise", "recordedCostPaise",
+        "remainingBudgetPaise", "currentProfitPaise", "currentMarginBps",
+        "overBudgetProjectCount", "overdueProjectCount",
+        "lateCompletedProjectCount", "overdueTaskCount"
+      ],
+      properties: {
+        projectCount: {
+          type: "integer",
+          minimum: 0,
+          title: "Approved projects",
+          description: "Distinct authorized projects with a Client-approved Estimate; not limited to the current page."
+        },
+        approvedContractTotalPaise: {
+          type: "integer",
+          minimum: 0,
+          title: "Accumulated Client-approved amount",
+          description: "Sum of approved project contract totals including GST."
+        },
+        approvedGstPaise: {
+          type: "integer",
+          minimum: 0,
+          title: "Accumulated approved GST (18%)",
+          description: "Sum of approved project GST, excluded from portfolio revenue, profit, and cost budget."
+        },
+        approvedSubtotalPaise: {
+          type: "integer",
+          minimum: 0,
+          title: "Net approved revenue (excluding GST)",
+          description: "approvedContractTotalPaise - approvedGstPaise."
+        },
+        targetProfitPaise: {
+          type: "integer",
+          minimum: 0,
+          title: "Target profit (20%)",
+          description: "Sum of each project's rounded 20% target profit on net approved revenue."
+        },
+        costBudgetPaise: {
+          type: "integer",
+          minimum: 0,
+          title: "Cost budget (80%)",
+          description: "approvedSubtotalPaise - targetProfitPaise."
+        },
+        procurementCostPaise: {
+          type: "integer",
+          minimum: 0,
+          title: "Procurement costs",
+          description: "Sum of posted procurement direct-spend entries across the portfolio."
+        },
+        employeePaymentPaise: {
+          type: "integer",
+          minimum: 0,
+          title: "Employee payments",
+          description: "Sum of posted employee-payment direct-spend entries across the portfolio."
+        },
+        otherExpensePaise: {
+          type: "integer",
+          minimum: 0,
+          title: "Other direct expenses",
+          description: "Sum of other and legacy unclassified direct spend across the portfolio."
+        },
+        directSpendPaise: {
+          type: "integer",
+          minimum: 0,
+          title: "Total direct expenses",
+          description: "procurementCostPaise + employeePaymentPaise + otherExpensePaise."
+        },
+        overheadPaise: {
+          type: "integer",
+          minimum: 0,
+          title: "Recorded overheads",
+          description: "Sum of explicitly posted overhead ledger entries. Deadline risk does not add money here."
+        },
+        recordedCostPaise: {
+          type: "integer",
+          minimum: 0,
+          title: "Total recorded costs",
+          description: "directSpendPaise + overheadPaise."
+        },
+        remainingBudgetPaise: {
+          type: "integer",
+          title: "Remaining cost budget",
+          description: "costBudgetPaise - recordedCostPaise. A negative value is a portfolio cost-budget overrun."
+        },
+        currentProfitPaise: {
+          type: "integer",
+          title: "Current profit (live)",
+          description: "approvedSubtotalPaise - recordedCostPaise. This is based on costs posted so far, not finalized actual profit while projects or cost capture remain open."
+        },
+        currentMarginBps: {
+          type: "integer",
+          nullable: true,
+          title: "Current portfolio margin (live)",
+          description: "currentProfitPaise / approvedSubtotalPaise in basis points; this is an aggregate ratio, not an average of project margins. Null when approvedSubtotalPaise is zero."
+        },
+        overBudgetProjectCount: {
+          type: "integer",
+          minimum: 0,
+          description: "Projects whose remainingBudgetPaise is negative."
+        },
+        overdueProjectCount: {
+          type: "integer",
+          minimum: 0,
+          description: "Active projects whose planned deadline has passed."
+        },
+        lateCompletedProjectCount: {
+          type: "integer",
+          minimum: 0,
+          description: "Completed projects with an actual completion after the deadline."
+        },
+        overdueTaskCount: {
+          type: "integer",
+          minimum: 0,
+          description: "Open or in-progress workflow tasks whose due time has passed; a risk count with no automatic monetary overhead."
+        }
+      }
+    },
+    FinanceLedgerEntry: {
+      type: "object",
+      required: [
+        "id", "bucketId", "projectId", "type", "expenseClass", "category", "amountPaise",
+        "incurredAt", "description", "vendor", "reference", "sourceSectionId",
+        "idempotencyKey", "status", "version", "createdById", "voidedAt",
+        "voidedById", "voidReason", "createdAt", "updatedAt"
+      ],
+      properties: {
+        id,
+        bucketId: id,
+        projectId: id,
+        type: { type: "string", enum: [...FINANCE_LEDGER_ENTRY_TYPES] },
+        expenseClass: {
+          type: "string",
+          enum: [...FINANCE_EXPENSE_CLASSES],
+          nullable: true
+        },
+        category: { type: "string" },
+        amountPaise: { type: "integer", minimum: 1 },
+        incurredAt: dateTime,
+        description: { type: "string" },
+        vendor: { type: "string", nullable: true },
+        reference: { type: "string", nullable: true },
+        sourceSectionId: { type: "string", nullable: true },
+        idempotencyKey: { type: "string" },
+        status: { type: "string", enum: ["posted", "voided"] },
+        version: { type: "integer", minimum: 1 },
+        createdById: id,
+        voidedAt: { ...dateTime, nullable: true },
+        voidedById: { type: "string", nullable: true },
+        voidReason: { type: "string", nullable: true },
+        createdAt: dateTime,
+        updatedAt: dateTime
+      }
+    },
+    FinanceLedgerEntryPage: {
+      type: "object",
+      required: ["items", "pagination"],
+      properties: {
+        items: {
+          type: "array",
+          items: { $ref: "#/components/schemas/FinanceLedgerEntry" }
+        },
+        pagination: { $ref: "#/components/schemas/Pagination" }
+      }
+    },
+    PostFinanceEntryResult: {
+      type: "object",
+      required: ["entry", "bucket", "replayed"],
+      properties: {
+        entry: { $ref: "#/components/schemas/FinanceLedgerEntry" },
+        bucket: { $ref: "#/components/schemas/ProjectFinanceBucket" },
+        replayed: { type: "boolean" }
+      }
     },
     ExtractionCrop: {
       type: "object",

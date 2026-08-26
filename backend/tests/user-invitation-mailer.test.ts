@@ -79,7 +79,8 @@ const smtpConfig = {
   tlsMode: "starttls" as const,
   username: "mailer-user",
   password: "mailer-password",
-  from: "Lisno Invitations <invitations@lisno.example>"
+  from: "Lisno Invitations <invitations@lisno.example>",
+  deliveryTimeoutMs: 120_000
 };
 
 afterEach(() => {
@@ -113,10 +114,10 @@ describe.sequential("SMTP invitation mailer", () => {
       ignoreTLS: false,
       logger: false,
       debug: false,
-      connectionTimeout: 10_000,
-      greetingTimeout: 10_000,
-      socketTimeout: 10_000,
-      dnsTimeout: 10_000,
+      connectionTimeout: 15_000,
+      greetingTimeout: 15_000,
+      socketTimeout: 60_000,
+      dnsTimeout: 15_000,
       tls: { rejectUnauthorized: true }
     });
     expect(messageState.options).toMatchObject({
@@ -246,7 +247,8 @@ describe.sequential("SMTP invitation mailer", () => {
       const mailer = createSmtpInvitationMailer({
         ...smtpConfig,
         host: server.host,
-        port: server.port
+        port: server.port,
+        deliveryTimeoutMs: 1_000
       });
       let settlements = 0;
       const sending = mailer.sendInvitation({

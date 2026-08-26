@@ -174,6 +174,11 @@ function setup(options: {
     leadId: "lead-1",
     projectId: null,
     estimateVersion: 7,
+    estimateSnapshot: {
+      subtotal: 12_000,
+      gst: 2_160,
+      total: 14_160
+    },
     sendGeneration: 2,
     assignedAdminId: "admin-1",
     deliveryStatus: "sent",
@@ -391,10 +396,16 @@ function setup(options: {
       expect(reviewSession).toBe(session);
     })
   };
+  const finance = {
+    ensurePending: vi.fn(async (_input, financeSession) => {
+      expect(financeSession).toBe(session);
+    })
+  };
   const service = createEstimateDecisionService({
     audit,
     estimateDesigns,
     reviews,
+    finance,
     now: () => new Date(NOW)
   } as never);
 
@@ -410,7 +421,8 @@ function setup(options: {
     session,
     audit,
     estimateDesigns,
-    reviews
+    reviews,
+    finance
   };
 }
 
@@ -648,6 +660,17 @@ describe("EstimateDecisionService Client compatibility", () => {
     });
     expect(state.estimateDesigns.approvalReadinessForDecision).not.toHaveBeenCalled();
     expect(state.estimateDesigns.approvalReadiness).not.toHaveBeenCalled();
+    expect(state.finance.ensurePending).toHaveBeenCalledWith({
+      projectId: result.estimate.projectId,
+      estimateId: "estimate-1",
+      estimateVersion: 7,
+      estimateReviewRoundId: "round-1",
+      approvedSubtotalRupees: 12_000,
+      approvedGstRupees: 2_160,
+      approvedContractTotalRupees: 14_160,
+      createdById: "client-1",
+      occurredAt: NOW
+    }, state.session);
   });
 
   it("opens pending design assignment after Client commercial approval", async () => {

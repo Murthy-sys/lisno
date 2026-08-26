@@ -9,7 +9,7 @@ export interface HumanJwtOperation {
   key: HumanJwtOperationKeyShape;
   permission: PermissionCode;
   scope:
-    | { kind: "project"; module: "projects" | "design" }
+    | { kind: "project"; module: "projects" | "design" | "finance" }
     | {
         kind: "non_project";
         namespace:
@@ -19,6 +19,7 @@ export interface HumanJwtOperation {
           | "estimation_ownership"
           | "estimate_client_response"
           | "project_workflow"
+          | "project_finance"
           | "access_administration";
         projectReviewScope?: boolean;
       };
@@ -34,7 +35,8 @@ export interface HumanJwtOperation {
     | "prompt_2"
       | "identity_provisioning"
       | "estimate_client_response"
-      | "project_workflow";
+      | "project_workflow"
+      | "project_finance";
 }
 
 export const HUMAN_JWT_OPERATION_LIST = [
@@ -133,7 +135,7 @@ export const HUMAN_JWT_OPERATION_LIST = [
   { key: "POST /project-access-grants/:grantId/revoke", permission: "project_access_grant.revoke", scope: { kind: "non_project", namespace: "access_administration", projectReviewScope: true }, operationClass: "admin", superAdminBehavior: "admin_override", availability: "prompt_1" },
   { key: "GET /admin/projects", permission: "projects.list", scope: { kind: "project", module: "projects" }, operationClass: "read", superAdminBehavior: "global_read", availability: "prompt_2" },
   { key: "GET /admin/projects/:projectId", permission: "projects.read", scope: { kind: "project", module: "projects" }, operationClass: "read", superAdminBehavior: "global_read", availability: "prompt_2" },
-  { key: "POST /admin/projects", permission: "projects.initiate", scope: { kind: "project", module: "projects" }, operationClass: "personal", superAdminBehavior: "deny_personal", availability: "prompt_2" },
+  { key: "POST /admin/projects", permission: "projects.initiate", scope: { kind: "project", module: "projects" }, operationClass: "admin", superAdminBehavior: "admin_override", availability: "prompt_2" },
   { key: "GET /admin/estimators", permission: "organization.estimators.read", scope: { kind: "non_project", namespace: "organization" }, operationClass: "read", superAdminBehavior: "global_read", availability: "prompt_2" },
   { key: "GET /admin/user-invitations", permission: "identity.user_invitations.read", scope: { kind: "non_project", namespace: "identity" }, operationClass: "read", superAdminBehavior: "global_read", availability: "identity_provisioning" },
   { key: "POST /admin/user-invitations", permission: "identity.user_invitations.create", scope: { kind: "non_project", namespace: "identity" }, operationClass: "admin", superAdminBehavior: "admin_override", availability: "identity_provisioning" },
@@ -149,8 +151,18 @@ export const HUMAN_JWT_OPERATION_LIST = [
   { key: "POST /admin/projects/:projectId/design-assignment", permission: "design.plan_assignment.manage", scope: { kind: "project", module: "projects" }, operationClass: "admin", superAdminBehavior: "admin_override", availability: "project_workflow" },
   { key: "GET /designer/design-plan-tasks", permission: "design.plan_task.read", scope: { kind: "non_project", namespace: "estimation_ownership" }, operationClass: "personal", superAdminBehavior: "deny_personal", availability: "project_workflow" },
   { key: "GET /admin/design-plan-response-tasks", permission: "design.plan_response_tasks.read", scope: { kind: "non_project", namespace: "estimate_client_response" }, operationClass: "read", superAdminBehavior: "global_read", availability: "project_workflow" },
+  { key: "GET /admin/design-plan-response-tasks/:roundId/attachments/:attachmentIndex", permission: "design.plan_response_tasks.read", scope: { kind: "non_project", namespace: "estimate_client_response" }, operationClass: "read", superAdminBehavior: "global_read", availability: "project_workflow" },
+  { key: "POST /admin/design-plan-response-tasks/:roundId/email/retry", permission: "design.plan_response_tasks.decide", scope: { kind: "non_project", namespace: "estimate_client_response" }, operationClass: "admin", superAdminBehavior: "admin_override", availability: "project_workflow" },
   { key: "POST /admin/design-plan-response-tasks/:roundId/decision", permission: "design.plan_response_tasks.decide", scope: { kind: "non_project", namespace: "estimate_client_response" }, operationClass: "admin", superAdminBehavior: "admin_override", availability: "project_workflow" },
-  { key: "GET /workflow-tasks", permission: "workflow.tasks.read", scope: { kind: "non_project", namespace: "project_workflow" }, operationClass: "personal", superAdminBehavior: "deny_personal", availability: "project_workflow" }
+  { key: "GET /admin/workers", permission: "execution.worker_assignment.override", scope: { kind: "non_project", namespace: "organization" }, operationClass: "read", superAdminBehavior: "global_read", availability: "project_workflow" },
+  { key: "GET /admin/projects/:projectId/workflow-tasks", permission: "execution.worker_assignment.override", scope: { kind: "non_project", namespace: "project_workflow" }, operationClass: "read", superAdminBehavior: "global_read", availability: "project_workflow" },
+  { key: "POST /execution/worker-assignments/override", permission: "execution.worker_assignment.override", scope: { kind: "non_project", namespace: "project_workflow" }, operationClass: "admin", superAdminBehavior: "admin_override", availability: "project_workflow" },
+  { key: "GET /workflow-tasks", permission: "workflow.tasks.read", scope: { kind: "non_project", namespace: "project_workflow" }, operationClass: "personal", superAdminBehavior: "deny_personal", availability: "project_workflow" },
+  { key: "PATCH /workflow-tasks/:taskId", permission: "workflow.tasks.update", scope: { kind: "non_project", namespace: "project_workflow" }, operationClass: "personal", superAdminBehavior: "deny_personal", availability: "project_workflow" },
+  { key: "GET /finance/projects", permission: "finance.bucket.read", scope: { kind: "non_project", namespace: "project_finance" }, operationClass: "read", superAdminBehavior: "global_read", availability: "project_finance" },
+  { key: "GET /finance/projects/:projectId", permission: "finance.bucket.read", scope: { kind: "project", module: "finance" }, operationClass: "read", superAdminBehavior: "global_read", availability: "project_finance" },
+  { key: "GET /finance/projects/:projectId/entries", permission: "finance.entry.read", scope: { kind: "project", module: "finance" }, operationClass: "read", superAdminBehavior: "global_read", availability: "project_finance" },
+  { key: "POST /finance/projects/:projectId/entries", permission: "finance.entry.create", scope: { kind: "project", module: "finance" }, operationClass: "admin", superAdminBehavior: "admin_override", availability: "project_finance" }
 ] as const satisfies readonly HumanJwtOperation[];
 
 export type HumanJwtOperationKey =

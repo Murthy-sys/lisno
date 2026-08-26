@@ -67,5 +67,6 @@ const estimateSchema = new Schema({
 estimateSchema.index({ ownerId: 1, updatedAt: -1 });
 estimateSchema.index({ status: 1, assignedManagerId: 1, assignedDesignerId: 1 });
 estimateSchema.index({ projectId: 1, designPlanStatus: 1 });
+estimateSchema.index({ status: 1, projectId: 1, clientDecisionAt: -1, updatedAt: -1 });
 estimateSchema.index({ designPlanDesignerId: 1, designPlanStatus: 1 });
 export const EstimateModel = models.Estimate ?? model("Estimate", estimateSchema);

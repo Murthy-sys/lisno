@@ -8,9 +8,15 @@ import {
 } from "../domain/estimate-client-review.js";
 import {
   projectWorkflowBlueprints,
+  workflowTaskDueAt,
+  WORKFLOW_TASK_SCHEDULE,
   type DesignPlanStatus
 } from "../domain/project-workflow.js";
-import { isWorkerRole } from "../domain/roles.js";
+import {
+  WORKER_ROLES,
+  isWorkerRole,
+  type WorkerRole
+} from "../domain/roles.js";
 import { ApiError } from "../middleware/errors.js";
 import { DesignPlanResponseProofModel } from "../models/DesignPlanResponseProof.js";
 import { DesignPlanReviewRoundModel } from "../models/DesignPlanReviewRound.js";
@@ -30,8 +36,16 @@ import type { PublicUser } from "./auth.service.js";
 import type { DesignPlanMailer } from "./design-plan-mailer.js";
 import { synchronizeEstimateDesignReviewState } from "./estimate-design-review-state.js";
 import { approvePlanTargetsForDrawingRevision } from "./estimate-plan-review.service.js";
+import type { OpenFinanceBucketInput } from "./project-finance.service.js";
 
 type Row = Record<string, any>;
+
+const DOWNSTREAM_EXECUTION_TASK_KINDS = [
+  "procurement",
+  "finance",
+  "site_execution",
+  "trade_execution"
+] as const;
 
 export interface DesignPlanTaskDto {
   id: string;
@@ -69,10 +83,27 @@ export interface ProjectWorkflowTaskDto {
   title: string;
   description: string;
   assigneeRole: string;
+  assignedWorker: {
+    id: string;
+    name: string;
+    email: string;
+    role: WorkerRole;
+    active: boolean;
+  } | null;
   sourceSectionId: string | null;
   roomName: string | null;
   status: string;
+  progress: number;
+  version: number;
   openedAt: string;
+  updatedAt: string;
+}
+
+export interface WorkerAssignmentOptionDto {
+  id: string;
+  name: string;
+  email: string;
+  role: WorkerRole;
 }
 
 export interface ProjectWorkflowService {
@@ -93,7 +124,10 @@ export interface ProjectWorkflowService {
     submittedAt: Date,
     session: mongoose.ClientSession
   ): Promise<{ roundId: string; designPlanVersion: number }>;
-  deliverDesignReview(roundId: string, actorId: string): Promise<void>;
+  deliverDesignReview(
+    roundId: string,
+    actorId: string
+  ): Promise<DesignPlanReviewTaskDto["deliveryStatus"] | undefined>;
   recordClientDrawingDecision(
     estimateId: string,
     actor: PublicUser,
@@ -106,6 +140,16 @@ export interface ProjectWorkflowService {
     actor: PublicUser,
     status?: "pending" | "approved" | "changes_requested"
   ): Promise<DesignPlanReviewTaskDto[]>;
+  readDesignReviewAttachment(
+    actor: PublicUser,
+    roundId: string,
+    attachmentIndex: number
+  ): Promise<{ filename: string; mimeType: string; bytes: Buffer }>;
+  retryDesignReviewDelivery(
+    actor: PublicUser,
+    roundId: string,
+    expectedVersion: number
+  ): Promise<DesignPlanReviewTaskDto>;
   decideDesignReviewAsAdmin(input: {
     actor: PublicUser;
     roundId: string;
@@ -114,7 +158,25 @@ export interface ProjectWorkflowService {
     note: string;
     proof: StoredEstimateClientResponseProof;
   }): Promise<DesignPlanReviewTaskDto>;
+  listAssignableWorkers(actor: PublicUser): Promise<WorkerAssignmentOptionDto[]>;
+  listProjectWorkflowTasks(
+    actor: PublicUser,
+    projectId: string
+  ): Promise<ProjectWorkflowTaskDto[]>;
+  overrideWorkerAssignment(input: {
+    actor: PublicUser;
+    projectId: string;
+    taskId: string;
+    expectedVersion: number;
+    workerId: string | null;
+  }): Promise<ProjectWorkflowTaskDto>;
   listOperationalTasks(actor: PublicUser): Promise<ProjectWorkflowTaskDto[]>;
+  updateOperationalTask(
+    actor: PublicUser,
+    taskId: string,
+    expectedVersion: number,
+    progress: number
+  ): Promise<ProjectWorkflowTaskDto>;
 }
 
 export function createProjectWorkflowService(input: {
@@ -122,11 +184,17 @@ export function createProjectWorkflowService(input: {
   mailer: DesignPlanMailer;
   portalUrl: string;
   audit: AuditService;
+  finance?: {
+    open(
+      input: OpenFinanceBucketInput,
+      session: mongoose.ClientSession
+    ): Promise<unknown>;
+  };
   now?: () => Date;
 }): ProjectWorkflowService {
   const now = input.now ?? (() => new Date());
 
-  return {
+  const service: ProjectWorkflowService = {
     async listAssignableDesigners(actor) {
       if (!(actor.role === "admin" || actor.role === "super_admin")) forbidden();
       const designers = await UserModel.find({ role: "designer", active: true })
@@ -190,6 +258,7 @@ export function createProjectWorkflowService(input: {
         const project = await ProjectModel.findById(projectId).session(session).lean();
         const lead = await LeadModel.findById(estimate.leadId).session(session).lean();
         if (!project || !lead) notFound();
+        const designPlanVersion = Number(estimate.designPlanVersion ?? 0);
 
         const estimateUpdated = await EstimateModel.updateOne(
           {
@@ -199,13 +268,12 @@ export function createProjectWorkflowService(input: {
             designPlanStatus: estimate.designPlanStatus == null
               ? { $in: [null] }
               : estimate.designPlanStatus,
-            designPlanVersion: Number(estimate.designPlanVersion ?? 0) === 0
-              ? { $in: [null, 0] }
-              : Number(estimate.designPlanVersion)
+            designPlanVersion: legacyZeroVersionFilter(designPlanVersion)
           },
           {
             $set: {
               designPlanStatus: "assigned",
+              designPlanVersion,
               designPlanDesignerId: designer._id,
               designPlanAssignedById: actor.id,
               designPlanAssignedAt: assignedAt,
@@ -258,7 +326,9 @@ export function createProjectWorkflowService(input: {
               sourceSectionId: null,
               sourceLineItemKey: null,
               roomName: null,
-              openedAt: assignedAt
+              openedAt: assignedAt,
+              dueAt: workflowTaskDueAt("design_plan_upload", assignedAt),
+              plannedEffort: WORKFLOW_TASK_SCHEDULE.design_plan_upload.plannedEffort
             },
             $set: {
               assigneeUserId: String(designer._id),
@@ -422,7 +492,8 @@ export function createProjectWorkflowService(input: {
         ...uploadAttachmentSnapshots,
         ...replacementAttachmentSnapshots
       ];
-      const designPlanVersion = Number(estimate.designPlanVersion ?? 0) + 1;
+      const previousDesignPlanVersion = Number(estimate.designPlanVersion ?? 0);
+      const designPlanVersion = previousDesignPlanVersion + 1;
       const assignedAdminId = await resolveDesignReviewAdmin(project._id, session);
       const roundId = `design-plan-review-${randomUUID()}`;
       await DesignPlanReviewRoundModel.create([{
@@ -455,22 +526,29 @@ export function createProjectWorkflowService(input: {
         {
           _id: estimateId,
           designPlanStatus: estimate.designPlanStatus,
-          designPlanVersion: Number(estimate.designPlanVersion ?? 0),
+          designPlanVersion: legacyZeroVersionFilter(previousDesignPlanVersion),
           designPlanDesignerId: actor.id
         },
         {
           $set: {
             designPlanStatus: "ready_for_client",
-            designPlanSubmittedAt: submittedAt
-          },
-          $inc: { designPlanVersion: 1 }
+            designPlanSubmittedAt: submittedAt,
+            designPlanVersion
+          }
         },
         { session }
       );
       requireMatched(updated, "The Design plan changed before it could be submitted.");
       await ProjectWorkflowTaskModel.updateOne(
         { dedupeKey: `${estimateId}:design-plan-upload`, assigneeUserId: actor.id },
-        { $set: { status: "completed", completedAt: submittedAt } },
+        {
+          $set: {
+            status: "completed",
+            progress: 100,
+            completedAt: submittedAt
+          },
+          $inc: { version: 1 }
+        },
         { session }
       );
       await input.audit.appendInMongoTransaction({
@@ -498,14 +576,14 @@ export function createProjectWorkflowService(input: {
       }).lean();
       if (!round) return;
       if (input.mailer.deliveryKind === "disabled") {
-        await DesignPlanReviewRoundModel.updateOne(
+        const disabled = await DesignPlanReviewRoundModel.updateOne(
           { _id: roundId, deliveryStatus: "queued" },
           {
             $set: { deliveryStatus: "disabled" },
             $inc: { version: 1 }
           }
         );
-        return;
+        return disabled.matchedCount === 1 ? "disabled" : undefined;
       }
       const deliveryRound = await DesignPlanReviewRoundModel.findOneAndUpdate(
         { _id: roundId, status: "pending", deliveryStatus: "queued" },
@@ -579,7 +657,9 @@ export function createProjectWorkflowService(input: {
             ...(outcome.failureCode ? { failureCode: outcome.failureCode } : {})
           }
         });
+        return outcome.status;
       }
+      return undefined;
     },
 
     async recordClientDrawingDecision(
@@ -620,7 +700,8 @@ export function createProjectWorkflowService(input: {
         note,
         occurredAt,
         session,
-        audit: input.audit
+        audit: input.audit,
+        finance: input.finance
       });
     },
 
@@ -643,6 +724,114 @@ export function createProjectWorkflowService(input: {
         .limit(100)
         .lean();
       return rounds.map(reviewTaskDto);
+    },
+
+    async readDesignReviewAttachment(actor, roundId, attachmentIndex) {
+      if (!(["admin", "super_admin"] as string[]).includes(actor.role)) forbidden();
+      if (!Number.isSafeInteger(attachmentIndex) || attachmentIndex < 0) notFound();
+      const filter: Row = { _id: roundId };
+      if (actor.role === "admin") filter.assignedAdminId = actor.id;
+      const round = await DesignPlanReviewRoundModel.findOne(filter)
+        .select("+attachments.storageReference")
+        .lean();
+      if (!round) notFound();
+      await requireAdminProjectScope(actor, String(round.projectId));
+      const attachment = (round.attachments as Row[] | undefined)?.[attachmentIndex];
+      if (!attachment) notFound();
+      const storageReference = attachment.storageReference;
+      if (typeof storageReference !== "string" || storageReference.length === 0) {
+        throw designPlanAttachmentConflict();
+      }
+      let bytes: Buffer;
+      try {
+        bytes = await input.storage.read(storageReference);
+      } catch {
+        throw designPlanAttachmentConflict();
+      }
+      if (
+        bytes.byteLength !== Number(attachment.byteSize) ||
+        sha256Hex(bytes) !== String(attachment.sha256)
+      ) {
+        throw designPlanAttachmentConflict();
+      }
+      return {
+        filename: String(attachment.filename),
+        mimeType: String(attachment.mimeType),
+        bytes
+      };
+    },
+
+    async retryDesignReviewDelivery(actor, roundId, expectedVersion) {
+      if (!(actor.role === "admin" || actor.role === "super_admin")) forbidden();
+      const requestedAt = now();
+      await withMongoTransaction(async (session) => {
+        const retryFilter: Row = {
+          _id: roundId,
+          status: "pending",
+          deliveryStatus: { $in: ["failed", "disabled"] },
+          version: expectedVersion
+        };
+        if (actor.role === "admin") retryFilter.assignedAdminId = actor.id;
+        const round = await DesignPlanReviewRoundModel.findOne(retryFilter)
+          .session(session)
+          .lean();
+        if (!round) {
+          throw new ApiError(
+            409,
+            "DESIGN_PLAN_EMAIL_NOT_RETRYABLE",
+            "This Design plan email can no longer be retried."
+          );
+        }
+        await requireAdminProjectScope(actor, String(round.projectId), session);
+        const compareAndSwapFilter: Row = {
+          _id: roundId,
+          status: "pending",
+          deliveryStatus: round.deliveryStatus,
+          version: expectedVersion
+        };
+        if (actor.role === "admin") compareAndSwapFilter.assignedAdminId = actor.id;
+        const requeued = await DesignPlanReviewRoundModel.updateOne(
+          compareAndSwapFilter,
+          {
+            $set: {
+              deliveryStatus: "queued",
+              deliveredAt: null,
+              deliveryFailureCode: null
+            },
+            $inc: { version: 1 }
+          },
+          { session }
+        );
+        if (requeued.matchedCount !== 1) {
+          throw new ApiError(
+            409,
+            "DESIGN_PLAN_EMAIL_NOT_RETRYABLE",
+            "This Design plan email can no longer be retried."
+          );
+        }
+        await input.audit.appendInMongoTransaction({
+          actorId: actor.id,
+          action: "design_plan_email_retry_requested",
+          entityType: "design_plan_review_round",
+          entityId: roundId,
+          occurredAt: requestedAt.toISOString(),
+          oldValues: {
+            deliveryStatus: String(round.deliveryStatus),
+            ...(round.deliveryFailureCode
+              ? { deliveryFailureCode: String(round.deliveryFailureCode) }
+              : {})
+          },
+          newValues: { deliveryStatus: "queued" }
+        }, session);
+      });
+
+      await service.deliverDesignReview(roundId, actor.id);
+
+      const refreshedFilter: Row = { _id: roundId };
+      if (actor.role === "admin") refreshedFilter.assignedAdminId = actor.id;
+      const refreshed = await DesignPlanReviewRoundModel.findOne(refreshedFilter).lean();
+      if (!refreshed) notFound();
+      return reviewTaskDto(refreshed);
     },
 
     async decideDesignReviewAsAdmin(decisionInput) {
@@ -764,7 +953,8 @@ export function createProjectWorkflowService(input: {
             note,
             occurredAt,
             session,
-            audit: input.audit
+            audit: input.audit,
+            finance: input.finance
           });
         } else {
           await transitionReviewRound(round, {
@@ -808,16 +998,158 @@ export function createProjectWorkflowService(input: {
       return reviewTaskDto(saved);
     },
 
+    async listAssignableWorkers(actor) {
+      if (actor.role !== "super_admin") forbidden();
+      const workers = await UserModel.find({
+        role: { $in: WORKER_ROLES },
+        active: true
+      })
+        .select({ _id: 1, name: 1, email: 1, role: 1 })
+        .sort({ role: 1, name: 1, _id: 1 })
+        .lean();
+      return workers.map((worker) => ({
+        id: String(worker._id),
+        name: String(worker.name),
+        email: String(worker.email),
+        role: String(worker.role) as WorkerRole
+      }));
+    },
+
+    async listProjectWorkflowTasks(actor, projectId) {
+      if (actor.role !== "super_admin") forbidden();
+      const project = await ProjectModel.findById(projectId)
+        .select({ _id: 1, name: 1 })
+        .lean();
+      if (!project) notFound();
+      const tasks = await ProjectWorkflowTaskModel.find({ projectId })
+        .sort({ kind: 1, assigneeRole: 1, status: 1, openedAt: -1, _id: 1 })
+        .lean();
+      return hydrateOperationalTaskDtos(tasks, new Map([
+        [String(project._id), String(project.name)]
+      ]));
+    },
+
+    async overrideWorkerAssignment(assignmentInput) {
+      const {
+        actor,
+        projectId,
+        taskId,
+        expectedVersion,
+        workerId
+      } = assignmentInput;
+      if (actor.role !== "super_admin") forbidden();
+      const occurredAt = now();
+      return withMongoTransaction(async (session) => {
+        const project = await ProjectModel.findById(projectId)
+          .select({ _id: 1, name: 1 })
+          .session(session)
+          .lean();
+        if (!project) notFound();
+        const task = await ProjectWorkflowTaskModel.findOne({
+          _id: taskId,
+          projectId,
+          kind: "trade_execution"
+        }).session(session).lean();
+        if (!task) notFound();
+
+        const currentVersion = Number(task.version ?? 1);
+        if (currentVersion !== expectedVersion) workflowTaskStale();
+        if (task.status === "completed") {
+          throw new ApiError(
+            409,
+            "WORKFLOW_TASK_COMPLETED",
+            "A completed worker task cannot be reassigned."
+          );
+        }
+
+        const worker = workerId === null
+          ? null
+          : await UserModel.findOne({
+              _id: workerId,
+              role: task.assigneeRole,
+              active: true
+            })
+              .select({ _id: 1, name: 1, email: 1, role: 1, active: 1 })
+              .session(session)
+              .lean();
+        if (workerId !== null && !worker) {
+          throw new ApiError(
+            400,
+            "WORKER_NOT_ASSIGNABLE",
+            "Choose an active worker for this task's trade."
+          );
+        }
+
+        const currentWorkerId = task.assigneeUserId == null
+          ? null
+          : String(task.assigneeUserId);
+        if (currentWorkerId === workerId) {
+          const currentWorker = currentWorkerId === null
+            ? null
+            : await UserModel.findById(currentWorkerId)
+                .select({ _id: 1, name: 1, email: 1, role: 1, active: 1 })
+                .session(session)
+                .lean();
+          return operationalTaskDto(task, String(project.name), currentWorker);
+        }
+
+        const updated = await ProjectWorkflowTaskModel.findOneAndUpdate(
+          {
+            _id: taskId,
+            projectId,
+            kind: "trade_execution",
+            status: { $ne: "completed" },
+            version: task.version == null ? { $in: [null, 1] } : currentVersion
+          },
+          task.version == null
+            ? {
+                $set: {
+                  assigneeUserId: workerId,
+                  updatedAt: occurredAt,
+                  version: 2
+                }
+              }
+            : {
+                $set: { assigneeUserId: workerId, updatedAt: occurredAt },
+                $inc: { version: 1 }
+              },
+          { new: true, runValidators: true, session }
+        ).lean();
+        if (!updated) workflowTaskStale();
+
+        await input.audit.appendInMongoTransaction({
+          actorId: actor.id,
+          action: "project_workflow_task_assignee_changed",
+          entityType: "project_workflow_task",
+          entityId: taskId,
+          occurredAt: occurredAt.toISOString(),
+          oldValues: {
+            assigneeUserId: currentWorkerId,
+            version: currentVersion
+          },
+          newValues: {
+            assigneeUserId: workerId,
+            version: currentVersion + 1
+          }
+        }, session);
+        return operationalTaskDto(updated, String(project.name), worker);
+      });
+    },
+
     async listOperationalTasks(actor) {
-      if (!(
-        actor.role === "procurement" ||
-        actor.role === "finance_head" ||
-        actor.role === "site_manager" ||
-        isWorkerRole(actor.role)
-      )) forbidden();
-      const filter: Row = { assigneeRole: actor.role };
+      if (!isOperationalTaskRole(actor.role)) forbidden();
+      const filter: Row = actor.role === "site_manager"
+        ? {
+            $or: [
+              { assigneeRole: "site_manager" },
+              { kind: "trade_execution" }
+            ]
+          }
+        : isWorkerRole(actor.role)
+          ? { assigneeRole: actor.role, assigneeUserId: actor.id }
+          : { assigneeRole: actor.role };
       const tasks = await ProjectWorkflowTaskModel.find(filter)
-        .sort({ status: 1, openedAt: -1, _id: 1 })
+        .sort({ projectId: 1, kind: 1, status: 1, openedAt: -1, _id: 1 })
         .lean();
       const projects = await ProjectModel.find({
         _id: { $in: tasks.map((task) => task.projectId) }
@@ -825,22 +1157,196 @@ export function createProjectWorkflowService(input: {
       const projectNames = new Map(
         projects.map((project) => [String(project._id), String(project.name)])
       );
-      return tasks.map((task) => ({
-        id: String(task._id),
-        projectId: String(task.projectId),
-        projectName: projectNames.get(String(task.projectId)) ?? "Project",
-        estimateId: String(task.estimateId),
-        kind: String(task.kind),
-        title: String(task.title),
-        description: String(task.description ?? ""),
-        assigneeRole: String(task.assigneeRole),
-        sourceSectionId: task.sourceSectionId == null ? null : String(task.sourceSectionId),
-        roomName: task.roomName == null ? null : String(task.roomName),
-        status: String(task.status),
-        openedAt: new Date(task.openedAt).toISOString()
-      }));
+      return hydrateOperationalTaskDtos(tasks, projectNames);
+    },
+
+    async updateOperationalTask(actor, taskId, expectedVersion, progress) {
+      if (!isOperationalTaskRole(actor.role)) forbidden();
+      const occurredAt = now();
+      return withMongoTransaction(async (session) => {
+        const ownershipFilter = isWorkerRole(actor.role)
+          ? { assigneeUserId: actor.id }
+          : {};
+        const task = await ProjectWorkflowTaskModel.findOne({
+          _id: taskId,
+          assigneeRole: actor.role,
+          ...ownershipFilter,
+          kind: { $in: DOWNSTREAM_EXECUTION_TASK_KINDS }
+        }).session(session).lean();
+        if (!task) notFound();
+
+        const currentVersion = Number(task.version ?? 1);
+        if (currentVersion !== expectedVersion) {
+          throw new ApiError(
+            409,
+            "WORKFLOW_TASK_STALE",
+            "This task changed before your progress update was saved."
+          );
+        }
+        if (task.status === "completed") {
+          throw new ApiError(
+            409,
+            "WORKFLOW_TASK_COMPLETED",
+            "A completed execution task cannot be reopened."
+          );
+        }
+
+        let project = await ProjectModel.findById(task.projectId)
+          .select({
+            _id: 1,
+            name: 1,
+            status: 1,
+            actualEndAt: 1,
+            updatedAt: 1
+          })
+          .session(session)
+          .lean();
+        if (!project) notFound();
+
+        const projectStatusBefore = String(project.status);
+        const projectActualEndAtBefore = nullableDateIso(project.actualEndAt);
+        let completionFenceAt: Date | null = null;
+        if (progress === 100 && project.status !== "completed") {
+          completionFenceAt = nextProjectCompletionFence(
+            project.updatedAt,
+            occurredAt
+          );
+          const lockedProject = await ProjectModel.findOneAndUpdate(
+            {
+              _id: task.projectId,
+              status: { $ne: "completed" },
+              updatedAt: new Date(project.updatedAt)
+            },
+            { $set: { updatedAt: completionFenceAt } },
+            {
+              returnDocument: "after",
+              session,
+              timestamps: false
+            }
+          ).lean();
+          if (!lockedProject) projectCompletionStale();
+          project = lockedProject;
+        }
+
+        const status = progress === 100
+          ? "completed"
+          : progress > 0
+            ? "in_progress"
+            : "open";
+        const taskUpdate = task.version == null
+          ? {
+              $set: {
+                progress,
+                status,
+                completedAt: progress === 100 ? occurredAt : null,
+                updatedAt: occurredAt,
+                version: 2
+              }
+            }
+          : {
+              $set: {
+                progress,
+                status,
+                completedAt: progress === 100 ? occurredAt : null,
+                updatedAt: occurredAt
+              },
+              $inc: { version: 1 }
+            };
+        const updated = await ProjectWorkflowTaskModel.findOneAndUpdate(
+          {
+            _id: taskId,
+            assigneeRole: actor.role,
+            ...ownershipFilter,
+            status: { $ne: "completed" },
+            version: task.version == null ? { $in: [null, 1] } : currentVersion
+          },
+          taskUpdate,
+          { new: true, runValidators: true, session }
+        ).lean();
+        if (!updated) {
+          throw new ApiError(
+            409,
+            "WORKFLOW_TASK_STALE",
+            "This task changed before your progress update was saved."
+          );
+        }
+
+        let projectCompleted = false;
+        if (
+          progress === 100 &&
+          project.status !== "completed" &&
+          completionFenceAt
+        ) {
+          const remainingExecutionTask = await ProjectWorkflowTaskModel.exists({
+            projectId: task.projectId,
+            kind: { $in: DOWNSTREAM_EXECUTION_TASK_KINDS },
+            status: { $ne: "completed" }
+          }).session(session);
+          if (!remainingExecutionTask) {
+            const completedProject = await ProjectModel.findOneAndUpdate(
+              {
+                _id: task.projectId,
+                status: { $ne: "completed" },
+                updatedAt: completionFenceAt
+              },
+              {
+                $set: {
+                  status: "completed",
+                  actualEndAt: occurredAt,
+                  updatedAt: completionFenceAt
+                }
+              },
+              {
+                returnDocument: "after",
+                session,
+                timestamps: false
+              }
+            ).lean();
+            if (!completedProject) projectCompletionStale();
+            project = completedProject;
+            projectCompleted = true;
+          }
+        }
+
+        await input.audit.appendInMongoTransaction({
+          actorId: actor.id,
+          action: "project_workflow_task_progress_changed",
+          entityType: "project_workflow_task",
+          entityId: taskId,
+          occurredAt: occurredAt.toISOString(),
+          oldValues: {
+            progress: Number(task.progress ?? 0),
+            status: String(task.status),
+            ...(projectCompleted
+              ? {
+                  projectStatus: projectStatusBefore,
+                  projectActualEndAt: projectActualEndAtBefore
+                }
+              : {})
+          },
+          newValues: {
+            progress,
+            status,
+            ...(projectCompleted
+              ? {
+                  projectStatus: "completed",
+                  projectActualEndAt: occurredAt.toISOString()
+                }
+              : {})
+          }
+        }, session);
+        const assignee = updated.assigneeUserId == null
+          ? null
+          : await UserModel.findById(updated.assigneeUserId)
+              .select({ _id: 1, name: 1, email: 1, role: 1, active: 1 })
+              .session(session)
+              .lean();
+        return operationalTaskDto(updated, String(project.name), assignee);
+      });
     }
   };
+
+  return service;
 }
 
 async function requireAdminProjectScope(
@@ -879,7 +1385,7 @@ async function resolveDesignReviewAdmin(
   if (grant) {
     const admin = await UserModel.findOne({
       _id: grant.userId,
-      role: "admin",
+      role: { $in: ["admin", "super_admin"] },
       active: true
     }).session(session).lean();
     if (admin) return String(admin._id);
@@ -976,7 +1482,15 @@ async function reopenDesignPlan(
   requireMatched(updated, "This Design plan changed before feedback was recorded.");
   await ProjectWorkflowTaskModel.updateOne(
     { dedupeKey: `${estimateId}:design-plan-upload` },
-    { $set: { status: "open", completedAt: null, openedAt: occurredAt } },
+    {
+      $set: {
+        status: "open",
+        progress: 0,
+        completedAt: null,
+        openedAt: occurredAt
+      },
+      $inc: { version: 1 }
+    },
     { session }
   );
 }
@@ -990,6 +1504,12 @@ async function finalizeDesignApproval(input: {
   occurredAt: Date;
   session: mongoose.ClientSession;
   audit: AuditService;
+  finance?: {
+    open(
+      input: OpenFinanceBucketInput,
+      session: mongoose.ClientSession
+    ): Promise<unknown>;
+  };
 }) {
   await transitionReviewRound(input.round, {
     status: "approved",
@@ -1027,6 +1547,22 @@ async function finalizeDesignApproval(input: {
     input.occurredAt,
     input.session
   );
+  if (input.finance) {
+    await input.finance.open({
+      projectId: String(input.estimate.projectId),
+      designPlanVersion: Number(input.round.designPlanVersion),
+      openedById: input.actorId,
+      occurredAt: input.occurredAt,
+      fallbackBaseline: {
+        estimateId: String(input.estimate._id),
+        estimateVersion: Number(input.estimate.version),
+        estimateReviewRoundId: null,
+        approvedSubtotalRupees: Number(input.estimate.subtotal),
+        approvedGstRupees: Number(input.estimate.gst),
+        approvedContractTotalRupees: Number(input.estimate.total)
+      }
+    }, input.session);
+  }
   await ProjectModel.updateOne(
     { _id: input.estimate.projectId, status: "planning" },
     { $set: { status: "active", actualStartAt: input.occurredAt, updatedAt: input.occurredAt } },
@@ -1068,24 +1604,138 @@ async function generateDownstreamTasks(
     lineItems: (estimate.lineItems ?? []) as never
   });
   for (const blueprint of blueprints) {
+    const { dueInDays: _dueInDays, plannedEffort, ...fields } = blueprint;
     await ProjectWorkflowTaskModel.updateOne(
       { dedupeKey: blueprint.dedupeKey },
       {
         $setOnInsert: {
           _id: `workflow-task-${randomUUID()}`,
-          ...blueprint,
+          ...fields,
           projectId: String(estimate.projectId),
           estimateId: String(estimate._id),
           designPlanVersion,
           assigneeUserId: null,
           status: "open",
+          progress: 0,
+          version: 1,
           openedAt,
+          dueAt: workflowTaskDueAt(blueprint.kind, openedAt),
+          plannedEffort,
           completedAt: null
         }
       },
       { upsert: true, session, runValidators: true }
     );
   }
+}
+
+function operationalTaskDto(
+  task: Row,
+  projectName: string,
+  assignee?: Row | null
+): ProjectWorkflowTaskDto {
+  const assigneeId = task.kind !== "trade_execution" ||
+      !isWorkerRole(task.assigneeRole) ||
+      task.assigneeUserId == null
+    ? null
+    : String(task.assigneeUserId);
+  return {
+    id: String(task._id),
+    projectId: String(task.projectId),
+    projectName,
+    estimateId: String(task.estimateId),
+    kind: String(task.kind),
+    title: String(task.title),
+    description: String(task.description ?? ""),
+    assigneeRole: String(task.assigneeRole),
+    assignedWorker: assigneeId === null
+      ? null
+      : {
+          id: assigneeId,
+          name: assignee ? String(assignee.name) : "Unavailable worker",
+          email: assignee ? String(assignee.email) : "",
+          role: String(assignee?.role ?? task.assigneeRole) as WorkerRole,
+          active: assignee ? Boolean(assignee.active) : false
+        },
+    sourceSectionId: task.sourceSectionId == null
+      ? null
+      : String(task.sourceSectionId),
+    roomName: task.roomName == null ? null : String(task.roomName),
+    status: String(task.status),
+    progress: Number(task.progress ?? 0),
+    version: Number(task.version ?? 1),
+    openedAt: new Date(task.openedAt).toISOString(),
+    updatedAt: new Date(task.updatedAt ?? task.openedAt).toISOString()
+  };
+}
+
+async function hydrateOperationalTaskDtos(
+  tasks: Row[],
+  projectNames: ReadonlyMap<string, string>
+): Promise<ProjectWorkflowTaskDto[]> {
+  const assigneeIds = [...new Set(
+    tasks.flatMap((task) => task.kind !== "trade_execution" ||
+      !isWorkerRole(task.assigneeRole) ||
+      task.assigneeUserId == null
+      ? []
+      : [String(task.assigneeUserId)])
+  )];
+  const assignees = assigneeIds.length === 0
+    ? []
+    : await UserModel.find({ _id: { $in: assigneeIds } })
+        .select({ _id: 1, name: 1, email: 1, role: 1, active: 1 })
+        .lean();
+  const assigneeById = new Map(
+    assignees.map((assignee) => [String(assignee._id), assignee])
+  );
+  return tasks.map((task) => operationalTaskDto(
+    task,
+    projectNames.get(String(task.projectId)) ?? "Project",
+    task.assigneeUserId == null
+      ? null
+      : assigneeById.get(String(task.assigneeUserId))
+  ));
+}
+
+function workflowTaskStale(): never {
+  throw new ApiError(
+    409,
+    "WORKFLOW_TASK_STALE",
+    "This task changed before your update was saved."
+  );
+}
+
+function projectCompletionStale(): never {
+  throw new ApiError(
+    409,
+    "WORKFLOW_PROJECT_STALE",
+    "The project changed before its completion state could be saved."
+  );
+}
+
+function nextProjectCompletionFence(value: unknown, occurredAt: Date): Date {
+  const current = new Date(value as string | number | Date);
+  if (Number.isNaN(current.getTime())) {
+    throw new ApiError(
+      409,
+      "WORKFLOW_PROJECT_STATE_INVALID",
+      "The project completion state is invalid."
+    );
+  }
+  return new Date(Math.max(occurredAt.getTime(), current.getTime() + 1));
+}
+
+function nullableDateIso(value: unknown): string | null {
+  if (value == null) return null;
+  const date = new Date(value as string | number | Date);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
+
+function isOperationalTaskRole(role: PublicUser["role"]): boolean {
+  return role === "procurement" ||
+    role === "finance_head" ||
+    role === "site_manager" ||
+    isWorkerRole(role);
 }
 
 function taskDto(estimate: Row, project: Row, lead: Row): DesignPlanTaskDto {
@@ -1125,8 +1775,20 @@ function requireMatched(result: { matchedCount: number }, message: string) {
   }
 }
 
+function legacyZeroVersionFilter(version: number) {
+  return version === 0 ? { $in: [null, 0] } : version;
+}
+
 function boundedFailureCode(value: string) {
   return /^[A-Z0-9_]{1,64}$/u.test(value) ? value : "DESIGN_PLAN_MAILER_FAILED";
+}
+
+function designPlanAttachmentConflict() {
+  return new ApiError(
+    409,
+    "DESIGN_PLAN_ATTACHMENT_CONFLICT",
+    "The submitted Design plan attachment no longer matches its review snapshot."
+  );
 }
 
 function safeAttachmentStem(value: string) {

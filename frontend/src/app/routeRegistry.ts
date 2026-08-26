@@ -9,6 +9,7 @@ import {
   MailCheck,
   Palette,
   UsersRound,
+  WalletCards,
   type LucideIcon
 } from "lucide-react";
 
@@ -59,6 +60,8 @@ export const ROUTE_REGISTRY = [
   { path: "/admin/client-responses/:roundId", permission: "estimation.client_response_tasks.read", presentationRoles: ["admin", "super_admin"], navigation: null },
   { path: "/admin/design-approvals", permission: "design.plan_response_tasks.read", presentationRoles: ["admin", "super_admin"], navigation: { roles: ["admin", "super_admin"], item: { label: "Design approvals", to: "/admin/design-approvals", end: true, icon: Palette } } },
   { path: "/admin/access-requests", permission: "access_request.review.read", presentationRoles: ["admin", "super_admin"], navigation: { roles: ["admin", "super_admin"], item: { label: "Access requests", to: "/admin/access-requests", end: true, icon: ClipboardCheck } } },
+  { path: "/finance", permission: "finance.bucket.read", presentationRoles: ["finance_head", "super_admin"], navigation: { roles: ["finance_head", "super_admin"], item: { label: "Finance", to: "/finance", end: true, icon: WalletCards } } },
+  { path: "/finance/projects/:projectId", permission: "finance.bucket.read", presentationRoles: ["finance_head", "super_admin"], navigation: null },
   { path: "/access-requests/mine", permission: "access_request.self.read", presentationRoles: ["designer", "procurement", "finance_head", "site_manager", "super_admin"], navigation: { roles: ["designer", "procurement", "finance_head", "site_manager"], item: { label: "My access requests", to: "/access-requests/mine", end: true, icon: KeyRound } } },
   { path: "/home", permission: "workflow.tasks.read", presentationRoles: ["procurement", "finance_head", "site_manager", ...WORKER_ROLES], navigation: { roles: ["procurement", "finance_head", "site_manager", ...WORKER_ROLES], item: { label: "Home", to: "/home", end: true, icon: House } } },
   { path: "/access-denied", permission: null, presentationRoles: ROLE_CODES, navigation: null }

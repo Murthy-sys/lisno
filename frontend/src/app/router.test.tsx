@@ -78,6 +78,11 @@ const clientResponsePaths = [
   "/admin/client-responses/:roundId"
 ] as const;
 
+const financePaths = [
+  "/finance",
+  "/finance/projects/:projectId"
+] as const;
+
 const estimateResponsePermissions = [
   "estimation.client_response_tasks.read",
   "estimation.client_response_tasks.decide",
@@ -412,11 +417,70 @@ describe("role landing staging contract", () => {
     ).toBeVisible();
     expect(router.state.location.pathname).toBe("/home");
   });
+
+  it("shows the shared KPI panel on a worker landing", async () => {
+    const currentUser = {
+      id: "user-procurement",
+      name: "Staged User",
+      email: "procurement@lisno.example",
+      role: "procurement" as const
+    };
+    tokenStorage.set("procurement-token");
+    const user = userEvent.setup();
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const path = apiRequestPath(input);
+      if (path === "/api/v1/auth/me") return Response.json({ data: currentUser });
+      if (path === "/api/v1/auth/authorization") {
+        return Response.json({ data: authorizationFor("procurement") });
+      }
+      if (path.startsWith("/api/v1/kpis/users/user-procurement")) {
+        return Response.json({
+          data: {
+            userId: currentUser.id,
+            periodStartAt: "2026-08-01T00:00:00.000Z",
+            periodEndAt: "2026-08-31T23:59:59.999Z",
+            score: 72,
+            // Design-only components report null for operational work; the
+            // engine redistributes their weight across the rest.
+            components: [
+              { key: "onTime", label: "On-time completion", score: 80, configuredWeight: 35, effectiveWeight: 58.3, eligibleCount: 2, explanation: "Completed and overdue tasks." },
+              { key: "quality", label: "Design quality and approval efficiency", score: null, configuredWeight: 25, effectiveWeight: 0, eligibleCount: 0, explanation: "Approved design versions." },
+              { key: "revisionEfficiency", label: "Revision efficiency", score: null, configuredWeight: 15, effectiveWeight: 0, eligibleCount: 0, explanation: "Review-stage revisions." },
+              { key: "updateDiscipline", label: "Status-update discipline", score: 60, configuredWeight: 15, effectiveWeight: 25, eligibleCount: 2, explanation: "Timely updates." },
+              { key: "workloadCompletion", label: "Workload completion", score: 55, configuredWeight: 10, effectiveWeight: 16.7, eligibleCount: 2, explanation: "Completed planned effort." }
+            ],
+            aggregates: {
+              taskCounts: { total: 2, completed: 1, active: 1 },
+              riskCounts: { gray: 0, green: 1, yellow: 1, red: 0 },
+              effort: { planned: 8, completed: 4, remaining: 4, workloadPercentage: 50 },
+              projects: [],
+              recentActivity: []
+            },
+            tasks: { items: [], pagination: { limit: 20, offset: 0, total: 0, hasMore: false } }
+          }
+        });
+      }
+      if (path.startsWith("/api/v1/workflow/tasks")) {
+        return Response.json({ data: [] });
+      }
+      throw new Error(`Unhandled request: ${path}`);
+    });
+
+    renderApp(["/home"]);
+
+    expect(await screen.findByLabelText("Personal KPI score")).toHaveTextContent("72");
+    await user.click(screen.getByRole("button", { name: "Show breakdown" }));
+    expect(screen.getByText("On-time completion")).toBeVisible();
+    // Design-shaped components stay visible but unscored for a worker.
+    const quality = screen.getByText("Design quality and approval efficiency")
+      .closest("article")!;
+    expect(within(quality).getByText("Not available")).toBeVisible();
+  });
 });
 
 describe("public invitation route", () => {
   it("mounts directly while staying outside the protected registry", async () => {
-    expect(ROUTE_REGISTRY).toHaveLength(24);
+    expect(ROUTE_REGISTRY).toHaveLength(26);
     expect(ROUTE_REGISTRY.map(({ path }) => path)).not.toContain(
       "/accept-invitation"
     );
@@ -433,23 +497,25 @@ describe("public invitation route", () => {
 });
 
 describe("registered permission routes", () => {
-  it("adds the workflow routes and preserves both Client route contracts", () => {
+  it("adds the workflow and finance routes and preserves both Client route contracts", () => {
     const paths = ROUTE_REGISTRY.map(({ path }) => path);
     const additions = paths.filter(
       (path) => !(historicalProtectedPaths as readonly string[]).includes(path)
     );
 
-    expect(paths).toHaveLength(historicalProtectedPaths.length + 4);
+    expect(paths).toHaveLength(historicalProtectedPaths.length + 6);
     expect(additions).toEqual([
       "/designer/design-plans",
       ...clientResponsePaths,
-      "/admin/design-approvals"
+      "/admin/design-approvals",
+      ...financePaths
     ]);
     expect(paths.filter(
       (path) => ![
         "/designer/design-plans",
         ...clientResponsePaths,
-        "/admin/design-approvals"
+        "/admin/design-approvals",
+        ...financePaths
       ].includes(path)
     )).toEqual(historicalProtectedPaths);
     expect(ROUTE_REGISTRY.filter(({ path }) => path.startsWith("/client")))

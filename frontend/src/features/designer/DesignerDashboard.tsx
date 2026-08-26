@@ -2,12 +2,11 @@ import {
   AlertTriangle,
   ArrowUpRight,
   BriefcaseBusiness,
-  ChevronDown,
   FolderKanban
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
-import { useState, type ReactNode } from "react";
+import type { ReactNode } from "react";
 
 import type {
   DesignPlanStatus,
@@ -15,17 +14,15 @@ import type {
   KpiProjectAggregate
 } from "../../api/types";
 import { useAuth } from "../../auth/AuthProvider";
-import { KpiBreakdown } from "../../components/kpi/KpiBreakdown";
-import { KpiScore } from "../../components/kpi/KpiScore";
+import { KpiPanel } from "../../components/kpi/KpiPanel";
 import { AsyncState } from "../../components/ui/AsyncState";
-import { Field, Select } from "../../components/ui/Field";
 import { PageHeader } from "../../components/ui/PageHeader";
 import { StatusBadge } from "../../components/ui/StatusBadge";
 import { Surface } from "../../components/ui/Surface";
 import {
   designerKeys,
   getAllProjects,
-  getKpi,
+  kpiQueryOptions,
   reviewPeriod
 } from "./designerApi";
 import {
@@ -73,10 +70,8 @@ const priorityRank: Record<"red" | "yellow" | "none", number> = {
 
 export function DesignerDashboard() {
   const auth = useAuth();
-  const [periodOffset, setPeriodOffset] = useState(0);
-  const [kpiExpanded, setKpiExpanded] = useState(false);
   const user = auth.user!;
-  const period = reviewPeriod(periodOffset);
+  const period = reviewPeriod();
   const projectsQuery = useQuery({
     queryKey: designerKeys.projects(),
     queryFn: getAllProjects
@@ -85,10 +80,7 @@ export function DesignerDashboard() {
     queryKey: projectWorkflowKeys.designerPlans,
     queryFn: getDesignerPlanTasks
   });
-  const kpiQuery = useQuery({
-    queryKey: [...designerKeys.kpi(user.id), period.from, period.to],
-    queryFn: () => getKpi(user.id, period)
-  });
+  const kpiQuery = useQuery(kpiQueryOptions(user.id, period));
   if (
     projectsQuery.isPending ||
     designTasksQuery.isPending ||
@@ -149,48 +141,7 @@ export function DesignerDashboard() {
         )}
       />
 
-      <Surface as="section" className="designer-kpi" aria-labelledby="kpi-title">
-        <div className="designer-kpi__summary">
-          <div className="designer-kpi__identity">
-            <p className="eyebrow">Personal performance</p>
-            <h2 id="kpi-title">KPI overview</h2>
-          </div>
-          <KpiScore score={kpi.score} />
-          <div className="designer-kpi__controls">
-            <Field
-              id="reporting-period"
-              className="designer-kpi__period"
-              label="Reporting period"
-            >
-              {(controlProps) => (
-                <Select
-                  {...controlProps}
-                  value={periodOffset}
-                  onChange={(event) => setPeriodOffset(Number(event.target.value))}
-                >
-                  <option value={0}>Current month</option>
-                  <option value={-1}>Previous month</option>
-                </Select>
-              )}
-            </Field>
-            <button
-              type="button"
-              className="designer-kpi__toggle"
-              aria-expanded={kpiExpanded}
-              aria-controls="designer-kpi-breakdown"
-              onClick={() => setKpiExpanded((current) => !current)}
-            >
-              {kpiExpanded ? "Hide breakdown" : "Show breakdown"}
-              <ChevronDown aria-hidden="true" />
-            </button>
-          </div>
-        </div>
-        {kpiExpanded ? (
-          <div className="designer-kpi__content" id="designer-kpi-breakdown">
-            <KpiBreakdown components={kpi.components} />
-          </div>
-        ) : null}
-      </Surface>
+      <KpiPanel userId={user.id} />
 
       <div className="designer-metrics">
         <MetricChip

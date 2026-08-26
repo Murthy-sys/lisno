@@ -193,8 +193,26 @@ describe("environment authentication configuration", () => {
         tlsMode: "starttls",
         username: "mailer-user",
         password: "mailer-password",
-        from: "Lisno Invitations <invitations@lisno.example>"
+        from: "Lisno Invitations <invitations@lisno.example>",
+        deliveryTimeoutMs: 120_000
       });
+    });
+
+    it("loads a bounded SMTP delivery deadline for attachment uploads", () => {
+      expect(loadEnvironment({
+        ...base,
+        SMTP_DELIVERY_TIMEOUT_SECONDS: "180"
+      }).mailDelivery).toMatchObject({
+        kind: "smtp",
+        deliveryTimeoutMs: 180_000
+      });
+
+      for (const value of ["29", "601", "60.5", "not-a-number"]) {
+        expect(() => loadEnvironment({
+          ...base,
+          SMTP_DELIVERY_TIMEOUT_SECONDS: value
+        }), value).toThrow();
+      }
     });
 
     it("accepts credential-free origin-only HTTP frontend URLs", () => {
@@ -212,6 +230,14 @@ describe("environment authentication configuration", () => {
         JWT_SECRET: base.JWT_SECRET,
         OCR_WORKER_TOKEN,
         SMTP_TLS_REJECT_UNAUTHORIZED: "true"
+      })).toThrow("Mail delivery configuration must be supplied as one complete group.");
+    });
+
+    it("rejects the delivery deadline when the rest of the SMTP group is absent", () => {
+      expect(() => loadEnvironment({
+        JWT_SECRET: base.JWT_SECRET,
+        OCR_WORKER_TOKEN,
+        SMTP_DELIVERY_TIMEOUT_SECONDS: "120"
       })).toThrow("Mail delivery configuration must be supplied as one complete group.");
     });
 

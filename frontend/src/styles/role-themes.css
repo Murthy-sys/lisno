@@ -272,7 +272,7 @@
 .ui-app-shell[data-role] .estimate-scope-list,
 .ui-app-shell[data-role] .estimate-dimensions {
   border: 1px solid var(--role-glass-edge);
-  border-radius: 1.25rem;
+  border-radius: var(--radius-surface);
   background-color: var(--role-glass);
   background-image: var(--role-glass-sheen);
   box-shadow: var(--role-glass-shadow);
@@ -358,7 +358,7 @@
 }
 
 .ui-app-shell[data-role] .ui-sidebar__identity strong {
-  font-size: 0.875rem;
+  font-size: var(--text-sm);
   letter-spacing: -0.005em;
 }
 
@@ -406,7 +406,7 @@
   gap: clamp(1.25rem, 3vw, 2.5rem);
   padding: clamp(1.6rem, 3.4vw, 2.6rem);
   border: 0;
-  border-radius: 1.5rem;
+  border-radius: var(--radius-surface);
   background: var(--role-band);
   color: var(--role-band-ink);
   box-shadow: var(--role-shadow-lift);
@@ -463,7 +463,9 @@
 .ui-app-shell[data-role] .kpi-panel h3,
 .ui-app-shell[data-role] .estimate-proposal > header h1,
 .ui-app-shell[data-role] .estimate-proposal > header h2,
-.ui-app-shell[data-role] .estimate-proposal > header h3 {
+.ui-app-shell[data-role] .estimate-proposal > header h3,
+.ui-app-shell[data-role] .finance-portfolio-hero h2,
+.ui-app-shell[data-role] .project-finance-hero h3 {
   color: var(--role-band-ink);
 }
 
@@ -607,7 +609,7 @@
 
 .ui-app-shell[data-role] .estimate-workspace__summary {
   border: 1px solid rgb(255 255 255 / 22%);
-  border-radius: 1.15rem;
+  border-radius: var(--radius-surface);
   background: rgb(255 255 255 / 12%);
   box-shadow: none;
   backdrop-filter: blur(10px);
@@ -650,7 +652,7 @@
 .ui-app-shell[data-role] .ui-button--secondary,
 .ui-app-shell[data-role] .estimate-design-uploads__retry {
   border: 1px solid var(--role-line-strong);
-  border-radius: 0.75rem;
+  border-radius: var(--radius-field);
   background: var(--role-glass-strong);
   color: var(--role-ink);
   box-shadow:
@@ -687,7 +689,7 @@
   gap: 0.45rem;
   padding: 0.5rem 0.9rem;
   border: 1px solid var(--role-line);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--role-glass);
   color: var(--role-ink-muted);
   box-shadow: inset 0 1px 0 rgb(255 255 255 / 65%);
@@ -760,7 +762,7 @@
 .ui-app-shell[data-role] .client-dashboard__overview dt,
 .ui-app-shell[data-role] .estimator-dashboard__overview dt {
   color: var(--role-ink-muted);
-  font-size: 0.72rem;
+  font-size: var(--text-xs);
   font-weight: 800;
   letter-spacing: 0.1em;
   text-transform: uppercase;
@@ -823,10 +825,10 @@
 .ui-app-shell[data-role] .estimator-dashboard__section-heading > strong {
   padding: 0.3rem 0.7rem;
   border: 1px solid var(--role-line);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--role-glass);
   color: var(--role-ink-muted);
-  font-size: 0.78rem;
+  font-size: var(--text-sm);
   font-weight: 800;
 }
 
@@ -837,7 +839,7 @@
   gap: 0.2rem;
   padding: clamp(1rem, 2vw, 1.4rem) 1.5rem;
   border: 1px solid rgb(255 255 255 / 22%);
-  border-radius: 1.15rem;
+  border-radius: var(--radius-surface);
   background: rgb(255 255 255 / 10%);
   color: var(--role-band-ink);
   backdrop-filter: blur(10px);
@@ -851,7 +853,7 @@
 
 .ui-app-shell[data-role] .client-dashboard__hero-count span {
   color: var(--role-band-ink-muted);
-  font-size: 0.82rem;
+  font-size: var(--text-sm);
   font-weight: 700;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -879,7 +881,7 @@
 
 .ui-app-shell[data-role] .client-project-card__identity h2 {
   font-family: var(--font-editorial);
-  font-size: 1.5rem;
+  font-size: var(--text-2xl);
   font-weight: 500;
   letter-spacing: -0.02em;
 }
@@ -898,13 +900,13 @@
 
 .ui-app-shell[data-role] .client-project-card__update {
   border: 1px solid var(--role-line);
-  border-radius: 0.9rem;
+  border-radius: var(--radius-field);
   background: var(--role-deck-tint);
 }
 
 .ui-app-shell[data-role] .client-project-card__update span {
   color: var(--role-ink-muted);
-  font-size: 0.72rem;
+  font-size: var(--text-xs);
   font-weight: 800;
   letter-spacing: 0.09em;
   text-transform: uppercase;
@@ -929,7 +931,7 @@
 }
 
 .ui-app-shell[data-role] .client-page--project .client-project-hero {
-  border-radius: 1.5rem;
+  border-radius: var(--radius-surface);
   background: var(--role-band);
   box-shadow: var(--role-shadow-lift);
 }
@@ -941,7 +943,7 @@
 
 .ui-app-shell[data-role] .client-page--project .client-floor-card {
   border-color: var(--role-glass-edge);
-  border-radius: 1.25rem;
+  border-radius: var(--radius-surface);
 }
 
 /* --------------------------------------------------------- estimator decks */
@@ -952,7 +954,7 @@
 
 .ui-app-shell[data-role] .lead-controls label {
   color: var(--role-ink-muted);
-  font-size: 0.72rem;
+  font-size: var(--text-xs);
   font-weight: 800;
   letter-spacing: 0.09em;
   text-transform: uppercase;
@@ -966,7 +968,7 @@
 .ui-app-shell[data-role] .estimate-drawing-correction select,
 .ui-app-shell[data-role] .estimate-drawing-assignment select {
   border: 1px solid var(--role-line-strong);
-  border-radius: 0.7rem;
+  border-radius: var(--radius-control);
   background: var(--role-deck);
   color: var(--role-ink);
 }
@@ -1036,7 +1038,7 @@
   margin: 0;
   color: var(--role-ink);
   font-family: var(--font-interface);
-  font-size: 0.95rem;
+  font-size: var(--text-md);
   font-weight: 750;
 }
 
@@ -1047,14 +1049,14 @@
 }
 
 .ui-app-shell[data-role] .lead-row__estimate .estimate-status {
-  font-size: 0.68rem;
+  font-size: var(--text-xs);
   line-height: 1.25;
   text-align: center;
 }
 
 .ui-app-shell[data-role] .lead-row__estimate strong {
   font-family: var(--font-editorial);
-  font-size: 1.15rem;
+  font-size: var(--text-lg);
   font-weight: 500;
   letter-spacing: -0.015em;
 }
@@ -1076,13 +1078,13 @@
 .ui-app-shell[data-role] .lead-row__open {
   min-height: 2.5rem;
   padding-inline: 0.7rem;
-  font-size: 0.82rem;
+  font-size: var(--text-sm);
   white-space: nowrap;
 }
 
 .ui-app-shell[data-role] .lead-row__actions [role="alert"] {
   color: #9a2f3f;
-  font-size: 0.76rem;
+  font-size: var(--text-xs);
   font-weight: 700;
 }
 
@@ -1094,7 +1096,7 @@
   margin: 0;
   padding: 0.7rem 0.9rem;
   border: 1px solid rgb(179 58 74 / 26%);
-  border-radius: 0.85rem;
+  border-radius: var(--radius-field);
   background: rgb(179 58 74 / 8%);
   color: #9a2f3f;
   font-weight: 700;
@@ -1122,14 +1124,14 @@
 .ui-app-shell[data-role] .estimate-review-card__total {
   color: var(--role-ink);
   font-family: var(--font-editorial);
-  font-size: 1.55rem;
+  font-size: var(--text-2xl);
   font-weight: 500;
   letter-spacing: -0.02em;
 }
 
 .ui-app-shell[data-role] .saved-estimate-card h3 {
   font-family: var(--font-editorial);
-  font-size: 1.25rem;
+  font-size: var(--text-xl);
   font-weight: 500;
 }
 
@@ -1141,7 +1143,7 @@
   border: 1px solid color-mix(in srgb, var(--role-accent) 30%, transparent);
   background: color-mix(in srgb, var(--role-accent-bright) 20%, transparent);
   color: #7a5122;
-  font-size: 0.74rem;
+  font-size: var(--text-xs);
   font-weight: 800;
 }
 
@@ -1196,7 +1198,7 @@
 .ui-app-shell[data-role] .estimate-total-card,
 .ui-app-shell[data-role] .client-estimate-totals,
 .ui-app-shell[data-role] .estimate-proposal > header {
-  border-radius: 1.15rem;
+  border-radius: var(--radius-surface);
   background: var(--role-band);
   box-shadow: var(--role-shadow-lift);
 }
@@ -1307,7 +1309,7 @@
 
 .ui-app-shell[data-role] .estimate-design-uploads__status-list li {
   align-items: center;
-  border-radius: 0.8rem;
+  border-radius: var(--radius-field);
 }
 
 .ui-app-shell[data-role] .estimate-drawing-row__menu button {
@@ -1373,7 +1375,7 @@
 .ui-app-shell[data-role] .inline-empty,
 .ui-app-shell[data-role] .project-empty {
   border: 1px dashed var(--role-line-strong);
-  border-radius: 1.25rem;
+  border-radius: var(--radius-surface);
   background: var(--role-glass);
   color: var(--role-ink-muted);
   backdrop-filter: var(--role-glass-filter);
@@ -1398,7 +1400,7 @@
   }
 
 .ui-app-shell[data-role] .workspace-header {
-    border-radius: 1.25rem;
+    border-radius: var(--radius-surface);
     padding: 1.35rem;
   }
 }
@@ -1415,4 +1417,51 @@
 .ui-app-shell[data-role] .estimator-dashboard__overview dl > div:hover {
     transform: none;
   }
+}
+
+/* ------------------------------------------------ finance statement bands */
+
+/*
+ * The finance heroes are dark statement panels: the formula chips, operator
+ * badges, alert pills and the liquid vessel are all drawn with white ink for a
+ * dark ground.
+ *
+ * `.finance-portfolio-hero` is a Surface, so the generic
+ * `.ui-app-shell[data-role] .ui-surface` glass tint won on specificity and
+ * replaced its dark gradient with light glass - leaving every one of those
+ * white children on cream. It opts out here.
+ *
+ * Both heroes also carried the original midnight/violet gradient, which reads
+ * as a foreign palette inside teak, so they take the role's own dark band.
+ */
+.ui-app-shell[data-role] .finance-portfolio-hero,
+.ui-app-shell[data-role] .project-finance-hero {
+  border: 0;
+  background: var(--role-band);
+  box-shadow: 0 26px 70px rgb(var(--role-shadow-tint) / 30%);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  color: var(--role-band-ink);
+}
+
+.ui-app-shell[data-role] .finance-portfolio-hero__copy > div > p:last-child,
+.ui-app-shell[data-role] .project-finance-hero__copy > p:not(.eyebrow):not(.finance-margin-note) {
+  color: var(--role-band-ink-muted);
+}
+
+.ui-app-shell[data-role] .finance-portfolio-hero .eyebrow,
+.ui-app-shell[data-role] .project-finance-hero .eyebrow {
+  color: var(--role-accent-bright);
+}
+
+.ui-app-shell[data-role] .finance-portfolio-hero__icon,
+.ui-app-shell[data-role] .finance-portfolio-formula__icon {
+  color: var(--role-accent-bright);
+}
+
+/* The operator badge sits on the band, so it needs the band's own dark ink
+   rather than the brand midnight it was drawn against. */
+.ui-app-shell[data-role] .finance-portfolio-formula__operation {
+  background: var(--role-ink);
+  color: var(--role-band-ink-muted);
 }

@@ -62,7 +62,7 @@
 .ui-sidebar__role p {
   color: color-mix(in srgb, var(--color-surface) 64%, transparent);
   font: var(--type-metadata);
-  font-size: 0.6875rem;
+  font-size: var(--text-xs);
   font-weight: 700;
   letter-spacing: 0.1em;
   margin: 0 0 var(--space-1);
@@ -71,7 +71,7 @@
 
 .ui-sidebar__role strong {
   font-family: var(--font-editorial);
-  font-size: 1.2rem;
+  font-size: var(--text-lg);
   font-weight: 500;
 }
 
@@ -138,7 +138,7 @@
   color: var(--color-surface);
   display: grid;
   font: var(--type-metadata);
-  font-size: 0.72rem;
+  font-size: var(--text-xs);
   font-weight: 800;
   block-size: 2.5rem;
   inline-size: 2.5rem;
@@ -159,12 +159,12 @@
 }
 
 .ui-sidebar__identity strong {
-  font-size: 0.8rem;
+  font-size: var(--text-sm);
 }
 
 .ui-sidebar__identity span {
   color: color-mix(in srgb, var(--color-surface) 64%, transparent);
-  font-size: 0.6875rem;
+  font-size: var(--text-xs);
 }
 
 .ui-sidebar__sign-out.ui-icon-button--quiet {

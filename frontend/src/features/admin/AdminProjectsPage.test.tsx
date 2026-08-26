@@ -122,7 +122,7 @@ describe("Admin project API paths", () => {
 });
 
 describe("AdminProjectsPage", () => {
-  it("renders the global Super Admin collection and never offers initiation", async () => {
+  it("renders the global Super Admin collection and offers project initiation", async () => {
     installSuperAdminSession();
     server.use(
       http.get("/api/v1/admin/projects", () => HttpResponse.json(page([project])))
@@ -134,7 +134,7 @@ describe("AdminProjectsPage", () => {
     expect(screen.getByText("All projects across the organization.")).toBeVisible();
     expect(await screen.findByRole("list", { name: "All Projects" })).toBeVisible();
     expect(screen.getByRole("navigation", { name: "All Projects pages" })).toBeVisible();
-    expect(screen.queryByRole("button", { name: "Initiate project" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Initiate project" })).toBeVisible();
   });
 
   it.each([

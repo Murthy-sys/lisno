@@ -13,7 +13,8 @@ const ACTORS = {
   superAdmin: actor("workflow-route-super-admin", "super_admin"),
   estimator: actor("workflow-route-estimator", "estimator_sales"),
   designer: actor("workflow-route-designer", "designer"),
-  procurement: actor("workflow-route-procurement", "procurement")
+  procurement: actor("workflow-route-procurement", "procurement"),
+  carpenter: actor("workflow-route-carpenter", "worker_carpenter")
 } as const;
 const JPEG = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46]);
 
@@ -51,6 +52,24 @@ function setup() {
     deliverDesignReview: vi.fn(),
     recordClientDrawingDecision: vi.fn(),
     listDesignReviewTasks: vi.fn(async () => []),
+    readDesignReviewAttachment: vi.fn(async () => ({
+      filename: "design-plan.pdf",
+      mimeType: "application/pdf",
+      bytes: Buffer.from("design plan")
+    })),
+    retryDesignReviewDelivery: vi.fn(async () => ({
+      id: "round-1",
+      estimateId: "estimate-1",
+      projectId: "project-1",
+      projectName: "Aurora Residence",
+      clientName: "Asha Rao",
+      designPlanVersion: 1,
+      status: "pending",
+      deliveryStatus: "sent",
+      submittedAt: "2026-08-25T10:00:00.000Z",
+      version: 5,
+      attachmentNames: ["design-plan.pdf"]
+    })),
     decideDesignReviewAsAdmin: vi.fn(async () => ({
       id: "round-1",
       estimateId: "estimate-1",
@@ -64,7 +83,62 @@ function setup() {
       version: 2,
       attachmentNames: ["design-plan.pdf"]
     })),
-    listOperationalTasks: vi.fn(async () => [])
+    listAssignableWorkers: vi.fn(async () => [{
+      id: "workflow-route-carpenter",
+      name: "Carla Carpenter",
+      email: "carla@example.test",
+      role: "worker_carpenter" as const
+    }]),
+    listProjectWorkflowTasks: vi.fn(async () => []),
+    overrideWorkerAssignment: vi.fn(async () => ({
+      id: "workflow-task-1",
+      projectId: "project-1",
+      projectName: "Aurora Residence",
+      estimateId: "estimate-1",
+      kind: "trade_execution",
+      title: "Carpentry · Living Room",
+      description: "Execute the approved carpentry work.",
+      assigneeRole: "worker_carpenter",
+      assignedWorker: {
+        id: "workflow-route-carpenter",
+        name: "Carla Carpenter",
+        email: "carla@example.test",
+        role: "worker_carpenter",
+        active: true
+      },
+      sourceSectionId: "CA",
+      roomName: "Living Room",
+      status: "open",
+      progress: 0,
+      version: 2,
+      openedAt: "2026-08-25T10:00:00.000Z",
+      updatedAt: "2026-08-26T10:00:00.000Z"
+    })),
+    listOperationalTasks: vi.fn(async () => []),
+    updateOperationalTask: vi.fn(async () => ({
+      id: "workflow-task-1",
+      projectId: "project-1",
+      projectName: "Aurora Residence",
+      estimateId: "estimate-1",
+      kind: "trade_execution",
+      title: "Carpentry · Living Room",
+      description: "Execute the approved carpentry work.",
+      assigneeRole: "worker_carpenter",
+      assignedWorker: {
+        id: "workflow-route-carpenter",
+        name: "Carla Carpenter",
+        email: "carla@example.test",
+        role: "worker_carpenter",
+        active: true
+      },
+      sourceSectionId: "CA",
+      roomName: "Living Room",
+      status: "in_progress",
+      progress: 65,
+      version: 3,
+      openedAt: "2026-08-25T10:00:00.000Z",
+      updatedAt: "2026-08-26T10:00:00.000Z"
+    }))
   } satisfies ProjectWorkflowService;
   const savedProof = {
     storageReference: "proofs/client-approval.jpg",
@@ -167,6 +241,189 @@ describe("project workflow routes", () => {
       .set("Authorization", bearer("designer"))
       .expect(403);
     expect(service.listOperationalTasks).toHaveBeenCalledTimes(1);
+  });
+
+  it("exposes Super Admin worker assignment reads and a versioned override", async () => {
+    const { app, service } = setup();
+
+    const workers = await request(app)
+      .get("/api/v1/admin/workers")
+      .set("Authorization", bearer("superAdmin"))
+      .expect(200);
+    expect(workers.body.data).toEqual([expect.objectContaining({
+      id: "workflow-route-carpenter",
+      role: "worker_carpenter"
+    })]);
+    expect(service.listAssignableWorkers).toHaveBeenCalledWith(ACTORS.superAdmin);
+
+    await request(app)
+      .get("/api/v1/admin/projects/project-1/workflow-tasks")
+      .set("Authorization", bearer("superAdmin"))
+      .expect(200, { data: [] });
+    expect(service.listProjectWorkflowTasks).toHaveBeenCalledWith(
+      ACTORS.superAdmin,
+      "project-1"
+    );
+
+    const assigned = await request(app)
+      .post("/api/v1/execution/worker-assignments/override")
+      .set("Authorization", bearer("superAdmin"))
+      .send({
+        projectId: "project-1",
+        taskId: "workflow-task-1",
+        expectedVersion: 1,
+        workerId: "workflow-route-carpenter"
+      })
+      .expect(200);
+    expect(assigned.body.data).toMatchObject({
+      id: "workflow-task-1",
+      version: 2,
+      assignedWorker: { id: "workflow-route-carpenter" }
+    });
+    expect(service.overrideWorkerAssignment).toHaveBeenCalledWith({
+      actor: ACTORS.superAdmin,
+      projectId: "project-1",
+      taskId: "workflow-task-1",
+      expectedVersion: 1,
+      workerId: "workflow-route-carpenter"
+    });
+
+    await request(app)
+      .post("/api/v1/execution/worker-assignments/override")
+      .set("Authorization", bearer("superAdmin"))
+      .send({
+        projectId: "project-1",
+        taskId: "workflow-task-1",
+        expectedVersion: 0,
+        workerId: null
+      })
+      .expect(400);
+    await request(app)
+      .get("/api/v1/admin/workers")
+      .set("Authorization", bearer("admin"))
+      .expect(403);
+    await request(app)
+      .post("/api/v1/execution/worker-assignments/override")
+      .set("Authorization", bearer("admin"))
+      .send({
+        projectId: "project-1",
+        taskId: "workflow-task-1",
+        expectedVersion: 1,
+        workerId: null
+      })
+      .expect(403);
+    expect(service.overrideWorkerAssignment).toHaveBeenCalledTimes(1);
+  });
+
+  it("downloads a review attachment through the scoped service boundary", async () => {
+    const { app, service } = setup();
+
+    const response = await request(app)
+      .get("/api/v1/admin/design-plan-response-tasks/round-1/attachments/0")
+      .set("Authorization", bearer("admin"))
+      .expect(200);
+
+    expect(response.headers["content-type"]).toBe("application/pdf");
+    expect(response.headers["content-disposition"]).toBe(
+      'attachment; filename="design-plan.pdf"'
+    );
+    expect(response.headers["cache-control"]).toBe("private, no-store");
+    expect(response.headers["x-content-type-options"]).toBe("nosniff");
+    expect(response.body).toEqual(Buffer.from("design plan"));
+    expect(service.readDesignReviewAttachment).toHaveBeenCalledWith(
+      ACTORS.admin,
+      "round-1",
+      0
+    );
+
+    await request(app)
+      .get("/api/v1/admin/design-plan-response-tasks/round-1/attachments/not-an-index")
+      .set("Authorization", bearer("admin"))
+      .expect(400);
+    await request(app)
+      .get("/api/v1/admin/design-plan-response-tasks/round-1/attachments/0")
+      .set("Authorization", bearer("estimator"))
+      .expect(403);
+    expect(service.readDesignReviewAttachment).toHaveBeenCalledTimes(1);
+  });
+
+  it("validates and forwards a versioned Design email retry for Admin roles", async () => {
+    const { app, service } = setup();
+
+    const response = await request(app)
+      .post("/api/v1/admin/design-plan-response-tasks/round-1/email/retry")
+      .set("Authorization", bearer("admin"))
+      .send({ expectedVersion: 2 })
+      .expect(200);
+
+    expect(response.body.data).toMatchObject({
+      id: "round-1",
+      status: "pending",
+      deliveryStatus: "sent",
+      version: 5
+    });
+    expect(service.retryDesignReviewDelivery).toHaveBeenCalledWith(
+      ACTORS.admin,
+      "round-1",
+      2
+    );
+
+    await request(app)
+      .post("/api/v1/admin/design-plan-response-tasks/round-1/email/retry")
+      .set("Authorization", bearer("superAdmin"))
+      .send({ expectedVersion: 3 })
+      .expect(200);
+    expect(service.retryDesignReviewDelivery).toHaveBeenLastCalledWith(
+      ACTORS.superAdmin,
+      "round-1",
+      3
+    );
+
+    await request(app)
+      .post("/api/v1/admin/design-plan-response-tasks/round-1/email/retry")
+      .set("Authorization", bearer("estimator"))
+      .send({ expectedVersion: 2 })
+      .expect(403);
+    await request(app)
+      .post("/api/v1/admin/design-plan-response-tasks/round-1/email/retry")
+      .set("Authorization", bearer("admin"))
+      .send({ expectedVersion: 0 })
+      .expect(400);
+    expect(service.retryDesignReviewDelivery).toHaveBeenCalledTimes(2);
+  });
+
+  it("validates and forwards versioned worker progress updates", async () => {
+    const { app, service } = setup();
+
+    const response = await request(app)
+      .patch("/api/v1/workflow-tasks/workflow-task-1")
+      .set("Authorization", bearer("carpenter"))
+      .send({ version: 2, progress: 65 })
+      .expect(200);
+    expect(response.body.data).toMatchObject({
+      id: "workflow-task-1",
+      status: "in_progress",
+      progress: 65,
+      version: 3
+    });
+    expect(service.updateOperationalTask).toHaveBeenCalledWith(
+      ACTORS.carpenter,
+      "workflow-task-1",
+      2,
+      65
+    );
+
+    await request(app)
+      .patch("/api/v1/workflow-tasks/workflow-task-1")
+      .set("Authorization", bearer("carpenter"))
+      .send({ version: 2, progress: 101 })
+      .expect(400);
+    await request(app)
+      .patch("/api/v1/workflow-tasks/workflow-task-1")
+      .set("Authorization", bearer("designer"))
+      .send({ version: 2, progress: 65 })
+      .expect(403);
+    expect(service.updateOperationalTask).toHaveBeenCalledTimes(1);
   });
 
   it("stores an Admin proof before the Design decision and forwards the exact version", async () => {

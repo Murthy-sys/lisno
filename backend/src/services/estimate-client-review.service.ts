@@ -86,7 +86,7 @@ export function createEstimateClientReviewService(input: {
                 {
                   $match: {
                     $expr: { $eq: ["$_id", "$$adminId"] },
-                    role: "admin",
+                    role: { $in: ["admin", "super_admin"] },
                     active: true
                   }
                 },

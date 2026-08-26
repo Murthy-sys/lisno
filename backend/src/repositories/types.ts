@@ -1013,6 +1013,19 @@ export interface AppRepository {
     periodEndAt: string,
     pagination: PaginationInput
   ): Promise<PageResult<TaskRecord>>;
+  /*
+   * Operational and worker roles own no design Task rows; their work is
+   * ProjectWorkflowTask. These are returned in TaskRecord shape so the KPI
+   * scores both task systems through one path. The design-only fields stay
+   * absent, which makes those KPI components report "not available" and
+   * redistributes their weight rather than scoring a worker at zero.
+   */
+  listWorkflowKpiTasksForPeriod(
+    assigneeUserIds: string[],
+    periodStartAt: string,
+    periodEndAt: string,
+    limit?: number
+  ): Promise<TaskRecord[]>;
   updateTask(id: string, expectedVersion: number, change: TaskChange): Promise<TaskRecord>;
   appendTaskEvent(input: NewTaskEvent): Promise<TaskEventRecord>;
   listTaskEvents(taskId: string): Promise<TaskEventRecord[]>;

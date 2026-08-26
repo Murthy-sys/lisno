@@ -38,6 +38,7 @@ import { createLeadsRouter } from "./routes/leads.js";
 import { createOrganizationRouter } from "./routes/organization.js";
 import { createProjectsRouter } from "./routes/projects.js";
 import { createProjectWorkflowRouter } from "./routes/project-workflow.js";
+import { createProjectFinanceRouter } from "./routes/project-finance.js";
 import { createTasksRouter } from "./routes/tasks.js";
 import { createUserInvitationsRouter } from "./routes/user-invitations.js";
 import { createAuditService } from "./services/audit.service.js";
@@ -67,6 +68,11 @@ import { createLeadService } from "./services/lead.service.js";
 import { createProjectActivityService } from "./services/project-activity.service.js";
 import { createProjectService } from "./services/project.service.js";
 import { createProjectWorkflowService } from "./services/project-workflow.service.js";
+import {
+  createProjectFinanceService,
+  ensurePendingProjectFinanceBucket,
+  openProjectFinanceBucket
+} from "./services/project-finance.service.js";
 import {
   createEstimatePdfService,
   type EstimatePdfService
@@ -193,11 +199,26 @@ export function createApp(dependencies: AppDependencies) {
   );
   const clientPortalUrl = dependencies.clientPortalUrl ?? "http://localhost:5173/client";
   const estimateClientReviewStorage = createEstimateClientReviewStorage(storage);
+  const projectFinanceService = createProjectFinanceService({ now: clock });
+  // Production constructs the app only after Mongo is connected. Keeping the
+  // lifecycle hook behind that boundary preserves the repository-backed test
+  // and characterization app, whose Estimate models are deliberately mocked
+  // without a finance database. The finance HTTP service remains registered;
+  // its own routes still enforce their Mongo-backed contract.
+  const projectFinanceLifecycle = mongoose.connection.readyState === 1
+    ? {
+        ensurePending: ensurePendingProjectFinanceBucket,
+        open: openProjectFinanceBucket
+      }
+    : null;
   const projectWorkflowService = createProjectWorkflowService({
     storage,
     mailer: dependencies.designPlanMailer ?? { deliveryKind: "disabled" },
     portalUrl: clientPortalUrl,
     audit: auditService,
+    ...(projectFinanceLifecycle
+      ? { finance: { open: projectFinanceLifecycle.open } }
+      : {}),
     now: clock
   });
   const estimateDesignService = createEstimateDesignService({
@@ -238,6 +259,9 @@ export function createApp(dependencies: AppDependencies) {
     audit: auditService,
     estimateDesigns: estimateDesignService,
     reviews: estimateClientReviewService,
+    ...(projectFinanceLifecycle
+      ? { finance: { ensurePending: projectFinanceLifecycle.ensurePending } }
+      : {}),
     now: clock
   });
   const extractionWorkerService = dependencies.ocrWorkerToken
@@ -306,6 +330,10 @@ export function createApp(dependencies: AppDependencies) {
       estimateClientReviewStorage,
       maxUploadBytes
     )
+  );
+  app.use(
+    "/api/v1",
+    createProjectFinanceRouter(authService, projectFinanceService)
   );
   app.use(
     "/api/v1",

@@ -1,7 +1,8 @@
 import type {
   ProjectModule,
   RequestableProjectModule,
-  Role
+  Role,
+  WorkerRole
 } from "./authorization-contract";
 
 export type { Role } from "./authorization-contract";
@@ -383,7 +384,7 @@ export interface DesignPlanReviewTask {
   clientName: string;
   designPlanVersion: number;
   status: "pending" | "approved" | "changes_requested";
-  deliveryStatus: "queued" | "sent" | "failed" | "disabled";
+  deliveryStatus: "queued" | "sending" | "sent" | "failed" | "disabled";
   submittedAt: string;
   version: number;
   attachmentNames: string[];
@@ -403,10 +404,122 @@ export interface ProjectWorkflowTask {
   title: string;
   description: string;
   assigneeRole: Role;
+  assignedWorker: {
+    id: string;
+    name: string;
+    email: string;
+    role: WorkerRole;
+    active: boolean;
+  } | null;
   sourceSectionId: string | null;
   roomName: string | null;
   status: "open" | "in_progress" | "completed";
+  progress: number;
+  version: number;
   openedAt: string;
+  updatedAt: string;
+}
+
+export interface WorkerAssignmentOption {
+  id: string;
+  name: string;
+  email: string;
+  role: WorkerRole;
+}
+
+export interface ProjectFinanceBucket {
+  id: string;
+  projectId: string;
+  projectName: string;
+  projectStatus: string;
+  estimateId: string;
+  estimateVersion: number;
+  estimateReviewRoundId: string | null;
+  designPlanVersion: number;
+  currency: "INR";
+  approvedSubtotalPaise: number;
+  approvedGstPaise: number;
+  approvedContractTotalPaise: number;
+  targetMarginBps: 2000;
+  targetProfitPaise: number;
+  costBudgetPaise: number;
+  procurementCostPaise: number;
+  employeePaymentPaise: number;
+  otherExpensePaise: number;
+  directSpendPaise: number;
+  overheadPaise: number;
+  recordedCostPaise: number;
+  remainingBudgetPaise: number;
+  currentProfitPaise: number;
+  currentMarginBps: number | null;
+  overBudget: boolean;
+  deadlineAt: string;
+  overdueDays: number;
+  deadlineStatus:
+    | "on_track"
+    | "overdue"
+    | "completed_on_time"
+    | "completed_late"
+    | "completed_date_unknown";
+  overdueTaskCount: number;
+  status: "pending_design" | "open" | "closed";
+  version: number;
+  openedAt: string | null;
+  closedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ProjectFinancePortfolioSummary {
+  projectCount: number;
+  approvedContractTotalPaise: number;
+  approvedGstPaise: number;
+  approvedSubtotalPaise: number;
+  targetProfitPaise: number;
+  costBudgetPaise: number;
+  procurementCostPaise: number;
+  employeePaymentPaise: number;
+  otherExpensePaise: number;
+  directSpendPaise: number;
+  overheadPaise: number;
+  recordedCostPaise: number;
+  remainingBudgetPaise: number;
+  currentProfitPaise: number;
+  currentMarginBps: number | null;
+  overBudgetProjectCount: number;
+  overdueProjectCount: number;
+  lateCompletedProjectCount: number;
+  overdueTaskCount: number;
+}
+
+export interface FinanceLedgerEntry {
+  id: string;
+  bucketId: string;
+  projectId: string;
+  type: "direct_spend" | "overhead";
+  expenseClass: "procurement" | "employee_payment" | "other" | null;
+  category: string;
+  amountPaise: number;
+  incurredAt: string;
+  description: string;
+  vendor: string | null;
+  reference: string | null;
+  sourceSectionId: string | null;
+  idempotencyKey: string;
+  status: "posted" | "voided";
+  version: number;
+  createdById: string;
+  voidedAt: string | null;
+  voidedById: string | null;
+  voidReason: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PostFinanceEntryResult {
+  entry: FinanceLedgerEntry;
+  bucket: ProjectFinanceBucket;
+  replayed: boolean;
 }
 
 export interface DesignerAssignmentOption {

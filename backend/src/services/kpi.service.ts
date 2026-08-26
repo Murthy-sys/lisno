@@ -1,6 +1,7 @@
 import { calculateKpi } from "../domain/kpi.js";
 import { calculateTaskRisk } from "../domain/risk.js";
 import { ApiError } from "../middleware/errors.js";
+import { WORKER_ROLES, type Role } from "../domain/roles.js";
 import type {
   AppRepository,
   PageResult,
@@ -20,6 +21,18 @@ import {
   requireUser,
   type Clock
 } from "./workflow.js";
+
+/*
+ * Roles whose work lives in ProjectWorkflowTask rather than the design Task
+ * collection. They score on the same KPI as Designer; the design-specific
+ * components report "not available" and their weight redistributes.
+ */
+const OPERATIONAL_KPI_ROLES = new Set<Role>([
+  "procurement",
+  "finance_head",
+  "site_manager",
+  ...WORKER_ROLES
+]);
 
 export interface KpiRead {
   userId: string;
@@ -102,18 +115,28 @@ export function createKpiService(
         periodStartAt,
         periodEndAt
       );
-      const storedTasks = await repository.listKpiTasksForPeriod(
+      const designTasks = await repository.listKpiTasksForPeriod(
         ownerIds,
         periodStartAt,
         periodEndAt,
         MAX_KPI_TASKS + 1
       );
-      const tasks = await enrichKpiTasks(
-        repository,
-        storedTasks,
+      const workflowTasks = await repository.listWorkflowKpiTasksForPeriod(
+        ownerIds,
         periodStartAt,
-        periodEndAt
+        periodEndAt,
+        MAX_KPI_TASKS + 1
       );
+      const storedTasks = [...designTasks, ...workflowTasks];
+      const tasks = [
+        ...(await enrichKpiTasks(
+          repository,
+          designTasks,
+          periodStartAt,
+          periodEndAt
+        )),
+        ...workflowTasks
+      ];
       const now = clock();
       const result = calculateKpi({
         tasks,
@@ -199,10 +222,18 @@ async function resolveKpiSubject(
     if (actor.role !== "super_admin") {
       await assertDesignerRelationship(repository, actor, userId);
     }
-  } else if (!(
+  } else if (
     subject.role === "design_manager" &&
     (actor.role === "design_head" || actor.role === "super_admin")
-  )) {
+  ) {
+    // Managers report on their designers; handled by ownerIds below.
+  } else if (OPERATIONAL_KPI_ROLES.has(subject.role)) {
+    /*
+     * Operational and worker roles share the Designer KPI, but only over their
+     * own record: they read themselves, and Super Admin reads anyone.
+     */
+    if (actor.role !== "super_admin" && actor.id !== subject.id) forbidden();
+  } else {
     forbidden();
   }
   const ownerIds =

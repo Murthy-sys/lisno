@@ -19,6 +19,7 @@ import type { AuditService } from "./audit.service.js";
 import type { PublicUser } from "./auth.service.js";
 import type { EstimateClientReviewService } from "./estimate-client-review.service.js";
 import type { EstimateDesignService } from "./estimate-design.service.js";
+import type { EnsurePendingFinanceBucketInput } from "./project-finance.service.js";
 import { resolveApprovalProject } from "./estimate-project-handoff.js";
 
 export type EstimateDecisionRoundTarget =
@@ -75,6 +76,12 @@ export function createEstimateDecisionService(input: {
   audit: AuditService;
   estimateDesigns: Pick<EstimateDesignService, "approvalReadinessForDecision">;
   reviews: Pick<EstimateClientReviewService, "requireDecisionScope">;
+  finance?: {
+    ensurePending(
+      input: EnsurePendingFinanceBucketInput,
+      session: mongoose.ClientSession
+    ): Promise<unknown>;
+  };
   now?: () => Date;
 }): EstimateDecisionService {
   const now = input.now ?? (() => new Date());
@@ -156,6 +163,8 @@ export function createEstimateDecisionService(input: {
               occurredAt,
               session,
               audit: input.audit,
+              finance: input.finance,
+              reviewRound,
               assignedAdminId: reviewRound?.assignedAdminId == null
                 ? context.source === "admin_proof" && context.actor.role === "admin"
                   ? context.actor.id
@@ -413,6 +422,13 @@ async function approve(input: {
   occurredAt: Date;
   session: mongoose.ClientSession;
   audit: AuditService;
+  finance?: {
+    ensurePending(
+      input: EnsurePendingFinanceBucketInput,
+      session: mongoose.ClientSession
+    ): Promise<unknown>;
+  };
+  reviewRound: Row | null;
   assignedAdminId: string | null;
 }): Promise<Row> {
   const {
@@ -423,6 +439,8 @@ async function approve(input: {
     occurredAt,
     session,
     audit,
+    finance,
+    reviewRound,
     assignedAdminId
   } = input;
   const clientId = context.source === "client_portal"
@@ -514,6 +532,24 @@ async function approve(input: {
     { session }
   );
   requireMatched(updated);
+  if (finance) {
+    const snapshot = reviewRound?.estimateSnapshot ?? estimate;
+    await finance.ensurePending({
+      projectId,
+      estimateId: String(estimate._id),
+      estimateVersion: reviewRound == null
+        ? Number(estimate.version)
+        : Number(reviewRound.estimateVersion),
+      estimateReviewRoundId: reviewRound == null
+        ? null
+        : String(reviewRound._id),
+      approvedSubtotalRupees: Number(snapshot.subtotal),
+      approvedGstRupees: Number(snapshot.gst),
+      approvedContractTotalRupees: Number(snapshot.total),
+      createdById: context.actor.id,
+      occurredAt
+    }, session);
+  }
   const leadUpdated = await LeadModel.updateOne(
     {
       _id: lead._id,

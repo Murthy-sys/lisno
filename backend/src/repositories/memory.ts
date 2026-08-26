@@ -1229,6 +1229,16 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
       return clone(limit === undefined ? tasks : tasks.slice(0, limit));
     },
 
+    /*
+     * The memory repository has no workflow-task store: ProjectWorkflowTask is
+     * written through Mongoose models directly, so nothing creates one here.
+     * Design-task KPI behaviour stays fully covered; the workflow contribution
+     * is exercised against Mongo.
+     */
+    async listWorkflowKpiTasksForPeriod() {
+      return [];
+    },
+
     async pageKpiTasksForPeriod(
       ownerIds,
       periodStartAt,

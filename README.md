@@ -130,6 +130,26 @@ npm run migrate:estimate-design-mapping -- --dry-run
 Review every `conflicts` entry in the JSON report. The final dry run must report
 `drawingsChanged: 0` and `revisionsChanged: 0`. Do not run `npm run seed`.
 
+### Approved-project finance backfill
+
+Deployments with projects whose Estimate was already approved must create their
+finance baseline so Super Admin's portfolio includes them, even while Design is
+pending. Back up the database, run the write-free report, and review every
+non-zero `skipCounts` value and `conflicts` entry:
+
+```bash
+cd backend
+npm run migrate:project-finance-backfill -- --dry-run
+npm run migrate:project-finance-backfill
+npm run migrate:project-finance-backfill -- --dry-run
+```
+
+The migration prefers the immutable Client-approved Estimate snapshot, uses a
+strict legacy approval fallback only when that snapshot does not exist, and is
+safe to rerun. After the write run, the final report should contain only
+`alreadyPending` or `alreadyOpen` projects and no unresolved conflicts. Do not
+run `npm run seed`.
+
 ## Drawing-title extraction
 
 OCR creates application-internal `section` records only for supported drawing
@@ -173,13 +193,16 @@ Frontend deployments may set `VITE_API_URL` to a full versioned API base URL
 (for example, `https://api.example.com/api/v1`) when the API uses a separate
 origin. Local Vite development uses its `/api` proxy without this variable.
 
-Staff invitations and Estimate attachments use one all-or-nothing mail group:
+Staff invitations, Estimate attachments, and Design plan attachments use one
+all-or-nothing mail group:
 `PUBLIC_FRONTEND_URL`, `SMTP_HOST`, `SMTP_PORT`, `SMTP_TLS_MODE`,
 `SMTP_USERNAME`, `SMTP_PASSWORD`, and `SMTP_FROM`. `SMTP_FROM` is the general
-Lisno sender for staff invitations and Estimate attachments. `SMTP_TLS_MODE`
+Lisno sender for staff invitations and Estimate and Design plan attachments. `SMTP_TLS_MODE`
 must be `implicit` or `starttls`. `SMTP_TLS_REJECT_UNAUTHORIZED` is optional
 and, when present, must be exactly `true`; certificate verification cannot be
-disabled and remains required when the variable is omitted. With every
+disabled and remains required when the variable is omitted.
+`SMTP_DELIVERY_TIMEOUT_SECONDS` is optional, defaults to 120, and accepts
+30-600 seconds for the complete delivery including attachment upload. With every
 SMTP-related variable absent, external mail is disabled. Supplying any
 incomplete group, including the optional variable by itself, stops startup
 before the database connection or listener. A complete, valid group enables

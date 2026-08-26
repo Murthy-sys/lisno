@@ -27,6 +27,8 @@ import { UserInvitationModel } from "../src/models/UserInvitation.js";
 import { DesignPlanReviewRoundModel } from "../src/models/DesignPlanReviewRound.js";
 import { DesignPlanResponseProofModel } from "../src/models/DesignPlanResponseProof.js";
 import { ProjectWorkflowTaskModel } from "../src/models/ProjectWorkflowTask.js";
+import { ProjectFinanceBucketModel } from "../src/models/ProjectFinanceBucket.js";
+import { FinanceLedgerEntryModel } from "../src/models/FinanceLedgerEntry.js";
 import type { AppRepository } from "../src/repositories/types.js";
 
 const env = {
@@ -365,6 +367,14 @@ describe("production server bootstrap", () => {
       events.push("project-workflow-task-index");
       return ProjectWorkflowTaskModel as never;
     });
+    vi.spyOn(ProjectFinanceBucketModel, "init").mockImplementation(async () => {
+      events.push("project-finance-bucket-index");
+      return ProjectFinanceBucketModel as never;
+    });
+    vi.spyOn(FinanceLedgerEntryModel, "init").mockImplementation(async () => {
+      events.push("finance-ledger-entry-index");
+      return FinanceLedgerEntryModel as never;
+    });
 
     const runtime = await startServer({
       loadEnvironment: () => env,
@@ -398,6 +408,8 @@ describe("production server bootstrap", () => {
       "design-plan-review-index",
       "design-plan-proof-index",
       "project-workflow-task-index",
+      "project-finance-bucket-index",
+      "finance-ledger-entry-index",
       "repository",
       "app",
       "listen"
@@ -477,7 +489,8 @@ describe("production server bootstrap", () => {
           tlsMode: "starttls" as const,
           username: smtpUsername,
           password: smtpPassword,
-          from: "Lisno <mail@example.test>"
+          from: "Lisno <mail@example.test>",
+          deliveryTimeoutMs: 120_000
         }
       }),
       connect: async () => undefined,
@@ -575,7 +588,8 @@ describe("production server bootstrap", () => {
       tlsMode: "starttls" as const,
       username: "smtp-user",
       password: "smtp-password",
-      from: "Lisno Invitations <invitations@example.test>"
+      from: "Lisno Invitations <invitations@example.test>",
+      deliveryTimeoutMs: 120_000
     };
     const externalMailer = {
       deliveryKind: "external" as const,

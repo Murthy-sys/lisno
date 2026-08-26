@@ -94,8 +94,11 @@ export const DESIGN_PLAN_WORKFLOW_AUDIT_ACTIONS = [
   "design_plan_submitted_for_client_review",
   "design_plan_email_delivery_sent",
   "design_plan_email_delivery_failed",
+  "design_plan_email_retry_requested",
   "design_plan_client_proof_stored",
-  "design_plan_approved"
+  "design_plan_approved",
+  "project_workflow_task_assignee_changed",
+  "project_workflow_task_progress_changed"
 ] as const;
 
 export const AUDIT_ACTIONS = [

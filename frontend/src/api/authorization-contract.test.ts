@@ -53,7 +53,14 @@ const projectWorkflowPermissions = [
   "design.plan_task.read",
   "design.plan_response_tasks.read",
   "design.plan_response_tasks.decide",
-  "workflow.tasks.read"
+  "workflow.tasks.read",
+  "workflow.tasks.update"
+] as const;
+
+const projectFinancePermissions = [
+  "finance.bucket.read",
+  "finance.entry.read",
+  "finance.entry.create"
 ] as const;
 
 describe("frontend authorization contract", () => {
@@ -74,13 +81,13 @@ describe("frontend authorization contract", () => {
       "execution"
     ]);
     expect(AUTHORIZATION_POLICY_VERSION).toBe(
-      "2026-08-25.project-workflow.v2"
+      "2026-08-26.super-admin-finance.v4"
     );
   });
 
-  it("publishes all 106 unique permissions with workflow, response, and invitation permissions in canonical order", () => {
-    expect(PERMISSION_CODES).toHaveLength(106);
-    expect(new Set(PERMISSION_CODES)).toHaveLength(106);
+  it("publishes all 110 unique permissions with finance, workflow, response, and invitation permissions in canonical order", () => {
+    expect(PERMISSION_CODES).toHaveLength(110);
+    expect(new Set(PERMISSION_CODES)).toHaveLength(110);
     expect(PERMISSION_CODES).toContain("projects.initiate");
     expect(PERMISSION_CODES).toContain("organization.estimators.read");
     const identityMutationIndex = PERMISSION_CODES.indexOf(
@@ -93,9 +100,11 @@ describe("frontend authorization contract", () => {
       ...invitationPermissions,
       "access_request.create"
     ]);
-    expect(PERMISSION_CODES.slice(-2)).toEqual([
+    expect(PERMISSION_CODES.slice(-6)).toEqual([
       "execution.worker_assignment.override",
-      "workflow.tasks.read"
+      ...projectFinancePermissions,
+      "workflow.tasks.read",
+      "workflow.tasks.update"
     ]);
     expect(
       PERMISSION_CODES.filter((permission) =>
@@ -107,14 +116,21 @@ describe("frontend authorization contract", () => {
         projectWorkflowPermissions.includes(permission as never)
       )
     ).toEqual(projectWorkflowPermissions);
+    expect(
+      PERMISSION_CODES.filter((permission) =>
+        projectFinancePermissions.includes(permission as never)
+      )
+    ).toEqual(projectFinancePermissions);
   });
 
-  it("keeps the protected frontend registry at exactly 24 routes", () => {
-    expect(ROUTE_REGISTRY).toHaveLength(24);
+  it("keeps the protected frontend registry at exactly 26 routes", () => {
+    expect(ROUTE_REGISTRY).toHaveLength(26);
     expect(ROUTE_REGISTRY.map(({ path }) => path)).toEqual(
       expect.arrayContaining([
         "/designer/design-plans",
-        "/admin/design-approvals"
+        "/admin/design-approvals",
+        "/finance",
+        "/finance/projects/:projectId"
       ])
     );
     expect(ROUTE_REGISTRY.map(({ path }) => path)).not.toContain(

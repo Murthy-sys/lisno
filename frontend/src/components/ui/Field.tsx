@@ -109,6 +109,22 @@ export const Checkbox = forwardRef<HTMLInputElement, CheckboxProps>(function Che
   );
 });
 
+export type RadioProps = Omit<InputHTMLAttributes<HTMLInputElement>, "type">;
+
+export const Radio = forwardRef<HTMLInputElement, RadioProps>(function Radio(
+  { className, ...rest },
+  ref
+) {
+  return (
+    <input
+      ref={ref}
+      type="radio"
+      className={classNames("ui-radio", className)}
+      {...rest}
+    />
+  );
+});
+
 export type FileInputProps = Omit<InputHTMLAttributes<HTMLInputElement>, "type">;
 
 export const FileInput = forwardRef<HTMLInputElement, FileInputProps>(function FileInput(

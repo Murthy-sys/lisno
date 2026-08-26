@@ -118,7 +118,7 @@ export function AdminProjectsPage() {
           ? "All projects across the organization."
           : "Projects you initiated and handed to Estimator/Sales."}
         metadata={page ? <StatusBadge tone="info" label={`${page.pagination.total} project${page.pagination.total === 1 ? "" : "s"}`} /> : undefined}
-        actions={auth.user?.role === "admin" && hasFrontendPermission(auth.authorization, "projects.initiate") ? <Button onClick={() => setDialogOpen(true)}>Initiate project</Button> : undefined}
+        actions={hasFrontendPermission(auth.authorization, "projects.initiate") ? <Button onClick={() => setDialogOpen(true)}>Initiate project</Button> : undefined}
       />
 
       {projectsQuery.isPending ? (

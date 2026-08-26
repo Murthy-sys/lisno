@@ -66,7 +66,7 @@ export function createAdminProjectService(
       return repository.runInTransaction(async (transaction) => {
         await transaction.coordinateAuthorizationMutation();
         const admin = await requireActor(transaction, actor);
-        if (admin.role !== "admin") forbidden();
+        if (admin.role !== "admin" && admin.role !== "super_admin") forbidden();
         const estimator = await transaction.findUserById(input.estimatorId);
         if (!estimator || !estimator.active || estimator.role !== "estimator_sales") {
           throw new ApiError(400, "VALIDATION_ERROR", "Request validation failed.", {

@@ -28,6 +28,9 @@ describe("DesignPlanResponseInboxPage", () => {
     let listRequests = 0;
     let submitted: FormData | undefined;
     let decisionPath = "";
+    const getBlob = vi.spyOn(apiClient, "getBlob").mockImplementation(
+      () => new Promise(() => undefined)
+    );
     vi.spyOn(apiClient, "postMultipart").mockImplementation(
       async function <T>(path: string, body: FormData): Promise<T> {
         decisionPath = path;
@@ -48,7 +51,18 @@ describe("DesignPlanResponseInboxPage", () => {
 
     expect(await screen.findByRole("heading", { name: "Aurora Villa" })).toBeVisible();
     expect(screen.getByText("Email sent")).toBeVisible();
-    expect(screen.getByText(/ground-floor-plan\.pdf/)).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Retry email" })).not.toBeInTheDocument();
+    expect(
+      screen.getByText("ground-floor-plan.pdf", { selector: "span" })
+    ).toBeVisible();
+    const download = screen.getByRole("button", {
+      name: "Download ground-floor-plan.pdf"
+    });
+    expect(download).toBeVisible();
+    await user.click(download);
+    expect(getBlob).toHaveBeenCalledWith(
+      "/admin/design-plan-response-tasks/design-round-1/attachments/0"
+    );
 
     const proof = new File(["client approved"], "client-approval.pdf", {
       type: "application/pdf"
@@ -71,5 +85,49 @@ describe("DesignPlanResponseInboxPage", () => {
     expect(
       await screen.findByText("No design plans are awaiting a Client response.")
     ).toBeVisible();
+  });
+
+  it("retries a failed Design email with the displayed version and refreshes its status", async () => {
+    const failedReview: DesignPlanReviewTask = {
+      ...pendingReview,
+      deliveryStatus: "failed",
+      version: 7
+    };
+    const sentReview: DesignPlanReviewTask = {
+      ...failedReview,
+      deliveryStatus: "sent",
+      version: 10
+    };
+    let listRequests = 0;
+    let retryPath = "";
+    let retryBody: unknown;
+    vi.spyOn(apiClient, "post").mockImplementation(
+      async function <T>(path: string, body: unknown): Promise<T> {
+        retryPath = path;
+        retryBody = body;
+        return sentReview as T;
+      }
+    );
+    server.use(
+      http.get("/api/v1/admin/design-plan-response-tasks", () => {
+        listRequests += 1;
+        return HttpResponse.json({
+          data: [listRequests === 1 ? failedReview : sentReview]
+        });
+      })
+    );
+    const user = userEvent.setup();
+
+    renderWithQuery(<DesignPlanResponseInboxPage />);
+
+    expect(await screen.findByText("Email delivery failed")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Retry email" }));
+
+    await waitFor(() => expect(retryPath).toBe(
+      "/admin/design-plan-response-tasks/design-round-1/email/retry"
+    ));
+    expect(retryBody).toEqual({ expectedVersion: 7 });
+    expect(await screen.findByText("Email sent")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Retry email" })).not.toBeInTheDocument();
   });
 });

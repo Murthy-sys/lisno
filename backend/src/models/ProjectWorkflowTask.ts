@@ -36,7 +36,16 @@ const projectWorkflowTaskSchema = new Schema(
       required: true,
       default: "open"
     },
+    progress: { type: Number, required: true, default: 0, min: 0, max: 100 },
+    version: { type: Number, required: true, default: 1, min: 1 },
     openedAt: { type: Date, required: true },
+    /*
+     * Both feed the shared KPI. They default to null so rows created before
+     * the KPI rollout still read; the KPI derives a fallback deadline from
+     * openedAt and the task kind for those.
+     */
+    dueAt: { type: Date, default: null },
+    plannedEffort: { type: Number, default: null, min: 0 },
     completedAt: { type: Date, default: null }
   },
   { timestamps: true, versionKey: false }

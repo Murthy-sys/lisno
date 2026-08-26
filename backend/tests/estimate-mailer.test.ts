@@ -88,7 +88,8 @@ const smtpConfig = {
   tlsMode: "starttls" as const,
   username: "mailer-user",
   password: "mailer-password",
-  from: "Lisno <mail@lisno.example>"
+  from: "Lisno <mail@lisno.example>",
+  deliveryTimeoutMs: 120_000
 };
 
 const pdfBytes = Buffer.from("%PDF-1.7\nLisno estimate fixture\n%%EOF", "utf8");
@@ -190,7 +191,8 @@ describe.sequential("SMTP estimate mailer", () => {
       const mailer = createSmtpEstimateMailer({
         ...smtpConfig,
         host: server.host,
-        port: server.port
+        port: server.port,
+        deliveryTimeoutMs: 1_000
       });
 
       const sending = mailer.send(hostileInput);

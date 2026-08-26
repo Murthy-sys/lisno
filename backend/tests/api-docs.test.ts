@@ -156,7 +156,7 @@ describe("OpenAPI and Swagger UI", () => {
     }
   });
 
-  it("contains all 123 routes without versioning paths twice", () => {
+  it("contains all 133 routes without versioning paths twice", () => {
     const methods = new Set(["get", "post", "put", "patch", "delete"]);
     const operationCount = Object.values(openApiDocument.paths).reduce(
       (total, pathItem) =>
@@ -165,7 +165,7 @@ describe("OpenAPI and Swagger UI", () => {
     );
 
     expect(operationCount).toBe(HUMAN_JWT_OPERATION_LIST.length + 10);
-    expect(operationCount).toBe(123);
+    expect(operationCount).toBe(133);
     expect(Object.keys(openApiDocument.paths).some((path) =>
       path.startsWith("/api/v1")
     )).toBe(false);
@@ -197,6 +197,83 @@ describe("OpenAPI and Swagger UI", () => {
         }
       }
     });
+    expect(
+      openApiDocument.paths[
+        "/admin/design-plan-response-tasks/{roundId}/email/retry"
+      ]?.post
+    ).toMatchObject({
+      requestBody: {
+        required: true,
+        content: {
+          "application/json": {
+            schema: {
+              $ref: "#/components/schemas/DesignPlanEmailRetryRequest"
+            }
+          }
+        },
+        "x-lisno-schema-completeness": "exact"
+      },
+      responses: {
+        "2XX": {
+          content: {
+            "application/json": {
+              schema: {
+                properties: {
+                  data: { $ref: "#/components/schemas/DesignPlanReviewTask" }
+                }
+              }
+            }
+          }
+        }
+      }
+    });
+    expect(
+      openApiDocument.paths["/workflow-tasks/{taskId}"]?.patch?.requestBody
+    ).toMatchObject({
+      required: true,
+      content: {
+        "application/json": {
+          schema: {
+            $ref: "#/components/schemas/WorkflowTaskProgressRequest"
+          }
+        }
+      },
+      "x-lisno-schema-completeness": "exact"
+    });
+    expect(
+      openApiDocument.paths["/workflow-tasks/{taskId}"]?.patch?.responses?.[
+        "2XX"
+      ]
+    ).toMatchObject({
+      content: {
+        "application/json": {
+          schema: {
+            properties: {
+              data: { $ref: "#/components/schemas/ProjectWorkflowTask" }
+            }
+          }
+        }
+      }
+    });
+    const designAttachment = openApiDocument.paths[
+      "/admin/design-plan-response-tasks/{roundId}/attachments/{attachmentIndex}"
+    ]?.get;
+    expect(designAttachment?.parameters).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: "roundId", in: "path", required: true }),
+      expect.objectContaining({
+        name: "attachmentIndex",
+        in: "path",
+        required: true,
+        schema: { type: "integer", minimum: 0 }
+      })
+    ]));
+    expect(
+      Object.keys(designAttachment?.responses?.["200"]?.content ?? {})
+    ).toEqual(expect.arrayContaining([
+      "application/pdf",
+      "image/png",
+      "image/heic"
+    ]));
     expect(
       openApiDocument.paths["/internal/extraction-jobs/{jobId}/complete"]
         ?.post?.security
@@ -262,6 +339,64 @@ describe("OpenAPI and Swagger UI", () => {
       ]
     });
     expect(schemas.FileUploadRequest?.additionalProperties).toBe(false);
+  });
+
+  it("defines unambiguous Super Admin Finance labels and live calculations", () => {
+    const schemas = componentSchemas();
+    const bucket = schemas.ProjectFinanceBucket;
+    const bucketProperties = bucket?.properties as Record<string, OpenApiObject>;
+    const summary = schemas.ProjectFinancePortfolioSummary;
+    const summaryProperties = summary?.properties as Record<string, OpenApiObject>;
+
+    expect(bucket?.description).toContain(
+      "not finalized actual profit until the project is closed"
+    );
+    expect(bucketProperties.approvedContractTotalPaise).toMatchObject({
+      title: "Client-approved amount (including GST)",
+      description: expect.stringContaining(
+        "approvedSubtotalPaise + approvedGstPaise"
+      )
+    });
+    expect(bucketProperties.targetProfitPaise).toMatchObject({
+      title: "Target profit (20%)",
+      description: expect.stringContaining("approvedSubtotalPaise x 20%")
+    });
+    expect(bucketProperties.costBudgetPaise).toMatchObject({
+      title: "Cost budget (80%)",
+      description: "approvedSubtotalPaise - targetProfitPaise."
+    });
+    expect(bucketProperties.currentProfitPaise).toMatchObject({
+      title: "Current profit (live)",
+      description: expect.stringContaining(
+        "approvedSubtotalPaise - recordedCostPaise"
+      )
+    });
+    expect(bucketProperties.overheadPaise).toMatchObject({
+      title: "Recorded overheads",
+      description: expect.stringContaining(
+        "Deadline risk never fabricates or estimates a monetary overhead"
+      )
+    });
+    expect(bucketProperties.deadlineStatus).toMatchObject({
+      title: "Deadline risk status",
+      description: expect.stringContaining("It does not change overheadPaise")
+    });
+
+    expect(schemas.ProjectFinanceBucketPage?.description).toContain(
+      "not only the current page"
+    );
+    expect(summary?.description).toContain(
+      "all authorized projects with a Client-approved Estimate"
+    );
+    expect(summaryProperties.approvedContractTotalPaise).toMatchObject({
+      title: "Accumulated Client-approved amount"
+    });
+    expect(summaryProperties.currentMarginBps?.description).toContain(
+      "not an average of project margins"
+    );
+    expect(summaryProperties.overdueTaskCount?.description).toContain(
+      "no automatic monetary overhead"
+    );
   });
 
   it("documents high-value query and public error contracts", () => {

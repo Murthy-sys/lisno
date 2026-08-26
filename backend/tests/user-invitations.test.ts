@@ -1087,7 +1087,8 @@ describe("protected user invitation administration", () => {
         tlsMode: "starttls",
         username: "mailer-user",
         password: "mailer-password",
-        from: "Lisno Invitations <invitations@lisno.example>"
+        from: "Lisno Invitations <invitations@lisno.example>",
+        deliveryTimeoutMs: 1_000
       });
       const { repository, service } = setup(seed, { mailer });
 

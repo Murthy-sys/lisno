@@ -16,7 +16,7 @@
     gap: 1.35rem;
     padding: clamp(1.25rem, 4vw, 2.5rem);
     border: 1px solid #ded9ee;
-    border-radius: 1.25rem;
+    border-radius: var(--radius-surface);
     background: rgb(255 255 255 / 96%);
     box-shadow: 0 24px 70px rgb(31 25 72 / 14%);
   }
@@ -40,7 +40,7 @@
     margin: 0;
     padding: 1rem;
     border: 1px solid #e5e1ef;
-    border-radius: .9rem;
+    border-radius: var(--radius-field);
     background: #faf9fd;
   }
 
@@ -52,7 +52,7 @@
 
   .invitation-summary dt {
     color: #666f83;
-    font-size: .8rem;
+    font-size: var(--text-sm);
     font-weight: 800;
   }
 
@@ -68,7 +68,7 @@
     gap: .55rem;
     padding: .9rem 1rem;
     border: 1px solid #e5bd6e;
-    border-radius: .85rem;
+    border-radius: var(--radius-field);
     background: #fff9eb;
     color: #674b16;
   }
@@ -94,7 +94,7 @@
   }
 
   .invitation-field label {
-    font-size: .85rem;
+    font-size: var(--text-sm);
     font-weight: 800;
   }
 
@@ -107,7 +107,7 @@
     min-height: 2.9rem;
     padding: .7rem 3.25rem .7rem .8rem;
     border: 1px solid #918aa3;
-    border-radius: .7rem;
+    border-radius: var(--radius-control);
     background: #fff;
     color: #1e2433;
     font: inherit;
@@ -131,7 +131,7 @@
     height: 2.3rem;
     place-items: center;
     border: 0;
-    border-radius: .55rem;
+    border-radius: var(--radius-control);
     background: transparent;
     color: #5b5473;
     cursor: pointer;
@@ -152,13 +152,13 @@
   .invitation-submit-error {
     margin: 0;
     color: #a52f3b;
-    font-size: .82rem;
+    font-size: var(--text-sm);
     font-weight: 700;
   }
 
   .invitation-password-hint {
     margin: -.2rem 0 0;
-    font-size: .8rem;
+    font-size: var(--text-sm);
   }
 
   .invitation-primary-action,
@@ -169,7 +169,7 @@
     align-items: center;
     justify-content: center;
     padding: .7rem 1rem;
-    border-radius: .7rem;
+    border-radius: var(--radius-control);
     font: inherit;
     font-weight: 800;
     text-decoration: none;
@@ -215,7 +215,7 @@
     border-radius: 50%;
     background: #dff5e8;
     color: #197046;
-    font-size: 1.35rem;
+    font-size: var(--text-xl);
     font-weight: 900;
   }
 
@@ -225,7 +225,7 @@
 
   @media (max-width: 520px) {
     .invitation-page { padding: .75rem; }
-    .invitation-card { border-radius: 1rem; }
+    .invitation-card { border-radius: var(--radius-surface); }
     .invitation-summary > div { grid-template-columns: 1fr; gap: .15rem; }
   }
 
