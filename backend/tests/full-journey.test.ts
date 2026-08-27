@@ -4,7 +4,7 @@ import { PDFDocument } from "pdf-lib";
 import request from "supertest";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
-import { createApp } from "../src/app.js";
+import { createApp as createApplication } from "../src/app.js";
 import { AuditEventModel } from "../src/models/AuditEvent.js";
 import { EstimateDesignAnnotationDraftModel } from "../src/models/EstimateDesignAnnotationDraft.js";
 import { EstimateDesignDrawingModel } from "../src/models/EstimateDesignDrawing.js";
@@ -12,12 +12,22 @@ import { EstimateDesignExtractionJobModel } from "../src/models/EstimateDesignEx
 import { EstimateDesignRevisionModel } from "../src/models/EstimateDesignRevision.js";
 import { EstimateDesignSourcePageModel } from "../src/models/EstimateDesignSourcePage.js";
 import { EstimateDesignUploadModel } from "../src/models/EstimateDesignUpload.js";
+import { EstimateClientReviewRoundModel } from "../src/models/EstimateClientReviewRound.js";
 import { EstimateModel } from "../src/models/Estimate.js";
 import { LeadModel } from "../src/models/Lead.js";
 import { ProjectModel } from "../src/models/Project.js";
 import { UserModel } from "../src/models/User.js";
 import { createMemoryRepository } from "../src/repositories/memory.js";
 import { demoSeedData } from "../src/seed/data.js";
+import { createAuditService } from "../src/services/audit.service.js";
+import { createProjectService } from "../src/services/project.service.js";
+import { developmentDemoAuthentication } from "./helpers/development-demo-authentication.js";
+
+const createApp = (dependencies: Parameters<typeof createApplication>[0]) =>
+  createApplication({
+    ...dependencies,
+    developmentDemoAuthorization: developmentDemoAuthentication()
+  });
 
 const password = "LisnoDemo2026!";
 let PDF: Buffer;
@@ -62,7 +72,7 @@ function modelQuery<T>(value: T) {
     sort: vi.fn(),
     select: vi.fn(),
     session: vi.fn(),
-    lean: vi.fn(async () => value),
+    lean: vi.fn(async () => detachedLeanValue(value)),
     exec: vi.fn(async () => value)
   };
   result.sort.mockReturnValue(result);
@@ -73,6 +83,20 @@ function modelQuery<T>(value: T) {
     reject: (error: unknown) => unknown
   ) => Promise.resolve(value).then(resolve, reject);
   return result;
+}
+
+function detachedLeanValue<T>(value: T): T {
+  if (Array.isArray(value)) {
+    return structuredClone(value.map((item) =>
+      item && typeof item === "object"
+        ? plainRecord(item as Record<string, any>)
+        : item
+    )) as T;
+  }
+  if (value && typeof value === "object") {
+    return structuredClone(plainRecord(value as Record<string, any>)) as T;
+  }
+  return value;
 }
 
 function modelMatches(
@@ -93,6 +117,7 @@ function modelMatches(
     if (expected && typeof expected === "object" && !(expected instanceof Date)) {
       if ("$in" in expected && !expected.$in.includes(actual)) return false;
       if ("$gt" in expected && !(new Date(actual) > expected.$gt)) return false;
+      if ("$size" in expected && (!Array.isArray(actual) || actual.length !== expected.$size)) return false;
       continue;
     }
     if (actual !== expected) return false;
@@ -126,8 +151,10 @@ function setupEstimateDrawingJourneyModels() {
     _id: "estimate-journey",
     leadId: "lead-journey",
     ownerId: "user-estimator-sales",
+    projectId: null,
     status: "draft",
     version: 1,
+    propertyType: "Apartment",
     designLifecycleVersion: 0,
     designFrozenAt: null,
     assignedDesignerId: "user-designer-ananya",
@@ -146,6 +173,8 @@ function setupEstimateDrawingJourneyModels() {
       included: true,
       amount: 1000
     }],
+    subtotal: 1000,
+    gst: 180,
     total: 1180,
     reviews: [],
     notifications: [],
@@ -159,6 +188,7 @@ function setupEstimateDrawingJourneyModels() {
   const leads: Array<Record<string, any>> = [{
     _id: "lead-journey",
     ownerId: "user-estimator-sales",
+    projectId: null,
     clientName: "Rhea Kapoor",
     clientEmail: "client@aurora.example",
     clientMobile: "+91 90000 00000",
@@ -172,6 +202,7 @@ function setupEstimateDrawingJourneyModels() {
   const drawings: Array<Record<string, any>> = [];
   const revisions: Array<Record<string, any>> = [];
   const drafts: Array<Record<string, any>> = [];
+  const clientReviewRounds: Array<Record<string, any>> = [];
   const projects: Array<Record<string, any>> = [];
   const auditEvents: Array<Record<string, any>> = [];
   const session = {
@@ -197,10 +228,21 @@ function setupEstimateDrawingJourneyModels() {
       estimates.find((record) => modelMatches(record, filter as never)) ?? null
     ) as never
   );
+  vi.spyOn(EstimateModel, "find").mockImplementation((filter) =>
+    modelQuery(
+      estimates.filter((record) => modelMatches(record, filter as never))
+    ) as never
+  );
   vi.spyOn(EstimateModel, "updateOne").mockImplementation(async (filter, update) => {
     const record = estimates.find((item) => modelMatches(item, filter as never));
     if (record) applyModelUpdate(record, update as never);
     return { matchedCount: record ? 1 : 0, modifiedCount: record ? 1 : 0 } as never;
+  });
+  vi.spyOn(EstimateModel, "aggregate").mockImplementation((pipeline) => {
+    const match = (pipeline as Array<Record<string, any>>)
+      .find((stage) => stage.$match)?.$match ?? {};
+    const record = estimates.find((candidate) => modelMatches(candidate, match));
+    return modelQuery(record ? [{ _id: record._id }] : []) as never;
   });
   vi.spyOn(LeadModel, "findById").mockImplementation((id) =>
     modelQuery(leads.find((record) => record._id === id) ?? null) as never
@@ -208,6 +250,11 @@ function setupEstimateDrawingJourneyModels() {
   vi.spyOn(LeadModel, "findOne").mockImplementation((filter) =>
     modelQuery(
       leads.find((record) => modelMatches(record, filter as never)) ?? null
+    ) as never
+  );
+  vi.spyOn(LeadModel, "find").mockImplementation((filter) =>
+    modelQuery(
+      leads.filter((record) => modelMatches(record, filter as never))
     ) as never
   );
   vi.spyOn(LeadModel, "updateOne").mockImplementation(async (filter, update) => {
@@ -352,9 +399,84 @@ function setupEstimateDrawingJourneyModels() {
   vi.spyOn(UserModel, "findById").mockImplementation((id) =>
     modelQuery(team.get(String(id)) ?? null) as never
   );
+  vi.spyOn(UserModel, "findOne").mockImplementation((filter) =>
+    modelQuery(
+      [...team.values()].find((record) =>
+        modelMatches(record, filter as never)
+      ) ?? null
+    ) as never
+  );
+  vi.spyOn(UserModel, "find").mockImplementation((filter) =>
+    modelQuery(
+      [...team.values()].filter((record) => modelMatches(record, filter as never))
+    ) as never
+  );
+  vi.spyOn(UserModel, "aggregate").mockReturnValue(
+    modelQuery([{ assignedAdminId: "user-super-admin" }]) as never
+  );
+  vi.spyOn(EstimateClientReviewRoundModel, "findOne").mockImplementation((filter) => {
+    const candidates = clientReviewRounds
+      .filter((record) => modelMatches(record, filter as never))
+      .sort((left, right) =>
+        Number(right.sendGeneration ?? 0) - Number(left.sendGeneration ?? 0) ||
+        String(left._id).localeCompare(String(right._id))
+      );
+    return modelQuery(candidates[0] ?? null) as never;
+  });
+  vi.spyOn(EstimateClientReviewRoundModel, "create").mockImplementation(async (input) => {
+    const created = (input as Array<Record<string, any>>).map((value) => {
+      const record: Record<string, any> = { ...value };
+      record.toObject = () => plainRecord(record);
+      clientReviewRounds.push(record);
+      return record;
+    });
+    return created as never;
+  });
+  vi.spyOn(EstimateClientReviewRoundModel, "findOneAndUpdate").mockImplementation((filter, update) => {
+    const record = clientReviewRounds.find((candidate) =>
+      modelMatches(candidate, filter as never)
+    ) ?? null;
+    if (record) applyModelUpdate(record, update as never);
+    return modelQuery(record) as never;
+  });
+  vi.spyOn(EstimateClientReviewRoundModel, "updateOne").mockImplementation(async (filter, update) => {
+    const record = clientReviewRounds.find((candidate) =>
+      modelMatches(candidate, filter as never)
+    );
+    if (record) applyModelUpdate(record, update as never);
+    return {
+      matchedCount: record ? 1 : 0,
+      modifiedCount: record ? 1 : 0
+    } as never;
+  });
+  vi.spyOn(EstimateClientReviewRoundModel, "aggregate").mockImplementation(() => {
+    const current = [...clientReviewRounds].sort((left, right) =>
+      Number(right.sendGeneration ?? 0) - Number(left.sendGeneration ?? 0) ||
+      String(left._id).localeCompare(String(right._id))
+    )[0];
+    return modelQuery(current ? [{
+      id: current._id,
+      sendGeneration: current.sendGeneration,
+      estimateVersion: current.estimateVersion,
+      version: current.version,
+      deliveryStatus: current.deliveryStatus,
+      deliveryAttemptCount: current.deliveryAttemptCount,
+      deliveredAt: current.deliveredAt,
+      status: current.status,
+      scopeMatches: true
+    }] : []) as never;
+  });
   vi.spyOn(ProjectModel, "create").mockImplementation(async (input) => {
     projects.push(...(input as Array<Record<string, any>>));
     return input as never;
+  });
+  vi.spyOn(ProjectModel, "findById").mockImplementation((id) =>
+    modelQuery(projects.find((record) => record._id === id) ?? null) as never
+  );
+  vi.spyOn(ProjectModel, "updateOne").mockImplementation(async (filter, update) => {
+    const record = projects.find((item) => modelMatches(item, filter as never));
+    if (record) applyModelUpdate(record, update as never);
+    return { matchedCount: record ? 1 : 0, modifiedCount: record ? 1 : 0 } as never;
   });
 
   return {
@@ -366,14 +488,654 @@ function setupEstimateDrawingJourneyModels() {
     drawings,
     revisions,
     drafts,
+    clientReviewRounds,
     projects,
     auditEvents
   };
 }
 
+function plainRecord(record: Record<string, any>) {
+  return Object.fromEntries(
+    Object.entries(record).filter(([key]) => key !== "save" && key !== "toObject")
+  );
+}
+
+function deepFreezeRecord<T>(value: T): T {
+  if (value && typeof value === "object" && !Object.isFrozen(value)) {
+    for (const nested of Object.values(value as Record<string, unknown>)) {
+      deepFreezeRecord(nested);
+    }
+    Object.freeze(value);
+  }
+  return value;
+}
+
+function immutableRecordSnapshot(record: Record<string, any>) {
+  return deepFreezeRecord(structuredClone(plainRecord(record)));
+}
+
+function estimateResponseDto(record: Record<string, any>) {
+  const { _id, ...plain } = plainRecord(record);
+  return JSON.parse(JSON.stringify({ ...plain, id: _id }));
+}
+
+function setupWorkflowCharacterization(
+  estimateOverrides: Record<string, any>,
+  extraEstimateOverrides: Array<Record<string, any>> = []
+) {
+  const state = setupEstimateDrawingJourneyModels();
+  const lead = Object.assign(state.leads[0]!, {
+    _id: "lead-aurora",
+    ownerId: "user-estimator-sales",
+    projectId: null,
+    clientName: "Rhea Kapoor",
+    clientEmail: "client@aurora.example",
+    clientMobile: "+91 90000 00000",
+    projectName: "Aurora",
+    location: "Pune",
+    propertyType: "villa",
+    stage: "estimate_in_progress",
+    nextAction: "prepare estimate",
+    nextActionAt: new Date("2026-09-01T10:00:00.000Z")
+  });
+  const base = plainRecord(state.estimates[0]!);
+  const makeEstimate = (overrides: Record<string, any>) => {
+    const record: Record<string, any> = {
+      ...base,
+      _id: "estimate-characterization",
+      leadId: "lead-aurora",
+      ownerId: "user-estimator-sales",
+      version: 1,
+      designLifecycleVersion: 0,
+      designFrozenAt: null,
+      status: "draft",
+      propertyType: "villa",
+      rooms: [],
+      scopes: ["interiors"],
+      lineItems: [],
+      subtotal: 1000,
+      gst: 180,
+      total: 1180,
+      approvalRequired: false,
+      assignedManagerId: null,
+      assignedDesignerId: null,
+      submittedAt: null,
+      sentToClientAt: null,
+      clientDecisionAt: null,
+      projectId: null,
+      reviews: [],
+      notifications: [],
+      ...overrides
+    };
+    record.reviews = [...(overrides.reviews ?? record.reviews)];
+    record.notifications = [...(overrides.notifications ?? record.notifications)];
+    record.save = vi.fn(async () => record);
+    record.toObject = () => plainRecord(record);
+    return record;
+  };
+  const estimate = makeEstimate(estimateOverrides);
+  const extraEstimates = extraEstimateOverrides.map(makeEstimate);
+  state.estimates.splice(0, state.estimates.length, estimate, ...extraEstimates);
+
+  const seed = structuredClone(demoSeedData);
+  const app = createApp({
+    repository: createMemoryRepository(seed),
+    storage: new JourneyStorage(),
+    auth: {
+      jwtSecret: "journey-secret-that-is-at-least-thirty-two-characters",
+      jwtExpiresInSeconds: 900
+    },
+    clock: () => new Date("2026-07-30T15:00:00.000Z")
+  });
+  const login = async (email: string) => {
+    const response = await request(app)
+      .post("/api/v1/auth/login")
+      .send({ email, password })
+      .expect(200);
+    return `Bearer ${response.body.data.token}`;
+  };
+  return { app, estimate, extraEstimates, lead, login, state };
+}
+
+function expectNoWorkflowWrites(fixture: ReturnType<typeof setupWorkflowCharacterization>) {
+  expect(fixture.estimate.save).not.toHaveBeenCalled();
+  expect(EstimateModel.updateOne).not.toHaveBeenCalled();
+  expect(LeadModel.updateOne).not.toHaveBeenCalled();
+  expect(ProjectModel.create).not.toHaveBeenCalled();
+  expect(AuditEventModel.create).not.toHaveBeenCalled();
+}
+
 afterEach(() => vi.restoreAllMocks());
 
 describe("complete cross-role journey", () => {
+
+  it("row 77 returns the exact manager review queue without writes", async () => {
+    const fixture = setupWorkflowCharacterization({
+      _id: "estimate-awaiting-assignment",
+      status: "pending_manager_assignment",
+      submittedAt: new Date("2026-07-29T10:00:00.000Z")
+    });
+    const manager = await fixture.login("aarav@lisno.example");
+    const response = await request(fixture.app)
+      .get("/api/v1/estimates/review-queue")
+      .set("Authorization", manager)
+      .expect(200);
+
+    expect(response.body).toEqual({
+      data: [{
+        ...estimateResponseDto(fixture.estimate),
+        lead: JSON.parse(JSON.stringify(fixture.lead))
+      }]
+    });
+    expect(EstimateModel.find).toHaveBeenCalledOnce();
+    expect(EstimateModel.find).toHaveBeenCalledWith({ status: "pending_manager_assignment" });
+    expect(LeadModel.find).toHaveBeenCalledOnce();
+    expectNoWorkflowWrites(fixture);
+  });
+
+  it("row 78 returns the exact active manager-team Designer DTOs without writes", async () => {
+    const fixture = setupWorkflowCharacterization({ _id: "estimate-unused", status: "draft" });
+    const manager = await fixture.login("aarav@lisno.example");
+    const response = await request(fixture.app)
+      .get("/api/v1/estimates/designers")
+      .set("Authorization", manager)
+      .expect(200);
+
+    expect(response.body).toEqual({ data: [{
+      id: "user-designer-ananya",
+      name: "Ananya Rao",
+      email: "ananya@lisno.example",
+      title: null
+    }] });
+    expect(UserModel.find).toHaveBeenCalledOnce();
+    expect(UserModel.find).toHaveBeenCalledWith({
+      role: "designer",
+      managerId: "user-manager-aarav",
+      active: true
+    });
+    expectNoWorkflowWrites(fixture);
+  });
+
+  it("row 79 assigns one Designer with one review and notification", async () => {
+    const fixture = setupWorkflowCharacterization({
+      _id: "estimate-awaiting-assignment",
+      status: "pending_manager_assignment"
+    });
+    const before = immutableRecordSnapshot(fixture.estimate);
+    const manager = await fixture.login("aarav@lisno.example");
+    const response = await request(fixture.app)
+      .post("/api/v1/estimates/estimate-awaiting-assignment/assign")
+      .set("Authorization", manager)
+      .send({ designerId: "user-designer-ananya" })
+      .expect(200);
+    const expectedState = {
+      ...before,
+      assignedManagerId: "user-manager-aarav",
+      assignedDesignerId: "user-designer-ananya",
+      status: "pending_designer_approval",
+      reviews: [{
+        actorId: "user-manager-aarav",
+        action: "designer_assigned",
+        note: "Ananya Rao",
+        occurredAt: expect.any(Date)
+      }],
+      notifications: [{
+        recipientEmail: "ananya@lisno.example",
+        recipientRole: "designer",
+        event: "estimate_approval_assigned",
+        status: "queued",
+        queuedAt: expect.any(Date)
+      }]
+    };
+    const expectedResponse = {
+      ...estimateResponseDto(before),
+      assignedManagerId: "user-manager-aarav",
+      assignedDesignerId: "user-designer-ananya",
+      status: "pending_designer_approval",
+      reviews: [{
+        actorId: "user-manager-aarav",
+        action: "designer_assigned",
+        note: "Ananya Rao",
+        occurredAt: expect.any(String)
+      }],
+      notifications: [{
+        recipientEmail: "ananya@lisno.example",
+        recipientRole: "designer",
+        event: "estimate_approval_assigned",
+        status: "queued",
+        queuedAt: expect.any(String)
+      }]
+    };
+
+    expect(response.body).toEqual({ data: expectedResponse });
+    expect(plainRecord(fixture.estimate)).toEqual(expectedState);
+    expect(response.body.data.reviews[0].occurredAt).toBe(
+      fixture.estimate.reviews[0].occurredAt.toISOString()
+    );
+    expect(response.body.data.notifications[0].queuedAt).toBe(
+      fixture.estimate.notifications[0].queuedAt.toISOString()
+    );
+    expect(fixture.estimate.save).toHaveBeenCalledOnce();
+    expect(UserModel.findOne).toHaveBeenCalledTimes(2);
+    expect(UserModel.findOne).toHaveBeenNthCalledWith(1, {
+      _id: "user-designer-ananya",
+      role: "designer",
+      managerId: "user-manager-aarav",
+      active: true
+    });
+    expect(UserModel.findOne).toHaveBeenNthCalledWith(2, {
+      _id: "user-manager-aarav",
+      role: "design_manager",
+      active: true
+    });
+    expect(LeadModel.updateOne).not.toHaveBeenCalled();
+    expect(EstimateModel.updateOne).not.toHaveBeenCalled();
+    expect(ProjectModel.create).not.toHaveBeenCalled();
+    expect(AuditEventModel.create).toHaveBeenCalledWith([
+      expect.objectContaining({
+        actorId: "user-manager-aarav",
+        action: "estimate_designer_assigned",
+        entityId: "estimate-awaiting-assignment"
+      })
+    ], { session: expect.anything() });
+  });
+
+  it("row 80 keeps legacy estimate approval out of the Designer role", async () => {
+    const fixture = setupWorkflowCharacterization({
+      _id: "estimate-awaiting-designer",
+      status: "pending_designer_approval",
+      assignedDesignerId: "user-designer-ananya"
+    });
+    const before = immutableRecordSnapshot(fixture.estimate);
+    const designer = await fixture.login("ananya@lisno.example");
+    await request(fixture.app)
+      .post("/api/v1/estimates/estimate-awaiting-designer/designer-decision")
+      .set("Authorization", designer)
+      .send({ decision: "approve", note: "Approved" })
+      .expect(403);
+
+    expect(plainRecord(fixture.estimate)).toEqual(before);
+    expect(fixture.estimate.save).not.toHaveBeenCalled();
+    expect(LeadModel.updateOne).not.toHaveBeenCalled();
+    expect(EstimateModel.updateOne).not.toHaveBeenCalled();
+    expect(ProjectModel.create).not.toHaveBeenCalled();
+    expect(AuditEventModel.create).not.toHaveBeenCalled();
+  });
+
+  it("row 81 sends one ready estimate and updates its Lead exactly once", async () => {
+    const fixture = setupWorkflowCharacterization({ _id: "estimate-ready", status: "ready_for_client" });
+    const before = immutableRecordSnapshot(fixture.estimate);
+    const leadBefore = deepFreezeRecord(structuredClone(fixture.lead));
+    const estimator = await fixture.login("sales@lisno.example");
+    const response = await request(fixture.app)
+      .post("/api/v1/estimates/estimate-ready/send-client")
+      .set("Authorization", estimator)
+      .expect(200);
+    const expectedState = {
+      ...before,
+      status: "sent_to_client",
+      sentToClientAt: expect.any(Date),
+      notifications: [{
+        recipientEmail: "client@aurora.example",
+        recipientRole: "client",
+        event: "estimate_ready_for_review",
+        status: "queued",
+        queuedAt: expect.any(Date)
+      }]
+    };
+    const expectedResponse = {
+      ...estimateResponseDto(before),
+      status: "sent_to_client",
+      sentToClientAt: expect.any(String),
+      notifications: [{
+        recipientEmail: "client@aurora.example",
+        recipientRole: "client",
+        event: "estimate_ready_for_review",
+        status: "queued",
+        queuedAt: expect.any(String)
+      }],
+      clientReview: {
+        id: expect.stringMatching(/^estimate-client-review-/),
+        sendGeneration: 1,
+        estimateVersion: 1,
+        version: 2,
+        deliveryStatus: "disabled",
+        deliveryAttemptCount: 0,
+        deliveredAt: null,
+        status: "pending"
+      }
+    };
+
+    expect(response.body).toEqual({ data: expectedResponse });
+    expect(plainRecord(fixture.estimate)).toEqual(expectedState);
+    expect(response.body.data.sentToClientAt).toBe(
+      fixture.estimate.sentToClientAt.toISOString()
+    );
+    expect(response.body.data.notifications[0].queuedAt).toBe(
+      fixture.estimate.notifications[0].queuedAt.toISOString()
+    );
+    expect(fixture.estimate.save).not.toHaveBeenCalled();
+    expect(LeadModel.updateOne).toHaveBeenCalledOnce();
+    expect(LeadModel.updateOne).toHaveBeenCalledWith(
+      {
+        _id: "lead-aurora",
+        ownerId: "user-estimator-sales",
+        projectId: null
+      },
+      { $set: {
+        stage: "estimate_sent",
+        nextAction: "client estimate decision",
+        nextActionAt: expect.any(Date)
+      } },
+      { session: expect.anything() }
+    );
+    expect(fixture.lead).toEqual({
+      ...leadBefore,
+      stage: "estimate_sent",
+      nextAction: "client estimate decision",
+      nextActionAt: expect.any(Date)
+    });
+    expect(EstimateModel.updateOne).toHaveBeenCalledOnce();
+    expect(fixture.state.clientReviewRounds).toEqual([
+      expect.objectContaining({
+        estimateId: "estimate-ready",
+        sendGeneration: 1,
+        status: "pending",
+        deliveryStatus: "disabled",
+        pdfStorageReference: expect.any(String)
+      })
+    ]);
+    expect(ProjectModel.create).not.toHaveBeenCalled();
+    expect(fixture.state.auditEvents.map((event) => event.action)).toEqual([
+      "estimate_client_review_published",
+      "estimate_client_response_task_assigned"
+    ]);
+    expect(JSON.stringify(response.body.data.clientReview)).not.toMatch(
+      /recipientEmail|pdfStorageReference|pdfFilename/i
+    );
+  });
+
+  it("row 82 returns only the exact client-visible estimates without writes", async () => {
+    const fixture = setupWorkflowCharacterization(
+      { _id: "estimate-client-visible", status: "sent_to_client" },
+      [
+        { _id: "estimate-hidden-draft", status: "draft" },
+        { _id: "estimate-hidden-ready", status: "ready_for_client" }
+      ]
+    );
+    const client = await fixture.login("client@aurora.example");
+    const response = await request(fixture.app)
+      .get("/api/v1/client/estimates")
+      .set("Authorization", client)
+      .expect(200);
+
+    expect(response.body).toEqual({ data: [{
+      ...estimateResponseDto(fixture.estimate),
+      lead: JSON.parse(JSON.stringify(fixture.lead))
+    }] });
+    expect(EstimateModel.find).toHaveBeenCalledOnce();
+    expect(EstimateModel.find).toHaveBeenCalledWith({
+      leadId: { $in: ["lead-aurora"] },
+      status: { $in: ["sent_to_client", "client_changes_requested", "client_approved"] }
+    });
+    expect(response.body.data.map((item: { id: string }) => item.id)).toEqual(["estimate-client-visible"]);
+    expectNoWorkflowWrites(fixture);
+    for (const hidden of fixture.extraEstimates) expect(hidden.save).not.toHaveBeenCalled();
+  });
+
+  it("row 84 performs one CAS approval, review, audit, and linked-project transition", async () => {
+    const fixture = setupWorkflowCharacterization({
+      _id: "estimate-client-visible",
+      status: "sent_to_client",
+      version: 1,
+      designLifecycleVersion: 0,
+      designFrozenAt: null,
+      assignedDesignerId: "user-designer-ananya"
+    });
+    const initialEstimate = immutableRecordSnapshot(fixture.estimate);
+    vi.spyOn(EstimateModel, "findOne").mockImplementation((filter) =>
+      modelQuery(modelMatches(initialEstimate, filter as never) ? structuredClone(initialEstimate) : null) as never
+    );
+    vi.spyOn(EstimateModel, "findById").mockImplementation((id) =>
+      modelQuery(id === initialEstimate._id ? structuredClone(initialEstimate) : null) as never
+    );
+    const client = await fixture.login("client@aurora.example");
+    const response = await request(fixture.app)
+      .post("/api/v1/client/estimates/estimate-client-visible/decision")
+      .set("Authorization", client)
+      .send({ decision: "approve", note: "Approved" })
+      .expect(200);
+    const projectId = response.body.data.projectId as string;
+    const decisionAt = response.body.data.clientDecisionAt as string;
+
+    expect(response.body).toEqual({ data: {
+      ...estimateResponseDto(initialEstimate),
+      status: "client_approved",
+      version: 2,
+      designLifecycleVersion: 1,
+      designFrozenAt: null,
+      designPlanStatus: "pending_assignment",
+      designPlanVersion: 0,
+      designPlanDesignerId: null,
+      designPlanAssignedById: null,
+      designPlanAssignedAt: null,
+      designPlanSubmittedAt: null,
+      designPlanApprovedAt: null,
+      designPlanApprovedById: null,
+      designPlanApprovalSource: null,
+      projectId: expect.stringMatching(/^project-/),
+      clientDecisionAt: decisionAt,
+      reviews: [{
+        actorId: "user-client-aurora",
+        action: "client_approved",
+        note: "Approved",
+        occurredAt: decisionAt
+      }],
+      notifications: []
+    } });
+    expect(EstimateModel.updateOne).toHaveBeenCalledOnce();
+    expect(EstimateModel.updateOne).toHaveBeenCalledWith(
+      {
+        _id: "estimate-client-visible",
+        status: "sent_to_client",
+        version: 1,
+        designLifecycleVersion: { $in: [0, null] },
+        designFrozenAt: { $in: [null] }
+      },
+      {
+        $set: {
+          status: "client_approved",
+          projectId,
+          clientDecisionAt: expect.any(Date),
+          designFrozenAt: null,
+          designPlanStatus: "pending_assignment",
+          designPlanVersion: 0,
+          designPlanDesignerId: null,
+          designPlanAssignedById: null,
+          designPlanAssignedAt: null,
+          designPlanSubmittedAt: null,
+          designPlanApprovedAt: null,
+          designPlanApprovedById: null,
+          designPlanApprovalSource: null
+        },
+        $inc: { version: 1, designLifecycleVersion: 1 },
+        $push: {
+          reviews: {
+            actorId: "user-client-aurora",
+            action: "client_approved",
+            note: "Approved",
+            occurredAt: expect.any(Date)
+          }
+        }
+      },
+      expect.any(Object)
+    );
+    expect(LeadModel.updateOne).toHaveBeenCalledOnce();
+    expect(LeadModel.updateOne).toHaveBeenCalledWith(
+      {
+        _id: "lead-aurora",
+        clientEmail: "client@aurora.example",
+        projectId: { $in: [null, projectId] }
+      },
+      { $set: {
+        projectId,
+        stage: "won",
+          nextAction: "Assign Designer for design plan",
+        nextActionAt: expect.any(Date)
+      } },
+      expect.any(Object)
+    );
+    expect(ProjectModel.create).toHaveBeenCalledOnce();
+    expect(fixture.state.projects).toEqual([{
+      _id: projectId,
+      name: "Aurora",
+      clientId: "user-client-aurora",
+      clientName: "Rhea Kapoor",
+      clientEmail: "client@aurora.example",
+      clientEmailNormalized: "client@aurora.example",
+      clientMobile: "+91 90000 00000",
+      clientAddress: "Pune",
+      initiatingDesignerId: null,
+      assignedEstimatorId: "user-estimator-sales",
+      assignedDesignerIds: [],
+      managerId: null,
+      status: "planning",
+      location: "Pune",
+      plannedStartAt: expect.any(Date),
+      plannedEndAt: expect.any(Date)
+    }]);
+    expect(AuditEventModel.create).toHaveBeenCalledTimes(2);
+    expect(fixture.state.auditEvents).toEqual([
+      {
+        _id: expect.stringMatching(/^audit-/),
+        actorId: "user-client-aurora",
+        action: "estimate_design_final_approved",
+        entityType: "estimate",
+        entityId: "estimate-client-visible",
+        occurredAt: decisionAt,
+        oldValues: { status: "sent_to_client" },
+        newValues: {
+          status: "client_approved",
+          projectId,
+          designPlanStatus: "pending_assignment"
+        },
+        reason: null
+      },
+      {
+        _id: expect.stringMatching(/^audit-/),
+        actorId: "user-client-aurora",
+        action: "estimate_client_response_recorded_through_portal",
+        entityType: "estimate",
+        entityId: "estimate-client-visible",
+        occurredAt: decisionAt,
+        oldValues: { status: "sent_to_client" },
+        newValues: {
+          status: "client_approved",
+          decision: "approve",
+          decisionSource: "client_portal",
+          noteLength: 8
+        },
+        reason: null
+      }
+    ]);
+    expect(plainRecord(fixture.estimate)).toEqual({
+      ...initialEstimate,
+      status: "client_approved",
+      version: 2,
+      designLifecycleVersion: 1,
+      designFrozenAt: null,
+      designPlanStatus: "pending_assignment",
+      designPlanVersion: 0,
+      designPlanDesignerId: null,
+      designPlanAssignedById: null,
+      designPlanAssignedAt: null,
+      designPlanSubmittedAt: null,
+      designPlanApprovedAt: null,
+      designPlanApprovedById: null,
+      designPlanApprovalSource: null,
+      projectId,
+      clientDecisionAt: expect.any(Date),
+      reviews: [{
+        actorId: "user-client-aurora",
+        action: "client_approved",
+        note: "Approved",
+        occurredAt: expect.any(Date)
+      }],
+      notifications: []
+    });
+  }, 15_000);
+
+  it("reuses the Admin-created Project during linked estimate approval", async () => {
+    const fixture = setupWorkflowCharacterization({
+      _id: "estimate-admin-linked",
+      status: "sent_to_client",
+      version: 1,
+      designLifecycleVersion: 0,
+      designFrozenAt: null,
+      assignedDesignerId: "user-designer-ananya",
+      projectId: "project-admin-1"
+    });
+    fixture.lead.projectId = "project-admin-1";
+    const adminProject = {
+      _id: "project-admin-1",
+      name: "Aurora",
+      clientId: null,
+      clientName: "Rhea Kapoor",
+      clientEmail: "client@aurora.example",
+      clientEmailNormalized: "client@aurora.example",
+      clientMobile: "+91 90000 00000",
+      clientAddress: "Pune",
+      initiatingDesignerId: null,
+      assignedEstimatorId: "user-estimator-sales",
+      assignedDesignerIds: [],
+      managerId: null,
+      status: "planning",
+      location: "Pune",
+      plannedStartAt: new Date("2026-07-01T00:00:00.000Z"),
+      plannedEndAt: new Date("2026-09-29T00:00:00.000Z")
+    };
+    fixture.state.projects.push(adminProject);
+    const projectCountBefore = fixture.state.projects.length;
+    const identityBefore = {
+      name: adminProject.name,
+      clientName: adminProject.clientName,
+      clientEmail: adminProject.clientEmail,
+      clientEmailNormalized: adminProject.clientEmailNormalized,
+      clientMobile: adminProject.clientMobile,
+      clientAddress: adminProject.clientAddress,
+      location: adminProject.location,
+      plannedStartAt: adminProject.plannedStartAt,
+      plannedEndAt: adminProject.plannedEndAt
+    };
+    const client = await fixture.login("client@aurora.example");
+
+    const response = await request(fixture.app)
+      .post("/api/v1/client/estimates/estimate-admin-linked/decision")
+      .set("Authorization", client)
+      .send({ decision: "approve", note: "Approved" })
+      .expect(200);
+
+    expect(fixture.state.projects).toHaveLength(projectCountBefore);
+    expect(ProjectModel.create).not.toHaveBeenCalled();
+    expect(adminProject).toMatchObject({
+      _id: "project-admin-1",
+      clientId: "user-client-aurora",
+      initiatingDesignerId: null,
+      assignedEstimatorId: "user-estimator-sales",
+      assignedDesignerIds: [],
+      managerId: null
+    });
+    expect(adminProject).toMatchObject(identityBefore);
+    expect(fixture.estimate).toMatchObject({
+      status: "client_approved",
+      projectId: "project-admin-1"
+    });
+    expect(response.body.data).toMatchObject({
+      status: "client_approved",
+      projectId: "project-admin-1"
+    });
+  });
+
   it("links every unclaimed mixed-case client project through upload, review, and revision history", async () => {
     const repository = createMemoryRepository(structuredClone(demoSeedData));
     const storage = new JourneyStorage();
@@ -410,14 +1172,23 @@ describe("complete cross-role journey", () => {
     ]);
     const managerId = managerSearch.body.data.items[0].id as string;
 
+    const projectService = createProjectService(
+      repository,
+      createAuditService(repository),
+      () => new Date("2026-07-28T12:00:00.000Z")
+    );
     const createProject = async (name: string, clientEmail: string) => {
-      const response = await request(app)
-        .post("/api/v1/projects")
-        .set("Authorization", designer)
-        .send({
+      const project = await projectService.create(
+        {
+          id: "user-designer-ananya",
+          name: "Ananya Rao",
+          email: "ananya@lisno.example",
+          role: "designer"
+        },
+        {
           name,
           clientName: "Journey Client",
-          clientEmail,
+          clientEmail: clientEmail.trim(),
           clientMobile: "+91 91234 56789",
           clientAddress: "42 Linking Lane, Bengaluru",
           assignedDesignerIds: ["user-designer-ananya"],
@@ -425,16 +1196,16 @@ describe("complete cross-role journey", () => {
           location: "Bengaluru",
           plannedStartAt: "2026-08-01T09:00:00.000Z",
           plannedEndAt: "2026-12-15T17:00:00.000Z"
-        })
-        .expect(201);
-      expect(response.body.data).toMatchObject({
+        }
+      );
+      expect(project).toMatchObject({
         name,
         clientId: null,
         clientEmail: clientEmail.trim(),
         clientEmailNormalized: "journey.client@example.com",
         managerId
       });
-      return response.body.data;
+      return project;
     };
     const residence = await createProject(
       "Journey Residence",
@@ -1007,15 +1778,56 @@ describe("complete cross-role journey", () => {
     const estimator = await login("sales@lisno.example");
     const client = await login("client@aurora.example");
 
-    const uploaded = await request(app)
+    const forbiddenUpload = await request(app)
       .post("/api/v1/estimates/estimate-journey/design-uploads")
       .set("Authorization", estimator)
       .attach("file", PDF, {
         filename: "estimate-review.pdf",
         contentType: "application/pdf"
-      })
-      .expect(201);
-    const job = state.jobs.find((item) => item.uploadId === uploaded.body.data.id)!;
+      });
+    expect(forbiddenUpload.status, JSON.stringify(forbiddenUpload.body)).toBe(403);
+    expect(state.uploads).toEqual([]);
+    expect(state.jobs).toEqual([]);
+    expect(state.auditEvents).toEqual([]);
+    expect(storage.files.size).toBe(0);
+
+    const seededAt = new Date("2026-07-30T15:00:00.000Z");
+    const seededSource = await storage.save({ data: PDF, extension: ".pdf" });
+    const seededUploadId = "estimate-design-upload-seeded-by-designer";
+    const job = {
+      _id: "estimate-design-job-seeded-by-designer",
+      uploadId: seededUploadId,
+      status: "queued",
+      attemptCount: 0,
+      queuedAt: seededAt,
+      nextAttemptAt: seededAt,
+      claimGeneration: 0,
+      startedAt: null,
+      completedAt: null,
+      leaseExpiresAt: null,
+      claimId: null,
+      failureCode: null,
+      failureMessage: null,
+      workerResultId: null
+    };
+    state.uploads.push({
+      _id: seededUploadId,
+      estimateId: "estimate-journey",
+      leadId: "lead-journey",
+      originalFilename: "estimate-review.pdf",
+      storedFileReference: seededSource.reference,
+      mimeType: "application/pdf",
+      sizeBytes: PDF.length,
+      uploaderId: "user-designer-ananya",
+      uploadedAt: seededAt,
+      extractionStatus: "queued",
+      replacementDrawingId: null,
+      replacesRevisionId: null,
+      replacementVersion: null,
+      failureCode: null,
+      failureMessage: null
+    });
+    state.jobs.push(job);
 
     const claim = await request(app)
       .post("/api/v1/internal/extraction-jobs/claim")
@@ -1136,11 +1948,14 @@ describe("complete cross-role journey", () => {
       .send()
       .expect(200);
     expect(submitted.body.data).toEqual({ submittedCount: 2 });
-    await request(app)
+    const publishedEstimate = await request(app)
       .post("/api/v1/leads/lead-journey/estimate/submit")
       .set("Authorization", estimator)
-      .send()
-      .expect(200);
+      .send();
+    expect(
+      publishedEstimate.status,
+      JSON.stringify(publishedEstimate.body)
+    ).toBe(200);
 
     const clientWorkspace = await request(app)
       .get("/api/v1/client/estimates/estimate-journey/design-drawings")
@@ -1241,18 +2056,30 @@ describe("complete cross-role journey", () => {
     const finalApproval = await request(app)
       .post("/api/v1/client/estimates/estimate-journey/decision")
       .set("Authorization", client)
-      .send({ decision: "approve", note: "" })
-      .expect(200);
+      .send({ decision: "approve", note: "" });
+    expect(finalApproval.status, JSON.stringify({
+      body: finalApproval.body,
+      estimate: plainRecord(state.estimates[0]!),
+      rounds: state.clientReviewRounds.map(plainRecord),
+      roundUpdates: vi.mocked(EstimateClientReviewRoundModel.updateOne).mock.calls
+    })).toBe(200);
 
     expect(finalApproval.body.data).toMatchObject({
       status: "client_approved",
+      designFrozenAt: null,
+      designPlanStatus: "pending_assignment",
+      designPlanVersion: 0,
+      designPlanDesignerId: null,
       projectId: expect.stringMatching(/^project-/)
     });
     expect(state.projects).toContainEqual(expect.objectContaining({
       _id: finalApproval.body.data.projectId,
       name: "Estimate Drawing Journey",
       clientId: "user-client-aurora",
-      managerId: "user-manager-aarav"
+      initiatingDesignerId: null,
+      assignedEstimatorId: "user-estimator-sales",
+      assignedDesignerIds: [],
+      managerId: null
     }));
     expect(
       state.revisions.filter((revision) => revision.drawingId === bedroom.id)
@@ -1276,7 +2103,6 @@ describe("complete cross-role journey", () => {
     ]));
     const auditActions = state.auditEvents.map((event) => event.action);
     expect(auditActions).toEqual(expect.arrayContaining([
-      "estimate_design_uploaded",
       "estimate_design_extraction_claimed",
       "estimate_design_extraction_completed",
       "estimate_design_verified",
@@ -1287,6 +2113,7 @@ describe("complete cross-role journey", () => {
       "estimate_design_replacement_created",
       "estimate_design_final_approved"
     ]));
+    expect(auditActions).not.toContain("estimate_design_uploaded");
     const serializedAudit = JSON.stringify(state.auditEvents);
     expect(serializedAudit).not.toContain("estimate-review.pdf");
     expect(serializedAudit).not.toContain("bedroom-flooring-v2.png");

@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { AnnotationDocumentV1 } from "../../api/types";
 import { tokenStorage } from "../../api/client";
+import { authorizationFor } from "../../test/authFixtures";
 import { EstimateDesignUploads } from "../leads/EstimateDesignUploads";
 import { renderApp, renderWithQuery } from "../../test/render";
 
@@ -386,6 +387,9 @@ describe("estimate drawing review journey", () => {
             role: "client",
           });
         }
+        if (url.endsWith("/api/v1/auth/authorization")) {
+          return json(authorizationFor("client"));
+        }
         if (url.includes("/api/v1/client/project-summaries?")) {
           return json({
             items: [],
@@ -493,7 +497,6 @@ describe("estimate drawing review journey", () => {
     );
     const tools = screen.getByRole("toolbar", { name: "Annotation tools" });
     for (const tool of [
-      "Select",
       "Rectangle",
       "Ellipse",
       "Arrow",
@@ -505,7 +508,8 @@ describe("estimate drawing review journey", () => {
     ]) {
       expect(within(tools).getByRole("button", { name: tool })).toBeVisible();
     }
-    expect(screen.getByRole("toolbar", { name: "Zoom and pan" })).toBeVisible();
+    expect(screen.getByRole("toolbar", { name: "Zoom controls" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: /pan/i })).not.toBeInTheDocument();
 
     const canvas = screen.getByRole("img", {
       name: "Drawing annotation canvas",
@@ -681,7 +685,9 @@ describe("estimate drawing review journey", () => {
       name: "Upload replacement",
     }));
 
-    expect(await screen.findByRole("status")).toHaveTextContent(
+    expect(await within(screen.getByRole("region", {
+      name: "Upload design plans",
+    })).findByRole("status")).toHaveTextContent(
       "Revision 2 awaits verification.",
     );
     const replacementRow = await screen.findByRole("article", {
@@ -745,6 +751,9 @@ describe("estimate drawing review journey", () => {
           email: "client@lisno.example",
           role: "client",
         });
+      }
+      if (url.endsWith("/api/v1/auth/authorization")) {
+        return json(authorizationFor("client"));
       }
       if (url.includes("/api/v1/client/project-summaries?")) {
         const projects = clientPhase === "estimate_approved"
@@ -873,7 +882,7 @@ describe("estimate drawing review journey", () => {
     const estimateApproval = within(approvedCard).getByRole("button", {
       name: "Approve estimate",
     });
-    expect(estimateApproval).toBeDisabled();
+    expect(estimateApproval).toBeEnabled();
     await user.click(within(approvedBedroom).getByRole("button", {
       name: "Approve Bedroom Flooring",
     }));
@@ -918,7 +927,7 @@ describe("estimate drawing review journey", () => {
       screen.queryByRole("toolbar", { name: "Annotation tools" }),
     ).not.toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: "Save draft" }),
+      screen.queryByRole("button", { name: "Save as draft" }),
     ).not.toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: "Submit change request" }),

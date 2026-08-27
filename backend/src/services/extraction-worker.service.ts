@@ -121,6 +121,32 @@ export interface ExtractionWorkerService {
   ): Promise<DesignExtractionJobRecord>;
 }
 
+/** Keep repeated labels when they identify different crops; remove only the
+ * same labelled crop when its pixels are identical or effectively identical. */
+export async function deduplicateExtractionProposals<
+  T extends { label: string; confidence: number; crop: CropRect; image: Buffer }
+>(proposals: T[]): Promise<T[]> {
+  const kept: T[] = [];
+  for (const proposal of proposals) {
+    let duplicateIndex = -1;
+    for (let index = 0; index < kept.length; index += 1) {
+      const existing = kept[index]!;
+      if (
+        normalizeProposalLabel(existing.label) !== normalizeProposalLabel(proposal.label) ||
+        !sameCrop(existing.crop, proposal.crop) ||
+        !(await nearIdenticalImage(existing.image, proposal.image))
+      ) continue;
+      duplicateIndex = index;
+      break;
+    }
+    if (duplicateIndex < 0) kept.push(proposal);
+    else if (proposal.confidence > kept[duplicateIndex]!.confidence) {
+      kept[duplicateIndex] = proposal;
+    }
+  }
+  return kept;
+}
+
 export function createExtractionWorkerService(
   repository: AppRepository,
   audit: AuditService,
@@ -573,7 +599,6 @@ async function normalizeAndValidateResult(
         maxImageBytes
       );
       await validatePng(sectionImage, section.crop.width, section.crop.height);
-      totalBytes += sectionImage.length;
       sections.push({
         ...section,
         label,
@@ -581,7 +606,9 @@ async function normalizeAndValidateResult(
         image: sectionImage
       });
     }
-    pages.push({ ...page, image, sections });
+    const uniqueSections = await deduplicateExtractionProposals(sections);
+    totalBytes += uniqueSections.reduce((bytes, section) => bytes + section.image.length, 0);
+    pages.push({ ...page, image, sections: uniqueSections });
   }
   if (totalBytes > maxImageBytes * 4) {
     invalidResult("The extraction result contains too much image data.");
@@ -649,6 +676,32 @@ function cropIsWithinPage(crop: CropRect, width: number, height: number) {
     crop.x + crop.width <= width &&
     crop.y + crop.height <= height
   );
+}
+
+function normalizeProposalLabel(label: string) {
+  return label.replace(/\s+/g, " ").trim().toLocaleLowerCase();
+}
+
+function sameCrop(left: CropRect, right: CropRect) {
+  return left.x === right.x && left.y === right.y &&
+    left.width === right.width && left.height === right.height;
+}
+
+async function nearIdenticalImage(left: Buffer, right: Buffer) {
+  if (left.equals(right)) return true;
+  try {
+    const [leftPixels, rightPixels] = await Promise.all([
+      sharp(left).resize(24, 24, { fit: "fill" }).grayscale().raw().toBuffer(),
+      sharp(right).resize(24, 24, { fit: "fill" }).grayscale().raw().toBuffer()
+    ]);
+    let difference = 0;
+    for (let index = 0; index < leftPixels.length; index += 1) {
+      difference += Math.abs(leftPixels[index]! - rightPixels[index]!);
+    }
+    return difference / leftPixels.length <= 2.5;
+  } catch {
+    return false;
+  }
 }
 
 function invalidResult(message: string): never {

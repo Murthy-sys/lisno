@@ -8,12 +8,23 @@ import { PDFDocument } from "pdf-lib";
 import request from "supertest";
 import { beforeAll, describe, expect, it } from "vitest";
 
-import { createApp } from "../src/app.js";
+import { createApp as createApplication } from "../src/app.js";
 import type { Role } from "../src/contracts/domain.js";
-import { isValidPdfDocument } from "../src/middleware/upload.js";
+import {
+  isValidPdfDocument,
+  uploadSingleFile
+} from "../src/middleware/upload.js";
+import { errorHandler } from "../src/middleware/errors.js";
 import { createMemoryRepository } from "../src/repositories/memory.js";
 import type { AppRepository } from "../src/repositories/types.js";
 import { demoSeedData } from "../src/seed/data.js";
+import { developmentDemoAuthentication } from "./helpers/development-demo-authentication.js";
+
+const createApp = (dependencies: Parameters<typeof createApplication>[0]) =>
+  createApplication({
+    ...dependencies,
+    developmentDemoAuthorization: developmentDemoAuthentication()
+  });
 
 const JWT_SECRET = "upload-test-secret-with-at-least-32-characters";
 const auth = {
@@ -98,6 +109,7 @@ beforeAll(async () => {
 });
 
 const users = {
+  superAdmin: ["user-super-admin", "super_admin"],
   head: ["user-head", "design_head"],
   managerAarav: ["user-manager-aarav", "design_manager"],
   managerMeera: ["user-manager-meera", "design_manager"],
@@ -115,6 +127,7 @@ class TestStorage {
   private sequence = 0;
   readonly objects = new Map<string, Buffer>();
   readonly deleted: string[] = [];
+  readonly opened: string[] = [];
   failSave = false;
 
   async save(input: { data: Buffer; extension: string }) {
@@ -131,10 +144,45 @@ class TestStorage {
   }
 
   async open(reference: string) {
+    this.opened.push(reference);
     const data = this.objects.get(reference);
     if (!data) throw new Error("stored object missing");
     return Readable.from(data);
   }
+}
+
+function superAdminDesignSeed() {
+  const seed = structuredClone(demoSeedData);
+  seed.designVersions.push({
+    ...structuredClone(seed.designVersions[0]!),
+    id: "version-super-admin-submitted",
+    versionNumber: 2,
+    originalFilename: "submitted-plan.pdf",
+    storedFileReference: "seed/submitted-plan.pdf",
+    approvalStatus: "in_review",
+    reviewerId: null,
+    approvedAt: null,
+    clientVisible: false
+  });
+  seed.extractionJobs.push({
+    id: "job-approved-version",
+    designVersionId: "version-aurora-plan-1",
+    status: "approved",
+    attemptCount: 1,
+    queuedAt: TEST_NOW,
+    nextAttemptAt: null,
+    claimGeneration: 1,
+    startedAt: TEST_NOW,
+    completedAt: TEST_NOW,
+    leaseExpiresAt: null,
+    failureCode: null,
+    failureMessage: null,
+    claimId: null,
+    workerResultId: "worker-result-approved-version",
+    createdAt: TEST_NOW,
+    updatedAt: TEST_NOW
+  });
+  return seed;
 }
 
 function setup(options: {
@@ -175,6 +223,28 @@ function upload(
     .post(`/api/v1/tasks/${taskId}/design-versions`)
     .set("Authorization", bearer(actor))
     .attach("file", data, { filename, contentType: mimeType });
+}
+
+function strictProofApp(maxUploadBytes = 1024 * 1024) {
+  const app = express();
+  app.post(
+    "/proof",
+    uploadSingleFile(maxUploadBytes, {
+      fieldName: "proof",
+      maxFields: 3,
+      allowedDetectedMimeTypes: new Set([
+        "application/pdf",
+        "image/jpeg",
+        "image/png",
+        "image/webp"
+      ]),
+      fieldErrorKey: "proof",
+      allowedTypeMessage: "Choose a PDF, JPEG, PNG, or WebP proof file."
+    }),
+    (request, response) => response.status(201).json({ data: request.validatedUpload })
+  );
+  app.use(errorHandler);
+  return app;
 }
 
 function rawMultipartUploadWithoutFileContentType(
@@ -943,6 +1013,80 @@ describe("design-version uploads", () => {
   });
 });
 
+describe("strict proof uploads", () => {
+  it("keeps the numeric max-fields overload and legacy TIFF/HEIC default allowlist", async () => {
+    const app = express();
+    app.post(
+      "/legacy",
+      uploadSingleFile(1024 * 1024, 1),
+      (request, response) => response.status(201).json({ data: request.validatedUpload })
+    );
+    app.use(errorHandler);
+
+    const [tiff, heic] = await Promise.all([
+      request(app)
+        .post("/legacy")
+        .field("caption", "drawing")
+        .attach("file", TIFF_LE, { filename: "drawing.tif", contentType: "image/tiff" }),
+      request(app)
+        .post("/legacy")
+        .field("caption", "render")
+        .attach("file", HEIC, { filename: "render.heic", contentType: "image/heic" })
+    ]);
+
+    expect(tiff.status).toBe(201);
+    expect(tiff.body.data.mimeType).toBe("image/tiff");
+    expect(heic.status).toBe(201);
+    expect(heic.body.data.mimeType).toBe("image/heic");
+  });
+
+  it("accepts only proof PDFs, JPEGs, PNGs, and WebP files with safe names", async () => {
+    const app = strictProofApp();
+
+    const response = await request(app)
+      .post("/proof")
+      .attach("proof", JPEG, {
+        filename: "receipt\u202E.jpg",
+        contentType: "image/jpeg"
+      });
+
+    expect(response.status).toBe(201);
+    expect(response.body.data).toMatchObject({
+      mimeType: "image/jpeg",
+      extension: ".jpg",
+      originalFilename: "receipt.jpg"
+    });
+  });
+
+  it.each([
+    ["missing proof", (app: express.Express) => request(app).post("/proof")],
+    ["wrong file field", (app: express.Express) => request(app).post("/proof").attach("file", JPEG, { filename: "proof.jpg", contentType: "image/jpeg" })],
+    ["multiple proof files", (app: express.Express) => request(app).post("/proof").attach("proof", JPEG, { filename: "first.jpg", contentType: "image/jpeg" }).attach("proof", JPEG, { filename: "second.jpg", contentType: "image/jpeg" })],
+    ["a fourth scalar field", (app: express.Express) => request(app).post("/proof").field("one", "1").field("two", "2").field("three", "3").field("four", "4").attach("proof", JPEG, { filename: "proof.jpg", contentType: "image/jpeg" })],
+    ["TIFF", (app: express.Express) => request(app).post("/proof").attach("proof", TIFF_LE, { filename: "proof.tif", contentType: "image/tiff" })],
+    ["HEIC", (app: express.Express) => request(app).post("/proof").attach("proof", HEIC, { filename: "proof.heic", contentType: "image/heic" })],
+    ["a spoofed filename extension", (app: express.Express) => request(app).post("/proof").attach("proof", JPEG, { filename: "proof.pdf", contentType: "image/jpeg" })],
+    ["a claimed MIME mismatch", (app: express.Express) => request(app).post("/proof").attach("proof", JPEG, { filename: "proof.jpg", contentType: "image/png" })],
+    ["a malformed PDF", (app: express.Express) => request(app).post("/proof").attach("proof", Buffer.from("%PDF-1.7\nnot a document"), { filename: "proof.pdf", contentType: "application/pdf" })]
+  ])("rejects %s with bounded proof field errors", async (_case, submit) => {
+    const response = await submit(strictProofApp());
+
+    expect(response.status).toBeGreaterThanOrEqual(400);
+    expect(response.body.error.fields).toEqual({
+      proof: "Choose a PDF, JPEG, PNG, or WebP proof file."
+    });
+  });
+
+  it("rejects an oversize proof with a bounded proof field error", async () => {
+    const response = await request(strictProofApp(8))
+      .post("/proof")
+      .attach("proof", JPEG, { filename: "proof.jpg", contentType: "image/jpeg" });
+
+    expect(response.status).toBe(413);
+    expect(response.body.error.fields).toEqual({ proof: "Choose a smaller file." });
+  });
+});
+
 describe("design-version approval and client visibility", () => {
   it("allows the responsible manager or head to approve and audits the atomic transition", async () => {
     const { app, repository } = setup();
@@ -1214,5 +1358,166 @@ describe("design-version approval and client visibility", () => {
       .get(`/api/v1/design-versions/${uploaded.body.data.id}/download`)
       .set("Authorization", bearer(users.celesteClient));
     expect(otherClient.status).toBe(404);
+  });
+});
+
+describe("Design Version operations", () => {
+  it("lets the task-owning initiating Designer upload when not assigned", async () => {
+    const seed = structuredClone(demoSeedData);
+    const project = seed.projects.find(
+      (candidate) => candidate.id === "project-aurora-villa"
+    )!;
+    project.assignedDesignerIds = project.assignedDesignerIds.filter(
+      (designerId) => designerId !== users.ananya[0]
+    );
+    const repository = createMemoryRepository(seed);
+    const storage = new TestStorage();
+    const { app } = setup({ repository, storage });
+    const before = await repository.listDesignVersions(project.id);
+
+    const response = await upload(
+      app,
+      users.ananya,
+      "task-furniture-layout",
+      PDF,
+      "initiator-plan.pdf",
+      "application/pdf"
+    );
+
+    expect(response.status).toBe(201);
+    expect(response.body.data).toMatchObject({
+      projectId: project.id,
+      taskId: "task-furniture-layout",
+      uploaderId: users.ananya[0],
+      originalFilename: "initiator-plan.pdf"
+    });
+    expect(await repository.listDesignVersions(project.id)).toHaveLength(
+      before.length + 1
+    );
+    expect(storage.objects.size).toBe(1);
+  });
+
+  it("Super Admin reads latest approved versions without exposing drafts", async () => {
+    const repository = createMemoryRepository(superAdminDesignSeed());
+    const { app } = setup({ repository });
+
+    const response = await request(app)
+      .get("/api/v1/client/latest-approved-versions?limit=20&offset=0")
+      .set("Authorization", bearer(users.superAdmin));
+
+    expect(response.status).toBe(200);
+    expect(response.body.data).toEqual([
+      expect.objectContaining({
+        id: "version-aurora-plan-1",
+        approvalStatus: "approved",
+        clientVisible: true
+      })
+    ]);
+    expect(JSON.stringify(response.body)).not.toContain("version-super-admin-submitted");
+    expect(response.body.data[0]).not.toHaveProperty("uploaderId");
+    expect(response.body.data[0]).not.toHaveProperty("reviewerId");
+  });
+
+  it("Super Admin cannot upload a Design Version before file handling", async () => {
+    const repository = createMemoryRepository(superAdminDesignSeed());
+    const storage = new TestStorage();
+    const { app } = setup({ repository, storage });
+    const before = await repository.listDesignVersions("project-aurora-villa");
+
+    await upload(
+      app,
+      users.superAdmin,
+      "task-furniture-layout",
+      PDF,
+      "forbidden.pdf",
+      "application/pdf"
+    ).expect(403);
+
+    expect(await repository.listDesignVersions("project-aurora-villa")).toEqual(before);
+    expect(storage.objects.size).toBe(0);
+  });
+
+  it("Super Admin lists project Design Versions and reads extraction state", async () => {
+    const repository = createMemoryRepository(superAdminDesignSeed());
+    const { app } = setup({ repository });
+    const before = await repository.findExtractionJobByVersionId("version-aurora-plan-1");
+
+    const versions = await request(app)
+      .get("/api/v1/projects/project-aurora-villa/design-versions?limit=20&offset=0")
+      .set("Authorization", bearer(users.superAdmin));
+    const extraction = await request(app)
+      .get("/api/v1/design-versions/version-aurora-plan-1/extraction")
+      .set("Authorization", bearer(users.superAdmin));
+
+    expect(versions.status).toBe(200);
+    expect(versions.body.data.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "version-aurora-plan-1" }),
+        expect.objectContaining({ id: "version-super-admin-submitted" })
+      ])
+    );
+    expect(extraction.status).toBe(200);
+    expect(extraction.body.data).toMatchObject({
+      id: "job-approved-version",
+      designVersionId: "version-aurora-plan-1",
+      status: "approved"
+    });
+    expect(await repository.findExtractionJobByVersionId("version-aurora-plan-1"))
+      .toEqual(before);
+  });
+
+  it("Super Admin approves with workflow checks and its own audit identity", async () => {
+    const repository = createMemoryRepository(superAdminDesignSeed());
+    const { app } = setup({ repository });
+
+    const response = await approval(
+      app,
+      users.superAdmin,
+      "version-super-admin-submitted",
+      { approvalStatus: "approved", clientVisible: true }
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.body.data).toMatchObject({
+      id: "version-super-admin-submitted",
+      approvalStatus: "approved",
+      clientVisible: true,
+      reviewerId: "user-super-admin",
+      approvedAt: TEST_NOW
+    });
+    expect(await repository.listAuditEvents({
+      entityType: "design_version",
+      entityId: "version-super-admin-submitted"
+    })).toEqual([
+      expect.objectContaining({
+        actorId: "user-super-admin",
+        action: "design_version_approval_changed"
+      })
+    ]);
+  });
+
+  it("Super Admin downloads a Design Version without mutating it", async () => {
+    const seed = superAdminDesignSeed();
+    seed.designVersions.find(
+      (version) => version.id === "version-aurora-plan-1"
+    )!.sizeBytes = PDF.byteLength;
+    const repository = createMemoryRepository(seed);
+    const storage = new TestStorage();
+    storage.objects.set("seed/aurora-ground-plan-v1.pdf", PDF);
+    const { app } = setup({ repository, storage });
+    const before = await repository.findDesignVersionById("version-aurora-plan-1");
+
+    const response = await request(app)
+      .get("/api/v1/design-versions/version-aurora-plan-1/download")
+      .set("Authorization", bearer(users.superAdmin))
+      .buffer(true)
+      .parse(binaryParser);
+
+    expect(response.status).toBe(200);
+    expect(response.headers["content-type"]).toMatch(/^application\/pdf/);
+    expect(response.headers["content-disposition"]).toContain("attachment;");
+    expect(response.body).toEqual(PDF);
+    expect(storage.opened).toEqual(["seed/aurora-ground-plan-v1.pdf"]);
+    expect(await repository.findDesignVersionById("version-aurora-plan-1")).toEqual(before);
   });
 });

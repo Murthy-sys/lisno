@@ -3,7 +3,22 @@ import jwt from "jsonwebtoken";
 import { z } from "zod";
 
 import type { Role } from "../contracts/domain.js";
+import { isBuiltInDevelopmentJwtSecret } from "../config/development-env.js";
+import {
+  assertDevelopmentDemoConnection,
+  isLoopbackRemoteAddress,
+  type DevelopmentDemoAuthorization
+} from "../development/demo-account-authorization.js";
+import {
+  ROLE_PERMISSIONS,
+  type PermissionCode
+} from "../domain/authorization.js";
+import {
+  isReservedDemoEmail,
+  isReservedDevelopmentDemoIdentity
+} from "../domain/demo-identities.js";
 import { normalizeEmail } from "../domain/email.js";
+import { roleSchema } from "../domain/roles.js";
 import {
   RepositoryConflictError,
   type AppRepository,
@@ -12,13 +27,6 @@ import {
 import { createAuditService, type AuditService } from "./audit.service.js";
 import { systemClock, type Clock } from "./workflow.js";
 
-const roleSchema = z.enum([
-  "designer",
-  "design_manager",
-  "design_head",
-  "estimator_sales",
-  "client"
-]);
 const tokenPayloadSchema = z
   .object({
     id: z.string().min(1),
@@ -56,6 +64,23 @@ export interface AuthPayload {
   user: PublicUser;
 }
 
+export const AUTHORIZATION_POLICY_VERSION =
+  "2026-08-26.procurement-receipts.v5" as const;
+
+export interface AuthorizationSnapshot {
+  readonly role: Role;
+  readonly policyVersion: typeof AUTHORIZATION_POLICY_VERSION;
+  readonly permissions: readonly PermissionCode[];
+}
+
+export function authorizationSnapshotFor(role: Role): AuthorizationSnapshot {
+  return Object.freeze({
+    role,
+    policyVersion: AUTHORIZATION_POLICY_VERSION,
+    permissions: Object.freeze([...ROLE_PERMISSIONS[role]])
+  });
+}
+
 export interface ClientSignupInput {
   name: string;
   email: string;
@@ -64,9 +89,14 @@ export interface ClientSignupInput {
   password: string;
 }
 
+export interface AuthenticationRequestContext {
+  readonly remoteAddress: string | undefined;
+}
+
 export interface AuthServiceDependencies {
   auditService: AuditService;
   clock?: Clock;
+  developmentDemoAuthorization?: DevelopmentDemoAuthorization;
 }
 
 export class InvalidCredentialsError extends Error {
@@ -98,9 +128,20 @@ export class ExpiredTokenError extends Error {
 }
 
 export interface AuthService {
-  login(email: string, password: string): Promise<AuthPayload>;
-  signupClient(input: ClientSignupInput): Promise<AuthPayload>;
-  authenticate(token: string): Promise<PublicUser>;
+  login(
+    email: string,
+    password: string,
+    context: AuthenticationRequestContext
+  ): Promise<AuthPayload>;
+  signupClient(
+    input: ClientSignupInput,
+    context: AuthenticationRequestContext
+  ): Promise<AuthPayload>;
+  authenticate(
+    token: string,
+    context: AuthenticationRequestContext
+  ): Promise<PublicUser>;
+  authorization(actor: PublicUser): AuthorizationSnapshot;
 }
 
 export function createAuthService(
@@ -111,9 +152,15 @@ export function createAuthService(
   const validatedConfig = authConfigSchema.parse(config);
   const clock = dependencies?.clock ?? systemClock;
   const auditService = dependencies?.auditService ?? createAuditService(repository);
+  const hasIssuedDevelopmentDemoAuthorization = isIssuedDevelopmentDemoAuthorization(
+    dependencies?.developmentDemoAuthorization
+  );
+  const usesBuiltInDevelopmentSecret = isBuiltInDevelopmentJwtSecret(
+    validatedConfig.jwtSecret
+  );
 
   return {
-    async login(email, password) {
+    async login(email, password, context) {
       const user = await repository.findUserByEmail(email);
       const passwordMatches = await bcrypt.compare(
         password,
@@ -121,6 +168,16 @@ export function createAuthService(
       );
 
       if (!user || !user.active || !passwordMatches) {
+        throw new InvalidCredentialsError();
+      }
+      if (
+        deniesHumanAuthentication(
+          user,
+          context,
+          usesBuiltInDevelopmentSecret,
+          hasIssuedDevelopmentDemoAuthorization
+        )
+      ) {
         throw new InvalidCredentialsError();
       }
 
@@ -131,8 +188,17 @@ export function createAuthService(
       return { token, user: toPublicUser(user) };
     },
 
-    async signupClient(input) {
+    async signupClient(input, context) {
       const emailNormalized = normalizeEmail(input.email);
+      if (isReservedDemoEmail(emailNormalized)) {
+        throw new AccountExistsError();
+      }
+      if (
+        usesBuiltInDevelopmentSecret &&
+        !isLoopbackRemoteAddress(context.remoteAddress)
+      ) {
+        throw new InvalidCredentialsError();
+      }
       let user: UserRecord;
       try {
         user = await repository.runInTransaction(async (transaction) => {
@@ -205,7 +271,7 @@ export function createAuthService(
       return { token, user: toPublicUser(user) };
     },
 
-    async authenticate(token) {
+    async authenticate(token, context) {
       let decoded: unknown;
       try {
         decoded = jwt.verify(token, validatedConfig.jwtSecret, {
@@ -227,10 +293,55 @@ export function createAuthService(
       if (!user || !user.active || user.role !== parsed.data.role) {
         throw new InvalidTokenError();
       }
+      if (
+        deniesHumanAuthentication(
+          user,
+          context,
+          usesBuiltInDevelopmentSecret,
+          hasIssuedDevelopmentDemoAuthorization
+        )
+      ) {
+        throw new InvalidTokenError();
+      }
 
       return toPublicUser(user);
+    },
+
+    authorization(actor) {
+      return authorizationSnapshotFor(actor.role);
     }
   };
+}
+
+function deniesHumanAuthentication(
+  user: UserRecord,
+  context: AuthenticationRequestContext,
+  usesBuiltInDevelopmentSecret: boolean,
+  hasIssuedDevelopmentDemoAuthorization: boolean
+): boolean {
+  const isLoopbackPeer = isLoopbackRemoteAddress(context.remoteAddress);
+  if (usesBuiltInDevelopmentSecret && !isLoopbackPeer) return true;
+  return (
+    isReservedDevelopmentDemoIdentity(user) &&
+    !(hasIssuedDevelopmentDemoAuthorization && isLoopbackPeer)
+  );
+}
+
+function isIssuedDevelopmentDemoAuthorization(
+  authorization: DevelopmentDemoAuthorization | undefined
+): boolean {
+  if (!authorization) return false;
+  const connectionIdentity = {};
+  try {
+    assertDevelopmentDemoConnection(authorization, {
+      connectedDatabaseName: "lisno_demo",
+      defaultConnection: connectionIdentity,
+      userModelConnection: connectionIdentity
+    });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function toPublicUser(user: UserRecord): PublicUser {

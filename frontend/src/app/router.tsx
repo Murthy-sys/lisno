@@ -3,17 +3,30 @@ import {
   Route,
   Routes,
   Navigate,
+  useLocation,
+  useNavigationType,
 } from "react-router-dom";
+import type { ReactNode } from "react";
 
 import type { Role } from "../api/types";
+import { roleHomePath, safeReturnPath } from "./routePaths";
+import {
+  registeredRoute,
+  type RegisteredFrontendPath
+} from "./routeRegistry";
+import { AccessDeniedPage } from "../auth/AccessDeniedPage";
+import { AuthRouteState } from "../auth/AuthRouteState";
 import { useAuth } from "../auth/AuthProvider";
 import { LoginPage } from "../auth/LoginPage";
+import { InvitationAcceptancePage } from "../auth/InvitationAcceptancePage";
+import { PermissionRoute } from "../auth/PermissionRoute";
 import { SignupPage } from "../auth/SignupPage";
-import { ProtectedRoute, roleHomePath } from "../auth/ProtectedRoute";
+import { ProtectedRoute } from "../auth/ProtectedRoute";
 import { AppShell } from "../components/layout/AppShell";
-import { AsyncState } from "../components/ui/AsyncState";
+import { RouteFocusManager } from "../components/layout/RouteFocusManager";
 import { StatusBadge } from "../components/ui/StatusBadge";
 import { DesignerDashboard } from "../features/designer/DesignerDashboard";
+import { DesignerDesignPlanTasksPage } from "../features/designer/DesignerDesignPlanTasksPage";
 import { ProjectWorkspace } from "../features/designer/ProjectWorkspace";
 import { ManagerDashboard } from "../features/manager/ManagerDashboard";
 import { DesignerDetail } from "../features/manager/DesignerDetail";
@@ -24,11 +37,43 @@ import { ClientProject } from "../features/client/ClientProject";
 import { LeadDashboard } from "../features/leads/LeadDashboard";
 import { LeadDetail } from "../features/leads/LeadDetail";
 import { LeadEstimateWorkspace } from "../features/leads/LeadEstimateWorkspace";
+import { UserDirectoryPage } from "../features/admin/UserDirectoryPage";
+import { AdminProjectsPage } from "../features/admin/AdminProjectsPage";
+import { AdminProjectDetailPage } from "../features/admin/AdminProjectDetailPage";
+import { ClientResponseInboxPage } from "../features/admin/ClientResponseInboxPage";
+import { ClientResponseTaskDetailPage } from "../features/admin/ClientResponseTaskDetailPage";
+import { DesignPlanResponseInboxPage } from "../features/admin/DesignPlanResponseInboxPage";
+import { AccessRequestInboxPage } from "../features/access/AccessRequestInboxPage";
+import { MyAccessRequestsPage } from "../features/access/MyAccessRequestsPage";
+import { NeutralHomePage } from "../features/home/NeutralHomePage";
+import { KpiPanel } from "../components/kpi/KpiPanel";
+import { PageHeader } from "../components/ui/PageHeader";
+import { OperationalTaskQueue } from "../features/workflow/OperationalTaskQueue";
+import { FinanceOverviewPage } from "../features/finance/FinanceOverviewPage";
+import { FinanceProjectPage } from "../features/finance/FinanceProjectPage";
+import { ProcurementProjectPage } from "../features/procurement/ProcurementProjectPage";
+import { ProcurementWorkspace } from "../features/procurement/ProcurementWorkspace";
 
-const roleHomeContent: Record<
-  Role,
-  { heading: string; eyebrow: string; description: string; status: string }
-> = {
+interface RoleHomeContent {
+  heading: string;
+  eyebrow: string;
+  description: string;
+  status: string;
+}
+
+const roleHomeContent: Record<Role, RoleHomeContent> = {
+  super_admin: {
+    heading: "Super Admin workspace",
+    eyebrow: "Organization administration",
+    description: "Your global administration tools are being prepared.",
+    status: "Ready for staged access"
+  },
+  admin: {
+    heading: "Admin workspace",
+    eyebrow: "Project administration",
+    description: "Your project administration tools are being prepared.",
+    status: "Ready for staged access"
+  },
   designer: {
     heading: "Designer workspace",
     eyebrow: "My design operations",
@@ -51,6 +96,60 @@ const roleHomeContent: Record<
     status: "Ready for organization review"
   },
   estimator_sales: { heading: "Estimator / Sales workspace", eyebrow: "Lead operations", description: "Your leads and estimates will live here.", status: "Ready for lead work" },
+  procurement: {
+    heading: "Procurement workspace",
+    eyebrow: "Project procurement",
+    description: "Your authorized procurement work will appear here.",
+    status: "Ready for staged access"
+  },
+  finance_head: {
+    heading: "Finance Manager workspace",
+    eyebrow: "Project finance",
+    description: "Your authorized finance work will appear here.",
+    status: "Ready for staged access"
+  },
+  site_manager: {
+    heading: "Site Manager workspace",
+    eyebrow: "Project execution",
+    description: "Your authorized execution work will appear here.",
+    status: "Ready for staged access"
+  },
+  worker_electrician: {
+    heading: "Electrician workspace",
+    eyebrow: "Site work",
+    description: "Your assigned electrical work will appear here.",
+    status: "Ready for staged access"
+  },
+  worker_plumber: {
+    heading: "Plumber workspace",
+    eyebrow: "Site work",
+    description: "Your assigned plumbing work will appear here.",
+    status: "Ready for staged access"
+  },
+  worker_carpenter: {
+    heading: "Carpenter workspace",
+    eyebrow: "Site work",
+    description: "Your assigned carpentry work will appear here.",
+    status: "Ready for staged access"
+  },
+  worker_painter: {
+    heading: "Painter workspace",
+    eyebrow: "Site work",
+    description: "Your assigned painting work will appear here.",
+    status: "Ready for staged access"
+  },
+  worker_civil: {
+    heading: "Civil Worker workspace",
+    eyebrow: "Site work",
+    description: "Your assigned civil work will appear here.",
+    status: "Ready for staged access"
+  },
+  worker_other: {
+    heading: "Other Worker workspace",
+    eyebrow: "Site work",
+    description: "Your assigned project work will appear here.",
+    status: "Ready for staged access"
+  },
   client: {
     heading: "Client workspace",
     eyebrow: "My projects",
@@ -60,53 +159,105 @@ const roleHomeContent: Record<
   }
 };
 
+export function roleHomeContentFor(role: Role): Readonly<RoleHomeContent> {
+  return roleHomeContent[role];
+}
+
 function RoleLanding({ role }: { role: Role }) {
-  const content = roleHomeContent[role];
+  const content = roleHomeContentFor(role);
   const auth = useAuth();
 
   return (
     <section className="role-landing" aria-labelledby="workspace-title">
-      <header className="workspace-header">
-        <div>
-          <p className="eyebrow">{content.eyebrow}</p>
-          <h1 id="workspace-title">{content.heading}</h1>
-          <p>Welcome, {auth.user?.name}.</p>
-        </div>
-        <StatusBadge label={content.status} tone="success" />
-      </header>
-
-      <div className="placeholder-card">
-        <span className="placeholder-card__index">01</span>
-        <div>
-          <p className="eyebrow">Role landing</p>
-          <h2>Your overview is the next step.</h2>
-          <p>{content.description}</p>
-        </div>
-      </div>
+      <PageHeader
+        id="workspace-title"
+        eyebrow={content.eyebrow}
+        title={content.heading}
+        description={`Welcome, ${auth.user?.name ?? ""}.`}
+        metadata={<StatusBadge label={content.status} tone="success" />}
+      />
+      {/*
+        No placeholder panel here: every role that reaches /home also renders
+        the queue below, which carries its own empty state. The old card sat
+        above real tasks announcing that work "will appear here".
+      */}
+      {auth.user ? <KpiPanel userId={auth.user.id} /> : null}
+      {role === "procurement" ? <ProcurementWorkspace /> : null}
+      {[
+        "finance_head",
+        "site_manager",
+        "worker_electrician",
+        "worker_plumber",
+        "worker_carpenter",
+        "worker_painter",
+        "worker_civil",
+        "worker_other"
+      ].includes(role) ? <OperationalTaskQueue role={role} /> : null}
     </section>
   );
 }
 
-function LoginRoute() {
+function CurrentRoleLanding() {
   const auth = useAuth();
 
+  return auth.user ? <RoleLanding role={auth.user.role} /> : null;
+}
+
+function LoginRoute() {
+  const auth = useAuth();
+  const location = useLocation();
+
   if (auth.status === "restoring") {
-    return <AsyncState state="loading" message="Restoring your session…" />;
+    return (
+      <AuthRouteState
+        title="Welcome back"
+        state="loading"
+        message="Restoring your session…"
+      />
+    );
   }
   if (auth.status === "authenticated" && auth.user) {
-    return <Navigate to={roleHomePath(auth.user.role)} replace />;
+    const locationState = location.state as { from?: unknown } | null;
+    const from = typeof locationState?.from === "string" ? locationState.from : null;
+    return (
+      <Navigate
+        to={safeReturnPath(auth.user.role, from)}
+        replace
+        state={{ routeFocus: true }}
+      />
+    );
   }
   return <LoginPage />;
 }
 
 function SignupRoute() {
   const auth = useAuth();
+  const location = useLocation();
+  const navigationType = useNavigationType();
 
   if (auth.status === "restoring") {
-    return <AsyncState state="loading" message="Restoring your session…" />;
+    return (
+      <AuthRouteState
+        title="Create your client account"
+        state="loading"
+        message="Restoring your session…"
+      />
+    );
   }
   if (auth.status === "authenticated" && auth.user) {
-    return <Navigate to={roleHomePath(auth.user.role)} replace />;
+    const signupState = location.state as { signupRouteFocus?: unknown } | null;
+    return (
+      <Navigate
+        to={roleHomePath(auth.user.role)}
+        replace
+        state={
+          signupState?.signupRouteFocus === true &&
+          navigationType === "REPLACE"
+            ? { routeFocus: true }
+            : undefined
+        }
+      />
+    );
   }
   return <SignupPage />;
 }
@@ -115,15 +266,21 @@ function HomeRedirect() {
   const auth = useAuth();
 
   if (auth.status === "restoring") {
-    return <AsyncState state="loading" message="Restoring your session…" />;
+    return (
+      <AuthRouteState
+        title="Opening your workspace"
+        state="loading"
+        message="Restoring your session…"
+      />
+    );
   }
   if (auth.status === "error") {
     return (
-      <AsyncState
+      <AuthRouteState
+        title="Opening your workspace"
         state="error"
         message="We couldn't restore your session."
-        actionLabel="Try again"
-        onAction={() => void auth.restore()}
+        action={{ label: "Try again", onAction: () => void auth.restore() }}
       />
     );
   }
@@ -139,11 +296,41 @@ function HomeRedirect() {
   );
 }
 
+const stagedElements = {
+  "/admin/projects": <AdminProjectsPage />,
+  "/admin/projects/:projectId": <AdminProjectDetailPage />,
+  "/admin/users": <UserDirectoryPage />,
+  "/admin/client-responses": <ClientResponseInboxPage />,
+  "/admin/client-responses/:roundId": <ClientResponseTaskDetailPage />,
+  "/admin/design-approvals": <DesignPlanResponseInboxPage />,
+  "/admin/access-requests": <AccessRequestInboxPage />,
+  "/finance": <FinanceOverviewPage />,
+  "/finance/projects/:projectId": <FinanceProjectPage />,
+  "/access-requests/mine": <MyAccessRequestsPage />
+} as const satisfies Partial<Record<RegisteredFrontendPath, ReactNode>>;
+
+function registeredElement(path: RegisteredFrontendPath, children: ReactNode) {
+  const route = registeredRoute(path);
+  if (route.permission === null) return children;
+
+  return (
+    <PermissionRoute
+      permission={route.permission}
+      presentationRoles={route.presentationRoles}
+    >
+      {children}
+    </PermissionRoute>
+  );
+}
+
 export function AppRoutes() {
   return (
-    <Routes>
+    <>
+      <RouteFocusManager />
+      <Routes>
       <Route path="/login" element={<LoginRoute />} />
       <Route path="/signup" element={<SignupRoute />} />
+      <Route path="/accept-invitation" element={<InvitationAcceptancePage />} />
       <Route path="/" element={<HomeRedirect />} />
       <Route
         element={
@@ -153,66 +340,173 @@ export function AppRoutes() {
         }
       >
         <Route
+          path="/home"
+          element={registeredElement("/home", <CurrentRoleLanding />)}
+        />
+        <Route
           path="/designer"
-          element={
-            <ProtectedRoute allowedRoles={["designer"]}>
-              <DesignerDashboard />
-            </ProtectedRoute>
-          }
+          element={registeredElement("/designer", <DesignerDashboard />)}
+        />
+        <Route
+          path="/designer/design-plans"
+          element={registeredElement(
+            "/designer/design-plans",
+            <DesignerDesignPlanTasksPage />
+          )}
         />
         <Route
           path="/designer/projects/:projectId"
-          element={
-            <ProtectedRoute allowedRoles={["designer"]}>
-              <ProjectWorkspace />
-            </ProtectedRoute>
-          }
+          element={registeredElement(
+            "/designer/projects/:projectId",
+            <ProjectWorkspace />
+          )}
         />
         <Route
           path="/manager"
-          element={
-            <ProtectedRoute allowedRoles={["design_manager"]}>
-              <ManagerDashboard />
-            </ProtectedRoute>
-          }
+          element={registeredElement("/manager", <ManagerDashboard />)}
         />
         <Route
           path="/manager/designers/:designerId"
-          element={
-            <ProtectedRoute allowedRoles={["design_manager", "design_head"]}>
-              <DesignerDetail />
-            </ProtectedRoute>
-          }
+          element={registeredElement(
+            "/manager/designers/:designerId",
+            <DesignerDetail />
+          )}
         />
-        <Route path="/manager/projects/:projectId" element={<ProtectedRoute allowedRoles={["design_manager"]}><ManagementProjectWorkspace /></ProtectedRoute>} />
+        <Route
+          path="/manager/projects/:projectId"
+          element={registeredElement(
+            "/manager/projects/:projectId",
+            <ManagementProjectWorkspace />
+          )}
+        />
         <Route
           path="/head"
-          element={
-            <ProtectedRoute allowedRoles={["design_head"]}>
-              <HeadDashboard />
-            </ProtectedRoute>
-          }
+          element={registeredElement("/head", <HeadDashboard />)}
         />
-        <Route path="/head/designers/:designerId" element={<ProtectedRoute allowedRoles={["design_head"]}><DesignerDetail /></ProtectedRoute>} />
-        <Route path="/head/projects/:projectId" element={<ProtectedRoute allowedRoles={["design_head"]}><ManagementProjectWorkspace /></ProtectedRoute>} />
+        <Route
+          path="/head/designers/:designerId"
+          element={registeredElement(
+            "/head/designers/:designerId",
+            <DesignerDetail />
+          )}
+        />
+        <Route
+          path="/head/projects/:projectId"
+          element={registeredElement(
+            "/head/projects/:projectId",
+            <ManagementProjectWorkspace />
+          )}
+        />
         <Route
           path="/estimator-sales"
-          element={<ProtectedRoute allowedRoles={["estimator_sales"]}><LeadDashboard /></ProtectedRoute>}
+          element={registeredElement("/estimator-sales", <LeadDashboard />)}
         />
-        <Route path="/estimator-sales/leads/:leadId" element={<ProtectedRoute allowedRoles={["estimator_sales"]}><LeadDetail /></ProtectedRoute>} />
-        <Route path="/estimator-sales/leads/:leadId/estimate" element={<ProtectedRoute allowedRoles={["estimator_sales"]}><LeadEstimateWorkspace /></ProtectedRoute>} />
+        <Route
+          path="/estimator-sales/leads/:leadId"
+          element={registeredElement(
+            "/estimator-sales/leads/:leadId",
+            <LeadDetail />
+          )}
+        />
+        <Route
+          path="/estimator-sales/leads/:leadId/estimate"
+          element={registeredElement(
+            "/estimator-sales/leads/:leadId/estimate",
+            <LeadEstimateWorkspace />
+          )}
+        />
         <Route
           path="/client"
+          element={registeredElement("/client", <ClientDashboard />)}
+        />
+        <Route
+          path="/client/projects/:projectId"
+          element={registeredElement(
+            "/client/projects/:projectId",
+            <ClientProject />
+          )}
+        />
+        <Route
+          path="/admin/projects"
+          element={registeredElement("/admin/projects", stagedElements["/admin/projects"])}
+        />
+        <Route
+          path="/admin/projects/:projectId"
+          element={registeredElement("/admin/projects/:projectId", stagedElements["/admin/projects/:projectId"])}
+        />
+        <Route
+          path="/admin/users"
+          element={registeredElement("/admin/users", stagedElements["/admin/users"])}
+        />
+        <Route
+          path="/admin/client-responses"
+          element={registeredElement(
+            "/admin/client-responses",
+            stagedElements["/admin/client-responses"]
+          )}
+        />
+        <Route
+          path="/admin/client-responses/:roundId"
+          element={registeredElement(
+            "/admin/client-responses/:roundId",
+            stagedElements["/admin/client-responses/:roundId"]
+          )}
+        />
+        <Route
+          path="/admin/design-approvals"
+          element={registeredElement(
+            "/admin/design-approvals",
+            stagedElements["/admin/design-approvals"]
+          )}
+        />
+        <Route
+          path="/admin/access-requests"
+          element={registeredElement(
+            "/admin/access-requests",
+            stagedElements["/admin/access-requests"]
+          )}
+        />
+        <Route
+          path="/procurement/projects/:projectId"
+          element={registeredElement(
+            "/procurement/projects/:projectId",
+            <ProcurementProjectPage />
+          )}
+        />
+        <Route
+          path="/finance"
+          element={registeredElement("/finance", stagedElements["/finance"])}
+        />
+        <Route
+          path="/finance/projects/:projectId"
+          element={registeredElement(
+            "/finance/projects/:projectId",
+            stagedElements["/finance/projects/:projectId"]
+          )}
+        />
+        <Route
+          path="/access-requests/mine"
+          element={registeredElement(
+            "/access-requests/mine",
+            stagedElements["/access-requests/mine"]
+          )}
+        />
+        <Route
+          path="/access-denied"
+          element={registeredElement("/access-denied", <AccessDeniedPage />)}
+        />
+        <Route
+          path="*"
           element={
-            <ProtectedRoute allowedRoles={["client"]}>
-              <ClientDashboard />
-            </ProtectedRoute>
+            <NeutralHomePage
+              title="Page not found"
+              description="The page you requested does not exist."
+            />
           }
         />
-        <Route path="/client/projects/:projectId" element={<ProtectedRoute allowedRoles={["client"]}><ClientProject /></ProtectedRoute>} />
       </Route>
-      <Route path="*" element={<HomeRedirect />} />
-    </Routes>
+      </Routes>
+    </>
   );
 }
 

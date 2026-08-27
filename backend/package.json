@@ -3,6 +3,9 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
+  "scarfSettings": {
+    "enabled": false
+  },
   "scripts": {
     "dev": "tsx src/development/run.ts",
     "dev:backend": "tsx watch src/dev.ts",
@@ -10,6 +13,7 @@
     "seed": "tsx src/seed/run.ts",
     "migrate:client-linking": "tsx src/migrations/client-email-project-linking.ts",
     "migrate:estimate-design-mapping": "tsx src/migrations/estimate-design-mapping.ts",
+    "migrate:project-finance-backfill": "tsx src/migrations/project-finance-backfill.ts",
     "build": "tsc && node scripts/copy-static-assets.mjs",
     "verify:estimate-pdf-build": "npm run build && node scripts/verify-estimate-pdf-build.mjs",
     "typecheck": "tsc --noEmit",
@@ -22,18 +26,23 @@
     "jsonwebtoken": "^9.0.3",
     "mongoose": "^9.8.0",
     "multer": "^2.2.0",
+    "nodemailer": "^9.0.5",
     "pdf-lib": "^1.17.1",
     "pdfkit": "^0.19.1",
     "sharp": "^0.35.3",
+    "swagger-ui-express": "^5.0.1",
     "zod": "^3.24.4"
   },
   "devDependencies": {
+    "@apidevtools/swagger-parser": "^12.1.0",
     "@types/express": "^5.0.3",
     "@types/jsonwebtoken": "^9.0.10",
     "@types/multer": "^2.2.0",
     "@types/node": "^22.15.29",
+    "@types/nodemailer": "^8.0.1",
     "@types/pdfkit": "^0.17.6",
     "@types/supertest": "^6.0.2",
+    "@types/swagger-ui-express": "^4.1.8",
     "mongodb-memory-server": "^11.2.0",
     "pdfjs-dist": "4.10.38",
     "supertest": "^7.1.1",

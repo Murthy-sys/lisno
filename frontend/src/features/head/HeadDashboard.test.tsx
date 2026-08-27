@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import { tokenStorage } from "../../api/client";
+import { authorizationFor } from "../../test/authFixtures";
 import { renderApp } from "../../test/render";
 
 const head = {
@@ -18,6 +19,7 @@ describe("HeadDashboard", () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = String(input);
       if (url === "/api/v1/auth/me") return Response.json({ data: head });
+      if (url === "/api/v1/auth/authorization") return Response.json({ data: authorizationFor(head.role) });
       if (url === "/api/v1/organization/tree?limit=100&offset=0") {
         return Response.json({
           data: { items: [{

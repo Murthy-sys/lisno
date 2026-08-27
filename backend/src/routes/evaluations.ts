@@ -1,7 +1,8 @@
 import { Router } from "express";
 import { z } from "zod";
 
-import { authenticate, authorizeRoles } from "../middleware/auth.js";
+import { authenticate } from "../middleware/auth.js";
+import { requireOperation } from "../middleware/authorization.js";
 import {
   paginatedEnvelope,
   paginationShape
@@ -32,7 +33,7 @@ export function createEvaluationsRouter(
   router.post(
     "/evaluations",
     protectedRoute,
-    authorizeRoles("design_manager", "design_head"),
+    requireOperation("POST /evaluations"),
     validateBody(evaluationSchema),
     async (request, response, next) => {
       try {
@@ -51,7 +52,7 @@ export function createEvaluationsRouter(
   router.get(
     "/evaluations/:subjectId",
     protectedRoute,
-    authorizeRoles("designer", "design_manager", "design_head"),
+    requireOperation("GET /evaluations/:subjectId"),
     validateQuery(listQuerySchema),
     async (request, response, next) => {
       try {

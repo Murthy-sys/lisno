@@ -1,8 +1,9 @@
-import { screen } from "@testing-library/react";
+import { screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import { tokenStorage } from "../../api/client";
+import { authorizationFor } from "../../test/authFixtures";
 import { renderApp } from "../../test/render";
 
 const client = { id: "client-1", name: "Aurora Homes", email: "client@lisno.example", role: "client" as const };
@@ -32,6 +33,7 @@ describe("ClientDashboard", () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = String(input);
       if (url.endsWith("/api/v1/auth/me")) return Response.json({ data: client });
+      if (url.endsWith("/api/v1/auth/authorization")) return Response.json({ data: authorizationFor(client.role) });
       if (url.includes("/api/v1/client/project-summaries?")) return Response.json({ data: { items: [], pagination: { limit: 100, offset: 0, total: 0, hasMore: false } } });
       if (url.endsWith("/api/v1/client/estimates")) return Response.json({ data: [{
         id: "estimate-approved",
@@ -67,6 +69,7 @@ describe("ClientDashboard", () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = String(input);
       if (url.endsWith("/api/v1/auth/me")) return Response.json({ data: client });
+      if (url.endsWith("/api/v1/auth/authorization")) return Response.json({ data: authorizationFor(client.role) });
       if (url.includes("/api/v1/client/project-summaries?")) return Response.json({ data: { items: summaries, pagination: { limit: 100, offset: 0, total: 2, hasMore: false } } });
       if (url.endsWith("/api/v1/client/latest-approved-versions")) return Response.json({ data: [
         { id: "version-villa", projectId: "project-villa", floorId: "floor-1", stageId: "stage-1", taskId: null, versionNumber: 2, originalFilename: "Villa floor plan.pdf", mimeType: "application/pdf", sizeBytes: 1200, uploadedAt: "2026-07-12T00:00:00.000Z", approvalStatus: "approved", approvedAt: "2026-07-14T00:00:00.000Z", clientVisible: true, createdAt: "2026-07-12T00:00:00.000Z", updatedAt: "2026-07-14T00:00:00.000Z" },
@@ -78,8 +81,17 @@ describe("ClientDashboard", () => {
     renderApp(["/client"]);
 
     expect(await screen.findByRole("heading", { name: "Your design plans" })).toBeVisible();
+    const overview = screen.getByRole("region", { name: "Client overview" });
+    expect(within(overview).getByText("Shared projects")).toBeVisible();
+    expect(within(overview).getByText("2", { selector: "dd" })).toBeVisible();
+    expect(within(overview).getByText("Average progress")).toBeVisible();
+    expect(within(overview).getByText("32%", { selector: "dd" })).toBeVisible();
+    expect(within(overview).getByText("Approved plans")).toBeVisible();
+    expect(within(overview).getByText("1", { selector: "dd" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Projects", level: 2 })).toBeVisible();
     expect(screen.getByRole("region", { name: "Your design plans" })).not.toHaveClass("client-page--project");
     expect(screen.getByText("Aurora Villa")).toBeVisible();
+    expect(screen.getByText("Active")).toBeVisible();
     expect(screen.getByText("Cedar Loft")).toBeVisible();
     expect(screen.getByText("64% complete")).toBeVisible();
     expect(screen.getByText("3 floors")).toBeVisible();
@@ -97,6 +109,7 @@ describe("ClientDashboard", () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = String(input);
       if (url.endsWith("/api/v1/auth/me")) return Response.json({ data: client });
+      if (url.endsWith("/api/v1/auth/authorization")) return Response.json({ data: authorizationFor(client.role) });
       if (url.includes("/api/v1/client/project-summaries?")) return Response.json({ data: { items: summaries, pagination: { limit: 100, offset: 0, total: 2, hasMore: false } } });
       if (url.endsWith("/api/v1/client/latest-approved-versions")) {
         attempts += 1;
@@ -119,11 +132,19 @@ describe("ClientDashboard", () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = String(input);
       if (url.endsWith("/api/v1/auth/me")) return Response.json({ data: client });
+      if (url.endsWith("/api/v1/auth/authorization")) return Response.json({ data: authorizationFor(client.role) });
       if (url.includes("/api/v1/client/project-summaries?")) return Response.json({ data: { items: [], pagination: { limit: 100, offset: 0, total: 0, hasMore: false } } });
       throw new Error(`Unhandled request: ${url}`);
     });
 
     renderApp(["/client"]);
-    expect(await screen.findByText("No projects have been shared with you yet.")).toBeVisible();
+
+    // The Projects section is dropped entirely for an empty account; the
+    // overview tile is what still separates "none shared" from "still loading".
+    const overview = await screen.findByRole("region", { name: "Client overview" });
+    const sharedProjects = within(overview).getByText("Shared projects").parentElement!;
+    expect(within(sharedProjects).getByText("0", { selector: "dd" })).toBeVisible();
+    expect(screen.queryByRole("heading", { name: "Projects", level: 2 })).not.toBeInTheDocument();
+    expect(screen.queryByText("No projects have been shared with you yet.")).not.toBeInTheDocument();
   });
 });

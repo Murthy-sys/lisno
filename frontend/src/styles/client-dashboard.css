@@ -1,0 +1,58 @@
+.client-dashboard { gap: var(--space-6); }
+.client-dashboard__hero {
+  align-items: end;
+  border-bottom: 1px solid var(--color-border);
+  padding-block-end: var(--space-6);
+}
+.client-dashboard__hero-count {
+  display: grid;
+  min-inline-size: 10rem;
+  padding: var(--space-4);
+  border-radius: var(--radius-surface);
+  color: var(--color-surface);
+  background: var(--color-brand-midnight);
+}
+.client-dashboard__hero-count strong { font: 700 2rem/1 var(--font-editorial); }
+.client-dashboard__hero-count span { color: color-mix(in srgb, var(--color-surface) 72%, transparent); }
+.client-dashboard__overview dl {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-3);
+  margin: 0;
+}
+.client-dashboard__overview dl > div {
+  display: grid;
+  gap: var(--space-2);
+  min-block-size: 7rem;
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-surface);
+  background: var(--color-surface);
+}
+.client-dashboard__overview dt { color: var(--color-text-muted); font-weight: 700; }
+.client-dashboard__overview dd { margin: 0; color: var(--color-text); font: 700 2rem/1 var(--font-editorial); }
+.client-dashboard__section-heading {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: var(--space-4);
+  margin-block-end: var(--space-4);
+}
+.client-dashboard__section-heading h2 { margin: 0; }
+.client-dashboard .client-project-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.client-dashboard .client-project-card { border-color: var(--color-border); box-shadow: var(--shadow-soft); }
+.client-dashboard .client-project-card__toggle { min-block-size: 44px; min-inline-size: 44px; }
+.client-project-card__status { inline-size: max-content; padding: .25rem .55rem; border-radius: var(--radius-pill); font: var(--type-metadata); font-weight: 800; text-transform: capitalize; }
+.client-project-card__status--active { color: var(--color-success); background: color-mix(in srgb, var(--color-success) 12%, var(--color-surface)); }
+.client-project-card__status--planning { color: var(--color-info); background: color-mix(in srgb, var(--color-info) 12%, var(--color-surface)); }
+@media (max-width: 720px) {
+  .client-dashboard__hero { align-items: stretch; }
+  .client-dashboard__hero-count { min-inline-size: 0; }
+  .client-dashboard__overview dl,
+  .client-dashboard .client-project-grid { grid-template-columns: 1fr; }
+  .client-dashboard__section-heading { align-items: flex-start; flex-direction: column; }
+  .client-dashboard .client-project-card__header,
+  .client-dashboard .client-project-card__toggle,
+  .client-dashboard .client-project-card__summary { align-items: flex-start; flex-direction: column; }
+  .client-dashboard .client-project-card__toggle { inline-size: 100%; }
+}

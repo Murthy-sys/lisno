@@ -1,7 +1,8 @@
 import { Router } from "express";
 import { z } from "zod";
 
-import { authenticate, authorizeRoles } from "../middleware/auth.js";
+import { authenticate } from "../middleware/auth.js";
+import { requireOperation } from "../middleware/authorization.js";
 import {
   paginatedEnvelope,
   paginationShape
@@ -31,7 +32,7 @@ export function createAuditRouter(
   router.get(
     "/projects/:projectId/activity",
     authenticate(authService),
-    authorizeRoles("design_manager", "design_head"),
+    requireOperation("GET /projects/:projectId/activity"),
     validateQuery(z.object(paginationShape).strict()),
     async (request, response, next) => {
       try {
@@ -55,7 +56,7 @@ export function createAuditRouter(
   router.get(
     "/designers/:designerId/audit",
     authenticate(authService),
-    authorizeRoles("designer", "design_manager", "design_head"),
+    requireOperation("GET /designers/:designerId/audit"),
     validateQuery(z.object({ ...paginationShape, sort: z.enum(["asc", "desc"]).optional() }).strict()),
     async (request, response, next) => {
       try {
@@ -68,7 +69,7 @@ export function createAuditRouter(
   router.get(
     "/audit",
     authenticate(authService),
-    authorizeRoles("designer", "design_manager", "design_head"),
+    requireOperation("GET /audit"),
     validateQuery(querySchema),
     async (request, response, next) => {
       try {

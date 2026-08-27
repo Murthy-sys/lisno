@@ -6,10 +6,234 @@ import { RepositoryConflictError } from "../src/repositories/types.js";
 import { demoSeedData } from "../src/seed/data.js";
 
 describe("memory repository", () => {
+  it("rejects a second Super Admin in seeds and direct repository mutations", async () => {
+    const duplicateSeed = structuredClone(demoSeedData);
+    duplicateSeed.users.push({
+      ...structuredClone(duplicateSeed.users[0]!),
+      id: "user-super-admin-second",
+      email: "second-super-admin@example.test",
+      emailNormalized: "second-super-admin@example.test",
+      role: "super_admin"
+    });
+    expect(() => createMemoryRepository(duplicateSeed)).toThrow(
+      "Only one Super Admin account is allowed."
+    );
+
+    const repository = createMemoryRepository(structuredClone(demoSeedData));
+    await expect(
+      repository.createUser({
+        name: "Second Super Admin",
+        email: "second-super-admin@example.test",
+        passwordHash: "hash",
+        role: "super_admin"
+      })
+    ).rejects.toThrow("Only one Super Admin account is allowed.");
+    await expect(
+      repository.updateUser("user-admin", 1, {
+        role: "super_admin",
+        updatedAt: "2026-08-23T12:00:00.000Z"
+      })
+    ).rejects.toThrow("Only one Super Admin account is allowed.");
+    await expect(repository.countActiveUsersByRole("super_admin")).resolves.toBe(1);
+  });
+
+  it("stores nullable Admin project relationships and rejects duplicate linked leads", async () => {
+    const seed = structuredClone(demoSeedData);
+    const repository = createMemoryRepository(seed);
+    const project = await repository.createProject({
+      ...structuredClone(seed.projects[0]!),
+      id: "project-admin-1",
+      name: "Admin project",
+      initiatingDesignerId: null,
+      assignedEstimatorId: "user-estimator-sales",
+      assignedDesignerIds: [],
+      managerId: null,
+      createdAt: "2026-08-23T10:00:00.000Z",
+      updatedAt: "2026-08-23T10:00:00.000Z"
+    });
+    expect(project).toMatchObject({
+      initiatingDesignerId: null,
+      assignedEstimatorId: "user-estimator-sales",
+      assignedDesignerIds: [],
+      managerId: null
+    });
+
+    const lead = {
+      id: "lead-admin-1",
+      projectId: project.id,
+      ownerId: "user-estimator-sales",
+      clientName: "Asha Shah",
+      clientEmail: "asha@example.com",
+      clientMobile: "9000000000",
+      projectName: "Asha home",
+      location: "Pune",
+      propertyType: "3BHK",
+      budgetMin: 800000,
+      budgetMax: 1200000,
+      source: "admin_project",
+      stage: "new_lead" as const,
+      nextAction: "Schedule site visit",
+      nextActionAt: "2026-08-25T05:00:00.000Z",
+      builder: null,
+      areaSqft: null,
+      targetHandoverAt: null,
+      notes: null,
+      latestActivityAt: null,
+      createdAt: "2026-08-23T10:00:00.000Z",
+      updatedAt: "2026-08-23T10:00:00.000Z"
+    };
+    await repository.createLead(lead);
+    await expect(repository.createLead({ ...lead, id: "lead-admin-2" }))
+      .rejects.toBeInstanceOf(RepositoryConflictError);
+    await expect(repository.createLead({ ...lead, id: "lead-admin-3", projectId: null }))
+      .resolves.toMatchObject({ projectId: null });
+  });
+
+  it("pages scoped Admin project summaries newest-first and exposes only active estimator options", async () => {
+    const seed = structuredClone(demoSeedData);
+    const admin = seed.users.find((user) => user.id === "user-admin")!;
+    const estimator = seed.users.find((user) => user.id === "user-estimator-sales")!;
+    const baseProject = structuredClone(seed.projects[0]!);
+    seed.projects = [
+      {
+        ...baseProject,
+        id: "project-admin-a",
+        name: "Admin A",
+        initiatingDesignerId: null,
+        assignedEstimatorId: estimator.id,
+        assignedDesignerIds: [],
+        managerId: null,
+        createdAt: "2026-08-23T10:00:00.000Z"
+      },
+      {
+        ...baseProject,
+        id: "project-admin-b",
+        name: "Admin B",
+        initiatingDesignerId: null,
+        assignedEstimatorId: estimator.id,
+        assignedDesignerIds: [],
+        managerId: null,
+        createdAt: "2026-08-23T10:00:00.000Z"
+      }
+    ];
+    seed.leads = [{
+      id: "lead-admin-b",
+      projectId: "project-admin-b",
+      ownerId: estimator.id,
+      clientName: "Asha Shah",
+      clientEmail: "asha@example.com",
+      clientMobile: "9000000000",
+      projectName: "Admin B",
+      location: "Pune",
+      propertyType: "3BHK",
+      budgetMin: 800000,
+      budgetMax: 1200000,
+      source: "admin_project",
+      stage: "new_lead",
+      nextAction: "Schedule site visit",
+      nextActionAt: "2026-08-25T05:00:00.000Z",
+      builder: null,
+      areaSqft: null,
+      targetHandoverAt: null,
+      notes: null,
+      latestActivityAt: null,
+      createdAt: "2026-08-23T10:00:00.000Z",
+      updatedAt: "2026-08-23T10:00:00.000Z"
+    }];
+    seed.estimateSummaries = [{
+      id: "estimate-admin-b",
+      leadId: "lead-admin-b",
+      projectId: "project-admin-b",
+      status: "draft",
+      total: 118000,
+      clientReview: null,
+      assignedAdminId: null
+    }];
+    seed.projectAccessGrants = seed.projects.map((project, index) => ({
+      id: `grant-admin-${index}`,
+      projectId: project.id,
+      userId: admin.id,
+      module: "projects" as const,
+      source: "admin_initiator" as const,
+      accessRequestId: null,
+      grantedById: admin.id,
+      active: true,
+      grantedAt: "2026-08-23T10:00:00.000Z",
+      revokedAt: null,
+      revokedById: null,
+      revocationReason: null,
+      version: 1,
+      createdAt: "2026-08-23T10:00:00.000Z",
+      updatedAt: "2026-08-23T10:00:00.000Z"
+    }));
+    const repository = createMemoryRepository(seed);
+
+    await expect(repository.pageAdminProjects(admin, { limit: 1, offset: 0 }))
+      .resolves.toEqual(expect.objectContaining({
+        total: 2,
+        items: [expect.objectContaining({
+          id: "project-admin-b",
+          estimator: { id: estimator.id, name: estimator.name, email: estimator.email },
+          lead: expect.objectContaining({ id: "lead-admin-b", stage: "new_lead" }),
+          estimate: {
+            id: "estimate-admin-b",
+            leadId: "lead-admin-b",
+            projectId: "project-admin-b",
+            resolvedProjectId: "project-admin-b",
+            projectLinkSource: "estimate_and_lead",
+            version: 1,
+            status: "draft",
+            subtotal: 118000,
+            gst: 0,
+            total: 118000,
+            clientDecisionAt: null,
+            clientDecisionSource: null,
+            approvedBaseline: null,
+            clientReview: null,
+            hasPendingClientResponseTask: false,
+            designPlanStatus: null,
+            designPlanVersion: 0,
+            designPlanDesigner: null
+          }
+        })]
+      }));
+    const options = await repository.pageActiveEstimatorOptions("sales@", { limit: 20, offset: 0 });
+    expect(options.items).toEqual([{ id: estimator.id, name: estimator.name, email: estimator.email, title: estimator.title ?? null }]);
+    expect(JSON.stringify(options)).not.toContain("mobile");
+    expect(JSON.stringify(options)).not.toContain("address");
+  });
+
+  it("defaults legacy and new accounts to standard while retaining explicit demo markers", async () => {
+    const legacySeed = structuredClone(demoSeedData);
+    Reflect.deleteProperty(legacySeed.users[0]!, "accountKind");
+    const repository = createMemoryRepository(legacySeed);
+
+    await expect(repository.findUserById("user-head")).resolves.toMatchObject({
+      accountKind: "standard"
+    });
+    await expect(
+      repository.createUser({
+        name: "Standard User",
+        email: "standard@example.test",
+        passwordHash: "hash",
+        role: "designer"
+      })
+    ).resolves.toMatchObject({ accountKind: "standard" });
+    await expect(
+      repository.createUser({
+        name: "Demo User",
+        email: "demo@example.test",
+        passwordHash: "hash",
+        role: "designer",
+        accountKind: "development_demo"
+      })
+    ).resolves.toMatchObject({ accountKind: "development_demo" });
+  });
+
   it("pages only an owner's matching leads and orders activities newest first", async () => {
     const repository = createMemoryRepository(demoSeedData);
     const base = {
-      ownerId: "user-estimator-sales", clientName: "Ramesh Nair", clientEmail: "ramesh@example.com", clientMobile: "9876500000",
+      projectId: null, ownerId: "user-estimator-sales", clientName: "Ramesh Nair", clientEmail: "ramesh@example.com", clientMobile: "9876500000",
       projectName: "Prestige Lakeside", location: "Bengaluru", propertyType: "3BHK", budgetMin: 1_000_000, budgetMax: 1_400_000,
       source: "Referral", stage: "negotiation" as const, nextAction: "Call client", nextActionAt: "2026-08-01T10:00:00.000Z",
       builder: null, areaSqft: null, targetHandoverAt: null, notes: null, latestActivityAt: null,
@@ -107,6 +331,163 @@ describe("memory repository", () => {
         role: "client"
       })
     ).rejects.toBeInstanceOf(RepositoryConflictError);
+  });
+
+  it("pages visible users and counts every persisted responsibility boundary", async () => {
+    const seed = structuredClone(demoSeedData);
+    const targetId = "user-estimator-sales";
+    const baseLead = {
+      id: "lead-responsibility-active",
+      projectId: null,
+      ownerId: targetId,
+      clientName: "Responsibility Client",
+      clientEmail: "responsibility@example.com",
+      clientMobile: "9999999999",
+      projectName: "Responsibility Project",
+      location: "Pune",
+      propertyType: "Apartment",
+      budgetMin: null,
+      budgetMax: null,
+      source: "Referral",
+      stage: "negotiation" as const,
+      nextAction: "Follow up",
+      nextActionAt: "2026-08-18T10:00:00.000Z",
+      builder: null,
+      areaSqft: null,
+      targetHandoverAt: null,
+      notes: null,
+      latestActivityAt: null,
+      createdAt: "2026-08-17T10:00:00.000Z",
+      updatedAt: "2026-08-17T10:00:00.000Z"
+    };
+    seed.leads.push(
+      baseLead,
+      { ...baseLead, id: "lead-responsibility-won", stage: "won" },
+      { ...baseLead, id: "lead-responsibility-lost", stage: "lost" }
+    );
+    seed.estimateResponsibilities.push(
+      { id: "estimate-responsibility-active", ownerId: targetId, status: "draft" },
+      {
+        id: "estimate-responsibility-complete",
+        ownerId: targetId,
+        status: "client_approved"
+      }
+    );
+    const activeProject = {
+      ...structuredClone(seed.projects[0]!),
+      id: "project-responsibility-active",
+      clientId: targetId,
+      initiatingDesignerId: targetId,
+      assignedDesignerIds: [targetId],
+      managerId: targetId,
+      status: "active" as const
+    };
+    seed.projects.push(activeProject, {
+      ...activeProject,
+      id: "project-responsibility-completed",
+      status: "completed"
+    });
+    const activeTask = {
+      ...structuredClone(seed.tasks[0]!),
+      id: "task-responsibility-active",
+      projectId: activeProject.id,
+      ownerId: targetId,
+      status: "in_progress" as const,
+      completedAt: null
+    };
+    seed.tasks.push(activeTask, {
+      ...activeTask,
+      id: "task-responsibility-completed",
+      status: "completed",
+      completedAt: "2026-08-18T10:00:00.000Z"
+    });
+    seed.users.push({
+      ...structuredClone(seed.users[0]!),
+      id: "user-inactive-direct-report",
+      name: "Inactive Direct Report",
+      email: "inactive-report@example.com",
+      emailNormalized: "inactive-report@example.com",
+      active: false,
+      managerId: targetId
+    });
+    const grantAt = "2026-08-17T10:00:00.000Z";
+    seed.projectAccessGrants.push({
+      id: "grant-responsibility-initiator",
+      projectId: activeProject.id,
+      userId: targetId,
+      module: "projects",
+      source: "admin_initiator",
+      accessRequestId: null,
+      grantedById: "user-super-admin",
+      active: true,
+      grantedAt: grantAt,
+      revokedAt: null,
+      revokedById: null,
+      revocationReason: null,
+      version: 1,
+      createdAt: grantAt,
+      updatedAt: grantAt
+    });
+    const repository = createMemoryRepository(seed);
+
+    await expect(
+      repository.pageUsers(
+        {
+          search: "SALES@",
+          role: "estimator_sales",
+          active: true,
+          visibleRoles: ["estimator_sales"]
+        },
+        { limit: 20, offset: 0 }
+      )
+    ).resolves.toMatchObject({
+      total: 1,
+      items: [{ id: targetId, role: "estimator_sales", active: true, version: 1 }]
+    });
+    await expect(repository.countActiveUsersByRole("design_manager")).resolves.toBe(2);
+    await expect(repository.countUserResponsibilities(targetId)).resolves.toEqual({
+      ownedActiveLeads: 1,
+      ownedActiveEstimates: 1,
+      initiatedActiveProjects: 1,
+      assignedActiveProjects: 1,
+      managedActiveProjects: 1,
+      ownedActiveTasks: 1,
+      directReports: 1,
+      linkedClientProjects: 2,
+      adminInitiatorGrants: 1
+    });
+  });
+
+  it("updates memory users by exact version and keeps outer writes rollback-safe", async () => {
+    const repository = createMemoryRepository(structuredClone(demoSeedData));
+    const target = await repository.findUserById("user-estimator-sales");
+    expect(target?.version).toBe(1);
+
+    const updated = await repository.updateUser(target!.id, target!.version, {
+      active: false,
+      updatedAt: "2026-08-17T11:00:00.000Z"
+    });
+    expect(updated).toMatchObject({ active: false, version: 2 });
+    await expect(
+      repository.updateUser(target!.id, target!.version, {
+        active: true,
+        updatedAt: "2026-08-17T12:00:00.000Z"
+      })
+    ).rejects.toBeInstanceOf(RepositoryConflictError);
+
+    await expect(
+      repository.runInTransaction(async () => {
+        await repository.updateUser(target!.id, updated.version, {
+          active: true,
+          updatedAt: "2026-08-17T13:00:00.000Z"
+        });
+        throw new Error("rollback outer write");
+      })
+    ).rejects.toThrow();
+    await expect(repository.findUserById(target!.id)).resolves.toMatchObject({
+      active: false,
+      version: 2
+    });
   });
 
   it("submits replacement drafts while preserving approved active section revisions", async () => {
@@ -594,21 +975,215 @@ describe("memory repository", () => {
     expect(manager).not.toBeNull();
     expect(head).not.toBeNull();
 
-    await expect(repository.listProjectsForUser(client!)).resolves.toMatchObject([
+    await expect(repository.listProjectsForUserInModule(client!, "projects")).resolves.toMatchObject([
       { id: "project-aurora-studio", clientId: "user-client-aurora" },
       { id: "project-aurora-villa", clientId: "user-client-aurora" }
     ]);
-    await expect(repository.listProjectsForUser(designer!)).resolves.toMatchObject([
+    await expect(repository.listProjectsForUserInModule(designer!, "projects")).resolves.toMatchObject([
       { id: "project-aurora-villa" },
       { id: "project-unclaimed-aurora-email" },
       { id: "project-celeste-office" }
     ]);
-    await expect(repository.listProjectsForUser(manager!)).resolves.toMatchObject([
+    await expect(repository.listProjectsForUserInModule(manager!, "projects")).resolves.toMatchObject([
       { id: "project-aurora-studio" },
       { id: "project-aurora-villa" },
       { id: "project-unclaimed-aurora-email" }
     ]);
-    await expect(repository.listProjectsForUser(head!)).resolves.toHaveLength(4);
+    await expect(repository.listProjectsForUserInModule(head!, "projects")).resolves.toHaveLength(4);
+  });
+
+  it("denies estimator sales projects even when legacy data names them as manager", async () => {
+    const seed = structuredClone(demoSeedData);
+    const sales = seed.users.find((user) => user.id === "user-estimator-sales")!;
+    seed.projects[0]!.managerId = sales.id;
+    const repository = createMemoryRepository(seed);
+
+    await expect(repository.listProjectsForUserInModule(sales, "projects")).resolves.toEqual([]);
+    await expect(
+      repository.pageProjectsForUserInModule(sales, "projects", { limit: 20, offset: 0 })
+    ).resolves.toEqual({ items: [], total: 0 });
+  });
+
+  it("keeps module-aware project list and page scope identical across legacy and exact grants", async () => {
+    const seed = structuredClone(demoSeedData);
+    const template = seed.users.find((user) => user.id === "user-head")!;
+    const addUser = (
+      id: string,
+      role: typeof template.role,
+      active = true
+    ) => {
+      seed.users.push({
+        ...structuredClone(template),
+        id,
+        name: id,
+        email: `${id}@lisno.example`,
+        emailNormalized: `${id}@lisno.example`,
+        role,
+        active,
+        managerId: null,
+        authorizedClientIds: []
+      });
+      return seed.users.at(-1)!;
+    };
+    const superAdmin = seed.users.find(({ id }) => id === "user-super-admin")!;
+    const admin = addUser("user-admin-scope", "admin");
+    const procurement = addUser("user-procurement-scope", "procurement");
+    const directDesigner = addUser("user-direct-designer", "designer");
+    const staleRole = addUser("user-stale-grant", "worker_other");
+    const revokedFinance = addUser("user-revoked-finance", "finance_head");
+    const ungrantedSiteManager = addUser("user-site-manager", "site_manager");
+    const inactiveFinance = addUser("user-inactive-finance", "finance_head", false);
+    const now = "2026-08-17T08:00:00.000Z";
+    seed.projectAccessGrants.push(
+      {
+        id: "grant-admin-projects",
+        projectId: "project-aurora-villa",
+        userId: admin.id,
+        module: "projects",
+        source: "admin_initiator",
+        accessRequestId: null,
+        grantedById: superAdmin.id,
+        active: true,
+        grantedAt: now,
+        revokedAt: null,
+        revokedById: null,
+        revocationReason: null,
+        version: 1,
+        createdAt: now,
+        updatedAt: now
+      },
+      {
+        id: "grant-procurement",
+        projectId: "project-celeste-office",
+        userId: procurement.id,
+        module: "procurement",
+        source: "access_request",
+        accessRequestId: "request-procurement",
+        grantedById: superAdmin.id,
+        active: true,
+        grantedAt: now,
+        revokedAt: null,
+        revokedById: null,
+        revocationReason: null,
+        version: 1,
+        createdAt: now,
+        updatedAt: now
+      },
+      {
+        id: "grant-direct-dormant",
+        projectId: "project-celeste-office",
+        userId: directDesigner.id,
+        module: "design",
+        source: "direct_assignment",
+        accessRequestId: null,
+        grantedById: superAdmin.id,
+        active: true,
+        grantedAt: now,
+        revokedAt: null,
+        revokedById: null,
+        revocationReason: null,
+        version: 1,
+        createdAt: now,
+        updatedAt: now
+      },
+      {
+        id: "grant-stale-role",
+        projectId: "project-aurora-villa",
+        userId: staleRole.id,
+        module: "execution",
+        source: "access_request",
+        accessRequestId: "request-stale-role",
+        grantedById: superAdmin.id,
+        active: true,
+        grantedAt: now,
+        revokedAt: null,
+        revokedById: null,
+        revocationReason: null,
+        version: 1,
+        createdAt: now,
+        updatedAt: now
+      },
+      {
+        id: "grant-revoked-finance",
+        projectId: "project-celeste-office",
+        userId: revokedFinance.id,
+        module: "finance",
+        source: "access_request",
+        accessRequestId: "request-revoked-finance",
+        grantedById: superAdmin.id,
+        active: false,
+        grantedAt: now,
+        revokedAt: now,
+        revokedById: superAdmin.id,
+        revocationReason: "Role coverage changed",
+        version: 2,
+        createdAt: now,
+        updatedAt: now
+      },
+      {
+        id: "grant-inactive-user",
+        projectId: "project-aurora-villa",
+        userId: inactiveFinance.id,
+        module: "finance",
+        source: "access_request",
+        accessRequestId: "request-inactive-user",
+        grantedById: superAdmin.id,
+        active: true,
+        grantedAt: now,
+        revokedAt: null,
+        revokedById: null,
+        revocationReason: null,
+        version: 1,
+        createdAt: now,
+        updatedAt: now
+      }
+    );
+    const repository = createMemoryRepository(seed);
+    const client = seed.users.find((user) => user.id === "user-client-aurora")!;
+    const designer = seed.users.find((user) => user.id === "user-designer-ananya")!;
+    const manager = seed.users.find((user) => user.id === "user-manager-aarav")!;
+    const head = seed.users.find((user) => user.id === "user-head")!;
+
+    await expect(repository.listProjectsForUserInModule(client, "projects"))
+      .resolves.toHaveLength(2);
+    await expect(repository.listProjectsForUserInModule(designer, "design"))
+      .resolves.toHaveLength(2);
+    await expect(repository.listProjectsForUserInModule(manager, "design"))
+      .resolves.toHaveLength(2);
+    await expect(repository.listProjectsForUserInModule(head, "projects"))
+      .resolves.toHaveLength(3);
+    await expect(repository.listProjectsForUserInModule(head, "design"))
+      .resolves.toHaveLength(3);
+    await expect(repository.listProjectsForUserInModule(superAdmin, "finance"))
+      .resolves.toHaveLength(3);
+    await expect(repository.listProjectsForUserInModule(admin, "projects"))
+      .resolves.toMatchObject([{ id: "project-aurora-villa" }]);
+    await expect(repository.listProjectsForUserInModule(admin, "design"))
+      .resolves.toEqual([]);
+    await expect(repository.listProjectsForUserInModule(procurement, "procurement"))
+      .resolves.toMatchObject([{ id: "project-celeste-office" }]);
+    await expect(repository.listProjectsForUserInModule(procurement, "finance"))
+      .resolves.toEqual([]);
+    await expect(repository.listProjectsForUserInModule(directDesigner, "design"))
+      .resolves.toEqual([]);
+    await expect(repository.listProjectsForUserInModule(staleRole, "execution"))
+      .resolves.toEqual([]);
+    await expect(repository.listProjectsForUserInModule(revokedFinance, "finance"))
+      .resolves.toEqual([]);
+    await expect(
+      repository.listProjectsForUserInModule(ungrantedSiteManager, "execution")
+    ).resolves.toEqual([]);
+    await expect(repository.listProjectsForUserInModule(inactiveFinance, "finance"))
+      .resolves.toEqual([]);
+    await expect(
+      repository.pageProjectsForUserInModule(procurement, "procurement", {
+        limit: 1,
+        offset: 0
+      })
+    ).resolves.toMatchObject({
+      items: [{ id: "project-celeste-office" }],
+      total: 1
+    });
   });
 
   it("slices paginated reads while retaining filtered totals", async () => {
@@ -657,7 +1232,7 @@ describe("memory repository", () => {
     const client = await repository.findUserById("user-client-aurora");
 
     await expect(
-      repository.pageProjectsForUser(client!, { limit: 1, offset: 1 })
+      repository.pageProjectsForUserInModule(client!, "projects", { limit: 1, offset: 1 })
     ).resolves.toMatchObject({
       items: [{ id: "project-aurora-villa" }],
       total: 2
@@ -722,7 +1297,7 @@ describe("memory repository", () => {
     const repository = createMemoryRepository(seed);
     const manager = await repository.findUserById("user-manager-aarav");
 
-    const visibleProjectIds = (await repository.listProjectsForUser(manager!)).map(
+    const visibleProjectIds = (await repository.listProjectsForUserInModule(manager!, "projects")).map(
       (project) => project.id
     );
 
@@ -1068,5 +1643,30 @@ describe("memory repository", () => {
     );
 
     expect(new Set(levels)).toEqual(new Set(["gray", "green", "yellow", "red"]));
+  });
+
+  it("enforces pending-request and active-grant partial uniqueness in seed snapshots", () => {
+    const seed = structuredClone(demoSeedData);
+    const pending = {
+      id: "request-seed-1",
+      requesterId: "user-designer-ananya",
+      projectId: "project-aurora-villa",
+      module: "design" as const,
+      reason: "Need access",
+      status: "pending" as const,
+      reviewerId: null,
+      decisionReason: null,
+      decisionFingerprint: null,
+      approvedGrantId: null,
+      reviewedAt: null,
+      version: 1,
+      createdAt: "2026-08-17T10:00:00.000Z",
+      updatedAt: "2026-08-17T10:00:00.000Z"
+    };
+    seed.accessRequests.push(pending, { ...pending, id: "request-seed-2" });
+
+    expect(() => createMemoryRepository(seed)).toThrow(RepositoryConflictError);
+    expect(demoSeedData.accessRequests).toEqual([]);
+    expect(demoSeedData.projectAccessGrants).toEqual([]);
   });
 });

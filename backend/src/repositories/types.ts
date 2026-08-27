@@ -1,4 +1,21 @@
 import type { Role, TaskStatus } from "../contracts/domain.js";
+import type { AccountKind } from "../domain/demo-identities.js";
+import type {
+  EstimateClientDecisionSource,
+  EstimateClientReviewSummary
+} from "../domain/estimate-client-review.js";
+import type {
+  InvitableRole,
+  UserInvitationAction,
+  UserInvitationDeliveryStatus,
+  UserInvitationPresentationStatus,
+  UserInvitationStoredStatus,
+  UserInvitationTokenValidity
+} from "../domain/user-invitations.js";
+import type {
+  ProjectModule,
+  RequestableProjectModule
+} from "../domain/authorization.js";
 
 export type ProjectStatus = "planning" | "active" | "on_hold" | "completed";
 
@@ -57,12 +74,134 @@ export interface UserRecord {
   passwordHash: string;
   role: Role;
   active: boolean;
+  accountKind: AccountKind;
+  version: number;
   managerId: string | null;
   authorizedClientIds: string[];
   avatar?: string;
   title?: string;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface UserInvitationRecord {
+  id: string;
+  name: string;
+  email: string;
+  emailNormalized: string;
+  role: InvitableRole;
+  mobile: string;
+  tokenHash: string | null;
+  tokenGeneration: number;
+  issuedAt: string;
+  expiresAt: string;
+  status: UserInvitationStoredStatus;
+  invitedById: string;
+  tokenIssuedById: string;
+  tokenIssuerVersion: number;
+  acceptedUserId: string | null;
+  acceptedAt: string | null;
+  revokedById: string | null;
+  revokedAt: string | null;
+  supersededByInvitationId: string | null;
+  supersededAt: string | null;
+  deliveryStatus: UserInvitationDeliveryStatus;
+  deliveryAttemptedAt: string | null;
+  sentAt: string | null;
+  deliveryFailureCode: string | null;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface UserInvitationFilters {
+  search?: string;
+  role?: InvitableRole;
+  status?: UserInvitationPresentationStatus;
+  deliveryStatus?: UserInvitationDeliveryStatus;
+}
+
+export interface UserInvitationAdminRecord {
+  id: string;
+  name: string;
+  email: string;
+  role: InvitableRole;
+  mobile: string;
+  tokenValidity: UserInvitationTokenValidity;
+  presentationStatus: UserInvitationPresentationStatus;
+  currentLinkAvailable: boolean;
+  availableActions: readonly UserInvitationAction[];
+  invitedBy: Pick<UserRecord, "id" | "name" | "email" | "role">;
+  issuedAt: string;
+  expiresAt: string;
+  deliveryStatus: UserInvitationDeliveryStatus;
+  deliveryAttemptedAt: string | null;
+  sentAt: string | null;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type NewUserInvitation = UserInvitationRecord;
+
+export interface SupersedeUserInvitationChange {
+  supersededByInvitationId: string;
+  supersededAt: string;
+  updatedAt: string;
+}
+
+export interface ResendUserInvitationChange {
+  tokenHash: string;
+  tokenGeneration: number;
+  issuedAt: string;
+  expiresAt: string;
+  tokenIssuedById: string;
+  tokenIssuerVersion: number;
+  updatedAt: string;
+}
+
+export interface RevokeUserInvitationChange {
+  revokedById: string;
+  revokedAt: string;
+  updatedAt: string;
+}
+
+export interface AcceptUserInvitationChange {
+  acceptedUserId: string;
+  acceptedAt: string;
+  updatedAt: string;
+}
+
+export type InvitationDeliveryChange =
+  | {
+      status: "sent";
+      attemptedAt: string;
+      sentAt: string;
+      updatedAt: string;
+    }
+  | {
+      status: "failed";
+      attemptedAt: string;
+      failureCode: string;
+      updatedAt: string;
+    };
+
+export interface UserDirectoryFilters {
+  search?: string;
+  role?: Role;
+  active?: boolean;
+}
+
+export interface UserResponsibilityCounts {
+  ownedActiveLeads: number;
+  ownedActiveEstimates: number;
+  initiatedActiveProjects: number;
+  assignedActiveProjects: number;
+  managedActiveProjects: number;
+  ownedActiveTasks: number;
+  directReports: number;
+  linkedClientProjects: number;
+  adminInitiatorGrants: number;
 }
 
 export interface ProjectRecord {
@@ -74,9 +213,10 @@ export interface ProjectRecord {
   clientEmailNormalized: string;
   clientMobile: string;
   clientAddress: string;
-  initiatingDesignerId: string;
+  initiatingDesignerId: string | null;
+  assignedEstimatorId: string | null;
   assignedDesignerIds: string[];
-  managerId: string;
+  managerId: string | null;
   status: ProjectStatus;
   location: string;
   plannedStartAt: string;
@@ -89,6 +229,7 @@ export interface ProjectRecord {
 
 export interface LeadRecord {
   id: string;
+  projectId: string | null;
   ownerId: string;
   clientName: string;
   clientEmail: string;
@@ -121,13 +262,115 @@ export interface LeadActivityRecord {
   createdAt: string;
 }
 
+export type EstimateResponsibilityStatus =
+  | "draft"
+  | "pending_manager_assignment"
+  | "pending_designer_approval"
+  | "designer_changes_requested"
+  | "ready_for_client"
+  | "sent_to_client"
+  | "client_changes_requested"
+  | "client_approved";
+
+export interface EstimateResponsibilityRecord {
+  id: string;
+  ownerId: string;
+  status: EstimateResponsibilityStatus;
+}
+
 export interface LeadFilters {
   search?: string;
   stage?: LeadStage;
 }
 
 export type NewLead = LeadRecord;
-export type LeadChange = Partial<Omit<LeadRecord, "id" | "ownerId" | "createdAt">>;
+export type LeadChange = Partial<
+  Omit<LeadRecord, "id" | "projectId" | "ownerId" | "createdAt">
+>;
+
+export interface EstimatorOption {
+  id: string;
+  name: string;
+  email: string;
+  title: string | null;
+}
+
+export interface EstimateSummaryRecord {
+  id: string;
+  leadId: string;
+  projectId: string | null;
+  version: number;
+  status: string;
+  subtotal: number;
+  gst: number;
+  total: number;
+  clientDecisionAt: string | null;
+  clientDecisionSource: EstimateClientDecisionSource | null;
+  approvedBaseline: AdminProjectApprovedEstimateBaseline | null;
+  clientReview: EstimateClientReviewSummary | null;
+  assignedAdminId: string | null;
+  designPlanStatus?: string | null;
+  designPlanVersion?: number;
+  designPlanDesignerId?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AdminProjectApprovedEstimateBaseline {
+  estimateVersion: number;
+  reviewRoundId: string | null;
+  subtotal: number;
+  gst: number;
+  total: number;
+  decisionAt: string | null;
+  decisionSource: EstimateClientDecisionSource | null;
+}
+
+export type AdminProjectEstimateLinkSource =
+  | "estimate"
+  | "lead"
+  | "estimate_and_lead";
+
+export interface AdminProjectEstimateSummary {
+  id: string;
+  leadId: string;
+  projectId: string | null;
+  resolvedProjectId: string;
+  projectLinkSource: AdminProjectEstimateLinkSource;
+  version: number;
+  status: string;
+  subtotal: number;
+  gst: number;
+  total: number;
+  clientDecisionAt: string | null;
+  clientDecisionSource: EstimateClientDecisionSource | null;
+  approvedBaseline: AdminProjectApprovedEstimateBaseline | null;
+  clientReview: EstimateClientReviewSummary | null;
+  hasPendingClientResponseTask: boolean;
+  designPlanStatus: string | null;
+  designPlanVersion: number;
+  designPlanDesigner: { id: string; name: string; email: string } | null;
+}
+
+export interface AdminProjectSummary {
+  id: string;
+  name: string;
+  status: ProjectStatus;
+  location: string;
+  client: { name: string; email: string; mobile: string };
+  propertyType: string | null;
+  budgetMin: number | null;
+  budgetMax: number | null;
+  estimator: { id: string; name: string; email: string } | null;
+  lead: {
+    id: string;
+    stage: LeadStage;
+    nextAction: string;
+    nextActionAt: string;
+  } | null;
+  estimate: AdminProjectEstimateSummary | null;
+  createdAt: string;
+}
 export type NewLeadActivity = LeadActivityRecord;
 
 export interface FloorRecord {
@@ -372,7 +615,7 @@ export interface EvaluationRecord {
   id: string;
   subjectUserId: string;
   evaluatorUserId: string;
-  evaluatorRole: Extract<Role, "design_manager" | "design_head">;
+  evaluatorRole: Extract<Role, "super_admin" | "design_manager" | "design_head">;
   periodStartAt: string;
   periodEndAt: string;
   score: number;
@@ -465,9 +708,113 @@ export interface PageResult<T> {
   total: number;
 }
 
+export type AccessRequestStatus =
+  | "pending"
+  | "approved"
+  | "rejected"
+  | "cancelled";
+
+export interface AccessRequestRecord {
+  id: string;
+  requesterId: string;
+  projectId: string;
+  module: RequestableProjectModule;
+  reason: string;
+  status: AccessRequestStatus;
+  reviewerId: string | null;
+  decisionReason: string | null;
+  decisionFingerprint: string | null;
+  approvedGrantId: string | null;
+  reviewedAt: string | null;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ProjectAccessGrantRecord {
+  id: string;
+  projectId: string;
+  userId: string;
+  module: ProjectModule;
+  source: "access_request" | "direct_assignment" | "admin_initiator";
+  accessRequestId: string | null;
+  grantedById: string;
+  active: boolean;
+  grantedAt: string;
+  revokedAt: string | null;
+  revokedById: string | null;
+  revocationReason: string | null;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type NewAccessRequest = Pick<
+  AccessRequestRecord,
+  "requesterId" | "projectId" | "module" | "reason"
+> & { id?: string; createdAt: string; updatedAt: string };
+
+export type AccessRequestTransition =
+  | {
+      status: "approved";
+      reviewerId: string;
+      decisionReason: null;
+      decisionFingerprint: string;
+      approvedGrantId: string;
+      reviewedAt: string;
+      updatedAt: string;
+    }
+  | {
+      status: "rejected";
+      reviewerId: string;
+      decisionReason: string;
+      decisionFingerprint: string;
+      approvedGrantId: null;
+      reviewedAt: string;
+      updatedAt: string;
+    }
+  | {
+      status: "cancelled";
+      reviewerId: null;
+      decisionReason: null;
+      decisionFingerprint: null;
+      approvedGrantId: null;
+      reviewedAt: null;
+      updatedAt: string;
+    };
+
+export interface AccessRequestFilters {
+  status?: AccessRequestStatus;
+  module?: RequestableProjectModule;
+}
+
+export type AccessRequestReviewScope =
+  | { kind: "global" }
+  | { kind: "admin_initiator"; adminId: string };
+
+export type NewProjectAccessGrant = Pick<
+  ProjectAccessGrantRecord,
+  | "projectId"
+  | "userId"
+  | "module"
+  | "source"
+  | "accessRequestId"
+  | "grantedById"
+> & { id?: string; grantedAt: string; createdAt: string; updatedAt: string };
+
+export interface GrantRevocation {
+  revokedAt: string;
+  revokedById: string;
+  revocationReason: string;
+  updatedAt: string;
+}
+
 export interface SeedData {
   users: UserRecord[];
+  userInvitations: UserInvitationRecord[];
   leads: LeadRecord[];
+  estimateResponsibilities: EstimateResponsibilityRecord[];
+  estimateSummaries?: EstimateSummaryRecord[];
   leadActivities: LeadActivityRecord[];
   projects: ProjectRecord[];
   floors: FloorRecord[];
@@ -481,6 +828,8 @@ export interface SeedData {
   designSectionRevisions: DesignSectionRevisionRecord[];
   evaluations: EvaluationRecord[];
   auditEvents: AuditEventRecord[];
+  accessRequests: AccessRequestRecord[];
+  projectAccessGrants: ProjectAccessGrantRecord[];
 }
 
 export type NewProject = ProjectRecord;
@@ -493,6 +842,7 @@ export type NewUser = Pick<UserRecord, "name" | "email" | "passwordHash" | "role
       | "mobile"
       | "address"
       | "active"
+      | "accountKind"
       | "managerId"
       | "authorizedClientIds"
       | "avatar"
@@ -510,26 +860,152 @@ export interface AppRepository {
     operation: (repository: AppRepository) => Promise<T>
   ): Promise<T>;
   coordinateClientEmail(emailNormalized: string): Promise<void>;
+  findUserInvitationById(id: string): Promise<UserInvitationRecord | null>;
+  findPendingUserInvitationByEmail(
+    emailNormalized: string
+  ): Promise<UserInvitationRecord | null>;
+  findLatestUserInvitationIssuedAtByEmail(
+    emailNormalized: string
+  ): Promise<string | null>;
+  findPendingUserInvitationByTokenHash(
+    tokenHash: string
+  ): Promise<UserInvitationRecord | null>;
+  pageUserInvitations(
+    filters: UserInvitationFilters,
+    pagination: PaginationInput,
+    now: string
+  ): Promise<PageResult<UserInvitationAdminRecord>>;
+  hasUnclaimedClientProjectByEmail(emailNormalized: string): Promise<boolean>;
+  createUserInvitation(input: NewUserInvitation): Promise<UserInvitationRecord>;
+  supersedeUserInvitation(
+    id: string,
+    expectedVersion: number,
+    change: SupersedeUserInvitationChange
+  ): Promise<UserInvitationRecord>;
+  resendUserInvitation(
+    id: string,
+    expectedVersion: number,
+    change: ResendUserInvitationChange
+  ): Promise<UserInvitationRecord>;
+  revokeUserInvitation(
+    id: string,
+    expectedVersion: number,
+    change: RevokeUserInvitationChange
+  ): Promise<UserInvitationRecord>;
+  acceptUserInvitation(
+    id: string,
+    expectedVersion: number,
+    expectedGeneration: number,
+    expectedTokenHash: string,
+    change: AcceptUserInvitationChange
+  ): Promise<UserInvitationRecord>;
+  updateUserInvitationDelivery(
+    id: string,
+    tokenGeneration: number,
+    change: InvitationDeliveryChange
+  ): Promise<UserInvitationRecord | null>;
+  coordinateAuthorizationMutation(): Promise<void>;
+  findAccessRequestById(id: string): Promise<AccessRequestRecord | null>;
+  findPendingAccessRequest(
+    requesterId: string,
+    projectId: string,
+    module: RequestableProjectModule
+  ): Promise<AccessRequestRecord | null>;
+  createAccessRequest(input: NewAccessRequest): Promise<AccessRequestRecord>;
+  findOrCreatePendingAccessRequest(
+    input: NewAccessRequest
+  ): Promise<{ record: AccessRequestRecord; created: boolean }>;
+  transitionAccessRequest(
+    id: string,
+    expectedVersion: number,
+    change: AccessRequestTransition
+  ): Promise<AccessRequestRecord>;
+  pageAccessRequestsForRequester(
+    requesterId: string,
+    filters: AccessRequestFilters,
+    pagination: PaginationInput
+  ): Promise<PageResult<AccessRequestRecord>>;
+  pageAccessRequestsForReview(
+    scope: AccessRequestReviewScope,
+    filters: AccessRequestFilters,
+    pagination: PaginationInput
+  ): Promise<PageResult<AccessRequestRecord>>;
+  findProjectAccessGrantById(id: string): Promise<ProjectAccessGrantRecord | null>;
+  findProjectAccessGrantByAccessRequestId(
+    accessRequestId: string
+  ): Promise<ProjectAccessGrantRecord | null>;
+  findActiveProjectAccessGrant(
+    userId: string,
+    projectId: string,
+    module: ProjectModule
+  ): Promise<ProjectAccessGrantRecord | null>;
+  listActiveProjectAccessGrants(
+    userId: string,
+    module: ProjectModule
+  ): Promise<ProjectAccessGrantRecord[]>;
+  createProjectAccessGrant(
+    input: NewProjectAccessGrant
+  ): Promise<ProjectAccessGrantRecord>;
+  findOrCreateActiveProjectAccessGrant(
+    input: NewProjectAccessGrant
+  ): Promise<{ record: ProjectAccessGrantRecord; created: boolean }>;
+  revokeProjectAccessGrant(
+    id: string,
+    expectedVersion: number,
+    change: GrantRevocation
+  ): Promise<ProjectAccessGrantRecord>;
+  revokeActiveProjectAccessGrantsForUser(
+    userId: string,
+    change: GrantRevocation
+  ): Promise<ProjectAccessGrantRecord[]>;
   findUserById(id: string): Promise<UserRecord | null>;
   findUserByEmail(email: string): Promise<UserRecord | null>;
   createUser(input: NewUser): Promise<UserRecord>;
   listUsers(): Promise<UserRecord[]>;
   listUsersByIds(ids: string[]): Promise<UserRecord[]>;
+  pageUsers(
+    filters: UserDirectoryFilters & { visibleRoles: readonly Role[] },
+    pagination: PaginationInput
+  ): Promise<PageResult<UserRecord>>;
+  countActiveUsersByRole(role: Role): Promise<number>;
+  countUserResponsibilities(userId: string): Promise<UserResponsibilityCounts>;
+  updateUser(
+    userId: string,
+    expectedVersion: number,
+    change: { role?: Role; active?: boolean; updatedAt: string }
+  ): Promise<UserRecord>;
+  pageAllLeads(filters: LeadFilters, pagination: PaginationInput): Promise<PageResult<LeadRecord>>;
   pageLeadsForOwner(ownerId: string, filters: LeadFilters, pagination: PaginationInput): Promise<PageResult<LeadRecord>>;
   findLeadById(id: string): Promise<LeadRecord | null>;
   createLead(input: NewLead): Promise<LeadRecord>;
   updateLead(id: string, change: LeadChange): Promise<LeadRecord>;
   appendLeadActivity(input: NewLeadActivity): Promise<LeadActivityRecord>;
   listLeadActivities(leadId: string): Promise<LeadActivityRecord[]>;
-  listProjectsForUser(user: UserRecord): Promise<ProjectRecord[]>;
+  listProjectsForUserInModule(
+    user: UserRecord,
+    module: ProjectModule
+  ): Promise<ProjectRecord[]>;
   listProjectsForDesignerIds(
     designerIds: string[],
     limit?: number
   ): Promise<ProjectRecord[]>;
-  pageProjectsForUser(
+  pageProjectsForUserInModule(
     user: UserRecord,
+    module: ProjectModule,
     pagination: PaginationInput
   ): Promise<PageResult<ProjectRecord>>;
+  pageAdminProjects(
+    actor: UserRecord,
+    pagination: PaginationInput
+  ): Promise<PageResult<AdminProjectSummary>>;
+  findAdminProject(
+    actor: UserRecord,
+    projectId: string
+  ): Promise<AdminProjectSummary | null>;
+  pageActiveEstimatorOptions(
+    search: string,
+    pagination: PaginationInput
+  ): Promise<PageResult<EstimatorOption>>;
   findProjectById(id: string): Promise<ProjectRecord | null>;
   linkUnclaimedProjectsToClient(
     emailNormalized: string,
@@ -547,6 +1023,9 @@ export interface AppRepository {
   ): Promise<PageResult<ManagerTreeNode>>;
   pageActiveManagers(
     search: string,
+    pagination: PaginationInput
+  ): Promise<PageResult<UserRecord>>;
+  pageActiveDesigners(
     pagination: PaginationInput
   ): Promise<PageResult<UserRecord>>;
   pageDesignersForManager(
@@ -570,6 +1049,19 @@ export interface AppRepository {
     periodEndAt: string,
     pagination: PaginationInput
   ): Promise<PageResult<TaskRecord>>;
+  /*
+   * Operational and worker roles own no design Task rows; their work is
+   * ProjectWorkflowTask. These are returned in TaskRecord shape so the KPI
+   * scores both task systems through one path. The design-only fields stay
+   * absent, which makes those KPI components report "not available" and
+   * redistributes their weight rather than scoring a worker at zero.
+   */
+  listWorkflowKpiTasksForPeriod(
+    assigneeUserIds: string[],
+    periodStartAt: string,
+    periodEndAt: string,
+    limit?: number
+  ): Promise<TaskRecord[]>;
   updateTask(id: string, expectedVersion: number, change: TaskChange): Promise<TaskRecord>;
   appendTaskEvent(input: NewTaskEvent): Promise<TaskEventRecord>;
   listTaskEvents(taskId: string): Promise<TaskEventRecord[]>;

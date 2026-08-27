@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { tokenStorage } from "../../api/client";
+import { authorizationFor } from "../../test/authFixtures";
 import { renderApp } from "../../test/render";
 
 const stylesheet = readFileSync("src/styles/index.css", "utf8");
@@ -42,9 +43,26 @@ const clientEstimates = [
     gst: 36000,
     total: 236000,
     status: "client_approved",
+    designPlanStatus: "ready_for_client",
+    designPlanVersion: 1,
     approvalRequired: false,
     projectId: "project-loft",
     lead: { _id: "lead-loft", clientName: "Aurora Homes", clientEmail: "client@lisno.example", projectName: "Cedar Loft", location: "Mysuru" }
+  },
+  {
+    id: "estimate-changes",
+    leadId: "lead-penthouse",
+    propertyType: "4BHK",
+    rooms: [],
+    scopes: [],
+    lineItems: [],
+    subtotal: 300000,
+    gst: 54000,
+    total: 354000,
+    status: "client_changes_requested",
+    approvalRequired: true,
+    projectId: "project-penthouse",
+    lead: { _id: "lead-penthouse", clientName: "Aurora Homes", clientEmail: "client@lisno.example", projectName: "Harbor Penthouse", location: "Kochi" }
   }
 ];
 const emptyDrawingWorkspace = {
@@ -60,6 +78,17 @@ const emptyDrawingWorkspace = {
     changesRequested: 0
   }
 };
+const planPages = [{
+    id: "plan-page-1", uploadId: "upload-1", pageNumber: 1,
+    width: 1000, height: 800, currentRevisionId: "manifest-1",
+    status: "awaiting_review", thumbnailUrl: "/plan-thumb-1",
+    currentImageUrl: "/plan-page-1", annotationDraft: null
+  }];
+const planWorkspace = {
+  uploads: [{ id: "upload-1", originalFilename: "client-design.pdf", mimeType: "application/pdf", pageCount: 1, pages: planPages }],
+  pages: planPages,
+  openRequests: []
+};
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -69,11 +98,18 @@ function installClientApi() {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const url = String(input);
     if (url.endsWith("/api/v1/auth/me")) return Response.json({ data: client });
+    if (url.endsWith("/api/v1/auth/authorization")) return Response.json({ data: authorizationFor(client.role) });
     if (url.includes("/api/v1/client/project-summaries?")) return Response.json({ data: { items: [], pagination: { limit: 100, offset: 0, total: 0, hasMore: false } } });
     if (url.endsWith("/api/v1/client/latest-approved-versions")) return Response.json({ data: [] });
     if (url.endsWith("/api/v1/client/estimates")) return Response.json({ data: clientEstimates });
     if (url.includes("/api/v1/client/estimates/") && url.endsWith("/design-drawings")) {
       return Response.json({ data: emptyDrawingWorkspace });
+    }
+    if (url.includes("/api/v1/client/estimates/") && url.endsWith("/plan-review")) {
+      return Response.json({ data: planWorkspace });
+    }
+    if ((url.includes("/api/v1/client/estimate-plan-pages/") && (url.endsWith("/thumbnail") || url.endsWith("/current-image"))) || url.endsWith("/plan-page-1") || url.endsWith("/plan-thumb-1")) {
+      return new Response(new Blob(["image"], { type: "image/png" }), { headers: { "Content-Type": "image/png" } });
     }
     throw new Error(`Unhandled request: ${url}`);
   });
@@ -128,6 +164,86 @@ describe("EstimateReviewPanel client disclosures", () => {
     );
     expect(thumbnailRule).toMatch(/width:\s*40px/);
     expect(thumbnailRule).toMatch(/height:\s*40px/);
+  });
+
+  it("keeps the full uploaded design in a sticky right sidebar on desktop", () => {
+    const workspaceRule = ruleBody(stylesheet, ".client-estimate-workspace");
+    expect(workspaceRule).toMatch(/grid-template-columns:\s*minmax\(0,\s*1fr\)\s+18rem/);
+    expect(workspaceRule).toMatch(/min-width:\s*0/);
+    expect(workspaceRule).toMatch(/width:\s*100%/);
+
+    const contentRule = ruleBody(stylesheet, ".estimate-review-card__client-content");
+    expect(contentRule).toMatch(/min-width:\s*0/);
+    expect(contentRule).toMatch(/overflow:\s*clip/);
+
+    const navigationRule = ruleBody(stylesheet, ".client-plan-nav");
+    expect(navigationRule).toMatch(/position:\s*sticky/);
+    expect(navigationRule).toMatch(/top:\s*1rem/);
+
+    const railRule = ruleBody(stylesheet, ".client-estimate-workspace__rail");
+    expect(railRule).not.toMatch(/position:\s*sticky/);
+    expect(railRule).toMatch(/grid-column:\s*2/);
+    expect(railRule).toMatch(/align-self:\s*stretch/);
+    expect(railRule).toMatch(/min-height:\s*calc\(100vh\s*-\s*2rem\)/);
+
+    const launcherRule = ruleBody(stylesheet, ".ask-lisno-launcher");
+    expect(launcherRule).toMatch(/position:\s*fixed/);
+    expect(launcherRule).toMatch(/bottom:/);
+    expect(launcherRule).toMatch(/right:/);
+
+    const pageListRule = ruleBody(stylesheet, ".client-plan-nav__pages");
+    expect(pageListRule).toMatch(/max-height:\s*none/);
+    expect(pageListRule).toMatch(/overflow:\s*visible/);
+
+    const mobileRules = ruleBody(
+      stylesheet.slice(stylesheet.lastIndexOf("@media (max-width: 760px)")),
+      "@media (max-width: 760px)"
+    );
+    expect(ruleBody(mobileRules, ".client-estimate-workspace")).toMatch(
+      /grid-template-columns:\s*minmax\(0,\s*1fr\)/
+    );
+    const mobileRailRule = ruleBody(mobileRules, ".client-estimate-workspace__rail");
+    expect(mobileRailRule).toMatch(/position:\s*static/);
+    expect(mobileRailRule).toMatch(/min-height:\s*0/);
+    expect(ruleBody(mobileRules, ".client-plan-nav")).toMatch(/position:\s*static/);
+  });
+
+  it("renders exactly one page-level Ask Lisno launcher outside estimate cards", async () => {
+    tokenStorage.set("client-token");
+    installClientApi();
+    await userEvent.click((renderApp(["/client"]), await screen.findByRole("button", { name: /Aurora Villa/i })));
+
+    await screen.findByRole("complementary", { name: "Design tools" });
+    const launchers = screen.getAllByRole("button", { name: "Ask Lisno" });
+    expect(launchers).toHaveLength(1);
+    expect(launchers[0]).toBeDisabled();
+    expect(launchers[0]!.closest("article")).toBeNull();
+  });
+
+  it("keeps full-design annotations editable after an earlier client change request", async () => {
+    tokenStorage.set("client-token");
+    installClientApi();
+    Object.defineProperty(URL, "createObjectURL", { configurable: true, value: vi.fn(() => "blob:plan-page") });
+    Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: vi.fn() });
+    renderApp(["/client"]);
+    await userEvent.click(await screen.findByRole("button", { name: /Harbor Penthouse/i }));
+    await userEvent.click(await screen.findByRole("button", { name: "Open uploaded plan client-design.pdf" }));
+
+    expect(await screen.findByText("Mark the drawing or add a text note before requesting changes.")).toBeVisible();
+    expect(await screen.findByRole("img", { name: "Design page 1 protected drawing" })).toBeVisible();
+    expect(await screen.findByRole("toolbar", { name: "Annotation tools" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Save as draft" })).toBeVisible();
+  });
+
+  it("opens full-design annotations after the Designer submits the plan", async () => {
+    tokenStorage.set("client-token");
+    installClientApi();
+    renderApp(["/client"]);
+    await userEvent.click(await screen.findByRole("button", { name: /Cedar Loft/i }));
+    await userEvent.click(await screen.findByRole("button", { name: "Open uploaded plan client-design.pdf" }));
+
+    expect(await screen.findByText("Mark the drawing or add a text note before requesting changes.")).toBeVisible();
+    expect(screen.getByRole("toolbar", { name: "Annotation tools" })).toBeVisible();
   });
 
   it("keeps client estimate details collapsed until each project is opened independently", async () => {
@@ -214,6 +330,7 @@ describe("EstimateReviewPanel client disclosures", () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = String(input);
       if (url.endsWith("/api/v1/auth/me")) return Response.json({ data: client });
+      if (url.endsWith("/api/v1/auth/authorization")) return Response.json({ data: authorizationFor(client.role) });
       if (url.includes("/api/v1/client/project-summaries?")) return Response.json({ data: { items: [], pagination: { limit: 100, offset: 0, total: 0, hasMore: false } } });
       if (url.endsWith("/api/v1/client/latest-approved-versions")) return Response.json({ data: [] });
       if (url.endsWith("/api/v1/client/estimates")) return Response.json({ data: clientEstimates });
@@ -264,6 +381,7 @@ describe("EstimateReviewPanel client disclosures", () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = String(input);
       if (url.endsWith("/api/v1/auth/me")) return Response.json({ data: client });
+      if (url.endsWith("/api/v1/auth/authorization")) return Response.json({ data: authorizationFor(client.role) });
       if (url.includes("/api/v1/client/project-summaries?")) return Response.json({ data: { items: [], pagination: { limit: 100, offset: 0, total: 0, hasMore: false } } });
       if (url.endsWith("/api/v1/client/latest-approved-versions")) return Response.json({ data: [] });
       if (url.endsWith("/api/v1/client/estimates")) return Response.json({ data: clientEstimates });
@@ -299,6 +417,7 @@ describe("EstimateReviewPanel client disclosures", () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = String(input);
       if (url.endsWith("/api/v1/auth/me")) return Response.json({ data: { id: "manager-1", name: "Meera Rao", email: "manager@lisno.example", role: "design_manager" } });
+      if (url.endsWith("/api/v1/auth/authorization")) return Response.json({ data: authorizationFor("design_manager") });
       if (url.endsWith("/api/v1/estimates/review-queue")) return Response.json({ data: [{
         id: "estimate-manager", leadId: "lead-manager", propertyType: "3BHK", rooms: [], scopes: [], lineItems: [], subtotal: 100000, gst: 18000, total: 118000, status: "pending_manager_assignment", approvalRequired: true, projectId: "project-manager",
         lead: { _id: "lead-manager", clientName: "Orchid Studio", clientEmail: "orchid@lisno.example", projectName: "Harbor House", location: "Kochi" }
@@ -319,15 +438,13 @@ describe("EstimateReviewPanel client disclosures", () => {
     expect(screen.queryByRole("button", { name: /Harbor House/ })).not.toBeInTheDocument();
   });
 
-  it("keeps designer estimate metadata and review actions immediately visible without a disclosure toggle", async () => {
+  it("does not surface estimate approval work on the Designer dashboard", async () => {
     tokenStorage.set("designer-token");
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = String(input);
       if (url.endsWith("/api/v1/auth/me")) return Response.json({ data: { id: "designer-1", name: "Ananya Shah", email: "ananya@lisno.example", role: "designer" } });
-      if (url.endsWith("/api/v1/estimates/review-queue")) return Response.json({ data: [{
-        id: "estimate-designer", leadId: "lead-designer", propertyType: "3BHK", rooms: [], scopes: [], lineItems: [], subtotal: 100000, gst: 18000, total: 118000, status: "pending_designer_approval", approvalRequired: true, projectId: "project-designer",
-        lead: { _id: "lead-designer", clientName: "Orchid Studio", clientEmail: "orchid@lisno.example", projectName: "Harbor House", location: "Kochi" }
-      }] });
+      if (url.endsWith("/api/v1/auth/authorization")) return Response.json({ data: authorizationFor("designer") });
+      if (url.endsWith("/api/v1/designer/design-plan-tasks")) return Response.json({ data: [] });
       if (url.startsWith("/api/v1/projects?")) return Response.json({ data: { items: [], pagination: { limit: 100, offset: 0, total: 0, hasMore: false } } });
       if (url.startsWith("/api/v1/kpis/users/designer-1/tasks?")) return Response.json({ data: { items: [], pagination: { limit: 20, offset: 0, total: 0, hasMore: false } } });
       if (url.startsWith("/api/v1/kpis/users/designer-1?")) return Response.json({ data: { score: 0, components: [], aggregates: { taskCounts: { total: 0, completed: 0, active: 0 }, riskCounts: { gray: 0, green: 0, yellow: 0, red: 0 }, effort: { planned: 0, completed: 0, remaining: 0, workloadPercentage: 0 }, projects: [], recentActivity: [] } } });
@@ -336,13 +453,10 @@ describe("EstimateReviewPanel client disclosures", () => {
 
     renderApp(["/designer"]);
 
-    const card = (await screen.findByRole("heading", { name: "Harbor House", level: 3 })).closest("article")!;
-    expect(within(card).getByText("Kochi")).toBeVisible();
-    expect(within(card).getByText("Orchid Studio")).toBeVisible();
-    expect(within(card).getByText("0 items · GST included")).toBeVisible();
-    expect(within(card).getByLabelText("Review note")).toBeVisible();
-    expect(within(card).getByRole("button", { name: "Request changes" })).toBeVisible();
-    expect(within(card).getByRole("button", { name: "Approve for client" })).toBeVisible();
-    expect(within(card).queryByRole("button", { name: /Harbor House/ })).not.toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Design workspace" })).toBeVisible();
+    expect(screen.queryByText("Estimate approvals")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Review note")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Request changes" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Approve for client" })).not.toBeInTheDocument();
   });
 });

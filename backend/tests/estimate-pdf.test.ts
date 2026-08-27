@@ -2,13 +2,16 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 import { getDocument } from "pdfjs-dist/legacy/build/pdf.mjs";
+import PDFDocument from "pdfkit";
 import { describe, expect, it } from "vitest";
 
 import { estimateBuilderSections } from "../../frontend/src/features/leads/estimateBuilderCatalogue.ts";
 import { estimatePdfCatalogue } from "../src/domain/estimate-pdf-catalogue.js";
 import {
   createEstimatePdfService,
-  type EstimatePdfInput
+  scaleEstimateTextSize,
+  type EstimatePdfInput,
+  type EstimatePdfProfile
 } from "../src/services/estimate-pdf.service.js";
 
 const backendLogo = readFileSync(
@@ -61,9 +64,12 @@ async function readPdf(bytes: Buffer) {
     )
   }).promise;
   const pageTexts: string[] = [];
+  const pageDimensions: Array<{ width: number; height: number }> = [];
 
   for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
     const page = await pdf.getPage(pageNumber);
+    const viewport = page.getViewport({ scale: 1 });
+    pageDimensions.push({ width: viewport.width, height: viewport.height });
     const content = await page.getTextContent();
     pageTexts.push(
       content.items
@@ -74,9 +80,61 @@ async function readPdf(bytes: Buffer) {
 
   return {
     pageCount: pdf.numPages,
+    pageDimensions,
     pageTexts,
     text: pageTexts.join(" ")
   };
+}
+
+async function generateWithTextTrace(
+  profile: EstimatePdfProfile
+): Promise<{
+  filename: string;
+  bytes: Buffer;
+  textSizes: number[];
+  textLines: string[];
+  imageCalls: unknown[][];
+  rotations: unknown[][];
+}> {
+  const textSizes: number[] = [];
+  const textLines: string[] = [];
+  const imageCalls: unknown[][] = [];
+  const rotations: unknown[][] = [];
+  const originalFontSize = PDFDocument.prototype.fontSize;
+  const originalText = PDFDocument.prototype.text;
+  const originalImage = PDFDocument.prototype.image;
+  const originalRotate = PDFDocument.prototype.rotate;
+
+  PDFDocument.prototype.fontSize = function (size: number) {
+    textSizes.push(size);
+    return originalFontSize.call(this, size);
+  };
+  PDFDocument.prototype.text = function (text: string, ...args: unknown[]) {
+    textLines.push(text);
+    return originalText.call(this, text, ...args);
+  };
+  PDFDocument.prototype.image = function (...args: unknown[]) {
+    imageCalls.push(args);
+    return originalImage.call(this, ...args);
+  };
+  PDFDocument.prototype.rotate = function (...args: unknown[]) {
+    rotations.push(args);
+    return originalRotate.call(this, ...args);
+  };
+
+  try {
+    const service = createEstimatePdfService({
+      now: () => new Date("2026-07-29T12:00:00.000Z"),
+      logoSvg: backendLogo
+    });
+    const result = await service.generate(fixture, { profile });
+    return { ...result, textSizes, textLines, imageCalls, rotations };
+  } finally {
+    PDFDocument.prototype.fontSize = originalFontSize;
+    PDFDocument.prototype.text = originalText;
+    PDFDocument.prototype.image = originalImage;
+    PDFDocument.prototype.rotate = originalRotate;
+  }
 }
 
 describe("estimate PDF catalogue", () => {
@@ -103,6 +161,35 @@ describe("estimate PDF catalogue", () => {
 });
 
 describe("estimate PDF service", () => {
+  it("generates compact client-delivery PDFs with scaled typography only", async () => {
+    expect(scaleEstimateTextSize(12, "standard")).toBe(12);
+    expect(scaleEstimateTextSize(12, "compact_client_delivery")).toBe(10);
+    expect(scaleEstimateTextSize(11, "compact_client_delivery")).toBe(9.5);
+    expect(scaleEstimateTextSize(8, "compact_client_delivery")).toBe(7);
+    expect(scaleEstimateTextSize(6, "compact_client_delivery")).toBe(7);
+
+    const standard = await generateWithTextTrace("standard");
+    const compact = await generateWithTextTrace("compact_client_delivery");
+    const standardPdf = await readPdf(standard.bytes);
+    const compactPdf = await readPdf(compact.bytes);
+
+    expect(compact.filename).toBe(standard.filename);
+    expect(compactPdf.pageCount).toBe(standardPdf.pageCount);
+    expect(compactPdf.pageDimensions).toEqual(standardPdf.pageDimensions);
+    expect(compactPdf.pageDimensions).toEqual([{ width: 595.28, height: 841.89 }]);
+    expect(compactPdf.pageTexts).toEqual(standardPdf.pageTexts);
+    expect(compactPdf.text).toContain("False ceiling - main area");
+    expect(compactPdf.text).toContain("INR 9,500");
+    expect(compactPdf.text).toContain("Final total");
+    expect(compactPdf.text).toContain("INR 11,210");
+    expect(compact.textLines).toEqual(standard.textLines);
+    expect(compact.imageCalls).toEqual(standard.imageCalls);
+    expect(compact.rotations).toEqual(standard.rotations);
+    expect(compact.textSizes).toEqual(
+      standard.textSizes.map((size) => Math.max(7, Math.round(size * 0.85 * 2) / 2))
+    );
+  });
+
   it("uses the exact frontend Lisno logo asset", () => {
     expect(backendLogo).toEqual(
       readFileSync(new URL("../../frontend/public/lisno-logo.svg", import.meta.url))

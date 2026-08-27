@@ -6,7 +6,7 @@ import request from "supertest";
 import sharp from "sharp";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
-import { createApp } from "../src/app.js";
+import { createApp as createApplication } from "../src/app.js";
 import {
   annotationDocumentSchema,
   type AnnotationDocumentV1
@@ -20,10 +20,18 @@ import { EstimateDesignUploadModel } from "../src/models/EstimateDesignUpload.js
 import { AuditEventModel } from "../src/models/AuditEvent.js";
 import { EstimateModel } from "../src/models/Estimate.js";
 import { LeadModel } from "../src/models/Lead.js";
+import { UserModel } from "../src/models/User.js";
 import { createMemoryRepository } from "../src/repositories/memory.js";
 import { demoSeedData } from "../src/seed/data.js";
+import { developmentDemoAuthentication } from "./helpers/development-demo-authentication.js";
 import { createEstimateDesignService } from "../src/services/estimate-design.service.js";
 import { createAuditService } from "../src/services/audit.service.js";
+
+const createApp = (dependencies: Parameters<typeof createApplication>[0]) =>
+  createApplication({
+    ...dependencies,
+    developmentDemoAuthorization: developmentDemoAuthentication()
+  });
 
 const SECRET = "estimate-design-review-secret-at-least-32-characters";
 const NOW = new Date("2026-07-30T14:00:00.000Z");
@@ -316,6 +324,13 @@ function setup(maxUploadBytes = 10_000_000) {
   vi.spyOn(LeadModel, "findOne").mockImplementation((filter) =>
     query(leads.find((item) => item._id === filter._id) ?? null) as never
   );
+  vi.spyOn(UserModel, "findOne").mockImplementation((filter) =>
+    query(
+      filter.role === "client" && filter.emailNormalized === "client@aurora.example"
+        ? { _id: "user-client-aurora", role: "client", active: true }
+        : null
+    ) as never
+  );
   vi.spyOn(EstimateDesignUploadModel, "findById").mockImplementation((id) =>
     query(uploads.find((item) => item._id === id) ?? null) as never
   );
@@ -434,7 +449,13 @@ function setup(maxUploadBytes = 10_000_000) {
     return { deletedCount: index >= 0 ? 1 : 0 } as never;
   });
 
-  const repository = createMemoryRepository(structuredClone(demoSeedData));
+  const seed = structuredClone(demoSeedData);
+  const repository = createMemoryRepository(seed);
+  const projectGrantSpies = [
+    vi.spyOn(repository, "findActiveProjectAccessGrant"),
+    vi.spyOn(repository, "listProjectsForUserInModule"),
+    vi.spyOn(repository, "pageProjectsForUserInModule")
+  ] as const;
   const app = createApp({
     repository,
     auth: { jwtSecret: SECRET, jwtExpiresInSeconds: 900 },
@@ -459,7 +480,8 @@ function setup(maxUploadBytes = 10_000_000) {
     drawings,
     revisions,
     drafts,
-    auditEvents
+    auditEvents,
+    projectGrantSpies
   };
 }
 
@@ -512,6 +534,61 @@ describe("estimate drawing annotation schema", () => {
 });
 
 describe("estimate drawing client review", () => {
+  it("uses the related Client draft identity for a Super Admin client-shaped read", async () => {
+    const { app, drafts } = setup();
+    drafts.push({
+      _id: "annotation-draft-related-client",
+      revisionId: "revision-1",
+      clientId: "user-client-aurora",
+      version: 3,
+      annotations: annotations()
+    });
+
+    const response = await request(app)
+      .get("/api/v1/client/estimates/estimate-1/design-drawings")
+      .set("Authorization", auth("user-super-admin", "super_admin"))
+      .expect(200);
+
+    expect(response.body.data.revisions).toContainEqual(expect.objectContaining({
+      id: "revision-1",
+      annotationDraft: expect.objectContaining({
+        id: "annotation-draft-related-client",
+        version: 3
+      })
+    }));
+    expect(EstimateDesignAnnotationDraftModel.findOne).toHaveBeenCalledWith({
+      revisionId: "revision-1",
+      clientId: "user-client-aurora"
+    });
+    expect(EstimateDesignAnnotationDraftModel.findOne).not.toHaveBeenCalledWith(
+      expect.objectContaining({ clientId: "user-super-admin" })
+    );
+  });
+
+  it("allows Super Admin global Estimate Design reads without project grants", async () => {
+    const { app, projectGrantSpies } = setup();
+    const authorization = auth("user-super-admin", "super_admin");
+
+    await request(app)
+      .get("/api/v1/estimates/estimate-1/design-uploads")
+      .set("Authorization", authorization)
+      .expect(200);
+    await request(app)
+      .get("/api/v1/estimate-design-source-pages/page-1/image")
+      .set("Authorization", authorization)
+      .expect(200);
+    await request(app)
+      .get("/api/v1/estimate-design-revisions/revision-1/image")
+      .set("Authorization", authorization)
+      .expect(200);
+    await request(app)
+      .get("/api/v1/client/estimates/estimate-1/design-drawings")
+      .set("Authorization", authorization)
+      .expect(200);
+
+    for (const spy of projectGrantSpies) expect(spy).not.toHaveBeenCalled();
+  });
+
   it("exposes submitted drawings only to the exact lead-email client", async () => {
     const { app } = setup();
 

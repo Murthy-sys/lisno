@@ -1,4 +1,6 @@
 import { model, models, Schema } from "./mongoose.js";
+import { ROLE_CODES } from "../domain/roles.js";
+import { ACCOUNT_KINDS } from "../domain/demo-identities.js";
 
 const userSchema = new Schema(
   {
@@ -11,10 +13,17 @@ const userSchema = new Schema(
     passwordHash: { type: String, required: true, select: false },
     role: {
       type: String,
-      enum: ["designer", "design_manager", "design_head", "estimator_sales", "client"],
+      enum: ROLE_CODES,
       required: true
     },
     active: { type: Boolean, required: true, default: true },
+    accountKind: {
+      type: String,
+      enum: ACCOUNT_KINDS,
+      required: true,
+      default: "standard"
+    },
+    version: { type: Number, required: true, default: 1, min: 1 },
     managerId: { type: String, ref: "User", default: null },
     authorizedClientIds: [{ type: String, ref: "User" }],
     avatar: { type: String },
@@ -24,6 +33,14 @@ const userSchema = new Schema(
 );
 
 userSchema.index({ emailNormalized: 1 }, { unique: true });
+userSchema.index(
+  { role: 1 },
+  {
+    unique: true,
+    partialFilterExpression: { role: "super_admin" },
+    name: "one_super_admin"
+  }
+);
 userSchema.index({ role: 1, active: 1 });
 userSchema.index({ managerId: 1, role: 1 });
 

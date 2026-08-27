@@ -6,7 +6,8 @@ import type {
   PaginationInput
 } from "../repositories/types.js";
 import type { PublicUser } from "./auth.service.js";
-import { forbidden, requireAccessibleProject } from "./workflow.js";
+import { sanitizeAuditPage } from "./audit.service.js";
+import { forbidden, requireProjectOperationAccess } from "./workflow.js";
 
 const MAX_PROJECT_TASKS = 1_000;
 const MAX_PROJECT_VERSIONS = 5_000;
@@ -25,12 +26,13 @@ export function createProjectActivityService(
   return {
     async list(actor, projectId, pagination) {
       if (
+        actor.role !== "super_admin" &&
         actor.role !== "design_manager" &&
         actor.role !== "design_head"
       ) {
         forbidden();
       }
-      const project = await requireAccessibleProject(
+      const project = await requireProjectOperationAccess(
         repository,
         actor,
         projectId
@@ -55,7 +57,7 @@ export function createProjectActivityService(
           "Project activity is too large to inspect safely."
         );
       }
-      return repository.pageAuditEvents(
+      return sanitizeAuditPage(await repository.pageAuditEvents(
         {
           entityIds: [
             project.id,
@@ -65,7 +67,7 @@ export function createProjectActivityService(
           sort: "desc"
         },
         pagination
-      );
+      ));
     }
   };
 }

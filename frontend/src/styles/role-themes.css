@@ -1,0 +1,1482 @@
+/*
+ * Application theme: Teak — walnut/amber wood tones on warm sand.
+ *
+ * Loaded after index.css so it can retint the shared primitives without
+ * unpicking them. Every rule is scoped to `.ui-app-shell[data-role]`, which
+ * keeps it ahead of the dashboard stylesheets on specificity while matching
+ * all five roles — client, estimator_sales, designer, design_manager and
+ * design_head share one palette, one canvas and one frosted-glass deck recipe
+ * driven by the --role-* tokens below.
+ *
+ * Anything genuinely role-specific belongs in a `[data-role="x"]` override
+ * under this file, not in a second palette.
+ */
+
+/* ---------------------------------------------------------- auth (no role) */
+
+/*
+ * Sign-in and sign-up render outside `.ui-app-shell` and before any role is
+ * known, so nothing below reaches them. They carry the teak palette directly
+ * as the product's shared front door.
+ */
+.login-page {
+  /* Amber carries the glow: teak brown at the same alpha reads as flat
+     shadow against a near-black base. */
+  --auth-story:
+    radial-gradient(circle at 16% 88%, rgb(206 146 68 / 52%), transparent 34%),
+    radial-gradient(circle at 96% 4%, rgb(224 174 105 / 24%), transparent 32%),
+    linear-gradient(145deg, #1a110b 0%, #35251a 52%, #5a3b21 100%);
+  --auth-panel:
+    radial-gradient(circle at 86% 8%, rgb(169 121 63 / 12%), transparent 28%),
+    radial-gradient(circle at 4% 96%, rgb(88 58 32 / 8%), transparent 30%),
+    linear-gradient(155deg, #faf5ec 0%, #f1e9da 100%);
+  --auth-accent: #9a6c33;
+  --auth-accent-bright: #e0ae69;
+  --auth-ink: #2e2318;
+  --auth-ink-muted: #6e6152;
+  --auth-line: #ddd0b8;
+  --auth-cta: linear-gradient(135deg, #a9793f 0%, #8d6238 58%, #6b4a2f 100%);
+  --auth-cta-hover: linear-gradient(135deg, #bd8a4a 0%, #9d6f3f 58%, #7a5636 100%);
+
+  background: #f4efe4;
+}
+
+.login-page .login-story,
+.login-page--signin .login-story {
+  background: var(--auth-story);
+}
+
+.login-page .login-panel,
+.login-page--signin .login-panel {
+  background: var(--auth-panel);
+}
+
+.login-page .login-story__content .eyebrow,
+.login-page--signin .login-story__content .eyebrow {
+  color: var(--auth-accent-bright);
+}
+
+.login-page .login-story__content > p:last-child,
+.login-page--signin .login-story__content > p:last-child {
+  color: #e2d6c2;
+}
+
+.login-page .login-story__note,
+.login-page--signin .login-story__note {
+  color: #d3c5ad;
+}
+
+.login-page--signin .login-card {
+  border-color: rgb(58 38 18 / 12%);
+  background: rgb(255 252 246 / 88%);
+  box-shadow:
+    0 1px 0 rgb(255 255 255 / 92%) inset,
+    0 28px 80px rgb(58 38 18 / 15%);
+}
+
+.login-page .login-card > .eyebrow,
+.login-page--signin .login-card > .eyebrow {
+  color: var(--auth-accent);
+}
+
+.login-page--signin .login-card h1,
+.login-page .login-card h1 {
+  color: var(--auth-ink);
+}
+
+.login-page--signin .login-card__intro,
+.login-page--signin .field label {
+  color: var(--auth-ink-muted);
+}
+
+.login-page--signin .field label {
+  color: var(--auth-ink);
+}
+
+.login-page--signin .field input {
+  border-color: var(--auth-line);
+  background: rgb(255 253 248 / 94%);
+}
+
+.login-page--signin .field input:hover {
+  border-color: #c6b493;
+  background: #fffdf8;
+}
+
+.login-page--signin .field input:focus {
+  border-color: var(--auth-accent);
+  background: #fffdf8;
+  box-shadow:
+    0 0 0 4px rgb(169 121 63 / 16%),
+    0 8px 24px rgb(58 38 18 / 8%);
+}
+
+/* `.signup-submit` has no rules of its own and falls through to the violet
+   `.ui-button--primary`, so both submits are covered here. */
+.login-page--signin .login-submit,
+.login-page .signup-submit,
+.login-page .ui-button--primary {
+  border-color: rgb(255 255 255 / 16%);
+  background: var(--auth-cta);
+  color: #fdf7ec;
+  box-shadow:
+    0 14px 30px rgb(107 74 47 / 32%),
+    0 1px 0 rgb(255 255 255 / 24%) inset;
+}
+
+.login-page--signin .login-submit:hover:not(:disabled),
+.login-page .signup-submit:hover:not(:disabled),
+.login-page .ui-button--primary:hover:not(:disabled) {
+  background: var(--auth-cta-hover);
+  box-shadow:
+    0 18px 38px rgb(107 74 47 / 38%),
+    0 1px 0 rgb(255 255 255 / 28%) inset;
+}
+
+.login-page--signin .login-submit:active:not(:disabled) {
+  box-shadow: 0 9px 20px rgb(107 74 47 / 28%);
+}
+
+.login-page--signin .password-field__toggle:hover:not(:disabled) {
+  background: #f6ecdb;
+  color: var(--auth-accent);
+}
+
+.login-page .auth-switch a,
+.login-page--signin .auth-switch a {
+  color: var(--auth-accent);
+}
+
+.login-page .auth-switch a:hover,
+.login-page--signin .auth-switch a:hover {
+  color: #7a5122;
+}
+
+.login-page :focus-visible {
+  box-shadow: 0 0 0 3px rgb(169 121 63 / 55%);
+}
+
+/* ---------------------------------------------------------------- palettes */
+
+/*
+ * Grain. Sits at the top of every canvas stack so the frosted decks blur real
+ * texture rather than a flat fill — without it the glass has nothing to refract.
+ */
+.ui-app-shell[data-role] {
+  --role-grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='220' height='220'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='220' height='220' filter='url(%23n)' opacity='0.42'/%3E%3C/svg%3E");
+}
+
+/*
+ * One palette for every role. Client and estimator each had their own tuning
+ * (olive/gold vs teak/amber), which read as two different products; the
+ * selector is now role-agnostic so designer, design_manager and design_head
+ * inherit it too instead of staying on the old violet canvas.
+ */
+.ui-app-shell[data-role] {
+  /* Orbs are placed across the content column (the rail covers 0-23%), so the
+     colour under each deck actually shifts and the frost has something to
+     refract. Edge-hugging orbs just hide behind the panels. */
+  --role-canvas:
+    var(--role-grain),
+    radial-gradient(30rem 30rem at 34% 10%, rgb(206 146 68 / 72%), transparent 58%),
+    radial-gradient(26rem 26rem at 92% 22%, rgb(150 88 40 / 66%), transparent 56%),
+    radial-gradient(28rem 26rem at 58% 52%, rgb(224 174 105 / 60%), transparent 58%),
+    radial-gradient(30rem 28rem at 30% 84%, rgb(120 72 34 / 56%), transparent 58%),
+    radial-gradient(24rem 24rem at 84% 92%, rgb(216 158 84 / 54%), transparent 60%),
+    radial-gradient(22rem 22rem at 8% 46%, rgb(94 58 28 / 40%), transparent 62%),
+    linear-gradient(168deg, #f8f2e6 0%, #f0e6d4 46%, #e6d8bf 100%);
+  --role-rail: linear-gradient(196deg, #33241a 0%, #271b13 58%, #1b120c 100%);
+  --role-band: linear-gradient(126deg, #3e2a1b 0%, #7a5330 52%, #a9793f 100%);
+  --role-band-ink: #fbf4e8;
+  --role-band-ink-muted: #e3d2b8;
+  --role-ink: #2e2318;
+  --role-ink-muted: #6e6152;
+  --role-accent: #9a6c33;
+  --role-accent-bright: #e0ae69;
+  --role-line: #e2d5be;
+  --role-line-strong: #cdb994;
+  --role-deck: #fffcf6;
+  --role-deck-tint: #f6ecdb;
+  --role-glass: rgb(255 252 246 / 54%);
+  --role-glass-strong: rgb(255 252 246 / 78%);
+  --role-glass-edge: rgb(255 255 255 / 56%);
+  --role-shadow-tint: 58 38 18;
+  --role-focus: #a9793f;
+  --role-cta: linear-gradient(140deg, #6b4a2f 0%, #8d6238 58%, #a9793f 100%);
+  --role-cta-hover: linear-gradient(140deg, #7a5636 0%, #9d6f3f 58%, #bd8a4a 100%);
+  --role-cta-ink: #fdf7ec;
+}
+
+/* ------------------------------------------------- shared glass + shadows */
+
+.ui-app-shell[data-role] {
+  --role-shadow-soft:
+    0 1px 2px rgb(var(--role-shadow-tint) / 6%),
+    0 10px 26px -12px rgb(var(--role-shadow-tint) / 24%);
+  --role-shadow-lift:
+    0 2px 4px rgb(var(--role-shadow-tint) / 8%),
+    0 22px 44px -18px rgb(var(--role-shadow-tint) / 36%);
+  /* Lit rim: bright inset on the top edge, a faint dark one underneath, then
+     the cast shadow. That top highlight is what reads as a glass edge. */
+  --role-glass-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 90%),
+    inset 0 -1px 0 rgb(var(--role-shadow-tint) / 7%),
+    0 2px 6px rgb(var(--role-shadow-tint) / 8%),
+    0 24px 56px -20px rgb(var(--role-shadow-tint) / 40%);
+  --role-glass-shadow-lift:
+    inset 0 1px 0 rgb(255 255 255 / 100%),
+    inset 0 -1px 0 rgb(var(--role-shadow-tint) / 9%),
+    0 4px 10px rgb(var(--role-shadow-tint) / 10%),
+    0 34px 72px -22px rgb(var(--role-shadow-tint) / 50%);
+  --role-glass-filter: blur(22px) saturate(180%);
+  /* Diagonal specular sweep, layered over the tint so light appears to fall
+     across the pane from the top-left. */
+  --role-glass-sheen:
+    linear-gradient(
+      148deg,
+      rgb(255 255 255 / 62%) 0%,
+      rgb(255 255 255 / 16%) 38%,
+      rgb(255 255 255 / 0%) 66%
+    );
+  --role-ease: cubic-bezier(0.2, 0, 0, 1);
+}
+
+/*
+ * One deck recipe, applied to every card-like surface in both roles.
+ * `.ui-glass` is the shorthand the rest of this file composes from.
+ */
+.ui-app-shell[data-role] .ui-glass,
+.ui-app-shell[data-role] .client-project-card,
+.ui-app-shell[data-role] .client-floor-card,
+.ui-app-shell[data-role] .client-version,
+.ui-app-shell[data-role] .client-estimate-drawings,
+.ui-app-shell[data-role] .client-estimate-details,
+.ui-app-shell[data-role] .client-dashboard__overview dl > div,
+.ui-app-shell[data-role] .estimator-dashboard__overview dl > div,
+.ui-app-shell[data-role] .lead-controls,
+.ui-app-shell[data-role] .lead-row,
+.ui-app-shell[data-role] .saved-estimates,
+.ui-app-shell[data-role] .saved-estimate-card,
+.ui-app-shell[data-role] .estimate-design-uploads__status-list li,
+.ui-app-shell[data-role] .estimate-drawing-row__menu,
+.ui-app-shell[data-role] .estimate-panel,
+.ui-app-shell[data-role] .estimate-review-panel,
+.ui-app-shell[data-role] .estimate-review-card,
+.ui-app-shell[data-role] .designer-kpi,
+.ui-app-shell[data-role] .designer-project-row,
+.ui-app-shell[data-role] .estimate-design-uploads,
+.ui-app-shell[data-role] .estimate-design-uploads__placement,
+.ui-app-shell[data-role] .estimate-design-uploads__group,
+.ui-app-shell[data-role] .estimate-design-uploads__misc,
+.ui-app-shell[data-role] .estimate-builder-section,
+.ui-app-shell[data-role] .estimate-scope-list,
+.ui-app-shell[data-role] .estimate-dimensions {
+  border: 1px solid var(--role-glass-edge);
+  border-radius: var(--radius-surface);
+  background-color: var(--role-glass);
+  background-image: var(--role-glass-sheen);
+  box-shadow: var(--role-glass-shadow);
+  backdrop-filter: var(--role-glass-filter);
+  -webkit-backdrop-filter: var(--role-glass-filter);
+}
+
+/* Backdrop blur cannot see through an opaque ancestor, so nested decks step
+   up to the solid tint instead of stacking a second useless blur. */
+.ui-app-shell[data-role] .estimate-design-uploads .estimate-design-uploads__placement,
+.ui-app-shell[data-role] .estimate-design-uploads .estimate-design-uploads__group,
+.ui-app-shell[data-role] .estimate-design-uploads .estimate-design-uploads__misc,
+.ui-app-shell[data-role] .estimate-design-uploads .estimate-design-uploads__status-list li,
+.ui-app-shell[data-role] .saved-estimates .saved-estimate-card,
+.ui-app-shell[data-role] .designer-kpi .kpi-component,
+.ui-app-shell[data-role] .estimate-review-panel .estimate-review-card {
+  border-color: var(--role-glass-edge);
+  background-color: var(--role-glass-strong);
+  background-image: var(--role-glass-sheen);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 85%),
+    0 2px 6px rgb(var(--role-shadow-tint) / 7%),
+    0 16px 34px -16px rgb(var(--role-shadow-tint) / 30%);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.ui-app-shell[data-role] .estimate-design-uploads__placement {
+  border-color: color-mix(in srgb, var(--role-accent) 42%, transparent);
+  background: color-mix(in srgb, var(--role-accent-bright) 14%, var(--role-glass-strong));
+}
+
+/* ------------------------------------------------------------------- shell */
+
+.ui-app-shell[data-role] {
+  background: var(--role-canvas);
+  background-attachment: fixed;
+  color: var(--role-ink);
+}
+
+.ui-app-shell[data-role] .ui-workspace {
+  background: transparent;
+}
+
+.ui-app-shell[data-role] .ui-sidebar-rail {
+  background: var(--role-rail);
+  border-inline-end: 1px solid rgb(255 255 255 / 8%);
+  box-shadow: 1px 0 0 rgb(12 10 30 / 18%);
+}
+
+.ui-app-shell[data-role] .ui-sidebar__link > svg {
+  color: var(--role-accent-bright);
+}
+
+.ui-app-shell[data-role] .ui-sidebar__link--active,
+.ui-app-shell[data-role] .ui-sidebar__link:hover {
+  background: rgb(255 255 255 / 10%);
+}
+
+.ui-app-shell[data-role] .ui-sidebar__link--active {
+  border-inline-start-color: var(--role-accent-bright);
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 7%);
+}
+
+/* -------------------------------------------------------- sidebar account */
+
+/*
+ * Icon-only sign-out. The label used to eat the row, truncating the name to
+ * "P…"; trimming the avatar and the trigger buys the identity ~30px back.
+ */
+.ui-app-shell[data-role] .ui-sidebar__account {
+  gap: var(--space-2);
+  align-items: center;
+  padding: var(--space-4) 0 var(--space-2);
+}
+
+.ui-app-shell[data-role] .ui-sidebar__avatar {
+  block-size: 2.25rem;
+  inline-size: 2.25rem;
+  background: linear-gradient(140deg, var(--role-accent-bright), var(--role-accent));
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 40%);
+  color: #1c130c;
+}
+
+.ui-app-shell[data-role] .ui-sidebar__identity strong {
+  font-size: var(--text-sm);
+  letter-spacing: -0.005em;
+}
+
+.ui-app-shell[data-role] .ui-sidebar__identity span {
+  color: color-mix(in srgb, var(--role-band-ink) 58%, transparent);
+}
+
+.ui-app-shell[data-role] .ui-sidebar__sign-out {
+  min-block-size: 2.25rem;
+  inline-size: 2.25rem;
+  border: 1px solid rgb(255 255 255 / 16%);
+  border-radius: var(--radius-control);
+  background: rgb(255 255 255 / 8%);
+  color: var(--role-band-ink);
+  transition:
+    background var(--duration-fast) var(--role-ease),
+    border-color var(--duration-fast) var(--role-ease);
+}
+
+.ui-app-shell[data-role] .ui-sidebar__sign-out:not(:disabled):hover {
+  border-color: color-mix(in srgb, var(--role-accent-bright) 55%, transparent);
+  background: rgb(255 255 255 / 16%);
+  color: var(--role-accent-bright);
+}
+
+.ui-app-shell[data-role] .ui-mobile-header {
+  background: var(--role-rail);
+  border-block-end: 0;
+  color: var(--role-band-ink);
+  box-shadow: 0 10px 30px -18px rgb(12 10 30 / 70%);
+}
+
+.ui-app-shell[data-role] .ui-mobile-header .brand {
+  color: var(--role-band-ink);
+}
+
+/* ------------------------------------------------------- header band, type */
+
+.ui-app-shell[data-role] .workspace-header,
+.ui-app-shell[data-role] .estimate-workspace__header {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  align-items: end;
+  gap: clamp(1.25rem, 3vw, 2.5rem);
+  padding: clamp(1.6rem, 3.4vw, 2.6rem);
+  border: 0;
+  border-radius: var(--radius-surface);
+  background: var(--role-band);
+  color: var(--role-band-ink);
+  box-shadow: var(--role-shadow-lift);
+}
+
+.ui-app-shell[data-role] .workspace-header::after,
+.ui-app-shell[data-role] .estimate-workspace__header::after {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  background:
+    radial-gradient(30rem 18rem at 88% -30%, rgb(255 255 255 / 22%), transparent 70%),
+    radial-gradient(24rem 16rem at 4% 130%, rgb(255 255 255 / 10%), transparent 70%);
+}
+
+.ui-app-shell[data-role] .workspace-header h1,
+.ui-app-shell[data-role] .estimate-workspace__header h1 {
+  color: var(--role-band-ink);
+  font-size: clamp(2.1rem, 3.6vw, 3.4rem);
+  letter-spacing: -0.035em;
+}
+
+.ui-app-shell[data-role] .workspace-header p:last-child,
+.ui-app-shell[data-role] .estimate-workspace__header p {
+  color: var(--role-band-ink-muted);
+}
+
+.ui-app-shell[data-role] .workspace-header .eyebrow,
+.ui-app-shell[data-role] .estimate-workspace__header .eyebrow {
+  color: var(--role-accent-bright);
+}
+
+.ui-app-shell[data-role] .eyebrow {
+  color: var(--role-accent);
+}
+
+.ui-app-shell[data-role] h1,
+.ui-app-shell[data-role] h2,
+.ui-app-shell[data-role] h3 {
+  color: var(--role-ink);
+}
+
+/*
+ * Headings that sit on a dark band. The blanket rule above is light-canvas
+ * ink; anything on a dark surface has to opt back out or it goes near-black
+ * on near-black (the KPI panel in the designer/manager/head views did).
+ */
+.ui-app-shell[data-role] .workspace-header h1,
+.ui-app-shell[data-role] .workspace-header h2,
+.ui-app-shell[data-role] .estimate-workspace__header h1,
+.ui-app-shell[data-role] .kpi-panel h1,
+.ui-app-shell[data-role] .kpi-panel h2,
+.ui-app-shell[data-role] .kpi-panel h3,
+.ui-app-shell[data-role] .estimate-proposal > header h1,
+.ui-app-shell[data-role] .estimate-proposal > header h2,
+.ui-app-shell[data-role] .estimate-proposal > header h3 {
+  color: var(--role-band-ink);
+}
+
+/* The KPI panel was navy with a violet glow; bring it onto the teak band. */
+.ui-app-shell[data-role] .kpi-panel {
+  background:
+    radial-gradient(circle at 5% 95%, rgb(224 174 105 / 34%), transparent 32%),
+    var(--role-band);
+  box-shadow: var(--role-shadow-lift);
+  color: var(--role-band-ink);
+}
+
+.ui-app-shell[data-role] .kpi-panel__intro .eyebrow {
+  color: var(--role-accent-bright);
+}
+
+.ui-app-shell[data-role] .kpi-panel__intro > p:not(.eyebrow),
+.ui-app-shell[data-role] .kpi-panel .kpi-component p,
+.ui-app-shell[data-role] .kpi-panel .kpi-component__heading span,
+.ui-app-shell[data-role] .kpi-score p,
+.ui-app-shell[data-role] .kpi-score span,
+.ui-app-shell[data-role] .kpi-component__unavailable {
+  color: var(--role-band-ink-muted);
+}
+
+.ui-app-shell[data-role] .kpi-component__heading b {
+  color: var(--role-accent-bright);
+}
+
+.ui-app-shell[data-role] .kpi-component .progress > span {
+  background: linear-gradient(90deg, var(--role-accent), var(--role-accent-bright));
+}
+
+/* The Designer dashboard uses KPI cards on the light canvas, not the dark
+   management band. Keep its compact strip on the ordinary role ink scale. */
+.ui-app-shell[data-role] .designer-kpi .kpi-score p,
+.ui-app-shell[data-role] .designer-kpi .kpi-score span,
+.ui-app-shell[data-role] .designer-kpi .kpi-component__heading span,
+.ui-app-shell[data-role] .designer-kpi .kpi-component p,
+.ui-app-shell[data-role] .designer-kpi .kpi-component__unavailable {
+  color: var(--role-ink-muted);
+}
+
+.ui-app-shell[data-role] .designer-kpi .kpi-component__heading b {
+  color: var(--role-accent);
+}
+
+/* ------------------------------------------------------- violet holdouts */
+
+/*
+ * index.css predates this theme and carries the old brand violet in two
+ * forms. Remapping the shared tokens catches everything that reads them;
+ * the selectors below are the hard-coded hexes a sweep of the rendered
+ * views still turned up.
+ */
+.ui-app-shell[data-role] {
+  --color-lisno-violet: var(--role-accent);
+  --color-lisno-navy: var(--role-ink);
+}
+
+.ui-app-shell[data-role] .button--quiet,
+.ui-app-shell[data-role] .auth-switch a,
+.ui-app-shell[data-role] .search-combobox__error button,
+.ui-app-shell[data-role] .risk-item a,
+.ui-app-shell[data-role] .project-card__link,
+.ui-app-shell[data-role] .back-link,
+.ui-app-shell[data-role] .task-row__latest-note span,
+.ui-app-shell[data-role] .activity-list__icon {
+  color: var(--role-accent);
+}
+
+.ui-app-shell[data-role] .annotation-toolbar button[aria-pressed="true"] {
+  border-color: var(--role-accent);
+  color: var(--role-accent);
+}
+
+.ui-app-shell[data-role] .progress > span {
+  background: linear-gradient(90deg, var(--role-accent), var(--role-accent-bright));
+}
+
+/* ----------------------------------------------------------- ask lisno */
+
+/*
+ * Floating chat launcher, mounted in AppShell rather than the estimates
+ * panel so no backdrop-filter ancestor captures its `fixed` positioning.
+ */
+.ui-app-shell[data-role] .ask-lisno-launcher {
+  inset-block-end: max(1.25rem, env(safe-area-inset-bottom));
+  inset-inline-end: max(1.25rem, env(safe-area-inset-right));
+  z-index: calc(var(--z-modal) - 1);
+  min-height: 3.75rem;
+  padding: 0.6rem 1.1rem 0.6rem 0.6rem;
+  border: 1px solid var(--role-glass-edge);
+  border-radius: var(--radius-pill);
+  background-color: var(--role-glass-strong);
+  background-image: var(--role-glass-sheen);
+  color: var(--role-ink);
+  box-shadow: var(--role-glass-shadow-lift);
+  backdrop-filter: var(--role-glass-filter);
+  -webkit-backdrop-filter: var(--role-glass-filter);
+  transition:
+    transform 200ms var(--role-ease),
+    box-shadow 200ms var(--role-ease);
+}
+
+.ui-app-shell[data-role] .ask-lisno-launcher:not(:disabled):hover {
+  transform: translateY(-2px);
+}
+
+.ui-app-shell[data-role] .ask-lisno-launcher__icon {
+  background: var(--role-band);
+  color: var(--role-accent-bright);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 22%);
+}
+
+.ui-app-shell[data-role] .ask-lisno-launcher strong {
+  color: var(--role-ink);
+  font-weight: 800;
+}
+
+.ui-app-shell[data-role] .ask-lisno-launcher small {
+  color: var(--role-ink-muted);
+}
+
+/* Collapse to the icon on small screens so it stops covering content. */
+@media (max-width: 560px) {
+  .ui-app-shell[data-role] .ask-lisno-launcher {
+    min-width: 0;
+    padding: 0.6rem;
+  }
+
+  .ui-app-shell[data-role] .ask-lisno-launcher > span:last-child {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+  }
+}
+
+.ui-app-shell[data-role] .estimate-workspace__summary {
+  border: 1px solid rgb(255 255 255 / 22%);
+  border-radius: var(--radius-surface);
+  background: rgb(255 255 255 / 12%);
+  box-shadow: none;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+.ui-app-shell[data-role] .estimate-workspace__summary span {
+  color: var(--role-band-ink-muted);
+}
+
+/* ----------------------------------------------------------------- buttons */
+
+.ui-app-shell[data-role] .button--primary,
+.ui-app-shell[data-role] .ui-button--primary,
+.ui-app-shell[data-role] .button--download {
+  border: 0;
+  background: var(--role-cta);
+  color: var(--role-cta-ink);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 22%),
+    0 12px 26px -14px rgb(var(--role-shadow-tint) / 90%);
+}
+
+.ui-app-shell[data-role] .button--primary:hover:not(:disabled),
+.ui-app-shell[data-role] .ui-button--primary:hover:not(:disabled),
+.ui-app-shell[data-role] .button--download:hover:not(:disabled) {
+  background: var(--role-cta-hover);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 28%),
+    0 16px 32px -14px rgb(var(--role-shadow-tint) / 95%);
+}
+
+/*
+ * `.secondary-button` had no definition at all, so every control using it
+ * rendered as plain text. index.css now gives it a base; here it picks up
+ * the role's wood tones and the glass treatment.
+ */
+.ui-app-shell[data-role] .secondary-button,
+.ui-app-shell[data-role] .button--secondary,
+.ui-app-shell[data-role] .ui-button--secondary,
+.ui-app-shell[data-role] .estimate-design-uploads__retry {
+  border: 1px solid var(--role-line-strong);
+  border-radius: var(--radius-field);
+  background: var(--role-glass-strong);
+  color: var(--role-ink);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 70%),
+    0 1px 2px rgb(var(--role-shadow-tint) / 8%);
+  font-weight: 750;
+}
+
+.ui-app-shell[data-role] .secondary-button:hover:not(:disabled),
+.ui-app-shell[data-role] .button--secondary:hover:not(:disabled),
+.ui-app-shell[data-role] .ui-button--secondary:hover:not(:disabled),
+.ui-app-shell[data-role] .estimate-design-uploads__retry:hover:not(:disabled) {
+  border-color: var(--role-accent);
+  background: color-mix(in srgb, var(--role-accent-bright) 18%, var(--role-deck));
+  color: var(--role-ink);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 80%),
+    0 6px 16px -8px rgb(var(--role-shadow-tint) / 45%);
+}
+
+/* The upload picker is a <label>, so it needs the control metrics too. */
+.ui-app-shell[data-role] .estimate-design-uploads__file-picker {
+  display: inline-flex;
+  min-height: 2.75rem;
+  align-items: center;
+  justify-content: center;
+  padding: 0.55rem 1rem;
+}
+
+.ui-app-shell[data-role] .back-link,
+.ui-app-shell[data-role] .estimate-workspace__back {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.5rem 0.9rem;
+  border: 1px solid var(--role-line);
+  border-radius: var(--radius-pill);
+  background: var(--role-glass);
+  color: var(--role-ink-muted);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 65%);
+  backdrop-filter: var(--role-glass-filter);
+  -webkit-backdrop-filter: var(--role-glass-filter);
+  text-decoration: none;
+}
+
+.ui-app-shell[data-role] .back-link:hover,
+.ui-app-shell[data-role] .estimate-workspace__back:hover {
+  border-color: var(--role-accent);
+  color: var(--role-ink);
+}
+
+/* Grid children stretch by default; controls should size to their label. */
+.ui-app-shell[data-role] .back-link,
+.ui-app-shell[data-role] .estimate-workspace__back,
+.ui-app-shell[data-role] .estimate-design-uploads > .secondary-button,
+.ui-app-shell[data-role] .estimate-panel > .secondary-button {
+  justify-self: start;
+  inline-size: max-content;
+}
+
+.ui-app-shell[data-role] .workspace-header .button--primary {
+  border: 1px solid rgb(255 255 255 / 30%);
+  background: rgb(255 255 255 / 16%);
+  color: var(--role-band-ink);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 26%);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+.ui-app-shell[data-role] .workspace-header .button--primary:hover:not(:disabled) {
+  border-color: rgb(255 255 255 / 50%);
+  background: rgb(255 255 255 / 26%);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 34%);
+}
+
+/* ---------------------------------------------------------- metric tiles */
+
+.ui-app-shell[data-role] .client-dashboard__overview dl > div,
+.ui-app-shell[data-role] .estimator-dashboard__overview dl > div {
+  position: relative;
+  overflow: hidden;
+  align-content: start;
+  gap: var(--space-3);
+  padding: var(--space-5);
+  transition:
+    transform 200ms var(--role-ease),
+    box-shadow 200ms var(--role-ease),
+    border-color 200ms var(--role-ease);
+}
+
+.ui-app-shell[data-role] .client-dashboard__overview dl > div::before,
+.ui-app-shell[data-role] .estimator-dashboard__overview dl > div::before {
+  content: "";
+  position: absolute;
+  inset-block-start: 0;
+  inset-inline: 0;
+  block-size: 3px;
+  background: linear-gradient(90deg, var(--role-accent), var(--role-accent-bright));
+}
+
+.ui-app-shell[data-role] .client-dashboard__overview dl > div:hover,
+.ui-app-shell[data-role] .estimator-dashboard__overview dl > div:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--role-glass-shadow-lift);
+}
+
+.ui-app-shell[data-role] .client-dashboard__overview dt,
+.ui-app-shell[data-role] .estimator-dashboard__overview dt {
+  color: var(--role-ink-muted);
+  font-size: var(--text-xs);
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.ui-app-shell[data-role] .client-dashboard__overview dd,
+.ui-app-shell[data-role] .estimator-dashboard__overview dd {
+  min-inline-size: 0;
+  color: var(--role-ink);
+  font-size: clamp(1.6rem, 2.4vw, 2.4rem);
+  letter-spacing: -0.03em;
+  overflow-wrap: anywhere;
+}
+
+/* The trailing tile carries the headline number for its dashboard. */
+.ui-app-shell[data-role] .client-dashboard__overview dl > div:last-child,
+.ui-app-shell[data-role] .estimator-dashboard__overview dl > div:last-child {
+  border-color: transparent;
+  background: var(--role-band);
+  box-shadow: var(--role-shadow-lift);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.ui-app-shell[data-role] .client-dashboard__overview dl > div:last-child::before,
+.ui-app-shell[data-role] .estimator-dashboard__overview dl > div:last-child::before {
+  background: linear-gradient(90deg, var(--role-accent-bright), transparent);
+}
+
+.ui-app-shell[data-role] .client-dashboard__overview dl > div:last-child dt,
+.ui-app-shell[data-role] .estimator-dashboard__overview dl > div:last-child dt {
+  color: var(--role-accent-bright);
+}
+
+.ui-app-shell[data-role] .client-dashboard__overview dl > div:last-child dd,
+.ui-app-shell[data-role] .estimator-dashboard__overview dl > div:last-child dd {
+  color: var(--role-band-ink);
+  font-size: clamp(1.35rem, 1.9vw, 1.95rem);
+}
+
+/* -------------------------------------------------------- section headings */
+
+.ui-app-shell[data-role] .client-dashboard__section-heading,
+.ui-app-shell[data-role] .estimator-dashboard__section-heading {
+  padding-block-end: var(--space-3);
+  border-block-end: 1px solid var(--role-line);
+}
+
+.ui-app-shell[data-role] .client-dashboard__section-heading h2,
+.ui-app-shell[data-role] .estimator-dashboard__section-heading h2 {
+  font-family: var(--font-editorial);
+  font-size: clamp(1.5rem, 2.2vw, 1.9rem);
+  font-weight: 500;
+  letter-spacing: -0.025em;
+}
+
+.ui-app-shell[data-role] .client-dashboard__section-heading > span,
+.ui-app-shell[data-role] .client-dashboard__section-heading > strong,
+.ui-app-shell[data-role] .estimator-dashboard__section-heading > span,
+.ui-app-shell[data-role] .estimator-dashboard__section-heading > strong {
+  padding: 0.3rem 0.7rem;
+  border: 1px solid var(--role-line);
+  border-radius: var(--radius-pill);
+  background: var(--role-glass);
+  color: var(--role-ink-muted);
+  font-size: var(--text-sm);
+  font-weight: 800;
+}
+
+/* ------------------------------------------------------------ client decks */
+
+.ui-app-shell[data-role] .client-dashboard__hero-count {
+  align-content: center;
+  gap: 0.2rem;
+  padding: clamp(1rem, 2vw, 1.4rem) 1.5rem;
+  border: 1px solid rgb(255 255 255 / 22%);
+  border-radius: var(--radius-surface);
+  background: rgb(255 255 255 / 10%);
+  color: var(--role-band-ink);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+.ui-app-shell[data-role] .client-dashboard__hero-count strong {
+  color: var(--role-accent-bright);
+  font-size: clamp(2.4rem, 4vw, 3rem);
+}
+
+.ui-app-shell[data-role] .client-dashboard__hero-count span {
+  color: var(--role-band-ink-muted);
+  font-size: var(--text-sm);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.ui-app-shell[data-role] .client-project-card {
+  align-content: start;
+  gap: 0;
+  overflow: hidden;
+  padding: 0;
+  transition:
+    transform 200ms var(--role-ease),
+    box-shadow 200ms var(--role-ease),
+    border-color 200ms var(--role-ease);
+}
+
+.ui-app-shell[data-role] .client-project-card:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--role-glass-shadow-lift);
+}
+
+.ui-app-shell[data-role] .client-project-card__header {
+  background: linear-gradient(180deg, rgb(255 255 255 / 45%), transparent);
+}
+
+.ui-app-shell[data-role] .client-project-card__identity h2 {
+  font-family: var(--font-editorial);
+  font-size: var(--text-2xl);
+  font-weight: 500;
+  letter-spacing: -0.02em;
+}
+
+.ui-app-shell[data-role] .client-project-card__toggle:hover {
+  background: transparent;
+}
+
+.ui-app-shell[data-role] .client-project-card__toggle:focus-visible {
+  outline: 3px solid var(--role-focus);
+}
+
+.ui-app-shell[data-role] .client-project-card__details {
+  border-block-start: 1px solid var(--role-line);
+}
+
+.ui-app-shell[data-role] .client-project-card__update {
+  border: 1px solid var(--role-line);
+  border-radius: var(--radius-field);
+  background: var(--role-deck-tint);
+}
+
+.ui-app-shell[data-role] .client-project-card__update span {
+  color: var(--role-ink-muted);
+  font-size: var(--text-xs);
+  font-weight: 800;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.ui-app-shell[data-role] .client-project-card__status--active {
+  border: 1px solid rgb(24 121 92 / 26%);
+  background: rgb(24 121 92 / 10%);
+  color: #146549;
+}
+
+.ui-app-shell[data-role] .client-project-card__status--planning {
+  border: 1px solid rgb(168 130 60 / 34%);
+  background: rgb(168 130 60 / 12%);
+  color: #7d5f21;
+}
+
+/* The project page carried its own flat parchment fill; let the canvas show. */
+.ui-app-shell[data-role] .client-page--project {
+  background: transparent;
+  color: var(--role-ink);
+}
+
+.ui-app-shell[data-role] .client-page--project .client-project-hero {
+  border-radius: var(--radius-surface);
+  background: var(--role-band);
+  box-shadow: var(--role-shadow-lift);
+}
+
+.ui-app-shell[data-role] .client-page--project .client-project-hero .eyebrow,
+.ui-app-shell[data-role] .client-page--project .client-project-hero__completion strong {
+  color: var(--role-accent-bright);
+}
+
+.ui-app-shell[data-role] .client-page--project .client-floor-card {
+  border-color: var(--role-glass-edge);
+  border-radius: var(--radius-surface);
+}
+
+/* --------------------------------------------------------- estimator decks */
+
+.ui-app-shell[data-role] .lead-controls {
+  padding: 1.15rem;
+}
+
+.ui-app-shell[data-role] .lead-controls label {
+  color: var(--role-ink-muted);
+  font-size: var(--text-xs);
+  font-weight: 800;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.ui-app-shell[data-role] .lead-controls input,
+.ui-app-shell[data-role] .lead-controls select,
+.ui-app-shell[data-role] .estimate-line select,
+.ui-app-shell[data-role] .estimate-line > input,
+.ui-app-shell[data-role] .estimate-drawing-correction input,
+.ui-app-shell[data-role] .estimate-drawing-correction select,
+.ui-app-shell[data-role] .estimate-drawing-assignment select {
+  border: 1px solid var(--role-line-strong);
+  border-radius: var(--radius-control);
+  background: var(--role-deck);
+  color: var(--role-ink);
+}
+
+.ui-app-shell[data-role] .lead-controls input:focus-visible,
+.ui-app-shell[data-role] .lead-controls select:focus-visible {
+  border-color: var(--role-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--role-accent) 30%, transparent);
+  outline: none;
+}
+
+.ui-app-shell[data-role] .lead-list__header {
+  color: var(--role-ink-muted);
+}
+
+.ui-app-shell[data-role] .lead-row {
+  position: relative;
+  overflow: hidden;
+  color: var(--role-ink);
+  transition:
+    transform 200ms var(--role-ease),
+    box-shadow 200ms var(--role-ease),
+    border-color 200ms var(--role-ease);
+}
+
+.ui-app-shell[data-role] .lead-row::before {
+  content: "";
+  position: absolute;
+  inset-block: 0;
+  inset-inline-start: 0;
+  inline-size: 3px;
+  background: linear-gradient(180deg, var(--role-accent), var(--role-accent-bright));
+  opacity: 0;
+  transition: opacity 200ms var(--role-ease);
+}
+
+.ui-app-shell[data-role] .lead-row:hover,
+.ui-app-shell[data-role] .lead-row:focus-visible {
+  transform: translateY(-2px);
+  border-color: var(--role-line-strong);
+  box-shadow: var(--role-glass-shadow-lift);
+}
+
+.ui-app-shell[data-role] .lead-row:hover::before,
+.ui-app-shell[data-role] .lead-row:focus-visible::before {
+  opacity: 1;
+}
+
+.ui-app-shell[data-role] .lead-row strong {
+  color: var(--role-ink);
+}
+
+/* Merged lead row: client, project, stage, estimate and actions in one line. */
+.ui-app-shell[data-role] .lead-row__name {
+  color: var(--role-ink);
+  font-weight: 800;
+  text-decoration: none;
+}
+
+.ui-app-shell[data-role] .lead-row__name:hover {
+  color: var(--role-accent);
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+}
+
+.ui-app-shell[data-role] .lead-row__project h3 {
+  margin: 0;
+  color: var(--role-ink);
+  font-family: var(--font-interface);
+  font-size: var(--text-md);
+  font-weight: 750;
+}
+
+.ui-app-shell[data-role] .lead-row__estimate {
+  display: grid;
+  gap: 0.3rem;
+  justify-items: start;
+}
+
+.ui-app-shell[data-role] .lead-row__estimate .estimate-status {
+  font-size: var(--text-xs);
+  line-height: 1.25;
+  text-align: center;
+}
+
+.ui-app-shell[data-role] .lead-row__estimate strong {
+  font-family: var(--font-editorial);
+  font-size: var(--text-lg);
+  font-weight: 500;
+  letter-spacing: -0.015em;
+}
+
+/* Icon export sits beside the link now, so the row is one line tall. */
+.ui-app-shell[data-role] .lead-row__actions {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.ui-app-shell[data-role] .lead-row__export {
+  inline-size: 2.5rem;
+  min-height: 2.5rem;
+  padding: 0;
+}
+
+.ui-app-shell[data-role] .lead-row__open {
+  min-height: 2.5rem;
+  padding-inline: 0.7rem;
+  font-size: var(--text-sm);
+  white-space: nowrap;
+}
+
+.ui-app-shell[data-role] .lead-row__actions [role="alert"] {
+  color: #9a2f3f;
+  font-size: var(--text-xs);
+  font-weight: 700;
+}
+
+.ui-app-shell[data-role] .lead-list__estimates-error {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem;
+  margin: 0;
+  padding: 0.7rem 0.9rem;
+  border: 1px solid rgb(179 58 74 / 26%);
+  border-radius: var(--radius-field);
+  background: rgb(179 58 74 / 8%);
+  color: #9a2f3f;
+  font-weight: 700;
+}
+
+.ui-app-shell[data-role] .lead-row span,
+.ui-app-shell[data-role] .lead-row small {
+  color: var(--role-ink-muted);
+}
+
+.ui-app-shell[data-role] .saved-estimate-card {
+  transition:
+    transform 200ms var(--role-ease),
+    box-shadow 200ms var(--role-ease),
+    border-color 200ms var(--role-ease);
+}
+
+.ui-app-shell[data-role] .saved-estimate-card:hover {
+  transform: translateY(-2px);
+  border-color: var(--role-line-strong);
+  box-shadow: var(--role-shadow-lift);
+}
+
+.ui-app-shell[data-role] .saved-estimate-card__summary > strong,
+.ui-app-shell[data-role] .estimate-review-card__total {
+  color: var(--role-ink);
+  font-family: var(--font-editorial);
+  font-size: var(--text-2xl);
+  font-weight: 500;
+  letter-spacing: -0.02em;
+}
+
+.ui-app-shell[data-role] .saved-estimate-card h3 {
+  font-family: var(--font-editorial);
+  font-size: var(--text-xl);
+  font-weight: 500;
+}
+
+/* ------------------------------------------------------------------ badges */
+
+.ui-app-shell[data-role] .lead-stage-badge,
+.ui-app-shell[data-role] .estimate-status,
+.ui-app-shell[data-role] .estimate-drawing-row__status {
+  border: 1px solid color-mix(in srgb, var(--role-accent) 30%, transparent);
+  background: color-mix(in srgb, var(--role-accent-bright) 20%, transparent);
+  color: #7a5122;
+  font-size: var(--text-xs);
+  font-weight: 800;
+}
+
+.ui-app-shell[data-role] .lead-stage-badge--won,
+.ui-app-shell[data-role] .estimate-drawing-row__status--verified {
+  border-color: rgb(24 121 92 / 28%);
+  background: rgb(24 121 92 / 12%);
+  color: #14684e;
+}
+
+.ui-app-shell[data-role] .lead-stage-badge--lost {
+  border-color: rgb(179 58 74 / 28%);
+  background: rgb(179 58 74 / 12%);
+  color: #9a2f3f;
+}
+
+/* ------------------------------------------------ estimate builder surfaces */
+
+.ui-app-shell[data-role] .estimate-tabs {
+  border-color: var(--role-glass-edge);
+  background: var(--role-glass);
+  box-shadow: var(--role-glass-shadow);
+  backdrop-filter: var(--role-glass-filter);
+  -webkit-backdrop-filter: var(--role-glass-filter);
+}
+
+.ui-app-shell[data-role] .estimate-tabs button {
+  color: var(--role-ink-muted);
+}
+
+.ui-app-shell[data-role] .estimate-tabs button.is-active {
+  background: var(--role-deck);
+  color: var(--role-accent);
+  box-shadow: var(--role-shadow-soft);
+}
+
+.ui-app-shell[data-role] .estimate-builder-section h3,
+.ui-app-shell[data-role] .client-estimate-section > summary {
+  background: color-mix(in srgb, var(--role-accent-bright) 14%, transparent);
+  color: var(--role-ink);
+}
+
+.ui-app-shell[data-role] .estimate-chip--active,
+.ui-app-shell[data-role] .estimate-room--active {
+  border-color: var(--role-accent);
+  background: var(--role-cta);
+  color: var(--role-cta-ink);
+}
+
+.ui-app-shell[data-role] .estimate-room-sidebar,
+.ui-app-shell[data-role] .estimate-workspace__footer,
+.ui-app-shell[data-role] .estimate-total-card,
+.ui-app-shell[data-role] .client-estimate-totals,
+.ui-app-shell[data-role] .estimate-proposal > header {
+  border-radius: var(--radius-surface);
+  background: var(--role-band);
+  box-shadow: var(--role-shadow-lift);
+}
+
+.ui-app-shell[data-role] .estimate-room-sidebar button.is-active {
+  background: rgb(255 255 255 / 16%);
+  color: var(--role-band-ink);
+}
+
+/*
+ * Controls sitting ON a dark band.
+ *
+ * `--role-cta` is a teak gradient tuned for the light canvas. Reused here it
+ * lands at 1.27:1 against the band — below the 3:1 WCAG needs for a control
+ * boundary — so the primary action vanished while the cream secondary read at
+ * 6.6:1 and outranked it. On the band the treatment inverts: amber solid for
+ * primary, light outline for secondary.
+ */
+.ui-app-shell[data-role] .estimate-workspace__footer .estimate-actions,
+.ui-app-shell[data-role] .estimate-proposal > header .estimate-actions {
+  /* index.css sets `.estimate-workspace__footer div { display: grid }`, which
+     catches this container and stacks the buttons into one column. */
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.6rem;
+}
+
+.ui-app-shell[data-role] .estimate-workspace__footer .button--primary,
+.ui-app-shell[data-role] .estimate-proposal > header .button--primary {
+  /* The band runs #3e2a1b -> #a9793f and the actions sit at its lightest end,
+     so the fill has to clear 3:1 against #a9793f, not the mid-tone. Cream
+     manages 3.50:1 there; amber only reached 1.91:1. The dark ring keeps the
+     edge defined across the whole gradient. */
+  border: 1px solid transparent;
+  background: linear-gradient(140deg, #fffdf8 0%, #fdf3e2 55%, #f6e7cd 100%);
+  color: #3a2a17;
+  box-shadow:
+    0 0 0 1px rgb(34 20 8 / 32%),
+    inset 0 1px 0 rgb(255 255 255 / 80%),
+    0 10px 24px -12px rgb(18 11 5 / 85%);
+}
+
+.ui-app-shell[data-role] .estimate-workspace__footer .button--primary:hover:not(:disabled),
+.ui-app-shell[data-role] .estimate-proposal > header .button--primary:hover:not(:disabled) {
+  background: linear-gradient(140deg, #ffffff 0%, #fffaf0 55%, #fdf0da 100%);
+  box-shadow:
+    0 0 0 1px rgb(34 20 8 / 40%),
+    inset 0 1px 0 rgb(255 255 255 / 90%),
+    0 14px 30px -12px rgb(18 11 5 / 90%);
+}
+
+.ui-app-shell[data-role] .estimate-workspace__footer .button--secondary,
+.ui-app-shell[data-role] .estimate-proposal > header .button--secondary {
+  /* Tinted dark rather than light: a white wash over the band's light end
+     capped the label at 3.5:1, and even pure white tops out at 3.84 there.
+     Darkening the button's own fill takes the label to ~7.8:1. */
+  border: 1px solid rgb(255 255 255 / 42%);
+  background: rgb(28 17 7 / 72%);
+  color: #ffffff;
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 20%);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+.ui-app-shell[data-role] .estimate-workspace__footer .button--secondary:hover:not(:disabled),
+.ui-app-shell[data-role] .estimate-proposal > header .button--secondary:hover:not(:disabled) {
+  border-color: rgb(255 255 255 / 68%);
+  background: rgb(28 17 7 / 84%);
+  color: #ffffff;
+}
+
+.ui-app-shell[data-role] .estimate-workspace__footer .button:disabled,
+.ui-app-shell[data-role] .estimate-proposal > header .button:disabled {
+  opacity: 0.55;
+}
+
+.ui-app-shell[data-role] .estimate-design-uploads__status-list strong,
+.ui-app-shell[data-role] .estimate-design-uploads__placement h3,
+.ui-app-shell[data-role] .estimate-design-uploads__group h3,
+.ui-app-shell[data-role] .estimate-design-uploads__misc h3,
+.ui-app-shell[data-role] .client-estimate-details > summary,
+.ui-app-shell[data-role] .estimate-section-heading > span {
+  color: var(--role-accent);
+}
+
+.ui-app-shell[data-role] .estimate-drawing-row {
+  border-block-start: 1px solid var(--role-line);
+}
+
+.ui-app-shell[data-role] .estimate-drawing-row__thumbnail {
+  border: 1px solid var(--role-line);
+  background: var(--role-deck-tint);
+}
+
+.ui-app-shell[data-role] .estimate-drawing-row__metadata small,
+.ui-app-shell[data-role] .estimate-design-uploads__footer span,
+.ui-app-shell[data-role] .estimate-design-uploads__header p:not(.eyebrow),
+.ui-app-shell[data-role] .estimate-design-uploads__empty,
+.ui-app-shell[data-role] .estimate-panel__hint {
+  color: var(--role-ink-muted);
+}
+
+.ui-app-shell[data-role] .estimate-drawing-row__change-summary {
+  color: #a4551b;
+}
+
+.ui-app-shell[data-role] .estimate-design-uploads__status-list li {
+  align-items: center;
+  border-radius: var(--radius-field);
+}
+
+.ui-app-shell[data-role] .estimate-drawing-row__menu button {
+  background: transparent;
+  color: var(--role-ink);
+}
+
+.ui-app-shell[data-role] .estimate-drawing-row__menu button:hover,
+.ui-app-shell[data-role] .estimate-drawing-row__menu button:focus-visible {
+  background: color-mix(in srgb, var(--role-accent-bright) 18%, transparent);
+}
+
+.ui-app-shell[data-role] .estimate-notice {
+  border: 1px solid rgb(24 121 92 / 24%);
+  background: rgb(24 121 92 / 10%);
+  color: #14684e;
+}
+
+/*
+ * index.css hard-codes violet hexes throughout the estimate builder. These
+ * neutralise the ones that survive on a wood canvas.
+ */
+.ui-app-shell[data-role] .estimate-design-uploads__group h3 span,
+.ui-app-shell[data-role] .estimate-review-card__toggle,
+.ui-app-shell[data-role] .estimate-workspace__back {
+  color: var(--role-accent);
+}
+
+.ui-app-shell[data-role] .estimate-chip,
+.ui-app-shell[data-role] .estimate-room,
+.ui-app-shell[data-role] .estimate-review-card__toggle,
+.ui-app-shell[data-role] .estimate-review-card select,
+.ui-app-shell[data-role] .estimate-review-card textarea {
+  border-color: var(--role-line-strong);
+  background: var(--role-deck);
+}
+
+.ui-app-shell[data-role] .estimate-line,
+.ui-app-shell[data-role] .estimate-scope + .estimate-scope,
+.ui-app-shell[data-role] .estimate-dimension-row + .estimate-dimension-row,
+.ui-app-shell[data-role] .client-estimate-line,
+.ui-app-shell[data-role] .estimate-summary-row,
+.ui-app-shell[data-role] .estimate-review-card__client-content {
+  border-color: var(--role-line);
+}
+
+.ui-app-shell[data-role] .estimate-line--included {
+  background: color-mix(in srgb, var(--role-accent-bright) 8%, transparent);
+  color: var(--role-ink);
+}
+
+.ui-app-shell[data-role] .estimate-scope input {
+  accent-color: var(--role-accent);
+}
+
+.ui-app-shell[data-role] .estimate-terms {
+  background: var(--role-deck-tint);
+  color: var(--role-ink-muted);
+}
+
+/* --------------------------------------------------------- shared surfaces */
+
+.ui-app-shell[data-role] .inline-empty,
+.ui-app-shell[data-role] .project-empty {
+  border: 1px dashed var(--role-line-strong);
+  border-radius: var(--radius-surface);
+  background: var(--role-glass);
+  color: var(--role-ink-muted);
+  backdrop-filter: var(--role-glass-filter);
+  -webkit-backdrop-filter: var(--role-glass-filter);
+}
+
+.ui-app-shell[data-role] .ui-surface {
+  border-color: var(--role-glass-edge);
+  background: var(--role-glass);
+  box-shadow: var(--role-glass-shadow);
+  backdrop-filter: var(--role-glass-filter);
+  -webkit-backdrop-filter: var(--role-glass-filter);
+}
+
+.ui-app-shell[data-role] :focus-visible {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--role-focus) 55%, transparent);
+}
+
+@media (max-width: 767px) {
+.ui-app-shell[data-role] {
+    background-attachment: scroll;
+  }
+
+.ui-app-shell[data-role] .workspace-header {
+    border-radius: var(--radius-surface);
+    padding: 1.35rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+.ui-app-shell[data-role] * {
+    transition-duration: 0.01ms !important;
+  }
+
+.ui-app-shell[data-role] .client-project-card:hover,
+.ui-app-shell[data-role] .client-dashboard__overview dl > div:hover,
+.ui-app-shell[data-role] .lead-row:hover,
+.ui-app-shell[data-role] .saved-estimate-card:hover,
+.ui-app-shell[data-role] .estimator-dashboard__overview dl > div:hover {
+    transform: none;
+  }
+}
+
+
+/* ------------------------------------------- super admin (dense type scale) */
+
+/*
+ * Super Admin works across administration tables, ledgers and inboxes rather
+ * than the presentation-sized workspaces the other roles get, so the whole
+ * shell steps down one type scale: 14px body, 12px metadata, 28px page titles.
+ * Spacing tokens are px and deliberately unchanged, so rows keep their rhythm
+ * and controls keep their 44px hit targets.
+ *
+ * Scoped from <body> rather than the shell so portalled dialogs, drawers and
+ * tooltips - which render outside `.ui-app-shell` - inherit the same scale.
+ */
+body:has(.ui-app-shell[data-role="super_admin"]) {
+  --type-page-title: 1.75rem/1.15 var(--font-editorial);
+  --type-section-title: 1.125rem/1.3 var(--font-interface);
+  --type-body: 0.875rem/1.5 var(--font-interface);
+  --type-metadata: 0.75rem/1.4 var(--font-interface);
+
+  --text-xs: 0.6875rem;
+  --text-sm: 0.75rem;
+  --text-md: 0.8125rem;
+  --text-base: 0.875rem;
+  --text-lg: 1rem;
+  --text-xl: 1.0625rem;
+  --text-2xl: 1.25rem;
+  --text-3xl: 1.5rem;
+  --text-4xl: 1.75rem;
+}
+
+/*
+ * The display sizes below are written as literals in the dashboard
+ * stylesheets, so the token scale above cannot reach them.
+ */
+body:has(.ui-app-shell[data-role="super_admin"]) .kpi-panel__intro h2,
+body:has(.ui-app-shell[data-role="super_admin"]) .section-heading h2 {
+  font-size: 1.25rem;
+}
+
+body:has(.ui-app-shell[data-role="super_admin"]) .workspace-header h1 {
+  font-size: 1.75rem;
+}
+
+body:has(.ui-app-shell[data-role="super_admin"]) .kpi-score strong {
+  font-size: 1.75rem;
+}
+
+body:has(.ui-app-shell[data-role="super_admin"]) .designer-kpi .kpi-score strong {
+  font-size: 1.5rem;
+}
+
+body:has(.ui-app-shell[data-role="super_admin"]) .finance-chart__figure {
+  font-size: clamp(1.375rem, 2vw, 1.625rem);
+}
+
+body:has(.ui-app-shell[data-role="super_admin"]) .finance-chart__ring-center strong {
+  font-size: 1.375rem;
+}
+
+/* The ring is sized in rem to sit beside the old type scale. */
+body:has(.ui-app-shell[data-role="super_admin"]) .finance-chart__ring {
+  width: clamp(7.5rem, 18vw, 9.5rem);
+}

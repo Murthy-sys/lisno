@@ -10,9 +10,10 @@ const projectSchema = new Schema(
     clientEmailNormalized: { type: String, required: true, default: "" },
     clientMobile: { type: String, required: true, default: "" },
     clientAddress: { type: String, required: true, default: "" },
-    initiatingDesignerId: { type: String, ref: "User", required: true },
-    assignedDesignerIds: [{ type: String, ref: "User", required: true }],
-    managerId: { type: String, ref: "User", required: true },
+    initiatingDesignerId: { type: String, ref: "User", default: null },
+    assignedEstimatorId: { type: String, ref: "User", default: null },
+    assignedDesignerIds: { type: [String], ref: "User", default: [] },
+    managerId: { type: String, ref: "User", default: null },
     status: {
       type: String,
       enum: ["planning", "active", "on_hold", "completed"],
@@ -32,5 +33,6 @@ projectSchema.index({ clientEmailNormalized: 1, clientId: 1 });
 projectSchema.index({ managerId: 1, status: 1 });
 projectSchema.index({ assignedDesignerIds: 1, status: 1 });
 projectSchema.index({ initiatingDesignerId: 1 });
+projectSchema.index({ assignedEstimatorId: 1 });
 
 export const ProjectModel = models.Project ?? model("Project", projectSchema);

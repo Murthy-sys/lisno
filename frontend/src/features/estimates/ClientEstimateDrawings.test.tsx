@@ -7,7 +7,14 @@ import type {
   EstimateDesignClientRevision
 } from "../../api/types";
 import { tokenStorage } from "../../api/client";
+import { authorizationFor } from "../../test/authFixtures";
 import { renderApp } from "../../test/render";
+import {
+  projectDrawingAnnotationsToPage,
+  projectDrawingCommentsToPage,
+  projectPlanCommentsToDrawing,
+  selectEditablePlanRequestForDrawing
+} from "./ClientEstimateDrawings";
 
 const client = {
   id: "client-1",
@@ -95,7 +102,7 @@ function drawing(
     mappingStatus: "auto_mapped" as const,
     detectedTitle: title,
     displayTitle: title,
-    source: "ocr",
+    source: "ocr" as const,
     roomConfidence: 0.98,
     scopeConfidence: 0.98,
     ocrConfidence: 0.98,
@@ -181,6 +188,9 @@ function json(data: unknown, status = 200) {
 
 function commonResponse(url: string) {
   if (url.endsWith("/api/v1/auth/me")) return json(client);
+  if (url.endsWith("/api/v1/auth/authorization")) {
+    return json(authorizationFor(client.role));
+  }
   if (url.includes("/api/v1/client/project-summaries?")) {
     return json({
       items: [],
@@ -245,6 +255,81 @@ async function addTextNote() {
 }
 
 describe("client estimate drawings", () => {
+  it("projects an extracted draft into its canonical page and deduplicates its submitted request", () => {
+    const draftRevision = {
+      ...revision("revision-living", "drawing-living", "Living ceiling", "room-living", "FC", "submitted"),
+      crop: { x: 200, y: 100, width: 400, height: 300 },
+      annotationDraft: {
+        id: "draft-1",
+        revisionId: "revision-living",
+        version: 1,
+        annotations: {
+          schemaVersion: 1 as const,
+          imageWidth: 400,
+          imageHeight: 300,
+          elements: [{ id: "crop-note", type: "text" as const, x: 0.5, y: 0.5, text: "Move crop", color: "#ef4444", strokeWidth: 2 }]
+        }
+      }
+    };
+    const drawingWorkspace = { ...workspace([draftRevision]), drawings: [drawings[0]!] };
+    const planPage = { ...page, currentRevisionId: "manifest-1", status: "awaiting_review" as const, thumbnailUrl: "/thumb", currentImageUrl: "/current", annotationDraft: null };
+    const planWorkspace = { uploads: [{ id: "upload-1", originalFilename: "plan.pdf", mimeType: "application/pdf", pageCount: 1, pages: [planPage] }], pages: [planPage], openRequests: [] };
+
+    expect(projectDrawingAnnotationsToPage(planPage, drawingWorkspace, planWorkspace)).toEqual([
+      expect.objectContaining({ id: "drawing:revision-living:crop-note", x: 0.4, y: 0.3125 })
+    ]);
+
+    const submitted = {
+      ...planWorkspace,
+      openRequests: [{
+        id: "request-1", sourcePageId: "page-1", version: 1, summary: "Move crop",
+        annotations: { schemaVersion: 1 as const, imageWidth: 1000, imageHeight: 800, elements: [{ id: "crop-note", type: "text" as const, x: 0.4, y: 0.3125, text: "Move crop", color: "#ef4444", strokeWidth: 2 }] },
+        targets: [{ drawingId: "drawing-living", requestedRevisionId: "revision-living", status: "open" as const, resolvedByRevisionId: null }],
+        unassigned: false, status: "open" as const
+      }]
+    };
+    expect(projectDrawingAnnotationsToPage(planPage, drawingWorkspace, submitted)).toEqual([
+      expect.objectContaining({ id: "request:request-1:crop-note", x: 0.4, y: 0.3125 })
+    ]);
+    expect(projectDrawingCommentsToPage(planPage, drawingWorkspace, submitted)).toEqual([
+      { id: "request-1", summary: "Move crop", status: "open", source: "plan" }
+    ]);
+    expect(projectPlanCommentsToDrawing("drawing-living", submitted)).toEqual([
+      { id: "request-1", summary: "Move crop", status: "open", source: "plan" }
+    ]);
+    expect(projectPlanCommentsToDrawing("drawing-detail", submitted)).toEqual([]);
+    expect(selectEditablePlanRequestForDrawing("drawing-living", submitted)).toMatchObject({ id: "request-1", version: 1, summary: "Move crop" });
+
+    const replacementRevision = {
+      ...draftRevision,
+      id: "revision-living-2",
+      revisionNumber: 2,
+      sourcePageId: "replacement-page",
+      crop: { x: 0, y: 0, width: 800, height: 600 },
+      replacesRevisionId: "revision-living",
+      annotationDraft: {
+        ...draftRevision.annotationDraft,
+        id: "draft-2",
+        revisionId: "revision-living-2",
+        annotations: { ...draftRevision.annotationDraft.annotations, imageWidth: 800, imageHeight: 600 }
+      }
+    };
+    const replacementWorkspace = {
+      ...drawingWorkspace,
+      pages: [...drawingWorkspace.pages, { ...page, id: "replacement-page", uploadId: "replacement-upload", width: 800, height: 600 }],
+      revisions: [{ ...draftRevision, annotationDraft: null }, replacementRevision]
+    };
+    expect(projectDrawingAnnotationsToPage(planPage, replacementWorkspace, planWorkspace)).toEqual([
+      expect.objectContaining({ id: "drawing:revision-living-2:crop-note", x: 0.4, y: 0.3125 })
+    ]);
+    expect(projectDrawingCommentsToPage(planPage, {
+      ...replacementWorkspace,
+      revisions: [{ ...draftRevision, annotationDraft: null }, { ...replacementRevision, changeSummary: "Use revised cabinet width" }]
+    }, planWorkspace)).toEqual([
+      { id: "drawing:revision-living-2", summary: "Use revised cabinet width", status: "submitted", source: "drawing" }
+    ]);
+  });
+
   it("loads drawings only inside the matching expanded estimate and keeps preview expansion state", async () => {
     const estimates = [
       estimate("estimate-a", "Aurora Villa"),
@@ -312,9 +397,11 @@ describe("client estimate drawings", () => {
     expect(within(loft).queryByText("Living ceiling")).not.toBeInTheDocument();
     expect(requestedWorkspaces).toEqual(["estimate-a"]);
 
-    await user.click(within(ceilingGroup).getByRole("button", {
+    const mappedPreview = within(ceilingGroup).getByRole("button", {
       name: "Preview Living ceiling"
-    }));
+    });
+    expect(mappedPreview).toHaveClass("button", "button--secondary");
+    await user.click(mappedPreview);
     await waitForCanvas();
     expect(screen.getByRole("toolbar", { name: "Annotation tools" })).toBeVisible();
     await user.click(within(screen.getByRole("dialog", {
@@ -324,12 +411,14 @@ describe("client estimate drawings", () => {
     }));
     expect(villaToggle).toHaveAttribute("aria-expanded", "true");
 
-    await user.click(within(ceilingGroup).getByRole("button", {
+    const readOnlyPreview = within(ceilingGroup).getByRole("button", {
       name: "Preview Living detail"
-    }));
+    });
+    expect(readOnlyPreview).toHaveClass("button", "button--secondary");
+    await user.click(readOnlyPreview);
     await waitForCanvas();
     expect(screen.queryByRole("toolbar", { name: "Annotation tools" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Save draft" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Save as draft" })).not.toBeInTheDocument();
     await user.click(within(screen.getByRole("dialog", {
       name: "Living detail preview"
     })).getByRole("button", {
@@ -421,6 +510,9 @@ describe("client estimate drawings", () => {
     expect(within(misc).getByRole("article", {
       name: "Unassigned TV detail drawing"
     })).toBeVisible();
+    expect(within(misc).getByRole("button", {
+      name: "Preview Unassigned TV detail"
+    })).toHaveClass("button", "button--secondary");
     expect(within(misc).getByRole("button", {
       name: "Approve Unassigned TV detail"
     })).toBeEnabled();
@@ -626,7 +718,7 @@ describe("client estimate drawings", () => {
       name: "Preview Living ceiling"
     }));
     await addTextNote();
-    await user.click(screen.getByRole("button", { name: "Save draft" }));
+    await user.click(screen.getByRole("button", { name: "Save as draft" }));
 
     await waitFor(() => expect(requests[0]?.body).toEqual({
       version: 0,
@@ -663,7 +755,7 @@ describe("client estimate drawings", () => {
     })).getByText("Shift this door")).toBeVisible();
 
     await addTextNote();
-    await user.click(screen.getByRole("button", { name: "Save draft" }));
+    await user.click(screen.getByRole("button", { name: "Save as draft" }));
     await waitFor(() => expect(requests[1]?.body).toEqual({
       version: 1,
       annotations: expect.objectContaining({
@@ -747,7 +839,7 @@ describe("client estimate drawings", () => {
     resolveApproval?.(json(revisions[0]));
   });
 
-  it("uses backend readiness for final approval and preserves a concurrent conflict", async () => {
+  it("keeps commercial approval independent from drawing readiness after a concurrent conflict", async () => {
     let workspaceReads = 0;
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const url = String(input);
@@ -807,11 +899,10 @@ describe("client estimate drawings", () => {
     expect(await within(card).findByRole("alert")).toHaveTextContent(
       "Every submitted drawing must be approved before approving the estimate."
     );
-    await waitFor(() => expect(approve).toBeDisabled());
-    const explanationId = approve.getAttribute("aria-describedby");
-    expect(explanationId).toBeTruthy();
-    expect(document.getElementById(explanationId!)).toHaveTextContent(
+    await waitFor(() => expect(workspaceReads).toBe(2));
+    expect(approve).toBeEnabled();
+    expect(within(card).getByText(
       "1 drawing unresolved: 1 awaiting review."
-    );
+    )).toBeVisible();
   });
 });

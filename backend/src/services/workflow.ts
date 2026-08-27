@@ -1,4 +1,10 @@
 import { ApiError } from "../middleware/errors.js";
+import { AuthorizationConfigurationError } from "../domain/authorization.js";
+import { currentHumanOperation } from "../domain/operation-context.js";
+import {
+  grantCanSupplyProjectModuleScope,
+  legacyRelationshipAllows
+} from "../domain/project-access.js";
 import type {
   AppRepository,
   ProjectRecord,
@@ -32,19 +38,53 @@ export async function requireUser(
   return user;
 }
 
-export async function requireAccessibleProject(
+async function resolveProjectForCurrentOperation(
+  repository: AppRepository,
+  actor: PublicUser,
+  projectId: string
+): Promise<ProjectRecord | null> {
+  const { operation } = currentHumanOperation();
+  if (operation.scope.kind !== "project") {
+    throw new AuthorizationConfigurationError(
+      "The current operation is not project-backed."
+    );
+  }
+  const module = operation.scope.module;
+  const storedActor = await repository.findUserById(actor.id);
+  if (!storedActor || !storedActor.active || storedActor.role !== actor.role) {
+    return null;
+  }
+  const project = await repository.findProjectById(projectId);
+  if (!project) return null;
+  if (storedActor.role === "super_admin") return project;
+  if (legacyRelationshipAllows(storedActor, project, module)) return project;
+
+  const grant = await repository.findActiveProjectAccessGrant(
+    storedActor.id,
+    project.id,
+    module
+  );
+  return grant !== null &&
+    grantCanSupplyProjectModuleScope(storedActor.role, grant)
+    ? project
+    : null;
+}
+
+export async function canAccessProjectForCurrentOperation(
+  repository: AppRepository,
+  actor: PublicUser,
+  projectId: string
+): Promise<boolean> {
+  return (await resolveProjectForCurrentOperation(repository, actor, projectId)) !== null;
+}
+
+export async function requireProjectOperationAccess(
   repository: AppRepository,
   actor: PublicUser,
   projectId: string
 ): Promise<ProjectRecord> {
-  const user = await requireActor(repository, actor);
-  const project = await repository.findProjectById(projectId);
+  const project = await resolveProjectForCurrentOperation(repository, actor, projectId);
   if (!project) {
-    throw new ApiError(404, "NOT_FOUND", "The requested resource was not found.");
-  }
-  const visibleProjects = await repository.listProjectsForUser(user);
-  if (!visibleProjects.some((candidate) => candidate.id === project.id)) {
-    // Entity isolation deliberately does not reveal that an inaccessible ID exists.
     throw new ApiError(404, "NOT_FOUND", "The requested resource was not found.");
   }
   return project;

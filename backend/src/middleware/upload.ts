@@ -28,6 +28,14 @@ export interface ValidatedUpload extends SaveFileInput {
   sizeBytes: number;
 }
 
+export interface UploadSingleFileOptions {
+  fieldName?: string;
+  maxFields?: number;
+  allowedDetectedMimeTypes?: ReadonlySet<ValidatedUpload["mimeType"]>;
+  fieldErrorKey?: string;
+  allowedTypeMessage?: string;
+}
+
 declare global {
   namespace Express {
     interface Request {
@@ -48,6 +56,14 @@ const allowedClaimedMimeTypes = new Set([
   // Busboy uses text/plain when a multipart file part omits Content-Type.
   "text/plain"
 ]);
+const allowedDetectedMimeTypes = new Set<ValidatedUpload["mimeType"]>([
+  "application/pdf",
+  "image/png",
+  "image/jpeg",
+  "image/webp",
+  "image/tiff",
+  "image/heic"
+]);
 const MAX_XREF_FIELD_WIDTH_BYTES = 8;
 const MAX_XREF_OBJECTS = 1_000_000;
 const MAX_XREF_INDEX_VALUES = 4_096;
@@ -56,8 +72,24 @@ const MAX_XREF_DICTIONARY_BYTES = 256 * 1024;
 
 export function uploadSingleFile(
   maxUploadBytes: number,
-  maxFields = 0
+  options: number | UploadSingleFileOptions = {}
 ): RequestHandler {
+  const normalized = typeof options === "number" ? { maxFields: options } : options;
+  const fieldName = normalized.fieldName ?? "file";
+  const maxFields = normalized.maxFields ?? 0;
+  const fieldErrorKey = normalized.fieldErrorKey ?? fieldName;
+  const claimedTypeMessage =
+    normalized.allowedTypeMessage ??
+    "Choose a PDF, PNG, JPEG, WebP, TIFF, or HEIC file.";
+  const detectedTypeMessage =
+    normalized.allowedTypeMessage ??
+    "Choose a valid PDF, PNG, JPEG, WebP, TIFF, or HEIC file.";
+  const malformedRequestMessage =
+    normalized.allowedTypeMessage ?? `Provide one file in the ${fieldName} field.`;
+  const missingFileMessage =
+    normalized.allowedTypeMessage ?? "A file is required.";
+  const permittedDetectedMimeTypes =
+    normalized.allowedDetectedMimeTypes ?? allowedDetectedMimeTypes;
   const parse = multer({
     storage: multer.memoryStorage(),
     limits: {
@@ -72,14 +104,14 @@ export function uploadSingleFile(
             415,
             "UNSUPPORTED_FILE_TYPE",
             "Only PDF, PNG, JPEG, WebP, TIFF, and HEIC files are supported.",
-            { file: "Choose a PDF, PNG, JPEG, WebP, TIFF, or HEIC file." }
+            { [fieldErrorKey]: claimedTypeMessage }
           )
         );
         return;
       }
       callback(null, true);
     }
-  }).single("file");
+  }).single(fieldName);
 
   return (request, _response, next) => {
     parse(request, _response, async (error) => {
@@ -90,7 +122,7 @@ export function uploadSingleFile(
               413,
               "FILE_TOO_LARGE",
               "The uploaded file exceeds the configured size limit.",
-              { file: "Choose a smaller file." }
+              { [fieldErrorKey]: "Choose a smaller file." }
             )
           );
           return;
@@ -105,7 +137,7 @@ export function uploadSingleFile(
               400,
               "VALIDATION_ERROR",
               "Request validation failed.",
-              { file: "Provide one file in the file field." }
+              { [fieldErrorKey]: malformedRequestMessage }
             )
           );
           return;
@@ -120,7 +152,7 @@ export function uploadSingleFile(
             400,
             "VALIDATION_ERROR",
             "Request validation failed.",
-            { file: "A file is required." }
+            { [fieldErrorKey]: missingFileMessage }
           )
         );
         return;
@@ -136,9 +168,21 @@ export function uploadSingleFile(
       const contentIsValid =
         detected?.mimeType !== "application/pdf" ||
         (await isValidPdfDocument(request.file.buffer));
+      const detectedMimeTypeIsAllowed =
+        detected !== null && permittedDetectedMimeTypes.has(detected.mimeType);
+      const safeFilename = detected
+        ? safeOriginalFilename(request.file.originalname, detected.extension)
+        : null;
+      const filenameMatchesType =
+        !normalized.allowedDetectedMimeTypes ||
+        (detected !== null &&
+          safeFilename !== null &&
+          filenameExtensionMatchesDetected(safeFilename, detected.extension));
       if (
         !detected ||
         !contentIsValid ||
+        !detectedMimeTypeIsAllowed ||
+        !filenameMatchesType ||
         (!claimIsGeneric && !claimMatchesDetected(claimed, detected.mimeType))
       ) {
         next(
@@ -146,7 +190,7 @@ export function uploadSingleFile(
             415,
             "UNSUPPORTED_FILE_TYPE",
             "The file contents do not match an allowed file type.",
-            { file: "Choose a valid PDF, PNG, JPEG, WebP, TIFF, or HEIC file." }
+            { [fieldErrorKey]: detectedTypeMessage }
           )
         );
         return;
@@ -155,10 +199,7 @@ export function uploadSingleFile(
       request.validatedUpload = {
         data: request.file.buffer,
         extension: detected.extension,
-        originalFilename: safeOriginalFilename(
-          request.file.originalname,
-          detected.extension
-        ),
+        originalFilename: safeFilename!,
         mimeType: detected.mimeType,
         sizeBytes: request.file.size
       };
@@ -518,4 +559,16 @@ function safeOriginalFilename(
     .trim()
     .slice(0, 255);
   return filename || `upload${extension}`;
+}
+
+function filenameExtensionMatchesDetected(
+  filename: string,
+  extension: ValidatedUpload["extension"]
+) {
+  const providedExtension = path.extname(filename).toLowerCase();
+  if (!providedExtension) return true;
+  if (extension === ".jpg") {
+    return providedExtension === ".jpg" || providedExtension === ".jpeg";
+  }
+  return providedExtension === extension;
 }

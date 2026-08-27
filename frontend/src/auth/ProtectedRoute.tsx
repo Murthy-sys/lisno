@@ -1,52 +1,60 @@
 import type { ReactNode } from "react";
 import { Navigate, useLocation } from "react-router-dom";
 
-import type { Role } from "../api/types";
-import { AsyncState } from "../components/ui/AsyncState";
+import { AuthRouteState } from "./AuthRouteState";
 import { useAuth } from "./AuthProvider";
 
-export function roleHomePath(role: Role): string {
-  const paths: Record<Role, string> = {
-    designer: "/designer",
-    design_manager: "/manager",
-    design_head: "/head",
-    estimator_sales: "/estimator-sales",
-    client: "/client"
-  };
-  return paths[role];
-}
-
 export function ProtectedRoute({
-  children,
-  allowedRoles
+  children
 }: {
   children: ReactNode;
-  allowedRoles?: Role[];
 }) {
   const auth = useAuth();
   const location = useLocation();
 
-  if (auth.status === "restoring") {
-    return <AsyncState state="loading" message="Restoring your session…" />;
-  }
-
-  if (auth.status === "error") {
+  if (auth.status === "signing_out") {
     return (
-      <AsyncState
-        state="error"
-        message="We couldn't restore your session."
-        actionLabel="Try again"
-        onAction={() => void auth.restore()}
+      <AuthRouteState
+        title="Signing out"
+        state="loading"
+        message="Signing out…"
       />
     );
   }
 
-  if (auth.status !== "authenticated" || !auth.user) {
+  if (auth.status === "restoring") {
+    return (
+      <AuthRouteState
+        title="Opening your workspace"
+        state="loading"
+        message="Restoring your session…"
+      />
+    );
+  }
+
+  if (auth.status === "error") {
+    return (
+      <AuthRouteState
+        title="Opening your workspace"
+        state="error"
+        message="We couldn't restore your session."
+        action={{ label: "Try again", onAction: () => void auth.restore() }}
+      />
+    );
+  }
+
+  if (auth.status !== "authenticated") {
     return <Navigate to="/login" replace state={{ from: location.pathname }} />;
   }
 
-  if (allowedRoles && !allowedRoles.includes(auth.user.role)) {
-    return <Navigate to={roleHomePath(auth.user.role)} replace />;
+  if (!auth.user || !auth.authorization) {
+    return (
+      <AuthRouteState
+        title="Opening your workspace"
+        state="error"
+        message="Authorization could not be established."
+      />
+    );
   }
 
   return children;

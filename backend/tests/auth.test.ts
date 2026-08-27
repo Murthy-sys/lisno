@@ -2,19 +2,26 @@ import express from "express";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import request from "supertest";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createApp } from "../src/app.js";
-import { isRoleAuthorized } from "../src/domain/permissions.js";
-import { authenticate, authorizeRoles } from "../src/middleware/auth.js";
+import { RESERVED_DEMO_IDENTITIES } from "../src/domain/demo-identities.js";
 import { createAuthRateLimit } from "../src/middleware/auth-rate-limit.js";
 import { errorHandler } from "../src/middleware/errors.js";
 import { createMemoryRepository } from "../src/repositories/memory.js";
-import type { AppRepository, ProjectRecord } from "../src/repositories/types.js";
+import type {
+  AppRepository,
+  ProjectRecord,
+  UserRecord
+} from "../src/repositories/types.js";
 import { demoSeedData } from "../src/seed/data.js";
-import { createAuthService } from "../src/services/auth.service.js";
+import { createAuditService } from "../src/services/audit.service.js";
+import { createProjectService } from "../src/services/project.service.js";
+import { developmentDemoAuthentication } from "./helpers/development-demo-authentication.js";
 
 const JWT_SECRET = "auth-test-secret-with-enough-entropy";
+const BUILT_IN_DEVELOPMENT_JWT_SECRET =
+  "local-development-jwt-secret-do-not-use-in-production";
 const DEMO_PASSWORD = "LisnoDemo2026!";
 
 const createTestApp = (seed = demoSeedData) =>
@@ -23,7 +30,8 @@ const createTestApp = (seed = demoSeedData) =>
     auth: {
       jwtSecret: JWT_SECRET,
       jwtExpiresInSeconds: 900
-    }
+    },
+    developmentDemoAuthorization: developmentDemoAuthentication()
   });
 
 const signupBody = (overrides: Partial<Record<string, string>> = {}) => ({
@@ -46,6 +54,60 @@ function unclaimedProject(id: string, email: string): ProjectRecord {
     clientEmailNormalized: email.trim().toLowerCase()
   };
 }
+
+function seedWithSingleUser(overrides: Partial<UserRecord> = {}) {
+  const seed = structuredClone(demoSeedData);
+  seed.users = [
+    {
+      ...seed.users[0]!,
+      id: "ordinary-user",
+      name: "Ordinary User",
+      email: "ordinary@example.test",
+      emailNormalized: "ordinary@example.test",
+      role: "client",
+      accountKind: "standard",
+      ...overrides
+    }
+  ];
+  return seed;
+}
+
+function withRemoteAddress(
+  app: express.Express,
+  remoteAddress: string | undefined
+) {
+  const gateway = express();
+  gateway.use((request, _response, next) => {
+    Object.defineProperty(request.socket, "remoteAddress", {
+      configurable: true,
+      value: remoteAddress
+    });
+    next();
+  });
+  gateway.use(app);
+  return gateway;
+}
+
+function createBoundaryApp(input: {
+  seed: ReturnType<typeof seedWithSingleUser>;
+  jwtSecret?: string;
+  developmentDemoAuthorization?: ReturnType<typeof developmentDemoAuthentication>;
+  remoteAddress?: string;
+}) {
+  const inner = createApp({
+    repository: createMemoryRepository(input.seed),
+    auth: {
+      jwtSecret: input.jwtSecret ?? JWT_SECRET,
+      jwtExpiresInSeconds: 900
+    },
+    developmentDemoAuthorization: input.developmentDemoAuthorization
+  });
+  return withRemoteAddress(inner, input.remoteAddress);
+}
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 function failSignupAuditWrites(base: AppRepository): AppRepository {
   return new Proxy(base, {
@@ -200,10 +262,21 @@ describe("authentication API", () => {
   });
 
   it.each([
+    ["super_admin", "super-admin@lisno.example", "user-super-admin"],
+    ["admin", "admin@lisno.example", "user-admin"],
     ["designer", "ananya@lisno.example", "user-designer-ananya"],
     ["design_manager", "aarav@lisno.example", "user-manager-aarav"],
     ["design_head", "head@lisno.example", "user-head"],
     ["estimator_sales", "sales@lisno.example", "user-estimator-sales"],
+    ["procurement", "procurement@lisno.example", "user-procurement"],
+    ["finance_head", "finance-head@lisno.example", "user-finance-head"],
+    ["site_manager", "site-manager@lisno.example", "user-site-manager"],
+    ["worker_electrician", "worker-electrician@lisno.example", "user-worker-electrician"],
+    ["worker_plumber", "worker-plumber@lisno.example", "user-worker-plumber"],
+    ["worker_carpenter", "worker-carpenter@lisno.example", "user-worker-carpenter"],
+    ["worker_painter", "worker-painter@lisno.example", "user-worker-painter"],
+    ["worker_civil", "worker-civil@lisno.example", "user-worker-civil"],
+    ["worker_other", "worker-other@lisno.example", "user-worker-other"],
     ["client", "client@aurora.example", "user-client-aurora"]
   ] as const)("logs in the seeded %s account", async (role, email, id) => {
     const response = await request(createTestApp()).post("/api/v1/auth/login").send({
@@ -425,6 +498,22 @@ describe("client signup API", () => {
       expect.objectContaining({ action: "client_project_linked", entityType: "project", entityId: "project-priya-home" }),
       expect.objectContaining({ action: "client_project_linked", entityType: "project", entityId: "project-priya-office" })
     ]));
+
+    const app = createApp({
+      repository,
+      auth: { jwtSecret: JWT_SECRET, jwtExpiresInSeconds: 900 }
+    });
+    const login = await request(app).post("/api/v1/auth/login").send({
+      email: "PRIYA@example.com",
+      password: "StrongPassword!23"
+    });
+    const reload = await request(app)
+      .get("/api/v1/auth/me")
+      .set("Authorization", `Bearer ${login.body.data.token}`);
+
+    expect(login.status).toBe(200);
+    expect(reload.status).toBe(200);
+    expect(reload.body.data).toEqual(response.body.data.user);
   });
 
   it("rejects an email already used by either a client or internal role", async () => {
@@ -491,20 +580,23 @@ describe("client signup API", () => {
     );
     const app = createApp({
       repository: interleaving.repository,
-      auth: { jwtSecret: JWT_SECRET, jwtExpiresInSeconds: 900 }
+      auth: { jwtSecret: JWT_SECRET, jwtExpiresInSeconds: 900 },
+      developmentDemoAuthorization: developmentDemoAuthentication()
     });
+    const projectService = createProjectService(
+      interleaving.repository,
+      createAuditService(interleaving.repository),
+      () => new Date("2026-07-28T12:00:00.000Z")
+    );
     const projectRequest = Promise.resolve(
-      request(app)
-        .post("/api/v1/projects")
-        .set(
-          "Authorization",
-          `Bearer ${jwt.sign(
-            { id: "user-designer-ananya", role: "designer" },
-            JWT_SECRET,
-            { expiresIn: 900 }
-          )}`
-        )
-        .send({
+      projectService.create(
+        {
+          id: "user-designer-ananya",
+          name: "Ananya Rao",
+          email: "ananya@lisno.example",
+          role: "designer"
+        },
+        {
           name: "Interleaved project",
           clientName: "Interleaved Client",
           clientEmail: " Interleaved@Example.COM ",
@@ -515,7 +607,8 @@ describe("client signup API", () => {
           location: "Bengaluru",
           plannedStartAt: "2026-08-01T09:00:00.000Z",
           plannedEndAt: "2026-10-01T17:00:00.000Z"
-        })
+        }
+      )
     );
     const firstOperation = await Promise.race([
       interleaving.observed.then(() => "lookup" as const),
@@ -535,9 +628,8 @@ describe("client signup API", () => {
     }
     const projectResponse = await projectRequest;
 
-    expect(projectResponse.status).toBe(201);
     expect(signupResponse.status).toBe(201);
-    expect(await base.findProjectById(projectResponse.body.data.id)).toMatchObject({
+    expect(await base.findProjectById(projectResponse.id)).toMatchObject({
       clientId: signupResponse.body.data.user.id,
       clientEmailNormalized: "interleaved@example.com"
     });
@@ -563,72 +655,428 @@ describe("client signup API", () => {
   });
 });
 
-describe("role authorization", () => {
-  it("allows only explicitly listed roles", () => {
-    expect(isRoleAuthorized("design_head", ["design_head"])).toBe(true);
-    expect(isRoleAuthorized("design_manager", ["design_manager", "design_head"])).toBe(
-      true
-    );
-    expect(isRoleAuthorized("designer", ["design_manager", "design_head"])).toBe(false);
-    expect(isRoleAuthorized("client", [])).toBe(false);
+describe("human authentication request boundary", () => {
+  const reservedIdentityCases = [
+    [
+      "marker only",
+      {
+        id: "marker-only-user",
+        email: "marker-only@example.test",
+        emailNormalized: "marker-only@example.test",
+        accountKind: "development_demo" as const
+      }
+    ],
+    [
+      "reserved ID only",
+      {
+        id: "user-head",
+        email: "reserved-id-only@example.test",
+        emailNormalized: "reserved-id-only@example.test",
+        accountKind: "standard" as const
+      }
+    ],
+    [
+      "reserved email only",
+      {
+        id: "reserved-email-only-user",
+        email: "head@lisno.example",
+        emailNormalized: "head@lisno.example",
+        accountKind: "standard" as const
+      }
+    ]
+  ] as const;
+
+  it.each(reservedIdentityCases)(
+    "denies a local %s identity without an issued capability",
+    async (_name, overrides) => {
+      const seed = seedWithSingleUser(overrides);
+      const user = seed.users[0]!;
+      const app = createBoundaryApp({ seed, remoteAddress: "127.0.0.1" });
+      const token = jwt.sign({ id: user.id, role: user.role }, JWT_SECRET, {
+        expiresIn: 900
+      });
+
+      const login = await request(app).post("/api/v1/auth/login").send({
+        email: user.email,
+        password: DEMO_PASSWORD
+      });
+      const reload = await request(app)
+        .get("/api/v1/auth/me")
+        .set("Authorization", `Bearer ${token}`);
+
+      expect(login.status).toBe(401);
+      expect(login.body).toEqual({
+        error: {
+          code: "INVALID_CREDENTIALS",
+          message: "Invalid email or password."
+        }
+      });
+      expect(reload.status).toBe(401);
+      expect(reload.body).toEqual({
+        error: { code: "INVALID_TOKEN", message: "Authentication token is invalid." }
+      });
+    }
+  );
+
+  it("denies a reserved identity when the capability is structurally forged", async () => {
+    const seed = seedWithSingleUser({
+      id: "user-head",
+      email: "head@lisno.example",
+      emailNormalized: "head@lisno.example",
+      accountKind: "development_demo"
+    });
+    const app = createBoundaryApp({
+      seed,
+      remoteAddress: "127.0.0.1",
+      developmentDemoAuthorization: {
+        databaseName: "lisno_demo",
+        bindHost: "127.0.0.1"
+      } as ReturnType<typeof developmentDemoAuthentication>
+    });
+
+    const response = await request(app).post("/api/v1/auth/login").send({
+      email: "head@lisno.example",
+      password: DEMO_PASSWORD
+    });
+
+    expect(response.status).toBe(401);
+    expect(response.body.error.code).toBe("INVALID_CREDENTIALS");
+  });
+
+  it.each(reservedIdentityCases)(
+    "denies a remote %s identity even with an issued capability",
+    async (_name, overrides) => {
+      const seed = seedWithSingleUser(overrides);
+      const user = seed.users[0]!;
+      const app = createBoundaryApp({
+        seed,
+        remoteAddress: "192.0.2.10",
+        developmentDemoAuthorization: developmentDemoAuthentication()
+      });
+      const token = jwt.sign({ id: user.id, role: user.role }, JWT_SECRET, {
+        expiresIn: 900
+      });
+
+      const login = await request(app).post("/api/v1/auth/login").send({
+        email: user.email,
+        password: DEMO_PASSWORD
+      });
+      const reload = await request(app)
+        .get("/api/v1/auth/me")
+        .set("Authorization", `Bearer ${token}`);
+
+      expect(login.status).toBe(401);
+      expect(login.body.error.code).toBe("INVALID_CREDENTIALS");
+      expect(reload.status).toBe(401);
+      expect(reload.body.error.code).toBe("INVALID_TOKEN");
+    }
+  );
+
+  it.each(["127.0.0.1", "::1", "::ffff:127.0.0.1"])(
+    "allows reserved login and JWT reload from issued loopback %s",
+    async (remoteAddress) => {
+      const seed = seedWithSingleUser({
+        id: "user-head",
+        email: "head@lisno.example",
+        emailNormalized: "head@lisno.example",
+        accountKind: "development_demo"
+      });
+      const user = seed.users[0]!;
+      const app = createBoundaryApp({
+        seed,
+        remoteAddress,
+        developmentDemoAuthorization: developmentDemoAuthentication()
+      });
+
+      const login = await request(app).post("/api/v1/auth/login").send({
+        email: user.email,
+        password: DEMO_PASSWORD
+      });
+      const reload = await request(app)
+        .get("/api/v1/auth/me")
+        .set("Authorization", `Bearer ${login.body.data.token}`);
+
+      expect(login.status).toBe(200);
+      expect(reload.status).toBe(200);
+      expect(reload.body.data.id).toBe(user.id);
+    }
+  );
+
+  it.each([
+    ["missing", undefined],
+    ["malformed", "127.0.0.999"]
+  ])(
+    "denies reserved authentication for a %s direct socket address",
+    async (_name, remoteAddress) => {
+      const seed = seedWithSingleUser({
+        id: "user-head",
+        email: "head@lisno.example",
+        emailNormalized: "head@lisno.example",
+        accountKind: "development_demo"
+      });
+      const app = createBoundaryApp({
+        seed,
+        remoteAddress,
+        developmentDemoAuthorization: developmentDemoAuthentication()
+      });
+
+      const response = await request(app).post("/api/v1/auth/login").send({
+        email: "head@lisno.example",
+        password: DEMO_PASSWORD
+      });
+
+      expect(response.status).toBe(401);
+      expect(response.body.error.code).toBe("INVALID_CREDENTIALS");
+    }
+  );
+
+  it("uses only the direct socket peer when a remote request spoofs X-Forwarded-For", async () => {
+    const seed = seedWithSingleUser({
+      id: "user-head",
+      email: "head@lisno.example",
+      emailNormalized: "head@lisno.example",
+      accountKind: "development_demo"
+    });
+    const inner = createApp({
+      repository: createMemoryRepository(seed),
+      auth: { jwtSecret: JWT_SECRET, jwtExpiresInSeconds: 900 },
+      developmentDemoAuthorization: developmentDemoAuthentication()
+    });
+    inner.set("trust proxy", true);
+    const app = withRemoteAddress(inner, "192.0.2.10");
+
+    const response = await request(app)
+      .post("/api/v1/auth/login")
+      .set("X-Forwarded-For", "127.0.0.1")
+      .send({ email: "head@lisno.example", password: DEMO_PASSWORD });
+
+    expect(response.status).toBe(401);
+    expect(response.body.error.code).toBe("INVALID_CREDENTIALS");
   });
 
   it.each([
-    ["design_head", 200, { data: { authorized: true } }],
-    [
-      "client",
-      403,
-      {
+    ["missing", undefined, undefined],
+    ["malformed", "127.0.0.999", undefined],
+    ["remote despite a loopback X-Forwarded-For", "192.0.2.10", "127.0.0.1"]
+  ])(
+    "denies a signed reserved JWT for a %s direct socket address",
+    async (_name, remoteAddress, forwardedFor) => {
+      const seed = seedWithSingleUser({
+        id: "user-head",
+        email: "head@lisno.example",
+        emailNormalized: "head@lisno.example",
+        accountKind: "development_demo"
+      });
+      const user = seed.users[0]!;
+      const inner = createApp({
+        repository: createMemoryRepository(seed),
+        auth: { jwtSecret: JWT_SECRET, jwtExpiresInSeconds: 900 },
+        developmentDemoAuthorization: developmentDemoAuthentication()
+      });
+      inner.set("trust proxy", true);
+      const app = withRemoteAddress(inner, remoteAddress);
+      const token = jwt.sign({ id: user.id, role: user.role }, JWT_SECRET, {
+        expiresIn: 900
+      });
+      const reload = request(app)
+        .get("/api/v1/auth/me")
+        .set("Authorization", `Bearer ${token}`);
+      if (forwardedFor) reload.set("X-Forwarded-For", forwardedFor);
+
+      const response = await reload;
+
+      expect(response.status).toBe(401);
+      expect(response.body).toEqual({
+        error: { code: "INVALID_TOKEN", message: "Authentication token is invalid." }
+      });
+    }
+  );
+
+  it.each([
+    ["without a capability", undefined],
+    ["with a demo capability", developmentDemoAuthentication()]
+  ])(
+    "denies every remote built-in-secret human auth flow %s with generic errors",
+    async (_name, developmentDemoAuthorization) => {
+      const seed = seedWithSingleUser();
+      const user = seed.users[0]!;
+      const app = createBoundaryApp({
+        seed,
+        jwtSecret: BUILT_IN_DEVELOPMENT_JWT_SECRET,
+        remoteAddress: "192.0.2.10",
+        developmentDemoAuthorization
+      });
+      const token = jwt.sign(
+        { id: user.id, role: user.role },
+        BUILT_IN_DEVELOPMENT_JWT_SECRET,
+        { expiresIn: 900 }
+      );
+
+      const login = await request(app).post("/api/v1/auth/login").send({
+        email: user.email,
+        password: DEMO_PASSWORD
+      });
+      const reload = await request(app)
+        .get("/api/v1/auth/me")
+        .set("Authorization", `Bearer ${token}`);
+      const signup = await request(app)
+        .post("/api/v1/auth/client-signup")
+        .send(signupBody({ email: "remote-signup@example.test" }));
+
+      expect(login.status).toBe(401);
+      expect(login.body.error.code).toBe("INVALID_CREDENTIALS");
+      expect(reload.status).toBe(401);
+      expect(reload.body.error.code).toBe("INVALID_TOKEN");
+      expect(signup.status).toBe(401);
+      expect(signup.body).toEqual({
         error: {
-          code: "FORBIDDEN",
-          message: "You are not authorized to perform this action."
+          code: "INVALID_CREDENTIALS",
+          message: "Invalid email or password."
         }
-      }
-    ]
-  ] as const)("enforces protected-route roles for %s", async (role, status, body) => {
-    const repository = createMemoryRepository(demoSeedData);
-    const authService = createAuthService(repository, {
-      jwtSecret: JWT_SECRET,
-      jwtExpiresInSeconds: 900
+      });
+    }
+  );
+
+  it.each([
+    ["without a capability", undefined],
+    ["with a demo capability", developmentDemoAuthentication()]
+  ])(
+    "allows a remote standard User on a custom-secret server %s",
+    async (_name, developmentDemoAuthorization) => {
+      const seed = seedWithSingleUser();
+      const user = seed.users[0]!;
+      const app = createBoundaryApp({
+        seed,
+        remoteAddress: "192.0.2.10",
+        developmentDemoAuthorization
+      });
+
+      const login = await request(app).post("/api/v1/auth/login").send({
+        email: user.email,
+        password: DEMO_PASSWORD
+      });
+      const reload = await request(app)
+        .get("/api/v1/auth/me")
+        .set("Authorization", `Bearer ${login.body.data.token}`);
+
+      expect(login.status).toBe(200);
+      expect(reload.status).toBe(200);
+      expect(reload.body.data.id).toBe(user.id);
+    }
+  );
+
+  it("does password comparison before generic remote built-in-secret login denial", async () => {
+    const seed = seedWithSingleUser();
+    const repository = createMemoryRepository(seed);
+    const compare = vi.spyOn(bcrypt, "compare");
+    const inner = createApp({
+      repository,
+      auth: {
+        jwtSecret: BUILT_IN_DEVELOPMENT_JWT_SECRET,
+        jwtExpiresInSeconds: 900
+      },
+      developmentDemoAuthorization: developmentDemoAuthentication()
     });
-    const app = express();
-    app.get(
-      "/head-only",
-      authenticate(authService),
-      authorizeRoles("design_head"),
-      (_request, response) => response.json({ data: { authorized: true } })
-    );
-    app.use(errorHandler);
-    const userId = role === "design_head" ? "user-head" : "user-client-aurora";
-    const token = jwt.sign({ id: userId, role }, JWT_SECRET, { expiresIn: 900 });
 
-    const response = await request(app)
-      .get("/head-only")
-      .set("Authorization", `Bearer ${token}`);
-
-    expect(response.status).toBe(status);
-    expect(response.body).toEqual(body);
-  });
-
-  it("returns the authentication envelope before evaluating a protected role", async () => {
-    const authService = createAuthService(createMemoryRepository(demoSeedData), {
-      jwtSecret: JWT_SECRET,
-      jwtExpiresInSeconds: 900
-    });
-    const app = express();
-    app.get(
-      "/head-only",
-      authenticate(authService),
-      authorizeRoles("design_head"),
-      (_request, response) => response.json({ data: { authorized: true } })
-    );
-    app.use(errorHandler);
-
-    const response = await request(app).get("/head-only");
+    const response = await request(withRemoteAddress(inner, "192.0.2.10"))
+      .post("/api/v1/auth/login")
+      .send({ email: "ordinary@example.test", password: DEMO_PASSWORD });
 
     expect(response.status).toBe(401);
-    expect(response.body).toEqual({
-      error: { code: "AUTHENTICATION_REQUIRED", message: "Authentication is required." }
+    expect(compare).toHaveBeenCalledOnce();
+  });
+
+  it("reloads the current exact-role User before generic remote JWT denial", async () => {
+    const seed = seedWithSingleUser();
+    const user = seed.users[0]!;
+    const repository = createMemoryRepository(seed);
+    const findUserById = vi.spyOn(repository, "findUserById");
+    const inner = createApp({
+      repository,
+      auth: {
+        jwtSecret: BUILT_IN_DEVELOPMENT_JWT_SECRET,
+        jwtExpiresInSeconds: 900
+      },
+      developmentDemoAuthorization: developmentDemoAuthentication()
     });
+    const token = jwt.sign(
+      { id: user.id, role: user.role },
+      BUILT_IN_DEVELOPMENT_JWT_SECRET,
+      { expiresIn: 900 }
+    );
+
+    const response = await request(withRemoteAddress(inner, "192.0.2.10"))
+      .get("/api/v1/auth/me")
+      .set("Authorization", `Bearer ${token}`);
+
+    expect(response.status).toBe(401);
+    expect(response.body.error.code).toBe("INVALID_TOKEN");
+    expect(findUserById).toHaveBeenCalledOnce();
+    expect(findUserById).toHaveBeenCalledWith(user.id);
+  });
+});
+
+describe("reserved Client signup boundary", () => {
+  it.each(RESERVED_DEMO_IDENTITIES)(
+    "returns ACCOUNT_EXISTS without starting writes for $emailNormalized",
+    async ({ emailNormalized }) => {
+      const repository = createMemoryRepository(structuredClone(demoSeedData));
+      const runInTransaction = vi.spyOn(repository, "runInTransaction");
+      const coordinateClientEmail = vi.spyOn(repository, "coordinateClientEmail");
+      const createUser = vi.spyOn(repository, "createUser");
+      const linkProjects = vi.spyOn(repository, "linkUnclaimedProjectsToClient");
+      const appendAuditEvent = vi.spyOn(repository, "appendAuditEvent");
+      const hash = vi.spyOn(bcrypt, "hash");
+      const app = createApp({
+        repository,
+        auth: { jwtSecret: JWT_SECRET, jwtExpiresInSeconds: 900 }
+      });
+
+      const response = await request(app)
+        .post("/api/v1/auth/client-signup")
+        .send(signupBody({ email: `  ${emailNormalized.toUpperCase()}  ` }));
+
+      expect(response.status).toBe(409);
+      expect(response.body).toEqual({
+        error: {
+          code: "ACCOUNT_EXISTS",
+          message: "An account already exists for this email."
+        }
+      });
+      expect(runInTransaction).not.toHaveBeenCalled();
+      expect(coordinateClientEmail).not.toHaveBeenCalled();
+      expect(createUser).not.toHaveBeenCalled();
+      expect(linkProjects).not.toHaveBeenCalled();
+      expect(appendAuditEvent).not.toHaveBeenCalled();
+      expect(hash).not.toHaveBeenCalled();
+    }
+  );
+
+  it("keeps reserved-email precedence over remote built-in-secret denial", async () => {
+    const repository = createMemoryRepository(structuredClone(demoSeedData));
+    const runInTransaction = vi.spyOn(repository, "runInTransaction");
+    const createUser = vi.spyOn(repository, "createUser");
+    const linkProjects = vi.spyOn(repository, "linkUnclaimedProjectsToClient");
+    const appendAuditEvent = vi.spyOn(repository, "appendAuditEvent");
+    const hash = vi.spyOn(bcrypt, "hash");
+    const inner = createApp({
+      repository,
+      auth: {
+        jwtSecret: BUILT_IN_DEVELOPMENT_JWT_SECRET,
+        jwtExpiresInSeconds: 900
+      }
+    });
+
+    const response = await request(withRemoteAddress(inner, "192.0.2.10"))
+      .post("/api/v1/auth/client-signup")
+      .send(signupBody({ email: "  CLIENT@AURORA.EXAMPLE " }));
+
+    expect(response.status).toBe(409);
+    expect(response.body.error.code).toBe("ACCOUNT_EXISTS");
+    expect(runInTransaction).not.toHaveBeenCalled();
+    expect(createUser).not.toHaveBeenCalled();
+    expect(linkProjects).not.toHaveBeenCalled();
+    expect(appendAuditEvent).not.toHaveBeenCalled();
+    expect(hash).not.toHaveBeenCalled();
   });
 });

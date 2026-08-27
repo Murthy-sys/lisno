@@ -1,0 +1,24 @@
+#:schema https://developers.openai.com/codex/config-schema.json
+
+# Repository quality floor. A stronger live Max/Ultra selection still flows to
+# child agents for that session.
+model = "gpt-5.6-sol"
+model_reasoning_effort = "xhigh"
+
+[agents]
+enabled = true
+# Three child threads plus the primary agent matches this repository's preferred
+# audit/implementation/review fan-out without encouraging overlapping writers.
+max_concurrent_threads_per_session = 3
+interrupt_message = true
+
+[mcp_servers."21st"]
+url = "https://21st.dev/api/mcp"
+bearer_token_env_var = "API_KEY_21ST"
+enabled = true
+required = false
+# Read-only discovery can run directly; component installs, generation, and
+# external publishing tools must request approval when correctly annotated.
+default_tools_approval_mode = "writes"
+startup_timeout_sec = 15
+tool_timeout_sec = 120

@@ -30,6 +30,8 @@ const markedDocument: AnnotationDocumentV1 = {
   }]
 };
 
+const setupUser = () => userEvent.setup({ delay: null });
+
 function makeOversizedDocument(): AnnotationDocumentV1 {
   return {
     ...emptyDocument,
@@ -104,7 +106,7 @@ async function waitForProtectedCanvas() {
 }
 
 async function addTextNote() {
-  const user = userEvent.setup();
+  const user = setupUser();
   const canvas = await waitForProtectedCanvas();
   vi.spyOn(canvas, "getBoundingClientRect").mockReturnValue({
     left: 0,
@@ -125,8 +127,96 @@ async function addTextNote() {
 }
 
 describe("EstimateDrawingPreviewDialog", () => {
+  it("shows deduplicated request history without prefilling or resubmitting it", async () => {
+    const user = setupUser();
+    const onSubmitChangeRequest = vi.fn();
+    render(<EstimateDrawingPreviewDialog {...previewProps({
+      annotations: markedDocument,
+      sharedComments: [
+        { id: "request-1", summary: "Move the cabinet left", status: "open", source: "plan" },
+        { id: "request-1", summary: "Move the cabinet left", status: "open", source: "plan" },
+        { id: "request-blank", summary: "   ", status: "open", source: "drawing" }
+      ],
+      onSubmitChangeRequest
+    })} />);
+
+    expect(screen.getByRole("heading", { name: "Requested changes" })).toBeVisible();
+    expect(screen.getAllByText("Move the cabinet left")).toHaveLength(1);
+    expect(screen.getByLabelText("Change summary")).toHaveValue("");
+
+    await user.type(screen.getByLabelText("Change summary"), "Use the revised width");
+    await user.click(screen.getByRole("button", { name: "Submit change request" }));
+    expect(onSubmitChangeRequest).toHaveBeenCalledWith(markedDocument, "Use the revised width");
+    expect(JSON.stringify(onSubmitChangeRequest.mock.calls[0])).not.toContain("Move the cabinet left");
+  });
+
+  it("edits one existing client request instead of offering another submission", async () => {
+    const user = setupUser();
+    const onSubmitChangeRequest = vi.fn();
+    const onUpdateChangeRequest = vi.fn();
+    render(<EstimateDrawingPreviewDialog {...previewProps({
+      annotations: markedDocument,
+      editableRequest: { id: "request-1", version: 3, summary: "Move the cabinet left" },
+      sharedComments: [{ id: "request-1", summary: "Move the cabinet left", status: "open", source: "plan" }],
+      onSubmitChangeRequest,
+      onUpdateChangeRequest
+    })} />);
+
+    expect(screen.queryByText("Requested changes")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Submit change request" })).not.toBeInTheDocument();
+    const summary = screen.getByLabelText("Change summary");
+    expect(summary).toHaveValue("Move the cabinet left");
+    await user.clear(summary);
+    await user.type(summary, "Use the revised cabinet width");
+    await user.click(screen.getByRole("button", { name: "Update change request" }));
+
+    expect(onUpdateChangeRequest).toHaveBeenCalledWith("request-1", 3, markedDocument, "Use the revised cabinet width");
+    expect(onSubmitChangeRequest).not.toHaveBeenCalled();
+  });
+
+  it("renders projected annotations read-only without persisting them in the editable draft", async () => {
+    const user = setupUser();
+    const onSaveDraft = vi.fn();
+    render(<EstimateDrawingPreviewDialog {...previewProps({
+      sharedAnnotations: [{
+        id: "shared-note",
+        type: "text",
+        x: 0.5,
+        y: 0.5,
+        text: "Shared extracted note",
+        color: "#ef4444",
+        strokeWidth: 2
+      }],
+      onSaveDraft
+    })} />);
+
+    await addTextNote();
+    const shared = screen.getByText("Shared extracted note");
+    expect(shared).toHaveAttribute("data-shared", "true");
+    expect(shared).toHaveStyle({ pointerEvents: "none" });
+    await user.click(screen.getByRole("button", { name: "Save as draft" }));
+    expect(onSaveDraft).toHaveBeenCalledWith(expect.objectContaining({
+      elements: [expect.objectContaining({ type: "text", text: "Shift this door" })]
+    }));
+    expect(JSON.stringify(onSaveDraft.mock.calls[0]?.[0])).not.toContain("shared-note");
+  });
+
+  it("enables Save as draft after the first default rectangle drag", async () => {
+    render(<EstimateDrawingPreviewDialog {...previewProps()} />);
+    const canvas = await waitForProtectedCanvas();
+    vi.spyOn(canvas, "getBoundingClientRect").mockReturnValue({ left: 0, top: 0, width: 1000, height: 800, right: 1000, bottom: 800, x: 0, y: 0, toJSON: () => ({}) });
+    expect(screen.getByRole("button", { name: "Save as draft" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Save as draft" })).toHaveClass("button", "button--secondary");
+
+    fireEvent.pointerDown(canvas, { pointerId: 1, clientX: 100, clientY: 100 });
+    fireEvent.pointerMove(canvas, { pointerId: 1, clientX: 300, clientY: 300 });
+    fireEvent.pointerUp(canvas, { pointerId: 1, clientX: 300, clientY: 300 });
+
+    expect(screen.getByRole("button", { name: "Save as draft" })).toBeEnabled();
+  });
+
   it("traps focus and restores it to the opener when a clean preview closes", async () => {
-    const user = userEvent.setup();
+    const user = setupUser();
     render(<ModalHarness />);
     const opener = screen.getByRole("button", { name: "Open drawing" });
     await user.click(opener);
@@ -143,6 +233,7 @@ describe("EstimateDrawingPreviewDialog", () => {
   });
 
   it("reuses one authenticated image source across view changes and revokes it on unmount", async () => {
+    const user = setupUser();
     const props = previewProps();
     const { unmount } = render(<EstimateDrawingPreviewDialog {...props} />);
     const canvas = await waitForProtectedCanvas();
@@ -150,9 +241,10 @@ describe("EstimateDrawingPreviewDialog", () => {
     expect(apiClient.getBlob).toHaveBeenCalledTimes(1);
     expect(apiClient.getBlob).toHaveBeenCalledWith(props.imageUrl);
     const initialViewBox = canvas.getAttribute("viewBox");
-    await userEvent.click(screen.getByRole("button", { name: "Zoom in" }));
+    await user.click(screen.getByRole("button", { name: "Zoom in" }));
     expect(canvas.getAttribute("viewBox")).not.toBe(initialViewBox);
-    await userEvent.click(screen.getByRole("button", { name: "Pan right" }));
+    expect(screen.queryByRole("button", { name: /pan/i })).not.toBeInTheDocument();
+    fireEvent.wheel(screen.getByTestId("map-viewport-surface"), { deltaY: -100, clientX: 100, clientY: 100 });
     expect(apiClient.getBlob).toHaveBeenCalledTimes(1);
 
     unmount();
@@ -162,7 +254,7 @@ describe("EstimateDrawingPreviewDialog", () => {
   it.each(["estimator", "approved client"] as const)(
     "renders immutable overlays without mounting editor controls for %s preview",
     async () => {
-      const { container } = render(
+      const { baseElement } = render(
         <EstimateDrawingPreviewDialog
           {...previewProps({ annotations: markedDocument, canAnnotate: false })}
         />
@@ -171,40 +263,43 @@ describe("EstimateDrawingPreviewDialog", () => {
 
       expect(screen.getByText("Keep this opening")).toBeVisible();
       expect(screen.queryByRole("toolbar", { name: "Annotation tools" })).not.toBeInTheDocument();
-      expect(container.querySelector(".annotation-editor")).not.toBeInTheDocument();
-      expect(container.querySelector(".annotation-overlay")).toBeInTheDocument();
-      expect(screen.queryByRole("button", { name: "Save draft" })).not.toBeInTheDocument();
+      expect(baseElement.querySelector(".annotation-editor")).not.toBeInTheDocument();
+      expect(baseElement.querySelector(".annotation-overlay")).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Save as draft" })).not.toBeInTheDocument();
       expect(screen.getByRole("button", { name: "Zoom in" })).toBeVisible();
+      expect(screen.queryByRole("complementary", { name: "Drawing view controls" })).not.toBeInTheDocument();
     }
   );
 
   it("confirms before closing with unsaved annotations and lets the client continue editing", async () => {
+    const user = setupUser();
     const onClose = vi.fn();
     render(<EstimateDrawingPreviewDialog {...previewProps({ onClose })} />);
     await addTextNote();
 
     const preview = screen.getByRole("dialog", { name: "Ground floor plan preview" });
-    await userEvent.click(within(preview).getByRole("button", { name: "Close Ground floor plan preview" }));
+    await user.click(within(preview).getByRole("button", { name: "Close Ground floor plan preview" }));
     const confirmation = screen.getByRole("alertdialog", { name: "Discard unsaved annotations?" });
     expect(onClose).not.toHaveBeenCalled();
     expect(preview).toHaveAttribute("inert");
-    await userEvent.click(within(confirmation).getByRole("button", { name: "Keep editing" }));
+    await user.click(within(confirmation).getByRole("button", { name: "Keep editing" }));
     expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
     expect(preview).not.toHaveAttribute("inert");
     expect(within(preview).getByRole("button", { name: "Close Ground floor plan preview" })).toHaveFocus();
     expect(screen.getByText("Shift this door")).toBeVisible();
 
-    await userEvent.click(within(preview).getByRole("button", { name: "Close Ground floor plan preview" }));
-    await userEvent.click(screen.getByRole("button", { name: "Discard changes" }));
+    await user.click(within(preview).getByRole("button", { name: "Close Ground floor plan preview" }));
+    await user.click(screen.getByRole("button", { name: "Discard changes" }));
     expect(onClose).toHaveBeenCalledOnce();
   });
 
   it("contains confirmation focus and uses Escape to continue editing", async () => {
+    const user = setupUser();
     render(<EstimateDrawingPreviewDialog {...previewProps()} />);
     await addTextNote();
     const preview = screen.getByRole("dialog", { name: "Ground floor plan preview" });
     const close = within(preview).getByRole("button", { name: "Close Ground floor plan preview" });
-    await userEvent.click(close);
+    await user.click(close);
     const confirmation = screen.getByRole("alertdialog", { name: "Discard unsaved annotations?" });
     const keepEditing = within(confirmation).getByRole("button", { name: "Keep editing" });
     const discard = within(confirmation).getByRole("button", { name: "Discard changes" });
@@ -226,7 +321,7 @@ describe("EstimateDrawingPreviewDialog", () => {
   it("saves a draft and submits a summary with the current annotation document", async () => {
     const onSaveDraft = vi.fn().mockResolvedValue(undefined);
     const onSubmitChangeRequest = vi.fn().mockResolvedValue(undefined);
-    const user = userEvent.setup();
+    const user = setupUser();
     render(
       <EstimateDrawingPreviewDialog
         {...previewProps({ onSaveDraft, onSubmitChangeRequest })}
@@ -234,7 +329,7 @@ describe("EstimateDrawingPreviewDialog", () => {
     );
     await addTextNote();
 
-    await user.click(screen.getByRole("button", { name: "Save draft" }));
+    await user.click(screen.getByRole("button", { name: "Save as draft" }));
     await waitFor(() => expect(onSaveDraft).toHaveBeenCalledOnce());
     expect(onSaveDraft.mock.calls[0]![0].elements[0]).toMatchObject({
       type: "text",
@@ -252,6 +347,7 @@ describe("EstimateDrawingPreviewDialog", () => {
   });
 
   it("blocks persistence callbacks when annotations exceed the UTF-8 payload limit", async () => {
+    const user = setupUser();
     const annotations = makeOversizedDocument();
     const onSaveDraft = vi.fn();
     const onSubmitChangeRequest = vi.fn();
@@ -261,8 +357,8 @@ describe("EstimateDrawingPreviewDialog", () => {
         {...previewProps({ annotations, onSaveDraft, onSubmitChangeRequest })}
       />
     );
-    await userEvent.type(screen.getByLabelText("Change summary"), "Please update the marked areas.");
-    await userEvent.click(screen.getByRole("button", { name: "Submit change request" }));
+    await user.type(screen.getByLabelText("Change summary"), "Please update the marked areas.");
+    await user.click(screen.getByRole("button", { name: "Submit change request" }));
 
     expect(onSaveDraft).not.toHaveBeenCalled();
     expect(onSubmitChangeRequest).not.toHaveBeenCalled();

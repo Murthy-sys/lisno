@@ -4,6 +4,7 @@ import { Router } from "express";
 import { z } from "zod";
 
 import { authenticate } from "../middleware/auth.js";
+import { requireOperation } from "../middleware/authorization.js";
 import { validateBody } from "../middleware/validate.js";
 import type { AuthService } from "../services/auth.service.js";
 import type { DesignSectionService } from "../services/design-section.service.js";
@@ -38,30 +39,31 @@ export function createDesignSectionsRouter(
   const router = Router();
   const protectedRoute = authenticate(authService);
 
-  router.get("/design-versions/:versionId/sections", protectedRoute, handler(async (request) =>
+  router.get("/design-versions/:versionId/sections", protectedRoute, requireOperation("GET /design-versions/:versionId/sections"), handler(async (request) =>
     sections.listDrafts(request.authenticatedUser!, request.params.versionId as string)
   ));
-  router.post("/design-versions/:versionId/sections", protectedRoute, validateBody(addSchema), handler(async (request) =>
+  router.post("/design-versions/:versionId/sections", protectedRoute, requireOperation("POST /design-versions/:versionId/sections"), validateBody(addSchema), handler(async (request) =>
     sections.add(request.authenticatedUser!, request.params.versionId as string, request.body), 201
   ));
-  router.patch("/design-sections/:sectionId", protectedRoute, validateBody(editSchema), handler(async (request) =>
+  router.patch("/design-sections/:sectionId", protectedRoute, requireOperation("PATCH /design-sections/:sectionId"), validateBody(editSchema), handler(async (request) =>
     sections.edit(request.authenticatedUser!, request.params.sectionId as string, request.body)
   ));
-  router.delete("/design-sections/:sectionId", protectedRoute, validateBody(removeSchema), handler(async (request) =>
+  router.delete("/design-sections/:sectionId", protectedRoute, requireOperation("DELETE /design-sections/:sectionId"), validateBody(removeSchema), handler(async (request) =>
     sections.remove(request.authenticatedUser!, request.params.sectionId as string, request.body.version)
   ));
-  router.post("/design-versions/:versionId/retry-extraction", protectedRoute, handler(async (request) =>
+  router.post("/design-versions/:versionId/retry-extraction", protectedRoute, requireOperation("POST /design-versions/:versionId/retry-extraction"), handler(async (request) =>
     sections.retry(request.authenticatedUser!, request.params.versionId as string)
   ));
-  router.post("/design-versions/:versionId/submit-sections", protectedRoute, handler(async (request) =>
+  router.post("/design-versions/:versionId/submit-sections", protectedRoute, requireOperation("POST /design-versions/:versionId/submit-sections"), handler(async (request) =>
     sections.submit(request.authenticatedUser!, request.params.versionId as string)
   ));
-  router.get("/client/projects/:projectId/design-sections", protectedRoute, handler(async (request) =>
+  router.get("/client/projects/:projectId/design-sections", protectedRoute, requireOperation("GET /client/projects/:projectId/design-sections"), handler(async (request) =>
     sections.listReview(request.authenticatedUser!, request.params.projectId as string)
   ));
   router.post(
     "/design-section-revisions/:revisionId/decision",
     protectedRoute,
+    requireOperation("POST /design-section-revisions/:revisionId/decision"),
     validateBody(decisionSchema),
     handler(async (request) =>
       sections.decide(
@@ -72,7 +74,7 @@ export function createDesignSectionsRouter(
     )
   );
 
-  router.get("/design-source-pages/:pageId/image", protectedRoute, async (request, response, next) => {
+  router.get("/design-source-pages/:pageId/image", protectedRoute, requireOperation("GET /design-source-pages/:pageId/image"), async (request, response, next) => {
     try {
       response.type("png");
       await pipeline(
@@ -84,7 +86,7 @@ export function createDesignSectionsRouter(
       else next(error);
     }
   });
-  router.get("/design-section-revisions/:revisionId/image", protectedRoute, async (request, response, next) => {
+  router.get("/design-section-revisions/:revisionId/image", protectedRoute, requireOperation("GET /design-section-revisions/:revisionId/image"), async (request, response, next) => {
     try {
       response.type("png");
       await pipeline(

@@ -1,16 +1,29 @@
 import { apiClient, type PaginatedData } from "../../api/client";
-import type { Lead, LeadActivity, LeadActivityType, LeadStage } from "../../api/types";
+import type {
+  DesignPlanStatus,
+  EstimateClientReviewSummary,
+  Lead,
+  LeadActivity,
+  LeadActivityType,
+  LeadStage
+} from "../../api/types";
 
-export const leadKeys = { all: ["leads"] as const, page: (search: string, stage: LeadStage | "all") => ["leads", "page", search.trim().toLowerCase(), stage] as const, detail: (id: string) => ["leads", id] as const, activities: (id: string) => ["leads", id, "activities"] as const };
+export const leadKeys = {
+  all: ["leads"] as const,
+  page: (search: string, stage: LeadStage | "all") => ["leads", "page", search.trim().toLowerCase(), stage] as const,
+  detail: (id: string) => ["leads", id] as const,
+  estimate: (id: string) => ["leads", id, "estimate"] as const,
+  activities: (id: string) => ["leads", id, "activities"] as const
+};
 export function getLeadPage(search = "", stage: LeadStage | "all" = "all") { const query = new URLSearchParams({ limit: "20", offset: "0" }); if (search.trim()) query.set("search", search.trim()); if (stage !== "all") query.set("stage", stage); return apiClient.get<PaginatedData<Lead>>(`/leads?${query}`); }
 export const getLead = (id: string) => apiClient.get<Lead>(`/leads/${encodeURIComponent(id)}`);
-export const createLead = (input: Omit<Lead, "id" | "ownerId" | "stage" | "latestActivityAt" | "createdAt" | "updatedAt" | "builder" | "areaSqft" | "targetHandoverAt" | "notes">) => apiClient.post<Lead>("/leads", input);
+export const createLead = (input: Omit<Lead, "id" | "projectId" | "ownerId" | "stage" | "latestActivityAt" | "createdAt" | "updatedAt" | "builder" | "areaSqft" | "targetHandoverAt" | "notes">) => apiClient.post<Lead>("/leads", input);
 export const updateLead = (id: string, input: Partial<Lead>) => apiClient.patch<Lead>(`/leads/${encodeURIComponent(id)}`, input);
 export const getLeadActivities = (id: string) => apiClient.get<PaginatedData<LeadActivity>>(`/leads/${encodeURIComponent(id)}/activities?limit=50&offset=0`);
 export const addLeadActivity = (id: string, input: { type: LeadActivityType; note: string; occurredAt: string }) => apiClient.post<LeadActivity>(`/leads/${encodeURIComponent(id)}/activities`, input);
 export interface EstimateDraftInput { propertyType: string; rooms: Array<Record<string, unknown>>; scopes: string[]; lineItems: Array<{ catalogueId: string; roomName: string; specification: string; unit: string; rate: number; quantity: number; included: boolean }>; }
 export type EstimateStatus = "draft" | "pending_manager_assignment" | "pending_designer_approval" | "designer_changes_requested" | "ready_for_client" | "sent_to_client" | "client_changes_requested" | "client_approved";
-export interface EstimateDraft extends EstimateDraftInput { id: string; subtotal: number; gst: number; total: number; status: EstimateStatus; approvalRequired: boolean; assignedDesignerId?: string | null; projectId?: string | null; }
+export interface EstimateDraft extends EstimateDraftInput { id: string; subtotal: number; gst: number; total: number; status: EstimateStatus; approvalRequired: boolean; assignedDesignerId?: string | null; projectId?: string | null; clientReview?: EstimateClientReviewSummary | null; designPlanStatus?: DesignPlanStatus | null; designPlanVersion?: number; }
 export interface SavedEstimate extends EstimateDraft {
   leadId: string;
   updatedAt: string;
@@ -21,5 +34,12 @@ export const getSavedEstimates = () => apiClient.get<SavedEstimate[]>("/estimate
 export const saveLeadEstimate = (id: string, input: EstimateDraftInput) => apiClient.put<EstimateDraft>(`/leads/${encodeURIComponent(id)}/estimate`, input);
 export const submitLeadEstimate = (id: string) => apiClient.post<EstimateDraft>(`/leads/${encodeURIComponent(id)}/estimate/submit`, {});
 export const sendEstimateToClient = (estimateId: string) => apiClient.post<EstimateDraft>(`/estimates/${encodeURIComponent(estimateId)}/send-client`, {});
+export const retryEstimateClientEmail = (
+  estimateId: string,
+  input: { roundId: string; version: number }
+) => apiClient.post<EstimateClientReviewSummary>(
+  `/estimates/${encodeURIComponent(estimateId)}/client-email/retry`,
+  input
+);
 export const downloadEstimatePdf = (estimateId: string) =>
   apiClient.getBlob(`/estimates/${encodeURIComponent(estimateId)}/pdf`);

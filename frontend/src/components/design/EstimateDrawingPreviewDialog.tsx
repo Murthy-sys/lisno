@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 
 import type { AnnotationDocumentV1 } from "../../api/types";
 import { Dialog } from "../ui/Dialog";
@@ -8,6 +8,7 @@ import {
   isAnnotationDocumentWithinByteLimit,
   type ViewTransform
 } from "./annotationGeometry";
+import { MapViewport } from "./MapViewport";
 
 export interface EstimateDrawingPreviewDialogProps {
   title: string;
@@ -15,16 +16,37 @@ export interface EstimateDrawingPreviewDialogProps {
   imageWidth: number;
   imageHeight: number;
   annotations: AnnotationDocumentV1;
+  sharedAnnotations?: AnnotationDocumentV1["elements"];
+  sharedComments?: SharedChangeRequestComment[];
+  editableRequest?: EditableChangeRequest;
   canAnnotate: boolean;
+  navigation?: ReactNode;
   onClose: () => void;
   onSaveDraft?: (document: AnnotationDocumentV1) => void | Promise<void>;
   onSubmitChangeRequest?: (
     document: AnnotationDocumentV1,
     summary: string
   ) => void | Promise<void>;
+  onUpdateChangeRequest?: (
+    requestId: string,
+    version: number,
+    document: AnnotationDocumentV1,
+    summary: string
+  ) => void | Promise<void>;
 }
 
-const DEFAULT_VIEW: ViewTransform = { zoom: 1, panX: 0, panY: 0 };
+export interface SharedChangeRequestComment {
+  id: string;
+  summary: string;
+  status: string;
+  source: "plan" | "drawing";
+}
+
+export interface EditableChangeRequest {
+  id: string;
+  version: number;
+  summary: string;
+}
 
 function fingerprint(document: AnnotationDocumentV1) {
   return JSON.stringify(document);
@@ -36,21 +58,32 @@ export function EstimateDrawingPreviewDialog({
   imageWidth,
   imageHeight,
   annotations,
+  sharedAnnotations = [],
+  sharedComments = [],
+  editableRequest,
   canAnnotate,
+  navigation,
   onClose,
   onSaveDraft,
-  onSubmitChangeRequest
+  onSubmitChangeRequest,
+  onUpdateChangeRequest
 }: EstimateDrawingPreviewDialogProps) {
   const [imageSource, setImageSource] = useState<string>();
   const [document, setDocument] = useState(annotations);
   const [savedFingerprint, setSavedFingerprint] = useState(() => fingerprint(annotations));
-  const [summary, setSummary] = useState("");
-  const [viewTransform, setViewTransform] = useState(DEFAULT_VIEW);
+  const [summary, setSummary] = useState(editableRequest?.summary ?? "");
+  const [savedSummary, setSavedSummary] = useState(editableRequest?.summary.trim() ?? "");
   const [confirmClose, setConfirmClose] = useState(false);
   const [busy, setBusy] = useState<"save" | "submit">();
   const [error, setError] = useState("");
   const annotationsDirty = fingerprint(document) !== savedFingerprint;
-  const dirty = annotationsDirty || summary.trim().length > 0;
+  const summaryDirty = summary.trim() !== savedSummary;
+  const dirty = annotationsDirty || summaryDirty;
+  const requestHistory = [...new Map(sharedComments
+    .map((comment) => ({ ...comment, summary: comment.summary.trim() }))
+    .filter((comment) => comment.summary && comment.id !== editableRequest?.id)
+    .map((comment) => [comment.id, comment])).values()];
+  const showControls = canAnnotate || requestHistory.length > 0;
 
   function requestClose() {
     if (dirty) {
@@ -58,21 +91,6 @@ export function EstimateDrawingPreviewDialog({
       return;
     }
     onClose();
-  }
-
-  function zoomBy(amount: number) {
-    setViewTransform((current) => ({
-      ...current,
-      zoom: Math.max(1, Math.min(4, Math.round((current.zoom + amount) * 100) / 100))
-    }));
-  }
-
-  function panBy(x: number, y: number) {
-    setViewTransform((current) => ({
-      ...current,
-      panX: Math.max(-0.5, Math.min(0.5, current.panX + x)),
-      panY: Math.max(-0.5, Math.min(0.5, current.panY + y))
-    }));
   }
 
   async function saveDraft() {
@@ -116,6 +134,25 @@ export function EstimateDrawingPreviewDialog({
     }
   }
 
+  async function updateChangeRequest() {
+    if (!editableRequest || !onUpdateChangeRequest || !summary.trim() || document.elements.length === 0 || !dirty) return;
+    if (!isAnnotationDocumentWithinByteLimit(document)) {
+      setError("Annotations exceed the 256 KiB limit. Remove or shorten markings before submitting.");
+      return;
+    }
+    setBusy("submit");
+    setError("");
+    try {
+      await onUpdateChangeRequest(editableRequest.id, editableRequest.version, document, summary.trim());
+      setSavedFingerprint(fingerprint(document));
+      setSavedSummary(summary.trim());
+    } catch {
+      setError("The change request changed or could not be updated. Refresh and try again.");
+    } finally {
+      setBusy(undefined);
+    }
+  }
+
   return (
     <>
       <Dialog
@@ -127,81 +164,99 @@ export function EstimateDrawingPreviewDialog({
         contentInert={confirmClose}
       >
         <div className="estimate-drawing-preview-dialog">
-        <ProtectedImage
-          source={imageUrl}
-          alt={`${title} protected drawing`}
-          className={imageSource ? "estimate-drawing-preview-dialog__loader estimate-drawing-preview-dialog__loader--ready" : "estimate-drawing-preview-dialog__loader"}
-          onSourceChange={setImageSource}
-        />
-        <div className="estimate-drawing-preview-dialog__layout">
-          <div className="estimate-drawing-preview-dialog__canvas">
-            {imageSource ? (
-              canAnnotate ? (
-                <ImageAnnotationEditor
-                  imageSource={imageSource}
-                  imageWidth={imageWidth}
-                  imageHeight={imageHeight}
-                  value={document}
-                  readOnly={false}
-                  onChange={setDocument}
-                  viewTransform={viewTransform}
-                />
+          <ProtectedImage
+            source={imageUrl}
+            alt={`${title} protected drawing`}
+            className={imageSource ? "estimate-drawing-preview-dialog__loader estimate-drawing-preview-dialog__loader--ready" : "estimate-drawing-preview-dialog__loader"}
+            onSourceChange={setImageSource}
+          />
+          <div className={`estimate-drawing-preview-dialog__layout${showControls ? "" : " estimate-drawing-preview-dialog__layout--solo"}`}>
+            {navigation ? <div className="estimate-drawing-preview-dialog__navigation">{navigation}</div> : null}
+            <div className="estimate-drawing-preview-dialog__canvas">
+              {imageSource ? (
+                <MapViewport ariaLabel={`${title} map view`}>
+                  {(mapView) => {
+                    const viewTransform: ViewTransform = {
+                      zoom: mapView.scale,
+                      panX: mapView.translateX / Math.max(1, imageWidth),
+                      panY: mapView.translateY / Math.max(1, imageHeight)
+                    };
+                    return canAnnotate ? (
+                      <ImageAnnotationEditor
+                        imageSource={imageSource}
+                        imageWidth={imageWidth}
+                        imageHeight={imageHeight}
+                        value={document}
+                        sharedAnnotations={sharedAnnotations}
+                        readOnly={false}
+                        onChange={setDocument}
+                        viewTransform={viewTransform}
+                      />
+                    ) : (
+                      <AnnotationOverlay
+                        imageSource={imageSource}
+                        imageWidth={imageWidth}
+                        imageHeight={imageHeight}
+                        value={{ ...document, elements: [...document.elements, ...sharedAnnotations] }}
+                        viewTransform={viewTransform}
+                      />
+                    );
+                  }}
+                </MapViewport>
               ) : (
-                <AnnotationOverlay
-                  imageSource={imageSource}
-                  imageWidth={imageWidth}
-                  imageHeight={imageHeight}
-                  value={document}
-                  viewTransform={viewTransform}
-                />
-              )
-            ) : (
-              <p role="status">Loading protected drawing…</p>
-            )}
-          </div>
-          <aside className="estimate-drawing-preview-dialog__controls" aria-label="Drawing view controls">
-            <div className="estimate-drawing-preview-dialog__view-toolbar" role="toolbar" aria-label="Zoom and pan">
-              <button type="button" onClick={() => zoomBy(0.25)} disabled={viewTransform.zoom >= 4}>Zoom in</button>
-              <button type="button" onClick={() => zoomBy(-0.25)} disabled={viewTransform.zoom <= 1}>Zoom out</button>
-              <button type="button" onClick={() => panBy(-0.05, 0)}>Pan left</button>
-              <button type="button" onClick={() => panBy(0.05, 0)}>Pan right</button>
-              <button type="button" onClick={() => panBy(0, -0.05)}>Pan up</button>
-              <button type="button" onClick={() => panBy(0, 0.05)}>Pan down</button>
-              <button type="button" onClick={() => setViewTransform(DEFAULT_VIEW)}>Reset view</button>
+                <p role="status">Loading protected drawing…</p>
+              )}
             </div>
-            <output aria-live="polite">{Math.round(viewTransform.zoom * 100)}% zoom</output>
-            {canAnnotate ? (
-              <div className="estimate-drawing-preview-dialog__review-actions">
-                <label>
-                  Change summary
-                  <textarea
-                    maxLength={1_000}
-                    value={summary}
-                    onChange={(event) => setSummary(event.target.value)}
-                    placeholder="Describe what should change"
-                  />
-                </label>
-                {error ? <p role="alert">{error}</p> : null}
-                <button
-                  type="button"
-                  className="secondary-button"
-                  onClick={() => void saveDraft()}
-                  disabled={!onSaveDraft || busy !== undefined || !annotationsDirty}
-                >
-                  {busy === "save" ? "Saving…" : "Save draft"}
-                </button>
-                <button
-                  type="button"
-                  className="button button--primary"
-                  onClick={() => void submitChangeRequest()}
-                  disabled={!onSubmitChangeRequest || busy !== undefined || !summary.trim() || document.elements.length === 0}
-                >
-                  {busy === "submit" ? "Submitting…" : "Submit change request"}
-                </button>
-              </div>
+            {showControls ? (
+              <aside className="estimate-drawing-preview-dialog__controls" aria-label="Drawing view controls">
+                {requestHistory.length ? (
+                  <section className="estimate-drawing-preview-dialog__request-history" aria-labelledby="drawing-request-history-title">
+                    <h3 id="drawing-request-history-title">Requested changes</h3>
+                    <ul>
+                      {requestHistory.map((comment) => (
+                        <li key={comment.id}>
+                          <p>{comment.summary}</p>
+                          <small>{comment.status.replaceAll("_", " ")}</small>
+                        </li>
+                      ))}
+                    </ul>
+                  </section>
+                ) : null}
+                {canAnnotate ? (
+                  <div className="estimate-drawing-preview-dialog__review-actions">
+                    <label>
+                      Change summary
+                      <textarea
+                        maxLength={1_000}
+                        value={summary}
+                        onChange={(event) => setSummary(event.target.value)}
+                        placeholder="Describe what should change"
+                      />
+                    </label>
+                    {error ? <p role="alert">{error}</p> : null}
+                    <button
+                      type="button"
+                      className="button button--secondary"
+                      onClick={() => void saveDraft()}
+                      disabled={!onSaveDraft || busy !== undefined || !annotationsDirty}
+                    >
+                      {busy === "save" ? "Saving…" : "Save as draft"}
+                    </button>
+                    <button
+                      type="button"
+                      className="button button--primary"
+                      onClick={() => void (editableRequest ? updateChangeRequest() : submitChangeRequest())}
+                      disabled={editableRequest
+                        ? !onUpdateChangeRequest || busy !== undefined || !summary.trim() || document.elements.length === 0 || !dirty
+                        : !onSubmitChangeRequest || busy !== undefined || !summary.trim() || document.elements.length === 0}
+                    >
+                      {busy === "submit" ? (editableRequest ? "Updating…" : "Submitting…") : (editableRequest ? "Update change request" : "Submit change request")}
+                    </button>
+                  </div>
+                ) : null}
+              </aside>
             ) : null}
-          </aside>
-        </div>
+          </div>
         </div>
       </Dialog>
       {confirmClose ? (

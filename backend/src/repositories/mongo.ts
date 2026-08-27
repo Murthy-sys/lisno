@@ -1,6 +1,19 @@
 import { randomUUID } from "node:crypto";
 import mongoose, { type ClientSession, type Model, type PipelineStage } from "mongoose";
 import { normalizeEmail } from "../domain/email.js";
+import { ApiError } from "../middleware/errors.js";
+import {
+  invitationEmailSchema,
+  invitationNameSchema,
+  normalizeInvitationEmail,
+  normalizeInvitationMobile
+} from "../domain/user-invitations.js";
+import {
+  REQUESTABLE_MODULES_BY_ROLE,
+  type ProjectModule
+} from "../domain/authorization.js";
+import { AccessRequestModel } from "../models/AccessRequest.js";
+import { AuthorizationCoordinationModel } from "../models/AuthorizationCoordination.js";
 import { AuditEventModel } from "../models/AuditEvent.js";
 import { DesignStageModel } from "../models/DesignStage.js";
 import { DesignExtractionJobModel } from "../models/DesignExtractionJob.js";
@@ -11,19 +24,34 @@ import { DesignVersionModel } from "../models/DesignVersion.js";
 import { DesignVersionSequenceModel } from "../models/DesignVersionSequence.js";
 import { EmailCoordinationModel } from "../models/EmailCoordination.js";
 import { EvaluationModel } from "../models/Evaluation.js";
+import { EstimateModel } from "../models/Estimate.js";
+import { EstimateClientReviewRoundModel } from "../models/EstimateClientReviewRound.js";
 import { FloorModel } from "../models/Floor.js";
 import { LeadModel } from "../models/Lead.js";
 import { LeadActivityModel } from "../models/LeadActivity.js";
 import { ProjectModel } from "../models/Project.js";
+import { ProjectAccessGrantModel } from "../models/ProjectAccessGrant.js";
+import {
+  WORKFLOW_TASK_SCHEDULE,
+  workflowTaskDueAt,
+  type ProjectWorkflowTaskKind
+} from "../domain/project-workflow.js";
+import { ProjectWorkflowTaskModel } from "../models/ProjectWorkflowTask.js";
 import { TaskModel } from "../models/Task.js";
 import { TaskEventModel } from "../models/TaskEvent.js";
 import { UserModel } from "../models/User.js";
+import { UserInvitationModel } from "../models/UserInvitation.js";
+import { adminProjectSummary } from "./admin-project-summary.js";
 import {
   RepositoryConflictError,
   RepositoryNotFoundError,
   type AppRepository,
+  type AccessRequestFilters,
+  type AccessRequestRecord,
+  type AdminProjectApprovedEstimateBaseline,
   type AuditEventRecord,
   type AuditFilters,
+  type EstimateSummaryRecord,
   type DesignExtractionJobRecord,
   type DesignSectionRecord,
   type DesignSectionRevisionRecord,
@@ -31,17 +59,24 @@ import {
   type DesignSourcePageRecord,
   type DesignVersionRecord,
   type EvaluationRecord,
+  type EstimatorOption,
   type FloorRecord,
   type LeadActivityRecord,
   type LeadRecord,
   type ManagerTreeNode,
   type NewUser,
+  type NewAccessRequest,
+  type NewProjectAccessGrant,
   type NewDesignExtractionJob,
   type NewDesignVersion,
   type ProjectHierarchy,
   type ProjectRecord,
+  type ProjectAccessGrantRecord,
   type TaskEventRecord,
   type TaskRecord,
+  type UserInvitationAdminRecord,
+  type UserInvitationFilters,
+  type UserInvitationRecord,
   type UserRecord
 } from "./types.js";
 
@@ -49,22 +84,298 @@ type PlainDocument = Record<string, any>;
 const MAX_DUPLICATE_KEY_TRANSACTION_ATTEMPTS = 2;
 
 export function createMongoRepository(session?: ClientSession): AppRepository {
-  const projectFilterForUser = (user: UserRecord) => {
-    let filter: PlainDocument = {};
-    if (user.role === "client") filter = { clientId: user.id };
-    if (user.role === "designer") {
-      filter = {
-        $or: [
-          { initiatingDesignerId: user.id },
-          { assignedDesignerIds: user.id }
-        ]
-      };
-    }
-    if (user.role === "design_manager") {
-      filter = { managerId: user.id };
-    }
-    return filter;
+  const executeSessionCompatibleReadPair = async <First, Second>(
+    first: () => Promise<First>,
+    second: () => Promise<Second>
+  ): Promise<[First, Second]> => {
+    if (!session) return Promise.all([first(), second()]);
+    const firstResult = await first();
+    const secondResult = await second();
+    return [firstResult, secondResult];
   };
+
+  const eligibleGrantSource = (
+    user: UserRecord,
+    module: ProjectModule
+  ): ProjectAccessGrantRecord["source"] | null => {
+    if (!user.active) return null;
+    if (user.role === "admin" && module === "projects") {
+      return "admin_initiator";
+    }
+    if (
+      REQUESTABLE_MODULES_BY_ROLE[user.role].some(
+        (requestableModule) => requestableModule === module
+      )
+    ) {
+      return "access_request";
+    }
+    return null;
+  };
+
+  const legacyProjectFilterForUserInModule = (
+    user: UserRecord,
+    module: ProjectModule
+  ): PlainDocument | null => {
+    if (!user.active) return null;
+    if (user.role === "super_admin") return {};
+    if (module !== "projects" && module !== "design") return null;
+    switch (user.role) {
+      case "design_head":
+        return {};
+      case "client":
+        return { clientId: user.id };
+      case "designer":
+        return {
+          $or: [
+            { initiatingDesignerId: user.id },
+            { assignedDesignerIds: user.id }
+          ]
+        };
+      case "design_manager":
+        return { managerId: user.id };
+      default:
+        return null;
+    }
+  };
+
+  const projectFilterForUserInModule = async (
+    user: UserRecord,
+    module: ProjectModule
+  ): Promise<PlainDocument | null> => {
+    const legacyFilter = legacyProjectFilterForUserInModule(user, module);
+    if (legacyFilter !== null && Object.keys(legacyFilter).length === 0) return {};
+
+    const source = eligibleGrantSource(user, module);
+    let grantProjectIds: string[] = [];
+    if (source !== null) {
+      const grantQuery = ProjectAccessGrantModel.find({
+        userId: user.id,
+        module,
+        active: true,
+        source
+      })
+        .select({ projectId: 1, _id: 0 })
+        .lean();
+      if (session) grantQuery.session(session);
+      const grants = await grantQuery.exec();
+      grantProjectIds = grants.map((grant) => String(grant.projectId));
+    }
+
+    if (legacyFilter === null) {
+      return grantProjectIds.length === 0
+        ? null
+        : { _id: { $in: grantProjectIds } };
+    }
+    if (grantProjectIds.length === 0) return legacyFilter;
+    return {
+      $or: [legacyFilter, { _id: { $in: grantProjectIds } }]
+    };
+  };
+
+  const loadAdminProjectSummaries = async (
+    projectDocuments: PlainDocument[],
+    actor: UserRecord
+  ) => {
+    if (projectDocuments.length === 0) return [];
+    const projectIds = projectDocuments.map((document) => idOf(document));
+    const leadQuery = LeadModel.find({ projectId: { $in: projectIds } }).lean();
+    if (session) leadQuery.session(session);
+    const leadDocuments = await leadQuery.exec();
+    const leadIds = leadDocuments.map((document) => idOf(document));
+    const estimatorIds = projectDocuments
+      .map((document) => document.assignedEstimatorId)
+      .filter((id): id is string => typeof id === "string");
+    const estimatorQuery = UserModel.find({ _id: { $in: estimatorIds } })
+      .select({ _id: 1, name: 1, email: 1, title: 1 })
+      .lean();
+    const estimateQuery = EstimateModel.find({
+      $or: [
+        { projectId: { $in: projectIds } },
+        { leadId: { $in: leadIds } }
+      ]
+    })
+      .select({
+        _id: 1,
+        leadId: 1,
+        projectId: 1,
+        version: 1,
+        status: 1,
+        subtotal: 1,
+        gst: 1,
+        total: 1,
+        clientDecisionAt: 1,
+        designPlanStatus: 1,
+        designPlanVersion: 1,
+        designPlanDesignerId: 1,
+        createdAt: 1,
+        updatedAt: 1
+      })
+      .sort({ clientDecisionAt: -1, updatedAt: -1, _id: 1 })
+      .lean();
+    if (session) {
+      estimatorQuery.session(session);
+      estimateQuery.session(session);
+    }
+    const [estimatorDocuments, estimateDocuments] =
+      await executeSessionCompatibleReadPair(
+        () => estimatorQuery.exec(),
+        () => estimateQuery.exec()
+      );
+    const loadedLeadIds = new Set(leadDocuments.map((document) => idOf(document)));
+    const lineageLeadIds = [
+      ...new Set(
+        estimateDocuments
+          .map((document) => String(document.leadId))
+          .filter((leadId) => !loadedLeadIds.has(leadId))
+      )
+    ];
+    let lineageLeadDocuments: Array<Record<string, any>> = [];
+    if (lineageLeadIds.length > 0) {
+      const lineageLeadQuery = LeadModel.find({
+        _id: { $in: lineageLeadIds }
+      }).lean();
+      if (session) lineageLeadQuery.session(session);
+      lineageLeadDocuments = await lineageLeadQuery.exec();
+    }
+    const designerIds = [
+      ...new Set(
+        estimateDocuments
+          .map((document) => document.designPlanDesignerId)
+          .filter((id): id is string => typeof id === "string")
+      )
+    ];
+    let designerDocuments: Array<Record<string, any>> = [];
+    if (designerIds.length > 0) {
+      const designerQuery = UserModel.find({
+        _id: { $in: designerIds }
+      }).select({ _id: 1, name: 1, email: 1 }).lean();
+      if (session) designerQuery.session(session);
+      designerDocuments = await designerQuery.exec();
+    }
+    const estimateIds = estimateDocuments.map((document) => idOf(document));
+    const roundQuery = EstimateClientReviewRoundModel.find({
+      estimateId: { $in: estimateIds }
+    })
+      .select({
+        _id: 1,
+        estimateId: 1,
+        sendGeneration: 1,
+        estimateVersion: 1,
+        version: 1,
+        deliveryStatus: 1,
+        deliveryAttemptCount: 1,
+        deliveredAt: 1,
+        status: 1,
+        assignedAdminId: 1,
+        decision: 1,
+        decisionSource: 1,
+        decidedAt: 1,
+        estimateSnapshot: 1
+      })
+      .sort({ estimateId: 1, sendGeneration: -1, _id: 1 })
+      .lean();
+    if (session) roundQuery.session(session);
+    const roundDocuments = await roundQuery.exec();
+    const currentRoundByEstimateId = new Map<
+      string,
+      Pick<
+        EstimateSummaryRecord,
+        "clientReview" | "assignedAdminId" | "clientDecisionSource"
+      >
+    >();
+    const roundsByEstimateId = new Map<string, Array<Record<string, any>>>();
+    for (const document of roundDocuments) {
+      const estimateId = String(document.estimateId);
+      const estimateRounds = roundsByEstimateId.get(estimateId) ?? [];
+      estimateRounds.push(document);
+      roundsByEstimateId.set(estimateId, estimateRounds);
+      if (currentRoundByEstimateId.has(estimateId)) continue;
+      currentRoundByEstimateId.set(estimateId, {
+        clientReview: {
+          id: idOf(document),
+          sendGeneration: Number(document.sendGeneration),
+          estimateVersion: Number(document.estimateVersion),
+          version: Number(document.version),
+          deliveryStatus: document.deliveryStatus,
+          deliveryAttemptCount: Number(document.deliveryAttemptCount),
+          deliveredAt: nullableIso(document.deliveredAt),
+          status: document.status
+        },
+        assignedAdminId: String(document.assignedAdminId),
+        clientDecisionSource: document.decisionSource ?? null
+      });
+    }
+    const projectUsers = [...estimatorDocuments, ...designerDocuments].map((document) => ({
+      id: idOf(document),
+      name: document.name,
+      email: document.email
+    }));
+    const estimates: EstimateSummaryRecord[] = estimateDocuments.map((document) => {
+      const currentRound = currentRoundByEstimateId.get(idOf(document));
+      return {
+        id: idOf(document),
+        leadId: String(document.leadId),
+        projectId: document.projectId == null ? null : String(document.projectId),
+        version: Number(document.version),
+        status: String(document.status),
+        subtotal: Number(document.subtotal),
+        gst: Number(document.gst),
+        total: Number(document.total),
+        clientDecisionAt: nullableIso(document.clientDecisionAt),
+        clientDecisionSource: currentRound?.clientDecisionSource ?? null,
+        approvedBaseline: approvedAdminEstimateBaseline(
+          document,
+          roundsByEstimateId.get(idOf(document)) ?? []
+        ),
+        clientReview: currentRound?.clientReview ?? null,
+        assignedAdminId: currentRound?.assignedAdminId ?? null,
+        designPlanStatus: document.designPlanStatus == null
+          ? null
+          : String(document.designPlanStatus),
+        designPlanVersion: Number(document.designPlanVersion ?? 0),
+        designPlanDesignerId: document.designPlanDesignerId == null
+          ? null
+          : String(document.designPlanDesignerId),
+        createdAt: requiredEstimateTimelineIso(document.createdAt),
+        updatedAt: requiredEstimateTimelineIso(document.updatedAt)
+      };
+    });
+    const leads = [...leadDocuments, ...lineageLeadDocuments].map(mapLead);
+    return projectDocuments.map((document) =>
+      adminProjectSummary(mapProject(document), projectUsers, leads, estimates, actor)
+    );
+  };
+
+  const transitionUserInvitation = async (
+    id: string,
+    expectedVersion: number,
+    extraFilter: PlainDocument,
+    set: PlainDocument
+  ): Promise<UserInvitationRecord> =>
+    runAuthorizationWrite(session, "User invitation", async () => {
+      const query = UserInvitationModel.findOneAndUpdate(
+        {
+          _id: id,
+          status: "pending",
+          __v: expectedVersion - 1,
+          ...extraFilter
+        },
+        { $set: set, $inc: { __v: 1 } },
+        { new: true, runValidators: true, timestamps: false }
+      ).select("+tokenHash");
+      if (session) query.session(session);
+      const document = await query.lean().exec();
+      if (document) return mapUserInvitation(document);
+
+      const existsQuery = UserInvitationModel.exists({ _id: id });
+      if (session) existsQuery.session(session);
+      if (!(await existsQuery.exec())) {
+        throw new RepositoryNotFoundError(`User invitation ${id} was not found.`);
+      }
+      throw new RepositoryConflictError(
+        `User invitation ${id} cannot transition at version ${expectedVersion}.`
+      );
+    });
 
   const repository: AppRepository = {
     async runInTransaction(operation) {
@@ -87,11 +398,13 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
           }
           return result as Awaited<ReturnType<typeof operation>>;
         } catch (error) {
-          if (
-            !isMongoDuplicateKeyError(error) ||
-            attempt === MAX_DUPLICATE_KEY_TRANSACTION_ATTEMPTS - 1
-          ) {
+          if (!isMongoDuplicateKeyError(error)) {
             throw error;
+          }
+          if (attempt === MAX_DUPLICATE_KEY_TRANSACTION_ATTEMPTS - 1) {
+            throw new RepositoryConflictError(
+              "MongoDB transaction conflicted with a concurrent write."
+            );
           }
         } finally {
           await transactionSession.endSession();
@@ -108,6 +421,509 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
       );
       if (session) query.session(session);
       await query.exec();
+    },
+
+    async findUserInvitationById(id) {
+      const query = UserInvitationModel.findById(id).select("+tokenHash");
+      if (session) query.session(session);
+      const document = await query.lean().exec();
+      return document ? mapUserInvitation(document) : null;
+    },
+
+    async findPendingUserInvitationByEmail(emailNormalized) {
+      const query = UserInvitationModel.findOne({
+        emailNormalized: normalizeInvitationEmail(emailNormalized),
+        status: "pending"
+      }).select("+tokenHash");
+      if (session) query.session(session);
+      const document = await query.lean().exec();
+      return document ? mapUserInvitation(document) : null;
+    },
+
+    async findLatestUserInvitationIssuedAtByEmail(emailNormalized) {
+      const query = UserInvitationModel.findOne({
+        emailNormalized: normalizeInvitationEmail(emailNormalized)
+      })
+        .sort({ issuedAt: -1, _id: -1 })
+        .select({ issuedAt: 1, _id: 0 });
+      if (session) query.session(session);
+      const document = await query.lean().exec();
+      return document ? iso(document.issuedAt) : null;
+    },
+
+    async findPendingUserInvitationByTokenHash(tokenHash) {
+      const query = UserInvitationModel.findOne({
+        tokenHash,
+        status: "pending"
+      }).select("+tokenHash");
+      if (session) query.session(session);
+      const document = await query.lean().exec();
+      return document ? mapUserInvitation(document) : null;
+    },
+
+    async pageUserInvitations(filters, pagination, now) {
+      return pageUserInvitations(filters, pagination, now, session);
+    },
+
+    async hasUnclaimedClientProjectByEmail(emailNormalized) {
+      const query = ProjectModel.exists({
+        clientId: null,
+        clientEmailNormalized: normalizeInvitationEmail(emailNormalized)
+      });
+      if (session) query.session(session);
+      return Boolean(await query.exec());
+    },
+
+    async createUserInvitation(input) {
+      return runAuthorizationWrite(session, "User invitation", async () => {
+        const emailNormalized = normalizeInvitationEmail(input.email);
+        const pendingQuery = UserInvitationModel.findOne({
+          emailNormalized,
+          status: "pending"
+        }).select({ _id: 1 });
+        if (session) pendingQuery.session(session);
+        if (await pendingQuery.lean().exec()) {
+          throw new RepositoryConflictError(
+            "Pending user invitation already exists for this email."
+          );
+        }
+        const document = await createDocument(
+          UserInvitationModel,
+          userInvitationForMongo(input),
+          session
+        );
+        return mapUserInvitation(document.toObject());
+      });
+    },
+
+    async supersedeUserInvitation(id, expectedVersion, change) {
+      return transitionUserInvitation(id, expectedVersion, {}, {
+        tokenHash: null,
+        status: "superseded",
+        supersededByInvitationId: change.supersededByInvitationId,
+        supersededAt: date(change.supersededAt),
+        updatedAt: date(change.updatedAt)
+      });
+    },
+
+    async resendUserInvitation(id, expectedVersion, change) {
+      if (
+        !Number.isSafeInteger(change.tokenGeneration) ||
+        change.tokenGeneration < 2
+      ) {
+        throw new RepositoryConflictError(
+          `User invitation ${id} has an invalid resend generation.`
+        );
+      }
+      return transitionUserInvitation(
+        id,
+        expectedVersion,
+        { tokenGeneration: change.tokenGeneration - 1 },
+        {
+          tokenHash: change.tokenHash,
+          tokenGeneration: change.tokenGeneration,
+          issuedAt: date(change.issuedAt),
+          expiresAt: date(change.expiresAt),
+          tokenIssuedById: change.tokenIssuedById,
+          tokenIssuerVersion: change.tokenIssuerVersion,
+          deliveryStatus: "queued",
+          deliveryAttemptedAt: null,
+          sentAt: null,
+          deliveryFailureCode: null,
+          updatedAt: date(change.updatedAt)
+        }
+      );
+    },
+
+    async revokeUserInvitation(id, expectedVersion, change) {
+      return transitionUserInvitation(id, expectedVersion, {}, {
+        tokenHash: null,
+        status: "revoked",
+        revokedById: change.revokedById,
+        revokedAt: date(change.revokedAt),
+        updatedAt: date(change.updatedAt)
+      });
+    },
+
+    async acceptUserInvitation(
+      id,
+      expectedVersion,
+      expectedGeneration,
+      expectedTokenHash,
+      change
+    ) {
+      return transitionUserInvitation(
+        id,
+        expectedVersion,
+        {
+          tokenGeneration: expectedGeneration,
+          tokenHash: expectedTokenHash
+        },
+        {
+          tokenHash: null,
+          status: "accepted",
+          acceptedUserId: change.acceptedUserId,
+          acceptedAt: date(change.acceptedAt),
+          updatedAt: date(change.updatedAt)
+        }
+      );
+    },
+
+    async updateUserInvitationDelivery(id, tokenGeneration, change) {
+      const query = UserInvitationModel.findOneAndUpdate(
+        {
+          _id: id,
+          status: "pending",
+          tokenGeneration,
+          deliveryStatus: "queued"
+        },
+        {
+          $set: {
+            deliveryStatus: change.status,
+            deliveryAttemptedAt: date(change.attemptedAt),
+            sentAt: change.status === "sent" ? date(change.sentAt) : null,
+            deliveryFailureCode:
+              change.status === "failed" ? change.failureCode : null,
+            updatedAt: date(change.updatedAt)
+          }
+        },
+        { new: true, runValidators: true, timestamps: false }
+      ).select("+tokenHash");
+      if (session) query.session(session);
+      const document = await query.lean().exec();
+      return document ? mapUserInvitation(document) : null;
+    },
+
+    async coordinateAuthorizationMutation() {
+      const query = AuthorizationCoordinationModel.updateOne(
+        { _id: "authorization" },
+        {
+          $inc: { revision: 1 },
+          $set: { updatedAt: new Date() }
+        },
+        { upsert: true }
+      );
+      if (session) query.session(session);
+      await query.exec();
+    },
+
+    async findAccessRequestById(id) {
+      const query = AccessRequestModel.findById(id);
+      if (session) query.session(session);
+      const document = await query.lean().exec();
+      return document ? mapAccessRequest(document) : null;
+    },
+
+    async findPendingAccessRequest(requesterId, projectId, module) {
+      const query = AccessRequestModel.findOne({
+        requesterId,
+        projectId,
+        module,
+        status: "pending"
+      });
+      if (session) query.session(session);
+      const document = await query.lean().exec();
+      return document ? mapAccessRequest(document) : null;
+    },
+
+    async createAccessRequest(input: NewAccessRequest) {
+      return runAuthorizationWrite(session, "Access request", async () => {
+        const document = await createDocument(
+          AccessRequestModel,
+          accessRequestForMongo(input, input.id ?? randomUUID()),
+          session
+        );
+        return mapAccessRequest(document.toObject());
+      });
+    },
+
+    async findOrCreatePendingAccessRequest(input: NewAccessRequest) {
+      const candidateId = input.id ?? randomUUID();
+      const candidate = accessRequestForMongo(input, candidateId);
+      await validateAccessRequestCandidate(candidate);
+      try {
+        const result = await AccessRequestModel.findOneAndUpdate(
+          {
+            requesterId: input.requesterId,
+            projectId: input.projectId,
+            module: input.module,
+            status: "pending"
+          },
+          {
+            $setOnInsert: candidate
+          },
+          {
+            upsert: true,
+            new: true,
+            includeResultMetadata: true,
+            runValidators: true,
+            timestamps: false,
+            ...(session ? { session } : {})
+          }
+        ).lean().exec();
+        if (!result.value) {
+          throw new Error("Pending request upsert returned no row.");
+        }
+        return {
+          record: mapAccessRequest(result.value),
+          created: result.lastErrorObject?.upserted !== undefined
+        };
+      } catch (error) {
+        if (!isMongoDuplicateKeyError(error)) throw error;
+        if (session) throw error;
+        const winner = await repository.findPendingAccessRequest(
+          input.requesterId,
+          input.projectId,
+          input.module
+        );
+        if (winner) return { record: winner, created: false };
+        throw new RepositoryConflictError("Access request already exists.");
+      }
+    },
+
+    async transitionAccessRequest(id, expectedVersion, change) {
+      const query = AccessRequestModel.findOneAndUpdate(
+        { _id: id, status: "pending", __v: expectedVersion - 1 },
+        {
+          $set: {
+            ...change,
+            reviewedAt: change.reviewedAt ? date(change.reviewedAt) : null,
+            updatedAt: date(change.updatedAt)
+          },
+          $inc: { __v: 1 }
+        },
+        { new: true, runValidators: true, timestamps: false }
+      );
+      if (session) query.session(session);
+      const document = await query.lean().exec();
+      if (document) return mapAccessRequest(document);
+      const exists = AccessRequestModel.exists({ _id: id });
+      if (session) exists.session(session);
+      if (!(await exists.exec())) {
+        throw new RepositoryNotFoundError(`Access request ${id} was not found.`);
+      }
+      throw new RepositoryConflictError(
+        `Access request ${id} cannot transition at version ${expectedVersion}.`
+      );
+    },
+
+    async pageAccessRequestsForRequester(requesterId, filters, pagination) {
+      return pageAccessRequests(
+        { requesterId, ...accessRequestFilter(filters) },
+        pagination,
+        session
+      );
+    },
+
+    async pageAccessRequestsForReview(scope, filters, pagination) {
+      const filter = accessRequestFilter(filters);
+      if (scope.kind === "global") {
+        return pageAccessRequests(filter, pagination, session);
+      }
+      const pipeline: PipelineStage[] = [
+        { $match: filter },
+        {
+          $lookup: {
+            from: ProjectAccessGrantModel.collection.name,
+            let: { requestProjectId: "$projectId" },
+            pipeline: [
+              {
+                $match: {
+                  $expr: { $eq: ["$projectId", "$$requestProjectId"] },
+                  userId: scope.adminId,
+                  module: "projects",
+                  source: "admin_initiator",
+                  active: true
+                }
+              },
+              { $limit: 1 }
+            ],
+            as: "initiatorGrants"
+          }
+        },
+        {
+          $lookup: {
+            from: ProjectModel.collection.name,
+            localField: "projectId",
+            foreignField: "_id",
+            as: "existingProjects"
+          }
+        },
+        {
+          $match: {
+            "initiatorGrants.0": { $exists: true },
+            "existingProjects.0": { $exists: true }
+          }
+        },
+        {
+          $facet: {
+            items: [
+              { $sort: { createdAt: -1, _id: -1 } },
+              { $skip: pagination.offset },
+              { $limit: pagination.limit },
+              { $project: { initiatorGrants: 0, existingProjects: 0 } }
+            ],
+            count: [{ $count: "total" }]
+          }
+        }
+      ];
+      const aggregate = AccessRequestModel.aggregate(pipeline);
+      if (session) aggregate.session(session);
+      const [result] = await aggregate.exec();
+      return {
+        items: (result?.items ?? []).map(mapAccessRequest),
+        total: result?.count?.[0]?.total ?? 0
+      };
+    },
+
+    async findProjectAccessGrantById(id) {
+      const query = ProjectAccessGrantModel.findById(id);
+      if (session) query.session(session);
+      const document = await query.lean().exec();
+      return document ? mapProjectAccessGrant(document) : null;
+    },
+
+    async findProjectAccessGrantByAccessRequestId(accessRequestId) {
+      const query = ProjectAccessGrantModel.findOne({ accessRequestId });
+      if (session) query.session(session);
+      const document = await query.lean().exec();
+      return document ? mapProjectAccessGrant(document) : null;
+    },
+
+    async findActiveProjectAccessGrant(userId, projectId, module) {
+      const query = ProjectAccessGrantModel.findOne({
+        userId,
+        projectId,
+        module,
+        active: true
+      });
+      if (session) query.session(session);
+      const document = await query.lean().exec();
+      return document ? mapProjectAccessGrant(document) : null;
+    },
+
+    async listActiveProjectAccessGrants(userId, module) {
+      const query = ProjectAccessGrantModel.find({ userId, module, active: true })
+        .sort({ projectId: 1, _id: 1 });
+      if (session) query.session(session);
+      const documents = await query.lean().exec();
+      return documents.map(mapProjectAccessGrant);
+    },
+
+    async createProjectAccessGrant(input: NewProjectAccessGrant) {
+      return runAuthorizationWrite(session, "Project access grant", async () => {
+        const document = await createDocument(
+          ProjectAccessGrantModel,
+          projectAccessGrantForMongo(input, input.id ?? randomUUID()),
+          session
+        );
+        return mapProjectAccessGrant(document.toObject());
+      });
+    },
+
+    async findOrCreateActiveProjectAccessGrant(input: NewProjectAccessGrant) {
+      const candidateId = input.id ?? randomUUID();
+      const candidate = projectAccessGrantForMongo(input, candidateId);
+      await validateProjectAccessGrantCandidate(candidate);
+      try {
+        const result = await ProjectAccessGrantModel.findOneAndUpdate(
+          {
+            userId: input.userId,
+            projectId: input.projectId,
+            module: input.module,
+            active: true
+          },
+          {
+            $setOnInsert: candidate
+          },
+          {
+            upsert: true,
+            new: true,
+            includeResultMetadata: true,
+            runValidators: true,
+            timestamps: false,
+            ...(session ? { session } : {})
+          }
+        ).lean().exec();
+        if (!result.value) {
+          throw new Error("Active project grant upsert returned no row.");
+        }
+        return {
+          record: mapProjectAccessGrant(result.value),
+          created: result.lastErrorObject?.upserted !== undefined
+        };
+      } catch (error) {
+        if (!isMongoDuplicateKeyError(error)) throw error;
+        if (session) throw error;
+        const winner = await repository.findActiveProjectAccessGrant(
+          input.userId,
+          input.projectId,
+          input.module
+        );
+        if (winner) return { record: winner, created: false };
+        throw new RepositoryConflictError("Project access grant already exists.");
+      }
+    },
+
+    async revokeProjectAccessGrant(id, expectedVersion, change) {
+      const query = ProjectAccessGrantModel.findOneAndUpdate(
+        { _id: id, active: true, __v: expectedVersion - 1 },
+        {
+          $set: {
+            active: false,
+            revokedAt: date(change.revokedAt),
+            revokedById: change.revokedById,
+            revocationReason: change.revocationReason.trim(),
+            updatedAt: date(change.updatedAt)
+          },
+          $inc: { __v: 1 }
+        },
+        { new: true, runValidators: true, timestamps: false }
+      );
+      if (session) query.session(session);
+      const document = await query.lean().exec();
+      if (document) return mapProjectAccessGrant(document);
+      const exists = ProjectAccessGrantModel.exists({ _id: id });
+      if (session) exists.session(session);
+      if (!(await exists.exec())) {
+        throw new RepositoryNotFoundError(`Project access grant ${id} was not found.`);
+      }
+      throw new RepositoryConflictError(
+        `Project access grant ${id} cannot be revoked at version ${expectedVersion}.`
+      );
+    },
+
+    async revokeActiveProjectAccessGrantsForUser(userId, change) {
+      const beforeQuery = ProjectAccessGrantModel.find({ userId, active: true }).select({ _id: 1 });
+      if (session) beforeQuery.session(session);
+      const before = await beforeQuery.lean().exec();
+      if (before.length === 0) return [];
+      const ids = before.map((document) => document._id);
+      const update = ProjectAccessGrantModel.updateMany(
+        { _id: { $in: ids }, active: true },
+        {
+          $set: {
+            active: false,
+            revokedAt: date(change.revokedAt),
+            revokedById: change.revokedById,
+            revocationReason: change.revocationReason.trim(),
+            updatedAt: date(change.updatedAt)
+          },
+          $inc: { __v: 1 }
+        },
+        { runValidators: true, timestamps: false }
+      );
+      if (session) update.session(session);
+      await update.exec();
+      const afterQuery = ProjectAccessGrantModel.find({
+        _id: { $in: ids },
+        active: false,
+        revokedAt: date(change.revokedAt),
+        revokedById: change.revokedById
+      }).sort({ projectId: 1, _id: 1 });
+      if (session) afterQuery.session(session);
+      const after = await afterQuery.lean().exec();
+      return after.map(mapProjectAccessGrant);
     },
 
     async findUserById(id) {
@@ -140,6 +956,8 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
           passwordHash: input.passwordHash,
           role: input.role,
           active: input.active ?? true,
+          accountKind: input.accountKind ?? "standard",
+          version: 1,
           managerId: input.managerId ?? null,
           authorizedClientIds: input.authorizedClientIds ?? [],
           ...(input.avatar ? { avatar: input.avatar } : {}),
@@ -168,6 +986,158 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
         .lean()
         .exec();
       return documents.map(mapUser);
+    },
+
+    async pageUsers(filters, pagination) {
+      if (filters.role && !filters.visibleRoles.includes(filters.role)) {
+        return { items: [], total: 0 };
+      }
+      const filter: PlainDocument = {
+        role: filters.role ?? { $in: [...filters.visibleRoles] }
+      };
+      if (filters.active !== undefined) filter.active = filters.active;
+      if (filters.search?.trim()) {
+        const search = new RegExp(escapeRegex(filters.search.trim()), "i");
+        filter.$or = [{ name: search }, { email: search }];
+      }
+      const usersQuery = UserModel.find(filter)
+        .select("+passwordHash")
+        .sort({ name: 1, _id: 1 })
+        .skip(pagination.offset)
+        .limit(pagination.limit);
+      if (session) usersQuery.session(session);
+      const documents = await usersQuery.lean().exec();
+      const countQuery = UserModel.countDocuments(filter);
+      if (session) countQuery.session(session);
+      const total = await countQuery.exec();
+      return { items: documents.map(mapUser), total };
+    },
+
+    async countActiveUsersByRole(role) {
+      const query = UserModel.countDocuments({ role, active: true });
+      if (session) query.session(session);
+      return query.exec();
+    },
+
+    async countUserResponsibilities(userId) {
+      const leadQuery = LeadModel.countDocuments({
+        ownerId: userId,
+        stage: { $nin: ["won", "lost"] }
+      });
+      if (session) leadQuery.session(session);
+      const ownedActiveLeads = await leadQuery.exec();
+
+      const estimateQuery = EstimateModel.countDocuments({
+        ownerId: userId,
+        status: { $ne: "client_approved" }
+      });
+      if (session) estimateQuery.session(session);
+      const ownedActiveEstimates = await estimateQuery.exec();
+
+      const initiatedProjectQuery = ProjectModel.countDocuments({
+        initiatingDesignerId: userId,
+        status: { $ne: "completed" }
+      });
+      if (session) initiatedProjectQuery.session(session);
+      const initiatedActiveProjects = await initiatedProjectQuery.exec();
+
+      const assignedProjectQuery = ProjectModel.countDocuments({
+        assignedDesignerIds: userId,
+        status: { $ne: "completed" }
+      });
+      if (session) assignedProjectQuery.session(session);
+      const assignedActiveProjects = await assignedProjectQuery.exec();
+
+      const managedProjectQuery = ProjectModel.countDocuments({
+        managerId: userId,
+        status: { $ne: "completed" }
+      });
+      if (session) managedProjectQuery.session(session);
+      const managedActiveProjects = await managedProjectQuery.exec();
+
+      const taskQuery = TaskModel.countDocuments({
+        ownerId: userId,
+        status: { $ne: "completed" }
+      });
+      if (session) taskQuery.session(session);
+      const ownedActiveTasks = await taskQuery.exec();
+
+      const directReportQuery = UserModel.countDocuments({ managerId: userId });
+      if (session) directReportQuery.session(session);
+      const directReports = await directReportQuery.exec();
+
+      const clientProjectQuery = ProjectModel.countDocuments({ clientId: userId });
+      if (session) clientProjectQuery.session(session);
+      const linkedClientProjects = await clientProjectQuery.exec();
+
+      const initiatorGrantQuery = ProjectAccessGrantModel.countDocuments({
+        userId,
+        module: "projects",
+        source: "admin_initiator",
+        active: true
+      });
+      if (session) initiatorGrantQuery.session(session);
+      const adminInitiatorGrants = await initiatorGrantQuery.exec();
+
+      return {
+        ownedActiveLeads,
+        ownedActiveEstimates,
+        initiatedActiveProjects,
+        assignedActiveProjects,
+        managedActiveProjects,
+        ownedActiveTasks,
+        directReports,
+        linkedClientProjects,
+        adminInitiatorGrants
+      };
+    },
+
+    async updateUser(userId, expectedVersion, change) {
+      const set: PlainDocument = {
+        ...(change.role === undefined ? {} : { role: change.role }),
+        ...(change.active === undefined ? {} : { active: change.active }),
+        updatedAt: date(change.updatedAt)
+      };
+      const filter: PlainDocument =
+        expectedVersion === 1
+          ? {
+              _id: userId,
+              $or: [{ version: 1 }, { version: { $exists: false } }]
+            }
+          : { _id: userId, version: expectedVersion };
+      const update: PlainDocument =
+        expectedVersion === 1
+          ? { $set: { ...set, version: 2 } }
+          : { $set: set, $inc: { version: 1 } };
+      const query = UserModel.findOneAndUpdate(filter, update, {
+        new: true,
+        runValidators: true,
+        timestamps: false
+      }).select("+passwordHash");
+      if (session) query.session(session);
+      const document = await query.lean().exec();
+      if (document) return mapUser(document);
+
+      const existsQuery = UserModel.exists({ _id: userId });
+      if (session) existsQuery.session(session);
+      if (!(await existsQuery.exec())) {
+        throw new RepositoryNotFoundError(`User ${userId} was not found.`);
+      }
+      throw new RepositoryConflictError(`User ${userId} changed concurrently.`);
+    },
+
+    async pageAllLeads(filters, pagination) {
+      const filter: PlainDocument = {};
+      if (filters.stage) filter.stage = filters.stage;
+      if (filters.search?.trim()) {
+        const search = new RegExp(escapeRegex(filters.search.trim()), "i");
+        filter.$or = [{ clientName: search }, { clientEmail: search }, { clientMobile: search }, { projectName: search }];
+      }
+      const [documents, total] = await Promise.all([
+        LeadModel.find(filter).sort({ updatedAt: -1, _id: -1 }).skip(pagination.offset).limit(pagination.limit).lean().exec(),
+        LeadModel.countDocuments(filter).exec()
+      ]);
+      return { items: documents.map(mapLead), total };
     },
 
     async pageLeadsForOwner(ownerId, filters, pagination) {
@@ -213,12 +1183,12 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
       return documents.map(mapLeadActivity);
     },
 
-    async listProjectsForUser(user) {
-      const filter = projectFilterForUser(user);
-      const documents = await ProjectModel.find(filter)
-        .sort({ name: 1, _id: 1 })
-        .lean()
-        .exec();
+    async listProjectsForUserInModule(user, module) {
+      const filter = await projectFilterForUserInModule(user, module);
+      if (filter === null) return [];
+      const query = ProjectModel.find(filter).sort({ name: 1, _id: 1 }).lean();
+      if (session) query.session(session);
+      const documents = await query.exec();
       return documents.map(mapProject);
     },
 
@@ -235,22 +1205,95 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
       return documents.map(mapProject);
     },
 
-    async pageProjectsForUser(user, pagination) {
-      const filter = projectFilterForUser(user);
+    async pageProjectsForUserInModule(user, module, pagination) {
+      const filter = await projectFilterForUserInModule(user, module);
+      if (filter === null) return { items: [], total: 0 };
+      const itemQuery = ProjectModel.find(filter)
+        .sort({ name: 1, _id: 1 })
+        .skip(pagination.offset)
+        .limit(pagination.limit)
+        .lean();
+      const countQuery = ProjectModel.countDocuments(filter);
+      if (session) {
+        itemQuery.session(session);
+        countQuery.session(session);
+      }
       const [documents, total] = await Promise.all([
-        ProjectModel.find(filter)
-          .sort({ name: 1, _id: 1 })
-          .skip(pagination.offset)
-          .limit(pagination.limit)
-          .lean()
-          .exec(),
-        ProjectModel.countDocuments(filter).exec()
+        itemQuery.exec(),
+        countQuery.exec()
       ]);
       return { items: documents.map(mapProject), total };
     },
 
+    async pageAdminProjects(actor, pagination) {
+      const filter = await projectFilterForUserInModule(actor, "projects");
+      if (filter === null) return { items: [], total: 0 };
+      const itemQuery = ProjectModel.find(filter)
+        .sort({ createdAt: -1, _id: -1 })
+        .skip(pagination.offset)
+        .limit(pagination.limit)
+        .lean();
+      const countQuery = ProjectModel.countDocuments(filter);
+      if (session) {
+        itemQuery.session(session);
+        countQuery.session(session);
+      }
+      const [documents, total] = await executeSessionCompatibleReadPair(
+        () => itemQuery.exec(),
+        () => countQuery.exec()
+      );
+      return {
+        items: await loadAdminProjectSummaries(documents, actor),
+        total
+      };
+    },
+
+    async findAdminProject(actor, projectId) {
+      const filter = await projectFilterForUserInModule(actor, "projects");
+      if (filter === null) return null;
+      const query = ProjectModel.findOne({
+        $and: [{ _id: projectId }, filter]
+      }).lean();
+      if (session) query.session(session);
+      const document = await query.exec();
+      if (!document) return null;
+      return (await loadAdminProjectSummaries([document], actor))[0] ?? null;
+    },
+
+    async pageActiveEstimatorOptions(search, pagination) {
+      const filter: PlainDocument = { role: "estimator_sales", active: true };
+      if (search.trim()) {
+        const pattern = new RegExp(escapeRegex(search.trim()), "i");
+        filter.$or = [{ name: pattern }, { email: pattern }];
+      }
+      const itemQuery = UserModel.find(filter)
+        .select({ _id: 1, name: 1, email: 1, title: 1 })
+        .sort({ name: 1, _id: 1 })
+        .skip(pagination.offset)
+        .limit(pagination.limit)
+        .lean();
+      const countQuery = UserModel.countDocuments(filter);
+      if (session) {
+        itemQuery.session(session);
+        countQuery.session(session);
+      }
+      const [documents, total] = await executeSessionCompatibleReadPair(
+        () => itemQuery.exec(),
+        () => countQuery.exec()
+      );
+      const items: EstimatorOption[] = documents.map((document) => ({
+        id: idOf(document),
+        name: document.name,
+        email: document.email,
+        title: document.title ?? null
+      }));
+      return { items, total };
+    },
+
     async findProjectById(id) {
-      const document = await ProjectModel.findById(id).lean().exec();
+      const query = ProjectModel.findById(id).lean();
+      if (session) query.session(session);
+      const document = await query.exec();
       return document ? mapProject(document) : null;
     },
 
@@ -473,6 +1516,21 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
       return { items: documents.map(mapUser), total };
     },
 
+    async pageActiveDesigners(pagination) {
+      const filter = { active: true, role: "designer" };
+      const [documents, total] = await Promise.all([
+        UserModel.find(filter)
+          .select("+passwordHash")
+          .sort({ name: 1, _id: 1 })
+          .skip(pagination.offset)
+          .limit(pagination.limit)
+          .lean()
+          .exec(),
+        UserModel.countDocuments(filter).exec()
+      ]);
+      return { items: documents.map(mapUser), total };
+    },
+
     async pageDesignersForManager(managerId, pagination) {
       const filter = {
         active: true,
@@ -542,6 +1600,32 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
       if (limit !== undefined) query.limit(limit);
       const documents = await query.lean().exec();
       return documents.map(mapTask);
+    },
+
+    async listWorkflowKpiTasksForPeriod(
+      assigneeUserIds,
+      periodStartAt,
+      periodEndAt,
+      limit
+    ) {
+      if (assigneeUserIds.length === 0) return [];
+      const periodStart = date(periodStartAt);
+      const periodEnd = date(periodEndAt);
+      const query = ProjectWorkflowTaskModel.find({
+        assigneeUserId: { $in: assigneeUserIds },
+        $or: [
+          { openedAt: { $lte: periodEnd } },
+          { completedAt: { $gte: periodStart, $lte: periodEnd } }
+        ]
+      }).sort({ openedAt: -1, _id: 1 });
+      if (limit !== undefined) query.limit(limit);
+      const documents = await query.lean().exec();
+      return documents
+        .map(mapWorkflowTaskToKpiRecord)
+        .filter((task) =>
+          new Date(task.plannedStartAt) <= periodEnd &&
+          new Date(task.currentDeadlineAt) >= periodStart
+        );
     },
 
     async pageKpiTasksForPeriod(
@@ -1551,6 +2635,373 @@ async function createMongoDocument<T>(
   }
 }
 
+async function runAuthorizationWrite<T>(
+  session: ClientSession | undefined,
+  label: string,
+  operation: () => Promise<T>
+): Promise<T> {
+  try {
+    return await operation();
+  } catch (error) {
+    if (!session && isMongoDuplicateKeyError(error)) {
+      throw new RepositoryConflictError(`${label} already exists.`);
+    }
+    throw error;
+  }
+}
+
+function accessRequestForMongo(input: NewAccessRequest, id: string): PlainDocument {
+  return {
+    _id: id,
+    requesterId: input.requesterId,
+    projectId: input.projectId,
+    module: input.module,
+    reason: input.reason.trim(),
+    status: "pending",
+    reviewerId: null,
+    decisionReason: null,
+    decisionFingerprint: null,
+    approvedGrantId: null,
+    reviewedAt: null,
+    __v: 0,
+    createdAt: date(input.createdAt),
+    updatedAt: date(input.updatedAt)
+  };
+}
+
+function projectAccessGrantForMongo(
+  input: NewProjectAccessGrant,
+  id: string
+): PlainDocument {
+  return {
+    _id: id,
+    projectId: input.projectId,
+    userId: input.userId,
+    module: input.module,
+    source: input.source,
+    accessRequestId: input.accessRequestId,
+    grantedById: input.grantedById,
+    active: true,
+    grantedAt: date(input.grantedAt),
+    revokedAt: null,
+    revokedById: null,
+    revocationReason: null,
+    __v: 0,
+    createdAt: date(input.createdAt),
+    updatedAt: date(input.updatedAt)
+  };
+}
+
+function userInvitationForMongo(input: UserInvitationRecord): PlainDocument {
+  return {
+    _id: input.id,
+    name: invitationNameSchema.parse(input.name),
+    email: invitationEmailSchema.parse(input.email),
+    emailNormalized: normalizeInvitationEmail(input.email),
+    role: input.role,
+    mobile: normalizeInvitationMobile(input.mobile),
+    tokenHash: input.tokenHash,
+    tokenGeneration: input.tokenGeneration,
+    issuedAt: date(input.issuedAt),
+    expiresAt: date(input.expiresAt),
+    status: input.status,
+    invitedById: input.invitedById,
+    tokenIssuedById: input.tokenIssuedById,
+    tokenIssuerVersion: input.tokenIssuerVersion,
+    acceptedUserId: input.acceptedUserId,
+    acceptedAt: input.acceptedAt ? date(input.acceptedAt) : null,
+    revokedById: input.revokedById,
+    revokedAt: input.revokedAt ? date(input.revokedAt) : null,
+    supersededByInvitationId: input.supersededByInvitationId,
+    supersededAt: input.supersededAt ? date(input.supersededAt) : null,
+    deliveryStatus: input.deliveryStatus,
+    deliveryAttemptedAt: input.deliveryAttemptedAt
+      ? date(input.deliveryAttemptedAt)
+      : null,
+    sentAt: input.sentAt ? date(input.sentAt) : null,
+    deliveryFailureCode: input.deliveryFailureCode,
+    __v: 0,
+    createdAt: date(input.createdAt),
+    updatedAt: date(input.updatedAt)
+  };
+}
+
+async function validateAccessRequestCandidate(candidate: PlainDocument) {
+  await new AccessRequestModel(candidate).validate();
+}
+
+async function validateProjectAccessGrantCandidate(candidate: PlainDocument) {
+  await new ProjectAccessGrantModel(candidate).validate();
+}
+
+function accessRequestFilter(filters: AccessRequestFilters): PlainDocument {
+  return compactFilter({ status: filters.status, module: filters.module });
+}
+
+async function pageAccessRequests(
+  filter: PlainDocument,
+  pagination: { limit: number; offset: number },
+  session?: ClientSession
+) {
+  const documentsQuery = AccessRequestModel.find(filter)
+    .sort({ createdAt: -1, _id: -1 })
+    .skip(pagination.offset)
+    .limit(pagination.limit);
+  const countQuery = AccessRequestModel.countDocuments(filter);
+  if (session) {
+    documentsQuery.session(session);
+    countQuery.session(session);
+  }
+  const [documents, total] = await Promise.all([
+    documentsQuery.lean().exec(),
+    countQuery.exec()
+  ]);
+  return { items: documents.map(mapAccessRequest), total };
+}
+
+async function pageUserInvitations(
+  filters: UserInvitationFilters,
+  pagination: { limit: number; offset: number },
+  now: string,
+  session?: ClientSession
+) {
+  const initialMatch: PlainDocument = {};
+  if (filters.status === undefined) initialMatch.status = "pending";
+  if (filters.role !== undefined) initialMatch.role = filters.role;
+  if (filters.deliveryStatus !== undefined) {
+    initialMatch.deliveryStatus = filters.deliveryStatus;
+  }
+  if (filters.search?.trim()) {
+    const search = new RegExp(escapeRegex(filters.search.trim()), "i");
+    initialMatch.$or = [{ name: search }, { email: search }];
+  }
+
+  const nowDate = date(now);
+  const pipeline: PlainDocument[] = [];
+  if (Object.keys(initialMatch).length > 0) {
+    pipeline.push({ $match: initialMatch });
+  }
+  pipeline.push(
+    {
+      $lookup: {
+        from: UserModel.collection.name,
+        let: { issuerId: "$tokenIssuedById" },
+        pipeline: [
+          {
+            $match: {
+              $expr: { $eq: ["$_id", "$$issuerId"] }
+            }
+          },
+          { $project: { _id: 1, active: 1, role: 1, version: 1 } },
+          { $limit: 1 }
+        ],
+        as: "issuerRows"
+      }
+    },
+    {
+      $set: {
+        issuer: { $arrayElemAt: ["$issuerRows", 0] }
+      }
+    },
+    {
+      $set: {
+        issuerVersion: { $ifNull: ["$issuer.version", 1] },
+        issuerMatches: {
+          $and: [
+            { $eq: ["$issuer.active", true] },
+            { $eq: ["$issuer.role", "super_admin"] },
+            {
+              $eq: [
+                { $ifNull: ["$issuer.version", 1] },
+                "$tokenIssuerVersion"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      $set: {
+        tokenValidity: {
+          $switch: {
+            branches: [
+              {
+                case: { $ne: ["$status", "pending"] },
+                then: "unavailable"
+              },
+              { case: { $not: ["$issuerMatches"] }, then: "invalidated" },
+              { case: { $lte: ["$expiresAt", nowDate] }, then: "expired" }
+            ],
+            default: "current"
+          }
+        },
+        presentationStatus: {
+          $switch: {
+            branches: [
+              { case: { $eq: ["$status", "accepted"] }, then: "accepted" },
+              { case: { $eq: ["$status", "revoked"] }, then: "revoked" },
+              {
+                case: { $eq: ["$status", "superseded"] },
+                then: "superseded"
+              },
+              { case: { $lte: ["$expiresAt", nowDate] }, then: "expired" },
+              {
+                case: { $eq: ["$deliveryStatus", "failed"] },
+                then: "delivery_failed"
+              }
+            ],
+            default: "pending"
+          }
+        },
+        version: { $add: [{ $ifNull: ["$__v", 0] }, 1] }
+      }
+    }
+  );
+  if (filters.status !== undefined) {
+    pipeline.push({ $match: { presentationStatus: filters.status } });
+  }
+  pipeline.push(
+    {
+      $lookup: {
+        from: UserModel.collection.name,
+        let: { invitationEmail: "$emailNormalized" },
+        pipeline: [
+          {
+            $match: {
+              $expr: { $eq: ["$emailNormalized", "$$invitationEmail"] }
+            }
+          },
+          { $project: { _id: 1 } },
+          { $limit: 1 }
+        ],
+        as: "claimedUsers"
+      }
+    },
+    {
+      $lookup: {
+        from: ProjectModel.collection.name,
+        let: { invitationEmail: "$emailNormalized" },
+        pipeline: [
+          {
+            $match: {
+              clientId: null,
+              $expr: {
+                $eq: ["$clientEmailNormalized", "$$invitationEmail"]
+              }
+            }
+          },
+          { $project: { _id: 1 } },
+          { $limit: 1 }
+        ],
+        as: "reservedProjects"
+      }
+    },
+    {
+      $set: {
+        emailClaimedOrReserved: {
+          $or: [
+            { $gt: [{ $size: "$claimedUsers" }, 0] },
+            { $gt: [{ $size: "$reservedProjects" }, 0] }
+          ]
+        }
+      }
+    },
+    {
+      $set: {
+        currentLinkAvailable: {
+          $and: [
+            { $eq: ["$tokenValidity", "current"] },
+            { $not: ["$emailClaimedOrReserved"] }
+          ]
+        },
+        availableActions: {
+          $switch: {
+            branches: [
+              {
+                case: { $ne: ["$status", "pending"] },
+                then: []
+              },
+              {
+                case: "$emailClaimedOrReserved",
+                then: ["revoke"]
+              }
+            ],
+            default: ["resend", "revoke"]
+          }
+        }
+      }
+    },
+    { $sort: { createdAt: -1, _id: -1 } },
+    {
+      $facet: {
+        items: [
+          { $skip: pagination.offset },
+          { $limit: pagination.limit },
+          {
+            $lookup: {
+              from: UserModel.collection.name,
+              localField: "invitedById",
+              foreignField: "_id",
+              pipeline: [
+                { $project: { _id: 1, name: 1, email: 1, role: 1 } },
+                { $limit: 1 }
+              ],
+              as: "inviterRows"
+            }
+          },
+          {
+            $set: {
+              inviter: { $arrayElemAt: ["$inviterRows", 0] }
+            }
+          },
+          {
+            $set: {
+              invitedBy: {
+                id: "$inviter._id",
+                name: "$inviter.name",
+                email: "$inviter.email",
+                role: "$inviter.role"
+              }
+            }
+          },
+          {
+            $project: {
+              _id: 1,
+              name: 1,
+              email: 1,
+              role: 1,
+              mobile: 1,
+              tokenValidity: 1,
+              presentationStatus: 1,
+              currentLinkAvailable: 1,
+              availableActions: 1,
+              invitedBy: 1,
+              issuedAt: 1,
+              expiresAt: 1,
+              deliveryStatus: 1,
+              deliveryAttemptedAt: 1,
+              sentAt: 1,
+              version: 1,
+              createdAt: 1,
+              updatedAt: 1
+            }
+          }
+        ],
+        count: [{ $count: "total" }]
+      }
+    }
+  );
+  const aggregate = UserInvitationModel.aggregate(
+    pipeline as PipelineStage[]
+  );
+  if (session) aggregate.session(session);
+  const [result] = await aggregate.exec();
+  return {
+    items: (result?.items ?? []).map(mapUserInvitationAdmin),
+    total: result?.count?.[0]?.total ?? 0
+  };
+}
+
 function isMongoDuplicateKeyError(error: unknown): boolean {
   return (
     typeof error === "object" &&
@@ -1665,6 +3116,86 @@ function nullableIso(value: string | Date | null | undefined): string | null {
   return value === null || value === undefined ? null : iso(value);
 }
 
+function approvedAdminEstimateBaseline(
+  estimate: PlainDocument,
+  rounds: readonly PlainDocument[]
+): AdminProjectApprovedEstimateBaseline | null {
+  if (estimate.status !== "client_approved") return null;
+  const currentVersion = Number(estimate.version);
+  const estimateVersion = Number.isSafeInteger(currentVersion) && currentVersion > 1
+    ? currentVersion - 1
+    : 1;
+  const approvedRounds = rounds.filter((round) =>
+    round.status === "approved" && round.decision === "approve"
+  );
+  if (approvedRounds.length > 0) {
+    const matchingRounds = approvedRounds.filter(
+      (round) => Number(round.estimateVersion) === estimateVersion
+    );
+    if (matchingRounds.length !== 1) approvedBaselineConflict();
+    const approvedRound = matchingRounds[0]!;
+    const baseline = {
+      estimateVersion,
+      reviewRoundId: idOf(approvedRound),
+      subtotal: Number(approvedRound.estimateSnapshot?.subtotal),
+      gst: Number(approvedRound.estimateSnapshot?.gst),
+      total: Number(approvedRound.estimateSnapshot?.total),
+      decisionAt: nullableIso(approvedRound.decidedAt),
+      decisionSource: approvedRound.decisionSource ?? null
+    };
+    assertApprovedBaselineMoney(baseline);
+    return baseline;
+  }
+  const baseline = {
+    estimateVersion,
+    reviewRoundId: null,
+    subtotal: Number(estimate.subtotal),
+    gst: Number(estimate.gst),
+    total: Number(estimate.total),
+    decisionAt: nullableIso(estimate.clientDecisionAt),
+    decisionSource: null
+  };
+  assertApprovedBaselineMoney(baseline);
+  return baseline;
+}
+
+function assertApprovedBaselineMoney(
+  baseline: Pick<AdminProjectApprovedEstimateBaseline, "subtotal" | "gst" | "total">
+): void {
+  if (
+    ![baseline.subtotal, baseline.gst, baseline.total].every(
+      (amount) => Number.isSafeInteger(amount) && amount >= 0
+    ) ||
+    baseline.subtotal + baseline.gst !== baseline.total
+  ) {
+    throw new ApiError(
+      409,
+      "ESTIMATE_APPROVAL_BASELINE_INVALID",
+      "The approved Estimate snapshot contains invalid financial values."
+    );
+  }
+}
+
+function approvedBaselineConflict(): never {
+  throw new ApiError(
+    409,
+    "ESTIMATE_APPROVAL_BASELINE_CONFLICT",
+    "The approved Estimate does not have exactly one matching approval snapshot."
+  );
+}
+
+function requiredEstimateTimelineIso(value: unknown): string {
+  const timestamp = value instanceof Date ? value : new Date(value as never);
+  if (Number.isNaN(timestamp.getTime())) {
+    throw new ApiError(
+      409,
+      "ESTIMATE_TIMELINE_INVALID",
+      "The Estimate timeline is incomplete or invalid."
+    );
+  }
+  return timestamp.toISOString();
+}
+
 function idOf(document: PlainDocument): string {
   return String(document._id);
 }
@@ -1680,10 +3211,116 @@ function mapUser(document: PlainDocument): UserRecord {
     passwordHash: document.passwordHash,
     role: document.role,
     active: document.active,
+    accountKind:
+      document.accountKind === "development_demo" ? "development_demo" : "standard",
+    version: document.version ?? 1,
     managerId: document.managerId ?? null,
     authorizedClientIds: [...(document.authorizedClientIds ?? [])],
     ...(document.avatar ? { avatar: document.avatar } : {}),
     ...(document.title ? { title: document.title } : {}),
+    createdAt: iso(document.createdAt),
+    updatedAt: iso(document.updatedAt)
+  };
+}
+
+function mapUserInvitation(document: PlainDocument): UserInvitationRecord {
+  return {
+    id: idOf(document),
+    name: document.name,
+    email: document.email,
+    emailNormalized:
+      document.emailNormalized ?? normalizeInvitationEmail(document.email),
+    role: document.role,
+    mobile: document.mobile,
+    tokenHash: document.tokenHash ?? null,
+    tokenGeneration: document.tokenGeneration,
+    issuedAt: iso(document.issuedAt),
+    expiresAt: iso(document.expiresAt),
+    status: document.status,
+    invitedById: document.invitedById,
+    tokenIssuedById: document.tokenIssuedById,
+    tokenIssuerVersion: document.tokenIssuerVersion,
+    acceptedUserId: document.acceptedUserId ?? null,
+    acceptedAt: nullableIso(document.acceptedAt),
+    revokedById: document.revokedById ?? null,
+    revokedAt: nullableIso(document.revokedAt),
+    supersededByInvitationId: document.supersededByInvitationId ?? null,
+    supersededAt: nullableIso(document.supersededAt),
+    deliveryStatus: document.deliveryStatus,
+    deliveryAttemptedAt: nullableIso(document.deliveryAttemptedAt),
+    sentAt: nullableIso(document.sentAt),
+    deliveryFailureCode: document.deliveryFailureCode ?? null,
+    version: (document.__v ?? 0) + 1,
+    createdAt: iso(document.createdAt),
+    updatedAt: iso(document.updatedAt)
+  };
+}
+
+function mapUserInvitationAdmin(
+  document: PlainDocument
+): UserInvitationAdminRecord {
+  const invitedBy = document.invitedBy ?? {};
+  return {
+    id: idOf(document),
+    name: document.name,
+    email: document.email,
+    role: document.role,
+    mobile: document.mobile,
+    tokenValidity: document.tokenValidity,
+    presentationStatus: document.presentationStatus,
+    currentLinkAvailable: document.currentLinkAvailable,
+    availableActions: [...(document.availableActions ?? [])],
+    invitedBy: {
+      id: String(invitedBy.id ?? invitedBy._id),
+      name: invitedBy.name,
+      email: invitedBy.email,
+      role: invitedBy.role
+    },
+    issuedAt: iso(document.issuedAt),
+    expiresAt: iso(document.expiresAt),
+    deliveryStatus: document.deliveryStatus,
+    deliveryAttemptedAt: nullableIso(document.deliveryAttemptedAt),
+    sentAt: nullableIso(document.sentAt),
+    version: document.version ?? (document.__v ?? 0) + 1,
+    createdAt: iso(document.createdAt),
+    updatedAt: iso(document.updatedAt)
+  };
+}
+
+function mapAccessRequest(document: PlainDocument): AccessRequestRecord {
+  return {
+    id: idOf(document),
+    requesterId: document.requesterId,
+    projectId: document.projectId,
+    module: document.module,
+    reason: document.reason,
+    status: document.status,
+    reviewerId: document.reviewerId ?? null,
+    decisionReason: document.decisionReason ?? null,
+    decisionFingerprint: document.decisionFingerprint ?? null,
+    approvedGrantId: document.approvedGrantId ?? null,
+    reviewedAt: nullableIso(document.reviewedAt),
+    version: (document.__v ?? 0) + 1,
+    createdAt: iso(document.createdAt),
+    updatedAt: iso(document.updatedAt)
+  };
+}
+
+function mapProjectAccessGrant(document: PlainDocument): ProjectAccessGrantRecord {
+  return {
+    id: idOf(document),
+    projectId: document.projectId,
+    userId: document.userId,
+    module: document.module,
+    source: document.source,
+    accessRequestId: document.accessRequestId ?? null,
+    grantedById: document.grantedById,
+    active: document.active,
+    grantedAt: iso(document.grantedAt),
+    revokedAt: nullableIso(document.revokedAt),
+    revokedById: document.revokedById ?? null,
+    revocationReason: document.revocationReason ?? null,
+    version: (document.__v ?? 0) + 1,
     createdAt: iso(document.createdAt),
     updatedAt: iso(document.updatedAt)
   };
@@ -1700,9 +3337,14 @@ function mapProject(document: PlainDocument): ProjectRecord {
       document.clientEmailNormalized ?? normalizeEmail(document.clientEmail ?? ""),
     clientMobile: document.clientMobile ?? "",
     clientAddress: document.clientAddress ?? "",
-    initiatingDesignerId: document.initiatingDesignerId,
-    assignedDesignerIds: [...document.assignedDesignerIds],
-    managerId: document.managerId,
+    initiatingDesignerId:
+      document.initiatingDesignerId == null ? null : String(document.initiatingDesignerId),
+    assignedEstimatorId:
+      document.assignedEstimatorId == null ? null : String(document.assignedEstimatorId),
+    assignedDesignerIds: Array.isArray(document.assignedDesignerIds)
+      ? document.assignedDesignerIds.map(String)
+      : [],
+    managerId: document.managerId == null ? null : String(document.managerId),
     status: document.status,
     location: document.location,
     plannedStartAt: iso(document.plannedStartAt),
@@ -1724,7 +3366,7 @@ function leadActivityForMongo(input: LeadActivityRecord): PlainDocument {
   return { ...input, id: undefined, occurredAt: date(input.occurredAt), createdAt: date(input.createdAt) };
 }
 function mapLead(document: PlainDocument): LeadRecord {
-  return { id: idOf(document), ownerId: document.ownerId, clientName: document.clientName, clientEmail: document.clientEmail, clientMobile: document.clientMobile, projectName: document.projectName, location: document.location, propertyType: document.propertyType, budgetMin: document.budgetMin ?? null, budgetMax: document.budgetMax ?? null, source: document.source, stage: document.stage, nextAction: document.nextAction, nextActionAt: iso(document.nextActionAt), builder: document.builder ?? null, areaSqft: document.areaSqft ?? null, targetHandoverAt: nullableIso(document.targetHandoverAt), notes: document.notes ?? null, latestActivityAt: nullableIso(document.latestActivityAt), createdAt: iso(document.createdAt), updatedAt: iso(document.updatedAt) };
+  return { id: idOf(document), projectId: document.projectId == null ? null : String(document.projectId), ownerId: document.ownerId, clientName: document.clientName, clientEmail: document.clientEmail, clientMobile: document.clientMobile, projectName: document.projectName, location: document.location, propertyType: document.propertyType, budgetMin: document.budgetMin ?? null, budgetMax: document.budgetMax ?? null, source: document.source, stage: document.stage, nextAction: document.nextAction, nextActionAt: iso(document.nextActionAt), builder: document.builder ?? null, areaSqft: document.areaSqft ?? null, targetHandoverAt: nullableIso(document.targetHandoverAt), notes: document.notes ?? null, latestActivityAt: nullableIso(document.latestActivityAt), createdAt: iso(document.createdAt), updatedAt: iso(document.updatedAt) };
 }
 function mapLeadActivity(document: PlainDocument): LeadActivityRecord {
   return { id: idOf(document), leadId: document.leadId, actorId: document.actorId, type: document.type, note: document.note, occurredAt: iso(document.occurredAt), createdAt: iso(document.createdAt) };
@@ -1810,6 +3452,53 @@ function mapTask(document: PlainDocument): TaskRecord {
     : {
         ...base,
         status: document.status,
+        completedAt: null
+      };
+}
+
+/*
+ * Presents a ProjectWorkflowTask in TaskRecord shape so the KPI scores design
+ * and operational work through one path. Rows created before the KPI rollout
+ * carry no dueAt/plannedEffort, so both fall back to the standard turnaround
+ * for the task kind rather than dropping the task from the report.
+ */
+function mapWorkflowTaskToKpiRecord(document: PlainDocument): TaskRecord {
+  const kind = String(document.kind) as ProjectWorkflowTaskKind;
+  const openedAt = new Date(document.openedAt);
+  const schedule = WORKFLOW_TASK_SCHEDULE[kind];
+  const deadline = document.dueAt
+    ? iso(document.dueAt)
+    : iso(workflowTaskDueAt(kind, openedAt));
+  const base = {
+    id: idOf(document),
+    projectId: document.projectId,
+    floorId: "",
+    stageId: "",
+    title: document.title,
+    description: document.description ?? "",
+    order: 0,
+    ownerId: document.assigneeUserId ?? "",
+    plannedStartAt: iso(document.openedAt),
+    originalDeadlineAt: deadline,
+    currentDeadlineAt: deadline,
+    plannedEffort: document.plannedEffort ?? schedule?.plannedEffort ?? null,
+    progress: document.progress ?? 0,
+    dependencyTaskIds: [],
+    latestUpdateAt: nullableIso(document.updatedAt),
+    version: document.version ?? 1,
+    createdAt: iso(document.createdAt ?? document.openedAt),
+    updatedAt: iso(document.updatedAt ?? document.openedAt)
+  };
+
+  return document.status === "completed"
+    ? {
+        ...base,
+        status: "completed" as const,
+        completedAt: iso(document.completedAt ?? document.updatedAt)
+      }
+    : {
+        ...base,
+        status: document.status === "in_progress" ? ("in_progress" as const) : ("not_started" as const),
         completedAt: null
       };
 }

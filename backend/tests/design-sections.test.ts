@@ -4,10 +4,17 @@ import jwt from "jsonwebtoken";
 import request from "supertest";
 import { describe, expect, it } from "vitest";
 
-import { createApp } from "../src/app.js";
+import { createApp as createApplication } from "../src/app.js";
 import { createMemoryRepository } from "../src/repositories/memory.js";
 import type { SeedData } from "../src/repositories/types.js";
 import { demoSeedData } from "../src/seed/data.js";
+import { developmentDemoAuthentication } from "./helpers/development-demo-authentication.js";
+
+const createApp = (dependencies: Parameters<typeof createApplication>[0]) =>
+  createApplication({
+    ...dependencies,
+    developmentDemoAuthorization: developmentDemoAuthentication()
+  });
 
 const SECRET = "design-section-test-secret-at-least-32-characters";
 const NOW = "2026-07-27T10:00:00.000Z";
@@ -18,6 +25,7 @@ const PAGE_PNG = Buffer.from(
 
 class TestStorage {
   readonly objects = new Map<string, Buffer>([["page.png", PAGE_PNG]]);
+  readonly opened: string[] = [];
   private next = 0;
   async save(input: { data: Buffer; extension: string }) {
     return this.saveGenerated(input);
@@ -33,6 +41,7 @@ class TestStorage {
     return Buffer.from(value);
   }
   async open(reference: string) {
+    this.opened.push(reference);
     return Readable.from(await this.read(reference));
   }
   async delete(reference: string) {
@@ -46,6 +55,23 @@ function token(id: string, role: string) {
 
 function sectionSeed(status: "designer_review" | "processing_failed" = "designer_review"): SeedData {
   const seed = structuredClone(demoSeedData);
+  seed.projectAccessGrants.push({
+    id: "grant-vikram-aurora-design-sections",
+    projectId: "project-aurora-villa",
+    userId: "user-designer-vikram",
+    module: "design",
+    source: "access_request",
+    accessRequestId: "request-vikram-aurora-design-sections",
+    grantedById: "user-super-admin",
+    active: true,
+    grantedAt: NOW,
+    revokedAt: null,
+    revokedById: null,
+    revocationReason: null,
+    version: 1,
+    createdAt: NOW,
+    updatedAt: NOW
+  });
   seed.extractionJobs.push({
     id: "job-review",
     designVersionId: "version-aurora-plan-1",
@@ -103,6 +129,133 @@ function sectionSeed(status: "designer_review" | "processing_failed" = "designer
   return seed;
 }
 
+describe("Design Section operations", () => {
+  it("lets Super Admin read draft sections and their images without mutation", async () => {
+    const { app, repository, storage } = setup();
+    const beforeSections = await repository.listDesignSections("version-aurora-plan-1");
+    const beforeJob = await repository.findExtractionJobByVersionId("version-aurora-plan-1");
+    const superAdmin = `Bearer ${token("user-super-admin", "super_admin")}`;
+
+    const drafts = await request(app)
+      .get("/api/v1/design-versions/version-aurora-plan-1/sections")
+      .set("Authorization", superAdmin);
+    const page = await request(app)
+      .get("/api/v1/design-source-pages/page-1/image")
+      .set("Authorization", superAdmin);
+    const revision = await request(app)
+      .get("/api/v1/design-section-revisions/revision-1/image")
+      .set("Authorization", superAdmin);
+
+    expect(drafts.status).toBe(200);
+    expect(drafts.body.data.sections).toEqual([
+      expect.objectContaining({ id: "section-1" })
+    ]);
+    expect(page.status).toBe(200);
+    expect(page.headers["content-type"]).toMatch(/^image\/png/);
+    expect(revision.status).toBe(200);
+    expect(revision.headers["content-type"]).toMatch(/^image\/png/);
+    expect(storage.opened).toEqual(["page.png", "page.png"]);
+    expect(await repository.listDesignSections("version-aurora-plan-1"))
+      .toEqual(beforeSections);
+    expect(await repository.findExtractionJobByVersionId("version-aurora-plan-1"))
+      .toEqual(beforeJob);
+  });
+
+  it("denies every Super Admin draft mutation before handler state changes", async () => {
+    const { app, repository, storage } = setup("processing_failed");
+    const superAdmin = `Bearer ${token("user-super-admin", "super_admin")}`;
+    const beforeSections = await repository.listDesignSections("version-aurora-plan-1");
+    const beforeRevisions = await repository.listSectionRevisions("section-1");
+    const beforeJob = await repository.findExtractionJobByVersionId("version-aurora-plan-1");
+    const beforeObjects = new Map(storage.objects);
+
+    await request(app)
+      .post("/api/v1/design-versions/version-aurora-plan-1/sections")
+      .set("Authorization", superAdmin)
+      .send({
+        sourcePageId: "page-1",
+        label: "Kitchen",
+        crop: { x: 0, y: 0, width: 1, height: 1 }
+      })
+      .expect(403);
+    await request(app)
+      .patch("/api/v1/design-sections/section-1")
+      .set("Authorization", superAdmin)
+      .send({ version: 1, label: "Updated kitchen" })
+      .expect(403);
+    await request(app)
+      .delete("/api/v1/design-sections/section-1")
+      .set("Authorization", superAdmin)
+      .send({ version: 1 })
+      .expect(403);
+    await request(app)
+      .post("/api/v1/design-versions/version-aurora-plan-1/retry-extraction")
+      .set("Authorization", superAdmin)
+      .expect(403);
+    await request(app)
+      .post("/api/v1/design-versions/version-aurora-plan-1/submit-sections")
+      .set("Authorization", superAdmin)
+      .expect(403);
+
+    expect(await repository.listDesignSections("version-aurora-plan-1"))
+      .toEqual(beforeSections);
+    expect(await repository.listSectionRevisions("section-1"))
+      .toEqual(beforeRevisions);
+    expect(await repository.findExtractionJobByVersionId("version-aurora-plan-1"))
+      .toEqual(beforeJob);
+    expect(storage.objects).toEqual(beforeObjects);
+  });
+
+  it("does not let a Design grant replace draft ownership", async () => {
+    const { app, repository, storage } = setup("processing_failed");
+    const grantedDesigner = `Bearer ${token("user-designer-vikram", "designer")}`;
+    const beforeSections = await repository.listDesignSections("version-aurora-plan-1");
+    const beforeRevisions = await repository.listSectionRevisions("section-1");
+    const beforeJob = await repository.findExtractionJobByVersionId("version-aurora-plan-1");
+    const beforeObjects = new Map(storage.objects);
+
+    await request(app)
+      .get("/api/v1/design-versions/version-aurora-plan-1/sections")
+      .set("Authorization", grantedDesigner)
+      .expect(404);
+    await request(app)
+      .post("/api/v1/design-versions/version-aurora-plan-1/sections")
+      .set("Authorization", grantedDesigner)
+      .send({
+        sourcePageId: "page-1",
+        label: "Kitchen",
+        crop: { x: 0, y: 0, width: 1, height: 1 }
+      })
+      .expect(404);
+    await request(app)
+      .patch("/api/v1/design-sections/section-1")
+      .set("Authorization", grantedDesigner)
+      .send({ version: 1, label: "Updated kitchen" })
+      .expect(404);
+    await request(app)
+      .delete("/api/v1/design-sections/section-1")
+      .set("Authorization", grantedDesigner)
+      .send({ version: 1 })
+      .expect(404);
+    await request(app)
+      .post("/api/v1/design-versions/version-aurora-plan-1/retry-extraction")
+      .set("Authorization", grantedDesigner)
+      .expect(404);
+    await request(app)
+      .post("/api/v1/design-versions/version-aurora-plan-1/submit-sections")
+      .set("Authorization", grantedDesigner)
+      .expect(404);
+
+    expect(await repository.listDesignSections("version-aurora-plan-1"))
+      .toEqual(beforeSections);
+    expect(await repository.listSectionRevisions("section-1"))
+      .toEqual(beforeRevisions);
+    expect(await repository.findExtractionJobByVersionId("version-aurora-plan-1"))
+      .toEqual(beforeJob);
+    expect(storage.objects).toEqual(beforeObjects);
+  });
+});
+
 function setup(status?: "designer_review" | "processing_failed") {
   const repository = createMemoryRepository(sectionSeed(status));
   const storage = new TestStorage();
@@ -157,7 +310,7 @@ describe("designer section correction", () => {
     await request(app)
       .get("/api/v1/design-versions/version-aurora-plan-1/sections")
       .set("Authorization", `Bearer ${token("user-client-aurora", "client")}`)
-      .expect(404);
+      .expect(403);
   });
 
   it("renames and recrops with optimistic versioning and appends an audit event", async () => {

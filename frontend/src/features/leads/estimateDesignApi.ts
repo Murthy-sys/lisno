@@ -8,14 +8,21 @@ import type {
   EstimateDesignReplacementResult,
   EstimateDesignRevision,
   EstimateDesignUpload,
-  EstimateDesignWorkspace
+  EstimateDesignWorkspace,
+  EstimatePlanAnnotationDraft,
+  EstimatePlanChangeRequest,
+  EstimatePlanChangeRequestDetail,
+  EstimatePlanChangeRequestQueueItem,
+  EstimatePlanClientWorkspace
 } from "../../api/types";
 
 export const estimateDesignKeys = {
   all: ["estimate-designs"] as const,
   workspace: (estimateId: string) => [...estimateDesignKeys.all, estimateId] as const,
   clientWorkspace: (estimateId: string) =>
-    ["client", "estimate-designs", estimateId] as const
+    ["client", "estimate-designs", estimateId] as const,
+  clientPlanWorkspace: (estimateId: string) =>
+    ["client", "estimate-plan-review", estimateId] as const
 };
 
 export const getEstimateDesignWorkspace = (estimateId: string) =>
@@ -97,7 +104,12 @@ export const removeEstimateDrawing = (drawingId: string, version: number) => api
 );
 
 export const submitEstimateDrawings = (estimateId: string) =>
-  apiClient.post<{ submittedCount: number }>(
+  apiClient.post<{
+    submittedCount: number;
+    reviewRoundId?: string | null;
+    designPlanVersion?: number | null;
+    deliveryStatus?: "queued" | "sending" | "sent" | "failed" | "disabled";
+  }>(
     `/estimates/${encodeURIComponent(estimateId)}/design-drawings/submit`
   );
 
@@ -137,3 +149,46 @@ export const estimateDesignSourcePageImageUrl = (pageId: string) =>
 
 export const estimateDesignRevisionImageUrl = (revisionId: string) =>
   `/estimate-design-revisions/${encodeURIComponent(revisionId)}/image`;
+
+export const getClientPlanWorkspace = (estimateId: string) =>
+  apiClient.get<EstimatePlanClientWorkspace>(`/client/estimates/${encodeURIComponent(estimateId)}/plan-review`);
+
+export const clientPlanThumbnailUrl = (pageId: string) =>
+  `/client/estimate-plan-pages/${encodeURIComponent(pageId)}/thumbnail`;
+
+export const clientPlanCurrentImageUrl = (pageId: string) =>
+  `/client/estimate-plan-pages/${encodeURIComponent(pageId)}/current-image`;
+
+export const saveClientPlanDraft = (pageId: string, version: number, annotations: AnnotationDocumentV1) =>
+  apiClient.put<EstimatePlanAnnotationDraft>(`/client/estimate-plan-pages/${encodeURIComponent(pageId)}/annotation-draft`, { version, annotations });
+
+export const previewClientPlanTargets = (pageId: string, annotations: AnnotationDocumentV1) =>
+  apiClient.post<{ pageRevisionNumber: number; targets: Array<{ drawingId: string; title: string; reason: "anchor_inside" | "area_overlap" }>; snapshotToken: string }>(`/client/estimate-plan-pages/${encodeURIComponent(pageId)}/target-preview`, { annotations });
+
+export const submitClientPlanChangeRequest = (pageId: string, input: {
+  version: number; summary: string; annotations: AnnotationDocumentV1;
+  targetDrawingIds: string[]; snapshotToken: string; idempotencyKey: string;
+}) => apiClient.post<EstimatePlanChangeRequest>(`/client/estimate-plan-pages/${encodeURIComponent(pageId)}/change-requests`, input);
+
+export const updateClientPlanChangeRequest = (requestId: string, input: {
+  version: number;
+  summary: string;
+  annotations: AnnotationDocumentV1;
+}) => apiClient.put<EstimatePlanChangeRequest>(`/client/estimate-plan-change-requests/${encodeURIComponent(requestId)}`, input);
+
+export const getEstimatePlanChangeRequests = (filters: { estimateId?: string; status?: "open" | "resolved" } = {}) => {
+  const query = new URLSearchParams();
+  if (filters.estimateId) query.set("estimateId", filters.estimateId);
+  if (filters.status) query.set("status", filters.status);
+  const suffix = query.size ? `?${query.toString()}` : "";
+  return apiClient.get<EstimatePlanChangeRequestQueueItem[]>(`/estimate-plan-change-requests${suffix}`);
+};
+
+export const getEstimatePlanChangeRequest = (requestId: string) =>
+  apiClient.get<EstimatePlanChangeRequestDetail>(`/estimate-plan-change-requests/${encodeURIComponent(requestId)}`);
+
+export const updateEstimatePlanRequestTargets = (requestId: string, input: { version: number; targetDrawingIds: string[] }) =>
+  apiClient.put<EstimatePlanChangeRequestDetail>(`/estimate-plan-change-requests/${encodeURIComponent(requestId)}/targets`, input);
+
+export const resolveEstimatePlanPageRequest = (requestId: string, input: { version: number; note: string }) =>
+  apiClient.post<EstimatePlanChangeRequestDetail>(`/estimate-plan-change-requests/${encodeURIComponent(requestId)}/resolve-page`, input);

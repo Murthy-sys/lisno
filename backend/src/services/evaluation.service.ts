@@ -43,6 +43,12 @@ export function createEvaluationService(
 ): EvaluationService {
   const assertCanViewSubject = async (actor: PublicUser, subjectId: string) => {
     const subject = await requireUser(repository, subjectId);
+    if (
+      actor.role === "super_admin" &&
+      (subject.role === "designer" || subject.role === "design_manager")
+    ) {
+      return subject;
+    }
     if (subject.role === "designer") {
       await assertDesignerRelationship(repository, actor, subject.id);
       return subject;
@@ -56,7 +62,11 @@ export function createEvaluationService(
   return {
     async create(actor, input) {
       await requireActor(repository, actor);
-      if (actor.role !== "design_manager" && actor.role !== "design_head") {
+      if (
+        actor.role !== "super_admin" &&
+        actor.role !== "design_manager" &&
+        actor.role !== "design_head"
+      ) {
         forbidden();
       }
       const evaluatorRole = actor.role;

@@ -38,8 +38,21 @@ export interface EstimatePdfResult {
   filename: string;
 }
 
+export type EstimatePdfProfile = "standard" | "compact_client_delivery";
+
+export function scaleEstimateTextSize(
+  size: number,
+  profile: EstimatePdfProfile
+): number {
+  if (profile === "standard") return size;
+  return Math.max(7, Math.round(size * 0.85 * 2) / 2);
+}
+
 export interface EstimatePdfService {
-  generate(input: EstimatePdfInput): Promise<EstimatePdfResult>;
+  generate(
+    input: EstimatePdfInput,
+    options?: { profile?: EstimatePdfProfile }
+  ): Promise<EstimatePdfResult>;
 }
 
 const colors = {
@@ -139,14 +152,18 @@ function drawWatermark(doc: PDFKit.PDFDocument, logo: Buffer): void {
   doc.opacity(1);
 }
 
-function drawPageHeader(doc: PDFKit.PDFDocument, logo: Buffer): void {
+function drawPageHeader(
+  doc: PDFKit.PDFDocument,
+  logo: Buffer,
+  profile: EstimatePdfProfile
+): void {
   const { left, right, top } = doc.page.margins;
   const width = doc.page.width - left - right;
 
   doc.image(logo, left, top, { fit: [76, 28] });
   doc
     .font("Helvetica-Bold")
-    .fontSize(15)
+    .fontSize(scaleEstimateTextSize(15, profile))
     .fillColor(colors.ink)
     .text("Interior Estimate", left + 250, top + 3, {
       width: width - 250,
@@ -162,7 +179,7 @@ function drawPageHeader(doc: PDFKit.PDFDocument, logo: Buffer): void {
   doc.y = top + pageHeaderContentOffset;
 }
 
-function drawTableHeader(doc: PDFKit.PDFDocument): void {
+function drawTableHeader(doc: PDFKit.PDFDocument, profile: EstimatePdfProfile): void {
   const y = doc.y;
   const width = doc.page.width - doc.page.margins.left - doc.page.margins.right;
 
@@ -170,7 +187,7 @@ function drawTableHeader(doc: PDFKit.PDFDocument): void {
   doc.rect(doc.page.margins.left, y, width, tableHeaderHeight).fill(colors.panel);
   doc
     .font("Helvetica-Bold")
-    .fontSize(8)
+    .fontSize(scaleEstimateTextSize(8, profile))
     .fillColor(colors.muted)
     .text("Description", table.description.x + 6, y + 8, {
       width: table.description.width - 12,
@@ -219,9 +236,10 @@ type LineCellText = ReturnType<typeof lineCellText>;
 
 function measureLineCells(
   doc: PDFKit.PDFDocument,
-  cells: LineCellText
+  cells: LineCellText,
+  profile: EstimatePdfProfile
 ): number {
-  doc.font("Helvetica").fontSize(9);
+  doc.font("Helvetica").fontSize(scaleEstimateTextSize(9, profile));
   const regularCellHeights = [
     doc.heightOfString(cells.description, {
       width: table.description.width - 12
@@ -230,7 +248,7 @@ function measureLineCells(
     doc.heightOfString(cells.quantity, { width: table.quantity.width - 8 }),
     doc.heightOfString(cells.rate, { width: table.rate.width - 8 })
   ];
-  doc.font("Helvetica-Bold").fontSize(9);
+  doc.font("Helvetica-Bold").fontSize(scaleEstimateTextSize(9, profile));
   const totalHeight = doc.heightOfString(cells.total, {
     width: table.total.width - 10
   });
@@ -239,17 +257,24 @@ function measureLineCells(
   return Math.max(minimumRowHeight, textHeight + rowVerticalPadding);
 }
 
-function lineRowHeight(doc: PDFKit.PDFDocument, line: EstimatePdfLine): number {
-  return measureLineCells(doc, lineCellText(line));
+function lineRowHeight(
+  doc: PDFKit.PDFDocument,
+  line: EstimatePdfLine,
+  profile: EstimatePdfProfile
+): number {
+  return measureLineCells(doc, lineCellText(line), profile);
 }
 
 function measureLineCell(
   doc: PDFKit.PDFDocument,
   text: string,
   width: number,
-  bold = false
+  bold = false,
+  profile: EstimatePdfProfile
 ): number {
-  doc.font(bold ? "Helvetica-Bold" : "Helvetica").fontSize(9);
+  doc
+    .font(bold ? "Helvetica-Bold" : "Helvetica")
+    .fontSize(scaleEstimateTextSize(9, profile));
   return doc.heightOfString(text, { width });
 }
 
@@ -258,13 +283,14 @@ function takeTextFragment(
   text: string,
   width: number,
   maxHeight: number,
-  bold = false
+  bold = false,
+  profile: EstimatePdfProfile
 ): { fragment: string; remaining: string } {
   const normalized = text.trimStart();
   if (!normalized) {
     return { fragment: "", remaining: "" };
   }
-  if (measureLineCell(doc, normalized, width, bold) <= maxHeight) {
+  if (measureLineCell(doc, normalized, width, bold, profile) <= maxHeight) {
     return { fragment: normalized, remaining: "" };
   }
 
@@ -275,7 +301,7 @@ function takeTextFragment(
   while (low <= high) {
     const middle = Math.floor((low + high) / 2);
     const candidate = characters.slice(0, middle).join("");
-    if (measureLineCell(doc, candidate, width, bold) <= maxHeight) {
+    if (measureLineCell(doc, candidate, width, bold, profile) <= maxHeight) {
       fittingLength = middle;
       low = middle + 1;
     } else {
@@ -305,38 +331,48 @@ function takeTextFragment(
 function splitLineCells(
   doc: PDFKit.PDFDocument,
   cells: LineCellText,
-  maxHeight: number
+  maxHeight: number,
+  profile: EstimatePdfProfile
 ): { fragment: LineCellText; remaining: LineCellText } {
   const description = takeTextFragment(
     doc,
     cells.description,
     table.description.width - 12,
-    maxHeight
+    maxHeight,
+    false,
+    profile
   );
   const room = takeTextFragment(
     doc,
     cells.room,
     table.room.width - 12,
-    maxHeight
+    maxHeight,
+    false,
+    profile
   );
   const quantity = takeTextFragment(
     doc,
     cells.quantity,
     table.quantity.width - 8,
-    maxHeight
+    maxHeight,
+    false,
+    profile
   );
   const rate = takeTextFragment(
     doc,
     cells.rate,
     table.rate.width - 8,
-    maxHeight
+    maxHeight,
+    false,
+    profile
   );
   const total = takeTextFragment(
     doc,
     cells.total,
     table.total.width - 10,
     maxHeight,
-    true
+    true,
+    profile
   );
 
   return {
@@ -360,7 +396,8 @@ function splitLineCells(
 function drawLineRowFragment(
   doc: PDFKit.PDFDocument,
   cells: LineCellText,
-  rowHeight: number
+  rowHeight: number,
+  profile: EstimatePdfProfile
 ): void {
   const y = doc.y;
   const drawCell = (
@@ -374,7 +411,7 @@ function drawLineRowFragment(
     }
     doc
       .font(options?.bold ? "Helvetica-Bold" : "Helvetica")
-      .fontSize(9)
+      .fontSize(scaleEstimateTextSize(9, profile))
       .fillColor(colors.ink)
       .text(text, x, y + 8, {
         width,
@@ -412,7 +449,11 @@ function drawLineRowFragment(
   doc.y = y + rowHeight;
 }
 
-function drawLineRow(doc: PDFKit.PDFDocument, line: EstimatePdfLine): void {
+function drawLineRow(
+  doc: PDFKit.PDFDocument,
+  line: EstimatePdfLine,
+  profile: EstimatePdfProfile
+): void {
   let remaining = lineCellText(line);
   let continuation = false;
 
@@ -427,23 +468,27 @@ function drawLineRow(doc: PDFKit.PDFDocument, line: EstimatePdfLine): void {
 
     const availableHeight = contentBottom(doc) - doc.y;
     const maxTextHeight = availableHeight - rowVerticalPadding;
-    const split = splitLineCells(doc, remaining, maxTextHeight);
+    const split = splitLineCells(doc, remaining, maxTextHeight, profile);
     const rowHeight = Math.min(
       availableHeight,
-      measureLineCells(doc, split.fragment)
+      measureLineCells(doc, split.fragment, profile)
     );
-    drawLineRowFragment(doc, split.fragment, rowHeight);
+    drawLineRowFragment(doc, split.fragment, rowHeight, profile);
     remaining = split.remaining;
     continuation = Object.values(remaining).some(Boolean);
   }
 }
 
-function drawGroupHeader(doc: PDFKit.PDFDocument, label: string): void {
+function drawGroupHeader(
+  doc: PDFKit.PDFDocument,
+  label: string,
+  profile: EstimatePdfProfile
+): void {
   const y = doc.y;
 
   doc
     .font("Helvetica-Bold")
-    .fontSize(10)
+    .fontSize(scaleEstimateTextSize(10, profile))
     .fillColor(colors.red)
     .text(label, doc.page.margins.left, y + 6, {
       width: doc.page.width - doc.page.margins.left - doc.page.margins.right,
@@ -463,9 +508,10 @@ function maximumFreshRowHeight(doc: PDFKit.PDFDocument): number {
 
 function rowReservation(
   doc: PDFKit.PDFDocument,
-  line: EstimatePdfLine
+  line: EstimatePdfLine,
+  profile: EstimatePdfProfile
 ): number {
-  const rowHeight = lineRowHeight(doc, line);
+  const rowHeight = lineRowHeight(doc, line, profile);
   const freshCapacity = maximumFreshRowHeight(doc);
   return rowHeight <= freshCapacity
     ? rowHeight
@@ -501,16 +547,18 @@ interface OverviewField {
 function measureOverviewField(
   doc: PDFKit.PDFDocument,
   field: OverviewField,
-  width: number
+  width: number,
+  profile: EstimatePdfProfile
 ): number {
-  doc.font(field.font).fontSize(field.fontSize);
+  doc.font(field.font).fontSize(scaleEstimateTextSize(field.fontSize, profile));
   return Math.min(doc.heightOfString(field.text, { width }), field.maxHeight);
 }
 
 function drawEstimateOverview(
   doc: PDFKit.PDFDocument,
   input: EstimatePdfInput,
-  generatedAt: Date
+  generatedAt: Date,
+  profile: EstimatePdfProfile
 ): void {
   const left = doc.page.margins.left;
   const fullWidth = doc.page.width - left - doc.page.margins.right;
@@ -600,10 +648,10 @@ function drawEstimateOverview(
     }
   ];
   const leftHeights = leftFields.map((field) =>
-    measureOverviewField(doc, field, leftWidth)
+    measureOverviewField(doc, field, leftWidth, profile)
   );
   const detailHeights = detailFields.map((field) =>
-    measureOverviewField(doc, field, detailWidth)
+    measureOverviewField(doc, field, detailWidth, profile)
   );
   const blockHeight = (fields: OverviewField[], heights: number[]) =>
     fields.reduce((height, field, index) => {
@@ -622,7 +670,7 @@ function drawEstimateOverview(
     const height = leftHeights[index];
     doc
       .font(field.font)
-      .fontSize(field.fontSize)
+      .fontSize(scaleEstimateTextSize(field.fontSize, profile))
       .fillColor(field.color)
       .text(field.text, left, leftY, {
         width: leftWidth,
@@ -637,7 +685,7 @@ function drawEstimateOverview(
     const height = detailHeights[index];
     doc
       .font(field.font)
-      .fontSize(field.fontSize)
+      .fontSize(scaleEstimateTextSize(field.fontSize, profile))
       .fillColor(field.color)
       .text(field.text, detailX, detailY, {
         width: detailWidth,
@@ -650,7 +698,11 @@ function drawEstimateOverview(
   doc.y = overviewY + overviewHeight;
 }
 
-function drawTotals(doc: PDFKit.PDFDocument, input: EstimatePdfInput): void {
+function drawTotals(
+  doc: PDFKit.PDFDocument,
+  input: EstimatePdfInput,
+  profile: EstimatePdfProfile
+): void {
   ensureSpace(doc, 174);
   doc.y += 16;
 
@@ -661,7 +713,7 @@ function drawTotals(doc: PDFKit.PDFDocument, input: EstimatePdfInput): void {
     const y = doc.y;
     doc
       .font(bold ? "Helvetica-Bold" : "Helvetica")
-      .fontSize(bold ? 11 : 9.5)
+      .fontSize(scaleEstimateTextSize(bold ? 11 : 9.5, profile))
       .fillColor(bold ? colors.ink : colors.muted)
       .text(label, labelX, y, { width: 100, lineBreak: false })
       .fillColor(colors.ink)
@@ -691,7 +743,7 @@ function drawTotals(doc: PDFKit.PDFDocument, input: EstimatePdfInput): void {
   ];
   doc
     .font("Helvetica")
-    .fontSize(8.5)
+    .fontSize(scaleEstimateTextSize(8.5, profile))
     .fillColor(colors.muted)
     .text(terms.join("\n"), doc.page.margins.left, doc.y + 6, {
       width: doc.page.width - doc.page.margins.left - doc.page.margins.right,
@@ -699,7 +751,7 @@ function drawTotals(doc: PDFKit.PDFDocument, input: EstimatePdfInput): void {
     });
 }
 
-function drawPageNumbers(doc: PDFKit.PDFDocument): void {
+function drawPageNumbers(doc: PDFKit.PDFDocument, profile: EstimatePdfProfile): void {
   const range = doc.bufferedPageRange();
 
   for (let index = 0; index < range.count; index += 1) {
@@ -716,7 +768,7 @@ function drawPageNumbers(doc: PDFKit.PDFDocument): void {
       .stroke();
     doc
       .font("Helvetica")
-      .fontSize(8)
+      .fontSize(scaleEstimateTextSize(8, profile))
       .fillColor(colors.muted)
       .text("Lisno Interiors", left, y, {
         width: width / 2,
@@ -744,7 +796,8 @@ export function createEstimatePdfService(options?: {
   })();
 
   return {
-    async generate(input) {
+    async generate(input, generateOptions) {
+      const profile = generateOptions?.profile ?? "standard";
       const logoPng = await logoPngPromise;
       const doc = new PDFDocument({
         size: "A4",
@@ -755,43 +808,43 @@ export function createEstimatePdfService(options?: {
 
       pageInitializers.set(doc, () => {
         drawWatermark(doc, logoPng);
-        drawPageHeader(doc, logoPng);
+        drawPageHeader(doc, logoPng, profile);
       });
       addDocumentPage(doc);
-      drawEstimateOverview(doc, input, now());
+      drawEstimateOverview(doc, input, now(), profile);
       doc.y += 8;
 
       for (const group of groupedIncludedLines(input)) {
         rowContinuationInitializers.set(doc, () => {
-          drawGroupHeader(doc, `${group.label} (continued)`);
-          drawTableHeader(doc);
+          drawGroupHeader(doc, `${group.label} (continued)`, profile);
+          drawTableHeader(doc, profile);
         });
-        const firstRowHeight = rowReservation(doc, group.lines[0]);
+        const firstRowHeight = rowReservation(doc, group.lines[0], profile);
         ensureSpace(doc, groupHeaderHeight + tableHeaderHeight + firstRowHeight);
-        drawGroupHeader(doc, group.label);
-        drawTableHeader(doc);
+        drawGroupHeader(doc, group.label, profile);
+        drawTableHeader(doc, profile);
 
         for (const [index, line] of group.lines.entries()) {
           if (index === 0) {
-            drawLineRow(doc, line);
+            drawLineRow(doc, line, profile);
             continue;
           }
 
           const pageCount = doc.bufferedPageRange().count;
-          const rowHeight = rowReservation(doc, line);
+          const rowHeight = rowReservation(doc, line, profile);
           ensureSpace(doc, groupHeaderHeight + tableHeaderHeight + rowHeight);
           if (doc.bufferedPageRange().count > pageCount) {
-            drawGroupHeader(doc, `${group.label} (continued)`);
-            drawTableHeader(doc);
+            drawGroupHeader(doc, `${group.label} (continued)`, profile);
+            drawTableHeader(doc, profile);
           }
-          drawLineRow(doc, line);
+          drawLineRow(doc, line, profile);
         }
         rowContinuationInitializers.delete(doc);
         doc.y += 8;
       }
 
-      drawTotals(doc, input);
-      drawPageNumbers(doc);
+      drawTotals(doc, input, profile);
+      drawPageNumbers(doc, profile);
 
       const projectPart =
         safeFilenamePart(input.lead.projectName) ||

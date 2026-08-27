@@ -179,7 +179,7 @@ export function createHierarchyService(
   return {
     async managers(actor, search, pagination) {
       await requireActor(repository, actor);
-      if (actor.role !== "designer") forbidden();
+      if (actor.role !== "designer" && actor.role !== "super_admin") forbidden();
       const page = await repository.pageActiveManagers(search, pagination);
       return {
         total: page.total,
@@ -189,11 +189,10 @@ export function createHierarchyService(
 
     async team(actor, pagination) {
       await requireActor(repository, actor);
-      if (actor.role !== "design_manager") forbidden();
-      const page = await repository.pageDesignersForManager(
-        actor.id,
-        pagination
-      );
+      if (actor.role !== "design_manager" && actor.role !== "super_admin") forbidden();
+      const page = actor.role === "super_admin"
+        ? await repository.pageActiveDesigners(pagination)
+        : await repository.pageDesignersForManager(actor.id, pagination);
       const summaries = await buildSummaries(page.items);
       return {
         total: page.total,
@@ -203,7 +202,7 @@ export function createHierarchyService(
 
     async managerDesigners(actor, managerId, pagination) {
       await requireActor(repository, actor);
-      if (actor.role !== "design_head") forbidden();
+      if (actor.role !== "design_head" && actor.role !== "super_admin") forbidden();
       const page = await repository.pageDesignersForManager(
         managerId,
         pagination
@@ -216,7 +215,7 @@ export function createHierarchyService(
 
     async tree(actor, pagination) {
       await requireActor(repository, actor);
-      if (actor.role !== "design_head") forbidden();
+      if (actor.role !== "design_head" && actor.role !== "super_admin") forbidden();
       const page = await repository.pageOrganizationManagers(pagination);
       const teamPages = await Promise.all(
         page.items.map(async (manager) => ({
@@ -318,14 +317,23 @@ export function createHierarchyService(
 
     async designerSummary(actor, designerId) {
       await requireActor(repository, actor);
-      const designer = await assertDesignerRelationship(
-        repository,
-        actor,
-        designerId
-      );
+      const designer = actor.role === "super_admin"
+        ? await requireActiveDesigner(repository, designerId)
+        : await assertDesignerRelationship(repository, actor, designerId);
       return (await buildSummaries([designer]))[0]!;
     }
   };
+}
+
+async function requireActiveDesigner(
+  repository: AppRepository,
+  designerId: string
+): Promise<UserRecord> {
+  const designer = await repository.findUserById(designerId);
+  if (!designer || !designer.active || designer.role !== "designer") {
+    throw new ApiError(404, "NOT_FOUND", "The requested resource was not found.");
+  }
+  return designer;
 }
 
 function publicDesigner(designer: UserRecord): ManagerTreeDesigner {

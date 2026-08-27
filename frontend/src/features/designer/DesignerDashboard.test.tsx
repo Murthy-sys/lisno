@@ -1,8 +1,9 @@
-import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import { tokenStorage } from "../../api/client";
+import { authorizationFor } from "../../test/authFixtures";
 import { renderApp } from "../../test/render";
 
 const designer = {
@@ -53,6 +54,33 @@ const projects = [
     updatedAt: "2026-07-15T08:00:00.000Z"
   }
 ];
+
+const designPlanTasks = [
+  {
+    id: "estimate-aurora-villa:design-plan-upload",
+    estimateId: "estimate-aurora-villa",
+    projectId: "project-aurora-villa",
+    projectName: "Aurora Villa",
+    clientName: "Priya Shah",
+    status: "in_progress",
+    designPlanVersion: 1,
+    rooms: [{ id: "room-living", label: "Living Room" }],
+    scopes: ["EL"],
+    lineItems: []
+  },
+  {
+    id: "estimate-aurora-studio:design-plan-upload",
+    estimateId: "estimate-aurora-studio",
+    projectId: "project-aurora-studio",
+    projectName: "Aurora Studio",
+    clientName: "Rhea Kapoor",
+    status: "ready_for_client",
+    designPlanVersion: 2,
+    rooms: [{ id: "room-bedroom", label: "Bedroom" }],
+    scopes: ["CA"],
+    lineItems: []
+  }
+] as const;
 
 const components = [
   ["onTime", "On-time delivery", 82, 30],
@@ -169,42 +197,21 @@ function installDashboardApi(options?: {
   empty?: boolean;
   failProjectsOnce?: boolean;
   kpiHasMore?: boolean;
-  failManagersOnce?: boolean;
-  createFieldError?: string;
+  missingProjectAggregates?: boolean;
+  reverseDesignTasks?: boolean;
 }) {
   let projectRequests = 0;
-  let managerRequests = 0;
   const mainKpiRequests: string[] = [];
   const taskFeedRequests: string[] = [];
-  let createBody: unknown;
-  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const url = String(input);
     if (url === "/api/v1/auth/me") return response(designer);
-    if (url.startsWith("/api/v1/organization/managers?")) {
-      managerRequests += 1;
-      if (options?.failManagersOnce && managerRequests === 1) {
-        return Response.json(
-          { error: { code: "REQUEST_FAILED", message: "Managers unavailable." } },
-          { status: 503 }
-        );
-      }
-      return response({
-        items: [
-          {
-            id: "user-manager-aarav",
-            name: "Aarav Mehta",
-            email: "aarav@lisno.example",
-            mobile: "+91 98765 00001"
-          },
-          {
-            id: "user-manager-meera",
-            name: "Meera Bose",
-            email: "meera@lisno.example",
-            mobile: "+91 98765 00002"
-          }
-        ],
-        pagination: { limit: 20, offset: 0, total: 2, hasMore: false }
-      });
+    if (url === "/api/v1/auth/authorization") return response(authorizationFor(designer.role));
+    if (url === "/api/v1/designer/design-plan-tasks") {
+      const tasks = options?.reverseDesignTasks
+        ? [...designPlanTasks].reverse()
+        : designPlanTasks;
+      return response(options?.empty ? [] : tasks);
     }
     if (url.startsWith("/api/v1/projects?")) {
       projectRequests += 1;
@@ -274,6 +281,8 @@ function installDashboardApi(options?: {
               projects: [],
               recentActivity: []
             }
+          : options?.missingProjectAggregates
+            ? { ...aggregates, projects: [] }
           : options?.kpiHasMore
             ? {
                 ...aggregates,
@@ -322,81 +331,124 @@ function installDashboardApi(options?: {
         }
       });
     }
-    if (url === "/api/v1/projects" && init?.method === "POST") {
-      createBody = JSON.parse(String(init.body));
-      if (options?.createFieldError) {
-        const message =
-          options.createFieldError === "managerId"
-            ? "Select an active design manager."
-            : "This email belongs to an internal account.";
-        return Response.json(
-          {
-            error: {
-              code: "INVALID_PROJECT",
-              message: "Client email is unavailable.",
-              fields: { [options.createFieldError]: message }
-            }
-          },
-          { status: 400 }
-        );
-      }
-      return response(projects[0], { status: 201 });
-    }
     throw new Error(`Unhandled request: ${url}`);
   });
   return {
-    getCreateBody: () => createBody,
-    getManagerRequests: () => managerRequests,
     getMainKpiRequests: () => mainKpiRequests,
     getTaskFeedRequests: () => taskFeedRequests
   };
 }
 
 describe("DesignerDashboard", () => {
-  it("shows server KPI components, active project metrics, risk reasons, activity, and project navigation", async () => {
+  it("shows one upload action, compact KPIs, assigned design rows, risk, and activity", async () => {
     tokenStorage.set("valid-token");
     installDashboardApi();
     const user = userEvent.setup();
     const { router } = renderApp(["/designer"]);
 
-    expect(await screen.findByRole("heading", { name: "Good morning, Ananya." }))
+    expect(await screen.findByRole("heading", { name: "Design workspace" }))
       .toBeVisible();
+    const hero = screen.getByRole("heading", { name: "Design workspace" })
+      .closest("header")!;
+    // The greeting is supporting copy on the page header, not the page title.
+    expect(within(hero).getByText(/Good morning, Ananya\./)).toBeVisible();
+    // Uploading starts from the Design plans workspace, so the hero is copy only.
+    expect(within(hero).queryAllByRole("link")).toHaveLength(0);
+    expect(within(hero).queryByRole("button", { name: "New project" }))
+      .not.toBeInTheDocument();
+    expect(screen.queryByText("Estimate approvals")).not.toBeInTheDocument();
+    // The score stays in the collapsed summary; the breakdown is behind the toggle.
     expect(screen.getByLabelText("Personal KPI score")).toHaveTextContent("84");
+    expect(screen.queryByLabelText("KPI component breakdown")).not.toBeInTheDocument();
+    const kpiToggle = screen.getByRole("button", { name: "Show breakdown" });
+    expect(kpiToggle).toHaveAttribute("aria-expanded", "false");
+    await user.click(kpiToggle);
+    expect(screen.getByLabelText("KPI component breakdown")).toBeVisible();
     for (const component of components) {
       expect(screen.getByText(String(component.label))).toBeVisible();
     }
+    await user.click(screen.getByRole("button", { name: "Hide breakdown" }));
+    expect(screen.queryByLabelText("KPI component breakdown")).not.toBeInTheDocument();
     expect(
       within(screen.getByText("Active projects").closest("article")!)
         .getByText("1")
     ).toBeVisible();
-    expect(screen.getByText("1 red")).toBeVisible();
-    expect(screen.getByText("1 yellow")).toBeVisible();
-    expect(screen.getByText("Deadline passed while work is incomplete.")).toBeVisible();
-    expect(screen.getByText("Waiting for the revised structural grid.")).toBeVisible();
+    // The separate red/yellow queue is gone: priority rides on the project rows.
+    expect(screen.queryByText("Red and yellow tasks")).not.toBeInTheDocument();
+    expect(screen.queryByText("Recent activity")).not.toBeInTheDocument();
+    expect(screen.queryByText("Deadline passed while work is incomplete."))
+      .not.toBeInTheDocument();
 
-    const projectCard = screen.getByRole("article", { name: "Aurora Villa" });
-    expect(within(projectCard).getByText("Bengaluru")).toBeVisible();
-    expect(within(projectCard).getByText("Active")).toBeVisible();
-    await user.click(within(projectCard).getByRole("link", { name: "Open project" }));
+    const projectRow = screen.getByRole("article", { name: "Aurora Villa" });
+    expect(within(projectRow).getByText("Priya Shah")).toBeVisible();
+    expect(within(projectRow).getByText("Design plan v1")).toBeVisible();
+    expect(within(projectRow).getByText("Extraction in progress")).toBeVisible();
+    expect(within(projectRow).getByText(/1 red · 0 yellow/)).toBeVisible();
+    expect(within(projectRow).getByText("High priority")).toBeVisible();
+    const continueLink = within(projectRow).getByRole("link", {
+      name: "Continue design for Aurora Villa"
+    });
+    expect(continueLink).toHaveAttribute(
+      "href",
+      "/designer/design-plans?estimate=estimate-aurora-villa"
+    );
+    await user.click(continueLink);
     expect(router.state.location.pathname).toBe(
-      "/designer/projects/project-aurora-villa"
+      "/designer/design-plans"
     );
   });
 
-  it("shows a clear empty state and keeps project creation available", async () => {
+  it("shows an assignment-owned empty state without project creation", async () => {
     tokenStorage.set("valid-token");
     installDashboardApi({ empty: true });
+    const user = userEvent.setup();
     renderApp(["/designer"]);
 
-    expect(await screen.findByText("No projects yet")).toBeVisible();
+    expect(await screen.findByText("No design projects assigned")).toBeVisible();
     expect(
-      screen.getByText("Create your first project to start planning design work.")
+      screen.getByText(
+        "Approved estimates will appear after an Admin or Super Admin assigns you."
+      )
     ).toBeVisible();
-    expect(screen.getByRole("button", { name: "Create project" })).toBeEnabled();
-    expect(screen.getByText("No recent task activity yet.")).toBeVisible();
+    expect(screen.queryByRole("button", { name: /create project/i }))
+      .not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /new project/i }))
+      .not.toBeInTheDocument();
+    expect(screen.queryByText("No recent task activity yet.")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Show breakdown" }));
     const unavailable = screen.getByText("On-time delivery").closest("article")!;
     expect(within(unavailable).getByText("Not available")).toBeVisible();
     expect(within(unavailable).queryByRole("progressbar")).not.toBeInTheDocument();
+  });
+
+  it("does not report zero health when KPI project data is unavailable", async () => {
+    tokenStorage.set("valid-token");
+    installDashboardApi({ missingProjectAggregates: true });
+    renderApp(["/designer"]);
+
+    const projectRow = await screen.findByRole("article", { name: "Aurora Villa" });
+    expect(within(projectRow).getByText("Not available")).toBeVisible();
+    expect(within(projectRow).queryByText(/0% task completion/)).not.toBeInTheDocument();
+    expect(within(projectRow).queryByText(/0 red · 0 yellow/)).not.toBeInTheDocument();
+  });
+
+  it("sorts red then yellow projects to the top and tags them", async () => {
+    tokenStorage.set("valid-token");
+    // The API hands back the yellow project first; priority order must win.
+    installDashboardApi({ reverseDesignTasks: true });
+    renderApp(["/designer"]);
+
+    await screen.findByRole("heading", { name: "Design workspace" });
+    const rows = screen.getAllByRole("article").filter((row) =>
+      row.classList.contains("designer-project-row")
+    );
+    expect(rows.map((row) => row.getAttribute("aria-labelledby"))).toEqual([
+      "designer-project-project-aurora-villa",
+      "designer-project-project-aurora-studio"
+    ]);
+    expect(within(rows[0]).getByText("High priority")).toBeVisible();
+    expect(within(rows[1]).getByText("Priority")).toBeVisible();
+    expect(screen.getByText("2 priority · 2 assigned")).toBeVisible();
   });
 
   it("offers retry when dashboard data cannot be loaded", async () => {
@@ -411,154 +463,35 @@ describe("DesignerDashboard", () => {
     await user.click(screen.getByRole("button", { name: "Try again" }));
 
     await waitFor(() =>
-      expect(screen.getByRole("heading", { name: "Good morning, Ananya." }))
+      expect(screen.getByRole("heading", { name: "Design workspace" }))
         .toBeVisible()
     );
   });
 
-  it("creates a project from client contact details and the selected manager", async () => {
-    tokenStorage.set("valid-token");
-    const api = installDashboardApi({ empty: true });
-    const user = userEvent.setup();
-    const { router } = renderApp(["/designer"]);
-    await screen.findByText("No projects yet");
-
-    await user.click(screen.getByRole("button", { name: "Create project" }));
-    const dialog = screen.getByRole("dialog", { name: "Create project" });
-    expect(api.getManagerRequests()).toBe(1);
-    expect(within(dialog).queryByLabelText("Client ID")).not.toBeInTheDocument();
-    expect(within(dialog).queryByLabelText("Manager ID")).not.toBeInTheDocument();
-    expect(within(dialog).getByLabelText("Client name")).toBeRequired();
-    expect(within(dialog).getByLabelText("Client email")).toHaveAttribute("type", "email");
-    expect(within(dialog).getByLabelText("Client mobile")).toBeRequired();
-    expect(within(dialog).getByLabelText("Client address")).toBeRequired();
-    const manager = within(dialog).getByRole("combobox", { name: "Project manager" });
-    await user.click(manager);
-    expect(within(dialog).getByRole("option", { name: /Aarav Mehta aarav@lisno\.example · \+91 98765 00001/i })).toBeVisible();
-    await user.keyboard("{ArrowDown}{Enter}");
-    expect(manager).toHaveValue("Aarav Mehta");
-    expect(within(dialog).getByLabelText("Assigned designer IDs")).toHaveAttribute(
-      "placeholder",
-      "e.g. user-designer-ananya, user-designer-kabir"
-    );
-
-    await user.type(within(dialog).getByLabelText("Project name"), "New Residence");
-    await user.type(within(dialog).getByLabelText("Location"), "Chennai");
-    await user.type(within(dialog).getByLabelText("Client name"), "Rhea Kapoor");
-    await user.type(within(dialog).getByLabelText("Client email"), "rhea@example.com");
-    await user.type(within(dialog).getByLabelText("Client mobile"), "+91 90000 00000");
-    await user.type(within(dialog).getByLabelText("Client address"), "12 Aurora Lane, Bengaluru");
-    await user.clear(within(dialog).getByLabelText("Assigned designer IDs"));
-    await user.type(
-      within(dialog).getByLabelText("Assigned designer IDs"),
-      "user-designer-kabir"
-    );
-    fireEvent.change(within(dialog).getByLabelText("Planned start"), {
-      target: { value: "2026-08-01T09:00" }
-    });
-    fireEvent.change(within(dialog).getByLabelText("Planned end"), {
-      target: { value: "2026-10-01T17:00" }
-    });
-
-    await user.type(manager, "x");
-    await user.click(within(dialog).getByRole("button", { name: "Create project" }));
-    expect(api.getCreateBody()).toBeUndefined();
-    expect(within(dialog).getByRole("alert")).toHaveTextContent(
-      "Complete every required project, client, team, and schedule field."
-    );
-    await user.clear(manager);
-    await waitFor(() => expect(api.getManagerRequests()).toBeGreaterThan(1));
-    await user.click(within(dialog).getByRole("option", { name: /Meera Bose/i }));
-    await user.click(within(dialog).getByRole("button", { name: "Create project" }));
-
-    await waitFor(() =>
-      expect(router.state.location.pathname).toBe(
-        "/designer/projects/project-aurora-villa"
-      )
-    );
-    expect(api.getCreateBody()).toMatchObject({
-      name: "New Residence",
-      clientName: "Rhea Kapoor",
-      clientEmail: "rhea@example.com",
-      clientMobile: "+91 90000 00000",
-      clientAddress: "12 Aurora Lane, Bengaluru",
-      managerId: "user-manager-meera",
-      assignedDesignerIds: [designer.id, "user-designer-kabir"],
-      location: "Chennai"
-    });
-  });
-
-  it("keeps manager requests inside the open dialog and connects manager API field errors", async () => {
-    tokenStorage.set("valid-token");
-    const api = installDashboardApi({ empty: true, createFieldError: "managerId" });
-    const user = userEvent.setup();
-    renderApp(["/designer"]);
-    await screen.findByText("No projects yet");
-    expect(api.getManagerRequests()).toBe(0);
-
-    await user.click(screen.getByRole("button", { name: "Create project" }));
-    const dialog = screen.getByRole("dialog", { name: "Create project" });
-    const manager = within(dialog).getByRole("combobox", { name: "Project manager" });
-    await user.type(manager, "meera");
-    await waitFor(() => expect(api.getManagerRequests()).toBe(2));
-    await user.click(within(dialog).getByRole("option", { name: /Meera Bose/i }));
-
-    await user.type(within(dialog).getByLabelText("Project name"), "New Residence");
-    await user.type(within(dialog).getByLabelText("Location"), "Chennai");
-    await user.type(within(dialog).getByLabelText("Client name"), "Rhea Kapoor");
-    await user.type(within(dialog).getByLabelText("Client email"), "rhea@example.com");
-    await user.type(within(dialog).getByLabelText("Client mobile"), "+91 90000 00000");
-    await user.type(within(dialog).getByLabelText("Client address"), "12 Aurora Lane, Bengaluru");
-    fireEvent.change(within(dialog).getByLabelText("Planned start"), { target: { value: "2026-08-01T09:00" } });
-    fireEvent.change(within(dialog).getByLabelText("Planned end"), { target: { value: "2026-10-01T17:00" } });
-    await user.click(within(dialog).getByRole("button", { name: "Create project" }));
-
-    expect(await within(dialog).findByRole("alert")).toHaveTextContent(
-      "Select an active design manager."
-    );
-    expect(manager).toHaveFocus();
-    expect(manager).toHaveAttribute("aria-invalid", "true");
-    const describedBy = manager.getAttribute("aria-describedby");
-    expect(describedBy).toBeTruthy();
-    expect(document.getElementById(describedBy!)).toHaveTextContent(
-      "Select an active design manager."
-    );
-  });
-
-  it("bounds KPI task reads and loads another page only on request", async () => {
+  it("reads the KPI aggregate once and no longer pages the task feed", async () => {
     tokenStorage.set("valid-token");
     const api = installDashboardApi({ kpiHasMore: true });
-    const user = userEvent.setup();
     renderApp(["/designer"]);
 
-    await screen.findByRole("heading", { name: "Good morning, Ananya." });
+    await screen.findByRole("heading", { name: "Design workspace" });
     expect(api.getMainKpiRequests()).toHaveLength(1);
-    expect(api.getTaskFeedRequests()).toHaveLength(1);
-    expect(api.getTaskFeedRequests()[0]).toMatch(/limit=20&offset=0$/);
-    expect(screen.queryByText("Loaded later")).not.toBeInTheDocument();
-    expect(screen.getByText("2 red")).toBeVisible();
-    expect(screen.getByText("Later-page completion recorded.")).toBeVisible();
+    // Every number on the page comes from the aggregate, so the paginated
+    // task feed that backed the removed queue is never requested.
+    expect(api.getTaskFeedRequests()).toHaveLength(0);
+    expect(screen.queryByRole("button", { name: "Load more tasks" }))
+      .not.toBeInTheDocument();
+    const riskMetric = screen.getByText("At-risk queue").closest("article")!;
+    expect(within(riskMetric).getByText("2 red · 1 yellow")).toBeVisible();
     expect(screen.getByText("20 active · 1 completed tasks")).toBeVisible();
     expect(
       screen.getByText("10h completed of 50h · 80% remains")
     ).toBeVisible();
-    const projectCard = screen.getByRole("article", { name: "Aurora Villa" });
-    expect(within(projectCard).getByText("5%")).toBeVisible();
-    expect(within(projectCard).getByText("2 red")).toBeVisible();
+    const projectRow = screen.getByRole("article", { name: "Aurora Villa" });
+    expect(within(projectRow).getByText("5%", { exact: false })).toBeVisible();
+    expect(within(projectRow).getByText(/2 red · 0 yellow/)).toBeVisible();
     expect(
       within(screen.getByText("Open workload").closest("article")!)
         .getByText("40h")
     ).toBeVisible();
-
-    await user.click(screen.getByRole("button", { name: "Load more tasks" }));
-
-    expect(await screen.findByText("Loaded later")).toBeVisible();
-    expect(api.getMainKpiRequests()).toHaveLength(1);
-    expect(api.getTaskFeedRequests()).toHaveLength(2);
-    expect(api.getTaskFeedRequests()[1]).toMatch(/limit=20&offset=20$/);
-    expect(screen.getByText("2 red")).toBeVisible();
-    expect(within(projectCard).getByText("5%")).toBeVisible();
-    expect(within(projectCard).getByText("2 red")).toBeVisible();
-    expect(screen.getByText("Later-page completion recorded.")).toBeVisible();
   });
 });

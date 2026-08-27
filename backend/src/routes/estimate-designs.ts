@@ -3,7 +3,8 @@ import { pipeline } from "node:stream/promises";
 import { Router, type NextFunction, type Request, type Response } from "express";
 import { z } from "zod";
 
-import { authenticate, authorizeRoles } from "../middleware/auth.js";
+import { authenticate } from "../middleware/auth.js";
+import { requireOperation } from "../middleware/authorization.js";
 import { uploadSingleFile } from "../middleware/upload.js";
 import { validateBody } from "../middleware/validate.js";
 import { annotationDocumentSchema } from "../domain/estimate-design.js";
@@ -90,12 +91,11 @@ export function createEstimateDesignsRouter(
 ): Router {
   const router = Router();
   const protectedRoute = authenticate(authService);
-  const estimatorOnly = authorizeRoles("estimator_sales");
 
   router.post(
     "/estimates/:estimateId/design-uploads",
     protectedRoute,
-    estimatorOnly,
+    requireOperation("POST /estimates/:estimateId/design-uploads"),
     uploadSingleFile(maxUploadBytes),
     async (request, response, next) => {
       try {
@@ -106,22 +106,22 @@ export function createEstimateDesignsRouter(
     }
   );
 
-  router.get("/estimates/:estimateId/design-uploads", protectedRoute, estimatorOnly, async (request, response, next) => {
+  router.get("/estimates/:estimateId/design-uploads", protectedRoute, requireOperation("GET /estimates/:estimateId/design-uploads"), async (request, response, next) => {
     try {
       response.json({ data: await estimateDesigns.listEstimator(request.authenticatedUser!, request.params.estimateId as string) });
     } catch (error) {
       next(error);
     }
   });
-  router.post("/estimate-design-uploads/:uploadId/retry", protectedRoute, estimatorOnly, async (request, response, next) => {
+  router.post("/estimate-design-uploads/:uploadId/retry", protectedRoute, requireOperation("POST /estimate-design-uploads/:uploadId/retry"), async (request, response, next) => {
     try { response.json({ data: await estimateDesigns.retryUpload(request.authenticatedUser!, request.params.uploadId as string) }); } catch (error) { next(error); }
   });
 
-  router.get("/estimate-design-source-pages/:pageId/image", protectedRoute, estimatorOnly, streamImage((user, id) => estimateDesigns.sourceImage(user, id)));
+  router.get("/estimate-design-source-pages/:pageId/image", protectedRoute, requireOperation("GET /estimate-design-source-pages/:pageId/image"), streamImage((user, id) => estimateDesigns.sourceImage(user, id)));
   router.post(
     "/estimate-design-source-pages/:pageId/drawings",
     protectedRoute,
-    estimatorOnly,
+    requireOperation("POST /estimate-design-source-pages/:pageId/drawings"),
     validateBody(createManualDrawingSchema),
     async (request, response, next) => {
       try {
@@ -137,11 +137,11 @@ export function createEstimateDesignsRouter(
       }
     }
   );
-  router.get("/estimate-design-revisions/:revisionId/image", protectedRoute, streamImage((user, id) => estimateDesigns.revisionImage(user, id)));
+  router.get("/estimate-design-revisions/:revisionId/image", protectedRoute, requireOperation("GET /estimate-design-revisions/:revisionId/image"), streamImage((user, id) => estimateDesigns.revisionImage(user, id)));
   router.get(
     "/client/estimates/:estimateId/design-drawings",
     protectedRoute,
-    authorizeRoles("client"),
+    requireOperation("GET /client/estimates/:estimateId/design-drawings"),
     async (request, response, next) => {
       try {
         response.json({
@@ -158,7 +158,7 @@ export function createEstimateDesignsRouter(
   router.put(
     "/client/estimate-design-revisions/:revisionId/annotation-draft",
     protectedRoute,
-    authorizeRoles("client"),
+    requireOperation("PUT /client/estimate-design-revisions/:revisionId/annotation-draft"),
     validateBody(annotationDraftSchema),
     async (request, response, next) => {
       try {
@@ -177,7 +177,7 @@ export function createEstimateDesignsRouter(
   router.post(
     "/client/estimate-design-revisions/:revisionId/decision",
     protectedRoute,
-    authorizeRoles("client"),
+    requireOperation("POST /client/estimate-design-revisions/:revisionId/decision"),
     validateBody(drawingDecisionSchema),
     async (request, response, next) => {
       try {
@@ -196,7 +196,7 @@ export function createEstimateDesignsRouter(
   router.patch(
     "/estimate-design-drawings/:drawingId",
     protectedRoute,
-    estimatorOnly,
+    requireOperation("PATCH /estimate-design-drawings/:drawingId"),
     validateBody(editDrawingSchema),
     async (request, response, next) => {
       try {
@@ -215,7 +215,7 @@ export function createEstimateDesignsRouter(
   router.put(
     "/estimate-design-drawings/:drawingId/estimate-item",
     protectedRoute,
-    estimatorOnly,
+    requireOperation("PUT /estimate-design-drawings/:drawingId/estimate-item"),
     validateBody(estimateItemAssignmentSchema),
     async (request, response, next) => {
       try {
@@ -234,7 +234,7 @@ export function createEstimateDesignsRouter(
   router.delete(
     "/estimate-design-drawings/:drawingId",
     protectedRoute,
-    estimatorOnly,
+    requireOperation("DELETE /estimate-design-drawings/:drawingId"),
     validateBody(removeDrawingSchema),
     async (request, response, next) => {
       try { response.json({ data: await estimateDesigns.removeDrawing(request.authenticatedUser!, request.params.drawingId as string, request.body.version) }); } catch (error) { next(error); }
@@ -243,7 +243,7 @@ export function createEstimateDesignsRouter(
   router.post(
     "/estimate-design-drawings/:drawingId/replacement",
     protectedRoute,
-    estimatorOnly,
+    requireOperation("POST /estimate-design-drawings/:drawingId/replacement"),
     uploadSingleFile(maxUploadBytes, 1),
     validateBody(replacementBodySchema),
     async (request, response, next) => {
@@ -263,7 +263,7 @@ export function createEstimateDesignsRouter(
   router.post(
     "/estimates/:estimateId/design-drawings/submit",
     protectedRoute,
-    estimatorOnly,
+    requireOperation("POST /estimates/:estimateId/design-drawings/submit"),
     async (request, response, next) => {
       try {
         response.json({

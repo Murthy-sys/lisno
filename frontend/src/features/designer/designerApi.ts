@@ -126,6 +126,19 @@ function kpiQuery(period: ReportingPeriod): string {
   return query.toString();
 }
 
+/*
+ * Shared by the dashboard and the KPI panel. Without agreeing on a staleTime
+ * the second observer to mount refetches the same monthly figures, so both use
+ * this rather than declaring the query twice.
+ */
+export function kpiQueryOptions(userId: string, period: ReportingPeriod) {
+  return {
+    queryKey: [...designerKeys.kpi(userId), period.from, period.to] as const,
+    queryFn: () => getKpi(userId, period),
+    staleTime: 5 * 60_000
+  };
+}
+
 export function getKpi(userId: string, period = reviewPeriod()): Promise<KpiRead> {
   return apiClient.get<KpiRead>(
     `/kpis/users/${encodeURIComponent(userId)}?${kpiQuery(period)}`

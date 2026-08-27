@@ -2,11 +2,20 @@ import jwt from "jsonwebtoken";
 import request from "supertest";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { createApp } from "../src/app.js";
+import { createApp as createApplication } from "../src/app.js";
 import { EstimateModel } from "../src/models/Estimate.js";
+import { EstimateClientReviewRoundModel } from "../src/models/EstimateClientReviewRound.js";
 import { LeadModel } from "../src/models/Lead.js";
 import { createMemoryRepository } from "../src/repositories/memory.js";
 import { demoSeedData } from "../src/seed/data.js";
+import type { FileStorage } from "../src/storage/storage.js";
+import { developmentDemoAuthentication } from "./helpers/development-demo-authentication.js";
+
+const createApp = (dependencies: Parameters<typeof createApplication>[0]) =>
+  createApplication({
+    ...dependencies,
+    developmentDemoAuthorization: developmentDemoAuthentication()
+  });
 
 const SECRET = "estimate-pdf-route-test-secret-at-least-32-characters";
 const pdfBytes = Buffer.from("%PDF-1.7\n%%EOF");
@@ -51,7 +60,11 @@ function auth(id: string, role: string) {
   return `Bearer ${jwt.sign({ id, role }, SECRET, { expiresIn: 900 })}`;
 }
 
-function setup() {
+function aggregate(value: unknown) {
+  return { exec: vi.fn().mockResolvedValue(value) };
+}
+
+function setup(storage?: FileStorage) {
   const seed = structuredClone(demoSeedData);
   const client = seed.users.find((user) => user.id === "user-client-aurora")!;
   client.email = "client@lisno.example";
@@ -60,13 +73,20 @@ function setup() {
     bytes: pdfBytes,
     filename: "lisno-aurora-villa-estimate-v1.pdf"
   }));
+  const repository = createMemoryRepository(seed);
+  const projectGrantSpies = [
+    vi.spyOn(repository, "findActiveProjectAccessGrant"),
+    vi.spyOn(repository, "listProjectsForUserInModule"),
+    vi.spyOn(repository, "pageProjectsForUserInModule")
+  ] as const;
   const app = createApp({
-    repository: createMemoryRepository(seed),
+    repository,
     auth: { jwtSecret: SECRET, jwtExpiresInSeconds: 900 },
-    estimatePdfService: { generate }
+    estimatePdfService: { generate },
+    ...(storage ? { storage } : {})
   });
 
-  return { app, generate };
+  return { app, generate, projectGrantSpies };
 }
 
 afterEach(() => {
@@ -74,7 +94,37 @@ afterEach(() => {
 });
 
 describe("estimate PDF download routes", () => {
-  it("exports a sales-owned non-draft PDF from persisted estimate and lead data", async () => {
+  it("allows Super Admin global owner and legacy client-visible PDF reads without project grants", async () => {
+    const { app, generate, projectGrantSpies } = setup();
+    const readyEstimate = { ...estimate, status: "ready_for_client" };
+    const clientEstimate = { ...estimate, _id: "estimate-client-visible", status: "sent_to_client" };
+    const findEstimate = vi.spyOn(EstimateModel, "findOne")
+      .mockReturnValueOnce(lean(readyEstimate) as never)
+      .mockReturnValueOnce(lean(clientEstimate) as never);
+    vi.spyOn(LeadModel, "findById").mockReturnValue(lean(lead) as never);
+    const findClientLead = vi.spyOn(LeadModel, "findOne").mockReturnValue(lean(lead) as never);
+    vi.spyOn(EstimateModel, "aggregate").mockReturnValue(
+      aggregate([{ _id: "estimate-client-visible" }]) as never
+    );
+    vi.spyOn(EstimateClientReviewRoundModel, "aggregate").mockReturnValue(
+      aggregate([]) as never
+    );
+    const authorization = auth("user-super-admin", "super_admin");
+
+    await request(app).get("/api/v1/estimates/estimate-draft/pdf").set("Authorization", authorization).expect(200);
+    await request(app).get("/api/v1/client/estimates/estimate-client-visible/pdf").set("Authorization", authorization).expect(200);
+
+    expect(findEstimate).toHaveBeenNthCalledWith(1, { _id: "estimate-draft" });
+    expect(findEstimate).toHaveBeenNthCalledWith(2, {
+      _id: "estimate-client-visible",
+      status: { $in: ["sent_to_client", "client_changes_requested", "client_approved"] }
+    });
+    expect(findClientLead).toHaveBeenCalledWith({ _id: "lead-aurora" });
+    expect(generate).toHaveBeenCalledTimes(2);
+    for (const spy of projectGrantSpies) expect(spy).not.toHaveBeenCalled();
+  });
+
+  it("row 76 exports the exact sales-owned PDF without writes", async () => {
     const { app, generate } = setup();
     const readyEstimate = { ...estimate, status: "ready_for_client" };
     const findEstimate = vi
@@ -83,6 +133,8 @@ describe("estimate PDF download routes", () => {
     const findLead = vi
       .spyOn(LeadModel, "findById")
       .mockReturnValue(lean(lead) as never);
+    const updateEstimate = vi.spyOn(EstimateModel, "updateOne");
+    const updateLead = vi.spyOn(LeadModel, "updateOne");
 
     const response = await request(app)
       .get("/api/v1/estimates/estimate-draft/pdf")
@@ -95,7 +147,7 @@ describe("estimate PDF download routes", () => {
       ownerId: "user-estimator-sales"
     });
     expect(findLead).toHaveBeenCalledWith("lead-aurora");
-    expect(response.headers["content-type"]).toMatch(/^application\/pdf/);
+    expect(response.headers["content-type"]).toBe("application/pdf");
     expect(response.headers["content-disposition"]).toBe(
       'attachment; filename="lisno-aurora-villa-estimate-v1.pdf"'
     );
@@ -116,6 +168,9 @@ describe("estimate PDF download routes", () => {
         location: "Bengaluru"
       }
     });
+    expect(generate).toHaveBeenCalledOnce();
+    expect(updateEstimate).not.toHaveBeenCalled();
+    expect(updateLead).not.toHaveBeenCalled();
   });
 
   it("returns one not-found response for missing and foreign sales estimates", async () => {
@@ -148,9 +203,15 @@ describe("estimate PDF download routes", () => {
   });
 
   it.each(["sent_to_client", "client_changes_requested", "client_approved"])(
-    "exports a %s client-visible PDF only when the persisted lead email matches exactly",
+    "row 83 exports a %s client-visible PDF exactly and without writes",
     async (status) => {
     const { app, generate } = setup();
+    vi.spyOn(EstimateModel, "aggregate").mockReturnValue(
+      aggregate([{ _id: "estimate-client-visible" }]) as never
+    );
+    vi.spyOn(EstimateClientReviewRoundModel, "aggregate").mockReturnValue(
+      aggregate([]) as never
+    );
     const clientEstimate = {
       ...estimate,
       _id: "estimate-client-visible",
@@ -162,6 +223,8 @@ describe("estimate PDF download routes", () => {
     const findLead = vi
       .spyOn(LeadModel, "findOne")
       .mockReturnValue(lean(lead) as never);
+    const updateEstimate = vi.spyOn(EstimateModel, "updateOne");
+    const updateLead = vi.spyOn(LeadModel, "updateOne");
 
     const response = await request(app)
       .get("/api/v1/client/estimates/estimate-client-visible/pdf")
@@ -181,15 +244,130 @@ describe("estimate PDF download routes", () => {
         $options: "i"
       }
     });
-    expect(response.headers["content-type"]).toMatch(/^application\/pdf/);
+    expect(response.headers["content-type"]).toBe("application/pdf");
+    expect(response.headers["content-disposition"]).toBe(
+      'attachment; filename="lisno-aurora-villa-estimate-v1.pdf"'
+    );
     expect(response.body.subarray(0, 5).toString()).toBe("%PDF-");
-    expect(generate).toHaveBeenCalledWith(expect.objectContaining({
+    expect(generate).toHaveBeenCalledWith({
       id: "estimate-client-visible",
       status,
-      lead: expect.objectContaining({ clientEmail: "client@lisno.example" })
-    }));
+      version: 2,
+      propertyType: "residential_apartment",
+      subtotal: 9_500,
+      gst: 1_710,
+      total: 11_210,
+      lineItems: estimate.lineItems,
+      lead: {
+        clientName: "Aurora Homes",
+        clientEmail: "client@lisno.example",
+        projectName: "Aurora Villa",
+        location: "Bengaluru"
+      }
+    });
+    expect(generate).toHaveBeenCalledOnce();
+    expect(updateEstimate).not.toHaveBeenCalled();
+    expect(updateLead).not.toHaveBeenCalled();
     }
   );
+
+  it("serves the immutable current-round Client PDF bytes and stored filename", async () => {
+    const storedBytes = Buffer.from("%PDF-1.7\nimmutable-round\n%%EOF");
+    const storage = {
+      save: vi.fn(),
+      saveGenerated: vi.fn(),
+      read: vi.fn(async (reference: string) => {
+        expect(reference).toBe("estimate-client-pdfs/round-current.pdf");
+        return storedBytes;
+      }),
+      delete: vi.fn(),
+      open: vi.fn()
+    } as unknown as FileStorage;
+    const { app, generate } = setup(storage);
+    vi.spyOn(EstimateModel, "findOne").mockReturnValue(
+      lean({ ...estimate, _id: "estimate-client-visible", status: "sent_to_client" }) as never
+    );
+    vi.spyOn(LeadModel, "findOne").mockReturnValue(lean(lead) as never);
+    vi.spyOn(EstimateModel, "aggregate").mockReturnValue(
+      aggregate([{ _id: "estimate-client-visible" }]) as never
+    );
+    vi.spyOn(EstimateClientReviewRoundModel, "aggregate")
+      .mockReturnValueOnce(aggregate([{
+        id: "round-current",
+        version: 4,
+        scopeMatches: true
+      }]) as never)
+      .mockReturnValueOnce(aggregate([{
+        storageReference: "estimate-client-pdfs/round-current.pdf",
+        filename: "lisno-estimate-sent-v3.pdf",
+        mimeType: "application/pdf"
+      }]) as never);
+
+    const response = await request(app)
+      .get("/api/v1/client/estimates/estimate-client-visible/pdf")
+      .set("Authorization", auth("user-client-aurora", "client"))
+      .expect(200);
+
+    expect(response.headers["content-type"]).toBe("application/pdf");
+    expect(response.headers["content-disposition"]).toBe(
+      'attachment; filename="lisno-estimate-sent-v3.pdf"'
+    );
+    expect(response.body).toEqual(storedBytes);
+    expect(storage.read).toHaveBeenCalledOnce();
+    expect(generate).not.toHaveBeenCalled();
+  });
+
+  it("serves the immutable current-round Client PDF to Super Admin without regenerating", async () => {
+    const storedBytes = Buffer.from("%PDF-1.7\nimmutable-super-admin-round\n%%EOF");
+    const storage = {
+      save: vi.fn(),
+      saveGenerated: vi.fn(),
+      read: vi.fn(async (reference: string) => {
+        expect(reference).toBe("estimate-client-pdfs/round-current.pdf");
+        return storedBytes;
+      }),
+      delete: vi.fn(),
+      open: vi.fn()
+    } as unknown as FileStorage;
+    const { app, generate, projectGrantSpies } = setup(storage);
+    vi.spyOn(EstimateModel, "findOne").mockReturnValue(
+      lean({ ...estimate, _id: "estimate-client-visible", status: "sent_to_client" }) as never
+    );
+    vi.spyOn(LeadModel, "findOne").mockReturnValue(lean(lead) as never);
+    vi.spyOn(EstimateModel, "aggregate").mockReturnValue(
+      aggregate([{ _id: "estimate-client-visible" }]) as never
+    );
+    vi.spyOn(EstimateClientReviewRoundModel, "aggregate")
+      .mockReturnValueOnce(aggregate([{
+        id: "round-current",
+        sendGeneration: 2,
+        estimateVersion: 2,
+        version: 4,
+        deliveryStatus: "sent",
+        deliveryAttemptCount: 1,
+        deliveredAt: "2026-08-24T10:00:02.000Z",
+        status: "pending"
+      }]) as never)
+      .mockReturnValueOnce(aggregate([{
+        storageReference: "estimate-client-pdfs/round-current.pdf",
+        filename: "lisno-estimate-sent-v2.pdf",
+        mimeType: "application/pdf"
+      }]) as never);
+
+    const response = await request(app)
+      .get("/api/v1/client/estimates/estimate-client-visible/pdf")
+      .set("Authorization", auth("user-super-admin", "super_admin"))
+      .expect(200);
+
+    expect(response.headers["content-type"]).toBe("application/pdf");
+    expect(response.headers["content-disposition"]).toBe(
+      'attachment; filename="lisno-estimate-sent-v2.pdf"'
+    );
+    expect(response.body).toEqual(storedBytes);
+    expect(storage.read).toHaveBeenCalledOnce();
+    expect(generate).not.toHaveBeenCalled();
+    for (const spy of projectGrantSpies) expect(spy).not.toHaveBeenCalled();
+  });
 
   it("hides draft, foreign-email, and missing client exports behind the same not-found response", async () => {
     const { app, generate } = setup();

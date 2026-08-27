@@ -6,34 +6,39 @@ import type {
   UserRecord
 } from "../repositories/types.js";
 import { normalizeEmail } from "../domain/email.js";
+import {
+  DEMO_ROLE_ACCOUNTS,
+  DEMO_SEED_PASSWORD_HASH
+} from "./config.js";
+import { DEVELOPMENT_DEMO_ACCOUNTS } from "../development/demo-account-catalog.js";
 
 const CREATED_AT = "2026-06-01T08:00:00.000Z";
 const UPDATED_AT = "2026-07-15T08:00:00.000Z";
 
-// Demo login for every seeded account: password `LisnoDemo2026!`.
-// This precomputed hash keeps seed imports deterministic and side-effect free.
-const DEMO_PASSWORD_HASH =
-  "$2b$10$7EqJtq98hPqEX7fNZaFWoOhqP8D5iEyOH6v9mJEkjEBlrptHw28.O";
-
 const user = (
   input: Pick<UserRecord, "id" | "name" | "email" | "role"> &
     Partial<
-      Pick<
+      Omit<
+        Pick<
         UserRecord,
-        "managerId" | "title" | "authorizedClientIds" | "mobile" | "address"
+        "managerId" | "title" | "authorizedClientIds" | "mobile" | "address" | "accountKind"
+        >,
+        "authorizedClientIds"
       >
-    >
+    > & { authorizedClientIds?: readonly string[] }
 ): UserRecord => ({
+  ...input,
   emailNormalized: normalizeEmail(input.email),
   mobile: input.mobile ?? null,
   address: input.address ?? null,
-  passwordHash: DEMO_PASSWORD_HASH,
+  passwordHash: DEMO_SEED_PASSWORD_HASH,
   active: true,
+  accountKind: input.accountKind ?? "development_demo",
+  version: 1,
   managerId: input.managerId ?? null,
-  authorizedClientIds: input.authorizedClientIds ?? [],
+  authorizedClientIds: [...(input.authorizedClientIds ?? [])],
   createdAt: CREATED_AT,
-  updatedAt: UPDATED_AT,
-  ...input
+  updatedAt: UPDATED_AT
 });
 
 const project = (
@@ -63,6 +68,7 @@ const project = (
   clientEmailNormalized: input.clientEmailNormalized ?? normalizeEmail(input.clientEmail ?? ""),
   clientMobile: input.clientMobile ?? "",
   clientAddress: input.clientAddress ?? "",
+  assignedEstimatorId: null,
   status: "active",
   plannedStartAt: "2026-06-01T09:00:00.000Z",
   plannedEndAt: "2026-09-30T17:00:00.000Z",
@@ -132,20 +138,8 @@ const task = (
 });
 
 const users: UserRecord[] = [
-  user({
-    id: "user-head",
-    name: "Devika Menon",
-    email: "head@lisno.example",
-    role: "design_head",
-    title: "Design Head"
-  }),
-  user({
-    id: "user-manager-aarav",
-    name: "Aarav Mehta",
-    email: "aarav@lisno.example",
-    role: "design_manager",
-    title: "Design Manager"
-  }),
+  user(DEVELOPMENT_DEMO_ACCOUNTS.find(({ id }) => id === "user-head")!),
+  user(DEVELOPMENT_DEMO_ACCOUNTS.find(({ id }) => id === "user-manager-aarav")!),
   user({
     id: "user-manager-meera",
     name: "Meera Iyer",
@@ -153,15 +147,7 @@ const users: UserRecord[] = [
     role: "design_manager",
     title: "Design Manager"
   }),
-  user({
-    id: "user-designer-ananya",
-    name: "Ananya Rao",
-    email: "ananya@lisno.example",
-    role: "designer",
-    managerId: "user-manager-aarav",
-    title: "Senior Designer",
-    authorizedClientIds: ["user-client-aurora", "user-client-celeste"]
-  }),
+  user(DEVELOPMENT_DEMO_ACCOUNTS.find(({ id }) => id === "user-designer-ananya")!),
   user({
     id: "user-designer-kabir",
     name: "Kabir Shah",
@@ -180,13 +166,7 @@ const users: UserRecord[] = [
     title: "Senior Designer",
     authorizedClientIds: ["user-client-celeste"]
   }),
-  user({
-    id: "user-estimator-sales",
-    name: "Priya Sharma",
-    email: "sales@lisno.example",
-    role: "estimator_sales",
-    title: "Estimator / Sales"
-  }),
+  user(DEVELOPMENT_DEMO_ACCOUNTS.find(({ id }) => id === "user-estimator-sales")!),
   user({
     id: "user-designer-vikram",
     name: "Vikram Nair",
@@ -196,13 +176,7 @@ const users: UserRecord[] = [
     title: "Designer",
     authorizedClientIds: ["user-client-celeste"]
   }),
-  user({
-    id: "user-client-aurora",
-    name: "Rhea Kapoor",
-    email: "client@aurora.example",
-    role: "client",
-    title: "Aurora Living"
-  }),
+  user(DEVELOPMENT_DEMO_ACCOUNTS.find(({ id }) => id === "user-client-aurora")!),
   user({
     id: "user-client-celeste",
     name: "Noah Fernandes",
@@ -211,6 +185,8 @@ const users: UserRecord[] = [
     title: "Celeste Works"
   })
 ];
+
+users.push(...DEMO_ROLE_ACCOUNTS.map((account) => user(account)));
 
 const projects: ProjectRecord[] = [
   project({
@@ -437,7 +413,10 @@ const tasks: TaskRecord[] = [
 
 export const demoSeedData: SeedData = {
   users,
+  userInvitations: [],
   leads: [],
+  estimateResponsibilities: [],
+  estimateSummaries: [],
   leadActivities: [],
   projects,
   floors,
@@ -509,5 +488,7 @@ export const demoSeedData: SeedData = {
       reason: null,
       createdAt: "2026-07-14T09:00:00.000Z"
     }
-  ]
+  ],
+  accessRequests: [],
+  projectAccessGrants: []
 };

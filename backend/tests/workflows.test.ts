@@ -2,11 +2,18 @@ import jwt from "jsonwebtoken";
 import request from "supertest";
 import { describe, expect, it } from "vitest";
 
-import { createApp } from "../src/app.js";
+import { createApp as createApplication } from "../src/app.js";
 import { createMemoryRepository } from "../src/repositories/memory.js";
 import type { AppRepository } from "../src/repositories/types.js";
 import type { Role } from "../src/contracts/domain.js";
 import { demoSeedData } from "../src/seed/data.js";
+import { developmentDemoAuthentication } from "./helpers/development-demo-authentication.js";
+
+const createApp = (dependencies: Parameters<typeof createApplication>[0]) =>
+  createApplication({
+    ...dependencies,
+    developmentDemoAuthorization: developmentDemoAuthentication()
+  });
 
 const JWT_SECRET = "test-secret-that-is-at-least-thirty-two-characters";
 const auth = {
@@ -24,7 +31,8 @@ const users = {
   kabir: ["user-designer-kabir", "designer"],
   ishita: ["user-designer-ishita", "designer"],
   auroraClient: ["user-client-aurora", "client"],
-  celesteClient: ["user-client-celeste", "client"]
+  celesteClient: ["user-client-celeste", "client"],
+  sales: ["user-estimator-sales", "estimator_sales"]
 } as const satisfies Record<string, readonly [string, Role]>;
 
 function bearer([id, role]: readonly [string, Role]) {
@@ -38,6 +46,46 @@ function setup(seed = demoSeedData) {
     app: createApp({ repository, auth, clock })
   };
 }
+
+describe("Design Version operations", () => {
+  it("uses a Design grant only for Design and not Projects", async () => {
+    const seed = structuredClone(demoSeedData);
+    seed.projectAccessGrants.push({
+      id: "grant-vikram-aurora-design",
+      projectId: "project-aurora-villa",
+      userId: "user-designer-vikram",
+      module: "design",
+      source: "access_request",
+      accessRequestId: "request-vikram-aurora-design",
+      grantedById: "user-head",
+      active: true,
+      grantedAt: TEST_NOW,
+      revokedAt: null,
+      revokedById: null,
+      revocationReason: null,
+      version: 1,
+      createdAt: TEST_NOW,
+      updatedAt: TEST_NOW
+    });
+    const { app } = setup(seed);
+
+    await request(app)
+      .get("/api/v1/projects/project-aurora-villa")
+      .set("Authorization", bearer(["user-designer-vikram", "designer"]))
+      .expect(404);
+
+    const design = await request(app)
+      .get("/api/v1/projects/project-aurora-villa/design-versions?limit=20&offset=0")
+      .set("Authorization", bearer(["user-designer-vikram", "designer"]));
+
+    expect(design.status).toBe(200);
+    expect(design.body.data.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "version-aurora-plan-1" })
+      ])
+    );
+  });
+});
 
 function projectInput(overrides: Record<string, unknown> = {}) {
   return {
@@ -92,6 +140,59 @@ function failAuditWrites(base: AppRepository): AppRepository {
 }
 
 describe("project workflows", () => {
+  it("preserves current Project and Design route success before route migration", async () => {
+    const { app } = setup();
+
+    const project = await request(app)
+      .get("/api/v1/projects/project-aurora-villa")
+      .set("Authorization", bearer(users.ananya));
+    const designVersions = await request(app)
+      .get("/api/v1/projects/project-aurora-villa/design-versions")
+      .set("Authorization", bearer(users.ananya));
+
+    expect(project.status).toBe(200);
+    expect(project.body.data).toMatchObject({ id: "project-aurora-villa" });
+    expect(designVersions.status).toBe(200);
+    expect(designVersions.body.data.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ projectId: "project-aurora-villa" })
+      ])
+    );
+  });
+
+  it("denies estimator sales generic project and artifact access", async () => {
+    const seed = structuredClone(demoSeedData);
+    seed.projects.find(
+      (project) => project.id === "project-aurora-villa"
+    )!.managerId = "user-estimator-sales";
+    const { app } = setup(seed);
+
+    const list = await request(app)
+      .get("/api/v1/projects?limit=20&offset=0")
+      .set("Authorization", bearer(users.sales));
+
+    expect(list.status).toBe(200);
+    expect(list.body.data).toEqual({
+      items: [],
+      pagination: {
+        limit: 20,
+        offset: 0,
+        total: 0,
+        hasMore: false
+      }
+    });
+
+    for (const [path, status] of [
+      ["/api/v1/projects/project-aurora-villa", 404],
+      ["/api/v1/projects/project-aurora-villa/design-versions", 403]
+    ] as const) {
+      await request(app)
+        .get(path)
+        .set("Authorization", bearer(users.sales))
+        .expect(status);
+    }
+  });
+
   it("does not grant a reporting manager project, design, or activity access to a cross-team assignment", async () => {
     const seed = structuredClone(demoSeedData);
     seed.projects.find(
@@ -153,187 +254,45 @@ describe("project workflows", () => {
     });
   });
 
-  it("lets a designer initiate a project and then exposes it in their project list", async () => {
+  it("denies Designers generic project creation before request validation", async () => {
     const { app } = setup();
-    const created = await request(app)
+    const response = await request(app)
       .post("/api/v1/projects")
       .set("Authorization", bearer(users.ananya))
       .send(projectInput());
 
-    expect(created.status).toBe(201);
-    expect(created.body.data).toMatchObject({
-      id: expect.any(String),
-      name: "Courtyard Residence",
-      initiatingDesignerId: "user-designer-ananya",
-      assignedDesignerIds: ["user-designer-ananya"],
-      clientId: "user-client-aurora",
-      clientEmailNormalized: "client@aurora.example",
-      status: "planning"
-    });
-
-    const listed = await request(app)
-      .get("/api/v1/projects")
-      .set("Authorization", bearer(users.ananya));
-
-    expect(listed.status).toBe(200);
-    expect(
-      listed.body.data.items.map((project: { id: string }) => project.id)
-    ).toContain(created.body.data.id);
-  });
-
-  it("validates project timestamps as ISO datetimes", async () => {
-    const { app } = setup();
-    const response = await request(app)
-      .post("/api/v1/projects")
-      .set("Authorization", bearer(users.ananya))
-      .send(projectInput({
-        name: "Invalid Schedule",
-        plannedStartAt: "next Tuesday",
-        plannedEndAt: "2026-10-31"
-      }));
-
-    expect(response.status).toBe(400);
-    expect(response.body).toMatchObject({
-      error: {
-        code: "VALIDATION_ERROR",
-        fields: {
-          plannedStartAt: expect.any(String),
-          plannedEndAt: expect.any(String)
-        }
-      }
-    });
-  });
-
-  it("links a known client through a mixed-case email and keeps contact details as a snapshot", async () => {
-    const { app } = setup();
-    const created = await request(app)
-      .post("/api/v1/projects")
-      .set("Authorization", bearer(users.ananya))
-      .send(projectInput({
-        clientEmail: "  CLIENT@AURORA.EXAMPLE ",
-        clientMobile: "+91 90000 00000",
-        clientAddress: "A snapshot address"
-      }));
-
-    expect(created.status).toBe(201);
-    expect(created.body.data).toMatchObject({
-      clientId: "user-client-aurora",
-      clientName: "Rhea Kapoor",
-      clientEmail: "CLIENT@AURORA.EXAMPLE",
-      clientEmailNormalized: "client@aurora.example",
-      clientMobile: "+91 90000 00000",
-      clientAddress: "A snapshot address"
-    });
-  });
-
-  it("creates an unclaimed project when the client email has no account", async () => {
-    const { app } = setup();
-    const created = await request(app)
-      .post("/api/v1/projects")
-      .set("Authorization", bearer(users.ananya))
-      .send(projectInput({
-        name: "Unclaimed Project",
-        clientName: "New Contact",
-        clientEmail: "new-contact@example.com"
-      }));
-
-    expect(created.status).toBe(201);
-    expect(created.body.data).toMatchObject({
-      clientId: null,
-      clientEmail: "new-contact@example.com",
-      clientEmailNormalized: "new-contact@example.com"
-    });
-  });
-
-  it("rejects an invalid project client email with a field error", async () => {
-    const { app } = setup();
-
-    const response = await request(app)
-      .post("/api/v1/projects")
-      .set("Authorization", bearer(users.ananya))
-      .send(projectInput({ clientEmail: "not-an-email" }));
-
-    expect(response.status).toBe(400);
+    expect(response.status).toBe(403);
     expect(response.body).toEqual({
       error: {
-        code: "VALIDATION_ERROR",
-        message: "Request validation failed.",
-        fields: { clientEmail: "Enter a valid email address." }
+        code: "FORBIDDEN",
+        message: "You are not authorized to perform this action."
       }
     });
   });
 
-  it("rejects an internal account email as a client contact", async () => {
+  it("keeps estimate approval and assignment decisions out of the Designer API", async () => {
     const { app } = setup();
-    const response = await request(app)
-      .post("/api/v1/projects")
+
+    await request(app)
+      .get("/api/v1/estimates/review-queue")
       .set("Authorization", bearer(users.ananya))
-      .send(projectInput({ clientEmail: "aarav@lisno.example" }));
+      .expect(403, {
+        error: {
+          code: "FORBIDDEN",
+          message: "You are not authorized to perform this action."
+        }
+      });
 
-    expect(response.status).toBe(400);
-    expect(response.body.error).toMatchObject({
-      code: "INVALID_PROJECT",
-      fields: { clientEmail: expect.any(String) }
-    });
-  });
-
-  it("accepts any active manager and active cross-team designers without changing reporting lines", async () => {
-    const seed = structuredClone(demoSeedData);
-    const { app } = setup(seed);
-    const created = await request(app)
-      .post("/api/v1/projects")
+    await request(app)
+      .post("/api/v1/estimates/estimate-aurora-villa/designer-decision")
       .set("Authorization", bearer(users.ananya))
-      .send(projectInput({
-        assignedDesignerIds: ["user-designer-ishita"],
-        managerId: "user-manager-meera"
-      }));
-
-    expect(created.status).toBe(201);
-    expect(created.body.data).toMatchObject({
-      initiatingDesignerId: "user-designer-ananya",
-      assignedDesignerIds: ["user-designer-ishita", "user-designer-ananya"],
-      managerId: "user-manager-meera"
-    });
-    expect(seed.users.find((user) => user.id === "user-designer-ananya")?.managerId).toBe(
-      "user-manager-aarav"
-    );
-    expect(seed.users.find((user) => user.id === "user-designer-ishita")?.managerId).toBe(
-      "user-manager-meera"
-    );
-  });
-
-  it("rejects inactive managers and inactive or non-designer assignees", async () => {
-    const inactiveManagerSeed = structuredClone(demoSeedData);
-    inactiveManagerSeed.users.find((user) => user.id === "user-manager-meera")!.active = false;
-    const inactiveManager = await request(setup(inactiveManagerSeed).app)
-      .post("/api/v1/projects")
-      .set("Authorization", bearer(users.ananya))
-      .send(projectInput({ managerId: "user-manager-meera" }));
-    expect(inactiveManager.status).toBe(400);
-    expect(inactiveManager.body.error.fields).toHaveProperty("managerId");
-
-    const nonManager = await request(setup().app)
-      .post("/api/v1/projects")
-      .set("Authorization", bearer(users.ananya))
-      .send(projectInput({ managerId: "user-designer-ishita" }));
-    expect(nonManager.status).toBe(400);
-    expect(nonManager.body.error.fields).toHaveProperty("managerId");
-
-    const inactiveDesignerSeed = structuredClone(demoSeedData);
-    inactiveDesignerSeed.users.find((user) => user.id === "user-designer-ishita")!.active = false;
-    const inactiveDesigner = await request(setup(inactiveDesignerSeed).app)
-      .post("/api/v1/projects")
-      .set("Authorization", bearer(users.ananya))
-      .send(projectInput({ assignedDesignerIds: ["user-designer-ananya", "user-designer-ishita"] }));
-    expect(inactiveDesigner.status).toBe(400);
-    expect(inactiveDesigner.body.error.fields).toHaveProperty("assignedDesignerIds");
-
-    const nonDesigner = await request(setup().app)
-      .post("/api/v1/projects")
-      .set("Authorization", bearer(users.ananya))
-      .send(projectInput({ assignedDesignerIds: ["user-client-aurora"] }));
-    expect(nonDesigner.status).toBe(400);
-    expect(nonDesigner.body.error.fields).toHaveProperty("assignedDesignerIds");
+      .send({ decision: "approve" })
+      .expect(403, {
+        error: {
+          code: "FORBIDDEN",
+          message: "You are not authorized to perform this action."
+        }
+      });
   });
 
   it("isolates client projects and removes internal project hierarchy fields", async () => {
@@ -553,18 +512,6 @@ describe("project workflows", () => {
   });
 
   it.each([
-    ["project", "/api/v1/projects", {
-      name: "Atomic Project",
-      clientName: "Rhea Kapoor",
-      clientEmail: "client@aurora.example",
-      clientMobile: "+91 98765 43210",
-      clientAddress: "12 Aurora Lane, Bengaluru",
-      assignedDesignerIds: ["user-designer-ananya"],
-      managerId: "user-manager-aarav",
-      location: "Bengaluru",
-      plannedStartAt: "2026-08-01T09:00:00.000Z",
-      plannedEndAt: "2026-10-31T17:00:00.000Z"
-    }, "Atomic Project"],
     ["floor", "/api/v1/projects/project-aurora-villa/floors", {
       name: "Atomic Floor",
       number: "A",
@@ -600,8 +547,9 @@ describe("project workflows", () => {
         .send(body);
 
       expect(response.status).toBe(500);
-      const projects = await base.listProjectsForUser(
-        (await base.findUserById("user-head"))!
+      const projects = await base.listProjectsForUserInModule(
+        (await base.findUserById("user-head"))!,
+        "projects"
       );
       const hierarchy = await base.getProjectHierarchy("project-aurora-villa");
       expect(JSON.stringify({ projects, hierarchy })).not.toContain(marker);
@@ -888,6 +836,39 @@ describe("task workflows", () => {
     await expect(
       base.listAuditEvents({ entityId: "task-circulation" })
     ).resolves.toEqual([]);
+  });
+});
+
+describe("Projects and Tasks operations", () => {
+  it("allows a Super Admin deadline override without bypassing workflow", async () => {
+    const seed = structuredClone(demoSeedData);
+    const { app, repository } = setup(seed);
+
+    const response = await request(app)
+      .patch("/api/v1/tasks/task-circulation/deadline")
+      .set("Authorization", bearer(["user-super-admin", "super_admin"]))
+      .send({
+        version: 1,
+        currentDeadlineAt: "2026-09-01T00:00:00.000Z",
+        reason: "Coverage"
+      });
+
+    expect(response.status).toBe(200);
+    expect(await repository.listTaskEvents("task-circulation")).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ actorId: "user-super-admin" })
+      ])
+    );
+
+    const stale = await request(app)
+      .patch("/api/v1/tasks/task-circulation/deadline")
+      .set("Authorization", bearer(["user-super-admin", "super_admin"]))
+      .send({
+        version: 1,
+        currentDeadlineAt: "2026-09-02T00:00:00.000Z",
+        reason: "Stale override"
+      });
+    expect(stale.status).toBe(409);
   });
 });
 
@@ -1218,14 +1199,6 @@ describe("organization and KPI workflows", () => {
     let eventBatchCalls = 0;
     const repository = new Proxy(base, {
       get(target, property, receiver) {
-        if (property === "listProjectsForUser") {
-          return async (user: { role: string }) => {
-            if (user.role === "design_head") {
-              throw new Error("head-wide project enumeration invoked");
-            }
-            return target.listProjectsForUser(user as never);
-          };
-        }
         if (property === "listEvaluationsForSubject") {
           return async () => {
             throw new Error("single-subject evaluation read invoked");
@@ -2106,5 +2079,36 @@ describe("evaluation and audit workflows", () => {
     await expect(
       base.listAuditEvents({ entityType: "evaluation" })
     ).resolves.toEqual([]);
+  });
+});
+
+describe("Audit operations", () => {
+  it("keeps legacy audit filters scoped for Designer, Manager, and Head", async () => {
+    const { app } = setup();
+
+    const designer = await request(app)
+      .get("/api/v1/designers/user-designer-ananya/audit?limit=20&offset=0")
+      .set("Authorization", bearer(users.ananya));
+    const manager = await request(app)
+      .get("/api/v1/projects/project-aurora-villa/activity?limit=20&offset=0")
+      .set("Authorization", bearer(users.managerAarav));
+    const head = await request(app)
+      .get("/api/v1/audit?limit=20&offset=0")
+      .set("Authorization", bearer(users.head));
+
+    expect(designer.status).toBe(200);
+    expect(designer.body.data.items.every(
+      (event: { entityId: string }) => event.entityId === "task-furniture-layout"
+    )).toBe(true);
+    expect(manager.status).toBe(200);
+    expect(manager.body.data.items.every(
+      (event: { entityId: string }) => [
+        "project-aurora-villa",
+        "task-circulation",
+        "task-furniture-layout",
+        "version-aurora-plan-1"
+      ].includes(event.entityId)
+    )).toBe(true);
+    expect(head.status).toBe(200);
   });
 });

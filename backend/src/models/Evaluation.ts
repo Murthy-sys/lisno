@@ -7,7 +7,7 @@ const evaluationSchema = new Schema(
     evaluatorUserId: { type: String, ref: "User", required: true, immutable: true },
     evaluatorRole: {
       type: String,
-      enum: ["design_manager", "design_head"],
+      enum: ["super_admin", "design_manager", "design_head"],
       required: true,
       immutable: true
     },

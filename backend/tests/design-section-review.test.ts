@@ -4,10 +4,17 @@ import jwt from "jsonwebtoken";
 import request from "supertest";
 import { describe, expect, it } from "vitest";
 
-import { createApp } from "../src/app.js";
+import { createApp as createApplication } from "../src/app.js";
 import { createMemoryRepository } from "../src/repositories/memory.js";
 import type { SeedData } from "../src/repositories/types.js";
 import { demoSeedData } from "../src/seed/data.js";
+import { developmentDemoAuthentication } from "./helpers/development-demo-authentication.js";
+
+const createApp = (dependencies: Parameters<typeof createApplication>[0]) =>
+  createApplication({
+    ...dependencies,
+    developmentDemoAuthorization: developmentDemoAuthentication()
+  });
 
 const SECRET = "design-review-test-secret-at-least-32-characters";
 const NOW = "2026-07-27T10:00:00.000Z";
@@ -18,6 +25,7 @@ const PNG = Buffer.from(
 
 class TestStorage {
   readonly objects = new Map<string, Buffer>([["page.png", PNG]]);
+  readonly opened: string[] = [];
   private next = 0;
   async save(input: { data: Buffer; extension: string }) {
     return this.saveGenerated(input);
@@ -33,6 +41,7 @@ class TestStorage {
     return Buffer.from(value);
   }
   async open(reference: string) {
+    this.opened.push(reference);
     return Readable.from(await this.read(reference));
   }
   async delete(reference: string) {
@@ -111,6 +120,7 @@ function setup(seed = reviewSeed()) {
   const storage = new TestStorage();
   return {
     repository,
+    storage,
     app: createApp({
       repository,
       storage,
@@ -122,8 +132,81 @@ function setup(seed = reviewSeed()) {
 
 const auth = (id: string, role: string) => `Bearer ${token(id, role)}`;
 
+describe("Design Section operations", () => {
+  it("gives Super Admin client-safe section and submitted-image reads", async () => {
+    const { app, repository, storage } = setup();
+    const superAdmin = auth("user-super-admin", "super_admin");
+    const beforeRevision = await repository.findSectionRevisionById("revision-1");
+
+    const review = await request(app)
+      .get("/api/v1/client/projects/project-aurora-villa/design-sections")
+      .set("Authorization", superAdmin);
+    const page = await request(app)
+      .get("/api/v1/design-source-pages/page-1/image")
+      .set("Authorization", superAdmin);
+    const revision = await request(app)
+      .get("/api/v1/design-section-revisions/revision-1/image")
+      .set("Authorization", superAdmin);
+
+    expect(review.status).toBe(200);
+    expect(review.body.data.sections).toHaveLength(2);
+    expect(review.body.data.sections.every(
+      (section: { revision: { reviewStatus: string } }) =>
+        section.revision.reviewStatus !== "draft"
+    )).toBe(true);
+    expect(JSON.stringify(review.body)).not.toContain("croppedFileReference");
+    expect(page.status).toBe(200);
+    expect(page.headers["content-type"]).toMatch(/^image\/png/);
+    expect(revision.status).toBe(200);
+    expect(revision.headers["content-type"]).toMatch(/^image\/png/);
+    expect(storage.opened).toEqual(["page.png", "page.png"]);
+    expect(await repository.findSectionRevisionById("revision-1"))
+      .toEqual(beforeRevision);
+  });
+
+  it("denies Super Admin client decision before revision state changes", async () => {
+    const { app, repository } = setup();
+    const before = await repository.findSectionRevisionById("revision-1");
+
+    await request(app)
+      .post("/api/v1/design-section-revisions/revision-1/decision")
+      .set("Authorization", auth("user-super-admin", "super_admin"))
+      .send({ version: 1, decision: "approved", comment: "Looks good" })
+      .expect(403);
+
+    expect(await repository.findSectionRevisionById("revision-1")).toEqual(before);
+  });
+
+  it("preserves linked Client success for rows 36 through 39", async () => {
+    const { app, repository } = setup();
+    const client = auth("user-client-aurora", "client");
+
+    const review = await request(app)
+      .get("/api/v1/client/projects/project-aurora-villa/design-sections")
+      .set("Authorization", client);
+    const decision = await request(app)
+      .post("/api/v1/design-section-revisions/revision-1/decision")
+      .set("Authorization", client)
+      .send({ version: 1, decision: "approved", comment: "Looks good" });
+    const page = await request(app)
+      .get("/api/v1/design-source-pages/page-1/image")
+      .set("Authorization", client);
+    const revision = await request(app)
+      .get("/api/v1/design-section-revisions/revision-1/image")
+      .set("Authorization", client);
+
+    expect(review.status).toBe(200);
+    expect(review.body.data.sections).toHaveLength(2);
+    expect(decision.status).toBe(200);
+    expect(page.status).toBe(200);
+    expect(revision.status).toBe(200);
+    expect(await repository.findSectionRevisionById("revision-1"))
+      .toMatchObject({ reviewStatus: "approved", reviewerId: "user-client-aurora" });
+  });
+});
+
 describe("client design section review", () => {
-  it("lists only submitted review material with aggregate progress for authorized project users", async () => {
+  it("lists only submitted review material for the linked Client", async () => {
     const { app } = setup();
     const response = await request(app)
       .get("/api/v1/client/projects/project-aurora-villa/design-sections")
@@ -142,11 +225,11 @@ describe("client design section review", () => {
     await request(app)
       .get("/api/v1/client/projects/project-aurora-villa/design-sections")
       .set("Authorization", auth("user-manager-aarav", "design_manager"))
-      .expect(200);
+      .expect(403);
     await request(app)
       .get("/api/v1/client/projects/project-aurora-villa/design-sections")
       .set("Authorization", auth("user-head", "design_head"))
-      .expect(200);
+      .expect(403);
     await request(app)
       .get("/api/v1/client/projects/project-aurora-villa/design-sections")
       .set("Authorization", auth("user-client-celeste", "client"))

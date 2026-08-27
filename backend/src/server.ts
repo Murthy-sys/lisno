@@ -6,13 +6,28 @@ import mongoose from "mongoose";
 
 import { createApp } from "./app.js";
 import { loadEnvironment } from "./config/env.js";
+import type { DevelopmentDemoAuthorization } from "./development/demo-account-authorization.js";
+import { initializeApplicationIndexes } from "./models/application-indexes.js";
 import { createMongoRepository } from "./repositories/mongo.js";
 import type { AppRepository } from "./repositories/types.js";
+import { createSmtpEstimateMailer } from "./services/smtp-estimate-mailer.js";
+import { createSmtpDesignPlanMailer } from "./services/smtp-design-plan-mailer.js";
+import { createSmtpInvitationMailer } from "./services/smtp-invitation-mailer.js";
+import {
+  runProcurementReceiptCleanupJobs,
+  runProcurementReceiptReconciliationJobs
+} from "./services/procurement.service.js";
 import { createLocalStorage } from "./storage/local-storage.js";
+import type { FileStorage } from "./storage/storage.js";
 
 type ServerApp = {
   listen(port: number, callback: (error?: Error) => void): Server;
+  listen(port: number, host: string, callback: (error?: Error) => void): Server;
 };
+
+export interface DatabasePreparationContext {
+  readonly mongodbUri: string;
+}
 
 export interface ServerDependencies {
   loadEnvironment?: typeof loadEnvironment;
@@ -20,8 +35,21 @@ export interface ServerDependencies {
   disconnect?: () => Promise<unknown>;
   repositoryFactory?: () => AppRepository;
   appFactory?: (dependencies: Parameters<typeof createApp>[0]) => ServerApp;
+  bindHost?: string;
+  prepareDatabase?: (context: DatabasePreparationContext) => Promise<void>;
+  prepareApplicationIndexes?: () => Promise<void>;
+  /** @deprecated Use prepareApplicationIndexes for the complete index boundary. */
+  prepareIdentityIndexes?: () => Promise<void>;
+  developmentDemoAuthorization?: DevelopmentDemoAuthorization;
   writeOutput?: (message: string) => void;
   registerSignalHandlers?: boolean;
+  receiptMaintenanceIntervalMs?: number;
+  receiptMaintenanceRunner?: (storage: FileStorage) => Promise<void>;
+  scheduleReceiptMaintenanceInterval?: (
+    callback: () => void,
+    intervalMs: number
+  ) => unknown;
+  clearReceiptMaintenanceInterval?: (handle: unknown) => void;
 }
 
 export interface RunningServer {
@@ -36,11 +64,33 @@ export async function startServer(
   const disconnect = dependencies.disconnect ?? (() => mongoose.disconnect());
   const repositoryFactory = dependencies.repositoryFactory ?? createMongoRepository;
   const appFactory = dependencies.appFactory ?? createApp;
+  const prepareApplicationIndexes =
+    dependencies.prepareApplicationIndexes ??
+    dependencies.prepareIdentityIndexes ??
+    initializeApplicationIndexes;
 
-  await connect(env.MONGODB_URI);
-
-  let server: Server;
+  let connected = false;
+  let server: Server | undefined;
+  let receiptMaintenance: ReceiptMaintenanceScheduler | undefined;
   try {
+    await connect(env.MONGODB_URI);
+    connected = true;
+    await dependencies.prepareDatabase?.({ mongodbUri: env.MONGODB_URI });
+    await prepareApplicationIndexes();
+    const mailDelivery = env.mailDelivery;
+    const invitationMailer = mailDelivery.kind === "smtp"
+      ? createSmtpInvitationMailer(mailDelivery)
+      : { deliveryKind: "disabled" as const };
+    const estimateMailer = mailDelivery.kind === "smtp"
+      ? createSmtpEstimateMailer(mailDelivery)
+      : { deliveryKind: "disabled" as const };
+    const designPlanMailer = mailDelivery.kind === "smtp"
+      ? createSmtpDesignPlanMailer(mailDelivery)
+      : { deliveryKind: "disabled" as const };
+    const clientPortalUrl = mailDelivery.kind === "smtp"
+      ? new URL("/client", mailDelivery.publicFrontendUrl).toString()
+      : "http://localhost:5173/client";
+    const storage = createLocalStorage(env.UPLOADS_DIR);
     const app = appFactory({
       repository: repositoryFactory(),
       auth: {
@@ -48,7 +98,7 @@ export async function startServer(
         jwtExpiresInSeconds: 900
       },
       corsOrigins: env.CORS_ORIGIN,
-      storage: createLocalStorage(env.UPLOADS_DIR),
+      storage,
       maxUploadBytes: Math.floor(env.MAX_UPLOAD_MB * 1024 * 1024),
       ocrLeaseSeconds: env.OCR_LEASE_SECONDS,
       ocrRetryPolicy: {
@@ -57,20 +107,40 @@ export async function startServer(
         maxDelayMs: env.OCR_RETRY_MAX_SECONDS * 1000
       },
       ocrConfidenceFloor: env.OCR_CONFIDENCE_FLOOR,
-      ocrWorkerToken: env.OCR_WORKER_TOKEN
+      ocrWorkerToken: env.OCR_WORKER_TOKEN,
+      invitationMailer,
+      allowDemoAccountExternalEmail: env.allowDemoAccountExternalEmail,
+      estimateMailer,
+      designPlanMailer,
+      clientPortalUrl,
+      developmentDemoAuthorization: dependencies.developmentDemoAuthorization,
+      apiDocsEnabled: env.apiDocsEnabled
     });
-    server = await listen(app, env.PORT);
+    server = await listen(app, env.PORT, dependencies.bindHost);
+    receiptMaintenance = startReceiptMaintenanceScheduler(
+      storage,
+      dependencies
+    );
     (dependencies.writeOutput ?? ((message) => process.stdout.write(message)))(
-      `Backend ready at http://localhost:${env.PORT}\n`
+      `Backend ready at http://${dependencies.bindHost ?? "localhost"}:${env.PORT}\n`
     );
   } catch (error) {
-    await disconnect();
+    await receiptMaintenance?.stop();
+    if (server) await close(server).catch(() => undefined);
+    if (connected) await disconnect();
     throw error;
   }
+  if (!server) throw new Error("HTTP server did not start.");
+  const runningServer = server;
 
   let stopping: Promise<void> | undefined;
   const stop = () => {
-    stopping ??= close(server).then(() => disconnect()).then(() => undefined);
+    stopping ??= (async () => {
+      const maintenanceStop = receiptMaintenance?.stop();
+      await close(runningServer);
+      await maintenanceStop;
+      await disconnect();
+    })();
     return stopping;
   };
 
@@ -91,7 +161,57 @@ export async function startServer(
   return { stop };
 }
 
-function listen(app: ServerApp, port: number): Promise<Server> {
+interface ReceiptMaintenanceScheduler {
+  stop(): Promise<void>;
+}
+
+function startReceiptMaintenanceScheduler(
+  storage: FileStorage,
+  dependencies: ServerDependencies
+): ReceiptMaintenanceScheduler {
+  const intervalMs = dependencies.receiptMaintenanceIntervalMs ?? 60_000;
+  if (!Number.isSafeInteger(intervalMs) || intervalMs < 1) {
+    throw new Error("Receipt maintenance interval must be a positive integer.");
+  }
+  const runner = dependencies.receiptMaintenanceRunner ?? (async (fileStorage) => {
+    await runProcurementReceiptReconciliationJobs({ storage: fileStorage });
+    await runProcurementReceiptCleanupJobs({ storage: fileStorage });
+  });
+  const schedule = dependencies.scheduleReceiptMaintenanceInterval ??
+    ((callback: () => void, delayMs: number) => setInterval(callback, delayMs));
+  const clear = dependencies.clearReceiptMaintenanceInterval ??
+    ((handle: unknown) => clearInterval(handle as NodeJS.Timeout));
+  let stopped = false;
+  let running: Promise<void> | null = null;
+  const tick = () => {
+    if (stopped || running) return;
+    running = Promise.resolve(runner(storage))
+      .catch(() => undefined)
+      .finally(() => {
+        running = null;
+      });
+  };
+  const handle = schedule(tick, intervalMs);
+  if (
+    typeof handle === "object" &&
+    handle !== null &&
+    "unref" in handle &&
+    typeof handle.unref === "function"
+  ) {
+    handle.unref();
+  }
+  return {
+    async stop() {
+      if (!stopped) {
+        stopped = true;
+        clear(handle);
+      }
+      await running;
+    }
+  };
+}
+
+function listen(app: ServerApp, port: number, host?: string): Promise<Server> {
   return new Promise((resolve, reject) => {
     let server: Server | undefined;
     const onListening = (error?: Error) => {
@@ -106,7 +226,10 @@ function listen(app: ServerApp, port: number): Promise<Server> {
       server.off("error", reject);
       resolve(server);
     };
-    server = app.listen(port, onListening);
+    server =
+      host === undefined
+        ? app.listen(port, onListening)
+        : app.listen(port, host, onListening);
     server.once("error", reject);
   });
 }

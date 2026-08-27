@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import { tokenStorage } from "../../api/client";
+import { authorizationFor } from "../../test/authFixtures";
 import { renderApp } from "../../test/render";
 
 const designer = {
@@ -123,6 +124,45 @@ function response(data: unknown, init?: ResponseInit) {
   return Response.json({ data }, init);
 }
 
+function apiRequestPath(input: RequestInfo | URL): string {
+  if (input instanceof Request) {
+    const requestUrl = new URL(input.url);
+    return `${requestUrl.pathname}${requestUrl.search}`;
+  }
+
+  if (input instanceof URL) {
+    return `${input.pathname}${input.search}`;
+  }
+
+  try {
+    const requestUrl = new URL(input);
+    return `${requestUrl.pathname}${requestUrl.search}`;
+  } catch {
+    return input;
+  }
+}
+
+describe("apiRequestPath", () => {
+  it("keeps a malformed relative API path distinct from a root-relative path", () => {
+    expect(apiRequestPath("api/v1/auth/me?source=restore")).toBe(
+      "api/v1/auth/me?source=restore"
+    );
+    expect(apiRequestPath("/api/v1/auth/me?source=restore")).toBe(
+      "/api/v1/auth/me?source=restore"
+    );
+  });
+
+  it("reads a Request URL and preserves its query", () => {
+    expect(
+      apiRequestPath(
+        new Request(
+          "https://api.lisno.example/api/v1/auth/me?source=restore&attempt=2"
+        )
+      )
+    ).toBe("/api/v1/auth/me?source=restore&attempt=2");
+  });
+});
+
 function installWorkspaceApi(options?: {
   conflict?: boolean;
   mutationError?: boolean;
@@ -142,8 +182,9 @@ function installWorkspaceApi(options?: {
     : Promise.resolve();
 
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
-    const url = String(input);
+    const url = apiRequestPath(input);
     if (url === "/api/v1/auth/me") return response(designer);
+    if (url === "/api/v1/auth/authorization") return response(authorizationFor(designer.role));
     if (url === `/api/v1/projects/${project.id}`) {
       projectReads += 1;
       const hierarchy = structuredClone(project);
@@ -430,7 +471,7 @@ describe("ProjectWorkspace", () => {
         }
       }
     ]);
-    expect(await screen.findByRole("status")).toHaveTextContent(
+    expect(await screen.findByRole("status", { name: "Project updates" })).toHaveTextContent(
       "Draft terrace concept was added."
     );
   });
@@ -631,7 +672,7 @@ describe("ProjectWorkspace", () => {
     api.releaseUpload();
     await waitFor(() => expect(api.getProjectReads()).toBeGreaterThan(1));
     expect(api.getUploadBody()?.get("file")).toEqual(file);
-    expect(screen.getByRole("status")).toHaveTextContent(
+    expect(screen.getByRole("status", { name: "Project updates" })).toHaveTextContent(
       "circulation.pdf uploaded as version 2."
     );
   });

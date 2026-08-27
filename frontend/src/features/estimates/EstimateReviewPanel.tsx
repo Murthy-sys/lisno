@@ -20,13 +20,22 @@ import {
 import { estimateBuilderSections } from "../leads/estimateBuilderCatalogue";
 import {
   estimateDesignKeys,
-  getClientEstimateDrawings
+  getClientEstimateDrawings,
+  getClientPlanWorkspace,
+  previewClientPlanTargets,
+  saveClientPlanDraft,
+  submitClientPlanChangeRequest,
+  updateClientPlanChangeRequest
 } from "../leads/estimateDesignApi";
 import {
   ClientEstimateDrawings,
-  clientDrawingReadinessId
+  projectDrawingAnnotationsToPage,
+  projectDrawingCommentsToPage
 } from "./ClientEstimateDrawings";
 import { clientKeys } from "../client/clientApi";
+import type { EstimatePlanPage } from "../../api/types";
+import { ClientFullPlanNav } from "./ClientFullPlanNav";
+import { ClientPlanPageReview } from "./ClientPlanPageReview";
 
 const money = (value: number) => `₹${value.toLocaleString("en-IN")}`;
 const catalogue = new Map<string, { description: string; sectionId: string; sectionLabel: string; icon: string }>();
@@ -123,6 +132,15 @@ function canActOnEstimate(role: string, status: EstimateQueueItem["status"]) {
   return status === "pending_designer_approval";
 }
 
+function canReviewDesign(role: Role, estimate: EstimateQueueItem) {
+  if (role !== "client") return false;
+  if (estimate.status === "client_approved") {
+    return estimate.designPlanStatus === "ready_for_client";
+  }
+  return estimate.status === "sent_to_client" ||
+    estimate.status === "client_changes_requested";
+}
+
 function EstimateReviewCard({
   estimate,
   role,
@@ -148,7 +166,9 @@ function EstimateReviewCard({
   onNoteChange: (note: string) => void;
   onAction: (action: "assign" | "approve" | "changes") => void;
 }) {
+  const queryClient = useQueryClient();
   const [clientExpanded, setClientExpanded] = useState(false);
+  const [selectedPlanPage, setSelectedPlanPage] = useState<EstimatePlanPage>();
   const isClient = role === "client";
   const detailsId = `client-estimate-${estimate.id}-details`;
   const headingId = `client-estimate-${estimate.id}-title`;
@@ -156,6 +176,11 @@ function EstimateReviewCard({
   const drawingWorkspace = useQuery({
     queryKey: estimateDesignKeys.clientWorkspace(estimate.id),
     queryFn: () => getClientEstimateDrawings(estimate.id),
+    enabled: isClient && clientExpanded
+  });
+  const planWorkspace = useQuery({
+    queryKey: estimateDesignKeys.clientPlanWorkspace(estimate.id),
+    queryFn: () => getClientPlanWorkspace(estimate.id),
     enabled: isClient && clientExpanded
   });
   const roomOptions = estimate.rooms.flatMap((room) => {
@@ -167,15 +192,12 @@ function EstimateReviewCard({
     id,
     label: estimateBuilderSections.find((section) => section.id === id)?.label ?? id
   }));
-  const clientApprovalBlocked = isClient &&
-    drawingWorkspace.data?.readiness.ready !== true;
-
   const reviewControls = actionable ? <>
     {role === "design_manager" ? <label>Assign approval to<select value={selectedDesignerId} onChange={(event) => onDesignerChange(event.target.value)}><option value="">Choose designer</option>{designers.map((designer) => <option value={designer.id} key={designer.id}>{designer.name}</option>)}</select></label> : <label>Review note<textarea value={note} onChange={(event) => onNoteChange(event.target.value)} placeholder={isClient ? "Optional note for the Lisno team" : "Add approval context or requested corrections"} /></label>}
     <div className="estimate-review-card__actions">
       {role === "design_manager"
         ? <button className="button button--primary" type="button" disabled={!selectedDesignerId || actionPending} onClick={() => onAction("assign")}>Assign designer</button>
-        : <><button className="button button--secondary" type="button" disabled={actionPending} onClick={() => onAction("changes")}>Request changes</button><button className="button button--primary" type="button" aria-describedby={isClient ? clientDrawingReadinessId(estimate.id) : undefined} disabled={actionPending || clientApprovalBlocked} onClick={() => onAction("approve")}>{isClient ? "Approve estimate" : "Approve for client"}</button></>}
+        : <><button className="button button--secondary" type="button" disabled={actionPending} onClick={() => onAction("changes")}>Request changes</button><button className="button button--primary" type="button" disabled={actionPending} onClick={() => onAction("approve")}>{isClient ? "Approve estimate" : "Approve for client"}</button></>}
     </div>
     {actionError ? <p role="alert">{actionError instanceof ApiError ? actionError.message : "That action could not be completed. Refresh and try again."}</p> : null}
   </> : null;
@@ -196,21 +218,80 @@ function EstimateReviewCard({
         <button className="estimate-review-card__toggle" type="button" aria-labelledby={headingId} aria-expanded={clientExpanded} aria-controls={detailsId} onClick={() => setClientExpanded((current) => !current)}><span aria-hidden="true">{clientExpanded ? "Hide details" : "View estimate"}</span><ChevronDown aria-hidden="true" /></button>
       </div>
       {clientExpanded ? <div className="estimate-review-card__client-content" id={detailsId}>
-        <p className="eyebrow">{estimate.lead?.location}</p>
-        <p>{estimate.lead?.clientName}</p>
-        <p>{includedItemCount} items · GST included</p>
-        <ClientEstimateDetails estimate={estimate} />
-        <ClientEstimateDrawings
-          estimateId={estimate.id}
-          rooms={roomOptions}
-          scopes={scopeOptions}
-          workspace={drawingWorkspace.data}
-          isPending={drawingWorkspace.isPending}
-          isError={drawingWorkspace.isError}
-          canReview={actionable}
-        />
-        {!actionable ? <p className="estimate-notice">{estimate.status === "client_approved" ? "Estimate approved" : "Changes requested"}</p> : null}
-        {reviewControls}
+        <div className="client-estimate-workspace">
+          <div className="client-estimate-workspace__main">
+            <p className="eyebrow">{estimate.lead?.location}</p>
+            <p>{estimate.lead?.clientName}</p>
+            <p>{includedItemCount} items · GST included</p>
+            <ClientEstimateDetails estimate={estimate} />
+            {planWorkspace.isPending ? <p role="status">Loading full design pages…</p> : null}
+            {planWorkspace.isError ? <p className="inline-empty">No full design pages are available for this estimate.</p> : null}
+            <ClientEstimateDrawings
+              estimateId={estimate.id}
+              rooms={roomOptions}
+              scopes={scopeOptions}
+              workspace={drawingWorkspace.data}
+              isPending={drawingWorkspace.isPending}
+              isError={drawingWorkspace.isError}
+              canReview={canReviewDesign(role, estimate)}
+              planWorkspace={planWorkspace.data}
+            />
+            {!actionable ? <p className="estimate-notice">{estimate.status === "client_approved" ? <><strong>Estimate approved</strong>. Review the design plan here when your Designer submits it.</> : "Changes requested"}</p> : null}
+            {reviewControls}
+          </div>
+          {planWorkspace.data?.pages.length ? (
+            <aside className="client-estimate-workspace__rail" aria-label="Design tools">
+              <ClientFullPlanNav
+                workspace={planWorkspace.data}
+                selectedPageId={selectedPlanPage?.id}
+                onSelectPage={setSelectedPlanPage}
+              />
+            </aside>
+          ) : null}
+        </div>
+        {selectedPlanPage ? (
+          <ClientPlanPageReview
+            key={selectedPlanPage.id}
+            page={selectedPlanPage}
+            editableRequest={planWorkspace.data?.openRequests.filter((request) => request.sourcePageId === selectedPlanPage.id).at(-1)}
+            sharedAnnotations={drawingWorkspace.data && planWorkspace.data
+              ? projectDrawingAnnotationsToPage(
+                  selectedPlanPage,
+                  drawingWorkspace.data,
+                  planWorkspace.data,
+                  planWorkspace.data.openRequests.filter((request) => request.sourcePageId === selectedPlanPage.id).at(-1)?.id
+                )
+              : []}
+            sharedComments={drawingWorkspace.data && planWorkspace.data
+              ? projectDrawingCommentsToPage(selectedPlanPage, drawingWorkspace.data, planWorkspace.data)
+              : []}
+            pages={planWorkspace.data?.uploads.find((upload) => upload.id === selectedPlanPage.uploadId)?.pages ?? [selectedPlanPage]}
+            onSelectPage={setSelectedPlanPage}
+            canReview={canReviewDesign(role, estimate)}
+            onClose={() => setSelectedPlanPage(undefined)}
+            saveDraft={async (annotations) => {
+              await saveClientPlanDraft(selectedPlanPage.id, selectedPlanPage.annotationDraft?.version ?? 0, annotations);
+              await queryClient.invalidateQueries({ queryKey: estimateDesignKeys.clientPlanWorkspace(estimate.id) });
+            }}
+            previewTargets={(annotations) => previewClientPlanTargets(selectedPlanPage.id, annotations)}
+            submitRequest={async (input) => {
+              await submitClientPlanChangeRequest(selectedPlanPage.id, input);
+              await Promise.all([
+                queryClient.invalidateQueries({ queryKey: estimateDesignKeys.clientPlanWorkspace(estimate.id) }),
+                queryClient.invalidateQueries({ queryKey: estimateDesignKeys.clientWorkspace(estimate.id) }),
+                queryClient.invalidateQueries({ queryKey: estimateWorkflowKeys.client })
+              ]);
+            }}
+            updateRequest={async ({ requestId, version, summary, annotations }) => {
+              await updateClientPlanChangeRequest(requestId, { version, summary, annotations });
+              await Promise.all([
+                queryClient.invalidateQueries({ queryKey: estimateDesignKeys.clientPlanWorkspace(estimate.id) }),
+                queryClient.invalidateQueries({ queryKey: estimateDesignKeys.clientWorkspace(estimate.id) }),
+                queryClient.invalidateQueries({ queryKey: estimateWorkflowKeys.client })
+              ]);
+            }}
+          />
+        ) : null}
       </div> : null}
     </article>;
   }

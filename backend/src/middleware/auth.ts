@@ -1,7 +1,5 @@
 import type { RequestHandler } from "express";
 
-import type { Role } from "../contracts/domain.js";
-import { isRoleAuthorized } from "../domain/permissions.js";
 import {
   ExpiredTokenError,
   InvalidTokenError,
@@ -18,8 +16,27 @@ declare global {
   }
 }
 
+const authenticationHandlerMarker = Symbol("authenticationHandler");
+type MarkedAuthenticationHandler = RequestHandler & {
+  readonly [authenticationHandlerMarker]: true;
+};
+
+export function isAuthenticationHandler(
+  handler: RequestHandler
+): handler is MarkedAuthenticationHandler {
+  const descriptor = Object.getOwnPropertyDescriptor(
+    handler,
+    authenticationHandlerMarker
+  );
+  return descriptor !== undefined &&
+    descriptor.value === true &&
+    descriptor.enumerable === false &&
+    descriptor.writable === false &&
+    descriptor.configurable === false;
+}
+
 export function authenticate(authService: AuthService): RequestHandler {
-  return async (request, _response, next) => {
+  const handler: RequestHandler = async (request, _response, next) => {
     const authorization = request.header("Authorization");
     if (!authorization) {
       next(
@@ -39,7 +56,9 @@ export function authenticate(authService: AuthService): RequestHandler {
     }
 
     try {
-      request.authenticatedUser = await authService.authenticate(match[1]!);
+      request.authenticatedUser = await authService.authenticate(match[1]!, {
+        remoteAddress: request.socket.remoteAddress
+      });
       next();
     } catch (error) {
       if (error instanceof ExpiredTokenError) {
@@ -59,32 +78,11 @@ export function authenticate(authService: AuthService): RequestHandler {
       next(error);
     }
   };
-}
-
-export function authorizeRoles(...allowedRoles: Role[]): RequestHandler {
-  return (request, _response, next) => {
-    if (!request.authenticatedUser) {
-      next(
-        new ApiError(
-          401,
-          "AUTHENTICATION_REQUIRED",
-          "Authentication is required."
-        )
-      );
-      return;
-    }
-
-    if (!isRoleAuthorized(request.authenticatedUser.role, allowedRoles)) {
-      next(
-        new ApiError(
-          403,
-          "FORBIDDEN",
-          "You are not authorized to perform this action."
-        )
-      );
-      return;
-    }
-
-    next();
-  };
+  Object.defineProperty(handler, authenticationHandlerMarker, {
+    value: true,
+    enumerable: false,
+    writable: false,
+    configurable: false
+  });
+  return handler;
 }

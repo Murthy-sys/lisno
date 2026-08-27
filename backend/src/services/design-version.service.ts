@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
 
+import { AuthorizationConfigurationError } from "../domain/authorization.js";
+import { currentHumanOperation } from "../domain/operation-context.js";
 import { ApiError } from "../middleware/errors.js";
 import type { ValidatedUpload } from "../middleware/upload.js";
 import type {
@@ -16,8 +18,8 @@ import type { AuditService } from "./audit.service.js";
 import type { PublicUser } from "./auth.service.js";
 import {
   forbidden,
-  requireAccessibleProject,
   requireActor,
+  requireProjectOperationAccess,
   requireTask,
   type Clock
 } from "./workflow.js";
@@ -104,7 +106,10 @@ export function createDesignVersionService(
       }
       if (
         task.ownerId !== actor.id ||
-        !project.assignedDesignerIds.includes(actor.id)
+        (
+          project.initiatingDesignerId !== actor.id &&
+          !project.assignedDesignerIds.includes(actor.id)
+        )
       ) {
         forbidden();
       }
@@ -192,7 +197,7 @@ export function createDesignVersionService(
     },
 
     async list(actor, projectId, pagination) {
-      await requireAccessibleProject(repository, actor, projectId);
+      await requireProjectOperationAccess(repository, actor, projectId);
       const page = await repository.pageDesignVersions(
         actor.role === "client"
           ? {
@@ -219,8 +224,11 @@ export function createDesignVersionService(
 
     async listLatestForClient(actor) {
       const user = await requireActor(repository, actor);
-      if (user.role !== "client") forbidden();
-      const projects = await repository.listProjectsForUser(user);
+      if (user.role !== "client" && user.role !== "super_admin") forbidden();
+      const projects = await repository.listProjectsForUserInModule(
+        user,
+        currentProjectModule()
+      );
       const versions = await repository.listLatestClientVisibleDesignVersions(projects.map((project) => project.id));
       return Promise.all(
         versions.map(async (version) => {
@@ -233,7 +241,8 @@ export function createDesignVersionService(
     async approve(actor, versionId, input) {
       if (
         actor.role !== "design_manager" &&
-        actor.role !== "design_head"
+        actor.role !== "design_head" &&
+        actor.role !== "super_admin"
       ) {
         forbidden();
       }
@@ -262,6 +271,11 @@ export function createDesignVersionService(
         ) {
           forbidden();
         }
+        await requireProjectOperationAccess(
+          transaction,
+          actor,
+          current.projectId
+        );
 
         const clientVisible =
           input.clientVisible ??
@@ -329,7 +343,7 @@ export function createDesignVersionService(
           "The requested resource was not found."
         );
       }
-      await requireAccessibleProject(repository, actor, version.projectId);
+      await requireProjectOperationAccess(repository, actor, version.projectId);
       if (
         actor.role === "client" &&
         (version.approvalStatus !== "approved" || !version.clientVisible)
@@ -365,7 +379,7 @@ export function createDesignVersionService(
           "The requested resource was not found."
         );
       }
-      await requireAccessibleProject(repository, actor, version.projectId);
+      await requireProjectOperationAccess(repository, actor, version.projectId);
       const job = await repository.findExtractionJobByVersionId(version.id);
       if (!job) {
         throw new ApiError(
@@ -377,6 +391,16 @@ export function createDesignVersionService(
       return publicExtractionJob(job);
     }
   };
+}
+
+function currentProjectModule() {
+  const { operation } = currentHumanOperation();
+  if (operation.scope.kind !== "project") {
+    throw new AuthorizationConfigurationError(
+      "The current operation is not project-backed."
+    );
+  }
+  return operation.scope.module;
 }
 
 function publicVersion(

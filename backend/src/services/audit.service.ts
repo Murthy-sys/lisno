@@ -8,13 +8,14 @@ import type {
 } from "../repositories/types.js";
 import type { ClientSession } from "mongoose";
 import { randomUUID } from "node:crypto";
+import type { AuditAction } from "../domain/audit-actions.js";
 import { AuditEventModel } from "../models/AuditEvent.js";
 import type { PublicUser } from "./auth.service.js";
-import { forbidden, requireActor } from "./workflow.js";
+import { forbidden, requireActor, requireUser } from "./workflow.js";
 
 export interface AuditWrite {
   actorId: string;
-  action: string;
+  action: AuditAction;
   entityType: string;
   entityId: string;
   occurredAt: string;
@@ -54,8 +55,8 @@ export function createAuditService(repository: AppRepository): AuditService {
         entityType: input.entityType,
         entityId: input.entityId,
         occurredAt: input.occurredAt,
-        oldValues: input.oldValues ?? {},
-        newValues: input.newValues ?? {},
+        oldValues: sanitizeAuditObject(input.oldValues ?? {}),
+        newValues: sanitizeAuditObject(input.newValues ?? {}),
         reason: input.reason ?? null
       });
     },
@@ -69,8 +70,8 @@ export function createAuditService(repository: AppRepository): AuditService {
           entityType: input.entityType,
           entityId: input.entityId,
           occurredAt: input.occurredAt,
-          oldValues: input.oldValues ?? {},
-          newValues: input.newValues ?? {},
+          oldValues: sanitizeAuditObject(input.oldValues ?? {}),
+          newValues: sanitizeAuditObject(input.newValues ?? {}),
           reason: input.reason ?? null
         }],
         { session }
@@ -86,19 +87,23 @@ export function createAuditService(repository: AppRepository): AuditService {
     async list(actor, filters, pagination) {
       await requireActor(repository, actor);
       if (actor.role === "client") forbidden();
-      if (actor.role === "design_head") {
-        return repository.pageAuditEvents(filters, pagination);
+      if (actor.role === "super_admin" || actor.role === "design_head") {
+        return sanitizeAuditPage(
+          await repository.pageAuditEvents(filters, pagination)
+        );
       }
 
       if (actor.role === "designer") {
         if (filters.actorId && filters.actorId !== actor.id) {
           return { items: [], total: 0 };
         }
-        return repository.pageAuditEvents(
+        return sanitizeAuditPage(await repository.pageAuditEvents(
           { ...filters, actorId: actor.id },
           pagination
-        );
+        ));
       }
+
+      if (actor.role !== "design_manager") forbidden();
 
       const users = await repository.listUsers();
       const directDesignerIds = new Set(
@@ -119,29 +124,133 @@ export function createAuditService(repository: AppRepository): AuditService {
           .flat()
           .map((task) => task.id)
       );
-      return repository.pageAuditEvents(
+      return sanitizeAuditPage(await repository.pageAuditEvents(
         {
           ...filters,
           visibleActorIds: [actor.id, ...directDesignerIds],
           visibleTaskIds: [...visibleTaskIds]
         },
         pagination
-      );
+      ));
     },
 
     async listForDesigner(actor, designerId, pagination, sort) {
       await requireActor(repository, actor);
       if (actor.role === "client") forbidden();
-      const users = await repository.listUsers();
-      const designer = users.find((user) => user.id === designerId && user.role === "designer");
+      const designer = await requireUser(repository, designerId);
       if (!designer) forbidden();
+      if (designer.role !== "designer") forbidden();
+      if (
+        actor.role !== "super_admin" &&
+        actor.role !== "design_head" &&
+        actor.role !== "design_manager" &&
+        actor.role !== "designer"
+      ) forbidden();
       if (actor.role === "design_manager" && designer.managerId !== actor.id) forbidden();
       if (actor.role === "designer" && actor.id !== designer.id) forbidden();
       const taskIds = (await repository.listTasks({ ownerId: designer.id })).map((task) => task.id);
-      return repository.pageAuditEvents(
-        { entityType: "task", entityIds: taskIds, visibleActorIds: actor.role === "design_head" ? undefined : [actor.id, designer.id], visibleTaskIds: taskIds, sort },
+      return sanitizeAuditPage(await repository.pageAuditEvents(
+        {
+          entityType: "task",
+          entityIds: taskIds,
+          visibleActorIds:
+            actor.role === "super_admin" || actor.role === "design_head"
+              ? undefined
+              : [actor.id, designer.id],
+          visibleTaskIds: taskIds,
+          sort
+        },
         pagination
-      );
+      ));
     }
   };
+}
+
+export function sanitizeAuditPage(
+  page: PageResult<AuditEventRecord>
+): PageResult<AuditEventRecord> {
+  return {
+    ...page,
+    items: page.items.map((event) => ({
+      ...event,
+      oldValues: sanitizeAuditObject(event.oldValues),
+      newValues: sanitizeAuditObject(event.newValues)
+    }))
+  };
+}
+
+function sanitizeAuditObject(value: JsonObject): JsonObject {
+  return sanitizeAuditValue(value) as JsonObject;
+}
+
+function sanitizeAuditValue(value: unknown, path: readonly string[] = []): unknown {
+  if (isBytePayload(value)) return undefined;
+  if (Array.isArray(value)) {
+    return value
+      .map((nested) => sanitizeAuditValue(nested, path))
+      .filter((nested) => nested !== undefined);
+  }
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .filter(([key, nested]) => !isSensitiveAuditKey(key, nested, path))
+      .map(([key, nested]) => [
+        key,
+        sanitizeAuditValue(nested, [...path, normalizeAuditKey(key)])
+      ] as const)
+      .filter(([, nested]) => nested !== undefined)
+  );
+}
+
+function isSensitiveAuditKey(
+  key: string,
+  value: unknown,
+  path: readonly string[]
+): boolean {
+  const normalized = normalizeAuditKey(key);
+  const normalizedPath = [...path, normalized].join("");
+  if (
+    normalized === "tokengeneration" &&
+    typeof value === "number" &&
+    Number.isSafeInteger(value) &&
+    value >= 1
+  ) {
+    return false;
+  }
+  if (
+    normalized === "sizebytes" &&
+    typeof value === "number" &&
+    Number.isSafeInteger(value) &&
+    value >= 0
+  ) {
+    return false;
+  }
+  if (
+    normalizedPath.includes("storagereference") ||
+    normalizedPath.includes("recipientemail") ||
+    normalizedPath.includes("providerresponse") ||
+    normalizedPath.includes("providermessage") ||
+    normalized === "bytes" ||
+    normalized.endsWith("bytes") ||
+    normalized.includes("bytebuffer") ||
+    isBytePayload(value)
+  ) {
+    return true;
+  }
+  return ["password", "hash", "token", "secret"].some((part) =>
+    normalized.includes(part)
+  );
+}
+
+function normalizeAuditKey(key: string): string {
+  return key
+    .normalize("NFKC")
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "");
+}
+
+function isBytePayload(value: unknown): boolean {
+  return Buffer.isBuffer(value) ||
+    value instanceof ArrayBuffer ||
+    ArrayBuffer.isView(value);
 }

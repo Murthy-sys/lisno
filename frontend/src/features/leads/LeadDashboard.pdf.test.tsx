@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import { tokenStorage } from "../../api/client";
+import { authorizationFor } from "../../test/authFixtures";
 import { renderApp } from "../../test/render";
 
 const salesUser = {
@@ -65,6 +66,13 @@ const savedEstimates = [
   }
 ];
 
+const leads = savedEstimates.map((estimate) => ({
+  ...estimate.lead,
+  stage: "estimate_in_progress" as const,
+  createdAt: estimate.updatedAt,
+  updatedAt: estimate.updatedAt
+}));
+
 function deferredResponse() {
   let resolve!: (response: Response) => void;
   const promise = new Promise<Response>((promiseResolve) => {
@@ -79,11 +87,12 @@ function installSalesApi(
   return vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = String(input);
     if (url === "/api/v1/auth/me") return Response.json({ data: salesUser });
+    if (url === "/api/v1/auth/authorization") return Response.json({ data: authorizationFor(salesUser.role) });
     if (url.startsWith("/api/v1/leads?")) {
       return Response.json({
         data: {
-          items: [],
-          pagination: { limit: 20, offset: 0, total: 0, hasMore: false }
+          items: leads,
+          pagination: { limit: 20, offset: 0, total: leads.length, hasMore: false }
         }
       });
     }
@@ -115,12 +124,10 @@ describe("LeadDashboard estimate PDF export", () => {
       name: "Cedar Loft",
       level: 3
     }).closest("article")!;
-    const draftHeader = draftCard.querySelector<HTMLElement>(".saved-estimate-card__top")!;
-    const sentHeader = sentCard.querySelector<HTMLElement>(".saved-estimate-card__top")!;
-    const draftExport = within(draftHeader).getByRole("button", {
+    const draftExport = within(draftCard).getByRole("button", {
       name: "Export as PDF"
     });
-    const sentExport = within(sentHeader).getByRole("button", {
+    const sentExport = within(sentCard).getByRole("button", {
       name: "Export as PDF"
     });
 

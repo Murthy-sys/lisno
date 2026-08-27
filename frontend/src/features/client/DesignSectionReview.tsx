@@ -143,7 +143,7 @@ export function DesignSectionReview({ projectId, mode }: { projectId: string; mo
         <div className="design-review__stat design-review__stat--awaiting"><strong>{progress.awaitingReview}</strong><span>Awaiting review</span></div>
         <div className="design-review__stat design-review__stat--total"><strong>{progress.total}</strong><span>Total</span></div>
       </div>
-      <p className="design-review__announcement" role="status" aria-live="polite">
+      <p className="design-review__announcement" role="status" aria-label="Design review updates" aria-live="polite">
         <span key={announcement.sequence}>{announcement.message}</span>
       </p>
       {sections.length > 0 && progress.awaitingReview === 0 ? (

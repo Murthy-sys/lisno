@@ -1,6 +1,15 @@
+import { randomUUID } from "node:crypto";
+
 import { model, models, Schema } from "./mongoose.js";
+import { DESIGN_PLAN_STATUSES } from "../domain/project-workflow.js";
 
 const estimateLineSchema = new Schema({
+  id: {
+    type: String,
+    required: true,
+    immutable: true,
+    default: () => `estimate-line-${randomUUID()}`
+  },
   catalogueId: { type: String, required: true }, roomName: { type: String, required: true }, specification: { type: String, required: true },
   unit: { type: String, required: true }, rate: { type: Number, required: true }, quantity: { type: Number, required: true }, included: { type: Boolean, required: true }, amount: { type: Number, required: true }
 }, { _id: false });
@@ -13,6 +22,7 @@ const estimateReviewSchema = new Schema({
 }, { _id: false });
 
 const estimateNotificationSchema = new Schema({
+  dedupeKey: { type: String, default: null },
   recipientEmail: { type: String, required: true },
   recipientRole: { type: String, required: true },
   event: { type: String, required: true },
@@ -38,6 +48,23 @@ const estimateSchema = new Schema({
   approvalRequired: { type: Boolean, required: true, default: false },
   assignedManagerId: { type: String, ref: "User", default: null },
   assignedDesignerId: { type: String, ref: "User", default: null },
+  designPlanStatus: {
+    type: String,
+    enum: [...DESIGN_PLAN_STATUSES, null],
+    default: null
+  },
+  designPlanVersion: { type: Number, required: true, default: 0, min: 0 },
+  designPlanDesignerId: { type: String, ref: "User", default: null },
+  designPlanAssignedById: { type: String, ref: "User", default: null },
+  designPlanAssignedAt: { type: Date, default: null },
+  designPlanSubmittedAt: { type: Date, default: null },
+  designPlanApprovedAt: { type: Date, default: null },
+  designPlanApprovedById: { type: String, ref: "User", default: null },
+  designPlanApprovalSource: {
+    type: String,
+    enum: ["client_portal", "admin_proof", null],
+    default: null
+  },
   submittedAt: { type: Date, default: null },
   sentToClientAt: { type: Date, default: null },
   clientDecisionAt: { type: Date, default: null },
@@ -47,4 +74,7 @@ const estimateSchema = new Schema({
 }, { timestamps: true, versionKey: false });
 estimateSchema.index({ ownerId: 1, updatedAt: -1 });
 estimateSchema.index({ status: 1, assignedManagerId: 1, assignedDesignerId: 1 });
+estimateSchema.index({ projectId: 1, designPlanStatus: 1 });
+estimateSchema.index({ status: 1, projectId: 1, clientDecisionAt: -1, updatedAt: -1 });
+estimateSchema.index({ designPlanDesignerId: 1, designPlanStatus: 1 });
 export const EstimateModel = models.Estimate ?? model("Estimate", estimateSchema);

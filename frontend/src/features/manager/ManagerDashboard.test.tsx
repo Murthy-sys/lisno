@@ -2,6 +2,7 @@ import { screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { tokenStorage } from "../../api/client";
+import { authorizationFor } from "../../test/authFixtures";
 import { renderApp } from "../../test/render";
 
 const manager = {
@@ -17,6 +18,7 @@ describe("ManagerDashboard", () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = String(input);
       if (url === "/api/v1/auth/me") return Response.json({ data: manager });
+      if (url === "/api/v1/auth/authorization") return Response.json({ data: authorizationFor(manager.role) });
       if (url === "/api/v1/organization/team?limit=100&offset=0") {
         return Response.json({
           data: { items: [{

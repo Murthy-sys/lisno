@@ -3,7 +3,8 @@ import { pipeline } from "node:stream/promises";
 import { Router } from "express";
 import { z } from "zod";
 
-import { authenticate, authorizeRoles } from "../middleware/auth.js";
+import { authenticate } from "../middleware/auth.js";
+import { requireOperation } from "../middleware/authorization.js";
 import {
   paginatedEnvelope,
   paginationShape
@@ -32,7 +33,7 @@ export function createDesignVersionsRouter(
   router.get(
     "/client/latest-approved-versions",
     protectedRoute,
-    authorizeRoles("client"),
+    requireOperation("GET /client/latest-approved-versions"),
     async (request, response, next) => {
       try {
         response.json({ data: await designVersions.listLatestForClient(request.authenticatedUser!) });
@@ -43,7 +44,7 @@ export function createDesignVersionsRouter(
   router.post(
     "/tasks/:taskId/design-versions",
     protectedRoute,
-    authorizeRoles("designer"),
+    requireOperation("POST /tasks/:taskId/design-versions"),
     uploadSingleFile(maxUploadBytes),
     async (request, response, next) => {
       try {
@@ -63,6 +64,7 @@ export function createDesignVersionsRouter(
   router.get(
     "/projects/:projectId/design-versions",
     protectedRoute,
+    requireOperation("GET /projects/:projectId/design-versions"),
     validateQuery(listQuerySchema),
     async (request, response, next) => {
       try {
@@ -86,6 +88,7 @@ export function createDesignVersionsRouter(
   router.get(
     "/design-versions/:versionId/extraction",
     protectedRoute,
+    requireOperation("GET /design-versions/:versionId/extraction"),
     async (request, response, next) => {
       try {
         response.json({
@@ -103,7 +106,7 @@ export function createDesignVersionsRouter(
   router.patch(
     "/design-versions/:versionId/approval",
     protectedRoute,
-    authorizeRoles("design_manager", "design_head"),
+    requireOperation("PATCH /design-versions/:versionId/approval"),
     validateBody(approvalSchema),
     async (request, response, next) => {
       try {
@@ -123,6 +126,7 @@ export function createDesignVersionsRouter(
   router.get(
     "/design-versions/:versionId/download",
     protectedRoute,
+    requireOperation("GET /design-versions/:versionId/download"),
     async (request, response, next) => {
       try {
         const download = await designVersions.download(

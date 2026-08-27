@@ -1,12 +1,16 @@
-import { Eye, EyeOff, Sparkles } from "lucide-react";
+import { ArrowRight, Eye, EyeOff } from "lucide-react";
 import { useRef, useState } from "react";
 import { useForm } from "react-hook-form";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { z } from "zod";
 
 import { ApiError } from "../api/client";
 import { BrandLogo } from "../components/ui/BrandLogo";
-import { roleHomePath } from "./ProtectedRoute";
+import { Button } from "../components/ui/Button";
+import { Field, Input } from "../components/ui/Field";
+import { IconButton } from "../components/ui/IconButton";
+import { NoticeBanner } from "../components/ui/NoticeBanner";
+import { safeReturnPath } from "../app/routePaths";
 import { useAuth } from "./AuthProvider";
 
 const loginSchema = z.object({
@@ -16,14 +20,10 @@ const loginSchema = z.object({
 
 type LoginFields = z.infer<typeof loginSchema>;
 
-const DEMO_ACCOUNT: LoginFields = {
-  email: "ananya@lisno.example",
-  password: "LisnoDemo2026!"
-};
-
 export function LoginPage() {
   const auth = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
   const [showPassword, setShowPassword] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [validationSummary, setValidationSummary] = useState<string[]>([]);
@@ -33,7 +33,6 @@ export function LoginPage() {
     register,
     handleSubmit,
     setError,
-    setValue,
     formState: { errors, isSubmitting }
   } = useForm<LoginFields>({
     defaultValues: { email: "", password: "" }
@@ -68,9 +67,14 @@ export function LoginPage() {
     }
 
     setValidationSummary([]);
+    const locationState = location.state as { from?: unknown } | null;
+    const from = typeof locationState?.from === "string" ? locationState.from : null;
     try {
       const user = await auth.login(parsed.data);
-      navigate(roleHomePath(user.role), { replace: true });
+      navigate(safeReturnPath(user.role, from), {
+        replace: true,
+        state: { routeFocus: true }
+      });
     } catch (error) {
       setSubmitError(
         error instanceof ApiError && error.code === "INVALID_CREDENTIALS"
@@ -80,15 +84,8 @@ export function LoginPage() {
     }
   });
 
-  const fillDemoAccount = () => {
-    setValue("email", DEMO_ACCOUNT.email, { shouldValidate: true });
-    setValue("password", DEMO_ACCOUNT.password, { shouldValidate: true });
-    setSubmitError(null);
-    setValidationSummary([]);
-  };
-
   return (
-    <main className="login-page">
+    <main className="login-page login-page--signin">
       <section className="login-story" aria-label="Lisno design operations">
         <a href="#login-form" className="skip-link">
           Skip to sign in
@@ -120,7 +117,27 @@ export function LoginPage() {
             Sign in to continue to your design workspace.
           </p>
 
-          <form id="login-form" onSubmit={submit} noValidate>
+          {auth.sessionExpired ? (
+            <NoticeBanner tone="warning" label="Session expired">
+              Your session expired. Sign in again.
+            </NoticeBanner>
+          ) : null}
+
+          <form
+            id="login-form"
+            onSubmit={submit}
+            noValidate
+            aria-busy={isSubmitting}
+          >
+            <p
+              className="sr-only"
+              role="status"
+              aria-live="polite"
+              aria-atomic="true"
+              aria-label="Sign-in status"
+            >
+              {isSubmitting ? "Signing in. Please wait." : ""}
+            </p>
             {submitError ? (
               <div className="form-alert" role="alert" aria-label="Sign-in error">
                 {submitError}
@@ -142,86 +159,77 @@ export function LoginPage() {
               </div>
             ) : null}
 
-            <div className="field">
-              <label htmlFor="email">Email address</label>
-              <input
-                id="email"
-                type="email"
-                autoComplete="username"
-                aria-invalid={Boolean(errors.email)}
-                aria-describedby={errors.email ? "email-error" : undefined}
-                {...emailRegistration}
-                ref={(element) => {
-                  registerEmail(element);
-                  emailRef.current = element;
-                }}
-              />
-              {errors.email ? (
-                <p id="email-error" className="field__error">
-                  {errors.email.message}
-                </p>
-              ) : null}
-            </div>
-
-            <div className="field">
-              <label htmlFor="password">Password</label>
-              <div className="password-field">
-                <input
-                  id="password"
-                  type={showPassword ? "text" : "password"}
-                  autoComplete="current-password"
-                  aria-invalid={Boolean(errors.password)}
-                  aria-describedby={errors.password ? "password-error" : undefined}
-                  {...passwordRegistration}
+            <Field
+              id="email"
+              className="field"
+              label="Email address"
+              error={errors.email?.message}
+            >
+              {(controlProps) => (
+                <Input
+                  {...controlProps}
+                  type="email"
+                  autoComplete="username"
+                  {...emailRegistration}
                   ref={(element) => {
-                    registerPassword(element);
-                    passwordRef.current = element;
+                    registerEmail(element);
+                    emailRef.current = element;
                   }}
                 />
-                <button
-                  type="button"
-                  className="password-field__toggle"
-                  aria-label={showPassword ? "Hide password" : "Show password"}
-                  aria-pressed={showPassword}
-                  onClick={() => setShowPassword((visible) => !visible)}
-                >
-                  {showPassword ? (
-                    <EyeOff aria-hidden="true" />
-                  ) : (
-                    <Eye aria-hidden="true" />
-                  )}
-                </button>
-              </div>
-              {errors.password ? (
-                <p id="password-error" className="field__error">
-                  {errors.password.message}
-                </p>
-              ) : null}
-            </div>
+              )}
+            </Field>
 
-            <button
-              type="submit"
-              className="button button--primary button--full"
-              disabled={isSubmitting}
+            <Field
+              id="password"
+              className="field"
+              label="Password"
+              error={errors.password?.message}
             >
-              {isSubmitting ? "Signing in…" : "Sign in"}
-            </button>
+              {(controlProps) => (
+                <div className="password-field">
+                  <Input
+                    {...controlProps}
+                    type={showPassword ? "text" : "password"}
+                    autoComplete="current-password"
+                    {...passwordRegistration}
+                    ref={(element) => {
+                      registerPassword(element);
+                      passwordRef.current = element;
+                    }}
+                  />
+                  <IconButton
+                    type="button"
+                    variant="quiet"
+                    className="password-field__toggle"
+                    label={showPassword ? "Hide password" : "Show password"}
+                    aria-pressed={showPassword}
+                    icon={
+                      showPassword ? (
+                        <EyeOff aria-hidden="true" />
+                      ) : (
+                        <Eye aria-hidden="true" />
+                      )
+                    }
+                    onClick={() => setShowPassword((visible) => !visible)}
+                  />
+                </div>
+              )}
+            </Field>
+
+            <Button
+              type="submit"
+              className="login-submit"
+              fullWidth
+              busy={isSubmitting}
+              busyLabel="Signing in…"
+              trailingIcon={
+                <ArrowRight className="login-submit__arrow" aria-hidden="true" />
+              }
+            >
+              Sign in
+            </Button>
           </form>
 
-          <div className="demo-helper">
-            <Sparkles aria-hidden="true" />
-            <div>
-              <strong>Reviewing the demo?</strong>
-              <p>Fill the seeded designer credentials in one step.</p>
-            </div>
-            <button
-              type="button"
-              className="button button--quiet"
-              onClick={fillDemoAccount}
-            >
-              Use designer demo account
-            </button>
-          </div>
           <p className="auth-switch">
             New to Lisno? <Link to="/signup">Create a client account</Link>
           </p>

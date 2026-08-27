@@ -41,6 +41,7 @@ export interface ImageAnnotationEditorProps {
   imageWidth: number;
   imageHeight: number;
   value: AnnotationDocumentV1;
+  sharedAnnotations?: AnnotationDocumentV1["elements"];
   readOnly: boolean;
   onChange: (document: AnnotationDocumentV1) => void;
   viewTransform?: ViewTransform;
@@ -69,7 +70,6 @@ type ResizeOperation = {
 type EditorOperation = DrawingOperation | MoveOperation | ResizeOperation;
 
 const tools: Array<{ tool: AnnotationTool; label: string }> = [
-  { tool: "select", label: "Select" },
   { tool: "ellipse", label: "Ellipse" },
   { tool: "rectangle", label: "Rectangle" },
   { tool: "arrow", label: "Arrow" },
@@ -123,11 +123,14 @@ function renderElement(
   interaction?: {
     onFocus: () => void;
     onKeyDown: (event: ReactKeyboardEvent<SVGElement>) => void;
-  }
+  },
+  isShared = false
 ) {
   const shared = {
     "aria-label": annotationLabel(element),
+    "data-annotation-id": element.id,
     "data-selected": selected ? "true" : "false",
+    ...(isShared ? { "data-shared": "true", style: { pointerEvents: "none" as const } } : {}),
     stroke: element.color,
     strokeWidth: element.strokeWidth,
     vectorEffect: "non-scaling-stroke" as const,
@@ -244,11 +247,12 @@ export function ImageAnnotationEditor({
   imageWidth,
   imageHeight,
   value,
+  sharedAnnotations = [],
   readOnly,
   onChange,
   viewTransform = DEFAULT_TRANSFORM
 }: ImageAnnotationEditorProps) {
-  const [tool, setTool] = useState<AnnotationTool>("select");
+  const [tool, setTool] = useState<AnnotationTool>("rectangle");
   const [selectedId, setSelectedId] = useState<string>();
   const [draftElement, setDraftElement] = useState<AnnotationElement>();
   const [textDraft, setTextDraft] = useState<{ point: AnnotationPoint; text: string }>();
@@ -309,9 +313,12 @@ export function ImageAnnotationEditor({
       setTextDraft({ point, text: "" });
       return;
     }
-    if (tool === "select") {
+    const annotationTarget = (event.target as Element).closest?.("[data-annotation-id]");
+    if (tool === "select" || annotationTarget) {
       const tolerance = 10 / Math.max(1, Math.min(event.currentTarget.getBoundingClientRect().width, event.currentTarget.getBoundingClientRect().height));
-      const hit = hitTestElements(value.elements, point, tolerance);
+      const hit = annotationTarget
+        ? value.elements.find((element) => element.id === annotationTarget.getAttribute("data-annotation-id"))
+        : hitTestElements(value.elements, point, tolerance);
       setSelectedId(hit?.id);
       if (hit) operationRef.current = { kind: "move", start: point, original: hit };
       return;
@@ -605,9 +612,14 @@ export function ImageAnnotationEditor({
   }
 
   return (
-    <div className={`annotation-editor${readOnly ? " annotation-editor--read-only" : ""}`}>
+    <div
+      className={`annotation-editor${readOnly ? " annotation-editor--read-only" : ""}`}
+      data-annotation-drawing={!readOnly && tool !== "select" ? "true" : "false"}
+      data-active-tool={tool}
+    >
       {!readOnly ? (
         <div className="annotation-toolbar" role="toolbar" aria-label="Annotation tools">
+          <p className="annotation-toolbar__hint">Choose a tool, then drag on the drawing.</p>
           {tools.map((item) => (
             <button
               key={item.tool}
@@ -642,6 +654,9 @@ export function ImageAnnotationEditor({
             </marker>
           </defs>
           <image href={imageSource} width={imageWidth} height={imageHeight} preserveAspectRatio="xMidYMid meet" />
+          {sharedAnnotations.map((element) =>
+            renderElement(element, imageWidth, imageHeight, false, markerId, undefined, true)
+          )}
           {renderedElements.map((element) =>
             renderElement(
               element,

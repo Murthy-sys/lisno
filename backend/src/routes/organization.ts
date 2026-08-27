@@ -1,7 +1,8 @@
 import { Router } from "express";
 import { z } from "zod";
 
-import { authenticate, authorizeRoles } from "../middleware/auth.js";
+import { authenticate } from "../middleware/auth.js";
+import { requireOperation } from "../middleware/authorization.js";
 import {
   paginatedEnvelope,
   paginationShape
@@ -28,7 +29,7 @@ export function createOrganizationRouter(
   router.get(
     "/organization/managers",
     protectedRoute,
-    authorizeRoles("designer"),
+    requireOperation("GET /organization/managers"),
     validateQuery(managerSearchQuery),
     async (request, response, next) => {
       try {
@@ -52,7 +53,7 @@ export function createOrganizationRouter(
   router.get(
     "/organization/team",
     protectedRoute,
-    authorizeRoles("design_manager"),
+    requireOperation("GET /organization/team"),
     validateQuery(pageQuery),
     async (request, response, next) => {
       try {
@@ -75,7 +76,7 @@ export function createOrganizationRouter(
   router.get(
     "/organization/tree",
     protectedRoute,
-    authorizeRoles("design_head"),
+    requireOperation("GET /organization/tree"),
     validateQuery(pageQuery),
     async (request, response, next) => {
       try {
@@ -98,7 +99,7 @@ export function createOrganizationRouter(
   router.get(
     "/organization/managers/:managerId/designers",
     protectedRoute,
-    authorizeRoles("design_head"),
+    requireOperation("GET /organization/managers/:managerId/designers"),
     validateQuery(pageQuery),
     async (request, response, next) => {
       try {
@@ -122,7 +123,7 @@ export function createOrganizationRouter(
   router.get(
     "/designers/:designerId/summary",
     protectedRoute,
-    authorizeRoles("designer", "design_manager", "design_head"),
+    requireOperation("GET /designers/:designerId/summary"),
     async (request, response, next) => {
       try {
         response.json({
