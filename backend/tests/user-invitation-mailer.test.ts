@@ -38,7 +38,7 @@ vi.mock("nodemailer", async (importOriginal) => {
   };
 });
 
-vi.mock("nodemailer/lib/smtp-connection", async () => {
+vi.mock("nodemailer/lib/smtp-connection/index.js", async () => {
   const { EventEmitter } = await import("node:events");
   return {
     default: class FakeSmtpConnection extends EventEmitter {
@@ -239,7 +239,7 @@ describe.sequential("SMTP invitation mailer", () => {
   });
 
   it("closes the exact real socket at the wall-clock deadline and settles once", async () => {
-    vi.doUnmock("nodemailer/lib/smtp-connection");
+    vi.doUnmock("nodemailer/lib/smtp-connection/index.js");
     vi.resetModules();
     const server = await startTricklingSmtpServer();
     try {

@@ -1,4 +1,4 @@
-declare module "nodemailer/lib/smtp-connection" {
+declare module "nodemailer/lib/smtp-connection/index.js" {
   import { EventEmitter } from "node:events";
   import type { Readable } from "node:stream";
 

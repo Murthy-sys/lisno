@@ -2,7 +2,7 @@ import type { Readable } from "node:stream";
 
 import type { Transport } from "nodemailer";
 import addressparser from "nodemailer/lib/addressparser/index.js";
-import SMTPConnection from "nodemailer/lib/smtp-connection";
+import SMTPConnection from "nodemailer/lib/smtp-connection/index.js";
 
 export type MailDeliveryConfig =
   | { kind: "disabled" }
