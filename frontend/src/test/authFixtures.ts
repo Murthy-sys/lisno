@@ -60,6 +60,9 @@ const DEFAULT_PERMISSIONS_BY_ROLE = {
     ...BASE_SESSION_PERMISSIONS,
     "workflow.tasks.read",
     "workflow.tasks.update",
+    "procurement.workspace.read",
+    "procurement.expense.create",
+    "procurement.document.read",
     "access_request.self.read"
   ],
   finance_head: [

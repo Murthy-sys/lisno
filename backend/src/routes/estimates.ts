@@ -73,10 +73,17 @@ export function createEstimatesRouter(
   } catch (error) { next(error); } });
   router.put("/leads/:leadId/estimate", protectedRoute, requireOperation("PUT /leads/:leadId/estimate"), validateBody(estimateSchema), async (req, res, next) => { try {
     const lead = await leads.get(req.authenticatedUser!, req.params.leadId as string);
-    const lineItems = req.body.lineItems.map((line: z.infer<typeof estimateLineSchema>) => ({ ...line, amount: line.included ? Math.round(line.quantity * line.rate) : 0 }));
+    let estimate = await EstimateModel.findOne({ leadId: lead.id, ownerId: req.authenticatedUser!.id });
+    const previousLines = estimate?.lineItems ?? [];
+    const lineItems = req.body.lineItems.map((line: z.infer<typeof estimateLineSchema>, index: number) => ({
+      id: typeof previousLines[index]?.id === "string"
+        ? previousLines[index].id
+        : `estimate-line-${randomUUID()}`,
+      ...line,
+      amount: line.included ? Math.round(line.quantity * line.rate) : 0
+    }));
     const subtotal = lineItems.reduce((sum: number, line: { amount: number }) => sum + line.amount, 0);
     const gst = Math.round(subtotal * .18);
-    let estimate = await EstimateModel.findOne({ leadId: lead.id, ownerId: req.authenticatedUser!.id });
     const leadProjectId = lead.projectId ?? null;
     const estimateProjectId = estimate?.projectId ?? null;
     if (

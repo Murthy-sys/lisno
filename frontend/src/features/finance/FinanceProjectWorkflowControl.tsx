@@ -38,12 +38,6 @@ export function FinanceProjectWorkflowControl({ projectId }: { projectId: string
     enabled: Boolean(projectId)
   });
   const project = projectQuery.data;
-  const executionOpen = project?.estimate?.designPlanStatus === "approved";
-  const tasksQuery = useQuery({
-    queryKey: projectWorkflowKeys.projectTasks(projectId),
-    queryFn: () => getAdminProjectWorkflowTasks(projectId),
-    enabled: Boolean(projectId) && executionOpen
-  });
 
   if (projectQuery.isPending) {
     return <PageState state="loading" message="Loading the complete project workflow…" />;
@@ -63,15 +57,36 @@ export function FinanceProjectWorkflowControl({ projectId }: { projectId: string
 
   return (
     <div className="access-administration admin-project-detail">
-      <WorkflowSnapshot
-        project={project}
-        tasks={tasksQuery.data ?? []}
-        tasksLoading={executionOpen && tasksQuery.isPending}
-        tasksError={executionOpen && tasksQuery.isError}
-        onRetryTasks={() => void tasksQuery.refetch()}
-      />
+      <ProjectWorkflowSnapshot project={project} />
       <WorkerAssignmentPanel project={project} />
     </div>
+  );
+}
+
+export function ProjectWorkflowSnapshot({ project }: { project: AdminProjectSummary }) {
+  const executionOpen = project.estimate?.designPlanStatus === "approved";
+  const tasksQuery = useQuery({
+    queryKey: projectWorkflowKeys.projectTasks(project.id),
+    queryFn: () => getAdminProjectWorkflowTasks(project.id),
+    enabled: executionOpen
+  });
+  const tasks = tasksQuery.data ?? [];
+  const tasksMismatch = tasks.some(
+    (task) => task.projectId !== project.id ||
+      (project.estimate !== null && task.estimateId !== project.estimate.id)
+  );
+
+  return (
+    <WorkflowSnapshot
+      project={project}
+      tasks={tasksMismatch ? [] : tasks}
+      tasksLoading={executionOpen && tasksQuery.isPending}
+      tasksError={executionOpen && (tasksQuery.isError || tasksMismatch)}
+      tasksErrorMessage={tasksMismatch
+        ? "Execution tasks do not match this project's approved estimate."
+        : "Execution status could not be loaded."}
+      onRetryTasks={() => void tasksQuery.refetch()}
+    />
   );
 }
 
@@ -80,12 +95,14 @@ function WorkflowSnapshot({
   tasks,
   tasksLoading,
   tasksError,
+  tasksErrorMessage,
   onRetryTasks
 }: {
   project: AdminProjectSummary;
   tasks: ProjectWorkflowTask[];
   tasksLoading: boolean;
   tasksError: boolean;
+  tasksErrorMessage: string;
   onRetryTasks: () => void;
 }) {
   const estimateApproved = project.estimate?.status === "client_approved";
@@ -137,7 +154,11 @@ function WorkflowSnapshot({
               ? formatWorkflowLabel(project.estimate.status)
               : "Not started"}
           detail={project.estimate
-            ? `${money.format(project.estimate.total)} approved commercial value`
+            ? project.estimate.status === "client_approved"
+              ? project.estimate.approvedBaseline
+                ? `${money.format(project.estimate.approvedBaseline.total)} approved commercial value`
+                : "Approved commercial baseline unavailable"
+              : `${money.format(project.estimate.total)} current Estimate value`
             : "No estimate has been prepared."}
         />
         <WorkflowStage
@@ -193,7 +214,7 @@ function WorkflowSnapshot({
       ) : tasksError ? (
         <PageState
           state="error"
-          message="Execution status could not be loaded."
+          message={tasksErrorMessage}
           action={{ label: "Try again", onAction: onRetryTasks }}
         />
       ) : null}

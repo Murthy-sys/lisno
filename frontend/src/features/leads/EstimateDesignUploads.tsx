@@ -62,6 +62,35 @@ function latestRevisions(revisions: EstimateDesignRevision[]) {
   return latest;
 }
 
+// OCR retries can briefly return the same drawing twice while the workspace is
+// being refreshed. Keep genuinely different drawings, but collapse records
+// that point at the same source crop and mapping.
+function uniqueActiveDrawings(
+  drawings: EstimateDesignDrawing[],
+  latest: Map<string, EstimateDesignRevision>
+) {
+  const seenIds = new Set<string>();
+  const seenFingerprints = new Set<string>();
+  return drawings.filter((drawing) => {
+    if (!drawing.active || !latest.has(drawing.id) || seenIds.has(drawing.id)) return false;
+    seenIds.add(drawing.id);
+    const revision = latest.get(drawing.id)!;
+    const crop = revision.crop;
+    const fingerprint = [
+      drawing.uploadId,
+      drawing.sourcePageId,
+      drawing.roomId ?? "",
+      drawing.scopeSectionId ?? "",
+      drawing.catalogueId ?? "",
+      drawing.displayTitle.trim().toLocaleLowerCase("en"),
+      crop.x, crop.y, crop.width, crop.height
+    ].join("\u0000");
+    if (seenFingerprints.has(fingerprint)) return false;
+    seenFingerprints.add(fingerprint);
+    return true;
+  });
+}
+
 function cropIsWithinPage(crop: CropRect, page: { width: number; height: number }) {
   return crop.x >= 0 && crop.y >= 0 && crop.width > 0 && crop.height > 0 &&
     crop.x + crop.width <= page.width && crop.y + crop.height <= page.height;
@@ -206,7 +235,7 @@ export function EstimateDesignUploads({
   });
 
   const latest = useMemo(() => latestRevisions(workspace.data?.revisions ?? []), [workspace.data?.revisions]);
-  const activeDrawings = (workspace.data?.drawings ?? []).filter((drawing) => drawing.active && latest.has(drawing.id));
+  const activeDrawings = uniqueActiveDrawings(workspace.data?.drawings ?? [], latest);
   const extractionPending = (workspace.data?.uploads ?? []).some((item) =>
     item.extractionStatus === "queued" || item.extractionStatus === "processing"
   );

@@ -284,6 +284,12 @@ describe("ClientResponseDecisionDialog", () => {
     await waitFor(() => {
       expect(invalidate).toHaveBeenCalledWith({ queryKey: ["estimate-client-responses"] });
       expect(invalidate).toHaveBeenCalledWith({ queryKey: ["admin-projects"] });
+      expect(invalidate).toHaveBeenCalledWith({
+        queryKey: ["project-finance", "projects"]
+      });
+      expect(invalidate).toHaveBeenCalledWith({
+        queryKey: ["project-finance", "bucket", "project-1"]
+      });
       expect(onSaved).toHaveBeenCalledOnce();
       expect(onClose).toHaveBeenCalledOnce();
       expect(returnFocusRef.current).toHaveFocus();

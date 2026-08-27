@@ -1,7 +1,7 @@
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { AUTHORIZATION_POLICY_VERSION } from "../../api/authorization-contract";
 import { tokenStorage } from "../../api/client";
@@ -154,14 +154,53 @@ function installFinanceSession() {
   );
 }
 
-function expectKpi(summary: HTMLElement, label: string, valuePaise: number) {
-  const card = within(summary).getByText(label).closest("article");
-  expect(card).not.toBeNull();
-  expect(card).toHaveTextContent(formatPaise(valuePaise));
+function escapeForRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function expectBreakdown(label: string, valuePaise: number) {
+  const breakdown = screen.getByRole("list", { name: "Cost budget breakdown" });
+  const row = within(breakdown).getByText(label).closest("li");
+  expect(row).not.toBeNull();
+  expect(row).toHaveTextContent(formatPaise(valuePaise));
 }
 
 function requiredLabel(label: string) {
   return new RegExp(`^${label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\*?$`);
+}
+
+function financeEntry(
+  id: string,
+  overrides: Partial<FinanceLedgerEntry> = {}
+): FinanceLedgerEntry {
+  return {
+    id,
+    bucketId: baseBucket.id,
+    projectId: baseBucket.projectId,
+    type: "direct_spend",
+    expenseClass: "other",
+    category: `Ledger item ${id}`,
+    amountPaise: 1_000,
+    incurredAt: "2026-08-25T00:00:00.000Z",
+    description: `Recorded cost ${id}`,
+    vendor: null,
+    reference: null,
+    sourceSectionId: null,
+    sourceLineItemKey: null,
+    sourceSectionLabel: null,
+    sourceLineItemLabel: null,
+    supportingDocument: null,
+    idempotencyKey: `idempotency-${id}`,
+    status: "posted",
+    version: 1,
+    createdById: "finance-manager-one",
+    voidedAt: null,
+    voidedById: null,
+    voidReason: null,
+    createdAt: "2026-08-26T09:00:00.000Z",
+    updatedAt: "2026-08-26T09:00:00.000Z",
+    ...overrides
+  };
 }
 
 describe("FinanceOverviewPage", () => {
@@ -205,28 +244,23 @@ describe("FinanceOverviewPage", () => {
     expect(within(projectList).getAllByRole("listitem")).toHaveLength(2);
     expect(within(projectList).getAllByRole("article")).toHaveLength(2);
 
-    // The aggregate cards already include every approved project while only
-    // the first card page is loaded, proving they come from the API summary.
-    const summary = screen.getByLabelText("Finance summary");
-    expectKpi(summary, "Client-approved value (incl. GST)", 413_000_000);
-    expectKpi(summary, "GST included (18%)", 63_000_000);
-    expectKpi(summary, "Net approved revenue (excl. GST)", 350_000_000);
-    expectKpi(summary, "Reserved profit target (20%)", 70_000_000);
-    expectKpi(summary, "Project cost budget (80%)", 280_000_000);
-    expectKpi(summary, "Procurement expenses", 90_000_000);
-    expectKpi(summary, "Employee payments", 40_000_000);
-    expectKpi(summary, "Other project expenses", 17_000_000);
-    expectKpi(summary, "Overheads", 18_000_000);
-    expectKpi(summary, "Total recorded expenses", 165_000_000);
-    expectKpi(summary, "Remaining cost budget", 115_000_000);
-    expect(screen.getByRole("heading", { name: "₹41,30,000.00" })).toBeVisible();
-    const budgetFormula = screen.getByLabelText("Portfolio cost budget calculation");
-    expect(budgetFormula).toHaveTextContent(`Net revenue after GST${formatPaise(350_000_000)}`);
-    expect(budgetFormula).toHaveTextContent(`Reserved profit target (20%)${formatPaise(70_000_000)}`);
-    expect(budgetFormula).toHaveTextContent(`Recorded project expenses${formatPaise(165_000_000)}`);
-    expect(budgetFormula).toHaveTextContent(`Remaining cost budget${formatPaise(115_000_000)}`);
-    // The reserve and remaining budget are stated once, by the formula steps:
-    // the separate margin note and gauge repeated those same two figures.
+    // The portfolio ring already covers every approved project while only the
+    // first card page is loaded, proving it comes from the API summary.
+    expect(screen.getByText(formatPaise(413_000_000))).toBeVisible();
+    expect(screen.getByText(/GST is excluded and/)).toHaveTextContent(
+      `${formatPaise(63_000_000)} GST is excluded and ${formatPaise(70_000_000)} reserved as profit`
+    );
+    expectBreakdown("Procurement", 90_000_000);
+    expectBreakdown("Employee payments", 40_000_000);
+    expectBreakdown("Other expenses", 17_000_000);
+    expectBreakdown("Overheads", 18_000_000);
+    expectBreakdown("Recorded expenses", 165_000_000);
+    expectBreakdown("Approved cost budget", 280_000_000);
+    expect(screen.getByText("59%")).toBeVisible();
+    const gauge = screen.getByRole("figure");
+    expect(within(gauge).getByText(formatPaise(115_000_000))).toBeVisible();
+    expect(within(gauge).getByText("left to spend")).toBeVisible();
+    // The reserve and remaining budget are each stated once.
     expect(screen.queryByText(/target margin reserved/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/current margin/i)).not.toBeInTheDocument();
     expect(
@@ -328,15 +362,299 @@ describe("FinanceOverviewPage", () => {
 
     expect(await screen.findByRole("heading", { name: "Aurora Villa finance" })).toBeVisible();
     expect(screen.getByRole("heading", { name: "Budget detail" })).toBeVisible();
-    const calculation = screen.getByLabelText("Project cost budget calculation");
-    expect(calculation).toHaveTextContent(`Project cost budget${formatPaise(80_000_000)}`);
-    expect(calculation).toHaveTextContent(`Recorded project expenses${formatPaise(40_000_000)}`);
-    expect(calculation).toHaveTextContent(`Remaining cost budget${formatPaise(40_000_000)}`);
-    expectKpi(screen.getByLabelText("Finance summary"), "Reserved profit target (20%)", 20_000_000);
+    expect(screen.getByRole("img", { name: /Cost budget consumed/ }))
+      .toHaveAccessibleName(new RegExp(`of a ${escapeForRegExp(formatPaise(80_000_000))} cost budget`));
+    expect(screen.getByText("50%")).toBeVisible();
+    const gauge = screen.getByRole("figure");
+    expect(within(gauge).getByText(formatPaise(40_000_000))).toBeVisible();
+    expect(within(gauge).getByText("left to spend")).toBeVisible();
+    expectBreakdown("Approved cost budget", 80_000_000);
   });
 });
 
 describe("ProjectFinancePanel", () => {
+  it("shows Estimate lineage, previews authenticated receipt images, and preserves legacy document state", async () => {
+    installFinanceSession();
+    const createObjectUrl = vi.fn(() => "blob:authenticated-procurement-receipt");
+    const revokeObjectUrl = vi.fn();
+    Object.defineProperty(URL, "createObjectURL", {
+      configurable: true,
+      value: createObjectUrl
+    });
+    Object.defineProperty(URL, "revokeObjectURL", {
+      configurable: true,
+      value: revokeObjectUrl
+    });
+    const receiptEntry: FinanceLedgerEntry = {
+      id: "finance-entry-receipt",
+      bucketId: baseBucket.id,
+      projectId: baseBucket.projectId,
+      type: "direct_spend",
+      expenseClass: "procurement",
+      category: "Carpentry",
+      amountPaise: 125_000,
+      incurredAt: "2026-08-25T00:00:00.000Z",
+      description: "Living room wardrobe plywood",
+      vendor: "Timber House",
+      reference: "INV-125",
+      sourceSectionId: "CA",
+      sourceLineItemKey: "living-room:CA01",
+      sourceSectionLabel: "Carpentry",
+      sourceLineItemLabel: "Wardrobe plywood and laminate · Living Room",
+      supportingDocument: {
+        id: "document-receipt",
+        originalFilename: "wardrobe-receipt.png",
+        mimeType: "image/png",
+        sizeBytes: 2_048,
+        createdAt: "2026-08-26T09:00:00.000Z"
+      },
+      idempotencyKey: "procurement-one",
+      status: "posted",
+      version: 1,
+      createdById: "procurement-user",
+      voidedAt: null,
+      voidedById: null,
+      voidReason: null,
+      createdAt: "2026-08-26T09:00:00.000Z",
+      updatedAt: "2026-08-26T09:00:00.000Z"
+    };
+    const legacyEntry: FinanceLedgerEntry = {
+      ...receiptEntry,
+      id: "finance-entry-legacy",
+      category: "Legacy procurement",
+      amountPaise: 25_000,
+      sourceLineItemKey: "legacy-estimate-line:estimate-one:1:6",
+      sourceLineItemLabel: null,
+      supportingDocument: null,
+      idempotencyKey: "procurement-legacy"
+    };
+    let documentRequests = 0;
+    server.use(
+      http.get("/api/v1/finance/projects/project-one", () =>
+        HttpResponse.json({ data: baseBucket })
+      ),
+      http.get("/api/v1/finance/projects/project-one/entries", () =>
+        HttpResponse.json({
+          data: {
+            items: [receiptEntry, legacyEntry],
+            pagination: { limit: 100, offset: 0, total: 2, hasMore: false }
+          }
+        })
+      ),
+      http.get(
+        "/api/v1/finance/projects/project-one/entries/finance-entry-receipt/document",
+        () => {
+          documentRequests += 1;
+          return new HttpResponse(new Blob(["image"], { type: "image/png" }), {
+            headers: {
+              "Content-Type": "image/png",
+              "Content-Disposition": "inline; filename=wardrobe-receipt.png"
+            }
+          });
+        }
+      )
+    );
+    const user = userEvent.setup();
+
+    renderApp(["/finance/projects/project-one"]);
+
+    expect(await screen.findByText("wardrobe-receipt.png")).toBeVisible();
+    const lineage = screen.getAllByLabelText("Approved Estimate source");
+    expect(lineage[0]).toHaveTextContent(
+      "Estimate sectionCarpentryEstimate itemWardrobe plywood and laminate · Living Room"
+    );
+    // No ledger row may leak an internal identifier into the UI.
+    expect(lineage[0]).not.toHaveTextContent("CA01");
+    expect(lineage[1]).toHaveTextContent(
+      "Estimate sectionCarpentryEstimate itemNo longer in the approved Estimate"
+    );
+    expect(lineage[1]).not.toHaveTextContent("legacy-estimate-line");
+    expect(screen.getByText("No supporting document")).toBeVisible();
+    await user.click(screen.getByRole("button", {
+      name: "Preview receipt wardrobe-receipt.png"
+    }));
+
+    const preview = await screen.findByRole("dialog", {
+      name: "Receipt: wardrobe-receipt.png"
+    });
+    const image = within(preview).getByRole("img", {
+      name: "Receipt wardrobe-receipt.png"
+    });
+    expect(image).toHaveAttribute("src", "blob:authenticated-procurement-receipt");
+    expect(createObjectUrl).toHaveBeenCalledTimes(1);
+    expect(documentRequests).toBe(1);
+    await user.click(within(preview).getByRole("button", {
+      name: "Close Receipt: wardrobe-receipt.png"
+    }));
+    await waitFor(() => expect(revokeObjectUrl).toHaveBeenCalledWith(
+      "blob:authenticated-procurement-receipt"
+    ));
+  });
+
+  it("loads supporting documents beyond the first 100 ledger rows without duplicating shifted rows", async () => {
+    installFinanceSession();
+    const firstPage = Array.from({ length: 100 }, (_, index) =>
+      financeEntry(`page-one-${index + 1}`)
+    );
+    const finalEntry = financeEntry("page-two-receipt", {
+      expenseClass: "procurement",
+      category: "Late-page carpentry receipt",
+      sourceSectionId: "CA",
+      sourceLineItemKey: "living-room::CA99",
+      sourceSectionLabel: "Carpentry",
+      sourceLineItemLabel: "Late-page wardrobe shutter · Living Room",
+      supportingDocument: {
+        id: "late-page-document",
+        originalFilename: "late-page-receipt.webp",
+        mimeType: "image/webp",
+        sizeBytes: 4_096,
+        createdAt: "2026-08-26T09:00:00.000Z"
+      }
+    });
+    const requestedOffsets: number[] = [];
+    let releaseNextPage: () => void = () => undefined;
+    const nextPageGate = new Promise<void>((resolve) => {
+      releaseNextPage = resolve;
+    });
+    server.use(
+      http.get("/api/v1/finance/projects/project-one", () =>
+        HttpResponse.json({ data: baseBucket })
+      ),
+      http.get("/api/v1/finance/projects/project-one/entries", async ({ request }) => {
+        const offset = Number(new URL(request.url).searchParams.get("offset"));
+        requestedOffsets.push(offset);
+        if (offset === 100) await nextPageGate;
+        return HttpResponse.json({
+          data: offset === 0
+            ? {
+                items: firstPage,
+                pagination: { limit: 100, offset: 0, total: 101, hasMore: true }
+              }
+            : {
+                // A concurrent insert can shift an offset boundary. The UI must
+                // keep the repeated row once while still exposing the new receipt.
+                items: [firstPage[99], finalEntry],
+                pagination: { limit: 100, offset: 100, total: 101, hasMore: false }
+              }
+        });
+      })
+    );
+    const user = userEvent.setup();
+
+    renderApp(["/finance/projects/project-one"]);
+
+    expect(await screen.findByText("100 of 101 entries")).toBeVisible();
+    expect(screen.queryByText("late-page-receipt.webp")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Load more ledger entries" }));
+    expect(await screen.findByRole("status", { name: "" })).toHaveTextContent(
+      "Loading more ledger entries"
+    );
+    releaseNextPage();
+
+    expect(await screen.findByText("late-page-receipt.webp")).toBeVisible();
+    expect(screen.getByText("101 entries")).toBeVisible();
+    expect(screen.getAllByText("Ledger item page-one-100")).toHaveLength(1);
+    expect(screen.getByText("All available ledger entries loaded.")).toBeVisible();
+    expect(requestedOffsets).toEqual([0, 100]);
+  });
+
+  it("offers an accessible retry when a later ledger page fails", async () => {
+    installFinanceSession();
+    let laterPageAttempts = 0;
+    server.use(
+      http.get("/api/v1/finance/projects/project-one", () =>
+        HttpResponse.json({ data: baseBucket })
+      ),
+      http.get("/api/v1/finance/projects/project-one/entries", ({ request }) => {
+        const offset = Number(new URL(request.url).searchParams.get("offset"));
+        if (offset === 0) {
+          return HttpResponse.json({
+            data: {
+              items: [financeEntry("first-page")],
+              pagination: { limit: 100, offset: 0, total: 2, hasMore: true }
+            }
+          });
+        }
+        laterPageAttempts += 1;
+        if (laterPageAttempts === 1) {
+          return HttpResponse.json(
+            { error: { code: "LEDGER_UNAVAILABLE", message: "Ledger unavailable." } },
+            { status: 503 }
+          );
+        }
+        return HttpResponse.json({
+          data: {
+            items: [financeEntry("second-page")],
+            pagination: { limit: 100, offset: 100, total: 2, hasMore: false }
+          }
+        });
+      })
+    );
+    const user = userEvent.setup();
+
+    renderApp(["/finance/projects/project-one"]);
+
+    await user.click(await screen.findByRole("button", { name: "Load more ledger entries" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "More ledger entries could not be loaded."
+    );
+    await user.click(screen.getByRole("button", { name: "Retry loading more entries" }));
+
+    expect(await screen.findByText("Ledger item second-page")).toBeVisible();
+    expect(screen.getByText("All available ledger entries loaded.")).toBeVisible();
+    expect(laterPageAttempts).toBe(2);
+  });
+
+  it("charts an over-budget project against its cost-budget threshold", async () => {
+    installFinanceSession();
+    server.use(
+      http.get("/api/v1/finance/projects/project-one", () =>
+        HttpResponse.json({
+          data: { ...overBudgetBucket, id: baseBucket.id, projectId: "project-one" }
+        })
+      ),
+      http.get("/api/v1/finance/projects/project-one/entries", () =>
+        HttpResponse.json({
+          data: { items: [], pagination: { limit: 100, offset: 0, total: 0, hasMore: false } }
+        })
+      )
+    );
+
+    renderApp(["/finance/projects/project-one"]);
+
+    expect(await screen.findByText("113%")).toBeVisible();
+    const gauge = screen.getByRole("figure");
+    expect(within(gauge).getByText(formatPaise(5_000_000))).toBeVisible();
+    expect(within(gauge).getByText("over the cost budget")).toBeVisible();
+    expect(within(gauge).queryByText("left to spend")).not.toBeInTheDocument();
+    expect(screen.getByRole("img", { name: /Cost budget consumed: Procurement/ })).toBeVisible();
+    expectBreakdown("Recorded expenses", 45_000_000);
+    expectBreakdown("Approved cost budget", 40_000_000);
+  });
+
+  it("keeps a valid approved baseline visible when the spending ledger fails", async () => {
+    installFinanceSession();
+    server.use(
+      http.get("/api/v1/finance/projects/project-one", () =>
+        HttpResponse.json({ data: baseBucket })
+      ),
+      http.get("/api/v1/finance/projects/project-one/entries", () =>
+        HttpResponse.json(
+          { error: { code: "LEDGER_UNAVAILABLE", message: "Ledger unavailable." } },
+          { status: 503 }
+        )
+      )
+    );
+
+    renderApp(["/finance/projects/project-one"]);
+
+    expect(await screen.findByRole("heading", { name: "Aurora Villa finance" })).toBeVisible();
+    expectBreakdown("Approved cost budget", 80_000_000);
+    expect(screen.getByText(/ledger could not be loaded/i)).toBeVisible();
+    expect(screen.getByText(/approved financial baseline remains available above/i)).toBeVisible();
+    expect(screen.queryByRole("heading", { name: "Record project cost" })).not.toBeInTheDocument();
+  });
+
   it("reuses the same idempotency key when a committed request fails at the network boundary and is retried unchanged", async () => {
     installFinanceSession();
     const attempts: Array<Record<string, unknown>> = [];
@@ -380,7 +698,7 @@ describe("ProjectFinancePanel", () => {
     expect(attempts[1]?.idempotencyKey).toBe(attempts[0]?.idempotencyKey);
   });
 
-  it("records direct costs with an explicit procurement, employee, or other expense class", async () => {
+  it("records generic direct costs as employee payments or other expenses, never procurement", async () => {
     installFinanceSession();
     let submitted: Record<string, unknown> | null = null;
     server.use(
@@ -404,8 +722,8 @@ describe("ProjectFinancePanel", () => {
 
     renderApp(["/finance/projects/project-one"]);
 
-    expect(await screen.findByLabelText(requiredLabel("Expense class"))).toHaveValue("procurement");
-    await user.selectOptions(screen.getByLabelText(requiredLabel("Expense class")), "employee_payment");
+    expect(await screen.findByLabelText(requiredLabel("Expense class"))).toHaveValue("employee_payment");
+    expect(screen.queryByRole("option", { name: "Procurement cost" })).not.toBeInTheDocument();
     await user.type(screen.getByLabelText(requiredLabel("Category")), "Installation crew");
     await user.type(screen.getByLabelText(requiredLabel("Amount (INR)")), "2500");
     await user.type(screen.getByLabelText(requiredLabel("Description")), "Weekly electrician payment");
@@ -472,6 +790,10 @@ describe("ProjectFinancePanel", () => {
           vendor: "Lisno Site Team",
           reference: "OH-001",
           sourceSectionId: null,
+          sourceLineItemKey: null,
+          sourceSectionLabel: null,
+          sourceLineItemLabel: null,
+          supportingDocument: null,
           idempotencyKey: String(submitted.idempotencyKey),
           status: "posted",
           version: 1,
@@ -498,16 +820,14 @@ describe("ProjectFinancePanel", () => {
 
     expect(await screen.findByRole("heading", { name: "Aurora Villa finance" })).toBeVisible();
     expect(await screen.findByText("No project costs have been recorded.")).toBeVisible();
-    const budgetCalculation = screen.getByLabelText("Project cost budget calculation");
-    expect(budgetCalculation).toHaveTextContent(`Project cost budget${formatPaise(80_000_000)}`);
-    expect(budgetCalculation).toHaveTextContent(`Recorded project expenses${formatPaise(40_000_000)}`);
-    expect(budgetCalculation).toHaveTextContent(`Remaining cost budget${formatPaise(40_000_000)}`);
-    expect(screen.getByText("20.00% target margin reserved")).toBeVisible();
-    const initialSummary = screen.getByLabelText("Finance summary");
-    expectKpi(initialSummary, "Reserved profit target (20%)", 20_000_000);
-    expectKpi(initialSummary, "Total recorded expenses", 40_000_000);
+    expect(screen.getByText(/is reserved as profit/)).toHaveTextContent(
+      `${formatPaise(20_000_000)}) is reserved as profit, leaving ${formatPaise(80_000_000)}`
+    );
+    expect(screen.getByText("50%")).toBeVisible();
+    expectBreakdown("Recorded expenses", 40_000_000);
+    expectBreakdown("Approved cost budget", 80_000_000);
     expect(screen.queryByText(/current profit|current margin/i)).not.toBeInTheDocument();
-    expect(screen.getByLabelText(requiredLabel("Expense class"))).toHaveValue("procurement");
+    expect(screen.getByLabelText(requiredLabel("Expense class"))).toHaveValue("employee_payment");
     await user.selectOptions(screen.getByLabelText(requiredLabel("Cost type")), "overhead");
     expect(screen.queryByLabelText(requiredLabel("Expense class"))).not.toBeInTheDocument();
     await user.type(screen.getByLabelText(requiredLabel("Category")), "Site supervision");
@@ -545,9 +865,8 @@ describe("ProjectFinancePanel", () => {
     expect(within(ledgerEntry).getByText("Lisno Site Team · OH-001")).toBeVisible();
     expect(screen.queryByText("No project costs have been recorded.")).not.toBeInTheDocument();
 
-    const summary = screen.getByLabelText("Finance summary");
-    expectKpi(summary, "Overheads", 5_012_345);
-    expectKpi(summary, "Remaining cost budget", 39_987_655);
+    expectBreakdown("Overheads", 5_012_345);
+    expectBreakdown("Recorded expenses", 40_012_345);
     expect(screen.getByLabelText(requiredLabel("Category"))).toHaveValue("");
     expect(screen.getByLabelText(requiredLabel("Amount (INR)"))).toHaveValue(null);
   });

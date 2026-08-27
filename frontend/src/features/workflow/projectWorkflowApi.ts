@@ -3,6 +3,7 @@ import type {
   DesignPlanReviewTask,
   DesignPlanTask,
   DesignerAssignmentOption,
+  ProjectWorkflowSectionAssignment,
   ProjectWorkflowTask,
   WorkerAssignmentOption
 } from "../../api/types";
@@ -16,7 +17,9 @@ export const projectWorkflowKeys = {
   operational: ["project-workflow", "operational"] as const,
   workers: ["project-workflow", "workers"] as const,
   projectTasks: (projectId: string) =>
-    ["project-workflow", "project-tasks", projectId] as const
+    ["project-workflow", "project-tasks", projectId] as const,
+  sectionAssignments: (projectId: string) =>
+    ["project-workflow", "section-assignments", projectId] as const
 };
 
 export const getDesignerPlanTasks = () =>
@@ -91,6 +94,11 @@ export const getAdminProjectWorkflowTasks = (projectId: string) =>
     `/admin/projects/${encodeURIComponent(projectId)}/workflow-tasks`
   );
 
+export const getAdminProjectSectionAssignments = (projectId: string) =>
+  apiClient.get<ProjectWorkflowSectionAssignment[]>(
+    `/admin/projects/${encodeURIComponent(projectId)}/section-assignments`
+  );
+
 export const overrideWorkerAssignment = (input: {
   projectId: string;
   taskId: string;
@@ -98,5 +106,17 @@ export const overrideWorkerAssignment = (input: {
   workerId: string | null;
 }) => apiClient.post<ProjectWorkflowTask>(
   "/execution/worker-assignments/override",
+  input
+);
+
+export const overrideSectionWorkerAssignment = (input: {
+  projectId: string;
+  estimateId: string;
+  designPlanVersion: number;
+  sourceSectionId: string;
+  expectedRevision: string;
+  workerId: string | null;
+}) => apiClient.post<ProjectWorkflowSectionAssignment>(
+  "/execution/section-worker-assignments/override",
   input
 );

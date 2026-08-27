@@ -8,7 +8,7 @@ beforeEach(() => vi.stubGlobal("PointerEvent", MouseEvent));
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe("MapViewport", () => {
-  it("offers map-style focal zoom controls without a pan mode", async () => {
+  it("offers button-only zoom controls without a pan mode", async () => {
     const user = userEvent.setup();
     render(<MapViewport ariaLabel="Plan page">{(view) => <div data-testid="view">{JSON.stringify(view)}</div>}</MapViewport>);
     const surface = screen.getByTestId("map-viewport-surface");
@@ -18,9 +18,10 @@ describe("MapViewport", () => {
     await user.click(screen.getByRole("button", { name: "Zoom in" }));
     expect(screen.getByTestId("view")).toHaveTextContent('"scale":1.25');
     fireEvent.wheel(surface, { deltaY: -100, clientX: 200, clientY: 150 });
-    expect(screen.getByTestId("view").textContent).toContain('"scale":1.5');
     fireEvent.doubleClick(surface, { clientX: 400, clientY: 300 });
-    expect(screen.getByTestId("view").textContent).toContain('"scale":2');
+    expect(screen.getByTestId("view").textContent).toContain('"scale":1.25');
+    await user.click(screen.getByRole("button", { name: "Zoom out" }));
+    expect(screen.getByTestId("view")).toHaveTextContent('"scale":1');
     await user.click(screen.getByRole("button", { name: "Reset view" }));
     expect(screen.getByTestId("view")).toHaveTextContent('{"scale":1,"translateX":0,"translateY":0}');
     expect(screen.getByRole("status")).toHaveTextContent("100% zoom");
@@ -40,9 +41,9 @@ describe("MapViewport", () => {
   it("clamps scale between 0.5 and 8", () => {
     render(<MapViewport ariaLabel="Plan page">{(view) => <div data-testid="view">{view.scale}</div>}</MapViewport>);
     const surface = screen.getByTestId("map-viewport-surface");
-    for (let index = 0; index < 40; index += 1) fireEvent.wheel(surface, { deltaY: -100, clientX: 0, clientY: 0 });
+    for (let index = 0; index < 40; index += 1) fireEvent.click(screen.getByRole("button", { name: "Zoom in" }));
     expect(screen.getByTestId("view")).toHaveTextContent("8");
-    for (let index = 0; index < 40; index += 1) fireEvent.wheel(surface, { deltaY: 100, clientX: 0, clientY: 0 });
+    for (let index = 0; index < 40; index += 1) fireEvent.click(screen.getByRole("button", { name: "Zoom out" }));
     expect(screen.getByTestId("view")).toHaveTextContent("0.5");
   });
 });

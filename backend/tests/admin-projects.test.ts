@@ -135,8 +135,18 @@ describe("Admin-initiated projects", () => {
       .expect(200);
     expect(reactivatedInitiator.body.data.estimate).toEqual({
       id: "estimate-admin-round",
+      leadId: "lead-admin-round",
+      projectId: "project-aurora-villa",
+      resolvedProjectId: "project-aurora-villa",
+      projectLinkSource: "estimate_and_lead",
+      version: 1,
       status: "sent_to_client",
+      subtotal: 1_180_000,
+      gst: 0,
       total: 1_180_000,
+      clientDecisionAt: null,
+      clientDecisionSource: null,
+      approvedBaseline: null,
       clientReview: safeRound,
       hasPendingClientResponseTask: false,
       designPlanStatus: null,
@@ -153,8 +163,18 @@ describe("Admin-initiated projects", () => {
       .expect(200);
     expect(superAdmin.body.data.estimate).toEqual({
       id: "estimate-admin-round",
+      leadId: "lead-admin-round",
+      projectId: "project-aurora-villa",
+      resolvedProjectId: "project-aurora-villa",
+      projectLinkSource: "estimate_and_lead",
+      version: 1,
       status: "sent_to_client",
+      subtotal: 1_180_000,
+      gst: 0,
       total: 1_180_000,
+      clientDecisionAt: null,
+      clientDecisionSource: null,
+      approvedBaseline: null,
       clientReview: safeRound,
       hasPendingClientResponseTask: true,
       designPlanStatus: null,
@@ -225,6 +245,215 @@ describe("Admin-initiated projects", () => {
         hasPendingClientResponseTask: false
       });
     }
+  });
+
+  it("returns deterministic approved Estimate lineage for Lead-only and direct-only projects", async () => {
+    const seed = structuredClone(demoSeedData);
+    seed.projects = seed.projects.filter(({ id }) =>
+      ["project-aurora-villa", "project-aurora-studio"].includes(id)
+    );
+    seed.leads = [{
+      id: "lead-approved-legacy",
+      ownerId: "user-estimator-sales",
+      projectId: "project-aurora-villa",
+      clientName: "Rhea Kapoor",
+      clientEmail: "client@aurora.example",
+      clientMobile: "+91 90000 00000",
+      projectName: "Aurora Villa",
+      location: "Bengaluru",
+      propertyType: "villa",
+      budgetMin: 200_000,
+      budgetMax: 300_000,
+      source: "legacy",
+      stage: "won",
+      nextAction: "Assign Designer",
+      nextActionAt: "2026-08-27T10:00:00.000Z",
+      builder: null,
+      areaSqft: null,
+      targetHandoverAt: null,
+      notes: null,
+      latestActivityAt: null,
+      createdAt: "2026-08-20T10:00:00.000Z",
+      updatedAt: "2026-08-26T10:00:00.000Z"
+    }];
+    seed.estimateSummaries = [
+      {
+        id: "estimate-approved-lead-only",
+        leadId: "lead-approved-legacy",
+        projectId: null,
+        version: 5,
+        status: "client_approved",
+        subtotal: 236_190,
+        gst: 42_514,
+        total: 278_704,
+        clientDecisionAt: "2026-08-26T09:00:00.000Z",
+        clientDecisionSource: "admin_proof",
+        approvedBaseline: {
+          estimateVersion: 4,
+          reviewRoundId: "round-approved-lead-only",
+          subtotal: 236_190,
+          gst: 42_514,
+          total: 278_704,
+          decisionAt: "2026-08-26T09:00:00.000Z",
+          decisionSource: "admin_proof"
+        },
+        clientReview: null,
+        assignedAdminId: "user-super-admin",
+        designPlanStatus: "pending_assignment",
+        designPlanVersion: 0,
+        designPlanDesignerId: null,
+        createdAt: "2026-08-20T10:00:00.000Z",
+        updatedAt: "2026-08-26T09:00:00.000Z"
+      },
+      {
+        id: "estimate-approved-direct-only",
+        leadId: "lead-not-migrated",
+        projectId: "project-aurora-studio",
+        version: 8,
+        status: "client_approved",
+        subtotal: 500_000,
+        gst: 90_000,
+        total: 590_000,
+        clientDecisionAt: "2026-08-25T09:00:00.000Z",
+        clientDecisionSource: "client_portal",
+        approvedBaseline: {
+          estimateVersion: 7,
+          reviewRoundId: "round-approved-direct-only",
+          subtotal: 500_000,
+          gst: 90_000,
+          total: 590_000,
+          decisionAt: "2026-08-25T09:00:00.000Z",
+          decisionSource: "client_portal"
+        },
+        clientReview: null,
+        assignedAdminId: null,
+        designPlanStatus: "assigned",
+        designPlanVersion: 0,
+        designPlanDesignerId: null,
+        createdAt: "2026-08-19T10:00:00.000Z",
+        updatedAt: "2026-08-25T09:00:00.000Z"
+      }
+    ];
+    const app = createApp({ repository: createMemoryRepository(seed), auth, clock });
+
+    const legacy = await request(app)
+      .get("/api/v1/admin/projects/project-aurora-villa")
+      .set("Authorization", bearer("user-super-admin", "super_admin"))
+      .expect(200);
+    expect(legacy.body.data.estimate).toMatchObject({
+      id: "estimate-approved-lead-only",
+      leadId: "lead-approved-legacy",
+      projectId: null,
+      resolvedProjectId: "project-aurora-villa",
+      projectLinkSource: "lead",
+      version: 5,
+      subtotal: 236_190,
+      gst: 42_514,
+      total: 278_704,
+      clientDecisionAt: "2026-08-26T09:00:00.000Z",
+      clientDecisionSource: "admin_proof",
+      approvedBaseline: {
+        estimateVersion: 4,
+        reviewRoundId: "round-approved-lead-only",
+        subtotal: 236_190,
+        gst: 42_514,
+        total: 278_704,
+        decisionAt: "2026-08-26T09:00:00.000Z",
+        decisionSource: "admin_proof"
+      }
+    });
+
+    const direct = await request(app)
+      .get("/api/v1/admin/projects/project-aurora-studio")
+      .set("Authorization", bearer("user-super-admin", "super_admin"))
+      .expect(200);
+    expect(direct.body.data).toMatchObject({
+      lead: null,
+      estimate: {
+        id: "estimate-approved-direct-only",
+        leadId: "lead-not-migrated",
+        projectId: "project-aurora-studio",
+        resolvedProjectId: "project-aurora-studio",
+        projectLinkSource: "estimate",
+        version: 8,
+        subtotal: 500_000,
+        gst: 90_000,
+        total: 590_000,
+        clientDecisionAt: "2026-08-25T09:00:00.000Z",
+        clientDecisionSource: "client_portal",
+        approvedBaseline: {
+          estimateVersion: 7,
+          reviewRoundId: "round-approved-direct-only",
+          subtotal: 500_000,
+          gst: 90_000,
+          total: 590_000,
+          decisionAt: "2026-08-25T09:00:00.000Z",
+          decisionSource: "client_portal"
+        }
+      }
+    });
+  });
+
+  it("rejects an Admin project whose approved Estimate and Lead resolve to different projects", async () => {
+    const seed = structuredClone(demoSeedData);
+    seed.projects = seed.projects.filter(({ id }) =>
+      ["project-aurora-villa", "project-aurora-studio"].includes(id)
+    );
+    seed.leads = [{
+      id: "lead-conflicting-project",
+      ownerId: "user-estimator-sales",
+      projectId: "project-aurora-villa",
+      clientName: "Rhea Kapoor",
+      clientEmail: "client@aurora.example",
+      clientMobile: "+91 90000 00000",
+      projectName: "Aurora Villa",
+      location: "Bengaluru",
+      propertyType: "villa",
+      budgetMin: null,
+      budgetMax: null,
+      source: "legacy",
+      stage: "won",
+      nextAction: "Assign Designer",
+      nextActionAt: "2026-08-27T10:00:00.000Z",
+      builder: null,
+      areaSqft: null,
+      targetHandoverAt: null,
+      notes: null,
+      latestActivityAt: null,
+      createdAt: "2026-08-20T10:00:00.000Z",
+      updatedAt: "2026-08-26T10:00:00.000Z"
+    }];
+    seed.estimateSummaries = [{
+      id: "estimate-conflicting-project",
+      leadId: "lead-conflicting-project",
+      projectId: "project-aurora-studio",
+      version: 3,
+      status: "client_approved",
+      subtotal: 100_000,
+      gst: 18_000,
+      total: 118_000,
+      clientDecisionAt: "2026-08-26T09:00:00.000Z",
+      clientDecisionSource: "client_portal",
+      clientReview: null,
+      assignedAdminId: null,
+      designPlanStatus: "pending_assignment",
+      designPlanVersion: 0,
+      designPlanDesignerId: null,
+      createdAt: "2026-08-20T10:00:00.000Z",
+      updatedAt: "2026-08-26T09:00:00.000Z"
+    }];
+    const app = createApp({ repository: createMemoryRepository(seed), auth, clock });
+
+    const response = await request(app)
+      .get("/api/v1/admin/projects/project-aurora-studio")
+      .set("Authorization", bearer("user-super-admin", "super_admin"))
+      .expect(409);
+    expect(response.body).toEqual({
+      error: {
+        code: "FINANCE_ESTIMATE_PROJECT_LINK_CONFLICT",
+        message: "An approved Estimate is linked to different projects through its Estimate and Lead."
+      }
+    });
   });
 
   it("atomically initiates and returns the Admin-scoped project handoff", async () => {

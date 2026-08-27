@@ -28,6 +28,9 @@ const decisionStatePaths = [
 
 const estimateClientReviewLineItemSchema = new Schema(
   {
+    // Older immutable snapshots predate stable line-item ids. Procurement
+    // derives a deterministic, version-and-position-scoped identity for them.
+    id: { type: String, default: null, immutable: true },
     catalogueId: { type: String, required: true, immutable: true },
     roomName: { type: String, required: true, immutable: true },
     specification: { type: String, required: true, immutable: true },

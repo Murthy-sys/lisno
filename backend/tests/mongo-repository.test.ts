@@ -1400,7 +1400,15 @@ describe("Mongo repository contracts", () => {
     );
     const estimateQuery = yieldingRecordedQuery([{
       _id: "estimate-admin-page", leadId: "lead-admin-page",
-      projectId: "project-admin-page", status: "draft", total: 118000
+      projectId: "project-admin-page",
+      version: 4,
+      status: "draft",
+      subtotal: 100000,
+      gst: 18000,
+      total: 118000,
+      clientDecisionAt: null,
+      createdAt: new Date("2026-08-23T10:00:00.000Z"),
+      updatedAt: new Date("2026-08-24T10:00:00.000Z")
     }], "estimate-join", execution);
     const estimateFind = vi.spyOn(EstimateModel, "find").mockReturnValueOnce(
       estimateQuery as never
@@ -1443,8 +1451,18 @@ describe("Mongo repository contracts", () => {
         lead: expect.objectContaining({ id: "lead-admin-page" }),
         estimate: {
           id: "estimate-admin-page",
+          leadId: "lead-admin-page",
+          projectId: "project-admin-page",
+          resolvedProjectId: "project-admin-page",
+          projectLinkSource: "estimate_and_lead",
+          version: 4,
           status: "draft",
+          subtotal: 100000,
+          gst: 18000,
           total: 118000,
+          clientDecisionAt: null,
+          clientDecisionSource: null,
+          approvedBaseline: null,
           clientReview: {
             id: "round-admin-page",
             sendGeneration: 2,
@@ -1498,11 +1516,17 @@ describe("Mongo repository contracts", () => {
       _id: 1,
       leadId: 1,
       projectId: 1,
+      version: 1,
       status: 1,
+      subtotal: 1,
+      gst: 1,
       total: 1,
+      clientDecisionAt: 1,
       designPlanStatus: 1,
       designPlanVersion: 1,
-      designPlanDesignerId: 1
+      designPlanDesignerId: 1,
+      createdAt: 1,
+      updatedAt: 1
     });
     expect(roundFind).toHaveBeenCalledWith({
       estimateId: { $in: ["estimate-admin-page"] }
@@ -1517,7 +1541,11 @@ describe("Mongo repository contracts", () => {
       deliveryAttemptCount: 1,
       deliveredAt: 1,
       status: 1,
-      assignedAdminId: 1
+      assignedAdminId: 1,
+      decision: 1,
+      decisionSource: 1,
+      decidedAt: 1,
+      estimateSnapshot: 1
     });
     expect(roundQuery.sort).toHaveBeenCalledWith({
       estimateId: 1,

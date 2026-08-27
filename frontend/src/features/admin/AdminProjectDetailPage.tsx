@@ -18,6 +18,7 @@ import { adminProjectKeys, getAdminProject } from "./adminProjectsApi";
 import { DesignAssignmentPanel } from "./DesignAssignmentPanel";
 import { WorkerAssignmentPanel } from "./WorkerAssignmentPanel";
 import { ProjectFinancePanel } from "../finance/ProjectFinancePanel";
+import { ProjectWorkflowSnapshot } from "../finance/FinanceProjectWorkflowControl";
 
 const money = new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 });
 const dateTime = new Intl.DateTimeFormat("en-GB", { dateStyle: "medium", timeStyle: "short", timeZone: "UTC" });
@@ -70,6 +71,23 @@ export function AdminProjectDetailPage() {
 
   const nextAction = adminProjectNextAction(project);
   const assignmentPending = isDesignerAssignmentPending(project);
+  const estimateApproved = project.estimate?.status === "client_approved";
+  const approvedBaseline = estimateApproved
+    ? project.estimate?.approvedBaseline ?? null
+    : null;
+  const approvedFinanceSource = estimateApproved && project.estimate
+    ? approvedBaseline
+      ? {
+        projectId: project.estimate.resolvedProjectId,
+        projectName: project.name,
+        estimateId: project.estimate.id,
+        estimateVersion: approvedBaseline.estimateVersion,
+        approvedSubtotalPaise: rupeesToPaise(approvedBaseline.subtotal),
+        approvedGstPaise: rupeesToPaise(approvedBaseline.gst),
+        approvedContractTotalPaise: rupeesToPaise(approvedBaseline.total)
+      }
+      : null
+    : undefined;
 
   return (
     <section className="access-administration admin-project-detail" aria-labelledby="admin-project-detail-title">
@@ -88,22 +106,24 @@ export function AdminProjectDetailPage() {
       />
       <Surface as="section" className="admin-project-detail__surface" aria-label="Project details">
         <div className="admin-project-detail__grid">
-          <section><h2>Project</h2><dl><div><dt>Location</dt><dd>{project.location}</dd></div><div><dt>Property type</dt><dd>{project.propertyType ?? "Not captured"}</dd></div><div><dt>Budget</dt><dd>{project.budgetMin === null || project.budgetMax === null ? "Not captured" : `${money.format(project.budgetMin)} – ${money.format(project.budgetMax)}`}</dd></div></dl></section>
+          <section><h2>Project</h2><dl><div><dt>Location</dt><dd>{project.location}</dd></div><div><dt>Property type</dt><dd>{project.propertyType ?? "Not captured"}</dd></div><div><dt>Initial client budget range</dt><dd>{project.budgetMin === null || project.budgetMax === null ? "Not captured" : `${money.format(project.budgetMin)} – ${money.format(project.budgetMax)}`}</dd></div></dl></section>
           <section><h2>Client</h2><dl><div><dt>Name</dt><dd>{project.client.name}</dd></div><div><dt>Email</dt><dd>{project.client.email}</dd></div><div><dt>Mobile</dt><dd>{project.client.mobile}</dd></div></dl></section>
           <section><h2>Estimator/Sales</h2><dl><div><dt>Assigned to</dt><dd>{project.estimator?.name ?? "Unassigned handoff"}</dd></div>{project.estimator ? <div><dt>Email</dt><dd>{project.estimator.email}</dd></div> : null}</dl></section>
           <section><h2>Lead progress</h2>{project.lead ? <dl><div><dt>Stage</dt><dd>{formatWorkflowLabel(project.lead.stage)}</dd></div><div><dt>Next action</dt><dd>{nextAction}</dd></div><div><dt>Next action date</dt><dd><time dateTime={project.lead.nextActionAt}>{dateTime.format(new Date(project.lead.nextActionAt))}</time></dd></div></dl> : <p>Unassigned handoff</p>}</section>
-          <section><h2>Estimate</h2>{project.estimate ? <dl><div><dt>Status</dt><dd>{formatWorkflowLabel(project.estimate.status)}</dd></div><div><dt>Value</dt><dd>{money.format(project.estimate.total)}</dd></div></dl> : <p>No estimate yet</p>}</section>
+          <section><h2>Estimate</h2>{project.estimate ? <dl><div><dt>Status</dt><dd>{formatWorkflowLabel(project.estimate.status)}</dd></div><div><dt>{estimateApproved ? "Client-approved value (incl. GST)" : "Current estimate value (incl. GST)"}</dt><dd>{estimateApproved ? approvedBaseline ? money.format(approvedBaseline.total) : "Approved baseline unavailable" : money.format(project.estimate.total)}</dd></div>{approvedBaseline ? <div><dt>Approved estimate baseline</dt><dd>Version {approvedBaseline.estimateVersion}</dd></div> : null}</dl> : <p>No estimate yet</p>}</section>
         </div>
       </Surface>
-      <DesignAssignmentPanel project={project} />
-      {canAssignWorkers ? <WorkerAssignmentPanel project={project} /> : null}
       {canReadFinance ? (
         <ProjectFinancePanel
           projectId={project.id}
-          enabled={project.estimate?.designPlanStatus === "approved"}
-          title="Project finance"
+          enabled={estimateApproved}
+          title={`${project.name} finance`}
+          expectedSource={approvedFinanceSource}
         />
       ) : null}
+      {canAssignWorkers ? <ProjectWorkflowSnapshot project={project} /> : null}
+      <DesignAssignmentPanel project={project} />
+      {canAssignWorkers ? <WorkerAssignmentPanel project={project} /> : null}
       {project.estimate?.clientReview ? (
         <Surface
           as="section"
@@ -139,4 +159,9 @@ export function AdminProjectDetailPage() {
       ) : null}
     </section>
   );
+}
+
+function rupeesToPaise(value: number): number {
+  const paise = value * 100;
+  return Number.isSafeInteger(paise) && paise >= 0 ? paise : Number.NaN;
 }

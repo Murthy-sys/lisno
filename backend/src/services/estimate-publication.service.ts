@@ -8,6 +8,7 @@ import {
   type EstimateClientReviewSnapshot,
   type EstimateClientReviewSummary
 } from "../domain/estimate-client-review.js";
+import { approvedEstimateLineItemKey } from "../domain/estimate-line-item.js";
 import { normalizeEmail } from "../domain/email.js";
 import { ApiError } from "../middleware/errors.js";
 import { EstimateClientReviewRoundModel } from "../models/EstimateClientReviewRound.js";
@@ -454,7 +455,15 @@ function toEstimateSnapshot(
     projectName: lead.projectName,
     location: lead.location,
     propertyType: estimate.propertyType,
-    lineItems: estimate.lineItems.map((line) => ({ ...line })),
+    lineItems: estimate.lineItems.map((line, index) => ({
+      ...line,
+      id: approvedEstimateLineItemKey({
+        id: (line as { id?: unknown }).id,
+        estimateId: estimate._id,
+        estimateVersion: estimate.version,
+        index
+      })
+    })),
     subtotal: estimate.subtotal,
     gst: estimate.gst,
     total: estimate.total

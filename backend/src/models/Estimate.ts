@@ -1,7 +1,15 @@
+import { randomUUID } from "node:crypto";
+
 import { model, models, Schema } from "./mongoose.js";
 import { DESIGN_PLAN_STATUSES } from "../domain/project-workflow.js";
 
 const estimateLineSchema = new Schema({
+  id: {
+    type: String,
+    required: true,
+    immutable: true,
+    default: () => `estimate-line-${randomUUID()}`
+  },
   catalogueId: { type: String, required: true }, roomName: { type: String, required: true }, specification: { type: String, required: true },
   unit: { type: String, required: true }, rate: { type: Number, required: true }, quantity: { type: Number, required: true }, included: { type: Boolean, required: true }, amount: { type: Number, required: true }
 }, { _id: false });

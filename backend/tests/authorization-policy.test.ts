@@ -11,6 +11,7 @@ import {
 import {
   AUDIT_ACTIONS,
   EXISTING_AUDIT_ACTIONS,
+  PROCUREMENT_AUDIT_ACTIONS,
   PROMPT_1_AUDIT_ACTIONS
 } from "../src/domain/audit-actions.js";
 import { ROLE_CODES, WORKER_ROLES, type Role } from "../src/domain/roles.js";
@@ -81,6 +82,12 @@ const PROJECT_FINANCE_PERMISSIONS = [
   "finance.bucket.read",
   "finance.entry.read",
   "finance.entry.create"
+] as const;
+
+const PROCUREMENT_PERMISSIONS = [
+  "procurement.workspace.read",
+  "procurement.expense.create",
+  "procurement.document.read"
 ] as const;
 
 const COMMON_ROWS = [1, 85] as const;
@@ -179,6 +186,7 @@ describe("authorization policy", () => {
         (permission) =>
           !ESTIMATE_CLIENT_RESPONSE_PERMISSIONS.includes(permission as never) &&
           !PROJECT_WORKFLOW_PERMISSIONS.includes(permission as never) &&
+          !PROCUREMENT_PERMISSIONS.includes(permission as never) &&
           !PROJECT_FINANCE_PERMISSIONS.includes(permission as never)
       );
       if (role === "admin") {
@@ -199,8 +207,8 @@ describe("authorization policy", () => {
         permissionsForRows([...COMMON_ROWS, ...ADDITIONAL_ROWS[role]])
       );
     }
-    expect(PERMISSION_CODES).toHaveLength(110);
-    expect(new Set(PERMISSION_CODES).size).toBe(110);
+    expect(PERMISSION_CODES).toHaveLength(113);
+    expect(new Set(PERMISSION_CODES).size).toBe(113);
     expect(ROLE_PERMISSIONS.super_admin).toEqual(PERMISSION_CODES);
   });
 
@@ -300,7 +308,9 @@ describe("authorization policy", () => {
     ).toEqual([
       "GET /admin/workers",
       "GET /admin/projects/:projectId/workflow-tasks",
-      "POST /execution/worker-assignments/override"
+      "GET /admin/projects/:projectId/section-assignments",
+      "POST /execution/worker-assignments/override",
+      "POST /execution/section-worker-assignments/override"
     ]);
   });
 
@@ -312,6 +322,24 @@ describe("authorization policy", () => {
       expect(
         ROLE_PERMISSIONS[role].filter((permission) =>
           PROJECT_FINANCE_PERMISSIONS.includes(permission as never)
+        ),
+        role
+      ).toEqual(expected);
+    }
+  });
+
+  it("grants procurement workspace, expense, and document operations only to Procurement and Super Admin", () => {
+    const firstFinanceIndex = PERMISSION_CODES.indexOf("finance.bucket.read");
+    expect(PERMISSION_CODES.slice(firstFinanceIndex - 3, firstFinanceIndex)).toEqual(
+      PROCUREMENT_PERMISSIONS
+    );
+    for (const role of ROLE_CODES) {
+      const expected = role === "procurement" || role === "super_admin"
+        ? PROCUREMENT_PERMISSIONS
+        : [];
+      expect(
+        ROLE_PERMISSIONS[role].filter((permission) =>
+          PROCUREMENT_PERMISSIONS.includes(permission as never)
         ),
         role
       ).toEqual(expected);
@@ -330,5 +358,10 @@ describe("authorization policy", () => {
     expect(EXISTING_AUDIT_ACTIONS).toContain("estimate_designer_assigned");
     expect(AUDIT_ACTIONS).toContain("estimate_designer_assigned");
     expect(PROMPT_1_AUDIT_ACTIONS).toHaveLength(9);
+  });
+
+  it("registers the sanitized procurement expense audit action", () => {
+    expect(PROCUREMENT_AUDIT_ACTIONS).toEqual(["procurement_expense_recorded"]);
+    expect(AUDIT_ACTIONS).toContain("procurement_expense_recorded");
   });
 });

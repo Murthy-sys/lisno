@@ -7,6 +7,8 @@ import type {
 
 export type { Role } from "./authorization-contract";
 
+export type WorkflowAssignmentRole = WorkerRole | "procurement";
+
 export interface PublicUser {
   id: string;
   name: string;
@@ -337,8 +339,26 @@ export interface AdminProjectSummary {
   } | null;
   estimate: {
     id: string;
+    leadId: string;
+    projectId: string | null;
+    resolvedProjectId: string;
+    projectLinkSource: "estimate" | "lead" | "estimate_and_lead";
+    version: number;
     status: string;
+    subtotal: number;
+    gst: number;
     total: number;
+    clientDecisionAt: string | null;
+    clientDecisionSource: "client_portal" | "admin_proof" | null;
+    approvedBaseline: {
+      estimateVersion: number;
+      reviewRoundId: string | null;
+      subtotal: number;
+      gst: number;
+      total: number;
+      decisionAt: string | null;
+      decisionSource: "client_portal" | "admin_proof" | null;
+    } | null;
     designPlanStatus?: DesignPlanStatus | null;
     designPlanVersion?: number;
     designPlanDesigner?: { id: string; name: string; email: string } | null;
@@ -408,7 +428,7 @@ export interface ProjectWorkflowTask {
     id: string;
     name: string;
     email: string;
-    role: WorkerRole;
+    role: WorkflowAssignmentRole;
     active: boolean;
   } | null;
   sourceSectionId: string | null;
@@ -420,11 +440,36 @@ export interface ProjectWorkflowTask {
   updatedAt: string;
 }
 
+export interface ProjectWorkflowSectionAssignment {
+  id: string;
+  projectId: string;
+  projectName: string;
+  estimateId: string;
+  designPlanVersion: number;
+  sourceSectionId: string;
+  sectionLabel: string;
+  assigneeRole: WorkerRole;
+  assignedWorker: {
+    id: string;
+    name: string;
+    email: string;
+    role: WorkerRole;
+    active: boolean;
+  } | null;
+  assignmentState: "unassigned" | "assigned" | "mixed";
+  status: "open" | "in_progress" | "completed";
+  progress: number;
+  taskCount: number;
+  unfinishedTaskCount: number;
+  revision: string;
+  updatedAt: string;
+}
+
 export interface WorkerAssignmentOption {
   id: string;
   name: string;
   email: string;
-  role: WorkerRole;
+  role: WorkflowAssignmentRole;
 }
 
 export interface ProjectFinanceBucket {
@@ -505,6 +550,11 @@ export interface FinanceLedgerEntry {
   vendor: string | null;
   reference: string | null;
   sourceSectionId: string | null;
+  sourceLineItemKey: string | null;
+  /* Display names for the two identifiers above; render these, never the ids. */
+  sourceSectionLabel: string | null;
+  sourceLineItemLabel: string | null;
+  supportingDocument: SupportingDocumentSummary | null;
   idempotencyKey: string;
   status: "posted" | "voided";
   version: number;
@@ -514,6 +564,48 @@ export interface FinanceLedgerEntry {
   voidReason: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface SupportingDocumentSummary {
+  id: string;
+  originalFilename: string;
+  mimeType: "application/pdf" | "image/jpeg" | "image/png" | "image/webp";
+  sizeBytes: number;
+  createdAt: string;
+}
+
+export interface ProcurementEstimateItem {
+  key: string;
+  catalogueId: string;
+  roomName: string;
+  specification: string;
+  unit: string;
+  quantity: number;
+  estimatedAmountPaise: number;
+  actualSpendPaise: number;
+  expenses: FinanceLedgerEntry[];
+}
+
+export interface ProcurementEstimateSection {
+  id: string;
+  label: string;
+  estimatedAmountPaise: number;
+  actualSpendPaise: number;
+  items: ProcurementEstimateItem[];
+}
+
+export interface ProcurementProject {
+  taskId: string;
+  taskVersion: number;
+  taskStatus: "open" | "in_progress" | "completed";
+  taskProgress: number;
+  openedAt: string;
+  updatedAt: string;
+  projectId: string;
+  projectName: string;
+  estimateId: string;
+  estimateVersion: number;
+  sections: ProcurementEstimateSection[];
 }
 
 export interface PostFinanceEntryResult {

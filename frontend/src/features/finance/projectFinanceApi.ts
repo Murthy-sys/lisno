@@ -28,10 +28,17 @@ export const getProjectFinanceBucket = (projectId: string) =>
     `/finance/projects/${encodeURIComponent(projectId)}`
   );
 
-export const getProjectFinanceEntries = (projectId: string) =>
+export const getProjectFinanceEntries = (projectId: string, offset = 0) =>
   apiClient.get<PageData<FinanceLedgerEntry>>(
-    `/finance/projects/${encodeURIComponent(projectId)}/entries?limit=100&offset=0`
+    `/finance/projects/${encodeURIComponent(projectId)}/entries?limit=100&offset=${offset}`
   );
+
+export const getFinanceSupportingDocument = (
+  projectId: string,
+  entryId: string
+) => apiClient.getBlob(
+  `/finance/projects/${encodeURIComponent(projectId)}/entries/${encodeURIComponent(entryId)}/document`
+);
 
 type FinanceEntryBase = {
   category: string;
@@ -44,7 +51,7 @@ type FinanceEntryBase = {
 };
 
 export type PostProjectFinanceEntryInput = FinanceEntryBase & (
-  | { type: "direct_spend"; expenseClass: "procurement" | "employee_payment" | "other" }
+  | { type: "direct_spend"; expenseClass: "employee_payment" | "other" }
   | { type: "overhead"; expenseClass?: never }
 );
 

@@ -29,7 +29,7 @@ const LEAD_ID = "workflow-commercial-lead";
 function workerUser(
   id: string,
   name: string,
-  role: WorkerRole,
+  role: WorkerRole | "procurement",
   active = true
 ) {
   const email = `${id}@example.test`;
@@ -660,7 +660,7 @@ describe("Designer assignment and task access", () => {
         _id: estimateId,
         leadId,
         ownerId: "workflow-estimator",
-        projectId,
+        projectId: null,
         version: 4,
         designLifecycleVersion: 1,
         designFrozenAt: NOW,
@@ -752,6 +752,7 @@ describe("Designer assignment and task access", () => {
       ProjectWorkflowTaskModel.find({ projectId }).lean()
     ]);
     expect(estimate).toMatchObject({
+      projectId,
       designPlanStatus: "assigned",
       designPlanVersion: 0,
       designPlanDesignerId: designerId,
@@ -781,6 +782,7 @@ describe("Designer assignment and task access", () => {
         action: "design_plan_designer_assigned",
         oldValues: expect.objectContaining({
           designPlanStatus: undefined,
+          projectId: null,
           projectManagerId: "legacy-auto-manager",
           nextAction: "project kickoff"
         }),
@@ -1345,6 +1347,17 @@ describe("approved Design plan operational queues", () => {
     const revisionId = "workflow-approved-revision";
     await Promise.all([
       UserModel.create(workerUser(
+        "workflow-procurement",
+        "Priya Procurement",
+        "procurement"
+      )),
+      UserModel.create(workerUser(
+        "workflow-procurement-inactive",
+        "Inactive Procurement",
+        "procurement",
+        false
+      )),
+      UserModel.create(workerUser(
         "workflow-worker-carpenter",
         "Carla Carpenter",
         "worker_carpenter"
@@ -1370,6 +1383,28 @@ describe("approved Design plan operational queues", () => {
         "Elena Electrician",
         "worker_electrician"
       )),
+      ProjectWorkflowTaskModel.create({
+        _id: "workflow-legacy-carpentry-task",
+        dedupeKey: `${estimateId}:trade:Living%20Room%3A%3ACA01`,
+        projectId,
+        estimateId,
+        designPlanVersion: 1,
+        kind: "trade_execution",
+        title: "Carpentry · Living Room",
+        description: "CA01 · Legacy TV unit · 1 nos",
+        assigneeRole: "worker_carpenter",
+        assigneeUserId: null,
+        sourceSectionId: "CA",
+        sourceLineItemKey: "Living Room::CA01",
+        roomName: "Living Room",
+        status: "open",
+        progress: 0,
+        version: 1,
+        openedAt: NOW,
+        dueAt: new Date("2026-09-04T10:00:00.000Z"),
+        plannedEffort: 6,
+        completedAt: null
+      }),
       ProjectModel.create({
         _id: projectId,
         name: "Approved Design Residence",
@@ -1428,6 +1463,7 @@ describe("approved Design plan operational queues", () => {
         scopes: ["carpentry", "civil", "electrical", "painting"],
         lineItems: [
           {
+            id: "approved-line-ca-original",
             catalogueId: "CA01",
             roomName: "Living Room",
             specification: "TV unit",
@@ -1438,6 +1474,18 @@ describe("approved Design plan operational queues", () => {
             amount: 10_000
           },
           {
+            id: "approved-line-ca-duplicate",
+            catalogueId: "CA01",
+            roomName: "Living Room",
+            specification: "Display shelves",
+            unit: "nos",
+            rate: 10_000,
+            quantity: 1,
+            included: true,
+            amount: 10_000
+          },
+          {
+            id: "approved-line-cv",
             catalogueId: "CV02",
             roomName: "Bathroom",
             specification: "Shower fittings",
@@ -1448,6 +1496,7 @@ describe("approved Design plan operational queues", () => {
             amount: 20_000
           },
           {
+            id: "approved-line-el",
             catalogueId: "EL01",
             roomName: "Kitchen",
             specification: "Light points",
@@ -1458,6 +1507,7 @@ describe("approved Design plan operational queues", () => {
             amount: 2_000
           },
           {
+            id: "approved-line-pa-excluded",
             catalogueId: "PA01",
             roomName: "Excluded Room",
             specification: "Paint",
@@ -1468,9 +1518,9 @@ describe("approved Design plan operational queues", () => {
             amount: 0
           }
         ],
-        subtotal: 32_000,
-        gst: 5_760,
-        total: 37_760,
+        subtotal: 42_000,
+        gst: 7_560,
+        total: 49_560,
         approvalRequired: false,
         assignedManagerId: null,
         assignedDesignerId: null,
@@ -1639,12 +1689,12 @@ describe("approved Design plan operational queues", () => {
         estimateId,
         estimateVersion: 5,
         estimateReviewRoundId: null,
-        approvedSubtotalRupees: 32_000,
-        approvedGstRupees: 5_760,
-        approvedContractTotalRupees: 37_760
+        approvedSubtotalRupees: 42_000,
+        approvedGstRupees: 7_560,
+        approvedContractTotalRupees: 49_560
       }
     }, expect.anything());
-    expect(tasks).toHaveLength(6);
+    expect(tasks).toHaveLength(7);
     expect(tasks.map(({ kind, assigneeRole, sourceSectionId }) => ({
       kind,
       assigneeRole,
@@ -1660,11 +1710,14 @@ describe("approved Design plan operational queues", () => {
     expect(tasks).not.toEqual(expect.arrayContaining([
       expect.objectContaining({ assigneeRole: "worker_painter" })
     ]));
+    expect(tasks.filter((task) => task.sourceSectionId === "CA").map((task) =>
+      task.dedupeKey
+    )).toEqual(expect.arrayContaining([
+      `${estimateId}:trade:Living%20Room%3A%3ACA01`,
+      `${estimateId}:trade:approved-line-ca-duplicate`
+    ]));
 
-    for (const [role, expectedKind] of [
-      ["procurement", "procurement"],
-      ["finance_head", "finance"]
-    ] as const) {
+    for (const [role, expectedKind] of [["finance_head", "finance"]] as const) {
       const visible = await workflow.listOperationalTasks({
         id: `workflow-${role}`,
         name: role,
@@ -1698,6 +1751,12 @@ describe("approved Design plan operational queues", () => {
     }
 
     await expect(workflow.listAssignableWorkers(superAdmin)).resolves.toEqual([
+      {
+        id: "workflow-procurement",
+        name: "Priya Procurement",
+        email: "workflow-procurement@example.test",
+        role: "procurement"
+      },
       {
         id: "workflow-worker-carpenter",
         name: "Carla Carpenter",
@@ -1738,7 +1797,7 @@ describe("approved Design plan operational queues", () => {
       superAdmin,
       projectId
     );
-    expect(projectTasks).toHaveLength(6);
+    expect(projectTasks).toHaveLength(7);
     expect(projectTasks.filter(({ kind }) => kind === "trade_execution")).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -1755,6 +1814,53 @@ describe("approved Design plan operational queues", () => {
         })
       ])
     );
+    const procurementTask = projectTasks.find(({ kind }) => kind === "procurement")!;
+    const procurement = {
+      id: "workflow-procurement",
+      name: "Priya Procurement",
+      email: "workflow-procurement@example.test",
+      role: "procurement"
+    } as const;
+    await expect(workflow.listOperationalTasks(procurement)).resolves.toEqual([]);
+    await expect(workflow.overrideWorkerAssignment({
+      actor: superAdmin,
+      projectId,
+      taskId: procurementTask.id,
+      expectedVersion: procurementTask.version,
+      workerId: "workflow-worker-carpenter"
+    })).rejects.toMatchObject({ status: 400, code: "WORKER_NOT_ASSIGNABLE" });
+    const assignedProcurement = await workflow.overrideWorkerAssignment({
+      actor: superAdmin,
+      projectId,
+      taskId: procurementTask.id,
+      expectedVersion: procurementTask.version,
+      workerId: procurement.id
+    });
+    expect(assignedProcurement).toMatchObject({
+      version: 2,
+      assignedWorker: {
+        id: procurement.id,
+        role: "procurement",
+        active: true
+      }
+    });
+    await expect(workflow.listOperationalTasks(procurement)).resolves.toEqual([
+      expect.objectContaining({
+        id: procurementTask.id,
+        assignedWorker: expect.objectContaining({ id: procurement.id })
+      })
+    ]);
+    await expect(workflow.listOperationalTasks({
+      ...procurement,
+      id: "workflow-other-procurement"
+    })).resolves.toEqual([]);
+    await expect(workflow.overrideWorkerAssignment({
+      actor: superAdmin,
+      projectId,
+      taskId: procurementTask.id,
+      expectedVersion: procurementTask.version,
+      workerId: null
+    })).rejects.toMatchObject({ status: 409, code: "WORKFLOW_TASK_STALE" });
     await expect(
       workflow.listProjectWorkflowTasks(admin, projectId)
     ).rejects.toMatchObject({ status: 403, code: "FORBIDDEN" });
@@ -1766,7 +1872,7 @@ describe("approved Design plan operational queues", () => {
       role: "site_manager"
     } as const;
     const siteVisible = await workflow.listOperationalTasks(siteManager);
-    expect(siteVisible).toHaveLength(4);
+    expect(siteVisible).toHaveLength(5);
     expect(siteVisible).toEqual(expect.arrayContaining([
       expect.objectContaining({
         kind: "site_execution",
@@ -1962,7 +2068,7 @@ describe("approved Design plan operational queues", () => {
       status: 409,
       code: "DESIGN_PLAN_NOT_REVIEWABLE"
     });
-    expect(await ProjectWorkflowTaskModel.countDocuments()).toBe(6);
+    expect(await ProjectWorkflowTaskModel.countDocuments()).toBe(7);
     expect(await DesignPlanResponseProofModel.countDocuments({
       reviewRoundId: roundId
     })).toBe(1);
@@ -1988,6 +2094,324 @@ describe("approved Design plan operational queues", () => {
       }),
       expect.anything()
     );
+  });
+});
+
+describe("section-level worker assignment", () => {
+  it("groups mixed unfinished tasks and atomically assigns all unfinished members", async () => {
+    const fixture = await createSectionAssignmentFixture();
+    const audit = vi.fn(async () => ({ id: "audit-section-assignment" }));
+    const workflow = sectionAssignmentWorkflow(audit);
+
+    const [before] = await workflow.listProjectWorkflowSectionAssignments(
+      sectionSuperAdmin(),
+      fixture.projectId
+    );
+    expect(before).toMatchObject({
+      projectId: fixture.projectId,
+      projectName: "Section Assignment Residence",
+      estimateId: fixture.estimateId,
+      designPlanVersion: 3,
+      sourceSectionId: "CA",
+      sectionLabel: "Carpentry",
+      assigneeRole: "worker_carpenter",
+      assignedWorker: null,
+      assignmentState: "mixed",
+      status: "in_progress",
+      progress: 58,
+      taskCount: 3,
+      unfinishedTaskCount: 2,
+      revision: expect.stringMatching(/^[a-f0-9]{64}$/u)
+    });
+    await expect(workflow.overrideSectionWorkerAssignment({
+      actor: sectionSuperAdmin(),
+      projectId: fixture.projectId,
+      estimateId: fixture.estimateId,
+      designPlanVersion: 3,
+      sourceSectionId: "CA",
+      expectedRevision: before!.revision,
+      workerId: "section-worker-electrician"
+    })).rejects.toMatchObject({ status: 400, code: "WORKER_NOT_ASSIGNABLE" });
+    await expect(workflow.overrideSectionWorkerAssignment({
+      actor: sectionSuperAdmin(),
+      projectId: fixture.projectId,
+      estimateId: fixture.estimateId,
+      designPlanVersion: 3,
+      sourceSectionId: "CA",
+      expectedRevision: before!.revision,
+      workerId: fixture.inactiveWorkerId
+    })).rejects.toMatchObject({ status: 400, code: "WORKER_NOT_ASSIGNABLE" });
+
+    const after = await workflow.overrideSectionWorkerAssignment({
+      actor: sectionSuperAdmin(),
+      projectId: fixture.projectId,
+      estimateId: fixture.estimateId,
+      designPlanVersion: 3,
+      sourceSectionId: "CA",
+      expectedRevision: before!.revision,
+      workerId: fixture.nextWorkerId
+    });
+
+    expect(after).toMatchObject({
+      assignmentState: "assigned",
+      assignedWorker: {
+        id: fixture.nextWorkerId,
+        role: "worker_carpenter",
+        active: true
+      },
+      taskCount: 3,
+      unfinishedTaskCount: 2
+    });
+    expect(after.revision).not.toBe(before!.revision);
+    const tasks = await ProjectWorkflowTaskModel.find({
+      projectId: fixture.projectId,
+      kind: "trade_execution"
+    }).sort({ _id: 1 }).lean();
+    expect(tasks).toEqual([
+      expect.objectContaining({
+        _id: fixture.completedTaskId,
+        assigneeUserId: fixture.inactiveWorkerId,
+        status: "completed",
+        version: 3
+      }),
+      expect.objectContaining({
+        _id: fixture.openTaskId,
+        assigneeUserId: fixture.nextWorkerId,
+        version: 2
+      }),
+      expect.objectContaining({
+        _id: fixture.startedTaskId,
+        assigneeUserId: fixture.nextWorkerId,
+        version: 3
+      })
+    ]);
+    expect(audit).toHaveBeenCalledOnce();
+    expect(audit).toHaveBeenCalledWith(expect.objectContaining({
+      action: "project_workflow_section_assignee_changed",
+      entityType: "project_workflow_section",
+      oldValues: expect.objectContaining({
+        assignmentState: "mixed",
+        assigneeUserIds: [fixture.currentWorkerId],
+        revision: before!.revision
+      }),
+      newValues: expect.objectContaining({
+        assigneeUserId: fixture.nextWorkerId,
+        affectedTaskCount: 2,
+        revision: after.revision
+      })
+    }), expect.anything());
+  });
+
+  it("returns a no-op idempotently without changing versions or appending audit", async () => {
+    const fixture = await createSectionAssignmentFixture();
+    await ProjectWorkflowTaskModel.updateMany(
+      {
+        _id: { $in: [fixture.openTaskId, fixture.startedTaskId] }
+      },
+      { $set: { assigneeUserId: fixture.currentWorkerId } }
+    );
+    const audit = vi.fn(async () => ({ id: "unexpected-audit" }));
+    const workflow = sectionAssignmentWorkflow(audit);
+    const [before] = await workflow.listProjectWorkflowSectionAssignments(
+      sectionSuperAdmin(),
+      fixture.projectId
+    );
+
+    const result = await workflow.overrideSectionWorkerAssignment({
+      actor: sectionSuperAdmin(),
+      projectId: fixture.projectId,
+      estimateId: fixture.estimateId,
+      designPlanVersion: 3,
+      sourceSectionId: "CA",
+      expectedRevision: before!.revision,
+      workerId: fixture.currentWorkerId
+    });
+
+    expect(result).toMatchObject({
+      revision: before!.revision,
+      assignmentState: "assigned",
+      assignedWorker: { id: fixture.currentWorkerId, active: true }
+    });
+    expect(audit).not.toHaveBeenCalled();
+    expect(await ProjectWorkflowTaskModel.find({
+      _id: { $in: [fixture.openTaskId, fixture.startedTaskId] }
+    }).sort({ _id: 1 }).distinct("version")).toEqual([1, 2]);
+  });
+
+  it("rejects stale progress or membership revisions without partial writes", async () => {
+    const fixture = await createSectionAssignmentFixture();
+    const audit = vi.fn(async () => ({ id: "unexpected-audit" }));
+    const workflow = sectionAssignmentWorkflow(audit);
+    const [beforeProgress] = await workflow.listProjectWorkflowSectionAssignments(
+      sectionSuperAdmin(),
+      fixture.projectId
+    );
+    await ProjectWorkflowTaskModel.updateOne(
+      { _id: fixture.openTaskId },
+      { $set: { progress: 25, status: "in_progress" }, $inc: { version: 1 } }
+    );
+
+    await expect(workflow.overrideSectionWorkerAssignment({
+      actor: sectionSuperAdmin(),
+      projectId: fixture.projectId,
+      estimateId: fixture.estimateId,
+      designPlanVersion: 3,
+      sourceSectionId: "CA",
+      expectedRevision: beforeProgress!.revision,
+      workerId: fixture.nextWorkerId
+    })).rejects.toMatchObject({
+      status: 409,
+      code: "WORKFLOW_SECTION_ASSIGNMENT_STALE"
+    });
+
+    const [beforeMembership] = await workflow.listProjectWorkflowSectionAssignments(
+      sectionSuperAdmin(),
+      fixture.projectId
+    );
+    await ProjectWorkflowTaskModel.create(sectionAssignmentTask({
+      id: "section-task-added",
+      projectId: fixture.projectId,
+      estimateId: fixture.estimateId,
+      sourceLineItemKey: "section-line-added",
+      version: 1
+    }));
+    await expect(workflow.overrideSectionWorkerAssignment({
+      actor: sectionSuperAdmin(),
+      projectId: fixture.projectId,
+      estimateId: fixture.estimateId,
+      designPlanVersion: 3,
+      sourceSectionId: "CA",
+      expectedRevision: beforeMembership!.revision,
+      workerId: fixture.nextWorkerId
+    })).rejects.toMatchObject({
+      status: 409,
+      code: "WORKFLOW_SECTION_ASSIGNMENT_STALE"
+    });
+    expect(await ProjectWorkflowTaskModel.countDocuments({
+      projectId: fixture.projectId,
+      assigneeUserId: fixture.nextWorkerId
+    })).toBe(0);
+    expect(audit).not.toHaveBeenCalled();
+  });
+
+  it("rolls back every member update when audit persistence fails", async () => {
+    const fixture = await createSectionAssignmentFixture();
+    const workflow = sectionAssignmentWorkflow(vi.fn(async () => {
+      throw new Error("simulated audit outage");
+    }));
+    const [before] = await workflow.listProjectWorkflowSectionAssignments(
+      sectionSuperAdmin(),
+      fixture.projectId
+    );
+
+    await expect(workflow.overrideSectionWorkerAssignment({
+      actor: sectionSuperAdmin(),
+      projectId: fixture.projectId,
+      estimateId: fixture.estimateId,
+      designPlanVersion: 3,
+      sourceSectionId: "CA",
+      expectedRevision: before!.revision,
+      workerId: fixture.nextWorkerId
+    })).rejects.toThrow("simulated audit outage");
+
+    const [after] = await workflow.listProjectWorkflowSectionAssignments(
+      sectionSuperAdmin(),
+      fixture.projectId
+    );
+    expect(after!.revision).toBe(before!.revision);
+    expect(after!.assignmentState).toBe("mixed");
+    expect(await ProjectWorkflowTaskModel.countDocuments({
+      projectId: fixture.projectId,
+      assigneeUserId: fixture.nextWorkerId
+    })).toBe(0);
+  });
+
+  it("preserves completed assignment history and rejects completed sections", async () => {
+    const fixture = await createSectionAssignmentFixture();
+    await ProjectWorkflowTaskModel.updateMany(
+      { projectId: fixture.projectId, kind: "trade_execution" },
+      {
+        $set: {
+          assigneeUserId: fixture.inactiveWorkerId,
+          status: "completed",
+          progress: 100,
+          completedAt: NOW
+        }
+      }
+    );
+    const audit = vi.fn(async () => ({ id: "unexpected-audit" }));
+    const workflow = sectionAssignmentWorkflow(audit);
+    const [completed] = await workflow.listProjectWorkflowSectionAssignments(
+      sectionSuperAdmin(),
+      fixture.projectId
+    );
+    expect(completed).toMatchObject({
+      status: "completed",
+      unfinishedTaskCount: 0,
+      assignmentState: "assigned",
+      assignedWorker: {
+        id: fixture.inactiveWorkerId,
+        active: false
+      }
+    });
+
+    await expect(workflow.overrideSectionWorkerAssignment({
+      actor: sectionSuperAdmin(),
+      projectId: fixture.projectId,
+      estimateId: fixture.estimateId,
+      designPlanVersion: 3,
+      sourceSectionId: "CA",
+      expectedRevision: completed!.revision,
+      workerId: fixture.nextWorkerId
+    })).rejects.toMatchObject({
+      status: 409,
+      code: "WORKFLOW_SECTION_COMPLETED"
+    });
+    expect(audit).not.toHaveBeenCalled();
+  });
+
+  it("fails closed for mixed Civil and Plumbing roles and non-canonical task lineage", async () => {
+    const fixture = await createSectionAssignmentFixture();
+    await ProjectWorkflowTaskModel.deleteMany({ projectId: fixture.projectId });
+    await ProjectWorkflowTaskModel.create([
+      sectionAssignmentTask({
+        id: "section-cv-civil",
+        projectId: fixture.projectId,
+        estimateId: fixture.estimateId,
+        sourceSectionId: "CV",
+        sourceLineItemKey: "section-line-cv-civil",
+        assigneeRole: "worker_civil"
+      }),
+      sectionAssignmentTask({
+        id: "section-cv-plumber",
+        projectId: fixture.projectId,
+        estimateId: fixture.estimateId,
+        sourceSectionId: "CV",
+        sourceLineItemKey: "section-line-cv-plumber",
+        assigneeRole: "worker_plumber"
+      })
+    ]);
+    const workflow = sectionAssignmentWorkflow(vi.fn());
+    await expect(workflow.listProjectWorkflowSectionAssignments(
+      sectionSuperAdmin(),
+      fixture.projectId
+    )).rejects.toMatchObject({
+      status: 409,
+      code: "WORKFLOW_SECTION_ASSIGNMENT_CONFLICT"
+    });
+
+    await ProjectWorkflowTaskModel.deleteOne({ _id: "section-cv-plumber" });
+    await ProjectWorkflowTaskModel.collection.updateOne(
+      { _id: "section-cv-civil" },
+      { $set: { estimateId: "historical-estimate" } }
+    );
+    await expect(workflow.listProjectWorkflowSectionAssignments(
+      sectionSuperAdmin(),
+      fixture.projectId
+    )).rejects.toMatchObject({
+      status: 409,
+      code: "WORKFLOW_SECTION_ASSIGNMENT_CONFLICT"
+    });
   });
 });
 
@@ -2152,6 +2576,205 @@ describe("operational workflow project completion", () => {
   });
 });
 
+function sectionAssignmentWorkflow(
+  appendInMongoTransaction: ReturnType<typeof vi.fn>
+) {
+  return createProjectWorkflowService({
+    storage: {} as never,
+    mailer: { deliveryKind: "disabled" },
+    portalUrl: "https://portal.example.test/client",
+    audit: { appendInMongoTransaction } as unknown as AuditService,
+    now: () => NOW
+  });
+}
+
+function sectionSuperAdmin() {
+  return {
+    id: "section-super-admin",
+    name: "Section Super Admin",
+    email: "section-super-admin@example.test",
+    role: "super_admin" as const
+  };
+}
+
+async function createSectionAssignmentFixture() {
+  const projectId = "section-assignment-project";
+  const estimateId = "section-assignment-estimate";
+  const currentWorkerId = "section-worker-current";
+  const nextWorkerId = "section-worker-next";
+  const inactiveWorkerId = "section-worker-inactive";
+  const completedTaskId = "section-task-completed";
+  const openTaskId = "section-task-open";
+  const startedTaskId = "section-task-started";
+  const createdAt = new Date(NOW.getTime() - 60_000);
+  await Promise.all([
+    ProjectModel.create({
+      _id: projectId,
+      name: "Section Assignment Residence",
+      clientId: null,
+      clientName: "Client",
+      clientEmail: "section-client@example.test",
+      clientEmailNormalized: "section-client@example.test",
+      clientMobile: "9000000000",
+      clientAddress: "Pune",
+      initiatingDesignerId: null,
+      assignedEstimatorId: null,
+      assignedDesignerIds: [],
+      managerId: null,
+      status: "active",
+      location: "Pune",
+      plannedStartAt: createdAt,
+      plannedEndAt: new Date("2026-11-27T10:00:00.000Z"),
+      actualStartAt: createdAt,
+      actualEndAt: null,
+      createdAt,
+      updatedAt: createdAt
+    }),
+    EstimateModel.create({
+      _id: estimateId,
+      leadId: "section-assignment-lead",
+      ownerId: sectionSuperAdmin().id,
+      version: 2,
+      status: "client_approved",
+      propertyType: "villa",
+      rooms: [],
+      scopes: ["carpentry"],
+      lineItems: [],
+      subtotal: 1_000,
+      gst: 180,
+      total: 1_180,
+      approvalRequired: false,
+      projectId,
+      reviews: [{
+        actorId: sectionSuperAdmin().id,
+        action: "client_approved",
+        note: "Approved",
+        occurredAt: createdAt
+      }],
+      designPlanStatus: "approved",
+      designPlanVersion: 3,
+      designPlanApprovedAt: createdAt,
+      designPlanApprovedById: sectionSuperAdmin().id,
+      designPlanApprovalSource: "admin_proof",
+      clientDecisionAt: createdAt,
+      createdAt,
+      updatedAt: createdAt
+    }),
+    UserModel.create(workerUser(
+      currentWorkerId,
+      "Current Carpenter",
+      "worker_carpenter"
+    )),
+    UserModel.create(workerUser(
+      nextWorkerId,
+      "Next Carpenter",
+      "worker_carpenter"
+    )),
+    UserModel.create(workerUser(
+      inactiveWorkerId,
+      "Inactive Carpenter",
+      "worker_carpenter",
+      false
+    )),
+    UserModel.create(workerUser(
+      "section-worker-electrician",
+      "Wrong Role Worker",
+      "worker_electrician"
+    ))
+  ]);
+  await ProjectWorkflowTaskModel.create([
+    sectionAssignmentTask({
+      id: completedTaskId,
+      projectId,
+      estimateId,
+      sourceLineItemKey: "section-line-completed",
+      assigneeUserId: inactiveWorkerId,
+      status: "completed",
+      progress: 100,
+      version: 3,
+      plannedEffort: 2,
+      completedAt: createdAt,
+      updatedAt: createdAt
+    }),
+    sectionAssignmentTask({
+      id: openTaskId,
+      projectId,
+      estimateId,
+      sourceLineItemKey: "section-line-open",
+      assigneeUserId: null,
+      status: "open",
+      progress: 0,
+      version: 1,
+      plannedEffort: 1,
+      updatedAt: createdAt
+    }),
+    sectionAssignmentTask({
+      id: startedTaskId,
+      projectId,
+      estimateId,
+      sourceLineItemKey: "section-line-started",
+      assigneeUserId: currentWorkerId,
+      status: "in_progress",
+      progress: 50,
+      version: 2,
+      plannedEffort: 3,
+      updatedAt: createdAt
+    })
+  ]);
+  return {
+    projectId,
+    estimateId,
+    currentWorkerId,
+    nextWorkerId,
+    inactiveWorkerId,
+    completedTaskId,
+    openTaskId,
+    startedTaskId
+  };
+}
+
+function sectionAssignmentTask(input: {
+  id: string;
+  projectId: string;
+  estimateId: string;
+  sourceSectionId?: string;
+  sourceLineItemKey: string;
+  assigneeRole?: WorkerRole;
+  assigneeUserId?: string | null;
+  status?: "open" | "in_progress" | "completed";
+  progress?: number;
+  version?: number;
+  plannedEffort?: number | null;
+  completedAt?: Date | null;
+  updatedAt?: Date;
+}) {
+  const createdAt = new Date(NOW.getTime() - 60_000);
+  return {
+    _id: input.id,
+    dedupeKey: `section-assignment:${input.id}`,
+    projectId: input.projectId,
+    estimateId: input.estimateId,
+    designPlanVersion: 3,
+    kind: "trade_execution" as const,
+    title: `${input.sourceSectionId ?? "CA"} task`,
+    description: "Section assignment test task",
+    assigneeRole: input.assigneeRole ?? "worker_carpenter",
+    assigneeUserId: input.assigneeUserId ?? null,
+    sourceSectionId: input.sourceSectionId ?? "CA",
+    sourceLineItemKey: input.sourceLineItemKey,
+    roomName: "Room",
+    status: input.status ?? "open",
+    progress: input.progress ?? 0,
+    version: input.version ?? 1,
+    openedAt: createdAt,
+    dueAt: new Date("2026-09-27T10:00:00.000Z"),
+    plannedEffort: input.plannedEffort ?? null,
+    completedAt: input.completedAt ?? null,
+    createdAt,
+    updatedAt: input.updatedAt ?? createdAt
+  };
+}
+
 function completionWorkflow(
   appendInMongoTransaction: ReturnType<typeof vi.fn>
 ) {
@@ -2218,7 +2841,9 @@ async function createOperationalCompletionFixture(
     title: `${task.kind} task`,
     description: "Completion boundary test",
     assigneeRole: task.role,
-    assigneeUserId: null,
+    assigneeUserId: task.role === "procurement"
+      ? "workflow-completion-procurement"
+      : null,
     sourceSectionId: null,
     sourceLineItemKey: null,
     roomName: null,

@@ -40,6 +40,7 @@ import {
   type ExtractionDraftReplacement,
   type DesignVersionRecord,
   type EvaluationRecord,
+  type EstimateSummaryRecord,
   type EstimatorOption,
   type FloorRecord,
   type LeadActivityRecord,
@@ -145,11 +146,20 @@ export function createMemoryRepository(seed: SeedData = demoSeedData): AppReposi
   normalizedSeed.estimateSummaries = (normalizedSeed.estimateSummaries ?? []).map(
     (estimate) => ({
       ...estimate,
+      version: estimate.version ?? 1,
+      subtotal: estimate.subtotal ?? estimate.total,
+      gst: estimate.gst ?? 0,
+      clientDecisionAt: estimate.clientDecisionAt ?? null,
+      clientDecisionSource: estimate.clientDecisionSource ?? null,
+      approvedBaseline: estimate.approvedBaseline ??
+        legacyApprovedEstimateBaseline(estimate),
       clientReview: estimate.clientReview ?? null,
       assignedAdminId: estimate.assignedAdminId ?? null,
       designPlanStatus: estimate.designPlanStatus ?? null,
       designPlanVersion: estimate.designPlanVersion ?? 0,
-      designPlanDesignerId: estimate.designPlanDesignerId ?? null
+      designPlanDesignerId: estimate.designPlanDesignerId ?? null,
+      createdAt: estimate.createdAt ?? "1970-01-01T00:00:00.000Z",
+      updatedAt: estimate.updatedAt ?? estimate.createdAt ?? "1970-01-01T00:00:00.000Z"
     })
   );
   normalizedSeed.projects = normalizedSeed.projects.map((project) => ({
@@ -169,6 +179,25 @@ export function createMemoryRepository(seed: SeedData = demoSeedData): AppReposi
     counters: new Map(),
     timestamp: latestTimestamp(normalizedSeed)
   });
+}
+
+function legacyApprovedEstimateBaseline(
+  estimate: EstimateSummaryRecord
+): EstimateSummaryRecord["approvedBaseline"] {
+  if (estimate.status !== "client_approved") return null;
+  const currentVersion = Number(estimate.version ?? 1);
+  const estimateVersion = Number.isSafeInteger(currentVersion) && currentVersion > 1
+    ? currentVersion - 1
+    : 1;
+  return {
+    estimateVersion,
+    reviewRoundId: null,
+    subtotal: Number(estimate.subtotal ?? estimate.total),
+    gst: Number(estimate.gst ?? 0),
+    total: Number(estimate.total),
+    decisionAt: estimate.clientDecisionAt ?? null,
+    decisionSource: estimate.clientDecisionSource ?? null
+  };
 }
 
 function buildMemoryRepository(initial: MemorySnapshot): AppRepository {

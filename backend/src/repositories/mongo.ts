@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import mongoose, { type ClientSession, type Model, type PipelineStage } from "mongoose";
 import { normalizeEmail } from "../domain/email.js";
+import { ApiError } from "../middleware/errors.js";
 import {
   invitationEmailSchema,
   invitationNameSchema,
@@ -47,6 +48,7 @@ import {
   type AppRepository,
   type AccessRequestFilters,
   type AccessRequestRecord,
+  type AdminProjectApprovedEstimateBaseline,
   type AuditEventRecord,
   type AuditFilters,
   type EstimateSummaryRecord,
@@ -196,12 +198,19 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
         _id: 1,
         leadId: 1,
         projectId: 1,
+        version: 1,
         status: 1,
+        subtotal: 1,
+        gst: 1,
         total: 1,
+        clientDecisionAt: 1,
         designPlanStatus: 1,
         designPlanVersion: 1,
-        designPlanDesignerId: 1
+        designPlanDesignerId: 1,
+        createdAt: 1,
+        updatedAt: 1
       })
+      .sort({ clientDecisionAt: -1, updatedAt: -1, _id: 1 })
       .lean();
     if (session) {
       estimatorQuery.session(session);
@@ -212,6 +221,22 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
         () => estimatorQuery.exec(),
         () => estimateQuery.exec()
       );
+    const loadedLeadIds = new Set(leadDocuments.map((document) => idOf(document)));
+    const lineageLeadIds = [
+      ...new Set(
+        estimateDocuments
+          .map((document) => String(document.leadId))
+          .filter((leadId) => !loadedLeadIds.has(leadId))
+      )
+    ];
+    let lineageLeadDocuments: Array<Record<string, any>> = [];
+    if (lineageLeadIds.length > 0) {
+      const lineageLeadQuery = LeadModel.find({
+        _id: { $in: lineageLeadIds }
+      }).lean();
+      if (session) lineageLeadQuery.session(session);
+      lineageLeadDocuments = await lineageLeadQuery.exec();
+    }
     const designerIds = [
       ...new Set(
         estimateDocuments
@@ -241,7 +266,11 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
         deliveryAttemptCount: 1,
         deliveredAt: 1,
         status: 1,
-        assignedAdminId: 1
+        assignedAdminId: 1,
+        decision: 1,
+        decisionSource: 1,
+        decidedAt: 1,
+        estimateSnapshot: 1
       })
       .sort({ estimateId: 1, sendGeneration: -1, _id: 1 })
       .lean();
@@ -249,10 +278,17 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
     const roundDocuments = await roundQuery.exec();
     const currentRoundByEstimateId = new Map<
       string,
-      Pick<EstimateSummaryRecord, "clientReview" | "assignedAdminId">
+      Pick<
+        EstimateSummaryRecord,
+        "clientReview" | "assignedAdminId" | "clientDecisionSource"
+      >
     >();
+    const roundsByEstimateId = new Map<string, Array<Record<string, any>>>();
     for (const document of roundDocuments) {
       const estimateId = String(document.estimateId);
+      const estimateRounds = roundsByEstimateId.get(estimateId) ?? [];
+      estimateRounds.push(document);
+      roundsByEstimateId.set(estimateId, estimateRounds);
       if (currentRoundByEstimateId.has(estimateId)) continue;
       currentRoundByEstimateId.set(estimateId, {
         clientReview: {
@@ -265,7 +301,8 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
           deliveredAt: nullableIso(document.deliveredAt),
           status: document.status
         },
-        assignedAdminId: String(document.assignedAdminId)
+        assignedAdminId: String(document.assignedAdminId),
+        clientDecisionSource: document.decisionSource ?? null
       });
     }
     const projectUsers = [...estimatorDocuments, ...designerDocuments].map((document) => ({
@@ -279,8 +316,17 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
         id: idOf(document),
         leadId: String(document.leadId),
         projectId: document.projectId == null ? null : String(document.projectId),
+        version: Number(document.version),
         status: String(document.status),
+        subtotal: Number(document.subtotal),
+        gst: Number(document.gst),
         total: Number(document.total),
+        clientDecisionAt: nullableIso(document.clientDecisionAt),
+        clientDecisionSource: currentRound?.clientDecisionSource ?? null,
+        approvedBaseline: approvedAdminEstimateBaseline(
+          document,
+          roundsByEstimateId.get(idOf(document)) ?? []
+        ),
         clientReview: currentRound?.clientReview ?? null,
         assignedAdminId: currentRound?.assignedAdminId ?? null,
         designPlanStatus: document.designPlanStatus == null
@@ -289,10 +335,12 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
         designPlanVersion: Number(document.designPlanVersion ?? 0),
         designPlanDesignerId: document.designPlanDesignerId == null
           ? null
-          : String(document.designPlanDesignerId)
+          : String(document.designPlanDesignerId),
+        createdAt: requiredEstimateTimelineIso(document.createdAt),
+        updatedAt: requiredEstimateTimelineIso(document.updatedAt)
       };
     });
-    const leads = leadDocuments.map(mapLead);
+    const leads = [...leadDocuments, ...lineageLeadDocuments].map(mapLead);
     return projectDocuments.map((document) =>
       adminProjectSummary(mapProject(document), projectUsers, leads, estimates, actor)
     );
@@ -3066,6 +3114,86 @@ function iso(value: string | Date): string {
 
 function nullableIso(value: string | Date | null | undefined): string | null {
   return value === null || value === undefined ? null : iso(value);
+}
+
+function approvedAdminEstimateBaseline(
+  estimate: PlainDocument,
+  rounds: readonly PlainDocument[]
+): AdminProjectApprovedEstimateBaseline | null {
+  if (estimate.status !== "client_approved") return null;
+  const currentVersion = Number(estimate.version);
+  const estimateVersion = Number.isSafeInteger(currentVersion) && currentVersion > 1
+    ? currentVersion - 1
+    : 1;
+  const approvedRounds = rounds.filter((round) =>
+    round.status === "approved" && round.decision === "approve"
+  );
+  if (approvedRounds.length > 0) {
+    const matchingRounds = approvedRounds.filter(
+      (round) => Number(round.estimateVersion) === estimateVersion
+    );
+    if (matchingRounds.length !== 1) approvedBaselineConflict();
+    const approvedRound = matchingRounds[0]!;
+    const baseline = {
+      estimateVersion,
+      reviewRoundId: idOf(approvedRound),
+      subtotal: Number(approvedRound.estimateSnapshot?.subtotal),
+      gst: Number(approvedRound.estimateSnapshot?.gst),
+      total: Number(approvedRound.estimateSnapshot?.total),
+      decisionAt: nullableIso(approvedRound.decidedAt),
+      decisionSource: approvedRound.decisionSource ?? null
+    };
+    assertApprovedBaselineMoney(baseline);
+    return baseline;
+  }
+  const baseline = {
+    estimateVersion,
+    reviewRoundId: null,
+    subtotal: Number(estimate.subtotal),
+    gst: Number(estimate.gst),
+    total: Number(estimate.total),
+    decisionAt: nullableIso(estimate.clientDecisionAt),
+    decisionSource: null
+  };
+  assertApprovedBaselineMoney(baseline);
+  return baseline;
+}
+
+function assertApprovedBaselineMoney(
+  baseline: Pick<AdminProjectApprovedEstimateBaseline, "subtotal" | "gst" | "total">
+): void {
+  if (
+    ![baseline.subtotal, baseline.gst, baseline.total].every(
+      (amount) => Number.isSafeInteger(amount) && amount >= 0
+    ) ||
+    baseline.subtotal + baseline.gst !== baseline.total
+  ) {
+    throw new ApiError(
+      409,
+      "ESTIMATE_APPROVAL_BASELINE_INVALID",
+      "The approved Estimate snapshot contains invalid financial values."
+    );
+  }
+}
+
+function approvedBaselineConflict(): never {
+  throw new ApiError(
+    409,
+    "ESTIMATE_APPROVAL_BASELINE_CONFLICT",
+    "The approved Estimate does not have exactly one matching approval snapshot."
+  );
+}
+
+function requiredEstimateTimelineIso(value: unknown): string {
+  const timestamp = value instanceof Date ? value : new Date(value as never);
+  if (Number.isNaN(timestamp.getTime())) {
+    throw new ApiError(
+      409,
+      "ESTIMATE_TIMELINE_INVALID",
+      "The Estimate timeline is incomplete or invalid."
+    );
+  }
+  return timestamp.toISOString();
 }
 
 function idOf(document: PlainDocument): string {

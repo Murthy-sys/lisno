@@ -299,6 +299,62 @@ describe("semantic UI foundation", () => {
     expect(foundation).toContain("@keyframes ui-route-enter");
   });
 
+  it("steps the Super Admin shell down one type scale without touching other roles", () => {
+    const tokens = tokenDeclarations(readStyle("tokens.css"));
+    const scope = 'body:has(.ui-app-shell[data-role="super_admin"])';
+    const dense = ruleBodies(readStyle("role-themes.css"), scope);
+    expect(dense.length).toBeGreaterThan(0);
+
+    const overrides = new Map(
+      [...dense[0].matchAll(/^\s*(--[\w-]+)\s*:\s*([^;]+);/gm)]
+        .map(([, name, value]) => [name, value.trim()])
+    );
+    const remSize = (value: string) => {
+      const match = value.match(/^([\d.]+)rem/);
+      expect(match, `${value} must start with a rem size`).not.toBeNull();
+      return Number(match![1]);
+    };
+
+    /* Every step of the scale is redefined, and every one is smaller. */
+    for (const name of [
+      "--type-page-title",
+      "--type-section-title",
+      "--type-body",
+      "--type-metadata",
+      "--text-xs",
+      "--text-sm",
+      "--text-md",
+      "--text-base",
+      "--text-lg",
+      "--text-xl",
+      "--text-2xl",
+      "--text-3xl",
+      "--text-4xl"
+    ]) {
+      const override = overrides.get(name);
+      expect(override, `${scope} must redefine ${name}`).toBeTruthy();
+      expect(remSize(override!), name).toBeLessThan(remSize(tokens.get(name)!));
+    }
+
+    /* 11px is the floor: metadata stays readable at the smaller scale. */
+    expect(remSize(overrides.get("--text-xs")!) * 16).toBeGreaterThanOrEqual(11);
+    expect(remSize(overrides.get("--type-body")!) * 16).toBeGreaterThanOrEqual(14);
+
+    /*
+     * Scoping from <body> is what carries the scale into portalled dialogs,
+     * drawers and tooltips, which render outside .ui-app-shell.
+     */
+    expect(readStyle("role-themes.css")).not.toContain(
+      '.ui-app-shell[data-role="super_admin"] {'
+    );
+    /* No other role may be caught by the dense scale. */
+    for (const role of ["admin", "designer", "client", "finance_head"]) {
+      expect(readStyle("role-themes.css")).not.toContain(
+        `body:has(.ui-app-shell[data-role="${role}"])`
+      );
+    }
+  });
+
   it("keeps literal hex colors inside the token layer", () => {
     for (const filename of ["base.css", "motion.css", "primitives.css", "shell.css"]) {
       expect(readStyle(filename), filename).not.toMatch(/#[\da-f]{3,8}\b/i);

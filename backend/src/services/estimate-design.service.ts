@@ -41,6 +41,7 @@ import {
 } from "./estimate-plan-review.service.js";
 import type { ProjectWorkflowService } from "./project-workflow.service.js";
 import { synchronizeEstimateDesignReviewState } from "./estimate-design-review-state.js";
+import { deduplicateExtractionProposals } from "./extraction-worker.service.js";
 
 const mutableDesignEstimateStatuses = [
   "draft",
@@ -3703,7 +3704,6 @@ async function normalizeEstimateResult(
           );
         }
       }
-      totalBytes += cropImage.length;
       sections.push({
         label,
         confidence: section.confidence,
@@ -3723,12 +3723,14 @@ async function normalizeEstimateResult(
         }
       });
     }
+    const uniqueSections = await deduplicateExtractionProposals(sections);
+    totalBytes += uniqueSections.reduce((bytes, section) => bytes + section.image.length, 0);
     pages.push({
       pageNumber: page.pageNumber,
       width: page.width,
       height: page.height,
       image,
-      sections
+      sections: uniqueSections
     });
   }
   if (totalBytes > maxImageBytes * 4) {

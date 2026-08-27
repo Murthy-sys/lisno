@@ -53,6 +53,15 @@ const workerAssignmentOverrideSchema = z.object({
   workerId: z.string().trim().min(1).nullable()
 }).strict();
 
+const sectionWorkerAssignmentOverrideSchema = z.object({
+  projectId: z.string().trim().min(1),
+  estimateId: z.string().trim().min(1),
+  designPlanVersion: z.number().int().positive(),
+  sourceSectionId: z.string().trim().min(1),
+  expectedRevision: z.string().regex(/^[a-f0-9]{64}$/u),
+  workerId: z.string().trim().min(1).nullable()
+}).strict();
+
 const proofUploadOptions = {
   fieldName: "proof",
   maxFields: 3,
@@ -262,6 +271,24 @@ export function createProjectWorkflowRouter(
     }
   );
 
+  router.get(
+    "/admin/projects/:projectId/section-assignments",
+    protectedRoute,
+    requireOperation("GET /admin/projects/:projectId/section-assignments"),
+    async (request, response, next) => {
+      try {
+        response.json({
+          data: await service.listProjectWorkflowSectionAssignments(
+            request.authenticatedUser!,
+            String(request.params.projectId)
+          )
+        });
+      } catch (error) {
+        next(error);
+      }
+    }
+  );
+
   router.post(
     "/execution/worker-assignments/override",
     protectedRoute,
@@ -275,6 +302,30 @@ export function createProjectWorkflowRouter(
             projectId: request.body.projectId,
             taskId: request.body.taskId,
             expectedVersion: request.body.expectedVersion,
+            workerId: request.body.workerId
+          })
+        });
+      } catch (error) {
+        next(error);
+      }
+    }
+  );
+
+  router.post(
+    "/execution/section-worker-assignments/override",
+    protectedRoute,
+    requireOperation("POST /execution/section-worker-assignments/override"),
+    validateBody(sectionWorkerAssignmentOverrideSchema),
+    async (request, response, next) => {
+      try {
+        response.json({
+          data: await service.overrideSectionWorkerAssignment({
+            actor: request.authenticatedUser!,
+            projectId: request.body.projectId,
+            estimateId: request.body.estimateId,
+            designPlanVersion: request.body.designPlanVersion,
+            sourceSectionId: request.body.sourceSectionId,
+            expectedRevision: request.body.expectedRevision,
             workerId: request.body.workerId
           })
         });

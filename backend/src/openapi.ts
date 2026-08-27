@@ -10,12 +10,13 @@ import {
 import {
   FINANCE_EXPENSE_CLASSES,
   FINANCE_LEDGER_ENTRY_TYPES,
+  MAX_FINANCE_AMOUNT_PAISE,
   PROJECT_DEADLINE_STATUSES,
   PROJECT_FINANCE_BUCKET_STATUSES,
   PROJECT_FINANCE_CURRENCY,
   PROJECT_FINANCE_TARGET_MARGIN_BPS
 } from "./domain/project-finance.js";
-import { ROLE_CODES } from "./domain/roles.js";
+import { ROLE_CODES, WORKER_ROLES } from "./domain/roles.js";
 import { INVITABLE_ROLE_CODES } from "./domain/user-invitations.js";
 import {
   HUMAN_JWT_OPERATION_LIST,
@@ -127,8 +128,14 @@ const requestBodiesByOperation: Readonly<Record<string, OpenApiRequestBody>> = {
   "POST /execution/worker-assignments/override": jsonRequest(
     "WorkerAssignmentOverrideRequest"
   ),
+  "POST /execution/section-worker-assignments/override": jsonRequest(
+    "SectionWorkerAssignmentOverrideRequest"
+  ),
   "POST /finance/projects/:projectId/entries": jsonRequest(
     "FinanceLedgerEntryRequest"
+  ),
+  "POST /procurement/projects/:projectId/expenses": multipartRequest(
+    "ProcurementExpenseRequest"
   ),
   "POST /estimates/:estimateId/client-email/retry": jsonRequest(
     "EstimateEmailRetryRequest"
@@ -167,11 +174,17 @@ const responseSchemaByOperation: Readonly<Record<string, string>> = {
     "DesignPlanReviewTask",
   "GET /admin/workers": "WorkerAssignmentOptionList",
   "GET /admin/projects/:projectId/workflow-tasks": "ProjectWorkflowTaskList",
+  "GET /admin/projects/:projectId/section-assignments":
+    "ProjectWorkflowSectionAssignmentList",
   "POST /execution/worker-assignments/override": "ProjectWorkflowTask",
+  "POST /execution/section-worker-assignments/override":
+    "ProjectWorkflowSectionAssignment",
   "GET /finance/projects": "ProjectFinanceBucketPage",
   "GET /finance/projects/:projectId": "ProjectFinanceBucket",
   "GET /finance/projects/:projectId/entries": "FinanceLedgerEntryPage",
   "POST /finance/projects/:projectId/entries": "PostFinanceEntryResult",
+  "GET /procurement/projects": "ProcurementProjectList",
+  "POST /procurement/projects/:projectId/expenses": "PostFinanceEntryResult",
   "GET /workflow-tasks": "ProjectWorkflowTaskList",
   "PATCH /workflow-tasks/:taskId": "ProjectWorkflowTask"
 };
@@ -196,6 +209,8 @@ const attachmentOperations = new Set<string>([
   "GET /design-versions/:versionId/download",
   "GET /admin/estimate-client-response-tasks/:roundId/proof",
   "GET /admin/design-plan-response-tasks/:roundId/attachments/:attachmentIndex",
+  "GET /procurement/projects/:projectId/entries/:entryId/document",
+  "GET /finance/projects/:projectId/entries/:entryId/document",
   "GET /internal/extraction-jobs/:jobId/source"
 ]);
 
@@ -204,7 +219,8 @@ const multipartOperations = new Set<string>([
   "POST /tasks/:taskId/design-versions",
   "POST /estimate-design-drawings/:drawingId/replacement",
   "POST /admin/estimate-client-response-tasks/:roundId/decision",
-  "POST /admin/design-plan-response-tasks/:roundId/decision"
+  "POST /admin/design-plan-response-tasks/:roundId/decision",
+  "POST /procurement/projects/:projectId/expenses"
 ]);
 
 const storedAttachmentContentTypes = [
@@ -242,15 +258,22 @@ const operationSummaries: Readonly<Record<string, string>> = {
     "Retry failed design-plan email delivery",
   "GET /workflow-tasks": "List role-specific execution tasks",
   "PATCH /workflow-tasks/:taskId": "Update execution-task progress",
-  "GET /admin/workers": "List active trade workers for assignment",
+  "GET /admin/workers": "List active Procurement and trade assignees",
   "GET /admin/projects/:projectId/workflow-tasks":
     "Monitor a project's workflow tasks",
   "POST /execution/worker-assignments/override":
-    "Assign, reassign, or unassign a trade worker",
+    "Assign, reassign, or unassign Procurement and trade execution work",
   "GET /finance/projects": "List authorized project finance buckets",
   "GET /finance/projects/:projectId": "Read project budget and margin position",
   "GET /finance/projects/:projectId/entries": "List project spending and overheads",
   "POST /finance/projects/:projectId/entries": "Record project spending or overhead",
+  "GET /procurement/projects": "List approved Estimate items for Procurement",
+  "POST /procurement/projects/:projectId/expenses":
+    "Record Procurement spending with a supporting receipt",
+  "GET /procurement/projects/:projectId/entries/:entryId/document":
+    "Download a Procurement supporting document",
+  "GET /finance/projects/:projectId/entries/:entryId/document":
+    "Download a Finance ledger supporting document",
   "POST /estimates/:estimateId/design-uploads":
     "Upload a design plan for extraction",
   "GET /estimates/:estimateId/design-uploads":
@@ -904,7 +927,7 @@ function financeLedgerRequestSchema(
     properties: {
       type: { type: "string", enum: [type] },
       expenseClass: requiresExpenseClass
-        ? { type: "string", enum: [...FINANCE_EXPENSE_CLASSES] }
+        ? { type: "string", enum: ["employee_payment", "other"] }
         : { type: "string", nullable: true, enum: [null] },
       category: { type: "string", minLength: 1, maxLength: 100 },
       amountPaise: { type: "integer", minimum: 1 },
@@ -1040,6 +1063,7 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
       }
     },
     Role: { type: "string", enum: [...ROLE_CODES] },
+    WorkerRole: { type: "string", enum: [...WORKER_ROLES] },
     PermissionCode: { type: "string", enum: [...PERMISSION_CODES] },
     PublicUser: {
       type: "object",
@@ -1230,12 +1254,65 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
         workerId: { type: "string", minLength: 1, nullable: true }
       }
     },
+    SectionWorkerAssignmentOverrideRequest: {
+      type: "object",
+      additionalProperties: false,
+      required: [
+        "projectId",
+        "estimateId",
+        "designPlanVersion",
+        "sourceSectionId",
+        "expectedRevision",
+        "workerId"
+      ],
+      properties: {
+        projectId: id,
+        estimateId: id,
+        designPlanVersion: { type: "integer", minimum: 1 },
+        sourceSectionId: { type: "string", minLength: 1 },
+        expectedRevision: {
+          type: "string",
+          pattern: "^[a-f0-9]{64}$"
+        },
+        workerId: { type: "string", minLength: 1, nullable: true }
+      }
+    },
     FinanceLedgerEntryRequest: {
       oneOf: [
         financeLedgerRequestSchema("direct_spend", true),
         financeLedgerRequestSchema("overhead", false)
       ],
       discriminator: { propertyName: "type" }
+    },
+    ProcurementExpenseRequest: {
+      type: "object",
+      additionalProperties: false,
+      required: [
+        "receipt",
+        "sourceLineItemKey",
+        "amountPaise",
+        "incurredAt",
+        "description",
+        "idempotencyKey"
+      ],
+      properties: {
+        receipt: {
+          type: "string",
+          format: "binary",
+          description: "PDF, JPEG, PNG, or WebP. File signatures are verified."
+        },
+        sourceLineItemKey: { type: "string", minLength: 1, maxLength: 500 },
+        amountPaise: {
+          type: "integer",
+          minimum: 1,
+          maximum: MAX_FINANCE_AMOUNT_PAISE
+        },
+        incurredAt: { type: "string", format: "date-time" },
+        description: { type: "string", minLength: 1, maxLength: 1000 },
+        vendor: { type: "string", minLength: 1, maxLength: 200 },
+        reference: { type: "string", minLength: 1, maxLength: 200 },
+        idempotencyKey: { type: "string", minLength: 8, maxLength: 128 }
+      }
     },
     EstimateEmailRetryRequest: {
       type: "object",
@@ -1362,6 +1439,118 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
     ProjectWorkflowTaskList: {
       type: "array",
       items: { $ref: "#/components/schemas/ProjectWorkflowTask" }
+    },
+    ProjectWorkflowSectionAssignment: {
+      type: "object",
+      additionalProperties: false,
+      required: [
+        "id", "projectId", "projectName", "estimateId", "designPlanVersion",
+        "sourceSectionId", "sectionLabel", "assigneeRole", "assignedWorker",
+        "assignmentState", "status", "progress", "taskCount",
+        "unfinishedTaskCount", "revision", "updatedAt"
+      ],
+      properties: {
+        id,
+        projectId: id,
+        projectName: { type: "string", minLength: 1 },
+        estimateId: id,
+        designPlanVersion: { type: "integer", minimum: 1 },
+        sourceSectionId: { type: "string", minLength: 1 },
+        sectionLabel: { type: "string", minLength: 1 },
+        assigneeRole: { $ref: "#/components/schemas/WorkerRole" },
+        assignedWorker: {
+          type: "object",
+          nullable: true,
+          additionalProperties: false,
+          required: ["id", "name", "email", "role", "active"],
+          properties: {
+            id,
+            name: { type: "string", minLength: 1 },
+            email: { type: "string", format: "email" },
+            role: { $ref: "#/components/schemas/WorkerRole" },
+            active: { type: "boolean" }
+          }
+        },
+        assignmentState: {
+          type: "string",
+          enum: ["unassigned", "assigned", "mixed"]
+        },
+        status: { $ref: "#/components/schemas/ProjectWorkflowTaskStatus" },
+        progress: { type: "integer", minimum: 0, maximum: 100 },
+        taskCount: { type: "integer", minimum: 1 },
+        unfinishedTaskCount: { type: "integer", minimum: 0 },
+        revision: { type: "string", pattern: "^[a-f0-9]{64}$" },
+        updatedAt: dateTime
+      }
+    },
+    ProjectWorkflowSectionAssignmentList: {
+      type: "array",
+      items: { $ref: "#/components/schemas/ProjectWorkflowSectionAssignment" }
+    },
+    ProcurementProject: {
+      type: "object",
+      required: [
+        "taskId", "taskVersion", "taskStatus", "taskProgress", "openedAt",
+        "updatedAt", "projectId", "projectName", "estimateId",
+        "estimateVersion", "sections"
+      ],
+      properties: {
+        taskId: id,
+        taskVersion: { type: "integer", minimum: 1 },
+        taskStatus: { type: "string", enum: [...PROJECT_WORKFLOW_TASK_STATUSES] },
+        taskProgress: { type: "integer", minimum: 0, maximum: 100 },
+        openedAt: dateTime,
+        updatedAt: dateTime,
+        projectId: id,
+        projectName: { type: "string", minLength: 1 },
+        estimateId: id,
+        estimateVersion: { type: "integer", minimum: 1 },
+        sections: {
+          type: "array",
+          items: { $ref: "#/components/schemas/ProcurementSection" }
+        }
+      }
+    },
+    ProcurementProjectList: {
+      type: "array",
+      items: { $ref: "#/components/schemas/ProcurementProject" }
+    },
+    ProcurementSection: {
+      type: "object",
+      required: [
+        "id", "label", "estimatedAmountPaise", "actualSpendPaise", "items"
+      ],
+      properties: {
+        id: { type: "string", minLength: 1 },
+        label: { type: "string", minLength: 1 },
+        estimatedAmountPaise: { type: "integer", minimum: 0 },
+        actualSpendPaise: { type: "integer", minimum: 0 },
+        items: {
+          type: "array",
+          items: { $ref: "#/components/schemas/ProcurementItem" }
+        }
+      }
+    },
+    ProcurementItem: {
+      type: "object",
+      required: [
+        "key", "catalogueId", "roomName", "specification", "unit",
+        "quantity", "estimatedAmountPaise", "actualSpendPaise", "expenses"
+      ],
+      properties: {
+        key: { type: "string", minLength: 1 },
+        catalogueId: { type: "string", minLength: 1 },
+        roomName: { type: "string", minLength: 1 },
+        specification: { type: "string", minLength: 1 },
+        unit: { type: "string", minLength: 1 },
+        quantity: { type: "number", minimum: 0 },
+        estimatedAmountPaise: { type: "integer", minimum: 0 },
+        actualSpendPaise: { type: "integer", minimum: 0 },
+        expenses: {
+          type: "array",
+          items: { $ref: "#/components/schemas/FinanceLedgerEntry" }
+        }
+      }
     },
     ProjectFinanceBucket: {
       type: "object",
@@ -1650,7 +1839,8 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
       required: [
         "id", "bucketId", "projectId", "type", "expenseClass", "category", "amountPaise",
         "incurredAt", "description", "vendor", "reference", "sourceSectionId",
-        "idempotencyKey", "status", "version", "createdById", "voidedAt",
+        "sourceLineItemKey", "sourceSectionLabel", "sourceLineItemLabel",
+        "supportingDocument", "idempotencyKey", "status", "version", "createdById", "voidedAt",
         "voidedById", "voidReason", "createdAt", "updatedAt"
       ],
       properties: {
@@ -1670,6 +1860,21 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
         vendor: { type: "string", nullable: true },
         reference: { type: "string", nullable: true },
         sourceSectionId: { type: "string", nullable: true },
+        sourceLineItemKey: { type: "string", nullable: true },
+        sourceSectionLabel: {
+          type: "string",
+          nullable: true,
+          description: "Display name of the approved Estimate section; clients render this instead of sourceSectionId."
+        },
+        sourceLineItemLabel: {
+          type: "string",
+          nullable: true,
+          description: "Approved specification and room for the source line item; clients render this instead of sourceLineItemKey. Null when the key no longer resolves against the approved Estimate."
+        },
+        supportingDocument: {
+          allOf: [{ $ref: "#/components/schemas/FinanceSupportingDocument" }],
+          nullable: true
+        },
         idempotencyKey: { type: "string" },
         status: { type: "string", enum: ["posted", "voided"] },
         version: { type: "integer", minimum: 1 },
@@ -1679,6 +1884,20 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
         voidReason: { type: "string", nullable: true },
         createdAt: dateTime,
         updatedAt: dateTime
+      }
+    },
+    FinanceSupportingDocument: {
+      type: "object",
+      required: ["id", "originalFilename", "mimeType", "sizeBytes", "createdAt"],
+      properties: {
+        id,
+        originalFilename: { type: "string", minLength: 1 },
+        mimeType: {
+          type: "string",
+          enum: ["application/pdf", "image/jpeg", "image/png", "image/webp"]
+        },
+        sizeBytes: { type: "integer", minimum: 1 },
+        createdAt: dateTime
       }
     },
     FinanceLedgerEntryPage: {

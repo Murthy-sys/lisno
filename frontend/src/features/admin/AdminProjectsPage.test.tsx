@@ -132,7 +132,14 @@ describe("AdminProjectsPage", () => {
 
     expect(await screen.findByRole("heading", { name: "All Projects" })).toBeVisible();
     expect(screen.getByText("All projects across the organization.")).toBeVisible();
-    expect(await screen.findByRole("list", { name: "All Projects" })).toBeVisible();
+    const list = await screen.findByRole("list", { name: "All Projects" });
+    expect(list).toBeVisible();
+    expect(within(list).getAllByRole("listitem")).toHaveLength(1);
+    expect(within(list).getByRole("article", { name: "Asha home" })).toBeVisible();
+    expect(within(list).getByRole("link", { name: "View details for Asha home" })).toHaveAttribute(
+      "href",
+      "/admin/projects/project%2Fone"
+    );
     expect(screen.getByRole("navigation", { name: "All Projects pages" })).toBeVisible();
     expect(screen.getByRole("button", { name: "Initiate project" })).toBeVisible();
   });
@@ -153,8 +160,26 @@ describe("AdminProjectsPage", () => {
         },
         estimate: {
           id: "estimate-approved",
+          leadId: "lead-1",
+          projectId: "project/one",
+          resolvedProjectId: "project/one",
+          projectLinkSource: "estimate_and_lead",
+          version: 4,
           status: "client_approved",
-          total: 278704
+          subtotal: 236190,
+          gst: 42514,
+          total: 278704,
+          clientDecisionAt: "2026-08-24T09:00:00.000Z",
+          clientDecisionSource: "client_portal",
+          approvedBaseline: {
+            estimateVersion: 4,
+            reviewRoundId: "round-approved",
+            subtotal: 236190,
+            gst: 42514,
+            total: 278704,
+            decisionAt: "2026-08-24T09:00:00.000Z",
+            decisionSource: "client_portal"
+          }
         }
       };
       server.use(
@@ -168,13 +193,17 @@ describe("AdminProjectsPage", () => {
       const list = await screen.findByRole("list", { name: collectionName });
       expect(within(list).getByText("Estimation Approval")).toBeVisible();
       expect(within(list).getByText("Assign Designer to upload design")).toBeVisible();
-      expect(within(list).getByText(/Client Approved · ₹2,78,704/)).toBeVisible();
+      expect(within(list).getByText("Client-approved value (incl. GST)")).toBeVisible();
+      expect(within(list).getByText(/₹2,78,704/)).toBeVisible();
       expect(within(list).queryByText("project kickoff")).not.toBeInTheDocument();
       expect(within(list).queryByText("Planning")).not.toBeInTheDocument();
-      expect(within(list).getByRole("link", { name: "Assign Designer" })).toHaveAttribute(
+      const projectLink = within(list).getByRole("link", { name: "View details for Asha home" });
+      const assignmentLink = within(list).getByRole("link", { name: "Assign Designer" });
+      expect(assignmentLink).toHaveAttribute(
         "href",
         "/admin/projects/project%2Fone#design-assignment-title"
       );
+      expect(projectLink.contains(assignmentLink)).toBe(false);
     }
   );
 
@@ -225,7 +254,21 @@ describe("AdminProjectsPage", () => {
               name: "Legacy project",
               estimator: null,
               lead: null,
-              estimate: { id: "estimate-2", status: "draft", total: 975000 }
+              estimate: {
+                id: "estimate-2",
+                leadId: "lead-2",
+                projectId: "project-two",
+                resolvedProjectId: "project-two",
+                projectLinkSource: "estimate",
+                version: 1,
+                status: "draft",
+                subtotal: 975000,
+                gst: 0,
+                total: 975000,
+                clientDecisionAt: null,
+                clientDecisionSource: null,
+                approvedBaseline: null
+              }
             }
           ])
         )
@@ -235,10 +278,14 @@ describe("AdminProjectsPage", () => {
     renderApp(["/admin/projects"]);
     expect(await screen.findByRole("heading", { name: "My Projects" })).toBeVisible();
     const list = await screen.findByRole("list", { name: "My Projects" });
-    expect(within(list).getByRole("link", { name: "Asha home" })).toHaveAttribute(
+    expect(within(list).getAllByRole("listitem")).toHaveLength(2);
+    expect(within(list).getAllByRole("article")).toHaveLength(2);
+    expect(within(list).getByRole("link", { name: "View details for Asha home" })).toHaveAttribute(
       "href",
       "/admin/projects/project%2Fone"
     );
+    expect(within(list).getAllByText("3BHK · Pune")).toHaveLength(2);
+    expect(within(list).getAllByText("View project")).toHaveLength(2);
     expect(within(list).getByText("No estimate yet")).toBeVisible();
     expect(within(list).getAllByText("Unassigned handoff")).toHaveLength(2);
     expect(within(list).getByText(/₹9,75,000/)).toBeVisible();

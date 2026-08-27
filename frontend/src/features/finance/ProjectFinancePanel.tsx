@@ -1,18 +1,8 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  BriefcaseBusiness,
-  CircleDollarSign,
-  Landmark,
-  ReceiptText,
-  ShoppingCart,
-  TrendingUp,
-  UsersRound,
-  WalletCards
-} from "lucide-react";
-import { useRef, useState, type CSSProperties, type FormEvent, type ReactNode } from "react";
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useRef, useState, type FormEvent } from "react";
 
 import { ApiError } from "../../api/client";
-import type { ProjectFinanceBucket } from "../../api/types";
+import type { FinanceLedgerEntry, ProjectFinanceBucket } from "../../api/types";
 import { useAuth } from "../../auth/AuthProvider";
 import { hasFrontendPermission } from "../../auth/authorization";
 import { Button } from "../../components/ui/Button";
@@ -20,18 +10,20 @@ import { Field, Input, Select, Textarea } from "../../components/ui/Field";
 import { PageState } from "../../components/ui/PageState";
 import { StatusBadge } from "../../components/ui/StatusBadge";
 import { Surface } from "../../components/ui/Surface";
+import { SupportingDocumentActions } from "../procurement/SupportingDocumentActions";
+import { formatBps, formatPaise, formatPercentage } from "./financeFormat";
+import { ProjectFinanceChart } from "./ProjectFinanceChart";
 import {
+  getFinanceSupportingDocument,
   getProjectFinanceBucket,
   getProjectFinanceEntries,
   postProjectFinanceEntry,
   projectFinanceKeys
 } from "./projectFinanceApi";
 
-const money = new Intl.NumberFormat("en-IN", {
-  style: "currency",
-  currency: "INR",
-  maximumFractionDigits: 2
-});
+/* Re-exported so the procurement views keep one money formatter. */
+export { formatBps, formatPaise } from "./financeFormat";
+
 const date = new Intl.DateTimeFormat("en-GB", {
   dateStyle: "medium",
   timeZone: "UTC"
@@ -40,24 +32,55 @@ const date = new Intl.DateTimeFormat("en-GB", {
 export function ProjectFinancePanel({
   projectId,
   enabled = true,
-  title = "Finance bucket"
+  title = "Finance bucket",
+  expectedSource
 }: {
   projectId: string;
   enabled?: boolean;
   title?: string;
+  expectedSource?: ProjectFinanceExpectedSource | null;
 }) {
   const auth = useAuth();
   const canCreate = hasFrontendPermission(auth.authorization, "finance.entry.create");
+  const canReadDocuments = hasFrontendPermission(auth.authorization, "finance.entry.read");
+  const queryEnabled = enabled && expectedSource !== null;
   const bucket = useQuery({
     queryKey: projectFinanceKeys.bucket(projectId),
     queryFn: () => getProjectFinanceBucket(projectId),
-    enabled
+    enabled: queryEnabled
   });
-  const entries = useQuery({
+  const entries = useInfiniteQuery({
     queryKey: projectFinanceKeys.entries(projectId),
-    queryFn: () => getProjectFinanceEntries(projectId),
-    enabled
+    queryFn: ({ pageParam }) => getProjectFinanceEntries(projectId, pageParam),
+    initialPageParam: 0,
+    getNextPageParam: (lastPage) => lastPage.pagination.hasMore
+      ? lastPage.pagination.offset + lastPage.pagination.limit
+      : undefined,
+    enabled: queryEnabled
   });
+  const entryPages = entries.data?.pages ?? [];
+  const entryItems = uniqueFinanceEntries(
+    entryPages.flatMap((page) => page.items)
+  );
+  const entryTotal = entryPages[0]?.pagination.total ?? entryItems.length;
+  const integrityError = bucket.data && expectedSource !== null
+    ? projectFinanceIntegrityError(bucket.data, projectId, expectedSource)
+    : null;
+  const trustedBucket = bucket.data && integrityError === null
+    ? bucket.data
+    : null;
+  const ledgerIntegrityError = trustedBucket && entries.data
+    ? projectFinanceLedgerIntegrityError(
+        entryItems,
+        projectId,
+        trustedBucket.id
+      )
+    : null;
+  const heading = expectedSource
+    ? `${expectedSource.projectName} finance`
+    : trustedBucket
+      ? `${trustedBucket.projectName} finance`
+      : title;
 
   return (
     <Surface
@@ -68,202 +91,185 @@ export function ProjectFinancePanel({
       <div className="section-heading">
         <div>
           <p className="eyebrow">Project financial details</p>
-          <h2 id={`project-finance-${projectId}`}>{bucket.data ? `${bucket.data.projectName} finance` : title}</h2>
+          <h2 id={`project-finance-${projectId}`}>{heading}</h2>
         </div>
-        {bucket.data ? (
+        {trustedBucket ? (
           <StatusBadge
-            tone={bucket.data.overBudget ? "danger" : bucket.data.status === "open" ? "success" : "info"}
-            label={bucket.data.overBudget ? "Over cost budget" : bucket.data.status.replaceAll("_", " ")}
+            tone={trustedBucket.overBudget ? "danger" : trustedBucket.status === "open" ? "success" : "info"}
+            label={trustedBucket.overBudget ? "Over cost budget" : trustedBucket.status.replaceAll("_", " ")}
           />
         ) : null}
       </div>
 
       {!enabled ? (
-        <p>The finance bucket opens when the design plan is approved.</p>
-      ) : bucket.isPending || entries.isPending ? (
-        <PageState state="loading" message="Loading project finance…" />
-      ) : bucket.isError || entries.isError ? (
+        <p>The approved financial baseline becomes available after the Client approves the estimate.</p>
+      ) : expectedSource === null ? (
         <PageState
           state="error"
-          message={financeError(bucket.error ?? entries.error)}
+          message="The approved Estimate baseline is missing, so this project's financial details cannot be reconciled safely."
+        />
+      ) : bucket.isPending ? (
+        <PageState state="loading" message="Loading project finance…" />
+      ) : bucket.isError ? (
+        <PageState
+          state="error"
+          message={financeError(bucket.error)}
           action={{
             label: "Try again",
+            onAction: () => void bucket.refetch()
+          }}
+        />
+      ) : integrityError ? (
+        <PageState
+          state="error"
+          message={integrityError}
+          action={{
+            label: "Refresh financial details",
             onAction: () => void Promise.all([bucket.refetch(), entries.refetch()])
           }}
         />
-      ) : bucket.data ? (
+      ) : trustedBucket ? (
         <>
-          <ProjectFinanceHero bucket={bucket.data} />
-          <FinanceKpis bucket={bucket.data} />
+          <ProjectFinanceChart bucket={trustedBucket} />
           <div className="project-finance-panel__details">
             <dl>
-              <div><dt>Client-approved value (incl. GST)</dt><dd>{formatPaise(bucket.data.approvedContractTotalPaise)}</dd></div>
-              <div><dt>GST included (18%)</dt><dd>{formatPaise(bucket.data.approvedGstPaise)}</dd></div>
-              <div><dt>Net approved revenue (excl. GST)</dt><dd>{formatPaise(bucket.data.approvedSubtotalPaise)}</dd></div>
-              <div><dt>Profit margin policy</dt><dd>{formatBps(bucket.data.targetMarginBps)}</dd></div>
-              <div><dt>Cost budget consumed</dt><dd>{formatPercentage(bucket.data.recordedCostPaise, bucket.data.costBudgetPaise)}</dd></div>
-              <div><dt>Design plan baseline</dt><dd>Version {bucket.data.designPlanVersion}</dd></div>
-              <div><dt>Project deadline</dt><dd>{date.format(new Date(bucket.data.deadlineAt))}</dd></div>
-              <div><dt>Schedule position</dt><dd>{deadlineLabel(bucket.data)}</dd></div>
+              <div><dt>Client-approved value (incl. GST)</dt><dd>{formatPaise(trustedBucket.approvedContractTotalPaise)}</dd></div>
+              <div><dt>GST included (18%)</dt><dd>{formatPaise(trustedBucket.approvedGstPaise)}</dd></div>
+              <div><dt>Net approved revenue (excl. GST)</dt><dd>{formatPaise(trustedBucket.approvedSubtotalPaise)}</dd></div>
+              <div><dt>Profit margin policy</dt><dd>{formatBps(trustedBucket.targetMarginBps)}</dd></div>
+              <div><dt>Cost budget consumed</dt><dd>{formatPercentage(trustedBucket.recordedCostPaise, trustedBucket.costBudgetPaise)}</dd></div>
+              <div><dt>Approved estimate baseline</dt><dd>Version {trustedBucket.estimateVersion}</dd></div>
+              <div><dt>Design plan baseline</dt><dd>Version {trustedBucket.designPlanVersion}</dd></div>
+              <div><dt>Project deadline</dt><dd>{date.format(new Date(trustedBucket.deadlineAt))}</dd></div>
+              <div><dt>Schedule position</dt><dd>{deadlineLabel(trustedBucket)}</dd></div>
             </dl>
           </div>
-          {canCreate && bucket.data.status === "open" ? (
+          {canCreate && trustedBucket.status === "open" && entries.data && !ledgerIntegrityError ? (
             <FinanceEntryForm key={projectId} projectId={projectId} />
           ) : null}
-          <FinanceEntries entries={entries.data?.items ?? []} />
+          {entries.isPending ? (
+            <PageState state="loading" message="Loading spending and overhead ledger…" />
+          ) : entries.isError && !entries.data ? (
+            <PageState
+              state="error"
+              message="The spending and overhead ledger could not be loaded. The approved financial baseline remains available above."
+              action={{ label: "Retry ledger", onAction: () => void entries.refetch() }}
+            />
+          ) : ledgerIntegrityError ? (
+            <PageState
+              state="error"
+              message={ledgerIntegrityError}
+              action={{ label: "Refresh ledger", onAction: () => void entries.refetch() }}
+            />
+          ) : (
+            <FinanceEntries
+              projectId={projectId}
+              entries={entryItems}
+              total={entryTotal}
+              canReadDocuments={canReadDocuments}
+              hasMore={entries.hasNextPage}
+              loadingMore={entries.isFetchingNextPage}
+              loadMoreError={entries.isFetchNextPageError}
+              onLoadMore={() => void entries.fetchNextPage()}
+            />
+          )}
         </>
       ) : null}
     </Surface>
   );
 }
 
-export function FinanceKpis({
-  bucket
-}: {
-  bucket: {
-    approvedContractTotalPaise: number;
-    approvedGstPaise: number;
-    approvedSubtotalPaise: number;
-    targetProfitPaise: number;
-    costBudgetPaise: number;
-    procurementCostPaise: number;
-    employeePaymentPaise: number;
-    otherExpensePaise: number;
-    directSpendPaise: number;
-    overheadPaise: number;
-    recordedCostPaise: number;
-    remainingBudgetPaise: number;
-  };
-}) {
-  const cards: FinanceKpiCard[] = [
-    { label: "Client-approved value (incl. GST)", value: bucket.approvedContractTotalPaise, icon: <Landmark />, note: "Approved estimate total payable by the client" },
-    { label: "GST included (18%)", value: bucket.approvedGstPaise, icon: <ReceiptText />, note: "Tax excluded before revenue is budgeted" },
-    { label: "Net approved revenue (excl. GST)", value: bucket.approvedSubtotalPaise, icon: <CircleDollarSign />, note: "Client-approved value less GST" },
-    { label: "Reserved profit target (20%)", value: bucket.targetProfitPaise, icon: <TrendingUp />, note: "Fixed at 20% of net approved revenue", tone: "violet" },
-    { label: "Project cost budget (80%)", value: bucket.costBudgetPaise, icon: <WalletCards />, note: "Net revenue less the reserved profit target", tone: "violet" },
-    { label: "Procurement expenses", value: bucket.procurementCostPaise, icon: <ShoppingCart />, note: "Recorded materials and vendor costs" },
-    { label: "Employee payments", value: bucket.employeePaymentPaise, icon: <UsersRound />, note: "Recorded project team payments" },
-    { label: "Other project expenses", value: bucket.otherExpensePaise, icon: <ReceiptText />, note: "Recorded direct costs outside procurement and payroll" },
-    { label: "Overheads", value: bucket.overheadPaise, icon: <BriefcaseBusiness />, note: "Recorded operating costs allocated to projects", tone: bucket.overheadPaise > 0 ? "amber" : undefined },
-    { label: "Total recorded expenses", value: bucket.recordedCostPaise, icon: <ReceiptText />, note: "Procurement + employees + other expenses + overheads", tone: bucket.recordedCostPaise > bucket.costBudgetPaise ? "red" : undefined },
-    { label: bucket.remainingBudgetPaise < 0 ? "Cost budget overrun" : "Remaining cost budget", value: Math.abs(bucket.remainingBudgetPaise), icon: <WalletCards />, note: "Project cost budget less all recorded expenses", tone: bucket.remainingBudgetPaise < 0 ? "red" : "green" }
+export interface ProjectFinanceExpectedSource {
+  projectId: string;
+  projectName: string;
+  estimateId: string;
+  estimateVersion?: number;
+  approvedSubtotalPaise: number;
+  approvedGstPaise: number;
+  approvedContractTotalPaise: number;
+}
+
+const FINANCE_INTEGRITY_MESSAGE =
+  "These financial details do not match this project's approved estimate. Refresh the project before taking financial action.";
+
+function projectFinanceIntegrityError(
+  bucket: ProjectFinanceBucket,
+  requestedProjectId: string,
+  expected?: ProjectFinanceExpectedSource
+): string | null {
+  const nonNegativeAmounts = [
+    bucket.approvedSubtotalPaise,
+    bucket.approvedGstPaise,
+    bucket.approvedContractTotalPaise,
+    bucket.targetProfitPaise,
+    bucket.costBudgetPaise,
+    bucket.procurementCostPaise,
+    bucket.employeePaymentPaise,
+    bucket.otherExpensePaise,
+    bucket.directSpendPaise,
+    bucket.overheadPaise,
+    bucket.recordedCostPaise
   ];
-  return (
-    <div className="finance-kpis" aria-label="Finance summary">
-      {cards.map((card) => (
-        <article key={card.label} className={`finance-kpi${card.tone ? ` finance-kpi--${card.tone}` : ""}`}>
-          <span className="finance-kpi__icon" aria-hidden="true">{card.icon}</span>
-          <span>{card.label}</span>
-          <strong>{formatPaise(card.value)}</strong>
-          <small>{card.note}</small>
-        </article>
-      ))}
-    </div>
+  const approvedSubtotalIsSafe = Number.isSafeInteger(bucket.approvedSubtotalPaise) &&
+    bucket.approvedSubtotalPaise >= 0;
+  const expectedTargetProfitPaise = approvedSubtotalIsSafe
+    ? Number((BigInt(bucket.approvedSubtotalPaise) * 2_000n + 5_000n) / 10_000n)
+    : null;
+  const sourceMismatch = bucket.projectId !== requestedProjectId || (
+    expected !== undefined && (
+      expected.projectId !== requestedProjectId ||
+      bucket.estimateId !== expected.estimateId ||
+      (expected.estimateVersion !== undefined &&
+        bucket.estimateVersion !== expected.estimateVersion) ||
+      bucket.approvedSubtotalPaise !== expected.approvedSubtotalPaise ||
+      bucket.approvedGstPaise !== expected.approvedGstPaise ||
+      bucket.approvedContractTotalPaise !== expected.approvedContractTotalPaise
+    )
   );
+  const arithmeticMismatch =
+    nonNegativeAmounts.some((value) => !Number.isSafeInteger(value) || value < 0) ||
+    bucket.targetMarginBps !== 2_000 ||
+    expectedTargetProfitPaise === null ||
+    bucket.targetProfitPaise !== expectedTargetProfitPaise ||
+    bucket.approvedSubtotalPaise + bucket.approvedGstPaise !==
+      bucket.approvedContractTotalPaise ||
+    bucket.targetProfitPaise + bucket.costBudgetPaise !==
+      bucket.approvedSubtotalPaise ||
+    bucket.procurementCostPaise + bucket.employeePaymentPaise +
+      bucket.otherExpensePaise !== bucket.directSpendPaise ||
+    bucket.directSpendPaise + bucket.overheadPaise !== bucket.recordedCostPaise ||
+    bucket.costBudgetPaise - bucket.recordedCostPaise !== bucket.remainingBudgetPaise ||
+    bucket.approvedSubtotalPaise - bucket.recordedCostPaise !==
+      bucket.currentProfitPaise ||
+    bucket.overBudget !== (bucket.remainingBudgetPaise < 0);
+  return sourceMismatch || arithmeticMismatch
+    ? FINANCE_INTEGRITY_MESSAGE
+    : null;
 }
 
-interface FinanceKpiCard {
-  label: string;
-  value: number;
-  icon: ReactNode;
-  note: string;
-  tone?: "green" | "amber" | "red" | "violet";
+function projectFinanceLedgerIntegrityError(
+  entries: FinanceLedgerEntry[],
+  requestedProjectId: string,
+  bucketId: string
+): string | null {
+  return entries.some(
+    (entry) => entry.projectId !== requestedProjectId || entry.bucketId !== bucketId
+  )
+    ? "The spending ledger contains entries from a different project or financial baseline. Refresh the project before taking financial action."
+    : null;
 }
 
-function ProjectFinanceHero({ bucket }: { bucket: ProjectFinanceBucket }) {
-  const budgetHealthy = bucket.remainingBudgetPaise >= 0;
-  return (
-    <section className="project-finance-hero" aria-labelledby={`project-finance-position-${bucket.projectId}`}>
-      <div className="project-finance-hero__copy">
-        <p className="eyebrow">Approved commercial baseline</p>
-        <h3 id={`project-finance-position-${bucket.projectId}`}>{formatPaise(bucket.approvedContractTotalPaise)}</h3>
-        <p>Client-approved value including GST. After GST, 20% of net revenue is reserved for profit and the remaining 80% becomes the project cost budget.</p>
-        <div className="project-finance-equation" aria-label="Project cost budget calculation">
-          <span><small>Project cost budget</small><strong>{formatPaise(bucket.costBudgetPaise)}</strong></span>
-          <i aria-hidden="true">−</i>
-          <span><small>Recorded project expenses</small><strong>{formatPaise(bucket.recordedCostPaise)}</strong></span>
-          <i aria-hidden="true">=</i>
-          <span className={budgetHealthy ? "is-healthy" : "is-risk"}>
-            <small>{budgetHealthy ? "Remaining cost budget" : "Cost budget overrun"}</small>
-            <strong>{formatPaise(Math.abs(bucket.remainingBudgetPaise))}</strong>
-          </span>
-        </div>
-        <p className={`finance-margin-note ${budgetHealthy ? "finance-margin-note--healthy" : "finance-margin-note--risk"}`}>
-          <strong>{formatBps(bucket.targetMarginBps)} target margin {budgetHealthy ? "reserved" : "at risk"}</strong>
-          <span>
-            {budgetHealthy
-              ? ` · ${formatPaise(bucket.targetProfitPaise)} is reserved before project spending.`
-              : ` · Costs exceed the project budget by ${formatPaise(Math.abs(bucket.remainingBudgetPaise))}.`}
-          </span>
-        </p>
-      </div>
-      <FinanceLiquidGauge
-        availablePaise={bucket.remainingBudgetPaise}
-        totalPaise={bucket.costBudgetPaise}
-        label="Remaining project cost budget"
-        size="large"
-      />
-    </section>
-  );
-}
-
-export function FinanceLiquidGauge({
-  availablePaise,
-  totalPaise,
-  label,
-  size = "compact"
-}: {
-  availablePaise: number;
-  totalPaise: number;
-  label: string;
-  size?: "compact" | "large";
-}) {
-  const percentage = totalPaise > 0
-    ? Math.max(0, Math.min(100, (availablePaise / totalPaise) * 100))
-    : 0;
-  const tone = availablePaise < 0 ? "danger" : percentage <= 25 ? "warning" : "healthy";
-  const style = { "--finance-liquid-level": `${percentage}%` } as CSSProperties;
-  const displayValue = availablePaise < 0
-    ? `${formatPaise(Math.abs(availablePaise))} over`
-    : formatPaise(availablePaise);
-  const accessibleValue = availablePaise < 0
-    ? `${formatPaise(Math.abs(availablePaise))} over the ${formatPaise(totalPaise)} cost budget`
-    : `${displayValue} of ${formatPaise(totalPaise)} available`;
-
-  return (
-    <div className={`finance-liquid finance-liquid--${size} finance-liquid--${tone}`}>
-      <div
-        className="finance-liquid__vessel"
-        role="progressbar"
-        aria-label={label}
-        aria-valuemin={0}
-        aria-valuemax={100}
-        aria-valuenow={Math.round(percentage)}
-        aria-valuetext={accessibleValue}
-        style={style}
-      >
-        <div className="finance-liquid__fill" aria-hidden="true">
-          <span className="finance-liquid__wave finance-liquid__wave--one" />
-          <span className="finance-liquid__wave finance-liquid__wave--two" />
-          <span className="finance-liquid__bubble finance-liquid__bubble--one" />
-          <span className="finance-liquid__bubble finance-liquid__bubble--two" />
-          <span className="finance-liquid__bubble finance-liquid__bubble--three" />
-        </div>
-        <div className="finance-liquid__value">
-          <span>{availablePaise < 0 ? "Budget overrun" : label}</span>
-          <strong>{displayValue}</strong>
-          <small>{availablePaise < 0 ? "Cost budget exceeded" : `${Math.round(percentage)}% of cost budget available`}</small>
-        </div>
-      </div>
-    </div>
-  );
+function uniqueFinanceEntries(entries: FinanceLedgerEntry[]) {
+  const unique = new Map<string, FinanceLedgerEntry>();
+  for (const entry of entries) unique.set(entry.id, entry);
+  return [...unique.values()];
 }
 
 function FinanceEntryForm({ projectId }: { projectId: string }) {
   const client = useQueryClient();
   const idempotencyKey = useRef(financeRequestKey());
   const [type, setType] = useState<"direct_spend" | "overhead">("direct_spend");
-  const [expenseClass, setExpenseClass] = useState<"procurement" | "employee_payment" | "other">("procurement");
+  const [expenseClass, setExpenseClass] = useState<"employee_payment" | "other">("employee_payment");
   const [category, setCategory] = useState("");
   const [amount, setAmount] = useState("");
   const [incurredAt, setIncurredAt] = useState(new Date().toISOString().slice(0, 10));
@@ -333,7 +339,7 @@ function FinanceEntryForm({ projectId }: { projectId: string }) {
         </Field>
         {type === "direct_spend" ? (
           <Field id={`finance-entry-class-${projectId}`} label="Expense class" hint="Used for accurate portfolio reporting." required>
-            {(props) => <Select {...props} value={expenseClass} onChange={(event) => updateDraft(() => setExpenseClass(event.target.value as typeof expenseClass))}><option value="procurement">Procurement cost</option><option value="employee_payment">Employee payment</option><option value="other">Other project expense</option></Select>}
+            {(props) => <Select {...props} value={expenseClass} onChange={(event) => updateDraft(() => setExpenseClass(event.target.value as typeof expenseClass))}><option value="employee_payment">Employee payment</option><option value="other">Other project expense</option></Select>}
           </Field>
         ) : null}
         <Field id={`finance-entry-category-${projectId}`} label="Category" required>
@@ -362,32 +368,84 @@ function FinanceEntryForm({ projectId }: { projectId: string }) {
   );
 }
 
-function FinanceEntries({ entries }: { entries: Array<{
-  id: string;
-  type: "direct_spend" | "overhead";
-  expenseClass: "procurement" | "employee_payment" | "other" | null;
-  category: string;
-  amountPaise: number;
-  incurredAt: string;
-  description: string;
-  vendor: string | null;
-  reference: string | null;
-  status: "posted" | "voided";
-}> }) {
+function FinanceEntries({
+  projectId,
+  entries,
+  total,
+  canReadDocuments,
+  hasMore,
+  loadingMore,
+  loadMoreError,
+  onLoadMore
+}: {
+  projectId: string;
+  entries: FinanceLedgerEntry[];
+  total: number;
+  canReadDocuments: boolean;
+  hasMore: boolean;
+  loadingMore: boolean;
+  loadMoreError: boolean;
+  onLoadMore: () => void;
+}) {
   return (
     <section className="finance-entries" aria-labelledby="finance-entries-title">
-      <div className="section-heading"><div><h3 id="finance-entries-title">Spending and overhead ledger</h3></div><span>{entries.length} entries</span></div>
+      <div className="section-heading"><div><h3 id="finance-entries-title">Spending and overhead ledger</h3></div><span>{hasMore ? `${entries.length} of ${total} entries` : `${entries.length} entries`}</span></div>
       {entries.length === 0 ? <p className="inline-empty">No project costs have been recorded.</p> : (
-        <div className="finance-entries__list">
-          {entries.map((entry) => (
-            <article key={entry.id} className="finance-entry">
-              <div><strong>{entry.category}</strong><span>{financeEntryLabel(entry)} · {date.format(new Date(entry.incurredAt))}</span></div>
-              <strong>{formatPaise(entry.amountPaise)}</strong>
-              <p>{entry.description}</p>
-              {entry.vendor || entry.reference ? <small>{[entry.vendor, entry.reference].filter(Boolean).join(" · ")}</small> : null}
-            </article>
-          ))}
-        </div>
+        <>
+          <div className="finance-entries__list">
+            {entries.map((entry) => (
+              <article key={entry.id} className="finance-entry">
+                <div><strong>{entry.category}</strong><span>{financeEntryLabel(entry)} · {date.format(new Date(entry.incurredAt))}</span></div>
+                <strong>{formatPaise(entry.amountPaise)}</strong>
+                <p>{entry.description}</p>
+                {entry.vendor || entry.reference ? <small>{[entry.vendor, entry.reference].filter(Boolean).join(" · ")}</small> : null}
+                {/*
+                  Lineage identifiers stay in the payload for reconciliation;
+                  only the approved names the server resolves are shown here.
+                */}
+                {entry.sourceSectionId || entry.sourceLineItemKey ? (
+                  <dl className="finance-entry__lineage" aria-label="Approved Estimate source">
+                    {entry.sourceSectionLabel ? <div><dt>Estimate section</dt><dd>{entry.sourceSectionLabel}</dd></div> : null}
+                    {entry.sourceLineItemKey ? (
+                      <div>
+                        <dt>Estimate item</dt>
+                        <dd>{entry.sourceLineItemLabel ?? "No longer in the approved Estimate"}</dd>
+                      </div>
+                    ) : null}
+                  </dl>
+                ) : null}
+                {canReadDocuments ? (
+                  <SupportingDocumentActions
+                    supportingDocument={entry.supportingDocument}
+                    getFile={() => getFinanceSupportingDocument(projectId, entry.id)}
+                  />
+                ) : entry.supportingDocument ? (
+                  <span className="supporting-document supporting-document--restricted">Supporting document access restricted</span>
+                ) : (
+                  <span className="supporting-document supporting-document--missing">No supporting document</span>
+                )}
+              </article>
+            ))}
+          </div>
+          {loadingMore ? <p role="status">Loading more ledger entries…</p> : null}
+          {loadMoreError ? (
+            <div>
+              <p role="alert">More ledger entries could not be loaded.</p>
+              <Button variant="secondary" onClick={onLoadMore}>Retry loading more entries</Button>
+            </div>
+          ) : hasMore ? (
+            <Button
+              variant="secondary"
+              busy={loadingMore}
+              busyLabel="Loading more entries…"
+              onClick={onLoadMore}
+            >
+              Load more ledger entries
+            </Button>
+          ) : (
+            <p role="status">All available ledger entries loaded.</p>
+          )}
+        </>
       )}
     </section>
   );
@@ -415,19 +473,6 @@ function deadlineLabel(bucket: Pick<ProjectFinanceBucket, "deadlineStatus" | "ov
         ? `On track · ${bucket.overdueTaskCount} overdue ${bucket.overdueTaskCount === 1 ? "task" : "tasks"}`
         : "On track";
   }
-}
-
-export function formatPaise(value: number) {
-  return money.format(value / 100);
-}
-
-export function formatBps(value: number | null) {
-  return value === null ? "Not available" : `${(value / 100).toFixed(2)}%`;
-}
-
-function formatPercentage(value: number, total: number) {
-  if (total <= 0) return "0%";
-  return `${Math.max(0, (value / total) * 100).toFixed(1)}%`;
 }
 
 function financeError(error: unknown) {

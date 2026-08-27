@@ -25,7 +25,7 @@ from .contracts import (
     OcrError,
     PdfRenderError,
 )
-from .estimate_taxonomy import classify_estimate_drawing
+from .estimate_taxonomy import classify_estimate_drawing, normalize_drawing_title
 from .image_formats import ImageSourceError, open_source_pages
 from .settings import LayoutSettings
 from .title_block import (
@@ -268,6 +268,10 @@ class Extractor:
                 eligible_lines,
                 self._estimate_taxonomy,
             )
+            titles = _deduplicate_taxonomy_titles(
+                titles,
+                self._estimate_taxonomy,
+            )
         title_boxes = tuple(title.box for title in titles)
         association_lines = tuple(
             line
@@ -305,6 +309,7 @@ class Extractor:
             _require_budget(used + section_bytes, remaining_bytes)
             sections.append(section)
             used += section_bytes
+        sections = list(_deduplicate_extracted_sections(sections, titles))
         return ExtractedPage(
             page_number=page_number,
             width=image.width,
@@ -547,6 +552,112 @@ def _with_estimate_taxonomy_titles(
         )
         existing_boxes.add(line.box)
     return tuple(sorted(titles, key=lambda title: (title.box[1], title.box[0])))
+
+
+def _deduplicate_taxonomy_titles(
+    titles: Sequence[DrawingTitle],
+    taxonomy: EstimateTaxonomy,
+) -> tuple[DrawingTitle, ...]:
+    """Collapse OCR aliases for one nearby drawing, keeping best confidence.
+
+    Taxonomy augmentation intentionally considers lines that the drawing-title
+    classifier rejected.  OCR can therefore produce both a classifier title
+    and a taxonomy-only alias for the same heading.  Canonical IDs make the
+    comparison robust to aliases, while geometry keeps repeated panels with
+    the same room/scope separate.
+    """
+    accepted: list[DrawingTitle] = []
+    ranked = sorted(
+        titles,
+        key=lambda title: (-title.confidence, title.box[1], title.box[0]),
+    )
+    for title in ranked:
+        proposal = classify_estimate_drawing(title.label, taxonomy)
+        duplicate = any(
+            _same_taxonomy_label(
+                title.label,
+                proposal,
+                existing.label,
+                classify_estimate_drawing(existing.label, taxonomy),
+            )
+            and _title_boxes_are_near(title.box, existing.box)
+            for existing in accepted
+        )
+        if not duplicate:
+            accepted.append(title)
+    return tuple(sorted(accepted, key=lambda title: (title.box[1], title.box[0])))
+
+
+def _same_taxonomy_label(
+    first_label: str,
+    first: EstimateDrawingProposal,
+    second_label: str,
+    second: EstimateDrawingProposal,
+) -> bool:
+    return normalize_drawing_title(first_label) == normalize_drawing_title(second_label) or (
+        first.room.id is not None
+        and first.room.id == second.room.id
+        and first.scope.id is not None
+        and first.scope.id == second.scope.id
+    )
+
+
+def _title_boxes_are_near(
+    first: tuple[int, int, int, int],
+    second: tuple[int, int, int, int],
+) -> bool:
+    if _boxes_overlap(first, second):
+        return True
+    first_width = max(1, first[2] - first[0])
+    second_width = max(1, second[2] - second[0])
+    first_height = max(1, first[3] - first[1])
+    second_height = max(1, second[3] - second[1])
+    horizontal_overlap = max(0, min(first[2], second[2]) - max(first[0], second[0]))
+    vertical_overlap = max(0, min(first[3], second[3]) - max(first[1], second[1]))
+    vertical_gap = max(first[1], second[1]) - min(first[3], second[3])
+    horizontal_gap = max(first[0], second[0]) - min(first[2], second[2])
+    return (
+        vertical_gap <= max(12, int(max(first_height, second_height) * 1.5))
+        and horizontal_overlap / min(first_width, second_width) >= 0.3
+    ) or (
+        horizontal_gap <= max(12, int(max(first_width, second_width) * 1.5))
+        and vertical_overlap / min(first_height, second_height) >= 0.3
+    )
+
+
+def _deduplicate_extracted_sections(
+    sections: Sequence[ExtractedSection],
+    titles: Sequence[DrawingTitle],
+) -> tuple[ExtractedSection, ...]:
+    """Protect the payload from repeated crops selected for nearby headings."""
+    kept: list[tuple[ExtractedSection, DrawingTitle]] = []
+    for section, title in zip(sections, titles):
+        duplicate_index = next(
+            (
+                index
+                for index, (existing, existing_title) in enumerate(kept)
+                if _box_iou(section.crop, existing.crop) >= 0.96
+                and normalize_drawing_title(title.label)
+                == normalize_drawing_title(existing_title.label)
+                and _title_boxes_are_near(title.box, existing_title.box)
+            ),
+            None,
+        )
+        if duplicate_index is None:
+            kept.append((section, title))
+        elif section.confidence > kept[duplicate_index][0].confidence:
+            kept[duplicate_index] = (section, title)
+    return tuple(section for section, _title in kept)
+
+
+def _box_iou(first: Crop, second: Crop) -> float:
+    left = max(first.x, second.x)
+    top = max(first.y, second.y)
+    right = min(first.x + first.width, second.x + second.width)
+    bottom = min(first.y + first.height, second.y + second.height)
+    intersection = max(0, right - left) * max(0, bottom - top)
+    union = first.width * first.height + second.width * second.height - intersection
+    return intersection / union if union else 0.0
 
 
 def _parse_predict_results(

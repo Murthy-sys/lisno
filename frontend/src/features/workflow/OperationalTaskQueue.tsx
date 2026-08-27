@@ -11,6 +11,8 @@ import { Dialog } from "../../components/ui/Dialog";
 import { ProgressBar } from "../../components/ui/ProgressBar";
 import { StatusBadge } from "../../components/ui/StatusBadge";
 import { Surface } from "../../components/ui/Surface";
+import { adminProjectKeys } from "../admin/adminProjectsApi";
+import { projectFinanceKeys } from "../finance/projectFinanceApi";
 import {
   getOperationalWorkflowTasks,
   projectWorkflowKeys,
@@ -45,6 +47,16 @@ export function OperationalTaskQueue({ role }: { role: Role }) {
         projectWorkflowKeys.operational,
         (current) => current?.map((task) => task.id === updated.id ? updated : task)
       );
+      void Promise.all([
+        queryClient.invalidateQueries({
+          queryKey: projectWorkflowKeys.projectTasks(updated.projectId)
+        }),
+        queryClient.invalidateQueries({ queryKey: adminProjectKeys.all }),
+        queryClient.invalidateQueries({ queryKey: projectFinanceKeys.projects }),
+        queryClient.invalidateQueries({
+          queryKey: projectFinanceKeys.bucket(updated.projectId)
+        })
+      ]);
       setEditingTask(undefined);
     },
     onError: async (error, { task }) => {

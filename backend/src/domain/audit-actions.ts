@@ -98,7 +98,12 @@ export const DESIGN_PLAN_WORKFLOW_AUDIT_ACTIONS = [
   "design_plan_client_proof_stored",
   "design_plan_approved",
   "project_workflow_task_assignee_changed",
+  "project_workflow_section_assignee_changed",
   "project_workflow_task_progress_changed"
+] as const;
+
+export const PROCUREMENT_AUDIT_ACTIONS = [
+  "procurement_expense_recorded"
 ] as const;
 
 export const AUDIT_ACTIONS = [
@@ -106,7 +111,8 @@ export const AUDIT_ACTIONS = [
   ...PROMPT_1_AUDIT_ACTIONS,
   ...USER_INVITATION_AUDIT_ACTIONS,
   ...ESTIMATE_CLIENT_REVIEW_AUDIT_ACTIONS,
-  ...DESIGN_PLAN_WORKFLOW_AUDIT_ACTIONS
+  ...DESIGN_PLAN_WORKFLOW_AUDIT_ACTIONS,
+  ...PROCUREMENT_AUDIT_ACTIONS
 ] as const;
 
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];

@@ -463,9 +463,7 @@
 .ui-app-shell[data-role] .kpi-panel h3,
 .ui-app-shell[data-role] .estimate-proposal > header h1,
 .ui-app-shell[data-role] .estimate-proposal > header h2,
-.ui-app-shell[data-role] .estimate-proposal > header h3,
-.ui-app-shell[data-role] .finance-portfolio-hero h2,
-.ui-app-shell[data-role] .project-finance-hero h3 {
+.ui-app-shell[data-role] .estimate-proposal > header h3 {
   color: var(--role-band-ink);
 }
 
@@ -1419,49 +1417,66 @@
   }
 }
 
-/* ------------------------------------------------ finance statement bands */
+
+/* ------------------------------------------- super admin (dense type scale) */
 
 /*
- * The finance heroes are dark statement panels: the formula chips, operator
- * badges, alert pills and the liquid vessel are all drawn with white ink for a
- * dark ground.
+ * Super Admin works across administration tables, ledgers and inboxes rather
+ * than the presentation-sized workspaces the other roles get, so the whole
+ * shell steps down one type scale: 14px body, 12px metadata, 28px page titles.
+ * Spacing tokens are px and deliberately unchanged, so rows keep their rhythm
+ * and controls keep their 44px hit targets.
  *
- * `.finance-portfolio-hero` is a Surface, so the generic
- * `.ui-app-shell[data-role] .ui-surface` glass tint won on specificity and
- * replaced its dark gradient with light glass - leaving every one of those
- * white children on cream. It opts out here.
- *
- * Both heroes also carried the original midnight/violet gradient, which reads
- * as a foreign palette inside teak, so they take the role's own dark band.
+ * Scoped from <body> rather than the shell so portalled dialogs, drawers and
+ * tooltips - which render outside `.ui-app-shell` - inherit the same scale.
  */
-.ui-app-shell[data-role] .finance-portfolio-hero,
-.ui-app-shell[data-role] .project-finance-hero {
-  border: 0;
-  background: var(--role-band);
-  box-shadow: 0 26px 70px rgb(var(--role-shadow-tint) / 30%);
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
-  color: var(--role-band-ink);
+body:has(.ui-app-shell[data-role="super_admin"]) {
+  --type-page-title: 1.75rem/1.15 var(--font-editorial);
+  --type-section-title: 1.125rem/1.3 var(--font-interface);
+  --type-body: 0.875rem/1.5 var(--font-interface);
+  --type-metadata: 0.75rem/1.4 var(--font-interface);
+
+  --text-xs: 0.6875rem;
+  --text-sm: 0.75rem;
+  --text-md: 0.8125rem;
+  --text-base: 0.875rem;
+  --text-lg: 1rem;
+  --text-xl: 1.0625rem;
+  --text-2xl: 1.25rem;
+  --text-3xl: 1.5rem;
+  --text-4xl: 1.75rem;
 }
 
-.ui-app-shell[data-role] .finance-portfolio-hero__copy > div > p:last-child,
-.ui-app-shell[data-role] .project-finance-hero__copy > p:not(.eyebrow):not(.finance-margin-note) {
-  color: var(--role-band-ink-muted);
+/*
+ * The display sizes below are written as literals in the dashboard
+ * stylesheets, so the token scale above cannot reach them.
+ */
+body:has(.ui-app-shell[data-role="super_admin"]) .kpi-panel__intro h2,
+body:has(.ui-app-shell[data-role="super_admin"]) .section-heading h2 {
+  font-size: 1.25rem;
 }
 
-.ui-app-shell[data-role] .finance-portfolio-hero .eyebrow,
-.ui-app-shell[data-role] .project-finance-hero .eyebrow {
-  color: var(--role-accent-bright);
+body:has(.ui-app-shell[data-role="super_admin"]) .workspace-header h1 {
+  font-size: 1.75rem;
 }
 
-.ui-app-shell[data-role] .finance-portfolio-hero__icon,
-.ui-app-shell[data-role] .finance-portfolio-formula__icon {
-  color: var(--role-accent-bright);
+body:has(.ui-app-shell[data-role="super_admin"]) .kpi-score strong {
+  font-size: 1.75rem;
 }
 
-/* The operator badge sits on the band, so it needs the band's own dark ink
-   rather than the brand midnight it was drawn against. */
-.ui-app-shell[data-role] .finance-portfolio-formula__operation {
-  background: var(--role-ink);
-  color: var(--role-band-ink-muted);
+body:has(.ui-app-shell[data-role="super_admin"]) .designer-kpi .kpi-score strong {
+  font-size: 1.5rem;
+}
+
+body:has(.ui-app-shell[data-role="super_admin"]) .finance-chart__figure {
+  font-size: clamp(1.375rem, 2vw, 1.625rem);
+}
+
+body:has(.ui-app-shell[data-role="super_admin"]) .finance-chart__ring-center strong {
+  font-size: 1.375rem;
+}
+
+/* The ring is sized in rem to sit beside the old type scale. */
+body:has(.ui-app-shell[data-role="super_admin"]) .finance-chart__ring {
+  width: clamp(7.5rem, 18vw, 9.5rem);
 }

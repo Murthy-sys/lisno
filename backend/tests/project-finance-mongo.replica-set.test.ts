@@ -2,6 +2,7 @@ import mongoose from "mongoose";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AuditEventModel } from "../src/models/AuditEvent.js";
+import { EstimateClientReviewRoundModel } from "../src/models/EstimateClientReviewRound.js";
 import { EstimateModel } from "../src/models/Estimate.js";
 import { FinanceLedgerEntryModel } from "../src/models/FinanceLedgerEntry.js";
 import { LeadModel } from "../src/models/Lead.js";
@@ -26,6 +27,7 @@ beforeAll(async () => {
   replica = await startMongoReplicaSet("project-finance-tests");
   await Promise.all([
     AuditEventModel.syncIndexes(),
+    EstimateClientReviewRoundModel.syncIndexes(),
     EstimateModel.syncIndexes(),
     FinanceLedgerEntryModel.syncIndexes(),
     LeadModel.syncIndexes(),
@@ -123,7 +125,7 @@ describe("project finance lifecycle and ledger", () => {
     })).resolves.toEqual({ items: [], total: 0 });
     await expect(service.postEntry(superAdminActor(), projectId, {
       type: "direct_spend",
-      expenseClass: "procurement",
+      expenseClass: "other",
       category: "Must remain locked",
       amountPaise: 10_000,
       incurredAt: NOW.toISOString(),
@@ -133,6 +135,127 @@ describe("project finance lifecycle and ledger", () => {
       status: 409,
       code: "FINANCE_BUCKET_NOT_OPEN"
     });
+  });
+
+  it("reconciles an approved Design with no bucket from its immutable v1 Estimate snapshot before the first expense", async () => {
+    const projectId = "approved-design-without-finance-bucket";
+    const estimateId = `estimate-${projectId}`;
+    const approvalRoundId = `estimate-review-${projectId}`;
+    const estimateApprovedAt = new Date("2026-08-24T09:00:00.000Z");
+    const designApprovedAt = new Date("2026-08-25T09:00:00.000Z");
+    await createProject(projectId, "Murthy Residence", {
+      approvedMoney: {
+        subtotalRupees: 236_190,
+        gstRupees: 42_514,
+        totalRupees: 278_704
+      }
+    });
+    await EstimateModel.updateOne({ _id: estimateId }, {
+      $set: {
+        version: 2,
+        designPlanStatus: "approved",
+        designPlanVersion: 1,
+        designPlanApprovedAt: designApprovedAt,
+        designPlanApprovedById: SUPER_ADMIN_ID,
+        designPlanApprovalSource: "admin_proof"
+      }
+    });
+    await EstimateClientReviewRoundModel.create({
+      _id: approvalRoundId,
+      estimateId,
+      leadId: `lead-${projectId}`,
+      projectId,
+      estimateVersion: 1,
+      sendGeneration: 1,
+      dedupeKey: "a".repeat(64),
+      recipientEmail: "murthy@example.test",
+      recipientEmailNormalized: "murthy@example.test",
+      estimateSnapshot: {
+        clientName: "Murthy",
+        projectName: "Murthy Residence",
+        location: "Bengaluru",
+        propertyType: "villa",
+        lineItems: [],
+        subtotal: 236_190,
+        gst: 42_514,
+        total: 278_704
+      },
+      pdfFilename: "murthy-estimate.pdf",
+      pdfMimeType: "application/pdf",
+      pdfByteSize: 1,
+      pdfSha256: "b".repeat(64),
+      pdfStorageReference: "estimate-review/murthy.pdf",
+      deliveryStatus: "sent",
+      deliveryAttemptGeneration: 1,
+      deliveryAttemptCount: 1,
+      deliveryAttemptedAt: estimateApprovedAt,
+      deliveryLeaseExpiresAt: null,
+      deliveredAt: estimateApprovedAt,
+      deliveryFailureCode: null,
+      assignedAdminId: SUPER_ADMIN_ID,
+      status: "approved",
+      decision: "approve",
+      decisionSource: "admin_proof",
+      decisionNote: "Approved for Client",
+      decidedById: SUPER_ADMIN_ID,
+      decidedAt: estimateApprovedAt,
+      version: 2
+    });
+    await createFinanceWorkflowTask(projectId);
+    expect(await ProjectFinanceBucketModel.countDocuments({ projectId })).toBe(0);
+
+    const service = createProjectFinanceService({ now: () => NOW });
+    const expected = {
+      projectId,
+      estimateId,
+      estimateVersion: 1,
+      estimateReviewRoundId: approvalRoundId,
+      designPlanVersion: 1,
+      approvedSubtotalPaise: 23_619_000,
+      approvedGstPaise: 4_251_400,
+      approvedContractTotalPaise: 27_870_400,
+      targetProfitPaise: 4_723_800,
+      costBudgetPaise: 18_895_200,
+      status: "open"
+    };
+    await expect(service.listProjects(superAdminActor(), { limit: 20, offset: 0 }))
+      .resolves.toMatchObject({ total: 1, items: [expected] });
+    await expect(service.getBucket(superAdminActor(), projectId))
+      .resolves.toMatchObject(expected);
+    expect(await ProjectFinanceBucketModel.countDocuments({ projectId })).toBe(0);
+
+    const entryInput = {
+      type: "direct_spend" as const,
+      expenseClass: "other" as const,
+      category: "Carpentry material",
+      amountPaise: 100_000,
+      incurredAt: NOW.toISOString(),
+      description: "First approved material invoice",
+      idempotencyKey: "missing-bucket-first-expense"
+    };
+    const posted = await service.postEntry(superAdminActor(), projectId, entryInput);
+    expect(posted).toMatchObject({
+      replayed: false,
+      bucket: {
+        ...expected,
+        directSpendPaise: 100_000,
+        recordedCostPaise: 100_000,
+        remainingBudgetPaise: 18_795_200
+      }
+    });
+    await expect(ProjectFinanceBucketModel.findOne({ projectId }).lean())
+      .resolves.toMatchObject({
+        estimateId,
+        estimateVersion: 1,
+        estimateReviewRoundId: approvalRoundId,
+        approvedContractTotalPaise: 27_870_400,
+        designPlanVersion: 1,
+        status: "open",
+        directSpendPaise: 100_000
+      });
+    await expect(service.postEntry(superAdminActor(), projectId, entryInput))
+      .resolves.toMatchObject({ replayed: true, entry: { id: posted.entry.id } });
+    expect(await FinanceLedgerEntryModel.countDocuments({ projectId })).toBe(1);
   });
 
   it("opens the exact approved pre-GST budget and posts idempotent expenses", async () => {
@@ -169,9 +292,22 @@ describe("project finance lifecycle and ledger", () => {
 
     const service = createProjectFinanceService({ now: () => NOW });
     const actor = superAdminActor();
+    await expect(service.postEntry(actor, projectId, {
+      type: "direct_spend",
+      expenseClass: "procurement",
+      category: "Materials",
+      amountPaise: 1_000,
+      incurredAt: NOW.toISOString(),
+      description: "Must use the receipt-backed Procurement workflow",
+      idempotencyKey: "generic-procurement-rejected"
+    })).rejects.toMatchObject({
+      status: 400,
+      code: "VALIDATION_ERROR"
+    });
+    expect(await FinanceLedgerEntryModel.countDocuments({ projectId })).toBe(0);
     const directInput = {
       type: "direct_spend" as const,
-      expenseClass: "procurement" as const,
+      expenseClass: "employee_payment" as const,
       category: "Materials",
       amountPaise: 55_000_000,
       incurredAt: "2026-08-25T09:00:00.000Z",
@@ -209,7 +345,7 @@ describe("project finance lifecycle and ledger", () => {
 
     await expect(service.postEntry(actor, projectId, {
       ...directInput,
-      expenseClass: "employee_payment"
+      expenseClass: "other"
     })).rejects.toMatchObject({
       status: 409,
       code: "FINANCE_IDEMPOTENCY_CONFLICT"
@@ -251,8 +387,8 @@ describe("project finance lifecycle and ledger", () => {
         approvedSubtotalPaise: 100_000_000,
         approvedGstPaise: 18_000_000,
         targetMarginBps: 2_000,
-        procurementCostPaise: 55_000_000,
-        employeePaymentPaise: 0,
+        procurementCostPaise: 0,
+        employeePaymentPaise: 55_000_000,
         otherExpensePaise: 0,
         recordedCostPaise: 85_000_000,
         overBudget: true
@@ -263,7 +399,8 @@ describe("project finance lifecycle and ledger", () => {
         approvedGstPaise: 18_000_000,
         approvedSubtotalPaise: 100_000_000,
         targetProfitPaise: 20_000_000,
-        procurementCostPaise: 55_000_000,
+        procurementCostPaise: 0,
+        employeePaymentPaise: 55_000_000,
         overheadPaise: 30_000_000,
         recordedCostPaise: 85_000_000,
         remainingBudgetPaise: -5_000_000,
@@ -277,7 +414,14 @@ describe("project finance lifecycle and ledger", () => {
     expect((await service.listEntries(actor, projectId, {
       limit: 20,
       offset: 0
-    })).items.map(({ type }) => type)).toEqual(["overhead", "direct_spend"]);
+    })).items.map(({ type, sourceLineItemKey, supportingDocument }) => ({
+      type,
+      sourceLineItemKey,
+      supportingDocument
+    }))).toEqual([
+      { type: "overhead", sourceLineItemKey: null, supportingDocument: null },
+      { type: "direct_spend", sourceLineItemKey: null, supportingDocument: null }
+    ]);
     expect(await AuditEventModel.countDocuments({})).toBe(0);
   });
 
@@ -336,15 +480,11 @@ describe("project finance lifecycle and ledger", () => {
       reference: null,
       sourceSectionId: null
     };
-    await service.postEntry(superAdminActor(), overdueProjectId, {
-      ...common,
-      type: "direct_spend",
-      expenseClass: "procurement",
-      category: "Materials",
-      amountPaise: 10_000,
-      description: "Procurement invoice",
-      idempotencyKey: "portfolio-procurement-entry"
-    });
+    await seedHistoricalProcurementExpense(
+      overdueProjectId,
+      10_000,
+      "portfolio-procurement-entry"
+    );
     await service.postEntry(superAdminActor(), overdueProjectId, {
       ...common,
       type: "direct_spend",
@@ -435,7 +575,7 @@ describe("project finance lifecycle and ledger", () => {
         if (concurrentWriteCompleted) return;
         await writer.postEntry(superAdminActor(), projectId, {
           type: "direct_spend",
-          expenseClass: "procurement",
+          expenseClass: "other",
           category: "Snapshot material",
           amountPaise: 12_345,
           incurredAt: NOW.toISOString(),
@@ -465,7 +605,8 @@ describe("project finance lifecycle and ledger", () => {
 
     const afterFirstCommit = await writer.getBucket(superAdminActor(), projectId);
     expect(afterFirstCommit).toMatchObject({
-      procurementCostPaise: 12_345,
+      procurementCostPaise: 0,
+      otherExpensePaise: 12_345,
       directSpendPaise: 12_345,
       recordedCostPaise: 12_345
     });
@@ -493,14 +634,16 @@ describe("project finance lifecycle and ledger", () => {
     );
     expect(secondWriteCompleted).toBe(true);
     expect(duringSecondWrite).toMatchObject({
-      procurementCostPaise: 12_345,
+      procurementCostPaise: 0,
+      otherExpensePaise: 12_345,
       employeePaymentPaise: 0,
       directSpendPaise: 12_345,
       recordedCostPaise: 12_345
     });
     await expect(writer.getBucket(superAdminActor(), projectId))
       .resolves.toMatchObject({
-        procurementCostPaise: 12_345,
+        procurementCostPaise: 0,
+        otherExpensePaise: 12_345,
         employeePaymentPaise: 6_789,
         directSpendPaise: 19_134,
         recordedCostPaise: 19_134
@@ -522,7 +665,7 @@ describe("project finance lifecycle and ledger", () => {
     const writer = createProjectFinanceService({ now: () => NOW });
     const originalInput = {
       type: "direct_spend" as const,
-      expenseClass: "procurement" as const,
+      expenseClass: "other" as const,
       category: "Replay materials",
       amountPaise: 10_000,
       incurredAt: NOW.toISOString(),
@@ -573,7 +716,8 @@ describe("project finance lifecycle and ledger", () => {
       replayed: true,
       entry: { id: original.entry.id },
       bucket: {
-        procurementCostPaise: 10_000,
+        procurementCostPaise: 0,
+        otherExpensePaise: 10_000,
         employeePaymentPaise: 0,
         directSpendPaise: 10_000,
         recordedCostPaise: 10_000
@@ -581,7 +725,8 @@ describe("project finance lifecycle and ledger", () => {
     });
     await expect(writer.getBucket(superAdminActor(), projectId))
       .resolves.toMatchObject({
-        procurementCostPaise: 10_000,
+        procurementCostPaise: 0,
+        otherExpensePaise: 10_000,
         employeePaymentPaise: 5_000,
         directSpendPaise: 15_000,
         recordedCostPaise: 15_000
@@ -721,8 +866,8 @@ function approvedBudgetInput(projectId: string) {
   return {
     projectId,
     estimateId: `estimate-${projectId}`,
-    estimateVersion: 4,
-    estimateReviewRoundId: `round-${projectId}`,
+    estimateVersion: 3,
+    estimateReviewRoundId: null,
     approvedSubtotalRupees: 1_000_000,
     approvedGstRupees: 180_000,
     approvedContractTotalRupees: 1_180_000,
@@ -846,6 +991,47 @@ async function createProject(
     designPlanVersion: 0,
     clientDecisionAt: NOW
   });
+}
+
+async function seedHistoricalProcurementExpense(
+  projectId: string,
+  amountPaise: number,
+  idempotencyKey: string
+) {
+  const bucket = await ProjectFinanceBucketModel.findOne({ projectId }).lean();
+  if (!bucket) throw new Error("Historical Procurement fixture needs a bucket.");
+  await FinanceLedgerEntryModel.create({
+    _id: `finance-entry-${idempotencyKey}`,
+    bucketId: String(bucket._id),
+    projectId,
+    type: "direct_spend",
+    expenseClass: "procurement",
+    category: "Materials",
+    amountPaise,
+    incurredAt: NOW,
+    description: "Historical receipt-backed Procurement expense",
+    vendor: null,
+    reference: null,
+    sourceSectionId: "CA",
+    sourceLineItemKey: `legacy-estimate-line:estimate-${projectId}:3:0`,
+    idempotencyKey,
+    status: "posted",
+    version: 1,
+    createdById: SUPER_ADMIN_ID,
+    voidedAt: null,
+    voidedById: null,
+    voidReason: null,
+    createdAt: NOW,
+    updatedAt: NOW
+  });
+  await ProjectFinanceBucketModel.updateOne(
+    { _id: bucket._id, projectId },
+    {
+      $inc: { directSpendPaise: amountPaise, version: 1 },
+      $set: { updatedAt: NOW }
+    },
+    { timestamps: false }
+  );
 }
 
 async function createFinanceWorkflowTask(projectId: string) {

@@ -54,6 +54,12 @@ const PROJECT_FINANCE_PERMISSIONS = [
   "finance.entry.create"
 ] as const;
 
+const PROCUREMENT_PERMISSIONS = [
+  "procurement.workspace.read",
+  "procurement.expense.create",
+  "procurement.document.read"
+] as const;
+
 describe("frontend authorization contract parity", () => {
   it("matches the backend role vocabulary and labels", () => {
     expect(FRONTEND_ROLE_CODES).toEqual(ROLE_CODES);
@@ -70,13 +76,13 @@ describe("frontend authorization contract parity", () => {
     expect(FRONTEND_POLICY_VERSION).toBe(AUTHORIZATION_POLICY_VERSION);
   });
 
-  it("publishes the exact 110-code Super Admin finance policy on both sides", () => {
-    expect(AUTHORIZATION_POLICY_VERSION).toBe("2026-08-26.super-admin-finance.v4");
-    expect(FRONTEND_POLICY_VERSION).toBe("2026-08-26.super-admin-finance.v4");
-    expect(PERMISSION_CODES).toHaveLength(110);
-    expect(FRONTEND_PERMISSION_CODES).toHaveLength(110);
-    expect(new Set(PERMISSION_CODES).size).toBe(110);
-    expect(new Set(FRONTEND_PERMISSION_CODES).size).toBe(110);
+  it("publishes the exact 113-code Procurement receipt policy on both sides", () => {
+    expect(AUTHORIZATION_POLICY_VERSION).toBe("2026-08-26.procurement-receipts.v5");
+    expect(FRONTEND_POLICY_VERSION).toBe("2026-08-26.procurement-receipts.v5");
+    expect(PERMISSION_CODES).toHaveLength(113);
+    expect(FRONTEND_PERMISSION_CODES).toHaveLength(113);
+    expect(new Set(PERMISSION_CODES).size).toBe(113);
+    expect(new Set(FRONTEND_PERMISSION_CODES).size).toBe(113);
     for (const permission of STAFF_INVITATION_PERMISSIONS) {
       expect(PERMISSION_CODES).toContain(permission);
       expect(FRONTEND_PERMISSION_CODES).toContain(permission);
@@ -101,6 +107,16 @@ describe("frontend authorization contract parity", () => {
         PROJECT_WORKFLOW_PERMISSIONS.includes(permission as never)
       )
     ).toEqual(PROJECT_WORKFLOW_PERMISSIONS);
+    expect(
+      PERMISSION_CODES.filter((permission) =>
+        PROCUREMENT_PERMISSIONS.includes(permission as never)
+      )
+    ).toEqual(PROCUREMENT_PERMISSIONS);
+    expect(
+      FRONTEND_PERMISSION_CODES.filter((permission) =>
+        PROCUREMENT_PERMISSIONS.includes(permission as never)
+      )
+    ).toEqual(PROCUREMENT_PERMISSIONS);
     expect(
       PERMISSION_CODES.filter((permission) =>
         PROJECT_FINANCE_PERMISSIONS.includes(permission as never)

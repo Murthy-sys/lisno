@@ -1,6 +1,9 @@
 import type { Role, TaskStatus } from "../contracts/domain.js";
 import type { AccountKind } from "../domain/demo-identities.js";
-import type { EstimateClientReviewSummary } from "../domain/estimate-client-review.js";
+import type {
+  EstimateClientDecisionSource,
+  EstimateClientReviewSummary
+} from "../domain/estimate-client-review.js";
 import type {
   InvitableRole,
   UserInvitationAction,
@@ -296,19 +299,52 @@ export interface EstimateSummaryRecord {
   id: string;
   leadId: string;
   projectId: string | null;
+  version: number;
   status: string;
+  subtotal: number;
+  gst: number;
   total: number;
+  clientDecisionAt: string | null;
+  clientDecisionSource: EstimateClientDecisionSource | null;
+  approvedBaseline: AdminProjectApprovedEstimateBaseline | null;
   clientReview: EstimateClientReviewSummary | null;
   assignedAdminId: string | null;
   designPlanStatus?: string | null;
   designPlanVersion?: number;
   designPlanDesignerId?: string | null;
+  createdAt: string;
+  updatedAt: string;
 }
+
+export interface AdminProjectApprovedEstimateBaseline {
+  estimateVersion: number;
+  reviewRoundId: string | null;
+  subtotal: number;
+  gst: number;
+  total: number;
+  decisionAt: string | null;
+  decisionSource: EstimateClientDecisionSource | null;
+}
+
+export type AdminProjectEstimateLinkSource =
+  | "estimate"
+  | "lead"
+  | "estimate_and_lead";
 
 export interface AdminProjectEstimateSummary {
   id: string;
+  leadId: string;
+  projectId: string | null;
+  resolvedProjectId: string;
+  projectLinkSource: AdminProjectEstimateLinkSource;
+  version: number;
   status: string;
+  subtotal: number;
+  gst: number;
   total: number;
+  clientDecisionAt: string | null;
+  clientDecisionSource: EstimateClientDecisionSource | null;
+  approvedBaseline: AdminProjectApprovedEstimateBaseline | null;
   clientReview: EstimateClientReviewSummary | null;
   hasPendingClientResponseTask: boolean;
   designPlanStatus: string | null;

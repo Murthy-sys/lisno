@@ -7,9 +7,9 @@ import { ROLE_PERMISSIONS } from "../src/domain/authorization.js";
 import { ROLE_CODES, type Role } from "../src/domain/roles.js";
 import { createMemoryRepository } from "../src/repositories/memory.js";
 import { demoSeedData } from "../src/seed/data.js";
+import { AUTHORIZATION_POLICY_VERSION } from "../src/services/auth.service.js";
 
 const JWT_SECRET = "auth-test-secret-with-enough-entropy";
-const POLICY_VERSION = "2026-08-26.super-admin-finance.v4";
 
 function appFor(role: Role, active = true) {
   const seed = structuredClone(demoSeedData);
@@ -46,7 +46,7 @@ describe("authorization snapshot API", () => {
     expect(response.body).toEqual({
       data: {
         role,
-        policyVersion: POLICY_VERSION,
+        policyVersion: AUTHORIZATION_POLICY_VERSION,
         permissions: ROLE_PERMISSIONS[role]
       }
     });

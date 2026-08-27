@@ -10,6 +10,8 @@ import { PageState } from "../../components/ui/PageState";
 import { StatusBadge } from "../../components/ui/StatusBadge";
 import { Surface } from "../../components/ui/Surface";
 import { DownloadButton } from "../../components/ui/DownloadButton";
+import { projectFinanceKeys } from "../finance/projectFinanceApi";
+import { adminProjectKeys } from "./adminProjectsApi";
 import {
   decideDesignPlanReview,
   downloadDesignPlanReviewAttachment,
@@ -77,7 +79,15 @@ function DesignReviewCard({ task }: { task: DesignPlanReviewTask }) {
       note,
       proof: proof!
     }),
-    onSuccess: () => client.invalidateQueries({ queryKey: projectWorkflowKeys.all })
+    onSuccess: async (updated) => {
+      await Promise.all([
+        client.invalidateQueries({ queryKey: projectWorkflowKeys.all }),
+        client.invalidateQueries({ queryKey: adminProjectKeys.all }),
+        client.invalidateQueries({ queryKey: projectFinanceKeys.projects }),
+        client.invalidateQueries({ queryKey: projectFinanceKeys.bucket(updated.projectId) }),
+        client.invalidateQueries({ queryKey: projectFinanceKeys.entries(updated.projectId) })
+      ]);
+    }
   });
   const retryEmail = useMutation({
     mutationFn: () => retryDesignPlanReviewEmail(task.id, task.version),

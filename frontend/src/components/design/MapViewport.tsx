@@ -1,4 +1,4 @@
-import { useRef, useState, type PointerEvent, type ReactNode, type WheelEvent } from "react";
+import { useRef, useState, type PointerEvent, type ReactNode } from "react";
 
 export interface MapViewTransform {
   scale: number;
@@ -54,12 +54,6 @@ export function MapViewport({
   function surfacePoint(clientX: number, clientY: number, element: HTMLElement) {
     const bounds = element.getBoundingClientRect();
     return { x: clientX - bounds.left, y: clientY - bounds.top };
-  }
-
-  function onWheel(event: WheelEvent<HTMLDivElement>) {
-    event.preventDefault();
-    const focal = surfacePoint(event.clientX, event.clientY, event.currentTarget);
-    zoomAt(view.scale + (event.deltaY < 0 ? 0.25 : -0.25), focal);
   }
 
   function onPointerDown(event: PointerEvent<HTMLDivElement>) {
@@ -121,8 +115,6 @@ export function MapViewport({
       <div
         className="map-viewport__surface"
         data-testid="map-viewport-surface"
-        onWheel={onWheel}
-        onDoubleClick={(event) => zoomAt(view.scale + 0.5, surfacePoint(event.clientX, event.clientY, event.currentTarget))}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={finishPointer}

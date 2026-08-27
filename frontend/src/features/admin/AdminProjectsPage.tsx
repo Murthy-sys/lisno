@@ -1,4 +1,5 @@
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { ArrowUpRight } from "lucide-react";
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 
@@ -44,34 +45,53 @@ function AdminProjectCard({
   const nextAction = adminProjectNextAction(project);
   const assignmentPending = isDesignerAssignmentPending(project);
   const detailPath = `/admin/projects/${encodeURIComponent(project.id)}`;
+  const estimate = project.estimate;
+  const estimateApproved = estimate?.status === "client_approved";
+  const estimateValue = estimateApproved
+    ? estimate.approvedBaseline?.total ?? null
+    : estimate?.total ?? null;
 
   return (
-    <li>
-      <Surface as="article" className="admin-project-card" variant="interactive">
-        <div className="admin-project-card__heading">
-          <div>
-            <Link to={detailPath}>
-              {project.name}
-            </Link>
+    <li className="admin-projects__item">
+      <Surface
+        as="article"
+        className="admin-project-card"
+        padding="compact"
+        aria-label={project.name}
+      >
+        <Link
+          className="admin-project-card__link"
+          to={detailPath}
+          aria-label={`View details for ${project.name}`}
+        >
+          <div className="admin-project-card__identity">
+            <h2>{project.name}</h2>
             <p>{project.client.name}</p>
+            <StatusBadge label={adminProjectStatusLabel(project)} tone="info" />
           </div>
-          <StatusBadge label={adminProjectStatusLabel(project)} tone="info" />
-        </div>
-        <dl className="admin-project-card__meta">
-          <div><dt>Property</dt><dd>{project.propertyType ?? "Not captured"}</dd></div>
-          <div><dt>Location</dt><dd>{project.location}</dd></div>
-          <div><dt>Estimator/Sales</dt><dd>{project.estimator?.name ?? "Unassigned handoff"}</dd></div>
-          <div><dt>Lead progress</dt><dd>{project.lead ? formatWorkflowLabel(project.lead.stage) : "Unassigned handoff"}</dd></div>
-          {nextAction ? <div><dt>Next action</dt><dd>{nextAction}</dd></div> : null}
-          <div>
-            <dt>Estimate</dt>
-            <dd>
-              {project.estimate
-                ? `${formatWorkflowLabel(project.estimate.status)} · ${money.format(project.estimate.total)}`
-                : "No estimate yet"}
-            </dd>
-          </div>
-        </dl>
+          <dl className="admin-project-card__meta">
+            <div>
+              <dt>Project</dt>
+              <dd>{project.propertyType ?? "Property not captured"} · {project.location}</dd>
+            </div>
+            <div><dt>Estimator/Sales</dt><dd>{project.estimator?.name ?? "Unassigned handoff"}</dd></div>
+            <div><dt>Lead progress</dt><dd>{project.lead ? formatWorkflowLabel(project.lead.stage) : "Unassigned handoff"}</dd></div>
+            <div><dt>Next action</dt><dd>{nextAction ?? "No action pending"}</dd></div>
+            <div>
+              <dt>{estimateApproved ? "Client-approved value (incl. GST)" : "Estimate"}</dt>
+              <dd>
+                {estimateApproved
+                  ? estimateValue === null
+                    ? "Approved baseline unavailable"
+                    : money.format(estimateValue)
+                  : estimate
+                    ? `${formatWorkflowLabel(estimate.status)} · ${money.format(estimateValue ?? estimate.total)}`
+                  : "No estimate yet"}
+              </dd>
+            </div>
+          </dl>
+          <span className="admin-project-card__view">View project <ArrowUpRight aria-hidden="true" /></span>
+        </Link>
         {assignmentPending && canAssignDesigner ? (
           <div className="admin-project-card__actions">
             <Link

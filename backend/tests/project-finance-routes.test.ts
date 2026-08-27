@@ -59,7 +59,7 @@ const ENTRY = {
   bucketId: BUCKET.id,
   projectId: BUCKET.projectId,
   type: "direct_spend" as const,
-  expenseClass: "procurement" as const,
+  expenseClass: "other" as const,
   category: "Carpentry material",
   amountPaise: 125_000,
   incurredAt: "2026-08-26T00:00:00.000Z",
@@ -67,6 +67,8 @@ const ENTRY = {
   vendor: "Woodworks",
   reference: "INV-101",
   sourceSectionId: null,
+  sourceLineItemKey: null,
+  supportingDocument: null,
   idempotencyKey: "finance-request-1",
   status: "posted" as const,
   version: 1,
@@ -116,7 +118,12 @@ function setup() {
     })),
     getBucket: vi.fn(async () => BUCKET),
     listEntries: vi.fn(async () => ({ items: [ENTRY], total: 1 })),
-    postEntry: vi.fn(async () => ({ entry: ENTRY, bucket: BUCKET, replayed: false }))
+    postEntry: vi.fn(async () => ({ entry: ENTRY, bucket: BUCKET, replayed: false })),
+    readEntryDocument: vi.fn(async () => ({
+      filename: "receipt.jpg",
+      mimeType: "image/jpeg" as const,
+      bytes: Buffer.from([0xff, 0xd8, 0xff])
+    }))
   } satisfies ProjectFinanceService;
   const app = express();
   app.use(express.json());
@@ -187,7 +194,7 @@ describe("project finance routes", () => {
     const { app, service } = setup();
     const body = {
       type: "direct_spend",
-      expenseClass: "procurement",
+      expenseClass: "other",
       category: "Carpentry material",
       amountPaise: 125_000,
       incurredAt: "2026-08-26T00:00:00.000Z",
@@ -219,6 +226,26 @@ describe("project finance routes", () => {
       .set("Authorization", bearer("financeManager"))
       .send(body)
       .expect(200);
+  });
+
+  it("downloads an authorized supporting document without cache or MIME sniffing", async () => {
+    const { app, service } = setup();
+
+    const response = await request(app)
+      .get("/api/v1/finance/projects/project-1/entries/finance-entry-1/document")
+      .set("Authorization", bearer("superAdmin"))
+      .expect(200);
+
+    expect(response.headers["cache-control"]).toBe("private, no-store");
+    expect(response.headers["x-content-type-options"]).toBe("nosniff");
+    expect(response.headers["content-disposition"]).toBe(
+      'attachment; filename="receipt.jpg"'
+    );
+    expect(service.readEntryDocument).toHaveBeenCalledWith(
+      ACTORS.superAdmin,
+      "project-1",
+      "finance-entry-1"
+    );
   });
 
   it("rejects unauthorized roles and malformed ledger input before the service", async () => {
@@ -268,6 +295,26 @@ describe("project finance routes", () => {
         type: "overhead",
         expenseClass: "employee_payment",
         ...common
+      })
+      .expect(400);
+
+    expect(service.postEntry).not.toHaveBeenCalled();
+  });
+
+  it("rejects procurement spending outside the receipt-backed item route", async () => {
+    const { app, service } = setup();
+
+    await request(app)
+      .post("/api/v1/finance/projects/project-1/entries")
+      .set("Authorization", bearer("financeManager"))
+      .send({
+        type: "direct_spend",
+        expenseClass: "procurement",
+        category: "Carpentry material",
+        amountPaise: 125_000,
+        incurredAt: "2026-08-26T00:00:00.000Z",
+        description: "Missing receipt workflow",
+        idempotencyKey: "generic-procurement-request"
       })
       .expect(400);
 

@@ -33,6 +33,12 @@ const PAGE_PNG = await sharp({
 const CROP_PNG = await sharp({
   create: { width: 200, height: 100, channels: 3, background: "white" }
 }).png().toBuffer();
+const DISTINCT_CROP_PNG = await sharp({
+  create: { width: 100, height: 100, channels: 3, background: "white" }
+}).png().toBuffer();
+const NEAR_CROP_PNG = await sharp({
+  create: { width: 200, height: 100, channels: 3, background: { r: 254, g: 254, b: 254 } }
+}).png().toBuffer();
 
 class TestStorage {
   private sequence = 0;
@@ -413,6 +419,43 @@ describe("OCR extraction worker contract", () => {
         ocrConfidence: 0.42
       })
     ]);
+  });
+
+  it("deduplicates same-page labelled crops but preserves distinct same-label crops", async () => {
+    const { app, repository } = await setup();
+    const leased = await claim(app);
+    const body = completeBody();
+    body.pages[0]!.sections.push(
+      {
+        label: "Ground Floor Elevation",
+        confidence: 0.9,
+        crop: { x: 20, y: 30, width: 200, height: 100 },
+        imageBase64: CROP_PNG.toString("base64")
+      },
+      {
+        label: " Ground   Floor Elevation ",
+        confidence: 0.95,
+        crop: { x: 20, y: 30, width: 200, height: 100 },
+        imageBase64: NEAR_CROP_PNG.toString("base64")
+      },
+      {
+        label: "Ground Floor Elevation",
+        confidence: 0.8,
+        crop: { x: 300, y: 30, width: 100, height: 100 },
+        imageBase64: DISTINCT_CROP_PNG.toString("base64")
+      }
+    );
+
+    await request(app)
+      .post("/api/v1/internal/extraction-jobs/job-1/complete")
+      .set("Authorization", `Bearer ${WORKER_TOKEN}`)
+      .set("X-Extraction-Claim-Token", leased.body.data.claimToken)
+      .send(body)
+      .expect(200);
+
+    const sections = await repository.listDesignSections("version-aurora-plan-1");
+    expect(sections).toHaveLength(2);
+    expect(sections.map((section) => section.ocrConfidence).sort()).toEqual([0.8, 0.95]);
   });
 
   it("requires the current claim token and bounds failure codes", async () => {

@@ -201,11 +201,18 @@ export function DesignerDesignPlanTasksPage() {
   );
 }
 
+function normalizePlacementValue(value: string) {
+  return value.normalize("NFKC").toLocaleLowerCase("en").replace(/[\p{P}\p{S}]+/gu, " ").replace(/\s+/g, " ").trim();
+}
+
 function roomOptions(task: DesignPlanTask): EstimateDesignPlacementOption[] {
+  const seen = new Set<string>();
   return task.rooms.flatMap((room) => {
     const id = typeof room.id === "string" ? room.id : "";
     const label = typeof room.label === "string" ? room.label : "";
-    return id && label ? [{ id, label }] : [];
+    if (!id || !label || seen.has(id)) return [];
+    seen.add(id);
+    return [{ id, label }];
   });
 }
 
@@ -220,7 +227,19 @@ function itemOptions(task: DesignPlanTask): EstimateDesignItemOption[] {
   const rooms = roomOptions(task);
   return task.lineItems.flatMap((line) => {
     if (!line.included) return [];
-    const room = rooms.find((item) => item.label === line.roomName);
+    const sourceRoom = task.rooms.find((room) => {
+      const id = typeof room.id === "string" ? room.id : "";
+      const label = typeof room.label === "string" ? room.label : "";
+      const aliases = Array.isArray(room.aliases)
+        ? room.aliases.filter((alias): alias is string => typeof alias === "string")
+        : [];
+      const terms = [id, label, ...aliases].map(normalizePlacementValue).filter(Boolean);
+      const roomName = normalizePlacementValue(line.roomName);
+      return terms.includes(roomName);
+    });
+    const room = sourceRoom
+      ? rooms.find((item) => item.id === sourceRoom.id)
+      : undefined;
     const section = estimateBuilderSections.find((candidate) =>
       candidate.rows.some((row) => row.id === line.catalogueId)
     );

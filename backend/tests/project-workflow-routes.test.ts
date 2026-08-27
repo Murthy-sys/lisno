@@ -90,6 +90,24 @@ function setup() {
       role: "worker_carpenter" as const
     }]),
     listProjectWorkflowTasks: vi.fn(async () => []),
+    listProjectWorkflowSectionAssignments: vi.fn(async () => [{
+      id: "workflow-section-one",
+      projectId: "project-1",
+      projectName: "Aurora Residence",
+      estimateId: "estimate-1",
+      designPlanVersion: 3,
+      sourceSectionId: "CA",
+      sectionLabel: "Carpentry",
+      assigneeRole: "worker_carpenter" as const,
+      assignedWorker: null,
+      assignmentState: "unassigned" as const,
+      status: "open" as const,
+      progress: 0,
+      taskCount: 2,
+      unfinishedTaskCount: 2,
+      revision: "a".repeat(64),
+      updatedAt: "2026-08-26T10:00:00.000Z"
+    }]),
     overrideWorkerAssignment: vi.fn(async () => ({
       id: "workflow-task-1",
       projectId: "project-1",
@@ -112,6 +130,30 @@ function setup() {
       progress: 0,
       version: 2,
       openedAt: "2026-08-25T10:00:00.000Z",
+      updatedAt: "2026-08-26T10:00:00.000Z"
+    })),
+    overrideSectionWorkerAssignment: vi.fn(async () => ({
+      id: "workflow-section-one",
+      projectId: "project-1",
+      projectName: "Aurora Residence",
+      estimateId: "estimate-1",
+      designPlanVersion: 3,
+      sourceSectionId: "CA",
+      sectionLabel: "Carpentry",
+      assigneeRole: "worker_carpenter" as const,
+      assignedWorker: {
+        id: "workflow-route-carpenter",
+        name: "Carla Carpenter",
+        email: "carla@example.test",
+        role: "worker_carpenter" as const,
+        active: true
+      },
+      assignmentState: "assigned" as const,
+      status: "open" as const,
+      progress: 0,
+      taskCount: 2,
+      unfinishedTaskCount: 2,
+      revision: "b".repeat(64),
       updatedAt: "2026-08-26T10:00:00.000Z"
     })),
     listOperationalTasks: vi.fn(async () => []),
@@ -313,6 +355,94 @@ describe("project workflow routes", () => {
       })
       .expect(403);
     expect(service.overrideWorkerAssignment).toHaveBeenCalledTimes(1);
+  });
+
+  it("exposes strict Super Admin section-assignment read and override contracts", async () => {
+    const { app, service } = setup();
+
+    const sections = await request(app)
+      .get("/api/v1/admin/projects/project-1/section-assignments")
+      .set("Authorization", bearer("superAdmin"))
+      .expect(200);
+    expect(sections.body.data).toEqual([expect.objectContaining({
+      sourceSectionId: "CA",
+      assignmentState: "unassigned",
+      revision: "a".repeat(64)
+    })]);
+    expect(service.listProjectWorkflowSectionAssignments).toHaveBeenCalledWith(
+      ACTORS.superAdmin,
+      "project-1"
+    );
+
+    const response = await request(app)
+      .post("/api/v1/execution/section-worker-assignments/override")
+      .set("Authorization", bearer("superAdmin"))
+      .send({
+        projectId: "project-1",
+        estimateId: "estimate-1",
+        designPlanVersion: 3,
+        sourceSectionId: "CA",
+        expectedRevision: "a".repeat(64),
+        workerId: "workflow-route-carpenter"
+      })
+      .expect(200);
+    expect(response.body.data).toMatchObject({
+      sourceSectionId: "CA",
+      assignedWorker: { id: "workflow-route-carpenter", active: true },
+      revision: "b".repeat(64)
+    });
+    expect(service.overrideSectionWorkerAssignment).toHaveBeenCalledWith({
+      actor: ACTORS.superAdmin,
+      projectId: "project-1",
+      estimateId: "estimate-1",
+      designPlanVersion: 3,
+      sourceSectionId: "CA",
+      expectedRevision: "a".repeat(64),
+      workerId: "workflow-route-carpenter"
+    });
+
+    await request(app)
+      .post("/api/v1/execution/section-worker-assignments/override")
+      .set("Authorization", bearer("superAdmin"))
+      .send({
+        projectId: "project-1",
+        estimateId: "estimate-1",
+        designPlanVersion: 3,
+        sourceSectionId: "CA",
+        expectedRevision: "not-a-revision",
+        workerId: null
+      })
+      .expect(400);
+    await request(app)
+      .post("/api/v1/execution/section-worker-assignments/override")
+      .set("Authorization", bearer("superAdmin"))
+      .send({
+        projectId: "project-1",
+        estimateId: "estimate-1",
+        designPlanVersion: 3,
+        sourceSectionId: "CA",
+        expectedRevision: "a".repeat(64),
+        workerId: null,
+        unexpected: true
+      })
+      .expect(400);
+    await request(app)
+      .get("/api/v1/admin/projects/project-1/section-assignments")
+      .set("Authorization", bearer("admin"))
+      .expect(403);
+    await request(app)
+      .post("/api/v1/execution/section-worker-assignments/override")
+      .set("Authorization", bearer("admin"))
+      .send({
+        projectId: "project-1",
+        estimateId: "estimate-1",
+        designPlanVersion: 3,
+        sourceSectionId: "CA",
+        expectedRevision: "a".repeat(64),
+        workerId: null
+      })
+      .expect(403);
+    expect(service.overrideSectionWorkerAssignment).toHaveBeenCalledTimes(1);
   });
 
   it("downloads a review attachment through the scoped service boundary", async () => {

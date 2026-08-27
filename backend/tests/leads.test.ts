@@ -1069,12 +1069,15 @@ describe("lead and owner-estimate route characterizations", () => {
       .set("Authorization", authorization)
       .send(CHARACTERIZATION_ESTIMATE_BODY)
       .expect(200);
+    const savedLineItemId = estimate.lineItems[0]?.id;
+    expect(savedLineItemId).toMatch(/^estimate-line-/u);
     const expected = {
       ...before,
       propertyType: "villa",
       rooms: [],
       scopes: ["interiors"],
       lineItems: [{
+        id: savedLineItemId,
         ...CHARACTERIZATION_ESTIMATE_BODY.lineItems[0],
         amount: 1000
       }],

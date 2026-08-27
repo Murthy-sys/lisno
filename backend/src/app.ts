@@ -39,6 +39,7 @@ import { createOrganizationRouter } from "./routes/organization.js";
 import { createProjectsRouter } from "./routes/projects.js";
 import { createProjectWorkflowRouter } from "./routes/project-workflow.js";
 import { createProjectFinanceRouter } from "./routes/project-finance.js";
+import { createProcurementRouter } from "./routes/procurement.js";
 import { createTasksRouter } from "./routes/tasks.js";
 import { createUserInvitationsRouter } from "./routes/user-invitations.js";
 import { createAuditService } from "./services/audit.service.js";
@@ -73,6 +74,7 @@ import {
   ensurePendingProjectFinanceBucket,
   openProjectFinanceBucket
 } from "./services/project-finance.service.js";
+import { createProcurementService } from "./services/procurement.service.js";
 import {
   createEstimatePdfService,
   type EstimatePdfService
@@ -199,7 +201,15 @@ export function createApp(dependencies: AppDependencies) {
   );
   const clientPortalUrl = dependencies.clientPortalUrl ?? "http://localhost:5173/client";
   const estimateClientReviewStorage = createEstimateClientReviewStorage(storage);
-  const projectFinanceService = createProjectFinanceService({ now: clock });
+  const projectFinanceService = createProjectFinanceService({
+    now: clock,
+    storage
+  });
+  const procurementService = createProcurementService({
+    storage,
+    audit: auditService,
+    now: clock
+  });
   // Production constructs the app only after Mongo is connected. Keeping the
   // lifecycle hook behind that boundary preserves the repository-backed test
   // and characterization app, whose Estimate models are deliberately mocked
@@ -330,6 +340,10 @@ export function createApp(dependencies: AppDependencies) {
       estimateClientReviewStorage,
       maxUploadBytes
     )
+  );
+  app.use(
+    "/api/v1",
+    createProcurementRouter(authService, procurementService, maxUploadBytes)
   );
   app.use(
     "/api/v1",

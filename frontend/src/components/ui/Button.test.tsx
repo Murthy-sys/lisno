@@ -16,6 +16,8 @@ describe("Button and Spinner", () => {
     ["secondary", "default"],
     ["quiet", "large"],
     ["destructive", "default"],
+    ["destructive-outline", "default"],
+    ["success", "default"],
   ] as const)("applies the %s variant and %s size classes", (variant, size) => {
     render(<Button variant={variant} size={size}>Save</Button>);
 

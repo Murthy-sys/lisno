@@ -1,0 +1,7 @@
+interface:
+  display_name: "Lisno Implementation Planner"
+  short_description: "Plan, delegate, implement, and verify complex changes"
+  default_prompt: "Use $lisno-implementation-planner to analyze this request, respect its requested mode, recommend an evidence-backed specification and task plan for substantial work, delegate bounded work when useful, verify implemented results, and disengage for factual or obvious local requests."
+
+policy:
+  allow_implicit_invocation: true

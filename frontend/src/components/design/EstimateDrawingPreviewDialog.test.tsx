@@ -254,7 +254,7 @@ describe("EstimateDrawingPreviewDialog", () => {
   it.each(["estimator", "approved client"] as const)(
     "renders immutable overlays without mounting editor controls for %s preview",
     async () => {
-      const { container } = render(
+      const { baseElement } = render(
         <EstimateDrawingPreviewDialog
           {...previewProps({ annotations: markedDocument, canAnnotate: false })}
         />
@@ -263,10 +263,11 @@ describe("EstimateDrawingPreviewDialog", () => {
 
       expect(screen.getByText("Keep this opening")).toBeVisible();
       expect(screen.queryByRole("toolbar", { name: "Annotation tools" })).not.toBeInTheDocument();
-      expect(container.querySelector(".annotation-editor")).not.toBeInTheDocument();
-      expect(container.querySelector(".annotation-overlay")).toBeInTheDocument();
+      expect(baseElement.querySelector(".annotation-editor")).not.toBeInTheDocument();
+      expect(baseElement.querySelector(".annotation-overlay")).toBeInTheDocument();
       expect(screen.queryByRole("button", { name: "Save as draft" })).not.toBeInTheDocument();
       expect(screen.getByRole("button", { name: "Zoom in" })).toBeVisible();
+      expect(screen.queryByRole("complementary", { name: "Drawing view controls" })).not.toBeInTheDocument();
     }
   );
 

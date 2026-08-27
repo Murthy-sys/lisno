@@ -1,8 +1,10 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 
 import mongoose, { type ClientSession } from "mongoose";
 
+import { approvedEstimateLineItemKey } from "../domain/estimate-line-item.js";
 import {
+  projectWorkflowSectionLabel,
   workflowTaskDueAt,
   type ProjectWorkflowTaskKind
 } from "../domain/project-workflow.js";
@@ -22,15 +24,19 @@ import {
 } from "../domain/project-finance.js";
 import { ApiError } from "../middleware/errors.js";
 import { EstimateModel } from "../models/Estimate.js";
+import { EstimateClientReviewRoundModel } from "../models/EstimateClientReviewRound.js";
+import { FinanceEntryDocumentModel } from "../models/FinanceEntryDocument.js";
 import { FinanceLedgerEntryModel } from "../models/FinanceLedgerEntry.js";
 import { LeadModel } from "../models/Lead.js";
 import { ProjectFinanceBucketModel } from "../models/ProjectFinanceBucket.js";
 import { ProjectModel } from "../models/Project.js";
 import { ProjectWorkflowTaskModel } from "../models/ProjectWorkflowTask.js";
 import { UserModel } from "../models/User.js";
+import type { FileStorage } from "../storage/storage.js";
 import type { PublicUser } from "./auth.service.js";
 
 type Row = Record<string, any>;
+const GENERIC_DIRECT_EXPENSE_CLASSES = ["employee_payment", "other"] as const;
 
 export interface ProjectFinancePagination {
   limit: number;
@@ -88,6 +94,14 @@ export interface FinanceLedgerEntryDto {
   vendor: string | null;
   reference: string | null;
   sourceSectionId: string | null;
+  sourceLineItemKey: string | null;
+  /*
+   * Presentation labels for the two lineage identifiers above. Clients render
+   * these; the identifiers stay in the payload for reconciliation only.
+   */
+  sourceSectionLabel: string | null;
+  sourceLineItemLabel: string | null;
+  supportingDocument: FinanceSupportingDocumentDto | null;
   idempotencyKey: string;
   status: "posted" | "voided";
   version: number;
@@ -97,6 +111,20 @@ export interface FinanceLedgerEntryDto {
   voidReason: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface FinanceSupportingDocumentDto {
+  id: string;
+  originalFilename: string;
+  mimeType: "application/pdf" | "image/jpeg" | "image/png" | "image/webp";
+  sizeBytes: number;
+  createdAt: string;
+}
+
+export interface FinanceDocumentDownload {
+  filename: string;
+  mimeType: FinanceSupportingDocumentDto["mimeType"];
+  bytes: Buffer;
 }
 
 export interface PostFinanceEntryInput {
@@ -163,6 +191,11 @@ export interface ProjectFinanceService {
     projectId: string,
     input: PostFinanceEntryInput
   ): Promise<PostFinanceEntryResult>;
+  readEntryDocument(
+    actor: PublicUser,
+    projectId: string,
+    entryId: string
+  ): Promise<FinanceDocumentDownload>;
 }
 
 export interface EnsurePendingFinanceBucketInput {
@@ -194,6 +227,7 @@ export interface OpenFinanceBucketInput {
 
 export function createProjectFinanceService(input: {
   now?: () => Date;
+  storage?: FileStorage;
   /** Test-only synchronization hook invoked after bucket counters are read. */
   afterSnapshotEstablished?: () => Promise<void>;
 } = {}): ProjectFinanceService {
@@ -238,10 +272,8 @@ export function createProjectFinanceService(input: {
         const financeSources = [...estimatesByProjectId.entries()].map(
           ([projectId, estimates]) => {
             const materialized = bucketsByProjectId.get(projectId);
-            const estimate = canonicalApprovedEstimate(estimates, materialized);
-            return materialized && String(materialized.estimateId) === String(estimate._id)
-              ? materialized
-              : syntheticFinanceBucket(estimate);
+            const estimate = canonicalApprovedEstimate(estimates);
+            return financeBucketForRead(estimate, materialized);
           }
         ).sort(compareFinanceSources);
         const total = financeSources.length;
@@ -304,11 +336,8 @@ export function createProjectFinanceService(input: {
         await input.afterSnapshotEstablished?.();
         const estimates = await approvedFinanceEstimates([projectId], session);
         if (estimates.length === 0) notFound();
-        const estimate = canonicalApprovedEstimate(estimates, materialized);
-        const bucket = materialized &&
-          String(materialized.estimateId) === String(estimate._id)
-          ? materialized
-          : syntheticFinanceBucket(estimate);
+        const estimate = canonicalApprovedEstimate(estimates);
+        const bucket = financeBucketForRead(estimate, materialized);
         const project = await ProjectModel.findById(projectId)
           .select({ _id: 1, name: 1, status: 1, plannedEndAt: 1, actualEndAt: 1 })
           .session(session)
@@ -329,14 +358,13 @@ export function createProjectFinanceService(input: {
         const storedActor = await requireFinanceActor(actor, session);
         await requireFinanceProjectAccess(storedActor, projectId, session);
         const bucket = await ProjectFinanceBucketModel.findOne({ projectId })
-          .select({ _id: 1 })
           .session(session)
           .lean();
-        if (!bucket) {
-          const estimates = await approvedFinanceEstimates([projectId], session);
-          if (estimates.length === 0) notFound();
-          return { items: [], total: 0 };
-        }
+        const estimates = await approvedFinanceEstimates([projectId], session);
+        if (estimates.length === 0) notFound();
+        const approvedSource = canonicalApprovedEstimate(estimates);
+        if (!bucket) return { items: [], total: 0 };
+        requireMatchingApprovedSource(bucket, approvedSource);
         const filter = { bucketId: String(bucket._id), projectId };
         const entries = await FinanceLedgerEntryModel.find(filter)
           .sort({ incurredAt: -1, _id: -1 })
@@ -347,7 +375,36 @@ export function createProjectFinanceService(input: {
         await input.afterSnapshotEstablished?.();
         const total = await FinanceLedgerEntryModel.countDocuments(filter)
           .session(session);
-        return { items: entries.map(entryDto), total };
+        const documents = entries.length === 0
+          ? []
+          : await FinanceEntryDocumentModel.find({
+              entryId: { $in: entries.map((entry) => String(entry._id)) },
+              projectId
+            })
+              .session(session)
+              .lean();
+        const documentsByEntryId = new Map(
+          documents.map((document) => [String(document.entryId), document])
+        );
+        const lineItemLabels = approvedEstimateLineLabels(approvedSource);
+        return {
+          items: entries.map((entry) => {
+            const document = documentsByEntryId.get(String(entry._id));
+            return financeEntryDto(
+              entry,
+              document && financeDocumentMatchesLineage(
+                document,
+                entry,
+                bucket,
+                approvedSource
+              )
+                ? document
+                : null,
+              lineItemLabels.get(String(entry.sourceLineItemKey)) ?? null
+            );
+          }),
+          total
+        };
       });
     },
 
@@ -359,7 +416,7 @@ export function createProjectFinanceService(input: {
         return await mongoose.connection.transaction(async (session) => {
           const storedActor = await requireFinanceActor(actor, session);
           await requireFinanceProjectAccess(storedActor, projectId, session);
-          const bucket = await ProjectFinanceBucketModel.findOne({ projectId })
+          let bucket = await ProjectFinanceBucketModel.findOne({ projectId })
             .session(session)
             .lean();
           const project = await ProjectModel.findById(projectId)
@@ -373,9 +430,29 @@ export function createProjectFinanceService(input: {
               .session(session)
               .lean();
           if (!project) notFound();
-          if (!bucket) {
-            const estimates = await approvedFinanceEstimates([projectId], session);
-            if (estimates.length === 0) notFound();
+          const estimates = await approvedFinanceEstimates([projectId], session);
+          if (estimates.length === 0) notFound();
+          const approvedSource = canonicalApprovedEstimate(estimates);
+          if (bucket) requireMatchingApprovedSource(bucket, approvedSource);
+
+          const designApproval = approvedDesignApproval(approvedSource);
+          if (
+            designApproval &&
+            (!bucket || bucket.status === "pending_design")
+          ) {
+            await ensurePendingProjectFinanceBucket(
+              pendingBucketInput(approvedSource),
+              session
+            );
+            await openProjectFinanceBucket({
+              projectId,
+              designPlanVersion: designApproval.designPlanVersion,
+              openedById: designApproval.openedById,
+              occurredAt: designApproval.occurredAt
+            }, session);
+            bucket = await ProjectFinanceBucketModel.findOne({ projectId })
+              .session(session)
+              .lean();
           }
           if (!bucket || bucket.status !== "open") {
             throw new ApiError(
@@ -398,7 +475,7 @@ export function createProjectFinanceService(input: {
               session
             );
             return {
-              entry: entryDto(replay),
+              entry: financeEntryDto(replay),
               bucket: bucketDto(
                 bucket,
                 project,
@@ -486,7 +563,7 @@ export function createProjectFinanceService(input: {
            * readable by non-finance Design leadership.
            */
           return {
-            entry: entryDto(entry.toObject()),
+            entry: financeEntryDto(entry.toObject()),
             bucket: bucketDto(
               updated,
               project,
@@ -506,6 +583,64 @@ export function createProjectFinanceService(input: {
           input.afterSnapshotEstablished
         );
       }
+    },
+
+    async readEntryDocument(actor, projectId, entryId) {
+      if (!input.storage || !projectId.trim() || !entryId.trim()) notFound();
+      const document = await financeSnapshotRead(async (session) => {
+        const storedActor = await requireFinanceActor(actor, session);
+        await requireFinanceProjectAccess(storedActor, projectId, session);
+        const bucket = await ProjectFinanceBucketModel.findOne({ projectId })
+          .session(session)
+          .lean();
+        const estimates = await approvedFinanceEstimates([projectId], session);
+        if (!bucket || estimates.length === 0) notFound();
+        requireMatchingApprovedSource(
+          bucket,
+          canonicalApprovedEstimate(estimates)
+        );
+        const entry = await FinanceLedgerEntryModel.findOne({
+          _id: entryId,
+          projectId,
+          bucketId: String(bucket._id)
+        }).select({
+          _id: 1,
+          bucketId: 1,
+          projectId: 1,
+          expenseClass: 1,
+          sourceSectionId: 1,
+          sourceLineItemKey: 1
+        }).session(session).lean();
+        if (!entry) notFound();
+        const storedDocument = await FinanceEntryDocumentModel.findOne({
+          entryId,
+          projectId
+        }).select("+storageReference +sha256").session(session).lean();
+        if (!storedDocument) notFound();
+        if (!financeDocumentMatchesLineage(
+          storedDocument,
+          entry,
+          bucket,
+          canonicalApprovedEstimate(estimates)
+        )) financeStateCorrupt();
+        return storedDocument;
+      });
+      const bytes = await input.storage.read(String(document.storageReference));
+      if (
+        bytes.length !== Number(document.sizeBytes) ||
+        createHash("sha256").update(bytes).digest("hex") !== String(document.sha256)
+      ) {
+        throw new ApiError(
+          500,
+          "FINANCE_DOCUMENT_INTEGRITY_FAILED",
+          "The supporting document could not be verified."
+        );
+      }
+      return {
+        filename: String(document.originalFilename),
+        mimeType: document.mimeType,
+        bytes
+      };
     }
   };
 }
@@ -574,13 +709,28 @@ export async function openProjectFinanceBucket(
   let current = await ProjectFinanceBucketModel.findOne({
     projectId: input.projectId
   }).session(session).lean();
-  if (!current && input.fallbackBaseline) {
-    await ensurePendingProjectFinanceBucket({
-      projectId: input.projectId,
-      ...input.fallbackBaseline,
-      createdById: input.openedById,
-      occurredAt: input.occurredAt
-    }, session);
+  if (!current) {
+    /*
+     * A Design approval may be replayed for data created before finance buckets
+     * existed. Rebuild from the immutable Client-approval round instead of the
+     * mutable Estimate fields supplied by older callers (whose version is
+     * incremented when approval is recorded).
+     */
+    const estimates = await approvedFinanceEstimates([input.projectId], session);
+    if (estimates.length > 0) {
+      const approvedSource = canonicalApprovedEstimate(estimates);
+      await ensurePendingProjectFinanceBucket(
+        pendingBucketInput(approvedSource),
+        session
+      );
+    } else if (input.fallbackBaseline) {
+      await ensurePendingProjectFinanceBucket({
+        projectId: input.projectId,
+        ...input.fallbackBaseline,
+        createdById: input.openedById,
+        occurredAt: input.occurredAt
+      }, session);
+    }
     current = await ProjectFinanceBucketModel.findOne({
       projectId: input.projectId
     }).session(session).lean();
@@ -663,7 +813,7 @@ async function replayCommittedEntry(
     if (!entry || !bucket || !project) throw duplicateConflict();
     requireMatchingReplay(entry, input);
     return {
-      entry: entryDto(entry),
+      entry: financeEntryDto(entry),
       bucket: bucketDto(bucket, project, enrichments.get(projectId), observedAt),
       replayed: true
     };
@@ -756,7 +906,11 @@ async function approvedFinanceEstimates(
       total: 1,
       designPlanStatus: 1,
       designPlanVersion: 1,
+      designPlanApprovedAt: 1,
+      designPlanApprovedById: 1,
+      designPlanApprovalSource: 1,
       clientDecisionAt: 1,
+      reviews: 1,
       createdAt: 1,
       updatedAt: 1
     })
@@ -805,7 +959,41 @@ async function approvedFinanceEstimates(
     ) continue;
     resolved.push({ ...estimate, projectId: resolvedProjectId });
   }
-  return resolved;
+  if (resolved.length === 0) return resolved;
+
+  const approvedRounds = await EstimateClientReviewRoundModel.find({
+    estimateId: { $in: resolved.map((estimate) => String(estimate._id)) },
+    status: "approved",
+    decision: "approve"
+  })
+    .select({
+      _id: 1,
+      estimateId: 1,
+      projectId: 1,
+      estimateVersion: 1,
+      estimateSnapshot: 1,
+      decisionSource: 1,
+      decidedById: 1,
+      decidedAt: 1
+    })
+    .sort({ estimateId: 1, decidedAt: -1, _id: 1 })
+    .session(session)
+    .lean();
+  const roundsByEstimateId = new Map<string, Row[]>();
+  for (const round of approvedRounds) {
+    const estimateId = String(round.estimateId);
+    const current = roundsByEstimateId.get(estimateId) ?? [];
+    current.push(round);
+    roundsByEstimateId.set(estimateId, current);
+  }
+  return resolved.map((estimate) => ({
+    ...estimate,
+    _financeApproval: financeApprovalLineage(
+      estimate,
+      roundsByEstimateId.get(String(estimate._id)) ?? []
+    ),
+    _financeDesignApproval: financeDesignApproval(estimate)
+  })).sort(compareApprovedEstimateSources);
 }
 
 function groupEstimatesByProject(estimates: readonly Row[]): Map<string, Row[]> {
@@ -819,55 +1007,336 @@ function groupEstimatesByProject(estimates: readonly Row[]): Map<string, Row[]> 
   return grouped;
 }
 
-function canonicalApprovedEstimate(
-  estimates: readonly Row[],
-  materializedBucket?: Row | null
-): Row {
+function canonicalApprovedEstimate(estimates: readonly Row[]): Row {
   if (estimates.length === 0) financeStateCorrupt();
-  if (materializedBucket) {
-    const matching = estimates.find(
-      (estimate) => String(estimate._id) === String(materializedBucket.estimateId)
-    );
-    if (matching) return matching;
-  }
-  const [latest] = estimates;
+  const [latest] = [...estimates].sort(compareApprovedEstimateSources);
   if (!latest) financeStateCorrupt();
   return latest;
 }
 
 function syntheticFinanceBucket(estimate: Row): Row {
-  const baseline = projectFinanceBaseline({
-    subtotalRupees: Number(estimate.subtotal),
-    gstRupees: Number(estimate.gst),
-    totalRupees: Number(estimate.total)
-  });
+  const approval = approvedEstimateLineage(estimate);
+  const baseline = approval.baseline;
   const projectId = String(estimate.projectId);
-  const estimateVersion = Number(estimate.version ?? 1);
-  if (!Number.isSafeInteger(estimateVersion) || estimateVersion < 1) {
-    financeStateCorrupt();
-  }
-  const createdAt = validStoredDate(
-    estimate.clientDecisionAt ?? estimate.updatedAt ?? estimate.createdAt
-  );
-  const updatedAt = validStoredDate(estimate.updatedAt ?? createdAt);
+  const designApproval = approvedDesignApproval(estimate);
+  const createdAt = approval.occurredAt;
+  const updatedAt = designApproval?.occurredAt ?? createdAt;
   return {
     _id: `finance-bucket-${projectId}`,
     projectId,
     estimateId: String(estimate._id),
-    estimateVersion,
-    estimateReviewRoundId: null,
-    designPlanVersion: 0,
+    estimateVersion: approval.estimateVersion,
+    estimateReviewRoundId: approval.estimateReviewRoundId,
+    designPlanVersion: designApproval?.designPlanVersion ?? 0,
     currency: PROJECT_FINANCE_CURRENCY,
     ...baseline,
     directSpendPaise: 0,
     overheadPaise: 0,
-    status: "pending_design",
+    status: designApproval ? "open" : "pending_design",
     version: 1,
-    openedAt: null,
+    openedAt: designApproval?.occurredAt ?? null,
     closedAt: null,
     createdAt,
     updatedAt
   };
+}
+
+function financeBucketForRead(estimate: Row, materialized?: Row | null): Row {
+  if (!materialized) return syntheticFinanceBucket(estimate);
+  requireMatchingApprovedSource(materialized, estimate);
+  const designApproval = approvedDesignApproval(estimate);
+  if (!designApproval) return materialized;
+  if (materialized.status === "pending_design") {
+    return {
+      ...materialized,
+      status: "open",
+      designPlanVersion: designApproval.designPlanVersion,
+      openedAt: designApproval.occurredAt,
+      updatedAt: designApproval.occurredAt
+    };
+  }
+  if (
+    materialized.status === "open" &&
+    Number(materialized.designPlanVersion) !== designApproval.designPlanVersion
+  ) {
+    financeSourceConflict(
+      "The open project budget does not match the approved Design plan version."
+    );
+  }
+  return materialized;
+}
+
+export interface FinanceApprovalLineage {
+  estimateVersion: number;
+  estimateReviewRoundId: string | null;
+  baseline: ReturnType<typeof projectFinanceBaseline>;
+  createdById: string;
+  occurredAt: Date;
+  immutable: boolean;
+  snapshot: Row;
+}
+
+export interface FinanceDesignApproval {
+  designPlanVersion: number;
+  openedById: string;
+  occurredAt: Date;
+}
+
+export function financeApprovalLineage(
+  estimate: Row,
+  approvedRounds: readonly Row[]
+): FinanceApprovalLineage {
+  const currentVersion = Number(estimate.version);
+  if (!Number.isSafeInteger(currentVersion) || currentVersion < 1) {
+    financeSourceConflict("The approved Estimate version is invalid.");
+  }
+  const approvedVersion = currentVersion > 1 ? currentVersion - 1 : 1;
+
+  if (approvedRounds.length > 0) {
+    const matching = approvedRounds.filter(
+      (round) => Number(round.estimateVersion) === approvedVersion
+    );
+    if (matching.length !== 1) {
+      financeSourceConflict(
+        "The approved Estimate does not have one immutable Client-approval snapshot for its approved version."
+      );
+    }
+    const round = matching[0]!;
+    const roundProjectId = nonEmptyIdentifier(round.projectId);
+    if (
+      roundProjectId !== null &&
+      roundProjectId !== String(estimate.projectId)
+    ) {
+      financeSourceConflict(
+        "The immutable Estimate approval snapshot is linked to a different project."
+      );
+    }
+    const createdById = nonEmptyIdentifier(round.decidedById);
+    const occurredAt = approvalDate(round.decidedAt);
+    if (
+      createdById === null ||
+      occurredAt === null ||
+      !["client_portal", "admin_proof"].includes(String(round.decisionSource))
+    ) {
+      financeSourceConflict(
+        "The immutable Estimate approval snapshot is missing decision evidence."
+      );
+    }
+    return {
+      estimateVersion: approvedVersion,
+      estimateReviewRoundId: String(round._id),
+      baseline: approvedMoneyBaseline(round.estimateSnapshot),
+      createdById,
+      occurredAt,
+      immutable: true,
+      snapshot: round.estimateSnapshot
+    };
+  }
+
+  const approvalReviews = Array.isArray(estimate.reviews)
+    ? estimate.reviews.filter((review: Row) =>
+        review?.action === "client_approved" &&
+        nonEmptyIdentifier(review.actorId) !== null &&
+        approvalDate(review.occurredAt) !== null
+      )
+    : [];
+  if (approvalReviews.length !== 1) {
+    financeSourceConflict(
+      "The legacy approved Estimate does not have one complete Client-approval record."
+    );
+  }
+  const review = approvalReviews[0]!;
+  return {
+    estimateVersion: approvedVersion,
+    estimateReviewRoundId: null,
+    baseline: approvedMoneyBaseline(estimate),
+    createdById: nonEmptyIdentifier(review.actorId)!,
+    occurredAt: approvalDate(review.occurredAt)!,
+    immutable: false,
+    snapshot: estimate
+  };
+}
+
+function financeDocumentMatchesLineage(
+  document: Row,
+  entry: Row,
+  bucket: Row,
+  estimate: Row
+): boolean {
+  const documentReviewRoundId = document.estimateReviewRoundId == null
+    ? null
+    : String(document.estimateReviewRoundId);
+  const bucketReviewRoundId = bucket.estimateReviewRoundId == null
+    ? null
+    : String(bucket.estimateReviewRoundId);
+  if (
+    String(document.entryId) !== String(entry._id) ||
+    String(document.projectId) !== String(entry.projectId) ||
+    String(document.bucketId) !== String(entry.bucketId) ||
+    String(document.bucketId) !== String(bucket._id) ||
+    String(document.estimateId) !== String(bucket.estimateId) ||
+    Number(document.estimateVersion) !== Number(bucket.estimateVersion) ||
+    documentReviewRoundId !== bucketReviewRoundId ||
+    nullableString(document.sourceSectionId) !== nullableString(entry.sourceSectionId) ||
+    nullableString(document.sourceLineItemKey) !== nullableString(entry.sourceLineItemKey)
+  ) return false;
+  if (entry.expenseClass !== "procurement") return true;
+
+  try {
+    const approval = approvedEstimateLineage(estimate);
+    const lines = Array.isArray(approval.snapshot.lineItems)
+      ? approval.snapshot.lineItems
+      : [];
+    return lines.some((line: Row, index: number) =>
+      line?.included === true &&
+      approvedEstimateLineItemKey({
+        id: line.id,
+        estimateId: String(estimate._id),
+        estimateVersion: approval.estimateVersion,
+        index
+      }) === String(entry.sourceLineItemKey) &&
+      String(line.catalogueId).trim().toUpperCase().slice(0, 2) ===
+        String(entry.sourceSectionId)
+    );
+  } catch {
+    return false;
+  }
+}
+
+export function financeDesignApproval(estimate: Row): FinanceDesignApproval | null {
+  if (estimate.designPlanStatus !== "approved") return null;
+  const designPlanVersion = Number(estimate.designPlanVersion);
+  const openedById = nonEmptyIdentifier(estimate.designPlanApprovedById);
+  const occurredAt = approvalDate(estimate.designPlanApprovedAt);
+  if (
+    !Number.isSafeInteger(designPlanVersion) ||
+    designPlanVersion < 1 ||
+    openedById === null ||
+    occurredAt === null ||
+    !["client_portal", "admin_proof"].includes(
+      String(estimate.designPlanApprovalSource)
+    )
+  ) {
+    financeSourceConflict(
+      "The approved Design plan is missing complete approval evidence."
+    );
+  }
+  return { designPlanVersion, openedById, occurredAt };
+}
+
+function approvedMoneyBaseline(value: Row): ReturnType<typeof projectFinanceBaseline> {
+  const source = value.estimateSnapshot ?? value;
+  try {
+    return projectFinanceBaseline({
+      subtotalRupees: Number(source.subtotal),
+      gstRupees: Number(source.gst),
+      totalRupees: Number(source.total)
+    });
+  } catch {
+    financeSourceConflict("The approved Estimate contains invalid financial values.");
+  }
+}
+
+/**
+ * Ledger rows persist the approved Estimate line-item key, which is an opaque
+ * identifier (and a synthetic `legacy-estimate-line:…` string for Estimates
+ * saved before line ids existed). Clients must never display it, so resolve
+ * every key back to its approved room and specification here.
+ */
+function approvedEstimateLineLabels(estimate: Row): Map<string, string> {
+  const labels = new Map<string, string>();
+  let approval: FinanceApprovalLineage;
+  try {
+    approval = approvedEstimateLineage(estimate);
+  } catch {
+    return labels;
+  }
+  const lines = Array.isArray(approval.snapshot?.lineItems)
+    ? approval.snapshot.lineItems
+    : [];
+  lines.forEach((line: Row, index: number) => {
+    if (line?.included !== true) return;
+    let key: string;
+    try {
+      key = approvedEstimateLineItemKey({
+        id: line.id,
+        estimateId: String(estimate._id),
+        estimateVersion: approval.estimateVersion,
+        index
+      });
+    } catch {
+      return;
+    }
+    const label = approvedEstimateLineLabel(line);
+    if (label) labels.set(key, label);
+  });
+  return labels;
+}
+
+function approvedEstimateLineLabel(line: Row): string | null {
+  const specification = String(line.specification ?? "").trim();
+  const roomName = String(line.roomName ?? "").trim();
+  const parts = [specification, roomName].filter(Boolean);
+  return parts.length === 0 ? null : parts.join(" · ");
+}
+
+function approvedEstimateLineage(estimate: Row): FinanceApprovalLineage {
+  const lineage = estimate._financeApproval as FinanceApprovalLineage | undefined;
+  if (!lineage) financeStateCorrupt();
+  return lineage;
+}
+
+function approvedDesignApproval(estimate: Row): FinanceDesignApproval | null {
+  return (estimate._financeDesignApproval as FinanceDesignApproval | null | undefined) ?? null;
+}
+
+function pendingBucketInput(estimate: Row): EnsurePendingFinanceBucketInput {
+  const approval = approvedEstimateLineage(estimate);
+  return {
+    projectId: String(estimate.projectId),
+    estimateId: String(estimate._id),
+    estimateVersion: approval.estimateVersion,
+    estimateReviewRoundId: approval.estimateReviewRoundId,
+    approvedSubtotalRupees: approval.baseline.approvedSubtotalPaise / 100,
+    approvedGstRupees: approval.baseline.approvedGstPaise / 100,
+    approvedContractTotalRupees:
+      approval.baseline.approvedContractTotalPaise / 100,
+    createdById: approval.createdById,
+    occurredAt: approval.occurredAt
+  };
+}
+
+function requireMatchingApprovedSource(bucket: Row, estimate: Row): void {
+  const approval = approvedEstimateLineage(estimate);
+  requireMatchingBaseline(bucket, {
+    projectId: String(estimate.projectId),
+    estimateId: String(estimate._id),
+    estimateVersion: approval.estimateVersion,
+    estimateReviewRoundId: approval.estimateReviewRoundId,
+    currency: PROJECT_FINANCE_CURRENCY,
+    ...approval.baseline
+  });
+}
+
+function compareApprovedEstimateSources(left: Row, right: Row): number {
+  const leftApproval = approvedEstimateLineage(left);
+  const rightApproval = approvedEstimateLineage(right);
+  const approvalDifference = rightApproval.occurredAt.getTime() -
+    leftApproval.occurredAt.getTime();
+  if (approvalDifference !== 0) return approvalDifference;
+  const updateDifference = validStoredDate(right.updatedAt).getTime() -
+    validStoredDate(left.updatedAt).getTime();
+  return updateDifference || String(left._id).localeCompare(String(right._id));
+}
+
+function approvalDate(value: unknown): Date | null {
+  if (value == null || value === "") return null;
+  const date = value instanceof Date ? value : new Date(value as never);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function financeSourceConflict(message: string): never {
+  throw new ApiError(409, "FINANCE_APPROVAL_SOURCE_CONFLICT", message);
 }
 
 function compareFinanceSources(left: Row, right: Row): number {
@@ -928,11 +1397,13 @@ function normalizeEntryInput(input: PostFinanceEntryInput): NormalizedEntryInput
   if (input.type === "direct_spend") {
     if (
       typeof input.expenseClass !== "string" ||
-      !FINANCE_EXPENSE_CLASSES.includes(input.expenseClass)
+      !(GENERIC_DIRECT_EXPENSE_CLASSES as readonly string[]).includes(
+        input.expenseClass
+      )
     ) {
       throw validationError(
         "expenseClass",
-        "Classify direct spending as procurement, employee payment, or other."
+        "Classify direct spending as employee payment or other. Procurement requires an approved item and receipt."
       );
     }
     expenseClass = input.expenseClass;
@@ -1028,6 +1499,25 @@ function bucketDto(
     createdAt: new Date(bucket.createdAt).toISOString(),
     updatedAt: new Date(bucket.updatedAt).toISOString()
   };
+}
+
+export async function projectFinanceBucketDtoForTransaction(
+  projectId: string,
+  bucket: Row,
+  observedAt: Date,
+  session: ClientSession
+): Promise<ProjectFinanceBucketDto> {
+  const project = await ProjectModel.findById(projectId)
+    .select({ _id: 1, name: 1, status: 1, plannedEndAt: 1, actualEndAt: 1 })
+    .session(session)
+    .lean();
+  if (!project || String(bucket.projectId) !== projectId) notFound();
+  const enrichments = await loadFinanceEnrichments(
+    [projectId],
+    observedAt,
+    session
+  );
+  return bucketDto(bucket, project, enrichments.get(projectId), observedAt);
 }
 
 async function loadFinanceEnrichments(
@@ -1288,7 +1778,25 @@ function portfolioMarginBps(profitPaise: number, revenuePaise: number): number |
   return value;
 }
 
-function entryDto(entry: Row): FinanceLedgerEntryDto {
+export function financeSupportingDocumentDto(
+  document: Row
+): FinanceSupportingDocumentDto {
+  return {
+    id: String(document._id),
+    originalFilename: String(document.originalFilename),
+    mimeType: document.mimeType,
+    sizeBytes: Number(document.sizeBytes),
+    createdAt: new Date(document.createdAt).toISOString()
+  };
+}
+
+export function financeEntryDto(
+  entry: Row,
+  supportingDocument?: Row | null,
+  sourceLineItemLabel?: string | null
+): FinanceLedgerEntryDto {
+  const sourceSectionId = nullableString(entry.sourceSectionId);
+  const sourceLineItemKey = nullableString(entry.sourceLineItemKey);
   return {
     id: String(entry._id),
     bucketId: String(entry.bucketId),
@@ -1303,7 +1811,17 @@ function entryDto(entry: Row): FinanceLedgerEntryDto {
     description: String(entry.description),
     vendor: nullableString(entry.vendor),
     reference: nullableString(entry.reference),
-    sourceSectionId: nullableString(entry.sourceSectionId),
+    sourceSectionId,
+    sourceLineItemKey,
+    sourceSectionLabel: sourceSectionId === null
+      ? null
+      : projectWorkflowSectionLabel(sourceSectionId),
+    sourceLineItemLabel: sourceLineItemKey === null
+      ? null
+      : sourceLineItemLabel?.trim() || null,
+    supportingDocument: supportingDocument
+      ? financeSupportingDocumentDto(supportingDocument)
+      : null,
     idempotencyKey: String(entry.idempotencyKey),
     status: entry.status,
     version: Number(entry.version),

@@ -29,6 +29,9 @@ import { DesignPlanResponseProofModel } from "../src/models/DesignPlanResponsePr
 import { ProjectWorkflowTaskModel } from "../src/models/ProjectWorkflowTask.js";
 import { ProjectFinanceBucketModel } from "../src/models/ProjectFinanceBucket.js";
 import { FinanceLedgerEntryModel } from "../src/models/FinanceLedgerEntry.js";
+import { FinanceEntryDocumentModel } from "../src/models/FinanceEntryDocument.js";
+import { ProcurementReceiptCleanupJobModel } from "../src/models/ProcurementReceiptCleanupJob.js";
+import { ProcurementReceiptReconciliationJobModel } from "../src/models/ProcurementReceiptReconciliationJob.js";
 import type { AppRepository } from "../src/repositories/types.js";
 
 const env = {
@@ -375,6 +378,18 @@ describe("production server bootstrap", () => {
       events.push("finance-ledger-entry-index");
       return FinanceLedgerEntryModel as never;
     });
+    vi.spyOn(FinanceEntryDocumentModel, "init").mockImplementation(async () => {
+      events.push("finance-entry-document-index");
+      return FinanceEntryDocumentModel as never;
+    });
+    vi.spyOn(ProcurementReceiptCleanupJobModel, "init").mockImplementation(async () => {
+      events.push("procurement-receipt-cleanup-index");
+      return ProcurementReceiptCleanupJobModel as never;
+    });
+    vi.spyOn(ProcurementReceiptReconciliationJobModel, "init").mockImplementation(async () => {
+      events.push("procurement-receipt-reconciliation-index");
+      return ProcurementReceiptReconciliationJobModel as never;
+    });
 
     const runtime = await startServer({
       loadEnvironment: () => env,
@@ -410,6 +425,9 @@ describe("production server bootstrap", () => {
       "project-workflow-task-index",
       "project-finance-bucket-index",
       "finance-ledger-entry-index",
+      "finance-entry-document-index",
+      "procurement-receipt-cleanup-index",
+      "procurement-receipt-reconciliation-index",
       "repository",
       "app",
       "listen"
@@ -663,5 +681,62 @@ describe("production server bootstrap", () => {
     })).rejects.toThrow("Mail delivery configuration must be supplied as one complete group.");
 
     expect(connect).not.toHaveBeenCalled();
+  });
+
+  it("runs receipt maintenance out of band without overlap and clears the unref timer on shutdown", async () => {
+    const server = fakeServer();
+    let tick: (() => void) | undefined;
+    let releaseRun: (() => void) | undefined;
+    const maintenanceRunner = vi.fn(
+      () => new Promise<void>((resolve) => {
+        releaseRun = resolve;
+      })
+    );
+    const intervalHandle = { unref: vi.fn() };
+    const schedule = vi.fn((callback: () => void, _intervalMs: number) => {
+      tick = callback;
+      return intervalHandle;
+    });
+    const clear = vi.fn();
+    const disconnect = vi.fn(async () => undefined);
+
+    const runtime = await startServer({
+      loadEnvironment: () => env,
+      connect: async () => undefined,
+      disconnect,
+      prepareApplicationIndexes: async () => undefined,
+      repositoryFactory: () => ({} as AppRepository),
+      appFactory: () => ({
+        listen: vi.fn((_port: number, callback: () => void) => {
+          callback();
+          return server;
+        })
+      }),
+      receiptMaintenanceIntervalMs: 30_000,
+      receiptMaintenanceRunner: maintenanceRunner,
+      scheduleReceiptMaintenanceInterval: schedule,
+      clearReceiptMaintenanceInterval: clear,
+      writeOutput: () => undefined,
+      registerSignalHandlers: false
+    });
+
+    expect(schedule).toHaveBeenCalledWith(expect.any(Function), 30_000);
+    expect(intervalHandle.unref).toHaveBeenCalledOnce();
+    tick?.();
+    tick?.();
+    expect(maintenanceRunner).toHaveBeenCalledOnce();
+
+    let stopped = false;
+    const stopping = runtime.stop().then(() => {
+      stopped = true;
+    });
+    await Promise.resolve();
+    expect(clear).toHaveBeenCalledOnce();
+    expect(stopped).toBe(false);
+    releaseRun?.();
+    await stopping;
+    expect(disconnect).toHaveBeenCalledOnce();
+    tick?.();
+    expect(maintenanceRunner).toHaveBeenCalledOnce();
   });
 });

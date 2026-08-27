@@ -1,3 +1,4 @@
+import { QueryClient } from "@tanstack/react-query";
 import { fireEvent, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
@@ -25,6 +26,7 @@ const pendingReview: DesignPlanReviewTask = {
 
 describe("DesignPlanResponseInboxPage", () => {
   it("submits the Admin-on-behalf design approval as multipart proof", async () => {
+    const invalidate = vi.spyOn(QueryClient.prototype, "invalidateQueries");
     let listRequests = 0;
     let submitted: FormData | undefined;
     let decisionPath = "";
@@ -85,6 +87,18 @@ describe("DesignPlanResponseInboxPage", () => {
     expect(
       await screen.findByText("No design plans are awaiting a Client response.")
     ).toBeVisible();
+    await waitFor(() => {
+      expect(invalidate).toHaveBeenCalledWith({ queryKey: ["admin-projects"] });
+      expect(invalidate).toHaveBeenCalledWith({
+        queryKey: ["project-finance", "projects"]
+      });
+      expect(invalidate).toHaveBeenCalledWith({
+        queryKey: ["project-finance", "bucket", "project-1"]
+      });
+      expect(invalidate).toHaveBeenCalledWith({
+        queryKey: ["project-finance", "entries", "project-1"]
+      });
+    });
   });
 
   it("retries a failed Design email with the displayed version and refreshes its status", async () => {

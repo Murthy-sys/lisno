@@ -10,14 +10,19 @@ from PIL import Image, ImageDraw, ImageFont
 from lisno_ocr.contracts import (
     Crop,
     EstimateTaxonomy,
+    ExtractedSection,
     InvalidSourceError,
     OcrError,
     PdfRenderError,
     TaxonomyTerm,
 )
-from lisno_ocr.extractor import Extractor
+from lisno_ocr.extractor import (
+    Extractor,
+    _deduplicate_extracted_sections,
+    _deduplicate_taxonomy_titles,
+)
 from lisno_ocr.settings import LayoutSettings
-from lisno_ocr.title_classifier import OcrLine, classify_drawing_titles
+from lisno_ocr.title_classifier import DrawingTitle, OcrLine, classify_drawing_titles
 
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -1379,3 +1384,63 @@ def test_installed_paddle_model_smoke():
             assert 0 <= section.crop.y < page.height
             assert section.crop.x + section.crop.width <= page.width
             assert section.crop.y + section.crop.height <= page.height
+
+
+def _taxonomy_for_dedup() -> EstimateTaxonomy:
+    return EstimateTaxonomy(
+        rooms=(TaxonomyTerm("room-kitchen", "Kitchen", ("Cooking Area",)),),
+        scopes=(TaxonomyTerm("scope-floor", "Floor Plan", ("Floor Layout",)),),
+    )
+
+
+def test_taxonomy_dedup_keeps_highest_confidence_for_near_duplicate_boxes():
+    titles = _deduplicate_taxonomy_titles(
+        (
+            DrawingTitle((100, 100, 260, 130), "Kitchen Floor Plan", 0.87),
+            DrawingTitle((104, 102, 264, 132), "Kitchen Floor Layout", 0.96),
+        ),
+        _taxonomy_for_dedup(),
+    )
+
+    assert titles == (DrawingTitle((104, 102, 264, 132), "Kitchen Floor Layout", 0.96),)
+
+
+def test_taxonomy_dedup_preserves_repeated_same_label_in_distinct_panels():
+    titles = _deduplicate_taxonomy_titles(
+        (
+            DrawingTitle((100, 100, 260, 130), "Kitchen Floor Plan", 0.96),
+            DrawingTitle((700, 500, 860, 530), "Kitchen Floor Plan", 0.91),
+        ),
+        _taxonomy_for_dedup(),
+    )
+
+    assert len(titles) == 2
+    assert [title.box for title in titles] == [(100, 100, 260, 130), (700, 500, 860, 530)]
+
+
+def test_extracted_section_dedup_resolves_crop_contention_for_nearby_titles():
+    titles = (
+        DrawingTitle((100, 100, 260, 130), "Kitchen Floor Plan", 0.87),
+        DrawingTitle((104, 102, 264, 132), "Kitchen Floor Plan", 0.96),
+    )
+    sections = (
+        ExtractedSection("Kitchen Floor Plan", 0.87, Crop(80, 80, 400, 300), "a"),
+        ExtractedSection("Kitchen Floor Plan", 0.96, Crop(81, 81, 399, 299), "b"),
+    )
+
+    result = _deduplicate_extracted_sections(sections, titles)
+
+    assert result == (sections[1],)
+
+
+def test_extracted_section_dedup_keeps_same_crop_for_distant_titles():
+    titles = (
+        DrawingTitle((100, 100, 160, 120), "Kitchen Floor Plan", 0.96),
+        DrawingTitle((700, 500, 760, 520), "Kitchen Floor Plan", 0.91),
+    )
+    sections = (
+        ExtractedSection("Kitchen Floor Plan", 0.96, Crop(0, 0, 1000, 800), "a"),
+        ExtractedSection("Kitchen Floor Plan", 0.91, Crop(0, 0, 1000, 800), "b"),
+    )
+
+    assert _deduplicate_extracted_sections(sections, titles) == sections

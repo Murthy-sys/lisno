@@ -7,6 +7,7 @@ import { AuditEventModel } from "../src/models/AuditEvent.js";
 import { AuthorizationCoordinationModel } from "../src/models/AuthorizationCoordination.js";
 import { EmailCoordinationModel } from "../src/models/EmailCoordination.js";
 import { EstimateModel } from "../src/models/Estimate.js";
+import { EstimateClientReviewRoundModel } from "../src/models/EstimateClientReviewRound.js";
 import { LeadModel } from "../src/models/Lead.js";
 import { ProjectModel } from "../src/models/Project.js";
 import { ProjectAccessGrantModel } from "../src/models/ProjectAccessGrant.js";
@@ -31,7 +32,8 @@ beforeAll(async () => {
     EstimateModel.syncIndexes(),
     AuditEventModel.syncIndexes(),
     AuthorizationCoordinationModel.syncIndexes(),
-    EmailCoordinationModel.syncIndexes()
+    EmailCoordinationModel.syncIndexes(),
+    EstimateClientReviewRoundModel.syncIndexes()
   ]);
 }, 120_000);
 
@@ -273,6 +275,187 @@ describe("Admin project Mongo transactions", () => {
     });
   });
 
+  it("returns the same approved Estimate lineage for Lead-only and direct-only Mongo projects", async () => {
+    await Promise.all([
+      insertUser("mongo-super-admin", "super_admin"),
+      insertUser("mongo-estimator", "estimator_sales")
+    ]);
+    await Promise.all([
+      insertAdminProject("mongo-legacy-project", "Mongo Legacy Project"),
+      insertAdminProject("mongo-direct-project", "Mongo Direct Project")
+    ]);
+    await insertAdminLead("mongo-legacy-lead", "mongo-legacy-project");
+    await Promise.all([
+      insertApprovedEstimate({
+        id: "mongo-legacy-estimate",
+        leadId: "mongo-legacy-lead",
+        projectId: null,
+        version: 5,
+        subtotal: 300_000,
+        gst: 54_000,
+        total: 354_000,
+        clientDecisionAt: "2026-08-26T09:00:00.000Z"
+      }),
+      insertApprovedEstimate({
+        id: "mongo-direct-estimate",
+        leadId: "mongo-unmigrated-lead",
+        projectId: "mongo-direct-project",
+        version: 8,
+        subtotal: 500_000,
+        gst: 90_000,
+        total: 590_000,
+        clientDecisionAt: "2026-08-25T09:00:00.000Z"
+      })
+    ]);
+    await insertApprovedReviewRound({
+      id: "mongo-legacy-review",
+      estimateId: "mongo-legacy-estimate",
+      leadId: "mongo-legacy-lead",
+      projectId: "mongo-legacy-project",
+      estimateVersion: 4,
+      decisionSource: "admin_proof",
+      subtotal: 236_190,
+      gst: 42_514,
+      total: 278_704
+    });
+    const app = createApp({ repository: createMongoRepository(), auth, clock });
+
+    const legacy = await request(app)
+      .get("/api/v1/admin/projects/mongo-legacy-project")
+      .set("Authorization", bearer("mongo-super-admin", "super_admin"))
+      .expect(200);
+    expect(legacy.body.data.estimate).toMatchObject({
+      id: "mongo-legacy-estimate",
+      leadId: "mongo-legacy-lead",
+      projectId: null,
+      resolvedProjectId: "mongo-legacy-project",
+      projectLinkSource: "lead",
+      version: 5,
+      subtotal: 300_000,
+      gst: 54_000,
+      total: 354_000,
+      clientDecisionAt: "2026-08-26T09:00:00.000Z",
+      clientDecisionSource: "admin_proof",
+      clientReview: { id: "mongo-legacy-review", status: "approved" },
+      approvedBaseline: {
+        estimateVersion: 4,
+        reviewRoundId: "mongo-legacy-review",
+        subtotal: 236_190,
+        gst: 42_514,
+        total: 278_704,
+        decisionAt: NOW,
+        decisionSource: "admin_proof"
+      }
+    });
+
+    const direct = await request(app)
+      .get("/api/v1/admin/projects/mongo-direct-project")
+      .set("Authorization", bearer("mongo-super-admin", "super_admin"))
+      .expect(200);
+    expect(direct.body.data).toMatchObject({
+      lead: null,
+      estimate: {
+        id: "mongo-direct-estimate",
+        leadId: "mongo-unmigrated-lead",
+        projectId: "mongo-direct-project",
+        resolvedProjectId: "mongo-direct-project",
+        projectLinkSource: "estimate",
+        version: 8,
+        subtotal: 500_000,
+        gst: 90_000,
+        total: 590_000,
+        clientDecisionAt: "2026-08-25T09:00:00.000Z",
+        clientDecisionSource: null,
+        approvedBaseline: {
+          estimateVersion: 7,
+          reviewRoundId: null,
+          subtotal: 500_000,
+          gst: 90_000,
+          total: 590_000,
+          decisionAt: "2026-08-25T09:00:00.000Z",
+          decisionSource: null
+        }
+      }
+    });
+  });
+
+  it("rejects a Mongo Estimate whose direct project and foreign Lead project conflict", async () => {
+    await Promise.all([
+      insertUser("mongo-super-admin", "super_admin"),
+      insertUser("mongo-estimator", "estimator_sales")
+    ]);
+    await Promise.all([
+      insertAdminProject("mongo-lead-project", "Mongo Lead Project"),
+      insertAdminProject("mongo-direct-project", "Mongo Direct Project")
+    ]);
+    await insertAdminLead("mongo-conflict-lead", "mongo-lead-project");
+    await insertApprovedEstimate({
+      id: "mongo-conflict-estimate",
+      leadId: "mongo-conflict-lead",
+      projectId: "mongo-direct-project",
+      version: 3,
+      subtotal: 100_000,
+      gst: 18_000,
+      total: 118_000,
+      clientDecisionAt: "2026-08-26T09:00:00.000Z"
+    });
+    const app = createApp({ repository: createMongoRepository(), auth, clock });
+
+    const response = await request(app)
+      .get("/api/v1/admin/projects/mongo-direct-project")
+      .set("Authorization", bearer("mongo-super-admin", "super_admin"))
+      .expect(409);
+    expect(response.body).toEqual({
+      error: {
+        code: "FINANCE_ESTIMATE_PROJECT_LINK_CONFLICT",
+        message: "An approved Estimate is linked to different projects through its Estimate and Lead."
+      }
+    });
+  });
+
+  it("rejects multiple approved review snapshots for the inferred approval version", async () => {
+    await Promise.all([
+      insertUser("mongo-super-admin", "super_admin"),
+      insertUser("mongo-estimator", "estimator_sales")
+    ]);
+    await insertAdminProject("mongo-duplicate-baseline", "Duplicate Baseline");
+    await insertAdminLead("mongo-duplicate-lead", "mongo-duplicate-baseline");
+    await insertApprovedEstimate({
+      id: "mongo-duplicate-estimate",
+      leadId: "mongo-duplicate-lead",
+      projectId: "mongo-duplicate-baseline",
+      version: 5,
+      subtotal: 100_000,
+      gst: 18_000,
+      total: 118_000,
+      clientDecisionAt: "2026-08-26T09:00:00.000Z"
+    });
+    for (const sendGeneration of [1, 2]) {
+      await insertApprovedReviewRound({
+        id: `mongo-duplicate-review-${sendGeneration}`,
+        estimateId: "mongo-duplicate-estimate",
+        leadId: "mongo-duplicate-lead",
+        projectId: "mongo-duplicate-baseline",
+        estimateVersion: 4,
+        decisionSource: "admin_proof",
+        subtotal: 100_000,
+        gst: 18_000,
+        total: 118_000,
+        sendGeneration
+      });
+    }
+    const app = createApp({ repository: createMongoRepository(), auth, clock });
+
+    const response = await request(app)
+      .get("/api/v1/admin/projects/mongo-duplicate-baseline")
+      .set("Authorization", bearer("mongo-super-admin", "super_admin"))
+      .expect(409);
+    expect(response.body.error).toEqual({
+      code: "ESTIMATE_APPROVAL_BASELINE_CONFLICT",
+      message: "The approved Estimate does not have exactly one matching approval snapshot."
+    });
+  });
+
   it.each([
     ["createProject", 0],
     ["createProjectAccessGrant", 0],
@@ -318,3 +501,150 @@ describe("Admin project Mongo transactions", () => {
     expect(await AuditEventModel.countDocuments()).toBe(0);
   });
 });
+
+async function insertAdminProject(id: string, name: string) {
+  await ProjectModel.create({
+    _id: id,
+    name,
+    clientId: null,
+    clientName: "Mongo Client",
+    clientEmail: `${id}@client.test`,
+    clientEmailNormalized: `${id}@client.test`,
+    clientMobile: "9000000000",
+    clientAddress: "Bengaluru",
+    initiatingDesignerId: null,
+    assignedEstimatorId: "mongo-estimator",
+    assignedDesignerIds: [],
+    managerId: null,
+    status: "planning",
+    location: "Bengaluru",
+    plannedStartAt: new Date(NOW),
+    plannedEndAt: new Date("2026-11-24T10:00:00.000Z"),
+    actualStartAt: null,
+    actualEndAt: null,
+    createdAt: new Date(NOW),
+    updatedAt: new Date(NOW)
+  });
+}
+
+async function insertAdminLead(id: string, projectId: string) {
+  await LeadModel.create({
+    _id: id,
+    projectId,
+    ownerId: "mongo-estimator",
+    clientName: "Mongo Client",
+    clientEmail: `${projectId}@client.test`,
+    clientMobile: "9000000000",
+    projectName: projectId,
+    location: "Bengaluru",
+    propertyType: "villa",
+    budgetMin: 200_000,
+    budgetMax: 600_000,
+    source: "legacy",
+    stage: "won",
+    nextAction: "Assign Designer",
+    nextActionAt: new Date(NOW),
+    builder: null,
+    areaSqft: null,
+    targetHandoverAt: null,
+    notes: null,
+    latestActivityAt: null,
+    createdAt: new Date(NOW),
+    updatedAt: new Date(NOW)
+  });
+}
+
+async function insertApprovedEstimate(input: {
+  id: string;
+  leadId: string;
+  projectId: string | null;
+  version: number;
+  subtotal: number;
+  gst: number;
+  total: number;
+  clientDecisionAt: string;
+}) {
+  await EstimateModel.create({
+    _id: input.id,
+    leadId: input.leadId,
+    ownerId: "mongo-estimator",
+    version: input.version,
+    status: "client_approved",
+    propertyType: "villa",
+    rooms: [],
+    scopes: [],
+    lineItems: [],
+    subtotal: input.subtotal,
+    gst: input.gst,
+    total: input.total,
+    approvalRequired: false,
+    projectId: input.projectId,
+    reviews: [{
+      actorId: "mongo-super-admin",
+      action: "client_approved",
+      note: "Approved",
+      occurredAt: new Date(input.clientDecisionAt)
+    }],
+    designPlanStatus: "pending_assignment",
+    designPlanVersion: 0,
+    clientDecisionAt: new Date(input.clientDecisionAt),
+    createdAt: new Date("2026-08-20T10:00:00.000Z"),
+    updatedAt: new Date(input.clientDecisionAt)
+  });
+}
+
+async function insertApprovedReviewRound(input: {
+  id: string;
+  estimateId: string;
+  leadId: string;
+  projectId: string;
+  estimateVersion: number;
+  decisionSource: "client_portal" | "admin_proof";
+  subtotal: number;
+  gst: number;
+  total: number;
+  sendGeneration?: number;
+}) {
+  const sendGeneration = input.sendGeneration ?? 1;
+  await EstimateClientReviewRoundModel.create({
+    _id: input.id,
+    estimateId: input.estimateId,
+    leadId: input.leadId,
+    projectId: input.projectId,
+    estimateVersion: input.estimateVersion,
+    sendGeneration,
+    dedupeKey: String(sendGeneration).padStart(64, "a"),
+    recipientEmail: "mongo-client@example.test",
+    recipientEmailNormalized: "mongo-client@example.test",
+    estimateSnapshot: {
+      clientName: "Mongo Client",
+      projectName: input.projectId,
+      location: "Bengaluru",
+      propertyType: "villa",
+      lineItems: [],
+      subtotal: input.subtotal,
+      gst: input.gst,
+      total: input.total
+    },
+    pdfFilename: "approved-estimate.pdf",
+    pdfMimeType: "application/pdf",
+    pdfByteSize: 100,
+    pdfSha256: "b".repeat(64),
+    pdfStorageReference: "review/approved-estimate.pdf",
+    deliveryStatus: "sent",
+    deliveryAttemptGeneration: 1,
+    deliveryAttemptCount: 1,
+    deliveryAttemptedAt: new Date(NOW),
+    deliveredAt: new Date(NOW),
+    assignedAdminId: "mongo-super-admin",
+    status: "approved",
+    decision: "approve",
+    decisionSource: input.decisionSource,
+    decisionNote: "Approved with recorded proof.",
+    decidedById: "mongo-super-admin",
+    decidedAt: new Date(NOW),
+    version: 2,
+    createdAt: new Date(NOW),
+    updatedAt: new Date(NOW)
+  });
+}

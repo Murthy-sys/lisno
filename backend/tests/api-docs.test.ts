@@ -100,6 +100,23 @@ describe("OpenAPI and Swagger UI", () => {
     expect(initializer.headers["cache-control"]).toBe("no-store");
   });
 
+  it("documents generic direct spending without the receipt-backed Procurement class", () => {
+    const requestSchema = componentSchemas().FinanceLedgerEntryRequest as {
+      oneOf: Array<{
+        properties: { expenseClass?: { enum?: unknown[] } };
+      }>;
+    };
+    expect(requestSchema.oneOf[0]?.properties.expenseClass?.enum).toEqual([
+      "employee_payment",
+      "other"
+    ]);
+
+    const readSchema = componentSchemas().FinanceLedgerEntry as {
+      properties: { expenseClass?: { enum?: unknown[] } };
+    };
+    expect(readSchema.properties.expenseClass?.enum).toContain("procurement");
+  });
+
   it("keeps the documentation surface read-only, narrow, and configurable", async () => {
     const methodRejected = await request(app).post("/api-docs/");
     expect(methodRejected.status).toBe(405);
@@ -156,7 +173,7 @@ describe("OpenAPI and Swagger UI", () => {
     }
   });
 
-  it("contains all 133 routes without versioning paths twice", () => {
+  it("contains all 139 routes without versioning paths twice", () => {
     const methods = new Set(["get", "post", "put", "patch", "delete"]);
     const operationCount = Object.values(openApiDocument.paths).reduce(
       (total, pathItem) =>
@@ -165,7 +182,7 @@ describe("OpenAPI and Swagger UI", () => {
     );
 
     expect(operationCount).toBe(HUMAN_JWT_OPERATION_LIST.length + 10);
-    expect(operationCount).toBe(133);
+    expect(operationCount).toBe(139);
     expect(Object.keys(openApiDocument.paths).some((path) =>
       path.startsWith("/api/v1")
     )).toBe(false);
@@ -339,6 +356,99 @@ describe("OpenAPI and Swagger UI", () => {
       ]
     });
     expect(schemas.FileUploadRequest?.additionalProperties).toBe(false);
+    expect(
+      openApiDocument.paths[
+        "/execution/section-worker-assignments/override"
+      ]?.post
+    ).toMatchObject({
+      requestBody: {
+        required: true,
+        "x-lisno-schema-completeness": "exact",
+        content: {
+          "application/json": {
+            schema: {
+              $ref: "#/components/schemas/SectionWorkerAssignmentOverrideRequest"
+            }
+          }
+        }
+      },
+      responses: {
+        "2XX": {
+          content: {
+            "application/json": {
+              schema: {
+                properties: {
+                  data: {
+                    $ref: "#/components/schemas/ProjectWorkflowSectionAssignment"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    });
+    expect(
+      openApiDocument.paths[
+        "/admin/projects/{projectId}/section-assignments"
+      ]?.get?.responses?.["2XX"]
+    ).toMatchObject({
+      content: {
+        "application/json": {
+          schema: {
+            properties: {
+              data: {
+                $ref: "#/components/schemas/ProjectWorkflowSectionAssignmentList"
+              }
+            }
+          }
+        }
+      }
+    });
+    expect(schemas.SectionWorkerAssignmentOverrideRequest).toMatchObject({
+      additionalProperties: false,
+      required: [
+        "projectId",
+        "estimateId",
+        "designPlanVersion",
+        "sourceSectionId",
+        "expectedRevision",
+        "workerId"
+      ],
+      properties: {
+        expectedRevision: { pattern: "^[a-f0-9]{64}$" },
+        workerId: { nullable: true }
+      }
+    });
+    const sectionAssignment = schemas.ProjectWorkflowSectionAssignment;
+    const sectionProperties = sectionAssignment?.properties as OpenApiObject;
+    expect(schemas.WorkerRole).toEqual({
+      type: "string",
+      enum: [
+        "worker_electrician",
+        "worker_plumber",
+        "worker_carpenter",
+        "worker_painter",
+        "worker_civil",
+        "worker_other"
+      ]
+    });
+    expect(sectionAssignment?.additionalProperties).toBe(false);
+    expect(sectionProperties.assigneeRole).toEqual({
+      $ref: "#/components/schemas/WorkerRole"
+    });
+    expect(sectionProperties.revision).toMatchObject({
+      pattern: "^[a-f0-9]{64}$"
+    });
+    const assignedWorkerProperties = (
+      (sectionProperties.assignedWorker as OpenApiObject).properties
+    ) as OpenApiObject;
+    expect(assignedWorkerProperties).toMatchObject({
+      active: { type: "boolean" }
+    });
+    expect(assignedWorkerProperties.role).toEqual({
+      $ref: "#/components/schemas/WorkerRole"
+    });
   });
 
   it("defines unambiguous Super Admin Finance labels and live calculations", () => {

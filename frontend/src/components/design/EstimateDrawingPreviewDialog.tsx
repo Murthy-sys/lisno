@@ -83,6 +83,7 @@ export function EstimateDrawingPreviewDialog({
     .map((comment) => ({ ...comment, summary: comment.summary.trim() }))
     .filter((comment) => comment.summary && comment.id !== editableRequest?.id)
     .map((comment) => [comment.id, comment])).values()];
+  const showControls = canAnnotate || requestHistory.length > 0;
 
   function requestClose() {
     if (dirty) {
@@ -163,97 +164,99 @@ export function EstimateDrawingPreviewDialog({
         contentInert={confirmClose}
       >
         <div className="estimate-drawing-preview-dialog">
-        <ProtectedImage
-          source={imageUrl}
-          alt={`${title} protected drawing`}
-          className={imageSource ? "estimate-drawing-preview-dialog__loader estimate-drawing-preview-dialog__loader--ready" : "estimate-drawing-preview-dialog__loader"}
-          onSourceChange={setImageSource}
-        />
-      <div className="estimate-drawing-preview-dialog__layout">
-          {navigation ? <div className="estimate-drawing-preview-dialog__navigation">{navigation}</div> : null}
-          <div className="estimate-drawing-preview-dialog__canvas">
-            {imageSource ? (
-              <MapViewport ariaLabel={`${title} map view`}>
-                {(mapView) => {
-                  const viewTransform: ViewTransform = {
-                    zoom: mapView.scale,
-                    panX: mapView.translateX / Math.max(1, imageWidth),
-                    panY: mapView.translateY / Math.max(1, imageHeight)
-                  };
-                  return canAnnotate ? (
-                    <ImageAnnotationEditor
-                      imageSource={imageSource}
-                      imageWidth={imageWidth}
-                      imageHeight={imageHeight}
-                      value={document}
-                      sharedAnnotations={sharedAnnotations}
-                      readOnly={false}
-                      onChange={setDocument}
-                      viewTransform={viewTransform}
-                    />
-                  ) : (
-                    <AnnotationOverlay
-                      imageSource={imageSource}
-                      imageWidth={imageWidth}
-                      imageHeight={imageHeight}
-                      value={{ ...document, elements: [...document.elements, ...sharedAnnotations] }}
-                      viewTransform={viewTransform}
-                    />
-                  );
-                }}
-              </MapViewport>
-            ) : (
-              <p role="status">Loading protected drawing…</p>
-            )}
+          <ProtectedImage
+            source={imageUrl}
+            alt={`${title} protected drawing`}
+            className={imageSource ? "estimate-drawing-preview-dialog__loader estimate-drawing-preview-dialog__loader--ready" : "estimate-drawing-preview-dialog__loader"}
+            onSourceChange={setImageSource}
+          />
+          <div className={`estimate-drawing-preview-dialog__layout${showControls ? "" : " estimate-drawing-preview-dialog__layout--solo"}`}>
+            {navigation ? <div className="estimate-drawing-preview-dialog__navigation">{navigation}</div> : null}
+            <div className="estimate-drawing-preview-dialog__canvas">
+              {imageSource ? (
+                <MapViewport ariaLabel={`${title} map view`}>
+                  {(mapView) => {
+                    const viewTransform: ViewTransform = {
+                      zoom: mapView.scale,
+                      panX: mapView.translateX / Math.max(1, imageWidth),
+                      panY: mapView.translateY / Math.max(1, imageHeight)
+                    };
+                    return canAnnotate ? (
+                      <ImageAnnotationEditor
+                        imageSource={imageSource}
+                        imageWidth={imageWidth}
+                        imageHeight={imageHeight}
+                        value={document}
+                        sharedAnnotations={sharedAnnotations}
+                        readOnly={false}
+                        onChange={setDocument}
+                        viewTransform={viewTransform}
+                      />
+                    ) : (
+                      <AnnotationOverlay
+                        imageSource={imageSource}
+                        imageWidth={imageWidth}
+                        imageHeight={imageHeight}
+                        value={{ ...document, elements: [...document.elements, ...sharedAnnotations] }}
+                        viewTransform={viewTransform}
+                      />
+                    );
+                  }}
+                </MapViewport>
+              ) : (
+                <p role="status">Loading protected drawing…</p>
+              )}
+            </div>
+            {showControls ? (
+              <aside className="estimate-drawing-preview-dialog__controls" aria-label="Drawing view controls">
+                {requestHistory.length ? (
+                  <section className="estimate-drawing-preview-dialog__request-history" aria-labelledby="drawing-request-history-title">
+                    <h3 id="drawing-request-history-title">Requested changes</h3>
+                    <ul>
+                      {requestHistory.map((comment) => (
+                        <li key={comment.id}>
+                          <p>{comment.summary}</p>
+                          <small>{comment.status.replaceAll("_", " ")}</small>
+                        </li>
+                      ))}
+                    </ul>
+                  </section>
+                ) : null}
+                {canAnnotate ? (
+                  <div className="estimate-drawing-preview-dialog__review-actions">
+                    <label>
+                      Change summary
+                      <textarea
+                        maxLength={1_000}
+                        value={summary}
+                        onChange={(event) => setSummary(event.target.value)}
+                        placeholder="Describe what should change"
+                      />
+                    </label>
+                    {error ? <p role="alert">{error}</p> : null}
+                    <button
+                      type="button"
+                      className="button button--secondary"
+                      onClick={() => void saveDraft()}
+                      disabled={!onSaveDraft || busy !== undefined || !annotationsDirty}
+                    >
+                      {busy === "save" ? "Saving…" : "Save as draft"}
+                    </button>
+                    <button
+                      type="button"
+                      className="button button--primary"
+                      onClick={() => void (editableRequest ? updateChangeRequest() : submitChangeRequest())}
+                      disabled={editableRequest
+                        ? !onUpdateChangeRequest || busy !== undefined || !summary.trim() || document.elements.length === 0 || !dirty
+                        : !onSubmitChangeRequest || busy !== undefined || !summary.trim() || document.elements.length === 0}
+                    >
+                      {busy === "submit" ? (editableRequest ? "Updating…" : "Submitting…") : (editableRequest ? "Update change request" : "Submit change request")}
+                    </button>
+                  </div>
+                ) : null}
+              </aside>
+            ) : null}
           </div>
-          <aside className="estimate-drawing-preview-dialog__controls" aria-label="Drawing view controls">
-            {requestHistory.length ? (
-              <section className="estimate-drawing-preview-dialog__request-history" aria-labelledby="drawing-request-history-title">
-                <h3 id="drawing-request-history-title">Requested changes</h3>
-                <ul>
-                  {requestHistory.map((comment) => (
-                    <li key={comment.id}>
-                      <p>{comment.summary}</p>
-                      <small>{comment.status.replaceAll("_", " ")}</small>
-                    </li>
-                  ))}
-                </ul>
-              </section>
-            ) : null}
-            {canAnnotate ? (
-              <div className="estimate-drawing-preview-dialog__review-actions">
-                <label>
-                  Change summary
-                  <textarea
-                    maxLength={1_000}
-                    value={summary}
-                    onChange={(event) => setSummary(event.target.value)}
-                    placeholder="Describe what should change"
-                  />
-                </label>
-                {error ? <p role="alert">{error}</p> : null}
-                <button
-                  type="button"
-                  className="button button--secondary"
-                  onClick={() => void saveDraft()}
-                  disabled={!onSaveDraft || busy !== undefined || !annotationsDirty}
-                >
-                  {busy === "save" ? "Saving…" : "Save as draft"}
-                </button>
-                <button
-                  type="button"
-                  className="button button--primary"
-                  onClick={() => void (editableRequest ? updateChangeRequest() : submitChangeRequest())}
-                  disabled={editableRequest
-                    ? !onUpdateChangeRequest || busy !== undefined || !summary.trim() || document.elements.length === 0 || !dirty
-                    : !onSubmitChangeRequest || busy !== undefined || !summary.trim() || document.elements.length === 0}
-                >
-                  {busy === "submit" ? (editableRequest ? "Updating…" : "Submitting…") : (editableRequest ? "Update change request" : "Submit change request")}
-                </button>
-              </div>
-            ) : null}
-          </aside>
-        </div>
         </div>
       </Dialog>
       {confirmClose ? (

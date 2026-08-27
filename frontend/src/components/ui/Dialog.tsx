@@ -7,7 +7,7 @@ import { X } from "lucide-react";
 
 import { Button } from "./Button";
 import { IconButton } from "./IconButton";
-import { useOverlay } from "./overlay";
+import { OverlayPortal, useOverlay } from "./overlay";
 
 export interface DialogProps {
   title: string;
@@ -46,46 +46,51 @@ export function Dialog({
   });
 
   return (
-    <div ref={layerRef} className="ui-overlay-layer modal-layer">
-      <Button
-        className="ui-overlay-backdrop modal-backdrop"
-        variant="quiet"
-        aria-label={`Close ${title}`}
-        onClick={onClose}
-        busy={busy}
-      >
-        <span className="sr-only">Close {title}</span>
-      </Button>
-      <div
-        ref={dialogRef}
-        className="ui-dialog modal"
-        role={role}
-        aria-modal="true"
-        aria-labelledby={titleId}
-        aria-describedby={description ? descriptionId : undefined}
-        tabIndex={-1}
-        inert={contentInert ? true : undefined}
-        data-overlay-root
-      >
-        <header className="ui-dialog__header modal__header">
-          <div>
-            <p className="eyebrow">{eyebrow}</p>
-            <h2 id={titleId}>{title}</h2>
-            {description ? <p id={descriptionId}>{description}</p> : null}
+    <OverlayPortal>
+      <div ref={layerRef} className="ui-overlay-layer modal-layer">
+        <Button
+          className="ui-overlay-backdrop modal-backdrop"
+          variant="quiet"
+          aria-label={`Close ${title}`}
+          onClick={onClose}
+          busy={busy}
+        >
+          <span className="sr-only">Close {title}</span>
+        </Button>
+        <div
+          ref={dialogRef}
+          className="ui-dialog modal"
+          role={role}
+          aria-modal="true"
+          aria-labelledby={titleId}
+          aria-describedby={description ? descriptionId : undefined}
+          tabIndex={-1}
+          inert={contentInert ? true : undefined}
+          data-overlay-root
+        >
+          {/* A plain container, not <header>: the dialog is portaled to
+              document.body, where a <header> would expose a second banner
+              landmark alongside the page header. */}
+          <div className="ui-dialog__header modal__header">
+            <div>
+              <p className="eyebrow">{eyebrow}</p>
+              <h2 id={titleId}>{title}</h2>
+              {description ? <p id={descriptionId}>{description}</p> : null}
+            </div>
+            {showCloseButton ? (
+              <IconButton
+                className="ui-dialog__close icon-button"
+                label={`Close ${title}`}
+                icon={<X aria-hidden="true" />}
+                onClick={onClose}
+                busy={busy}
+                variant="quiet"
+              />
+            ) : null}
           </div>
-          {showCloseButton ? (
-            <IconButton
-              className="ui-dialog__close icon-button"
-              label={`Close ${title}`}
-              icon={<X aria-hidden="true" />}
-              onClick={onClose}
-              busy={busy}
-              variant="quiet"
-            />
-          ) : null}
-        </header>
-        {children}
+          {children}
+        </div>
       </div>
-    </div>
+    </OverlayPortal>
   );
 }

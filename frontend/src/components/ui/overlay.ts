@@ -1,8 +1,10 @@
 import {
   useEffect,
   useRef,
+  type ReactNode,
   type RefObject
 } from "react";
+import { createPortal } from "react-dom";
 
 export const focusableSelector = [
   "a[href]",
@@ -292,4 +294,16 @@ export function useOverlay({
     presentationRef,
     returnFocusRef
   ]);
+}
+
+/*
+ * Overlays mount on `document.body` instead of where they are declared. Role
+ * themes give panels such as `.estimate-design-uploads` a `backdrop-filter`,
+ * and a filtered ancestor becomes the containing block for `position: fixed`
+ * descendants — which would centre a modal inside that panel rather than the
+ * viewport and clip it at the panel edge.
+ */
+export function OverlayPortal({ children }: { children: ReactNode }) {
+  if (typeof document === "undefined") return null;
+  return createPortal(children, document.body);
 }

@@ -1,14 +1,12 @@
 import { Router } from "express";
 import { z } from "zod";
 
-import {
-  FINANCE_EXPENSE_CLASSES
-} from "../domain/project-finance.js";
 import { authenticate } from "../middleware/auth.js";
 import { requireOperation } from "../middleware/authorization.js";
 import { validateBody, validateQuery } from "../middleware/validate.js";
 import type { AuthService } from "../services/auth.service.js";
 import type { ProjectFinanceService } from "../services/project-finance.service.js";
+import { sendDownload } from "./estimate-client-responses.js";
 
 const paginationSchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(20),
@@ -29,7 +27,8 @@ const financeEntryFields = {
 const financeEntrySchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("direct_spend"),
-    expenseClass: z.enum(FINANCE_EXPENSE_CLASSES),
+    // Procurement spending must use the receipt-backed, approved-item route.
+    expenseClass: z.enum(["employee_payment", "other"]),
     ...financeEntryFields
   }).strict(),
   z.object({
@@ -116,6 +115,29 @@ export function createProjectFinanceRouter(
             }
           }
         });
+      } catch (error) {
+        next(error);
+      }
+    }
+  );
+
+  router.get(
+    "/finance/projects/:projectId/entries/:entryId/document",
+    protectedRoute,
+    requireOperation("GET /finance/projects/:projectId/entries/:entryId/document"),
+    async (request, response, next) => {
+      try {
+        response
+          .set("Cache-Control", "private, no-store")
+          .set("X-Content-Type-Options", "nosniff");
+        sendDownload(
+          response,
+          await service.readEntryDocument(
+            request.authenticatedUser!,
+            String(request.params.projectId),
+            String(request.params.entryId)
+          )
+        );
       } catch (error) {
         next(error);
       }

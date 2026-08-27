@@ -55,6 +55,20 @@
   color: var(--color-surface);
 }
 
+.ui-button--destructive-outline,
+.ui-icon-button--destructive-outline {
+  background: var(--color-surface);
+  border-color: var(--color-danger);
+  color: var(--color-danger);
+}
+
+.ui-button--destructive-outline:not(:disabled):hover,
+.ui-icon-button--destructive-outline:not(:disabled):hover {
+  background: color-mix(in srgb, var(--color-danger) 8%, var(--color-surface));
+  border-color: var(--color-danger-strong);
+  color: var(--color-danger-strong);
+}
+
 .ui-button--success,
 .ui-icon-button--success {
   background: var(--color-success);

@@ -63,6 +63,12 @@ const projectFinancePermissions = [
   "finance.entry.create"
 ] as const;
 
+const procurementPermissions = [
+  "procurement.workspace.read",
+  "procurement.expense.create",
+  "procurement.document.read"
+] as const;
+
 describe("frontend authorization contract", () => {
   it("publishes the exact Prompt 2 role and module vocabulary", () => {
     expect(ROLE_CODES).toEqual(expectedRoles);
@@ -81,13 +87,13 @@ describe("frontend authorization contract", () => {
       "execution"
     ]);
     expect(AUTHORIZATION_POLICY_VERSION).toBe(
-      "2026-08-26.super-admin-finance.v4"
+      "2026-08-26.procurement-receipts.v5"
     );
   });
 
-  it("publishes all 110 unique permissions with finance, workflow, response, and invitation permissions in canonical order", () => {
-    expect(PERMISSION_CODES).toHaveLength(110);
-    expect(new Set(PERMISSION_CODES)).toHaveLength(110);
+  it("publishes all 113 unique permissions with procurement, finance, workflow, response, and invitation permissions in canonical order", () => {
+    expect(PERMISSION_CODES).toHaveLength(113);
+    expect(new Set(PERMISSION_CODES)).toHaveLength(113);
     expect(PERMISSION_CODES).toContain("projects.initiate");
     expect(PERMISSION_CODES).toContain("organization.estimators.read");
     const identityMutationIndex = PERMISSION_CODES.indexOf(
@@ -100,12 +106,18 @@ describe("frontend authorization contract", () => {
       ...invitationPermissions,
       "access_request.create"
     ]);
-    expect(PERMISSION_CODES.slice(-6)).toEqual([
+    expect(PERMISSION_CODES.slice(-9)).toEqual([
       "execution.worker_assignment.override",
+      ...procurementPermissions,
       ...projectFinancePermissions,
       "workflow.tasks.read",
       "workflow.tasks.update"
     ]);
+    expect(
+      PERMISSION_CODES.filter((permission) =>
+        procurementPermissions.includes(permission as never)
+      )
+    ).toEqual(procurementPermissions);
     expect(
       PERMISSION_CODES.filter((permission) =>
         estimateClientResponsePermissions.includes(permission as never)
@@ -123,12 +135,13 @@ describe("frontend authorization contract", () => {
     ).toEqual(projectFinancePermissions);
   });
 
-  it("keeps the protected frontend registry at exactly 26 routes", () => {
-    expect(ROUTE_REGISTRY).toHaveLength(26);
+  it("keeps the protected frontend registry at exactly 27 routes", () => {
+    expect(ROUTE_REGISTRY).toHaveLength(27);
     expect(ROUTE_REGISTRY.map(({ path }) => path)).toEqual(
       expect.arrayContaining([
         "/designer/design-plans",
         "/admin/design-approvals",
+        "/procurement/projects/:projectId",
         "/finance",
         "/finance/projects/:projectId"
       ])

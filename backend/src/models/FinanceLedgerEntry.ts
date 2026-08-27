@@ -87,6 +87,13 @@ const financeLedgerEntrySchema = new Schema(
       default: null,
       immutable: true
     },
+    sourceLineItemKey: {
+      type: String,
+      trim: true,
+      maxlength: 500,
+      default: null,
+      immutable: true
+    },
     idempotencyKey: {
       type: String,
       required: true,

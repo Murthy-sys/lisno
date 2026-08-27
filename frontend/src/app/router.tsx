@@ -51,6 +51,8 @@ import { PageHeader } from "../components/ui/PageHeader";
 import { OperationalTaskQueue } from "../features/workflow/OperationalTaskQueue";
 import { FinanceOverviewPage } from "../features/finance/FinanceOverviewPage";
 import { FinanceProjectPage } from "../features/finance/FinanceProjectPage";
+import { ProcurementProjectPage } from "../features/procurement/ProcurementProjectPage";
+import { ProcurementWorkspace } from "../features/procurement/ProcurementWorkspace";
 
 interface RoleHomeContent {
   heading: string;
@@ -180,8 +182,8 @@ function RoleLanding({ role }: { role: Role }) {
         above real tasks announcing that work "will appear here".
       */}
       {auth.user ? <KpiPanel userId={auth.user.id} /> : null}
+      {role === "procurement" ? <ProcurementWorkspace /> : null}
       {[
-        "procurement",
         "finance_head",
         "site_manager",
         "worker_electrician",
@@ -462,6 +464,13 @@ export function AppRoutes() {
           element={registeredElement(
             "/admin/access-requests",
             stagedElements["/admin/access-requests"]
+          )}
+        />
+        <Route
+          path="/procurement/projects/:projectId"
+          element={registeredElement(
+            "/procurement/projects/:projectId",
+            <ProcurementProjectPage />
           )}
         />
         <Route

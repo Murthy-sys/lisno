@@ -13,7 +13,12 @@ import type { AppRepository } from "./repositories/types.js";
 import { createSmtpEstimateMailer } from "./services/smtp-estimate-mailer.js";
 import { createSmtpDesignPlanMailer } from "./services/smtp-design-plan-mailer.js";
 import { createSmtpInvitationMailer } from "./services/smtp-invitation-mailer.js";
+import {
+  runProcurementReceiptCleanupJobs,
+  runProcurementReceiptReconciliationJobs
+} from "./services/procurement.service.js";
 import { createLocalStorage } from "./storage/local-storage.js";
+import type { FileStorage } from "./storage/storage.js";
 
 type ServerApp = {
   listen(port: number, callback: (error?: Error) => void): Server;
@@ -38,6 +43,13 @@ export interface ServerDependencies {
   developmentDemoAuthorization?: DevelopmentDemoAuthorization;
   writeOutput?: (message: string) => void;
   registerSignalHandlers?: boolean;
+  receiptMaintenanceIntervalMs?: number;
+  receiptMaintenanceRunner?: (storage: FileStorage) => Promise<void>;
+  scheduleReceiptMaintenanceInterval?: (
+    callback: () => void,
+    intervalMs: number
+  ) => unknown;
+  clearReceiptMaintenanceInterval?: (handle: unknown) => void;
 }
 
 export interface RunningServer {
@@ -58,7 +70,8 @@ export async function startServer(
     initializeApplicationIndexes;
 
   let connected = false;
-  let server: Server;
+  let server: Server | undefined;
+  let receiptMaintenance: ReceiptMaintenanceScheduler | undefined;
   try {
     await connect(env.MONGODB_URI);
     connected = true;
@@ -104,17 +117,30 @@ export async function startServer(
       apiDocsEnabled: env.apiDocsEnabled
     });
     server = await listen(app, env.PORT, dependencies.bindHost);
+    receiptMaintenance = startReceiptMaintenanceScheduler(
+      storage,
+      dependencies
+    );
     (dependencies.writeOutput ?? ((message) => process.stdout.write(message)))(
       `Backend ready at http://${dependencies.bindHost ?? "localhost"}:${env.PORT}\n`
     );
   } catch (error) {
+    await receiptMaintenance?.stop();
+    if (server) await close(server).catch(() => undefined);
     if (connected) await disconnect();
     throw error;
   }
+  if (!server) throw new Error("HTTP server did not start.");
+  const runningServer = server;
 
   let stopping: Promise<void> | undefined;
   const stop = () => {
-    stopping ??= close(server).then(() => disconnect()).then(() => undefined);
+    stopping ??= (async () => {
+      const maintenanceStop = receiptMaintenance?.stop();
+      await close(runningServer);
+      await maintenanceStop;
+      await disconnect();
+    })();
     return stopping;
   };
 
@@ -133,6 +159,56 @@ export async function startServer(
   }
 
   return { stop };
+}
+
+interface ReceiptMaintenanceScheduler {
+  stop(): Promise<void>;
+}
+
+function startReceiptMaintenanceScheduler(
+  storage: FileStorage,
+  dependencies: ServerDependencies
+): ReceiptMaintenanceScheduler {
+  const intervalMs = dependencies.receiptMaintenanceIntervalMs ?? 60_000;
+  if (!Number.isSafeInteger(intervalMs) || intervalMs < 1) {
+    throw new Error("Receipt maintenance interval must be a positive integer.");
+  }
+  const runner = dependencies.receiptMaintenanceRunner ?? (async (fileStorage) => {
+    await runProcurementReceiptReconciliationJobs({ storage: fileStorage });
+    await runProcurementReceiptCleanupJobs({ storage: fileStorage });
+  });
+  const schedule = dependencies.scheduleReceiptMaintenanceInterval ??
+    ((callback: () => void, delayMs: number) => setInterval(callback, delayMs));
+  const clear = dependencies.clearReceiptMaintenanceInterval ??
+    ((handle: unknown) => clearInterval(handle as NodeJS.Timeout));
+  let stopped = false;
+  let running: Promise<void> | null = null;
+  const tick = () => {
+    if (stopped || running) return;
+    running = Promise.resolve(runner(storage))
+      .catch(() => undefined)
+      .finally(() => {
+        running = null;
+      });
+  };
+  const handle = schedule(tick, intervalMs);
+  if (
+    typeof handle === "object" &&
+    handle !== null &&
+    "unref" in handle &&
+    typeof handle.unref === "function"
+  ) {
+    handle.unref();
+  }
+  return {
+    async stop() {
+      if (!stopped) {
+        stopped = true;
+        clear(handle);
+      }
+      await running;
+    }
+  };
 }
 
 function listen(app: ServerApp, port: number, host?: string): Promise<Server> {

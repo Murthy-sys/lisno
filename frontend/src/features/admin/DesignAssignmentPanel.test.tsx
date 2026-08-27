@@ -25,8 +25,26 @@ const project: AdminProjectSummary = {
   lead: null,
   estimate: {
     id: "estimate-1",
+    leadId: "lead-1",
+    projectId: "project-1",
+    resolvedProjectId: "project-1",
+    projectLinkSource: "estimate_and_lead",
+    version: 4,
     status: "client_approved",
+    subtotal: 826271,
+    gst: 148729,
     total: 975000,
+    clientDecisionAt: "2026-08-24T09:00:00.000Z",
+    clientDecisionSource: "client_portal",
+    approvedBaseline: {
+      estimateVersion: 3,
+      reviewRoundId: "round-1",
+      subtotal: 826271,
+      gst: 148729,
+      total: 975000,
+      decisionAt: "2026-08-24T09:00:00.000Z",
+      decisionSource: "client_portal"
+    },
     designPlanStatus: "pending_assignment",
     designPlanVersion: 0,
     designPlanDesigner: null

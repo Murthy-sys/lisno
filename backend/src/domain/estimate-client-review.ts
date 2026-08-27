@@ -41,6 +41,7 @@ export interface EstimateClientReviewSnapshot {
   location: string;
   propertyType: string;
   lineItems: readonly {
+    id?: string | null;
     catalogueId: string;
     roomName: string;
     specification: string;

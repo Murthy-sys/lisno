@@ -1,29 +1,16 @@
 import { useInfiniteQuery } from "@tanstack/react-query";
-import {
-  ArrowUpRight,
-  CalendarClock,
-  CircleDollarSign,
-  ReceiptText,
-  ShieldCheck,
-  WalletCards
-} from "lucide-react";
+import { ArrowUpRight, CalendarClock } from "lucide-react";
 import { Link } from "react-router-dom";
-import { useEffect, type ReactNode } from "react";
+import { useEffect } from "react";
 
-import type {
-  ProjectFinanceBucket,
-  ProjectFinancePortfolioSummary
-} from "../../api/types";
+import type { ProjectFinanceBucket } from "../../api/types";
 import { Button } from "../../components/ui/Button";
 import { PageHeader } from "../../components/ui/PageHeader";
 import { PageState } from "../../components/ui/PageState";
 import { StatusBadge, type StatusTone } from "../../components/ui/StatusBadge";
 import { Surface } from "../../components/ui/Surface";
-import {
-  FinanceKpis,
-  formatBps,
-  formatPaise
-} from "./ProjectFinancePanel";
+import { formatPaise } from "./financeFormat";
+import { PortfolioFinanceChart } from "./ProjectFinanceChart";
 import { getProjectFinanceBuckets, projectFinanceKeys } from "./projectFinanceApi";
 
 const deadlineDate = new Intl.DateTimeFormat("en-IN", {
@@ -73,10 +60,7 @@ export function FinanceOverviewPage() {
       {query.isPending ? <PageState state="loading" message="Loading portfolio finance…" /> : null}
       {query.isError ? <PageState state="error" message="Portfolio finance could not be loaded." action={{ label: "Try again", onAction: () => void query.refetch() }} /> : null}
       {summary ? (
-        <>
-          <PortfolioFinanceHero summary={summary} />
-          <FinanceKpis bucket={summary} />
-        </>
+        <PortfolioFinanceChart summary={summary} />
       ) : null}
       {firstPage && buckets.length === 0 ? <PageState state="empty" message="Client-approved estimates will appear here with their project budgets." /> : null}
       {buckets.length ? (
@@ -107,81 +91,6 @@ export function FinanceOverviewPage() {
         </Surface>
       ) : null}
     </section>
-  );
-}
-
-function PortfolioFinanceHero({ summary }: { summary: ProjectFinancePortfolioSummary }) {
-  const budgetHealthy = summary.remainingBudgetPaise >= 0;
-
-  /*
-   * The band states the position once. The gauge repeated the remaining-budget
-   * figure that the last formula step already carries, and the margin note
-   * repeated the reserved-profit step, so both are gone; the closing step now
-   * carries the healthy/at-risk tone that the note used to signal.
-   */
-  return (
-    <Surface as="section" className="finance-portfolio-hero" aria-labelledby="finance-portfolio-balance">
-      <div className="finance-portfolio-hero__copy">
-        <span className="finance-portfolio-hero__icon" aria-hidden="true"><WalletCards /></span>
-        <div>
-          <p className="eyebrow">Live portfolio position</p>
-          <h2 id="finance-portfolio-balance">{formatPaise(summary.approvedContractTotalPaise)}</h2>
-          <p>
-            Client-approved value including GST across {summary.projectCount} projects. {formatPaise(summary.approvedGstPaise)} GST is excluded before budgeting.
-          </p>
-        </div>
-        <div className="finance-portfolio-formula" aria-label="Portfolio cost budget calculation">
-          <FinanceFormulaItem icon={<CircleDollarSign />} label="Net revenue after GST" value={summary.approvedSubtotalPaise} operation="=" />
-          <FinanceFormulaItem icon={<ShieldCheck />} label="Reserved profit target (20%)" value={summary.targetProfitPaise} operation="−" />
-          <FinanceFormulaItem icon={<ReceiptText />} label="Recorded project expenses" value={summary.recordedCostPaise} operation="−" />
-          <FinanceFormulaItem
-            icon={<WalletCards />}
-            label={budgetHealthy ? "Remaining cost budget" : "Cost budget overrun"}
-            value={Math.abs(summary.remainingBudgetPaise)}
-            operation="="
-            emphasized
-            atRisk={!budgetHealthy}
-          />
-        </div>
-      </div>
-      <div className="finance-portfolio-alerts" aria-label="Portfolio attention items">
-        <span><strong>{summary.overBudgetProjectCount}</strong> over budget</span>
-        <span><strong>{summary.overdueProjectCount}</strong> live overdue</span>
-        <span><strong>{summary.lateCompletedProjectCount}</strong> completed late</span>
-        <span><strong>{summary.overdueTaskCount}</strong> overdue tasks</span>
-      </div>
-    </Surface>
-  );
-}
-
-function FinanceFormulaItem({
-  icon,
-  label,
-  value,
-  operation,
-  emphasized = false,
-  atRisk = false
-}: {
-  icon: ReactNode;
-  label: string;
-  value: number;
-  operation: "−" | "=";
-  emphasized?: boolean;
-  atRisk?: boolean;
-}) {
-  const classes = [
-    "finance-portfolio-formula__item",
-    emphasized && "finance-portfolio-formula__item--emphasis",
-    atRisk && "finance-portfolio-formula__item--risk"
-  ].filter(Boolean).join(" ");
-
-  return (
-    <div className={classes}>
-      <span className="finance-portfolio-formula__operation" aria-hidden="true">{operation}</span>
-      <span className="finance-portfolio-formula__icon" aria-hidden="true">{icon}</span>
-      <span>{label}</span>
-      <strong>{formatPaise(value)}</strong>
-    </div>
   );
 }
 

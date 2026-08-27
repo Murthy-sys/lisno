@@ -78,6 +78,8 @@ const clientResponsePaths = [
   "/admin/client-responses/:roundId"
 ] as const;
 
+const procurementPaths = ["/procurement/projects/:projectId"] as const;
+
 const financePaths = [
   "/finance",
   "/finance/projects/:projectId"
@@ -480,7 +482,7 @@ describe("role landing staging contract", () => {
 
 describe("public invitation route", () => {
   it("mounts directly while staying outside the protected registry", async () => {
-    expect(ROUTE_REGISTRY).toHaveLength(26);
+    expect(ROUTE_REGISTRY).toHaveLength(27);
     expect(ROUTE_REGISTRY.map(({ path }) => path)).not.toContain(
       "/accept-invitation"
     );
@@ -503,11 +505,12 @@ describe("registered permission routes", () => {
       (path) => !(historicalProtectedPaths as readonly string[]).includes(path)
     );
 
-    expect(paths).toHaveLength(historicalProtectedPaths.length + 6);
+    expect(paths).toHaveLength(historicalProtectedPaths.length + 7);
     expect(additions).toEqual([
       "/designer/design-plans",
       ...clientResponsePaths,
       "/admin/design-approvals",
+      ...procurementPaths,
       ...financePaths
     ]);
     expect(paths.filter(
@@ -515,6 +518,7 @@ describe("registered permission routes", () => {
         "/designer/design-plans",
         ...clientResponsePaths,
         "/admin/design-approvals",
+        ...procurementPaths,
         ...financePaths
       ].includes(path)
     )).toEqual(historicalProtectedPaths);
@@ -759,6 +763,19 @@ describe("registered permission routes", () => {
     ).toBeVisible();
     expect(screen.queryByRole("link", { name: "Request access" })).not.toBeInTheDocument();
     expect(router.state.location.pathname).toBe("/designer");
+  });
+
+  it("denies the procurement project page to a role outside its presentation", async () => {
+    installAuthorizationSession("finance_head", [
+      "identity.self.read",
+      "finance.bucket.read"
+    ]);
+    const { router } = renderApp(["/procurement/projects/project-1"]);
+
+    expect(
+      await screen.findByRole("heading", { name: "Access denied" })
+    ).toBeVisible();
+    expect(router.state.location.pathname).toBe("/procurement/projects/project-1");
   });
 
   it("keeps an unknown route as Not Found without request context", async () => {

@@ -13,6 +13,7 @@ import { Button } from "../../components/ui/Button";
 import { Dialog } from "../../components/ui/Dialog";
 import { Field, FileInput, Textarea } from "../../components/ui/Field";
 import { ProgressBar } from "../../components/ui/ProgressBar";
+import { projectFinanceKeys } from "../finance/projectFinanceApi";
 import { adminProjectKeys } from "./adminProjectsApi";
 import {
   decideEstimateClientResponse,
@@ -82,7 +83,13 @@ export function ClientResponseDecisionDialog({
         queryClient.invalidateQueries({
           queryKey: estimateClientResponseKeys.all
         }),
-        queryClient.invalidateQueries({ queryKey: adminProjectKeys.all })
+        queryClient.invalidateQueries({ queryKey: adminProjectKeys.all }),
+        queryClient.invalidateQueries({ queryKey: projectFinanceKeys.projects }),
+        ...(task.project
+          ? [queryClient.invalidateQueries({
+              queryKey: projectFinanceKeys.bucket(task.project.id)
+            })]
+          : [])
       ]);
       feedback.announce("Client response recorded.");
       onSaved();

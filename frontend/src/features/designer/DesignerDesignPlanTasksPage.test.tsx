@@ -210,6 +210,62 @@ describe("DesignerDesignPlanTasksPage", () => {
     expect(within(drawing).getByRole("button", { name: "Preview" })).toBeEnabled();
   });
 
+  it("does not render the same extracted crop twice during a workspace refresh", async () => {
+    const workspace = extractedWorkspace("estimate-1");
+    const drawing = workspace.drawings[0]!;
+    const revision = workspace.revisions[0]!;
+    workspace.drawings.push({ ...drawing, id: "duplicate-drawing" });
+    workspace.revisions.push({ ...revision, id: "duplicate-revision", drawingId: "duplicate-drawing" });
+    server.use(
+      http.get("/api/v1/designer/design-plan-tasks", () =>
+        HttpResponse.json({ data: [{ ...assignedTask, status: "in_progress" }] })
+      ),
+      http.get("/api/v1/estimates/estimate-1/design-uploads", () =>
+        HttpResponse.json({ data: workspace })
+      ),
+      http.get("/api/v1/estimate-design-revisions/:revisionId/image", () =>
+        new HttpResponse(new Uint8Array([137, 80, 78, 71]), {
+          headers: { "Content-Type": "image/png" }
+        })
+      )
+    );
+
+    renderPage();
+
+    expect(await screen.findByRole("heading", { name: "Extracted images" })).toBeVisible();
+    expect(screen.getByText("1 image")).toBeVisible();
+    expect(screen.getAllByRole("article", { name: /drawing$/i })).toHaveLength(1);
+  });
+
+  it("maps line items to the canonical room when the estimate label uses an alias", async () => {
+    const aliasedTask: DesignPlanTask = {
+      ...assignedTask,
+      rooms: [{ id: "room-living", label: "Living Room", aliases: ["living-room"] }],
+      lineItems: [{ ...assignedTask.lineItems[0]!, roomName: "  LIVING-ROOM  " }]
+    };
+    server.use(
+      http.get("/api/v1/designer/design-plan-tasks", () =>
+        HttpResponse.json({ data: [{ ...aliasedTask, status: "in_progress" }] })
+      ),
+      http.get("/api/v1/estimates/estimate-1/design-uploads", () =>
+        HttpResponse.json({ data: extractedWorkspace("estimate-1") })
+      ),
+      http.get("/api/v1/estimate-design-revisions/:revisionId/image", () =>
+        new HttpResponse(new Uint8Array([137, 80, 78, 71]), {
+          headers: { "Content-Type": "image/png" }
+        })
+      )
+    );
+    const user = userEvent.setup();
+
+    renderPage();
+
+    const drawing = await screen.findByRole("article", { name: /drawing$/i });
+    await user.click(within(drawing).getByRole("button", { name: /More actions/ }));
+    await user.click(screen.getByRole("menuitem", { name: "Change estimate item" }));
+    expect(await screen.findByRole("option", { name: /EL01.*Light \/ fan \/ switch points.*Electrical/i })).toBeVisible();
+  });
+
   it("opens the exact estimate selected from the dashboard project list", async () => {
     const workspaceRequests: string[] = [];
     server.use(

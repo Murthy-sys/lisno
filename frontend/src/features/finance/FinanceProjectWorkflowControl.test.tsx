@@ -5,7 +5,12 @@ import { describe, expect, it, vi } from "vitest";
 
 import { AUTHORIZATION_POLICY_VERSION, type PermissionCode } from "../../api/authorization-contract";
 import { tokenStorage } from "../../api/client";
-import type { AdminProjectSummary, ProjectWorkflowTask, Role } from "../../api/types";
+import type {
+  AdminProjectSummary,
+  ProjectWorkflowSectionAssignment,
+  ProjectWorkflowTask,
+  Role
+} from "../../api/types";
 import { renderApp } from "../../test/render";
 import { server } from "../../test/server";
 
@@ -32,8 +37,26 @@ const project: AdminProjectSummary = {
   lead: null,
   estimate: {
     id: "estimate-one",
+    leadId: "lead-one",
+    projectId: "project-one",
+    resolvedProjectId: "project-one",
+    projectLinkSource: "estimate_and_lead",
+    version: 4,
     status: "client_approved",
+    subtotal: 1_000_000,
+    gst: 180_000,
     total: 1_180_000,
+    clientDecisionAt: "2026-08-24T09:00:00.000Z",
+    clientDecisionSource: "client_portal",
+    approvedBaseline: {
+      estimateVersion: 4,
+      reviewRoundId: "estimate-round-one",
+      subtotal: 1_000_000,
+      gst: 180_000,
+      total: 1_180_000,
+      decisionAt: "2026-08-24T09:00:00.000Z",
+      decisionSource: "client_portal"
+    },
     designPlanStatus: "approved",
     designPlanVersion: 2,
     designPlanDesigner: {
@@ -100,6 +123,31 @@ const workflowTasks: ProjectWorkflowTask[] = [
   tradeTask
 ];
 
+const carpentrySection: ProjectWorkflowSectionAssignment = {
+  id: "section-assignment-carpentry",
+  projectId: project.id,
+  projectName: project.name,
+  estimateId: "estimate-one",
+  designPlanVersion: 2,
+  sourceSectionId: "CA",
+  sectionLabel: "Carpentry",
+  assigneeRole: "worker_carpenter",
+  assignedWorker: {
+    id: "worker-one",
+    name: "Kiran Carpenter",
+    email: "kiran@example.com",
+    role: "worker_carpenter",
+    active: true
+  },
+  assignmentState: "assigned",
+  status: "open",
+  progress: 0,
+  taskCount: 2,
+  unfinishedTaskCount: 2,
+  revision: "carpentry-revision-1",
+  updatedAt: "2026-08-26T08:00:00.000Z"
+};
+
 function installSession(role: Role, permissions: PermissionCode[]) {
   tokenStorage.set(`${role}-token`);
   server.use(
@@ -122,7 +170,7 @@ function installSession(role: Role, permissions: PermissionCode[]) {
 }
 
 describe("Finance project workflow control", () => {
-  it("shows Super Admin the complete workflow and saves an exact worker reassignment", async () => {
+  it("shows Super Admin the complete workflow and saves one exact section reassignment", async () => {
     installSession("super_admin", [
       "identity.self.read",
       "identity.authorization.read",
@@ -145,6 +193,9 @@ describe("Finance project workflow control", () => {
         adminTaskRequest();
         return HttpResponse.json({ data: workflowTasks });
       }),
+      http.get("/api/v1/admin/projects/project-one/section-assignments", () =>
+        HttpResponse.json({ data: [carpentrySection] })
+      ),
       http.get("/api/v1/admin/workers", () => {
         adminWorkerRequest();
         return HttpResponse.json({
@@ -155,12 +206,12 @@ describe("Finance project workflow control", () => {
           ]
         });
       }),
-      http.post("/api/v1/execution/worker-assignments/override", async ({ request }) => {
+      http.post("/api/v1/execution/section-worker-assignments/override", async ({ request }) => {
         assignment(await request.json());
         return HttpResponse.json({
           data: {
-            ...tradeTask,
-            version: 2,
+            ...carpentrySection,
+            revision: "carpentry-revision-2",
             assignedWorker: {
               id: "worker-two",
               name: "Asha Carpenter",
@@ -193,24 +244,28 @@ describe("Finance project workflow control", () => {
     })).toHaveAttribute("aria-valuenow", "25");
     expect(executionStage).toHaveTextContent("0 of 3 tasks complete");
 
-    const workerRow = await screen.findByRole("article", {
-      name: "Carpentry · Living Room worker assignment"
-    });
+    const taskAssignment = await screen.findByRole("button", { name: "Task assignment" });
+    expect(taskAssignment).toHaveAttribute("aria-expanded", "false");
+    await user.click(taskAssignment);
+    const sectionTrigger = await screen.findByRole("button", { name: /^Carpentry/ });
+    await user.click(sectionTrigger);
     expect(adminProjectRequest).toHaveBeenCalledTimes(1);
     expect(adminTaskRequest).toHaveBeenCalledTimes(1);
     expect(adminWorkerRequest).toHaveBeenCalledTimes(1);
-    const workerSelect = within(workerRow).getByRole("combobox", { name: "Assigned worker" });
+    const workerSelect = screen.getByRole("combobox", { name: "Assign or reassign Carpentry" });
     expect(within(workerSelect).queryByRole("option", { name: /Dev Electrician/ })).not.toBeInTheDocument();
     await user.selectOptions(workerSelect, "worker-two");
-    await user.click(within(workerRow).getByRole("button", { name: "Reassign Worker" }));
+    await user.click(screen.getByRole("button", { name: "Reassign person" }));
 
     await waitFor(() => expect(assignment).toHaveBeenCalledWith({
       projectId: "project-one",
-      taskId: "task-carpentry",
-      expectedVersion: 1,
+      estimateId: "estimate-one",
+      designPlanVersion: 2,
+      sourceSectionId: "CA",
+      expectedRevision: "carpentry-revision-1",
       workerId: "worker-two"
     }));
-    expect(await within(workerRow).findByText("Worker assignment saved.")).toBeVisible();
+    expect(await screen.findByText("Carpentry assignment saved.")).toBeVisible();
   });
 
   it("keeps Finance Manager on the finance-only view without calling Admin APIs", async () => {
@@ -223,6 +278,7 @@ describe("Finance project workflow control", () => {
     ]);
     const adminProjectRequest = vi.fn();
     const adminTaskRequest = vi.fn();
+    const adminSectionRequest = vi.fn();
     const adminWorkerRequest = vi.fn();
     server.use(
       http.get("/api/v1/admin/projects/project-one", () => {
@@ -232,6 +288,10 @@ describe("Finance project workflow control", () => {
       http.get("/api/v1/admin/projects/project-one/workflow-tasks", () => {
         adminTaskRequest();
         return HttpResponse.json({ data: workflowTasks });
+      }),
+      http.get("/api/v1/admin/projects/project-one/section-assignments", () => {
+        adminSectionRequest();
+        return HttpResponse.json({ data: [carpentrySection] });
       }),
       http.get("/api/v1/admin/workers", () => {
         adminWorkerRequest();
@@ -247,6 +307,7 @@ describe("Finance project workflow control", () => {
     expect(screen.queryByRole("heading", { name: "Entire project workflow" })).not.toBeInTheDocument();
     expect(adminProjectRequest).not.toHaveBeenCalled();
     expect(adminTaskRequest).not.toHaveBeenCalled();
+    expect(adminSectionRequest).not.toHaveBeenCalled();
     expect(adminWorkerRequest).not.toHaveBeenCalled();
   });
 });
