@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import type { ClientSession } from "mongoose";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   PERMISSION_CODES,
@@ -9,13 +10,20 @@ import {
   roleMayRequestModule
 } from "../src/domain/authorization.js";
 import {
+  AI_ESTIMATOR_KNOWLEDGE_AUDIT_ACTIONS,
   AUDIT_ACTIONS,
   EXISTING_AUDIT_ACTIONS,
   PROCUREMENT_AUDIT_ACTIONS,
   PROMPT_1_AUDIT_ACTIONS
 } from "../src/domain/audit-actions.js";
+import { ApiError } from "../src/middleware/errors.js";
 import { ROLE_CODES, WORKER_ROLES, type Role } from "../src/domain/roles.js";
 import { HUMAN_JWT_OPERATION_LIST } from "../src/domain/route-operations.js";
+import {
+  createAiEstimatorKnowledgeActorGuard,
+  type AiEstimatorKnowledgeActorStore
+} from "../src/services/ai-estimator-knowledge-actor.js";
+import type { PublicUser } from "../src/services/auth.service.js";
 import { EXPECTED_HUMAN_JWT_OPERATIONS } from "./fixtures/prompt-1-route-operations.js";
 
 const STAFF_INVITATION_PERMISSIONS = [
@@ -88,6 +96,14 @@ const PROCUREMENT_PERMISSIONS = [
   "procurement.workspace.read",
   "procurement.expense.create",
   "procurement.document.read"
+] as const;
+
+const AI_ESTIMATOR_KNOWLEDGE_PERMISSIONS = [
+  "ai_estimator_knowledge.configuration.read",
+  "ai_estimator_knowledge.configuration.create",
+  "ai_estimator_knowledge.configuration.update",
+  "ai_estimator_knowledge.configuration.lifecycle",
+  "ai_estimator_knowledge.context.read"
 ] as const;
 
 const COMMON_ROWS = [1, 85] as const;
@@ -207,8 +223,8 @@ describe("authorization policy", () => {
         permissionsForRows([...COMMON_ROWS, ...ADDITIONAL_ROWS[role]])
       );
     }
-    expect(PERMISSION_CODES).toHaveLength(113);
-    expect(new Set(PERMISSION_CODES).size).toBe(113);
+    expect(PERMISSION_CODES).toHaveLength(118);
+    expect(new Set(PERMISSION_CODES).size).toBe(118);
     expect(ROLE_PERMISSIONS.super_admin).toEqual(PERMISSION_CODES);
   });
 
@@ -346,6 +362,23 @@ describe("authorization policy", () => {
     }
   });
 
+  it("grants all five AI Estimator Knowledge permissions only to Super Admin", () => {
+    expect(PERMISSION_CODES.slice(-AI_ESTIMATOR_KNOWLEDGE_PERMISSIONS.length)).toEqual(
+      AI_ESTIMATOR_KNOWLEDGE_PERMISSIONS
+    );
+    for (const role of ROLE_CODES) {
+      const expected = role === "super_admin"
+        ? AI_ESTIMATOR_KNOWLEDGE_PERMISSIONS
+        : [];
+      expect(
+        ROLE_PERMISSIONS[role].filter((permission) =>
+          AI_ESTIMATOR_KNOWLEDGE_PERMISSIONS.includes(permission as never)
+        ),
+        role
+      ).toEqual(expected);
+    }
+  });
+
   it("registers all nine Prompt 1 audit actions", () => {
     expect(PROMPT_1_AUDIT_ACTIONS).toEqual([
       "user.role_changed", "user.activated", "user.deactivated",
@@ -364,4 +397,178 @@ describe("authorization policy", () => {
     expect(PROCUREMENT_AUDIT_ACTIONS).toEqual(["procurement_expense_recorded"]);
     expect(AUDIT_ACTIONS).toContain("procurement_expense_recorded");
   });
+
+  it("registers only bounded AI Estimator Knowledge audit action names", () => {
+    expect(AI_ESTIMATOR_KNOWLEDGE_AUDIT_ACTIONS).toEqual([
+      "ai_estimator_knowledge_basket_created",
+      "ai_estimator_knowledge_basket_updated",
+      "ai_estimator_knowledge_basket_archived",
+      "ai_estimator_knowledge_main_line_created",
+      "ai_estimator_knowledge_main_line_updated",
+      "ai_estimator_knowledge_main_line_archived",
+      "ai_estimator_knowledge_main_line_deactivated",
+      "ai_estimator_knowledge_main_line_duplicated",
+      "ai_estimator_knowledge_master_created",
+      "ai_estimator_knowledge_master_updated",
+      "ai_estimator_knowledge_master_archived",
+      "ai_estimator_knowledge_section_updated",
+      "ai_estimator_knowledge_price_version_created",
+      "ai_estimator_knowledge_tax_version_created",
+      "ai_estimator_knowledge_tax_version_rolled_over",
+      "ai_estimator_knowledge_revision_created",
+      "ai_estimator_knowledge_revision_activated",
+      "ai_estimator_knowledge_lifecycle_blocked"
+    ]);
+    expect(AUDIT_ACTIONS.slice(-AI_ESTIMATOR_KNOWLEDGE_AUDIT_ACTIONS.length)).toEqual(
+      AI_ESTIMATOR_KNOWLEDGE_AUDIT_ACTIONS
+    );
+  });
+});
+
+describe("AI Estimator Knowledge mutation actor guard", () => {
+  const session = {} as ClientSession;
+  const actor: PublicUser = {
+    id: "user-super-admin",
+    name: "Super Admin",
+    email: "super-admin@example.test",
+    role: "super_admin"
+  };
+
+  function store(
+    overrides: Partial<AiEstimatorKnowledgeActorStore> = {}
+  ): AiEstimatorKnowledgeActorStore {
+    return {
+      coordinateAuthorizationMutation: vi.fn(async () => undefined),
+      findActor: vi.fn(async () => ({
+        id: actor.id,
+        role: actor.role,
+        active: true
+      })),
+      countActiveSuperAdmins: vi.fn(async () => 1),
+      ...overrides
+    };
+  }
+
+  it("revalidates read actors in the supplied session without coordination writes", async () => {
+    const coordinate = vi.fn(async () => undefined);
+    const findActor = vi.fn(async (
+      _actorId: string,
+      receivedSession?: ClientSession
+    ) => {
+      expect(receivedSession).toBe(session);
+      return { id: actor.id, role: "super_admin" as const, active: true };
+    });
+    const countActiveSuperAdmins = vi.fn(async (
+      receivedSession?: ClientSession
+    ) => {
+      expect(receivedSession).toBe(session);
+      return 1;
+    });
+    const guard = createAiEstimatorKnowledgeActorGuard(store({
+      coordinateAuthorizationMutation: coordinate,
+      findActor,
+      countActiveSuperAdmins
+    }));
+
+    await expect(guard.requireReadActor(actor, session)).resolves.toEqual({
+      id: actor.id,
+      role: "super_admin"
+    });
+    expect(coordinate).not.toHaveBeenCalled();
+    expect(findActor).toHaveBeenCalledWith(actor.id, session);
+    expect(countActiveSuperAdmins).toHaveBeenCalledWith(session);
+  });
+
+  it.each([
+    ["inactive", { id: actor.id, role: "super_admin" as const, active: false }, 1, 401, "INVALID_TOKEN"],
+    ["stale role", { id: actor.id, role: "admin" as const, active: true }, 1, 401, "INVALID_TOKEN"],
+    ["multiple Super Admins", { id: actor.id, role: "super_admin" as const, active: true }, 2, 409, "SOLE_SUPER_ADMIN_REQUIRED"]
+  ])(
+    "fails closed on reads for %s",
+    async (_label, storedActor, count, status, code) => {
+      const coordinate = vi.fn(async () => undefined);
+      const guard = createAiEstimatorKnowledgeActorGuard(store({
+        coordinateAuthorizationMutation: coordinate,
+        findActor: vi.fn(async () => storedActor),
+        countActiveSuperAdmins: vi.fn(async () => count)
+      }));
+
+      await expect(guard.requireReadActor(actor)).rejects.toMatchObject({
+        status,
+        code
+      });
+      expect(coordinate).not.toHaveBeenCalled();
+    }
+  );
+
+  it("coordinates, reloads, and verifies the sole active Super Admin in order", async () => {
+    const calls: string[] = [];
+    const actorStore = store({
+      coordinateAuthorizationMutation: vi.fn(async (receivedSession) => {
+        expect(receivedSession).toBe(session);
+        calls.push("coordinate");
+      }),
+      findActor: vi.fn(async (actorId, receivedSession) => {
+        expect(actorId).toBe(actor.id);
+        expect(receivedSession).toBe(session);
+        calls.push("actor");
+        return { id: actor.id, role: "super_admin", active: true };
+      }),
+      countActiveSuperAdmins: vi.fn(async (receivedSession) => {
+        expect(receivedSession).toBe(session);
+        calls.push("count");
+        return 1;
+      })
+    });
+
+    await expect(
+      createAiEstimatorKnowledgeActorGuard(actorStore)
+        .requireMutationActor(actor, session)
+    ).resolves.toEqual({ id: actor.id, role: "super_admin" });
+    expect(calls).toEqual(["coordinate", "actor", "count"]);
+  });
+
+  it.each([
+    ["missing", null],
+    ["inactive", { id: actor.id, role: "super_admin" as const, active: false }],
+    ["stale role", { id: actor.id, role: "admin" as const, active: true }]
+  ])("fails closed for a %s stored actor", async (_label, storedActor) => {
+    const guard = createAiEstimatorKnowledgeActorGuard(store({
+      findActor: vi.fn(async () => storedActor)
+    }));
+
+    await expect(guard.requireMutationActor(actor, session)).rejects.toMatchObject({
+      status: 401,
+      code: "INVALID_TOKEN"
+    } satisfies Partial<ApiError>);
+  });
+
+  it("denies a role-matching non-Super-Admin actor", async () => {
+    const adminActor = { ...actor, role: "admin" as const };
+    const guard = createAiEstimatorKnowledgeActorGuard(store({
+      findActor: vi.fn(async () => ({
+        id: adminActor.id,
+        role: adminActor.role,
+        active: true
+      }))
+    }));
+
+    await expect(
+      guard.requireMutationActor(adminActor, session)
+    ).rejects.toMatchObject({ status: 403, code: "FORBIDDEN" });
+  });
+
+  it.each([0, 2])(
+    "rejects the active Super Admin invariant when the count is %i",
+    async (count) => {
+      const guard = createAiEstimatorKnowledgeActorGuard(store({
+        countActiveSuperAdmins: vi.fn(async () => count)
+      }));
+
+      await expect(guard.requireMutationActor(actor, session)).rejects.toMatchObject({
+        status: 409,
+        code: "SOLE_SUPER_ADMIN_REQUIRED"
+      });
+    }
+  );
 });

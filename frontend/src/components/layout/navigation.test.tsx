@@ -10,6 +10,7 @@ import {
   LayoutDashboard,
   MailCheck,
   Palette,
+  Settings2,
   UsersRound,
   WalletCards
 } from "lucide-react";
@@ -24,7 +25,7 @@ import { Sidebar } from "./Sidebar";
 import { navigationForAuthorization } from "./navigation";
 
 const roleNavigation = [
-  ["super_admin", [["All Projects", "/admin/projects", FolderKanban], ["Users", "/admin/users", UsersRound], ["Client responses", "/admin/client-responses", MailCheck], ["Design approvals", "/admin/design-approvals", Palette], ["Access requests", "/admin/access-requests", ClipboardCheck], ["Finance", "/finance", WalletCards]]],
+  ["super_admin", [["All Projects", "/admin/projects", FolderKanban], ["Users", "/admin/users", UsersRound], ["Configuration", "/admin/configuration/estimation", Settings2, false], ["Client responses", "/admin/client-responses", MailCheck], ["Design approvals", "/admin/design-approvals", Palette], ["Access requests", "/admin/access-requests", ClipboardCheck], ["Finance", "/finance", WalletCards]]],
   ["admin", [["My Projects", "/admin/projects", FolderKanban], ["Client responses", "/admin/client-responses", MailCheck], ["Design approvals", "/admin/design-approvals", Palette], ["Access requests", "/admin/access-requests", ClipboardCheck]]],
   ["estimator_sales", [["Leads & estimates", "/estimator-sales", BriefcaseBusiness]]],
   ["designer", [["Workspace", "/designer", LayoutDashboard], ["Design plans", "/designer/design-plans", Palette], ["My access requests", "/access-requests/mine", KeyRound]]],
@@ -42,7 +43,7 @@ const roleNavigation = [
   ["client", [["My projects", "/client", FolderKanban]]]
 ] as const satisfies ReadonlyArray<readonly [
   Role,
-  ReadonlyArray<readonly [string, string, typeof LayoutDashboard]>
+  ReadonlyArray<readonly [string, string, typeof LayoutDashboard, boolean?]>
 ]>;
 
 function navigationAuthorization(role: Role) {
@@ -93,7 +94,7 @@ describe("role navigation", () => {
       const items = navigationForAuthorization(role, navigationAuthorization(role));
 
       expect(items).toEqual(
-        expected.map(([label, to, icon]) => ({ label, to, end: true, icon }))
+        expected.map(([label, to, icon, end = true]) => ({ label, to, end, icon }))
       );
       expect(items.every((item) => !item.to.includes(":"))).toBe(true);
     }
@@ -183,6 +184,37 @@ describe("role navigation", () => {
       expect(
         navigationForAuthorization(role, authorizationFor(role)).some(
           ({ label }) => label === "Client responses"
+        )
+      ).toBe(false);
+    }
+  });
+
+  it("shows one nested Configuration navigation item only to a permitted Super Admin", () => {
+    expect(
+      navigationForAuthorization(
+        "super_admin",
+        authorizationFor("super_admin")
+      ).filter(({ label }) => label === "Configuration")
+    ).toEqual([
+      {
+        label: "Configuration",
+        to: "/admin/configuration/estimation",
+        end: false,
+        icon: Settings2
+      }
+    ]);
+
+    expect(
+      navigationForAuthorization(
+        "super_admin",
+        authorizationFor("super_admin", ["identity.self.read"])
+      ).some(({ label }) => label === "Configuration")
+    ).toBe(false);
+
+    for (const role of ROLE_CODES.filter((candidate) => candidate !== "super_admin")) {
+      expect(
+        navigationForAuthorization(role, authorizationFor(role)).some(
+          ({ label }) => label === "Configuration"
         )
       ).toBe(false);
     }

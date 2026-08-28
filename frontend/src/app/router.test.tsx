@@ -8,7 +8,7 @@ import {
   within
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { FolderKanban } from "lucide-react";
+import { FolderKanban, Settings2 } from "lucide-react";
 import { StrictMode } from "react";
 import { BrowserRouter, useLocation } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -25,9 +25,19 @@ import { authorizationFor } from "../test/authFixtures";
 import { renderApp } from "../test/render";
 import { AppProviders } from "./providers";
 import { ROUTE_REGISTRY } from "./routeRegistry";
-import { AppRoutes, roleHomeContentFor } from "./router";
+import { AppRoutes, createAppBrowserRouter, roleHomeContentFor } from "./router";
 
 const ROUTER_TEST_RESET_TOKEN = "abcdefghijklmnopqrstuvwxyzABCDEFGH123456789";
+
+describe("application data router", () => {
+  it("creates an isolated router instance for each application mount", () => {
+    const first = createAppBrowserRouter();
+    const second = createAppBrowserRouter();
+    expect(first).not.toBe(second);
+    first.dispose();
+    second.dispose();
+  });
+});
 
 interface ObservedRouterLocation {
   pathname: string;
@@ -120,6 +130,12 @@ const procurementPaths = ["/procurement/projects/:projectId"] as const;
 const financePaths = [
   "/finance",
   "/finance/projects/:projectId"
+] as const;
+
+const knowledgeConfigurationPaths = [
+  "/admin/configuration/estimation",
+  "/admin/configuration/estimation/items/:itemId",
+  "/admin/configuration/estimation/reusable-values"
 ] as const;
 
 const estimateResponsePermissions = [
@@ -412,6 +428,97 @@ function installAuthorizationSession(
         }
       });
     }
+    if (path.startsWith("/api/v1/admin/ai-estimator-knowledge/items?")) {
+      return Response.json({
+        data: {
+          items: [],
+          pagination: { limit: 20, offset: 0, total: 0, hasMore: false }
+        }
+      });
+    }
+    if (path.startsWith("/api/v1/admin/ai-estimator-knowledge/baskets?")) {
+      return Response.json({
+        data: {
+          items: [],
+          pagination: { limit: 100, offset: 0, total: 0, hasMore: false }
+        }
+      });
+    }
+    if (path === "/api/v1/admin/ai-estimator-knowledge/main-lines/item-1") {
+      const completeness = {
+        percentage: 25,
+        sections: [],
+        blockers: [],
+        warnings: []
+      };
+      const revision = {
+        id: "revision-1",
+        mainLineId: "item-1",
+        revisionNumber: 1,
+        status: "draft",
+        sourceRevisionId: null,
+        contentDigest: null,
+        completeness,
+        activatedAt: null,
+        activatedById: null,
+        supersededAt: null,
+        supersededById: null,
+        version: 1,
+        createdById: "super_admin-route-user",
+        updatedById: "super_admin-route-user",
+        createdAt: "2026-08-28T08:00:00.000Z",
+        updatedAt: "2026-08-28T08:00:00.000Z"
+      };
+      return Response.json({ data: {
+        id: "item-1",
+        mainLineId: "item-1",
+        mainLineName: "Wall panel",
+        basketId: "basket-1",
+        basketName: "Carpentry",
+        description: "Interior wall panel knowledge",
+        status: "draft",
+        activeRevisionId: null,
+        draftRevisionId: "revision-1",
+        revisionNumber: 1,
+        uomId: null,
+        priorityId: null,
+        modeIds: [],
+        surfaceIds: [],
+        vendorIds: [],
+        completeness,
+        allowedActions: ["update_section", "review_and_activate", "duplicate", "archive"],
+        activeRevision: null,
+        draftRevision: revision,
+        blockers: [],
+        warnings: [],
+        version: 1,
+        createdById: "super_admin-route-user",
+        updatedById: "super_admin-route-user",
+        createdAt: "2026-08-28T08:00:00.000Z",
+        updatedAt: "2026-08-28T08:00:00.000Z"
+      } });
+    }
+    if (path === "/api/v1/admin/ai-estimator-knowledge/main-lines/item-1/history?limit=100&offset=0") {
+      return Response.json({ data: { items: [], pagination: { limit: 100, offset: 0, total: 0, hasMore: false } } });
+    }
+    if (path === "/api/v1/admin/ai-estimator-knowledge/main-lines/item-1/revisions/revision-1/sections/overview") {
+      return Response.json({ data: {
+        id: "section-overview-1",
+        mainLineId: "item-1",
+        revisionId: "revision-1",
+        sectionKey: "overview",
+        applicability: "not_configured",
+        payload: {},
+        version: 1,
+        createdById: "super_admin-route-user",
+        updatedById: "super_admin-route-user",
+        createdAt: "2026-08-28T08:00:00.000Z",
+        updatedAt: "2026-08-28T08:00:00.000Z"
+      } });
+    }
+    if (/\/api\/v1\/admin\/ai-estimator-knowledge\/(?:uoms|vendors|taxes|priorities|surfaces|modes)\?/u.test(path)) {
+      return Response.json({ data: { items: [], pagination: { limit: 100, offset: 0, total: 0, hasMore: false } } });
+    }
     throw new Error(`Unhandled request: ${path}`);
   });
 }
@@ -519,7 +626,7 @@ describe("role landing staging contract", () => {
 
 describe("public invitation route", () => {
   it("mounts directly while staying outside the protected registry", async () => {
-    expect(ROUTE_REGISTRY).toHaveLength(27);
+    expect(ROUTE_REGISTRY).toHaveLength(30);
     expect(ROUTE_REGISTRY.map(({ path }) => path)).not.toContain(
       "/accept-invitation"
     );
@@ -607,15 +714,16 @@ describe("public password recovery routes", () => {
 });
 
 describe("registered permission routes", () => {
-  it("adds the workflow and finance routes and preserves both Client route contracts", () => {
+  it("adds workflow, finance, and isolated knowledge configuration routes while preserving both Client route contracts", () => {
     const paths = ROUTE_REGISTRY.map(({ path }) => path);
     const additions = paths.filter(
       (path) => !(historicalProtectedPaths as readonly string[]).includes(path)
     );
 
-    expect(paths).toHaveLength(historicalProtectedPaths.length + 7);
+    expect(paths).toHaveLength(historicalProtectedPaths.length + 10);
     expect(additions).toEqual([
       "/designer/design-plans",
+      ...knowledgeConfigurationPaths,
       ...clientResponsePaths,
       "/admin/design-approvals",
       ...procurementPaths,
@@ -624,6 +732,7 @@ describe("registered permission routes", () => {
     expect(paths.filter(
       (path) => ![
         "/designer/design-plans",
+        ...knowledgeConfigurationPaths,
         ...clientResponsePaths,
         "/admin/design-approvals",
         ...procurementPaths,
@@ -689,6 +798,41 @@ describe("registered permission routes", () => {
         path: "/admin/client-responses/:roundId",
         permission: "estimation.client_response_tasks.read",
         presentationRoles: ["admin", "super_admin"],
+        navigation: null
+      }
+    ]);
+  });
+
+  it("registers one nested Super Admin Configuration navigation item and keeps child routes out of navigation", () => {
+    expect(
+      ROUTE_REGISTRY.filter(({ path }) =>
+        path.startsWith("/admin/configuration/estimation")
+      )
+    ).toEqual([
+      {
+        path: "/admin/configuration/estimation",
+        permission: "ai_estimator_knowledge.configuration.read",
+        presentationRoles: ["super_admin"],
+        navigation: {
+          roles: ["super_admin"],
+          item: {
+            label: "Configuration",
+            to: "/admin/configuration/estimation",
+            end: false,
+            icon: Settings2
+          }
+        }
+      },
+      {
+        path: "/admin/configuration/estimation/items/:itemId",
+        permission: "ai_estimator_knowledge.configuration.read",
+        presentationRoles: ["super_admin"],
+        navigation: null
+      },
+      {
+        path: "/admin/configuration/estimation/reusable-values",
+        permission: "ai_estimator_knowledge.configuration.read",
+        presentationRoles: ["super_admin"],
         navigation: null
       }
     ]);
@@ -804,6 +948,48 @@ describe("registered permission routes", () => {
     ).toBeVisible();
     expect(screen.getByText("estimate-v4.pdf")).toBeVisible();
     expect(router.state.location.pathname).toBe("/admin/client-responses/round-1");
+  });
+
+  it.each([
+    ["/admin/configuration/estimation", "AI Estimator Knowledge Base"],
+    ["/admin/configuration/estimation/items/item-1", "Wall panel"],
+    [
+      "/admin/configuration/estimation/reusable-values",
+      "Reusable estimation values"
+    ]
+  ] as const)(
+    "mounts the isolated Super Admin knowledge page at %s",
+    async (path, title) => {
+      installAuthorizationSession("super_admin", [
+        "identity.self.read",
+        "ai_estimator_knowledge.configuration.read"
+      ]);
+      const { router } = renderApp([path]);
+
+      expect(await screen.findByRole("heading", { name: title })).toBeVisible();
+      expect(
+        screen.getByText(
+          "Knowledge-base changes do not modify current estimates or the existing Estimator/Sales builder."
+        )
+      ).toBeVisible();
+      expect(router.state.location.pathname).toBe(path);
+    }
+  );
+
+  it("denies the knowledge workspace to Admin even when the permission code is supplied", async () => {
+    installAuthorizationSession("admin", [
+      "identity.self.read",
+      "ai_estimator_knowledge.configuration.read"
+    ]);
+    const { router } = renderApp(["/admin/configuration/estimation"]);
+
+    expect(await screen.findByRole("heading", { name: "Access denied" })).toBeVisible();
+    expect(
+      screen.queryByRole("heading", { name: "AI Estimator Knowledge Base" })
+    ).not.toBeInTheDocument();
+    expect(router.state.location.pathname).toBe(
+      "/admin/configuration/estimation"
+    );
   });
 
   it.each(nonAdminClientResponsePresentationCases)(

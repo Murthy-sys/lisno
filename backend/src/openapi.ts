@@ -25,6 +25,14 @@ import {
   type HumanJwtOperation,
   type HumanJwtOperationKeyShape
 } from "./domain/route-operations.js";
+import {
+  AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS,
+  AI_ESTIMATOR_KNOWLEDGE_OPERATION_SUMMARIES,
+  AI_ESTIMATOR_KNOWLEDGE_PAGINATION_OPERATIONS,
+  AI_ESTIMATOR_KNOWLEDGE_QUERY_PARAMETERS,
+  AI_ESTIMATOR_KNOWLEDGE_REQUEST_BODIES,
+  AI_ESTIMATOR_KNOWLEDGE_RESPONSE_SCHEMAS
+} from "./openapi/ai-estimator-knowledge.js";
 import { workerFailureCodes } from "./services/extraction-worker.service.js";
 
 type OpenApiSchema = Readonly<Record<string, unknown>>;
@@ -148,7 +156,8 @@ const requestBodiesByOperation: Readonly<Record<string, OpenApiRequestBody>> = {
   ),
   "POST /internal/extraction-jobs/:jobId/fail": jsonRequest(
     "ExtractionFailureRequest"
-  )
+  ),
+  ...AI_ESTIMATOR_KNOWLEDGE_REQUEST_BODIES
 };
 
 const operationsWithoutBodies = new Set<string>([
@@ -192,7 +201,8 @@ const responseSchemaByOperation: Readonly<Record<string, string>> = {
   "GET /procurement/projects": "ProcurementProjectList",
   "POST /procurement/projects/:projectId/expenses": "PostFinanceEntryResult",
   "GET /workflow-tasks": "ProjectWorkflowTaskList",
-  "PATCH /workflow-tasks/:taskId": "ProjectWorkflowTask"
+  "PATCH /workflow-tasks/:taskId": "ProjectWorkflowTask",
+  ...AI_ESTIMATOR_KNOWLEDGE_RESPONSE_SCHEMAS
 };
 
 const pdfOperations = new Set<string>([
@@ -296,7 +306,8 @@ const operationSummaries: Readonly<Record<string, string>> = {
     "Renew an extraction job lease",
   "POST /internal/extraction-jobs/:jobId/complete":
     "Complete an extraction job",
-  "POST /internal/extraction-jobs/:jobId/fail": "Fail an extraction job"
+  "POST /internal/extraction-jobs/:jobId/fail": "Fail an extraction job",
+  ...AI_ESTIMATOR_KNOWLEDGE_OPERATION_SUMMARIES
 };
 
 const paginationOperationKeys = new Set<string>([
@@ -322,7 +333,8 @@ const paginationOperationKeys = new Set<string>([
   "GET /projects/:projectId/design-versions",
   "GET /admin/estimate-client-response-tasks",
   "GET /finance/projects",
-  "GET /finance/projects/:projectId/entries"
+  "GET /finance/projects/:projectId/entries",
+  ...AI_ESTIMATOR_KNOWLEDGE_PAGINATION_OPERATIONS
 ]);
 
 const statusFilterOperationKeys = new Set<string>([
@@ -501,7 +513,8 @@ const queryParametersByOperation: Readonly<
     }
   ],
   "GET /kpis/users/:userId/tasks": kpiPeriodParameters(),
-  "GET /kpis/users/:userId": kpiPeriodParameters()
+  "GET /kpis/users/:userId": kpiPeriodParameters(),
+  ...AI_ESTIMATOR_KNOWLEDGE_QUERY_PARAMETERS
 };
 
 function kpiPeriodParameters(): readonly OpenApiParameter[] {
@@ -686,6 +699,10 @@ export const openApiDocument: LisnoOpenApiDocument = Object.freeze({
     tag("Tasks", "Delivery tasks, deadlines, and task events."),
     tag("Organization", "Teams, hierarchy, KPIs, and evaluations."),
     tag("Audit", "Authorized audit and project activity feeds."),
+    tag(
+      "AI Estimator Knowledge",
+      "Super Admin-managed Interior Estimation knowledge and read-only future-AI context. This does not alter the existing estimator."
+    ),
     tag("OCR worker", "Internal extraction-worker protocol. These routes are mounted only when OCR worker authentication is configured.")
   ],
   paths,
@@ -863,6 +880,10 @@ function responsesFor(key: HumanJwtOperationKeyShape): Readonly<Record<string, O
       ? dataResponse(responseSchema, "Successful response.")
       : jsonSuccessResponse,
     ...standardProtectedErrors,
+    ...(HUMAN_JWT_OPERATION_LIST.find((operation) => operation.key === key)
+      ?.availability === "ai_estimator_knowledge"
+      ? { "422": { $ref: "#/components/responses/UnprocessableKnowledge" } }
+      : {}),
     ...(multipartOperations.has(key)
       ? {
           "413": { $ref: "#/components/responses/PayloadTooLarge" },
@@ -1010,6 +1031,8 @@ function pathParameters(path: string): OpenApiParameter[] {
     required: true,
     schema: match[1] === "attachmentIndex"
       ? { type: "integer", minimum: 0 }
+      : match[1] === "sectionKey"
+        ? { $ref: "#/components/schemas/KnowledgeSectionKey" }
       : { type: "string", minLength: 1 }
   }));
 }
@@ -1027,6 +1050,7 @@ function protectedDescription(operation: HumanJwtOperation): string {
 
 function tagFor(operation: HumanJwtOperation): string {
   const { path } = splitHumanOperationKey(operation.key);
+  if (operation.availability === "ai_estimator_knowledge") return "AI Estimator Knowledge";
   if (operation.availability === "project_workflow") return "Project workflow";
   if (operation.availability === "project_finance") return "Project finance";
   if (operation.availability === "identity_provisioning") return "Invitations";
@@ -1079,6 +1103,7 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
   const id = { type: "string", minLength: 1 } as const;
   const dateTime = { type: "string", format: "date-time" } as const;
   return {
+    ...AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS,
     GenericJsonObject: {
       type: "object",
       additionalProperties: true,
@@ -2216,6 +2241,9 @@ function componentResponses(): Readonly<Record<string, OpenApiResponse>> {
     Forbidden: errorResponse("The authenticated identity is not authorized for this operation."),
     NotFound: errorResponse("The requested resource is unavailable or not visible to this identity."),
     Conflict: errorResponse("The request conflicts with the current version or workflow state."),
+    UnprocessableKnowledge: errorResponse(
+      "Required Active estimation knowledge is unavailable or cannot be resolved."
+    ),
     Gone: errorResponse("The requested invitation is no longer available."),
     PayloadTooLarge: errorResponse("The uploaded file exceeds the configured size limit."),
     UnsupportedMediaType: errorResponse("The uploaded file type or signature is not supported."),

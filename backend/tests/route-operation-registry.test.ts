@@ -29,10 +29,12 @@ import { EXPECTED_STAFF_INVITATION_HUMAN_JWT_OPERATIONS } from "./fixtures/staff
 import { EXPECTED_ESTIMATE_CLIENT_RESPONSE_HUMAN_JWT_OPERATIONS } from "./fixtures/estimate-client-response-route-operations.js";
 import { EXPECTED_PROJECT_WORKFLOW_HUMAN_JWT_OPERATIONS } from "./fixtures/project-workflow-route-operations.js";
 import { EXPECTED_PROJECT_FINANCE_HUMAN_JWT_OPERATIONS } from "./fixtures/project-finance-route-operations.js";
+import { EXPECTED_AI_ESTIMATOR_KNOWLEDGE_OPERATIONS } from "./fixtures/ai-estimator-knowledge-route-operations.js";
 
 const EXPECTED_ALL_HUMAN_JWT_OPERATIONS = [
   ...EXPECTED_HUMAN_JWT_OPERATIONS,
-  ...EXPECTED_PROJECT_FINANCE_HUMAN_JWT_OPERATIONS
+  ...EXPECTED_PROJECT_FINANCE_HUMAN_JWT_OPERATIONS,
+  ...EXPECTED_AI_ESTIMATOR_KNOWLEDGE_OPERATIONS
 ] as const;
 const EXPECTED_STAFF_INVITATION_OPERATIONS =
   EXPECTED_STAFF_INVITATION_HUMAN_JWT_OPERATIONS.slice(
@@ -205,9 +207,9 @@ describe("human JWT operation registry", () => {
     expect(HUMAN_JWT_OPERATION_LIST.slice(start, end)).toEqual(expected);
   });
 
-  it("matches all 129 normative operation rows", () => {
+  it("matches all 172 normative operation rows", () => {
     expect(Object.values(HUMAN_JWT_OPERATIONS)).toEqual(EXPECTED_ALL_HUMAN_JWT_OPERATIONS);
-    expect(Object.keys(HUMAN_JWT_OPERATIONS)).toHaveLength(129);
+    expect(Object.keys(HUMAN_JWT_OPERATIONS)).toHaveLength(172);
   });
 
   it("mounts rows 2 through 23 as exact router groups with one ordered marker pair", () => {
@@ -429,7 +431,7 @@ describe("human JWT operation registry", () => {
   });
 
   it("appends and mounts five project-finance operations in one authenticated router", () => {
-    expect(HUMAN_JWT_OPERATION_LIST.slice(124)).toEqual(
+    expect(HUMAN_JWT_OPERATION_LIST.slice(124, 129)).toEqual(
       EXPECTED_PROJECT_FINANCE_OPERATIONS
     );
     expect(HUMAN_JWT_OPERATION_LIST.filter(
@@ -443,6 +445,23 @@ describe("human JWT operation registry", () => {
     expect(matches[0]!.routes.map(({ key }) => key).sort()).toEqual(
       [...expectedKeys].sort()
     );
+  });
+
+  it("appends exactly 43 AI Estimator Knowledge operations with one closed namespace", () => {
+    expect(HUMAN_JWT_OPERATION_LIST.slice(129)).toEqual(
+      EXPECTED_AI_ESTIMATOR_KNOWLEDGE_OPERATIONS
+    );
+    expect(EXPECTED_AI_ESTIMATOR_KNOWLEDGE_OPERATIONS).toHaveLength(43);
+    expect(HUMAN_JWT_OPERATION_LIST.filter(
+      ({ availability }) => availability === "ai_estimator_knowledge"
+    )).toEqual(EXPECTED_AI_ESTIMATOR_KNOWLEDGE_OPERATIONS);
+    for (const operation of EXPECTED_AI_ESTIMATOR_KNOWLEDGE_OPERATIONS) {
+      expect(operation.scope).toEqual({
+        kind: "non_project",
+        namespace: "ai_estimator_knowledge"
+      });
+      expect(operation.availability).toBe("ai_estimator_knowledge");
+    }
   });
 
   it("mounts four protected invitation operations and two explicit public non-human routes in one router", () => {
@@ -466,7 +485,7 @@ describe("human JWT operation registry", () => {
     }
   });
 
-  it("mounts the exact 129-operation manifest with one ordered marker pair each", () => {
+  it("mounts the exact 172-operation manifest with one ordered marker pair each", () => {
     const expectedKeys = EXPECTED_ALL_HUMAN_JWT_OPERATIONS.map(
       ({ key }) => key
     ).sort();
@@ -476,8 +495,8 @@ describe("human JWT operation registry", () => {
     const mountedOperations = mountedRoutes.map(({ key }) => key);
 
     expect([...mountedOperations].sort()).toEqual(expectedKeys);
-    expect(expectedKeys).toHaveLength(129);
-    expect(new Set(expectedKeys).size).toBe(129);
+    expect(expectedKeys).toHaveLength(172);
+    expect(new Set(expectedKeys).size).toBe(172);
     expect(mountedOperations).toContain(
       "POST /execution/worker-assignments/override"
     );
@@ -524,9 +543,9 @@ describe("human JWT operation registry", () => {
     expect(() => assertTaskSixRouteMounts(routers)).toThrow();
   });
 
-  it("has 129 unique keys and exactly 113 routed permissions", () => {
-    expect(new Set(HUMAN_JWT_OPERATION_LIST.map(({ key }) => key)).size).toBe(129);
-    expect(new Set(HUMAN_JWT_OPERATION_LIST.map(({ permission }) => permission)).size).toBe(113);
+  it("has 172 unique keys and exactly 118 routed permissions", () => {
+    expect(new Set(HUMAN_JWT_OPERATION_LIST.map(({ key }) => key)).size).toBe(172);
+    expect(new Set(HUMAN_JWT_OPERATION_LIST.map(({ permission }) => permission)).size).toBe(118);
     expect(HUMAN_JWT_OPERATION_LIST.every(({ permission }) =>
       (PERMISSION_CODES as readonly string[]).includes(permission)
     )).toBe(true);
@@ -615,6 +634,40 @@ describe("human JWT operation registry", () => {
     expect(() => requireOperation("GET /health" as never)).toThrow(
       "Unregistered human operation: GET /health"
     );
+  });
+
+  it("denies non-Super-Admin knowledge mutations before validation", async () => {
+    const app = express();
+    let validationReached = false;
+    app.post(
+      "/knowledge-baskets",
+      (incoming, _response, next) => {
+        incoming.authenticatedUser = {
+          id: "user-admin",
+          name: "Admin",
+          email: "admin@example.test",
+          role: "admin"
+        };
+        next();
+      },
+      requireOperation("POST /admin/ai-estimator-knowledge/baskets"),
+      (_incoming, _response, next) => {
+        validationReached = true;
+        next(new Error("validation should not run"));
+      }
+    );
+    app.use(errorHandler);
+
+    await request(app)
+      .post("/knowledge-baskets")
+      .send({ malformed: true })
+      .expect(403, {
+        error: {
+          code: "FORBIDDEN",
+          message: "You are not authorized to perform this action."
+        }
+      });
+    expect(validationReached).toBe(false);
   });
 
   it("propagates registered operation context across await", async () => {

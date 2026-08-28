@@ -12,6 +12,7 @@
     "start": "node dist/server.js",
     "seed": "tsx src/seed/run.ts",
     "bootstrap:production-super-admin": "tsx src/operations/production-super-admin-bootstrap.ts",
+    "bootstrap:ai-estimator-knowledge": "tsx src/operations/ai-estimator-knowledge-bootstrap.ts",
     "migrate:client-linking": "tsx src/migrations/client-email-project-linking.ts",
     "migrate:estimate-design-mapping": "tsx src/migrations/estimate-design-mapping.ts",
     "migrate:project-finance-backfill": "tsx src/migrations/project-finance-backfill.ts",
