@@ -24,6 +24,7 @@ const userSchema = new Schema(
       default: "standard"
     },
     version: { type: Number, required: true, default: 1, min: 1 },
+    sessionVersion: { type: Number, required: true, default: 1, min: 1 },
     managerId: { type: String, ref: "User", default: null },
     authorizedClientIds: [{ type: String, ref: "User" }],
     avatar: { type: String },

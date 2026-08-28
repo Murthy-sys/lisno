@@ -294,8 +294,14 @@ describe("authentication API", () => {
     expect(response.body.data.user).not.toHaveProperty("passwordHash");
 
     const tokenPayload = jwt.decode(response.body.data.token) as Record<string, unknown>;
-    expect(Object.keys(tokenPayload).sort()).toEqual(["exp", "iat", "id", "role"]);
-    expect(tokenPayload).toMatchObject({ id, role });
+    expect(Object.keys(tokenPayload).sort()).toEqual([
+      "exp",
+      "iat",
+      "id",
+      "role",
+      "sessionVersion"
+    ]);
+    expect(tokenPayload).toMatchObject({ id, role, sessionVersion: 1 });
   });
 
   it("returns the same generic error for an unknown email and a wrong password", async () => {

@@ -188,6 +188,7 @@ describe("demo seed authorization", () => {
         "ProjectAccessGrant",
         "AuthorizationCoordination",
         "UserInvitation",
+        "PasswordResetRequest",
         "EmailCoordination"
       ])
     );

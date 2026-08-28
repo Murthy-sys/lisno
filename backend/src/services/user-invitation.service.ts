@@ -727,7 +727,13 @@ async function deliverGeneration(
     | { status: "sent" }
     | { status: "failed"; failureCode: string };
 
-  if (!issuingActor || !issuingActor.active || issuingActor.role !== "super_admin") {
+  if (
+    !issuingActor ||
+    !issuingActor.active ||
+    issuingActor.role !== "super_admin" ||
+    issuingActor.version !== attempt.record.tokenIssuerVersion ||
+    (await repository.countActiveUsersByRole("super_admin")) !== 1
+  ) {
     delivery = {
       status: "failed",
       failureCode: "INVITATION_ISSUER_UNAVAILABLE"
@@ -768,10 +774,25 @@ async function deliverGeneration(
   let deliveredRecord: UserInvitationRecord | null = null;
   try {
     deliveredRecord = await repository.runInTransaction(async (transaction) => {
+      await transaction.coordinateAuthorizationMutation();
+      const currentIssuer = await transaction.findUserById(attempt.actorId);
+      const issuerStillAuthoritative =
+        currentIssuer !== null &&
+        currentIssuer.active &&
+        currentIssuer.role === "super_admin" &&
+        currentIssuer.version === attempt.record.tokenIssuerVersion &&
+        (await transaction.countActiveUsersByRole("super_admin")) === 1;
+      const recordedDelivery =
+        delivery.status === "sent" && !issuerStillAuthoritative
+          ? {
+              status: "failed" as const,
+              failureCode: "INVITATION_ISSUER_UNAVAILABLE"
+            }
+          : delivery;
       const updated = await transaction.updateUserInvitationDelivery(
         attempt.record.id,
         attempt.record.tokenGeneration,
-        delivery.status === "sent"
+        recordedDelivery.status === "sent"
           ? {
               status: "sent",
               attemptedAt,
@@ -781,7 +802,7 @@ async function deliverGeneration(
           : {
               status: "failed",
               attemptedAt,
-              failureCode: delivery.failureCode,
+              failureCode: recordedDelivery.failureCode,
               updatedAt: attemptedAt
             }
       );
@@ -790,7 +811,7 @@ async function deliverGeneration(
         {
           actorId: attempt.actorId,
           action:
-            delivery.status === "sent"
+            recordedDelivery.status === "sent"
               ? "user_invitation.delivery_sent"
               : "user_invitation.delivery_failed",
           entityType: "user_invitation",
@@ -802,7 +823,7 @@ async function deliverGeneration(
             role: attempt.record.role,
             tokenGeneration: attempt.record.tokenGeneration,
             expiresAt: attempt.record.expiresAt,
-            deliveryState: delivery.status
+            deliveryState: recordedDelivery.status
           }
         },
         transaction

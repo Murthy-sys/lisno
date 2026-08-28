@@ -1,9 +1,17 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { FolderKanban } from "lucide-react";
-import { describe, expect, it, vi } from "vitest";
+import { StrictMode } from "react";
+import { BrowserRouter, useLocation } from "react-router-dom";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   OPERATIONAL_ROLES,
@@ -12,10 +20,39 @@ import {
   type Role
 } from "../api/authorization-contract";
 import { tokenStorage } from "../api/client";
+import { capturePasswordResetTokenBeforeRouterMount } from "../auth/passwordResetTokenVault";
 import { authorizationFor } from "../test/authFixtures";
 import { renderApp } from "../test/render";
+import { AppProviders } from "./providers";
 import { ROUTE_REGISTRY } from "./routeRegistry";
-import { roleHomeContentFor } from "./router";
+import { AppRoutes, roleHomeContentFor } from "./router";
+
+const ROUTER_TEST_RESET_TOKEN = "abcdefghijklmnopqrstuvwxyzABCDEFGH123456789";
+
+interface ObservedRouterLocation {
+  pathname: string;
+  search: string;
+  hash: string;
+}
+
+function RouterLocationRecorder({
+  observations
+}: {
+  observations: ObservedRouterLocation[];
+}) {
+  const location = useLocation();
+  observations.push({
+    pathname: location.pathname,
+    search: location.search,
+    hash: location.hash
+  });
+  return null;
+}
+
+afterEach(() => {
+  window.history.replaceState(null, "", "/");
+  capturePasswordResetTokenBeforeRouterMount();
+});
 
 const designer = {
   id: "user-designer-ananya",
@@ -495,6 +532,77 @@ describe("public invitation route", () => {
       )
     ).toBeVisible();
     expect(router.state.location.pathname).toBe("/accept-invitation");
+  });
+});
+
+describe("public password recovery routes", () => {
+  it("mounts forgot-password directly outside the protected registry", () => {
+    expect(ROUTE_REGISTRY.map(({ path }) => path)).not.toContain("/forgot-password");
+
+    const { router } = renderApp(["/forgot-password"]);
+
+    expect(
+      screen.getByRole("heading", { name: "Reset your password", level: 1 })
+    ).toBeVisible();
+    expect(router.state.location.pathname).toBe("/forgot-password");
+  });
+
+  it("mounts reset-password directly outside the protected registry", async () => {
+    expect(ROUTE_REGISTRY.map(({ path }) => path)).not.toContain("/reset-password");
+
+    const { router } = renderApp(["/reset-password"]);
+
+    expect(
+      await screen.findByText(
+        "Reset link unavailable. This link is invalid, expired, or has already been used."
+      )
+    ).toBeVisible();
+    expect(router.state.location.pathname).toBe("/reset-password");
+  });
+
+  it("never exposes the bootstrap fragment to BrowserRouter under StrictMode", async () => {
+    const observations: ObservedRouterLocation[] = [];
+    let inspectCalls = 0;
+    window.history.replaceState(
+      { marker: "router-bootstrap" },
+      "",
+      `/reset-password#token=${ROUTER_TEST_RESET_TOKEN}`
+    );
+    capturePasswordResetTokenBeforeRouterMount();
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const path = new URL(String(input), window.location.origin).pathname;
+      if (path === "/api/v1/auth/password-reset/inspect") {
+        inspectCalls += 1;
+        return Response.json({ data: { available: true } });
+      }
+      throw new Error(`Unhandled request: ${path}`);
+    });
+
+    render(
+      <StrictMode>
+        <AppProviders>
+          <BrowserRouter>
+            <RouterLocationRecorder observations={observations} />
+            <AppRoutes />
+          </BrowserRouter>
+        </AppProviders>
+      </StrictMode>
+    );
+
+    expect(
+      await screen.findByRole("heading", { name: "Choose a new password" })
+    ).toBeVisible();
+    expect(inspectCalls).toBe(1);
+    expect(observations.length).toBeGreaterThanOrEqual(2);
+    for (const observation of observations) {
+      expect(observation).toEqual({
+        pathname: "/reset-password",
+        search: "",
+        hash: ""
+      });
+      expect(JSON.stringify(observation)).not.toContain(ROUTER_TEST_RESET_TOKEN);
+    }
+    expect(window.location.href).not.toContain(ROUTER_TEST_RESET_TOKEN);
   });
 });
 

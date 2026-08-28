@@ -154,6 +154,29 @@ describe("LoginPage", () => {
     expect(await screen.findByRole("heading", { name: "Create your client account" })).toBeVisible();
   });
 
+  it("links to the literal forgot-password route in keyboard order", () => {
+    renderApp(["/login"]);
+
+    const passwordControl = screen.getByLabelText("Password");
+    const visibilityToggle = screen.getByRole("button", { name: "Show password" });
+    const forgotPassword = screen.getByRole("link", { name: "Forgot password?" });
+    const submit = screen.getByRole("button", { name: "Sign in" });
+
+    expect(forgotPassword).toHaveAttribute("href", "/forgot-password");
+    expect(
+      passwordControl.compareDocumentPosition(visibilityToggle) &
+        Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy();
+    expect(
+      visibilityToggle.compareDocumentPosition(forgotPassword) &
+        Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy();
+    expect(
+      forgotPassword.compareDocumentPosition(submit) &
+        Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy();
+  });
+
   it("announces all validation errors and focuses email when both fields are invalid", async () => {
     renderApp(["/login"]);
 

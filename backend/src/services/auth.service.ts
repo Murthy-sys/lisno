@@ -31,6 +31,7 @@ const tokenPayloadSchema = z
   .object({
     id: z.string().min(1),
     role: roleSchema,
+    sessionVersion: z.number().int().positive().optional(),
     iat: z.number().int().nonnegative(),
     exp: z.number().int().positive()
   })
@@ -181,9 +182,15 @@ export function createAuthService(
         throw new InvalidCredentialsError();
       }
 
-      const token = jwt.sign({ id: user.id, role: user.role }, validatedConfig.jwtSecret, {
-        expiresIn: validatedConfig.jwtExpiresInSeconds
-      });
+      const token = jwt.sign(
+        {
+          id: user.id,
+          role: user.role,
+          sessionVersion: user.sessionVersion ?? 1
+        },
+        validatedConfig.jwtSecret,
+        { expiresIn: validatedConfig.jwtExpiresInSeconds }
+      );
 
       return { token, user: toPublicUser(user) };
     },
@@ -265,9 +272,15 @@ export function createAuthService(
         throw error;
       }
 
-      const token = jwt.sign({ id: user.id, role: user.role }, validatedConfig.jwtSecret, {
-        expiresIn: validatedConfig.jwtExpiresInSeconds
-      });
+      const token = jwt.sign(
+        {
+          id: user.id,
+          role: user.role,
+          sessionVersion: user.sessionVersion ?? 1
+        },
+        validatedConfig.jwtSecret,
+        { expiresIn: validatedConfig.jwtExpiresInSeconds }
+      );
       return { token, user: toPublicUser(user) };
     },
 
@@ -290,7 +303,12 @@ export function createAuthService(
       }
 
       const user = await repository.findUserById(parsed.data.id);
-      if (!user || !user.active || user.role !== parsed.data.role) {
+      if (
+        !user ||
+        !user.active ||
+        user.role !== parsed.data.role ||
+        (user.sessionVersion ?? 1) !== (parsed.data.sessionVersion ?? 1)
+      ) {
         throw new InvalidTokenError();
       }
       if (

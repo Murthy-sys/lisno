@@ -13,6 +13,7 @@ import type { AppRepository } from "./repositories/types.js";
 import { createSmtpEstimateMailer } from "./services/smtp-estimate-mailer.js";
 import { createSmtpDesignPlanMailer } from "./services/smtp-design-plan-mailer.js";
 import { createSmtpInvitationMailer } from "./services/smtp-invitation-mailer.js";
+import { createSmtpPasswordResetMailer } from "./services/smtp-password-reset-mailer.js";
 import {
   runProcurementReceiptCleanupJobs,
   runProcurementReceiptReconciliationJobs
@@ -81,6 +82,9 @@ export async function startServer(
     const invitationMailer = mailDelivery.kind === "smtp"
       ? createSmtpInvitationMailer(mailDelivery)
       : { deliveryKind: "disabled" as const };
+    const passwordResetMailer = mailDelivery.kind === "smtp"
+      ? createSmtpPasswordResetMailer(mailDelivery)
+      : { deliveryKind: "disabled" as const };
     const estimateMailer = mailDelivery.kind === "smtp"
       ? createSmtpEstimateMailer(mailDelivery)
       : { deliveryKind: "disabled" as const };
@@ -109,6 +113,7 @@ export async function startServer(
       ocrConfidenceFloor: env.OCR_CONFIDENCE_FLOOR,
       ocrWorkerToken: env.OCR_WORKER_TOKEN,
       invitationMailer,
+      passwordResetMailer,
       allowDemoAccountExternalEmail: env.allowDemoAccountExternalEmail,
       estimateMailer,
       designPlanMailer,

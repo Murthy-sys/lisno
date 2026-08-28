@@ -77,6 +77,16 @@ export const USER_INVITATION_AUDIT_ACTIONS = [
   "user.invited_created"
 ] as const;
 
+export const PASSWORD_RESET_AUDIT_ACTIONS = [
+  "password_reset.requested",
+  "password_reset.superseded",
+  "password_reset.delivery_sent",
+  "password_reset.delivery_failed",
+  "password_reset.completed",
+  "password_reset.notification_sent",
+  "password_reset.notification_failed"
+] as const;
+
 export const ESTIMATE_CLIENT_REVIEW_AUDIT_ACTIONS = [
   "estimate_client_review_published",
   "estimate_email_delivery_sent",
@@ -110,6 +120,7 @@ export const AUDIT_ACTIONS = [
   ...EXISTING_AUDIT_ACTIONS,
   ...PROMPT_1_AUDIT_ACTIONS,
   ...USER_INVITATION_AUDIT_ACTIONS,
+  ...PASSWORD_RESET_AUDIT_ACTIONS,
   ...ESTIMATE_CLIENT_REVIEW_AUDIT_ACTIONS,
   ...DESIGN_PLAN_WORKFLOW_AUDIT_ACTIONS,
   ...PROCUREMENT_AUDIT_ACTIONS

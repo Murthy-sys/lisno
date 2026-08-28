@@ -41,6 +41,7 @@ import { TaskModel } from "../models/Task.js";
 import { TaskEventModel } from "../models/TaskEvent.js";
 import { UserModel } from "../models/User.js";
 import { UserInvitationModel } from "../models/UserInvitation.js";
+import { PasswordResetRequestModel } from "../models/PasswordResetRequest.js";
 import { adminProjectSummary } from "./admin-project-summary.js";
 import {
   RepositoryConflictError,
@@ -72,6 +73,7 @@ import {
   type ProjectHierarchy,
   type ProjectRecord,
   type ProjectAccessGrantRecord,
+  type PasswordResetRequestRecord,
   type TaskEventRecord,
   type TaskRecord,
   type UserInvitationAdminRecord,
@@ -377,6 +379,36 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
       );
     });
 
+  const transitionPasswordReset = async (
+    id: string,
+    expectedVersion: number,
+    extraFilter: PlainDocument,
+    set: PlainDocument
+  ): Promise<PasswordResetRequestRecord> => {
+    const query = PasswordResetRequestModel.findOneAndUpdate(
+      {
+        _id: id,
+        status: "pending",
+        version: expectedVersion,
+        ...extraFilter
+      },
+      { $set: set, $inc: { version: 1 } },
+      { new: true, runValidators: true, timestamps: false }
+    ).select("+tokenHash");
+    if (session) query.session(session);
+    const document = await query.lean().exec();
+    if (document) return mapPasswordReset(document);
+
+    const existsQuery = PasswordResetRequestModel.exists({ _id: id });
+    if (session) existsQuery.session(session);
+    if (!(await existsQuery.exec())) {
+      throw new RepositoryNotFoundError(`Password reset ${id} was not found.`);
+    }
+    throw new RepositoryConflictError(
+      `Password reset ${id} cannot transition at version ${expectedVersion}.`
+    );
+  };
+
   const repository: AppRepository = {
     async runInTransaction(operation) {
       if (session) return operation(repository);
@@ -421,6 +453,121 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
       );
       if (session) query.session(session);
       await query.exec();
+    },
+
+    async findPasswordResetById(id) {
+      const query = PasswordResetRequestModel.findById(id).select("+tokenHash");
+      if (session) query.session(session);
+      const document = await query.lean().exec();
+      return document ? mapPasswordReset(document) : null;
+    },
+
+    async findPendingPasswordResetByUserId(userId) {
+      const query = PasswordResetRequestModel.findOne({
+        userId,
+        status: "pending"
+      }).select("+tokenHash");
+      if (session) query.session(session);
+      const document = await query.lean().exec();
+      return document ? mapPasswordReset(document) : null;
+    },
+
+    async findPendingPasswordResetByTokenHash(tokenHash) {
+      const query = PasswordResetRequestModel.findOne({
+        tokenHash,
+        status: "pending"
+      }).select("+tokenHash");
+      if (session) query.session(session);
+      const document = await query.lean().exec();
+      return document ? mapPasswordReset(document) : null;
+    },
+
+    async findLatestPasswordResetIssuedAt(userId) {
+      const query = PasswordResetRequestModel.findOne({ userId })
+        .sort({ issuedAt: -1, _id: -1 })
+        .select({ issuedAt: 1, _id: 0 });
+      if (session) query.session(session);
+      const document = await query.lean().exec();
+      return document ? iso(document.issuedAt) : null;
+    },
+
+    async countPasswordResetsIssuedSince(userId, since) {
+      const query = PasswordResetRequestModel.countDocuments({
+        userId,
+        issuedAt: { $gt: date(since) }
+      });
+      if (session) query.session(session);
+      return query.exec();
+    },
+
+    async createPasswordReset(input) {
+      const document = await createMongoDocument("Password reset", () =>
+        createDocument(
+          PasswordResetRequestModel,
+          passwordResetForMongo(input),
+          session
+        )
+      );
+      return mapPasswordReset(document.toObject());
+    },
+
+    async supersedePasswordReset(id, expectedVersion, change) {
+      return transitionPasswordReset(id, expectedVersion, {}, {
+        tokenHash: null,
+        status: "superseded",
+        supersededByResetId: change.supersededByResetId,
+        supersededAt: date(change.supersededAt),
+        updatedAt: date(change.updatedAt)
+      });
+    },
+
+    async completePasswordReset(
+      id,
+      expectedVersion,
+      expectedGeneration,
+      expectedTokenHash,
+      change
+    ) {
+      return transitionPasswordReset(
+        id,
+        expectedVersion,
+        {
+          tokenGeneration: expectedGeneration,
+          tokenHash: expectedTokenHash
+        },
+        {
+          tokenHash: null,
+          status: "completed",
+          completedAt: date(change.completedAt),
+          updatedAt: date(change.updatedAt)
+        }
+      );
+    },
+
+    async updatePasswordResetDelivery(id, tokenGeneration, change) {
+      const query = PasswordResetRequestModel.findOneAndUpdate(
+        {
+          _id: id,
+          status: "pending",
+          tokenGeneration,
+          deliveryStatus: "queued"
+        },
+        {
+          $set: {
+            deliveryStatus: change.status,
+            deliveryAttemptedAt: date(change.attemptedAt),
+            sentAt: change.status === "sent" ? date(change.sentAt) : null,
+            deliveryFailureCode:
+              change.status === "failed" ? change.failureCode : null,
+            updatedAt: date(change.updatedAt)
+          },
+          $inc: { version: 1 }
+        },
+        { new: true, runValidators: true, timestamps: false }
+      ).select("+tokenHash");
+      if (session) query.session(session);
+      const document = await query.lean().exec();
+      return document ? mapPasswordReset(document) : null;
     },
 
     async findUserInvitationById(id) {
@@ -958,6 +1105,7 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
           active: input.active ?? true,
           accountKind: input.accountKind ?? "standard",
           version: 1,
+          sessionVersion: input.sessionVersion ?? 1,
           managerId: input.managerId ?? null,
           authorizedClientIds: input.authorizedClientIds ?? [],
           ...(input.avatar ? { avatar: input.avatar } : {}),
@@ -1114,6 +1262,52 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
         runValidators: true,
         timestamps: false
       }).select("+passwordHash");
+      if (session) query.session(session);
+      const document = await query.lean().exec();
+      if (document) return mapUser(document);
+
+      const existsQuery = UserModel.exists({ _id: userId });
+      if (session) existsQuery.session(session);
+      if (!(await existsQuery.exec())) {
+        throw new RepositoryNotFoundError(`User ${userId} was not found.`);
+      }
+      throw new RepositoryConflictError(`User ${userId} changed concurrently.`);
+    },
+
+    async updateUserCredentials(
+      userId,
+      expectedVersion,
+      expectedSessionVersion,
+      change
+    ) {
+      const versionFilter =
+        expectedVersion === 1
+          ? { $or: [{ version: 1 }, { version: { $exists: false } }] }
+          : { version: expectedVersion };
+      const sessionVersionFilter =
+        expectedSessionVersion === 1
+          ? {
+              $or: [
+                { sessionVersion: 1 },
+                { sessionVersion: { $exists: false } }
+              ]
+            }
+          : { sessionVersion: expectedSessionVersion };
+      const query = UserModel.findOneAndUpdate(
+        {
+          _id: userId,
+          $and: [versionFilter, sessionVersionFilter]
+        },
+        {
+          $set: {
+            passwordHash: change.passwordHash,
+            version: expectedVersion + 1,
+            sessionVersion: expectedSessionVersion + 1,
+            updatedAt: date(change.updatedAt)
+          }
+        },
+        { new: true, runValidators: true, timestamps: false }
+      ).select("+passwordHash");
       if (session) query.session(session);
       const document = await query.lean().exec();
       if (document) return mapUser(document);
@@ -2726,6 +2920,34 @@ function userInvitationForMongo(input: UserInvitationRecord): PlainDocument {
   };
 }
 
+function passwordResetForMongo(
+  input: PasswordResetRequestRecord
+): PlainDocument {
+  return {
+    _id: input.id,
+    userId: input.userId,
+    userVersion: input.userVersion,
+    sessionVersion: input.sessionVersion,
+    tokenHash: input.tokenHash,
+    tokenGeneration: input.tokenGeneration,
+    issuedAt: date(input.issuedAt),
+    expiresAt: date(input.expiresAt),
+    status: input.status,
+    supersededByResetId: input.supersededByResetId,
+    supersededAt: input.supersededAt ? date(input.supersededAt) : null,
+    completedAt: input.completedAt ? date(input.completedAt) : null,
+    deliveryStatus: input.deliveryStatus,
+    deliveryAttemptedAt: input.deliveryAttemptedAt
+      ? date(input.deliveryAttemptedAt)
+      : null,
+    sentAt: input.sentAt ? date(input.sentAt) : null,
+    deliveryFailureCode: input.deliveryFailureCode,
+    version: input.version,
+    createdAt: date(input.createdAt),
+    updatedAt: date(input.updatedAt)
+  };
+}
+
 async function validateAccessRequestCandidate(candidate: PlainDocument) {
   await new AccessRequestModel(candidate).validate();
 }
@@ -3214,10 +3436,35 @@ function mapUser(document: PlainDocument): UserRecord {
     accountKind:
       document.accountKind === "development_demo" ? "development_demo" : "standard",
     version: document.version ?? 1,
+    sessionVersion: document.sessionVersion ?? 1,
     managerId: document.managerId ?? null,
     authorizedClientIds: [...(document.authorizedClientIds ?? [])],
     ...(document.avatar ? { avatar: document.avatar } : {}),
     ...(document.title ? { title: document.title } : {}),
+    createdAt: iso(document.createdAt),
+    updatedAt: iso(document.updatedAt)
+  };
+}
+
+function mapPasswordReset(document: PlainDocument): PasswordResetRequestRecord {
+  return {
+    id: idOf(document),
+    userId: String(document.userId),
+    userVersion: Number(document.userVersion),
+    sessionVersion: Number(document.sessionVersion),
+    tokenHash: document.tokenHash ?? null,
+    tokenGeneration: Number(document.tokenGeneration),
+    issuedAt: iso(document.issuedAt),
+    expiresAt: iso(document.expiresAt),
+    status: document.status,
+    supersededByResetId: document.supersededByResetId ?? null,
+    supersededAt: nullableIso(document.supersededAt),
+    completedAt: nullableIso(document.completedAt),
+    deliveryStatus: document.deliveryStatus,
+    deliveryAttemptedAt: nullableIso(document.deliveryAttemptedAt),
+    sentAt: nullableIso(document.sentAt),
+    deliveryFailureCode: document.deliveryFailureCode ?? null,
+    version: Number(document.version ?? 1),
     createdAt: iso(document.createdAt),
     updatedAt: iso(document.updatedAt)
   };

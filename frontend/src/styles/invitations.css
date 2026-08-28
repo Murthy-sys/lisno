@@ -219,6 +219,71 @@
     font-weight: 900;
   }
 
+  .login-recovery-link {
+    display: flex;
+    min-height: 2.75rem;
+    align-items: center;
+    justify-content: flex-end;
+    margin: -0.45rem 0 0.75rem;
+  }
+
+  .login-recovery-link a {
+    color: #5d46d7;
+    font-weight: 750;
+    text-underline-offset: 0.2em;
+  }
+
+  .password-reset-card {
+    width: min(100%, 34rem);
+  }
+
+  .password-reset-page {
+    padding-block:
+      max(clamp(1rem, 4vw, 3rem), env(safe-area-inset-top))
+      max(clamp(1rem, 4vw, 3rem), env(safe-area-inset-bottom));
+    padding-inline:
+      max(clamp(1rem, 4vw, 3rem), env(safe-area-inset-left))
+      max(clamp(1rem, 4vw, 3rem), env(safe-area-inset-right));
+  }
+
+  .password-reset-form,
+  .password-reset-actions {
+    display: grid;
+    gap: 1rem;
+  }
+
+  .password-reset-form .ui-field {
+    gap: 0.45rem;
+  }
+
+  .password-reset-form .ui-control {
+    min-height: 3.15rem;
+  }
+
+  .password-reset-back-link {
+    justify-self: center;
+    border-color: transparent !important;
+  }
+
+  .password-reset-actions {
+    width: 100%;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .password-reset-actions svg,
+  .password-reset-back-link svg {
+    width: 1rem;
+    height: 1rem;
+  }
+
+  .password-reset-result {
+    width: 100%;
+  }
+
+  .password-reset-supporting-copy {
+    font-size: var(--text-sm);
+  }
+
   @keyframes invitation-spin {
     to { transform: rotate(360deg); }
   }
@@ -227,6 +292,15 @@
     .invitation-page { padding: .75rem; }
     .invitation-card { border-radius: var(--radius-surface); }
     .invitation-summary > div { grid-template-columns: 1fr; gap: .15rem; }
+    .password-reset-actions { grid-template-columns: 1fr; }
+    .password-reset-page {
+      padding-block:
+        max(.75rem, env(safe-area-inset-top))
+        max(.75rem, env(safe-area-inset-bottom));
+      padding-inline:
+        max(.75rem, env(safe-area-inset-left))
+        max(.75rem, env(safe-area-inset-right));
+    }
   }
 
   @media (prefers-reduced-motion: reduce) {
