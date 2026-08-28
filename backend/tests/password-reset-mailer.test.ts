@@ -34,6 +34,140 @@ afterEach(() => {
 });
 
 describe("SMTP password-reset mailer", () => {
+  it.each([
+    {
+      label: "authentication",
+      structured: { code: "EAUTH", responseCode: 550, command: "AUTH PLAIN" },
+      expected: "SMTP_AUTH_FAILED"
+    },
+    {
+      label: "TLS negotiation",
+      structured: { code: "ETLS", responseCode: 550, command: "STARTTLS" },
+      expected: "SMTP_TLS_FAILED"
+    },
+    {
+      label: "required TLS",
+      structured: {
+        code: "EREQUIRETLS",
+        responseCode: 550,
+        command: "MAIL FROM"
+      },
+      expected: "SMTP_TLS_FAILED"
+    },
+    {
+      label: "connection",
+      structured: { code: "ECONNREFUSED" },
+      expected: "SMTP_CONNECTION_FAILED"
+    },
+    {
+      label: "wall-clock timeout",
+      safeFailureCode: "SMTP_TIMEOUT",
+      expected: "SMTP_TIMEOUT"
+    },
+    {
+      label: "sender rejection",
+      structured: {
+        code: "EENVELOPE",
+        responseCode: 550,
+        command: "MAIL FROM"
+      },
+      expected: "SMTP_SENDER_REJECTED"
+    },
+    {
+      label: "recipient rejection",
+      structured: {
+        code: "EENVELOPE",
+        responseCode: 550,
+        command: "RCPT TO"
+      },
+      expected: "SMTP_RECIPIENT_REJECTED"
+    },
+    {
+      label: "permanent DATA rejection",
+      structured: { code: "EMESSAGE", responseCode: 550, command: "DATA" },
+      expected: "SMTP_REJECTED"
+    },
+    {
+      label: "temporary DATA rejection",
+      structured: { code: "EMESSAGE", responseCode: 451, command: "DATA" },
+      expected: "SMTP_TEMPORARY_FAILURE"
+    },
+    {
+      label: "message construction",
+      structured: { code: "EMESSAGE", command: "API" },
+      expected: "SMTP_MESSAGE_FAILED"
+    },
+    {
+      label: "message stream",
+      structured: { code: "ESTREAM", command: "API" },
+      expected: "SMTP_MESSAGE_FAILED"
+    },
+    {
+      label: "unknown provider error",
+      structured: { code: "UNRECOGNIZED" },
+      expected: "SMTP_DELIVERY_FAILED"
+    },
+    {
+      label: "untrusted command that resembles a sender stage",
+      structured: {
+        code: "EENVELOPE",
+        responseCode: 550,
+        command: "MAIL FROM victim@example.com token=reset-secret"
+      },
+      expected: "SMTP_REJECTED"
+    }
+  ])("classifies $label failures using only bounded structured metadata", async ({
+    structured,
+    safeFailureCode,
+    expected
+  }) => {
+    const privateValues = [
+      "victim@example.com",
+      "reset-token-private-value",
+      "smtp-api-key-private-value"
+    ];
+    const { MailDeliveryError, safeMailDeliveryError } = await import(
+      "../src/services/smtp-transport.js"
+    );
+    const providerFailure = safeFailureCode
+      ? new MailDeliveryError(safeFailureCode)
+      : Object.assign(
+          new Error(privateValues.join(" ")),
+          structured,
+          {
+            response: privateValues.join(" "),
+            recipient: privateValues[0],
+            token: privateValues[1],
+            credential: privateValues[2]
+          }
+        );
+
+    const failure = safeMailDeliveryError(providerFailure);
+    const serialized = `${String(failure)} ${JSON.stringify(failure)}`;
+
+    expect(failure).toBeInstanceOf(MailDeliveryError);
+    expect(failure).toMatchObject({ failureCode: expected });
+    expect(String(failure)).toBe("Error: Mail delivery failed.");
+    for (const privateValue of privateValues) {
+      expect(serialized).not.toContain(privateValue);
+    }
+    expect(failure).not.toHaveProperty("cause");
+    expect(failure).not.toHaveProperty("response");
+    expect(failure).not.toHaveProperty("command");
+  });
+
+  it("sanitizes a non-taxonomy code passed to the shared delivery error", async () => {
+    const { MailDeliveryError } = await import(
+      "../src/services/smtp-transport.js"
+    );
+    const failure = new MailDeliveryError(
+      "SMTP_PRIVATE_reset-token-private-value"
+    );
+
+    expect(failure.failureCode).toBe("SMTP_DELIVERY_FAILED");
+    expect(JSON.stringify(failure)).not.toContain("reset-token-private-value");
+  });
+
   it("builds the trusted fragment-only reset URL and escapes HTML", async () => {
     const { createSmtpPasswordResetMailer } = await import(
       "../src/services/smtp-password-reset-mailer.js"

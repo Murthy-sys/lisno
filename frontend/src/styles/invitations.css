@@ -280,6 +280,26 @@
     width: 100%;
   }
 
+  .password-reset-result h2 {
+    margin-block: .25rem;
+  }
+
+  .password-reset-information-mark {
+    display: grid;
+    width: 2.6rem;
+    height: 2.6rem;
+    place-items: center;
+    border: 1px solid #cfc8ef;
+    border-radius: 50%;
+    background: #f0edff;
+    color: #5040ad;
+  }
+
+  .password-reset-information-mark svg {
+    width: 1.25rem;
+    height: 1.25rem;
+  }
+
   .password-reset-supporting-copy {
     font-size: var(--text-sm);
   }

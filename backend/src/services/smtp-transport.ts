@@ -18,9 +18,36 @@ export type MailDeliveryConfig =
       deliveryTimeoutMs: number;
     };
 
+const MAIL_DELIVERY_FAILURE_CODES = [
+  "SMTP_AUTH_FAILED",
+  "SMTP_TLS_FAILED",
+  "SMTP_CONNECTION_FAILED",
+  "SMTP_TIMEOUT",
+  "SMTP_SENDER_REJECTED",
+  "SMTP_RECIPIENT_REJECTED",
+  "SMTP_MESSAGE_FAILED",
+  "SMTP_REJECTED",
+  "SMTP_TEMPORARY_FAILURE",
+  "SMTP_DELIVERY_FAILED"
+] as const;
+
+export type MailDeliveryFailureCode =
+  (typeof MAIL_DELIVERY_FAILURE_CODES)[number];
+
+function isMailDeliveryFailureCode(
+  value: string
+): value is MailDeliveryFailureCode {
+  return (MAIL_DELIVERY_FAILURE_CODES as readonly string[]).includes(value);
+}
+
 export class MailDeliveryError extends Error {
-  constructor(readonly failureCode: string) {
+  readonly failureCode: MailDeliveryFailureCode;
+
+  constructor(failureCode: string) {
     super("Mail delivery failed.");
+    this.failureCode = isMailDeliveryFailureCode(failureCode)
+      ? failureCode
+      : "SMTP_DELIVERY_FAILED";
   }
 }
 
@@ -31,22 +58,41 @@ interface SafeSentInfo {
 type ProviderError = Error & {
   code?: unknown;
   responseCode?: unknown;
+  command?: unknown;
 };
 
 const SMTP_CONNECTION_TIMEOUT_MS = 15_000;
 const SMTP_SOCKET_TIMEOUT_MS = 60_000;
 
-function classifyFailure(error: unknown): string {
+function hasSmtpFailureResponse(
+  provider: ProviderError
+): provider is ProviderError & { responseCode: number } {
+  return typeof provider.responseCode === "number"
+    && Number.isInteger(provider.responseCode)
+    && provider.responseCode >= 400
+    && provider.responseCode < 600;
+}
+
+function classifyEnvelopeRejection(
+  provider: ProviderError
+): MailDeliveryFailureCode | undefined {
+  if (provider.code !== "EENVELOPE" || !hasSmtpFailureResponse(provider)) {
+    return undefined;
+  }
+  if (provider.command === "MAIL FROM") return "SMTP_SENDER_REJECTED";
+  if (provider.command === "RCPT TO") return "SMTP_RECIPIENT_REJECTED";
+  return undefined;
+}
+
+function classifyFailure(error: unknown): MailDeliveryFailureCode {
   if (error instanceof MailDeliveryError) return error.failureCode;
   const provider = error instanceof Error ? error as ProviderError : undefined;
   switch (provider?.code) {
     case "EAUTH":
       return "SMTP_AUTH_FAILED";
     case "ETLS":
+    case "EREQUIRETLS":
       return "SMTP_TLS_FAILED";
-    case "EMESSAGE":
-    case "ESTREAM":
-      return "SMTP_MESSAGE_FAILED";
     case "EDNS":
     case "ECONNECTION":
     case "ESOCKET":
@@ -55,13 +101,23 @@ function classifyFailure(error: unknown): string {
     case "ENOTFOUND":
     case "EAI_AGAIN":
       return "SMTP_CONNECTION_FAILED";
-    default:
-      if (typeof provider?.responseCode === "number") {
-        if (provider.responseCode >= 500) return "SMTP_REJECTED";
-        if (provider.responseCode >= 400) return "SMTP_TEMPORARY_FAILURE";
-      }
-      return "SMTP_DELIVERY_FAILED";
   }
+
+  if (!provider) return "SMTP_DELIVERY_FAILED";
+
+  const envelopeRejection = classifyEnvelopeRejection(provider);
+  if (envelopeRejection) return envelopeRejection;
+
+  if (hasSmtpFailureResponse(provider)) {
+    if (provider.responseCode >= 500) return "SMTP_REJECTED";
+    return "SMTP_TEMPORARY_FAILURE";
+  }
+
+  if (provider.code === "EMESSAGE" || provider.code === "ESTREAM") {
+    return "SMTP_MESSAGE_FAILED";
+  }
+
+  return "SMTP_DELIVERY_FAILED";
 }
 
 export function safeMailDeliveryError(error: unknown): MailDeliveryError {

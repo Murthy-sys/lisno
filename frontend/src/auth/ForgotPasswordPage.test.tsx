@@ -8,7 +8,9 @@ import { renderApp } from "../test/render";
 import { server } from "../test/server";
 
 const ACCEPTED_MESSAGE =
-  "If an account exists for that email, we'll send password reset instructions.";
+  "If an eligible account exists for that email, reset instructions will be sent.";
+const ACCEPTED_SUPPORTING_COPY =
+  "Check your inbox and spam folder. Wait a few minutes before trying again.";
 
 function deferred() {
   let resolve!: () => void;
@@ -71,7 +73,7 @@ describe("ForgotPasswordPage", () => {
     expect(calls).toBe(0);
   });
 
-  it("submits once while pending and replaces the form with account-neutral copy", async () => {
+  it("submits once while pending and presents acceptance without claiming delivery", async () => {
     const requestGate = deferred();
     let calls = 0;
     server.use(
@@ -93,7 +95,18 @@ describe("ForgotPasswordPage", () => {
     expect(submit).toBeDisabled();
     requestGate.resolve();
 
-    expect(await screen.findByText(ACCEPTED_MESSAGE)).toBeVisible();
+    const acceptedHeading = await screen.findByRole("heading", {
+      name: "Request received",
+      level: 2
+    });
+    expect(acceptedHeading).toBeVisible();
+    await waitFor(() => expect(acceptedHeading).toHaveFocus());
+    expect(screen.getByText(ACCEPTED_MESSAGE)).toBeVisible();
+    expect(screen.getByText(ACCEPTED_SUPPORTING_COPY)).toBeVisible();
+    const acceptedStatus = acceptedHeading.closest('[role="status"]');
+    expect(acceptedStatus).toHaveAttribute("aria-live", "polite");
+    expect(acceptedStatus).toHaveAttribute("aria-atomic", "true");
+    expect(document.querySelector(".invitation-success-mark")).toBeNull();
     expect(screen.queryByText("real.user@example.com")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Email address")).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Back to sign in" })).toHaveAttribute(
@@ -102,6 +115,47 @@ describe("ForgotPasswordPage", () => {
     );
     expect(screen.getByRole("button", { name: "Try another email" })).toBeVisible();
     expect(calls).toBe(1);
+  });
+
+  it("keeps accepted-state actions in keyboard order", async () => {
+    server.use(
+      http.post("/api/v1/auth/password-reset/request", () =>
+        HttpResponse.json({ data: { accepted: true } }, { status: 202 })
+      )
+    );
+    const user = userEvent.setup();
+    renderApp(["/forgot-password"]);
+    await user.type(screen.getByLabelText("Email address"), "person@example.com");
+    await user.click(
+      screen.getByRole("button", { name: "Send reset instructions" })
+    );
+
+    const acceptedHeading = await screen.findByRole("heading", {
+      name: "Request received"
+    });
+    await waitFor(() => expect(acceptedHeading).toHaveFocus());
+
+    await user.tab();
+    expect(screen.getByRole("link", { name: "Back to sign in" })).toHaveFocus();
+    await user.tab();
+    expect(screen.getByRole("button", { name: "Try another email" })).toHaveFocus();
+  });
+
+  it("has no automated accessibility violations in the accepted state", async () => {
+    server.use(
+      http.post("/api/v1/auth/password-reset/request", () =>
+        HttpResponse.json({ data: { accepted: true } }, { status: 202 })
+      )
+    );
+    const user = userEvent.setup();
+    renderApp(["/forgot-password"]);
+    await user.type(screen.getByLabelText("Email address"), "person@example.com");
+    await user.click(
+      screen.getByRole("button", { name: "Send reset instructions" })
+    );
+    await screen.findByRole("heading", { name: "Request received" });
+
+    expect((await axe.run(document.body)).violations).toEqual([]);
   });
 
   it("starts a clean retry without echoing the prior email", async () => {
