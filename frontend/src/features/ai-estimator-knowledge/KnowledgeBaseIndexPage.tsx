@@ -470,12 +470,14 @@ function BasketEditorDialog({ existing, onClose, onCreated }: {
   return (
     <Dialog title={existing ? "Edit main basket" : "Add main basket"} eyebrow="Estimation configuration" onClose={onClose} busy={mutation.isPending}>
       <form className="knowledge-dialog-form" onSubmit={(event) => { event.preventDefault(); mutation.mutate(); }}>
-        {mutation.error ? <InlineMessage tone="error" role="alert">{mutation.error.message}</InlineMessage> : null}
-        <Field id="basket-name" label="Basket name" required>{(props) => <Input {...props} value={name} onChange={(event) => setName(event.target.value)} />}</Field>
-        <Field id="basket-description" label="Description">{(props) => <Textarea {...props} value={description} onChange={(event) => setDescription(event.target.value)} />}</Field>
-        <div className="knowledge-form-grid">
-          <Field id="basket-order" label="Display order" required>{(props) => <Input {...props} type="number" min={0} step={1} value={displayOrder} onChange={(event) => setDisplayOrder(event.target.value)} />}</Field>
-          {existing ? <Field id="basket-status" label="Status">{(props) => <Select {...props} value={status} onChange={(event) => setStatus(event.target.value as typeof status)}><option value="active">Active</option><option value="inactive">Inactive</option></Select>}</Field> : null}
+        <div className="knowledge-dialog-body">
+          {mutation.error ? <InlineMessage tone="error" role="alert">{mutation.error.message}</InlineMessage> : null}
+          <Field id="basket-name" label="Basket name" required>{(props) => <Input {...props} value={name} onChange={(event) => setName(event.target.value)} />}</Field>
+          <Field id="basket-description" label="Description" hint="Optional context shown alongside the basket in the knowledge base.">{(props) => <Textarea {...props} value={description} onChange={(event) => setDescription(event.target.value)} />}</Field>
+          <div className="knowledge-form-grid">
+            <Field id="basket-order" label="Display order" required hint="Lower numbers appear first.">{(props) => <Input {...props} type="number" min={0} step={1} value={displayOrder} onChange={(event) => setDisplayOrder(event.target.value)} />}</Field>
+            {existing ? <Field id="basket-status" label="Status">{(props) => <Select {...props} value={status} onChange={(event) => setStatus(event.target.value as typeof status)}><option value="active">Active</option><option value="inactive">Inactive</option></Select>}</Field> : null}
+          </div>
         </div>
         <div className="knowledge-dialog-actions"><Button type="button" variant="quiet" onClick={onClose}>Cancel</Button><Button type="submit" busy={mutation.isPending} disabled={!name.trim() || !Number.isInteger(Number(displayOrder)) || Number(displayOrder) < 0}>{existing ? "Save basket" : "Add main basket"}</Button></div>
       </form>
@@ -513,11 +515,13 @@ function CreateItemDialog({ baskets, onClose, onCreated }: {
   return (
     <Dialog title="Add estimation item" eyebrow="Estimation configuration" onClose={onClose} busy={mutation.isPending}>
       <form className="knowledge-dialog-form" onSubmit={(event) => { event.preventDefault(); mutation.mutate(); }}>
-        {mutation.error ? <InlineMessage tone="error" role="alert">{mutation.error.message}</InlineMessage> : null}
-        {baskets.length === 0 ? <InlineMessage tone="warning">Add a main basket before creating an estimation item.</InlineMessage> : null}
-        <Field id="item-basket" label="Main basket" required>{(props) => <Select {...props} value={basketId} onChange={(event) => setBasketId(event.target.value)}><option value="">Select a basket</option>{baskets.map((basket) => <option key={basket.id} value={basket.id}>{basket.name}</option>)}</Select>}</Field>
-        <Field id="item-name" label="Main Line name" required>{(props) => <Input {...props} value={name} onChange={(event) => setName(event.target.value)} />}</Field>
-        <Field id="item-description" label="Description">{(props) => <Textarea {...props} value={description} onChange={(event) => setDescription(event.target.value)} />}</Field>
+        <div className="knowledge-dialog-body">
+          {mutation.error ? <InlineMessage tone="error" role="alert">{mutation.error.message}</InlineMessage> : null}
+          {baskets.length === 0 ? <InlineMessage tone="warning">Add a main basket before creating an estimation item.</InlineMessage> : null}
+          <Field id="item-basket" label="Main basket" required>{(props) => <Select {...props} value={basketId} onChange={(event) => setBasketId(event.target.value)}><option value="">Select a basket</option>{baskets.map((basket) => <option key={basket.id} value={basket.id}>{basket.name}</option>)}</Select>}</Field>
+          <Field id="item-name" label="Main Line name" required>{(props) => <Input {...props} value={name} onChange={(event) => setName(event.target.value)} />}</Field>
+          <Field id="item-description" label="Description" hint="Optional context for estimators reviewing this item.">{(props) => <Textarea {...props} value={description} onChange={(event) => setDescription(event.target.value)} />}</Field>
+        </div>
         <div className="knowledge-dialog-actions"><Button type="button" variant="quiet" onClick={onClose}>Cancel</Button><Button type="submit" busy={mutation.isPending} disabled={!basketId || !name.trim()}>Add estimation item</Button></div>
       </form>
     </Dialog>

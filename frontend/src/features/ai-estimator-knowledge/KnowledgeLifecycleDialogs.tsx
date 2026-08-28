@@ -1,5 +1,8 @@
+import { useId } from "react";
+
 import { Button } from "../../components/ui/Button";
 import { Dialog } from "../../components/ui/Dialog";
+import { Field, Textarea } from "../../components/ui/Field";
 import { InlineMessage } from "../../components/ui/InlineMessage";
 import type { KnowledgeCompletenessFinding } from "./knowledgeTypes";
 
@@ -49,9 +52,12 @@ export function KnowledgeLifecycleDialog({
   busy = false,
   error
 }: KnowledgeLifecycleDialogProps) {
+  const reasonId = useId().replace(/:/gu, "");
   const copy = lifecycleCopy[action];
   const blocked = blockers.length > 0;
   const requiresReason = action !== "activate";
+  const hasBody =
+    blockers.length > 0 || warnings.length > 0 || Boolean(error) || requiresReason;
 
   return (
     <Dialog
@@ -62,43 +68,52 @@ export function KnowledgeLifecycleDialog({
       busy={busy}
       onClose={onClose}
     >
-      {blockers.length ? (
-        <InlineMessage tone="error" title="Activation is blocked" role="alert">
-          <ul>
-            {blockers.map((blocker) => (
-              <li key={`${blocker.code}-${blocker.sectionKey ?? "item"}`}>
-                {blocker.message}
-              </li>
-            ))}
-          </ul>
-        </InlineMessage>
-      ) : null}
-      {warnings.length ? (
-        <InlineMessage tone="warning" title="Review these warnings">
-          <ul>
-            {warnings.map((warning) => (
-              <li key={`${warning.code}-${warning.sectionKey ?? "item"}`}>
-                {warning.message}
-              </li>
-            ))}
-          </ul>
-        </InlineMessage>
-      ) : null}
-      {error ? (
-        <InlineMessage tone="error" role="alert">
-          {error}
-        </InlineMessage>
-      ) : null}
-      {requiresReason ? (
-        <label className="knowledge-dialog-reason">
-          <span>Reason</span>
-          <textarea
-            className="ui-control ui-textarea"
-            value={reason}
-            required
-            onChange={(event) => onReasonChange?.(event.target.value)}
-          />
-        </label>
+      {hasBody ? (
+        <div className="knowledge-dialog-body">
+          {blockers.length ? (
+            <InlineMessage tone="error" title="Activation is blocked" role="alert">
+              <ul>
+                {blockers.map((blocker) => (
+                  <li key={`${blocker.code}-${blocker.sectionKey ?? "item"}`}>
+                    {blocker.message}
+                  </li>
+                ))}
+              </ul>
+            </InlineMessage>
+          ) : null}
+          {warnings.length ? (
+            <InlineMessage tone="warning" title="Review these warnings">
+              <ul>
+                {warnings.map((warning) => (
+                  <li key={`${warning.code}-${warning.sectionKey ?? "item"}`}>
+                    {warning.message}
+                  </li>
+                ))}
+              </ul>
+            </InlineMessage>
+          ) : null}
+          {error ? (
+            <InlineMessage tone="error" role="alert">
+              {error}
+            </InlineMessage>
+          ) : null}
+          {requiresReason ? (
+            <Field
+              id={`${reasonId}-reason`}
+              label="Reason"
+              required
+              hint="Recorded on the audit trail for this configuration change."
+            >
+              {(controlProps) => (
+                <Textarea
+                  {...controlProps}
+                  value={reason}
+                  onChange={(event) => onReasonChange?.(event.target.value)}
+                />
+              )}
+            </Field>
+          ) : null}
+        </div>
       ) : null}
       <div className="knowledge-dialog-actions">
         <Button variant="quiet" onClick={onClose} disabled={busy}>
