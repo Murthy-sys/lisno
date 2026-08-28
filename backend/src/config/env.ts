@@ -1,12 +1,11 @@
 import addressparser from "nodemailer/lib/addressparser/index.js";
 import { z } from "zod";
 
-import type { MailDeliveryConfig } from "../services/smtp-transport.js";
+import type { MailDeliveryConfig } from "../services/sendgrid-transport.js";
 
-export type { MailDeliveryConfig } from "../services/smtp-transport.js";
+export type { MailDeliveryConfig } from "../services/sendgrid-transport.js";
 
 const SMTP_KEYS = [
-  "PUBLIC_FRONTEND_URL",
   "SMTP_HOST",
   "SMTP_PORT",
   "SMTP_TLS_MODE",
@@ -19,8 +18,14 @@ const SMTP_RELATED_KEYS = [
   "SMTP_TLS_REJECT_UNAUTHORIZED",
   "SMTP_DELIVERY_TIMEOUT_SECONDS"
 ] as const;
+const SENDGRID_KEYS = ["SENDGRID_API_KEY", "SENDGRID_FROM"] as const;
+const SENDGRID_RELATED_KEYS = [
+  ...SENDGRID_KEYS,
+  "SENDGRID_DELIVERY_TIMEOUT_SECONDS"
+] as const;
 
 const DEFAULT_SMTP_DELIVERY_TIMEOUT_SECONDS = 120;
+const DEFAULT_SENDGRID_DELIVERY_TIMEOUT_SECONDS = 120;
 
 const CONTROL_CHARACTERS = /[\u0000-\u001F\u007F-\u009F]/u;
 
@@ -33,6 +38,14 @@ function isHttpOrigin(value: string): boolean {
       url.pathname === "/" &&
       url.search === "" &&
       url.hash === "";
+  } catch {
+    return false;
+  }
+}
+
+function isHttpsOrigin(value: string): boolean {
+  try {
+    return new URL(value).protocol === "https:";
   } catch {
     return false;
   }
@@ -80,6 +93,9 @@ const environmentSchema = z.object({
   SMTP_FROM: z.string().optional(),
   SMTP_TLS_REJECT_UNAUTHORIZED: z.string().optional(),
   SMTP_DELIVERY_TIMEOUT_SECONDS: z.coerce.number().int().min(30).max(600).optional(),
+  SENDGRID_API_KEY: z.string().optional(),
+  SENDGRID_FROM: z.string().optional(),
+  SENDGRID_DELIVERY_TIMEOUT_SECONDS: z.coerce.number().int().min(30).max(600).optional(),
   ALLOW_DEMO_ACCOUNT_EXTERNAL_EMAIL: z.string().optional()
 }).superRefine((environment, context) => {
   if (environment.OCR_RETRY_MAX_SECONDS < environment.OCR_RETRY_INITIAL_SECONDS) {
@@ -89,11 +105,32 @@ const environmentSchema = z.object({
       message: "OCR_RETRY_MAX_SECONDS must be at least OCR_RETRY_INITIAL_SECONDS."
     });
   }
-  const supplied = SMTP_KEYS.filter((key) => environment[key] !== undefined);
+  const smtpSupplied = SMTP_KEYS.filter((key) => environment[key] !== undefined);
   const anySmtpSettingSupplied = SMTP_RELATED_KEYS.some(
     (key) => environment[key] !== undefined
   );
-  if (anySmtpSettingSupplied && supplied.length !== SMTP_KEYS.length) {
+  const sendGridSupplied = SENDGRID_KEYS.filter(
+    (key) => environment[key] !== undefined
+  );
+  const anySendGridSettingSupplied = SENDGRID_RELATED_KEYS.some(
+    (key) => environment[key] !== undefined
+  );
+
+  if (anySmtpSettingSupplied && anySendGridSettingSupplied) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["SENDGRID_API_KEY"],
+      message: "SMTP and SendGrid Web API configuration are mutually exclusive."
+    });
+    return;
+  }
+
+  const frontendUrlSupplied = environment.PUBLIC_FRONTEND_URL !== undefined;
+  if (
+    (anySmtpSettingSupplied &&
+      (smtpSupplied.length !== SMTP_KEYS.length || !frontendUrlSupplied)) ||
+    (!anySmtpSettingSupplied && !anySendGridSettingSupplied && frontendUrlSupplied)
+  ) {
     context.addIssue({
       code: z.ZodIssueCode.custom,
       path: ["SMTP_HOST"],
@@ -101,11 +138,44 @@ const environmentSchema = z.object({
     });
     return;
   }
-  if (!anySmtpSettingSupplied) return;
+  if (
+    anySendGridSettingSupplied &&
+    (sendGridSupplied.length !== SENDGRID_KEYS.length || !frontendUrlSupplied)
+  ) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["SENDGRID_API_KEY"],
+      message: "Mail delivery configuration must be supplied as one complete group."
+    });
+    return;
+  }
+  if (!anySmtpSettingSupplied && !anySendGridSettingSupplied) return;
 
   if (!isHttpOrigin(environment.PUBLIC_FRONTEND_URL!)) {
     context.addIssue({ code: z.ZodIssueCode.custom, path: ["PUBLIC_FRONTEND_URL"], message: "PUBLIC_FRONTEND_URL must be an HTTP(S) origin." });
   }
+  if (
+    environment.NODE_ENV === "production" &&
+    !isHttpsOrigin(environment.PUBLIC_FRONTEND_URL!)
+  ) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ["PUBLIC_FRONTEND_URL"], message: "PUBLIC_FRONTEND_URL must use HTTPS in production." });
+  }
+
+  if (anySendGridSettingSupplied) {
+    if (
+      !environment.SENDGRID_API_KEY?.trim() ||
+      environment.SENDGRID_API_KEY !== environment.SENDGRID_API_KEY.trim() ||
+      CONTROL_CHARACTERS.test(environment.SENDGRID_API_KEY) ||
+      /\s/u.test(environment.SENDGRID_API_KEY)
+    ) {
+      context.addIssue({ code: z.ZodIssueCode.custom, path: ["SENDGRID_API_KEY"], message: "SENDGRID_API_KEY is invalid." });
+    }
+    if (!isSingleMailbox(environment.SENDGRID_FROM!)) {
+      context.addIssue({ code: z.ZodIssueCode.custom, path: ["SENDGRID_FROM"], message: "SENDGRID_FROM must contain one valid mailbox." });
+    }
+    return;
+  }
+
   if (
     !environment.SMTP_HOST!.trim() ||
     environment.SMTP_HOST !== environment.SMTP_HOST!.trim() ||
@@ -150,6 +220,9 @@ const environmentSchema = z.object({
     SMTP_FROM,
     SMTP_TLS_REJECT_UNAUTHORIZED: _tlsVerification,
     SMTP_DELIVERY_TIMEOUT_SECONDS,
+    SENDGRID_API_KEY,
+    SENDGRID_FROM,
+    SENDGRID_DELIVERY_TIMEOUT_SECONDS,
     ALLOW_DEMO_ACCOUNT_EXTERNAL_EMAIL,
     API_DOCS_ENABLED,
     ...base
@@ -159,9 +232,18 @@ const environmentSchema = z.object({
   const apiDocsEnabled = API_DOCS_ENABLED === undefined
     ? environment.NODE_ENV !== "production"
     : API_DOCS_ENABLED === "true";
-  const mailDelivery: MailDeliveryConfig = SMTP_HOST === undefined
-    ? { kind: "disabled" }
-    : {
+  const mailDelivery: MailDeliveryConfig = SENDGRID_API_KEY !== undefined
+    ? {
+        kind: "sendgrid_web_api",
+        publicFrontendUrl: new URL(PUBLIC_FRONTEND_URL!).origin,
+        apiKey: SENDGRID_API_KEY,
+        from: SENDGRID_FROM!.trim(),
+        deliveryTimeoutMs:
+          (SENDGRID_DELIVERY_TIMEOUT_SECONDS ??
+            DEFAULT_SENDGRID_DELIVERY_TIMEOUT_SECONDS) * 1_000
+      }
+    : SMTP_HOST !== undefined
+      ? {
         kind: "smtp",
         publicFrontendUrl: new URL(PUBLIC_FRONTEND_URL!).origin,
         host: SMTP_HOST,
@@ -172,7 +254,8 @@ const environmentSchema = z.object({
         from: SMTP_FROM!.trim(),
         deliveryTimeoutMs:
           (SMTP_DELIVERY_TIMEOUT_SECONDS ?? DEFAULT_SMTP_DELIVERY_TIMEOUT_SECONDS) * 1_000
-      };
+      }
+      : { kind: "disabled" };
   return {
     ...base,
     mailDelivery,

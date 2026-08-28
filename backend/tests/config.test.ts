@@ -270,5 +270,112 @@ describe("environment authentication configuration", () => {
         SMTP_TLS_REJECT_UNAUTHORIZED: "true"
       }).mailDelivery.kind).toBe("smtp");
     });
+
+    describe("SendGrid Web API", () => {
+      const sendGridBase = {
+        JWT_SECRET: "runtime-secret-with-at-least-32-characters",
+        OCR_WORKER_TOKEN,
+        PUBLIC_FRONTEND_URL: "https://app.lisno.example",
+        SENDGRID_API_KEY: "SG.fabricated-safe-key-for-tests",
+        SENDGRID_FROM: "Lisno Notifications <notifications@lisno.example>"
+      } as const;
+
+      it("parses the complete group and defaults its bounded deadline", () => {
+        expect(loadEnvironment(sendGridBase).mailDelivery).toEqual({
+          kind: "sendgrid_web_api",
+          publicFrontendUrl: "https://app.lisno.example",
+          apiKey: "SG.fabricated-safe-key-for-tests",
+          from: "Lisno Notifications <notifications@lisno.example>",
+          deliveryTimeoutMs: 120_000
+        });
+      });
+
+      it("requires the complete SendGrid group", () => {
+        for (const key of [
+          "PUBLIC_FRONTEND_URL",
+          "SENDGRID_API_KEY",
+          "SENDGRID_FROM"
+        ] as const) {
+          const partial = { ...sendGridBase } as Record<string, string | undefined>;
+          delete partial[key];
+          expect(() => loadEnvironment(partial), key).toThrow(
+            "Mail delivery configuration must be supplied as one complete group."
+          );
+        }
+
+        expect(() => loadEnvironment({
+          JWT_SECRET: sendGridBase.JWT_SECRET,
+          OCR_WORKER_TOKEN,
+          SENDGRID_DELIVERY_TIMEOUT_SECONDS: "120"
+        })).toThrow("Mail delivery configuration must be supplied as one complete group.");
+      });
+
+      it("loads a 30-600 second SendGrid delivery deadline", () => {
+        expect(loadEnvironment({
+          ...sendGridBase,
+          SENDGRID_DELIVERY_TIMEOUT_SECONDS: "180"
+        }).mailDelivery).toMatchObject({
+          kind: "sendgrid_web_api",
+          deliveryTimeoutMs: 180_000
+        });
+
+        for (const value of ["29", "601", "60.5", "not-a-number"]) {
+          expect(() => loadEnvironment({
+            ...sendGridBase,
+            SENDGRID_DELIVERY_TIMEOUT_SECONDS: value
+          }), value).toThrow();
+        }
+      });
+
+      it.each([
+        ["SENDGRID_API_KEY", ""],
+        ["SENDGRID_API_KEY", " SG.fabricated-safe-key-for-tests"],
+        ["SENDGRID_API_KEY", "SG.fabricated key"],
+        ["SENDGRID_API_KEY", "SG.fabricated\nkey"],
+        ["SENDGRID_FROM", "not-an-address"],
+        ["SENDGRID_FROM", "one@example.com, two@example.com"],
+        ["SENDGRID_FROM", "Sender\r\nBcc: victim@example.com <sender@example.com>"]
+      ])("rejects unsafe %s configuration", (key, value) => {
+        expect(() => loadEnvironment({ ...sendGridBase, [key]: value })).toThrow();
+      });
+
+      it("fails closed when any SMTP and SendGrid settings are supplied together", () => {
+        const combined = { ...base, ...sendGridBase };
+        expect(() => loadEnvironment(combined)).toThrow(
+          "SMTP and SendGrid Web API configuration are mutually exclusive."
+        );
+        expect(() => loadEnvironment({
+          ...sendGridBase,
+          SMTP_DELIVERY_TIMEOUT_SECONDS: "120"
+        })).toThrow("SMTP and SendGrid Web API configuration are mutually exclusive.");
+      });
+
+      it("rejects a provider-less frontend URL and non-HTTPS production origin", () => {
+        expect(() => loadEnvironment({
+          JWT_SECRET: sendGridBase.JWT_SECRET,
+          OCR_WORKER_TOKEN,
+          PUBLIC_FRONTEND_URL: "https://app.lisno.example"
+        })).toThrow("Mail delivery configuration must be supplied as one complete group.");
+
+        expect(() => loadEnvironment({
+          ...sendGridBase,
+          NODE_ENV: "production",
+          PUBLIC_FRONTEND_URL: "http://app.lisno.example"
+        })).toThrow("PUBLIC_FRONTEND_URL must use HTTPS in production.");
+      });
+
+      it("never includes the SendGrid API key in configuration errors", () => {
+        const secret = "SG.fabricated-secret-that-must-not-appear\n";
+        let failure: unknown;
+        try {
+          loadEnvironment({ ...sendGridBase, SENDGRID_API_KEY: secret });
+        } catch (error) {
+          failure = error;
+        }
+        expect(failure).toBeDefined();
+        expect(String(failure)).not.toContain(secret.trim());
+        expect(JSON.stringify(failure)).not.toContain(secret.trim());
+      });
+    });
   });
 });
