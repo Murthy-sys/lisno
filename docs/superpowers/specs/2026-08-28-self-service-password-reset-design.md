@@ -1,5 +1,33 @@
 # Self-Service Password Reset — Design Specification
 
+## Amendment status — delivery-result responses
+
+The 28 August 2026 follow-up requested that the public reset-request endpoint return
+a success status only after email delivery succeeds and otherwise return the actual
+mail failure cause.
+
+That literal contract is not approved by this specification because it would create
+an account-enumeration oracle: a caller could distinguish an eligible Lisno email
+from an unknown, inactive, reserved, or suppressed email by comparing the response
+status, body, or SMTP-dependent latency. Raw provider failures may also contain
+recipient data, sender configuration, or other operational details that are not safe
+for an anonymous API.
+
+The security-preserving amendment is:
+
+- keep the account-neutral asynchronous `202` contract for every syntactically valid
+  email while mail is globally available;
+- stop presenting that `202` as proof that an email was delivered;
+- retain and improve bounded, actionable SMTP failure classification in the
+  password-reset record and audit trail for authorized operational diagnosis; and
+- expose only global, identity-independent availability failures through the public
+  API.
+
+In this system, `sentAt` means the SMTP provider accepted the message submission. It
+does not prove inbox delivery. True inbox delivery would require an authenticated
+provider event webhook, provider-message correlation, event persistence, and a
+separate operational delivery lifecycle; that is outside this amendment.
+
 ## 1. Decision summary
 
 ### Requested outcome
@@ -14,6 +42,11 @@ grant or restrict self-service recovery.
 Inactive Users, reserved development-demo identities, and pending invitations are
 not eligible. They receive the same public response as an unknown email and require
 an administrator or invitation workflow to regain access.
+
+The latest operational outcome is that a failed reset email must not be represented
+to the User as delivered, and the operator must receive a safe, actionable failure
+category instead of the overly broad `SMTP_MESSAGE_FAILED` wherever the provider
+error can be classified without retaining provider text.
 
 ### Recommended approach
 
@@ -33,6 +66,10 @@ The existing SMTP configuration, isolated TLS transport, public frontend origin,
 repository transaction boundary, audit sanitization, and accessible invitation-page
 patterns are reused.
 
+The public endpoint remains intentionally account-neutral. Delivery diagnostics are
+operator-side only because public delivery outcome or cause disclosure would reveal
+eligible accounts.
+
 ### Fixed product decisions
 
 - Email link is the only recovery method in this scope.
@@ -43,6 +80,12 @@ patterns are reused.
 - No administrator can view, choose, retrieve, or reset another User's password.
 - The workflow does not change User ID, email, role, active state, account kind,
   assignments, project access, or financial/workflow data.
+- Public `202` means **request accepted for privacy-preserving processing**, not
+  **email delivered**.
+- Public APIs never return raw SMTP/provider responses or identity-dependent delivery
+  categories.
+- Stored/audited mail failures use bounded codes only; provider response text is
+  classified in memory and discarded.
 
 ## 2. Current behavior and verified evidence
 
@@ -191,6 +234,11 @@ Cache-Control: no-store
 { "data": { "accepted": true } }
 ```
 
+This is the only safe public success contract. Returning `200` only for SMTP success
+and `4xx`/`5xx` for an unknown account or a recipient-specific SMTP failure is
+prohibited because the response becomes an account-existence oracle. The endpoint
+must also not wait for SMTP merely to choose its response.
+
 The response must never contain name, normalized email, User ID, role, active state,
 account kind, reset ID, token, expiry, delivery status, or provider detail.
 
@@ -212,6 +260,12 @@ Cache-Control: no-store
 ```
 
 This `503` discloses only global service availability, never account existence.
+
+The public error envelope may expose only identity-independent conditions known
+before account lookup: invalid input, public rate limiting, globally disabled or
+unconfigured mail, and an ordinary generic synchronous server failure. It must not
+return `SMTP_AUTH_FAILED`, `SMTP_MESSAGE_FAILED`, `SMTP_REJECTED`, a provider
+response, or any other result produced only after an eligible account is found.
 
 ### `POST /api/v1/auth/password-reset/inspect`
 
@@ -361,8 +415,17 @@ attempt and is never serialized or persisted.
   intentionally unrecoverable. The User can request a new link after cooldown,
   which supersedes the stranded generation. No raw token may be persisted to make
   retry possible.
-- The UI never reports delivery state and instructs the User to retry later if no
-  email arrives.
+- The UI reports **Request received**, never **Email sent** or **Delivered**, and
+  instructs the User to check inbox/spam and retry later if no email arrives.
+
+Operational failure classification must prefer the narrowest safe bounded code
+available without persisting raw provider text. The allowed taxonomy includes:
+`SMTP_AUTH_FAILED`, `SMTP_TLS_FAILED`, `SMTP_CONNECTION_FAILED`, `SMTP_TIMEOUT`,
+`SMTP_SENDER_REJECTED`, `SMTP_RECIPIENT_REJECTED`, `SMTP_MESSAGE_FAILED`,
+`SMTP_REJECTED`, `SMTP_TEMPORARY_FAILURE`, and `SMTP_DELIVERY_FAILED`. Provider text,
+email addresses, message bodies, tokens, URLs, and credentials are never stored or
+returned. A more specific code may be added only with tests proving it is bounded,
+contains no provider-controlled text, and remains operator-side.
 
 This safe-failure tradeoff is preferred over synchronous SMTP timing disclosure or
 storing an encrypted/recoverable bearer token in Mongo.
@@ -441,8 +504,15 @@ silent regression.
   password</h1>`.
 - One email field using `type="email"` and `autocomplete="email"`.
 - Reuse login validation, first-invalid focus, busy button, and live-region patterns.
-- After `202`, replace the form with exactly:
-  **“If an account exists for that email, we'll send password reset instructions.”**
+- After `202`, replace the form with an informational, not success-confirmation,
+  state headed **“Request received”** and message:
+  **“If an eligible account exists for that email, reset instructions will be
+  sent.”**
+- Supporting copy is:
+  **“Check your inbox and spam folder. Wait a few minutes before trying again.”**
+- Do not show the existing green success check or any **Sent**, **Delivered**, or
+  equivalent status. Use a neutral informational presentation that is not conveyed
+  by color alone.
 - Do not echo the email or describe account/delivery state.
 - Provide literal **Back to sign in** and **Try another email** actions.
 - `503` shows **“Password reset is temporarily unavailable. Please try again
@@ -506,6 +576,12 @@ Add safe actions for:
 Permitted audit values are reset ID, User ID, generation/version, expiry, terminal
 state, and bounded delivery state/failure code. Email, token/hash, password/hash,
 link, JWT, SMTP values, and provider responses are forbidden.
+
+Operators diagnose delivery through the persisted bounded code and safe audit event,
+not the anonymous request response. Raw provider messages remain intentionally
+unavailable. If a future authenticated Super Admin diagnostic view is added, it must
+use an operation-specific backend authorization check and may expose only the same
+bounded codes and safe timestamps; that view is not part of this amendment.
 
 Operational metrics should count request acceptance, suppression, delivery outcome,
 unavailable-token completion, successful completion, and rate-limit events without
@@ -580,6 +656,27 @@ required.
 - Rejected for a public recovery endpoint; asynchronous post-commit delivery is the
   approved safe-failure tradeoff.
 
+### E. Return provider success/error to the anonymous requester
+
+- Matches the literal follow-up request and is convenient while diagnosing SMTP
+  configuration.
+- A success response identifies eligible accounts; an SMTP error identifies a
+  different subset of eligible accounts; timing supplies another oracle even if the
+  bodies are generic.
+- SMTP acceptance is not inbox delivery, and provider responses can contain private
+  operational or recipient information.
+- Rejected. Use bounded operator-side diagnostics and neutral public acceptance
+  instead.
+
+### F. Confirm inbox delivery through provider webhooks
+
+- Authenticated provider events can distinguish accepted, delivered, bounced, and
+  dropped mail for operations.
+- Requires SendGrid-specific webhook authentication, message correlation, replay and
+  ordering controls, retention decisions, and new persistence; it still cannot be
+  exposed anonymously without enumerating accounts.
+- Deferred as a separate high-risk integration, not required for this amendment.
+
 ## 15. Principal risks
 
 - Render proxy misconfiguration can globally throttle users behind one address or
@@ -640,7 +737,19 @@ required.
 19. Focused and full backend/frontend tests, typechecks, builds, rendered interaction
    and accessibility checks, `git diff --check`, and dirty-worktree review pass.
 20. No production migration, real email, deployment, Render/provider change, commit,
-   or push occurs without a later exact authorization.
+    or push occurs without a later exact authorization.
+21. The public reset-request response remains identical for eligible, unknown,
+    inactive, reserved, suppressed, SMTP-success, SMTP-failure, and SMTP-timeout
+    cases and does not wait for SMTP.
+22. The accepted frontend state says **Request received**, uses neutral presentation,
+    never claims that mail was sent/delivered, never echoes the submitted email, and
+    passes interaction, responsive, focus, live-region, and color-contrast checks.
+23. SMTP error classification stores/audits only the narrowest tested bounded code;
+    raw provider messages and provider-controlled text never reach persistence,
+    logs, API responses, or the frontend.
+24. Tests prove that delivery diagnostics remain operator-side and that no public
+    status, body, header, or timing branch is introduced for account or delivery
+    state.
 
 ## 17. Assumptions, constraints, and open decisions
 
@@ -657,6 +766,11 @@ approved:
 - Super Admin reset intentionally invalidates its older invitation generations.
 - Existing SMTP and public frontend origin are reused; no second mail provider is
   introduced.
+- Approval of this amendment explicitly chooses the secure account-neutral public
+  response over the requested anonymous delivery-success/error distinction.
+- `sentAt` continues to mean SMTP-provider acceptance, not inbox delivery.
+- A provider event-webhook lifecycle and a protected Super Admin diagnostics screen
+  remain separate future scopes.
 
 Technical facts still required before production enablement, not before local
 implementation:

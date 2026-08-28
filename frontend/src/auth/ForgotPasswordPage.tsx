@@ -1,5 +1,5 @@
-import { ArrowLeft, Mail } from "lucide-react";
-import { useRef, useState } from "react";
+import { ArrowLeft, Info, Mail } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { Link } from "react-router-dom";
 import { z } from "zod";
@@ -17,7 +17,9 @@ const requestSchema = z.object({
 type RequestFields = z.infer<typeof requestSchema>;
 
 const ACCEPTED_MESSAGE =
-  "If an account exists for that email, we'll send password reset instructions.";
+  "If an eligible account exists for that email, reset instructions will be sent.";
+const ACCEPTED_SUPPORTING_COPY =
+  "Check your inbox and spam folder. Wait a few minutes before trying again.";
 
 type RequestError = "unavailable" | "rate_limited" | "other" | null;
 
@@ -26,6 +28,7 @@ export function ForgotPasswordPage() {
   const [requestError, setRequestError] = useState<RequestError>(null);
   const submittingRef = useRef(false);
   const emailRef = useRef<HTMLInputElement | null>(null);
+  const acceptedHeadingRef = useRef<HTMLHeadingElement | null>(null);
   const {
     register,
     handleSubmit,
@@ -34,6 +37,15 @@ export function ForgotPasswordPage() {
     formState: { errors, isSubmitting }
   } = useForm<RequestFields>({ defaultValues: { email: "" } });
   const { ref: registerEmail, ...emailRegistration } = register("email");
+
+  useEffect(() => {
+    if (!accepted) return;
+
+    const focusFrame = requestAnimationFrame(() => {
+      acceptedHeadingRef.current?.focus();
+    });
+    return () => cancelAnimationFrame(focusFrame);
+  }, [accepted]);
 
   const submit = handleSubmit(async (values) => {
     if (submittingRef.current) return;
@@ -95,12 +107,15 @@ export function ForgotPasswordPage() {
             aria-live="polite"
             aria-atomic="true"
           >
-            <span className="invitation-success-mark" aria-hidden="true">
-              ✓
+            <span className="password-reset-information-mark" aria-hidden="true">
+              <Info />
             </span>
+            <h2 ref={acceptedHeadingRef} tabIndex={-1}>
+              Request received
+            </h2>
             <p>{ACCEPTED_MESSAGE}</p>
             <p className="password-reset-supporting-copy">
-              If the email does not arrive, wait a few minutes before trying again.
+              {ACCEPTED_SUPPORTING_COPY}
             </p>
             <div className="password-reset-actions">
               <Link className="invitation-link invitation-link--primary" to="/login">
