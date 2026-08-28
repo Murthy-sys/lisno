@@ -3,12 +3,37 @@ import { EventEmitter } from "node:events";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const createMongoRepository = vi.hoisted(() => vi.fn());
+const createSendGridDesignPlanMailer = vi.hoisted(() => vi.fn());
+const createSendGridEstimateMailer = vi.hoisted(() => vi.fn());
+const createSendGridInvitationMailer = vi.hoisted(() => vi.fn());
+const createSendGridPasswordResetMailer = vi.hoisted(() => vi.fn());
+const createSmtpDesignPlanMailer = vi.hoisted(() => vi.fn());
 const createSmtpInvitationMailer = vi.hoisted(() => vi.fn());
 const createSmtpEstimateMailer = vi.hoisted(() => vi.fn());
 const createSmtpPasswordResetMailer = vi.hoisted(() => vi.fn());
 const prepareEstimateClientReviewIndexes = vi.hoisted(() => vi.fn());
 
 vi.mock("../src/repositories/mongo.js", () => ({ createMongoRepository }));
+vi.mock("../src/services/sendgrid-design-plan-mailer.js", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../src/services/sendgrid-design-plan-mailer.js")>(),
+  createSendGridDesignPlanMailer
+}));
+vi.mock("../src/services/sendgrid-estimate-mailer.js", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../src/services/sendgrid-estimate-mailer.js")>(),
+  createSendGridEstimateMailer
+}));
+vi.mock("../src/services/sendgrid-invitation-mailer.js", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../src/services/sendgrid-invitation-mailer.js")>(),
+  createSendGridInvitationMailer
+}));
+vi.mock("../src/services/sendgrid-password-reset-mailer.js", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../src/services/sendgrid-password-reset-mailer.js")>(),
+  createSendGridPasswordResetMailer
+}));
+vi.mock("../src/services/smtp-design-plan-mailer.js", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../src/services/smtp-design-plan-mailer.js")>(),
+  createSmtpDesignPlanMailer
+}));
 vi.mock("../src/services/smtp-invitation-mailer.js", async (importOriginal) => ({
   ...await importOriginal<typeof import("../src/services/smtp-invitation-mailer.js")>(),
   createSmtpInvitationMailer
@@ -39,6 +64,7 @@ import { FinanceEntryDocumentModel } from "../src/models/FinanceEntryDocument.js
 import { ProcurementReceiptCleanupJobModel } from "../src/models/ProcurementReceiptCleanupJob.js";
 import { ProcurementReceiptReconciliationJobModel } from "../src/models/ProcurementReceiptReconciliationJob.js";
 import type { AppRepository } from "../src/repositories/types.js";
+import { MailDeliveryError } from "../src/services/smtp-transport.js";
 
 const env = {
   PORT: 3010,
@@ -58,6 +84,11 @@ const env = {
 
 afterEach(() => {
   createMongoRepository.mockReset();
+  createSendGridDesignPlanMailer.mockReset();
+  createSendGridEstimateMailer.mockReset();
+  createSendGridInvitationMailer.mockReset();
+  createSendGridPasswordResetMailer.mockReset();
+  createSmtpDesignPlanMailer.mockReset();
   createSmtpInvitationMailer.mockReset();
   createSmtpEstimateMailer.mockReset();
   createSmtpPasswordResetMailer.mockReset();
@@ -579,7 +610,7 @@ describe("production server bootstrap", () => {
     expect(writeOutput).not.toHaveBeenCalled();
   });
 
-  it("injects every disabled delivery boundary without constructing SMTP", async () => {
+  it("injects every disabled delivery boundary without constructing an external provider", async () => {
     const server = fakeServer();
     const appFactory = vi.fn(() => ({
       listen: vi.fn((_port: number, callback: () => void) => {
@@ -602,10 +633,16 @@ describe("production server bootstrap", () => {
     expect(createSmtpInvitationMailer).not.toHaveBeenCalled();
     expect(createSmtpEstimateMailer).not.toHaveBeenCalled();
     expect(createSmtpPasswordResetMailer).not.toHaveBeenCalled();
+    expect(createSmtpDesignPlanMailer).not.toHaveBeenCalled();
+    expect(createSendGridInvitationMailer).not.toHaveBeenCalled();
+    expect(createSendGridEstimateMailer).not.toHaveBeenCalled();
+    expect(createSendGridPasswordResetMailer).not.toHaveBeenCalled();
+    expect(createSendGridDesignPlanMailer).not.toHaveBeenCalled();
     expect(appFactory).toHaveBeenCalledWith(expect.objectContaining({
       invitationMailer: { deliveryKind: "disabled" },
       passwordResetMailer: { deliveryKind: "disabled" },
       estimateMailer: { deliveryKind: "disabled" },
+      designPlanMailer: { deliveryKind: "disabled" },
       clientPortalUrl: "http://localhost:5173/client"
     }));
     await runtime.stop();
@@ -636,9 +673,14 @@ describe("production server bootstrap", () => {
       sendResetLink: vi.fn(async () => undefined),
       sendPasswordChanged: vi.fn(async () => undefined)
     };
+    const externalDesignPlanMailer = {
+      deliveryKind: "external" as const,
+      sendDesignPlan: vi.fn(async () => ({ kind: "sent" as const }))
+    };
     createSmtpInvitationMailer.mockReturnValue(externalMailer);
     createSmtpEstimateMailer.mockReturnValue(externalEstimateMailer);
     createSmtpPasswordResetMailer.mockReturnValue(externalPasswordResetMailer);
+    createSmtpDesignPlanMailer.mockReturnValue(externalDesignPlanMailer);
     const server = fakeServer();
     const appFactory = vi.fn(() => ({
       listen: vi.fn((_port: number, callback: () => void) => {
@@ -664,10 +706,17 @@ describe("production server bootstrap", () => {
     expect(createSmtpEstimateMailer).toHaveBeenCalledWith(smtp);
     expect(createSmtpPasswordResetMailer).toHaveBeenCalledOnce();
     expect(createSmtpPasswordResetMailer).toHaveBeenCalledWith(smtp);
+    expect(createSmtpDesignPlanMailer).toHaveBeenCalledOnce();
+    expect(createSmtpDesignPlanMailer).toHaveBeenCalledWith(smtp);
+    expect(createSendGridInvitationMailer).not.toHaveBeenCalled();
+    expect(createSendGridEstimateMailer).not.toHaveBeenCalled();
+    expect(createSendGridPasswordResetMailer).not.toHaveBeenCalled();
+    expect(createSendGridDesignPlanMailer).not.toHaveBeenCalled();
     expect(appFactory).toHaveBeenCalledWith(expect.objectContaining({
       invitationMailer: externalMailer,
       passwordResetMailer: externalPasswordResetMailer,
       estimateMailer: externalEstimateMailer,
+      designPlanMailer: externalDesignPlanMailer,
       clientPortalUrl: "https://app.example.test/client"
     }));
 
@@ -690,6 +739,147 @@ describe("production server bootstrap", () => {
       pathname: "/client"
     });
     await runtime.stop();
+  });
+
+  it("maps one complete SendGrid union through every SendGrid factory without exposing credentials to the app", async () => {
+    const sendGrid = {
+      kind: "sendgrid_web_api" as const,
+      publicFrontendUrl: "https://app.example.test",
+      apiKey: "SG.server-fabricated-private-key",
+      from: "Lisno <mail@example.test>",
+      deliveryTimeoutMs: 120_000
+    };
+    const invitationMailer = {
+      deliveryKind: "external" as const,
+      sendInvitation: vi.fn(async () => undefined)
+    };
+    const estimateMailer = {
+      deliveryKind: "external" as const,
+      send: vi.fn(async () => ({ kind: "sent" as const }))
+    };
+    const passwordResetMailer = {
+      deliveryKind: "external" as const,
+      sendResetLink: vi.fn(async () => undefined),
+      sendPasswordChanged: vi.fn(async () => undefined)
+    };
+    const designPlanMailer = {
+      deliveryKind: "external" as const,
+      sendDesignPlan: vi.fn(async () => ({ kind: "sent" as const }))
+    };
+    createSendGridInvitationMailer.mockReturnValue(invitationMailer);
+    createSendGridEstimateMailer.mockReturnValue(estimateMailer);
+    createSendGridPasswordResetMailer.mockReturnValue(passwordResetMailer);
+    createSendGridDesignPlanMailer.mockReturnValue(designPlanMailer);
+    const server = fakeServer();
+    const appFactory = vi.fn(() => ({
+      listen: vi.fn((_port: number, callback: () => void) => {
+        callback();
+        return server;
+      })
+    }));
+
+    const runtime = await startServer({
+      loadEnvironment: () => ({ ...env, mailDelivery: sendGrid }),
+      connect: async () => undefined,
+      disconnect: async () => undefined,
+      prepareIdentityIndexes: async () => undefined,
+      repositoryFactory: () => ({} as AppRepository),
+      appFactory,
+      writeOutput: () => undefined,
+      registerSignalHandlers: false
+    });
+
+    expect(createSendGridInvitationMailer).toHaveBeenCalledOnce();
+    expect(createSendGridInvitationMailer).toHaveBeenCalledWith(sendGrid);
+    expect(createSendGridEstimateMailer).toHaveBeenCalledOnce();
+    expect(createSendGridEstimateMailer).toHaveBeenCalledWith(sendGrid);
+    expect(createSendGridPasswordResetMailer).toHaveBeenCalledOnce();
+    expect(createSendGridPasswordResetMailer).toHaveBeenCalledWith(sendGrid);
+    expect(createSendGridDesignPlanMailer).toHaveBeenCalledOnce();
+    expect(createSendGridDesignPlanMailer).toHaveBeenCalledWith(sendGrid);
+    expect(createSmtpInvitationMailer).not.toHaveBeenCalled();
+    expect(createSmtpEstimateMailer).not.toHaveBeenCalled();
+    expect(createSmtpPasswordResetMailer).not.toHaveBeenCalled();
+    expect(createSmtpDesignPlanMailer).not.toHaveBeenCalled();
+    expect(appFactory).toHaveBeenCalledWith(expect.objectContaining({
+      invitationMailer,
+      passwordResetMailer,
+      estimateMailer,
+      designPlanMailer,
+      clientPortalUrl: "https://app.example.test/client"
+    }));
+
+    const capturedDependencies = appFactory.mock.calls[0]?.[0];
+    const capturedJson = JSON.stringify(capturedDependencies);
+    expect(capturedJson).not.toContain(sendGrid.apiKey);
+    expect(capturedJson).not.toContain(sendGrid.from);
+    const portalUrl = new URL(String(capturedDependencies?.clientPortalUrl));
+    expect({
+      username: portalUrl.username,
+      password: portalUrl.password,
+      search: portalUrl.search,
+      hash: portalUrl.hash,
+      pathname: portalUrl.pathname
+    }).toEqual({
+      username: "",
+      password: "",
+      search: "",
+      hash: "",
+      pathname: "/client"
+    });
+    await runtime.stop();
+  });
+
+  it("disconnects without listening when SendGrid construction fails with a bounded secret-safe error", async () => {
+    const sendGrid = {
+      kind: "sendgrid_web_api" as const,
+      publicFrontendUrl: "https://app.example.test",
+      apiKey: "SG.server-construction-private-key",
+      from: "Lisno Private Sender <mail@example.test>",
+      deliveryTimeoutMs: 120_000
+    };
+    const failure = new MailDeliveryError("SENDGRID_AUTH_FAILED");
+    createSendGridInvitationMailer.mockImplementation(() => {
+      throw failure;
+    });
+    const disconnect = vi.fn(async () => undefined);
+    const repositoryFactory = vi.fn();
+    const appFactory = vi.fn();
+    const writeOutput = vi.fn();
+
+    const outcome = await startServer({
+      loadEnvironment: () => ({ ...env, mailDelivery: sendGrid }),
+      connect: async () => undefined,
+      disconnect,
+      prepareIdentityIndexes: async () => undefined,
+      repositoryFactory,
+      appFactory,
+      writeOutput,
+      registerSignalHandlers: false
+    }).then(
+      (runtime) => ({ kind: "started" as const, runtime }),
+      (error: unknown) => ({ kind: "failed" as const, error })
+    );
+
+    if (outcome.kind === "started") await outcome.runtime.stop();
+
+    expect(outcome.kind).toBe("failed");
+    if (outcome.kind === "failed") {
+      expect(outcome.error).toBe(failure);
+      const exposed = `${String(outcome.error)} ${JSON.stringify(outcome.error)}`;
+      expect(exposed).not.toContain(sendGrid.apiKey);
+      expect(exposed).not.toContain(sendGrid.from);
+      expect(exposed).not.toContain("mail@example.test");
+    }
+    expect(createSendGridInvitationMailer).toHaveBeenCalledOnce();
+    expect(createSendGridInvitationMailer).toHaveBeenCalledWith(sendGrid);
+    expect(createSendGridEstimateMailer).not.toHaveBeenCalled();
+    expect(createSendGridPasswordResetMailer).not.toHaveBeenCalled();
+    expect(createSendGridDesignPlanMailer).not.toHaveBeenCalled();
+    expect(repositoryFactory).not.toHaveBeenCalled();
+    expect(appFactory).not.toHaveBeenCalled();
+    expect(writeOutput).not.toHaveBeenCalled();
+    expect(disconnect).toHaveBeenCalledOnce();
   });
 
   it("does not connect when environment loading rejects a partial SMTP group", async () => {

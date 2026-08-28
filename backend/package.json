@@ -21,6 +21,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@sendgrid/mail": "^8.1.6",
     "bcryptjs": "^3.0.3",
     "dotenv": "^17.4.2",
     "express": "^5.1.0",

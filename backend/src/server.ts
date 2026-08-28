@@ -10,6 +10,10 @@ import type { DevelopmentDemoAuthorization } from "./development/demo-account-au
 import { initializeApplicationIndexes } from "./models/application-indexes.js";
 import { createMongoRepository } from "./repositories/mongo.js";
 import type { AppRepository } from "./repositories/types.js";
+import { createSendGridDesignPlanMailer } from "./services/sendgrid-design-plan-mailer.js";
+import { createSendGridEstimateMailer } from "./services/sendgrid-estimate-mailer.js";
+import { createSendGridInvitationMailer } from "./services/sendgrid-invitation-mailer.js";
+import { createSendGridPasswordResetMailer } from "./services/sendgrid-password-reset-mailer.js";
 import { createSmtpEstimateMailer } from "./services/smtp-estimate-mailer.js";
 import { createSmtpDesignPlanMailer } from "./services/smtp-design-plan-mailer.js";
 import { createSmtpInvitationMailer } from "./services/smtp-invitation-mailer.js";
@@ -81,17 +85,25 @@ export async function startServer(
     const mailDelivery = env.mailDelivery;
     const invitationMailer = mailDelivery.kind === "smtp"
       ? createSmtpInvitationMailer(mailDelivery)
+      : mailDelivery.kind === "sendgrid_web_api"
+        ? createSendGridInvitationMailer(mailDelivery)
       : { deliveryKind: "disabled" as const };
     const passwordResetMailer = mailDelivery.kind === "smtp"
       ? createSmtpPasswordResetMailer(mailDelivery)
+      : mailDelivery.kind === "sendgrid_web_api"
+        ? createSendGridPasswordResetMailer(mailDelivery)
       : { deliveryKind: "disabled" as const };
     const estimateMailer = mailDelivery.kind === "smtp"
       ? createSmtpEstimateMailer(mailDelivery)
+      : mailDelivery.kind === "sendgrid_web_api"
+        ? createSendGridEstimateMailer(mailDelivery)
       : { deliveryKind: "disabled" as const };
     const designPlanMailer = mailDelivery.kind === "smtp"
       ? createSmtpDesignPlanMailer(mailDelivery)
+      : mailDelivery.kind === "sendgrid_web_api"
+        ? createSendGridDesignPlanMailer(mailDelivery)
       : { deliveryKind: "disabled" as const };
-    const clientPortalUrl = mailDelivery.kind === "smtp"
+    const clientPortalUrl = mailDelivery.kind !== "disabled"
       ? new URL("/client", mailDelivery.publicFrontendUrl).toString()
       : "http://localhost:5173/client";
     const storage = createLocalStorage(env.UPLOADS_DIR);
