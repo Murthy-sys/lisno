@@ -37,12 +37,14 @@ export function KnowledgeQuickAddDialog({
       onClose={onClose}
     >
       <form className="knowledge-dialog-form" onSubmit={submit}>
-        {error ? (
-          <InlineMessage tone="error" role="alert">
-            {error}
-          </InlineMessage>
-        ) : null}
-        {children}
+        <div className="knowledge-dialog-body">
+          {error ? (
+            <InlineMessage tone="error" role="alert">
+              {error}
+            </InlineMessage>
+          ) : null}
+          {children}
+        </div>
         <div className="knowledge-dialog-actions">
           <Button type="button" variant="quiet" onClick={onClose} disabled={busy}>
             Cancel
