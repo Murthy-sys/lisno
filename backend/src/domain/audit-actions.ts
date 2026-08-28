@@ -116,6 +116,27 @@ export const PROCUREMENT_AUDIT_ACTIONS = [
   "procurement_expense_recorded"
 ] as const;
 
+export const AI_ESTIMATOR_KNOWLEDGE_AUDIT_ACTIONS = [
+  "ai_estimator_knowledge_basket_created",
+  "ai_estimator_knowledge_basket_updated",
+  "ai_estimator_knowledge_basket_archived",
+  "ai_estimator_knowledge_main_line_created",
+  "ai_estimator_knowledge_main_line_updated",
+  "ai_estimator_knowledge_main_line_archived",
+  "ai_estimator_knowledge_main_line_deactivated",
+  "ai_estimator_knowledge_main_line_duplicated",
+  "ai_estimator_knowledge_master_created",
+  "ai_estimator_knowledge_master_updated",
+  "ai_estimator_knowledge_master_archived",
+  "ai_estimator_knowledge_section_updated",
+  "ai_estimator_knowledge_price_version_created",
+  "ai_estimator_knowledge_tax_version_created",
+  "ai_estimator_knowledge_tax_version_rolled_over",
+  "ai_estimator_knowledge_revision_created",
+  "ai_estimator_knowledge_revision_activated",
+  "ai_estimator_knowledge_lifecycle_blocked"
+] as const;
+
 export const AUDIT_ACTIONS = [
   ...EXISTING_AUDIT_ACTIONS,
   ...PROMPT_1_AUDIT_ACTIONS,
@@ -123,7 +144,8 @@ export const AUDIT_ACTIONS = [
   ...PASSWORD_RESET_AUDIT_ACTIONS,
   ...ESTIMATE_CLIENT_REVIEW_AUDIT_ACTIONS,
   ...DESIGN_PLAN_WORKFLOW_AUDIT_ACTIONS,
-  ...PROCUREMENT_AUDIT_ACTIONS
+  ...PROCUREMENT_AUDIT_ACTIONS,
+  ...AI_ESTIMATOR_KNOWLEDGE_AUDIT_ACTIONS
 ] as const;
 
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];

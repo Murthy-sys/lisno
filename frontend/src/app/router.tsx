@@ -1,12 +1,13 @@
 import {
-  BrowserRouter,
+  createBrowserRouter,
+  RouterProvider,
   Route,
   Routes,
   Navigate,
   useLocation,
   useNavigationType,
 } from "react-router-dom";
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 
 import type { Role } from "../api/types";
 import { roleHomePath, safeReturnPath } from "./routePaths";
@@ -55,6 +56,9 @@ import { FinanceOverviewPage } from "../features/finance/FinanceOverviewPage";
 import { FinanceProjectPage } from "../features/finance/FinanceProjectPage";
 import { ProcurementProjectPage } from "../features/procurement/ProcurementProjectPage";
 import { ProcurementWorkspace } from "../features/procurement/ProcurementWorkspace";
+import { KnowledgeBaseIndexPage } from "../features/ai-estimator-knowledge/KnowledgeBaseIndexPage";
+import { KnowledgeItemWorkspacePage } from "../features/ai-estimator-knowledge/KnowledgeItemWorkspacePage";
+import { KnowledgeReusableValuesPage } from "../features/ai-estimator-knowledge/KnowledgeReusableValuesPage";
 
 interface RoleHomeContent {
   heading: string;
@@ -302,6 +306,9 @@ const stagedElements = {
   "/admin/projects": <AdminProjectsPage />,
   "/admin/projects/:projectId": <AdminProjectDetailPage />,
   "/admin/users": <UserDirectoryPage />,
+  "/admin/configuration/estimation": <KnowledgeBaseIndexPage />,
+  "/admin/configuration/estimation/items/:itemId": <KnowledgeItemWorkspacePage />,
+  "/admin/configuration/estimation/reusable-values": <KnowledgeReusableValuesPage />,
   "/admin/client-responses": <ClientResponseInboxPage />,
   "/admin/client-responses/:roundId": <ClientResponseTaskDetailPage />,
   "/admin/design-approvals": <DesignPlanResponseInboxPage />,
@@ -443,6 +450,27 @@ export function AppRoutes() {
           element={registeredElement("/admin/users", stagedElements["/admin/users"])}
         />
         <Route
+          path="/admin/configuration/estimation"
+          element={registeredElement(
+            "/admin/configuration/estimation",
+            stagedElements["/admin/configuration/estimation"]
+          )}
+        />
+        <Route
+          path="/admin/configuration/estimation/items/:itemId"
+          element={registeredElement(
+            "/admin/configuration/estimation/items/:itemId",
+            stagedElements["/admin/configuration/estimation/items/:itemId"]
+          )}
+        />
+        <Route
+          path="/admin/configuration/estimation/reusable-values"
+          element={registeredElement(
+            "/admin/configuration/estimation/reusable-values",
+            stagedElements["/admin/configuration/estimation/reusable-values"]
+          )}
+        />
+        <Route
           path="/admin/client-responses"
           element={registeredElement(
             "/admin/client-responses",
@@ -515,9 +543,24 @@ export function AppRoutes() {
 }
 
 export function AppRouter() {
-  return (
-    <BrowserRouter>
-      <AppRoutes />
-    </BrowserRouter>
+  const [router] = useState(createAppBrowserRouter);
+  return <RouterProvider router={router} />;
+}
+
+export function createAppBrowserRouter() {
+  return createBrowserRouter(
+    [
+      {
+        path: "*",
+        element: <AppRoutes />
+      }
+    ],
+    {
+      // Route data is rendered by AppRoutes/TanStack Query rather than router
+      // loaders. Marking the shell hydrated avoids a synthetic initial loader
+      // request while preserving normal browser navigation and blockers.
+      hydrationData: { loaderData: {}, actionData: null, errors: null },
+      window
+    }
   );
 }

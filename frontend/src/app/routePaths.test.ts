@@ -34,6 +34,11 @@ describe("safeReturnPath", () => {
     ["super_admin", "/admin/projects", "/admin/projects"],
     [
       "super_admin",
+      "/admin/configuration/estimation/items/item-1?section=pricing#rates",
+      "/admin/configuration/estimation/items/item-1?section=pricing#rates"
+    ],
+    [
+      "super_admin",
       "/admin/projects/project-1?tab=estimate#summary",
       "/admin/projects/project-1?tab=estimate#summary"
     ],
@@ -120,4 +125,24 @@ describe("safeReturnPath", () => {
   ])("rejects a confused or traversing Super Admin project boundary: %s", (candidate) => {
     expect(safeReturnPath("super_admin", candidate)).toBe("/admin/users");
   });
+
+  it.each([
+    "/admin/configuration/estimations",
+    "/admin/configuration/estimation-archive",
+    "/admin/configuration/estimation/%2e%2e/users",
+    "/admin/configuration/estimation/%252e%252e/users",
+    "//evil.example/admin/configuration/estimation",
+    "/admin/configuration/estimation\\items\\item-1"
+  ])("rejects a confused or traversing knowledge configuration boundary: %s", (candidate) => {
+    expect(safeReturnPath("super_admin", candidate)).toBe("/admin/users");
+  });
+
+  it.each(ROLE_CODES.filter((role) => role !== "super_admin"))(
+    "rejects the knowledge configuration return boundary for %s",
+    (role) => {
+      expect(
+        safeReturnPath(role, "/admin/configuration/estimation/items/item-1")
+      ).toBe(roleHomePath(role));
+    }
+  );
 });

@@ -70,13 +70,18 @@ export function safeReturnPath(
       role === "super_admin" &&
       (parsed.pathname === "/admin/projects" ||
         parsed.pathname.startsWith("/admin/projects/"));
+    const canReturnToKnowledgeConfiguration =
+      role === "super_admin" &&
+      (parsed.pathname === "/admin/configuration/estimation" ||
+        parsed.pathname.startsWith("/admin/configuration/estimation/"));
     if (
       parsed.origin !== returnPathOrigin ||
       hasEncodedTraversal(parsed.pathname) ||
       (!canReturnToRoleHome &&
         !canReturnToClientResponses &&
         !canReturnToDesignApprovals &&
-        !canReturnToSuperAdminProjects)
+        !canReturnToSuperAdminProjects &&
+        !canReturnToKnowledgeConfiguration)
     ) {
       return home;
     }

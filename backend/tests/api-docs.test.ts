@@ -173,7 +173,7 @@ describe("OpenAPI and Swagger UI", () => {
     }
   });
 
-  it("contains all 142 routes without versioning paths twice", () => {
+  it("contains all 185 routes without versioning paths twice", () => {
     const methods = new Set(["get", "post", "put", "patch", "delete"]);
     const operationCount = Object.values(openApiDocument.paths).reduce(
       (total, pathItem) =>
@@ -182,10 +182,78 @@ describe("OpenAPI and Swagger UI", () => {
     );
 
     expect(operationCount).toBe(HUMAN_JWT_OPERATION_LIST.length + 13);
-    expect(operationCount).toBe(142);
+    expect(operationCount).toBe(185);
     expect(Object.keys(openApiDocument.paths).some((path) =>
       path.startsWith("/api/v1")
     )).toBe(false);
+  });
+
+  it("documents all AI Estimator Knowledge operations with exact schemas and 422", () => {
+    const knowledgeOperations = HUMAN_JWT_OPERATION_LIST.filter(
+      ({ availability }) => availability === "ai_estimator_knowledge"
+    );
+    expect(knowledgeOperations).toHaveLength(43);
+
+    for (const registered of knowledgeOperations) {
+      const { method, path } = splitHumanOperationKey(registered.key);
+      const documented = openApiDocument.paths[openApiPathForRoute(path)]?.[
+        method.toLowerCase()
+      ];
+      expect(documented?.tags, registered.key).toEqual([
+        "AI Estimator Knowledge"
+      ]);
+      expect(documented?.responses?.["422"], registered.key).toEqual({
+        $ref: "#/components/responses/UnprocessableKnowledge"
+      });
+      if (method !== "GET") {
+        expect(documented?.requestBody, registered.key).toMatchObject({
+          required: true,
+          "x-lisno-schema-completeness": "exact",
+          content: {
+            "application/json": {
+              schema: { $ref: expect.stringMatching(/^#\/components\/schemas\/Knowledge/u) }
+            }
+          }
+        });
+      }
+      expect(documented?.requestBody, registered.key).not.toMatchObject({
+        content: {
+          "application/json": {
+            schema: { $ref: "#/components/schemas/GenericJsonObject" }
+          }
+        }
+      });
+    }
+
+    expect(
+      openApiDocument.paths[
+        "/admin/ai-estimator-knowledge/main-lines/{mainLineId}/revisions/{revisionId}/sections/{sectionKey}"
+      ]?.put?.parameters
+    ).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        name: "sectionKey",
+        schema: { $ref: "#/components/schemas/KnowledgeSectionKey" }
+      })
+    ]));
+
+    const previewRequest = componentSchemas().KnowledgePreviewRequest as {
+      additionalProperties?: boolean;
+      properties: Record<string, unknown>;
+    };
+    const contextRequest = componentSchemas().KnowledgeContextRequest as {
+      additionalProperties?: boolean;
+      required?: string[];
+      properties: Record<string, unknown>;
+    };
+    const previewResponse = componentSchemas().KnowledgePreview as {
+      properties: Record<string, unknown>;
+    };
+    expect(previewRequest.additionalProperties).toBe(false);
+    expect(previewRequest.properties).not.toHaveProperty("finalPrice");
+    expect(contextRequest.additionalProperties).toBe(false);
+    expect(contextRequest.required).toEqual(["mainBasketId", "mainLineId"]);
+    expect(contextRequest.properties).not.toHaveProperty("name");
+    expect(previewResponse.properties).not.toHaveProperty("finalPrice");
   });
 
   it("documents exact workflow multipart contracts and separate worker security", () => {

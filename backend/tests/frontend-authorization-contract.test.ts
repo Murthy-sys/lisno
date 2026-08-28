@@ -60,6 +60,14 @@ const PROCUREMENT_PERMISSIONS = [
   "procurement.document.read"
 ] as const;
 
+const AI_ESTIMATOR_KNOWLEDGE_PERMISSIONS = [
+  "ai_estimator_knowledge.configuration.read",
+  "ai_estimator_knowledge.configuration.create",
+  "ai_estimator_knowledge.configuration.update",
+  "ai_estimator_knowledge.configuration.lifecycle",
+  "ai_estimator_knowledge.context.read"
+] as const;
+
 describe("frontend authorization contract parity", () => {
   it("matches the backend role vocabulary and labels", () => {
     expect(FRONTEND_ROLE_CODES).toEqual(ROLE_CODES);
@@ -76,13 +84,13 @@ describe("frontend authorization contract parity", () => {
     expect(FRONTEND_POLICY_VERSION).toBe(AUTHORIZATION_POLICY_VERSION);
   });
 
-  it("publishes the exact 113-code Procurement receipt policy on both sides", () => {
-    expect(AUTHORIZATION_POLICY_VERSION).toBe("2026-08-26.procurement-receipts.v5");
-    expect(FRONTEND_POLICY_VERSION).toBe("2026-08-26.procurement-receipts.v5");
-    expect(PERMISSION_CODES).toHaveLength(113);
-    expect(FRONTEND_PERMISSION_CODES).toHaveLength(113);
-    expect(new Set(PERMISSION_CODES).size).toBe(113);
-    expect(new Set(FRONTEND_PERMISSION_CODES).size).toBe(113);
+  it("publishes the exact 118-code AI Estimator Knowledge policy on both sides", () => {
+    expect(AUTHORIZATION_POLICY_VERSION).toBe("2026-08-28.ai-estimator-knowledge.v6");
+    expect(FRONTEND_POLICY_VERSION).toBe("2026-08-28.ai-estimator-knowledge.v6");
+    expect(PERMISSION_CODES).toHaveLength(118);
+    expect(FRONTEND_PERMISSION_CODES).toHaveLength(118);
+    expect(new Set(PERMISSION_CODES).size).toBe(118);
+    expect(new Set(FRONTEND_PERMISSION_CODES).size).toBe(118);
     for (const permission of STAFF_INVITATION_PERMISSIONS) {
       expect(PERMISSION_CODES).toContain(permission);
       expect(FRONTEND_PERMISSION_CODES).toContain(permission);
@@ -127,5 +135,15 @@ describe("frontend authorization contract parity", () => {
         PROJECT_FINANCE_PERMISSIONS.includes(permission as never)
       )
     ).toEqual(PROJECT_FINANCE_PERMISSIONS);
+    expect(
+      PERMISSION_CODES.filter((permission) =>
+        AI_ESTIMATOR_KNOWLEDGE_PERMISSIONS.includes(permission as never)
+      )
+    ).toEqual(AI_ESTIMATOR_KNOWLEDGE_PERMISSIONS);
+    expect(
+      FRONTEND_PERMISSION_CODES.filter((permission) =>
+        AI_ESTIMATOR_KNOWLEDGE_PERMISSIONS.includes(permission as never)
+      )
+    ).toEqual(AI_ESTIMATOR_KNOWLEDGE_PERMISSIONS);
   });
 });

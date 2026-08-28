@@ -8,6 +8,7 @@ import {
   LayoutDashboard,
   MailCheck,
   Palette,
+  Settings2,
   UsersRound,
   WalletCards,
   type LucideIcon
@@ -56,6 +57,9 @@ export const ROUTE_REGISTRY = [
   { path: "/admin/projects", permission: "projects.list", presentationRoles: ["admin", "super_admin"], navigation: { roles: ["admin", "super_admin"], item: { label: "My Projects", to: "/admin/projects", end: true, icon: FolderKanban }, labels: { super_admin: "All Projects" } } },
   { path: "/admin/projects/:projectId", permission: "projects.read", presentationRoles: ["admin", "super_admin"], navigation: null },
   { path: "/admin/users", permission: "identity.users.read", presentationRoles: ["super_admin"], navigation: { roles: ["super_admin"], item: { label: "Users", to: "/admin/users", end: true, icon: UsersRound } } },
+  { path: "/admin/configuration/estimation", permission: "ai_estimator_knowledge.configuration.read", presentationRoles: ["super_admin"], navigation: { roles: ["super_admin"], item: { label: "Configuration", to: "/admin/configuration/estimation", end: false, icon: Settings2 } } },
+  { path: "/admin/configuration/estimation/items/:itemId", permission: "ai_estimator_knowledge.configuration.read", presentationRoles: ["super_admin"], navigation: null },
+  { path: "/admin/configuration/estimation/reusable-values", permission: "ai_estimator_knowledge.configuration.read", presentationRoles: ["super_admin"], navigation: null },
   { path: "/admin/client-responses", permission: "estimation.client_response_tasks.read", presentationRoles: ["admin", "super_admin"], navigation: { roles: ["admin", "super_admin"], item: { label: "Client responses", to: "/admin/client-responses", end: true, icon: MailCheck } } },
   { path: "/admin/client-responses/:roundId", permission: "estimation.client_response_tasks.read", presentationRoles: ["admin", "super_admin"], navigation: null },
   { path: "/admin/design-approvals", permission: "design.plan_response_tasks.read", presentationRoles: ["admin", "super_admin"], navigation: { roles: ["admin", "super_admin"], item: { label: "Design approvals", to: "/admin/design-approvals", end: true, icon: Palette } } },

@@ -31,7 +31,12 @@ const DEFAULT_PERMISSIONS_BY_ROLE = {
     "identity.user_invitations.resend",
     "identity.user_invitations.revoke",
     "access_request.review.read",
-    "access_request.self.read"
+    "access_request.self.read",
+    "ai_estimator_knowledge.configuration.read",
+    "ai_estimator_knowledge.configuration.create",
+    "ai_estimator_knowledge.configuration.update",
+    "ai_estimator_knowledge.configuration.lifecycle",
+    "ai_estimator_knowledge.context.read"
   ],
   admin: [
     ...BASE_SESSION_PERMISSIONS,

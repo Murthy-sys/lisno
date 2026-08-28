@@ -63,6 +63,18 @@ import { FinanceLedgerEntryModel } from "../src/models/FinanceLedgerEntry.js";
 import { FinanceEntryDocumentModel } from "../src/models/FinanceEntryDocument.js";
 import { ProcurementReceiptCleanupJobModel } from "../src/models/ProcurementReceiptCleanupJob.js";
 import { ProcurementReceiptReconciliationJobModel } from "../src/models/ProcurementReceiptReconciliationJob.js";
+import { AiEstimatorKnowledgeBasketModel } from "../src/models/AiEstimatorKnowledgeBasket.js";
+import { AiEstimatorKnowledgeMainLineModel } from "../src/models/AiEstimatorKnowledgeMainLine.js";
+import { AiEstimatorKnowledgeModeModel } from "../src/models/AiEstimatorKnowledgeMode.js";
+import { AiEstimatorKnowledgePriceVersionModel } from "../src/models/AiEstimatorKnowledgePriceVersion.js";
+import { AiEstimatorKnowledgePriorityModel } from "../src/models/AiEstimatorKnowledgePriority.js";
+import { AiEstimatorKnowledgeRevisionModel } from "../src/models/AiEstimatorKnowledgeRevision.js";
+import { AiEstimatorKnowledgeSectionModel } from "../src/models/AiEstimatorKnowledgeSection.js";
+import { AiEstimatorKnowledgeSurfaceModel } from "../src/models/AiEstimatorKnowledgeSurface.js";
+import { AiEstimatorKnowledgeTaxRuleModel } from "../src/models/AiEstimatorKnowledgeTaxRule.js";
+import { AiEstimatorKnowledgeTaxVersionModel } from "../src/models/AiEstimatorKnowledgeTaxVersion.js";
+import { AiEstimatorKnowledgeUomModel } from "../src/models/AiEstimatorKnowledgeUom.js";
+import { AiEstimatorKnowledgeVendorModel } from "../src/models/AiEstimatorKnowledgeVendor.js";
 import type { AppRepository } from "../src/repositories/types.js";
 import { MailDeliveryError } from "../src/services/smtp-transport.js";
 
@@ -432,6 +444,54 @@ describe("production server bootstrap", () => {
       events.push("procurement-receipt-reconciliation-index");
       return ProcurementReceiptReconciliationJobModel as never;
     });
+    vi.spyOn(AiEstimatorKnowledgeBasketModel, "init").mockImplementation(async () => {
+      events.push("ai-estimator-knowledge-basket-index");
+      return AiEstimatorKnowledgeBasketModel as never;
+    });
+    vi.spyOn(AiEstimatorKnowledgeMainLineModel, "init").mockImplementation(async () => {
+      events.push("ai-estimator-knowledge-main-line-index");
+      return AiEstimatorKnowledgeMainLineModel as never;
+    });
+    vi.spyOn(AiEstimatorKnowledgeRevisionModel, "init").mockImplementation(async () => {
+      events.push("ai-estimator-knowledge-revision-index");
+      return AiEstimatorKnowledgeRevisionModel as never;
+    });
+    vi.spyOn(AiEstimatorKnowledgeSectionModel, "init").mockImplementation(async () => {
+      events.push("ai-estimator-knowledge-section-index");
+      return AiEstimatorKnowledgeSectionModel as never;
+    });
+    vi.spyOn(AiEstimatorKnowledgePriceVersionModel, "init").mockImplementation(async () => {
+      events.push("ai-estimator-knowledge-price-version-index");
+      return AiEstimatorKnowledgePriceVersionModel as never;
+    });
+    vi.spyOn(AiEstimatorKnowledgeUomModel, "init").mockImplementation(async () => {
+      events.push("ai-estimator-knowledge-uom-index");
+      return AiEstimatorKnowledgeUomModel as never;
+    });
+    vi.spyOn(AiEstimatorKnowledgeVendorModel, "init").mockImplementation(async () => {
+      events.push("ai-estimator-knowledge-vendor-index");
+      return AiEstimatorKnowledgeVendorModel as never;
+    });
+    vi.spyOn(AiEstimatorKnowledgeTaxRuleModel, "init").mockImplementation(async () => {
+      events.push("ai-estimator-knowledge-tax-rule-index");
+      return AiEstimatorKnowledgeTaxRuleModel as never;
+    });
+    vi.spyOn(AiEstimatorKnowledgeTaxVersionModel, "init").mockImplementation(async () => {
+      events.push("ai-estimator-knowledge-tax-version-index");
+      return AiEstimatorKnowledgeTaxVersionModel as never;
+    });
+    vi.spyOn(AiEstimatorKnowledgePriorityModel, "init").mockImplementation(async () => {
+      events.push("ai-estimator-knowledge-priority-index");
+      return AiEstimatorKnowledgePriorityModel as never;
+    });
+    vi.spyOn(AiEstimatorKnowledgeSurfaceModel, "init").mockImplementation(async () => {
+      events.push("ai-estimator-knowledge-surface-index");
+      return AiEstimatorKnowledgeSurfaceModel as never;
+    });
+    vi.spyOn(AiEstimatorKnowledgeModeModel, "init").mockImplementation(async () => {
+      events.push("ai-estimator-knowledge-mode-index");
+      return AiEstimatorKnowledgeModeModel as never;
+    });
 
     const runtime = await startServer({
       loadEnvironment: () => env,
@@ -471,6 +531,18 @@ describe("production server bootstrap", () => {
       "finance-entry-document-index",
       "procurement-receipt-cleanup-index",
       "procurement-receipt-reconciliation-index",
+      "ai-estimator-knowledge-basket-index",
+      "ai-estimator-knowledge-main-line-index",
+      "ai-estimator-knowledge-revision-index",
+      "ai-estimator-knowledge-section-index",
+      "ai-estimator-knowledge-price-version-index",
+      "ai-estimator-knowledge-uom-index",
+      "ai-estimator-knowledge-vendor-index",
+      "ai-estimator-knowledge-tax-rule-index",
+      "ai-estimator-knowledge-tax-version-index",
+      "ai-estimator-knowledge-priority-index",
+      "ai-estimator-knowledge-surface-index",
+      "ai-estimator-knowledge-mode-index",
       "repository",
       "app",
       "listen"

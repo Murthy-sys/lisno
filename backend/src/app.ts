@@ -26,6 +26,8 @@ import { createAuditRouter } from "./routes/audit.js";
 import { createAccessRequestsRouter } from "./routes/access-requests.js";
 import { createAdminUsersRouter } from "./routes/admin-users.js";
 import { createAdminProjectsRouter } from "./routes/admin-projects.js";
+import { createAiEstimatorKnowledgeAdminRouter } from "./routes/ai-estimator-knowledge-admin.js";
+import { createAiEstimatorKnowledgeContextRouter } from "./routes/ai-estimator-knowledge-context.js";
 import { apiDocsRouter } from "./routes/api-docs.js";
 import { createAuthRouter } from "./routes/auth.js";
 import { createPasswordResetsRouter } from "./routes/password-resets.js";
@@ -48,6 +50,9 @@ import { createProcurementRouter } from "./routes/procurement.js";
 import { createTasksRouter } from "./routes/tasks.js";
 import { createUserInvitationsRouter } from "./routes/user-invitations.js";
 import { createAuditService } from "./services/audit.service.js";
+import { createAiEstimatorKnowledgeContextService } from "./services/ai-estimator-knowledge-context.service.js";
+import { createAiEstimatorKnowledgeItemService } from "./services/ai-estimator-knowledge-item.service.js";
+import { createAiEstimatorKnowledgeReferenceService } from "./services/ai-estimator-knowledge-reference.service.js";
 import { createAccessRequestService } from "./services/access-request.service.js";
 import { createAdminProjectService } from "./services/admin-project.service.js";
 import { createUserAdministrationService } from "./services/user-administration.service.js";
@@ -143,6 +148,17 @@ export function createApp(dependencies: AppDependencies) {
   const ocrRetryPolicy =
     dependencies.ocrRetryPolicy ?? defaultExtractionRetryPolicy;
   const auditService = createAuditService(repository);
+  const aiEstimatorKnowledgeReferenceService =
+    createAiEstimatorKnowledgeReferenceService({
+      audit: auditService,
+      now: clock
+    });
+  const aiEstimatorKnowledgeItemService = createAiEstimatorKnowledgeItemService({
+    audit: auditService,
+    now: clock
+  });
+  const aiEstimatorKnowledgeContextService =
+    createAiEstimatorKnowledgeContextService({ now: clock });
   const authService = createAuthService(repository, dependencies.auth, {
     auditService,
     clock,
@@ -367,6 +383,21 @@ export function createApp(dependencies: AppDependencies) {
   app.use(
     "/api/v1",
     createAdminProjectsRouter(authService, adminProjectService)
+  );
+  app.use(
+    "/api/v1",
+    createAiEstimatorKnowledgeAdminRouter(authService, {
+      reference: aiEstimatorKnowledgeReferenceService,
+      item: aiEstimatorKnowledgeItemService,
+      context: aiEstimatorKnowledgeContextService
+    })
+  );
+  app.use(
+    "/api/v1",
+    createAiEstimatorKnowledgeContextRouter(
+      authService,
+      aiEstimatorKnowledgeContextService
+    )
   );
   app.use(
     "/api/v1",

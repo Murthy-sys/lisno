@@ -10,6 +10,18 @@ import { ProcurementReceiptReconciliationJobModel } from "./ProcurementReceiptRe
 import { UserModel } from "./User.js";
 import { UserInvitationModel } from "./UserInvitation.js";
 import { PasswordResetRequestModel } from "./PasswordResetRequest.js";
+import { AiEstimatorKnowledgeBasketModel } from "./AiEstimatorKnowledgeBasket.js";
+import { AiEstimatorKnowledgeMainLineModel } from "./AiEstimatorKnowledgeMainLine.js";
+import { AiEstimatorKnowledgeModeModel } from "./AiEstimatorKnowledgeMode.js";
+import { AiEstimatorKnowledgePriceVersionModel } from "./AiEstimatorKnowledgePriceVersion.js";
+import { AiEstimatorKnowledgePriorityModel } from "./AiEstimatorKnowledgePriority.js";
+import { AiEstimatorKnowledgeRevisionModel } from "./AiEstimatorKnowledgeRevision.js";
+import { AiEstimatorKnowledgeSectionModel } from "./AiEstimatorKnowledgeSection.js";
+import { AiEstimatorKnowledgeSurfaceModel } from "./AiEstimatorKnowledgeSurface.js";
+import { AiEstimatorKnowledgeTaxRuleModel } from "./AiEstimatorKnowledgeTaxRule.js";
+import { AiEstimatorKnowledgeTaxVersionModel } from "./AiEstimatorKnowledgeTaxVersion.js";
+import { AiEstimatorKnowledgeUomModel } from "./AiEstimatorKnowledgeUom.js";
+import { AiEstimatorKnowledgeVendorModel } from "./AiEstimatorKnowledgeVendor.js";
 
 export async function initializeApplicationIndexes(): Promise<void> {
   await UserModel.init();
@@ -24,4 +36,16 @@ export async function initializeApplicationIndexes(): Promise<void> {
   await FinanceEntryDocumentModel.init();
   await ProcurementReceiptCleanupJobModel.init();
   await ProcurementReceiptReconciliationJobModel.init();
+  await AiEstimatorKnowledgeBasketModel.init();
+  await AiEstimatorKnowledgeMainLineModel.init();
+  await AiEstimatorKnowledgeRevisionModel.init();
+  await AiEstimatorKnowledgeSectionModel.init();
+  await AiEstimatorKnowledgePriceVersionModel.init();
+  await AiEstimatorKnowledgeUomModel.init();
+  await AiEstimatorKnowledgeVendorModel.init();
+  await AiEstimatorKnowledgeTaxRuleModel.init();
+  await AiEstimatorKnowledgeTaxVersionModel.init();
+  await AiEstimatorKnowledgePriorityModel.init();
+  await AiEstimatorKnowledgeSurfaceModel.init();
+  await AiEstimatorKnowledgeModeModel.init();
 }
