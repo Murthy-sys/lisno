@@ -1,241 +1,354 @@
-# Staff Email Transfer to the Active `lisno-api` Database — Task Plan
+# Existing `lisno` Super Admin Bootstrap — Revised Task Plan
 
 ## Approved source
 
-- Specification: `docs/superpowers/specs/2026-08-27-staff-email-transfer-to-lisno-api-design.md`
+- Specification:
+  `docs/superpowers/specs/2026-08-27-staff-email-transfer-to-lisno-api-design.md`
 
-## Parent outcome
+## Outcome
 
-Verify the single production target used by Render `lisno-api`, compare the approved source staff identities without exposing secrets or personal data, retain the target's sole Super Admin, and issue audited target invitations for approved absent Admin/Designer identities only after an exact production-write and email-delivery approval.
+Safely update the existing operator bootstrap so one transaction against
+`linso-cluster / lisno`:
 
-## Ownership boundaries
+1. quarantines the exact audited legacy Designer without changing its identity or
+   five task references; and
+2. inserts exactly one canonical active standard Super Admin.
 
-- **Primary integrator/operator**
-  - Owns interpretation of the approved specification, sanitized environment fingerprints, the exact target and candidate count, approval gates, external side effects, and final reconciliation.
-  - Never prints or persists connection strings, database usernames, password hashes, invitation tokens, names, or email addresses in chat, logs, screenshots, or repository artifacts.
-- **Source identity auditor**
-  - Read-only access to the explicitly identified source database.
-  - May inspect only User fields required to select and validate the approved roles.
-  - Must not write, export credentials, or inspect unrelated collections.
-- **Target identity auditor**
-  - Read-only access to the database proven to be Render `lisno-api`'s current `MONGODB_URI` target.
-  - Owns the sole-Super-Admin, email-conflict, role-conflict, invitation-conflict, and index checks.
-- **Live invitation executor**
-  - The primary agent only, after a fresh exact live-action approval.
-  - Uses the established target Super Admin invitation workflow; no direct User insert or cross-database row copy.
-- **Verification runner**
-  - Read-only after live execution; verifies target identity and audit invariants without changing source, target, deployment, mail, or repository state.
+The task preserves every existing business document, leaves `lisno_prod` unchanged,
+and verifies deployed login only after a new target-specific dry run and live-action
+approval.
+
+## Affected areas and ownership boundaries
+
+### Backend operation writer
+
+Owned file:
+
+- `backend/src/operations/production-super-admin-bootstrap.ts`
+
+Responsibilities:
+
+- exact `/lisno` target and fingerprint contract;
+- non-empty baseline inspection and sanitized digest;
+- legacy-row CAS quarantine plus Super Admin insert in one transaction;
+- post-write/idempotent verification and redacted failures.
+
+Must not edit the focused test, shared models, services, frontend, plan/spec, or
+production data.
+
+### Backend regression-test writer
+
+Owned file:
+
+- `backend/tests/production-super-admin-bootstrap.test.ts`
+
+Responsibilities:
+
+- encode the approved operation contract using only synthetic local replica-set data;
+- verify exact-row and task-reference preservation;
+- verify redaction, concurrency, rollback, drift, and rerun behavior.
+
+Must not edit the operation implementation, package scripts, shared helpers, models,
+services, frontend, or production data.
+
+### Primary integrator
+
+Owned areas:
+
+- product/contract interpretation;
+- `backend/package.json` only if the existing script needs adjustment;
+- reconciliation between operation and tests;
+- spec/plan documents;
+- production read-only dry run and exact authority gates.
+
+The primary integrator does not delegate or parallelize production access or writes.
+
+### Integrity reviewer and verification runner
+
+- Integrity reviewer runs after both writers and integration are complete.
+- Verification runner runs only after integrity findings are resolved.
+- Neither role performs production access or product-source edits during final
+  verification.
 
 ## Dependency-ordered task graph
 
-### Task 1 — Freeze environment identity and operational scope
+### Task 1 — Freeze the revised local contract
 
-Owner: Primary integrator/operator.
+Owner: Primary integrator.
 
-Dependencies: approved specification.
+Dependencies: approved revised specification.
 
 Work:
 
-1. Confirm that `lismo-api` means Render service `lisno-api`.
-2. Resolve the exact source and target cluster/database using sanitized, non-reversible fingerprints.
-3. Prove the target fingerprint matches the secret `MONGODB_URI` currently attached to Render `lisno-api`.
-4. Confirm source and target are different environments.
-5. Establish the selection mode:
-   - an exact operator-provided email allowlist; or
-   - every eligible active standard `admin` and `designer` in the source.
-6. Confirm that source IDs, passwords, grants, and assignments are intentionally not preserved.
+1. Preserve and inspect the existing dirty bootstrap module, test, package script,
+   spec, and plan changes.
+2. Confirm the exact runtime contract:
+   - target label `linso-cluster/lisno`;
+   - URI path `/lisno`;
+   - fingerprint input `lowercase-host + "|lisno"`;
+   - maintenance confirmation specific to `/lisno`;
+   - dry run by default and only optional CLI argument `--write`;
+   - sanitized baseline and HMAC approval digest;
+   - one proposed quarantine and one proposed insert.
+3. Share the same output/status shapes and baseline invariants with both writers.
 
-Acceptance criteria: AC 1–3 and 10.
+Acceptance:
 
-Stop/report conditions:
+- No generic arbitrary-database mode is introduced.
+- No implementation or test writer owns the same file.
+- No PII, URI, password, private ID, or production content enters source or fixtures.
 
-- Service name or target cannot be proven.
-- Source and target resolve to the same environment.
-- A secret or personal-data-safe inspection path is unavailable.
-- The user requires password, ID, grant, or assignment continuity.
+### Task 2A — Revise the baseline-aware operation
 
-### Task 2A — Audit source candidates
+Owner: Backend operation writer.
 
-Owner: Source identity auditor.
-
-Dependencies: Task 1 exact source and selection mode.
+Dependencies: Task 1.
 
 May run in parallel with Task 2B.
 
 Work:
 
-1. Read only selected source User records.
-2. Validate exact role, active state, `standard` account kind, normalized email, required identity fields, and non-reserved/non-demo status.
-3. Derive a non-reversible selection digest and sanitized role counts.
-4. Classify the source Super Admin for comparison only; never mark it copyable.
+1. Retarget all independent safeguards from `/lisno_prod` to `/lisno`.
+2. Replace the global empty-database rejection with a read-only baseline inspector
+   that verifies:
+   - one exact reserved legacy Designer;
+   - active state and expected missing legacy fields;
+   - zero Super Admins;
+   - zero target-email matches;
+   - no missing/null normalized emails;
+   - compatible complete User index definitions;
+   - unchanged task-responsibility counts;
+   - sanitized collection/document/User counts.
+3. Include all sanitized baseline values and two proposed mutations in the approval
+   digest.
+4. In one transaction:
+   - recheck the exact baseline and identity predicates;
+   - CAS-update only the legacy Designer's `active`, `accountKind`, `version`, and
+     `updatedAt` fields;
+   - insert one canonical generated Super Admin;
+   - rely on unique normalized-email and sole-Super-Admin indexes for concurrency.
+5. Post-write verify two Users, exactly one canonical Super Admin, one quarantined
+   legacy Designer, unchanged task references, compatible indexes, and no unrelated
+   document-count changes.
+6. Preserve exact-rerun idempotency and sanitized committed-state reporting.
 
-Acceptance criteria: AC 3–7.
+Acceptance:
 
-Stop/report conditions:
+- Dry run creates no collections, indexes, transaction, or data write.
+- A mismatched target, baseline, identity, responsibility, or index fails closed.
+- A failed transaction changes neither User.
+- Existing business documents never enter the write set.
 
-- Any selected row is reserved/demo, invalid, inactive, outside `admin`/`designer`, or changes during the audit.
-- More than one source Super Admin exists.
+### Task 2B — Extend focused replica-set regression coverage
 
-### Task 2B — Audit target identity and invitation state
+Owner: Backend regression-test writer.
 
-Owner: Target identity auditor.
-
-Dependencies: Task 1 exact target.
+Dependencies: Task 1.
 
 May run in parallel with Task 2A.
 
 Work:
 
-1. Verify the target's User email and sole-Super-Admin indexes are present.
-2. Verify exactly one target Super Admin row and exactly one active Super Admin.
-3. Read normalized-email/role identity summaries and current actionable invitations needed for conflict analysis.
-4. Derive a non-reversible target snapshot digest and sanitized counts.
-5. Verify the invitation mailer is configured as enabled; do not create a test invitation or send an email.
+1. Replace empty-target fixtures with a synthetic compatible non-empty baseline:
+   one reserved active Designer and five referenced active tasks.
+2. Prove dry run reports one quarantine plus one insert and writes nothing.
+3. Prove one write atomically:
+   - preserves legacy ID, identity fields, role, credential hash, creation time, and
+     task references;
+   - changes only the approved quarantine fields;
+   - creates one canonical remote-auth-compatible Super Admin.
+4. Cover wrong target/fingerprint, existing Super Admin, target-email conflict,
+   missing/extra legacy row, changed responsibility count, incompatible index,
+   concurrent attempts, injected transaction failure, exact rerun, changed-input
+   rerun, and post-commit reporting.
+5. Assert stdout/stderr/errors exclude synthetic names, emails, passwords, hashes,
+   IDs, and URIs.
 
-Acceptance criteria: AC 1, 2, 6, 8, and 9.
+Acceptance:
 
-Stop/report conditions:
+- All tests use a local temporary Mongo replica set and synthetic identities.
+- Tests do not access Atlas, Render, SMTP, frontend, OCR, or public services.
 
-- Target fingerprint changes or no longer matches Render.
-- Target has zero or multiple Super Admin rows/active identities.
-- Required unique indexes are absent.
-- Invitation delivery is disabled.
+### Task 3 — Integrate and run focused checks
 
-### Task 3 — Reconcile dry-run classifications
-
-Owner: Primary integrator/operator.
+Owner: Primary integrator.
 
 Dependencies: Tasks 2A and 2B.
 
 Work:
 
-1. Compare candidates by normalized email without outputting personal values.
-2. Produce sanitized counts for:
-   - target Super Admin matches;
-   - eligible Admin invitations;
-   - eligible Designer invitations;
-   - already-existing same-role identities;
-   - email/role/Super-Admin/reserved/invalid conflicts.
-3. Require the target Super Admin to remain unchanged.
-4. Block the entire proposed live batch if any conflict exists.
-5. Re-read source and target and require both snapshot digests to remain unchanged before presenting the live batch.
+1. Reconcile contract differences without overwriting either writer's unrelated
+   changes.
+2. Adjust the existing package command only if necessary.
+3. Inspect the scoped diff and run:
 
-Acceptance criteria: AC 3–8.
+```bash
+cd backend
+npm test -- tests/production-super-admin-bootstrap.test.ts
+npm run typecheck
+```
 
-Verification:
+Acceptance:
 
-- Dry run performs no database, repository, Render, invitation, audit, token, or email write.
-- Source and target connection/session teardown is confirmed.
+- Focused tests and typecheck pass.
+- The diff contains no personal or secret production data.
 
-Stop/report conditions:
+### Task 4 — Integrity review
 
-- Source and target Super Admin identities differ.
-- Any target email/role conflict or source validation conflict exists.
-- Candidate or target snapshot changes during reconciliation.
+Owner: Integrity reviewer.
 
-### Task 4 — Obtain exact live-action authority and recovery evidence
+Dependencies: Task 3.
 
-Owner: Primary integrator/operator.
+Review focus:
 
-Dependencies: conflict-free Task 3 dry run.
+- exact-target independence and digest binding;
+- transaction/CAS correctness and race handling;
+- sole-Super-Admin and normalized-email enforcement;
+- legacy identity and five-task lineage preservation;
+- no unrelated writes, destructive index operation, secret disclosure, or ambiguous
+  post-commit retry state.
 
-Work:
+Acceptance:
 
-1. Present only sanitized eligible Admin/Designer counts, role breakdown, environment fingerprints, and selection digest.
-2. Ask for one exact approval covering:
-   - target production database;
-   - candidate digest/count;
-   - creation of pending invitations;
-   - real invitation email delivery.
-3. Capture a target backup or equivalent verified recovery evidence for the exact invitation/audit write surface.
-4. Verify pending invitations can be revoked and delivery failures can be retried through existing operations.
-5. Immediately before the first write, re-run the target fingerprint, sole-Super-Admin, conflict, and snapshot checks.
+- All blocker/major findings are resolved before final verification.
 
-Acceptance criteria: AC 6, 8, 9, 11, and 12.
-
-Stop/report conditions:
-
-- Approval does not name the exact target and eligible count/digest.
-- Recovery evidence is missing or unusable.
-- SMTP/invitation service is unavailable.
-- Any source or target snapshot changed after approval.
-
-### Task 5 — Issue Admin and Designer invitations
-
-Owner: Live invitation executor (primary agent only).
-
-Dependencies: Task 4 exact live approval and final unchanged dry run.
-
-Work:
-
-1. Authenticate as the target's sole active Super Admin through the existing authorized workflow.
-2. Create invitations only for the approved eligible `admin` and `designer` candidates.
-3. Execute sequentially so each response, delivery state, and audit result can be verified before continuing.
-4. Never issue a Super Admin invitation, direct User insert, role promotion, overwrite, seed, or password-hash copy.
-5. If an invitation returns a conflict or unexpected failure:
-   - stop the remaining batch;
-   - retain already completed invitation/audit history;
-   - do not silently retry or revoke successful invitations;
-   - report the partial result and request direction.
-6. Treat failed delivery as the established retryable invitation delivery state; do not create another User or token outside the service.
-
-Acceptance criteria: AC 6, 8–12.
-
-Side effects:
-
-- Creates target invitation, token-hash, audit, and delivery-state records.
-- Sends real staff invitation emails.
-- Does not create a target User until a recipient accepts and chooses a password.
-
-### Task 6 — Verify target outcome and handoff
+### Task 5 — Final local verification
 
 Owner: Verification runner.
 
-Dependencies: Task 5 complete or stopped with a reported partial result.
+Dependencies: resolved Task 4.
+
+Checks:
+
+```bash
+cd backend
+npm test -- tests/production-super-admin-bootstrap.test.ts
+npm run typecheck
+npm test
+npm run build
+cd ..
+git diff --check
+git status --short
+```
+
+Acceptance:
+
+- Focused test, typecheck, full backend suite, build, and repository hygiene checks
+  pass.
+- Any existing unrelated warning is reported rather than described as a new success.
+- No production, Render, SMTP, frontend, OCR, deploy, commit, or push action occurs.
+
+### Task 6 — Prepare the private `/lisno` execution inputs
+
+Owner: Primary operator with user-controlled secrets.
+
+Dependencies: Task 5.
 
 Work:
 
-1. Verify exactly one unchanged target Super Admin row and active identity.
-2. Verify no source or target existing User was overwritten, deleted, deactivated, or role-changed.
-3. Verify the exact approved invitation count, roles, statuses, issuer identity, versions, and sanitized audit actions.
-4. Verify no reserved/demo identity, Super Admin invitation, duplicate normalized email, duplicate actionable invitation, leaked token, or unapproved role was introduced.
-5. Run the final read-only reconciliation:
-   - every approved candidate is `already_exists` or has the expected actionable/sent invitation state;
-   - zero candidates remain unexpectedly eligible;
-   - zero conflicts are present.
-6. Report acceptance as a later recipient-controlled step: new User creation and login can be verified only after each recipient accepts and chooses a password.
-7. Confirm repository and deployment configuration still point to one target database and no source code, secret, deployment, account, or cluster was changed.
+1. Update the protected temporary environment file so:
+   - `MONGODB_URI` ends in `/lisno` with the current Atlas database-user password;
+   - target label is exactly `linso-cluster/lisno`;
+   - target fingerprint is regenerated using `host + "|lisno"`;
+   - maintenance confirmation is specific to `/lisno`;
+   - the selected private application identity inputs remain present.
+2. Confirm Render's backend `MONGODB_URI` path is `/lisno`.
+3. Stop or isolate Render, OCR, shells, and any other writers before the final dry run.
 
-Acceptance criteria: all.
+Acceptance:
+
+- File mode remains `600`.
+- Validation prints booleans/counts only and exposes no values.
+- This task performs no database write.
+
+### Task 7 — Production dry run only
+
+Owner: Primary operator.
+
+Dependencies: Task 6.
+
+Work:
+
+1. Run the unchanged command without `--write`.
+2. Compare the production result with the approved sanitized baseline.
+3. Report only target label/fingerprint, collection/document/User counts, identity and
+   responsibility counts, index state, one proposed quarantine, one proposed insert,
+   and approval digest.
+4. Stop on any mismatch or drift.
+
+Acceptance:
+
+- Dry run performs zero writes.
+- The report contains no identity or secret value.
+- No live action is inferred from earlier `/lisno_prod` approval.
+
+### Task 8 — Exact approval and live transaction
+
+Owner: Primary live executor only.
+
+Dependencies: eligible Task 7 report.
+
+Required gate:
+
+- Obtain explicit approval naming `linso-cluster / lisno`, the exact dry-run digest,
+  one legacy-Designer quarantine, one Super Admin insert, and no other connected
+  writers.
+
+Execution:
+
+1. Repeat the unchanged dry run and require every bound value to match.
+2. Execute once with `--write`.
+3. Run read-only verification of Users, indexes, preserved task links, and unrelated
+   document counts.
+4. Stop and report `committed` state on any ambiguous post-write failure; never retry
+   blindly.
+
+### Task 9 — Verify deployed login and hand off
+
+Owner: Primary operator/user.
+
+Dependencies: successful Task 8.
+
+Work:
+
+1. Start/redeploy Render only if needed and separately authorized.
+2. Verify API health.
+3. Verify normal Super Admin login using the private application password.
+4. Confirm the quarantined Designer is absent from active assignment selectors and
+   its five task links remain visible/preserved.
+5. Confirm other staff roles can be created later through the portal without
+   submitting an invitation in this task.
+6. Remove the protected temporary secret file only after the private login password
+   is securely retained.
 
 ## Safe parallelism
 
-- Tasks 2A and 2B may run in parallel because both are read-only and target different environments.
-- Dry-run reconciliation waits for both audits.
-- Environment confirmation, live approval, backup/recovery evidence, invitation creation, and final verification are sequential.
-- Production invitation writes must not be delegated to multiple agents or executed concurrently.
+- Tasks 2A and 2B are the only parallel writer tasks; their file ownership does not
+  overlap.
+- Task 3 waits for both writers.
+- Integrity review and verification are sequential after integration.
+- Private-input preparation, production dry run, exact approval, live transaction,
+  and deployed login verification are strictly sequential and never delegated.
 
 ## Acceptance-criteria traceability
 
-| Acceptance criterion | Primary task(s) | Verification |
+| Specification acceptance | Plan tasks | Evidence |
 |---|---|---|
-| AC 1 target is Render `lisno-api` database | 1, 2B, 4 | Sanitized fingerprint equality before dry run and write |
-| AC 2 one runtime Mongo database | 1, 6 | Render/repository configuration inspection |
-| AC 3 PII/secret-safe dry run | 2A, 2B, 3 | Output inspection and zero-write evidence |
-| AC 4 only active standard Admin/Designer eligible | 2A, 3 | Role/state/account-kind validation |
-| AC 5 demo/reserved identities rejected | 2A, 3, 6 | Reserved identity filter and final report |
-| AC 6 target Super Admin unchanged and singular | 2B–6 | Pre/post User and index checks |
-| AC 7 different source Super Admin blocks | 2A, 3 | Dry-run classification and zero-write proof |
-| AC 8 target identities never overwritten | 2B–6 | Conflict matrix and pre/post target digest |
-| AC 9 existing invitation flow only | 2B, 4, 5 | Authorized endpoint/service and audit evidence |
-| AC 10 fresh password/new target identity | 1, 5, 6 | No User before acceptance; acceptance contract inspection |
-| AC 11 transactionally audited | 5, 6 | Invitation/delivery/acceptance audit verification |
-| AC 12 excluded external/destructive actions | 1–6 | Final repository/deployment/database hygiene report |
+| Exact `/lisno` target and target-specific approval | 1, 2A, 6–8 | Independent URI/target/fingerprint checks and approval digest |
+| Zero-write sanitized dry run | 2A, 2B, 7 | Replica-set regression plus production dry-run report |
+| Atomic quarantine plus one insert | 2A, 2B, 8 | Transaction tests and post-write counts |
+| Legacy identity/task lineage preserved | 2A–5, 8–9 | Field-level and five-task reference assertions |
+| Sole Super Admin and unique email | 2A–5, 8 | Compatible index checks and concurrency tests |
+| Remote login succeeds | 2B, 9 | Auth regression and deployed login |
+| No unrelated data or external side effects | 2A–9 | Baseline digest, scoped diff, final hygiene report |
+| `lisno_prod` unchanged | 2A, 6–9 | Exact-target rejection and no source access |
 
-## External actions explicitly excluded until Task 4 approval
+## Expected duration after task-plan approval
 
-- No production invitation, token, audit, or email write.
-- No source or target User mutation.
-- No password-hash, stable-ID, grant, assignment, audit-history, or project-data transfer.
-- No Super Admin replacement or mutation.
-- No migration, seed, deletion, deployment, commit, push, secret rotation, account removal, cluster removal, or database cutover.
+- Parallel implementation and focused integration: approximately 10–15 minutes.
+- Integrity review and full local verification: approximately 10–15 minutes.
+- Private input update, production dry run, approved transaction, and login check:
+  approximately 5–10 minutes if Render/Atlas access is ready.
+
+These are estimates, not a substitute for the required safety gates or passing
+verification.
