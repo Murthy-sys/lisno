@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 const createMongoRepository = vi.hoisted(() => vi.fn());
 const createSmtpInvitationMailer = vi.hoisted(() => vi.fn());
 const createSmtpEstimateMailer = vi.hoisted(() => vi.fn());
+const createSmtpPasswordResetMailer = vi.hoisted(() => vi.fn());
 const prepareEstimateClientReviewIndexes = vi.hoisted(() => vi.fn());
 
 vi.mock("../src/repositories/mongo.js", () => ({ createMongoRepository }));
@@ -16,6 +17,10 @@ vi.mock("../src/services/smtp-estimate-mailer.js", async (importOriginal) => ({
   ...await importOriginal<typeof import("../src/services/smtp-estimate-mailer.js")>(),
   createSmtpEstimateMailer
 }));
+vi.mock("../src/services/smtp-password-reset-mailer.js", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../src/services/smtp-password-reset-mailer.js")>(),
+  createSmtpPasswordResetMailer
+}));
 vi.mock("../src/models/EstimateClientReviewRound.js", async (importOriginal) => ({
   ...await importOriginal<typeof import("../src/models/EstimateClientReviewRound.js")>(),
   prepareEstimateClientReviewIndexes
@@ -24,6 +29,7 @@ vi.mock("../src/models/EstimateClientReviewRound.js", async (importOriginal) => 
 import { startServer } from "../src/server.js";
 import { UserModel } from "../src/models/User.js";
 import { UserInvitationModel } from "../src/models/UserInvitation.js";
+import { PasswordResetRequestModel } from "../src/models/PasswordResetRequest.js";
 import { DesignPlanReviewRoundModel } from "../src/models/DesignPlanReviewRound.js";
 import { DesignPlanResponseProofModel } from "../src/models/DesignPlanResponseProof.js";
 import { ProjectWorkflowTaskModel } from "../src/models/ProjectWorkflowTask.js";
@@ -54,6 +60,7 @@ afterEach(() => {
   createMongoRepository.mockReset();
   createSmtpInvitationMailer.mockReset();
   createSmtpEstimateMailer.mockReset();
+  createSmtpPasswordResetMailer.mockReset();
   prepareEstimateClientReviewIndexes.mockReset();
   vi.restoreAllMocks();
 });
@@ -355,6 +362,10 @@ describe("production server bootstrap", () => {
       events.push("invitation-index");
       return UserInvitationModel as never;
     });
+    vi.spyOn(PasswordResetRequestModel, "init").mockImplementation(async () => {
+      events.push("password-reset-index");
+      return PasswordResetRequestModel as never;
+    });
     prepareEstimateClientReviewIndexes.mockImplementation(async () => {
       events.push("estimate-client-review-indexes");
     });
@@ -419,6 +430,7 @@ describe("production server bootstrap", () => {
       "connect",
       "user-index",
       "invitation-index",
+      "password-reset-index",
       "estimate-client-review-indexes",
       "design-plan-review-index",
       "design-plan-proof-index",
@@ -567,7 +579,7 @@ describe("production server bootstrap", () => {
     expect(writeOutput).not.toHaveBeenCalled();
   });
 
-  it("injects both disabled delivery boundaries without constructing SMTP", async () => {
+  it("injects every disabled delivery boundary without constructing SMTP", async () => {
     const server = fakeServer();
     const appFactory = vi.fn(() => ({
       listen: vi.fn((_port: number, callback: () => void) => {
@@ -589,15 +601,17 @@ describe("production server bootstrap", () => {
 
     expect(createSmtpInvitationMailer).not.toHaveBeenCalled();
     expect(createSmtpEstimateMailer).not.toHaveBeenCalled();
+    expect(createSmtpPasswordResetMailer).not.toHaveBeenCalled();
     expect(appFactory).toHaveBeenCalledWith(expect.objectContaining({
       invitationMailer: { deliveryKind: "disabled" },
+      passwordResetMailer: { deliveryKind: "disabled" },
       estimateMailer: { deliveryKind: "disabled" },
       clientPortalUrl: "http://localhost:5173/client"
     }));
     await runtime.stop();
   });
 
-  it("maps one complete SMTP union through both factories without exposing credentials to the app", async () => {
+  it("maps one complete SMTP union through every mail factory without exposing credentials to the app", async () => {
     const smtp = {
       kind: "smtp" as const,
       publicFrontendUrl: "https://app.example.test",
@@ -617,8 +631,14 @@ describe("production server bootstrap", () => {
       deliveryKind: "external" as const,
       send: vi.fn(async () => ({ kind: "sent" as const }))
     };
+    const externalPasswordResetMailer = {
+      deliveryKind: "external" as const,
+      sendResetLink: vi.fn(async () => undefined),
+      sendPasswordChanged: vi.fn(async () => undefined)
+    };
     createSmtpInvitationMailer.mockReturnValue(externalMailer);
     createSmtpEstimateMailer.mockReturnValue(externalEstimateMailer);
+    createSmtpPasswordResetMailer.mockReturnValue(externalPasswordResetMailer);
     const server = fakeServer();
     const appFactory = vi.fn(() => ({
       listen: vi.fn((_port: number, callback: () => void) => {
@@ -642,8 +662,11 @@ describe("production server bootstrap", () => {
     expect(createSmtpInvitationMailer).toHaveBeenCalledWith(smtp);
     expect(createSmtpEstimateMailer).toHaveBeenCalledOnce();
     expect(createSmtpEstimateMailer).toHaveBeenCalledWith(smtp);
+    expect(createSmtpPasswordResetMailer).toHaveBeenCalledOnce();
+    expect(createSmtpPasswordResetMailer).toHaveBeenCalledWith(smtp);
     expect(appFactory).toHaveBeenCalledWith(expect.objectContaining({
       invitationMailer: externalMailer,
+      passwordResetMailer: externalPasswordResetMailer,
       estimateMailer: externalEstimateMailer,
       clientPortalUrl: "https://app.example.test/client"
     }));

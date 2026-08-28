@@ -90,6 +90,9 @@ const genericJsonRequestBody: OpenApiRequestBody = {
 const requestBodiesByOperation: Readonly<Record<string, OpenApiRequestBody>> = {
   "POST /auth/login": jsonRequest("LoginRequest"),
   "POST /auth/client-signup": jsonRequest("ClientSignupRequest"),
+  "POST /auth/password-reset/request": jsonRequest("PasswordResetRequest"),
+  "POST /auth/password-reset/inspect": jsonRequest("PasswordResetInspectRequest"),
+  "POST /auth/password-reset/complete": jsonRequest("PasswordResetCompleteRequest"),
   "POST /auth/user-invitations/inspect": jsonRequest("InvitationInspectRequest"),
   "POST /auth/user-invitations/accept": jsonRequest("InvitationAcceptRequest"),
   "POST /admin/projects": jsonRequest("AdminProjectInitiationRequest"),
@@ -162,6 +165,9 @@ const operationsWithoutBodies = new Set<string>([
 const responseSchemaByOperation: Readonly<Record<string, string>> = {
   "POST /auth/login": "AuthPayload",
   "POST /auth/client-signup": "AuthPayload",
+  "POST /auth/password-reset/request": "PasswordResetAccepted",
+  "POST /auth/password-reset/inspect": "PasswordResetAvailable",
+  "POST /auth/password-reset/complete": "PasswordResetCompleted",
   "GET /auth/me": "PublicUser",
   "GET /auth/authorization": "AuthorizationSnapshot",
   "GET /admin/designers": "DesignerOptionList",
@@ -237,6 +243,9 @@ const operationSummaries: Readonly<Record<string, string>> = {
   "GET /health": "Check API health",
   "POST /auth/login": "Sign in and issue a JWT",
   "POST /auth/client-signup": "Create a Client account",
+  "POST /auth/password-reset/request": "Request password-reset instructions",
+  "POST /auth/password-reset/inspect": "Inspect a password-reset link",
+  "POST /auth/password-reset/complete": "Choose a new password",
   "GET /auth/me": "Read the current user",
   "GET /auth/authorization": "Read the current authorization snapshot",
   "POST /auth/user-invitations/inspect": "Inspect a staff invitation",
@@ -588,6 +597,46 @@ addOperation(
 
 addOperation(
   paths,
+  "/auth/password-reset/request",
+  "POST",
+  publicOperation("POST /auth/password-reset/request", {
+    requestBody: requestBodiesByOperation["POST /auth/password-reset/request"],
+    responses: publicJsonResponses(
+      "PasswordResetAccepted",
+      ["400", "429", "500", "503"],
+      "202"
+    )
+  })
+);
+
+addOperation(
+  paths,
+  "/auth/password-reset/inspect",
+  "POST",
+  publicOperation("POST /auth/password-reset/inspect", {
+    requestBody: requestBodiesByOperation["POST /auth/password-reset/inspect"],
+    responses: publicJsonResponses(
+      "PasswordResetAvailable",
+      ["400", "410", "429", "500"]
+    )
+  })
+);
+
+addOperation(
+  paths,
+  "/auth/password-reset/complete",
+  "POST",
+  publicOperation("POST /auth/password-reset/complete", {
+    requestBody: requestBodiesByOperation["POST /auth/password-reset/complete"],
+    responses: publicJsonResponses(
+      "PasswordResetCompleted",
+      ["400", "410", "429", "500"]
+    )
+  })
+);
+
+addOperation(
+  paths,
   "/auth/user-invitations/inspect",
   "POST",
   publicOperation("POST /auth/user-invitations/inspect", {
@@ -864,6 +913,7 @@ function publicErrorResponse(code: string): OpenApiResponse {
     "409": "Conflict",
     "410": "Gone",
     "429": "TooManyRequests",
+    "503": "ServiceUnavailable",
     "500": "InternalError"
   };
   return { $ref: `#/components/responses/${names[code] ?? "InternalError"}` };
@@ -1124,6 +1174,69 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
           description: "Must exactly match password."
         }
       }
+    },
+    PasswordResetRequest: {
+      type: "object",
+      additionalProperties: false,
+      required: ["email"],
+      properties: {
+        email: { type: "string", format: "email" }
+      }
+    },
+    PasswordResetInspectRequest: {
+      type: "object",
+      additionalProperties: false,
+      required: ["token"],
+      properties: {
+        token: {
+          type: "string",
+          minLength: 43,
+          maxLength: 43,
+          pattern: "^[A-Za-z0-9_-]{43}$"
+        }
+      }
+    },
+    PasswordResetCompleteRequest: {
+      type: "object",
+      additionalProperties: false,
+      required: ["token", "password", "passwordConfirmation"],
+      properties: {
+        token: {
+          type: "string",
+          minLength: 43,
+          maxLength: 43,
+          pattern: "^[A-Za-z0-9_-]{43}$"
+        },
+        password: {
+          type: "string",
+          format: "password",
+          minLength: 12,
+          maxLength: 128
+        },
+        passwordConfirmation: {
+          type: "string",
+          format: "password",
+          description: "Must exactly match password."
+        }
+      }
+    },
+    PasswordResetAccepted: {
+      type: "object",
+      additionalProperties: false,
+      required: ["accepted"],
+      properties: { accepted: { type: "boolean", enum: [true] } }
+    },
+    PasswordResetAvailable: {
+      type: "object",
+      additionalProperties: false,
+      required: ["available"],
+      properties: { available: { type: "boolean", enum: [true] } }
+    },
+    PasswordResetCompleted: {
+      type: "object",
+      additionalProperties: false,
+      required: ["reset"],
+      properties: { reset: { type: "boolean", enum: [true] } }
     },
     InvitationInspectRequest: {
       type: "object",

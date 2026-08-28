@@ -9,10 +9,12 @@ import { ProcurementReceiptCleanupJobModel } from "./ProcurementReceiptCleanupJo
 import { ProcurementReceiptReconciliationJobModel } from "./ProcurementReceiptReconciliationJob.js";
 import { UserModel } from "./User.js";
 import { UserInvitationModel } from "./UserInvitation.js";
+import { PasswordResetRequestModel } from "./PasswordResetRequest.js";
 
 export async function initializeApplicationIndexes(): Promise<void> {
   await UserModel.init();
   await UserInvitationModel.init();
+  await PasswordResetRequestModel.init();
   await prepareEstimateClientReviewIndexes();
   await DesignPlanReviewRoundModel.init();
   await DesignPlanResponseProofModel.init();

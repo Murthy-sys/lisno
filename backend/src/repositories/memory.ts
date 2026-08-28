@@ -15,6 +15,11 @@ import {
   tokenValidityForInvitation
 } from "../domain/user-invitations.js";
 import {
+  PASSWORD_RESET_DELIVERY_FAILURE_CODE_PATTERN,
+  PASSWORD_RESET_TOKEN_HASH_PATTERN,
+  PASSWORD_RESET_TTL_MS
+} from "../domain/password-resets.js";
+import {
   PROJECT_MODULES,
   REQUESTABLE_PROJECT_MODULES
 } from "../domain/authorization.js";
@@ -52,6 +57,7 @@ import {
   type ProjectHierarchy,
   type ProjectRecord,
   type ProjectAccessGrantRecord,
+  type PasswordResetRequestRecord,
   type SeedData,
   type TaskEventRecord,
   type TaskFilters,
@@ -93,6 +99,10 @@ const mutationMethods = new Set<keyof AppRepository>([
   "revokeUserInvitation",
   "acceptUserInvitation",
   "updateUserInvitationDelivery",
+  "createPasswordReset",
+  "supersedePasswordReset",
+  "completePasswordReset",
+  "updatePasswordResetDelivery",
   "coordinateAuthorizationMutation",
   "createAccessRequest",
   "findOrCreatePendingAccessRequest",
@@ -107,6 +117,7 @@ const mutationMethods = new Set<keyof AppRepository>([
   "appendLeadActivity",
   "createUser",
   "updateUser",
+  "updateUserCredentials",
   "linkUnclaimedProjectsToClient",
   "createFloor",
   "createDesignStage",
@@ -137,10 +148,12 @@ const mutationMethods = new Set<keyof AppRepository>([
 export function createMemoryRepository(seed: SeedData = demoSeedData): AppRepository {
   const normalizedSeed = clone(seed);
   normalizedSeed.userInvitations ??= [];
+  normalizedSeed.passwordResetRequests ??= [];
   normalizedSeed.users = normalizedSeed.users.map((user) => ({
     ...user,
     accountKind: user.accountKind === "development_demo" ? "development_demo" : "standard",
-    version: user.version ?? 1
+    version: user.version ?? 1,
+    sessionVersion: user.sessionVersion ?? 1
   }));
   normalizedSeed.estimateResponsibilities ??= [];
   normalizedSeed.estimateSummaries = (normalizedSeed.estimateSummaries ?? []).map(
@@ -271,6 +284,164 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
 
     async coordinateClientEmail(emailNormalized) {
       normalizeEmail(emailNormalized);
+    },
+
+    async findPasswordResetById(id) {
+      return copyOrNull(
+        state.passwordResetRequests!.find((reset) => reset.id === id)
+      );
+    },
+
+    async findPendingPasswordResetByUserId(userId) {
+      return copyOrNull(
+        state.passwordResetRequests!.find(
+          (reset) => reset.userId === userId && reset.status === "pending"
+        )
+      );
+    },
+
+    async findPendingPasswordResetByTokenHash(tokenHash) {
+      if (!PASSWORD_RESET_TOKEN_HASH_PATTERN.test(tokenHash)) return null;
+      return copyOrNull(
+        state.passwordResetRequests!.find(
+          (reset) =>
+            reset.status === "pending" && reset.tokenHash === tokenHash
+        )
+      );
+    },
+
+    async findLatestPasswordResetIssuedAt(userId) {
+      return state.passwordResetRequests!
+        .filter((reset) => reset.userId === userId)
+        .sort(
+          (left, right) =>
+            Date.parse(right.issuedAt) - Date.parse(left.issuedAt) ||
+            right.id.localeCompare(left.id)
+        )[0]?.issuedAt ?? null;
+    },
+
+    async countPasswordResetsIssuedSince(userId, since) {
+      const sinceMs = Date.parse(since);
+      return state.passwordResetRequests!.filter(
+        (reset) =>
+          reset.userId === userId && Date.parse(reset.issuedAt) > sinceMs
+      ).length;
+    },
+
+    async createPasswordReset(input) {
+      const resets = state.passwordResetRequests!;
+      ensureUniqueId(resets, input.id, "Password reset");
+      assertPasswordResetState(input);
+      if (
+        input.tokenHash === null ||
+        !PASSWORD_RESET_TOKEN_HASH_PATTERN.test(input.tokenHash)
+      ) {
+        throw new RepositoryConflictError("Password reset token digest is invalid.");
+      }
+      if (resets.some((reset) => reset.tokenHash === input.tokenHash)) {
+        throw new RepositoryConflictError("Password reset token digest already exists.");
+      }
+      if (
+        input.status !== "pending" ||
+        resets.some(
+          (reset) => reset.userId === input.userId && reset.status === "pending"
+        )
+      ) {
+        throw new RepositoryConflictError(
+          `Pending password reset already exists for User ${input.userId}.`
+        );
+      }
+      const record = clone(input);
+      resets.push(record);
+      return clone(record);
+    },
+
+    async supersedePasswordReset(id, expectedVersion, change) {
+      const resets = state.passwordResetRequests!;
+      const index = resets.findIndex((reset) => reset.id === id);
+      if (index < 0) {
+        throw new RepositoryNotFoundError(`Password reset ${id} was not found.`);
+      }
+      const current = resets[index]!;
+      if (current.status !== "pending" || current.version !== expectedVersion) {
+        throw new RepositoryConflictError(`Password reset ${id} changed concurrently.`);
+      }
+      const updated: PasswordResetRequestRecord = {
+        ...current,
+        tokenHash: null,
+        status: "superseded",
+        supersededByResetId: change.supersededByResetId,
+        supersededAt: change.supersededAt,
+        updatedAt: change.updatedAt,
+        version: current.version + 1
+      };
+      resets[index] = updated;
+      return clone(updated);
+    },
+
+    async completePasswordReset(
+      id,
+      expectedVersion,
+      expectedGeneration,
+      expectedTokenHash,
+      change
+    ) {
+      const resets = state.passwordResetRequests!;
+      const index = resets.findIndex((reset) => reset.id === id);
+      if (index < 0) {
+        throw new RepositoryNotFoundError(`Password reset ${id} was not found.`);
+      }
+      const current = resets[index]!;
+      if (
+        current.status !== "pending" ||
+        current.version !== expectedVersion ||
+        current.tokenGeneration !== expectedGeneration ||
+        current.tokenHash === null ||
+        !tokenHashesEqual(current.tokenHash, expectedTokenHash)
+      ) {
+        throw new RepositoryConflictError(`Password reset ${id} changed concurrently.`);
+      }
+      const updated: PasswordResetRequestRecord = {
+        ...current,
+        tokenHash: null,
+        status: "completed",
+        completedAt: change.completedAt,
+        updatedAt: change.updatedAt,
+        version: current.version + 1
+      };
+      resets[index] = updated;
+      return clone(updated);
+    },
+
+    async updatePasswordResetDelivery(id, tokenGeneration, change) {
+      const resets = state.passwordResetRequests!;
+      const index = resets.findIndex(
+        (reset) =>
+          reset.id === id &&
+          reset.status === "pending" &&
+          reset.tokenGeneration === tokenGeneration &&
+          reset.deliveryStatus === "queued"
+      );
+      if (index < 0) return null;
+      if (
+        change.status === "failed" &&
+        !PASSWORD_RESET_DELIVERY_FAILURE_CODE_PATTERN.test(change.failureCode)
+      ) {
+        throw new RepositoryConflictError("Password reset delivery code is invalid.");
+      }
+      const current = resets[index]!;
+      const updated: PasswordResetRequestRecord = {
+        ...current,
+        deliveryStatus: change.status,
+        deliveryAttemptedAt: change.attemptedAt,
+        sentAt: change.status === "sent" ? change.sentAt : null,
+        deliveryFailureCode:
+          change.status === "failed" ? change.failureCode : null,
+        updatedAt: change.updatedAt,
+        version: current.version + 1
+      };
+      resets[index] = updated;
+      return clone(updated);
     },
 
     async findUserInvitationById(id) {
@@ -784,6 +955,7 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
         active: input.active ?? true,
         accountKind: input.accountKind ?? "standard",
         version: 1,
+        sessionVersion: input.sessionVersion ?? 1,
         managerId: input.managerId ?? null,
         authorizedClientIds: input.authorizedClientIds ?? [],
         ...(input.avatar ? { avatar: input.avatar } : {}),
@@ -886,6 +1058,34 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
         ...(change.active === undefined ? {} : { active: change.active }),
         updatedAt: change.updatedAt,
         version: current.version + 1
+      };
+      state.users[index] = updated;
+      return clone(updated);
+    },
+
+    async updateUserCredentials(
+      userId,
+      expectedVersion,
+      expectedSessionVersion,
+      change
+    ) {
+      const index = state.users.findIndex((user) => user.id === userId);
+      if (index < 0) {
+        throw new RepositoryNotFoundError(`User ${userId} was not found.`);
+      }
+      const current = state.users[index]!;
+      if (
+        current.version !== expectedVersion ||
+        (current.sessionVersion ?? 1) !== expectedSessionVersion
+      ) {
+        throw new RepositoryConflictError(`User ${userId} changed concurrently.`);
+      }
+      const updated: UserRecord = {
+        ...current,
+        passwordHash: change.passwordHash,
+        updatedAt: change.updatedAt,
+        version: current.version + 1,
+        sessionVersion: (current.sessionVersion ?? 1) + 1
       };
       state.users[index] = updated;
       return clone(updated);
@@ -2532,6 +2732,7 @@ function assertAuthorizationUniqueness(seed: SeedData) {
     throw new RepositoryConflictError("Only one Super Admin account is allowed.");
   }
   assertUserInvitationUniqueness(seed.userInvitations);
+  assertPasswordResetUniqueness(seed.passwordResetRequests ?? []);
   const requestIds = new Set<string>();
   const pendingTuples = new Set<string>();
   for (const request of seed.accessRequests) {
@@ -2570,6 +2771,97 @@ function assertAuthorizationUniqueness(seed: SeedData) {
       throw new RepositoryConflictError("Active project access grant already exists.");
     }
     activeTuples.add(tuple);
+  }
+}
+
+function assertPasswordResetUniqueness(
+  resets: PasswordResetRequestRecord[]
+) {
+  const ids = new Set<string>();
+  const pendingUsers = new Set<string>();
+  const tokenHashes: string[] = [];
+  for (const reset of resets) {
+    assertPasswordResetState(reset);
+    if (ids.has(reset.id)) {
+      throw new RepositoryConflictError(`Password reset ${reset.id} already exists.`);
+    }
+    ids.add(reset.id);
+    if (reset.status === "pending") {
+      if (
+        reset.tokenHash === null ||
+        !PASSWORD_RESET_TOKEN_HASH_PATTERN.test(reset.tokenHash) ||
+        pendingUsers.has(reset.userId)
+      ) {
+        throw new RepositoryConflictError(
+          `Pending password reset already exists for User ${reset.userId}.`
+        );
+      }
+      pendingUsers.add(reset.userId);
+    } else if (reset.tokenHash !== null) {
+      throw new RepositoryConflictError("Terminal password reset retained a token.");
+    }
+    if (reset.tokenHash !== null) {
+      if (tokenHashes.some((hash) => tokenHashesEqual(hash, reset.tokenHash!))) {
+        throw new RepositoryConflictError("Password reset token digest already exists.");
+      }
+      tokenHashes.push(reset.tokenHash);
+    }
+  }
+}
+
+function assertPasswordResetState(reset: PasswordResetRequestRecord) {
+  if (
+    !(["pending", "superseded", "completed"] as const).includes(reset.status) ||
+    !(["queued", "sent", "failed"] as const).includes(reset.deliveryStatus) ||
+    !Number.isSafeInteger(reset.userVersion) ||
+    reset.userVersion < 1 ||
+    !Number.isSafeInteger(reset.sessionVersion) ||
+    reset.sessionVersion < 1 ||
+    !Number.isSafeInteger(reset.tokenGeneration) ||
+    reset.tokenGeneration < 1 ||
+    !Number.isSafeInteger(reset.version) ||
+    reset.version < 1 ||
+    Date.parse(reset.expiresAt) - Date.parse(reset.issuedAt) !==
+      PASSWORD_RESET_TTL_MS
+  ) {
+    throw new RepositoryConflictError("Password reset version or expiry is invalid.");
+  }
+  if (
+    reset.status === "pending"
+      ? reset.tokenHash === null ||
+        !PASSWORD_RESET_TOKEN_HASH_PATTERN.test(reset.tokenHash) ||
+        reset.supersededByResetId !== null ||
+        reset.supersededAt !== null ||
+        reset.completedAt !== null
+      : reset.status === "superseded"
+        ? reset.tokenHash !== null ||
+          !reset.supersededByResetId ||
+          reset.supersededAt === null ||
+          reset.completedAt !== null
+        : reset.tokenHash !== null ||
+          reset.supersededByResetId !== null ||
+          reset.supersededAt !== null ||
+          reset.completedAt === null
+  ) {
+    throw new RepositoryConflictError("Password reset state is invalid.");
+  }
+  if (
+    reset.deliveryStatus === "queued"
+      ? reset.deliveryAttemptedAt !== null ||
+        reset.sentAt !== null ||
+        reset.deliveryFailureCode !== null
+      : reset.deliveryStatus === "sent"
+        ? reset.deliveryAttemptedAt === null ||
+          reset.sentAt === null ||
+          reset.deliveryFailureCode !== null
+        : reset.deliveryAttemptedAt === null ||
+          reset.sentAt !== null ||
+          reset.deliveryFailureCode === null ||
+          !PASSWORD_RESET_DELIVERY_FAILURE_CODE_PATTERN.test(
+            reset.deliveryFailureCode
+          )
+  ) {
+    throw new RepositoryConflictError("Password reset delivery state is invalid.");
   }
 }
 
@@ -2707,6 +2999,16 @@ function latestTimestamp(seed: SeedData): number {
       record.acceptedAt,
       record.revokedAt,
       record.supersededAt,
+      record.deliveryAttemptedAt,
+      record.sentAt,
+      record.createdAt,
+      record.updatedAt
+    ]),
+    ...(seed.passwordResetRequests ?? []).flatMap((record) => [
+      record.issuedAt,
+      record.expiresAt,
+      record.supersededAt,
+      record.completedAt,
       record.deliveryAttemptedAt,
       record.sentAt,
       record.createdAt,

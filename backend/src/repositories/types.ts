@@ -13,6 +13,10 @@ import type {
   UserInvitationTokenValidity
 } from "../domain/user-invitations.js";
 import type {
+  PasswordResetDeliveryStatus,
+  PasswordResetStoredStatus
+} from "../domain/password-resets.js";
+import type {
   ProjectModule,
   RequestableProjectModule
 } from "../domain/authorization.js";
@@ -76,6 +80,7 @@ export interface UserRecord {
   active: boolean;
   accountKind: AccountKind;
   version: number;
+  sessionVersion: number;
   managerId: string | null;
   authorizedClientIds: string[];
   avatar?: string;
@@ -83,6 +88,53 @@ export interface UserRecord {
   createdAt: string;
   updatedAt: string;
 }
+
+export interface PasswordResetRequestRecord {
+  id: string;
+  userId: string;
+  userVersion: number;
+  sessionVersion: number;
+  tokenHash: string | null;
+  tokenGeneration: number;
+  issuedAt: string;
+  expiresAt: string;
+  status: PasswordResetStoredStatus;
+  supersededByResetId: string | null;
+  supersededAt: string | null;
+  completedAt: string | null;
+  deliveryStatus: PasswordResetDeliveryStatus;
+  deliveryAttemptedAt: string | null;
+  sentAt: string | null;
+  deliveryFailureCode: string | null;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SupersedePasswordResetChange {
+  supersededByResetId: string;
+  supersededAt: string;
+  updatedAt: string;
+}
+
+export interface CompletePasswordResetChange {
+  completedAt: string;
+  updatedAt: string;
+}
+
+export type PasswordResetDeliveryChange =
+  | {
+      status: "sent";
+      attemptedAt: string;
+      sentAt: string;
+      updatedAt: string;
+    }
+  | {
+      status: "failed";
+      attemptedAt: string;
+      failureCode: string;
+      updatedAt: string;
+    };
 
 export interface UserInvitationRecord {
   id: string;
@@ -812,6 +864,7 @@ export interface GrantRevocation {
 export interface SeedData {
   users: UserRecord[];
   userInvitations: UserInvitationRecord[];
+  passwordResetRequests?: PasswordResetRequestRecord[];
   leads: LeadRecord[];
   estimateResponsibilities: EstimateResponsibilityRecord[];
   estimateSummaries?: EstimateSummaryRecord[];
@@ -843,6 +896,7 @@ export type NewUser = Pick<UserRecord, "name" | "email" | "passwordHash" | "role
       | "address"
       | "active"
       | "accountKind"
+      | "sessionVersion"
       | "managerId"
       | "authorizedClientIds"
       | "avatar"
@@ -860,6 +914,35 @@ export interface AppRepository {
     operation: (repository: AppRepository) => Promise<T>
   ): Promise<T>;
   coordinateClientEmail(emailNormalized: string): Promise<void>;
+  findPasswordResetById(id: string): Promise<PasswordResetRequestRecord | null>;
+  findPendingPasswordResetByUserId(
+    userId: string
+  ): Promise<PasswordResetRequestRecord | null>;
+  findPendingPasswordResetByTokenHash(
+    tokenHash: string
+  ): Promise<PasswordResetRequestRecord | null>;
+  findLatestPasswordResetIssuedAt(userId: string): Promise<string | null>;
+  countPasswordResetsIssuedSince(userId: string, since: string): Promise<number>;
+  createPasswordReset(
+    input: PasswordResetRequestRecord
+  ): Promise<PasswordResetRequestRecord>;
+  supersedePasswordReset(
+    id: string,
+    expectedVersion: number,
+    change: SupersedePasswordResetChange
+  ): Promise<PasswordResetRequestRecord>;
+  completePasswordReset(
+    id: string,
+    expectedVersion: number,
+    expectedGeneration: number,
+    expectedTokenHash: string,
+    change: CompletePasswordResetChange
+  ): Promise<PasswordResetRequestRecord>;
+  updatePasswordResetDelivery(
+    id: string,
+    tokenGeneration: number,
+    change: PasswordResetDeliveryChange
+  ): Promise<PasswordResetRequestRecord | null>;
   findUserInvitationById(id: string): Promise<UserInvitationRecord | null>;
   findPendingUserInvitationByEmail(
     emailNormalized: string
@@ -973,6 +1056,12 @@ export interface AppRepository {
     userId: string,
     expectedVersion: number,
     change: { role?: Role; active?: boolean; updatedAt: string }
+  ): Promise<UserRecord>;
+  updateUserCredentials(
+    userId: string,
+    expectedVersion: number,
+    expectedSessionVersion: number,
+    change: { passwordHash: string; updatedAt: string }
   ): Promise<UserRecord>;
   pageAllLeads(filters: LeadFilters, pagination: PaginationInput): Promise<PageResult<LeadRecord>>;
   pageLeadsForOwner(ownerId: string, filters: LeadFilters, pagination: PaginationInput): Promise<PageResult<LeadRecord>>;

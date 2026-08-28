@@ -35,6 +35,7 @@ const user = (
   active: true,
   accountKind: input.accountKind ?? "development_demo",
   version: 1,
+  sessionVersion: 1,
   managerId: input.managerId ?? null,
   authorizedClientIds: [...(input.authorizedClientIds ?? [])],
   createdAt: CREATED_AT,
@@ -414,6 +415,7 @@ const tasks: TaskRecord[] = [
 export const demoSeedData: SeedData = {
   users,
   userInvitations: [],
+  passwordResetRequests: [],
   leads: [],
   estimateResponsibilities: [],
   estimateSummaries: [],

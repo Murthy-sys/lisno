@@ -36,6 +36,7 @@ export interface SeedModels {
   projectAccessGrant: Model<any>;
   authorizationCoordination: Model<any>;
   userInvitation: Model<any>;
+  passwordResetRequest: Model<any>;
   emailCoordination: Model<any>;
 }
 
@@ -65,6 +66,7 @@ async function loadSeedModels(): Promise<SeedModels> {
     projectAccessGrant,
     authorizationCoordination,
     userInvitation,
+    passwordResetRequest,
     emailCoordination
   ] = await Promise.all([
     import("../models/User.js"),
@@ -81,6 +83,7 @@ async function loadSeedModels(): Promise<SeedModels> {
     import("../models/ProjectAccessGrant.js"),
     import("../models/AuthorizationCoordination.js"),
     import("../models/UserInvitation.js"),
+    import("../models/PasswordResetRequest.js"),
     import("../models/EmailCoordination.js")
   ]);
   return {
@@ -99,6 +102,7 @@ async function loadSeedModels(): Promise<SeedModels> {
     authorizationCoordination:
       authorizationCoordination.AuthorizationCoordinationModel,
     userInvitation: userInvitation.UserInvitationModel,
+    passwordResetRequest: passwordResetRequest.PasswordResetRequestModel,
     emailCoordination: emailCoordination.EmailCoordinationModel
   };
 }
@@ -155,6 +159,7 @@ async function resetAuthorizedSeedCollections(
     models.projectAccessGrant,
     models.authorizationCoordination,
     models.userInvitation,
+    models.passwordResetRequest,
     models.emailCoordination
   ].map((model) => model.deleteMany({})));
   await replaceAll(models.user, demoSeedData.users, userDocument);

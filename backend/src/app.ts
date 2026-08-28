@@ -10,6 +10,10 @@ import type { DevelopmentDemoAuthorization } from "./development/demo-account-au
 import { createAuthRateLimit } from "./middleware/auth-rate-limit.js";
 import { createAccessRequestRateLimit } from "./middleware/access-request-rate-limit.js";
 import {
+  createPasswordResetRateLimit,
+  type PasswordResetRateLimitOptions
+} from "./middleware/password-reset-rate-limit.js";
+import {
   createInvitationDeliveryRateLimit,
   createInvitationPublicRateLimit,
   type InvitationRateLimitOptions
@@ -24,6 +28,7 @@ import { createAdminUsersRouter } from "./routes/admin-users.js";
 import { createAdminProjectsRouter } from "./routes/admin-projects.js";
 import { apiDocsRouter } from "./routes/api-docs.js";
 import { createAuthRouter } from "./routes/auth.js";
+import { createPasswordResetsRouter } from "./routes/password-resets.js";
 import { createEvaluationsRouter } from "./routes/evaluations.js";
 import { createDesignVersionsRouter } from "./routes/design-versions.js";
 import { createDesignSectionsRouter } from "./routes/design-sections.js";
@@ -81,6 +86,11 @@ import {
 } from "./services/estimate-pdf.service.js";
 import { createTaskService } from "./services/task.service.js";
 import type { InvitationMailer } from "./services/invitation-mailer.js";
+import type { PasswordResetMailer } from "./services/password-reset-mailer.js";
+import {
+  createPasswordResetService,
+  type PasswordResetAsyncFailure
+} from "./services/password-reset.service.js";
 import { createUserInvitationService } from "./services/user-invitation.service.js";
 import { systemClock, type Clock } from "./services/workflow.js";
 import { createLocalStorage } from "./storage/local-storage.js";
@@ -108,6 +118,12 @@ export interface AppDependencies {
   allowDemoAccountExternalEmail?: boolean;
   invitationPublicRateLimit?: InvitationRateLimitOptions;
   invitationDeliveryRateLimit?: InvitationRateLimitOptions;
+  passwordResetMailer?: PasswordResetMailer;
+  passwordResetRateLimit?: PasswordResetRateLimitOptions;
+  passwordResetDispatch?: (operation: () => Promise<void>) => void;
+  passwordResetAsyncFailureReporter?: (
+    failure: PasswordResetAsyncFailure
+  ) => void;
   estimatePdfService?: EstimatePdfService;
   estimateMailer?: EstimateMailer;
   designPlanMailer?: DesignPlanMailer;
@@ -156,6 +172,12 @@ export function createApp(dependencies: AppDependencies) {
       dependencies.invitationDeliveryRateLimit?.clock ??
       (() => clock().getTime())
   });
+  const passwordResetRateLimit = createPasswordResetRateLimit({
+    ...dependencies.passwordResetRateLimit,
+    clock:
+      dependencies.passwordResetRateLimit?.clock ??
+      (() => clock().getTime())
+  });
   const accessRequestService = createAccessRequestService(
     repository,
     auditService,
@@ -172,6 +194,18 @@ export function createApp(dependencies: AppDependencies) {
     mailer: dependencies.invitationMailer ?? { deliveryKind: "disabled" },
     allowDemoAccountExternalEmail: dependencies.allowDemoAccountExternalEmail,
     clock
+  });
+  const passwordResetService = createPasswordResetService({
+    repository,
+    audit: auditService,
+    mailer: dependencies.passwordResetMailer ?? { deliveryKind: "disabled" },
+    clock,
+    ...(dependencies.passwordResetDispatch
+      ? { dispatch: dependencies.passwordResetDispatch }
+      : {}),
+    ...(dependencies.passwordResetAsyncFailureReporter
+      ? { reportAsyncFailure: dependencies.passwordResetAsyncFailureReporter }
+      : {})
   });
   const adminProjectService = createAdminProjectService(
     repository,
@@ -304,10 +338,12 @@ export function createApp(dependencies: AppDependencies) {
     );
   }
   app.post(publicInvitationPaths, noStore, invitationPublicRateLimit);
+  app.post(publicPasswordResetPaths, noStore, passwordResetRateLimit);
   // Annotation documents are capped at 256 KiB by their domain schema.
   app.use(express.json({ limit: "300kb" }));
   app.use("/api/v1", healthRouter);
   app.use("/api/v1", createAuthRouter(authService, authRateLimit));
+  app.use("/api/v1", createPasswordResetsRouter(passwordResetService));
   app.use(
     "/api/v1",
     createUserInvitationsRouter(
@@ -415,6 +451,12 @@ export function createApp(dependencies: AppDependencies) {
 const publicInvitationPaths = [
   "/api/v1/auth/user-invitations/inspect",
   "/api/v1/auth/user-invitations/accept"
+];
+
+const publicPasswordResetPaths = [
+  "/api/v1/auth/password-reset/request",
+  "/api/v1/auth/password-reset/inspect",
+  "/api/v1/auth/password-reset/complete"
 ];
 
 const noStore: RequestHandler = (_request, response, next) => {

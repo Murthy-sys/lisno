@@ -19,6 +19,8 @@ import { AuthRouteState } from "../auth/AuthRouteState";
 import { useAuth } from "../auth/AuthProvider";
 import { LoginPage } from "../auth/LoginPage";
 import { InvitationAcceptancePage } from "../auth/InvitationAcceptancePage";
+import { ForgotPasswordPage } from "../auth/ForgotPasswordPage";
+import { PasswordResetPage } from "../auth/PasswordResetPage";
 import { PermissionRoute } from "../auth/PermissionRoute";
 import { SignupPage } from "../auth/SignupPage";
 import { ProtectedRoute } from "../auth/ProtectedRoute";
@@ -330,6 +332,8 @@ export function AppRoutes() {
       <Routes>
       <Route path="/login" element={<LoginRoute />} />
       <Route path="/signup" element={<SignupRoute />} />
+      <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+      <Route path="/reset-password" element={<PasswordResetPage />} />
       <Route path="/accept-invitation" element={<InvitationAcceptancePage />} />
       <Route path="/" element={<HomeRedirect />} />
       <Route

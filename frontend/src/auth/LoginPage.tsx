@@ -216,6 +216,10 @@ export function LoginPage() {
               )}
             </Field>
 
+            <p className="login-recovery-link">
+              <Link to="/forgot-password">Forgot password?</Link>
+            </p>
+
             <Button
               type="submit"
               className="login-submit"
