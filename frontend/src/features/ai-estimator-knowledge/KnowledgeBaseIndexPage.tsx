@@ -459,12 +459,17 @@ function BasketEditorDialog({ existing, onClose, onCreated }: {
 }) {
   const [name, setName] = useState(existing?.name ?? "");
   const [description, setDescription] = useState(existing?.description ?? "");
-  const [displayOrder, setDisplayOrder] = useState(String(existing?.displayOrder ?? 0));
+  const [displayOrder, setDisplayOrder] = useState(String(existing?.displayOrder ?? ""));
   const [status, setStatus] = useState<"active" | "inactive">(existing?.status === "inactive" ? "inactive" : "active");
+  const displayOrderValid = !existing || (
+    displayOrder.trim() !== "" &&
+    Number.isSafeInteger(Number(displayOrder)) &&
+    Number(displayOrder) >= 0
+  );
   const mutation = useMutation({
     mutationFn: () => existing
       ? updateKnowledgeBasket(existing.id, { expectedVersion: existing.version, name, description: description.trim() || null, displayOrder: Number(displayOrder), status })
-      : createKnowledgeBasket({ name, description: description.trim() || null, displayOrder: Number(displayOrder) }),
+      : createKnowledgeBasket({ name, description: description.trim() || null }),
     onSuccess: onCreated
   });
   return (
@@ -474,12 +479,14 @@ function BasketEditorDialog({ existing, onClose, onCreated }: {
           {mutation.error ? <InlineMessage tone="error" role="alert">{mutation.error.message}</InlineMessage> : null}
           <Field id="basket-name" label="Basket name" required>{(props) => <Input {...props} value={name} onChange={(event) => setName(event.target.value)} />}</Field>
           <Field id="basket-description" label="Description" hint="Optional context shown alongside the basket in the knowledge base.">{(props) => <Textarea {...props} value={description} onChange={(event) => setDescription(event.target.value)} />}</Field>
-          <div className="knowledge-form-grid">
-            <Field id="basket-order" label="Display order" required hint="Lower numbers appear first.">{(props) => <Input {...props} type="number" min={0} step={1} value={displayOrder} onChange={(event) => setDisplayOrder(event.target.value)} />}</Field>
-            {existing ? <Field id="basket-status" label="Status">{(props) => <Select {...props} value={status} onChange={(event) => setStatus(event.target.value as typeof status)}><option value="active">Active</option><option value="inactive">Inactive</option></Select>}</Field> : null}
-          </div>
+          {existing ? (
+            <div className="knowledge-form-grid">
+              <Field id="basket-order" label="Display order" required hint="Lower numbers appear first.">{(props) => <Input {...props} type="number" min={0} step={1} value={displayOrder} onChange={(event) => setDisplayOrder(event.target.value)} />}</Field>
+              <Field id="basket-status" label="Status">{(props) => <Select {...props} value={status} onChange={(event) => setStatus(event.target.value as typeof status)}><option value="active">Active</option><option value="inactive">Inactive</option></Select>}</Field>
+            </div>
+          ) : null}
         </div>
-        <div className="knowledge-dialog-actions"><Button type="button" variant="quiet" onClick={onClose}>Cancel</Button><Button type="submit" busy={mutation.isPending} disabled={!name.trim() || !Number.isInteger(Number(displayOrder)) || Number(displayOrder) < 0}>{existing ? "Save basket" : "Add main basket"}</Button></div>
+        <div className="knowledge-dialog-actions"><Button type="button" variant="quiet" onClick={onClose}>Cancel</Button><Button type="submit" busy={mutation.isPending} disabled={!name.trim() || !displayOrderValid}>{existing ? "Save basket" : "Add main basket"}</Button></div>
       </form>
     </Dialog>
   );

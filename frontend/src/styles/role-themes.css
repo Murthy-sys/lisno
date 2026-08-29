@@ -22,9 +22,22 @@
 .login-page {
   /* Amber carries the glow: teak brown at the same alpha reads as flat
      shadow against a near-black base. */
+  /* Layers run top-to-bottom: amber glow, then a scrim that carries the
+     headline's contrast, then the photograph, then the original gradient —
+     which still shows in full if the image is missing or fails to load. The
+     scrim is angled so it is heaviest on the left, where the logo, headline
+     and note sit, and lightest over the lit shelving on the right. */
   --auth-story:
-    radial-gradient(circle at 16% 88%, rgb(206 146 68 / 52%), transparent 34%),
-    radial-gradient(circle at 96% 4%, rgb(224 174 105 / 24%), transparent 32%),
+    radial-gradient(circle at 16% 88%, rgb(206 146 68 / 30%), transparent 34%),
+    radial-gradient(circle at 96% 4%, rgb(224 174 105 / 16%), transparent 32%),
+    linear-gradient(
+      100deg,
+      rgb(23 15 10 / 94%) 0%,
+      rgb(26 17 11 / 86%) 30%,
+      rgb(33 22 15 / 66%) 62%,
+      rgb(46 31 20 / 44%) 100%
+    ),
+    url("/login-hero.png") center / cover no-repeat,
     linear-gradient(145deg, #1a110b 0%, #35251a 52%, #5a3b21 100%);
   --auth-panel:
     radial-gradient(circle at 86% 8%, rgb(169 121 63 / 12%), transparent 28%),
@@ -154,6 +167,63 @@
 
 .login-page :focus-visible {
   box-shadow: 0 0 0 3px rgb(169 121 63 / 55%);
+}
+
+/*
+ * Sign-in runs the photograph full-bleed: it is painted on the page grid so it
+ * spans both columns, and the story and panel columns go transparent so the
+ * card floats over the image instead of sitting on its own cream field.
+ *
+ * Scoped to the two-column breakpoint on purpose. Below 1024px the story
+ * column is display:none and index.css switches to a light card-on-cream
+ * treatment; because this file loads after index.css, an unscoped rule here
+ * would outrank those media queries and drop a dark photo behind the mobile
+ * form. Sign-up is untouched and keeps the photo inside its story column.
+ */
+@media (min-width: 1024px) {
+  .login-page--signin {
+    background:
+      /* Heaviest at the left edge, where the logo, headline and note sit;
+         clears by the time it reaches the card so the room stays visible. */
+      linear-gradient(
+        90deg,
+        rgb(18 11 7 / 97%) 0%,
+        rgb(20 13 9 / 94%) 22%,
+        rgb(26 17 12 / 84%) 38%,
+        rgb(33 22 15 / 60%) 55%,
+        rgb(43 29 19 / 32%) 71%,
+        rgb(56 38 25 / 12%) 87%,
+        rgb(66 45 30 / 4%) 100%
+      ),
+      /* Softens the top and bottom edges so the crop does not end abruptly. */
+      linear-gradient(
+        180deg,
+        rgb(20 13 9 / 34%) 0%,
+        rgb(20 13 9 / 0%) 26%,
+        rgb(20 13 9 / 0%) 74%,
+        rgb(20 13 9 / 30%) 100%
+      ),
+      url("/login-hero.png") center / cover no-repeat,
+      linear-gradient(145deg, #1a110b 0%, #35251a 52%, #5a3b21 100%);
+  }
+
+  .login-page--signin .login-story,
+  .login-page--signin .login-panel {
+    background: none;
+  }
+
+  /* The inset frame read as a panel edge; there is no panel any more. */
+  .login-page--signin .login-story::after {
+    display: none;
+  }
+
+  /* Slightly more opaque than the on-cream card: it now sits over a photo. */
+  .login-page--signin .login-card {
+    background: rgb(255 252 246 / 94%);
+    box-shadow:
+      0 1px 0 rgb(255 255 255 / 92%) inset,
+      0 36px 90px rgb(20 13 9 / 42%);
+  }
 }
 
 /* ---------------------------------------------------------------- palettes */
@@ -1417,6 +1487,163 @@
   }
 }
 
+
+/* --------------------------------------------- configuration (knowledge base) */
+
+/*
+ * The AI estimator Configuration screens read their palette from the --role-*
+ * tokens with the cool base tokens as fallbacks, so they pick the teak palette
+ * up automatically inside the shell. Two things still need help here.
+ *
+ * First, dialogs portal to <body>, outside `.ui-app-shell`, so they never
+ * inherit the role tokens. Republishing the palette from <body> — the same
+ * trick the super-admin type scale below uses — lets overlays match the page
+ * that opened them. Nothing outside this file reads --role-* unscoped, so
+ * defining them here changes no existing rule.
+ */
+body:has(.ui-app-shell[data-role]) {
+  --role-ink: #2e2318;
+  --role-ink-muted: #6e6152;
+  --role-accent: #9a6c33;
+  --role-accent-bright: #e0ae69;
+  --role-line: #e2d5be;
+  --role-line-strong: #cdb994;
+  --role-deck: #fffcf6;
+  --role-deck-tint: #f6ecdb;
+  --role-glass-strong: rgb(255 252 246 / 78%);
+  --role-rail: linear-gradient(196deg, #33241a 0%, #271b13 58%, #1b120c 100%);
+  --role-band-ink: #fbf4e8;
+  --role-shadow-tint: 58 38 18;
+  --role-shadow-soft:
+    0 1px 2px rgb(58 38 18 / 6%),
+    0 10px 26px -12px rgb(58 38 18 / 24%);
+  --role-cta: linear-gradient(140deg, #6b4a2f 0%, #8d6238 58%, #a9793f 100%);
+  --role-cta-hover: linear-gradient(140deg, #7a5636 0%, #9d6f3f 58%, #bd8a4a 100%);
+  --role-cta-ink: #fdf7ec;
+}
+
+/* Second, the chevron's stroke is baked into a data URI, so the whole token
+   is swapped for one drawn in the role's muted ink. */
+body:has(.ui-app-shell[data-role]) {
+  --ui-select-chevron:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%236e6152' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+}
+
+/* Card breadcrumbs are the same kind of label as .eyebrow, which the theme
+   already tints, but they carry their own class. */
+.ui-app-shell[data-role] .knowledge-breadcrumb {
+  color: var(--role-accent);
+}
+
+/* Knowledge surfaces sit on the warm canvas as opaque decks rather than the
+   frosted glass used for dashboard panels: these screens are dense forms and
+   tables, where a blurred backdrop costs legibility. */
+.ui-app-shell[data-role] .knowledge-page .ui-surface {
+  border-color: var(--role-line);
+  background: var(--role-deck);
+  box-shadow: var(--role-shadow-soft);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.ui-app-shell[data-role] .knowledge-page .ui-surface--subtle {
+  background: var(--role-deck-tint);
+}
+
+/* Inputs inside Configuration follow the login card's warm field treatment. */
+.ui-app-shell[data-role] .knowledge-page .ui-control,
+body:has(.ui-app-shell[data-role]) .knowledge-dialog-body .ui-control {
+  border-color: var(--role-line-strong);
+  background-color: var(--role-deck);
+  color: var(--role-ink);
+}
+
+.ui-app-shell[data-role] .knowledge-page .ui-control:hover:not(:disabled),
+body:has(.ui-app-shell[data-role]) .knowledge-dialog-body .ui-control:hover:not(:disabled) {
+  border-color: var(--role-accent);
+}
+
+.ui-app-shell[data-role] .knowledge-page .ui-field__label,
+body:has(.ui-app-shell[data-role]) .knowledge-dialog-body .ui-field__label {
+  color: var(--role-ink);
+}
+
+/* Hints and metadata default to a cool grey that reads cold on warm sand. */
+.ui-app-shell[data-role] .knowledge-page .ui-field__hint,
+body:has(.ui-app-shell[data-role]) .knowledge-dialog-body .ui-field__hint {
+  color: var(--role-ink-muted);
+}
+
+/* Quiet buttons and progress fills still resolve to the base violet, which is
+   the loudest cool note left on these screens. Scoped to Configuration rather
+   than retinting .ui-button--quiet app-wide, which would reach every role. */
+.ui-app-shell[data-role] .knowledge-page .ui-button--quiet,
+.ui-app-shell[data-role] .knowledge-page .ui-icon-button--quiet,
+body:has(.ui-app-shell[data-role]) .knowledge-dialog-body .ui-button--quiet,
+body:has(.ui-app-shell[data-role]) .knowledge-dialog-actions .ui-button--quiet {
+  color: var(--role-accent);
+}
+
+.ui-app-shell[data-role] .knowledge-page .ui-button--quiet:not(:disabled):hover,
+.ui-app-shell[data-role] .knowledge-page .ui-icon-button--quiet:not(:disabled):hover,
+body:has(.ui-app-shell[data-role]) .knowledge-dialog-body .ui-button--quiet:not(:disabled):hover,
+body:has(.ui-app-shell[data-role]) .knowledge-dialog-actions .ui-button--quiet:not(:disabled):hover {
+  background: color-mix(in srgb, var(--role-accent) 12%, transparent);
+  color: #7a5122;
+}
+
+.ui-app-shell[data-role] .knowledge-page .ui-progress {
+  background: var(--role-line);
+}
+
+.ui-app-shell[data-role] .knowledge-page .ui-progress__value {
+  background: var(--role-cta);
+}
+
+/* Dialog chrome: the shared .modal is a cool parchment; warm it to the deck. */
+body:has(.ui-app-shell[data-role="super_admin"]) .modal:has(.knowledge-dialog-body) {
+  background: var(--role-deck);
+}
+
+body:has(.ui-app-shell[data-role="super_admin"]) .modal:has(.knowledge-dialog-body) > .modal__header {
+  border-block-end-color: var(--role-line);
+}
+
+body:has(.ui-app-shell[data-role="super_admin"]) .modal:has(.knowledge-dialog-body) .eyebrow {
+  color: var(--role-accent);
+}
+
+/* .modal__header hardcodes the navy/cool-grey pair from index.css. */
+body:has(.ui-app-shell[data-role="super_admin"]) .modal:has(.knowledge-dialog-body) .modal__header h2 {
+  color: var(--role-ink);
+}
+
+body:has(.ui-app-shell[data-role="super_admin"]) .modal:has(.knowledge-dialog-body) .modal__header p:last-child:not(.eyebrow) {
+  color: var(--role-ink-muted);
+}
+
+/* The gold CTA is scoped inside .ui-app-shell, which portalled dialogs are
+   not, so their submit fell back to the base violet. */
+body:has(.ui-app-shell[data-role]) .knowledge-dialog-actions .ui-button--primary {
+  border: 0;
+  background: var(--role-cta, linear-gradient(140deg, #6b4a2f 0%, #8d6238 58%, #a9793f 100%));
+  color: var(--role-cta-ink, #fdf7ec);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 22%),
+    0 12px 26px -14px rgb(58 38 18 / 90%);
+}
+
+body:has(.ui-app-shell[data-role]) .knowledge-dialog-actions .ui-button--primary:hover:not(:disabled) {
+  background: var(--role-cta-hover, linear-gradient(140deg, #7a5636 0%, #9d6f3f 58%, #bd8a4a 100%));
+}
+
+/* accent-color drives the native checkbox tick. */
+.ui-app-shell[data-role] .knowledge-page .ui-checkbox,
+.ui-app-shell[data-role] .knowledge-page .ui-radio,
+body:has(.ui-app-shell[data-role]) .knowledge-dialog-body .ui-checkbox,
+body:has(.ui-app-shell[data-role]) .knowledge-dialog-body .ui-radio {
+  accent-color: var(--role-accent);
+}
 
 /* ------------------------------------------- super admin (dense type scale) */
 

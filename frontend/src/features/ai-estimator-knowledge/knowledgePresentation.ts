@@ -31,13 +31,61 @@ export const KNOWLEDGE_ITEM_STATUS_LABELS = {
   archived: "Archived"
 } as const satisfies Readonly<Record<KnowledgeItemStatus, string>>;
 
+const KNOWLEDGE_INR_WHOLE = new Intl.NumberFormat("en-IN", {
+  style: "currency",
+  currency: "INR",
+  minimumFractionDigits: 0,
+  maximumFractionDigits: 0
+});
+
 export function formatKnowledgeMoney(amountPaise: number): string {
-  return new Intl.NumberFormat("en-IN", {
-    style: "currency",
-    currency: "INR",
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2
-  }).format(amountPaise / 100);
+  if (!Number.isSafeInteger(amountPaise) || amountPaise < 0) {
+    throw new RangeError("Paise must be a non-negative safe integer.");
+  }
+
+  const exactPaise = BigInt(amountPaise);
+  const wholeRupees = exactPaise / 100n;
+  const fractionalPaise = (exactPaise % 100n).toString().padStart(2, "0");
+  return `${KNOWLEDGE_INR_WHOLE.format(wholeRupees)}.${fractionalPaise}`;
+}
+
+export type RupeeInputParseResult =
+  | { readonly status: "valid"; readonly paise: number }
+  | { readonly status: "incomplete" }
+  | { readonly status: "invalid"; readonly reason: "format" | "unsafe" };
+
+const MAX_SAFE_PAISE = BigInt(Number.MAX_SAFE_INTEGER);
+const COMPLETE_RUPEE_INPUT = /^(\d+)(?:\.(\d{1,2}))?$/u;
+const INCOMPLETE_RUPEE_INPUT = /^\d*\.$/u;
+
+/** Converts editable rupee text to exact integer paise without floating-point arithmetic. */
+export function parseRupeeInputToPaise(value: string): RupeeInputParseResult {
+  if (value === "" || INCOMPLETE_RUPEE_INPUT.test(value)) {
+    return { status: "incomplete" };
+  }
+
+  const match = COMPLETE_RUPEE_INPUT.exec(value);
+  if (!match) return { status: "invalid", reason: "format" };
+
+  const wholeRupees = BigInt(match[1]);
+  const fractionalPaise = BigInt((match[2] ?? "").padEnd(2, "0") || "0");
+  const paise = wholeRupees * 100n + fractionalPaise;
+  if (paise > MAX_SAFE_PAISE) return { status: "invalid", reason: "unsafe" };
+
+  return { status: "valid", paise: Number(paise) };
+}
+
+/** Formats safe, non-negative integer paise as canonical editable rupee text. */
+export function formatPaiseForRupeeInput(amountPaise: number): string {
+  if (!Number.isSafeInteger(amountPaise) || amountPaise < 0) {
+    throw new RangeError("Paise must be a non-negative safe integer.");
+  }
+  if (amountPaise === 0) return "0";
+
+  const digits = BigInt(amountPaise);
+  const wholeRupees = digits / 100n;
+  const fractionalPaise = (digits % 100n).toString().padStart(2, "0");
+  return `${wholeRupees}.${fractionalPaise}`;
 }
 
 export function formatKnowledgePercentage(percentageBps: number): string {

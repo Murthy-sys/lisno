@@ -254,6 +254,34 @@ describe("OpenAPI and Swagger UI", () => {
     expect(contextRequest.required).toEqual(["mainBasketId", "mainLineId"]);
     expect(contextRequest.properties).not.toHaveProperty("name");
     expect(previewResponse.properties).not.toHaveProperty("finalPrice");
+
+    const createRequestNames = [
+      "KnowledgeBasketCreateRequest",
+      "KnowledgeMainLineCreateRequest",
+      "KnowledgeMasterCreateRequest",
+      "KnowledgeUomCreateRequest",
+      "KnowledgeTaxCreateRequest"
+    ] as const;
+    const basketResponse = componentSchemas().KnowledgeBasket as {
+      required?: string[];
+      properties: Record<string, { maximum?: number }>;
+    };
+    for (const schemaName of createRequestNames) {
+      const createRequest = componentSchemas()[schemaName] as {
+        required?: string[];
+        properties: Record<string, { default?: unknown; deprecated?: boolean; maximum?: number }>;
+      };
+      expect(createRequest.required, schemaName).not.toContain("displayOrder");
+      expect(createRequest.properties.displayOrder, schemaName).toMatchObject({
+        deprecated: true,
+        maximum: Number.MAX_SAFE_INTEGER
+      });
+      expect(createRequest.properties.displayOrder, schemaName).not.toHaveProperty("default");
+    }
+    expect(basketResponse.required).toContain("displayOrder");
+    expect(basketResponse.properties.displayOrder).toMatchObject({
+      maximum: Number.MAX_SAFE_INTEGER
+    });
   });
 
   it("documents exact workflow multipart contracts and separate worker security", () => {

@@ -34,6 +34,12 @@ import {
   aiEstimatorKnowledgeActorGuard,
   type AiEstimatorKnowledgeActorGuard
 } from "./ai-estimator-knowledge-actor.js";
+import {
+  AI_ESTIMATOR_KNOWLEDGE_BASKET_DISPLAY_ORDER_SCOPE,
+  allocateAiEstimatorKnowledgeDisplayOrder,
+  createAiEstimatorKnowledgeMasterDisplayOrderScope,
+  observeExplicitAiEstimatorKnowledgeDisplayOrder
+} from "./ai-estimator-knowledge-display-order.service.js";
 import type { PublicUser } from "./auth.service.js";
 import { systemClock, type Clock } from "./workflow.js";
 
@@ -240,12 +246,27 @@ export function createAiEstimatorKnowledgeReferenceService(
         const timestamp = now();
         const normalized = normalizeKnowledgeIdentity(input.name);
         await ensureBasketIdentityAvailable(normalized, null, session);
+        const displayOrderTarget = {
+          scope: AI_ESTIMATOR_KNOWLEDGE_BASKET_DISPLAY_ORDER_SCOPE,
+          resourceModel: AiEstimatorKnowledgeBasketModel,
+          resourceFilter: {},
+          session
+        } as const;
+        const displayOrder = input.displayOrder === undefined
+          ? await allocateAiEstimatorKnowledgeDisplayOrder(displayOrderTarget)
+          : input.displayOrder;
+        if (input.displayOrder !== undefined) {
+          await observeExplicitAiEstimatorKnowledgeDisplayOrder({
+            ...displayOrderTarget,
+            displayOrder: input.displayOrder
+          });
+        }
         const [created] = await AiEstimatorKnowledgeBasketModel.create([{
           _id: `knowledge-basket-${createId()}`,
           name: input.name,
           nameNormalized: normalized,
           description: input.description ?? null,
-          displayOrder: input.displayOrder ?? 0,
+          displayOrder,
           status: input.status ?? "active",
           version: 1,
           createdById: authorized.id,
@@ -282,7 +303,16 @@ export function createAiEstimatorKnowledgeReferenceService(
           await ensureBasketIdentityAvailable(String(set.nameNormalized), basketId, session);
         }
         if (input.description !== undefined) set.description = input.description;
-        if (input.displayOrder !== undefined) set.displayOrder = input.displayOrder;
+        if (input.displayOrder !== undefined) {
+          await observeExplicitAiEstimatorKnowledgeDisplayOrder({
+            scope: AI_ESTIMATOR_KNOWLEDGE_BASKET_DISPLAY_ORDER_SCOPE,
+            resourceModel: AiEstimatorKnowledgeBasketModel,
+            resourceFilter: {},
+            session,
+            displayOrder: input.displayOrder
+          });
+          set.displayOrder = input.displayOrder;
+        }
         if (input.status !== undefined) set.status = input.status;
         const updated = await AiEstimatorKnowledgeBasketModel.findOneAndUpdate(
           { _id: basketId, version: input.expectedVersion, status: { $ne: "archived" } },
@@ -367,6 +397,21 @@ export function createAiEstimatorKnowledgeReferenceService(
         const codeNormalized = normalizeKnowledgeIdentity(input.code);
         const nameNormalized = normalizeKnowledgeIdentity(input.name);
         await ensureMasterIdentityAvailable(model, codeNormalized, nameNormalized, null, session);
+        const displayOrderTarget = {
+          scope: createAiEstimatorKnowledgeMasterDisplayOrderScope(masterType),
+          resourceModel: model,
+          resourceFilter: {},
+          session
+        } as const;
+        const displayOrder = input.displayOrder === undefined
+          ? await allocateAiEstimatorKnowledgeDisplayOrder(displayOrderTarget)
+          : input.displayOrder;
+        if (input.displayOrder !== undefined) {
+          await observeExplicitAiEstimatorKnowledgeDisplayOrder({
+            ...displayOrderTarget,
+            displayOrder: input.displayOrder
+          });
+        }
         const id = `knowledge-${singular(masterType)}-${createId()}`;
         const [created] = await model.create([{
           _id: id,
@@ -375,7 +420,7 @@ export function createAiEstimatorKnowledgeReferenceService(
           name: input.name,
           nameNormalized,
           description: input.description ?? null,
-          displayOrder: input.displayOrder ?? 0,
+          displayOrder,
           status: input.status ?? "active",
           ...(masterType === "uoms" ? { decimalScale: input.decimalScale } : {}),
           version: 1,
@@ -425,7 +470,16 @@ export function createAiEstimatorKnowledgeReferenceService(
         if (input.name !== undefined) { set.name = input.name; set.nameNormalized = nameNormalized; }
         if (input.code !== undefined || input.name !== undefined) await ensureMasterIdentityAvailable(model, codeNormalized, nameNormalized, id, session);
         if (input.description !== undefined) set.description = input.description;
-        if (input.displayOrder !== undefined) set.displayOrder = input.displayOrder;
+        if (input.displayOrder !== undefined) {
+          await observeExplicitAiEstimatorKnowledgeDisplayOrder({
+            scope: createAiEstimatorKnowledgeMasterDisplayOrderScope(masterType),
+            resourceModel: model,
+            resourceFilter: {},
+            session,
+            displayOrder: input.displayOrder
+          });
+          set.displayOrder = input.displayOrder;
+        }
         if (input.status !== undefined) set.status = input.status;
         if (masterType === "uoms" && input.decimalScale !== undefined) {
           if (

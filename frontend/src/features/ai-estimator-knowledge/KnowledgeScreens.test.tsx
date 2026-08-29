@@ -312,10 +312,12 @@ describe("AI estimator knowledge screens", () => {
     vi.mocked(knowledgeApi.getKnowledgeSection).mockImplementation(async (_lineId, _revisionId, sectionKey) => section(sectionKey, sectionKey === "pricing" ? { priceEntries: [{ operation: "reference", priceEntryId: "price-entry-1", priceVersionId: "price-version-1", priceVersion: { id: "price-version-1", priceEntryId: "price-entry-1", versionNumber: 1, vendorId: "vendor-1", uomId: "uom-1", specificationId: null, modeId: null, taxRuleId: "tax-1", taxVersionId: "tax-version-1", inputAmountPaise: 12000, baseAmountPaise: 12000, taxAmountPaise: 2160, totalAmountPaise: 14160, treatment: "exclusive", effectiveFrom: "2026-08-01T00:00:00.000Z", effectiveTo: null, status: "active", reviewRequired: false } }] } : {}));
     renderRoute(<KnowledgeItemWorkspacePage />, "/admin/configuration/estimation/items/line-1", "/admin/configuration/estimation/items/:itemId");
     await user.click(await screen.findByRole("tab", { name: "Pricing" }));
-    expect(await screen.findByLabelText("Immutable saved price details")).toHaveTextContent("14160 paise");
+    const savedPrice = await screen.findByLabelText("Immutable saved price details");
+    expect(savedPrice).toHaveTextContent(/₹\s?141\.60/u);
+    expect(savedPrice).not.toHaveTextContent("paise");
     await user.click(screen.getByRole("button", { name: "Replace price version" }));
     expect(screen.getByRole("textbox", { name: "Price entry ID" })).toHaveValue("price-entry-1");
-    expect(screen.getByRole("spinbutton", { name: "Input amount (paise)" })).toHaveValue(12000);
+    expect(screen.getByRole("textbox", { name: "Input amount (rupees)" })).toHaveValue("120.00");
   });
 
   it("renders all eight guided sections, prompts on unsaved navigation, and accepts zero-valued server preview inputs", async () => {
@@ -344,13 +346,20 @@ describe("AI estimator knowledge screens", () => {
     expect(screen.getByRole("button", { name: /Add specification/iu })).toBeVisible();
     await user.click(screen.getByRole("tab", { name: "Quantity & margin" }));
     expect(await screen.findByRole("heading", { name: "Quantity & margin" })).toBeVisible();
-    await user.clear(screen.getByRole("spinbutton", { name: "Unit rate (paise)" }));
-    await user.type(screen.getByRole("spinbutton", { name: "Unit rate (paise)" }), "0");
+    const unitRate = screen.getByRole("textbox", { name: "Unit rate (₹)" });
+    await user.type(unitRate, "0");
     await user.type(screen.getByRole("textbox", { name: "Quantity" }), "0");
     const preview = screen.getByRole("button", { name: "Run server preview" });
     expect(preview).toBeEnabled();
     await user.click(preview);
-    await waitFor(() => expect(knowledgeApi.previewKnowledge).toHaveBeenCalledWith(expect.not.objectContaining({ taxTreatment: expect.anything() })));
+    await waitFor(() => expect(knowledgeApi.previewKnowledge).toHaveBeenLastCalledWith(expect.objectContaining({ unitRatePaise: 0 })));
+    expect(knowledgeApi.previewKnowledge).toHaveBeenLastCalledWith(expect.not.objectContaining({ taxTreatment: expect.anything() }));
+
+    await user.clear(unitRate);
+    await user.type(unitRate, "118.00");
+    await user.click(preview);
+    await waitFor(() => expect(knowledgeApi.previewKnowledge).toHaveBeenLastCalledWith(expect.objectContaining({ unitRatePaise: 11_800 })));
+    expect(screen.queryByText(/paise/iu)).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("tab", { name: "Recommendations" }));
     expect(await screen.findByRole("combobox", { name: "Target Basket" })).toHaveDisplayValue("Carpentry");

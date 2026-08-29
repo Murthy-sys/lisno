@@ -74,9 +74,112 @@ describe("AI estimator knowledge item service", () => {
       expectedVersion: 1,
       description: "Stale"
     })).rejects.toMatchObject({ status: 409, code: "VERSION_CONFLICT" });
-    expect((await AiEstimatorKnowledgeMainLineModel.findById(created.mainLineId).lean())?.description)
-      .toBe("Updated");
+    expect(await AiEstimatorKnowledgeMainLineModel.findById(created.mainLineId).lean())
+      .toMatchObject({ description: "Updated", displayOrder: 10 });
     expect(appendAudit).toHaveBeenCalledTimes(2);
+    expect(appendAudit).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        action: "ai_estimator_knowledge_main_line_updated",
+        oldValues: { version: 1 },
+        newValues: { version: 2 }
+      }),
+      expect.anything()
+    );
+  });
+
+  it("appends within each Basket while explicit orders advance but never lower the high-water mark", async () => {
+    await AiEstimatorKnowledgeBasketModel.create({
+      _id: "basket-painting",
+      name: "Painting",
+      nameNormalized: "painting",
+      description: null,
+      displayOrder: 2,
+      status: "active",
+      version: 1,
+      createdById: ACTOR.id,
+      updatedById: ACTOR.id,
+      createdAt: NOW,
+      updatedAt: NOW
+    });
+    const { service, appendAudit } = createService();
+
+    const explicitlyOrdered = await service.createMainLine(ACTOR, "basket-carpentry", {
+      name: "Explicitly ordered",
+      displayOrder: 5
+    });
+    const appended = await service.createMainLine(ACTOR, "basket-carpentry", {
+      name: "Automatically appended"
+    });
+    const independent = await service.createMainLine(ACTOR, "basket-painting", {
+      name: "Independent Basket"
+    });
+
+    await expectMainLineOrder(explicitlyOrdered.mainLineId, 5);
+    await expectMainLineOrder(appended.mainLineId, 6);
+    await expectMainLineOrder(independent.mainLineId, 0);
+
+    const raised = await service.updateMainLine(ACTOR, explicitlyOrdered.mainLineId, {
+      expectedVersion: explicitlyOrdered.version,
+      displayOrder: 9
+    });
+    const afterRaise = await service.createMainLine(ACTOR, "basket-carpentry", {
+      name: "After explicit raise"
+    });
+    await expectMainLineOrder(raised.mainLineId, 9);
+    await expectMainLineOrder(afterRaise.mainLineId, 10);
+    const lowered = await service.updateMainLine(ACTOR, explicitlyOrdered.mainLineId, {
+      expectedVersion: raised.version,
+      displayOrder: 2
+    });
+    const afterLower = await service.createMainLine(ACTOR, "basket-carpentry", {
+      name: "After explicit lower"
+    });
+
+    await expectMainLineOrder(lowered.mainLineId, 2);
+    await expectMainLineOrder(afterLower.mainLineId, 11);
+    expect(appendAudit).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        action: "ai_estimator_knowledge_main_line_created",
+        newValues: expect.objectContaining({
+          basketId: "basket-carpentry",
+          displayOrder: 5,
+          version: 1
+        })
+      }),
+      expect.anything()
+    );
+    expect(appendAudit).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        action: "ai_estimator_knowledge_main_line_created",
+        newValues: expect.objectContaining({
+          basketId: "basket-carpentry",
+          displayOrder: 6,
+          version: 1
+        })
+      }),
+      expect.anything()
+    );
+    expect(appendAudit).toHaveBeenNthCalledWith(
+      4,
+      expect.objectContaining({
+        action: "ai_estimator_knowledge_main_line_updated",
+        oldValues: { version: 1, displayOrder: 5 },
+        newValues: { version: 2, displayOrder: 9 }
+      }),
+      expect.anything()
+    );
+    expect(appendAudit).toHaveBeenNthCalledWith(
+      6,
+      expect.objectContaining({
+        action: "ai_estimator_knowledge_main_line_updated",
+        oldValues: { version: 2, displayOrder: 9 },
+        newValues: { version: 3, displayOrder: 2 }
+      }),
+      expect.anything()
+    );
   });
 
   it("materializes immutable price append commands and stores only stable references", async () => {
@@ -362,8 +465,8 @@ describe("AI estimator knowledge item service", () => {
       .toBe(historicalCount + 2);
   });
 
-  it("duplicates a Draft with remapped internal step and price identities marked for review", async () => {
-    const { service } = createService();
+  it("duplicates a Draft at the end of its Basket with remapped identities marked for review", async () => {
+    const { service, appendAudit } = createService();
     const created = await service.createMainLine(ACTOR, "basket-carpentry", { name: "Partition" });
     const revisionId = created.draftRevisionId!;
     const pricing = await service.getSection(ACTOR, created.mainLineId, revisionId, "pricing");
@@ -430,6 +533,8 @@ describe("AI estimator knowledge item service", () => {
       expectedVersion: 3,
       name: "Partition Copy"
     });
+    await expectMainLineOrder(created.mainLineId, 0);
+    await expectMainLineOrder(duplicate.mainLineId, 1);
     const duplicatePricing = await service.getSection(
       ACTOR,
       duplicate.mainLineId,
@@ -454,6 +559,43 @@ describe("AI estimator knowledge item service", () => {
     const steps = duplicateExecution.payload.steps as Array<{ id: string; dependencyStepIds: string[] }>;
     expect(steps[0]!.id).not.toBe("step-a");
     expect(steps[1]!.dependencyStepIds).toEqual([steps[0]!.id]);
+    expect(appendAudit.mock.calls.map(([event]) => event)).toContainEqual(
+      expect.objectContaining({
+        action: "ai_estimator_knowledge_main_line_duplicated",
+        entityId: duplicate.mainLineId,
+        newValues: expect.objectContaining({
+          sourceMainLineId: created.mainLineId,
+          basketId: "basket-carpentry",
+          displayOrder: 1,
+          version: 1
+        })
+      })
+    );
+  });
+
+  it("rolls back a duplicate's allocated order and aggregate when its audit write fails", async () => {
+    const { service, appendAudit } = createService();
+    const source = await service.createMainLine(ACTOR, "basket-carpentry", {
+      name: "Rollback source"
+    });
+    appendAudit.mockRejectedValueOnce(new Error("audit unavailable"));
+
+    await expect(service.duplicate(ACTOR, source.mainLineId, {
+      expectedVersion: source.version,
+      name: "Failed duplicate"
+    })).rejects.toThrow();
+    expect(await AiEstimatorKnowledgeMainLineModel.countDocuments({
+      basketId: "basket-carpentry"
+    })).toBe(1);
+
+    const duplicate = await service.duplicate(ACTOR, source.mainLineId, {
+      expectedVersion: source.version,
+      name: "Successful duplicate"
+    });
+    await expectMainLineOrder(duplicate.mainLineId, 1);
+    expect(await AiEstimatorKnowledgeMainLineModel.countDocuments({
+      basketId: "basket-carpentry"
+    })).toBe(2);
   });
 
   it("accepts a basket-only scope exclusion without treating it as an item dependency", async () => {
@@ -860,6 +1002,11 @@ function createService() {
       uuid: () => `generated-${++sequence}`
     })
   };
+}
+
+async function expectMainLineOrder(mainLineId: string, displayOrder: number): Promise<void> {
+  expect(await AiEstimatorKnowledgeMainLineModel.findById(mainLineId).lean())
+    .toMatchObject({ displayOrder });
 }
 
 async function seedReferences(): Promise<void> {

@@ -34,7 +34,7 @@ export function KnowledgeMasterEditorDialog({
   const [code, setCode] = useState(existing?.code ?? "");
   const [name, setName] = useState(existing?.name ?? "");
   const [description, setDescription] = useState(existing?.description ?? "");
-  const [displayOrder, setDisplayOrder] = useState(String(existing?.displayOrder ?? 0));
+  const [displayOrder, setDisplayOrder] = useState(String(existing?.displayOrder ?? ""));
   const [status, setStatus] = useState<"active" | "inactive">(
     existing?.status === "inactive" ? "inactive" : "active"
   );
@@ -66,8 +66,11 @@ export function KnowledgeMasterEditorDialog({
   const formValid = Boolean(
     code.trim() &&
       name.trim() &&
-      Number.isInteger(Number(displayOrder)) &&
-      Number(displayOrder) >= 0 &&
+      (!existing || (
+        displayOrder.trim() !== "" &&
+        Number.isSafeInteger(Number(displayOrder)) &&
+        Number(displayOrder) >= 0
+      )) &&
       (masterType !== "uoms" || [0, 1, 2, 3].includes(Number(decimalScale))) &&
       (masterType !== "taxes" || !includeTaxVersion || (taxVersion && taxApplicability.trim()))
   );
@@ -78,13 +81,13 @@ export function KnowledgeMasterEditorDialog({
         code: code.trim(),
         name: name.trim(),
         description: description.trim() || null,
-        displayOrder: Number(displayOrder),
         ...(masterType === "uoms" ? { decimalScale: Number(decimalScale) } : {}),
         ...(taxVersion ? { taxVersion } : {})
       };
       if (!existing) return createKnowledgeMaster(masterType, common);
       return updateKnowledgeMaster(masterType, existing.id, {
         ...common,
+        displayOrder: Number(displayOrder),
         expectedVersion: existing.version,
         status
       });
@@ -126,9 +129,11 @@ export function KnowledgeMasterEditorDialog({
             <Field id="master-name" label="Name" required>
               {(props) => <Input {...props} value={name} maxLength={240} onChange={(event) => setName(event.target.value)} />}
             </Field>
-            <Field id="master-order" label="Display order" required>
-              {(props) => <Input {...props} type="number" min={0} step={1} value={displayOrder} onChange={(event) => setDisplayOrder(event.target.value)} />}
-            </Field>
+            {existing ? (
+              <Field id="master-order" label="Display order" required>
+                {(props) => <Input {...props} type="number" min={0} step={1} value={displayOrder} onChange={(event) => setDisplayOrder(event.target.value)} />}
+              </Field>
+            ) : null}
             {existing ? (
               <Field id="master-status" label="Status">
                 {(props) => <Select {...props} value={status} onChange={(event) => setStatus(event.target.value as "active" | "inactive")}><option value="active">Active</option><option value="inactive">Inactive</option></Select>}

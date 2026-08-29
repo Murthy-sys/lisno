@@ -1,6 +1,6 @@
 .knowledge-page {
   display: grid;
-  gap: var(--space-6);
+  gap: var(--space-5);
   min-width: 0;
 }
 
@@ -18,9 +18,9 @@
   padding: var(--space-1);
   overflow-x: auto;
   overscroll-behavior-inline: contain;
-  border: 1px solid var(--color-border);
+  border: 1px solid var(--role-line, var(--color-border));
   border-radius: var(--radius-pill);
-  background: var(--color-surface-subtle);
+  background: var(--role-deck-tint, var(--color-surface-subtle));
   scrollbar-width: thin;
 }
 
@@ -32,7 +32,7 @@
   border: 1px solid transparent;
   border-radius: var(--radius-pill);
   background: transparent;
-  color: var(--color-text-muted);
+  color: var(--role-ink-muted, var(--color-text-muted));
   font: var(--type-body);
   font-weight: 600;
   white-space: nowrap;
@@ -45,16 +45,16 @@
 
 .knowledge-section-tab:hover:not(:disabled),
 .knowledge-master-tab:hover:not([aria-selected="true"]) {
-  background: color-mix(in srgb, var(--color-brand-midnight) 5%, transparent);
-  color: var(--color-text);
+  background: color-mix(in srgb, var(--role-accent, var(--color-brand-midnight)) 10%, transparent);
+  color: var(--role-ink, var(--color-text));
 }
 
 .knowledge-section-tab[aria-selected="true"],
 .knowledge-master-tab[aria-selected="true"] {
-  border-color: var(--color-border);
-  background: var(--color-surface);
-  color: var(--color-brand-violet);
-  box-shadow: var(--shadow-soft);
+  border-color: var(--role-line, var(--color-border));
+  background: var(--role-deck, var(--color-surface));
+  color: var(--role-accent, var(--color-brand-violet));
+  box-shadow: var(--role-shadow-soft, var(--shadow-soft));
 }
 
 .knowledge-section-tab:focus-visible,
@@ -79,9 +79,13 @@
   border-radius: var(--radius-surface);
 }
 
+.knowledge-workspace-section {
+  overflow: visible;
+}
+
 .knowledge-repeater {
   display: grid;
-  gap: var(--space-4);
+  gap: var(--space-3);
   min-width: 0;
 }
 
@@ -108,16 +112,37 @@
 .knowledge-preview-panel,
 .knowledge-workspace-section {
   display: grid;
-  gap: var(--space-5);
+  gap: var(--space-4);
 }
 
 .knowledge-filter-grid,
 .knowledge-form-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 210px), 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 178px), 1fr));
   align-items: start;
-  gap: var(--space-4);
+  gap: var(--space-4) var(--space-3);
   min-width: 0;
+}
+
+/* Labels, controls and hints line up across a row even when one label wraps to
+   two lines. The fourth track is a spacer that restores the gap between rows. */
+@supports (grid-template-rows: subgrid) {
+  .knowledge-filter-grid,
+  .knowledge-form-grid {
+    row-gap: var(--space-2);
+  }
+
+  .knowledge-filter-grid > .ui-field,
+  .knowledge-form-grid > .ui-field {
+    grid-row: span 4;
+    grid-template-rows: subgrid;
+    gap: 0;
+  }
+
+  .knowledge-filter-grid > .ui-field::after,
+  .knowledge-form-grid > .ui-field::after {
+    content: "";
+  }
 }
 
 .knowledge-inline-filter {
@@ -128,11 +153,8 @@
 .knowledge-filter-actions,
 .knowledge-row-actions,
 .knowledge-item-card__actions,
-.knowledge-section-save,
 .knowledge-header-metadata,
-.knowledge-workspace-back,
-.knowledge-quick-add-rail,
-.knowledge-applicability-row {
+.knowledge-quick-add-rail {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
@@ -140,19 +162,18 @@
 }
 
 .knowledge-filter-actions,
-.knowledge-item-card__actions,
-.knowledge-section-save {
+.knowledge-item-card__actions {
   justify-content: flex-end;
 }
 
 .knowledge-filter-panel form:not(.knowledge-inline-filter) > .knowledge-filter-actions {
   padding-block-start: var(--space-5);
-  border-block-start: 1px solid var(--color-border);
+  border-block-start: 1px solid var(--role-line, var(--color-border));
 }
 
-.knowledge-section-save {
-  padding-block-start: var(--space-5);
-  border-block-start: 1px solid var(--color-border);
+.knowledge-preview-actions {
+  display: flex;
+  justify-content: flex-end;
 }
 
 .knowledge-refresh-status,
@@ -160,10 +181,9 @@
 .knowledge-breadcrumb,
 .knowledge-section-heading p,
 .knowledge-summary-progress span,
-.knowledge-history li > span,
-.knowledge-applicability-row > span {
+.knowledge-history li > span {
   margin: 0;
-  color: var(--color-text-muted);
+  color: var(--role-ink-muted, var(--color-text-muted));
   font-size: var(--text-sm);
 }
 
@@ -176,7 +196,7 @@
 }
 
 .knowledge-item-grid {
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 290px), 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 252px), 1fr));
 }
 
 .knowledge-item-card {
@@ -185,9 +205,9 @@
   gap: var(--space-4);
   min-width: 0;
   padding: var(--space-5);
-  border: 1px solid var(--color-border);
+  border: 1px solid var(--role-line, var(--color-border));
   border-radius: var(--radius-field);
-  background: var(--color-surface);
+  background: var(--role-deck, var(--color-surface));
   transition:
     border-color var(--duration-fast) var(--ease-standard),
     box-shadow var(--duration-fast) var(--ease-standard),
@@ -196,8 +216,8 @@
 
 .knowledge-item-card:hover,
 .knowledge-item-card:focus-within {
-  border-color: var(--color-border-strong);
-  box-shadow: var(--shadow-soft);
+  border-color: var(--role-line-strong, var(--color-border-strong));
+  box-shadow: var(--role-shadow-soft, var(--shadow-soft));
   transform: translateY(-2px);
 }
 
@@ -208,7 +228,7 @@
 }
 
 .knowledge-item-card > p {
-  color: var(--color-text-muted);
+  color: var(--role-ink-muted, var(--color-text-muted));
   font-size: var(--text-md);
 }
 
@@ -244,7 +264,7 @@
 
 .knowledge-basket-group > .knowledge-section-heading {
   padding-block-end: var(--space-4);
-  border-block-end: 1px solid var(--color-border);
+  border-block-end: 1px solid var(--role-line, var(--color-border));
 }
 
 .knowledge-item-card__progress {
@@ -260,15 +280,15 @@
 }
 
 .knowledge-item-link {
-  color: var(--color-text);
-  text-decoration-color: var(--color-border-strong);
+  color: var(--role-ink, var(--color-text));
+  text-decoration-color: var(--role-line-strong, var(--color-border-strong));
   text-decoration-thickness: 1px;
   text-underline-offset: 0.2em;
   transition: color var(--duration-fast) var(--ease-standard);
 }
 
 .knowledge-item-link:hover {
-  color: var(--color-brand-violet);
+  color: var(--role-accent, var(--color-brand-violet));
   text-decoration-color: currentcolor;
 }
 
@@ -290,7 +310,7 @@
 .knowledge-item-metadata dt,
 .knowledge-summary-list dt,
 .knowledge-preview-result dt {
-  color: var(--color-text-muted);
+  color: var(--role-ink-muted, var(--color-text-muted));
   font-size: var(--text-xs);
   font-weight: 700;
   text-transform: uppercase;
@@ -323,9 +343,9 @@
 .knowledge-table-scroll {
   max-width: 100%;
   overflow-x: auto;
-  border: 1px solid var(--color-border);
+  border: 1px solid var(--role-line, var(--color-border));
   border-radius: var(--radius-field);
-  background: var(--color-surface);
+  background: var(--role-deck, var(--color-surface));
 }
 
 .knowledge-table {
@@ -337,7 +357,7 @@
 .knowledge-table th,
 .knowledge-table td {
   padding: var(--space-4);
-  border-block-end: 1px solid var(--color-border);
+  border-block-end: 1px solid var(--role-line, var(--color-border));
   text-align: start;
   vertical-align: top;
 }
@@ -346,9 +366,9 @@
   position: sticky;
   inset-block-start: 0;
   z-index: var(--z-raised);
-  border-block-end-color: var(--color-border-strong);
-  background: var(--color-surface-subtle);
-  color: var(--color-text-muted);
+  border-block-end-color: var(--role-line-strong, var(--color-border-strong));
+  background: var(--role-deck-tint, var(--color-surface-subtle));
+  color: var(--role-ink-muted, var(--color-text-muted));
   font-size: var(--text-xs);
   font-weight: 700;
   letter-spacing: 0.06em;
@@ -362,7 +382,7 @@
 }
 
 .knowledge-table tbody tr:hover {
-  background: color-mix(in srgb, var(--color-brand-violet) 4%, transparent);
+  background: color-mix(in srgb, var(--role-accent, var(--role-accent, var(--color-brand-violet))) 7%, transparent);
 }
 
 .knowledge-table tbody tr:last-child td {
@@ -371,13 +391,13 @@
 
 .knowledge-table td:first-child strong {
   display: block;
-  color: var(--color-text);
+  color: var(--role-ink, var(--color-text));
 }
 
 .knowledge-table td:first-child span {
   display: block;
   margin-block-start: var(--space-1);
-  color: var(--color-text-muted);
+  color: var(--role-ink-muted, var(--color-text-muted));
   font-family: var(--font-tabular);
   font-size: var(--text-xs);
   letter-spacing: 0.02em;
@@ -410,7 +430,7 @@
 .knowledge-tax-history li span {
   display: block;
   margin-block-start: var(--space-1);
-  color: var(--color-text-muted);
+  color: var(--role-ink-muted, var(--color-text-muted));
   font-size: var(--text-xs);
 }
 
@@ -420,15 +440,15 @@
   min-width: 0;
   margin: 0;
   padding: var(--space-5);
-  border: 1px solid var(--color-border);
+  border: 1px solid var(--role-line, var(--color-border));
   border-radius: var(--radius-field);
-  background: var(--color-surface-subtle);
+  background: var(--role-deck-tint, var(--color-surface-subtle));
 }
 
 .knowledge-fieldset legend {
   margin-inline-start: calc(var(--space-2) * -1);
   padding-inline: var(--space-2);
-  color: var(--color-text-muted);
+  color: var(--role-ink-muted, var(--color-text-muted));
   font-size: var(--text-xs);
   font-weight: 700;
   letter-spacing: 0.06em;
@@ -469,16 +489,16 @@
 }
 
 .knowledge-header-metadata {
-  color: var(--color-text-muted);
+  color: var(--role-ink-muted, var(--color-text-muted));
 }
 
 .knowledge-readonly-label {
   flex: 0 0 auto;
   padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--color-border);
+  border: 1px solid var(--role-line, var(--color-border));
   border-radius: var(--radius-pill);
-  background: var(--color-surface-subtle);
-  color: var(--color-text-muted);
+  background: var(--role-deck-tint, var(--color-surface-subtle));
+  color: var(--role-ink-muted, var(--color-text-muted));
   font-size: var(--text-xs);
   font-weight: 700;
   letter-spacing: 0.04em;
@@ -486,14 +506,46 @@
   white-space: nowrap;
 }
 
-.knowledge-applicability-row {
-  justify-content: space-between;
-  padding-block-end: var(--space-4);
-  border-block-end: 1px solid var(--color-border);
+.knowledge-section-toolbar {
+  position: sticky;
+  inset-block-start: 0;
+  z-index: var(--z-raised);
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-3) var(--space-4);
+  margin: calc(var(--space-5) * -1) calc(var(--space-5) * -1) 0;
+  padding: var(--space-3) var(--space-5);
+  border-block-end: 1px solid var(--role-line, var(--color-border));
+  border-start-start-radius: var(--radius-surface);
+  border-start-end-radius: var(--radius-surface);
+  background: var(--role-glass-strong, color-mix(in srgb, var(--role-deck, var(--color-surface)) 88%, transparent));
+  backdrop-filter: blur(8px);
 }
 
-.knowledge-applicability-row .ui-field {
-  min-width: min(100%, 280px);
+/* Label sits beside the control so the bar stays one line tall. */
+.knowledge-section-toolbar__field {
+  grid-template-columns: auto minmax(150px, 220px);
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.knowledge-section-toolbar__field .ui-field__label {
+  white-space: nowrap;
+}
+
+.knowledge-section-toolbar__field .ui-control {
+  min-block-size: 38px;
+}
+
+.knowledge-section-toolbar__meta {
+  color: var(--role-ink-muted, var(--color-text-muted));
+  font-size: var(--text-sm);
+}
+
+.knowledge-section-toolbar__save {
+  margin-inline-start: auto;
+  min-block-size: 38px;
 }
 
 .knowledge-master-control {
@@ -509,9 +561,9 @@
 
 .knowledge-quick-add-rail {
   padding: var(--space-3) var(--space-4);
-  border: 1px dashed var(--color-border-strong);
+  border: 1px dashed var(--role-line-strong, var(--color-border-strong));
   border-radius: var(--radius-field);
-  background: var(--color-surface-subtle);
+  background: var(--role-deck-tint, var(--color-surface-subtle));
 }
 
 .knowledge-quick-add-rail > span {
@@ -528,9 +580,9 @@
   display: grid;
   gap: var(--space-3);
   padding: var(--space-4);
-  border: 1px solid var(--color-border);
+  border: 1px solid var(--role-line, var(--color-border));
   border-radius: var(--radius-field);
-  background: var(--color-surface-subtle);
+  background: var(--role-deck-tint, var(--color-surface-subtle));
 }
 
 .knowledge-readonly-data h3,
@@ -550,8 +602,8 @@
   padding: var(--space-4);
   overflow: auto;
   border-radius: var(--radius-field);
-  background: var(--color-brand-midnight);
-  color: var(--color-surface);
+  background: var(--role-rail, var(--color-brand-midnight));
+  color: var(--role-band-ink, var(--role-deck, var(--color-surface)));
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
@@ -568,7 +620,7 @@
   display: grid;
   gap: var(--space-2);
   padding: var(--space-4);
-  border: 1px solid var(--color-border);
+  border: 1px solid var(--role-line, var(--color-border));
   border-radius: var(--radius-field);
 }
 
@@ -580,16 +632,16 @@
 }
 
 .knowledge-preview-panel {
-  margin-block-start: var(--space-6);
+  margin-block-start: var(--space-2);
 }
 
 .knowledge-preview-result {
   display: grid;
   gap: var(--space-4);
   padding: var(--space-4);
-  border: 1px solid var(--color-border);
+  border: 1px solid var(--role-line, var(--color-border));
   border-radius: var(--radius-field);
-  background: var(--color-surface);
+  background: var(--role-deck, var(--color-surface));
 }
 
 .knowledge-repeater__header {
@@ -613,9 +665,9 @@
 .knowledge-repeater__row {
   gap: var(--space-3);
   padding: var(--space-4);
-  border: 1px solid var(--color-border);
+  border: 1px solid var(--role-line, var(--color-border));
   border-radius: var(--radius-field);
-  background: var(--color-surface);
+  background: var(--role-deck, var(--color-surface));
 }
 
 .knowledge-repeater__content {
@@ -629,10 +681,11 @@
 }
 
 .knowledge-repeater__empty {
-  padding: var(--space-5);
-  border: 1px dashed var(--color-border-strong);
+  padding: var(--space-3) var(--space-4);
+  border: 1px dashed var(--role-line-strong, var(--color-border-strong));
   border-radius: var(--radius-field);
-  color: var(--color-text-muted);
+  color: var(--role-ink-muted, var(--color-text-muted));
+  font-size: var(--text-sm);
   text-align: center;
 }
 
@@ -651,8 +704,10 @@
   padding: var(--space-6);
 }
 
+/* Row gap is owned by the grid rule below (subgrid multiplies it across four
+   tracks), so only widen the columns here. */
 .knowledge-dialog-body > .knowledge-form-grid {
-  gap: var(--space-5) var(--space-4);
+  column-gap: var(--space-4);
 }
 
 .knowledge-dialog-body > ul {
@@ -665,8 +720,8 @@
   flex-wrap: wrap;
   gap: var(--space-3);
   padding: var(--space-4) var(--space-6);
-  border-block-start: 1px solid var(--color-border);
-  background: color-mix(in srgb, var(--color-brand-midnight) 4%, transparent);
+  border-block-start: 1px solid var(--role-line, var(--color-border));
+  background: color-mix(in srgb, var(--role-accent, var(--color-brand-midnight)) 7%, transparent);
 }
 
 /* Two-column forms and three-action footers need more than the default 35rem. */
@@ -728,15 +783,30 @@
   .knowledge-item-card__heading,
   .knowledge-section-heading,
   .knowledge-summary-progress,
-  .knowledge-history li > div,
-  .knowledge-applicability-row {
+  .knowledge-history li > div {
     align-items: stretch;
     flex-direction: column;
   }
 
+  .knowledge-section-toolbar {
+    position: static;
+    align-items: stretch;
+    flex-direction: column;
+    backdrop-filter: none;
+  }
+
+  .knowledge-section-toolbar__field {
+    grid-template-columns: minmax(0, 1fr);
+    align-items: stretch;
+  }
+
+  .knowledge-section-toolbar__save {
+    margin-inline-start: 0;
+    width: 100%;
+  }
+
   .knowledge-row-actions,
   .knowledge-item-card__actions,
-  .knowledge-section-save,
   .knowledge-filter-actions {
     align-items: stretch;
     flex-direction: column;
@@ -744,7 +814,6 @@
 
   .knowledge-row-actions .ui-button,
   .knowledge-item-card__actions .ui-button,
-  .knowledge-section-save .ui-button,
   .knowledge-filter-actions .ui-button {
     width: 100%;
   }
@@ -766,7 +835,7 @@
   padding: var(--space-4) var(--space-5);
   border: 1px solid color-mix(in srgb, var(--color-danger) 40%, transparent);
   border-radius: var(--radius-field);
-  background: color-mix(in srgb, var(--color-danger) 7%, var(--color-surface));
+  background: color-mix(in srgb, var(--color-danger) 7%, var(--role-deck, var(--role-deck, var(--color-surface))));
   color: var(--color-danger-strong);
   font-size: var(--text-md);
 }

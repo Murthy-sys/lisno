@@ -56,6 +56,11 @@ import {
   aiEstimatorKnowledgeActorGuard,
   type AiEstimatorKnowledgeActorGuard
 } from "./ai-estimator-knowledge-actor.js";
+import {
+  allocateAiEstimatorKnowledgeDisplayOrder,
+  createAiEstimatorKnowledgeMainLineDisplayOrderScope,
+  observeExplicitAiEstimatorKnowledgeDisplayOrder
+} from "./ai-estimator-knowledge-display-order.service.js";
 import { systemClock, type Clock } from "./workflow.js";
 
 type Row = Record<string, unknown>;
@@ -231,6 +236,21 @@ export function createAiEstimatorKnowledgeItemService(
         const occurredAt = now();
         const revisionId = knowledgeId("revision", uuid());
         const completeness = emptyCompleteness(mainLineId);
+        const displayOrderTarget = {
+          scope: createAiEstimatorKnowledgeMainLineDisplayOrderScope(basketId),
+          resourceModel: AiEstimatorKnowledgeMainLineModel,
+          resourceFilter: { basketId },
+          session
+        };
+        const displayOrder = input.displayOrder === undefined
+          ? await allocateAiEstimatorKnowledgeDisplayOrder(displayOrderTarget)
+          : input.displayOrder;
+        if (input.displayOrder !== undefined) {
+          await observeExplicitAiEstimatorKnowledgeDisplayOrder({
+            ...displayOrderTarget,
+            displayOrder: input.displayOrder
+          });
+        }
         await AiEstimatorKnowledgeMainLineModel.create(
           [{
             _id: mainLineId,
@@ -238,7 +258,7 @@ export function createAiEstimatorKnowledgeItemService(
             name: input.name,
             nameNormalized: normalizeKnowledgeIdentity(input.name),
             description: input.description ?? null,
-            displayOrder: input.displayOrder ?? 0,
+            displayOrder,
             status: "draft",
             activeRevisionId: null,
             draftRevisionId: revisionId,
@@ -289,7 +309,7 @@ export function createAiEstimatorKnowledgeItemService(
           entityType: "ai_estimator_knowledge_main_line",
           entityId: mainLineId,
           occurredAt: occurredAt.toISOString(),
-          newValues: { basketId, revisionId, version: 1 }
+          newValues: { basketId, revisionId, displayOrder, version: 1 }
         }, session);
       });
       return getItemAfterMutation(actor, mainLineId, actorGuard);
@@ -316,7 +336,17 @@ export function createAiEstimatorKnowledgeItemService(
           set.nameNormalized = normalizeKnowledgeIdentity(input.name);
         }
         if (input.description !== undefined) set.description = input.description;
-        if (input.displayOrder !== undefined) set.displayOrder = input.displayOrder;
+        if (input.displayOrder !== undefined) {
+          const basketId = requiredString(current.basketId);
+          await observeExplicitAiEstimatorKnowledgeDisplayOrder({
+            scope: createAiEstimatorKnowledgeMainLineDisplayOrderScope(basketId),
+            resourceModel: AiEstimatorKnowledgeMainLineModel,
+            resourceFilter: { basketId },
+            session,
+            displayOrder: input.displayOrder
+          });
+          set.displayOrder = input.displayOrder;
+        }
         const updated = await AiEstimatorKnowledgeMainLineModel.findOneAndUpdate(
           { _id: mainLineId, version: input.expectedVersion, status: { $ne: "archived" } },
           { $set: set, $inc: { version: 1 } },
@@ -329,8 +359,18 @@ export function createAiEstimatorKnowledgeItemService(
           entityType: "ai_estimator_knowledge_main_line",
           entityId: mainLineId,
           occurredAt: occurredAt.toISOString(),
-          oldValues: { version: input.expectedVersion },
-          newValues: { version: input.expectedVersion + 1 }
+          oldValues: {
+            version: input.expectedVersion,
+            ...(input.displayOrder === undefined
+              ? {}
+              : { displayOrder: requiredInteger(current.displayOrder) })
+          },
+          newValues: {
+            version: input.expectedVersion + 1,
+            ...(input.displayOrder === undefined
+              ? {}
+              : { displayOrder: input.displayOrder })
+          }
         }, session);
       });
       return getItemAfterMutation(actor, mainLineId, actorGuard);
@@ -800,6 +840,13 @@ export function createAiEstimatorKnowledgeItemService(
         const occurredAt = now();
         const revisionId = knowledgeId("revision", uuid());
         const duplicateName = input.name?.trim() || `${requiredString(source.name)} Copy`;
+        const basketId = requiredString(source.basketId);
+        const displayOrder = await allocateAiEstimatorKnowledgeDisplayOrder({
+          scope: createAiEstimatorKnowledgeMainLineDisplayOrderScope(basketId),
+          resourceModel: AiEstimatorKnowledgeMainLineModel,
+          resourceFilter: { basketId },
+          session
+        });
         const priceReferences = await cloneRevisionPrices({
           sourcePrices: sourcePriceDocuments.map((row) => asRow(row)!),
           targetMainLineId: duplicateId,
@@ -821,11 +868,11 @@ export function createAiEstimatorKnowledgeItemService(
         const completeness = completenessForRows(duplicateId, remappedPayloads);
         await AiEstimatorKnowledgeMainLineModel.create([{
           _id: duplicateId,
-          basketId: source.basketId,
+          basketId,
           name: duplicateName,
           nameNormalized: normalizeKnowledgeIdentity(duplicateName),
           description: source.description ?? null,
-          displayOrder: source.displayOrder ?? 0,
+          displayOrder,
           status: "draft",
           activeRevisionId: null,
           draftRevisionId: revisionId,
@@ -868,7 +915,14 @@ export function createAiEstimatorKnowledgeItemService(
           entityType: "ai_estimator_knowledge_main_line",
           entityId: duplicateId,
           occurredAt: occurredAt.toISOString(),
-          newValues: { sourceMainLineId: mainLineId, sourceRevisionId, revisionId, version: 1 }
+          newValues: {
+            sourceMainLineId: mainLineId,
+            sourceRevisionId,
+            revisionId,
+            basketId,
+            displayOrder,
+            version: 1
+          }
         }, session);
       });
       return getItemAfterMutation(actor, duplicateId, actorGuard);

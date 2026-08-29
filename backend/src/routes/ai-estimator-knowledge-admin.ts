@@ -29,7 +29,7 @@ const stableIdSchema = z.string().trim().min(1).max(128);
 const shortTextSchema = z.string().trim().min(1).max(240);
 const optionalDescriptionSchema = z.string().trim().min(1).max(4_000).nullable().optional();
 const expectedVersionSchema = z.number().int().min(1);
-const displayOrderSchema = z.number().int().min(0);
+const displayOrderSchema = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
 const paginationFields = {
   limit: z.coerce.number().int().min(1).max(100).default(20),
   offset: z.coerce.number().int().min(0).default(0)
@@ -57,7 +57,7 @@ const basketCreateSchema = z
   .object({
     name: shortTextSchema,
     description: optionalDescriptionSchema,
-    displayOrder: displayOrderSchema.default(0),
+    displayOrder: displayOrderSchema.optional(),
     status: z.enum(["active", "inactive"]).optional()
   })
   .strict();
@@ -103,7 +103,7 @@ const mainLineCreateSchema = z
   .object({
     name: shortTextSchema,
     description: optionalDescriptionSchema,
-    displayOrder: displayOrderSchema.default(0)
+    displayOrder: displayOrderSchema.optional()
   })
   .strict();
 
@@ -170,7 +170,7 @@ const commonMasterFields = {
   code: z.string().trim().min(1).max(64),
   name: shortTextSchema,
   description: optionalDescriptionSchema,
-  displayOrder: displayOrderSchema.default(0),
+  displayOrder: displayOrderSchema.optional(),
   status: z.enum(["active", "inactive"]).optional()
 } as const;
 
