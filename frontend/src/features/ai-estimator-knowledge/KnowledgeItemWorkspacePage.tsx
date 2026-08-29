@@ -39,7 +39,9 @@ import {
   KNOWLEDGE_SECTION_LABELS,
   formatKnowledgeDateTime,
   formatKnowledgeMoney,
-  formatKnowledgePercentage
+  formatKnowledgePercentage,
+  formatPaiseForRupeeInput,
+  parseRupeeInputToPaise
 } from "./knowledgePresentation";
 import { knowledgeQueryKeys } from "./knowledgeQueryKeys";
 import { KnowledgeSectionEditor } from "./KnowledgeSectionEditor";
@@ -229,6 +231,7 @@ export function KnowledgeItemWorkspacePage() {
     <div className="knowledge-page">
       <PageHeader
         id="knowledge-item-title"
+        breadcrumb={<Button variant="quiet" size="compact" leadingIcon={<ArrowLeft />} onClick={() => guard.requestNavigation(() => navigate("/admin/configuration/estimation"))}>Back to knowledge base</Button>}
         eyebrow={`${item.basketName} → Main Line`}
         title={item.mainLineName}
         description={item.description ?? "No description provided."}
@@ -236,7 +239,6 @@ export function KnowledgeItemWorkspacePage() {
         actions={<WorkspaceActions item={item} dirty={dirty} canCreate={canCreate} canLifecycle={canLifecycle} onSave={() => void saveSection()} onCommand={(next) => guard.requestNavigation(() => setCommand(next))} onLifecycle={(next) => guard.requestNavigation(() => setLifecycleAction(next))} saveBusy={saveMutation.isPending} saveDisabled={!editable || !dirty} />}
       />
       <KnowledgeSafetyNotice />
-      <div className="knowledge-workspace-back"><Button variant="quiet" leadingIcon={<ArrowLeft />} onClick={() => guard.requestNavigation(() => navigate("/admin/configuration/estimation"))}>Back to knowledge base</Button></div>
       <Surface as="section" className="knowledge-workspace-summary" variant="subtle" aria-label="Revision summary">
         <div className="knowledge-summary-progress"><div><strong>{item.completeness.percentage}% complete</strong><span>Backend-derived activation readiness</span></div><ProgressBar value={item.completeness.percentage} label="Knowledge completeness" valueText={`${item.completeness.percentage}% complete`} /></div>
         <dl className="knowledge-summary-list"><div><dt>Active revision</dt><dd>{item.activeRevision ? `Revision ${item.activeRevision.revisionNumber}` : "None"}</dd></div><div><dt>Draft revision</dt><dd>{item.draftRevision ? `Revision ${item.draftRevision.revisionNumber}` : "None"}</dd></div><div><dt>Current view</dt><dd>{revision ? `${revision.status} revision ${revision.revisionNumber}` : "Unavailable"}</dd></div></dl>
@@ -247,13 +249,16 @@ export function KnowledgeItemWorkspacePage() {
       <KnowledgeSectionNavigation activeSection={activeSection} onSectionChange={(next) => guard.requestNavigation(() => { setActiveSection(next); setDirty(false); setEditorValid(true); setConflict(null); setServerReview(null); })} panelBusy={sectionQuery.isFetching}>
         {sectionQuery.isPending ? <PageState state="loading" message={`Loading ${KNOWLEDGE_SECTION_LABELS[activeSection]}…`} /> : sectionQuery.isError ? <PageState state="error" message={sectionQuery.error.message} action={{ label: "Try again", onAction: () => void sectionQuery.refetch() }} /> : sectionQuery.data ? (
           <Surface as="section" className="knowledge-workspace-section">
-            <div className="knowledge-applicability-row"><Field id="knowledge-applicability" label="Section state">{(props) => <Select {...props} disabled={!editable} value={applicability} onChange={(event) => { setApplicability(event.target.value as KnowledgeSectionApplicability); setDirty(true); }}><option value="configured">Configured</option><option value="not_configured">Not configured</option><option value="not_applicable">Not applicable</option></Select>}</Field><span>Section version {sectionQuery.data.version}</span></div>
+            <div className="knowledge-section-toolbar">
+              <Field id="knowledge-applicability" label="Section state" className="knowledge-section-toolbar__field">{(props) => <Select {...props} disabled={!editable} value={applicability} onChange={(event) => { setApplicability(event.target.value as KnowledgeSectionApplicability); setDirty(true); }}><option value="configured">Configured</option><option value="not_configured">Not configured</option><option value="not_applicable">Not applicable</option></Select>}</Field>
+              <span className="knowledge-section-toolbar__meta">Section version {sectionQuery.data.version}</span>
+              {editable ? <Button className="knowledge-section-toolbar__save" leadingIcon={<Save />} busy={saveMutation.isPending} disabled={!dirty} onClick={() => void saveSection()}>Save section</Button> : null}
+            </div>
             {serverReview ? <Surface as="section" variant="subtle" className="knowledge-conflict-review" aria-label="Latest server version"><h3>Latest server version {serverReview.version}</h3><p>Your unsaved local editor remains below for comparison.</p><pre>{JSON.stringify(serverReview.payload, null, 2)}</pre></Surface> : null}
             {(relationshipBasketsQuery.isError || relationshipItemsQuery.isError) && ["scope", "recommendations", "advanced"].includes(activeSection) ? <InlineMessage tone="warning">Some Basket or Main Line choices could not be loaded. Existing stable-ID selections remain visible; retry before changing relationships.</InlineMessage> : null}
             <KnowledgeSectionEditor sectionKey={activeSection} payload={payload} masters={masters} relationshipBaskets={relationshipBasketsQuery.data?.items ?? []} relationshipItems={relationshipItemsQuery.data?.items ?? []} currentMainLineId={mainLineId} readOnly={!editable} canQuickAdd={canCreate} resetKey={`${sectionQuery.data.id}-${sectionQuery.data.version}`} validationAttempt={validationAttempt} onChange={setPayload} onDirty={() => setDirty(true)} onValidationChange={setEditorValid} onQuickAdd={(type, select) => setQuickAdd({ type, select })} />
             {activeSection === "quantity-margin" ? <KnowledgePreviewPanel disabled={false} /> : null}
             {saveMutation.error && !(saveMutation.error instanceof ApiError && saveMutation.error.code === "VERSION_CONFLICT") ? <InlineMessage tone="error" role="alert">{saveMutation.error.message}</InlineMessage> : null}
-            {editable ? <div className="knowledge-section-save"><Button leadingIcon={<Save />} busy={saveMutation.isPending} disabled={!dirty} onClick={() => void saveSection()}>Save section</Button></div> : null}
           </Surface>
         ) : <PageState state="empty" message="This revision has no section data." />}
       </KnowledgeSectionNavigation>
@@ -313,7 +318,7 @@ function KnowledgeCommandDialog({ kind, reason, duplicateName, onReasonChange, o
 }
 
 function KnowledgePreviewPanel({ disabled }: { readonly disabled: boolean }) {
-  const [unitRatePaise, setUnitRatePaise] = useState("");
+  const [unitRateRupees, setUnitRateRupees] = useState("");
   const [quantity, setQuantity] = useState("");
   const [quantityScale, setQuantityScale] = useState("0");
   const [quantityAdjustmentBps, setQuantityAdjustmentBps] = useState("");
@@ -323,23 +328,42 @@ function KnowledgePreviewPanel({ disabled }: { readonly disabled: boolean }) {
   const [startMarginBps, setStartMarginBps] = useState("");
   const [bottomMarginBps, setBottomMarginBps] = useState("");
   const [pmcMarkupBps, setPmcMarkupBps] = useState("");
-  const mutation = useMutation({ mutationFn: () => previewKnowledge(previewRequest({ unitRatePaise, quantity, quantityScale, quantityAdjustmentBps, wastageBps, taxRateBps, taxTreatment, startMarginBps, bottomMarginBps, pmcMarkupBps })) });
-  const ready = isNonnegativeInteger(unitRatePaise) && /^(?:0|[1-9]\d*)(?:\.\d+)?$/u.test(quantity) && isBoundedInteger(quantityScale, 0, 18);
-  return <Surface as="section" variant="subtle" className="knowledge-preview-panel" aria-labelledby="knowledge-preview-title"><div className="knowledge-section-heading"><div><h3 id="knowledge-preview-title">Server calculation preview</h3><p>Money is sent in paise, percentages in basis points, and quantity as a canonical decimal string. The client does not calculate an authoritative total.</p></div></div><div className="knowledge-form-grid"><PreviewInput id="preview-rate" label="Unit rate (paise)" value={unitRatePaise} setValue={setUnitRatePaise} /><PreviewInput id="preview-quantity" label="Quantity" value={quantity} setValue={setQuantity} text /><PreviewInput id="preview-scale" label="Quantity scale" value={quantityScale} setValue={setQuantityScale} /><PreviewInput id="preview-adjustment" label="Quantity adjustment (BPS)" value={quantityAdjustmentBps} setValue={setQuantityAdjustmentBps} /><PreviewInput id="preview-wastage" label="Wastage (BPS)" value={wastageBps} setValue={setWastageBps} /><PreviewInput id="preview-tax" label="Tax rate (BPS)" value={taxRateBps} setValue={setTaxRateBps} />{taxRateBps !== "" ? <Field id="preview-treatment" label="Tax treatment">{(props) => <Select {...props} value={taxTreatment} onChange={(event) => setTaxTreatment(event.target.value as typeof taxTreatment)}><option value="exclusive">Exclusive</option><option value="inclusive">Inclusive</option></Select>}</Field> : null}<PreviewInput id="preview-start-margin" label="Start margin (BPS)" value={startMarginBps} setValue={setStartMarginBps} /><PreviewInput id="preview-bottom-margin" label="Bottom margin (BPS)" value={bottomMarginBps} setValue={setBottomMarginBps} /><PreviewInput id="preview-pmc" label="PMC markup (BPS)" value={pmcMarkupBps} setValue={setPmcMarkupBps} /></div><Button variant="secondary" busy={mutation.isPending} disabled={disabled || !ready} onClick={() => mutation.mutate()}>Run server preview</Button>{mutation.error ? <InlineMessage tone="error" role="alert">{mutation.error.message}</InlineMessage> : mutation.data ? <KnowledgePreviewResult preview={mutation.data} /> : null}</Surface>;
+  const parsedUnitRate = parseRupeeInputToPaise(unitRateRupees);
+  const unitRateError = unitRateRupees === "" || parsedUnitRate.status === "valid"
+    ? undefined
+    : parsedUnitRate.status === "incomplete"
+      ? "Complete the rupee amount with one or two digits after the decimal point."
+      : parsedUnitRate.reason === "unsafe"
+        ? "Enter a rupee amount within the supported range."
+        : "Enter a non-negative rupee amount with no more than two decimal places.";
+  const mutation = useMutation({
+    mutationFn: () => previewKnowledge(previewRequest({ unitRateRupees, quantity, quantityScale, quantityAdjustmentBps, wastageBps, taxRateBps, taxTreatment, startMarginBps, bottomMarginBps, pmcMarkupBps }))
+  });
+  const ready = parsedUnitRate.status === "valid" && /^(?:0|[1-9]\d*)(?:\.\d+)?$/u.test(quantity) && isBoundedInteger(quantityScale, 0, 18);
+  return <Surface as="section" variant="subtle" className="knowledge-preview-panel" aria-labelledby="knowledge-preview-title"><div className="knowledge-section-heading"><div><h3 id="knowledge-preview-title">Server calculation preview</h3><p>The server remains authoritative for monetary amounts, percentages, and canonical decimal quantities; the client does not calculate totals.</p></div></div><div className="knowledge-form-grid"><Field id="preview-rate" label="Unit rate (₹)" hint="Enter a non-negative rupee amount with up to two decimal places, for example 0, 0.01, or 125.50." error={unitRateError}>{(props) => <Input {...props} type="text" inputMode="decimal" value={unitRateRupees} onChange={(event) => setUnitRateRupees(event.target.value)} onBlur={() => { if (parsedUnitRate.status === "valid") setUnitRateRupees(formatPaiseForRupeeInput(parsedUnitRate.paise)); }} />}</Field><PreviewInput id="preview-quantity" label="Quantity" value={quantity} setValue={setQuantity} text /><PreviewInput id="preview-scale" label="Quantity scale" value={quantityScale} setValue={setQuantityScale} /><PreviewInput id="preview-adjustment" label="Quantity adjustment (BPS)" value={quantityAdjustmentBps} setValue={setQuantityAdjustmentBps} /><PreviewInput id="preview-wastage" label="Wastage (BPS)" value={wastageBps} setValue={setWastageBps} /><PreviewInput id="preview-tax" label="Tax rate (BPS)" value={taxRateBps} setValue={setTaxRateBps} />{taxRateBps !== "" ? <Field id="preview-treatment" label="Tax treatment">{(props) => <Select {...props} value={taxTreatment} onChange={(event) => setTaxTreatment(event.target.value as typeof taxTreatment)}><option value="exclusive">Exclusive</option><option value="inclusive">Inclusive</option></Select>}</Field> : null}<PreviewInput id="preview-start-margin" label="Start margin (BPS)" value={startMarginBps} setValue={setStartMarginBps} /><PreviewInput id="preview-bottom-margin" label="Bottom margin (BPS)" value={bottomMarginBps} setValue={setBottomMarginBps} /><PreviewInput id="preview-pmc" label="PMC markup (BPS)" value={pmcMarkupBps} setValue={setPmcMarkupBps} /></div><div className="knowledge-preview-actions"><Button variant="secondary" busy={mutation.isPending} disabled={disabled || !ready} onClick={() => mutation.mutate()}>Run server preview</Button></div>{mutation.error ? <InlineMessage tone="error" role="alert">{mutation.error.message}</InlineMessage> : mutation.data ? <KnowledgePreviewResult preview={mutation.data} /> : null}</Surface>;
 }
 
 function PreviewInput({ id, label, value, setValue, text = false }: { readonly id: string; readonly label: string; readonly value: string; readonly setValue: (value: string) => void; readonly text?: boolean }) {
   return <Field id={id} label={label}>{(props) => <Input {...props} type={text ? "text" : "number"} min={text ? undefined : 0} step={text ? undefined : 1} value={value} onChange={(event) => setValue(event.target.value)} />}</Field>;
 }
 
-function previewRequest(values: Record<string, string>): KnowledgePreviewRequest {
+function previewRequest(values: Readonly<{
+  unitRateRupees: string;
+  quantity: string;
+  quantityScale: string;
+  quantityAdjustmentBps: string;
+  wastageBps: string;
+  taxRateBps: string;
+  taxTreatment: string;
+  startMarginBps: string;
+  bottomMarginBps: string;
+  pmcMarkupBps: string;
+}>): KnowledgePreviewRequest {
+  const unitRate = parseRupeeInputToPaise(values.unitRateRupees);
+  if (unitRate.status !== "valid") throw new Error("Enter a valid unit rate in rupees before running the preview.");
   const integer = (value: string) => value === "" ? undefined : Number(value);
   const taxRateBps = integer(values.taxRateBps);
-  return { unitRatePaise: integer(values.unitRatePaise), quantity: values.quantity || null, quantityScale: Number(values.quantityScale), quantityAdjustmentBps: integer(values.quantityAdjustmentBps), wastageBps: integer(values.wastageBps), taxRateBps, ...(taxRateBps === undefined ? {} : { taxTreatment: values.taxTreatment as "exclusive" | "inclusive" }), startMarginBps: integer(values.startMarginBps), bottomMarginBps: integer(values.bottomMarginBps), pmcMarkupBps: integer(values.pmcMarkupBps) };
-}
-
-function isNonnegativeInteger(value: string): boolean {
-  return value !== "" && Number.isSafeInteger(Number(value)) && Number(value) >= 0;
+  return { unitRatePaise: unitRate.paise, quantity: values.quantity || null, quantityScale: Number(values.quantityScale), quantityAdjustmentBps: integer(values.quantityAdjustmentBps), wastageBps: integer(values.wastageBps), taxRateBps, ...(taxRateBps === undefined ? {} : { taxTreatment: values.taxTreatment as "exclusive" | "inclusive" }), startMarginBps: integer(values.startMarginBps), bottomMarginBps: integer(values.bottomMarginBps), pmcMarkupBps: integer(values.pmcMarkupBps) };
 }
 
 function isBoundedInteger(value: string, minimum: number, maximum: number): boolean {

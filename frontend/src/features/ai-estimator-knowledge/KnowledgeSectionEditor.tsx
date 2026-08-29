@@ -1,10 +1,16 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { Button } from "../../components/ui/Button";
 import { Checkbox, Field, Input, Select, Textarea } from "../../components/ui/Field";
 import { InlineMessage } from "../../components/ui/InlineMessage";
 import { KnowledgeRepeater } from "./KnowledgeRepeater";
-import { KNOWLEDGE_SECTION_LABELS } from "./knowledgePresentation";
+import {
+  KNOWLEDGE_SECTION_LABELS,
+  formatKnowledgeMoney,
+  formatPaiseForRupeeInput,
+  parseRupeeInputToPaise,
+  type RupeeInputParseResult
+} from "./knowledgePresentation";
 import type {
   KnowledgeJsonObject,
   KnowledgeJsonValue,
@@ -102,7 +108,7 @@ export function KnowledgeSectionEditor({
         </div>
         {readOnly ? <span className="knowledge-readonly-label">Read-only revision</span> : null}
       </div>
-      {issues.length ? <div ref={validationSummaryRef} className="knowledge-validation-summary" role="alert" tabIndex={-1}><strong>Review {issues.length} section issue{issues.length === 1 ? "" : "s"}</strong><ul>{issues.map((issue) => <li key={`${issue.path}-${issue.message}`}><span>{issue.path.replaceAll(".", " → ")}: </span>{issue.message}</li>)}</ul></div> : null}
+      {issues.length ? <div ref={validationSummaryRef} className="knowledge-validation-summary" role="alert" tabIndex={-1}><strong>Review {issues.length} section issue{issues.length === 1 ? "" : "s"}</strong><ul>{issues.map((issue) => <li key={`${issue.path}-${issue.message}`}><span>{validationPathLabel(issue.path)}: </span>{issue.message}</li>)}</ul></div> : null}
 
       {sectionKey === "overview" ? (
         <>
@@ -204,7 +210,7 @@ function NumberField({ field, label, value, disabled, max, onChange }: {
   readonly max?: number;
   readonly onChange: (value: number | undefined) => void;
 }) {
-  return <Field id={`knowledge-${field}`} label={label} hint="Stored as an integer; 100 basis points equals 1%.">{(props) => <Input {...props} type="number" min={0} max={max} step={1} disabled={disabled} value={typeof value === "number" ? value : ""} onChange={(event) => onChange(event.target.value === "" ? undefined : Number(event.target.value))} />}</Field>;
+  return <Field id={`knowledge-${field}`} label={label} hint="Integer; 100 bps = 1%.">{(props) => <Input {...props} type="number" min={0} max={max} step={1} disabled={disabled} value={typeof value === "number" ? value : ""} onChange={(event) => onChange(event.target.value === "" ? undefined : Number(event.target.value))} />}</Field>;
 }
 
 function EnumField({ id, label, value, values, disabled, onChange }: {
@@ -365,11 +371,52 @@ function PriceEntryRow({ prefix, value, specifications, masters, disabled, canQu
     }
     onChange(copied);
   };
-  return <div className="knowledge-form-grid"><RowSelect id={`${prefix}-operation`} label="Price operation" value={operation} values={["append", "reference"]} disabled={disabled || referenced} onChange={(next) => set("operation", next || undefined)} /><RowInput id={`${prefix}-entry-id`} label="Price entry ID" value={stringValue(value.priceEntryId)} disabled readOnly />{referenced ? <><RowInput id={`${prefix}-version-id`} label="Price version ID" value={stringValue(value.priceVersionId)} disabled readOnly />{resolved ? <ResolvedPriceVersion value={resolved} /> : <p className="knowledge-help-text">Saved price details are unavailable.</p>}<Button size="compact" variant="secondary" disabled={disabled || !resolved} onClick={replace}>Replace price version</Button></> : <><div className="knowledge-master-control"><MasterRowSelect id={`${prefix}-vendor`} label="Vendor" value={stringValue(value.vendorId)} masters={masters.vendors ?? []} disabled={disabled} onChange={(next) => set("vendorId", next)} /><Button size="compact" variant="quiet" disabled={disabled || !canQuickAdd} onClick={() => onQuickAdd("vendors", (master) => set("vendorId", master.id))}>Add vendor</Button></div><MasterRowSelect id={`${prefix}-uom`} label="UOM" value={stringValue(value.uomId)} masters={masters.uoms ?? []} disabled={disabled} onChange={(next) => set("uomId", next)} /><StableIdSelect id={`${prefix}-specification`} label="Specification" value={stringValue(value.specificationId)} options={specifications.map((specification) => ({ id: stringValue(specification.id), label: stringValue(specification.name) || "Unnamed specification" })).filter(({ id }) => id)} disabled={disabled} nullable onChange={(next) => set("specificationId", next || null)} /><MasterRowSelect id={`${prefix}-mode`} label="Mode" value={stringValue(value.modeId)} masters={masters.modes ?? []} disabled={disabled} nullable onChange={(next) => set("modeId", next)} /><div className="knowledge-master-control"><MasterRowSelect id={`${prefix}-tax-rule`} label="Tax rule" value={stringValue(value.taxRuleId)} masters={masters.taxes ?? []} disabled={disabled} onChange={(next) => onChange(setObjectValue(setObjectValue(value, "taxRuleId", next), "taxVersionId", undefined))} /><Button size="compact" variant="quiet" disabled={disabled || !canQuickAdd} onClick={() => onQuickAdd("taxes", (master) => onChange(setObjectValue(setObjectValue(value, "taxRuleId", master.id), "taxVersionId", undefined)))}>Add tax</Button></div><TaxVersionSelect id={`${prefix}-tax-version`} value={stringValue(value.taxVersionId)} taxRule={taxRule} disabled={disabled} onChange={(next) => set("taxVersionId", next || undefined)} /><RowNumber id={`${prefix}-amount`} label="Input amount (paise)" value={numberValue(value.inputAmountPaise)} disabled={disabled} min={0} required onChange={(next) => set("inputAmountPaise", next)} /><RowSelect id={`${prefix}-treatment`} label="Tax treatment" value={stringValue(value.treatment)} values={["exclusive", "inclusive"]} disabled={disabled} onChange={(next) => set("treatment", next || undefined)} /><RowDateTime id={`${prefix}-from`} label="Effective from" value={stringValue(value.effectiveFrom)} disabled={disabled} required onChange={(next) => set("effectiveFrom", next || undefined)} /><RowDateTime id={`${prefix}-to`} label="Effective to" value={stringValue(value.effectiveTo)} disabled={disabled} onChange={(next) => set("effectiveTo", next || null)} /><RowSelect id={`${prefix}-status`} label="Version status" value={stringValue(value.status)} values={["draft", "active", "inactive"]} disabled={disabled} onChange={(next) => set("status", next || undefined)} /></>}</div>;
+  return <div className="knowledge-form-grid"><RowSelect id={`${prefix}-operation`} label="Price operation" value={operation} values={["append", "reference"]} disabled={disabled || referenced} onChange={(next) => set("operation", next || undefined)} /><RowInput id={`${prefix}-entry-id`} label="Price entry ID" value={stringValue(value.priceEntryId)} disabled readOnly />{referenced ? <><RowInput id={`${prefix}-version-id`} label="Price version ID" value={stringValue(value.priceVersionId)} disabled readOnly />{resolved ? <ResolvedPriceVersion value={resolved} /> : <p className="knowledge-help-text">Saved price details are unavailable.</p>}<Button size="compact" variant="secondary" disabled={disabled || !resolved} onClick={replace}>Replace price version</Button></> : <><div className="knowledge-master-control"><MasterRowSelect id={`${prefix}-vendor`} label="Vendor" value={stringValue(value.vendorId)} masters={masters.vendors ?? []} disabled={disabled} onChange={(next) => set("vendorId", next)} /><Button size="compact" variant="quiet" disabled={disabled || !canQuickAdd} onClick={() => onQuickAdd("vendors", (master) => set("vendorId", master.id))}>Add vendor</Button></div><MasterRowSelect id={`${prefix}-uom`} label="UOM" value={stringValue(value.uomId)} masters={masters.uoms ?? []} disabled={disabled} onChange={(next) => set("uomId", next)} /><StableIdSelect id={`${prefix}-specification`} label="Specification" value={stringValue(value.specificationId)} options={specifications.map((specification) => ({ id: stringValue(specification.id), label: stringValue(specification.name) || "Unnamed specification" })).filter(({ id }) => id)} disabled={disabled} nullable onChange={(next) => set("specificationId", next || null)} /><MasterRowSelect id={`${prefix}-mode`} label="Mode" value={stringValue(value.modeId)} masters={masters.modes ?? []} disabled={disabled} nullable onChange={(next) => set("modeId", next)} /><div className="knowledge-master-control"><MasterRowSelect id={`${prefix}-tax-rule`} label="Tax rule" value={stringValue(value.taxRuleId)} masters={masters.taxes ?? []} disabled={disabled} onChange={(next) => onChange(setObjectValue(setObjectValue(value, "taxRuleId", next), "taxVersionId", undefined))} /><Button size="compact" variant="quiet" disabled={disabled || !canQuickAdd} onClick={() => onQuickAdd("taxes", (master) => onChange(setObjectValue(setObjectValue(value, "taxRuleId", master.id), "taxVersionId", undefined)))}>Add tax</Button></div><TaxVersionSelect id={`${prefix}-tax-version`} value={stringValue(value.taxVersionId)} taxRule={taxRule} disabled={disabled} onChange={(next) => set("taxVersionId", next || undefined)} /><RupeeAmountField id={`${prefix}-amount`} valuePaise={numberValue(value.inputAmountPaise)} disabled={disabled} onChange={(next) => set("inputAmountPaise", next)} /><RowSelect id={`${prefix}-treatment`} label="Tax treatment" value={stringValue(value.treatment)} values={["exclusive", "inclusive"]} disabled={disabled} onChange={(next) => set("treatment", next || undefined)} /><RowDateTime id={`${prefix}-from`} label="Effective from" value={stringValue(value.effectiveFrom)} disabled={disabled} required onChange={(next) => set("effectiveFrom", next || undefined)} /><RowDateTime id={`${prefix}-to`} label="Effective to" value={stringValue(value.effectiveTo)} disabled={disabled} onChange={(next) => set("effectiveTo", next || null)} /><RowSelect id={`${prefix}-status`} label="Version status" value={stringValue(value.status)} values={["draft", "active", "inactive"]} disabled={disabled} onChange={(next) => set("status", next || undefined)} /></>}</div>;
 }
 
 function ResolvedPriceVersion({ value }: { readonly value: KnowledgeJsonObject }) {
-  return <dl className="knowledge-summary-list" aria-label="Immutable saved price details"><div><dt>Version</dt><dd>{numberValue(value.versionNumber) ?? "Unavailable"}</dd></div><div><dt>Input</dt><dd>{numberValue(value.inputAmountPaise) ?? "Unavailable"} paise</dd></div><div><dt>Base</dt><dd>{numberValue(value.baseAmountPaise) ?? "Unavailable"} paise</dd></div><div><dt>Tax</dt><dd>{numberValue(value.taxAmountPaise) ?? "Unavailable"} paise</dd></div><div><dt>Total</dt><dd>{numberValue(value.totalAmountPaise) ?? "Unavailable"} paise</dd></div><div><dt>Status</dt><dd>{stringValue(value.status) || "Unavailable"}</dd></div></dl>;
+  return <dl className="knowledge-summary-list" aria-label="Immutable saved price details"><div><dt>Version</dt><dd>{numberValue(value.versionNumber) ?? "Unavailable"}</dd></div><div><dt>Input</dt><dd>{formattedMoney(value.inputAmountPaise)}</dd></div><div><dt>Base</dt><dd>{formattedMoney(value.baseAmountPaise)}</dd></div><div><dt>Tax</dt><dd>{formattedMoney(value.taxAmountPaise)}</dd></div><div><dt>Total</dt><dd>{formattedMoney(value.totalAmountPaise)}</dd></div><div><dt>Status</dt><dd>{stringValue(value.status) || "Unavailable"}</dd></div></dl>;
+}
+
+function RupeeAmountField({ id, valuePaise, disabled, onChange }: { readonly id: string; readonly valuePaise: number | undefined; readonly disabled: boolean; readonly onChange: (value: number | undefined) => void }) {
+  const initialText = editableRupeeText(valuePaise);
+  const [text, setText] = useState(initialText);
+  const textRef = useRef(initialText);
+  const parsed = parseRupeeInputToPaise(text);
+  const setEditableText = (next: string) => {
+    textRef.current = next;
+    setText(next);
+  };
+
+  useEffect(() => {
+    const current = parseRupeeInputToPaise(textRef.current);
+    if (valuePaise === undefined) {
+      if (current.status === "valid") setEditableText("");
+      return;
+    }
+    const next = editableRupeeText(valuePaise);
+    if (current.status !== "valid" || current.paise !== valuePaise) setEditableText(next);
+  }, [valuePaise]);
+
+  return <Field id={id} label="Input amount (rupees)" required hint="Enter a non-negative rupee amount with up to two decimal places." error={rupeeInputError(parsed, text)}>{(props) => <Input {...props} type="text" inputMode="decimal" autoComplete="off" disabled={disabled} value={text} onChange={(event) => { const nextText = event.target.value; setEditableText(nextText); const next = parseRupeeInputToPaise(nextText); onChange(next.status === "valid" ? next.paise : undefined); }} />}</Field>;
+}
+
+function rupeeInputError(parsed: RupeeInputParseResult, text: string): string | undefined {
+  if (parsed.status === "valid") return undefined;
+  if (parsed.status === "incomplete") return text ? "Complete the rupee amount with one or two decimal places." : "Enter an amount in rupees.";
+  if (parsed.reason === "unsafe") return "Enter a smaller rupee amount.";
+  return "Enter a non-negative rupee amount with up to two decimal places.";
+}
+
+function editableRupeeText(valuePaise: number | undefined): string {
+  return typeof valuePaise === "number" && Number.isSafeInteger(valuePaise) && valuePaise >= 0
+    ? formatPaiseForRupeeInput(valuePaise)
+    : "";
+}
+
+function formattedMoney(value: KnowledgeJsonValue | undefined): string {
+  const amountPaise = numberValue(value);
+  return amountPaise === undefined ? "Unavailable" : formatKnowledgeMoney(amountPaise);
 }
 
 function TaxVersionSelect({ id, value, taxRule, disabled, onChange }: { readonly id: string; readonly value: string; readonly taxRule: KnowledgeMaster | undefined; readonly disabled: boolean; readonly onChange: (value: string) => void }) {
@@ -498,10 +545,14 @@ function singular(label: string): string {
   return label.endsWith("ies") ? `${label.slice(0, -3)}y` : label.endsWith("s") ? label.slice(0, -1) : label;
 }
 
+function validationPathLabel(path: string): string {
+  return path.split(".").map((part) => part === "inputAmountPaise" ? "Input amount (rupees)" : part).join(" → ");
+}
+
 function sectionHelp(sectionKey: KnowledgeSectionKey): string {
   return ({
     overview: "Set the item identity and compatible reusable values.",
-    pricing: "Maintain specifications, immutable price-version commands, and internal pricing notes. Money uses paise.",
+    pricing: "Maintain specifications, immutable price-version commands, and internal pricing notes. Enter price amounts in rupees.",
     "quantity-margin": "Configure quantity slabs and basis-point margins. Preview calculations remain server-owned.",
     scope: "Define applicable modes, surfaces, and explicit exclusions.",
     recommendations: "Relate this item to other stable Basket and Main Line IDs.",

@@ -171,7 +171,21 @@ const dateTime = { type: "string", format: "date-time" } as const;
 const nullableDateTime = { ...dateTime, nullable: true } as const;
 const decimal = { type: "string", minLength: 1, maxLength: 64, pattern: "^(0|[1-9][0-9]*)(\\.[0-9]+)?$" } as const;
 const description = { type: "string", minLength: 1, maxLength: 4_000, nullable: true } as const;
-const displayOrder = { type: "integer", minimum: 0, default: 0 } as const;
+const displayOrder = {
+  type: "integer",
+  minimum: 0,
+  maximum: Number.MAX_SAFE_INTEGER
+} as const;
+const createDisplayOrder = {
+  ...displayOrder,
+  deprecated: true,
+  description:
+    "Assigned automatically after existing values when omitted. Explicit values remain temporarily accepted for backward compatibility."
+} as const;
+const editableDisplayOrder = {
+  ...displayOrder,
+  description: "Optional explicit display position used when manually reordering an existing value."
+} as const;
 const masterStatus = { type: "string", enum: [...AI_ESTIMATOR_KNOWLEDGE_MASTER_STATUSES] } as const;
 const sectionApplicability = { type: "string", enum: [...AI_ESTIMATOR_KNOWLEDGE_SECTION_APPLICABILITY] } as const;
 
@@ -195,11 +209,18 @@ const masterProperties = {
   ...actorMetadata
 } as const;
 
-const masterRequestProperties = {
+const masterCreateRequestProperties = {
   code: masterProperties.code,
   name: masterProperties.name,
   description,
-  displayOrder,
+  displayOrder: createDisplayOrder,
+  status: { type: "string", enum: ["active", "inactive"] }
+} as const;
+const masterUpdateRequestProperties = {
+  code: masterProperties.code,
+  name: masterProperties.name,
+  description,
+  displayOrder: editableDisplayOrder,
   status: { type: "string", enum: ["active", "inactive"] }
 } as const;
 const masterRequiredProperties = Object.keys(masterProperties).filter(
@@ -233,26 +254,26 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
   KnowledgeBasketCreateRequest: strictObject(["name"], {
     name: masterProperties.name,
     description,
-    displayOrder,
+    displayOrder: createDisplayOrder,
     status: { type: "string", enum: ["active", "inactive"] }
   }),
   KnowledgeBasketUpdateRequest: strictObject(["expectedVersion"], {
     expectedVersion: version,
     name: masterProperties.name,
     description,
-    displayOrder,
+    displayOrder: editableDisplayOrder,
     status: { type: "string", enum: ["active", "inactive"] }
   }),
   KnowledgeMainLineCreateRequest: strictObject(["name"], {
     name: masterProperties.name,
     description,
-    displayOrder
+    displayOrder: createDisplayOrder
   }),
   KnowledgeMainLineUpdateRequest: strictObject(["expectedVersion"], {
     expectedVersion: version,
     name: masterProperties.name,
     description,
-    displayOrder
+    displayOrder: editableDisplayOrder
   }),
   KnowledgeRevisionCreateRequest: strictObject(["expectedVersion"], {
     expectedVersion: version,
@@ -267,9 +288,9 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
     reason: { type: "string", minLength: 1, maxLength: 1_000 },
     name: masterProperties.name
   }),
-  KnowledgeMasterCreateRequest: strictObject(["code", "name"], masterRequestProperties),
+  KnowledgeMasterCreateRequest: strictObject(["code", "name"], masterCreateRequestProperties),
   KnowledgeUomCreateRequest: strictObject(["code", "name", "decimalScale"], {
-    ...masterRequestProperties,
+    ...masterCreateRequestProperties,
     decimalScale: { type: "integer", minimum: 0, maximum: 3 }
   }),
   KnowledgeTaxVersionRequest: strictObject(
@@ -296,23 +317,23 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
     }
   ),
   KnowledgeTaxCreateRequest: strictObject(["code", "name"], {
-    ...masterRequestProperties,
+    ...masterCreateRequestProperties,
     taxVersion: ref("KnowledgeTaxVersionRequest")
   }),
   KnowledgeMasterUpdateRequest: strictObject(["expectedVersion"], {
     expectedVersion: version,
-    ...masterRequestProperties,
+    ...masterUpdateRequestProperties,
     status: { type: "string", enum: ["active", "inactive"] }
   }),
   KnowledgeUomUpdateRequest: strictObject(["expectedVersion"], {
     expectedVersion: version,
-    ...masterRequestProperties,
+    ...masterUpdateRequestProperties,
     status: { type: "string", enum: ["active", "inactive"] },
     decimalScale: { type: "integer", minimum: 0, maximum: 3 }
   }),
   KnowledgeTaxUpdateRequest: strictObject(["expectedVersion"], {
     expectedVersion: version,
-    ...masterRequestProperties,
+    ...masterUpdateRequestProperties,
     status: { type: "string", enum: ["active", "inactive"] },
     taxVersion: ref("KnowledgeTaxVersionUpdateRequest")
   }),

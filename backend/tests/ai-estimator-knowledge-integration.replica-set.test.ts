@@ -8,6 +8,7 @@ import { errorHandler } from "../src/middleware/errors.js";
 import { AuditEventModel } from "../src/models/AuditEvent.js";
 import { AuthorizationCoordinationModel } from "../src/models/AuthorizationCoordination.js";
 import { AiEstimatorKnowledgeBasketModel } from "../src/models/AiEstimatorKnowledgeBasket.js";
+import { AiEstimatorKnowledgeDisplayOrderSequenceModel } from "../src/models/AiEstimatorKnowledgeDisplayOrderSequence.js";
 import { AiEstimatorKnowledgeMainLineModel } from "../src/models/AiEstimatorKnowledgeMainLine.js";
 import { AiEstimatorKnowledgeModeModel } from "../src/models/AiEstimatorKnowledgeMode.js";
 import { AiEstimatorKnowledgePriceVersionModel } from "../src/models/AiEstimatorKnowledgePriceVersion.js";
@@ -67,6 +68,7 @@ beforeAll(async () => {
   await Promise.all([
     AuditEventModel.syncIndexes(),
     AiEstimatorKnowledgeBasketModel.syncIndexes(),
+    AiEstimatorKnowledgeDisplayOrderSequenceModel.syncIndexes(),
     AiEstimatorKnowledgeMainLineModel.syncIndexes(),
     AiEstimatorKnowledgeModeModel.syncIndexes(),
     AiEstimatorKnowledgePriceVersionModel.syncIndexes(),
@@ -176,6 +178,167 @@ describe("AI estimator knowledge integrated replica-set invariants", () => {
       entityId: basket.id,
       action: "ai_estimator_knowledge_basket_updated"
     })).toBe(1);
+
+    await expect(reference.updateBasket(SUPER_ADMIN, basket.id, {
+      expectedVersion: 1,
+      displayOrder: 50
+    })).rejects.toMatchObject({ status: 409, code: "VERSION_CONFLICT" });
+    const afterStaleReorder = await reference.createBasket(SUPER_ADMIN, {
+      name: "After stale reorder"
+    });
+    expect(afterStaleReorder.displayOrder).toBe(3);
+    await expect(
+      AiEstimatorKnowledgeDisplayOrderSequenceModel.findById("baskets")
+        .lean()
+        .exec()
+    ).resolves.toMatchObject({ highWaterOrder: 3 });
+  });
+
+  it("allocates Basket and reusable-value orders from isolated historical high-water scopes", async () => {
+    const { reference } = createServices();
+    await AiEstimatorKnowledgeBasketModel.create({
+      _id: "integration-basket-archived-maximum",
+      name: "Archived maximum",
+      nameNormalized: "archived maximum",
+      description: null,
+      displayOrder: 10,
+      status: "archived",
+      version: 1,
+      createdById: SUPER_ADMIN.id,
+      updatedById: SUPER_ADMIN.id,
+      archivedAt: NOW,
+      archivedById: SUPER_ADMIN.id,
+      createdAt: NOW,
+      updatedAt: NOW
+    });
+
+    const automatic = await reference.createBasket(SUPER_ADMIN, {
+      name: "Automatic Basket"
+    });
+    await expect(reference.createBasket(SUPER_ADMIN, {
+      name: "Automatic Basket"
+    })).rejects.toMatchObject({ status: 409, code: "DUPLICATE_IDENTITY" });
+    const afterIdentityConflict = await reference.createBasket(SUPER_ADMIN, {
+      name: "After identity conflict"
+    });
+    const explicit = await reference.createBasket(SUPER_ADMIN, {
+      name: "Explicit Basket",
+      displayOrder: 50
+    });
+    await reference.updateBasket(SUPER_ADMIN, explicit.id, {
+      expectedVersion: explicit.version,
+      displayOrder: 2
+    });
+    const afterLowerReorder = await reference.createBasket(SUPER_ADMIN, {
+      name: "After lower reorder"
+    });
+
+    expect(automatic.displayOrder).toBe(11);
+    expect(afterIdentityConflict.displayOrder).toBe(12);
+    expect(afterLowerReorder.displayOrder).toBe(51);
+    await expect(
+      AiEstimatorKnowledgeDisplayOrderSequenceModel.findById("baskets")
+        .lean()
+        .exec()
+    ).resolves.toMatchObject({ highWaterOrder: 51 });
+
+    const [uom, vendor] = await Promise.all([
+      reference.createMaster(SUPER_ADMIN, "uoms", {
+        code: "LM",
+        name: "Linear metre",
+        decimalScale: 2
+      }),
+      reference.createMaster(SUPER_ADMIN, "vendors", {
+        code: "PREMIUM",
+        name: "Premium Vendor"
+      })
+    ]);
+    expect({ uom: uom.displayOrder, vendor: vendor.displayOrder }).toEqual({
+      uom: 2,
+      vendor: 2
+    });
+    const createdAudit = await AuditEventModel.findOne({
+      action: "ai_estimator_knowledge_basket_created",
+      entityId: automatic.id
+    }).lean().exec();
+    expect(createdAudit?.newValues).toMatchObject({ displayOrder: 11 });
+  });
+
+  it("serializes concurrent automatic creates while keeping Main Line scopes Basket-local", async () => {
+    const services = createServices();
+    const concurrentBaskets = await Promise.all([
+      services.reference.createBasket(SUPER_ADMIN, { name: "Concurrent Basket A" }),
+      services.reference.createBasket(SUPER_ADMIN, { name: "Concurrent Basket B" })
+    ]);
+    expect(
+      concurrentBaskets.map((basket) => basket.displayOrder).toSorted((left, right) => left - right)
+    ).toEqual([2, 3]);
+
+    const firstBasketLines = await Promise.all([
+      services.item.createMainLine(SUPER_ADMIN, BASKET_ID, { name: "Concurrent Line A" }),
+      services.item.createMainLine(SUPER_ADMIN, BASKET_ID, { name: "Concurrent Line B" })
+    ]);
+    const firstBasketRows = await AiEstimatorKnowledgeMainLineModel.find({
+      _id: { $in: firstBasketLines.map((line) => line.mainLineId) }
+    }).sort({ displayOrder: 1 }).lean().exec();
+    expect(firstBasketRows.map((line) => line.displayOrder)).toEqual([0, 1]);
+
+    const secondBasketLine = await services.item.createMainLine(
+      SUPER_ADMIN,
+      concurrentBaskets[0]!.id,
+      { name: "Independent Basket Line" }
+    );
+    await expect(
+      AiEstimatorKnowledgeMainLineModel.findById(secondBasketLine.mainLineId)
+        .lean()
+        .exec()
+    ).resolves.toMatchObject({ displayOrder: 0 });
+    await expect(
+      AiEstimatorKnowledgeDisplayOrderSequenceModel.findById(`main-lines:${BASKET_ID}`)
+        .lean()
+        .exec()
+    ).resolves.toMatchObject({ highWaterOrder: 1 });
+    await expect(
+      AiEstimatorKnowledgeDisplayOrderSequenceModel.findById(
+        `main-lines:${concurrentBaskets[0]!.id}`
+      )
+        .lean()
+        .exec()
+    ).resolves.toMatchObject({ highWaterOrder: 0 });
+  });
+
+  it("honors explicit Main Line compatibility orders without lowering Basket high-water", async () => {
+    const { item } = createServices();
+    const explicit = await item.createMainLine(SUPER_ADMIN, BASKET_ID, {
+      name: "Explicit ordered line",
+      displayOrder: 10
+    });
+    await item.updateMainLine(SUPER_ADMIN, explicit.mainLineId, {
+      expectedVersion: explicit.version,
+      displayOrder: 2
+    });
+    const automatic = await item.createMainLine(SUPER_ADMIN, BASKET_ID, {
+      name: "Automatic after lower reorder"
+    });
+
+    await expect(
+      AiEstimatorKnowledgeMainLineModel.findById(automatic.mainLineId)
+        .lean()
+        .exec()
+    ).resolves.toMatchObject({ displayOrder: 11 });
+    await expect(
+      AiEstimatorKnowledgeDisplayOrderSequenceModel.findById(`main-lines:${BASKET_ID}`)
+        .lean()
+        .exec()
+    ).resolves.toMatchObject({ highWaterOrder: 11 });
+    const createdAudit = await AuditEventModel.findOne({
+      action: "ai_estimator_knowledge_main_line_created",
+      entityId: automatic.mainLineId
+    }).lean().exec();
+    expect(createdAudit?.newValues).toMatchObject({
+      basketId: BASKET_ID,
+      displayOrder: 11
+    });
   });
 
   it("rolls back the business write, coordination, and audit when audit persistence fails", async () => {
@@ -195,6 +358,94 @@ describe("AI estimator knowledge integrated replica-set invariants", () => {
       .toBe(0);
     expect(await AuditEventModel.countDocuments()).toBe(0);
     expect(await AuthorizationCoordinationModel.countDocuments()).toBe(0);
+    expect(await AiEstimatorKnowledgeDisplayOrderSequenceModel.countDocuments()).toBe(0);
+
+    const recovered = await createServices().reference.createBasket(SUPER_ADMIN, {
+      name: "Recovered after audit outage"
+    });
+    expect(recovered.displayOrder).toBe(2);
+    await expect(
+      AiEstimatorKnowledgeDisplayOrderSequenceModel.findById("baskets")
+        .lean()
+        .exec()
+    ).resolves.toMatchObject({ highWaterOrder: 2 });
+  });
+
+  it("rolls back Main Line aggregate children and order allocation when audit persistence fails", async () => {
+    const failingItem = createAiEstimatorKnowledgeItemService({
+      audit: {
+        appendInMongoTransaction: async () => {
+          throw new Error("injected Main Line audit outage");
+        }
+      },
+      now: () => NOW,
+      uuid: nextId
+    });
+
+    await expect(
+      failingItem.createMainLine(SUPER_ADMIN, BASKET_ID, {
+        name: "Must roll back Main Line"
+      })
+    ).rejects.toBeDefined();
+    expect(await AiEstimatorKnowledgeMainLineModel.countDocuments()).toBe(0);
+    expect(await AiEstimatorKnowledgeRevisionModel.countDocuments()).toBe(0);
+    expect(await AiEstimatorKnowledgeSectionModel.countDocuments()).toBe(0);
+    expect(
+      await AiEstimatorKnowledgeDisplayOrderSequenceModel.countDocuments({
+        _id: `main-lines:${BASKET_ID}`
+      })
+    ).toBe(0);
+
+    const recovered = await createServices().item.createMainLine(
+      SUPER_ADMIN,
+      BASKET_ID,
+      { name: "Recovered Main Line" }
+    );
+    await expect(
+      AiEstimatorKnowledgeMainLineModel.findById(recovered.mainLineId)
+        .lean()
+        .exec()
+    ).resolves.toMatchObject({ displayOrder: 0 });
+  });
+
+  it("rejects exhausted Basket and Main Line scopes without partial resources, children, audits, or sequence changes", async () => {
+    await AiEstimatorKnowledgeDisplayOrderSequenceModel.create([
+      { _id: "baskets", highWaterOrder: Number.MAX_SAFE_INTEGER },
+      {
+        _id: `main-lines:${BASKET_ID}`,
+        highWaterOrder: Number.MAX_SAFE_INTEGER
+      }
+    ]);
+    const services = createServices();
+
+    await expect(services.reference.createBasket(SUPER_ADMIN, {
+      name: "Exhausted Basket"
+    })).rejects.toMatchObject({
+      status: 409,
+      code: "DISPLAY_ORDER_EXHAUSTED"
+    });
+    await expect(services.item.createMainLine(SUPER_ADMIN, BASKET_ID, {
+      name: "Exhausted Main Line"
+    })).rejects.toMatchObject({
+      status: 409,
+      code: "DISPLAY_ORDER_EXHAUSTED"
+    });
+
+    expect(await AiEstimatorKnowledgeBasketModel.countDocuments({
+      nameNormalized: "exhausted basket"
+    })).toBe(0);
+    expect(await AiEstimatorKnowledgeMainLineModel.countDocuments()).toBe(0);
+    expect(await AiEstimatorKnowledgeRevisionModel.countDocuments()).toBe(0);
+    expect(await AiEstimatorKnowledgeSectionModel.countDocuments()).toBe(0);
+    expect(await AuditEventModel.countDocuments()).toBe(0);
+    const sequences = await AiEstimatorKnowledgeDisplayOrderSequenceModel.find({})
+      .sort({ _id: 1 })
+      .lean()
+      .exec();
+    expect(sequences).toHaveLength(2);
+    expect(sequences.every(
+      (sequenceRow) => sequenceRow.highWaterOrder === Number.MAX_SAFE_INTEGER
+    )).toBe(true);
   });
 
   it("rejects overlapping tax and price windows atomically and resolves exact, non-leaking lineage without writes", async () => {
@@ -513,9 +764,15 @@ describe("AI estimator knowledge integrated replica-set invariants", () => {
       mainLineId: duplicate.mainLineId,
       revisionId: duplicate.draftRevisionId
     }).lean().exec();
+    const [sourceLine, duplicateLine] = await Promise.all([
+      AiEstimatorKnowledgeMainLineModel.findById(draft.mainLineId).lean().exec(),
+      AiEstimatorKnowledgeMainLineModel.findById(duplicate.mainLineId).lean().exec()
+    ]);
     expect(duplicatePrice).toMatchObject({ status: "draft", reviewRequired: true });
     expect(duplicatePrice?._id).not.toBe(sourcePrice?._id);
     expect(duplicatePrice?.priceEntryId).not.toBe(sourcePrice?.priceEntryId);
+    expect(sourceLine?.displayOrder).toBe(0);
+    expect(duplicateLine?.displayOrder).toBe(1);
 
     const execution = await services.item.getSection(
       SUPER_ADMIN,
@@ -527,10 +784,15 @@ describe("AI estimator knowledge integrated replica-set invariants", () => {
     expect(steps[0]!.id).not.toBe("step-measure");
     expect(steps[1]!.id).not.toBe("step-install");
     expect(steps[1]!.dependencyStepIds).toEqual([steps[0]!.id]);
-    expect(await AuditEventModel.countDocuments({
+    const duplicateAudit = await AuditEventModel.findOne({
       action: "ai_estimator_knowledge_main_line_duplicated",
       entityId: duplicate.mainLineId
-    })).toBe(1);
+    }).lean().exec();
+    expect(duplicateAudit?.newValues).toMatchObject({
+      basketId: BASKET_ID,
+      displayOrder: 1,
+      sourceMainLineId: draft.mainLineId
+    });
   });
 
   it("blocks inbound archives and rolls back step and item dependency cycles", async () => {

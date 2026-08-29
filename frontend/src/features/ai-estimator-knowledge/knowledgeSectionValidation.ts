@@ -18,7 +18,7 @@ export function validateKnowledgeSection(sectionKey: KnowledgeSectionKey, payloa
     requireString(row, "priceEntryId", path);
     if (row.operation === "reference") requireString(row, "priceVersionId", path);
     else for (const key of ["vendorId", "uomId", "taxRuleId", "taxVersionId", "treatment", "effectiveFrom", "status"]) requireString(row, key, path);
-    if (row.operation !== "reference" && (!Number.isInteger(row.inputAmountPaise) || (row.inputAmountPaise as number) < 0)) issues.push({ path: `${path}.inputAmountPaise`, message: "Input amount must be a non-negative integer paise value." });
+    if (row.operation !== "reference" && (!Number.isSafeInteger(row.inputAmountPaise) || (row.inputAmountPaise as number) < 0)) issues.push({ path: `${path}.inputAmountPaise`, message: "Enter a non-negative rupee amount with up to two decimal places." });
     if (typeof row.effectiveFrom === "string" && typeof row.effectiveTo === "string" && row.effectiveTo && row.effectiveTo <= row.effectiveFrom) issues.push({ path: `${path}.effectiveTo`, message: "Effective to must be later than effective from." });
   });
   if (sectionKey === "quantity-margin") {

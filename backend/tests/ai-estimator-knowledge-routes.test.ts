@@ -123,6 +123,46 @@ describe("AI Estimator Knowledge HTTP routes", () => {
     );
   });
 
+  it("forwards an omitted Basket display order for server-side allocation", async () => {
+    const testServices = services();
+    const response = await request(appFor(testServices))
+      .post("/api/v1/admin/ai-estimator-knowledge/baskets")
+      .set("Authorization", "Bearer super-admin-token")
+      .send({ name: "Painting" });
+
+    expect(response.status).toBe(201);
+    expect(testServices.reference.createBasket).toHaveBeenCalledWith(
+      superAdmin,
+      { name: "Painting" }
+    );
+  });
+
+  it("forwards an omitted Main Line display order for Basket-scoped allocation", async () => {
+    const testServices = services();
+    const response = await request(appFor(testServices))
+      .post("/api/v1/admin/ai-estimator-knowledge/baskets/basket-1/main-lines")
+      .set("Authorization", "Bearer super-admin-token")
+      .send({ name: "Wall panelling" });
+
+    expect(response.status).toBe(201);
+    expect(testServices.item.createMainLine).toHaveBeenCalledWith(
+      superAdmin,
+      "basket-1",
+      { name: "Wall panelling" }
+    );
+  });
+
+  it("rejects display orders outside JavaScript's safe-integer range", async () => {
+    const testServices = services();
+    const response = await request(appFor(testServices))
+      .post("/api/v1/admin/ai-estimator-knowledge/baskets")
+      .set("Authorization", "Bearer super-admin-token")
+      .send({ name: "Painting", displayOrder: Number.MAX_SAFE_INTEGER + 1 });
+
+    expect(response.status).toBe(400);
+    expect(testServices.reference.createBasket).not.toHaveBeenCalled();
+  });
+
   it("splits list filters from pagination and returns page metadata", async () => {
     const testServices = services();
     const response = await request(appFor(testServices))
@@ -154,7 +194,7 @@ describe("AI Estimator Knowledge HTTP routes", () => {
     expect(testServices.reference.createMaster).toHaveBeenCalledWith(
       superAdmin,
       "uoms",
-      { code: "SQFT", name: "Square foot", decimalScale: 2, displayOrder: 0 }
+      { code: "SQFT", name: "Square foot", decimalScale: 2 }
     );
   });
 

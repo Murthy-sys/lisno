@@ -3,6 +3,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest
 
 import { ApiError } from "../src/middleware/errors.js";
 import { AiEstimatorKnowledgeBasketModel } from "../src/models/AiEstimatorKnowledgeBasket.js";
+import { AiEstimatorKnowledgeDisplayOrderSequenceModel } from "../src/models/AiEstimatorKnowledgeDisplayOrderSequence.js";
 import { AiEstimatorKnowledgeMainLineModel } from "../src/models/AiEstimatorKnowledgeMainLine.js";
 import { AiEstimatorKnowledgePriceVersionModel } from "../src/models/AiEstimatorKnowledgePriceVersion.js";
 import { AiEstimatorKnowledgeRevisionModel } from "../src/models/AiEstimatorKnowledgeRevision.js";
@@ -32,6 +33,7 @@ beforeAll(async () => {
   replicaSet = await startMongoReplicaSet("ai-estimator-knowledge-reference-test");
   await Promise.all([
     AiEstimatorKnowledgeBasketModel.init(),
+    AiEstimatorKnowledgeDisplayOrderSequenceModel.init(),
     AiEstimatorKnowledgeMainLineModel.init(),
     AiEstimatorKnowledgeRevisionModel.init(),
     AiEstimatorKnowledgeSectionModel.init(),
@@ -129,6 +131,36 @@ describe("AI estimator knowledge reference service", () => {
     expect(actorGuard.requireReadActor).toHaveBeenCalledTimes(2);
   });
 
+  it("appends omitted Basket orders while explicit creates and updates only raise the high-water mark", async () => {
+    const { service, audit } = harness();
+    const first = await service.createBasket(actor, { name: "Electrical" });
+    const explicit = await service.createBasket(actor, { name: "POP / Gypsum", displayOrder: 5 });
+    const appended = await service.createBasket(actor, { name: "Painting" });
+
+    expect([first.displayOrder, explicit.displayOrder, appended.displayOrder]).toEqual([0, 5, 6]);
+
+    const unchanged = await service.updateBasket(actor, first.id, {
+      expectedVersion: 1,
+      description: "Electrical works"
+    });
+    const lowered = await service.updateBasket(actor, explicit.id, {
+      expectedVersion: 1,
+      displayOrder: 1
+    });
+    const next = await service.createBasket(actor, { name: "Carpentry" });
+
+    expect(unchanged.displayOrder).toBe(0);
+    expect(lowered.displayOrder).toBe(1);
+    expect(next.displayOrder).toBe(7);
+    expect(audit.appendInMongoTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "ai_estimator_knowledge_basket_created",
+        newValues: expect.objectContaining({ displayOrder: 7 })
+      }),
+      expect.anything()
+    );
+  });
+
   it("maps normalized duplicate races to 409 and permits identity reuse after soft archive", async () => {
     const { service } = harness();
     const created = await service.createBasket(actor, { name: "  ＰＯＰ  / Gypsum " });
@@ -158,6 +190,8 @@ describe("AI estimator knowledge reference service", () => {
     const { service } = harness({ audit });
     await expect(service.createBasket(actor, { name: "Electrical" })).rejects.toThrow("audit unavailable");
     expect(await AiEstimatorKnowledgeBasketModel.countDocuments()).toBe(0);
+    const recovered = await harness().service.createBasket(actor, { name: "Electrical" });
+    expect(recovered.displayOrder).toBe(0);
   });
 
   it("blocks Basket archive while a non-archived Main Line exists", async () => {
@@ -209,6 +243,50 @@ describe("AI estimator knowledge reference service", () => {
     const archived = await service.archiveMaster(actor, "uoms", uom.id, { expectedVersion: 2 });
     expect(archived).toMatchObject({ status: "archived", version: 3 });
     expect((await service.listMasters(actor, "uoms", {}, { limit: 10, offset: 0 })).items.map(({ code }) => code)).toEqual(["NOS"]);
+  });
+
+  it("appends reusable values independently per type and preserves a non-lowering high-water mark", async () => {
+    const { service } = harness();
+    const firstUom = await service.createMaster(actor, "uoms", {
+      code: "SFT",
+      name: "Square feet",
+      decimalScale: 2
+    });
+    const secondUom = await service.createMaster(actor, "uoms", {
+      code: "NOS",
+      name: "Numbers",
+      decimalScale: 0
+    });
+    const explicitVendor = await service.createMaster(actor, "vendors", {
+      code: "V1",
+      name: "Vendor one",
+      displayOrder: 5
+    });
+    const firstPriority = await service.createMaster(actor, "priorities", {
+      code: "STANDARD",
+      name: "Standard"
+    });
+
+    expect([firstUom.displayOrder, secondUom.displayOrder]).toEqual([0, 1]);
+    expect(explicitVendor.displayOrder).toBe(5);
+    expect(firstPriority.displayOrder).toBe(0);
+
+    const unchangedUom = await service.updateMaster(actor, "uoms", firstUom.id, {
+      expectedVersion: 1,
+      description: "Area unit"
+    });
+    const loweredVendor = await service.updateMaster(actor, "vendors", explicitVendor.id, {
+      expectedVersion: 1,
+      displayOrder: 1
+    });
+    const appendedVendor = await service.createMaster(actor, "vendors", {
+      code: "V2",
+      name: "Vendor two"
+    });
+
+    expect(unchangedUom.displayOrder).toBe(0);
+    expect(loweredVendor.displayOrder).toBe(1);
+    expect(appendedVendor.displayOrder).toBe(6);
   });
 
   it("never changes a UOM scale after any historical Section or Price reference", async () => {
@@ -641,6 +719,11 @@ describe("AI estimator knowledge reference service", () => {
     const { service } = harness({ audit });
     await expect(service.createMaster(actor, "vendors", { code: "V1", name: "Vendor one" })).rejects.toThrow("audit failed");
     expect(await AiEstimatorKnowledgeVendorModel.countDocuments()).toBe(0);
+    const recovered = await harness().service.createMaster(actor, "vendors", {
+      code: "V1",
+      name: "Vendor one"
+    });
+    expect(recovered.displayOrder).toBe(0);
   });
 
   it("rejects unsupported master types without leaking model details", async () => {
