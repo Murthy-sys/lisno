@@ -25,7 +25,7 @@ import { Sidebar } from "./Sidebar";
 import { navigationForAuthorization } from "./navigation";
 
 const roleNavigation = [
-  ["super_admin", [["All Projects", "/admin/projects", FolderKanban], ["Users", "/admin/users", UsersRound], ["Configuration", "/admin/configuration/estimation", Settings2, false], ["Client responses", "/admin/client-responses", MailCheck], ["Design approvals", "/admin/design-approvals", Palette], ["Access requests", "/admin/access-requests", ClipboardCheck], ["Finance", "/finance", WalletCards]]],
+  ["super_admin", [["Dashboard", "/admin/dashboard", LayoutDashboard], ["All Projects", "/admin/projects", FolderKanban], ["Users", "/admin/users", UsersRound], ["Configuration", "/admin/configuration/estimation", Settings2, false], ["Client responses", "/admin/client-responses", MailCheck], ["Design approvals", "/admin/design-approvals", Palette], ["Access requests", "/admin/access-requests", ClipboardCheck], ["Finance", "/finance", WalletCards]]],
   ["admin", [["My Projects", "/admin/projects", FolderKanban], ["Client responses", "/admin/client-responses", MailCheck], ["Design approvals", "/admin/design-approvals", Palette], ["Access requests", "/admin/access-requests", ClipboardCheck]]],
   ["estimator_sales", [["Leads & estimates", "/estimator-sales", BriefcaseBusiness]]],
   ["designer", [["Workspace", "/designer", LayoutDashboard], ["Design plans", "/designer/design-plans", Palette], ["My access requests", "/access-requests/mine", KeyRound]]],

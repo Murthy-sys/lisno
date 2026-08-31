@@ -36,7 +36,8 @@ const DEFAULT_PERMISSIONS_BY_ROLE = {
     "ai_estimator_knowledge.configuration.create",
     "ai_estimator_knowledge.configuration.update",
     "ai_estimator_knowledge.configuration.lifecycle",
-    "ai_estimator_knowledge.context.read"
+    "ai_estimator_knowledge.context.read",
+    "admin.dashboard.read"
   ],
   admin: [
     ...BASE_SESSION_PERMISSIONS,

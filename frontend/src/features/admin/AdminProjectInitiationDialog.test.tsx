@@ -3,12 +3,13 @@ import userEvent from "@testing-library/user-event";
 import { QueryClient } from "@tanstack/react-query";
 import { http, HttpResponse } from "msw";
 import { MemoryRouter } from "react-router-dom";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { AdminProjectSummary } from "../../api/types";
 import { renderWithQuery } from "../../test/render";
 import { server } from "../../test/server";
 import { AdminProjectInitiationDialog } from "./AdminProjectInitiationDialog";
+import { dashboardKeys } from "./dashboard/superAdminDashboardApi";
 
 const estimator = {
   id: "estimator-1",
@@ -16,6 +17,8 @@ const estimator = {
   email: "ravi@lisno.example",
   title: "Senior Estimator"
 };
+
+afterEach(() => vi.restoreAllMocks());
 
 const createdProject: AdminProjectSummary = {
   id: "project-created",
@@ -213,9 +216,11 @@ describe("AdminProjectInitiationDialog", () => {
     });
     expect(body).not.toHaveProperty("source");
     release();
+    expect(await screen.findByText("The Estimator/Sales handoff is ready.")).toBeVisible();
   });
 
   it("retains every value, renders field feedback, and focuses the first server-invalid control", async () => {
+    const invalidate = vi.spyOn(QueryClient.prototype, "invalidateQueries");
     server.use(
       http.get("/api/v1/admin/estimators", () => HttpResponse.json(estimatorPage())),
       http.post("/api/v1/admin/projects", () =>
@@ -247,6 +252,7 @@ describe("AdminProjectInitiationDialog", () => {
     expect(screen.getByRole("combobox", { name: "Estimator/Sales" })).toHaveValue("Ravi Estimator");
     expect(screen.getByText("Select an active Estimator/Sales user.")).toBeVisible();
     expect(screen.getByRole("textbox", { name: "Project / property name" })).toHaveValue("Asha home");
+    expect(invalidate).not.toHaveBeenCalledWith({ queryKey: dashboardKeys.all });
   });
 
   it("invalidates project queries, announces success, closes, and returns the created project", async () => {
@@ -267,6 +273,7 @@ describe("AdminProjectInitiationDialog", () => {
     expect(await screen.findByText("The Estimator/Sales handoff is ready.")).toBeVisible();
     await waitFor(() => {
       expect(invalidate).toHaveBeenCalledWith({ queryKey: ["admin-projects"] });
+      expect(invalidate).toHaveBeenCalledWith({ queryKey: dashboardKeys.all });
       expect(onClose).toHaveBeenCalledOnce();
       expect(onCreated).toHaveBeenCalledWith(createdProject);
     });

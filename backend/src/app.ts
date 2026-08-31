@@ -26,6 +26,7 @@ import { createAuditRouter } from "./routes/audit.js";
 import { createAccessRequestsRouter } from "./routes/access-requests.js";
 import { createAdminUsersRouter } from "./routes/admin-users.js";
 import { createAdminProjectsRouter } from "./routes/admin-projects.js";
+import { createSuperAdminDashboardRouter } from "./routes/super-admin-dashboard.js";
 import { createAiEstimatorKnowledgeAdminRouter } from "./routes/ai-estimator-knowledge-admin.js";
 import { createAiEstimatorKnowledgeContextRouter } from "./routes/ai-estimator-knowledge-context.js";
 import { apiDocsRouter } from "./routes/api-docs.js";
@@ -55,6 +56,7 @@ import { createAiEstimatorKnowledgeItemService } from "./services/ai-estimator-k
 import { createAiEstimatorKnowledgeReferenceService } from "./services/ai-estimator-knowledge-reference.service.js";
 import { createAccessRequestService } from "./services/access-request.service.js";
 import { createAdminProjectService } from "./services/admin-project.service.js";
+import { createSuperAdminDashboardService } from "./services/super-admin-dashboard.service.js";
 import { createUserAdministrationService } from "./services/user-administration.service.js";
 import {
   createAuthService,
@@ -228,6 +230,10 @@ export function createApp(dependencies: AppDependencies) {
     auditService,
     clock
   );
+  const superAdminDashboardService = createSuperAdminDashboardService(
+    repository,
+    clock
+  );
   const projectActivityService = createProjectActivityService(repository);
   const projectService = createProjectService(repository, auditService, clock);
   const leadService = createLeadService(repository, auditService, clock);
@@ -383,6 +389,10 @@ export function createApp(dependencies: AppDependencies) {
   app.use(
     "/api/v1",
     createAdminProjectsRouter(authService, adminProjectService)
+  );
+  app.use(
+    "/api/v1",
+    createSuperAdminDashboardRouter(authService, superAdminDashboardService)
   );
   app.use(
     "/api/v1",

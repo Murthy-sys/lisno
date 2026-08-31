@@ -12,6 +12,7 @@ import { ProgressBar } from "../../components/ui/ProgressBar";
 import { StatusBadge } from "../../components/ui/StatusBadge";
 import { Surface } from "../../components/ui/Surface";
 import { adminProjectKeys } from "../admin/adminProjectsApi";
+import { dashboardKeys } from "../admin/dashboard/superAdminDashboardApi";
 import { projectFinanceKeys } from "../finance/projectFinanceApi";
 import {
   getOperationalWorkflowTasks,
@@ -55,7 +56,8 @@ export function OperationalTaskQueue({ role }: { role: Role }) {
         queryClient.invalidateQueries({ queryKey: projectFinanceKeys.projects }),
         queryClient.invalidateQueries({
           queryKey: projectFinanceKeys.bucket(updated.projectId)
-        })
+        }),
+        queryClient.invalidateQueries({ queryKey: dashboardKeys.all })
       ]);
       setEditingTask(undefined);
     },

@@ -14,6 +14,7 @@ import { Button } from "../../components/ui/Button";
 import { Dialog } from "../../components/ui/Dialog";
 import { Field, Select } from "../../components/ui/Field";
 import { adminUserKeys, updateManagedUser } from "./adminApi";
+import { dashboardKeys } from "./dashboard/superAdminDashboardApi";
 
 export interface UserMutationDialogProps {
   user: UserDirectoryItem;
@@ -112,7 +113,10 @@ export function UserMutationDialog({
     mutationFn: (change: UpdateManagedUserInput) =>
       updateManagedUser(user.id, change),
     onSuccess: async (result) => {
-      await queryClient.invalidateQueries({ queryKey: adminUserKeys.all });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: adminUserKeys.all }),
+        queryClient.invalidateQueries({ queryKey: dashboardKeys.all })
+      ]);
       feedback.success({
         title: "User access updated",
         message: successMessage(result)

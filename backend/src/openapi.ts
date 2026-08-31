@@ -17,6 +17,19 @@ import {
   PROJECT_FINANCE_TARGET_MARGIN_BPS
 } from "./domain/project-finance.js";
 import { ROLE_CODES, WORKER_ROLES } from "./domain/roles.js";
+import {
+  DASHBOARD_KPI_AVAILABILITY,
+  DASHBOARD_PROJECT_MODULES,
+  DASHBOARD_PROJECT_MODULE_STATUSES,
+  DASHBOARD_PROJECT_SORTS,
+  DASHBOARD_RISK_REASON_CODES,
+  DASHBOARD_RISK_FACTORS,
+  DASHBOARD_RISK_LEVELS,
+  DASHBOARD_WORKFORCE_ASSIGNMENT_STATES,
+  DASHBOARD_WORKFORCE_CAPACITY_STATES,
+  DASHBOARD_WORKFORCE_SORTS,
+  SUPER_ADMIN_DASHBOARD_PERIOD_DAYS
+} from "./contracts/super-admin-dashboard.js";
 import { INVITABLE_ROLE_CODES } from "./domain/user-invitations.js";
 import {
   HUMAN_JWT_OPERATION_LIST,
@@ -202,6 +215,9 @@ const responseSchemaByOperation: Readonly<Record<string, string>> = {
   "POST /procurement/projects/:projectId/expenses": "PostFinanceEntryResult",
   "GET /workflow-tasks": "ProjectWorkflowTaskList",
   "PATCH /workflow-tasks/:taskId": "ProjectWorkflowTask",
+  "GET /admin/dashboard/overview": "SuperAdminDashboardOverview",
+  "GET /admin/dashboard/projects": "SuperAdminDashboardProjectPage",
+  "GET /admin/dashboard/workforce": "SuperAdminDashboardWorkforcePage",
   ...AI_ESTIMATOR_KNOWLEDGE_RESPONSE_SCHEMAS
 };
 
@@ -291,6 +307,9 @@ const operationSummaries: Readonly<Record<string, string>> = {
     "Record Procurement spending with a supporting receipt",
   "GET /procurement/projects/:projectId/entries/:entryId/document":
     "Download a Procurement supporting document",
+  "GET /admin/dashboard/overview": "Read the organization dashboard overview",
+  "GET /admin/dashboard/projects": "List global project dashboard metrics",
+  "GET /admin/dashboard/workforce": "List global workforce dashboard metrics",
   "GET /finance/projects/:projectId/entries/:entryId/document":
     "Download a Finance ledger supporting document",
   "POST /estimates/:estimateId/design-uploads":
@@ -367,9 +386,69 @@ const statusFilterParameter: OpenApiParameter = {
   }
 };
 
+function dashboardPeriodParameter(): OpenApiParameter {
+  return {
+    name: "periodDays",
+    in: "query",
+    required: false,
+    schema: { type: "integer", enum: [...SUPER_ADMIN_DASHBOARD_PERIOD_DAYS], default: 30 }
+  };
+}
+
+function dashboardEnumParameter(
+  name: string,
+  values: readonly string[],
+  defaultValue?: string
+): OpenApiParameter {
+  return {
+    name,
+    in: "query",
+    required: false,
+    schema: { type: "string", enum: [...values], ...(defaultValue ? { default: defaultValue } : {}) }
+  };
+}
+
+function dashboardSearchParameter(): OpenApiParameter {
+  return {
+    name: "search",
+    in: "query",
+    required: false,
+    schema: { type: "string", maxLength: 100 }
+  };
+}
+
+function dashboardPaginationParameters(): readonly OpenApiParameter[] {
+  return [
+    { name: "limit", in: "query", required: false, schema: { type: "integer", minimum: 1, maximum: 50, default: 20 } },
+    { name: "offset", in: "query", required: false, schema: { type: "integer", minimum: 0, default: 0 } }
+  ];
+}
+
 const queryParametersByOperation: Readonly<
   Record<string, readonly OpenApiParameter[]>
 > = {
+  "GET /admin/dashboard/overview": [dashboardPeriodParameter()],
+  "GET /admin/dashboard/projects": [
+    dashboardPeriodParameter(),
+    dashboardEnumParameter("module", DASHBOARD_PROJECT_MODULES),
+    dashboardEnumParameter("projectStatus", ["planning", "active", "on_hold", "completed"]),
+    dashboardEnumParameter("moduleStatus", DASHBOARD_PROJECT_MODULE_STATUSES),
+    dashboardEnumParameter("riskLevel", DASHBOARD_RISK_LEVELS),
+    dashboardEnumParameter("riskFactor", DASHBOARD_RISK_FACTORS),
+    dashboardSearchParameter(),
+    dashboardEnumParameter("sort", DASHBOARD_PROJECT_SORTS, "risk_desc"),
+    ...dashboardPaginationParameters()
+  ],
+  "GET /admin/dashboard/workforce": [
+    dashboardPeriodParameter(),
+    dashboardEnumParameter("role", WORKER_ROLES),
+    dashboardEnumParameter("assignmentState", DASHBOARD_WORKFORCE_ASSIGNMENT_STATES),
+    dashboardEnumParameter("capacityState", DASHBOARD_WORKFORCE_CAPACITY_STATES),
+    dashboardEnumParameter("kpiAvailability", DASHBOARD_KPI_AVAILABILITY),
+    dashboardSearchParameter(),
+    dashboardEnumParameter("sort", DASHBOARD_WORKFORCE_SORTS, "workload_desc"),
+    ...dashboardPaginationParameters()
+  ],
   "GET /admin/estimators": [
     {
       name: "search",
@@ -1099,11 +1178,217 @@ function tag(name: string, description: string) {
   return { name, description } as const;
 }
 
+function dashboardPageSchema(itemSchema: string): OpenApiSchema {
+  return {
+    type: "object",
+    required: ["observedAt", "period", "items", "pagination", "dataQuality"],
+    properties: {
+      observedAt: { type: "string", format: "date-time" },
+      period: { $ref: "#/components/schemas/DashboardPeriod" },
+      items: { type: "array", items: { $ref: `#/components/schemas/${itemSchema}` } },
+      pagination: { $ref: "#/components/schemas/Pagination" },
+      dataQuality: { $ref: "#/components/schemas/DashboardDataQuality" }
+    }
+  };
+}
+
 function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
   const id = { type: "string", minLength: 1 } as const;
   const dateTime = { type: "string", format: "date-time" } as const;
   return {
     ...AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS,
+    DashboardRatio: {
+      type: "object",
+      additionalProperties: false,
+      required: ["numerator", "denominator", "rateBps"],
+      properties: {
+        numerator: { type: "integer", minimum: 0 },
+        denominator: { type: "integer", minimum: 0 },
+        rateBps: { type: "integer", nullable: true, description: "Integer basis points; null when denominator is zero." }
+      }
+    },
+    DashboardRiskFactor: {
+      type: "object",
+      additionalProperties: false,
+      required: ["kind", "level", "reasonCode", "reason", "source", "observedValue", "threshold", "drillDownTarget"],
+      properties: {
+        kind: { type: "string", enum: [...DASHBOARD_RISK_FACTORS] },
+        level: { type: "string", enum: ["yellow", "red"] },
+        reasonCode: { type: "string", enum: [...DASHBOARD_RISK_REASON_CODES] },
+        reason: { type: "string" },
+        source: {
+          type: "object",
+          required: ["entityType", "entityId"],
+          additionalProperties: false,
+          properties: {
+            entityType: { type: "string", enum: ["project", "task", "estimate", "design_plan", "lead", "delivery"] },
+            entityId: id
+          }
+        },
+        observedValue: { nullable: true },
+        threshold: { nullable: true },
+        drillDownTarget: { type: "string", pattern: "^/" }
+      }
+    },
+    DashboardDataQuality: {
+      type: "object",
+      additionalProperties: false,
+      required: ["status", "totalIssueCount", "issues", "unavailableMetricKeys"],
+      properties: {
+        status: { type: "string", enum: ["complete", "partial"] },
+        totalIssueCount: { type: "integer", minimum: 0 },
+        issues: { type: "array", maxItems: 50, items: { $ref: "#/components/schemas/DashboardDataQualityIssue" } },
+        unavailableMetricKeys: { type: "array", items: { type: "string" } }
+      }
+    },
+    DashboardDataQualityIssue: {
+      type: "object",
+      additionalProperties: false,
+      required: ["code", "metricKey", "message", "entityType", "entityId"],
+      properties: {
+        code: { type: "string", enum: ["project_identity_mismatch", "estimate_project_lineage_mismatch", "finance_project_lineage_mismatch", "task_project_lineage_mismatch", "assignee_identity_mismatch", "module_aggregate_unavailable"] },
+        metricKey: { type: "string", minLength: 1 },
+        message: { type: "string", minLength: 1 },
+        entityType: { type: "string", enum: ["project", "estimate", "finance_bucket", "task", "user"], nullable: true },
+        entityId: { type: "string", nullable: true }
+      }
+    },
+    DashboardPeriod: {
+      type: "object",
+      required: ["days", "startAt", "endAt"],
+      properties: {
+        days: { type: "integer", enum: [...SUPER_ADMIN_DASHBOARD_PERIOD_DAYS] },
+        startAt: dateTime,
+        endAt: dateTime
+      }
+    },
+    DashboardProjectsMetrics: {
+      type: "object", additionalProperties: false,
+      required: ["total", "createdInPeriod", "planning", "active", "onHold", "completed", "liveOverdue", "completedLate", "completionRate", "atRisk"],
+      properties: {
+        total: { type: "integer", minimum: 0 }, createdInPeriod: { type: "integer", minimum: 0 },
+        planning: { type: "integer", minimum: 0 }, active: { type: "integer", minimum: 0 },
+        onHold: { type: "integer", minimum: 0 }, completed: { type: "integer", minimum: 0 },
+        liveOverdue: { type: "integer", minimum: 0 }, completedLate: { type: "integer", minimum: 0 },
+        completionRate: { $ref: "#/components/schemas/DashboardRatio" }, atRisk: { type: "integer", minimum: 0 }
+      }
+    },
+    DashboardEstimationMetrics: {
+      type: "object", additionalProperties: false,
+      required: ["eligibleProjects", "trackedProjects", "unavailableProjects", "noEstimate", "draftInternal", "readyToSend", "awaitingClient", "changesRequested", "clientApproved", "approvedSubtotalPaise", "approvedGstPaise", "approvedContractTotalPaise", "medianWaitingAgeDays", "oldestWaitingAgeDays"],
+      properties: {
+        eligibleProjects: { type: "integer", minimum: 0 }, trackedProjects: { type: "integer", minimum: 0 }, unavailableProjects: { type: "integer", minimum: 0 },
+        noEstimate: { type: "integer", minimum: 0 }, draftInternal: { type: "integer", minimum: 0 }, readyToSend: { type: "integer", minimum: 0 }, awaitingClient: { type: "integer", minimum: 0 }, changesRequested: { type: "integer", minimum: 0 }, clientApproved: { type: "integer", minimum: 0 },
+        approvedSubtotalPaise: { type: "integer", minimum: 0 }, approvedGstPaise: { type: "integer", minimum: 0 }, approvedContractTotalPaise: { type: "integer", minimum: 0 },
+        medianWaitingAgeDays: { type: "integer", minimum: 0, nullable: true }, oldestWaitingAgeDays: { type: "integer", minimum: 0, nullable: true }
+      }
+    },
+    DashboardDesignMetrics: {
+      type: "object", additionalProperties: false,
+      required: ["eligibleProjects", "trackedProjects", "unavailableProjects", "pendingAssignment", "assigned", "inProgress", "readyForClient", "changesRequested", "approved", "approvalRate", "oldestPendingReviewAgeDays", "failedDeliveryCount", "disabledDeliveryCount"],
+      properties: {
+        eligibleProjects: { type: "integer", minimum: 0 }, trackedProjects: { type: "integer", minimum: 0 }, unavailableProjects: { type: "integer", minimum: 0 },
+        pendingAssignment: { type: "integer", minimum: 0 }, assigned: { type: "integer", minimum: 0 }, inProgress: { type: "integer", minimum: 0 }, readyForClient: { type: "integer", minimum: 0 }, changesRequested: { type: "integer", minimum: 0 }, approved: { type: "integer", minimum: 0 },
+        approvalRate: { $ref: "#/components/schemas/DashboardRatio" }, oldestPendingReviewAgeDays: { type: "integer", minimum: 0, nullable: true }, failedDeliveryCount: { type: "integer", minimum: 0 }, disabledDeliveryCount: { type: "integer", minimum: 0 }
+      }
+    },
+    DashboardProcurementMetrics: {
+      type: "object", additionalProperties: false,
+      required: ["eligibleProjects", "trackedProjects", "unavailableProjects", "notStarted", "open", "inProgress", "completed", "plannedAmountPaise", "postedSpendPaise", "variancePaise", "averageProgress"],
+      properties: {
+        eligibleProjects: { type: "integer", minimum: 0 }, trackedProjects: { type: "integer", minimum: 0 }, unavailableProjects: { type: "integer", minimum: 0 }, notStarted: { type: "integer", minimum: 0 }, open: { type: "integer", minimum: 0 }, inProgress: { type: "integer", minimum: 0 }, completed: { type: "integer", minimum: 0 },
+        plannedAmountPaise: { type: "integer", minimum: 0, nullable: true }, postedSpendPaise: { type: "integer", minimum: 0 }, variancePaise: { type: "integer", nullable: true }, averageProgress: { $ref: "#/components/schemas/DashboardRatio" }
+      }
+    },
+    DashboardFinanceMetrics: {
+      type: "object", additionalProperties: false,
+      required: ["projectCount", "approvedContractTotalPaise", "approvedGstPaise", "approvedSubtotalPaise", "targetProfitPaise", "costBudgetPaise", "procurementCostPaise", "employeePaymentPaise", "otherExpensePaise", "directSpendPaise", "overheadPaise", "recordedCostPaise", "remainingBudgetPaise", "currentProfitPaise", "currentMarginBps", "overBudgetProjectCount", "overdueProjectCount", "lateCompletedProjectCount", "overdueTaskCount"],
+      properties: {
+        projectCount: { type: "integer", minimum: 0 }, approvedContractTotalPaise: { type: "integer", minimum: 0 }, approvedGstPaise: { type: "integer", minimum: 0 }, approvedSubtotalPaise: { type: "integer", minimum: 0 }, targetProfitPaise: { type: "integer", minimum: 0 }, costBudgetPaise: { type: "integer", minimum: 0 }, procurementCostPaise: { type: "integer", minimum: 0 }, employeePaymentPaise: { type: "integer", minimum: 0 }, otherExpensePaise: { type: "integer", minimum: 0 }, directSpendPaise: { type: "integer", minimum: 0 }, overheadPaise: { type: "integer", minimum: 0 }, recordedCostPaise: { type: "integer", minimum: 0 }, remainingBudgetPaise: { type: "integer" }, currentProfitPaise: { type: "integer" }, currentMarginBps: { type: "integer", nullable: true }, overBudgetProjectCount: { type: "integer", minimum: 0 }, overdueProjectCount: { type: "integer", minimum: 0 }, lateCompletedProjectCount: { type: "integer", minimum: 0 }, overdueTaskCount: { type: "integer", minimum: 0 }
+      }
+    },
+    DashboardExecutionMetrics: {
+      type: "object", additionalProperties: false,
+      required: ["total", "open", "inProgress", "completed", "completedInPeriod", "overdue", "unassigned", "overdueUnassigned", "weightedProgress", "projectDistribution", "roleDistribution"],
+      properties: {
+        total: { type: "integer", minimum: 0 }, open: { type: "integer", minimum: 0 }, inProgress: { type: "integer", minimum: 0 }, completed: { type: "integer", minimum: 0 }, completedInPeriod: { type: "integer", minimum: 0 }, overdue: { type: "integer", minimum: 0 }, unassigned: { type: "integer", minimum: 0 }, overdueUnassigned: { type: "integer", minimum: 0 },
+        weightedProgress: { allOf: [{ $ref: "#/components/schemas/DashboardRatio" }, { type: "object", required: ["fallbackTaskCount"], properties: { fallbackTaskCount: { type: "integer", minimum: 0 } } }] },
+        projectDistribution: { type: "array", maxItems: 50, items: { type: "object", additionalProperties: false, required: ["projectId", "taskCount"], properties: { projectId: id, taskCount: { type: "integer", minimum: 0 } } } },
+        roleDistribution: { type: "array", items: { type: "object", additionalProperties: false, required: ["role", "taskCount"], properties: { role: { type: "string" }, taskCount: { type: "integer", minimum: 0 } } } }
+      }
+    },
+    DashboardWorkforceMetrics: {
+      type: "object", additionalProperties: false,
+      required: ["activeWorkers", "assignedWorkers", "unassignedWorkers", "activeAssignedTaskCount", "activeUnassignedTaskCount", "completedInPeriodTaskCount", "overCapacityWorkers", "capacityAvailable", "inactiveAssigneeTaskCount", "kpiEligibleWorkers", "kpiUnavailableWorkers", "averageKpi", "roleDistribution"],
+      properties: {
+        activeWorkers: { type: "integer", minimum: 0 }, assignedWorkers: { type: "integer", minimum: 0 }, unassignedWorkers: { type: "integer", minimum: 0 }, activeAssignedTaskCount: { type: "integer", minimum: 0 }, activeUnassignedTaskCount: { type: "integer", minimum: 0 }, completedInPeriodTaskCount: { type: "integer", minimum: 0 }, overCapacityWorkers: { type: "integer", minimum: 0, nullable: true }, capacityAvailable: { type: "boolean" }, inactiveAssigneeTaskCount: { type: "integer", minimum: 0 }, kpiEligibleWorkers: { type: "integer", minimum: 0 }, kpiUnavailableWorkers: { type: "integer", minimum: 0 }, averageKpi: { $ref: "#/components/schemas/DashboardRatio" },
+        roleDistribution: { type: "array", items: { type: "object", additionalProperties: false, required: ["role", "workerCount"], properties: { role: { type: "string", enum: [...WORKER_ROLES] }, workerCount: { type: "integer", minimum: 0 } } } }
+      }
+    },
+    DashboardGovernanceMetrics: {
+      type: "object", additionalProperties: false,
+      required: ["pendingInvitations", "expiredInvitations", "failedInvitationDeliveries", "pendingAccessRequests", "pendingClientResponses", "pendingDesignResponses", "failedClientDeliveries", "disabledClientDeliveries", "failedDesignDeliveries", "disabledDesignDeliveries"],
+      properties: Object.fromEntries(["pendingInvitations", "expiredInvitations", "failedInvitationDeliveries", "pendingAccessRequests", "pendingClientResponses", "pendingDesignResponses", "failedClientDeliveries", "disabledClientDeliveries", "failedDesignDeliveries", "disabledDesignDeliveries"].map((key) => [key, { type: "integer", minimum: 0 }]))
+    },
+    DashboardRiskMetrics: {
+      type: "object", additionalProperties: false,
+      required: ["projectDistribution", "factorDistribution", "topProjects"],
+      properties: {
+        projectDistribution: { type: "object", additionalProperties: false, required: ["gray", "green", "yellow", "red"], properties: Object.fromEntries(DASHBOARD_RISK_LEVELS.map((level) => [level, { type: "integer", minimum: 0 }])) },
+        factorDistribution: { type: "array", items: { type: "object", additionalProperties: false, required: ["kind", "level", "reasonCode", "occurrenceCount", "projectCount"], properties: { kind: { type: "string", enum: [...DASHBOARD_RISK_FACTORS] }, level: { type: "string", enum: ["yellow", "red"] }, reasonCode: { type: "string", enum: [...DASHBOARD_RISK_REASON_CODES] }, occurrenceCount: { type: "integer", minimum: 0 }, projectCount: { type: "integer", minimum: 0 } } } },
+        topProjects: { type: "array", maxItems: 10, items: { type: "object", additionalProperties: false, required: ["projectId", "projectName", "projectStatus", "risk"], properties: { projectId: id, projectName: { type: "string" }, projectStatus: { type: "string", enum: ["planning", "active", "on_hold", "completed"] }, risk: { $ref: "#/components/schemas/DashboardProjectRisk" } } } }
+      }
+    },
+    DashboardProjectRisk: {
+      type: "object", additionalProperties: false, required: ["level", "factors"],
+      properties: { level: { type: "string", enum: [...DASHBOARD_RISK_LEVELS] }, factors: { type: "array", maxItems: 50, items: { $ref: "#/components/schemas/DashboardRiskFactor" } } }
+    },
+    DashboardTrendBucket: {
+      type: "object", additionalProperties: false,
+      required: ["date", "projectsCreated", "projectsCompleted", "estimatesApproved", "designPlansApproved", "workflowTasksCompleted", "ledgerExpensesPostedPaise"],
+      properties: { date: { type: "string", format: "date" }, projectsCreated: { type: "integer", minimum: 0 }, projectsCompleted: { type: "integer", minimum: 0 }, estimatesApproved: { type: "integer", minimum: 0 }, designPlansApproved: { type: "integer", minimum: 0 }, workflowTasksCompleted: { type: "integer", minimum: 0 }, ledgerExpensesPostedPaise: { type: "integer", minimum: 0 } }
+    },
+    DashboardProjectRow: {
+      type: "object", additionalProperties: false,
+      required: ["projectId", "projectName", "projectStatus", "location", "plannedStartAt", "plannedEndAt", "actualEndAt", "manager", "estimate", "designPlan", "procurement", "execution", "finance", "risk"],
+      properties: {
+        projectId: id, projectName: { type: "string" }, projectStatus: { type: "string", enum: ["planning", "active", "on_hold", "completed"] }, location: { type: "string" }, plannedStartAt: dateTime, plannedEndAt: dateTime, actualEndAt: { ...dateTime, nullable: true },
+        manager: { type: "object", nullable: true, additionalProperties: false, required: ["id", "name"], properties: { id, name: { type: "string" } } },
+        estimate: { type: "object", nullable: true, additionalProperties: false, required: ["id", "projectId", "resolvedProjectId", "projectLinkSource", "version", "reviewRoundId", "status"], properties: { id, projectId: { type: "string", nullable: true }, resolvedProjectId: id, projectLinkSource: { type: "string", enum: ["estimate", "lead", "estimate_and_lead"] }, version: { type: "integer", minimum: 1 }, reviewRoundId: { type: "string", nullable: true }, status: { type: "string" } } },
+        designPlan: { type: "object", nullable: true, additionalProperties: false, required: ["estimateId", "version", "status", "reviewRoundId"], properties: { estimateId: id, version: { type: "integer", minimum: 0 }, status: { type: "string", enum: [...DESIGN_PLAN_STATUSES] }, reviewRoundId: { type: "string", nullable: true } } },
+        procurement: { type: "object", nullable: true, additionalProperties: false, required: ["taskId", "estimateId", "designPlanVersion", "status", "progress", "approvedAmountPaise", "postedSpendPaise", "variancePaise", "sourceSectionIds", "sourceLineItemKeys"], properties: { taskId: id, estimateId: id, designPlanVersion: { type: "integer", minimum: 0 }, status: { type: "string", enum: [...PROJECT_WORKFLOW_TASK_STATUSES] }, progress: { type: "integer", minimum: 0, maximum: 100 }, approvedAmountPaise: { type: "integer", minimum: 0, nullable: true }, postedSpendPaise: { type: "integer", minimum: 0 }, variancePaise: { type: "integer", nullable: true }, sourceSectionIds: { type: "array", maxItems: 50, items: id }, sourceLineItemKeys: { type: "array", maxItems: 50, items: id } } },
+        execution: { type: "object", additionalProperties: false, required: ["taskIds", "assigneeWorkerIds", "sourceSectionIds", "sourceLineItemKeys", "taskCount", "overdueTaskCount", "unassignedTaskCount", "progress"], properties: { taskIds: { type: "array", maxItems: 50, items: id }, assigneeWorkerIds: { type: "array", maxItems: 50, items: id }, sourceSectionIds: { type: "array", maxItems: 50, items: id }, sourceLineItemKeys: { type: "array", maxItems: 50, items: id }, taskCount: { type: "integer", minimum: 0 }, overdueTaskCount: { type: "integer", minimum: 0 }, unassignedTaskCount: { type: "integer", minimum: 0 }, progress: { allOf: [{ $ref: "#/components/schemas/DashboardRatio" }, { type: "object", required: ["fallbackTaskCount"], properties: { fallbackTaskCount: { type: "integer", minimum: 0 } } }] } } },
+        finance: { type: "object", nullable: true, additionalProperties: false, required: ["bucketId", "version", "estimateId", "estimateVersion", "estimateReviewRoundId", "designPlanVersion", "approvedSubtotalPaise", "recordedCostPaise", "currentProfitPaise", "currentMarginBps"], properties: { bucketId: id, version: { type: "integer", minimum: 1 }, estimateId: id, estimateVersion: { type: "integer", minimum: 1 }, estimateReviewRoundId: { type: "string", nullable: true }, designPlanVersion: { type: "integer", minimum: 0 }, approvedSubtotalPaise: { type: "integer", minimum: 0 }, recordedCostPaise: { type: "integer", minimum: 0 }, currentProfitPaise: { type: "integer" }, currentMarginBps: { type: "integer", nullable: true } } },
+        risk: { $ref: "#/components/schemas/DashboardProjectRisk" }
+      }
+    },
+    DashboardWorkforceRow: {
+      type: "object", additionalProperties: false,
+      required: ["workerId", "workerName", "role", "assignmentState", "activeTaskCount", "completedInPeriod", "plannedEffort", "completedEffort", "remainingEffort", "remainingWorkloadPercentage", "capacityEffort", "capacityAvailable", "capacityState", "kpi"],
+      properties: { workerId: id, workerName: { type: "string" }, role: { type: "string", enum: [...WORKER_ROLES] }, assignmentState: { type: "string", enum: [...DASHBOARD_WORKFORCE_ASSIGNMENT_STATES] }, activeTaskCount: { type: "integer", minimum: 0 }, completedInPeriod: { type: "integer", minimum: 0 }, plannedEffort: { type: "integer", minimum: 0 }, completedEffort: { type: "integer", minimum: 0 }, remainingEffort: { type: "integer", minimum: 0 }, remainingWorkloadPercentage: { type: "integer", minimum: 0, maximum: 100 }, capacityEffort: { type: "integer", minimum: 0, nullable: true }, capacityAvailable: { type: "boolean" }, capacityState: { type: "string", enum: [...DASHBOARD_WORKFORCE_CAPACITY_STATES] }, kpi: { type: "object", additionalProperties: false, required: ["availability", "scoreBps", "eligibleComponentCount"], properties: { availability: { type: "string", enum: [...DASHBOARD_KPI_AVAILABILITY] }, scoreBps: { type: "integer", minimum: 0, maximum: 10000, nullable: true }, eligibleComponentCount: { type: "integer", minimum: 0 } } } }
+    },
+    SuperAdminDashboardOverview: {
+      type: "object",
+      additionalProperties: false,
+      required: ["observedAt", "period", "projects", "estimation", "design", "procurement", "finance", "execution", "workforce", "governance", "risk", "trends", "dataQuality"],
+      properties: {
+        observedAt: dateTime,
+        period: { $ref: "#/components/schemas/DashboardPeriod" },
+        projects: { $ref: "#/components/schemas/DashboardProjectsMetrics" },
+        estimation: { $ref: "#/components/schemas/DashboardEstimationMetrics" },
+        design: { $ref: "#/components/schemas/DashboardDesignMetrics" },
+        procurement: { $ref: "#/components/schemas/DashboardProcurementMetrics" },
+        finance: { $ref: "#/components/schemas/DashboardFinanceMetrics" },
+        execution: { $ref: "#/components/schemas/DashboardExecutionMetrics" },
+        workforce: { $ref: "#/components/schemas/DashboardWorkforceMetrics" },
+        governance: { $ref: "#/components/schemas/DashboardGovernanceMetrics" },
+        risk: { $ref: "#/components/schemas/DashboardRiskMetrics" },
+        trends: { type: "array", maxItems: 90, items: { $ref: "#/components/schemas/DashboardTrendBucket" } },
+        dataQuality: { $ref: "#/components/schemas/DashboardDataQuality" }
+      }
+    },
+    SuperAdminDashboardProjectPage: dashboardPageSchema("DashboardProjectRow"),
+    SuperAdminDashboardWorkforcePage: dashboardPageSchema("DashboardWorkforceRow"),
     GenericJsonObject: {
       type: "object",
       additionalProperties: true,

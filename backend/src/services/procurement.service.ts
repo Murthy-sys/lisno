@@ -7,6 +7,7 @@ import {
   projectWorkflowSectionLabel
 } from "../domain/project-workflow.js";
 import {
+  MAX_FINANCE_AMOUNT_PAISE,
   assertFinanceAmount,
   projectFinanceBaseline,
   rupeesToPaise,
@@ -21,6 +22,7 @@ import {
   FinanceEntryDocumentModel
 } from "../models/FinanceEntryDocument.js";
 import { FinanceLedgerEntryModel } from "../models/FinanceLedgerEntry.js";
+import { LeadModel } from "../models/Lead.js";
 import { ProjectFinanceBucketModel } from "../models/ProjectFinanceBucket.js";
 import { ProjectModel } from "../models/Project.js";
 import { ProjectWorkflowTaskModel } from "../models/ProjectWorkflowTask.js";
@@ -85,6 +87,557 @@ export interface ProcurementProjectDto {
   estimateId: string;
   estimateVersion: number;
   sections: ProcurementSectionDto[];
+}
+
+export interface ProcurementDashboardProjection {
+  projectId: string;
+  taskId: string;
+  taskStatus: "open" | "in_progress" | "completed";
+  taskProgress: number;
+  estimateId: string;
+  estimateVersion: number;
+  designPlanVersion: number;
+  approvedAmountPaise: number;
+  postedSpendPaise: number;
+  variancePaise: number;
+  sourceSectionIds: string[];
+  sourceLineItemKeys: string[];
+}
+
+export interface ProcurementDashboardPortfolioReport {
+  eligibleProjects: number;
+  trackedProjects: number;
+  open: number;
+  inProgress: number;
+  completed: number;
+  progressNumerator: number;
+  progressDenominator: number;
+  approvedAmountPaise: number;
+  postedSpendPaise: number;
+  variancePaise: number;
+}
+
+export interface ProcurementDashboardApprovalRound {
+  id: string;
+  projectId: string | null;
+  estimateId: string;
+  estimateVersion: number;
+  estimateSnapshot: Row;
+  decisionSource: string | null;
+  decidedById: string | null;
+  decidedAt: Date | null;
+  status: "approved";
+  decision: "approve";
+}
+
+/**
+ * Reads immutable Procurement approval facts for an already bounded dashboard
+ * page. Scalar round counts stay in Mongo, while at most two candidate
+ * identities per canonical Estimate leave the aggregate to detect duplicates.
+ */
+export async function readProcurementDashboardApprovalRounds(
+  estimateIds: readonly string[]
+): Promise<Map<string, readonly ProcurementDashboardApprovalRound[]>> {
+  const boundedIds = [...new Set(estimateIds)].sort();
+  if (boundedIds.length === 0) return new Map();
+  if (boundedIds.length > 50) {
+    throw new TypeError("Dashboard Procurement approval reads support at most 50 Estimates.");
+  }
+  return procurementSnapshotRead(async (session) => {
+    const rows = await EstimateModel.aggregate<Row>([
+      { $match: { _id: { $in: boundedIds } } },
+      {
+        $set: {
+          approvedEstimateVersion: {
+            $cond: [{ $gt: ["$version", 1] }, { $subtract: ["$version", 1] }, 1]
+          }
+        }
+      },
+      {
+        $lookup: {
+          from: EstimateClientReviewRoundModel.collection.name,
+          let: { estimateId: "$_id" },
+          pipeline: [
+            { $match: { $expr: { $eq: ["$estimateId", "$$estimateId"] } } },
+            { $count: "value" }
+          ],
+          as: "roundCount"
+        }
+      },
+      {
+        $lookup: {
+          from: EstimateClientReviewRoundModel.collection.name,
+          let: { estimateId: "$_id", approvedEstimateVersion: "$approvedEstimateVersion" },
+          pipeline: [
+            {
+              $match: {
+                status: "approved",
+                decision: "approve",
+                $expr: {
+                  $and: [
+                    { $eq: ["$estimateId", "$$estimateId"] },
+                    { $eq: ["$estimateVersion", "$$approvedEstimateVersion"] }
+                  ]
+                }
+              }
+            },
+            { $sort: { sendGeneration: -1, _id: 1 } },
+            { $limit: 2 },
+            {
+              $project: {
+                _id: 1, projectId: 1, estimateId: 1, estimateVersion: 1,
+                estimateSnapshot: 1, decisionSource: 1, decidedById: 1,
+                decidedAt: 1, status: 1, decision: 1
+              }
+            }
+          ],
+          as: "matchingApprovedRounds"
+        }
+      },
+      {
+        $project: {
+          _id: 1,
+          roundCount: { $ifNull: [{ $arrayElemAt: ["$roundCount.value", 0] }, 0] },
+          matchingApprovedRounds: 1
+        }
+      }
+    ]).session(session).exec();
+    if (rows.length !== boundedIds.length) procurementLineageConflict();
+    const result = new Map<string, readonly ProcurementDashboardApprovalRound[]>();
+    for (const row of rows) {
+      const estimateId = String(row._id);
+      const roundCount = Number(row.roundCount ?? 0);
+      const matching = (row.matchingApprovedRounds ?? []) as Row[];
+      if (!Number.isSafeInteger(roundCount) || roundCount < 0) procurementLineageConflict();
+      if (roundCount === 0) {
+        result.set(estimateId, []);
+        continue;
+      }
+      if (matching.length !== 1) procurementLineageConflict();
+      const round = matching[0]!;
+      result.set(estimateId, [{
+        id: requiredStoredText(round._id),
+        projectId: nullableText(round.projectId),
+        estimateId: requiredStoredText(round.estimateId),
+        estimateVersion: Number(round.estimateVersion),
+        estimateSnapshot: round.estimateSnapshot,
+        decisionSource: nullableText(round.decisionSource),
+        decidedById: nullableText(round.decidedById),
+        decidedAt: round.decidedAt instanceof Date ? round.decidedAt : null,
+        status: "approved",
+        decision: "approve"
+      }]);
+    }
+    return result;
+  });
+}
+
+/** Canonical scalar Procurement portfolio projection; no detail arrays leave Mongo. */
+export async function readProcurementDashboardPortfolioReport(): Promise<ProcurementDashboardPortfolioReport> {
+  return procurementSnapshotRead(async (session) => {
+    const [result] = await EstimateModel.aggregate<Row>([
+      { $match: { status: "client_approved", designPlanStatus: "approved", projectId: { $type: "string", $ne: "" } } },
+      {
+        $setWindowFields: {
+          partitionBy: "$projectId",
+          output: { approvedDesignEstimateCount: { $count: {} } }
+        }
+      },
+      { $lookup: { from: ProjectModel.collection.name, localField: "projectId", foreignField: "_id", as: "project" } },
+      { $lookup: { from: LeadModel.collection.name, localField: "leadId", foreignField: "_id", as: "lead" } },
+      {
+        $lookup: {
+          from: EstimateClientReviewRoundModel.collection.name,
+          let: { estimateId: "$_id" },
+          pipeline: [
+            { $match: { status: "approved", decision: "approve", $expr: { $eq: ["$estimateId", "$$estimateId"] } } },
+            { $project: { _id: 1, projectId: 1, estimateVersion: 1, estimateSnapshot: 1, decisionSource: 1, decidedById: 1, decidedAt: 1 } }
+          ],
+          as: "approvedRounds"
+        }
+      },
+      {
+        $set: {
+          approvedVersion: { $cond: [{ $gt: ["$version", 1] }, { $subtract: ["$version", 1] }, 1] },
+          legacyApprovals: {
+            $filter: {
+              input: { $ifNull: ["$reviews", []] },
+              as: "review",
+              cond: {
+                $and: [
+                  { $eq: ["$$review.action", "client_approved"] },
+                  { $eq: [{ $type: "$$review.actorId" }, "string"] },
+                  { $eq: [{ $type: "$$review.occurredAt" }, "date"] }
+                ]
+              }
+            }
+          }
+        }
+      },
+      {
+        $set: {
+          matchingRounds: {
+            $filter: {
+              input: "$approvedRounds",
+              as: "round",
+              cond: { $eq: ["$$round.estimateVersion", "$approvedVersion"] }
+            }
+          }
+        }
+      },
+      {
+        $set: {
+          approvalValid: {
+            $and: [
+              { $eq: [{ $size: "$project" }, 1] },
+              { $eq: [{ $size: "$lead" }, 1] },
+              { $eq: [{ $arrayElemAt: ["$lead.projectId", 0] }, "$projectId"] },
+              { $eq: ["$approvedDesignEstimateCount", 1] },
+              {
+                $cond: [
+                  { $gt: [{ $size: "$approvedRounds" }, 0] },
+                  {
+                    $and: [
+                      { $eq: [{ $size: "$matchingRounds" }, 1] },
+                      { $in: [{ $arrayElemAt: ["$matchingRounds.decisionSource", 0] }, ["client_portal", "admin_proof"]] },
+                      { $eq: [{ $type: { $arrayElemAt: ["$matchingRounds.decidedById", 0] } }, "string"] },
+                      { $eq: [{ $type: { $arrayElemAt: ["$matchingRounds.decidedAt", 0] } }, "date"] },
+                      {
+                        $or: [
+                          { $eq: [{ $ifNull: [{ $arrayElemAt: ["$matchingRounds.projectId", 0] }, null] }, null] },
+                          { $eq: [{ $arrayElemAt: ["$matchingRounds.projectId", 0] }, "$projectId"] }
+                        ]
+                      }
+                    ]
+                  },
+                  { $eq: [{ $size: "$legacyApprovals" }, 1] }
+                ]
+              },
+              { $gt: ["$designPlanVersion", 0] },
+              { $eq: [{ $type: "$designPlanApprovedAt" }, "date"] },
+              { $eq: [{ $type: "$designPlanApprovedById" }, "string"] },
+              { $in: ["$designPlanApprovalSource", ["client_portal", "admin_proof"]] }
+            ]
+          },
+          approvalSnapshot: {
+            $cond: [
+              { $gt: [{ $size: "$approvedRounds" }, 0] },
+              { $arrayElemAt: ["$matchingRounds.estimateSnapshot", 0] },
+              { subtotal: "$subtotal", gst: "$gst", total: "$total", lineItems: "$lineItems" }
+            ]
+          },
+          approvalRoundId: {
+            $cond: [
+              { $gt: [{ $size: "$approvedRounds" }, 0] },
+              { $arrayElemAt: ["$matchingRounds._id", 0] },
+              null
+            ]
+          }
+        }
+      },
+      {
+        $set: {
+          approvedSubtotalPaise: { $multiply: ["$approvalSnapshot.subtotal", 100] },
+          approvedGstPaise: { $multiply: ["$approvalSnapshot.gst", 100] },
+          approvedContractTotalPaise: { $multiply: ["$approvalSnapshot.total", 100] },
+          includedLines: {
+            $filter: { input: { $ifNull: ["$approvalSnapshot.lineItems", []] }, as: "line", cond: { $eq: ["$$line.included", true] } }
+          }
+        }
+      },
+      {
+        $set: {
+          moneyValid: {
+            $and: [
+              { $isNumber: "$approvedSubtotalPaise" }, { $isNumber: "$approvedGstPaise" }, { $isNumber: "$approvedContractTotalPaise" },
+              { $gte: ["$approvedSubtotalPaise", 0] }, { $gte: ["$approvedGstPaise", 0] },
+              { $eq: ["$approvedSubtotalPaise", { $trunc: "$approvedSubtotalPaise" }] },
+              { $eq: ["$approvedGstPaise", { $trunc: "$approvedGstPaise" }] },
+              { $eq: [{ $add: ["$approvedSubtotalPaise", "$approvedGstPaise"] }, "$approvedContractTotalPaise"] }
+            ]
+          }
+        }
+      },
+      {
+        $facet: {
+          invalid: [{ $match: { $expr: { $not: [{ $and: ["$approvalValid", "$moneyValid"] }] } } }, { $count: "value" }],
+          valid: [
+            { $match: { approvalValid: true, moneyValid: true } },
+            { $unwind: { path: "$includedLines", includeArrayIndex: "lineIndex", preserveNullAndEmptyArrays: true } },
+            {
+              $set: {
+                sourceLineItemKey: {
+                  $cond: [
+                    { $and: [{ $eq: [{ $type: "$includedLines.id" }, "string"] }, { $ne: [{ $trim: { input: "$includedLines.id" } }, ""] }] },
+                    { $trim: { input: "$includedLines.id" } },
+                    { $concat: ["legacy-estimate-line:", "$_id", ":", { $toString: "$approvedVersion" }, ":", { $toString: "$lineIndex" }] }
+                  ]
+                },
+                sourceSectionId: { $substrCP: [{ $toUpper: { $ifNull: ["$includedLines.catalogueId", ""] } }, 0, 2] },
+                lineAmountPaise: { $cond: [{ $ne: ["$includedLines", null] }, { $multiply: ["$includedLines.amount", 100] }, 0] }
+              }
+            },
+            {
+              $lookup: {
+                from: ProjectWorkflowTaskModel.collection.name,
+                let: { projectId: "$projectId", estimateId: "$_id", designPlanVersion: "$designPlanVersion" },
+                pipeline: [
+                  { $match: { kind: "procurement", $expr: { $eq: ["$projectId", "$$projectId"] } } },
+                  { $project: { _id: 1, estimateId: 1, designPlanVersion: 1, assigneeRole: 1, status: 1, progress: 1 } },
+                  { $limit: 2 }
+                ],
+                as: "tasks"
+              }
+            },
+            { $lookup: { from: ProjectFinanceBucketModel.collection.name, localField: "projectId", foreignField: "projectId", as: "buckets" } },
+            { $set: { bucket: { $arrayElemAt: ["$buckets", 0] } } },
+            {
+              $set: {
+                bucketValid: {
+                  $or: [
+                    { $eq: [{ $size: "$buckets" }, 0] },
+                    {
+                      $and: [
+                        { $eq: [{ $size: "$buckets" }, 1] },
+                        { $eq: ["$bucket.estimateId", "$_id"] }, { $eq: ["$bucket.estimateVersion", "$approvedVersion"] },
+                        { $eq: [{ $ifNull: ["$bucket.estimateReviewRoundId", null] }, "$approvalRoundId"] },
+                        { $eq: ["$bucket.designPlanVersion", "$designPlanVersion"] },
+                        { $eq: ["$bucket.approvedSubtotalPaise", "$approvedSubtotalPaise"] },
+                        { $eq: ["$bucket.approvedGstPaise", "$approvedGstPaise"] },
+                        { $eq: ["$bucket.approvedContractTotalPaise", "$approvedContractTotalPaise"] }
+                      ]
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              $group: {
+                _id: "$projectId",
+                invalid: { $max: { $cond: [{ $and: ["$bucketValid", { $lte: [{ $size: "$tasks" }, 1] }, { $isNumber: "$lineAmountPaise" }, { $gte: ["$lineAmountPaise", 0] }, { $lte: ["$lineAmountPaise", MAX_FINANCE_AMOUNT_PAISE] }, { $eq: ["$lineAmountPaise", { $trunc: "$lineAmountPaise" }] }] }, 0, 1] } },
+                tasks: { $first: "$tasks" },
+                hasPersistedTask: { $first: { $eq: [{ $size: "$tasks" }, 1] } },
+                taskStatus: { $first: { $ifNull: [{ $arrayElemAt: ["$tasks.status", 0] }, "open"] } },
+                taskProgress: { $first: { $ifNull: [{ $arrayElemAt: ["$tasks.progress", 0] }, 0] } },
+                estimateId: { $first: "$_id" },
+                designPlanVersion: { $first: "$designPlanVersion" },
+                bucket: { $first: "$bucket" },
+                approvedLineages: { $push: { sectionId: "$sourceSectionId", lineItemKey: "$sourceLineItemKey" } },
+                approvedAmountPaise: { $sum: "$lineAmountPaise" },
+              }
+            },
+            {
+              $lookup: {
+                from: FinanceLedgerEntryModel.collection.name,
+                let: { projectId: "$_id", bucketId: "$bucket._id", approvedLineages: "$approvedLineages" },
+                pipeline: [
+                  {
+                    $match: {
+                      status: "posted",
+                      type: "direct_spend",
+                      expenseClass: "procurement",
+                      $expr: { $eq: ["$projectId", "$$projectId"] }
+                    }
+                  },
+                  {
+                    $set: {
+                      lineageValid: {
+                        $and: [
+                          { $eq: ["$bucketId", "$$bucketId"] },
+                          { $isNumber: "$amountPaise" },
+                          { $gt: ["$amountPaise", 0] },
+                          { $lte: ["$amountPaise", MAX_FINANCE_AMOUNT_PAISE] },
+                          { $eq: ["$amountPaise", { $trunc: "$amountPaise" }] },
+                          {
+                            $anyElementTrue: {
+                              $map: {
+                                input: "$$approvedLineages",
+                                as: "lineage",
+                                in: {
+                                  $and: [
+                                    { $eq: ["$sourceSectionId", "$$lineage.sectionId"] },
+                                    { $eq: ["$sourceLineItemKey", "$$lineage.lineItemKey"] }
+                                  ]
+                                }
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  },
+                  {
+                    $group: {
+                      _id: null,
+                      invalidCount: { $sum: { $cond: ["$lineageValid", 0, 1] } },
+                      postedSpendPaise: { $sum: { $cond: ["$lineageValid", "$amountPaise", 0] } }
+                    }
+                  }
+                ],
+                as: "ledger"
+              }
+            },
+            {
+              $set: {
+                invalid: {
+                  $max: [
+                    "$invalid",
+                    {
+                      $cond: [
+                        {
+                          $and: [
+                            "$hasPersistedTask",
+                            {
+                              $or: [
+                                { $ne: [{ $arrayElemAt: ["$tasks.estimateId", 0] }, "$estimateId"] },
+                                { $ne: [{ $arrayElemAt: ["$tasks.designPlanVersion", 0] }, "$designPlanVersion"] },
+                                { $ne: [{ $arrayElemAt: ["$tasks.assigneeRole", 0] }, "procurement"] },
+                                { $not: [{ $in: ["$taskStatus", ["open", "in_progress", "completed"]] }] },
+                                { $not: [{ $isNumber: "$taskProgress" }] },
+                                { $lt: ["$taskProgress", 0] },
+                                { $gt: ["$taskProgress", 100] },
+                                { $ne: ["$taskProgress", { $trunc: "$taskProgress" }] }
+                              ]
+                            }
+                          ]
+                        },
+                        1,
+                        0
+                      ]
+                    },
+                    { $cond: [{ $gt: [{ $ifNull: [{ $arrayElemAt: ["$ledger.invalidCount", 0] }, 0] }, 0] }, 1, 0] }
+                  ]
+                },
+                postedSpendPaise: { $ifNull: [{ $arrayElemAt: ["$ledger.postedSpendPaise", 0] }, 0] }
+              }
+            },
+            {
+              $group: {
+                _id: null,
+                invalidProjectCount: { $sum: "$invalid" },
+                eligibleProjects: { $sum: 1 },
+                trackedProjects: { $sum: { $cond: ["$hasPersistedTask", 1, 0] } },
+                open: { $sum: { $cond: [{ $and: ["$hasPersistedTask", { $eq: ["$taskStatus", "open"] }] }, 1, 0] } },
+                inProgress: { $sum: { $cond: [{ $and: ["$hasPersistedTask", { $eq: ["$taskStatus", "in_progress"] }] }, 1, 0] } },
+                completed: { $sum: { $cond: [{ $and: ["$hasPersistedTask", { $eq: ["$taskStatus", "completed"] }] }, 1, 0] } },
+                progressNumerator: { $sum: { $cond: ["$hasPersistedTask", "$taskProgress", 0] } },
+                progressDenominator: { $sum: { $cond: ["$hasPersistedTask", 100, 0] } },
+                approvedAmountPaise: { $sum: "$approvedAmountPaise" }, postedSpendPaise: { $sum: "$postedSpendPaise" }
+              }
+            }
+          ]
+        }
+      }
+    ]).session(session).exec();
+    const invalidCount = Number(result?.invalid?.[0]?.value ?? 0) +
+      Number(result?.valid?.[0]?.invalidProjectCount ?? 0);
+    if (invalidCount > 0) procurementLineageConflict();
+    const row = result?.valid?.[0] ?? {};
+    const approvedAmountPaise = Number(row.approvedAmountPaise ?? 0);
+    const postedSpendPaise = Number(row.postedSpendPaise ?? 0);
+    return {
+      eligibleProjects: Number(row.eligibleProjects ?? 0),
+      trackedProjects: Number(row.trackedProjects ?? 0),
+      open: Number(row.open ?? 0), inProgress: Number(row.inProgress ?? 0), completed: Number(row.completed ?? 0),
+      progressNumerator: Number(row.progressNumerator ?? 0),
+      progressDenominator: Number(row.progressDenominator ?? 0),
+      approvedAmountPaise, postedSpendPaise,
+      variancePaise: approvedAmountPaise - postedSpendPaise
+    };
+  });
+}
+
+/**
+ * Pure canonical Procurement read projection used by dashboards after their
+ * bounded batch reads. It shares immutable Estimate/Design approval lineage,
+ * stable line identities, bucket validation, and posted-ledger classification
+ * with the Procurement service and fails closed on any mismatch.
+ */
+export function procurementDashboardProjection(input: {
+  project: Row;
+  estimate: Row;
+  approvedRounds: readonly Row[];
+  task: Row | null;
+  bucket: Row | null;
+  entries: readonly Row[];
+}): ProcurementDashboardProjection {
+  const projectId = requiredStoredText(input.project._id);
+  if (
+    input.estimate.status !== "client_approved" ||
+    input.estimate.designPlanStatus !== "approved" ||
+    requiredStoredText(input.estimate.projectId) !== projectId
+  ) procurementLineageConflict();
+  const snapshot = approvedProcurementSnapshotFromRows(
+    input.estimate,
+    input.approvedRounds
+  );
+  if (
+    input.task && (
+      input.task.kind !== "procurement" ||
+      input.task.assigneeRole !== "procurement" ||
+      String(input.task.projectId) !== projectId ||
+      String(input.task.estimateId) !== snapshot.estimateId ||
+      Number(input.task.designPlanVersion) !== snapshot.designPlanVersion
+    )
+  ) procurementLineageConflict();
+  const task = input.task ?? syntheticProcurementTask(input.estimate, projectId);
+  if (!["open", "in_progress", "completed"].includes(String(task.status))) {
+    procurementLineageConflict();
+  }
+  const taskId = requiredStoredText(task._id);
+  const taskProgress = Number(task.progress);
+  if (
+    !Number.isSafeInteger(taskProgress) ||
+    taskProgress < 0 ||
+    taskProgress > 100
+  ) procurementLineageConflict();
+  if (input.bucket) requireMatchingBucketLineage(input.bucket, snapshot);
+  const approvedLineByKey = new Map(snapshot.lineItems.map((line) => [line.key, line]));
+  let approvedAmountPaise = 0;
+  for (const line of snapshot.lineItems) {
+    approvedAmountPaise = safeAddFinanceAmounts(
+      approvedAmountPaise,
+      line.amountPaise,
+      "Dashboard Procurement approved amount"
+    );
+  }
+  let postedSpendPaise = 0;
+  for (const entry of input.entries) {
+    if (
+      !input.bucket ||
+      entry.status !== "posted" ||
+      entry.type !== "direct_spend" ||
+      entry.expenseClass !== "procurement" ||
+      String(entry.projectId) !== projectId ||
+      String(entry.bucketId) !== String(input.bucket._id)
+    ) procurementLineageConflict();
+    const key = nullableText(entry.sourceLineItemKey);
+    const line = key ? approvedLineByKey.get(key) : undefined;
+    if (!line || nullableText(entry.sourceSectionId) !== line.sectionId) {
+      procurementLineageConflict();
+    }
+    postedSpendPaise = safeAddFinanceAmounts(
+      postedSpendPaise,
+      Number(entry.amountPaise),
+      "Dashboard Procurement posted spending"
+    );
+  }
+  const variancePaise = approvedAmountPaise - postedSpendPaise;
+  if (!Number.isSafeInteger(variancePaise)) procurementLineageConflict();
+  return {
+    projectId,
+    taskId,
+    taskStatus: task.status as ProcurementDashboardProjection["taskStatus"],
+    taskProgress,
+    estimateId: snapshot.estimateId,
+    estimateVersion: snapshot.estimateVersion,
+    designPlanVersion: snapshot.designPlanVersion,
+    approvedAmountPaise,
+    postedSpendPaise,
+    variancePaise,
+    sourceSectionIds: [...new Set(snapshot.lineItems.map((line) => line.sectionId))].sort(),
+    sourceLineItemKeys: snapshot.lineItems.map((line) => line.key).sort()
+  };
 }
 
 export interface ProcurementService {
@@ -810,6 +1363,13 @@ async function approvedProcurementSnapshot(
     status: "approved",
     decision: "approve"
   }).session(session).lean();
+  return approvedProcurementSnapshotFromRows(estimate, approvedRounds);
+}
+
+function approvedProcurementSnapshotFromRows(
+  estimate: Row,
+  approvedRounds: readonly Row[]
+): ApprovedProcurementSnapshot {
   let approval: ReturnType<typeof financeApprovalLineage>;
   let designApproval: NonNullable<ReturnType<typeof financeDesignApproval>>;
   try {

@@ -30,6 +30,11 @@ import {
 import { demoSeedData } from "../seed/data.js";
 import { adminProjectSummary } from "./admin-project-summary.js";
 import {
+  memorySuperAdminDashboardOverview,
+  memorySuperAdminDashboardProjects,
+  memorySuperAdminDashboardWorkforce
+} from "./super-admin-dashboard.js";
+import {
   RepositoryConflictError,
   RepositoryNotFoundError,
   type AppRepository,
@@ -929,6 +934,18 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
       return copyOrNull(
         state.users.find((user) => user.emailNormalized === normalizedEmail)
       );
+    },
+
+    async readSuperAdminDashboardOverview(input) {
+      return memorySuperAdminDashboardOverview(state, input);
+    },
+
+    async pageSuperAdminDashboardProjects(observedAt, filters) {
+      return memorySuperAdminDashboardProjects(state, observedAt, filters);
+    },
+
+    async pageSuperAdminDashboardWorkforce(input) {
+      return memorySuperAdminDashboardWorkforce(state, input);
     },
 
     async createUser(input: NewUser) {

@@ -1,6 +1,7 @@
 import type { KpiTask, TaskRisk } from "../contracts/domain.js";
 
-const TWO_CALENDAR_DAYS_MS = 2 * 24 * 60 * 60 * 1000;
+export const TASK_RISK_DUE_SOON_MS = 2 * 24 * 60 * 60 * 1000;
+export const TASK_RISK_MIN_SCHEDULE_BUFFER = 0.2;
 
 const clamp = (value: number) => Math.min(1, Math.max(0, value));
 
@@ -58,7 +59,7 @@ export function calculateTaskRisk(task: KpiTask, now: Date): TaskRisk {
     };
   }
 
-  if (nowMs >= plannedStartAt.getTime() && currentDeadlineAt.getTime() - nowMs <= TWO_CALENDAR_DAYS_MS) {
+  if (nowMs >= plannedStartAt.getTime() && currentDeadlineAt.getTime() - nowMs <= TASK_RISK_DUE_SOON_MS) {
     return { ...response, level: "yellow", reason: "Task is due within two calendar days." };
   }
 
@@ -67,7 +68,7 @@ export function calculateTaskRisk(task: KpiTask, now: Date): TaskRisk {
     return { ...response, level: "yellow", reason: "Task is behind its expected schedule." };
   }
 
-  if (nowMs >= plannedStartAt.getTime() && scheduleBuffer + Number.EPSILON < 0.2) {
+  if (nowMs >= plannedStartAt.getTime() && scheduleBuffer + Number.EPSILON < TASK_RISK_MIN_SCHEDULE_BUFFER) {
     return {
       ...response,
       level: "yellow",
@@ -75,7 +76,7 @@ export function calculateTaskRisk(task: KpiTask, now: Date): TaskRisk {
     };
   }
 
-  if (nowMs >= plannedStartAt.getTime() && scheduleBuffer + Number.EPSILON >= 0.2) {
+  if (nowMs >= plannedStartAt.getTime() && scheduleBuffer + Number.EPSILON >= TASK_RISK_MIN_SCHEDULE_BUFFER) {
     return {
       ...response,
       level: "green",

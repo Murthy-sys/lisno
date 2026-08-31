@@ -4,7 +4,7 @@ import { ROLE_CODES, type Role } from "../api/authorization-contract";
 import { roleHomePath, safeReturnPath } from "./routePaths";
 
 const expectedRoleHomes: Record<Role, string> = {
-  super_admin: "/admin/users",
+  super_admin: "/admin/dashboard",
   admin: "/admin/projects",
   estimator_sales: "/estimator-sales",
   designer: "/designer",
@@ -32,6 +32,9 @@ describe("safeReturnPath", () => {
   it.each([
     ["admin", "/admin/projects/project-1", "/admin/projects/project-1"],
     ["super_admin", "/admin/projects", "/admin/projects"],
+    ["super_admin", "/admin/users", "/admin/users"],
+    ["super_admin", "/admin/access-requests", "/admin/access-requests"],
+    ["super_admin", "/finance/projects/project-1", "/finance/projects/project-1"],
     [
       "super_admin",
       "/admin/configuration/estimation/items/item-1?section=pricing#rates",
@@ -123,7 +126,7 @@ describe("safeReturnPath", () => {
     "//evil.example/admin/projects",
     "/admin/projects\\project-1"
   ])("rejects a confused or traversing Super Admin project boundary: %s", (candidate) => {
-    expect(safeReturnPath("super_admin", candidate)).toBe("/admin/users");
+    expect(safeReturnPath("super_admin", candidate)).toBe("/admin/dashboard");
   });
 
   it.each([
@@ -134,7 +137,7 @@ describe("safeReturnPath", () => {
     "//evil.example/admin/configuration/estimation",
     "/admin/configuration/estimation\\items\\item-1"
   ])("rejects a confused or traversing knowledge configuration boundary: %s", (candidate) => {
-    expect(safeReturnPath("super_admin", candidate)).toBe("/admin/users");
+    expect(safeReturnPath("super_admin", candidate)).toBe("/admin/dashboard");
   });
 
   it.each(ROLE_CODES.filter((role) => role !== "super_admin"))(

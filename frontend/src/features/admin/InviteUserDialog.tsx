@@ -13,6 +13,7 @@ import { Button } from "../../components/ui/Button";
 import { Dialog } from "../../components/ui/Dialog";
 import { Field, Input, Select } from "../../components/ui/Field";
 import { createUserInvitation, userInvitationKeys } from "./userInvitationsApi";
+import { dashboardKeys } from "./dashboard/superAdminDashboardApi";
 
 interface InviteUserDialogProps {
   roles: readonly InvitableRole[];
@@ -102,7 +103,10 @@ export function InviteUserDialog({ roles, onClose }: InviteUserDialogProps) {
     mutationFn: createUserInvitation,
     retry: false,
     onSuccess: async (result) => {
-      await queryClient.invalidateQueries({ queryKey: userInvitationKeys.all });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: userInvitationKeys.all }),
+        queryClient.invalidateQueries({ queryKey: dashboardKeys.all })
+      ]);
       feedback.success({
         title: "Invitation created.",
         message: deliveryMessage(result)

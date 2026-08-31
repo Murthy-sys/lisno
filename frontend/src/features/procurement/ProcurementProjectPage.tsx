@@ -19,6 +19,7 @@ import { PageState } from "../../components/ui/PageState";
 import { ProgressBar } from "../../components/ui/ProgressBar";
 import { StatusBadge } from "../../components/ui/StatusBadge";
 import { adminProjectKeys } from "../admin/adminProjectsApi";
+import { dashboardKeys } from "../admin/dashboard/superAdminDashboardApi";
 import { formatPaise } from "../finance/ProjectFinancePanel";
 import { projectFinanceKeys } from "../finance/projectFinanceApi";
 import { projectWorkflowKeys } from "../workflow/projectWorkflowApi";
@@ -373,7 +374,8 @@ function PurchaseDialog({
         queryClient.invalidateQueries({ queryKey: projectWorkflowKeys.operational }),
         queryClient.invalidateQueries({
           queryKey: projectWorkflowKeys.projectTasks(selection.project.projectId)
-        })
+        }),
+        queryClient.invalidateQueries({ queryKey: dashboardKeys.all })
       ]);
       feedback.success({
         title: result.replayed ? "Purchase already recorded" : "Purchase recorded",

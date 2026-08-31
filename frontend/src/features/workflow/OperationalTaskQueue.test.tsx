@@ -1,11 +1,13 @@
+import { QueryClient } from "@tanstack/react-query";
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { ProjectWorkflowTask } from "../../api/types";
 import { renderWithQuery } from "../../test/render";
 import { server } from "../../test/server";
+import { dashboardKeys } from "../admin/dashboard/superAdminDashboardApi";
 import { OperationalTaskQueue } from "./OperationalTaskQueue";
 
 const carpenterTask: ProjectWorkflowTask = {
@@ -32,6 +34,8 @@ const carpenterTask: ProjectWorkflowTask = {
   openedAt: "2026-08-25T08:15:00.000Z",
   updatedAt: "2026-08-26T09:30:00.000Z"
 };
+
+afterEach(() => vi.restoreAllMocks());
 
 describe("OperationalTaskQueue", () => {
   it("renders the worker queue with progress and trade context", async () => {
@@ -67,6 +71,7 @@ describe("OperationalTaskQueue", () => {
 
   it("validates and saves a versioned worker progress update", async () => {
     let submitted: unknown;
+    const invalidate = vi.spyOn(QueryClient.prototype, "invalidateQueries");
     server.use(
       http.get("/api/v1/workflow-tasks", () =>
         HttpResponse.json({ data: [carpenterTask] })
@@ -117,10 +122,12 @@ describe("OperationalTaskQueue", () => {
     expect(within(updated).getByRole("progressbar", {
       name: "Carpentry · Living Room: 65% complete"
     })).toHaveAttribute("aria-valuenow", "65");
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: dashboardKeys.all });
   });
 
   it("refreshes a stale task version before the worker tries again", async () => {
     let listRequests = 0;
+    const invalidate = vi.spyOn(QueryClient.prototype, "invalidateQueries");
     const refreshedTask: ProjectWorkflowTask = {
       ...carpenterTask,
       progress: 40,
@@ -166,6 +173,7 @@ describe("OperationalTaskQueue", () => {
     progress = within(dialog).getByLabelText("Progress percentage");
     expect(progress).toHaveValue(40);
     expect(listRequests).toBe(2);
+    expect(invalidate).not.toHaveBeenCalledWith({ queryKey: dashboardKeys.all });
   });
 
   it("gives Site Managers a grouped, read-only view of trade progress", async () => {

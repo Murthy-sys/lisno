@@ -303,12 +303,13 @@ describe("EstimateClientReviewRound persistence model", () => {
     );
   });
 
-  it("registers exactly the dedupe, generation, queue, and history indexes", () => {
+  it("registers exactly the dedupe, generation, queue, history, and dashboard delivery indexes", () => {
     expect(EstimateClientReviewRoundModel.schema.indexes()).toEqual([
       [{ dedupeKey: 1 }, { unique: true }],
       [{ estimateId: 1, sendGeneration: 1 }, { unique: true }],
       [{ assignedAdminId: 1, status: 1, createdAt: -1, _id: 1 }, {}],
-      [{ estimateId: 1, createdAt: -1, _id: 1 }, {}]
+      [{ estimateId: 1, createdAt: -1, _id: 1 }, {}],
+      [{ projectId: 1, deliveryStatus: 1 }, {}]
     ]);
   });
 });

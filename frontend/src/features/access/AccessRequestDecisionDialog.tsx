@@ -7,6 +7,7 @@ import { useFeedback } from "../../components/feedback/FeedbackProvider";
 import { Button } from "../../components/ui/Button";
 import { Dialog } from "../../components/ui/Dialog";
 import { Field, Textarea } from "../../components/ui/Field";
+import { dashboardKeys } from "../admin/dashboard/superAdminDashboardApi";
 import {
   decideAccessRequest,
   ownAccessRequestKeys,
@@ -42,7 +43,8 @@ export function AccessRequestDecisionDialog({
     onSuccess: async () => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: reviewAccessRequestKeys.all }),
-        queryClient.invalidateQueries({ queryKey: ownAccessRequestKeys.all })
+        queryClient.invalidateQueries({ queryKey: ownAccessRequestKeys.all }),
+        queryClient.invalidateQueries({ queryKey: dashboardKeys.all })
       ]);
       feedback.announce("Access request decision saved.");
       onClose();

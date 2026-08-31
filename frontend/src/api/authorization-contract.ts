@@ -218,13 +218,14 @@ export const PERMISSION_CODES = [
   "ai_estimator_knowledge.configuration.create",
   "ai_estimator_knowledge.configuration.update",
   "ai_estimator_knowledge.configuration.lifecycle",
-  "ai_estimator_knowledge.context.read"
+  "ai_estimator_knowledge.context.read",
+  "admin.dashboard.read"
 ] as const;
 
 export type PermissionCode = (typeof PERMISSION_CODES)[number];
 
 export const AUTHORIZATION_POLICY_VERSION =
-  "2026-08-28.ai-estimator-knowledge.v6" as const;
+  "2026-08-30.super-admin-dashboard.v1" as const;
 
 export interface AuthorizationSnapshot {
   readonly role: Role;

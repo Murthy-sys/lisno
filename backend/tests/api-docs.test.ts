@@ -117,6 +117,42 @@ describe("OpenAPI and Swagger UI", () => {
     expect(readSchema.properties.expenseClass?.enum).toContain("procurement");
   });
 
+  it("documents bounded Super Admin dashboard reads and explicit units", () => {
+    const overview = openApiDocument.paths["/admin/dashboard/overview"]?.get;
+    const projects = openApiDocument.paths["/admin/dashboard/projects"]?.get;
+    const workforce = openApiDocument.paths["/admin/dashboard/workforce"]?.get;
+    for (const operation of [overview, projects, workforce]) {
+      expect(operation?.security).toEqual([{ bearerAuth: [] }]);
+      expect(operation?.["x-lisno-permission"]).toBe("admin.dashboard.read");
+    }
+    expect((projects?.parameters as Array<{ name: string; schema: Record<string, unknown> }>))
+      .toEqual(expect.arrayContaining([
+        expect.objectContaining({ name: "limit", schema: expect.objectContaining({ maximum: 50 }) }),
+        expect.objectContaining({ name: "periodDays", schema: expect.objectContaining({ enum: [7, 30, 90] }) })
+      ]));
+    expect(componentSchemas()).toHaveProperty("DashboardRatio");
+    expect(componentSchemas()).toHaveProperty("DashboardDataQuality");
+    expect(componentSchemas()).toHaveProperty("SuperAdminDashboardOverview");
+    const schemas = componentSchemas() as Record<string, {
+      additionalProperties?: boolean;
+      properties?: Record<string, unknown>;
+    }>;
+    expect(schemas.SuperAdminDashboardOverview?.additionalProperties).toBe(false);
+    expect(schemas.SuperAdminDashboardOverview?.properties?.projects).toEqual({
+      $ref: "#/components/schemas/DashboardProjectsMetrics"
+    });
+    expect(schemas.SuperAdminDashboardProjectPage?.properties?.items).toEqual({
+      type: "array",
+      items: { $ref: "#/components/schemas/DashboardProjectRow" }
+    });
+    expect(schemas.SuperAdminDashboardWorkforcePage?.properties?.items).toEqual({
+      type: "array",
+      items: { $ref: "#/components/schemas/DashboardWorkforceRow" }
+    });
+    expect(schemas.DashboardProjectRow?.additionalProperties).toBe(false);
+    expect(schemas.DashboardWorkforceRow?.additionalProperties).toBe(false);
+  });
+
   it("keeps the documentation surface read-only, narrow, and configurable", async () => {
     const methodRejected = await request(app).post("/api-docs/");
     expect(methodRejected.status).toBe(405);
@@ -173,7 +209,7 @@ describe("OpenAPI and Swagger UI", () => {
     }
   });
 
-  it("contains all 185 routes without versioning paths twice", () => {
+  it("contains all 188 routes without versioning paths twice", () => {
     const methods = new Set(["get", "post", "put", "patch", "delete"]);
     const operationCount = Object.values(openApiDocument.paths).reduce(
       (total, pathItem) =>
@@ -182,7 +218,7 @@ describe("OpenAPI and Swagger UI", () => {
     );
 
     expect(operationCount).toBe(HUMAN_JWT_OPERATION_LIST.length + 13);
-    expect(operationCount).toBe(185);
+    expect(operationCount).toBe(188);
     expect(Object.keys(openApiDocument.paths).some((path) =>
       path.startsWith("/api/v1")
     )).toBe(false);

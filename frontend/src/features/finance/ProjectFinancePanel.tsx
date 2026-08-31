@@ -10,6 +10,7 @@ import { Field, Input, Select, Textarea } from "../../components/ui/Field";
 import { PageState } from "../../components/ui/PageState";
 import { StatusBadge } from "../../components/ui/StatusBadge";
 import { Surface } from "../../components/ui/Surface";
+import { dashboardKeys } from "../admin/dashboard/superAdminDashboardApi";
 import { SupportingDocumentActions } from "../procurement/SupportingDocumentActions";
 import { formatBps, formatPaise, formatPercentage } from "./financeFormat";
 import { ProjectFinanceChart } from "./ProjectFinanceChart";
@@ -290,7 +291,8 @@ function FinanceEntryForm({ projectId }: { projectId: string }) {
       await Promise.all([
         client.invalidateQueries({ queryKey: projectFinanceKeys.bucket(projectId) }),
         client.invalidateQueries({ queryKey: projectFinanceKeys.entries(projectId) }),
-        client.invalidateQueries({ queryKey: projectFinanceKeys.projects })
+        client.invalidateQueries({ queryKey: projectFinanceKeys.projects }),
+        client.invalidateQueries({ queryKey: dashboardKeys.all })
       ]);
     }
   });

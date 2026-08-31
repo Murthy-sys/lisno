@@ -208,6 +208,7 @@ estimateClientReviewRoundSchema.index({
   _id: 1
 });
 estimateClientReviewRoundSchema.index({ estimateId: 1, createdAt: -1, _id: 1 });
+estimateClientReviewRoundSchema.index({ projectId: 1, deliveryStatus: 1 });
 
 function isDate(value: unknown): value is Date {
   return value instanceof Date && !Number.isNaN(value.getTime());

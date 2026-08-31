@@ -1,7 +1,7 @@
 import type { Role } from "../api/types";
 
 const roleHomePaths: Record<Role, string> = {
-  super_admin: "/admin/users",
+  super_admin: "/admin/dashboard",
   admin: "/admin/projects",
   designer: "/designer",
   procurement: "/home",
@@ -70,6 +70,13 @@ export function safeReturnPath(
       role === "super_admin" &&
       (parsed.pathname === "/admin/projects" ||
         parsed.pathname.startsWith("/admin/projects/"));
+    const canReturnToSuperAdminUsers =
+      role === "super_admin" && parsed.pathname === "/admin/users";
+    const canReturnToSuperAdminAccessRequests =
+      role === "super_admin" && parsed.pathname === "/admin/access-requests";
+    const canReturnToSuperAdminFinance =
+      role === "super_admin" &&
+      (parsed.pathname === "/finance" || parsed.pathname.startsWith("/finance/projects/"));
     const canReturnToKnowledgeConfiguration =
       role === "super_admin" &&
       (parsed.pathname === "/admin/configuration/estimation" ||
@@ -81,6 +88,9 @@ export function safeReturnPath(
         !canReturnToClientResponses &&
         !canReturnToDesignApprovals &&
         !canReturnToSuperAdminProjects &&
+        !canReturnToSuperAdminUsers &&
+        !canReturnToSuperAdminAccessRequests &&
+        !canReturnToSuperAdminFinance &&
         !canReturnToKnowledgeConfiguration)
     ) {
       return home;

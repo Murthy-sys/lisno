@@ -15,6 +15,7 @@ import { Field, FileInput, Textarea } from "../../components/ui/Field";
 import { ProgressBar } from "../../components/ui/ProgressBar";
 import { projectFinanceKeys } from "../finance/projectFinanceApi";
 import { adminProjectKeys } from "./adminProjectsApi";
+import { dashboardKeys } from "./dashboard/superAdminDashboardApi";
 import {
   decideEstimateClientResponse,
   estimateClientResponseKeys
@@ -84,6 +85,7 @@ export function ClientResponseDecisionDialog({
           queryKey: estimateClientResponseKeys.all
         }),
         queryClient.invalidateQueries({ queryKey: adminProjectKeys.all }),
+        queryClient.invalidateQueries({ queryKey: dashboardKeys.all }),
         queryClient.invalidateQueries({ queryKey: projectFinanceKeys.projects }),
         ...(task.project
           ? [queryClient.invalidateQueries({

@@ -8,6 +8,7 @@ import { Field, Select } from "../../components/ui/Field";
 import { StatusBadge } from "../../components/ui/StatusBadge";
 import { Surface } from "../../components/ui/Surface";
 import { adminProjectKeys } from "./adminProjectsApi";
+import { dashboardKeys } from "./dashboard/superAdminDashboardApi";
 import {
   assignProjectDesigner,
   getDesignerAssignmentOptions,
@@ -32,7 +33,8 @@ export function DesignAssignmentPanel({ project }: { project: AdminProjectSummar
     onSuccess: async () => {
       await Promise.all([
         client.invalidateQueries({ queryKey: adminProjectKeys.detail(project.id) }),
-        client.invalidateQueries({ queryKey: projectWorkflowKeys.all })
+        client.invalidateQueries({ queryKey: projectWorkflowKeys.all }),
+        client.invalidateQueries({ queryKey: dashboardKeys.all })
       ]);
     }
   });

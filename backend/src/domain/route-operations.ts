@@ -21,7 +21,8 @@ export interface HumanJwtOperation {
           | "project_workflow"
           | "project_finance"
           | "access_administration"
-          | "ai_estimator_knowledge";
+          | "ai_estimator_knowledge"
+          | "super_admin_dashboard";
         projectReviewScope?: boolean;
       };
   operationClass: "read" | "admin" | "personal";
@@ -38,7 +39,8 @@ export interface HumanJwtOperation {
       | "estimate_client_response"
       | "project_workflow"
       | "project_finance"
-      | "ai_estimator_knowledge";
+      | "ai_estimator_knowledge"
+      | "super_admin_dashboard";
 }
 
 export const HUMAN_JWT_OPERATION_LIST = [
@@ -213,7 +215,10 @@ export const HUMAN_JWT_OPERATION_LIST = [
   { key: "POST /admin/ai-estimator-knowledge/modes", permission: "ai_estimator_knowledge.configuration.create", scope: { kind: "non_project", namespace: "ai_estimator_knowledge" }, operationClass: "admin", superAdminBehavior: "admin_override", availability: "ai_estimator_knowledge" },
   { key: "PATCH /admin/ai-estimator-knowledge/modes/:id", permission: "ai_estimator_knowledge.configuration.update", scope: { kind: "non_project", namespace: "ai_estimator_knowledge" }, operationClass: "admin", superAdminBehavior: "admin_override", availability: "ai_estimator_knowledge" },
   { key: "DELETE /admin/ai-estimator-knowledge/modes/:id", permission: "ai_estimator_knowledge.configuration.lifecycle", scope: { kind: "non_project", namespace: "ai_estimator_knowledge" }, operationClass: "admin", superAdminBehavior: "admin_override", availability: "ai_estimator_knowledge" },
-  { key: "POST /ai-estimator-knowledge/context", permission: "ai_estimator_knowledge.context.read", scope: { kind: "non_project", namespace: "ai_estimator_knowledge" }, operationClass: "read", superAdminBehavior: "global_read", availability: "ai_estimator_knowledge" }
+  { key: "POST /ai-estimator-knowledge/context", permission: "ai_estimator_knowledge.context.read", scope: { kind: "non_project", namespace: "ai_estimator_knowledge" }, operationClass: "read", superAdminBehavior: "global_read", availability: "ai_estimator_knowledge" },
+  { key: "GET /admin/dashboard/overview", permission: "admin.dashboard.read", scope: { kind: "non_project", namespace: "super_admin_dashboard" }, operationClass: "read", superAdminBehavior: "global_read", availability: "super_admin_dashboard" },
+  { key: "GET /admin/dashboard/projects", permission: "admin.dashboard.read", scope: { kind: "non_project", namespace: "super_admin_dashboard" }, operationClass: "read", superAdminBehavior: "global_read", availability: "super_admin_dashboard" },
+  { key: "GET /admin/dashboard/workforce", permission: "admin.dashboard.read", scope: { kind: "non_project", namespace: "super_admin_dashboard" }, operationClass: "read", superAdminBehavior: "global_read", availability: "super_admin_dashboard" }
 ] as const satisfies readonly HumanJwtOperation[];
 
 export type HumanJwtOperationKey =

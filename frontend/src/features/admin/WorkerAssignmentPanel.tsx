@@ -17,6 +17,7 @@ import { ProgressBar } from "../../components/ui/ProgressBar";
 import { StatusBadge } from "../../components/ui/StatusBadge";
 import { Surface } from "../../components/ui/Surface";
 import { adminProjectKeys } from "./adminProjectsApi";
+import { dashboardKeys } from "./dashboard/superAdminDashboardApi";
 import {
   getAdminProjectSectionAssignments,
   getAdminProjectWorkflowTasks,
@@ -251,7 +252,8 @@ function SectionAssignmentDisclosure({ section, workers }: {
         client.invalidateQueries({ queryKey: projectWorkflowKeys.projectTasks(section.projectId) }),
         client.invalidateQueries({ queryKey: projectWorkflowKeys.operational }),
         client.invalidateQueries({ queryKey: adminProjectKeys.all }),
-        client.invalidateQueries({ queryKey: adminProjectKeys.detail(section.projectId) })
+        client.invalidateQueries({ queryKey: adminProjectKeys.detail(section.projectId) }),
+        client.invalidateQueries({ queryKey: dashboardKeys.all })
       ]);
     },
     onError: (error) => {
@@ -392,7 +394,8 @@ function WorkerAssignmentRow({ projectId, task, workers, onStale }: {
       void Promise.all([
         client.invalidateQueries({ queryKey: projectWorkflowKeys.operational }),
         client.invalidateQueries({ queryKey: adminProjectKeys.all }),
-        client.invalidateQueries({ queryKey: adminProjectKeys.detail(projectId) })
+        client.invalidateQueries({ queryKey: adminProjectKeys.detail(projectId) }),
+        client.invalidateQueries({ queryKey: dashboardKeys.all })
       ]);
     },
     onError: (error) => {

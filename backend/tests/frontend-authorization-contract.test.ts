@@ -84,13 +84,15 @@ describe("frontend authorization contract parity", () => {
     expect(FRONTEND_POLICY_VERSION).toBe(AUTHORIZATION_POLICY_VERSION);
   });
 
-  it("publishes the exact 118-code AI Estimator Knowledge policy on both sides", () => {
-    expect(AUTHORIZATION_POLICY_VERSION).toBe("2026-08-28.ai-estimator-knowledge.v6");
-    expect(FRONTEND_POLICY_VERSION).toBe("2026-08-28.ai-estimator-knowledge.v6");
-    expect(PERMISSION_CODES).toHaveLength(118);
-    expect(FRONTEND_PERMISSION_CODES).toHaveLength(118);
-    expect(new Set(PERMISSION_CODES).size).toBe(118);
-    expect(new Set(FRONTEND_PERMISSION_CODES).size).toBe(118);
+  it("publishes the exact 119-code Super Admin dashboard policy on both sides", () => {
+    expect(AUTHORIZATION_POLICY_VERSION).toBe("2026-08-30.super-admin-dashboard.v1");
+    expect(FRONTEND_POLICY_VERSION).toBe("2026-08-30.super-admin-dashboard.v1");
+    expect(PERMISSION_CODES).toHaveLength(119);
+    expect(FRONTEND_PERMISSION_CODES).toHaveLength(119);
+    expect(new Set(PERMISSION_CODES).size).toBe(119);
+    expect(new Set(FRONTEND_PERMISSION_CODES).size).toBe(119);
+    expect(PERMISSION_CODES.at(-1)).toBe("admin.dashboard.read");
+    expect(FRONTEND_PERMISSION_CODES.at(-1)).toBe("admin.dashboard.read");
     for (const permission of STAFF_INVITATION_PERMISSIONS) {
       expect(PERMISSION_CODES).toContain(permission);
       expect(FRONTEND_PERMISSION_CODES).toContain(permission);
