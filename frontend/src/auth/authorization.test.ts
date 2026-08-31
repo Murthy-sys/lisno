@@ -26,7 +26,7 @@ const invitationPermissions = [
 ] as const;
 
 describe("parseAuthorizationSnapshot", () => {
-  it("accepts an exact role and policy version and canonicalizes permissions", () => {
+  it("accepts the current policy identifier and canonicalizes permissions", () => {
     const result = parseAuthorizationSnapshot(
       {
         ...validSnapshot,
@@ -46,6 +46,22 @@ describe("parseAuthorizationSnapshot", () => {
     });
     expect(Object.isFrozen(result)).toBe(true);
     expect(Object.isFrozen(result?.permissions)).toBe(true);
+  });
+
+  it.each([
+    ["previous", "2026-08-28.ai-estimator-knowledge.v6"],
+    ["safe future", "2027-01-15.authorization_policy-v2"]
+  ])("accepts and preserves a %s policy identifier", (_label, policyVersion) => {
+    const result = parseAuthorizationSnapshot(
+      { ...validSnapshot, policyVersion },
+      "designer"
+    );
+
+    expect(result).toEqual({
+      role: "designer",
+      policyVersion,
+      permissions: ["identity.self.read", "projects.read"]
+    });
   });
 
   it("omits unknown individual permissions so they remain denied", () => {
@@ -71,11 +87,23 @@ describe("parseAuthorizationSnapshot", () => {
   it.each([
     ["role mismatch", { ...validSnapshot, role: "design_manager" }],
     ["unknown role", { ...validSnapshot, role: "unknown_role" }],
-    ["stale policy", { ...validSnapshot, policyVersion: "stale" }],
+    ["empty policy", { ...validSnapshot, policyVersion: "" }],
+    [
+      "whitespace-padded policy",
+      { ...validSnapshot, policyVersion: ` ${AUTHORIZATION_POLICY_VERSION} ` }
+    ],
+    [
+      "unsafe policy characters",
+      { ...validSnapshot, policyVersion: "2026-08-31/policy:v2" }
+    ],
+    ["leading policy punctuation", { ...validSnapshot, policyVersion: ".v2" }],
+    ["punctuation-only policy", { ...validSnapshot, policyVersion: "._-" }],
+    ["oversized policy", { ...validSnapshot, policyVersion: "a".repeat(129) }],
     [
       "missing policy",
       { role: "designer", permissions: ["identity.self.read"] }
     ],
+    ["non-string policy", { ...validSnapshot, policyVersion: 2 }],
     [
       "missing role",
       {
