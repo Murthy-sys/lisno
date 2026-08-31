@@ -82,6 +82,7 @@ const env = {
   PORT: 3010,
   MONGODB_URI: "mongodb://mongo.example:27017/lisno?replicaSet=rs0",
   JWT_SECRET: "server-runtime-secret-with-at-least-32-characters",
+  JWT_EXPIRES_IN_SECONDS: 86_400,
   CORS_ORIGIN: ["http://localhost:5173"],
   UPLOADS_DIR: "uploads",
   MAX_UPLOAD_MB: 25,
@@ -179,7 +180,13 @@ describe("production server bootstrap", () => {
       expect.any(Function)
     );
     expect(appDependencies).toEqual([
-      expect.objectContaining({ developmentDemoAuthorization: authorization })
+      expect.objectContaining({
+        auth: {
+          jwtSecret: env.JWT_SECRET,
+          jwtExpiresInSeconds: env.JWT_EXPIRES_IN_SECONDS
+        },
+        developmentDemoAuthorization: authorization
+      })
     ]);
     await runtime.stop();
   });

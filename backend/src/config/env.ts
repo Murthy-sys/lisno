@@ -65,6 +65,12 @@ const environmentSchema = z.object({
     .string()
     .default("mongodb://127.0.0.1:27017/lisno?replicaSet=rs0"),
   JWT_SECRET: z.string().min(32),
+  JWT_EXPIRES_IN_SECONDS: z.coerce
+    .number()
+    .int()
+    .min(60)
+    .max(86_400)
+    .default(86_400),
   CORS_ORIGIN: z
     .string()
     .default("http://localhost:5173")

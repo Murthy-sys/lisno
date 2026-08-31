@@ -111,7 +111,7 @@ export async function startServer(
       repository: repositoryFactory(),
       auth: {
         jwtSecret: env.JWT_SECRET,
-        jwtExpiresInSeconds: 900
+        jwtExpiresInSeconds: env.JWT_EXPIRES_IN_SECONDS
       },
       corsOrigins: env.CORS_ORIGIN,
       storage,

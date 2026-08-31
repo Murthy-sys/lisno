@@ -44,6 +44,19 @@ const signupBody = (overrides: Partial<Record<string, string>> = {}) => ({
   ...overrides
 });
 
+function decodeTokenTimestamps(token: string): { iat: number; exp: number } {
+  const payload = jwt.decode(token);
+  if (
+    payload === null ||
+    typeof payload === "string" ||
+    typeof payload.iat !== "number" ||
+    typeof payload.exp !== "number"
+  ) {
+    throw new Error("JWT did not contain numeric issuance and expiry timestamps.");
+  }
+  return { iat: payload.iat, exp: payload.exp };
+}
+
 function unclaimedProject(id: string, email: string): ProjectRecord {
   return {
     ...structuredClone(demoSeedData.projects[0]),
@@ -392,6 +405,44 @@ describe("authentication API", () => {
     });
   });
 
+  it("issues a fixed 24-hour login token without renewing it during activity", async () => {
+    const app = createApp({
+      repository: createMemoryRepository(demoSeedData),
+      auth: { jwtSecret: JWT_SECRET, jwtExpiresInSeconds: 86_400 },
+      developmentDemoAuthorization: developmentDemoAuthentication()
+    });
+    const login = await request(app).post("/api/v1/auth/login").send({
+      email: "head@lisno.example",
+      password: DEMO_PASSWORD
+    });
+
+    expect(login.status).toBe(200);
+    const token = login.body.data.token as string;
+    const issued = decodeTokenTimestamps(token);
+    expect(issued.exp - issued.iat).toBe(86_400);
+
+    const dateNow = vi.spyOn(Date, "now");
+    dateNow.mockReturnValue((issued.exp - 1) * 1_000);
+    const beforeExpiry = await request(app)
+      .get("/api/v1/auth/me")
+      .set("Authorization", `Bearer ${token}`);
+
+    expect(beforeExpiry.status).toBe(200);
+    expect(beforeExpiry.body.data).not.toHaveProperty("token");
+    expect(decodeTokenTimestamps(token)).toEqual(issued);
+
+    dateNow.mockReturnValue(issued.exp * 1_000);
+    const atExpiry = await request(app)
+      .get("/api/v1/auth/me")
+      .set("Authorization", `Bearer ${token}`);
+
+    expect(atExpiry.status).toBe(401);
+    expect(atExpiry.body).toEqual({
+      error: { code: "TOKEN_EXPIRED", message: "Authentication token has expired." }
+    });
+    expect(decodeTokenTimestamps(token)).toEqual(issued);
+  });
+
   it("rejects an expired token", async () => {
     const expiredToken = jwt.sign(
       { id: "user-head", role: "design_head" },
@@ -472,6 +523,21 @@ describe("authentication API", () => {
 });
 
 describe("client signup API", () => {
+  it("issues a fixed 24-hour token for client signup", async () => {
+    const response = await request(
+      createApp({
+        repository: createMemoryRepository(structuredClone(demoSeedData)),
+        auth: { jwtSecret: JWT_SECRET, jwtExpiresInSeconds: 86_400 }
+      })
+    )
+      .post("/api/v1/auth/client-signup")
+      .send(signupBody({ email: "fixed-expiry@example.com" }));
+
+    expect(response.status).toBe(201);
+    const timestamps = decodeTokenTimestamps(response.body.data.token as string);
+    expect(timestamps.exp - timestamps.iat).toBe(86_400);
+  });
+
   it("creates an active client, claims every matching unclaimed project, and omits password fields", async () => {
     const seed = structuredClone(demoSeedData);
     seed.projects.push(
