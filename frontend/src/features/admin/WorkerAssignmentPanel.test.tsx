@@ -16,6 +16,7 @@ import { renderWithQuery } from "../../test/render";
 import { server } from "../../test/server";
 import { projectWorkflowKeys } from "../workflow/projectWorkflowApi";
 import { adminProjectKeys } from "./adminProjectsApi";
+import { dashboardKeys } from "./dashboard/superAdminDashboardApi";
 import {
   sectionAssignmentsIntegrityError,
   WorkerAssignmentPanel
@@ -423,7 +424,8 @@ describe("WorkerAssignmentPanel", () => {
       projectWorkflowKeys.projectTasks("project-1"),
       projectWorkflowKeys.operational,
       adminProjectKeys.all,
-      adminProjectKeys.detail("project-1")
+      adminProjectKeys.detail("project-1"),
+      dashboardKeys.all
     ]) {
       expect(invalidate).toHaveBeenCalledWith({ queryKey });
     }
@@ -453,6 +455,7 @@ describe("WorkerAssignmentPanel", () => {
   it("refetches a stale section without showing a false success and clears obsolete conflict feedback", async () => {
     let snapshot = sectionAssignments;
     let sectionRequests = 0;
+    const invalidate = vi.spyOn(QueryClient.prototype, "invalidateQueries");
     server.use(
       http.get("/api/v1/admin/projects/project-1/workflow-tasks", () => HttpResponse.json({ data: allTasks })),
       http.get("/api/v1/admin/projects/project-1/section-assignments", () => {
@@ -485,6 +488,7 @@ describe("WorkerAssignmentPanel", () => {
     expect(screen.queryByText(/changed while you were assigning/i)).not.toBeInTheDocument();
     expect(sectionRequests).toBeGreaterThan(1);
     expect(screen.getByRole("combobox", { name: "Assign or reassign Electrical" })).toHaveValue("");
+    expect(invalidate).not.toHaveBeenCalledWith({ queryKey: dashboardKeys.all });
   });
 
   it("keeps loading, error, and empty states inside the opened Task assignment panel", async () => {

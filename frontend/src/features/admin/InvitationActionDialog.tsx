@@ -15,6 +15,7 @@ import {
   revokeUserInvitation,
   userInvitationKeys
 } from "./userInvitationsApi";
+import { dashboardKeys } from "./dashboard/superAdminDashboardApi";
 
 interface InvitationActionDialogProps {
   invitation: UserInvitationItem;
@@ -67,7 +68,10 @@ export function InvitationActionDialog({
         : revokeUserInvitation(snapshot.id, { version: snapshot.version }),
     retry: false,
     onSuccess: async (result, candidate) => {
-      await queryClient.invalidateQueries({ queryKey: userInvitationKeys.all });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: userInvitationKeys.all }),
+        queryClient.invalidateQueries({ queryKey: dashboardKeys.all })
+      ]);
       feedback.success(
         candidate === "revoke"
           ? { title: "Invitation revoked." }

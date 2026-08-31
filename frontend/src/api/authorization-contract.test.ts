@@ -87,13 +87,13 @@ describe("frontend authorization contract", () => {
       "execution"
     ]);
     expect(AUTHORIZATION_POLICY_VERSION).toBe(
-      "2026-08-28.ai-estimator-knowledge.v6"
+      "2026-08-30.super-admin-dashboard.v1"
     );
   });
 
-  it("publishes all 118 unique permissions with the additive knowledge-base permissions in canonical order", () => {
-    expect(PERMISSION_CODES).toHaveLength(118);
-    expect(new Set(PERMISSION_CODES)).toHaveLength(118);
+  it("publishes all 119 unique permissions with the additive dashboard permission in canonical order", () => {
+    expect(PERMISSION_CODES).toHaveLength(119);
+    expect(new Set(PERMISSION_CODES)).toHaveLength(119);
     expect(PERMISSION_CODES).toContain("projects.initiate");
     expect(PERMISSION_CODES).toContain("organization.estimators.read");
     const identityMutationIndex = PERMISSION_CODES.indexOf(
@@ -106,7 +106,7 @@ describe("frontend authorization contract", () => {
       ...invitationPermissions,
       "access_request.create"
     ]);
-    expect(PERMISSION_CODES.slice(-14)).toEqual([
+    expect(PERMISSION_CODES.slice(-15)).toEqual([
       "execution.worker_assignment.override",
       ...procurementPermissions,
       ...projectFinancePermissions,
@@ -116,7 +116,8 @@ describe("frontend authorization contract", () => {
       "ai_estimator_knowledge.configuration.create",
       "ai_estimator_knowledge.configuration.update",
       "ai_estimator_knowledge.configuration.lifecycle",
-      "ai_estimator_knowledge.context.read"
+      "ai_estimator_knowledge.context.read",
+      "admin.dashboard.read"
     ]);
     expect(
       PERMISSION_CODES.filter((permission) =>
@@ -140,11 +141,12 @@ describe("frontend authorization contract", () => {
     ).toEqual(projectFinancePermissions);
   });
 
-  it("keeps the protected frontend registry at exactly 30 routes", () => {
-    expect(ROUTE_REGISTRY).toHaveLength(30);
+  it("keeps the protected frontend registry at exactly 31 routes", () => {
+    expect(ROUTE_REGISTRY).toHaveLength(31);
     expect(ROUTE_REGISTRY.map(({ path }) => path)).toEqual(
       expect.arrayContaining([
         "/designer/design-plans",
+        "/admin/dashboard",
         "/admin/design-approvals",
         "/admin/configuration/estimation",
         "/admin/configuration/estimation/items/:itemId",

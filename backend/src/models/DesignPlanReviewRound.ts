@@ -93,6 +93,7 @@ designPlanReviewRoundSchema.index(
 );
 designPlanReviewRoundSchema.index({ assignedAdminId: 1, status: 1, createdAt: -1 });
 designPlanReviewRoundSchema.index({ estimateId: 1, createdAt: -1 });
+designPlanReviewRoundSchema.index({ projectId: 1, deliveryStatus: 1 });
 
 export const DesignPlanReviewRoundModel =
   models.DesignPlanReviewRound ??

@@ -223,8 +223,8 @@ describe("authorization policy", () => {
         permissionsForRows([...COMMON_ROWS, ...ADDITIONAL_ROWS[role]])
       );
     }
-    expect(PERMISSION_CODES).toHaveLength(118);
-    expect(new Set(PERMISSION_CODES).size).toBe(118);
+    expect(PERMISSION_CODES).toHaveLength(119);
+    expect(new Set(PERMISSION_CODES).size).toBe(119);
     expect(ROLE_PERMISSIONS.super_admin).toEqual(PERMISSION_CODES);
   });
 
@@ -363,9 +363,9 @@ describe("authorization policy", () => {
   });
 
   it("grants all five AI Estimator Knowledge permissions only to Super Admin", () => {
-    expect(PERMISSION_CODES.slice(-AI_ESTIMATOR_KNOWLEDGE_PERMISSIONS.length)).toEqual(
-      AI_ESTIMATOR_KNOWLEDGE_PERMISSIONS
-    );
+    expect(PERMISSION_CODES.filter((permission) =>
+      AI_ESTIMATOR_KNOWLEDGE_PERMISSIONS.includes(permission as never)
+    )).toEqual(AI_ESTIMATOR_KNOWLEDGE_PERMISSIONS);
     for (const role of ROLE_CODES) {
       const expected = role === "super_admin"
         ? AI_ESTIMATOR_KNOWLEDGE_PERMISSIONS
@@ -376,6 +376,13 @@ describe("authorization policy", () => {
         ),
         role
       ).toEqual(expected);
+    }
+  });
+
+  it("grants the dashboard read only to Super Admin", () => {
+    expect(PERMISSION_CODES.at(-1)).toBe("admin.dashboard.read");
+    for (const role of ROLE_CODES) {
+      expect(hasPermission(role, "admin.dashboard.read")).toBe(role === "super_admin");
     }
   });
 

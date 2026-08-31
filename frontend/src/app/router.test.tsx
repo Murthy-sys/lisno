@@ -23,6 +23,7 @@ import { tokenStorage } from "../api/client";
 import { capturePasswordResetTokenBeforeRouterMount } from "../auth/passwordResetTokenVault";
 import { authorizationFor } from "../test/authFixtures";
 import { renderApp } from "../test/render";
+import { superAdminDashboardOverviewFixture } from "../features/admin/dashboard/dashboardFixtures";
 import { AppProviders } from "./providers";
 import { ROUTE_REGISTRY } from "./routeRegistry";
 import { AppRoutes, createAppBrowserRouter, roleHomeContentFor } from "./router";
@@ -111,6 +112,7 @@ const historicalProtectedPaths = [
   "/estimator-sales/leads/:leadId/estimate",
   "/client",
   "/client/projects/:projectId",
+  "/admin/dashboard",
   "/admin/projects",
   "/admin/projects/:projectId",
   "/admin/users",
@@ -324,6 +326,9 @@ function installAuthorizationSession(
     }
     if (path === "/api/v1/auth/authorization") {
       return Response.json({ data: authorizationFor(role, permissions) });
+    }
+    if (path === "/api/v1/admin/dashboard/overview?periodDays=30") {
+      return Response.json({ data: superAdminDashboardOverviewFixture });
     }
     if (path === "/api/v1/admin/users?limit=20&offset=0") {
       return Response.json({
@@ -626,7 +631,7 @@ describe("role landing staging contract", () => {
 
 describe("public invitation route", () => {
   it("mounts directly while staying outside the protected registry", async () => {
-    expect(ROUTE_REGISTRY).toHaveLength(30);
+    expect(ROUTE_REGISTRY).toHaveLength(31);
     expect(ROUTE_REGISTRY.map(({ path }) => path)).not.toContain(
       "/accept-invitation"
     );
@@ -868,6 +873,13 @@ describe("registered permission routes", () => {
 
   it.each([
     [
+      "super_admin",
+      "/admin/dashboard",
+      ["identity.self.read", "admin.dashboard.read"],
+      "Organization dashboard",
+      "Cross-module health"
+    ],
+    [
       "admin",
       "/admin/projects",
       ["identity.self.read", "projects.list"],
@@ -935,6 +947,22 @@ describe("registered permission routes", () => {
       expect(router.state.location.pathname).toBe(path);
     }
   );
+
+  it("routes the Super Admin root to Dashboard while denied Admin makes no dashboard request", async () => {
+    installAuthorizationSession("super_admin", ["identity.self.read", "admin.dashboard.read"]);
+    const first = renderApp(["/"]);
+    expect(await screen.findByRole("heading", { name: "Organization dashboard" })).toBeVisible();
+    expect(first.router.state.location.pathname).toBe("/admin/dashboard");
+    first.unmount();
+
+    vi.restoreAllMocks();
+    installAuthorizationSession("admin", ["identity.self.read", "admin.dashboard.read"]);
+    renderApp(["/admin/dashboard"]);
+    expect(await screen.findByRole("heading", { name: "Access denied" })).toBeVisible();
+    expect(vi.mocked(globalThis.fetch).mock.calls.some(([input]) =>
+      apiRequestPath(input).startsWith("/api/v1/admin/dashboard")
+    )).toBe(false);
+  });
 
   it("mounts the Client response detail for Super Admin with the registered read permission", async () => {
     installAuthorizationSession("super_admin", [

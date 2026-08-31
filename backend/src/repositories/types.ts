@@ -20,6 +20,14 @@ import type {
   ProjectModule,
   RequestableProjectModule
 } from "../domain/authorization.js";
+import type {
+  DashboardDataQuality,
+  DashboardProjectFilters,
+  DashboardProjectRow,
+  DashboardWorkforceFilters,
+  DashboardWorkforceRow,
+  SuperAdminDashboardOverview
+} from "../contracts/super-admin-dashboard.js";
 
 export type ProjectStatus = "planning" | "active" | "on_hold" | "completed";
 
@@ -760,6 +768,10 @@ export interface PageResult<T> {
   total: number;
 }
 
+export interface DashboardPageResult<T> extends PageResult<T> {
+  dataQuality: DashboardDataQuality;
+}
+
 export type AccessRequestStatus =
   | "pending"
   | "approved"
@@ -1043,6 +1055,23 @@ export interface AppRepository {
   ): Promise<ProjectAccessGrantRecord[]>;
   findUserById(id: string): Promise<UserRecord | null>;
   findUserByEmail(email: string): Promise<UserRecord | null>;
+  readSuperAdminDashboardOverview(input: {
+    observedAt: string;
+    startAt: string;
+    endAt: string;
+    periodDays: 7 | 30 | 90;
+  }): Promise<SuperAdminDashboardOverview>;
+  pageSuperAdminDashboardProjects(
+    observedAt: string,
+    filters: DashboardProjectFilters
+  ): Promise<DashboardPageResult<DashboardProjectRow>>;
+  pageSuperAdminDashboardWorkforce(input: {
+    observedAt: string;
+    startAt: string;
+    endAt: string;
+    periodDays: 7 | 30 | 90;
+    filters: DashboardWorkforceFilters;
+  }): Promise<DashboardPageResult<DashboardWorkforceRow>>;
   createUser(input: NewUser): Promise<UserRecord>;
   listUsers(): Promise<UserRecord[]>;
   listUsersByIds(ids: string[]): Promise<UserRecord[]>;

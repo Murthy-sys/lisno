@@ -2,13 +2,14 @@ import { QueryClient } from "@tanstack/react-query";
 import { fireEvent, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { apiClient } from "../../api/client";
 import type { DesignPlanReviewTask } from "../../api/types";
 import { renderWithQuery } from "../../test/render";
 import { server } from "../../test/server";
 import { DesignPlanResponseInboxPage } from "./DesignPlanResponseInboxPage";
+import { dashboardKeys } from "./dashboard/superAdminDashboardApi";
 
 const pendingReview: DesignPlanReviewTask = {
   id: "design-round-1",
@@ -23,6 +24,8 @@ const pendingReview: DesignPlanReviewTask = {
   version: 4,
   attachmentNames: ["ground-floor-plan.pdf"]
 };
+
+afterEach(() => vi.restoreAllMocks());
 
 describe("DesignPlanResponseInboxPage", () => {
   it("submits the Admin-on-behalf design approval as multipart proof", async () => {
@@ -98,10 +101,12 @@ describe("DesignPlanResponseInboxPage", () => {
       expect(invalidate).toHaveBeenCalledWith({
         queryKey: ["project-finance", "entries", "project-1"]
       });
+      expect(invalidate).toHaveBeenCalledWith({ queryKey: dashboardKeys.all });
     });
   });
 
   it("retries a failed Design email with the displayed version and refreshes its status", async () => {
+    const invalidate = vi.spyOn(QueryClient.prototype, "invalidateQueries");
     const failedReview: DesignPlanReviewTask = {
       ...pendingReview,
       deliveryStatus: "failed",
@@ -143,5 +148,31 @@ describe("DesignPlanResponseInboxPage", () => {
     expect(retryBody).toEqual({ expectedVersion: 7 });
     expect(await screen.findByText("Email sent")).toBeVisible();
     expect(screen.queryByRole("button", { name: "Retry email" })).not.toBeInTheDocument();
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: dashboardKeys.all });
+  });
+
+  it("does not invalidate the dashboard when a Design email retry fails", async () => {
+    const invalidate = vi.spyOn(QueryClient.prototype, "invalidateQueries");
+    const failedReview: DesignPlanReviewTask = {
+      ...pendingReview,
+      deliveryStatus: "failed",
+      version: 7
+    };
+    vi.spyOn(apiClient, "post").mockRejectedValue(new Error("offline"));
+    server.use(
+      http.get("/api/v1/admin/design-plan-response-tasks", () =>
+        HttpResponse.json({ data: [failedReview] })
+      )
+    );
+    const user = userEvent.setup();
+
+    renderWithQuery(<DesignPlanResponseInboxPage />);
+    expect(await screen.findByText("Email delivery failed")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Retry email" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "The design-plan email could not be retried."
+    );
+    expect(invalidate).not.toHaveBeenCalledWith({ queryKey: dashboardKeys.all });
   });
 });

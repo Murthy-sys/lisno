@@ -10,6 +10,7 @@ import type {
   UpdateTaskInput
 } from "../../api/types";
 import { designerKeys } from "../../features/designer/designerApi";
+import { dashboardKeys } from "../../features/admin/dashboard/superAdminDashboardApi";
 import { Dialog } from "../ui/Dialog";
 
 const statusLabels: Record<TaskStatus, string> = {
@@ -114,7 +115,8 @@ export function TaskUpdateDialog({
           queryKey: designerKeys.kpi(userId),
           exact: true,
           refetchType: "none"
-        })
+        }),
+        queryClient.invalidateQueries({ queryKey: dashboardKeys.all })
       ]);
       onSaved(updated);
       onClose();

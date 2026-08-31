@@ -23,6 +23,7 @@ import {
   getEstimatorOptions,
   initiateAdminProject
 } from "./adminProjectsApi";
+import { dashboardKeys } from "./dashboard/superAdminDashboardApi";
 
 interface ProjectInitiationForm {
   clientName: string;
@@ -140,7 +141,10 @@ export function AdminProjectInitiationDialog({
   const mutation = useMutation({
     mutationFn: initiateAdminProject,
     onSuccess: async (project) => {
-      await queryClient.invalidateQueries({ queryKey: adminProjectKeys.all });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: adminProjectKeys.all }),
+        queryClient.invalidateQueries({ queryKey: dashboardKeys.all })
+      ]);
       feedback.success({
         title: "Project initiated",
         message: "The Estimator/Sales handoff is ready."

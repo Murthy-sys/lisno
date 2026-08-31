@@ -12,6 +12,7 @@ import { Surface } from "../../components/ui/Surface";
 import { DownloadButton } from "../../components/ui/DownloadButton";
 import { projectFinanceKeys } from "../finance/projectFinanceApi";
 import { adminProjectKeys } from "./adminProjectsApi";
+import { dashboardKeys } from "./dashboard/superAdminDashboardApi";
 import {
   decideDesignPlanReview,
   downloadDesignPlanReviewAttachment,
@@ -83,6 +84,7 @@ function DesignReviewCard({ task }: { task: DesignPlanReviewTask }) {
       await Promise.all([
         client.invalidateQueries({ queryKey: projectWorkflowKeys.all }),
         client.invalidateQueries({ queryKey: adminProjectKeys.all }),
+        client.invalidateQueries({ queryKey: dashboardKeys.all }),
         client.invalidateQueries({ queryKey: projectFinanceKeys.projects }),
         client.invalidateQueries({ queryKey: projectFinanceKeys.bucket(updated.projectId) }),
         client.invalidateQueries({ queryKey: projectFinanceKeys.entries(updated.projectId) })
@@ -91,7 +93,10 @@ function DesignReviewCard({ task }: { task: DesignPlanReviewTask }) {
   });
   const retryEmail = useMutation({
     mutationFn: () => retryDesignPlanReviewEmail(task.id, task.version),
-    onSuccess: () => client.invalidateQueries({ queryKey: projectWorkflowKeys.all }),
+    onSuccess: () => Promise.all([
+      client.invalidateQueries({ queryKey: projectWorkflowKeys.all }),
+      client.invalidateQueries({ queryKey: dashboardKeys.all })
+    ]),
     onError: (error) => {
       if (error instanceof ApiError && error.status === 409) {
         void client.invalidateQueries({ queryKey: projectWorkflowKeys.all });

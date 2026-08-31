@@ -59,6 +59,7 @@ import { ProcurementWorkspace } from "../features/procurement/ProcurementWorkspa
 import { KnowledgeBaseIndexPage } from "../features/ai-estimator-knowledge/KnowledgeBaseIndexPage";
 import { KnowledgeItemWorkspacePage } from "../features/ai-estimator-knowledge/KnowledgeItemWorkspacePage";
 import { KnowledgeReusableValuesPage } from "../features/ai-estimator-knowledge/KnowledgeReusableValuesPage";
+import { SuperAdminDashboardPage } from "../features/admin/dashboard/SuperAdminDashboardPage";
 
 interface RoleHomeContent {
   heading: string;
@@ -303,6 +304,7 @@ function HomeRedirect() {
 }
 
 const stagedElements = {
+  "/admin/dashboard": <SuperAdminDashboardPage />,
   "/admin/projects": <AdminProjectsPage />,
   "/admin/projects/:projectId": <AdminProjectDetailPage />,
   "/admin/users": <UserDirectoryPage />,
@@ -435,6 +437,13 @@ export function AppRoutes() {
           element={registeredElement(
             "/client/projects/:projectId",
             <ClientProject />
+          )}
+        />
+        <Route
+          path="/admin/dashboard"
+          element={registeredElement(
+            "/admin/dashboard",
+            stagedElements["/admin/dashboard"]
           )}
         />
         <Route

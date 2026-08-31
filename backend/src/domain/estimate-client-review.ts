@@ -160,6 +160,68 @@ export interface ReviewAssignee {
   source: "admin_initiator" | "super_admin_fallback";
 }
 
+export interface EstimateReviewWorkflowRound {
+  id: string;
+  estimateVersion: number;
+  sendGeneration: number;
+  status: EstimateClientReviewStatus;
+  decision: EstimateClientDecision | null;
+  decidedAt?: string | Date | null;
+  createdAt?: string | Date | null;
+}
+
+/**
+ * Resolves the review identity that represents the Estimate's current workflow
+ * state. Estimate versions advance after a decision, but publication rounds do
+ * not, so a blanket `version - 1` rule is not valid for pending republications.
+ */
+export function resolveEstimateReviewRoundId(input: {
+  estimateStatus: string;
+  estimateVersion: number;
+  rounds: readonly EstimateReviewWorkflowRound[];
+  approvedReviewRoundId: string | null;
+}): string | null {
+  if (input.estimateStatus === "client_approved") {
+    const approvedId = input.approvedReviewRoundId?.trim();
+    return approvedId || null;
+  }
+  if (!["sent_to_client", "client_changes_requested"].includes(input.estimateStatus)) {
+    return null;
+  }
+  if (!Number.isSafeInteger(input.estimateVersion) || input.estimateVersion < 1) {
+    throw new TypeError("Estimate review workflow version is invalid.");
+  }
+  const candidates = input.rounds.filter((round) => {
+    if (input.estimateStatus === "sent_to_client") {
+      return round.status === "pending" &&
+        round.estimateVersion === input.estimateVersion;
+    }
+    return round.status === "changes_requested" &&
+      round.decision === "request_changes" &&
+      (
+        round.estimateVersion === input.estimateVersion ||
+        round.estimateVersion === Math.max(1, input.estimateVersion - 1)
+      );
+  }).sort(compareWorkflowRounds);
+  return candidates[0]?.id ?? null;
+}
+
+function compareWorkflowRounds(
+  left: EstimateReviewWorkflowRound,
+  right: EstimateReviewWorkflowRound
+): number {
+  return right.sendGeneration - left.sendGeneration ||
+    workflowRoundTime(right) - workflowRoundTime(left) ||
+    left.id.localeCompare(right.id);
+}
+
+function workflowRoundTime(round: EstimateReviewWorkflowRound): number {
+  const value = round.decidedAt ?? round.createdAt;
+  if (value == null) return 0;
+  const time = new Date(value).getTime();
+  return Number.isFinite(time) ? time : 0;
+}
+
 export interface StoredDownload {
   filename: string;
   mimeType: "application/pdf" | EstimateClientProofMimeType;

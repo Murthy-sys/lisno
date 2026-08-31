@@ -198,6 +198,108 @@ export interface ProjectFinanceService {
   ): Promise<FinanceDocumentDownload>;
 }
 
+/**
+ * Canonical read-only portfolio report for organization summaries. It shares
+ * the same immutable approval lineage, bucket projection, ledger enrichment,
+ * per-project rounding, and reducer used by the Finance endpoint.
+ */
+export async function readProjectFinancePortfolioReport(
+  observedAt: Date
+): Promise<ProjectFinancePortfolioSummary> {
+  return financeSnapshotRead(async (session) => {
+    const approvedEstimates = await approvedFinanceEstimates(null, session);
+    const approvedProjectIds = [
+      ...new Set(approvedEstimates.map((estimate) => String(estimate.projectId)))
+    ];
+    if (approvedProjectIds.length === 0) return emptyPortfolioSummary();
+    const materializedBuckets = await ProjectFinanceBucketModel.find({
+      projectId: { $in: approvedProjectIds }
+    }).session(session).lean();
+    const bucketsByProjectId = new Map(
+      materializedBuckets.map((bucket) => [String(bucket.projectId), bucket])
+    );
+    const financeSources = [...groupEstimatesByProject(approvedEstimates).entries()]
+      .map(([projectId, estimates]) =>
+        financeBucketForRead(
+          canonicalApprovedEstimate(estimates),
+          bucketsByProjectId.get(projectId)
+        )
+      )
+      .sort(compareFinanceSources);
+    const projects = await ProjectModel.find({ _id: { $in: approvedProjectIds } })
+      .select({ _id: 1, name: 1, status: 1, plannedEndAt: 1, actualEndAt: 1 })
+      .session(session)
+      .lean();
+    const projectsById = new Map(
+      projects.map((project) => [String(project._id), project])
+    );
+    requireCompletePortfolio(financeSources, projectsById);
+    const enrichments = await loadFinanceEnrichments(
+      approvedProjectIds,
+      observedAt,
+      session
+    );
+    return portfolioSummary(
+      financeSources,
+      projectsById,
+      enrichments,
+      observedAt
+    );
+  });
+}
+
+/**
+ * Canonical, authorization-free dashboard projection for an already bounded
+ * set of Project ids. Callers receive the same synthetic/materialized bucket,
+ * immutable approval baseline validation, ledger enrichment, and rounding as
+ * the Finance project list without broadening Finance route authorization.
+ */
+export async function readProjectFinanceDashboardProjects(
+  observedAt: Date,
+  projectIds: readonly string[]
+): Promise<ProjectFinanceBucketDto[]> {
+  const boundedProjectIds = [...new Set(projectIds)].sort();
+  if (boundedProjectIds.length === 0) return [];
+  if (boundedProjectIds.length > 50) {
+    throw new TypeError("Dashboard Finance projection supports at most 50 Projects per read.");
+  }
+  return financeSnapshotRead(async (session) => {
+    const approvedEstimates = await approvedFinanceEstimates(boundedProjectIds, session);
+    const approvedByProject = groupEstimatesByProject(approvedEstimates);
+    const materializedBuckets = await ProjectFinanceBucketModel.find({
+      projectId: { $in: boundedProjectIds }
+    }).session(session).lean();
+    const bucketsByProjectId = new Map(
+      materializedBuckets.map((bucket) => [String(bucket.projectId), bucket])
+    );
+    const financeSources = [...approvedByProject.entries()]
+      .map(([projectId, estimates]) => financeBucketForRead(
+        canonicalApprovedEstimate(estimates),
+        bucketsByProjectId.get(projectId)
+      ))
+      .sort(compareFinanceSources);
+    const projects = await ProjectModel.find({ _id: { $in: boundedProjectIds } })
+      .select({ _id: 1, name: 1, status: 1, plannedEndAt: 1, actualEndAt: 1 })
+      .session(session)
+      .lean();
+    const projectsById = new Map(
+      projects.map((project) => [String(project._id), project])
+    );
+    requireCompletePortfolio(financeSources, projectsById);
+    const enrichments = await loadFinanceEnrichments(
+      [...approvedByProject.keys()],
+      observedAt,
+      session
+    );
+    return financeSources.map((bucket) => {
+      const projectId = String(bucket.projectId);
+      const project = projectsById.get(projectId);
+      if (!project) financeStateCorrupt();
+      return bucketDto(bucket, project, enrichments.get(projectId), observedAt);
+    });
+  });
+}
+
 export interface EnsurePendingFinanceBucketInput {
   projectId: string;
   estimateId: string;
@@ -1056,11 +1158,11 @@ function financeBucketForRead(estimate: Row, materialized?: Row | null): Row {
     };
   }
   if (
-    materialized.status === "open" &&
+    materialized.status !== "pending_design" &&
     Number(materialized.designPlanVersion) !== designApproval.designPlanVersion
   ) {
     financeSourceConflict(
-      "The open project budget does not match the approved Design plan version."
+      "The project budget does not match the approved Design plan version."
     );
   }
   return materialized;

@@ -44,6 +44,11 @@ import { UserInvitationModel } from "../models/UserInvitation.js";
 import { PasswordResetRequestModel } from "../models/PasswordResetRequest.js";
 import { adminProjectSummary } from "./admin-project-summary.js";
 import {
+  mongoSuperAdminDashboardOverview,
+  mongoSuperAdminDashboardProjects,
+  mongoSuperAdminDashboardWorkforce
+} from "./super-admin-dashboard.js";
+import {
   RepositoryConflictError,
   RepositoryNotFoundError,
   type AppRepository,
@@ -1087,6 +1092,18 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
       if (session) query.session(session);
       const document = await query.lean().exec();
       return document ? mapUser(document) : null;
+    },
+
+    async readSuperAdminDashboardOverview(input) {
+      return mongoSuperAdminDashboardOverview(input);
+    },
+
+    async pageSuperAdminDashboardProjects(observedAt, filters) {
+      return mongoSuperAdminDashboardProjects(observedAt, filters);
+    },
+
+    async pageSuperAdminDashboardWorkforce(input) {
+      return mongoSuperAdminDashboardWorkforce(input);
     },
 
     async createUser(input: NewUser) {
