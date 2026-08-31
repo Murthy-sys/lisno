@@ -27,6 +27,42 @@ describe("environment authentication configuration", () => {
     ).toBe("runtime-secret-with-at-least-32-characters");
   });
 
+  it("defaults JWT expiry to a fixed 24-hour maximum", () => {
+    expect(
+      loadEnvironment({
+        JWT_SECRET: "runtime-secret-with-at-least-32-characters",
+        OCR_WORKER_TOKEN
+      }).JWT_EXPIRES_IN_SECONDS
+    ).toBe(86_400);
+  });
+
+  it.each([
+    ["minimum", "60", 60],
+    ["shorter test value", "900", 900],
+    ["24-hour maximum", "86400", 86_400]
+  ])("accepts the %s JWT expiry", (_name, input, expected) => {
+    expect(
+      loadEnvironment({
+        JWT_SECRET: "runtime-secret-with-at-least-32-characters",
+        JWT_EXPIRES_IN_SECONDS: input,
+        OCR_WORKER_TOKEN
+      }).JWT_EXPIRES_IN_SECONDS
+    ).toBe(expected);
+  });
+
+  it.each(["0", "-1", "59", "60.5", "not-a-number", "86401"])(
+    "rejects unsafe JWT expiry value %s",
+    (JWT_EXPIRES_IN_SECONDS) => {
+      expect(() =>
+        loadEnvironment({
+          JWT_SECRET: "runtime-secret-with-at-least-32-characters",
+          JWT_EXPIRES_IN_SECONDS,
+          OCR_WORKER_TOKEN
+        })
+      ).toThrow();
+    }
+  );
+
   it("parses local MongoDB origins into a CORS allow-list", () => {
     expect(
       loadEnvironment({
