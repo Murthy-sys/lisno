@@ -229,7 +229,7 @@ export const AUTHORIZATION_POLICY_VERSION =
 
 export interface AuthorizationSnapshot {
   readonly role: Role;
-  readonly policyVersion: typeof AUTHORIZATION_POLICY_VERSION;
+  readonly policyVersion: string;
   readonly permissions: readonly PermissionCode[];
 }
 

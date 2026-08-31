@@ -75,6 +75,9 @@ function AuthHarness() {
       <output aria-label="Authorization role">
         {auth.authorization?.role ?? "none"}
       </output>
+      <output aria-label="Authorization policy">
+        {auth.authorization?.policyVersion ?? "none"}
+      </output>
       <output aria-label="Session invariant">
         {auth.status === "authenticated" &&
         (!auth.user || !auth.authorization)
@@ -233,6 +236,38 @@ describe("AuthProvider atomic authorization establishment", () => {
     });
   });
 
+  it("restores a session across an older backend policy label and preserves it", async () => {
+    const previousPolicyVersion = "2026-08-28.ai-estimator-knowledge.v6";
+    tokenStorage.set("token-a");
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const path = requestPath(input);
+      if (path === "/api/v1/auth/me") {
+        return Response.json({ data: userA });
+      }
+      if (path === "/api/v1/auth/authorization") {
+        return Response.json({
+          data: {
+            ...authorizationFor("designer"),
+            policyVersion: previousPolicyVersion
+          }
+        });
+      }
+      throw new Error(`Unexpected request: ${path}`);
+    });
+
+    renderAuthProvider();
+
+    await waitFor(() =>
+      expect(screen.getByLabelText("Authentication status")).toHaveTextContent(
+        /^authenticated$/
+      )
+    );
+    expect(screen.getByLabelText("Authorization policy")).toHaveTextContent(
+      previousPolicyVersion
+    );
+    expect(tokenStorage.get()).toBe("token-a");
+  });
+
   it.each([
     [
       "authorization failure",
@@ -246,11 +281,11 @@ describe("AuthProvider atomic authorization establishment", () => {
       Response.json({ data: authorizationFor("design_manager") })
     ],
     [
-      "stale policy",
+      "malformed policy label",
       Response.json({
         data: {
           ...authorizationFor("designer"),
-          policyVersion: "2025-01-01.stale"
+          policyVersion: ".invalid-policy"
         }
       })
     ]
@@ -278,9 +313,13 @@ describe("AuthProvider atomic authorization establishment", () => {
     expect(screen.getByLabelText("Authorization role")).toHaveTextContent(
       "none"
     );
+    expect(screen.getByLabelText("Authorization policy")).toHaveTextContent(
+      "none"
+    );
     expect(screen.getByLabelText("Session invariant")).toHaveTextContent(
       "valid"
     );
+    expect(tokenStorage.get()).toBe("token-a");
   });
 
   it.each(["/api/v1/auth/me", "/api/v1/auth/authorization"])(
@@ -445,7 +484,7 @@ describe("AuthProvider atomic authorization establishment", () => {
           return Response.json({
             data: {
               role: user.role,
-              policyVersion: `${AUTHORIZATION_POLICY_VERSION}.stale`,
+              policyVersion: `${AUTHORIZATION_POLICY_VERSION}/unsafe`,
               permissions: ["identity.self.read"]
             }
           });
@@ -468,6 +507,38 @@ describe("AuthProvider atomic authorization establishment", () => {
       );
     }
   );
+
+  it("establishes login across a future backend policy label and preserves it", async () => {
+    const futurePolicyVersion = "2027-01-15.authorization_policy-v2";
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const path = requestPath(input);
+      if (path === "/api/v1/auth/login") {
+        return Response.json({ data: { token: "token-b", user: userB } });
+      }
+      if (path === "/api/v1/auth/authorization") {
+        return Response.json({
+          data: {
+            ...authorizationFor("design_manager"),
+            policyVersion: futurePolicyVersion
+          }
+        });
+      }
+      throw new Error(`Unexpected request: ${path}`);
+    });
+
+    renderAuthProvider();
+    await userEvent.click(screen.getByRole("button", { name: "Log in as B" }));
+
+    await waitFor(() =>
+      expect(screen.getByLabelText("Authentication status")).toHaveTextContent(
+        /^authenticated$/
+      )
+    );
+    expect(screen.getByLabelText("Authorization policy")).toHaveTextContent(
+      futurePolicyVersion
+    );
+    expect(tokenStorage.get()).toBe("token-b");
+  });
 });
 
 describe("AuthProvider session concurrency", () => {

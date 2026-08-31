@@ -1,7 +1,6 @@
 import { z } from "zod";
 
 import {
-  AUTHORIZATION_POLICY_VERSION,
   PERMISSION_CODES,
   isFrontendPermissionCode,
   isFrontendRole,
@@ -10,10 +9,17 @@ import {
   type Role
 } from "../api/authorization-contract";
 
+const AUTHORIZATION_POLICY_IDENTIFIER_MAX_LENGTH = 128;
+const authorizationPolicyIdentifierSchema = z
+  .string()
+  .min(1)
+  .max(AUTHORIZATION_POLICY_IDENTIFIER_MAX_LENGTH)
+  .regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/);
+
 const rawAuthorizationSnapshotSchema = z
   .object({
     role: z.string(),
-    policyVersion: z.string(),
+    policyVersion: authorizationPolicyIdentifierSchema,
     permissions: z.array(z.string()).max(PERMISSION_CODES.length + 32)
   })
   .strict();
@@ -35,8 +41,7 @@ export function parseAuthorizationSnapshot(
   if (!parsed.success) return null;
   if (
     !isFrontendRole(parsed.data.role) ||
-    parsed.data.role !== expectedRole ||
-    parsed.data.policyVersion !== AUTHORIZATION_POLICY_VERSION
+    parsed.data.role !== expectedRole
   ) {
     return null;
   }
@@ -46,7 +51,7 @@ export function parseAuthorizationSnapshot(
   );
   return Object.freeze({
     role: parsed.data.role,
-    policyVersion: AUTHORIZATION_POLICY_VERSION,
+    policyVersion: parsed.data.policyVersion,
     permissions: Object.freeze(permissions)
   });
 }
