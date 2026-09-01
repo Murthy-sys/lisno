@@ -12,8 +12,11 @@ import {
   type CalculateKnowledgePreviewInput
 } from "../domain/ai-estimator-knowledge-calculation.js";
 import {
+  AI_ESTIMATOR_KNOWLEDGE_MODE_FIELD_TYPES,
   AI_ESTIMATOR_KNOWLEDGE_SECTION_KEYS,
   type KnowledgeDurationUnit,
+  type KnowledgeExecutionSource,
+  type KnowledgeModeKind,
   type KnowledgeSectionKey,
   type KnowledgeTaxTreatment
 } from "../domain/ai-estimator-knowledge.js";
@@ -45,6 +48,8 @@ export interface AiEstimatorKnowledgeContextRequest {
   readonly uomId?: string;
   readonly surfaceId?: string;
   readonly modeId?: string;
+  readonly modeKind?: KnowledgeModeKind;
+  readonly executionSource?: KnowledgeExecutionSource;
 }
 
 export interface AiEstimatorKnowledgeContextService {
@@ -112,6 +117,7 @@ async function resolveContext(
   evaluatedAt: Date,
   session: ClientSession
 ): Promise<KnowledgeContext> {
+  assertSingleModeSelector(input);
   const mainLine = asRow(
     await AiEstimatorKnowledgeMainLineModel.findOne({
       _id: input.mainLineId,
@@ -162,13 +168,17 @@ async function resolveContext(
   }
 
   const overview = projectedPayloads.get("overview")!;
+  const advanced = projectedPayloads.get("advanced")!;
   await validateRequestedMasterReferences(input, session);
   assertCompatibleReference(overview, "uomId", input.uomId);
   assertCompatibleArrayReference(overview, "surfaceIds", input.surfaceId);
-  assertCompatibleArrayReference(overview, "modeIds", input.modeId);
+  assertCompatibleModeReference(overview, advanced, input.modeId);
+  filterModeConfigurations(advanced, input);
+  filterModeOverrides(advanced, input);
 
   const pricing = projectedPayloads.get("pricing")!;
   assertSpecification(pricing, input.specificationId);
+  filterSpecifications(pricing, input.specificationId);
 
   const resolvedUomId = input.uomId ?? optionalString(overview.uomId);
   const retainedOverviewUomId = optionalString(overview.uomId);
@@ -283,6 +293,70 @@ async function resolveContext(
   };
 }
 
+function assertSingleModeSelector(input: AiEstimatorKnowledgeContextRequest): void {
+  if (input.modeId && input.modeKind) {
+    throw new ApiError(
+      400,
+      "VALIDATION_ERROR",
+      "Request validation failed.",
+      { modeKind: "modeKind and modeId cannot be supplied together." }
+    );
+  }
+  if (input.executionSource && input.modeKind !== "execution") {
+    throw new ApiError(
+      400,
+      "VALIDATION_ERROR",
+      "Request validation failed.",
+      { executionSource: "executionSource requires modeKind to be execution." }
+    );
+  }
+}
+
+function filterModeConfigurations(
+  advanced: Row,
+  input: AiEstimatorKnowledgeContextRequest
+): void {
+  if (!Array.isArray(advanced.modeConfigurations)) return;
+  if (input.modeKind) {
+    advanced.modeConfigurations = activeRows(advanced.modeConfigurations).filter(
+      (configuration) =>
+        optionalString(configuration.modeKind) === input.modeKind &&
+        (
+          input.modeKind !== "execution" ||
+          (
+            optionalString(configuration.executionSource) !== undefined &&
+            (
+              !input.executionSource ||
+              optionalString(configuration.executionSource) === input.executionSource
+            )
+          )
+        )
+    );
+    return;
+  }
+  if (input.modeId) {
+    advanced.modeConfigurations = activeRows(advanced.modeConfigurations).filter(
+      (configuration) => optionalString(configuration.modeId) === input.modeId
+    );
+  }
+}
+
+function filterModeOverrides(
+  advanced: Row,
+  input: AiEstimatorKnowledgeContextRequest
+): void {
+  if (!Array.isArray(advanced.modeOverrides)) return;
+  if (input.modeKind) {
+    advanced.modeOverrides = [];
+    return;
+  }
+  if (input.modeId) {
+    advanced.modeOverrides = activeRows(advanced.modeOverrides).filter(
+      (override) => optionalString(override.modeId) === input.modeId
+    );
+  }
+}
+
 async function resolveEffectivePrice(
   revisionId: string,
   input: AiEstimatorKnowledgeContextRequest,
@@ -300,8 +374,11 @@ async function resolveEffectivePrice(
     $or: [{ effectiveTo: null }, { effectiveTo: { $gt: evaluatedAt } }]
   };
   if (uomId) filter.uomId = uomId;
-  if (input.specificationId) filter.specificationId = input.specificationId;
-  if (input.modeId) filter.modeId = input.modeId;
+  if (input.modeKind) {
+    filter.modeId = { $eq: null, $exists: true };
+  } else if (input.modeId) {
+    filter.modeId = input.modeId;
+  }
   const candidates = await AiEstimatorKnowledgePriceVersionModel.find(filter)
     .sort({ effectiveFrom: -1, _id: 1 })
     .limit(2)
@@ -511,6 +588,25 @@ function assertCompatibleArrayReference(
   }
 }
 
+function assertCompatibleModeReference(
+  overview: Row,
+  advanced: Row,
+  requested: string | undefined
+): void {
+  if (!requested) return;
+  const configured = new Set([
+    ...(Array.isArray(overview.modeIds)
+      ? overview.modeIds.filter((value): value is string => typeof value === "string")
+      : []),
+    ...activeRows(advanced.modeConfigurations)
+      .map((configuration) => optionalString(configuration.modeId))
+      .filter((modeId): modeId is string => Boolean(modeId))
+  ]);
+  if (configured.size > 0 && !configured.has(requested)) {
+    invalidReference("modeId");
+  }
+}
+
 function assertSpecification(payload: Row, requested: string | undefined): void {
   if (!requested) return;
   const configured = Array.isArray(payload.specifications)
@@ -519,6 +615,14 @@ function assertSpecification(payload: Row, requested: string | undefined): void 
       )
     : false;
   if (!configured) invalidReference("specificationId");
+}
+
+function filterSpecifications(payload: Row, requested: string | undefined): void {
+  if (!requested || !Array.isArray(payload.specifications)) return;
+  payload.specifications = payload.specifications.filter((entry) => {
+    const row = asRow(entry);
+    return row?._id === requested || row?.id === requested;
+  });
 }
 
 function projectActiveSectionRows(sectionKey: KnowledgeSectionKey, payload: Row): Row {
@@ -557,21 +661,98 @@ function activeRows(value: unknown): Row[] {
 }
 
 function sanitizeSectionPayload(sectionKey: KnowledgeSectionKey, payload: Row): Row {
+  if (sectionKey === "advanced") return publicAdvancedPayload(payload);
   if (sectionKey !== "pricing") return structuredClone(payload);
-  const {
-    internalVendorNotes: _internalVendorNotes,
-    priceEntries: _priceEntries,
-    ...safe
-  } = payload;
-  const specifications = Array.isArray(safe.specifications)
-    ? safe.specifications.map((entry) => {
-        const row = asRow(entry);
-        if (!row) return entry;
-        const { vendorNotes: _vendorNotes, internalVendorNotes: _internal, ...clean } = row;
-        return clean;
-      })
-    : safe.specifications;
-  return { ...safe, specifications };
+  const safe: Row = {};
+  if (Array.isArray(payload.specifications)) {
+    safe.specifications = payload.specifications
+      .map(publicSpecification)
+      .filter((entry): entry is Row => entry !== null);
+  }
+  if (Array.isArray(payload.brands)) {
+    safe.brands = payload.brands
+      .map(publicNamedRow)
+      .filter((entry): entry is Row => entry !== null);
+  }
+  if (Object.hasOwn(payload, "technicalDescription")) {
+    safe.technicalDescription = structuredClone(payload.technicalDescription);
+  }
+  if (Object.hasOwn(payload, "qualityLevel")) {
+    safe.qualityLevel = structuredClone(payload.qualityLevel);
+  }
+  return safe;
+}
+
+function publicAdvancedPayload(payload: Row): Row {
+  const safe: Row = {};
+  if (Array.isArray(payload.dependencies)) {
+    safe.dependencies = structuredClone(payload.dependencies);
+  }
+  if (Array.isArray(payload.modeConfigurations)) {
+    safe.modeConfigurations = payload.modeConfigurations
+      .map(publicModeConfiguration)
+      .filter((entry): entry is Row => entry !== null);
+  }
+  return safe;
+}
+
+function publicModeConfiguration(value: unknown): Row | null {
+  const configuration = asRow(value);
+  if (!configuration) return null;
+  const id = optionalString(configuration.id) ?? optionalString(configuration._id);
+  if (!id || !Array.isArray(configuration.fields)) return null;
+  const safe: Row = {
+    id,
+    fields: configuration.fields
+      .map(publicModeField)
+      .filter((entry): entry is Row => entry !== null)
+  };
+  if (configuration.modeKind === "pmc") {
+    safe.modeKind = "pmc";
+  } else if (
+    configuration.modeKind === "execution" &&
+    (configuration.executionSource === "sub_vendor" || configuration.executionSource === "in_house")
+  ) {
+    safe.modeKind = "execution";
+    safe.executionSource = configuration.executionSource;
+  }
+  return safe;
+}
+
+function publicModeField(value: unknown): Row | null {
+  const field = asRow(value);
+  if (!field) return null;
+  const id = optionalString(field.id) ?? optionalString(field._id);
+  const type = optionalString(field.type);
+  const label = optionalString(field.label);
+  if (
+    !id ||
+    !type ||
+    !AI_ESTIMATOR_KNOWLEDGE_MODE_FIELD_TYPES.includes(type as never) ||
+    !label ||
+    !Array.isArray(field.options)
+  ) return null;
+  return {
+    id,
+    type,
+    label,
+    options: field.options.filter((option): option is string => typeof option === "string")
+  };
+}
+
+function publicSpecification(value: unknown): Row | null {
+  return publicNamedRow(value);
+}
+
+function publicNamedRow(value: unknown): Row | null {
+  const row = asRow(value);
+  if (!row) return null;
+  const id = optionalString(row.id) ?? optionalString(row._id);
+  const name = optionalString(row.name);
+  if (!id || !name) return null;
+  const safe: Row = { id, name };
+  if (Object.hasOwn(row, "description")) safe.description = row.description;
+  return safe;
 }
 
 function publicIdentity(row: Row): Row {

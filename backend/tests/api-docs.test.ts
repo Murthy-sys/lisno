@@ -209,7 +209,7 @@ describe("OpenAPI and Swagger UI", () => {
     }
   });
 
-  it("contains all 188 routes without versioning paths twice", () => {
+  it("contains all 190 routes without versioning paths twice", () => {
     const methods = new Set(["get", "post", "put", "patch", "delete"]);
     const operationCount = Object.values(openApiDocument.paths).reduce(
       (total, pathItem) =>
@@ -218,7 +218,7 @@ describe("OpenAPI and Swagger UI", () => {
     );
 
     expect(operationCount).toBe(HUMAN_JWT_OPERATION_LIST.length + 13);
-    expect(operationCount).toBe(188);
+    expect(operationCount).toBe(190);
     expect(Object.keys(openApiDocument.paths).some((path) =>
       path.startsWith("/api/v1")
     )).toBe(false);
@@ -228,7 +228,7 @@ describe("OpenAPI and Swagger UI", () => {
     const knowledgeOperations = HUMAN_JWT_OPERATION_LIST.filter(
       ({ availability }) => availability === "ai_estimator_knowledge"
     );
-    expect(knowledgeOperations).toHaveLength(43);
+    expect(knowledgeOperations).toHaveLength(45);
 
     for (const registered of knowledgeOperations) {
       const { method, path } = splitHumanOperationKey(registered.key);
@@ -271,6 +271,44 @@ describe("OpenAPI and Swagger UI", () => {
         schema: { $ref: "#/components/schemas/KnowledgeSectionKey" }
       })
     ]));
+    expect(
+      openApiDocument.paths[
+        "/admin/ai-estimator-knowledge/main-lines/{mainLineId}/revisions/{revisionId}/sections/{sectionKey}"
+      ]?.get?.responses?.["2XX"]
+    ).toMatchObject({
+      content: {
+        "application/json": {
+          schema: {
+            properties: {
+              data: { $ref: "#/components/schemas/KnowledgeSectionEnvelope" }
+            }
+          }
+        }
+      }
+    });
+    expect(
+      openApiDocument.paths[
+        "/admin/ai-estimator-knowledge/main-lines/{mainLineId}/revisions/{revisionId}/sections/{sectionKey}"
+      ]?.put?.responses?.["2XX"]
+    ).toMatchObject({
+      content: {
+        "application/json": {
+          schema: {
+            properties: {
+              data: { $ref: "#/components/schemas/KnowledgeSectionMutationEnvelope" }
+            }
+          }
+        }
+      }
+    });
+    expect(componentSchemas().KnowledgeSectionMutationEnvelope).toMatchObject({
+      additionalProperties: false,
+      required: expect.arrayContaining(["version", "aggregateVersion"]),
+      properties: {
+        version: { type: "integer", minimum: 1 },
+        aggregateVersion: { type: "integer", minimum: 1 }
+      }
+    });
 
     const previewRequest = componentSchemas().KnowledgePreviewRequest as {
       additionalProperties?: boolean;
@@ -280,6 +318,7 @@ describe("OpenAPI and Swagger UI", () => {
       additionalProperties?: boolean;
       required?: string[];
       properties: Record<string, unknown>;
+      allOf?: unknown[];
     };
     const previewResponse = componentSchemas().KnowledgePreview as {
       properties: Record<string, unknown>;
@@ -289,7 +328,333 @@ describe("OpenAPI and Swagger UI", () => {
     expect(contextRequest.additionalProperties).toBe(false);
     expect(contextRequest.required).toEqual(["mainBasketId", "mainLineId"]);
     expect(contextRequest.properties).not.toHaveProperty("name");
+    expect(contextRequest.properties.modeKind).toMatchObject({
+      type: "string",
+      enum: ["pmc", "execution"]
+    });
+    expect(contextRequest.properties.executionSource).toMatchObject({
+      type: "string",
+      enum: ["sub_vendor", "in_house"]
+    });
+    expect(contextRequest.allOf).toEqual([
+      { not: { required: ["modeId", "modeKind"] } },
+      {
+        anyOf: [
+          { not: { required: ["executionSource"] } },
+          {
+            required: ["modeKind"],
+            properties: { modeKind: { enum: ["execution"] } }
+          }
+        ]
+      }
+    ]);
+    expect(previewRequest.properties).not.toHaveProperty("modeKind");
     expect(previewResponse.properties).not.toHaveProperty("finalPrice");
+
+    const sectionPayload = componentSchemas().KnowledgeSectionPayload as {
+      anyOf: Array<{
+        description?: string;
+        additionalProperties?: boolean;
+        properties?: Record<string, unknown>;
+      }>;
+    };
+    const advancedPayload = sectionPayload.anyOf.find((schema) =>
+      schema.description?.startsWith("advanced section payload"));
+    expect(advancedPayload).toMatchObject({
+      additionalProperties: false,
+      properties: {
+        modeConfigurations: {
+          type: "array",
+          items: { $ref: "#/components/schemas/KnowledgeModeConfiguration" }
+        }
+      }
+    });
+    expect(componentSchemas().KnowledgeModeConfiguration).toMatchObject({
+      oneOf: [
+        {
+          type: "object",
+          additionalProperties: false,
+          required: ["id", "modeKind", "fields"],
+          properties: {
+            modeKind: { enum: ["pmc"] },
+            fields: {
+              type: "array",
+              maxItems: 50,
+              items: { $ref: "#/components/schemas/KnowledgeModeFieldInput" }
+            }
+          }
+        },
+        {
+          type: "object",
+          additionalProperties: false,
+          required: ["id", "modeKind", "executionSource", "fields"],
+          properties: {
+            modeKind: { enum: ["execution"] },
+            executionSource: { enum: ["sub_vendor", "in_house"] },
+            fields: {
+              type: "array",
+              maxItems: 50,
+              items: { $ref: "#/components/schemas/KnowledgeModeFieldInput" }
+            }
+          }
+        },
+        {
+          type: "object",
+          additionalProperties: false,
+          deprecated: true,
+          required: ["id", "modeKind", "fields"],
+          properties: {
+            modeKind: { enum: ["execution"] },
+            fields: {
+              type: "array",
+              maxItems: 50,
+              items: { $ref: "#/components/schemas/KnowledgeModeFieldInput" }
+            }
+          }
+        },
+        {
+          type: "object",
+          additionalProperties: false,
+          required: ["id", "modeId", "fields"],
+          properties: {
+            modeId: { deprecated: true },
+            fields: {
+              type: "array",
+              maxItems: 50,
+              items: { $ref: "#/components/schemas/KnowledgeModeFieldInput" }
+            }
+          }
+        }
+      ]
+    });
+    expect(componentSchemas().KnowledgeModeField).toMatchObject({
+      oneOf: [
+        { $ref: "#/components/schemas/KnowledgeModeNonChoiceField" },
+        { $ref: "#/components/schemas/KnowledgeModeChoiceField" }
+      ]
+    });
+    expect(componentSchemas().KnowledgeModeNonChoiceField).toMatchObject({
+      type: "object",
+      additionalProperties: false,
+      required: ["id", "type", "label", "options"],
+      properties: {
+        type: {
+          enum: ["text", "textarea", "number", "checkbox"]
+        },
+        options: { type: "array", maxItems: 0 }
+      }
+    });
+    expect(componentSchemas().KnowledgeModeChoiceField).toMatchObject({
+      type: "object",
+      additionalProperties: false,
+      required: ["id", "type", "label", "options"],
+      properties: {
+        type: { enum: ["radio", "dropdown"] },
+        options: {
+          type: "array",
+          minItems: 1,
+          maxItems: 50,
+          uniqueItems: true,
+          items: {
+            type: "string",
+            minLength: 1,
+            maxLength: 240,
+            pattern: "^\\S(?:[\\s\\S]*\\S)?$"
+          }
+        }
+      }
+    });
+    expect(componentSchemas().KnowledgeModeNonChoiceField).not.toHaveProperty("properties.value");
+    expect(componentSchemas().KnowledgeModeChoiceField).not.toHaveProperty("properties.value");
+    expect(componentSchemas().KnowledgeLegacyValuedModeField).toMatchObject({
+      deprecated: true,
+      oneOf: [
+        { $ref: "#/components/schemas/KnowledgeLegacyValuedNonChoiceModeField" },
+        { $ref: "#/components/schemas/KnowledgeLegacyValuedChoiceModeField" }
+      ]
+    });
+    expect(componentSchemas().KnowledgeLegacyValuedNonChoiceModeField).toMatchObject({
+      deprecated: true,
+      type: "object",
+      additionalProperties: false,
+      required: ["id", "type", "label", "options", "value"],
+      properties: {
+        value: {
+          oneOf: [
+            { type: "string", maxLength: 4_000, nullable: true },
+            { type: "boolean" }
+          ]
+        }
+      }
+    });
+    expect(componentSchemas().KnowledgeLegacyValuedNonChoiceModeField).toMatchObject({
+      properties: {
+        type: { enum: ["text", "textarea", "number", "checkbox"] },
+        options: { type: "array", maxItems: 0 }
+      }
+    });
+    expect(componentSchemas().KnowledgeLegacyValuedChoiceModeField).toMatchObject({
+      deprecated: true,
+      properties: {
+        type: { enum: ["radio", "dropdown"] },
+        options: {
+          type: "array",
+          minItems: 1,
+          maxItems: 50,
+          uniqueItems: true,
+          items: { pattern: "^\\S(?:[\\s\\S]*\\S)?$" }
+        },
+        value: {
+          oneOf: [
+            { type: "string", maxLength: 4_000, nullable: true },
+            { type: "boolean" }
+          ]
+        }
+      }
+    });
+
+    const pricingPayload = sectionPayload.anyOf.find((schema) =>
+      schema.description?.startsWith("pricing section payload"));
+    expect(pricingPayload).toMatchObject({
+      additionalProperties: false,
+      properties: {
+        specifications: {
+          type: "array",
+          maxItems: 50,
+          items: { $ref: "#/components/schemas/KnowledgeSpecification" }
+        },
+        priceEntries: {
+          type: "array",
+          items: { $ref: "#/components/schemas/KnowledgePriceEntryCommand" },
+          description: expect.stringContaining("null Specification scope")
+        }
+      }
+    });
+    expect(componentSchemas().KnowledgeSpecification).toEqual({
+      description: "A descriptive Specification row for current writes, or an unchanged stored typed row retained for compatibility.",
+      oneOf: [
+        { $ref: "#/components/schemas/KnowledgeDescriptiveSpecification" },
+        { $ref: "#/components/schemas/KnowledgeCanonicalSpecification" }
+      ]
+    });
+    expect(componentSchemas().KnowledgeDescriptiveSpecification).toMatchObject({
+      type: "object",
+      additionalProperties: false,
+      required: ["id", "name"],
+      example: {
+        id: "specification-plywood",
+        name: "Plywood",
+        description: "18 mm BWP-grade plywood for the cabinet carcass."
+      }
+    });
+    expect(componentSchemas().KnowledgeLegacySpecification).toMatchObject({
+      deprecated: true,
+      allOf: [{ $ref: "#/components/schemas/KnowledgeDescriptiveSpecification" }]
+    });
+    expect(componentSchemas().KnowledgeCanonicalSpecification).toMatchObject({
+      deprecated: true,
+      description: expect.stringContaining("Compatibility-only"),
+      "x-lisno-field-types": ["text", "textarea", "number", "radio", "dropdown", "checkbox"],
+      example: {
+        id: "specification-finish",
+        name: "Finish",
+        description: "Choose the approved finish.",
+        type: "dropdown",
+        options: ["Matte", "Gloss"],
+        value: "Matte"
+      },
+      oneOf: expect.arrayContaining([
+        expect.objectContaining({
+          required: ["id", "name", "type", "options", "value"],
+          properties: expect.objectContaining({
+            type: { type: "string", enum: ["number"] },
+            value: expect.objectContaining({
+              pattern: "^(0|[1-9][0-9]*)(\\.[0-9]{1,6})?$"
+            })
+          })
+        }),
+        expect.objectContaining({
+          properties: expect.objectContaining({
+            type: { type: "string", enum: ["checkbox"] },
+            value: { type: "boolean" }
+          })
+        }),
+        expect.objectContaining({
+          properties: expect.objectContaining({
+            type: { type: "string", enum: ["dropdown"] },
+            options: expect.objectContaining({
+              minItems: 1,
+              maxItems: 50,
+              uniqueItems: true,
+              description: expect.stringContaining("normalized, case-insensitive")
+            }),
+            value: expect.objectContaining({
+              description: "Null or one of the configured options."
+            })
+          })
+        })
+      ])
+    });
+    expect(componentSchemas().KnowledgePriceEntryAppendCommand).toMatchObject({
+      type: "object",
+      additionalProperties: false,
+      required: expect.arrayContaining(["operation", "specificationId", "inputAmountPaise"]),
+      properties: {
+        operation: { type: "string", enum: ["append"] },
+        specificationId: {
+          type: "string",
+          nullable: true,
+          enum: [null],
+          description: expect.stringContaining("not a price dimension")
+        },
+        inputAmountPaise: expect.objectContaining({
+          type: "integer",
+          minimum: 0,
+          description: expect.stringContaining("integer paise")
+        })
+      }
+    });
+    expect(componentSchemas().KnowledgePriceEntryReferenceCommand).toMatchObject({
+      type: "object",
+      additionalProperties: false,
+      required: ["operation", "priceEntryId", "priceVersionId"],
+      properties: {
+        operation: { type: "string", enum: ["reference"] },
+        priceVersionId: expect.objectContaining({
+          description: expect.stringContaining("historical versions may retain")
+        })
+      }
+    });
+    expect(componentSchemas().KnowledgeContextRequest).toMatchObject({
+      properties: {
+        specificationId: expect.objectContaining({
+          description: expect.stringContaining("never changes price resolution")
+        })
+      }
+    });
+    expect(componentSchemas().KnowledgeSectionReferenceState).toEqual({
+      type: "object",
+      additionalProperties: false,
+      required: ["specificationIds"],
+      properties: {
+        specificationIds: {
+          type: "array",
+          uniqueItems: true,
+          description: expect.stringContaining("Response-only removal guidance"),
+          items: expect.any(Object)
+        }
+      }
+    });
+    expect(componentSchemas().KnowledgeSectionEnvelope).toMatchObject({
+      properties: {
+        referenceState: { $ref: "#/components/schemas/KnowledgeSectionReferenceState" }
+      }
+    });
+    expect(componentSchemas().KnowledgeSectionMutationEnvelope).toMatchObject({
+      properties: {
+        referenceState: { $ref: "#/components/schemas/KnowledgeSectionReferenceState" }
+      }
+    });
 
     const createRequestNames = [
       "KnowledgeBasketCreateRequest",
@@ -318,6 +683,121 @@ describe("OpenAPI and Swagger UI", () => {
     expect(basketResponse.properties.displayOrder).toMatchObject({
       maximum: Number.MAX_SAFE_INTEGER
     });
+
+    const permanentDeleteRequest = componentSchemas()
+      .KnowledgePermanentDeleteBasketRequest as {
+        additionalProperties?: boolean;
+        required?: string[];
+        properties?: Record<string, unknown>;
+      };
+    expect(permanentDeleteRequest).toMatchObject({
+      additionalProperties: false,
+      required: ["expectedVersion", "confirmationName", "reason"],
+      properties: {
+        expectedVersion: { type: "integer", minimum: 1 },
+        confirmationName: { type: "string", minLength: 1, maxLength: 240 },
+        reason: { type: "string", minLength: 1, maxLength: 1_000 }
+      }
+    });
+
+    const impact = componentSchemas().KnowledgeBasketDeletionImpact as {
+      additionalProperties?: boolean;
+      required?: string[];
+      properties?: Record<string, unknown>;
+    };
+    expect(impact).toMatchObject({
+      additionalProperties: false,
+      required: [
+        "basketId",
+        "basketName",
+        "version",
+        "mainLineCount",
+        "historicalReferenceCount",
+        "bootstrapOwned",
+        "canDelete",
+        "blockers"
+      ],
+      properties: {
+        blockers: {
+          type: "array",
+          items: { $ref: "#/components/schemas/KnowledgeBasketDeletionBlocker" }
+        }
+      }
+    });
+    expect(componentSchemas().KnowledgeBasketDeletionBlocker).toMatchObject({
+      additionalProperties: false,
+      required: ["code", "message"],
+      properties: {
+        code: {
+          type: "string",
+          enum: ["BOOTSTRAP_OWNED", "HAS_MAIN_LINES", "HAS_HISTORICAL_REFERENCES"]
+        },
+        message: { type: "string" }
+      }
+    });
+    expect(componentSchemas().KnowledgePermanentDeleteBasketResult).toMatchObject({
+      additionalProperties: false,
+      required: ["basketId", "deleted", "deletedAt"],
+      properties: {
+        deleted: { type: "boolean", enum: [true] },
+        deletedAt: { type: "string", format: "date-time" }
+      }
+    });
+
+    expect(
+      openApiDocument.paths[
+        "/admin/ai-estimator-knowledge/baskets/{basketId}/deletion-impact"
+      ]?.get?.["x-lisno-permission"]
+    ).toBe("ai_estimator_knowledge.configuration.lifecycle");
+    expect(
+      openApiDocument.paths[
+        "/admin/ai-estimator-knowledge/baskets/{basketId}/deletion-impact"
+      ]?.get?.responses?.["2XX"]
+    ).toMatchObject({
+      content: {
+        "application/json": {
+          schema: {
+            properties: {
+              data: { $ref: "#/components/schemas/KnowledgeBasketDeletionImpact" }
+            }
+          }
+        }
+      }
+    });
+    expect(
+      openApiDocument.paths[
+        "/admin/ai-estimator-knowledge/baskets/{basketId}/permanent"
+      ]?.delete?.requestBody
+    ).toMatchObject({
+      required: true,
+      "x-lisno-schema-completeness": "exact",
+      content: {
+        "application/json": {
+          schema: {
+            $ref: "#/components/schemas/KnowledgePermanentDeleteBasketRequest"
+          }
+        }
+      }
+    });
+    expect(
+      openApiDocument.paths[
+        "/admin/ai-estimator-knowledge/baskets/{basketId}/permanent"
+      ]?.delete?.responses?.["2XX"]
+    ).toMatchObject({
+      content: {
+        "application/json": {
+          schema: {
+            properties: {
+              data: { $ref: "#/components/schemas/KnowledgePermanentDeleteBasketResult" }
+            }
+          }
+        }
+      }
+    });
+    expect(
+      openApiDocument.paths["/admin/ai-estimator-knowledge/baskets/{basketId}"]
+        ?.delete?.summary
+    ).toBe("Archive a knowledge Basket");
   });
 
   it("documents exact workflow multipart contracts and separate worker security", () => {
