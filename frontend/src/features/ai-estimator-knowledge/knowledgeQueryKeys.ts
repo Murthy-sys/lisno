@@ -2,7 +2,8 @@ import type {
   KnowledgeContextRequest,
   KnowledgeListParams,
   KnowledgePageParams,
-  KnowledgePreviewRequest
+  KnowledgePreviewRequest,
+  KnowledgeReferenceListParams
 } from "./knowledgeApi";
 import type {
   KnowledgeMasterType,
@@ -41,8 +42,12 @@ export const knowledgeQueryKeys = {
   activationReview: (itemId: string, revisionId: string) =>
     ["ai-estimator-knowledge", "activation-review", itemId, revisionId] as const,
   basketLists: () => ["ai-estimator-knowledge", "baskets"] as const,
-  basketList: (params: KnowledgePageParams) =>
+  basketList: (params: KnowledgeReferenceListParams) =>
     ["ai-estimator-knowledge", "baskets", params] as const,
+  basketDeletionImpacts: () =>
+    ["ai-estimator-knowledge", "basket-deletion-impact"] as const,
+  basketDeletionImpact: (basketId: string) =>
+    ["ai-estimator-knowledge", "basket-deletion-impact", basketId] as const,
   mainLineLists: (basketId?: string) =>
     basketId
       ? (["ai-estimator-knowledge", "main-lines", basketId] as const)
@@ -57,6 +62,8 @@ export const knowledgeQueryKeys = {
       : (["ai-estimator-knowledge", "masters"] as const),
   masterList: (type: KnowledgeMasterType, params: KnowledgePageParams) =>
     ["ai-estimator-knowledge", "masters", type, params] as const,
+  masterCatalog: (type: KnowledgeMasterType) =>
+    ["ai-estimator-knowledge", "masters", type, "catalog"] as const,
   previews: () => ["ai-estimator-knowledge", "preview"] as const,
   preview: (input: KnowledgePreviewRequest) =>
     ["ai-estimator-knowledge", "preview", input] as const,

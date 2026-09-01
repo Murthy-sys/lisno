@@ -3,6 +3,7 @@ import { Dialog } from "../../components/ui/Dialog";
 import { InlineMessage } from "../../components/ui/InlineMessage";
 
 export interface KnowledgeVersionConflictDialogProps {
+  readonly sectionLabel?: string;
   readonly localVersion: number;
   readonly serverVersion: number;
   readonly onReviewServerVersion: () => void;
@@ -12,6 +13,7 @@ export interface KnowledgeVersionConflictDialogProps {
 }
 
 export function KnowledgeVersionConflictDialog({
+  sectionLabel,
   localVersion,
   serverVersion,
   onReviewServerVersion,
@@ -30,6 +32,7 @@ export function KnowledgeVersionConflictDialog({
     >
       <div className="knowledge-dialog-body">
         <InlineMessage tone="warning" title="Version conflict">
+          {sectionLabel ? <><strong>{sectionLabel}</strong>: </> : null}
           You edited version {localVersion}, while the server now has version {serverVersion}.
           Review both versions before deciding what to keep.
         </InlineMessage>

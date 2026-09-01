@@ -85,6 +85,47 @@ describe("AI estimator knowledge models", () => {
     ]);
   });
 
+  it("keeps the Basket dependency epoch internal and backward-compatible", async () => {
+    const basket = new AiEstimatorKnowledgeBasketModel({
+      _id: "basket-guarded",
+      name: "Guarded Basket",
+      description: null,
+      displayOrder: 0,
+      status: "active",
+      version: 1,
+      ...actor,
+      archivedAt: null,
+      archivedById: null
+    });
+
+    await expect(basket.validate()).resolves.toBeUndefined();
+    expect(basket.dependencyEpoch).toBe(0);
+    const dependencyEpoch = AiEstimatorKnowledgeBasketModel.schema.path("dependencyEpoch");
+    expect(dependencyEpoch).toBeDefined();
+    expect(dependencyEpoch.isRequired).not.toBe(true);
+  });
+
+  it("keeps the Mode dependency epoch internal and backward-compatible", async () => {
+    const mode = new AiEstimatorKnowledgeModeModel({
+      _id: "mode-guarded",
+      code: "PMC",
+      name: "PMC",
+      description: null,
+      displayOrder: 0,
+      status: "active",
+      version: 1,
+      ...actor,
+      archivedAt: null,
+      archivedById: null
+    });
+
+    await expect(mode.validate()).resolves.toBeUndefined();
+    expect(mode.dependencyEpoch).toBe(0);
+    const dependencyEpoch = AiEstimatorKnowledgeModeModel.schema.path("dependencyEpoch");
+    expect(dependencyEpoch).toBeDefined();
+    expect(dependencyEpoch.isRequired).not.toBe(true);
+  });
+
   it("allows archived identity reuse by excluding archived records from unique indexes", () => {
     for (const model of [
       AiEstimatorKnowledgeBasketModel,
@@ -169,6 +210,44 @@ describe("AI estimator knowledge models", () => {
       ...actor
     });
     await expect(invalid.validate()).rejects.toThrow(/not valid for overview/u);
+
+    const dynamicMode = new AiEstimatorKnowledgeSectionModel({
+      _id: "section-mode-configuration",
+      mainLineId: "line-1",
+      revisionId: "revision-1",
+      sectionKey: "advanced",
+      applicability: "configured",
+      payload: {
+        dependencies: [],
+        modeConfigurations: [
+          {
+            id: "configuration-pmc",
+            modeId: "mode-pmc",
+            fields: [{
+              id: "field-pmc-mark",
+              type: "text",
+              label: "PMC mark",
+              options: [],
+              value: "A1"
+            }]
+          },
+          {
+            id: "configuration-execution",
+            modeId: "mode-execution",
+            fields: [{
+              id: "field-crew-code",
+              type: "text",
+              label: "Crew code",
+              options: [],
+              value: "E-27"
+            }]
+          }
+        ]
+      },
+      version: 1,
+      ...actor
+    });
+    await expect(dynamicMode.validate()).resolves.toBeUndefined();
   });
 
   it("requires lifecycle metadata for immutable active revisions", async () => {

@@ -194,6 +194,14 @@ describe("AI Estimator Knowledge guarded bootstrap on a local replica set", () =
     expect(auditCount).toBe(
       AI_ESTIMATOR_KNOWLEDGE_BOOTSTRAP_MANIFEST.resources.length
     );
+    const basketDocuments = await mongoose.connection.db!
+      .collection("aiEstimatorKnowledgeBaskets")
+      .find({})
+      .toArray();
+    expect(basketDocuments).toHaveLength(7);
+    for (const basket of basketDocuments) {
+      expect(basket).not.toHaveProperty("dependencyEpoch");
+    }
     const afterFirstRun = await snapshotDatabase();
 
     const rerun = await runAiEstimatorKnowledgeBootstrap(config(true));

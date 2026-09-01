@@ -4,6 +4,7 @@ import { Button } from "../../components/ui/Button";
 import { Checkbox, Field, Input, Select, Textarea } from "../../components/ui/Field";
 import { InlineMessage } from "../../components/ui/InlineMessage";
 import { KnowledgeRepeater } from "./KnowledgeRepeater";
+import { KnowledgeSpecificationBuilder } from "./KnowledgeSpecificationBuilder";
 import {
   KNOWLEDGE_SECTION_LABELS,
   formatKnowledgeMoney,
@@ -20,11 +21,13 @@ import type {
   KnowledgeMasterType,
   KnowledgeSectionKey
 } from "./knowledgeTypes";
-import { KNOWLEDGE_SECTION_KEYS } from "./knowledgeTypes";
-import { validateKnowledgeSection } from "./knowledgeSectionValidation";
+import {
+  validateKnowledgeSection,
+  type KnowledgeValidationIssue
+} from "./knowledgeSectionValidation";
 
 const ARRAY_FIELDS = {
-  overview: ["sectionApplicability"],
+  overview: [],
   pricing: ["specifications", "brands", "priceEntries"],
   "quantity-margin": ["quantitySlabs"],
   scope: ["exclusions"],
@@ -35,9 +38,8 @@ const ARRAY_FIELDS = {
 } as const satisfies Readonly<Record<KnowledgeSectionKey, readonly string[]>>;
 
 const ARRAY_LABELS: Readonly<Record<string, string>> = {
-  sectionApplicability: "Section applicability rules",
   specifications: "Specifications",
-  brands: "Brands",
+  brands: "Vendors",
   priceEntries: "Price versions",
   quantitySlabs: "Quantity slabs",
   exclusions: "Exclusions",
@@ -49,6 +51,15 @@ const ARRAY_LABELS: Readonly<Record<string, string>> = {
   modeOverrides: "Mode overrides",
 };
 
+const KNOWLEDGE_MASTER_SINGULAR_LABELS = {
+  uoms: "UOM",
+  vendors: "Vendor",
+  taxes: "Tax",
+  priorities: "Priority",
+  surfaces: "Surface",
+  modes: "Mode"
+} as const satisfies Readonly<Record<KnowledgeMasterType, string>>;
+
 export interface KnowledgeSectionEditorProps {
   readonly sectionKey: KnowledgeSectionKey;
   readonly payload: KnowledgeJsonObject;
@@ -59,11 +70,65 @@ export interface KnowledgeSectionEditorProps {
   readonly readOnly: boolean;
   readonly canQuickAdd: boolean;
   readonly resetKey: string;
+  readonly specificationScopeKey?: string;
+  readonly specificationReferenceIds?: readonly string[];
   readonly validationAttempt?: number;
+  readonly serverIssues?: readonly KnowledgeValidationIssue[];
   readonly onChange: (payload: KnowledgeJsonObject) => void;
   readonly onDirty: () => void;
   readonly onValidationChange: (valid: boolean) => void;
   readonly onQuickAdd: (type: KnowledgeMasterType, select: (master: KnowledgeMaster) => void) => void;
+}
+
+export interface KnowledgePrimaryUomEditorProps {
+  readonly payload: KnowledgeJsonObject;
+  readonly masters: Readonly<Partial<Record<KnowledgeMasterType, readonly KnowledgeMaster[]>>>;
+  readonly readOnly: boolean;
+  readonly canQuickAdd: boolean;
+  readonly onChange: (payload: KnowledgeJsonObject) => void;
+  readonly onDirty: () => void;
+  readonly onQuickAdd: KnowledgeSectionEditorProps["onQuickAdd"];
+}
+
+export function KnowledgePrimaryUomEditor({
+  payload,
+  masters,
+  readOnly,
+  canQuickAdd,
+  onChange,
+  onDirty,
+  onQuickAdd
+}: KnowledgePrimaryUomEditorProps) {
+  function changeUom(value: string) {
+    onDirty();
+    const next = { ...payload } as Record<string, KnowledgeJsonValue>;
+    if (value) next.uomId = value;
+    else delete next.uomId;
+    onChange(next);
+  }
+
+  return (
+    <section className="knowledge-section-editor" aria-labelledby="knowledge-primary-uom-heading">
+      <div className="knowledge-section-heading">
+        <div>
+          <h2 id="knowledge-primary-uom-heading">UOM</h2>
+          <p>Choose the reusable value used as this item&apos;s primary unit of measurement.</p>
+        </div>
+        {readOnly ? <span className="knowledge-readonly-label">Read-only revision</span> : null}
+      </div>
+      <MasterSelect
+        id="knowledge-uom"
+        label="UOM"
+        type="uoms"
+        value={stringValue(payload.uomId)}
+        masters={masters.uoms ?? []}
+        disabled={readOnly}
+        quickAddDisabled={!canQuickAdd}
+        onChange={changeUom}
+        onQuickAdd={(select) => onQuickAdd("uoms", select)}
+      />
+    </section>
+  );
 }
 
 export function KnowledgeSectionEditor({
@@ -76,13 +141,19 @@ export function KnowledgeSectionEditor({
   readOnly,
   canQuickAdd,
   resetKey,
+  specificationScopeKey,
+  specificationReferenceIds = [],
   validationAttempt = 0,
+  serverIssues = [],
   onChange,
   onDirty,
   onValidationChange,
   onQuickAdd
 }: KnowledgeSectionEditorProps) {
-  const issues = useMemo(() => validateKnowledgeSection(sectionKey, payload), [payload, sectionKey]);
+  const issues = useMemo(
+    () => [...validateKnowledgeSection(sectionKey, payload), ...serverIssues],
+    [payload, sectionKey, serverIssues]
+  );
   const validationSummaryRef = useRef<HTMLDivElement>(null);
   useEffect(() => { onValidationChange(issues.length === 0); }, [issues.length, onValidationChange, resetKey]);
   useEffect(() => {
@@ -101,40 +172,16 @@ export function KnowledgeSectionEditor({
 
   return (
     <div className="knowledge-section-editor">
-      <div className="knowledge-section-heading">
-        <div>
-          <h2>{KNOWLEDGE_SECTION_LABELS[sectionKey]}</h2>
-          <p>{sectionHelp(sectionKey)}</p>
+      {sectionKey !== "pricing" ? (
+        <div className="knowledge-section-heading">
+          <div>
+            <h2>{KNOWLEDGE_SECTION_LABELS[sectionKey]}</h2>
+            <p>{sectionHelp(sectionKey)}</p>
+          </div>
+          {readOnly ? <span className="knowledge-readonly-label">Read-only revision</span> : null}
         </div>
-        {readOnly ? <span className="knowledge-readonly-label">Read-only revision</span> : null}
-      </div>
+      ) : null}
       {issues.length ? <div ref={validationSummaryRef} className="knowledge-validation-summary" role="alert" tabIndex={-1}><strong>Review {issues.length} section issue{issues.length === 1 ? "" : "s"}</strong><ul>{issues.map((issue) => <li key={`${issue.path}-${issue.message}`}><span>{validationPathLabel(issue.path)}: </span>{issue.message}</li>)}</ul></div> : null}
-
-      {sectionKey === "overview" ? (
-        <>
-          <Field id="knowledge-description" label="Description">
-            {(props) => <Textarea {...props} disabled={readOnly} value={stringValue(payload.description)} onChange={(event) => change("description", event.target.value || undefined)} />}
-          </Field>
-          <div className="knowledge-form-grid">
-            <MasterSelect id="knowledge-uom" label="UOM" type="uoms" value={stringValue(payload.uomId)} masters={masters.uoms ?? []} disabled={readOnly} quickAddDisabled={!canQuickAdd} onChange={(value) => change("uomId", value || undefined)} onQuickAdd={(select) => onQuickAdd("uoms", select)} />
-            <MasterSelect id="knowledge-priority" label="Priority" type="priorities" value={stringValue(payload.priorityId)} masters={masters.priorities ?? []} disabled={readOnly} quickAddDisabled={!canQuickAdd} onChange={(value) => change("priorityId", value || undefined)} onQuickAdd={(select) => onQuickAdd("priorities", select)} />
-          </div>
-          <div className="knowledge-form-grid">
-            <MasterMultiSelect id="knowledge-modes" label="Modes" type="modes" values={stringArray(payload.modeIds)} masters={masters.modes ?? []} disabled={readOnly} quickAddDisabled={!canQuickAdd} onChange={(values) => change("modeIds", values)} onQuickAdd={(select) => onQuickAdd("modes", select)} />
-            <MasterMultiSelect id="knowledge-surfaces" label="Surfaces" type="surfaces" values={stringArray(payload.surfaceIds)} masters={masters.surfaces ?? []} disabled={readOnly} quickAddDisabled={!canQuickAdd} onChange={(values) => change("surfaceIds", values)} onQuickAdd={(select) => onQuickAdd("surfaces", select)} />
-          </div>
-        </>
-      ) : null}
-
-      {sectionKey === "pricing" ? (
-        <>
-          <div className="knowledge-form-grid">
-            <TextField field="technicalDescription" label="Technical description" payload={payload} readOnly={readOnly} onChange={change} multiline />
-            <TextField field="internalVendorNotes" label="Internal vendor notes" payload={payload} readOnly={readOnly} onChange={change} multiline />
-            <TextField field="qualityLevel" label="Quality level" payload={payload} readOnly={readOnly} onChange={change} />
-          </div>
-        </>
-      ) : null}
 
       {sectionKey === "quantity-margin" ? (
         <div className="knowledge-form-grid">
@@ -152,7 +199,18 @@ export function KnowledgeSectionEditor({
         </div>
       ) : null}
 
-      {ARRAY_FIELDS[sectionKey].map((field) => (
+      {ARRAY_FIELDS[sectionKey].map((field) => field === "specifications" ? (
+        <KnowledgeSpecificationBuilder
+          key={`${specificationScopeKey ?? resetKey}-${field}`}
+          value={payload.specifications}
+          priceEntries={payload.priceEntries}
+          referencedSpecificationIds={specificationReferenceIds}
+          readOnly={readOnly}
+          issues={issues.filter((issue) => issue.path === "specifications" || issue.path.startsWith("specifications."))}
+          onDirty={onDirty}
+          onChange={(value) => change(field, value)}
+        />
+      ) : (
         <StructuredArrayEditor
           key={`${resetKey}-${field}`}
           field={field}
@@ -189,19 +247,6 @@ const BPS_LABELS = {
   wastageBps: "Wastage (basis points)"
 } as const;
 
-function TextField({ field, label, payload, readOnly, onChange, multiline = false }: {
-  readonly field: string;
-  readonly label: string;
-  readonly payload: KnowledgeJsonObject;
-  readonly readOnly: boolean;
-  readonly onChange: (key: string, value: KnowledgeJsonValue | undefined) => void;
-  readonly multiline?: boolean;
-}) {
-  return <Field id={`knowledge-${field}`} label={label}>{(props) => multiline
-    ? <Textarea {...props} disabled={readOnly} value={stringValue(payload[field])} onChange={(event) => onChange(field, event.target.value || undefined)} />
-    : <Input {...props} disabled={readOnly} value={stringValue(payload[field])} onChange={(event) => onChange(field, event.target.value || undefined)} />}</Field>;
-}
-
 function NumberField({ field, label, value, disabled, max, onChange }: {
   readonly field: string;
   readonly label: string;
@@ -235,7 +280,7 @@ function MasterSelect({ id, label, type, value, masters, disabled, quickAddDisab
   readonly onChange: (value: string) => void;
   readonly onQuickAdd: (select: (master: KnowledgeMaster) => void) => void;
 }) {
-  return <div className="knowledge-master-control"><Field id={id} label={label}>{(props) => <Select {...props} disabled={disabled} value={value} onChange={(event) => onChange(event.target.value)}><option value="">Not configured</option>{masters.filter(({ status, id: masterId }) => status === "active" || masterId === value).map((master) => <option key={master.id} value={master.id}>{master.name}</option>)}</Select>}</Field><Button size="compact" variant="quiet" disabled={disabled || quickAddDisabled} onClick={() => onQuickAdd((master) => onChange(master.id))}>Add {type.replace(/s$/u, "")}</Button></div>;
+  return <div className="knowledge-master-control"><Field id={id} label={label}>{(props) => <Select {...props} disabled={disabled} value={value} onChange={(event) => onChange(event.target.value)}><option value="">Not configured</option>{masters.filter(({ status, id: masterId }) => status === "active" || masterId === value).map((master) => <option key={master.id} value={master.id}>{master.name}</option>)}</Select>}</Field><Button size="compact" variant="quiet" disabled={disabled || quickAddDisabled} onClick={() => onQuickAdd((master) => onChange(master.id))}>Add {KNOWLEDGE_MASTER_SINGULAR_LABELS[type]}</Button></div>;
 }
 
 function MasterMultiSelect({ id, label, type, values, masters, disabled, quickAddDisabled, onChange, onQuickAdd }: {
@@ -249,7 +294,7 @@ function MasterMultiSelect({ id, label, type, values, masters, disabled, quickAd
   readonly onChange: (values: readonly string[]) => void;
   readonly onQuickAdd: (select: (master: KnowledgeMaster) => void) => void;
 }) {
-  return <div className="knowledge-master-control"><Field id={id} label={label} hint="Use Command/Ctrl to select more than one.">{(props) => <Select {...props} multiple size={Math.min(5, Math.max(3, masters.length))} disabled={disabled} value={[...values]} onChange={(event) => onChange([...event.currentTarget.selectedOptions].map((option) => option.value))}>{masters.filter(({ status, id: masterId }) => status === "active" || values.includes(masterId)).map((master) => <option key={master.id} value={master.id}>{master.name}</option>)}</Select>}</Field><Button size="compact" variant="quiet" disabled={disabled || quickAddDisabled} onClick={() => onQuickAdd((master) => onChange([...new Set([...values, master.id])]))}>Add {type.replace(/s$/u, "")}</Button></div>;
+  return <div className="knowledge-master-control"><Field id={id} label={label} hint="Use Command/Ctrl to select more than one.">{(props) => <Select {...props} multiple size={Math.min(5, Math.max(3, masters.length))} disabled={disabled} value={[...values]} onChange={(event) => onChange([...event.currentTarget.selectedOptions].map((option) => option.value))}>{masters.filter(({ status, id: masterId }) => status === "active" || values.includes(masterId)).map((master) => <option key={master.id} value={master.id}>{master.name}</option>)}</Select>}</Field><Button size="compact" variant="quiet" disabled={disabled || quickAddDisabled} onClick={() => onQuickAdd((master) => onChange([...new Set([...values, master.id])]))}>Add {KNOWLEDGE_MASTER_SINGULAR_LABELS[type]}</Button></div>;
 }
 
 interface EditorRow { readonly id: string; readonly value: KnowledgeJsonObject }
@@ -274,7 +319,7 @@ function StructuredArrayEditor({ field, label, value, sectionPayload, masters, r
     const values = rows.map((row, rowIndex) => rowIndex === index ? next : row.value);
     onChange(values);
   }
-  return <KnowledgeRepeater label={label} addLabel={`Add ${singular(label)}`} items={rows} disabled={disabled} emptyMessage={`No ${label.toLowerCase()} configured.`}
+  return <KnowledgeRepeater label={label} addLabel={field === "brands" ? "Add vendor" : `Add ${singular(label)}`} items={rows} disabled={disabled} readOnly={field === "brands" && disabled} emptyMessage={`No ${label.toLowerCase()} configured.`}
     onAdd={() => { onDirty(); onChange([...rows.map(({ value: row }) => row), newRow(field)]); }}
     onRemove={(id) => { onDirty(); onChange(rows.filter((row) => row.id !== id).map((row) => row.value)); }}
     onMove={(id, direction) => { onDirty(); const current = [...rows]; const from = current.findIndex((row) => row.id === id); const to = direction === "up" ? from - 1 : from + 1; if (from < 0 || to < 0 || to >= current.length) return; [current[from], current[to]] = [current[to], current[from]]; onChange(current.map((row) => row.value)); }}
@@ -298,9 +343,8 @@ function GuidedRow({ field, index, value, sectionPayload, masters, relationshipB
 }) {
   const prefix = `${field}-${index}`;
   const set = (key: string, next: KnowledgeJsonValue | undefined) => onChange(setObjectValue(value, key, next));
-  if (field === "specifications" || field === "brands") return <div className="knowledge-form-grid"><ReadOnlyId value={stringValue(value.id)} /><RowInput id={`${prefix}-name`} label="Name" value={stringValue(value.name)} disabled={disabled} required onChange={(next) => set("name", next || undefined)} /><RowInput id={`${prefix}-description`} label="Description" value={stringValue(value.description)} disabled={disabled} multiline onChange={(next) => set("description", next || undefined)} /></div>;
-  if (field === "sectionApplicability") return <div className="knowledge-form-grid"><ReadOnlyId value={stringValue(value.id)} /><RowSelect id={`${prefix}-section`} label="Section key" value={stringValue(value.sectionKey)} values={KNOWLEDGE_SECTION_KEYS} disabled={disabled} onChange={(next) => set("sectionKey", next || undefined)} /><RowSelect id={`${prefix}-state`} label="State" value={stringValue(value.applicability)} values={["configured", "not_configured", "not_applicable"]} disabled={disabled} onChange={(next) => set("applicability", next || undefined)} /></div>;
-  if (field === "priceEntries") return <PriceEntryRow prefix={prefix} value={value} specifications={objectArray(sectionPayload.specifications)} masters={masters} disabled={disabled} canQuickAdd={canQuickAdd} onQuickAdd={onQuickAdd} set={set} onChange={onChange} />;
+  if (field === "brands") return <div className="knowledge-form-grid"><ReadOnlyId value={stringValue(value.id)} /><RowInput id={`${prefix}-name`} label="Vendor name" value={stringValue(value.name)} disabled={disabled} required onChange={(next) => set("name", next || undefined)} /><RowInput id={`${prefix}-description`} label="Description" value={stringValue(value.description)} disabled={disabled} multiline onChange={(next) => set("description", next || undefined)} /></div>;
+  if (field === "priceEntries") return <PriceEntryRow prefix={prefix} value={value} masters={masters} disabled={disabled} canQuickAdd={canQuickAdd} onQuickAdd={onQuickAdd} set={set} onChange={onChange} />;
   if (field === "quantitySlabs") return <div className="knowledge-form-grid"><ReadOnlyId value={stringValue(value.id)} /><RowInput id={`${prefix}-minimum`} label="Minimum quantity" value={stringValue(value.minimumQuantity)} disabled={disabled} required onChange={(next) => set("minimumQuantity", next || undefined)} /><RowInput id={`${prefix}-maximum`} label="Maximum quantity" value={stringValue(value.maximumQuantity)} disabled={disabled} hint="Leave blank for no upper limit." onChange={(next) => set("maximumQuantity", next || null)} /><RowNumber id={`${prefix}-adjustment`} label="Adjustment (basis points)" value={numberValue(value.adjustmentBps)} disabled={disabled} required onChange={(next) => set("adjustmentBps", next)} /></div>;
   if (field === "exclusions" || field === "dependencies") return <RelationshipRow prefix={prefix} kind={field} value={value} baskets={relationshipBaskets} items={relationshipItems} currentMainLineId={currentMainLineId} disabled={disabled} onChange={onChange} />;
   if (field === "recommendations") return <div className="knowledge-form-grid"><ReadOnlyId value={stringValue(value.id)} /><RelationshipTargetFields prefix={prefix} value={value} baskets={relationshipBaskets} items={relationshipItems} required disabled={disabled} onChange={onChange} /><RowSelect id={`${prefix}-type`} label="Recommendation type" value={stringValue(value.type)} values={["mandatory", "recommended", "optional"]} disabled={disabled} onChange={(next) => set("type", next || undefined)} /><MasterRowSelect id={`${prefix}-priority`} label="Priority" value={stringValue(value.priorityId)} masters={masters.priorities ?? []} disabled={disabled} nullable onChange={(next) => set("priorityId", next)} /><RowInput id={`${prefix}-reason`} label="Reason" value={stringValue(value.reason)} disabled={disabled} required multiline onChange={(next) => set("reason", next || undefined)} /><RowSelect id={`${prefix}-relationship`} label="Quantity relationship" value={stringValue(value.quantityRelationship)} values={["same_quantity", "percentage_of_source", "fixed", "per_unit"]} disabled={disabled} onChange={(next) => set("quantityRelationship", next || undefined)} /><RowInput id={`${prefix}-quantity`} label="Quantity value" value={stringValue(value.quantityValue)} disabled={disabled} onChange={(next) => set("quantityValue", next || null)} /><RowCheckbox label="Dependency" checked={booleanValue(value.dependency)} disabled={disabled} onChange={(next) => set("dependency", next)} /><RowCheckbox label="Active" checked={booleanValue(value.active, true)} disabled={disabled} onChange={(next) => set("active", next)} /></div>;
@@ -357,7 +401,7 @@ function StableIdMultiSelect({ id, label, values, options, disabled, onChange }:
   return <Field id={id} label={label} hint="Select zero or more named steps; stable IDs are stored.">{(props) => <Select {...props} multiple size={Math.max(3, Math.min(6, options.length + unresolved.length))} disabled={disabled} value={[...values]} onChange={(event) => onChange([...event.currentTarget.selectedOptions].map((option) => option.value))}>{unresolved.map((value) => <option key={value} value={value} disabled>Unavailable step · {value}</option>)}{options.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}</Select>}</Field>;
 }
 
-function PriceEntryRow({ prefix, value, specifications, masters, disabled, canQuickAdd, onQuickAdd, set, onChange }: { readonly prefix: string; readonly value: KnowledgeJsonObject; readonly specifications: readonly KnowledgeJsonObject[]; readonly masters: Readonly<Partial<Record<KnowledgeMasterType, readonly KnowledgeMaster[]>>>; readonly disabled: boolean; readonly canQuickAdd: boolean; readonly onQuickAdd: KnowledgeSectionEditorProps["onQuickAdd"]; readonly set: (key: string, value: KnowledgeJsonValue | undefined) => void; readonly onChange: (value: KnowledgeJsonObject) => void }) {
+function PriceEntryRow({ prefix, value, masters, disabled, canQuickAdd, onQuickAdd, set, onChange }: { readonly prefix: string; readonly value: KnowledgeJsonObject; readonly masters: Readonly<Partial<Record<KnowledgeMasterType, readonly KnowledgeMaster[]>>>; readonly disabled: boolean; readonly canQuickAdd: boolean; readonly onQuickAdd: KnowledgeSectionEditorProps["onQuickAdd"]; readonly set: (key: string, value: KnowledgeJsonValue | undefined) => void; readonly onChange: (value: KnowledgeJsonObject) => void }) {
   const operation = stringValue(value.operation);
   const referenced = operation === "reference";
   const taxRule = (masters.taxes ?? []).find(({ id }) => id === stringValue(value.taxRuleId));
@@ -365,13 +409,14 @@ function PriceEntryRow({ prefix, value, specifications, masters, disabled, canQu
   const replace = () => {
     if (!resolved) return;
     const copied: Record<string, KnowledgeJsonValue> = { operation: "append", priceEntryId: stringValue(value.priceEntryId) };
-    for (const key of ["vendorId", "uomId", "specificationId", "modeId", "taxRuleId", "taxVersionId", "inputAmountPaise", "treatment", "effectiveFrom", "effectiveTo", "status"] as const) {
+    for (const key of ["vendorId", "uomId", "modeId", "taxRuleId", "taxVersionId", "inputAmountPaise", "treatment", "effectiveFrom", "effectiveTo", "status"] as const) {
       const next = resolved[key];
       if (next !== undefined) copied[key] = next;
     }
+    copied.specificationId = null;
     onChange(copied);
   };
-  return <div className="knowledge-form-grid"><RowSelect id={`${prefix}-operation`} label="Price operation" value={operation} values={["append", "reference"]} disabled={disabled || referenced} onChange={(next) => set("operation", next || undefined)} /><RowInput id={`${prefix}-entry-id`} label="Price entry ID" value={stringValue(value.priceEntryId)} disabled readOnly />{referenced ? <><RowInput id={`${prefix}-version-id`} label="Price version ID" value={stringValue(value.priceVersionId)} disabled readOnly />{resolved ? <ResolvedPriceVersion value={resolved} /> : <p className="knowledge-help-text">Saved price details are unavailable.</p>}<Button size="compact" variant="secondary" disabled={disabled || !resolved} onClick={replace}>Replace price version</Button></> : <><div className="knowledge-master-control"><MasterRowSelect id={`${prefix}-vendor`} label="Vendor" value={stringValue(value.vendorId)} masters={masters.vendors ?? []} disabled={disabled} onChange={(next) => set("vendorId", next)} /><Button size="compact" variant="quiet" disabled={disabled || !canQuickAdd} onClick={() => onQuickAdd("vendors", (master) => set("vendorId", master.id))}>Add vendor</Button></div><MasterRowSelect id={`${prefix}-uom`} label="UOM" value={stringValue(value.uomId)} masters={masters.uoms ?? []} disabled={disabled} onChange={(next) => set("uomId", next)} /><StableIdSelect id={`${prefix}-specification`} label="Specification" value={stringValue(value.specificationId)} options={specifications.map((specification) => ({ id: stringValue(specification.id), label: stringValue(specification.name) || "Unnamed specification" })).filter(({ id }) => id)} disabled={disabled} nullable onChange={(next) => set("specificationId", next || null)} /><MasterRowSelect id={`${prefix}-mode`} label="Mode" value={stringValue(value.modeId)} masters={masters.modes ?? []} disabled={disabled} nullable onChange={(next) => set("modeId", next)} /><div className="knowledge-master-control"><MasterRowSelect id={`${prefix}-tax-rule`} label="Tax rule" value={stringValue(value.taxRuleId)} masters={masters.taxes ?? []} disabled={disabled} onChange={(next) => onChange(setObjectValue(setObjectValue(value, "taxRuleId", next), "taxVersionId", undefined))} /><Button size="compact" variant="quiet" disabled={disabled || !canQuickAdd} onClick={() => onQuickAdd("taxes", (master) => onChange(setObjectValue(setObjectValue(value, "taxRuleId", master.id), "taxVersionId", undefined)))}>Add tax</Button></div><TaxVersionSelect id={`${prefix}-tax-version`} value={stringValue(value.taxVersionId)} taxRule={taxRule} disabled={disabled} onChange={(next) => set("taxVersionId", next || undefined)} /><RupeeAmountField id={`${prefix}-amount`} valuePaise={numberValue(value.inputAmountPaise)} disabled={disabled} onChange={(next) => set("inputAmountPaise", next)} /><RowSelect id={`${prefix}-treatment`} label="Tax treatment" value={stringValue(value.treatment)} values={["exclusive", "inclusive"]} disabled={disabled} onChange={(next) => set("treatment", next || undefined)} /><RowDateTime id={`${prefix}-from`} label="Effective from" value={stringValue(value.effectiveFrom)} disabled={disabled} required onChange={(next) => set("effectiveFrom", next || undefined)} /><RowDateTime id={`${prefix}-to`} label="Effective to" value={stringValue(value.effectiveTo)} disabled={disabled} onChange={(next) => set("effectiveTo", next || null)} /><RowSelect id={`${prefix}-status`} label="Version status" value={stringValue(value.status)} values={["draft", "active", "inactive"]} disabled={disabled} onChange={(next) => set("status", next || undefined)} /></>}</div>;
+  return <div className="knowledge-form-grid"><RowSelect id={`${prefix}-operation`} label="Price operation" value={operation} values={["append", "reference"]} disabled={disabled || referenced} onChange={(next) => set("operation", next || undefined)} /><RowInput id={`${prefix}-entry-id`} label="Price entry ID" value={stringValue(value.priceEntryId)} disabled readOnly />{referenced ? <><RowInput id={`${prefix}-version-id`} label="Price version ID" value={stringValue(value.priceVersionId)} disabled readOnly />{resolved ? <ResolvedPriceVersion value={resolved} /> : <p className="knowledge-help-text">Saved price details are unavailable.</p>}<Button size="compact" variant="secondary" disabled={disabled || !resolved} onClick={replace}>Replace price version</Button></> : <><div className="knowledge-master-control"><MasterRowSelect id={`${prefix}-vendor`} label="Vendor" value={stringValue(value.vendorId)} masters={masters.vendors ?? []} disabled={disabled} onChange={(next) => set("vendorId", next)} /><Button size="compact" variant="quiet" disabled={disabled || !canQuickAdd} onClick={() => onQuickAdd("vendors", (master) => set("vendorId", master.id))}>Add vendor</Button></div><MasterRowSelect id={`${prefix}-uom`} label="UOM" value={stringValue(value.uomId)} masters={masters.uoms ?? []} disabled={disabled} onChange={(next) => set("uomId", next)} /><MasterRowSelect id={`${prefix}-mode`} label="Mode" value={stringValue(value.modeId)} masters={masters.modes ?? []} disabled={disabled} nullable onChange={(next) => set("modeId", next)} /><div className="knowledge-master-control"><MasterRowSelect id={`${prefix}-tax-rule`} label="Tax rule" value={stringValue(value.taxRuleId)} masters={masters.taxes ?? []} disabled={disabled} onChange={(next) => onChange(setObjectValue(setObjectValue(value, "taxRuleId", next), "taxVersionId", undefined))} /><Button size="compact" variant="quiet" disabled={disabled || !canQuickAdd} onClick={() => onQuickAdd("taxes", (master) => onChange(setObjectValue(setObjectValue(value, "taxRuleId", master.id), "taxVersionId", undefined)))}>Add tax</Button></div><TaxVersionSelect id={`${prefix}-tax-version`} value={stringValue(value.taxVersionId)} taxRule={taxRule} disabled={disabled} onChange={(next) => set("taxVersionId", next || undefined)} /><RupeeAmountField id={`${prefix}-amount`} valuePaise={numberValue(value.inputAmountPaise)} disabled={disabled} onChange={(next) => set("inputAmountPaise", next)} /><RowSelect id={`${prefix}-treatment`} label="Tax treatment" value={stringValue(value.treatment)} values={["exclusive", "inclusive"]} disabled={disabled} onChange={(next) => set("treatment", next || undefined)} /><RowDateTime id={`${prefix}-from`} label="Effective from" value={stringValue(value.effectiveFrom)} disabled={disabled} required onChange={(next) => set("effectiveFrom", next || undefined)} /><RowDateTime id={`${prefix}-to`} label="Effective to" value={stringValue(value.effectiveTo)} disabled={disabled} onChange={(next) => set("effectiveTo", next || null)} /><RowSelect id={`${prefix}-status`} label="Version status" value={stringValue(value.status)} values={["draft", "active", "inactive"]} disabled={disabled} onChange={(next) => set("status", next || undefined)} /></>}</div>;
 }
 
 function ResolvedPriceVersion({ value }: { readonly value: KnowledgeJsonObject }) {
@@ -494,7 +539,11 @@ function ReadOnlyStructuredData({ label, value }: { readonly label: string; read
 
 function newRow(field: string): KnowledgeJsonObject {
   const id = `knowledge-${field}-${crypto.randomUUID()}`;
-  if (field === "priceEntries") return { operation: "append", priceEntryId: id };
+  if (field === "priceEntries") return {
+    operation: "append",
+    priceEntryId: id,
+    specificationId: null
+  };
   return { id };
 }
 
@@ -546,7 +595,11 @@ function singular(label: string): string {
 }
 
 function validationPathLabel(path: string): string {
-  return path.split(".").map((part) => part === "inputAmountPaise" ? "Input amount (rupees)" : part).join(" → ");
+  return path.split(".").map((part) => {
+    if (part === "brands") return "Vendors";
+    if (part === "inputAmountPaise") return "Input amount (rupees)";
+    return part;
+  }).join(" → ");
 }
 
 function sectionHelp(sectionKey: KnowledgeSectionKey): string {

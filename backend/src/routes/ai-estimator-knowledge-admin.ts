@@ -84,6 +84,14 @@ const archiveSchema = z
   })
   .strict();
 
+const permanentDeleteBasketSchema = z
+  .object({
+    expectedVersion: expectedVersionSchema,
+    confirmationName: z.string().min(1).max(240),
+    reason: z.string().trim().min(1).max(1_000)
+  })
+  .strict();
+
 const expectedVersionCommandSchema = z
   .object({
     expectedVersion: expectedVersionSchema,
@@ -303,6 +311,26 @@ export function createAiEstimatorKnowledgeAdminRouter(
     requireOperation("DELETE /admin/ai-estimator-knowledge/baskets/:basketId"),
     validateBody(archiveSchema),
     handler(async (request) => services.reference.archiveBasket(request.authenticatedUser!, String(request.params.basketId), request.body))
+  );
+  router.get(
+    `${prefix}/baskets/:basketId/deletion-impact`,
+    protectedRoute,
+    requireOperation("GET /admin/ai-estimator-knowledge/baskets/:basketId/deletion-impact"),
+    handler(async (request) => services.reference.getBasketDeletionImpact(
+      request.authenticatedUser!,
+      String(request.params.basketId)
+    ))
+  );
+  router.delete(
+    `${prefix}/baskets/:basketId/permanent`,
+    protectedRoute,
+    requireOperation("DELETE /admin/ai-estimator-knowledge/baskets/:basketId/permanent"),
+    validateBody(permanentDeleteBasketSchema),
+    handler(async (request) => services.reference.permanentlyDeleteBasket(
+      request.authenticatedUser!,
+      String(request.params.basketId),
+      request.body
+    ))
   );
   router.get(
     `${prefix}/baskets/:basketId/main-lines`,

@@ -3,6 +3,7 @@ import type {
   KnowledgeMasterType,
   KnowledgeSectionKey
 } from "./knowledgeTypes";
+import type { KnowledgeWorkspaceSectionKey } from "./knowledgeWorkspaceSections";
 
 export const KNOWLEDGE_SECTION_LABELS = {
   overview: "Overview",
@@ -14,6 +15,13 @@ export const KNOWLEDGE_SECTION_LABELS = {
   execution: "Execution",
   advanced: "Advanced"
 } as const satisfies Readonly<Record<KnowledgeSectionKey, string>>;
+
+export const KNOWLEDGE_WORKSPACE_SECTION_LABELS = {
+  overview: "Overview",
+  mode: "Mode",
+  recommendations: "Recommendations",
+  quality: "Quality"
+} as const satisfies Readonly<Record<KnowledgeWorkspaceSectionKey, string>>;
 
 export const KNOWLEDGE_MASTER_LABELS = {
   uoms: "UOMs",

@@ -40,6 +40,8 @@ const UOM_ID = "integration-uom-sqft";
 const VENDOR_ID = "integration-vendor-local";
 const TAX_RULE_ID = "integration-tax-gst";
 const TAX_VERSION_ID = "integration-tax-gst-v1";
+const PMC_MODE_ID = "integration-mode-pmc";
+const EXECUTION_MODE_ID = "integration-mode-execution";
 
 const SUPER_ADMIN: PublicUser = {
   id: "integration-super-admin",
@@ -94,11 +96,18 @@ afterAll(async () => {
   await replica.stop();
 });
 
-describe("AI estimator knowledge integrated replica-set invariants", () => {
+describe("AI estimator knowledge integrated replica-set invariants", { timeout: 30_000 }, () => {
   it("reloads the stored actor for reads and mutations and requires exactly one active Super Admin", async () => {
     const services = createServices();
 
     await UserModel.updateOne({ _id: SUPER_ADMIN.id }, { $set: { active: false } }).exec();
+    await expect(services.reference.getBasketDeletionImpact(SUPER_ADMIN, BASKET_ID))
+      .rejects.toMatchObject({ status: 401, code: "INVALID_TOKEN" });
+    await expect(services.reference.permanentlyDeleteBasket(SUPER_ADMIN, BASKET_ID, {
+      expectedVersion: 1,
+      confirmationName: "Carpentry",
+      reason: "   "
+    })).rejects.toMatchObject({ status: 401, code: "INVALID_TOKEN" });
     await expect(services.reference.listBaskets(SUPER_ADMIN, {}, page()))
       .rejects.toMatchObject({ status: 401, code: "INVALID_TOKEN" });
     await expect(services.reference.createBasket(SUPER_ADMIN, { name: "Forbidden inactive write" }))
@@ -509,8 +518,38 @@ describe("AI estimator knowledge integrated replica-set invariants", () => {
     )).version).toBe(pricing.version);
     expect(await AuditEventModel.countDocuments()).toBe(auditCountBeforeOverlap);
 
+    const configuredPricing = await services.item.updateSection(
+      SUPER_ADMIN,
+      draft.mainLineId,
+      draft.revisionId,
+      "pricing",
+      {
+        expectedVersion: pricing.version,
+        expectedAggregateVersion: draft.aggregateVersion,
+        payload: {
+          specifications: [
+            {
+              id: "spec-standard",
+              name: "Board grade",
+              description: "Use the approved board grade."
+            },
+            {
+              id: "spec-private-other",
+              name: "Other internal guidance",
+              description: "Only returned when explicitly selected."
+            }
+          ],
+          brands: [{ id: "brand-public", name: "Public brand" }],
+          technicalDescription: "Public technical detail",
+          qualityLevel: "Premium",
+          internalVendorNotes: "commercially sensitive",
+          priceEntries: [firstReference]
+        }
+      }
+    );
+
     const active = await services.item.activate(SUPER_ADMIN, draft.mainLineId, draft.revisionId, {
-      expectedVersion: draft.aggregateVersion
+      expectedVersion: configuredPricing.aggregateVersion
     });
     const price = await AiEstimatorKnowledgePriceVersionModel.findOne({
       revisionId: draft.revisionId,
@@ -544,9 +583,160 @@ describe("AI estimator knowledge integrated replica-set invariants", () => {
     });
     expect(context.sections.pricing).not.toHaveProperty("internalVendorNotes");
     expect(context.sections.pricing).not.toHaveProperty("priceEntries");
+    expect(context.sections.pricing).toEqual({
+      specifications: [{
+        id: "spec-standard",
+        name: "Board grade",
+        description: "Use the approved board grade."
+      }],
+      brands: [{ id: "brand-public", name: "Public brand" }],
+      technicalDescription: "Public technical detail",
+      qualityLevel: "Premium"
+    });
+    expect(JSON.stringify(context)).not.toContain("spec-private-other");
     expect(JSON.stringify(context)).not.toContain("commercially sensitive");
     expect(JSON.stringify(context)).not.toContain(SUPER_ADMIN.id);
     expect(await persistentStateCounts()).toEqual(beforeContext);
+  });
+
+  it("filters descriptive Specification guidance without changing effective-price resolution", async () => {
+    const services = createServices();
+    const draft = await createConfiguredDraft(
+      services.item,
+      "Specification Guidance Wardrobe",
+      { withPrice: true }
+    );
+    await AiEstimatorKnowledgeSectionModel.updateOne(
+      {
+        mainLineId: draft.mainLineId,
+        revisionId: draft.revisionId,
+        sectionKey: "pricing"
+      },
+      {
+        $set: {
+          "payload.specifications": [{
+            id: "spec-standard",
+            name: "Stored typed board guidance",
+            description: "Compatibility row whose typed fields must remain private.",
+            type: "dropdown",
+            options: ["Standard", "Premium"],
+            value: "Premium"
+          }]
+        }
+      }
+    );
+    const pricing = await services.item.getSection(
+      SUPER_ADMIN,
+      draft.mainLineId,
+      draft.revisionId,
+      "pricing"
+    );
+    const currentEntry = (pricing.payload.priceEntries as Array<{
+      operation: "reference";
+      priceEntryId: string;
+      priceVersionId: string;
+    }>)[0]!;
+    const currentReference = {
+      operation: currentEntry.operation,
+      priceEntryId: currentEntry.priceEntryId,
+      priceVersionId: currentEntry.priceVersionId
+    };
+    const futureHistoricalPriceVersionId = "price-version-historical-specification-future";
+    await AiEstimatorKnowledgePriceVersionModel.create({
+      _id: futureHistoricalPriceVersionId,
+      mainLineId: draft.mainLineId,
+      revisionId: draft.revisionId,
+      priceEntryId: "price-entry-historical-specification-future",
+      versionNumber: 1,
+      vendorId: VENDOR_ID,
+      uomId: UOM_ID,
+      specificationId: "spec-standard",
+      modeId: null,
+      taxRuleId: TAX_RULE_ID,
+      taxVersionId: TAX_VERSION_ID,
+      treatment: "inclusive",
+      inputAmountPaise: 23_600,
+      baseAmountPaise: 20_000,
+      taxAmountPaise: 3_600,
+      totalAmountPaise: 23_600,
+      effectiveFrom: new Date("2027-01-01T00:00:00.000Z"),
+      effectiveTo: null,
+      status: "active",
+      reviewRequired: false,
+      version: 1,
+      createdById: SUPER_ADMIN.id,
+      updatedById: SUPER_ADMIN.id,
+      createdAt: NOW,
+      updatedAt: NOW
+    });
+    const configured = await services.item.updateSection(
+      SUPER_ADMIN,
+      draft.mainLineId,
+      draft.revisionId,
+      "pricing",
+      {
+        expectedVersion: pricing.version,
+        expectedAggregateVersion: draft.aggregateVersion,
+        payload: {
+          specifications: [
+            {
+              id: "spec-standard",
+              name: "Plywood",
+              description: "18 mm BWP-grade plywood for the cabinet carcass."
+            },
+            {
+              id: "spec-hardware",
+              name: "Hardware",
+              description: "Soft-close hinges and full-extension drawer channels."
+            }
+          ],
+          priceEntries: [
+            currentReference,
+            {
+              operation: "reference",
+              priceEntryId: "price-entry-historical-specification-future",
+              priceVersionId: futureHistoricalPriceVersionId
+            }
+          ]
+        }
+      }
+    );
+    await services.item.activate(SUPER_ADMIN, draft.mainLineId, draft.revisionId, {
+      expectedVersion: configured.aggregateVersion
+    });
+
+    const plywood = await services.context.resolve(SUPER_ADMIN, {
+      mainBasketId: BASKET_ID,
+      mainLineId: draft.mainLineId,
+      specificationId: "spec-standard",
+      quantity: "1.00",
+      uomId: UOM_ID
+    });
+    const hardware = await services.context.resolve(SUPER_ADMIN, {
+      mainBasketId: BASKET_ID,
+      mainLineId: draft.mainLineId,
+      specificationId: "spec-hardware",
+      quantity: "1.00",
+      uomId: UOM_ID
+    });
+
+    expect(plywood.lineage.priceVersionId).toBe(currentReference.priceVersionId);
+    expect(hardware.lineage.priceVersionId).toBe(currentReference.priceVersionId);
+    expect(plywood.preview?.effectiveUnitRatePaise).toBe(11_800);
+    expect(hardware.preview?.effectiveUnitRatePaise).toBe(11_800);
+    expect((plywood.sections.pricing as { specifications: unknown[] }).specifications).toEqual([{
+      id: "spec-standard",
+      name: "Plywood",
+      description: "18 mm BWP-grade plywood for the cabinet carcass."
+    }]);
+    expect((hardware.sections.pricing as { specifications: unknown[] }).specifications).toEqual([{
+      id: "spec-hardware",
+      name: "Hardware",
+      description: "Soft-close hinges and full-extension drawer channels."
+    }]);
+    expect(JSON.stringify(plywood.sections.pricing)).not.toContain("type");
+    expect(JSON.stringify(plywood.sections.pricing)).not.toContain("options");
+    expect(JSON.stringify(plywood.sections.pricing)).not.toContain("value");
   });
 
   it("resolves only price versions retained by the active pricing section", async () => {
@@ -741,6 +931,97 @@ describe("AI estimator knowledge integrated replica-set invariants", () => {
       revisionId: initialDraft.revisionId,
       sectionKey: "overview"
     }).lean().exec())?.payload).toMatchObject({ description: "Atomic TV Unit" });
+  });
+
+  it("atomically rejects activation of unresolved canonical Execution recovery until explicit assignment", async () => {
+    const services = createServices();
+    const draft = await createConfiguredDraft(services.item, "Execution recovery activation");
+    const advanced = await services.item.getSection(
+      SUPER_ADMIN,
+      draft.mainLineId,
+      draft.revisionId,
+      "advanced"
+    );
+    const recoveryConfiguration = {
+      id: "configuration-execution-activation-recovery",
+      modeKind: "execution",
+      fields: [{
+        id: "field-execution-activation-recovery",
+        type: "text",
+        label: "Recovery field",
+        options: []
+      }]
+    };
+    await AiEstimatorKnowledgeSectionModel.updateOne(
+      { _id: advanced.id },
+      {
+        $set: {
+          applicability: "configured",
+          payload: { modeConfigurations: [recoveryConfiguration] }
+        }
+      }
+    ).exec();
+    const [lineBefore, revisionBefore, advancedBefore, auditCountBefore] = await Promise.all([
+      AiEstimatorKnowledgeMainLineModel.findById(draft.mainLineId).lean().exec(),
+      AiEstimatorKnowledgeRevisionModel.findById(draft.revisionId).lean().exec(),
+      AiEstimatorKnowledgeSectionModel.findById(advanced.id).lean().exec(),
+      AuditEventModel.countDocuments()
+    ]);
+
+    await expect(services.item.activate(
+      SUPER_ADMIN,
+      draft.mainLineId,
+      draft.revisionId,
+      { expectedVersion: draft.aggregateVersion }
+    )).rejects.toMatchObject({
+      status: 422,
+      code: "KNOWLEDGE_ACTIVATION_BLOCKED",
+      fields: {
+        activation: expect.stringContaining("UNSCOPED_EXECUTION_RECOVERY_REQUIRED")
+      }
+    });
+    const [lineAfter, revisionAfter, advancedAfter, auditCountAfter] = await Promise.all([
+      AiEstimatorKnowledgeMainLineModel.findById(draft.mainLineId).lean().exec(),
+      AiEstimatorKnowledgeRevisionModel.findById(draft.revisionId).lean().exec(),
+      AiEstimatorKnowledgeSectionModel.findById(advanced.id).lean().exec(),
+      AuditEventModel.countDocuments()
+    ]);
+    expect(lineAfter).toEqual(lineBefore);
+    expect(revisionAfter).toEqual(revisionBefore);
+    expect(advancedAfter).toEqual(advancedBefore);
+    expect(auditCountAfter).toBe(auditCountBefore);
+    expect(await AiEstimatorKnowledgeRevisionModel.countDocuments({
+      mainLineId: draft.mainLineId,
+      status: "active"
+    })).toBe(0);
+
+    const assigned = await services.item.updateSection(
+      SUPER_ADMIN,
+      draft.mainLineId,
+      draft.revisionId,
+      "advanced",
+      {
+        expectedVersion: advanced.version,
+        expectedAggregateVersion: draft.aggregateVersion,
+        applicability: "configured",
+        payload: {
+          modeConfigurations: [{
+            ...recoveryConfiguration,
+            executionSource: "sub_vendor"
+          }]
+        }
+      }
+    );
+    await expect(services.item.activate(
+      SUPER_ADMIN,
+      draft.mainLineId,
+      draft.revisionId,
+      { expectedVersion: assigned.aggregateVersion }
+    )).resolves.toMatchObject({
+      status: "active",
+      activeRevision: { id: draft.revisionId, status: "active" },
+      draftRevision: null
+    });
   });
 
   it("duplicates stable content with remapped step and price identities and mandatory price review", async () => {
@@ -992,7 +1273,8 @@ describe("AI estimator knowledge integrated replica-set invariants", () => {
     expect(context.sections.scope).toMatchObject({ exclusions: [] });
     expect(context.sections.recommendations).toMatchObject({ recommendations: [] });
     expect(context.sections.quality).toMatchObject({ parameters: [] });
-    expect(context.sections.advanced).toMatchObject({ dependencies: [], modeOverrides: [] });
+    expect(context.sections.advanced).toMatchObject({ dependencies: [] });
+    expect(context.sections.advanced).not.toHaveProperty("modeOverrides");
     expect(context.sections.execution).toMatchObject({
       steps: [expect.objectContaining({ id: "active-step", dependencyStepIds: [] })],
       productivity: []
@@ -1011,6 +1293,424 @@ describe("AI estimator knowledge integrated replica-set invariants", () => {
     ]) {
       expect(serialized).not.toContain(privateValue);
     }
+  });
+
+  it("keeps PMC, Sub-Vendor, and In-house definitions isolated without changing price resolution", async () => {
+    const services = createServices();
+    let draft = await createConfiguredDraft(
+      services.item,
+      "Dynamic mode configuration",
+      { withPrice: true }
+    );
+    const pricing = await services.item.getSection(
+      SUPER_ADMIN,
+      draft.mainLineId,
+      draft.revisionId,
+      "pricing"
+    );
+    const sharedEntry = (pricing.payload.priceEntries as Array<{
+      priceEntryId: string;
+      priceVersionId: string;
+    }>)[0]!;
+    await services.item.updateSection(
+      SUPER_ADMIN,
+      draft.mainLineId,
+      draft.revisionId,
+      "pricing",
+      {
+        expectedVersion: pricing.version,
+        expectedAggregateVersion: draft.aggregateVersion,
+        payload: {
+          specifications: [{ id: "spec-standard", name: "Standard" }],
+          priceEntries: [
+            {
+              operation: "reference",
+              priceEntryId: sharedEntry.priceEntryId,
+              priceVersionId: sharedEntry.priceVersionId
+            },
+            {
+              ...priceCommand("price-entry-legacy-pmc", "2026-01-01T00:00:00.000Z"),
+              modeId: PMC_MODE_ID,
+              inputAmountPaise: 23_600
+            }
+          ]
+        }
+      }
+    );
+    draft = {
+      ...draft,
+      aggregateVersion: (await services.item.getItem(SUPER_ADMIN, draft.mainLineId)).version
+    };
+    const advancedPayload = modeConfigurationPayload("A1", "E-27");
+    const initialAdvanced = await services.item.getSection(
+      SUPER_ADMIN,
+      draft.mainLineId,
+      draft.revisionId,
+      "advanced"
+    );
+    expect(initialAdvanced).toMatchObject({
+      applicability: "not_configured",
+      payload: {}
+    });
+    const savedAdvanced = await services.item.updateSection(
+      SUPER_ADMIN,
+      draft.mainLineId,
+      draft.revisionId,
+      "advanced",
+      {
+        expectedVersion: initialAdvanced.version,
+        expectedAggregateVersion: draft.aggregateVersion,
+        applicability: "configured",
+        payload: advancedPayload
+      }
+    );
+    draft = {
+      ...draft,
+      aggregateVersion: (await services.item.getItem(SUPER_ADMIN, draft.mainLineId)).version
+    };
+    expect(savedAdvanced.applicability).toBe("configured");
+    expect(savedAdvanced.payload).toEqual(advancedPayload);
+    const storedAdvancedPayload = {
+      ...advancedPayload,
+      modeConfigurations: advancedPayload.modeConfigurations.map((configuration) => ({
+        ...configuration,
+        fields: configuration.fields.map((field) => ({
+          ...field,
+          value: configuration.modeKind === "pmc"
+            ? "private-pmc-answer"
+            : configuration.executionSource === "sub_vendor"
+              ? "private-sub-vendor-answer"
+              : "private-in-house-answer"
+        }))
+      }))
+    };
+    await AiEstimatorKnowledgeSectionModel.updateOne(
+      { _id: savedAdvanced.id },
+      { $set: { payload: storedAdvancedPayload } }
+    ).exec();
+
+    const active = await services.item.activate(
+      SUPER_ADMIN,
+      draft.mainLineId,
+      draft.revisionId,
+      { expectedVersion: draft.aggregateVersion }
+    );
+    expect(active.activeRevision?.contentDigest).toMatch(/^[a-f0-9]{64}$/u);
+
+    const pmcContext = await services.context.resolve(SUPER_ADMIN, {
+      mainBasketId: BASKET_ID,
+      mainLineId: draft.mainLineId,
+      modeKind: "pmc"
+    });
+    const executionContext = await services.context.resolve(SUPER_ADMIN, {
+      mainBasketId: BASKET_ID,
+      mainLineId: draft.mainLineId,
+      modeKind: "execution"
+    });
+    const subVendorContext = await services.context.resolve(SUPER_ADMIN, {
+      mainBasketId: BASKET_ID,
+      mainLineId: draft.mainLineId,
+      modeKind: "execution",
+      executionSource: "sub_vendor"
+    });
+    const inHouseContext = await services.context.resolve(SUPER_ADMIN, {
+      mainBasketId: BASKET_ID,
+      mainLineId: draft.mainLineId,
+      modeKind: "execution",
+      executionSource: "in_house"
+    });
+    const legacyContext = await services.context.resolve(SUPER_ADMIN, {
+      mainBasketId: BASKET_ID,
+      mainLineId: draft.mainLineId,
+      modeId: PMC_MODE_ID
+    });
+    const selectorFreeContext = await services.context.resolve(SUPER_ADMIN, {
+      mainBasketId: BASKET_ID,
+      mainLineId: draft.mainLineId
+    });
+    const prices = await AiEstimatorKnowledgePriceVersionModel.find({
+      revisionId: draft.revisionId
+    }).lean().exec();
+    const sharedPrice = prices.find((price) => price.modeId === null);
+    const legacyPmcPrice = prices.find((price) => price.modeId === PMC_MODE_ID);
+    expect(pmcContext.lineage).toMatchObject({
+      mainLineId: draft.mainLineId,
+      revisionId: draft.revisionId,
+      contentDigest: active.activeRevision?.contentDigest,
+      priceVersionId: sharedPrice?._id
+    });
+    expect(pmcContext.sections.advanced).toMatchObject({
+      dependencies: [],
+      modeConfigurations: [{
+        id: "configuration-pmc",
+        modeKind: "pmc",
+        fields: [{
+          id: "field-pmc-mark",
+          type: "text",
+          label: "PMC mark A1",
+          options: []
+        }]
+      }]
+    });
+    expect(JSON.stringify(pmcContext)).not.toContain("Sub-Vendor crew E-27");
+    expect(JSON.stringify(pmcContext)).not.toContain("In-house supervisor");
+    expect(JSON.stringify(pmcContext)).not.toContain("private-pmc-answer");
+    expect(pmcContext.preview).toMatchObject({
+      effectivePriceVersionId: sharedPrice?._id,
+      effectiveUnitRatePaise: 11_800
+    });
+    expect(executionContext.sections.advanced).toMatchObject({
+      dependencies: [],
+      modeConfigurations: [
+        expect.objectContaining({
+          id: "configuration-execution-sub-vendor",
+          modeKind: "execution",
+          executionSource: "sub_vendor",
+          fields: [expect.objectContaining({ id: "field-crew-code", label: "Sub-Vendor crew E-27" })]
+        }),
+        expect.objectContaining({
+          id: "configuration-execution-in-house",
+          modeKind: "execution",
+          executionSource: "in_house",
+          fields: [expect.objectContaining({ id: "field-in-house-supervisor", label: "In-house supervisor" })]
+        })
+      ]
+    });
+    expect(JSON.stringify(executionContext)).not.toContain("PMC mark A1");
+    expect(JSON.stringify(executionContext)).not.toContain("private-sub-vendor-answer");
+    expect(JSON.stringify(executionContext)).not.toContain("private-in-house-answer");
+    expect(subVendorContext.sections.advanced).toMatchObject({
+      modeConfigurations: [{
+        executionSource: "sub_vendor",
+        fields: [expect.objectContaining({ label: "Sub-Vendor crew E-27" })]
+      }]
+    });
+    expect(JSON.stringify(subVendorContext)).not.toContain("In-house supervisor");
+    expect(inHouseContext.sections.advanced).toMatchObject({
+      modeConfigurations: [{
+        executionSource: "in_house",
+        fields: [expect.objectContaining({ label: "In-house supervisor" })]
+      }]
+    });
+    expect(JSON.stringify(inHouseContext)).not.toContain("Sub-Vendor crew E-27");
+    expect(subVendorContext.lineage.priceVersionId).toBe(sharedPrice?._id);
+    expect(inHouseContext.lineage.priceVersionId).toBe(sharedPrice?._id);
+    expect(subVendorContext.preview).toMatchObject({ effectiveUnitRatePaise: 11_800 });
+    expect(inHouseContext.preview).toMatchObject({ effectiveUnitRatePaise: 11_800 });
+    expect(executionContext.lineage.priceVersionId).toBe(sharedPrice?._id);
+    expect(executionContext.preview).toMatchObject({
+      effectivePriceVersionId: sharedPrice?._id,
+      effectiveUnitRatePaise: 11_800
+    });
+    expect(legacyContext.sections.advanced).toMatchObject({
+      dependencies: [],
+      modeConfigurations: []
+    });
+    expect(JSON.stringify(legacyContext)).not.toContain("PMC mark A1");
+    expect(JSON.stringify(legacyContext)).not.toContain("Sub-Vendor crew E-27");
+    expect(JSON.stringify(legacyContext)).not.toContain("Execution override must stay isolated");
+    expect(JSON.stringify(legacyContext)).not.toContain(PMC_MODE_ID);
+    expect(legacyContext.lineage.priceVersionId).toBe(legacyPmcPrice?._id);
+    expect(legacyContext.preview).toMatchObject({
+      effectivePriceVersionId: legacyPmcPrice?._id,
+      effectiveUnitRatePaise: 23_600
+    });
+    expect(selectorFreeContext.lineage.priceVersionId).toBeNull();
+    expect(selectorFreeContext.preview).toBeNull();
+    expect(selectorFreeContext.sections.advanced).toMatchObject({
+      dependencies: [],
+      modeConfigurations: expect.arrayContaining([
+        expect.objectContaining({ modeKind: "pmc" }),
+        expect.objectContaining({ executionSource: "sub_vendor" }),
+        expect.objectContaining({ executionSource: "in_house" })
+      ])
+    });
+    expect(JSON.stringify(selectorFreeContext.sections.advanced)).not.toContain("modeId");
+    expect(JSON.stringify(selectorFreeContext.sections.advanced)).not.toContain("value");
+    expect(JSON.stringify(selectorFreeContext.sections.advanced)).not.toContain("revisionLineage");
+    await expect(services.context.resolve(SUPER_ADMIN, {
+      mainBasketId: BASKET_ID,
+      mainLineId: draft.mainLineId,
+      modeKind: "pmc",
+      modeId: PMC_MODE_ID
+    })).rejects.toMatchObject({ status: 400, code: "VALIDATION_ERROR" });
+    await expect(services.context.resolve(SUPER_ADMIN, {
+      mainBasketId: BASKET_ID,
+      mainLineId: draft.mainLineId,
+      modeKind: "pmc",
+      executionSource: "sub_vendor"
+    })).rejects.toMatchObject({
+      status: 400,
+      code: "VALIDATION_ERROR",
+      fields: { executionSource: expect.stringContaining("requires") }
+    });
+
+    const withDraft = await services.item.createRevision(
+      SUPER_ADMIN,
+      draft.mainLineId,
+      { expectedVersion: active.version }
+    );
+    const copiedRevisionId = withDraft.draftRevisionId!;
+    const copiedAdvanced = await services.item.getSection(
+      SUPER_ADMIN,
+      draft.mainLineId,
+      copiedRevisionId,
+      "advanced"
+    );
+    expect(copiedAdvanced.payload).toEqual(storedAdvancedPayload);
+
+    const auditCountBeforeCas = await AuditEventModel.countDocuments({
+      action: "ai_estimator_knowledge_section_updated",
+      entityId: copiedAdvanced.id
+    });
+    const casResults = await Promise.allSettled([
+      services.item.updateSection(
+        SUPER_ADMIN,
+        draft.mainLineId,
+        copiedRevisionId,
+        "advanced",
+        {
+          expectedVersion: copiedAdvanced.version,
+          expectedAggregateVersion: withDraft.version,
+          payload: modeConfigurationPayload("B1", "E-27")
+        }
+      ),
+      services.item.updateSection(
+        SUPER_ADMIN,
+        draft.mainLineId,
+        copiedRevisionId,
+        "advanced",
+        {
+          expectedVersion: copiedAdvanced.version,
+          expectedAggregateVersion: withDraft.version,
+          payload: modeConfigurationPayload("C1", "E-27")
+        }
+      )
+    ]);
+    expect(casResults.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    expect(casResults.find((result) => result.status === "rejected")).toMatchObject({
+      status: "rejected",
+      reason: { status: 409, code: "VERSION_CONFLICT" }
+    });
+    const currentDraftAdvanced = await services.item.getSection(
+      SUPER_ADMIN,
+      draft.mainLineId,
+      copiedRevisionId,
+      "advanced"
+    );
+    const currentConfigurations = currentDraftAdvanced.payload.modeConfigurations as Array<{
+      modeKind?: "pmc" | "execution";
+      executionSource?: "sub_vendor" | "in_house";
+      fields: Array<{ label: string }>;
+    }>;
+    expect(currentConfigurations.find(({ modeKind }) => modeKind === "pmc")?.fields[0]?.label)
+      .toMatch(/^PMC mark [BC]1$/u);
+    expect(currentConfigurations.find(({ executionSource }) => executionSource === "sub_vendor")?.fields[0]?.label)
+      .toBe("Sub-Vendor crew E-27");
+    expect(await AuditEventModel.countDocuments({
+      action: "ai_estimator_knowledge_section_updated",
+      entityId: copiedAdvanced.id
+    })).toBe(auditCountBeforeCas + 1);
+
+    const contextAfterDraftEdit = await services.context.resolve(SUPER_ADMIN, {
+      mainBasketId: BASKET_ID,
+      mainLineId: draft.mainLineId,
+      modeKind: "pmc"
+    });
+    expect(JSON.stringify(contextAfterDraftEdit.sections.advanced)).toContain("PMC mark A1");
+    expect(JSON.stringify(contextAfterDraftEdit.sections.advanced)).not.toMatch(/PMC mark [BC]1/u);
+
+    await expect(services.item.updateSection(
+      SUPER_ADMIN,
+      draft.mainLineId,
+      draft.revisionId,
+      "advanced",
+      {
+        expectedVersion: savedAdvanced.version,
+        expectedAggregateVersion: (await services.item.getItem(SUPER_ADMIN, draft.mainLineId)).version,
+        payload: modeConfigurationPayload("forbidden", "E-27")
+      }
+    )).rejects.toMatchObject({
+      status: 409,
+      code: "KNOWLEDGE_REVISION_IMMUTABLE"
+    });
+
+    await AiEstimatorKnowledgeModeModel.deleteOne({ _id: PMC_MODE_ID });
+    await expect(services.context.resolve(SUPER_ADMIN, {
+      mainBasketId: BASKET_ID,
+      mainLineId: draft.mainLineId,
+      modeKind: "execution"
+    })).resolves.toMatchObject({
+      lineage: { priceVersionId: sharedPrice?._id },
+      preview: { effectivePriceVersionId: sharedPrice?._id }
+    });
+    await expect(services.context.resolve(SUPER_ADMIN, {
+      mainBasketId: BASKET_ID,
+      mainLineId: draft.mainLineId,
+      modeId: PMC_MODE_ID
+    })).rejects.toMatchObject({ status: 400, code: "VALIDATION_ERROR" });
+  });
+
+  it("rejects newly introduced legacy reusable-Mode configurations without mutation", async () => {
+    const services = createServices();
+    const legacyMode = await services.reference.createMaster(SUPER_ADMIN, "modes", {
+      code: "LEGACY_COMPATIBILITY_ONLY",
+      name: "Legacy compatibility only"
+    });
+    const draft = await createConfiguredDraft(
+      services.item,
+      "Reject new legacy Mode configuration"
+    );
+    const advanced = await services.item.getSection(
+      SUPER_ADMIN,
+      draft.mainLineId,
+      draft.revisionId,
+      "advanced"
+    );
+    const auditCount = await AuditEventModel.countDocuments({
+      action: "ai_estimator_knowledge_section_updated",
+      entityId: advanced.id
+    });
+
+    await expect(services.item.updateSection(
+      SUPER_ADMIN,
+      draft.mainLineId,
+      draft.revisionId,
+      "advanced",
+      {
+        expectedVersion: advanced.version,
+        expectedAggregateVersion: draft.aggregateVersion,
+        applicability: "configured",
+        payload: singleModeConfigurationPayload(
+          legacyMode.id,
+          "new-legacy",
+          "must-not-persist"
+        )
+      }
+    )).rejects.toMatchObject({
+      status: 400,
+      code: "VALIDATION_ERROR",
+      fields: {
+        "payload.modeConfigurations.0.modeId": expect.stringContaining("compatibility-only")
+      }
+    });
+    expect(await AiEstimatorKnowledgeSectionModel.findById(advanced.id).lean())
+      .toMatchObject({
+        applicability: "not_configured",
+        version: advanced.version
+      });
+    await expect(services.item.getSection(
+      SUPER_ADMIN,
+      draft.mainLineId,
+      draft.revisionId,
+      "advanced"
+    )).resolves.toMatchObject({ applicability: "not_configured", payload: {} });
+    expect(await AiEstimatorKnowledgeMainLineModel.findById(draft.mainLineId).lean())
+      .toMatchObject({ version: draft.aggregateVersion });
+    expect(await AuditEventModel.countDocuments({
+      action: "ai_estimator_knowledge_section_updated",
+      entityId: advanced.id
+    })).toBe(auditCount);
   });
 
   it("accepts only known active requested surfaces and modes for unrestricted and configured compatibility", async () => {
@@ -1164,6 +1864,334 @@ describe("AI estimator knowledge integrated replica-set invariants", () => {
       reasonCode: "INVALID_PRODUCTIVITY_PRECISION"
     });
   });
+
+  it("serializes permanent deletion against Main Line creation in both commit orders", async () => {
+    const base = createServices();
+    const deleteFirstBasket = await base.reference.createBasket(SUPER_ADMIN, {
+      name: "Delete First Basket"
+    });
+    const deleteGate = createGatedAudit(
+      "ai_estimator_knowledge_basket_permanently_deleted"
+    );
+    const deleteFirstReference = createRaceReferenceService(deleteGate.audit);
+    const competingItem = createRaceItemService(persistentAudit());
+    const deletion = deleteFirstReference.permanentlyDeleteBasket(
+      SUPER_ADMIN,
+      deleteFirstBasket.id,
+      {
+        expectedVersion: deleteFirstBasket.version,
+        confirmationName: deleteFirstBasket.name,
+        reason: "Exercise delete-first commit order"
+      }
+    );
+    await deleteGate.entered;
+    const losingCreation = competingItem.createMainLine(
+      SUPER_ADMIN,
+      deleteFirstBasket.id,
+      { name: "Must not become orphaned" }
+    );
+    await nextEventLoopTurn();
+    deleteGate.release();
+
+    const [deleteFirstResult, losingCreationResult] = await Promise.allSettled([
+      deletion,
+      losingCreation
+    ]);
+    expect(deleteFirstResult).toMatchObject({
+      status: "fulfilled",
+      value: { basketId: deleteFirstBasket.id, deleted: true }
+    });
+    expect(losingCreationResult).toMatchObject({
+      status: "rejected",
+      reason: { status: 404, code: "NOT_FOUND" }
+    });
+    expect(await AiEstimatorKnowledgeBasketModel.exists({ _id: deleteFirstBasket.id }))
+      .toBeNull();
+    expect(await AiEstimatorKnowledgeMainLineModel.countDocuments({
+      basketId: deleteFirstBasket.id
+    })).toBe(0);
+
+    const createFirstBasket = await base.reference.createBasket(SUPER_ADMIN, {
+      name: "Create First Basket"
+    });
+    const createGate = createGatedAudit("ai_estimator_knowledge_main_line_created");
+    const createFirstItem = createRaceItemService(createGate.audit);
+    const competingReference = createRaceReferenceService(persistentAudit());
+    const creation = createFirstItem.createMainLine(
+      SUPER_ADMIN,
+      createFirstBasket.id,
+      { name: "Committed Estimation Item" }
+    );
+    await createGate.entered;
+    const losingDeletion = competingReference.permanentlyDeleteBasket(
+      SUPER_ADMIN,
+      createFirstBasket.id,
+      {
+        expectedVersion: createFirstBasket.version,
+        confirmationName: createFirstBasket.name,
+        reason: "Exercise create-first commit order"
+      }
+    );
+    await nextEventLoopTurn();
+    createGate.release();
+
+    const [createFirstResult, losingDeletionResult] = await Promise.allSettled([
+      creation,
+      losingDeletion
+    ]);
+    expect(createFirstResult.status).toBe("fulfilled");
+    expect(losingDeletionResult).toMatchObject({
+      status: "rejected",
+      reason: { status: 409, code: "BASKET_DELETE_BLOCKED" }
+    });
+    expect(await AiEstimatorKnowledgeBasketModel.findById(createFirstBasket.id).lean())
+      .toMatchObject({ dependencyEpoch: 1, version: 1 });
+    expect(await AiEstimatorKnowledgeMainLineModel.countDocuments({
+      basketId: createFirstBasket.id
+    })).toBe(1);
+    expect(await AuditEventModel.countDocuments({
+      action: "ai_estimator_knowledge_basket_permanently_deleted",
+      entityId: createFirstBasket.id
+    })).toBe(0);
+  });
+
+  it("serializes permanent deletion against new historical Basket references in both commit orders", async () => {
+    const base = createServices();
+    const deleteFirstTarget = await base.reference.createBasket(SUPER_ADMIN, {
+      name: "Delete First Relationship Target"
+    });
+    const deleteFirstSource = await base.item.createMainLine(
+      SUPER_ADMIN,
+      BASKET_ID,
+      { name: "Delete First Relationship Source" }
+    );
+    const deleteFirstScope = await base.item.getSection(
+      SUPER_ADMIN,
+      deleteFirstSource.mainLineId,
+      deleteFirstSource.draftRevisionId!,
+      "scope"
+    );
+    const deleteGate = createGatedAudit(
+      "ai_estimator_knowledge_basket_permanently_deleted"
+    );
+    const deletion = createRaceReferenceService(deleteGate.audit)
+      .permanentlyDeleteBasket(SUPER_ADMIN, deleteFirstTarget.id, {
+        expectedVersion: deleteFirstTarget.version,
+        confirmationName: deleteFirstTarget.name,
+        reason: "Exercise delete-first reference order"
+      });
+    await deleteGate.entered;
+    const losingReference = createRaceItemService(persistentAudit()).updateSection(
+      SUPER_ADMIN,
+      deleteFirstSource.mainLineId,
+      deleteFirstSource.draftRevisionId!,
+      "scope",
+      {
+        expectedVersion: deleteFirstScope.version,
+        expectedAggregateVersion: deleteFirstSource.version,
+        payload: historicalScopeReference(deleteFirstTarget.id, "delete-first")
+      }
+    );
+    await nextEventLoopTurn();
+    deleteGate.release();
+
+    const [deleteFirstResult, losingReferenceResult] = await Promise.allSettled([
+      deletion,
+      losingReference
+    ]);
+    expect(deleteFirstResult.status).toBe("fulfilled");
+    expect(losingReferenceResult).toMatchObject({
+      status: "rejected",
+      reason: { status: 409, code: "KNOWLEDGE_REFERENCE_INVALID" }
+    });
+    expect(await AiEstimatorKnowledgeBasketModel.exists({ _id: deleteFirstTarget.id }))
+      .toBeNull();
+    const rolledBackScope = await AiEstimatorKnowledgeSectionModel
+      .findById(deleteFirstScope.id)
+      .lean();
+    expect(rolledBackScope).toMatchObject({ version: deleteFirstScope.version });
+    expect(JSON.stringify(rolledBackScope?.payload ?? {}))
+      .not.toContain(deleteFirstTarget.id);
+
+    const referenceFirstTarget = await base.reference.createBasket(SUPER_ADMIN, {
+      name: "Reference First Relationship Target"
+    });
+    const referenceFirstSource = await base.item.createMainLine(
+      SUPER_ADMIN,
+      BASKET_ID,
+      { name: "Reference First Relationship Source" }
+    );
+    const referenceFirstScope = await base.item.getSection(
+      SUPER_ADMIN,
+      referenceFirstSource.mainLineId,
+      referenceFirstSource.draftRevisionId!,
+      "scope"
+    );
+    const referenceGate = createGatedAudit("ai_estimator_knowledge_section_updated");
+    const referenceWrite = createRaceItemService(referenceGate.audit).updateSection(
+      SUPER_ADMIN,
+      referenceFirstSource.mainLineId,
+      referenceFirstSource.draftRevisionId!,
+      "scope",
+      {
+        expectedVersion: referenceFirstScope.version,
+        expectedAggregateVersion: referenceFirstSource.version,
+        payload: historicalScopeReference(referenceFirstTarget.id, "reference-first")
+      }
+    );
+    await referenceGate.entered;
+    const losingDeletion = createRaceReferenceService(persistentAudit())
+      .permanentlyDeleteBasket(SUPER_ADMIN, referenceFirstTarget.id, {
+        expectedVersion: referenceFirstTarget.version,
+        confirmationName: referenceFirstTarget.name,
+        reason: "Exercise reference-first commit order"
+      });
+    await nextEventLoopTurn();
+    referenceGate.release();
+
+    const [referenceFirstResult, losingDeletionResult] = await Promise.allSettled([
+      referenceWrite,
+      losingDeletion
+    ]);
+    expect(referenceFirstResult.status).toBe("fulfilled");
+    expect(losingDeletionResult).toMatchObject({
+      status: "rejected",
+      reason: { status: 409, code: "BASKET_DELETE_BLOCKED" }
+    });
+    expect(await AiEstimatorKnowledgeBasketModel.findById(referenceFirstTarget.id).lean())
+      .toMatchObject({ dependencyEpoch: 1, version: 1 });
+    await expect(base.reference.getBasketDeletionImpact(
+      SUPER_ADMIN,
+      referenceFirstTarget.id
+    )).resolves.toMatchObject({
+      historicalReferenceCount: 1,
+      canDelete: false,
+      blockers: [expect.objectContaining({ code: "HAS_HISTORICAL_REFERENCES" })]
+    });
+  });
+
+  it("serializes stale Draft duplication against last-reference removal and permanent deletion", async () => {
+    const base = createServices();
+    const deleteFirstTarget = await base.reference.createBasket(SUPER_ADMIN, {
+      name: "Delete First Duplicate Target"
+    });
+    const deleteFirstSource = await createDuplicateRaceSource(
+      base.item,
+      deleteFirstTarget.id,
+      "Delete First Duplicate Source"
+    );
+    const beforeDeleteFirstMainLines = await AiEstimatorKnowledgeMainLineModel.countDocuments();
+    const duplicateReadGate = createGatedAudit(
+      "ai_estimator_knowledge_price_version_created"
+    );
+    const losingDuplicate = createRaceItemService(duplicateReadGate.audit).duplicate(
+      SUPER_ADMIN,
+      deleteFirstSource.mainLineId,
+      {
+        expectedVersion: deleteFirstSource.aggregateVersion,
+        name: "Must Not Retain Deleted Target"
+      }
+    );
+    await duplicateReadGate.entered;
+    await base.item.updateSection(
+      SUPER_ADMIN,
+      deleteFirstSource.mainLineId,
+      deleteFirstSource.revisionId,
+      "scope",
+      {
+        expectedVersion: deleteFirstSource.scopeVersion,
+        expectedAggregateVersion: deleteFirstSource.aggregateVersion,
+        payload: { exclusions: [] }
+      }
+    );
+    await expect(createRaceReferenceService(persistentAudit()).permanentlyDeleteBasket(
+      SUPER_ADMIN,
+      deleteFirstTarget.id,
+      {
+        expectedVersion: deleteFirstTarget.version,
+        confirmationName: deleteFirstTarget.name,
+        reason: "Exercise delete-first stale duplicate order"
+      }
+    )).resolves.toMatchObject({ basketId: deleteFirstTarget.id, deleted: true });
+    duplicateReadGate.release();
+
+    const losingDuplicateResult = await Promise.allSettled([losingDuplicate]);
+    expect(losingDuplicateResult[0]).toMatchObject({
+      status: "rejected",
+      reason: { status: 409, code: "VERSION_CONFLICT" }
+    });
+    expect(await AiEstimatorKnowledgeBasketModel.exists({ _id: deleteFirstTarget.id }))
+      .toBeNull();
+    expect(await AiEstimatorKnowledgeMainLineModel.countDocuments())
+      .toBe(beforeDeleteFirstMainLines);
+    expect(await AiEstimatorKnowledgeSectionModel.countDocuments({
+      "payload.exclusions.targetBasketId": deleteFirstTarget.id
+    })).toBe(0);
+    expect(await AuditEventModel.countDocuments({
+      action: "ai_estimator_knowledge_main_line_duplicated",
+      "newValues.sourceMainLineId": deleteFirstSource.mainLineId
+    })).toBe(0);
+
+    const duplicateFirstTarget = await base.reference.createBasket(SUPER_ADMIN, {
+      name: "Duplicate First Target"
+    });
+    const duplicateFirstSource = await createDuplicateRaceSource(
+      base.item,
+      duplicateFirstTarget.id,
+      "Duplicate First Source"
+    );
+    const duplicateCommitGate = createGatedAudit(
+      "ai_estimator_knowledge_main_line_duplicated"
+    );
+    const winningDuplicate = createRaceItemService(duplicateCommitGate.audit).duplicate(
+      SUPER_ADMIN,
+      duplicateFirstSource.mainLineId,
+      {
+        expectedVersion: duplicateFirstSource.aggregateVersion,
+        name: "Committed Relationship Copy"
+      }
+    );
+    await duplicateCommitGate.entered;
+    await base.item.updateSection(
+      SUPER_ADMIN,
+      duplicateFirstSource.mainLineId,
+      duplicateFirstSource.revisionId,
+      "scope",
+      {
+        expectedVersion: duplicateFirstSource.scopeVersion,
+        expectedAggregateVersion: duplicateFirstSource.aggregateVersion,
+        payload: { exclusions: [] }
+      }
+    );
+    const losingDeletion = createRaceReferenceService(persistentAudit())
+      .permanentlyDeleteBasket(SUPER_ADMIN, duplicateFirstTarget.id, {
+        expectedVersion: duplicateFirstTarget.version,
+        confirmationName: duplicateFirstTarget.name,
+        reason: "Exercise duplicate-first stale source order"
+      });
+    await nextEventLoopTurn();
+    duplicateCommitGate.release();
+
+    const [winningDuplicateResult, losingDeletionResult] = await Promise.allSettled([
+      winningDuplicate,
+      losingDeletion
+    ]);
+    expect(winningDuplicateResult.status).toBe("fulfilled");
+    expect(losingDeletionResult).toMatchObject({
+      status: "rejected",
+      reason: { status: 409, code: "BASKET_DELETE_BLOCKED" }
+    });
+    expect(await AiEstimatorKnowledgeBasketModel.findById(duplicateFirstTarget.id).lean())
+      .toMatchObject({ dependencyEpoch: 2, version: 1 });
+    await expect(base.reference.getBasketDeletionImpact(
+      SUPER_ADMIN,
+      duplicateFirstTarget.id
+    )).resolves.toMatchObject({
+      historicalReferenceCount: 1,
+      canDelete: false,
+      blockers: [expect.objectContaining({ code: "HAS_HISTORICAL_REFERENCES" })]
+    });
+  });
 });
 
 function createServices() {
@@ -1183,6 +2211,127 @@ function createServices() {
     item,
     context: createAiEstimatorKnowledgeContextService({ now: () => NOW })
   };
+}
+
+const raceActorGuard = {
+  async requireReadActor() {
+    return { id: SUPER_ADMIN.id, role: "super_admin" as const };
+  },
+  async requireMutationActor() {
+    return { id: SUPER_ADMIN.id, role: "super_admin" as const };
+  }
+};
+
+function persistentAudit() {
+  return createAuditService(createMemoryRepository());
+}
+
+function createRaceReferenceService(audit: ReturnType<typeof persistentAudit>) {
+  return createAiEstimatorKnowledgeReferenceService({
+    audit,
+    actorGuard: raceActorGuard,
+    now: () => NOW,
+    createId: nextId
+  });
+}
+
+function createRaceItemService(audit: ReturnType<typeof persistentAudit>) {
+  return createAiEstimatorKnowledgeItemService({
+    audit,
+    actorGuard: raceActorGuard,
+    now: () => NOW,
+    uuid: nextId
+  });
+}
+
+function createGatedAudit(action: string) {
+  const delegate = persistentAudit();
+  let enteredResolve!: () => void;
+  let releaseResolve!: () => void;
+  let gated = false;
+  const entered = new Promise<void>((resolve) => {
+    enteredResolve = resolve;
+  });
+  const released = new Promise<void>((resolve) => {
+    releaseResolve = resolve;
+  });
+  return {
+    entered,
+    release: releaseResolve,
+    audit: {
+      async appendInMongoTransaction(
+        ...args: Parameters<typeof delegate.appendInMongoTransaction>
+      ) {
+        if (!gated && args[0].action === action) {
+          gated = true;
+          enteredResolve();
+          await released;
+        }
+        return delegate.appendInMongoTransaction(...args);
+      }
+    }
+  };
+}
+
+function historicalScopeReference(targetBasketId: string, suffix: string) {
+  return {
+    modeIds: [],
+    surfaceIds: [],
+    exclusions: [{
+      id: `inactive-scope-${suffix}`,
+      targetBasketId,
+      targetMainLineId: null,
+      reason: "Retained historical relationship",
+      active: false
+    }]
+  };
+}
+
+async function createDuplicateRaceSource(
+  item: AiEstimatorKnowledgeItemService,
+  targetBasketId: string,
+  name: string
+): Promise<{
+  mainLineId: string;
+  revisionId: string;
+  aggregateVersion: number;
+  scopeVersion: number;
+}> {
+  let source = await item.createMainLine(SUPER_ADMIN, BASKET_ID, { name });
+  const revisionId = source.draftRevisionId!;
+  const scope = await item.getSection(SUPER_ADMIN, source.mainLineId, revisionId, "scope");
+  const savedScope = await item.updateSection(
+    SUPER_ADMIN,
+    source.mainLineId,
+    revisionId,
+    "scope",
+    {
+      expectedVersion: scope.version,
+      expectedAggregateVersion: source.version,
+      payload: historicalScopeReference(targetBasketId, nextId())
+    }
+  );
+  source = await item.getItem(SUPER_ADMIN, source.mainLineId);
+  const pricing = await item.getSection(SUPER_ADMIN, source.mainLineId, revisionId, "pricing");
+  await item.updateSection(SUPER_ADMIN, source.mainLineId, revisionId, "pricing", {
+    expectedVersion: pricing.version,
+    expectedAggregateVersion: source.version,
+    payload: {
+      specifications: [{ id: "spec-standard", name: "Duplicate race" }],
+      priceEntries: [priceCommand(`price-entry-${nextId()}`, "2026-01-01T00:00:00.000Z")]
+    }
+  });
+  source = await item.getItem(SUPER_ADMIN, source.mainLineId);
+  return {
+    mainLineId: source.mainLineId,
+    revisionId,
+    aggregateVersion: source.version,
+    scopeVersion: savedScope.version
+  };
+}
+
+async function nextEventLoopTurn(): Promise<void> {
+  await new Promise<void>((resolve) => setImmediate(resolve));
 }
 
 async function createConfiguredDraft(
@@ -1304,6 +2453,84 @@ async function createAndActivateOverviewOnly(
   };
 }
 
+function modeConfigurationPayload(pmcMarker: string, crewMarker: string) {
+  return {
+    dependencies: [],
+    modeOverrides: [
+      {
+        id: "override-pmc",
+        modeId: PMC_MODE_ID,
+        description: "Retained existing Advanced override",
+        active: true
+      },
+      {
+        id: "override-execution",
+        modeId: EXECUTION_MODE_ID,
+        description: "Execution override must stay isolated",
+        active: true
+      }
+    ],
+    revisionLineage: [],
+    modeConfigurations: [
+      {
+        id: "configuration-pmc",
+        modeKind: "pmc",
+        fields: [{
+          id: "field-pmc-mark",
+          type: "text",
+          label: `PMC mark ${pmcMarker}`,
+          options: []
+        }]
+      },
+      {
+        id: "configuration-execution-sub-vendor",
+        modeKind: "execution",
+        executionSource: "sub_vendor",
+        fields: [{
+          id: "field-crew-code",
+          type: "text",
+          label: `Sub-Vendor crew ${crewMarker}`,
+          options: []
+        }]
+      },
+      {
+        id: "configuration-execution-in-house",
+        modeKind: "execution",
+        executionSource: "in_house",
+        fields: [{
+          id: "field-in-house-supervisor",
+          type: "dropdown",
+          label: "In-house supervisor",
+          options: ["Day", "Night"]
+        }]
+      }
+    ]
+  };
+}
+
+function singleModeConfigurationPayload(
+  modeId: string,
+  suffix: string,
+  value: string
+) {
+  return {
+    dependencies: [],
+    modeOverrides: [],
+    revisionLineage: [],
+    modeConfigurations: [{
+      id: `configuration-${suffix}`,
+      modeId,
+      fields: [{
+        id: `field-${suffix}`,
+        type: "text",
+        label: `${suffix} marker`,
+        options: [],
+        value
+      }]
+    }]
+  };
+}
+
 function overviewPayload(description: string) {
   return {
     description,
@@ -1351,7 +2578,7 @@ function priceCommand(priceEntryId: string, effectiveFrom: string) {
     priceEntryId,
     vendorId: VENDOR_ID,
     uomId: UOM_ID,
-    specificationId: "spec-standard",
+    specificationId: null,
     modeId: null,
     taxRuleId: TAX_RULE_ID,
     taxVersionId: TAX_VERSION_ID,
@@ -1490,6 +2717,40 @@ async function seedKnowledgeReferences(): Promise<void> {
       updatedById: SUPER_ADMIN.id,
       createdAt: NOW,
       updatedAt: NOW
+    }),
+    AiEstimatorKnowledgeModeModel.create({
+      _id: PMC_MODE_ID,
+      code: "PMC",
+      codeNormalized: "pmc",
+      name: "PMC",
+      nameNormalized: "pmc",
+      description: null,
+      displayOrder: 1,
+      status: "active",
+      version: 1,
+      createdById: SUPER_ADMIN.id,
+      updatedById: SUPER_ADMIN.id,
+      createdAt: NOW,
+      updatedAt: NOW,
+      archivedAt: null,
+      archivedById: null
+    }),
+    AiEstimatorKnowledgeModeModel.create({
+      _id: EXECUTION_MODE_ID,
+      code: "EXECUTION",
+      codeNormalized: "execution",
+      name: "Execution",
+      nameNormalized: "execution",
+      description: null,
+      displayOrder: 2,
+      status: "active",
+      version: 1,
+      createdById: SUPER_ADMIN.id,
+      updatedById: SUPER_ADMIN.id,
+      createdAt: NOW,
+      updatedAt: NOW,
+      archivedAt: null,
+      archivedById: null
     })
   ]);
 }

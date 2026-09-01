@@ -5,8 +5,19 @@ import {
   useQuery,
   useQueryClient
 } from "@tanstack/react-query";
-import { Archive, Pencil, Plus, Settings2 } from "lucide-react";
-import { useMemo, useState, type FormEvent } from "react";
+import {
+  Archive,
+  ChevronDown,
+  ListTree,
+  Pencil,
+  Plus,
+  Search,
+  Settings2,
+  SlidersHorizontal,
+  Trash2,
+  X
+} from "lucide-react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
 
 import { ApiError } from "../../api/client";
@@ -25,26 +36,33 @@ import {
   createKnowledgeBasket,
   createKnowledgeMainLine,
   archiveKnowledgeBasket,
+  getKnowledgeBasketDeletionImpact,
   listKnowledgeBaskets,
   listKnowledgeItems,
   listKnowledgeMasters,
+  permanentlyDeleteKnowledgeBasket,
   updateKnowledgeBasket,
   type KnowledgeListParams
 } from "./knowledgeApi";
+import { syncKnowledgeBasketDeletion } from "./knowledgeMutationSync";
 import { knowledgeQueryKeys } from "./knowledgeQueryKeys";
 import { KNOWLEDGE_ITEM_STATUS_LABELS } from "./knowledgePresentation";
 import { KnowledgeSafetyNotice } from "./KnowledgeSafetyNotice";
 import { KnowledgeLifecycleDialog } from "./KnowledgeLifecycleDialogs";
 import type {
   KnowledgeBasket,
+  KnowledgeBasketDeletionImpact,
   KnowledgeItemListItem,
   KnowledgeItemStatus,
   KnowledgeMaster,
-  KnowledgeMasterType
+  KnowledgeMasterStatus,
+  KnowledgeMasterType,
+  KnowledgePermanentDeleteBasketResult
 } from "./knowledgeTypes";
 import "./ai-estimator-knowledge.css";
 
 const PAGE_SIZE = 20;
+const BASKET_MANAGEMENT_PAGE_SIZE = 100;
 const FILTER_MASTER_TYPES = [
   "priorities",
   "modes",
@@ -54,6 +72,17 @@ const FILTER_MASTER_TYPES = [
 ] as const satisfies readonly KnowledgeMasterType[];
 
 type FilterState = Omit<KnowledgeListParams, "limit" | "offset">;
+
+/* Everything except the always-visible search box lives behind the "Filters" disclosure. */
+const ADVANCED_FILTER_KEYS = [
+  "basketId",
+  "status",
+  "priorityId",
+  "modeId",
+  "surfaceId",
+  "uomId",
+  "vendorId"
+] as const satisfies readonly (keyof FilterState)[];
 
 const emptyFilters: FilterState = {
   search: "",
@@ -85,10 +114,16 @@ export function KnowledgeBaseIndexPage() {
   const [appliedFilters, setAppliedFilters] = useState<FilterState>(emptyFilters);
   const [offset, setOffset] = useState(0);
   const [basketDialogOpen, setBasketDialogOpen] = useState(false);
+  const [basketManagerOpen, setBasketManagerOpen] = useState(false);
   const [basketEditor, setBasketEditor] = useState<KnowledgeBasket | null>(null);
   const [basketArchive, setBasketArchive] = useState<KnowledgeBasket | null>(null);
+  const [basketDelete, setBasketDelete] = useState<KnowledgeBasket | null>(null);
   const [basketArchiveReason, setBasketArchiveReason] = useState("");
   const [itemDialogOpen, setItemDialogOpen] = useState(false);
+  const [announcement, setAnnouncement] = useState("");
+  const [advancedFiltersOpen, setAdvancedFiltersOpen] = useState(false);
+  const [collapsedBaskets, setCollapsedBaskets] = useState<readonly string[]>([]);
+  const manageBasketsButtonRef = useRef<HTMLButtonElement>(null);
 
   const canCreate = hasFrontendPermission(
     auth.authorization,
@@ -102,6 +137,7 @@ export function KnowledgeBaseIndexPage() {
     auth.authorization,
     "ai_estimator_knowledge.configuration.lifecycle"
   );
+  const canManageBaskets = auth.user?.role === "super_admin" && canLifecycle;
   const request = { ...appliedFilters, limit: PAGE_SIZE, offset };
   const itemsQuery = useQuery({
     queryKey: knowledgeQueryKeys.itemList(request),
@@ -128,8 +164,17 @@ export function KnowledgeBaseIndexPage() {
       ) as Readonly<Record<(typeof FILTER_MASTER_TYPES)[number], readonly KnowledgeMaster[]>>,
     [masterQueries]
   );
+  const hasActiveFilters = Object.values(appliedFilters).some(Boolean);
+  /* Unfiltered, every live basket gets a card even with no items yet — otherwise
+     a freshly configured basket is invisible until its first item exists. */
   const groupedItems = useMemo(() => {
     const groups = new Map<string, { basketName: string; items: KnowledgeItemListItem[] }>();
+    if (!hasActiveFilters) {
+      for (const basket of basketsQuery.data?.items ?? []) {
+        if (basket.status === "archived") continue;
+        groups.set(basket.id, { basketName: basket.name, items: [] });
+      }
+    }
     for (const item of itemsQuery.data?.items ?? []) {
       const group = groups.get(item.basketId) ?? {
         basketName: item.basketName,
@@ -139,8 +184,37 @@ export function KnowledgeBaseIndexPage() {
       groups.set(item.basketId, group);
     }
     return [...groups.entries()];
-  }, [itemsQuery.data?.items]);
+  }, [itemsQuery.data?.items, basketsQuery.data?.items, hasActiveFilters]);
   const total = itemsQuery.data?.pagination.total ?? 0;
+  const advancedFilterCount = ADVANCED_FILTER_KEYS.filter((key) => filters[key]).length;
+  const appliedChips = useMemo(() => {
+    const baskets = basketsQuery.data?.items ?? [];
+    const chips: { key: keyof FilterState; label: string; value: string }[] = [];
+    if (appliedFilters.search) {
+      chips.push({ key: "search", label: "Search", value: appliedFilters.search });
+    }
+    if (appliedFilters.basketId) {
+      chips.push({
+        key: "basketId",
+        label: "Basket",
+        value: baskets.find(({ id }) => id === appliedFilters.basketId)?.name ?? "Unavailable"
+      });
+    }
+    if (appliedFilters.status) {
+      chips.push({
+        key: "status",
+        label: "Status",
+        value: KNOWLEDGE_ITEM_STATUS_LABELS[appliedFilters.status]
+      });
+    }
+    for (const type of FILTER_MASTER_TYPES) {
+      const key = filterKey(type);
+      const value = appliedFilters[key];
+      if (!value) continue;
+      chips.push({ key, label: filterLabel(type), value: nameFor(masters[type], value) });
+    }
+    return chips;
+  }, [appliedFilters, basketsQuery.data?.items, masters]);
 
   function applyFilters(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -152,6 +226,30 @@ export function KnowledgeBaseIndexPage() {
     setFilters(emptyFilters);
     setAppliedFilters(emptyFilters);
     setOffset(0);
+  }
+
+  function removeFilter(key: keyof FilterState) {
+    const cleared = key === "status" ? undefined : "";
+    setFilters((current) => ({ ...current, [key]: cleared }));
+    setAppliedFilters((current) => ({ ...current, [key]: cleared }));
+    setOffset(0);
+  }
+
+  function toggleBasket(basketId: string) {
+    setCollapsedBaskets((current) =>
+      current.includes(basketId)
+        ? current.filter((id) => id !== basketId)
+        : [...current, basketId]
+    );
+  }
+
+  function returnFocusToBasketManagerButton() {
+    window.setTimeout(() => manageBasketsButtonRef.current?.focus(), 0);
+  }
+
+  function closeBasketManager() {
+    setBasketManagerOpen(false);
+    returnFocusToBasketManagerButton();
   }
 
   return (
@@ -170,6 +268,16 @@ export function KnowledgeBaseIndexPage() {
             >
               Manage reusable values
             </Button>
+            {canManageBaskets ? (
+              <Button
+                ref={manageBasketsButtonRef}
+                variant="secondary"
+                leadingIcon={<ListTree />}
+                onClick={() => setBasketManagerOpen(true)}
+              >
+                Manage main baskets
+              </Button>
+            ) : null}
             {canCreate ? (
               <Button
                 variant="secondary"
@@ -188,6 +296,11 @@ export function KnowledgeBaseIndexPage() {
         }
       />
       <KnowledgeSafetyNotice />
+      {announcement ? (
+        <p className="sr-only" role="status">
+          {announcement}
+        </p>
+      ) : null}
 
       {basketsQuery.isError || masterQueries.some(({ isError }) => isError) ? (
         <InlineMessage tone="warning" title="Some filters are unavailable">
@@ -197,19 +310,78 @@ export function KnowledgeBaseIndexPage() {
 
       <Surface as="section" className="knowledge-filter-panel" variant="subtle">
         <form onSubmit={applyFilters}>
-          <div className="knowledge-filter-grid">
-            <Field id="knowledge-search" label="Search Basket or Main Line">
+          <div className="knowledge-search-bar">
+            <Field
+              id="knowledge-search"
+              className="knowledge-search-bar__field"
+              label="Search Basket or Main Line"
+            >
               {(controlProps) => (
-                <Input
-                  {...controlProps}
-                  type="search"
-                  value={filters.search ?? ""}
-                  onChange={(event) =>
-                    setFilters((current) => ({ ...current, search: event.target.value }))
-                  }
-                />
+                <div className="knowledge-search-control">
+                  <Search className="knowledge-search-control__icon" aria-hidden="true" />
+                  <Input
+                    {...controlProps}
+                    type="search"
+                    placeholder="Search by basket or main line name"
+                    value={filters.search ?? ""}
+                    onChange={(event) =>
+                      setFilters((current) => ({ ...current, search: event.target.value }))
+                    }
+                  />
+                </div>
               )}
             </Field>
+            <div className="knowledge-search-bar__actions">
+              <Button
+                type="button"
+                variant="secondary"
+                leadingIcon={<SlidersHorizontal />}
+                aria-expanded={advancedFiltersOpen}
+                aria-controls="knowledge-advanced-filters"
+                onClick={() => setAdvancedFiltersOpen((open) => !open)}
+              >
+                Filters
+                {advancedFilterCount > 0 ? (
+                  <span className="knowledge-filter-count" aria-hidden="true">
+                    {advancedFilterCount}
+                  </span>
+                ) : null}
+              </Button>
+              <Button type="submit">Search</Button>
+            </div>
+          </div>
+
+          {appliedChips.length > 0 ? (
+            <div className="knowledge-filter-chips">
+              <span className="knowledge-filter-chips__label">Applied</span>
+              <ul aria-label="Applied filters">
+                {appliedChips.map((chip) => (
+                  <li key={chip.key} className="knowledge-chip">
+                    <span className="knowledge-chip__label">{chip.label}</span>
+                    <span className="knowledge-chip__value">{chip.value}</span>
+                    <button
+                      type="button"
+                      className="knowledge-chip__remove"
+                      aria-label={`Remove ${chip.label} filter`}
+                      onClick={() => removeFilter(chip.key)}
+                    >
+                      <X aria-hidden="true" />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+              <Button type="button" size="compact" variant="quiet" onClick={resetFilters}>
+                Clear all
+              </Button>
+            </div>
+          ) : null}
+
+          <div
+            id="knowledge-advanced-filters"
+            className="knowledge-advanced-filters"
+            hidden={!advancedFiltersOpen}
+          >
+            <div className="knowledge-filter-grid">
             <FilterSelect
               id="knowledge-basket-filter"
               label="Basket"
@@ -243,12 +415,13 @@ export function KnowledgeBaseIndexPage() {
                 }
               />
             ))}
-          </div>
-          <div className="knowledge-filter-actions">
-            <Button type="button" variant="quiet" onClick={resetFilters}>
-              Clear filters
-            </Button>
-            <Button type="submit">Apply filters</Button>
+            </div>
+            <div className="knowledge-filter-actions">
+              <Button type="button" variant="quiet" onClick={resetFilters}>
+                Clear filters
+              </Button>
+              <Button type="submit">Apply filters</Button>
+            </div>
           </div>
         </form>
       </Surface>
@@ -270,23 +443,59 @@ export function KnowledgeBaseIndexPage() {
         <PageState
           state="empty"
           message={
-            Object.values(appliedFilters).some(Boolean)
+            hasActiveFilters
               ? "No estimation items match these filters."
-              : "No AI estimator knowledge items have been added yet."
+              : "No main baskets have been added yet."
           }
-          action={canCreate ? { label: "Add estimation item", onAction: () => setItemDialogOpen(true) } : undefined}
+          action={
+            canCreate
+              ? hasActiveFilters
+                ? { label: "Add estimation item", onAction: () => setItemDialogOpen(true) }
+                : { label: "Add main basket", onAction: () => setBasketDialogOpen(true) }
+              : undefined
+          }
         />
       ) : (
         <div className="knowledge-basket-groups" aria-label="Knowledge items">
-          {groupedItems.map(([basketId, group]) => (
-            <Surface key={basketId} as="section" className="knowledge-basket-group">
-              <div className="knowledge-section-heading">
-                <h2>{group.basketName}</h2>
-                <div className="knowledge-row-actions">
-                  {canUpdate ? <Button size="compact" variant="quiet" leadingIcon={<Pencil />} onClick={() => setBasketEditor((basketsQuery.data?.items ?? []).find(({ id }) => id === basketId) ?? null)}>Edit basket</Button> : null}
-                  {canLifecycle ? <Button size="compact" variant="destructive-outline" leadingIcon={<Archive />} onClick={() => { setBasketArchive((basketsQuery.data?.items ?? []).find(({ id }) => id === basketId) ?? null); setBasketArchiveReason(""); }}>Archive basket</Button> : null}
+          {groupedItems.map(([basketId, group]) => {
+            const expanded = !collapsedBaskets.includes(basketId);
+            const panelId = `knowledge-basket-panel-${basketId}`;
+            return (
+            <Surface
+              key={basketId}
+              as="section"
+              className="knowledge-basket-group knowledge-basket-panel"
+              data-expanded={expanded || undefined}
+            >
+              <div className="knowledge-section-heading knowledge-basket-panel__header">
+                <h2 className="knowledge-basket-panel__title">
+                  <button
+                    type="button"
+                    className="knowledge-basket-panel__toggle"
+                    aria-expanded={expanded}
+                    aria-controls={panelId}
+                    onClick={() => toggleBasket(basketId)}
+                  >
+                    <ChevronDown className="knowledge-basket-panel__chevron" aria-hidden="true" />
+                    <span>{group.basketName}</span>
+                  </button>
+                </h2>
+                <div className="knowledge-basket-panel__meta">
+                  <span className="knowledge-count-pill">
+                    {group.items.length} {group.items.length === 1 ? "item" : "items"}
+                  </span>
+                  <div className="knowledge-row-actions">
+                    {/* The count pill beside it already reports an empty basket, so
+                        this is the only prompt the basket needs. The name is spoken
+                        but not shown: several baskets each offer this command, and
+                        "Add estimation item" alone would name them all alike. */}
+                    {canCreate ? <Button size="compact" variant="secondary" leadingIcon={<Plus />} onClick={() => setItemDialogOpen(true)}>Add estimation item<span className="sr-only"> to {group.basketName}</span></Button> : null}
+                    {canUpdate ? <Button size="compact" variant="quiet" leadingIcon={<Pencil />} onClick={() => setBasketEditor((basketsQuery.data?.items ?? []).find(({ id }) => id === basketId) ?? null)}>Edit basket</Button> : null}
+                    {canLifecycle ? <Button size="compact" variant="destructive-outline" leadingIcon={<Archive />} onClick={() => { setBasketArchive((basketsQuery.data?.items ?? []).find(({ id }) => id === basketId) ?? null); setBasketArchiveReason(""); }}>Archive basket</Button> : null}
+                  </div>
                 </div>
               </div>
+              <div id={panelId} className="knowledge-basket-panel__body" hidden={!expanded}>
               <div className="knowledge-item-grid">
                 {group.items.map((item) => (
                   <article key={item.id} className="knowledge-item-card">
@@ -330,8 +539,10 @@ export function KnowledgeBaseIndexPage() {
                   </article>
                 ))}
               </div>
+              </div>
             </Surface>
-          ))}
+            );
+          })}
         </div>
       )}
 
@@ -366,6 +577,19 @@ export function KnowledgeBaseIndexPage() {
           }}
         />
       ) : null}
+      {basketManagerOpen ? (
+        <MainBasketManagementDialog
+          canUpdate={canUpdate}
+          onClose={closeBasketManager}
+          onEdit={setBasketEditor}
+          onArchive={(basket) => {
+            setBasketArchive(basket);
+            setBasketArchiveReason("");
+          }}
+          onDelete={setBasketDelete}
+          childDialogOpen={Boolean(basketEditor || basketArchive || basketDelete)}
+        />
+      ) : null}
       {basketEditor ? (
         <BasketEditorDialog
           existing={basketEditor}
@@ -394,6 +618,19 @@ export function KnowledgeBaseIndexPage() {
           }}
         />
       ) : null}
+      {basketDelete ? (
+        <PermanentDeleteBasketDialog
+          basket={basketDelete}
+          onClose={() => setBasketDelete(null)}
+          onDeleted={async (result, basketName) => {
+            await syncKnowledgeBasketDeletion(queryClient, result.basketId);
+            setAnnouncement(`Main basket “${basketName}” was permanently deleted.`);
+            setBasketDelete(null);
+            setBasketManagerOpen(false);
+            returnFocusToBasketManagerButton();
+          }}
+        />
+      ) : null}
       {itemDialogOpen ? (
         <CreateItemDialog
           baskets={(basketsQuery.data?.items ?? []).filter(({ status }) => status === "active")}
@@ -405,6 +642,399 @@ export function KnowledgeBaseIndexPage() {
           }}
         />
       ) : null}
+    </div>
+  );
+}
+
+function masterStatusTone(status: KnowledgeMasterStatus): StatusTone {
+  if (status === "active") return "success";
+  if (status === "archived") return "danger";
+  return "neutral";
+}
+
+function masterStatusLabel(status: KnowledgeMasterStatus): string {
+  return status === "active" ? "Active" : status === "inactive" ? "Inactive" : "Archived";
+}
+
+function MainBasketManagementDialog({
+  canUpdate,
+  onClose,
+  onEdit,
+  onArchive,
+  onDelete,
+  childDialogOpen
+}: {
+  readonly canUpdate: boolean;
+  readonly onClose: () => void;
+  readonly onEdit: (basket: KnowledgeBasket) => void;
+  readonly onArchive: (basket: KnowledgeBasket) => void;
+  readonly onDelete: (basket: KnowledgeBasket) => void;
+  readonly childDialogOpen: boolean;
+}) {
+  const [offset, setOffset] = useState(0);
+  const resultsRef = useRef<HTMLDivElement>(null);
+  const focusResultsAfterNavigationRef = useRef(false);
+  const params = {
+    includeArchived: true,
+    limit: BASKET_MANAGEMENT_PAGE_SIZE,
+    offset
+  } as const;
+  const basketsQuery = useQuery({
+    queryKey: knowledgeQueryKeys.basketList(params),
+    queryFn: () => listKnowledgeBaskets(params),
+    retry: false
+  });
+
+  useEffect(() => {
+    if (basketsQuery.isFetching || !focusResultsAfterNavigationRef.current) return;
+    focusResultsAfterNavigationRef.current = false;
+    resultsRef.current?.focus();
+  }, [basketsQuery.isFetching]);
+
+  function goToOffset(nextOffset: number) {
+    focusResultsAfterNavigationRef.current = true;
+    setOffset(Math.max(0, nextOffset));
+  }
+
+  return (
+    <Dialog
+      title="Manage main baskets"
+      eyebrow="Estimation configuration"
+      description="Edit or archive existing baskets. Permanent deletion is limited to custom baskets with no items or historical references."
+      onClose={onClose}
+      contentInert={childDialogOpen}
+    >
+      <div className="knowledge-dialog-body knowledge-basket-manager">
+        <div
+          ref={resultsRef}
+          className="knowledge-basket-manager__results"
+          tabIndex={-1}
+          aria-busy={basketsQuery.isFetching || undefined}
+        >
+          {basketsQuery.isPending ? (
+            <PageState state="loading" message="Loading main baskets…" />
+          ) : basketsQuery.isError ? (
+            <PageState
+              state="error"
+              message={errorMessage(basketsQuery.error)}
+              action={{ label: "Try again", onAction: () => void basketsQuery.refetch() }}
+            />
+          ) : (
+            <>
+              {basketsQuery.data.items.length === 0 ? (
+                <PageState
+                  state="empty"
+                  message={offset === 0
+                    ? "No main baskets have been added yet."
+                    : "No main baskets are available on this page."}
+                />
+              ) : (
+                <ul className="knowledge-basket-manager__list" aria-label="Main baskets">
+                  {basketsQuery.data.items.map((basket) => (
+                    <li key={basket.id} className="knowledge-basket-manager__row">
+                      <div className="knowledge-basket-manager__summary">
+                        <div>
+                          <h3>{basket.name}</h3>
+                          <p>{basket.description ?? "No description provided."}</p>
+                        </div>
+                        <StatusBadge
+                          label={masterStatusLabel(basket.status)}
+                          tone={masterStatusTone(basket.status)}
+                        />
+                      </div>
+                      <div className="knowledge-basket-manager__actions">
+                        {canUpdate && basket.status !== "archived" ? (
+                          <Button
+                            size="compact"
+                            variant="quiet"
+                            leadingIcon={<Pencil />}
+                            aria-label={`Edit ${basket.name}`}
+                            onClick={() => onEdit(basket)}
+                          >
+                            Edit
+                          </Button>
+                        ) : null}
+                        {basket.status !== "archived" ? (
+                          <Button
+                            size="compact"
+                            variant="destructive-outline"
+                            leadingIcon={<Archive />}
+                            aria-label={`Archive ${basket.name}`}
+                            onClick={() => onArchive(basket)}
+                          >
+                            Archive
+                          </Button>
+                        ) : null}
+                        <Button
+                          size="compact"
+                          variant="destructive-outline"
+                          leadingIcon={<Trash2 />}
+                          aria-label={`Delete ${basket.name} permanently`}
+                          onClick={() => onDelete(basket)}
+                        >
+                          Delete permanently
+                        </Button>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {offset > 0 || basketsQuery.data.pagination.hasMore ? (
+                <nav
+                  className="knowledge-pagination knowledge-basket-manager__pagination"
+                  aria-label="Main basket pages"
+                >
+                  <Button
+                    variant="secondary"
+                    aria-label="Previous basket page"
+                    disabled={offset === 0 || basketsQuery.isFetching}
+                    onClick={() => goToOffset(offset - BASKET_MANAGEMENT_PAGE_SIZE)}
+                  >
+                    Previous
+                  </Button>
+                  <span>
+                    {basketsQuery.data.pagination.total === 0
+                      ? 0
+                      : basketsQuery.data.pagination.offset + 1}
+                    –{Math.min(
+                      basketsQuery.data.pagination.offset + basketsQuery.data.items.length,
+                      basketsQuery.data.pagination.total
+                    )} of {basketsQuery.data.pagination.total}
+                  </span>
+                  <Button
+                    variant="secondary"
+                    aria-label="Next basket page"
+                    disabled={!basketsQuery.data.pagination.hasMore || basketsQuery.isFetching}
+                    onClick={() => goToOffset(offset + BASKET_MANAGEMENT_PAGE_SIZE)}
+                  >
+                    Next
+                  </Button>
+                </nav>
+              ) : null}
+            </>
+          )}
+        </div>
+      </div>
+      <div className="knowledge-dialog-actions">
+        <Button type="button" variant="secondary" onClick={onClose}>
+          Done
+        </Button>
+      </div>
+    </Dialog>
+  );
+}
+
+function PermanentDeleteBasketDialog({
+  basket,
+  onClose,
+  onDeleted
+}: {
+  readonly basket: KnowledgeBasket;
+  readonly onClose: () => void;
+  readonly onDeleted: (
+    result: KnowledgePermanentDeleteBasketResult,
+    basketName: string
+  ) => Promise<void>;
+}) {
+  const queryClient = useQueryClient();
+  const [confirmationName, setConfirmationName] = useState("");
+  const [reason, setReason] = useState("");
+  const [conflictRefresh, setConflictRefresh] = useState<
+    "none" | "refreshed" | "failed"
+  >("none");
+  const [requiresFreshImpact, setRequiresFreshImpact] = useState(false);
+  const impactQuery = useQuery({
+    queryKey: knowledgeQueryKeys.basketDeletionImpact(basket.id),
+    queryFn: () => getKnowledgeBasketDeletionImpact(basket.id),
+    retry: false,
+    staleTime: 0,
+    refetchOnMount: "always"
+  });
+  const impact = impactQuery.data;
+
+  async function refreshImpact(): Promise<boolean> {
+    setRequiresFreshImpact(true);
+    const refreshed = await impactQuery.refetch();
+    const succeeded = refreshed.isSuccess;
+    setRequiresFreshImpact(!succeeded);
+    return succeeded;
+  }
+
+  async function retryImpact() {
+    const succeeded = await refreshImpact();
+    if (conflictRefresh !== "none") {
+      setConflictRefresh(succeeded ? "refreshed" : "failed");
+    }
+  }
+
+  const mutation = useMutation({
+    mutationFn: () => {
+      if (!impact) throw new Error("Deletion impact is unavailable.");
+      return permanentlyDeleteKnowledgeBasket(basket.id, {
+        expectedVersion: impact.version,
+        confirmationName,
+        reason: reason.trim()
+      });
+    },
+    onSuccess: (result) => onDeleted(result, impact?.basketName ?? basket.name),
+    onError: async (error) => {
+      if (error instanceof ApiError && error.code === "VERSION_CONFLICT") {
+        setConfirmationName("");
+        await queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.basketLists() });
+        setConflictRefresh(await refreshImpact() ? "refreshed" : "failed");
+      } else if (error instanceof ApiError && error.code === "BASKET_DELETE_BLOCKED") {
+        setConfirmationName("");
+        await refreshImpact();
+      }
+    }
+  });
+  const busy = impactQuery.isFetching || mutation.isPending || requiresFreshImpact;
+  const nameMatches = Boolean(impact && confirmationName === impact.basketName);
+  const canSubmit = Boolean(
+    impact?.canDelete && nameMatches && reason.trim() && !busy && !impactQuery.isError
+  );
+  const mutationError = mutation.error;
+  const mutationErrorMessage =
+    mutationError instanceof ApiError && mutationError.code === "VERSION_CONFLICT"
+      ? null
+      : mutationError?.message ?? null;
+
+  return (
+    <Dialog
+      title="Delete main basket permanently?"
+      eyebrow="Irrecoverable action"
+      description={`This can permanently remove only the “${impact?.basketName ?? basket.name}” basket. It never deletes estimation items or history.`}
+      onClose={onClose}
+      busy={mutation.isPending}
+      role="alertdialog"
+    >
+      <form
+        className="knowledge-dialog-form"
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (canSubmit) mutation.mutate();
+        }}
+      >
+        <div className="knowledge-dialog-body knowledge-basket-delete">
+          {impactQuery.isPending ? (
+            <PageState state="loading" message="Checking whether this basket can be deleted…" />
+          ) : impactQuery.isError ? (
+            <PageState
+              state="error"
+              message={errorMessage(impactQuery.error)}
+              action={{
+                label: "Retry impact check",
+                onAction: () => void retryImpact()
+              }}
+            />
+          ) : impact ? (
+            <BasketDeletionImpactSummary impact={impact} />
+          ) : null}
+
+          {conflictRefresh === "refreshed" ? (
+            <InlineMessage tone="warning" title="Basket changed">
+              Review the refreshed impact and enter the exact current basket name again. The deletion was not retried.
+            </InlineMessage>
+          ) : null}
+          {conflictRefresh === "failed" ? (
+            <InlineMessage tone="error" title="Impact refresh failed" role="alert">
+              This basket changed, but its latest deletion impact could not be loaded. Retry the impact check before continuing.
+            </InlineMessage>
+          ) : null}
+          {mutationErrorMessage ? (
+            <InlineMessage tone="error" role="alert">
+              {mutationErrorMessage}
+            </InlineMessage>
+          ) : null}
+
+          {impact ? (
+            <>
+              <Field
+                id="basket-delete-confirmation-name"
+                label="Type basket name to confirm"
+                hint={<>Enter <strong>{impact.basketName}</strong> exactly, including spaces and capitalization.</>}
+                required
+              >
+                {(props) => (
+                  <Input
+                    {...props}
+                    autoComplete="off"
+                    maxLength={240}
+                    value={confirmationName}
+                    onChange={(event) => setConfirmationName(event.target.value)}
+                  />
+                )}
+              </Field>
+              <Field
+                id="basket-delete-reason"
+                label="Reason"
+                hint="Recorded in the audit history for this permanent change."
+                required
+              >
+                {(props) => (
+                  <Textarea
+                    {...props}
+                    maxLength={1_000}
+                    value={reason}
+                    onChange={(event) => setReason(event.target.value)}
+                  />
+                )}
+              </Field>
+            </>
+          ) : null}
+        </div>
+        <div className="knowledge-dialog-actions">
+          <Button type="button" variant="quiet" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button
+            type="submit"
+            variant="destructive"
+            busy={mutation.isPending}
+            busyLabel="Deleting…"
+            disabled={!canSubmit}
+          >
+            Delete permanently
+          </Button>
+        </div>
+      </form>
+    </Dialog>
+  );
+}
+
+function BasketDeletionImpactSummary({ impact }: {
+  readonly impact: KnowledgeBasketDeletionImpact;
+}) {
+  return (
+    <div className="knowledge-basket-delete__impact">
+      <dl>
+        <div>
+          <dt>Main Lines</dt>
+          <dd>{impact.mainLineCount}</dd>
+        </div>
+        <div>
+          <dt>Historical references</dt>
+          <dd>{impact.historicalReferenceCount}</dd>
+        </div>
+        <div>
+          <dt>Bootstrap owned</dt>
+          <dd>{impact.bootstrapOwned ? "Yes" : "No"}</dd>
+        </div>
+      </dl>
+      {!impact.canDelete ? (
+        <InlineMessage tone="error" title="Permanent deletion is blocked" role="alert">
+          <p>This basket is archive-only for the following reason{impact.blockers.length === 1 ? "" : "s"}:</p>
+          <ul>
+            {impact.blockers.map((blocker) => (
+              <li key={blocker.code}>{blocker.message}</li>
+            ))}
+          </ul>
+        </InlineMessage>
+      ) : (
+        <InlineMessage tone="warning" title="This action cannot be undone">
+          The basket is empty and unreferenced. Only its Basket record will be deleted.
+        </InlineMessage>
+      )}
     </div>
   );
 }

@@ -23,6 +23,11 @@ export interface KnowledgeRepeaterProps<TItem extends KnowledgeRepeaterItem> {
   readonly onMove?: (itemId: string, direction: "up" | "down") => void;
   readonly emptyMessage?: string;
   readonly disabled?: boolean;
+  readonly addDisabled?: boolean;
+  readonly readOnly?: boolean;
+  readonly removeDisabled?: (item: TItem, index: number) => boolean;
+  readonly removeDisabledReason?: (item: TItem, index: number) => string | undefined;
+  readonly itemLabel?: (item: TItem, index: number) => string;
 }
 
 export function KnowledgeRepeater<TItem extends KnowledgeRepeaterItem>({
@@ -34,7 +39,12 @@ export function KnowledgeRepeater<TItem extends KnowledgeRepeaterItem>({
   onRemove,
   onMove,
   emptyMessage = "No entries have been added.",
-  disabled = false
+  disabled = false,
+  addDisabled = false,
+  readOnly = false,
+  removeDisabled = () => false,
+  removeDisabledReason = () => undefined,
+  itemLabel
 }: KnowledgeRepeaterProps<TItem>) {
   const titleId = useId();
   const rowRefs = useRef(new Map<string, HTMLDivElement>());
@@ -67,63 +77,81 @@ export function KnowledgeRepeater<TItem extends KnowledgeRepeaterItem>({
     <section className="knowledge-repeater" aria-labelledby={titleId}>
       <div className="knowledge-repeater__header">
         <h3 id={titleId}>{label}</h3>
-        <Button
-          ref={addButtonRef}
-          size="compact"
-          variant="secondary"
-          leadingIcon={<Plus />}
-          onClick={onAdd}
-          disabled={disabled}
-        >
-          {addLabel}
-        </Button>
+        {!readOnly ? (
+          <Button
+            ref={addButtonRef}
+            size="compact"
+            variant="secondary"
+            leadingIcon={<Plus />}
+            onClick={onAdd}
+            disabled={disabled || addDisabled}
+          >
+            {addLabel}
+          </Button>
+        ) : null}
       </div>
 
       {items.length ? (
         <ol className="knowledge-repeater__list">
-          {items.map((item, index) => (
-            <li key={item.id}>
-              <div
-                ref={(node) => {
-                  if (node) rowRefs.current.set(item.id, node);
-                  else rowRefs.current.delete(item.id);
-                }}
-                className="knowledge-repeater__row"
-                tabIndex={-1}
-              >
-                <div className="knowledge-repeater__content">
-                  {renderItem(item, index)}
-                </div>
-                <div className="knowledge-repeater__actions">
-                  {onMove ? (
-                    <>
+          {items.map((item, index) => {
+            const removalBlocked = removeDisabled(item, index);
+            const removalReason = removalBlocked
+              ? removeDisabledReason(item, index)
+              : undefined;
+            const removalReasonId = `${titleId}-remove-reason-${index}`;
+            const entryLabel = itemLabel?.(item, index) ?? `entry ${index + 1}`;
+            return (
+              <li key={item.id}>
+                <div
+                  ref={(node) => {
+                    if (node) rowRefs.current.set(item.id, node);
+                    else rowRefs.current.delete(item.id);
+                  }}
+                  className="knowledge-repeater__row"
+                  tabIndex={-1}
+                >
+                  <div className="knowledge-repeater__content">
+                    {renderItem(item, index)}
+                  </div>
+                  {!readOnly ? (
+                    <div className="knowledge-repeater__actions">
+                      {onMove ? (
+                        <>
+                          <IconButton
+                            label={`Move ${label} ${entryLabel} up`}
+                            icon={<ArrowUp aria-hidden="true" />}
+                            variant="quiet"
+                            disabled={disabled || index === 0}
+                            onClick={() => onMove(item.id, "up")}
+                          />
+                          <IconButton
+                            label={`Move ${label} ${entryLabel} down`}
+                            icon={<ArrowDown aria-hidden="true" />}
+                            variant="quiet"
+                            disabled={disabled || index === items.length - 1}
+                            onClick={() => onMove(item.id, "down")}
+                          />
+                        </>
+                      ) : null}
                       <IconButton
-                        label={`Move ${label} entry ${index + 1} up`}
-                        icon={<ArrowUp aria-hidden="true" />}
-                        variant="quiet"
-                        disabled={disabled || index === 0}
-                        onClick={() => onMove(item.id, "up")}
+                        label={`Remove ${label} ${entryLabel}`}
+                        icon={<Trash2 aria-hidden="true" />}
+                        variant="destructive-outline"
+                        disabled={disabled || removalBlocked}
+                        aria-describedby={removalReason ? removalReasonId : undefined}
+                        onClick={() => removeItem(item, index)}
                       />
-                      <IconButton
-                        label={`Move ${label} entry ${index + 1} down`}
-                        icon={<ArrowDown aria-hidden="true" />}
-                        variant="quiet"
-                        disabled={disabled || index === items.length - 1}
-                        onClick={() => onMove(item.id, "down")}
-                      />
-                    </>
+                      {removalReason ? (
+                        <span id={removalReasonId} className="knowledge-help-text">
+                          {removalReason}
+                        </span>
+                      ) : null}
+                    </div>
                   ) : null}
-                  <IconButton
-                    label={`Remove ${label} entry ${index + 1}`}
-                    icon={<Trash2 aria-hidden="true" />}
-                    variant="destructive-outline"
-                    disabled={disabled}
-                    onClick={() => removeItem(item, index)}
-                  />
                 </div>
-              </div>
-            </li>
-          ))}
+              </li>
+            );
+          })}
         </ol>
       ) : (
         <p className="knowledge-repeater__empty">{emptyMessage}</p>

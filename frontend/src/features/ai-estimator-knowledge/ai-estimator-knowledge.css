@@ -79,8 +79,503 @@
   border-radius: var(--radius-surface);
 }
 
+/* The item workspace uses the shared PageHeader DOM with a page-specific grid:
+   the breadcrumb owns the first row, then context and commands read together. */
+.knowledge-page--item-workspace > .ui-page-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: var(--space-3) var(--space-6);
+}
+
+.knowledge-page--item-workspace > .ui-page-header .ui-page-header__breadcrumb {
+  grid-column: 1 / -1;
+}
+
+.knowledge-page--item-workspace > .ui-page-header .ui-page-header__content {
+  grid-column: 1;
+}
+
+.knowledge-page--item-workspace > .ui-page-header .ui-page-header__actions {
+  grid-column: 2;
+  justify-content: flex-end;
+}
+
+/* Item navigation shares the active workspace width. The tab row itself keeps
+   horizontal overflow as a safety net until the labelled selector takes over. */
+.knowledge-page--item-workspace .knowledge-section-tabs {
+  inline-size: 100%;
+  max-inline-size: 100%;
+  justify-self: stretch;
+}
+
+/* Every editor uses the same main-column measure; individual content grids
+   manage their own readable line lengths. */
+.knowledge-page--item-workspace .knowledge-workspace-section--overview {
+  inline-size: 100%;
+  max-inline-size: none;
+}
+
+/* Warm-theme controls need a visible edge against the deck. Every state is
+   restated under the exact Super Admin item-workspace scope so the stronger
+   default does not flatten hover, focus, validation, or read-only feedback. */
+.ui-app-shell[data-role="super_admin"] .knowledge-page.knowledge-page--item-workspace .ui-control {
+  border-color: color-mix(in srgb, var(--role-line-strong, var(--color-border-strong)) 72%, var(--role-ink, var(--color-text)));
+  background-color: color-mix(in srgb, var(--role-deck, var(--color-surface)) 78%, var(--role-deck-tint, var(--color-surface-subtle)));
+}
+
+.ui-app-shell[data-role="super_admin"] .knowledge-page.knowledge-page--item-workspace .ui-control:hover:not(:disabled):not([aria-invalid="true"]) {
+  border-color: var(--role-accent, var(--color-border-strong));
+  background-color: var(--role-deck, var(--color-surface));
+}
+
+.ui-app-shell[data-role="super_admin"] .knowledge-page.knowledge-page--item-workspace .ui-control:focus-visible {
+  border-color: var(--role-focus, var(--role-accent, var(--color-border-strong)));
+  background-color: var(--role-deck, var(--color-surface));
+  box-shadow: var(--focus-ring);
+  outline: none;
+}
+
+.ui-app-shell[data-role="super_admin"] .knowledge-page.knowledge-page--item-workspace .ui-control[aria-invalid="true"] {
+  border-color: var(--color-danger);
+  background-color: color-mix(in srgb, var(--color-danger) 6%, var(--role-deck, var(--color-surface)));
+}
+
+.ui-app-shell[data-role="super_admin"] .knowledge-page.knowledge-page--item-workspace .ui-control:disabled {
+  border-color: var(--role-line, var(--color-border));
+  background-color: var(--role-deck-tint, var(--color-surface-subtle));
+  color: var(--role-ink-muted, var(--color-text-muted));
+  cursor: not-allowed;
+  opacity: 0.78;
+}
+
 .knowledge-workspace-section {
   overflow: visible;
+}
+
+.knowledge-overview,
+.knowledge-overview__section,
+.knowledge-overview__summary-panel,
+.knowledge-overview-card,
+.knowledge-overview__detail,
+.knowledge-overview__subsection {
+  display: grid;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+/* Identity reads as the section's own masthead rather than a second card
+   competing with the page header: an accent rule squares off the leading edge
+   and the revision stats collapse to one divided row on the trailing side. */
+.knowledge-overview__identity {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-5);
+  min-width: 0;
+  padding-block: var(--space-4);
+  padding-inline: var(--space-5);
+  border-inline-start: 3px solid var(--role-accent, var(--color-brand-violet));
+  border-start-start-radius: 0;
+  border-end-start-radius: 0;
+}
+
+.knowledge-overview__identity h2,
+.knowledge-overview__identity p,
+.knowledge-overview__summary-heading h2,
+.knowledge-overview__mode-title h3,
+.knowledge-overview__subsection h3,
+.knowledge-overview__subsection h4,
+.knowledge-overview-card h3,
+.knowledge-overview__supporting-copy,
+.knowledge-overview__empty,
+.knowledge-overview__source-state,
+.knowledge-overview__refreshing {
+  margin: 0;
+}
+
+.knowledge-overview__eyebrow {
+  color: var(--role-accent, var(--color-brand-violet));
+  font-size: var(--text-xs);
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.knowledge-overview__main-line-name {
+  margin-block-start: var(--space-1);
+  margin-block-end: var(--space-1);
+  color: var(--role-ink, var(--color-text));
+  font-size: var(--text-lg);
+  font-weight: 800;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+
+.knowledge-overview__identity p,
+.knowledge-overview__supporting-copy,
+.knowledge-overview__source-state,
+.knowledge-overview__refreshing,
+.knowledge-overview__empty {
+  color: var(--role-ink-muted, var(--color-text-muted));
+}
+
+.knowledge-overview__identity-meta,
+.knowledge-overview__definition-grid,
+.knowledge-overview-card__counts,
+.knowledge-overview-card__highlights {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3);
+  margin: 0;
+  min-width: 0;
+}
+
+.knowledge-overview__identity-meta {
+  flex: 0 0 auto;
+  grid-template-columns: repeat(3, minmax(5rem, auto));
+  gap: var(--space-5);
+  text-align: end;
+}
+
+.knowledge-overview__identity-meta > div + div {
+  padding-inline-start: var(--space-5);
+  border-inline-start: 1px solid var(--role-line, var(--color-border));
+}
+
+.knowledge-overview__identity-meta dt {
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.knowledge-overview__identity-meta dd {
+  font-size: var(--text-lg);
+  font-weight: 750;
+}
+
+.knowledge-overview__identity-meta div,
+.knowledge-overview__definition-grid div,
+.knowledge-overview-card__counts div,
+.knowledge-overview-card__highlights div {
+  min-width: 0;
+}
+
+.knowledge-overview__identity-meta dt,
+.knowledge-overview__definition-grid dt,
+.knowledge-overview-card__counts dt,
+.knowledge-overview-card__highlights dt {
+  color: var(--role-ink-muted, var(--color-text-muted));
+  font-size: var(--text-xs);
+  font-weight: 700;
+}
+
+.knowledge-overview__identity-meta dd,
+.knowledge-overview__definition-grid dd,
+.knowledge-overview-card__counts dd,
+.knowledge-overview-card__highlights dd {
+  margin: var(--space-1) 0 0;
+  overflow-wrap: anywhere;
+  font-weight: 650;
+}
+
+.knowledge-overview__configured-grid,
+.knowledge-overview__principal-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+.knowledge-overview__configured-grid {
+  align-items: start;
+  gap: var(--space-5);
+}
+
+.knowledge-overview__reference-control {
+  display: grid;
+  align-content: start;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.knowledge-overview__modes {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.knowledge-overview__modes legend,
+.knowledge-surface-multiselect__label {
+  display: block;
+  margin-block-end: var(--space-2);
+  color: var(--role-ink, var(--color-text));
+  font: var(--type-body);
+  font-weight: 600;
+}
+
+.knowledge-overview__radio-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.knowledge-overview__radio-option {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--role-line, var(--color-border));
+  border-radius: var(--radius-pill);
+  background: var(--role-deck, var(--color-surface));
+  cursor: pointer;
+}
+
+.knowledge-overview__radio-option:has(.ui-radio:checked) {
+  border-color: var(--role-accent, var(--color-brand-violet));
+  background: color-mix(in srgb, var(--role-accent, var(--color-brand-violet)) 9%, var(--role-deck, var(--color-surface)));
+}
+
+.knowledge-overview__radio-option span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.knowledge-overview__summary-panel--wide {
+  grid-column: 1 / -1;
+}
+
+.knowledge-overview__summary-heading,
+.knowledge-overview__mode-title,
+.knowledge-overview-card__heading,
+.knowledge-overview__quality-title,
+.knowledge-overview__subsection li {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.knowledge-overview__summary-heading .ui-button,
+.knowledge-overview-card > .ui-button {
+  flex: 0 0 auto;
+}
+
+.knowledge-overview__quality-list,
+.knowledge-overview__price-list,
+.knowledge-overview__subsection ul,
+.knowledge-overview-card__findings ul {
+  display: grid;
+  gap: var(--space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.knowledge-overview__quality-list > li,
+.knowledge-overview__price-list > li {
+  display: grid;
+  gap: var(--space-3);
+  min-width: 0;
+  padding: var(--space-4);
+  border: 1px solid var(--role-line, var(--color-border));
+  border-radius: var(--radius-field);
+  background: var(--role-deck-tint, var(--color-surface-subtle));
+}
+
+.knowledge-overview__quality-title > div {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+.knowledge-overview__cards {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+.knowledge-overview-card__counts,
+.knowledge-overview-card__highlights {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.knowledge-overview-card__findings {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border-inline-start: 3px solid var(--color-warning);
+  background: color-mix(in srgb, var(--color-warning) 8%, transparent);
+}
+
+.knowledge-overview-card__findings--blocking {
+  border-inline-start-color: var(--color-danger);
+  background: color-mix(in srgb, var(--color-danger) 8%, transparent);
+}
+
+.knowledge-overview-card__findings li {
+  overflow-wrap: anywhere;
+}
+
+.knowledge-surface-multiselect {
+  position: relative;
+  min-width: 0;
+}
+
+/* Geometry, edge and type mirror .ui-control so the Surfaces trigger and the
+   neighbouring native selects read as one control family. */
+.knowledge-surface-multiselect__trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  inline-size: 100%;
+  min-block-size: 44px;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--role-line, var(--color-border));
+  border-radius: var(--radius-field);
+  background: var(--role-deck, var(--color-surface));
+  color: var(--role-ink, var(--color-text));
+  font: var(--type-body);
+  text-align: start;
+  cursor: pointer;
+  transition:
+    background-color var(--duration-fast) var(--ease-standard),
+    border-color var(--duration-fast) var(--ease-standard),
+    box-shadow var(--duration-fast) var(--ease-standard);
+}
+
+.knowledge-surface-multiselect__trigger:hover:not(:disabled) {
+  border-color: var(--role-line-strong, var(--color-border-strong));
+}
+
+.knowledge-surface-multiselect__trigger:focus-visible,
+.knowledge-surface-multiselect__option:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.knowledge-surface-multiselect__trigger:disabled {
+  cursor: not-allowed;
+  opacity: 0.72;
+}
+
+/* The Surfaces trigger is a button rather than a .ui-control, so the warm-theme
+   edge is restated for it verbatim; without this it is the only control in
+   Configured values without the Super Admin treatment. */
+.ui-app-shell[data-role="super_admin"] .knowledge-page.knowledge-page--item-workspace .knowledge-surface-multiselect__trigger {
+  border-color: color-mix(in srgb, var(--role-line-strong, var(--color-border-strong)) 72%, var(--role-ink, var(--color-text)));
+  background-color: color-mix(in srgb, var(--role-deck, var(--color-surface)) 78%, var(--role-deck-tint, var(--color-surface-subtle)));
+}
+
+.ui-app-shell[data-role="super_admin"] .knowledge-page.knowledge-page--item-workspace .knowledge-surface-multiselect__trigger:hover:not(:disabled) {
+  border-color: var(--role-accent, var(--color-border-strong));
+  background-color: var(--role-deck, var(--color-surface));
+}
+
+.ui-app-shell[data-role="super_admin"] .knowledge-page.knowledge-page--item-workspace .knowledge-surface-multiselect__trigger:focus-visible {
+  border-color: var(--role-focus, var(--role-accent, var(--color-border-strong)));
+  background-color: var(--role-deck, var(--color-surface));
+  box-shadow: var(--focus-ring);
+  outline: none;
+}
+
+.ui-app-shell[data-role="super_admin"] .knowledge-page.knowledge-page--item-workspace .knowledge-surface-multiselect__trigger:disabled {
+  border-color: var(--role-line, var(--color-border));
+  background-color: var(--role-deck-tint, var(--color-surface-subtle));
+  color: var(--role-ink-muted, var(--color-text-muted));
+  cursor: not-allowed;
+  opacity: 0.78;
+}
+
+.knowledge-surface-multiselect__summary {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.knowledge-surface-multiselect__indicator {
+  flex: 0 0 auto;
+}
+
+.knowledge-surface-multiselect__popup {
+  position: absolute;
+  z-index: var(--z-overlay);
+  inset-block-start: calc(100% + var(--space-2));
+  inset-inline: 0;
+  min-width: 0;
+  max-height: 18rem;
+  overflow: auto;
+  padding: var(--space-2);
+  border: 1px solid var(--role-line-strong, var(--color-border-strong));
+  border-radius: var(--radius-field);
+  background: var(--role-deck, var(--color-surface));
+  box-shadow: var(--shadow-raised);
+}
+
+.knowledge-surface-multiselect__listbox {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.knowledge-surface-multiselect__option {
+  display: grid;
+  grid-template-columns: 1.25rem minmax(0, 1fr);
+  gap: var(--space-2);
+  align-items: start;
+  inline-size: 100%;
+  padding: var(--space-2) var(--space-3);
+  border: 0;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: inherit;
+  text-align: start;
+}
+
+.knowledge-surface-multiselect__option:hover,
+.knowledge-surface-multiselect__option[data-active="true"] {
+  background: var(--role-deck-tint, var(--color-surface-subtle));
+}
+
+.knowledge-surface-multiselect__option[aria-disabled="true"] {
+  cursor: default;
+  opacity: 0.72;
+}
+
+.knowledge-surface-multiselect__check {
+  color: var(--role-accent, var(--color-brand-violet));
+  font-weight: 800;
+}
+
+.knowledge-surface-multiselect__option-label,
+.knowledge-surface-multiselect__empty {
+  overflow-wrap: anywhere;
+}
+
+.knowledge-surface-multiselect__empty {
+  margin: 0;
+  padding: var(--space-3);
+  color: var(--role-ink-muted, var(--color-text-muted));
+}
+
+.knowledge-mode-panel {
+  display: grid;
+  gap: var(--space-5);
+  min-width: 0;
+}
+
+.knowledge-mode-block {
+  min-width: 0;
+}
+
+.knowledge-mode-block__dirty {
+  margin-inline-start: auto;
+  color: var(--role-accent, var(--color-brand-violet));
+  font-size: var(--text-sm);
+  font-weight: 700;
 }
 
 .knowledge-repeater {
@@ -166,8 +661,8 @@
   justify-content: flex-end;
 }
 
-.knowledge-filter-panel form:not(.knowledge-inline-filter) > .knowledge-filter-actions {
-  padding-block-start: var(--space-5);
+.knowledge-advanced-filters > .knowledge-filter-actions {
+  padding-block-start: var(--space-4);
   border-block-start: 1px solid var(--role-line, var(--color-border));
 }
 
@@ -472,20 +967,36 @@
   min-inline-size: var(--space-5);
 }
 
+/* The readiness meter reads as the primary figure; the revision stats sit in a
+   single row beside it behind a hairline so the strip never wraps 2 + 1. */
 .knowledge-workspace-summary {
   display: grid;
-  grid-template-columns: minmax(240px, 1fr) minmax(300px, 1fr);
+  grid-template-columns: minmax(0, 19rem) minmax(0, 1fr);
   align-items: center;
-  gap: var(--space-6);
+  gap: var(--space-5) var(--space-6);
 }
 
 .knowledge-summary-progress {
   display: grid;
+  gap: var(--space-3);
 }
 
 .knowledge-summary-progress > div:first-child {
   display: grid;
   gap: var(--space-1);
+}
+
+.knowledge-summary-progress > div:first-child strong {
+  font-size: var(--text-xl);
+  font-weight: 800;
+  line-height: 1.15;
+}
+
+.knowledge-workspace-summary .knowledge-summary-list {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-4);
+  padding-inline-start: var(--space-6);
+  border-inline-start: 1px solid var(--role-line, var(--color-border));
 }
 
 .knowledge-header-metadata {
@@ -506,6 +1017,9 @@
   white-space: nowrap;
 }
 
+/* The toolbar is the section card's own header: it full-bleeds to the card edge
+   through negative margins that match the Surface padding, and stays opaque so
+   scrolled section content never shows through the sticky band. */
 .knowledge-section-toolbar {
   position: sticky;
   inset-block-start: 0;
@@ -514,38 +1028,32 @@
   align-items: center;
   flex-wrap: wrap;
   gap: var(--space-3) var(--space-4);
-  margin: calc(var(--space-5) * -1) calc(var(--space-5) * -1) 0;
+  margin: calc(var(--space-5) * -1) calc(var(--space-5) * -1) var(--space-1);
   padding: var(--space-3) var(--space-5);
   border-block-end: 1px solid var(--role-line, var(--color-border));
   border-start-start-radius: var(--radius-surface);
   border-start-end-radius: var(--radius-surface);
-  background: var(--role-glass-strong, color-mix(in srgb, var(--role-deck, var(--color-surface)) 88%, transparent));
-  backdrop-filter: blur(8px);
+  background: var(--role-deck-tint, var(--color-surface-subtle));
 }
 
-/* Label sits beside the control so the bar stays one line tall. */
-.knowledge-section-toolbar__field {
-  grid-template-columns: auto minmax(150px, 220px);
-  align-items: center;
-  gap: var(--space-3);
-}
-
-.knowledge-section-toolbar__field .ui-field__label {
-  white-space: nowrap;
-}
-
-.knowledge-section-toolbar__field .ui-control {
-  min-block-size: 38px;
+.knowledge-mode-block__toolbar {
+  position: static;
+  inset-block-start: auto;
+  z-index: auto;
+  margin: 0;
 }
 
 .knowledge-section-toolbar__meta {
   color: var(--role-ink-muted, var(--color-text-muted));
-  font-size: var(--text-sm);
+  font-size: var(--text-xs);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
 }
 
 .knowledge-section-toolbar__save {
   margin-inline-start: auto;
-  min-block-size: 38px;
+  min-block-size: 40px;
 }
 
 .knowledge-master-control {
@@ -622,6 +1130,7 @@
   padding: var(--space-4);
   border: 1px solid var(--role-line, var(--color-border));
   border-radius: var(--radius-field);
+  background: var(--role-deck-tint, var(--color-surface-subtle));
 }
 
 .knowledge-history li > div {
@@ -730,6 +1239,50 @@
   width: min(100%, 46rem);
 }
 
+@media (max-width: 1100px) {
+  .knowledge-page--item-workspace > .ui-page-header {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .knowledge-page--item-workspace > .ui-page-header .ui-page-header__content,
+  .knowledge-page--item-workspace > .ui-page-header .ui-page-header__actions {
+    grid-column: 1;
+  }
+
+  .knowledge-page--item-workspace > .ui-page-header .ui-page-header__actions {
+    justify-content: flex-start;
+  }
+}
+
+@media (max-width: 960px) {
+  .knowledge-workspace-summary {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .knowledge-workspace-summary .knowledge-summary-list {
+    padding-inline-start: 0;
+    padding-block-start: var(--space-4);
+    border-inline-start: 0;
+    border-block-start: 1px solid var(--role-line, var(--color-border));
+  }
+}
+
+@media (max-width: 768px) {
+  .knowledge-page--item-workspace .knowledge-workspace-section--overview {
+    max-inline-size: 100%;
+  }
+
+  .knowledge-overview__configured-grid,
+  .knowledge-overview__principal-grid,
+  .knowledge-overview__cards {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .knowledge-overview__summary-panel--wide {
+    grid-column: auto;
+  }
+}
+
 @media (max-width: 640px) {
   .knowledge-section-tabs {
     display: none;
@@ -768,6 +1321,7 @@
   .knowledge-workspace-summary,
   .knowledge-item-metadata,
   .knowledge-summary-list,
+  .knowledge-workspace-summary .knowledge-summary-list,
   .knowledge-preview-result dl {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -792,16 +1346,45 @@
     position: static;
     align-items: stretch;
     flex-direction: column;
-    backdrop-filter: none;
-  }
-
-  .knowledge-section-toolbar__field {
-    grid-template-columns: minmax(0, 1fr);
-    align-items: stretch;
   }
 
   .knowledge-section-toolbar__save {
     margin-inline-start: 0;
+    width: 100%;
+  }
+
+  .knowledge-mode-block__dirty {
+    margin-inline-start: 0;
+  }
+
+  .knowledge-overview__identity,
+  .knowledge-overview__summary-heading,
+  .knowledge-overview-card__heading,
+  .knowledge-overview__quality-title {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .knowledge-overview__identity {
+    padding-inline: var(--space-4);
+    border-inline-start-width: 0;
+    border-block-start: 3px solid var(--role-accent, var(--color-brand-violet));
+  }
+
+  .knowledge-overview__identity-meta,
+  .knowledge-overview__definition-grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-3);
+    text-align: start;
+  }
+
+  .knowledge-overview__identity-meta > div + div {
+    padding-inline-start: 0;
+    border-inline-start: 0;
+  }
+
+  .knowledge-overview__summary-heading .ui-button,
+  .knowledge-overview-card > .ui-button {
     width: 100%;
   }
 
@@ -861,4 +1444,1897 @@
   font-family: var(--font-tabular);
   font-size: var(--text-xs);
   opacity: 0.85;
+}
+
+/* Main Basket lifecycle management is scoped to the AI Estimator feature so
+   the wider destructive workflow does not alter shared dialog geometry. */
+.modal:has(.knowledge-basket-manager) {
+  width: min(100%, 52rem);
+}
+
+.knowledge-basket-manager,
+.knowledge-basket-manager__results,
+.knowledge-basket-delete,
+.knowledge-basket-delete__impact {
+  min-width: 0;
+}
+
+.knowledge-basket-manager__results {
+  display: grid;
+  gap: var(--space-4);
+  outline: none;
+}
+
+.knowledge-basket-manager__results:focus-visible {
+  border-radius: var(--radius-field);
+  box-shadow: var(--focus-ring);
+}
+
+.knowledge-basket-manager__list {
+  display: grid;
+  gap: var(--space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.knowledge-basket-manager__row {
+  display: grid;
+  gap: var(--space-4);
+  min-width: 0;
+  padding: var(--space-4);
+  border: 1px solid var(--role-line, var(--color-border));
+  border-radius: var(--radius-field);
+  background: var(--role-deck, var(--color-surface));
+}
+
+.knowledge-basket-manager__summary {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+.knowledge-basket-manager__summary > div {
+  min-width: 0;
+}
+
+.knowledge-basket-manager__summary h3,
+.knowledge-basket-manager__summary p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.knowledge-basket-manager__summary p {
+  margin-block-start: var(--space-1);
+  color: var(--role-ink-muted, var(--color-text-muted));
+  font-size: var(--text-sm);
+}
+
+.knowledge-basket-manager__actions {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.knowledge-basket-delete__impact,
+.knowledge-basket-delete__impact > dl {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.knowledge-basket-delete__impact > dl {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin: 0;
+}
+
+.knowledge-basket-delete__impact > dl > div {
+  display: grid;
+  gap: var(--space-1);
+  min-width: 0;
+  padding: var(--space-3);
+  border: 1px solid var(--role-line, var(--color-border));
+  border-radius: var(--radius-field);
+}
+
+.knowledge-basket-delete__impact dt {
+  color: var(--role-ink-muted, var(--color-text-muted));
+  font-size: var(--text-xs);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.knowledge-basket-delete__impact dd {
+  margin: 0;
+  font-size: var(--text-lg);
+  font-weight: 700;
+}
+
+.knowledge-basket-delete__impact .ui-inline-message p {
+  margin-block: 0 var(--space-2);
+}
+
+.knowledge-basket-delete__impact .ui-inline-message ul {
+  margin: 0;
+  padding-inline-start: var(--space-5);
+}
+
+@media (max-width: 640px) {
+  .knowledge-basket-manager__summary {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .knowledge-basket-manager__actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .knowledge-basket-manager__actions .ui-button {
+    width: 100%;
+    min-height: 44px;
+  }
+
+  .knowledge-basket-manager__pagination {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .knowledge-basket-manager__pagination .ui-button {
+    width: 100%;
+    min-height: 44px;
+  }
+
+  .knowledge-basket-delete__impact > dl {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Configuration screen: simplified search bar and Main Basket expansion cards
+   --------------------------------------------------------------------------- */
+
+/* One prominent search row; every other filter hides behind the disclosure so
+   the panel opens at three controls instead of eight.
+
+   The field track is sized to the query, not to the page: a basket or main
+   line name needs nowhere near the full workspace width, and stretching to it
+   turned a search box into a rule across the screen. The group packs to the
+   start, so what follows it is canvas rather than a gap inside the control.
+
+   Sized here rather than in the segmented-row block further down, because the
+   768px stacking override sits between the two and would lose to it. */
+.knowledge-search-bar {
+  display: grid;
+  grid-template-columns: minmax(0, 30rem) auto;
+  justify-content: start;
+  align-items: end;
+  gap: var(--space-3) var(--space-4);
+  min-width: 0;
+}
+
+.knowledge-search-bar__field {
+  min-width: 0;
+}
+
+.knowledge-search-bar__actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.knowledge-search-control {
+  position: relative;
+  min-width: 0;
+}
+
+.knowledge-search-control .ui-control {
+  padding-inline-start: var(--space-9);
+}
+
+.knowledge-search-control .ui-control::-webkit-search-cancel-button {
+  cursor: pointer;
+}
+
+.knowledge-search-control__icon {
+  position: absolute;
+  inset-block-start: 50%;
+  inset-inline-start: var(--space-3);
+  block-size: 18px;
+  inline-size: 18px;
+  color: var(--role-ink-muted, var(--color-text-muted));
+  pointer-events: none;
+  transform: translateY(-50%);
+}
+
+/* Count of pending advanced filters, so a collapsed panel never hides state. */
+.knowledge-filter-count {
+  display: inline-flex;
+  justify-content: center;
+  align-items: center;
+  min-inline-size: 20px;
+  block-size: 20px;
+  margin-inline-start: var(--space-2);
+  padding-inline: 6px;
+  border-radius: var(--radius-pill);
+  background: var(--role-accent, var(--color-brand-violet));
+  color: var(--role-cta-ink, #fff);
+  font-size: var(--text-xs);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.knowledge-advanced-filters {
+  display: grid;
+  gap: var(--space-4);
+  padding-block-start: var(--space-4);
+  border-block-start: 1px solid var(--role-line, var(--color-border));
+  animation: knowledge-panel-reveal var(--duration-fast) var(--ease-standard) both;
+}
+
+.knowledge-advanced-filters[hidden] {
+  display: none;
+}
+
+/* Applied filters stay legible as removable chips once the panel is closed. */
+.knowledge-filter-chips {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-3);
+  min-width: 0;
+}
+
+.knowledge-filter-chips__label {
+  color: var(--role-ink-muted, var(--color-text-muted));
+  font-size: var(--text-xs);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.knowledge-filter-chips ul {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+  list-style: none;
+}
+
+.knowledge-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  max-inline-size: 100%;
+  padding: 4px 4px 4px var(--space-3);
+  border: 1px solid var(--role-line, var(--color-border));
+  border-radius: var(--radius-pill);
+  background: var(--role-deck, var(--color-surface));
+  font-size: var(--text-sm);
+}
+
+.knowledge-chip__label {
+  color: var(--role-ink-muted, var(--color-text-muted));
+  font-weight: 600;
+}
+
+.knowledge-chip__value {
+  overflow: hidden;
+  color: var(--role-ink, var(--color-text));
+  font-weight: 600;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.knowledge-chip__remove {
+  display: inline-flex;
+  justify-content: center;
+  align-items: center;
+  flex: 0 0 auto;
+  block-size: 24px;
+  inline-size: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--role-ink-muted, var(--color-text-muted));
+  cursor: pointer;
+  transition:
+    background-color var(--duration-fast) var(--ease-standard),
+    color var(--duration-fast) var(--ease-standard);
+}
+
+.knowledge-chip__remove svg {
+  block-size: 14px;
+  inline-size: 14px;
+}
+
+.knowledge-chip__remove:hover {
+  background: color-mix(in srgb, var(--color-danger) 12%, transparent);
+  color: var(--color-danger-strong, var(--color-danger));
+}
+
+.knowledge-chip__remove:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/*
+ * Main Basket list: each basket is a card whose body collapses.
+ *
+ * The Surface's own padding is handed down to the header and the body so the
+ * title band can run corner to corner. That is what makes an open panel read
+ * as a titled section rather than as a heading floating inside a box, and it
+ * is why `overflow: clip` matters here - the band and the spine below are both
+ * trimmed by the card's radius.
+ */
+.knowledge-basket-panel.ui-surface {
+  position: relative;
+  gap: 0;
+  padding: 0;
+  overflow: clip;
+  transition:
+    border-color var(--duration-fast) var(--ease-standard),
+    box-shadow var(--duration-fast) var(--ease-standard);
+}
+
+.knowledge-basket-panel:focus-within {
+  border-color: var(--role-line-strong, var(--color-border-strong));
+  box-shadow: var(--role-shadow-lift, var(--shadow-raised));
+}
+
+/* An open panel carries an accent spine down its leading edge, so a long list
+   shows at a glance which baskets are unfolded without reading every chevron. */
+.knowledge-basket-panel[data-expanded]::before {
+  content: "";
+  position: absolute;
+  inset-block: 0;
+  inset-inline-start: 0;
+  inline-size: 3px;
+  background: var(--role-cta, var(--color-brand-violet));
+}
+
+/* Written as a child selector so this out-ranks the shared
+   `.knowledge-basket-group > .knowledge-section-heading` padding and keeps the
+   band symmetrical top and bottom. */
+.knowledge-basket-panel > .knowledge-basket-panel__header {
+  align-items: center;
+  gap: var(--space-3) var(--space-4);
+  padding: var(--space-3) var(--space-5);
+  transition: background-color var(--duration-fast) var(--ease-standard);
+}
+
+/* That shared rule also draws a hairline under every heading. Here the header
+   is a band, so it owns its own edge - only when there is something to divide. */
+.knowledge-basket-group.knowledge-basket-panel > .knowledge-section-heading {
+  border-block-end: 0;
+}
+
+/* Only a panel that actually opened onto something tints its band and closes
+   it with a hairline. Expanded-but-empty stays flat: a tint would promise
+   content that is not there. */
+.knowledge-basket-panel[data-expanded]:has(.knowledge-item-card) > .knowledge-basket-panel__header {
+  border-block-end: 1px solid var(--role-line, var(--color-border));
+  background: linear-gradient(
+    180deg,
+    var(--role-deck-tint, var(--color-surface-subtle)) 0%,
+    color-mix(in srgb, var(--role-deck-tint, var(--color-surface-subtle)) 45%, var(--role-deck, var(--color-surface))) 100%
+  );
+}
+
+/* Basket names are names of things, not interface labels, so they take the
+   editorial face the page title uses. The class carries an element selector to
+   out-rank the shared `.knowledge-section-heading h2` font shorthand. */
+.knowledge-basket-panel h2.knowledge-basket-panel__title {
+  min-width: 0;
+  flex: 1 1 auto;
+  font-family: var(--font-editorial);
+  font-size: var(--text-xl);
+  font-weight: 500;
+  letter-spacing: -0.01em;
+}
+
+.knowledge-basket-panel__toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  inline-size: 100%;
+  min-block-size: 44px;
+  margin-inline-start: calc(var(--space-2) * -1);
+  padding: var(--space-1) var(--space-2);
+  border: 0;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+  transition:
+    background-color var(--duration-fast) var(--ease-standard),
+    color var(--duration-fast) var(--ease-standard);
+}
+
+.knowledge-basket-panel__toggle:hover {
+  background: color-mix(in srgb, var(--role-accent, var(--color-brand-midnight)) 8%, transparent);
+  color: var(--role-accent, var(--color-brand-violet));
+}
+
+.knowledge-basket-panel__toggle:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.knowledge-basket-panel__toggle > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.knowledge-basket-panel__chevron {
+  flex: 0 0 auto;
+  block-size: 20px;
+  inline-size: 20px;
+  color: var(--role-ink-muted, var(--color-text-muted));
+  transform: rotate(-90deg);
+  transition:
+    color var(--duration-fast) var(--ease-standard),
+    transform var(--duration-fast) var(--ease-standard);
+}
+
+/* Open state is carried by colour as well as angle, so it survives at a glance
+   and for anyone who reads the rotation slowly. */
+.knowledge-basket-panel[data-expanded] .knowledge-basket-panel__chevron {
+  color: var(--role-accent, var(--color-brand-violet));
+  transform: rotate(0deg);
+}
+
+.knowledge-basket-panel__meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+.knowledge-count-pill {
+  display: inline-flex;
+  align-items: center;
+  block-size: 22px;
+  padding-inline: var(--space-3);
+  border: 1px solid var(--role-line, var(--color-border));
+  border-radius: var(--radius-pill);
+  background: var(--role-deck-tint, var(--color-surface-subtle));
+  color: var(--role-ink-muted, var(--color-text-muted));
+  font-size: var(--text-xs);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.knowledge-basket-panel__body {
+  display: grid;
+  gap: var(--space-4);
+  padding: var(--space-5);
+  min-width: 0;
+  animation: knowledge-panel-reveal var(--duration-fast) var(--ease-standard) both;
+}
+
+/* Expanded onto nothing: the grid is already hidden, so the body should not
+   hold a band of padding open under a flat header either. */
+.knowledge-basket-panel__body:not(:has(.knowledge-item-card)) {
+  padding: 0;
+}
+
+.knowledge-basket-panel__body[hidden] {
+  display: none;
+}
+
+@keyframes knowledge-panel-reveal {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* Basket management rows read as cards with a clearly separated action row. */
+.knowledge-basket-manager__row {
+  transition:
+    border-color var(--duration-fast) var(--ease-standard),
+    box-shadow var(--duration-fast) var(--ease-standard);
+}
+
+.knowledge-basket-manager__row:hover,
+.knowledge-basket-manager__row:focus-within {
+  border-color: var(--role-line-strong, var(--color-border-strong));
+  box-shadow: var(--role-shadow-soft, var(--shadow-soft));
+}
+
+.knowledge-basket-manager__actions {
+  padding-block-start: var(--space-3);
+  border-block-start: 1px solid var(--role-line, var(--color-border));
+}
+
+@media (max-width: 768px) {
+  .knowledge-search-bar {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .knowledge-search-bar__actions {
+    justify-content: flex-end;
+  }
+
+  .knowledge-search-bar__actions .ui-button {
+    flex: 1 1 auto;
+    min-height: 44px;
+  }
+
+}
+
+@media (max-width: 640px) {
+  /* The band and body own the card's padding now, so they are what has to give
+     up width on a phone. Both selectors match the child form the band is
+     declared with - a media query adds no specificity of its own. */
+  .knowledge-basket-panel > .knowledge-basket-panel__header,
+  .knowledge-basket-panel__body {
+    padding-inline: var(--space-4);
+  }
+
+  .knowledge-basket-panel > .knowledge-basket-panel__header {
+    align-items: stretch;
+  }
+
+  .knowledge-basket-panel__meta {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .knowledge-basket-panel__meta > .knowledge-count-pill {
+    align-self: flex-start;
+  }
+
+  .knowledge-chip__value {
+    max-inline-size: 12rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .knowledge-advanced-filters,
+  .knowledge-basket-panel__body {
+    animation: none;
+  }
+
+  .knowledge-basket-panel__chevron {
+    transition: none;
+  }
+}
+
+/* Nothing to lay out when a basket is empty; the grid would add a stray gap. */
+.knowledge-basket-panel__body > .knowledge-item-grid:empty {
+  display: none;
+}
+
+/* ==========================================================================
+   Configuration presentation layer
+   --------------------------------------------------------------------------
+   Presentation-only polish for the two Configuration entry screens - the
+   knowledge base index and Reusable estimation values. Everything is written
+   against the --role-* teak tokens with the cool base tokens as fallbacks, and
+   against the type scale rather than literal sizes, so the Super Admin dense
+   scale still governs. The item workspace keeps the header grid declared near
+   the top of this file, so the masthead layout below deliberately excludes it.
+   ========================================================================== */
+
+/* One step more air between masthead, notice, toolbar and deck than the
+   generic section rhythm gives: these pages stack four distinct regions. */
+.knowledge-page {
+  gap: var(--space-6);
+}
+
+/* --------------------------------------------------------------- masthead */
+
+/* Title block and commands share one baseline, with a hairline closing the
+   masthead so the page reads as header + content rather than a loose stack. */
+.knowledge-page:not(.knowledge-page--item-workspace) > .ui-page-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: var(--space-4) var(--space-7);
+  padding-block-end: var(--space-5);
+  border-block-end: 1px solid var(--role-line, var(--color-border));
+}
+
+/* The eyebrow is a section kicker, not body metadata: a short rule plus small
+   caps in the accent places the page inside Configuration at a glance. */
+.knowledge-page > .ui-page-header .ui-page-header__eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--role-accent, var(--color-brand-violet));
+  font-size: var(--text-xs);
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.knowledge-page > .ui-page-header .ui-page-header__eyebrow::before {
+  content: "";
+  flex: 0 0 auto;
+  inline-size: var(--space-5);
+  block-size: 2px;
+  border-radius: var(--radius-pill);
+  background: currentcolor;
+  opacity: 0.5;
+}
+
+/* Size stays on the token so the dense Super Admin scale still applies; only
+   the colour and the editorial tracking are set here. */
+.knowledge-page > .ui-page-header .ui-page-header__title {
+  color: var(--role-ink, var(--color-text));
+  letter-spacing: -0.015em;
+}
+
+.knowledge-page > .ui-page-header .ui-page-header__description {
+  max-inline-size: 68ch;
+  color: var(--role-ink-muted, var(--color-text-muted));
+}
+
+.knowledge-page > .ui-page-header .ui-page-header__actions {
+  gap: var(--space-2);
+  justify-content: flex-end;
+}
+
+/* Four commands in a row should read as a toolbar, not as four equal calls to
+   action: the secondaries take a lighter edge and a smaller icon, and only the
+   primary keeps the full-weight teak fill. */
+.knowledge-page > .ui-page-header .ui-page-header__actions .ui-button--secondary {
+  border-color: var(--role-line-strong, var(--color-border-strong));
+  background: var(--role-deck, var(--color-surface));
+  color: var(--role-ink, var(--color-text));
+}
+
+.knowledge-page > .ui-page-header .ui-page-header__actions .ui-button--secondary:not(:disabled):hover {
+  border-color: var(--role-accent, var(--color-border-strong));
+  background: color-mix(in srgb, var(--role-accent, var(--color-brand-violet)) 7%, var(--role-deck, var(--color-surface)));
+  color: var(--role-accent, var(--color-text));
+}
+
+.knowledge-page > .ui-page-header .ui-page-header__actions .ui-button__icon > svg {
+  block-size: 16px;
+  inline-size: 16px;
+}
+
+/* The row only steps down from the 44px target where there is no touch input
+   to serve; coarse pointers keep the full hit area. */
+@media (pointer: fine) {
+  .knowledge-page > .ui-page-header .ui-page-header__actions .ui-button {
+    min-block-size: 38px;
+    padding-inline: var(--space-4);
+  }
+}
+
+/* The isolation notice repeats on every Configuration screen and asks for
+   nothing, so it sits back: deck tint, accent rule, metadata weight. */
+.knowledge-page > .ui-notice-banner .ui-inline-message {
+  border-color: var(--role-line, var(--color-border));
+  border-inline-start-color: var(--role-accent, var(--color-info));
+  background: var(--role-deck-tint, var(--color-surface-subtle));
+  padding-block: var(--space-3);
+  color: var(--role-ink-muted, var(--color-text-muted));
+  font-size: var(--text-md);
+}
+
+.knowledge-page > .ui-notice-banner .ui-inline-message__icon {
+  color: var(--role-accent, var(--color-info));
+}
+
+/* --------------------------------------------------------------- toolbars */
+
+/*
+ * Search row: the field and its two commands join into one segmented control.
+ *
+ * Capping the field but right-aligning the commands - which is what this did
+ * before - left a quarter of the page of dead tint between two things that act
+ * on each other. Joined and packed to the start, the group reads left to right
+ * in increasing weight: query, then the disclosure, then the submit. Radii are
+ * flattened only where two segments meet, so it keeps one continuous outline.
+ * The track that sizes it is up in the base rule, for cascade reasons noted
+ * there.
+ */
+.knowledge-search-bar {
+  column-gap: 0;
+}
+
+/*
+ * A card wrapped around a single field is a box inside a box, and the beige
+ * ground it drew made the bar look sunk into a slab. Closed, the panel is just
+ * the bar standing on the canvas; opening the disclosure gives the card back,
+ * so the filter drawer has something to sit in. The open state wins on its own
+ * specificity - :has() takes the weight of its most specific argument.
+ */
+.ui-app-shell[data-role] .knowledge-page .knowledge-filter-panel:has(.knowledge-search-bar),
+.knowledge-page .knowledge-filter-panel:has(.knowledge-search-bar) {
+  padding: 0;
+  border: 0;
+  background: none;
+  box-shadow: none;
+}
+
+.ui-app-shell[data-role] .knowledge-page .knowledge-filter-panel:has(.knowledge-advanced-filters:not([hidden])),
+.knowledge-page .knowledge-filter-panel:has(.knowledge-advanced-filters:not([hidden])) {
+  padding: var(--space-5);
+  border: 1px solid var(--role-line, var(--color-border));
+  background: var(--role-deck-tint, var(--color-surface-subtle));
+  box-shadow: var(--role-shadow-soft, var(--shadow-soft));
+}
+
+/* The magnifier and the placeholder already name this field twice over, so the
+   third label comes out of the layout - and stays in the accessibility tree,
+   where it is still the input's programmatic name. */
+.knowledge-search-bar__field > .ui-field__label {
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  padding: 0;
+  margin: -1px;
+  border: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.knowledge-search-bar__actions {
+  gap: 0;
+  flex-wrap: nowrap;
+}
+
+.knowledge-search-bar .knowledge-search-control .ui-control {
+  border-start-end-radius: 0;
+  border-end-end-radius: 0;
+}
+
+/* The role theme gives every secondary button a radius at three classes, and
+   it is emitted after this file, so squaring the seams has to out-rank it. */
+.ui-app-shell[data-role] .knowledge-page .knowledge-search-bar__actions .ui-button,
+.knowledge-page .knowledge-search-bar__actions .ui-button {
+  border-radius: 0;
+}
+
+.ui-app-shell[data-role] .knowledge-page .knowledge-search-bar__actions .ui-button:last-child,
+.knowledge-page .knowledge-search-bar__actions .ui-button:last-child {
+  border-start-end-radius: var(--radius-field);
+  border-end-end-radius: var(--radius-field);
+}
+
+/* Collapse the doubled edge where two segments meet. */
+.knowledge-search-bar__actions .ui-button + .ui-button {
+  margin-inline-start: -1px;
+}
+
+/* A focus ring on a joined segment belongs over its neighbours, not under. */
+.knowledge-search-bar .ui-control:focus-visible,
+.knowledge-search-bar__actions .ui-button:focus-visible {
+  position: relative;
+  z-index: 1;
+}
+
+/* Filter labels are micro-labels: the control underneath already says what it
+   collects, and small caps keep the toolbar from reading as a form. Scoped
+   past the role theme's own label colour so the muted tone survives. */
+.ui-app-shell[data-role] .knowledge-page .knowledge-filter-panel .ui-field__label,
+.knowledge-page .knowledge-filter-panel .ui-field__label {
+  color: var(--role-ink-muted, var(--color-text-muted));
+  font-size: var(--text-xs);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+/* --------------------------------------------------- reusable value tabs */
+
+/* The category tabs are navigation, not a panel. The pill deck already carries
+   its own edge and tint, so the surface around it only drew a second box. */
+.ui-app-shell[data-role] .knowledge-page .knowledge-master-navigation.ui-surface,
+.knowledge-page .knowledge-master-navigation.ui-surface {
+  padding: 0;
+  border: 0;
+  background: none;
+  box-shadow: none;
+}
+
+/* Seven categories form a compact deck instead of a mostly empty full-width
+   pill, matching how the item workspace sizes its section tabs. */
+.knowledge-master-navigation .knowledge-master-tabs {
+  inline-size: max-content;
+  max-inline-size: 100%;
+}
+
+/* ----------------------------------------------------------- basket decks */
+
+/* Repeated row-level commands stay quiet until they are pointed at. A column
+   of permanently red "Archive" outlines makes a healthy list look alarming;
+   the destructive colour arrives on hover and focus, where the intent is.
+   Confirmation dialogs keep the loud treatment untouched. */
+.knowledge-basket-panel__meta .ui-button--destructive-outline,
+.knowledge-table .ui-button--destructive-outline {
+  border-color: var(--role-line-strong, var(--color-border-strong));
+  background: transparent;
+  color: var(--role-ink-muted, var(--color-text-muted));
+}
+
+.knowledge-basket-panel__meta .ui-button--destructive-outline:not(:disabled):hover,
+.knowledge-basket-panel__meta .ui-button--destructive-outline:focus-visible,
+.knowledge-table .ui-button--destructive-outline:not(:disabled):hover,
+.knowledge-table .ui-button--destructive-outline:focus-visible {
+  border-color: var(--color-danger);
+  background: color-mix(in srgb, var(--color-danger) 8%, transparent);
+  color: var(--color-danger-strong);
+}
+
+/* The basket's own "Add estimation item" keeps the role theme's own glass
+   secondary. An override was written here first, at two classes, which never
+   applied: role-themes.css styles `.ui-app-shell[data-role] .ui-button--
+   secondary` at three and is emitted after this file. The theme's treatment is
+   the right one for a row action anyway, so the rule is gone rather than
+   escalated - the masthead override stays because a four-command row genuinely
+   needs calming, and it reaches four classes honestly. */
+
+/* auto-fill rather than auto-fit: one lonely item should stay a card, not
+   stretch into a full-width banner beside three empty tracks. */
+.knowledge-item-grid {
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 20rem), 1fr));
+}
+
+/* --------------------------------------------------------------- footers */
+
+/* Pagination closes the list rather than floating under it. */
+.knowledge-pagination {
+  justify-content: space-between;
+  padding-block-start: var(--space-4);
+  border-block-start: 1px solid var(--role-line, var(--color-border));
+}
+
+.knowledge-pagination > span {
+  color: var(--role-ink-muted, var(--color-text-muted));
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ------------------------------------------------------------ responsive */
+
+@media (max-width: 1180px) {
+  /* Commands drop to their own row before they start squeezing the title. */
+  .knowledge-page:not(.knowledge-page--item-workspace) > .ui-page-header {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .knowledge-page:not(.knowledge-page--item-workspace) > .ui-page-header .ui-page-header__actions {
+    justify-content: flex-start;
+  }
+}
+
+@media (max-width: 640px) {
+  .knowledge-page > .ui-page-header .ui-page-header__actions {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .knowledge-page > .ui-page-header .ui-page-header__actions .ui-button {
+    inline-size: 100%;
+  }
+
+  /* Below the tab breakpoint the navigation holds a labelled select instead of
+     the self-contained pill deck, so the surface earns its card back. */
+  .ui-app-shell[data-role] .knowledge-page .knowledge-master-navigation.ui-surface,
+  .knowledge-page .knowledge-master-navigation.ui-surface {
+    padding: var(--space-4);
+    border: 1px solid var(--role-line, var(--color-border));
+    background: var(--role-deck-tint, var(--color-surface-subtle));
+  }
+
+  .knowledge-pagination {
+    justify-content: center;
+  }
+}
+
+/* ==========================================================================
+   Configuration dialogs
+   --------------------------------------------------------------------------
+   Dialogs portal to <body>, outside `.ui-app-shell`, so everything here is
+   scoped from `body:has(...)` the way role-themes.css scopes the palette it
+   republishes for overlays. `.modal` is added to each selector to out-rank
+   those rules regardless of which stylesheet the bundler emits last - the
+   same specificity guard the item workspace block near the top of this file
+   uses against the global knowledge control theme.
+   ========================================================================== */
+
+/*
+ * The theme fills dialog fields with --role-deck, which is also what the
+ * dialog itself is painted with, so a field was deck-on-deck: nothing but a
+ * 1px hairline said where it started. Same fix the item workspace uses - the
+ * ink-darkened edge does the work, with a whisper of deck tint recessing the
+ * well behind it. Every state is restated so the stronger default does not
+ * flatten hover, focus, validation or read-only feedback.
+ */
+body:has(.ui-app-shell[data-role]) .modal .knowledge-dialog-body .ui-control {
+  border-color: color-mix(in srgb, var(--role-line-strong, var(--color-border-strong)) 72%, var(--role-ink, var(--color-text)));
+  background-color: color-mix(in srgb, var(--role-deck, var(--color-surface)) 78%, var(--role-deck-tint, var(--color-surface-subtle)));
+}
+
+body:has(.ui-app-shell[data-role]) .modal .knowledge-dialog-body .ui-control:hover:not(:disabled):not([aria-invalid="true"]) {
+  border-color: var(--role-accent, var(--color-border-strong));
+  background-color: var(--role-deck, var(--color-surface));
+}
+
+body:has(.ui-app-shell[data-role]) .modal .knowledge-dialog-body .ui-control:focus-visible {
+  border-color: var(--role-focus, var(--role-accent, var(--color-border-strong)));
+  background-color: var(--role-deck, var(--color-surface));
+  box-shadow: var(--focus-ring);
+  outline: none;
+}
+
+body:has(.ui-app-shell[data-role]) .modal .knowledge-dialog-body .ui-control[aria-invalid="true"] {
+  border-color: var(--color-danger);
+  background-color: color-mix(in srgb, var(--color-danger) 6%, var(--role-deck, var(--color-surface)));
+}
+
+body:has(.ui-app-shell[data-role]) .modal .knowledge-dialog-body .ui-control:disabled {
+  border-color: var(--role-line, var(--color-border));
+  background-color: var(--role-deck-tint, var(--color-surface-subtle));
+  color: var(--role-ink-muted, var(--color-text-muted));
+  cursor: not-allowed;
+  opacity: 0.78;
+}
+
+/* An optional one-line description does not need the 8rem well the shared
+   textarea reserves; it still grows by drag. */
+.knowledge-dialog-body .ui-textarea {
+  min-block-size: 6rem;
+}
+
+/* ------------------------------------------------------------ dialog footer */
+
+/* A transparent accent mix over the deck muddied into neither band nor
+   ground. A solid tint separates the commands from the form cleanly. */
+body:has(.ui-app-shell[data-role]) .modal .knowledge-dialog-actions {
+  align-items: center;
+  border-block-start-color: var(--role-line, var(--color-border));
+  background: var(--role-deck-tint, var(--color-surface-subtle));
+}
+
+/* The submit sat at --radius-control while every themed secondary in the
+   shell sits at --radius-field, so the filled slab read square beside them.
+   Configuration settles on one radius for both. */
+.knowledge-page .ui-button,
+.knowledge-page .ui-icon-button,
+.knowledge-dialog-actions .ui-button {
+  border-radius: var(--radius-field);
+}
+
+/* "Cancel" as a bare quiet button is unreadable as a control on the tinted
+   band. It keeps the lighter weight - dismissing should never compete with
+   confirming - but gains an edge to sit on. */
+body:has(.ui-app-shell[data-role]) .modal .knowledge-dialog-actions .ui-button--quiet {
+  border-color: var(--role-line-strong, var(--color-border-strong));
+  background: var(--role-deck, var(--color-surface));
+  color: var(--role-ink, var(--color-text));
+}
+
+body:has(.ui-app-shell[data-role]) .modal .knowledge-dialog-actions .ui-button--quiet:not(:disabled):hover {
+  border-color: var(--role-accent, var(--color-border-strong));
+  background: color-mix(in srgb, var(--role-accent, var(--color-brand-violet)) 8%, var(--role-deck, var(--color-surface)));
+  color: var(--role-accent, var(--color-text));
+}
+
+/* ------------------------------------------- segmented search row, stacked */
+
+/*
+ * This has to live at the end of the file rather than in the 768px block
+ * above, which is emitted before the segmented-row rules and would therefore
+ * lose to them at equal specificity - a media query carries no weight of its
+ * own. Verified against the bundled stylesheet, not assumed.
+ */
+@media (max-width: 768px) {
+  /* Stacked, the field is no longer joined to the commands: it takes its
+     trailing corners back and the pair below closes its own leading edge. */
+  .knowledge-search-bar .knowledge-search-control .ui-control {
+    border-start-end-radius: var(--radius-field);
+    border-end-end-radius: var(--radius-field);
+  }
+
+  .ui-app-shell[data-role] .knowledge-page .knowledge-search-bar__actions .ui-button:first-child,
+  .knowledge-page .knowledge-search-bar__actions .ui-button:first-child {
+    border-start-start-radius: var(--radius-field);
+    border-end-start-radius: var(--radius-field);
+  }
+}
+
+/* ==========================================================================
+   Professional Main Line workspace
+   --------------------------------------------------------------------------
+   This late, item-scoped layer owns the approved workspace composition. It is
+   intentionally after the general Configuration presentation rules so the
+   status strip, navigation, command bar, editor and history rail resolve as
+   one system without changing shared shell, role-theme or primitive styles.
+   ========================================================================== */
+
+.knowledge-page--item-workspace {
+  inline-size: 100%;
+  max-inline-size: var(--content-wide);
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
+}
+
+.knowledge-page--item-workspace > .ui-page-header,
+.knowledge-page--item-workspace > .ui-page-header .ui-page-header__content,
+.knowledge-page--item-workspace > .ui-page-header .ui-page-header__actions {
+  min-inline-size: 0;
+}
+
+.knowledge-page--item-workspace > .ui-page-header .ui-page-header__actions {
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.knowledge-page--item-workspace > .ui-page-header .ui-button--destructive-outline {
+  margin-inline-start: var(--space-1);
+}
+
+.knowledge-workspace-status {
+  display: grid;
+  grid-template-columns: minmax(14rem, 0.72fr) minmax(0, 2fr);
+  align-items: center;
+  gap: var(--space-4) var(--space-6);
+  min-inline-size: 0;
+  padding: var(--space-4) var(--space-5);
+  box-shadow: none;
+}
+
+.knowledge-workspace-status .knowledge-summary-progress {
+  min-inline-size: 0;
+  gap: var(--space-2);
+}
+
+.knowledge-workspace-status .knowledge-summary-progress > div:first-child {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.knowledge-workspace-status .knowledge-summary-progress > div:first-child strong {
+  flex: 0 0 auto;
+  font-size: var(--text-lg);
+  font-variant-numeric: tabular-nums;
+}
+
+.knowledge-workspace-status .knowledge-summary-list {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0;
+  min-inline-size: 0;
+  margin: 0;
+}
+
+.knowledge-workspace-status .knowledge-summary-list > div {
+  min-inline-size: 0;
+  padding-inline: var(--space-5);
+  border-inline-start: 1px solid var(--role-line, var(--color-border));
+}
+
+.knowledge-workspace-status .knowledge-summary-list dd {
+  color: var(--role-ink, var(--color-text));
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.knowledge-workspace-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(16rem, 18rem);
+  align-items: start;
+  gap: var(--space-5);
+  min-inline-size: 0;
+}
+
+.knowledge-workspace-main {
+  display: grid;
+  gap: var(--space-4);
+  min-inline-size: 0;
+}
+
+.knowledge-section-tabs-shell {
+  position: relative;
+  inline-size: 100%;
+  max-inline-size: 100%;
+  min-inline-size: 0;
+}
+
+.knowledge-page--item-workspace .knowledge-section-tabs {
+  inline-size: 100%;
+  max-inline-size: 100%;
+  min-inline-size: 0;
+  justify-self: stretch;
+}
+
+.knowledge-page--item-workspace .knowledge-section-command-bar {
+  position: sticky;
+  inset-block-start: var(--space-2);
+  z-index: var(--z-raised);
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-3) var(--space-5);
+  inline-size: 100%;
+  min-inline-size: 0;
+  padding: var(--space-3) var(--space-5);
+  border: 1px solid var(--role-line, var(--color-border));
+  border-radius: var(--radius-field);
+  background: var(--role-deck, var(--color-surface));
+  box-shadow: var(--role-shadow-soft, var(--shadow-soft));
+}
+
+.knowledge-section-command-bar__context {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-2);
+  min-inline-size: 0;
+}
+
+.knowledge-section-command-bar__label {
+  color: var(--role-ink, var(--color-text));
+  font-weight: 750;
+}
+
+.knowledge-section-command-bar__version,
+.knowledge-section-command-bar__status {
+  color: var(--role-ink-muted, var(--color-text-muted));
+  font-size: var(--text-sm);
+}
+
+.knowledge-section-command-bar__status {
+  min-inline-size: 0;
+  text-align: end;
+}
+
+.knowledge-section-command-bar__save {
+  min-block-size: 44px;
+}
+
+.knowledge-page--item-workspace .knowledge-workspace-section,
+.knowledge-page--item-workspace .knowledge-workspace-section--overview {
+  inline-size: 100%;
+  max-inline-size: none;
+  min-inline-size: 0;
+}
+
+/* Direct Main Line tab decks share the Overview inset and remain shrink-safe.
+   The exact Super Admin scope keeps this geometry out of reusable-master and
+   index screens while outranking the role theme loaded after this stylesheet. */
+.ui-app-shell[data-role="super_admin"] .knowledge-page.knowledge-page--item-workspace .ui-surface.knowledge-workspace-section {
+  inline-size: 100%;
+  max-inline-size: 100%;
+  min-inline-size: 0;
+  padding: var(--space-5);
+  overflow: visible;
+}
+
+/* Keep the command bar and Overview deck on the same outer edges while giving
+   their contents the same deliberate horizontal inset. This stronger,
+   item-scoped selector survives the role theme loaded after this stylesheet. */
+.ui-app-shell[data-role="super_admin"] .knowledge-page.knowledge-page--item-workspace .ui-surface.knowledge-workspace-section--overview {
+  padding: var(--space-5);
+}
+
+.knowledge-page--item-workspace .knowledge-workspace-section--overview .knowledge-overview {
+  gap: var(--space-4);
+  min-inline-size: 0;
+}
+
+.knowledge-page--item-workspace .knowledge-overview__context {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  min-inline-size: 0;
+  margin: 0;
+  padding-block: var(--space-2);
+  border-block-end: 1px solid var(--role-line, var(--color-border));
+  color: var(--role-ink-muted, var(--color-text-muted));
+  font-size: var(--text-sm);
+}
+
+.knowledge-overview__context-main-line {
+  color: var(--role-ink, var(--color-text));
+  font-size: var(--text-md);
+}
+
+.knowledge-overview__context-main-line,
+.knowledge-overview__context-basket,
+.knowledge-section-command-bar__context,
+.knowledge-section-command-bar__status,
+.knowledge-workspace-status dd,
+.knowledge-workspace-history-rail li,
+.knowledge-conflict-review__heading,
+.knowledge-conflict-review__values dd {
+  overflow-wrap: anywhere;
+}
+
+.knowledge-page--item-workspace .knowledge-overview__section--configured {
+  gap: var(--space-4);
+  min-inline-size: 0;
+}
+
+.knowledge-page--item-workspace .knowledge-overview__section--configured > .knowledge-section-heading {
+  min-inline-size: 0;
+}
+
+.knowledge-page--item-workspace .knowledge-overview__configured-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+  gap: var(--space-5);
+  min-inline-size: 0;
+}
+
+.knowledge-page--item-workspace .knowledge-overview__configured-field {
+  display: grid;
+  align-content: start;
+  gap: var(--space-2);
+  min-inline-size: 0;
+}
+
+.knowledge-page--item-workspace .knowledge-overview__configured-field .ui-field,
+.knowledge-page--item-workspace .knowledge-overview__configured-field .knowledge-surface-multiselect {
+  gap: 0;
+  min-inline-size: 0;
+}
+
+.knowledge-page--item-workspace .knowledge-overview__configured-field .ui-field__label,
+.knowledge-page--item-workspace .knowledge-overview__configured-field .knowledge-surface-multiselect__label {
+  min-block-size: 1.5rem;
+  margin: 0 0 var(--space-2);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.knowledge-page--item-workspace .knowledge-overview__configured-field .ui-control,
+.knowledge-page--item-workspace .knowledge-overview__configured-field .knowledge-surface-multiselect__trigger {
+  inline-size: 100%;
+  max-inline-size: 100%;
+  min-block-size: 44px;
+}
+
+.knowledge-page--item-workspace .knowledge-overview__quick-add {
+  justify-self: start;
+  margin: 0;
+}
+
+/* Visible Main Line editors use the same compact rhythm as Overview without
+   flattening the distinct Mode blocks or structured repeater rows. */
+.knowledge-page--item-workspace .knowledge-workspace-section > .knowledge-section-editor {
+  gap: var(--space-4);
+  min-inline-size: 0;
+}
+
+.knowledge-page--item-workspace .knowledge-workspace-section > .knowledge-section-editor > .knowledge-section-heading,
+.knowledge-page--item-workspace .knowledge-workspace-section > .knowledge-section-editor > .knowledge-section-heading > div {
+  min-inline-size: 0;
+}
+
+.knowledge-page--item-workspace .knowledge-workspace-section > .knowledge-section-editor > .knowledge-section-heading {
+  flex-wrap: wrap;
+}
+
+.knowledge-page--item-workspace .knowledge-workspace-section > .knowledge-section-editor > .knowledge-section-heading h2,
+.knowledge-page--item-workspace .knowledge-workspace-section > .knowledge-section-editor > .knowledge-section-heading p {
+  max-inline-size: 100%;
+  overflow-wrap: anywhere;
+}
+
+/* Mode keeps configuration, Pricing and Quantity & margin as separate blocks,
+   but their local metadata, editor and preview align to one inset and rhythm. */
+.knowledge-page--item-workspace .knowledge-mode-panel {
+  inline-size: 100%;
+  min-inline-size: 0;
+  gap: var(--space-4);
+}
+
+.ui-app-shell[data-role="super_admin"] .knowledge-page.knowledge-page--item-workspace .ui-surface.knowledge-mode-block {
+  inline-size: 100%;
+  max-inline-size: 100%;
+  min-inline-size: 0;
+  gap: var(--space-4);
+  padding: var(--space-5);
+  overflow: visible;
+}
+
+.knowledge-page--item-workspace .knowledge-mode-block__toolbar {
+  position: static;
+  inset-block-start: auto;
+  z-index: auto;
+  align-items: center;
+  flex-direction: row;
+  gap: var(--space-2) var(--space-3);
+  min-inline-size: 0;
+  margin: 0;
+  padding: 0 0 var(--space-3);
+  border-block-end: 1px solid var(--role-line, var(--color-border));
+  border-radius: 0;
+  background: transparent;
+}
+
+.knowledge-page--item-workspace .knowledge-mode-block__dirty {
+  min-inline-size: 0;
+  margin-inline-start: auto;
+  overflow-wrap: anywhere;
+}
+
+.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-section-toolbar__meta,
+.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-section-heading,
+.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-section-heading > div,
+.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-section-editor,
+.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-form-grid,
+.knowledge-page--item-workspace .knowledge-mode-panel .ui-field,
+.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-master-control,
+.knowledge-page--item-workspace .knowledge-mode-panel .ui-inline-message,
+.knowledge-page--item-workspace .knowledge-mode-panel .ui-inline-message__copy {
+  min-inline-size: 0;
+}
+
+.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-section-toolbar__meta,
+.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-section-heading h2,
+.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-section-heading h3,
+.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-section-heading p,
+.knowledge-page--item-workspace .knowledge-mode-panel .ui-field__label,
+.knowledge-page--item-workspace .knowledge-mode-panel .ui-field__hint,
+.knowledge-page--item-workspace .knowledge-mode-panel .ui-field__error,
+.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-help-text,
+.knowledge-page--item-workspace .knowledge-mode-panel .ui-inline-message__body {
+  max-inline-size: 100%;
+  overflow-wrap: anywhere;
+}
+
+.knowledge-page--item-workspace .knowledge-mode-panel .ui-control {
+  min-inline-size: 0;
+  max-inline-size: 100%;
+  min-block-size: 44px;
+}
+
+.ui-app-shell[data-role="super_admin"] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-block > .ui-surface.knowledge-preview-panel {
+  min-inline-size: 0;
+  margin-block-start: 0;
+  padding: var(--space-4);
+  box-shadow: none;
+}
+
+.knowledge-page--item-workspace .knowledge-mode-panel > .ui-page-state,
+.knowledge-page--item-workspace .knowledge-section-panel > .ui-page-state {
+  min-block-size: 0;
+  min-inline-size: 0;
+  padding: var(--space-7) var(--space-5);
+  border: 1px solid var(--role-line, var(--color-border));
+  border-radius: var(--radius-surface);
+  background: var(--role-deck, var(--color-surface));
+}
+
+/* Recommendations and Quality keep their repeater semantics while gaining a
+   balanced header, shrink-safe field grid and restrained nested row surface.
+   These rules also keep any Mode repeaters aligned to the same visual system. */
+.knowledge-page--item-workspace .knowledge-workspace-section .knowledge-repeater,
+.knowledge-page--item-workspace .knowledge-workspace-section .knowledge-repeater__header,
+.knowledge-page--item-workspace .knowledge-workspace-section .knowledge-repeater__list,
+.knowledge-page--item-workspace .knowledge-workspace-section .knowledge-repeater__list > li,
+.knowledge-page--item-workspace .knowledge-workspace-section .knowledge-repeater__row,
+.knowledge-page--item-workspace .knowledge-workspace-section .knowledge-repeater__content {
+  min-inline-size: 0;
+}
+
+.knowledge-page--item-workspace .knowledge-workspace-section .knowledge-repeater__header {
+  align-items: center;
+  flex-direction: row;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.knowledge-page--item-workspace .knowledge-workspace-section .knowledge-repeater__header h3 {
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
+}
+
+.knowledge-page--item-workspace .knowledge-workspace-section .knowledge-repeater__header > .ui-button {
+  flex: 0 0 auto;
+  min-block-size: 44px;
+}
+
+.knowledge-page--item-workspace .knowledge-workspace-section .knowledge-repeater__empty {
+  min-inline-size: 0;
+  margin: 0;
+  padding: var(--space-4);
+  background: var(--role-deck-tint, var(--color-surface-subtle));
+  overflow-wrap: anywhere;
+}
+
+.knowledge-page--item-workspace .knowledge-workspace-section .knowledge-repeater__row {
+  align-items: flex-start;
+  gap: var(--space-4);
+  background: var(--role-deck-tint, var(--color-surface-subtle));
+}
+
+.knowledge-page--item-workspace .knowledge-workspace-section .knowledge-repeater__content {
+  inline-size: 100%;
+}
+
+.knowledge-page--item-workspace .knowledge-workspace-section .knowledge-repeater__content > .knowledge-form-grid {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr));
+  align-items: start;
+  gap: var(--space-4) var(--space-3);
+  min-inline-size: 0;
+}
+
+.knowledge-page--item-workspace .knowledge-workspace-section .knowledge-repeater .ui-field,
+.knowledge-page--item-workspace .knowledge-workspace-section .knowledge-repeater .knowledge-checkbox-row {
+  min-inline-size: 0;
+}
+
+.knowledge-page--item-workspace .knowledge-workspace-section .knowledge-repeater .ui-field {
+  align-content: start;
+}
+
+.knowledge-page--item-workspace .knowledge-workspace-section .knowledge-repeater .ui-field__label,
+.knowledge-page--item-workspace .knowledge-workspace-section .knowledge-repeater .ui-field__hint,
+.knowledge-page--item-workspace .knowledge-workspace-section .knowledge-repeater .ui-field__error,
+.knowledge-page--item-workspace .knowledge-workspace-section .knowledge-repeater .knowledge-checkbox-row {
+  min-inline-size: 0;
+  max-inline-size: 100%;
+  overflow-wrap: anywhere;
+}
+
+.knowledge-page--item-workspace .knowledge-workspace-section .knowledge-repeater .ui-control {
+  min-inline-size: 0;
+  max-inline-size: 100%;
+  min-block-size: 44px;
+}
+
+.knowledge-page--item-workspace .knowledge-workspace-section .knowledge-repeater .knowledge-checkbox-row {
+  align-self: start;
+  align-items: flex-start;
+}
+
+.knowledge-page--item-workspace .knowledge-workspace-section .knowledge-repeater__actions {
+  flex: 0 1 auto;
+  align-self: flex-start;
+  align-items: flex-start;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  min-inline-size: 0;
+  margin-inline-start: auto;
+}
+
+.knowledge-page--item-workspace .knowledge-mode-configuration {
+  display: grid;
+  gap: var(--space-4);
+  min-inline-size: 0;
+}
+
+.knowledge-page--item-workspace .knowledge-mode-configuration > .ui-field {
+  inline-size: min(100%, 30rem);
+}
+
+.knowledge-page--item-workspace .knowledge-mode-configuration__execution-source {
+  display: grid;
+  gap: var(--space-2);
+  min-inline-size: 0;
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--role-line, var(--color-border));
+  border-radius: var(--radius-field);
+  background: var(--role-deck-tint, var(--color-surface-subtle));
+}
+
+.knowledge-page--item-workspace .knowledge-mode-configuration__execution-source legend {
+  padding-inline: var(--space-1);
+  font-weight: 700;
+}
+
+.knowledge-page--item-workspace .knowledge-mode-configuration__execution-source-options,
+.knowledge-page--item-workspace .knowledge-mode-configuration__execution-source-options label,
+.knowledge-page--item-workspace .knowledge-mode-configuration__recovery-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-4);
+  min-inline-size: 0;
+}
+
+.knowledge-page--item-workspace .knowledge-mode-configuration__execution-source-options label {
+  display: inline-flex;
+  gap: var(--space-2);
+  min-block-size: 44px;
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
+}
+
+.knowledge-page--item-workspace .knowledge-mode-configuration__recovery-actions {
+  justify-content: flex-end;
+}
+
+.knowledge-page--item-workspace .knowledge-mode-configuration__state,
+.knowledge-page--item-workspace .knowledge-mode-field__pending {
+  margin: 0;
+  color: var(--role-text-muted, var(--color-text-muted));
+  overflow-wrap: anywhere;
+}
+
+.knowledge-page--item-workspace .knowledge-mode-field {
+  display: grid;
+  gap: var(--space-4);
+  min-inline-size: 0;
+}
+
+.knowledge-page--item-workspace .knowledge-mode-field__definition {
+  display: grid;
+  grid-template-columns: minmax(10rem, 0.7fr) minmax(14rem, 1fr) minmax(16rem, 1.3fr);
+  align-items: start;
+  gap: var(--space-3);
+  min-inline-size: 0;
+}
+
+.knowledge-page--item-workspace .knowledge-overview__mode-component-list {
+  display: grid;
+  gap: var(--space-3);
+  min-inline-size: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.knowledge-page--item-workspace .knowledge-overview__mode-component-list > li {
+  min-inline-size: 0;
+  padding: var(--space-3);
+  border: 1px solid var(--role-line, var(--color-border));
+  border-radius: var(--radius-field);
+}
+
+.knowledge-page--item-workspace .knowledge-overview__mode-component-list h5 {
+  margin: 0 0 var(--space-2);
+  overflow-wrap: anywhere;
+}
+
+.knowledge-page--item-workspace .knowledge-validation-summary button {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.knowledge-workspace-history-rail {
+  position: sticky;
+  inset-block-start: var(--space-2);
+  align-self: start;
+  inline-size: 100%;
+  max-inline-size: 18rem;
+  min-inline-size: 0;
+  padding: var(--space-4);
+  box-shadow: none;
+}
+
+.knowledge-workspace-history-rail .knowledge-section-heading {
+  padding-block-end: var(--space-3);
+  border-block-end: 1px solid var(--role-line, var(--color-border));
+}
+
+.knowledge-workspace-history-rail ol {
+  gap: var(--space-2);
+}
+
+.knowledge-workspace-history-rail li {
+  padding: var(--space-3);
+  background: var(--role-deck-tint, var(--color-surface-subtle));
+}
+
+.knowledge-conflict-review {
+  padding: var(--space-4);
+  border-color: color-mix(in srgb, var(--color-warning) 45%, var(--role-line, var(--color-border)));
+  box-shadow: none;
+}
+
+/* The role theme is intentionally loaded after this feature stylesheet and
+   gives every knowledge Surface a soft shadow. These workspace status/history
+   surfaces are secondary information, so this item-scoped rule must outrank
+   that later generic Surface rule instead of relying on source order. */
+.ui-app-shell[data-role="super_admin"] .knowledge-page.knowledge-page--item-workspace .ui-surface.knowledge-workspace-status,
+.ui-app-shell[data-role="super_admin"] .knowledge-page.knowledge-page--item-workspace .ui-surface.knowledge-workspace-history-rail,
+.ui-app-shell[data-role="super_admin"] .knowledge-page.knowledge-page--item-workspace .ui-surface.knowledge-conflict-review {
+  box-shadow: none;
+}
+
+.knowledge-conflict-review__heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+  min-inline-size: 0;
+}
+
+.knowledge-conflict-review__heading h2,
+.knowledge-conflict-review__heading p {
+  margin: 0;
+}
+
+.knowledge-conflict-review__values {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3);
+  min-inline-size: 0;
+  margin: 0;
+}
+
+.knowledge-conflict-review__values > div {
+  min-inline-size: 0;
+  padding: var(--space-3);
+  border: 1px solid var(--role-line, var(--color-border));
+  border-radius: var(--radius-field);
+  background: var(--role-deck, var(--color-surface));
+}
+
+.knowledge-conflict-review__values dt {
+  color: var(--role-ink-muted, var(--color-text-muted));
+  font-size: var(--text-xs);
+  font-weight: 700;
+}
+
+.knowledge-conflict-review__values dd {
+  margin: var(--space-1) 0 0;
+  color: var(--role-ink, var(--color-text));
+  font-weight: 650;
+}
+
+@media (max-width: 1180px) {
+  .knowledge-workspace-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .knowledge-workspace-history-rail {
+    position: static;
+    inset-block-start: auto;
+    max-inline-size: none;
+  }
+
+  .knowledge-section-tabs-shell::after {
+    content: "›";
+    position: absolute;
+    inset-block: 1px;
+    inset-inline-end: 1px;
+    inline-size: var(--space-6);
+    display: grid;
+    place-items: center;
+    border-inline-start: 1px solid var(--role-line, var(--color-border));
+    border-start-end-radius: var(--radius-pill);
+    border-end-end-radius: var(--radius-pill);
+    background: var(--role-deck-tint, var(--color-surface-subtle));
+    color: var(--role-ink-muted, var(--color-text-muted));
+    font-size: var(--text-lg);
+    font-weight: 700;
+    pointer-events: none;
+  }
+}
+
+@media (max-width: 768px) {
+  .knowledge-page--item-workspace > .ui-page-header .ui-button--destructive-outline {
+    margin-inline-start: 0;
+  }
+
+  .knowledge-workspace-status {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-4);
+  }
+
+  .knowledge-workspace-status .knowledge-summary-list {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .knowledge-workspace-status .knowledge-summary-list > div {
+    padding: var(--space-3) 0 0;
+    border-inline-start: 0;
+    border-block-start: 1px solid var(--role-line, var(--color-border));
+  }
+
+  .knowledge-section-tabs-shell {
+    display: none;
+  }
+
+  .knowledge-section-select {
+    display: block;
+  }
+
+  .knowledge-page--item-workspace .knowledge-section-command-bar {
+    position: static;
+    inset-block-start: auto;
+    grid-template-columns: minmax(0, 1fr);
+    align-items: stretch;
+    gap: var(--space-2);
+  }
+
+  .knowledge-section-command-bar__status {
+    text-align: start;
+  }
+
+  .knowledge-section-command-bar__save {
+    inline-size: 100%;
+  }
+
+  .knowledge-page--item-workspace .knowledge-overview__configured-grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-4);
+  }
+
+  .knowledge-page--item-workspace .knowledge-mode-panel .knowledge-form-grid,
+  .knowledge-page--item-workspace .knowledge-workspace-section .knowledge-repeater__content > .knowledge-form-grid {
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr));
+  }
+
+  .knowledge-page--item-workspace .knowledge-mode-field__definition {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .knowledge-conflict-review__heading {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .knowledge-conflict-review__values {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 640px) {
+  /* Override the earlier generic mobile stack: the repeater heading and Add
+     action stay paired until the narrow-mobile breakpoint. */
+  .knowledge-page--item-workspace .knowledge-workspace-section .knowledge-repeater__header {
+    align-items: center;
+    flex-direction: row;
+  }
+
+  .knowledge-page--item-workspace .knowledge-workspace-section .knowledge-repeater__row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .knowledge-page--item-workspace .knowledge-workspace-section .knowledge-repeater__actions {
+    align-self: stretch;
+    inline-size: 100%;
+    margin-inline-start: 0;
+    padding-block-start: var(--space-3);
+    border-block-start: 1px solid var(--role-line, var(--color-border));
+  }
+
+  .knowledge-page--item-workspace .knowledge-mode-field__definition {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .knowledge-page--item-workspace .knowledge-mode-panel .knowledge-preview-result dl {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 480px) {
+  .knowledge-workspace-status,
+  .knowledge-workspace-history-rail,
+  .knowledge-conflict-review {
+    padding: var(--space-4);
+  }
+
+  .knowledge-page--item-workspace .knowledge-section-command-bar {
+    padding-inline: var(--space-4);
+  }
+
+  .ui-app-shell[data-role="super_admin"] .knowledge-page.knowledge-page--item-workspace .ui-surface.knowledge-workspace-section--overview {
+    padding: var(--space-4);
+  }
+
+  .ui-app-shell[data-role="super_admin"] .knowledge-page.knowledge-page--item-workspace .ui-surface.knowledge-workspace-section,
+  .ui-app-shell[data-role="super_admin"] .knowledge-page.knowledge-page--item-workspace .ui-surface.knowledge-mode-block,
+  .knowledge-page--item-workspace .knowledge-mode-panel > .ui-page-state,
+  .knowledge-page--item-workspace .knowledge-section-panel > .ui-page-state {
+    padding: var(--space-4);
+  }
+
+  .knowledge-page--item-workspace .knowledge-mode-block__toolbar {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: var(--space-1);
+  }
+
+  .knowledge-page--item-workspace .knowledge-mode-block__dirty {
+    margin-inline-start: 0;
+  }
+
+  .knowledge-page--item-workspace .knowledge-mode-panel .knowledge-preview-actions .ui-button {
+    inline-size: 100%;
+  }
+
+  .knowledge-page--item-workspace .knowledge-workspace-section .knowledge-repeater__header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .knowledge-page--item-workspace .knowledge-workspace-section .knowledge-repeater__header > .ui-button {
+    inline-size: 100%;
+  }
+
+  .knowledge-page--item-workspace .knowledge-workspace-section .knowledge-repeater__content > .knowledge-form-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .knowledge-page--item-workspace .knowledge-mode-configuration__execution-source {
+    padding: var(--space-3);
+  }
+
+  .knowledge-page--item-workspace .knowledge-mode-configuration__execution-source-options,
+  .knowledge-page--item-workspace .knowledge-mode-configuration__recovery-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .knowledge-page--item-workspace .knowledge-mode-configuration__execution-source-options label,
+  .knowledge-page--item-workspace .knowledge-mode-configuration__recovery-actions .ui-button {
+    inline-size: 100%;
+  }
+
+  .knowledge-page--item-workspace .knowledge-workspace-section .knowledge-repeater__row {
+    padding: var(--space-3);
+  }
+
+  .knowledge-page--item-workspace .knowledge-overview__context {
+    align-items: flex-start;
+  }
+
+  .knowledge-page--item-workspace .knowledge-overview__context-separator {
+    display: none;
+  }
+
+  .knowledge-page--item-workspace .knowledge-overview__context-basket {
+    flex-basis: 100%;
+  }
+
+  .knowledge-page--item-workspace .knowledge-overview__quick-add {
+    min-block-size: 44px;
+  }
+}
+
+@media (pointer: coarse) {
+  .knowledge-page--item-workspace .knowledge-section-tab,
+  .knowledge-page--item-workspace .knowledge-section-command-bar__save,
+  .knowledge-page--item-workspace .knowledge-overview__quick-add,
+  .knowledge-page--item-workspace .knowledge-surface-multiselect__trigger,
+  .knowledge-page--item-workspace .knowledge-mode-panel .ui-button--compact,
+  .knowledge-page--item-workspace .knowledge-workspace-section .knowledge-repeater__header > .ui-button,
+  .knowledge-page--item-workspace .knowledge-workspace-section .knowledge-repeater__actions .ui-icon-button {
+    min-block-size: 44px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .knowledge-page--item-workspace .knowledge-section-tab,
+  .knowledge-page--item-workspace .knowledge-surface-multiselect__trigger,
+  .knowledge-page--item-workspace .ui-button {
+    scroll-behavior: auto;
+    transition: none;
+  }
 }

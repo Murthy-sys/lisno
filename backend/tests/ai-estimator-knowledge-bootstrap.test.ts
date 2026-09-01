@@ -96,6 +96,11 @@ describe("AI Estimator Knowledge bootstrap manifest", () => {
       "Polishing",
       "Fabrication"
     ]);
+    expect(basketDocuments).toHaveLength(7);
+    for (const basket of basketDocuments) {
+      expect(basket).toMatchObject({ version: 1 });
+      expect(basket).not.toHaveProperty("dependencyEpoch");
+    }
 
     const mainLines = AI_ESTIMATOR_KNOWLEDGE_BOOTSTRAP_MANIFEST.resources.filter(
       (resource) => resource.kind === "main_line"

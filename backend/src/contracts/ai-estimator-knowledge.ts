@@ -4,6 +4,9 @@ import type {
   KnowledgeDurationUnit,
   KnowledgeItemStatus,
   KnowledgeMasterStatus,
+  KnowledgeModeFieldType,
+  KnowledgeModeKind,
+  KnowledgeExecutionSource,
   KnowledgeQuantityGapBehavior,
   KnowledgeQuantityRelationship,
   KnowledgeQualityParameterType,
@@ -11,6 +14,7 @@ import type {
   KnowledgeRevisionStatus,
   KnowledgeSectionApplicability,
   KnowledgeSectionKey,
+  KnowledgeSpecificationFieldType,
   KnowledgeTaxTreatment,
   KnowledgeVersionStatus
 } from "../domain/ai-estimator-knowledge.js";
@@ -19,6 +23,15 @@ export type KnowledgeStableId = string;
 export type KnowledgeCanonicalDecimal = string;
 export type KnowledgePaise = number;
 export type KnowledgeBasisPoints = number;
+
+export const AI_ESTIMATOR_KNOWLEDGE_BASKET_DELETION_BLOCKER_CODES = [
+  "BOOTSTRAP_OWNED",
+  "HAS_MAIN_LINES",
+  "HAS_HISTORICAL_REFERENCES"
+] as const;
+
+export type KnowledgeBasketDeletionBlockerCode =
+  (typeof AI_ESTIMATOR_KNOWLEDGE_BASKET_DELETION_BLOCKER_CODES)[number];
 
 export interface KnowledgeActorMetadata {
   createdById: KnowledgeStableId;
@@ -114,6 +127,16 @@ export interface KnowledgeSectionEnvelope<TPayload = unknown>
   sectionKey: KnowledgeSectionKey;
   applicability: KnowledgeSectionApplicability;
   payload: TPayload;
+  referenceState?: KnowledgeSectionReferenceState;
+}
+
+export interface KnowledgeSectionReferenceState {
+  specificationIds: KnowledgeStableId[];
+}
+
+export interface KnowledgeSectionMutationEnvelope<TPayload = unknown>
+  extends KnowledgeSectionEnvelope<TPayload> {
+  aggregateVersion: number;
 }
 
 export interface KnowledgeQuantitySlab {
@@ -128,12 +151,54 @@ export interface KnowledgeQuantityRules {
   slabs: KnowledgeQuantitySlab[];
 }
 
+export interface KnowledgeDescriptiveSpecification {
+  id: KnowledgeStableId;
+  name: string;
+  description?: string | null;
+}
+
+/** @deprecated Use KnowledgeDescriptiveSpecification for current writes. */
+export type KnowledgeLegacySpecification = KnowledgeDescriptiveSpecification;
+
+interface KnowledgeCanonicalSpecificationBase {
+  id: KnowledgeStableId;
+  name: string;
+  description?: string | null;
+}
+
+/** @deprecated Typed Specification rows are retained only for stored-data compatibility. */
+export type KnowledgeCanonicalSpecification =
+  | (KnowledgeCanonicalSpecificationBase & {
+      type: Extract<KnowledgeSpecificationFieldType, "text" | "textarea">;
+      options: [];
+      value: string | null;
+    })
+  | (KnowledgeCanonicalSpecificationBase & {
+      type: Extract<KnowledgeSpecificationFieldType, "number">;
+      options: [];
+      value: KnowledgeCanonicalDecimal | null;
+    })
+  | (KnowledgeCanonicalSpecificationBase & {
+      type: Extract<KnowledgeSpecificationFieldType, "radio" | "dropdown">;
+      options: string[];
+      value: string | null;
+    })
+  | (KnowledgeCanonicalSpecificationBase & {
+      type: Extract<KnowledgeSpecificationFieldType, "checkbox">;
+      options: [];
+      value: boolean;
+    });
+
+export type KnowledgeSpecification =
+  | KnowledgeDescriptiveSpecification
+  | KnowledgeCanonicalSpecification;
+
 export interface KnowledgePriceEntryAppendCommand {
   operation: "append";
   priceEntryId: KnowledgeStableId;
   vendorId: KnowledgeStableId;
   uomId: KnowledgeStableId;
-  specificationId: KnowledgeStableId | null;
+  specificationId: null;
   modeId: KnowledgeStableId | null;
   taxRuleId: KnowledgeStableId;
   taxVersionId: KnowledgeStableId;
@@ -180,6 +245,35 @@ export interface KnowledgeQualityParameter {
   category: string | null;
   active: boolean;
 }
+
+export interface KnowledgeModeField {
+  id: KnowledgeStableId;
+  type: KnowledgeModeFieldType;
+  label: string;
+  options: string[];
+}
+
+interface KnowledgeModeConfigurationBase {
+  id: KnowledgeStableId;
+  fields: KnowledgeModeField[];
+}
+
+export type KnowledgeModeConfiguration =
+  | (KnowledgeModeConfigurationBase & {
+      modeKind: Extract<KnowledgeModeKind, "pmc">;
+      executionSource?: never;
+      modeId?: never;
+    })
+  | (KnowledgeModeConfigurationBase & {
+      modeKind: Extract<KnowledgeModeKind, "execution">;
+      executionSource: KnowledgeExecutionSource;
+      modeId?: never;
+    })
+  | (KnowledgeModeConfigurationBase & {
+      modeKind?: never;
+      executionSource?: never;
+      modeId: KnowledgeStableId;
+    });
 
 export interface KnowledgeExecutionStep {
   id: KnowledgeStableId;

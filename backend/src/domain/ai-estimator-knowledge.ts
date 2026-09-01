@@ -94,6 +94,40 @@ export const AI_ESTIMATOR_KNOWLEDGE_QUALITY_PARAMETER_TYPES = [
   "boolean"
 ] as const;
 
+export const AI_ESTIMATOR_KNOWLEDGE_MODE_FIELD_TYPES = [
+  "text",
+  "textarea",
+  "number",
+  "radio",
+  "dropdown",
+  "checkbox"
+] as const;
+
+export const AI_ESTIMATOR_KNOWLEDGE_MODE_KINDS = [
+  "pmc",
+  "execution"
+] as const;
+
+export const AI_ESTIMATOR_KNOWLEDGE_EXECUTION_SOURCES = [
+  "sub_vendor",
+  "in_house"
+] as const;
+
+export const AI_ESTIMATOR_KNOWLEDGE_MAX_MODE_FIELDS = 50;
+export const AI_ESTIMATOR_KNOWLEDGE_MAX_MODE_FIELD_OPTIONS = 50;
+
+export const AI_ESTIMATOR_KNOWLEDGE_SPECIFICATION_FIELD_TYPES = [
+  "text",
+  "textarea",
+  "number",
+  "radio",
+  "dropdown",
+  "checkbox"
+] as const;
+
+export const AI_ESTIMATOR_KNOWLEDGE_MAX_SPECIFICATION_FIELDS = 50;
+export const AI_ESTIMATOR_KNOWLEDGE_MAX_SPECIFICATION_FIELD_OPTIONS = 50;
+
 export const AI_ESTIMATOR_KNOWLEDGE_TAX_TREATMENTS = [
   "exclusive",
   "inclusive"
@@ -130,6 +164,14 @@ export type KnowledgeQuantityGapBehavior =
   (typeof AI_ESTIMATOR_KNOWLEDGE_QUANTITY_GAP_BEHAVIORS)[number];
 export type KnowledgeQualityParameterType =
   (typeof AI_ESTIMATOR_KNOWLEDGE_QUALITY_PARAMETER_TYPES)[number];
+export type KnowledgeModeFieldType =
+  (typeof AI_ESTIMATOR_KNOWLEDGE_MODE_FIELD_TYPES)[number];
+export type KnowledgeModeKind =
+  (typeof AI_ESTIMATOR_KNOWLEDGE_MODE_KINDS)[number];
+export type KnowledgeExecutionSource =
+  (typeof AI_ESTIMATOR_KNOWLEDGE_EXECUTION_SOURCES)[number];
+export type KnowledgeSpecificationFieldType =
+  (typeof AI_ESTIMATOR_KNOWLEDGE_SPECIFICATION_FIELD_TYPES)[number];
 export type KnowledgeTaxTreatment =
   (typeof AI_ESTIMATOR_KNOWLEDGE_TAX_TREATMENTS)[number];
 export type KnowledgeDurationUnit =

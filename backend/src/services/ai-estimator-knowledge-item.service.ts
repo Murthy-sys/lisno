@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 
 import mongoose, { type ClientSession } from "mongoose";
 
@@ -7,7 +8,8 @@ import type {
   KnowledgeItemListItem,
   KnowledgeQuantitySlab,
   KnowledgeRevision,
-  KnowledgeSectionEnvelope
+  KnowledgeSectionEnvelope,
+  KnowledgeSectionMutationEnvelope
 } from "../contracts/ai-estimator-knowledge.js";
 import {
   deriveTaxAmounts,
@@ -165,7 +167,7 @@ export interface AiEstimatorKnowledgeItemService {
     revisionId: string,
     sectionKey: KnowledgeSectionKey,
     input: KnowledgeSectionUpdateInput
-  ): Promise<KnowledgeSectionEnvelope<Row>>;
+  ): Promise<KnowledgeSectionMutationEnvelope<Row>>;
   activate(
     actor: PublicUser,
     mainLineId: string,
@@ -225,14 +227,7 @@ export function createAiEstimatorKnowledgeItemService(
       const mainLineId = knowledgeId("main-line", uuid());
       await mongoose.connection.transaction(async (session) => {
         const storedActor = await actorGuard.requireMutationActor(actor, session);
-        const basket = await AiEstimatorKnowledgeBasketModel.findOne({
-          _id: basketId,
-          status: { $ne: "archived" }
-        })
-          .session(session)
-          .lean()
-          .exec();
-        if (!basket) notFound();
+        await coordinateMainLineBasketDependency(basketId, session);
         const occurredAt = now();
         const revisionId = knowledgeId("revision", uuid());
         const completeness = emptyCompleteness(mainLineId);
@@ -608,7 +603,7 @@ export function createAiEstimatorKnowledgeItemService(
 
     async updateSection(actor, mainLineId, revisionId, sectionKey, input) {
       validateSectionPayloadOrThrow(sectionKey, input.payload);
-      await mongoose.connection.transaction(async (session) => {
+      const mutation = await mongoose.connection.transaction(async (session) => {
         const storedActor = await actorGuard.requireMutationActor(actor, session);
         const lineDocument = await AiEstimatorKnowledgeMainLineModel.findById(mainLineId)
           .session(session).lean().exec();
@@ -626,18 +621,34 @@ export function createAiEstimatorKnowledgeItemService(
         if (requiredInteger(line.version) !== expectedAggregateVersion) versionConflict();
 
         const occurredAt = now();
+        const previousPayload = payloadFor(section);
         const persistedPayload = sectionKey === "pricing"
           ? await materializePriceCommands({
               mainLineId,
               revisionId,
               payload: input.payload,
+              previousPayload,
               actorId: storedActor.id,
               occurredAt,
               session,
               uuid,
               audit: dependencies.audit
             })
+          : sectionKey === "advanced"
+            ? preserveModeConfigurationCompatibility(previousPayload, input.payload)
           : structuredClone(input.payload);
+        await coordinateNewBasketReferences(
+          sectionKey,
+          previousPayload,
+          persistedPayload,
+          session
+        );
+        await coordinateNewModeConfigurationReferences(
+          sectionKey,
+          previousPayload,
+          persistedPayload,
+          session
+        );
         const updatedSection = await AiEstimatorKnowledgeSectionModel.findOneAndUpdate(
           { _id: section._id, version: input.expectedVersion, revisionId },
           {
@@ -680,8 +691,15 @@ export function createAiEstimatorKnowledgeItemService(
           oldValues: { mainLineId, revisionId, sectionKey, sectionVersion: input.expectedVersion, aggregateVersion: expectedAggregateVersion },
           newValues: { sectionVersion: input.expectedVersion + 1, aggregateVersion: expectedAggregateVersion + 1, applicability: input.applicability ?? "configured" }
         }, session);
+        return {
+          section: asRow(updatedSection)!,
+          aggregateVersion: requiredInteger(asRow(updatedLine)!.version)
+        };
       });
-      return this.getSection(actor, mainLineId, revisionId, sectionKey);
+      const section = sectionKey === "pricing"
+        ? await enrichPricingSectionDto(mutation.section)
+        : sectionDto(mutation.section);
+      return { ...section, aggregateVersion: mutation.aggregateVersion };
     },
 
     async activate(actor, mainLineId, revisionId, input) {
@@ -841,6 +859,7 @@ export function createAiEstimatorKnowledgeItemService(
         const revisionId = knowledgeId("revision", uuid());
         const duplicateName = input.name?.trim() || `${requiredString(source.name)} Copy`;
         const basketId = requiredString(source.basketId);
+        await coordinateMainLineBasketDependency(basketId, session);
         const displayOrder = await allocateAiEstimatorKnowledgeDisplayOrder({
           scope: createAiEstimatorKnowledgeMainLineDisplayOrderScope(basketId),
           resourceModel: AiEstimatorKnowledgeMainLineModel,
@@ -865,6 +884,7 @@ export function createAiEstimatorKnowledgeItemService(
           uuid,
           true
         );
+        await coordinateCopiedBasketReferences(remappedPayloads, session);
         const completeness = completenessForRows(duplicateId, remappedPayloads);
         await AiEstimatorKnowledgeMainLineModel.create([{
           _id: duplicateId,
@@ -934,19 +954,56 @@ async function materializePriceCommands(input: {
   mainLineId: string;
   revisionId: string;
   payload: Row;
+  previousPayload: Row;
   actorId: string;
   occurredAt: Date;
   session: ClientSession;
   uuid: () => string;
   audit: Pick<AuditService, "appendInMongoTransaction">;
 }): Promise<Row> {
-  const commands = Array.isArray(input.payload.priceEntries)
-    ? input.payload.priceEntries
+  const compatiblePayload = preserveTypedSpecificationCompatibility(
+    input.previousPayload,
+    input.payload
+  );
+  const commands = Array.isArray(compatiblePayload.priceEntries)
+    ? compatiblePayload.priceEntries
     : [];
   const references: Row[] = [];
-  const specifications = Array.isArray(input.payload.specifications)
-    ? input.payload.specifications.map(asRow).filter((row): row is Row => Boolean(row))
+  const specifications = Array.isArray(compatiblePayload.specifications)
+    ? compatiblePayload.specifications.map(asRow).filter((row): row is Row => Boolean(row))
     : [];
+  const specificationIds = new Set(
+    specifications
+      .map((specification) => optionalString(specification.id) ?? optionalString(specification._id))
+      .filter((id): id is string => Boolean(id))
+  );
+  const previousSpecificationIds = new Set(
+    (Array.isArray(input.previousPayload.specifications)
+      ? input.previousPayload.specifications
+      : [])
+      .map((specification) => {
+        const row = asRow(specification);
+        return optionalString(row?.id) ?? optionalString(row?._id);
+      })
+      .filter((id): id is string => Boolean(id))
+  );
+  const removedSpecificationIds = new Set(
+    [...previousSpecificationIds].filter((id) => !specificationIds.has(id))
+  );
+  const previousPriceVersionIds = new Set(
+    referencedPriceVersionIds(input.previousPayload)
+  );
+  const historicalSpecificationReferences = await AiEstimatorKnowledgePriceVersionModel.find({
+    mainLineId: input.mainLineId,
+    revisionId: input.revisionId,
+    specificationId: { $ne: null }
+  }).select({ specificationId: 1 }).session(input.session).lean().exec();
+  if (historicalSpecificationReferences.some((reference) => {
+    const specificationId = optionalString(asRow(reference)?.specificationId);
+    return specificationId !== undefined && removedSpecificationIds.has(specificationId);
+  })) {
+    invalidSpecificationRemoval();
+  }
   const candidatePriceVersionIds = new Set<string>();
   for (const candidate of commands) {
     const command = asRow(candidate);
@@ -954,20 +1011,28 @@ async function materializePriceCommands(input: {
       candidatePriceVersionIds.add(requiredString(command.priceVersionId));
     }
   }
-  for (const candidate of commands) {
+  for (const [commandIndex, candidate] of commands.entries()) {
     const command = asRow(candidate);
     if (!command) continue;
     const priceEntryId = requiredString(command.priceEntryId);
     if (command.operation === "reference") {
       const priceVersionId = requiredString(command.priceVersionId);
-      const referenced = await AiEstimatorKnowledgePriceVersionModel.exists({
+      const referenced = asRow(await AiEstimatorKnowledgePriceVersionModel.findOne({
         _id: priceVersionId,
         mainLineId: input.mainLineId,
         revisionId: input.revisionId,
         priceEntryId
-      }).session(input.session);
+      }).select({ specificationId: 1 }).session(input.session).lean().exec());
       if (!referenced) {
         throw new ApiError(409, "KNOWLEDGE_REFERENCE_INVALID", "A referenced price version is unavailable for this revision.");
+      }
+      const referencedSpecificationId = optionalString(referenced.specificationId);
+      if (
+        referencedSpecificationId &&
+        !specificationIds.has(referencedSpecificationId) &&
+        !previousPriceVersionIds.has(priceVersionId)
+      ) {
+        invalidSpecificationRemoval();
       }
       references.push({ operation: "reference", priceEntryId, priceVersionId });
       continue;
@@ -979,10 +1044,16 @@ async function materializePriceCommands(input: {
     const modeId = optionalString(command.modeId) ?? null;
     const taxRuleId = requiredString(command.taxRuleId);
     const taxVersionId = requiredString(command.taxVersionId);
-    if (specificationId && !specifications.some((specification) =>
-      optionalString(specification.id) === specificationId || optionalString(specification._id) === specificationId
-    )) {
-      throw new ApiError(409, "KNOWLEDGE_REFERENCE_INVALID", "The price specification is unavailable in this revision.");
+    if (specificationId !== null) {
+      throw new ApiError(
+        409,
+        "KNOWLEDGE_REFERENCE_INVALID",
+        "New prices cannot be scoped to a descriptive Specification.",
+        {
+          [`payload.priceEntries.${commandIndex}.specificationId`]:
+            "Set specificationId to null when appending a new price version."
+        }
+      );
     }
     const vendor = await AiEstimatorKnowledgeVendorModel.findOne({ _id: vendorId, status: "active" })
       .session(input.session).lean().exec();
@@ -1106,7 +1177,252 @@ async function materializePriceCommands(input: {
     }, input.session);
     references.push({ operation: "reference", priceEntryId, priceVersionId: id });
   }
-  return { ...structuredClone(input.payload), priceEntries: references };
+  return { ...compatiblePayload, priceEntries: references };
+}
+
+function preserveTypedSpecificationCompatibility(
+  previousPayload: Row,
+  nextPayload: Row
+): Row {
+  if (!Array.isArray(nextPayload.specifications)) {
+    return structuredClone(nextPayload);
+  }
+  const previousSpecifications = new Map<string, Row>();
+  if (Array.isArray(previousPayload.specifications)) {
+    for (const value of previousPayload.specifications) {
+      const row = asRow(value);
+      const id = optionalString(row?.id) ?? optionalString(row?._id);
+      if (row && id) previousSpecifications.set(id, row);
+    }
+  }
+
+  const issues: KnowledgeValidationIssue[] = [];
+  const specifications = nextPayload.specifications.map((value, index) => {
+    const next = asRow(value);
+    if (!next) return structuredClone(value);
+    const id = optionalString(next.id) ?? optionalString(next._id);
+    const previous = id ? previousSpecifications.get(id) : undefined;
+    const nextIsTyped = isTypedSpecification(next);
+    const previousIsTyped = previous ? isTypedSpecification(previous) : false;
+    const path = `payload.specifications.${index}`;
+
+    if (nextIsTyped && !previousIsTyped) {
+      issues.push(validationIssue(
+        `${path}.type`,
+        "TYPED_SPECIFICATION_COMPATIBILITY_ONLY",
+        "Typed Specification fields are compatibility-only and cannot be introduced by a new write."
+      ));
+      return structuredClone(next);
+    }
+    if (nextIsTyped && previous && !typedSpecificationFieldsEqual(previous, next)) {
+      for (const field of ["type", "options", "value"] as const) {
+        if (!valuesEqual(previous[field], next[field])) {
+          issues.push(validationIssue(
+            `${path}.${field}`,
+            "IMMUTABLE_TYPED_SPECIFICATION_FIELD",
+            `Historical Specification ${field} is immutable.`
+          ));
+        }
+      }
+      return structuredClone(next);
+    }
+    if (!nextIsTyped && previousIsTyped && previous) {
+      return {
+        ...structuredClone(next),
+        type: structuredClone(previous.type),
+        options: structuredClone(previous.options),
+        value: structuredClone(previous.value)
+      };
+    }
+    return structuredClone(next);
+  });
+
+  if (issues.length > 0) invalidRevisionSectionRules(issues);
+  return { ...structuredClone(nextPayload), specifications };
+}
+
+function isTypedSpecification(value: Row): boolean {
+  return ["type", "options", "value"].some((field) => Object.hasOwn(value, field));
+}
+
+function typedSpecificationFieldsEqual(previous: Row, next: Row): boolean {
+  return ["type", "options", "value"].every((field) =>
+    valuesEqual(previous[field], next[field])
+  );
+}
+
+function valuesEqual(left: unknown, right: unknown): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function preserveModeConfigurationCompatibility(
+  previousPayload: Row,
+  nextPayload: Row
+): Row {
+  if (!Array.isArray(nextPayload.modeConfigurations)) {
+    return structuredClone(nextPayload);
+  }
+
+  const previousConfigurations = new Map<string, Row>();
+  const occupiedExecutionSources = new Map<string, string>();
+  for (const value of structuredRows(previousPayload.modeConfigurations)) {
+    const id = optionalString(value.id) ?? optionalString(value._id);
+    if (!id) continue;
+    previousConfigurations.set(id, value);
+    if (value.modeKind === "execution") {
+      const source = optionalString(value.executionSource);
+      if (source) occupiedExecutionSources.set(source, id);
+    }
+  }
+
+  const issues: KnowledgeValidationIssue[] = [];
+  const modeConfigurations = nextPayload.modeConfigurations.map((value, configurationIndex) => {
+    const next = asRow(value);
+    if (!next) return structuredClone(value);
+    const configurationPath = `payload.modeConfigurations.${configurationIndex}`;
+    const id = optionalString(next.id) ?? optionalString(next._id);
+    const previous = id ? previousConfigurations.get(id) : undefined;
+
+    enforceModeConfigurationIdentityCompatibility({
+      previous,
+      next,
+      configurationPath,
+      occupiedExecutionSources,
+      issues
+    });
+
+    const previousFields = new Map<string, Row>();
+    for (const field of structuredRows(previous?.fields)) {
+      const fieldId = optionalString(field.id) ?? optionalString(field._id);
+      if (fieldId) previousFields.set(fieldId, field);
+    }
+    const fields = Array.isArray(next.fields)
+      ? next.fields.map((fieldValue, fieldIndex) => {
+          const nextField = asRow(fieldValue);
+          if (!nextField) return structuredClone(fieldValue);
+          const fieldPath = `${configurationPath}.fields.${fieldIndex}`;
+          const fieldId = optionalString(nextField.id) ?? optionalString(nextField._id);
+          const previousField = fieldId ? previousFields.get(fieldId) : undefined;
+          const previousHasValue = Boolean(previousField && Object.hasOwn(previousField, "value"));
+          const nextHasValue = Object.hasOwn(nextField, "value");
+
+          if (nextHasValue && !previousHasValue) {
+            issues.push(validationIssue(
+              `${fieldPath}.value`,
+              "MODE_VALUE_COMPATIBILITY_ONLY",
+              "Mode component values are compatibility-only and cannot be introduced by a new write."
+            ));
+          } else if (
+            nextHasValue &&
+            previousField &&
+            !isDeepStrictEqual(previousField.value, nextField.value)
+          ) {
+            issues.push(validationIssue(
+              `${fieldPath}.value`,
+              "IMMUTABLE_MODE_VALUE",
+              "The retained historical Mode component value is immutable."
+            ));
+          }
+
+          if (!nextHasValue && previousHasValue && previousField) {
+            return {
+              ...structuredClone(nextField),
+              value: structuredClone(previousField.value)
+            };
+          }
+          return structuredClone(nextField);
+        })
+      : structuredClone(next.fields);
+    const compatible = { ...structuredClone(next), fields };
+
+    if (
+      next.modeKind === "execution" &&
+      !Object.hasOwn(next, "executionSource") &&
+      previous &&
+      previous.modeKind === "execution" &&
+      !Object.hasOwn(previous, "executionSource") &&
+      !isDeepStrictEqual(previous, compatible)
+    ) {
+      issues.push(validationIssue(
+        configurationPath,
+        "UNSCOPED_EXECUTION_RECOVERY_REQUIRED",
+        "An unscoped historical Execution configuration must remain unchanged until it is assigned to an empty Execution source."
+      ));
+    }
+    return compatible;
+  });
+
+  if (issues.length > 0) invalidRevisionSectionRules(issues);
+  return { ...structuredClone(nextPayload), modeConfigurations };
+}
+
+function enforceModeConfigurationIdentityCompatibility(input: {
+  previous: Row | undefined;
+  next: Row;
+  configurationPath: string;
+  occupiedExecutionSources: ReadonlyMap<string, string>;
+  issues: KnowledgeValidationIssue[];
+}): void {
+  const { previous, next, configurationPath, occupiedExecutionSources, issues } = input;
+  const nextModeId = optionalString(next.modeId);
+  if (nextModeId) {
+    if (!previous || optionalString(previous.modeId) !== nextModeId) {
+      issues.push(validationIssue(
+        `${configurationPath}.modeId`,
+        "LEGACY_MODE_ID_COMPATIBILITY_ONLY",
+        "Reusable Mode IDs are compatibility-only and cannot be introduced or changed."
+      ));
+    }
+    return;
+  }
+
+  if (next.modeKind === "execution" && !Object.hasOwn(next, "executionSource")) {
+    if (
+      !previous ||
+      previous.modeKind !== "execution" ||
+      Object.hasOwn(previous, "executionSource")
+    ) {
+      issues.push(validationIssue(
+        `${configurationPath}.executionSource`,
+        "EXECUTION_SOURCE_REQUIRED",
+        "New Execution configurations must select Sub-Vendor or In-house."
+      ));
+    }
+    return;
+  }
+
+  if (!previous) return;
+  if (previous.modeKind !== next.modeKind || optionalString(previous.modeId)) {
+    issues.push(validationIssue(
+      `${configurationPath}.modeKind`,
+      "IMMUTABLE_MODE_CONFIGURATION_IDENTITY",
+      "A retained Mode configuration cannot change its Mode identity."
+    ));
+    return;
+  }
+
+  if (next.modeKind !== "execution") return;
+  const nextSource = optionalString(next.executionSource);
+  const previousSource = optionalString(previous.executionSource);
+  if (previousSource && previousSource !== nextSource) {
+    issues.push(validationIssue(
+      `${configurationPath}.executionSource`,
+      "IMMUTABLE_EXECUTION_SOURCE",
+      "A source-scoped Execution configuration cannot move to another source."
+    ));
+    return;
+  }
+  if (!previousSource && nextSource) {
+    const occupiedBy = occupiedExecutionSources.get(nextSource);
+    const previousId = optionalString(previous.id) ?? optionalString(previous._id);
+    if (occupiedBy && occupiedBy !== previousId) {
+      issues.push(validationIssue(
+        `${configurationPath}.executionSource`,
+        "EXECUTION_SOURCE_OCCUPIED",
+        "The selected Execution source already has a retained configuration."
+      ));
+    }
+  }
 }
 
 async function loadItemDetail(mainLineId: string, includeArchived = false): Promise<AiEstimatorKnowledgeItemDetail> {
@@ -1234,13 +1550,20 @@ function sectionDto(row: Row): KnowledgeSectionEnvelope<Row> {
 async function enrichPricingSectionDto(row: Row): Promise<KnowledgeSectionEnvelope<Row>> {
   const dto = sectionDto(row);
   const priceVersionIds = referencedPriceVersionIds(dto.payload);
-  const documents = priceVersionIds.length === 0
-    ? []
-    : await AiEstimatorKnowledgePriceVersionModel.find({
-        _id: { $in: priceVersionIds },
-        mainLineId: dto.mainLineId,
-        revisionId: dto.revisionId
-      }).lean().exec();
+  const [documents, specificationReferenceDocuments] = await Promise.all([
+    priceVersionIds.length === 0
+      ? Promise.resolve([])
+      : AiEstimatorKnowledgePriceVersionModel.find({
+          _id: { $in: priceVersionIds },
+          mainLineId: dto.mainLineId,
+          revisionId: dto.revisionId
+        }).lean().exec(),
+    AiEstimatorKnowledgePriceVersionModel.find({
+      mainLineId: dto.mainLineId,
+      revisionId: dto.revisionId,
+      specificationId: { $ne: null }
+    }).select({ specificationId: 1 }).lean().exec()
+  ]);
   const byId = new Map(documents.map((document) => {
     const price = asRow(document)!;
     return [requiredString(price._id), publicPriceVersion(price)] as const;
@@ -1256,7 +1579,14 @@ async function enrichPricingSectionDto(row: Row): Promise<KnowledgeSectionEnvelo
     : dto.payload.priceEntries;
   return {
     ...dto,
-    payload: { ...dto.payload, priceEntries }
+    payload: { ...dto.payload, priceEntries },
+    referenceState: {
+      specificationIds: [...new Set(
+        specificationReferenceDocuments
+          .map((document) => optionalString(asRow(document)?.specificationId))
+          .filter((id): id is string => Boolean(id))
+      )].sort()
+    }
   };
 }
 
@@ -1306,11 +1636,36 @@ function completenessForRows(mainLineId: string, rows: Row[]): KnowledgeComplete
 }
 
 function completenessInputs(rows: Row[]): KnowledgeCompletenessSectionInput[] {
-  return rows.map((row) => ({
-    sectionKey: requiredString(row.sectionKey) as KnowledgeSectionKey,
-    applicability: requiredString(row.applicability) as KnowledgeSectionApplicability,
-    payload: payloadFor(row)
-  }));
+  return rows.map((row) => {
+    const sectionKey = requiredString(row.sectionKey) as KnowledgeSectionKey;
+    const payload = payloadFor(row);
+    const validationFindings = activationCompletenessFindings(sectionKey, payload);
+    return {
+      sectionKey,
+      applicability: requiredString(row.applicability) as KnowledgeSectionApplicability,
+      payload,
+      ...(validationFindings.length > 0 ? { validationFindings } : {})
+    };
+  });
+}
+
+function activationCompletenessFindings(
+  sectionKey: KnowledgeSectionKey,
+  payload: Row
+): NonNullable<KnowledgeCompletenessSectionInput["validationFindings"]> {
+  if (sectionKey !== "advanced") return [];
+  const hasUnresolvedExecutionRecovery = structuredRows(payload.modeConfigurations).some(
+    (configuration) =>
+      configuration.modeKind === "execution" &&
+      !Object.hasOwn(configuration, "executionSource") &&
+      !optionalString(configuration.modeId)
+  );
+  if (!hasUnresolvedExecutionRecovery) return [];
+  return [{
+    code: "UNSCOPED_EXECUTION_RECOVERY_REQUIRED",
+    message: "Assign every saved Execution configuration to Sub-Vendor or In-house, or remove it before activation.",
+    blocking: true
+  }];
 }
 
 function emptyCompleteness(mainLineId: string): KnowledgeCompletenessSummary {
@@ -1351,6 +1706,120 @@ function sectionGraphIssues(rows: Row[]): string[] {
 interface KnowledgeItemEdge {
   readonly fromId: string;
   readonly toId: string;
+}
+
+async function coordinateMainLineBasketDependency(
+  basketId: string,
+  session: ClientSession
+): Promise<void> {
+  const basket = await AiEstimatorKnowledgeBasketModel.findOneAndUpdate(
+    { _id: basketId, status: { $ne: "archived" } },
+    { $inc: { dependencyEpoch: 1 } },
+    {
+      returnDocument: "after",
+      runValidators: true,
+      session,
+      timestamps: false
+    }
+  ).select({ _id: 1 }).lean().exec();
+  if (!basket) notFound();
+}
+
+async function coordinateNewBasketReferences(
+  sectionKey: KnowledgeSectionKey,
+  priorPayload: Row,
+  nextPayload: Row,
+  session: ClientSession
+): Promise<void> {
+  const priorIds = basketTargetIds(sectionKey, priorPayload);
+  const nextIds = basketTargetIds(sectionKey, nextPayload);
+  await coordinateBasketDependencies(
+    new Set([...nextIds].filter((basketId) => !priorIds.has(basketId))),
+    session
+  );
+}
+
+async function coordinateNewModeConfigurationReferences(
+  sectionKey: KnowledgeSectionKey,
+  priorPayload: Row,
+  nextPayload: Row,
+  session: ClientSession
+): Promise<void> {
+  const priorIds = legacyModeConfigurationIds(sectionKey, priorPayload);
+  const nextIds = legacyModeConfigurationIds(sectionKey, nextPayload);
+  for (const modeId of [...nextIds].filter((id) => !priorIds.has(id)).sort()) {
+    const mode = await AiEstimatorKnowledgeModeModel.findOneAndUpdate(
+      { _id: modeId, status: "active" },
+      { $inc: { dependencyEpoch: 1 } },
+      {
+        returnDocument: "after",
+        runValidators: true,
+        session,
+        timestamps: false
+      }
+    ).select({ _id: 1 }).lean().exec();
+    if (!mode) invalidKnowledgeReference("Mode");
+  }
+}
+
+async function coordinateCopiedBasketReferences(
+  rows: Row[],
+  session: ClientSession
+): Promise<void> {
+  const basketIds = new Set<string>();
+  for (const row of rows) {
+    const sectionKey = requiredString(row.sectionKey) as KnowledgeSectionKey;
+    for (const basketId of basketTargetIds(sectionKey, payloadFor(row))) {
+      basketIds.add(basketId);
+    }
+  }
+  await coordinateBasketDependencies(basketIds, session);
+}
+
+async function coordinateBasketDependencies(
+  basketIds: ReadonlySet<string>,
+  session: ClientSession
+): Promise<void> {
+  for (const basketId of [...basketIds].sort()) {
+    const basket = await AiEstimatorKnowledgeBasketModel.findOneAndUpdate(
+      { _id: basketId },
+      { $inc: { dependencyEpoch: 1 } },
+      {
+        returnDocument: "after",
+        runValidators: true,
+        session,
+        timestamps: false
+      }
+    ).select({ _id: 1 }).lean().exec();
+    if (!basket) invalidKnowledgeReference("Basket");
+  }
+}
+
+function basketTargetIds(sectionKey: KnowledgeSectionKey, payload: Row): Set<string> {
+  const candidates = sectionKey === "scope"
+    ? payload.exclusions
+    : sectionKey === "recommendations"
+      ? payload.recommendations
+      : sectionKey === "advanced"
+        ? payload.dependencies
+        : null;
+  return new Set(
+    structuredRows(candidates)
+      .map((candidate) => optionalString(candidate.targetBasketId))
+      .filter((basketId): basketId is string => Boolean(basketId))
+  );
+}
+
+function legacyModeConfigurationIds(
+  sectionKey: KnowledgeSectionKey,
+  payload: Row
+): Set<string> {
+  if (sectionKey !== "advanced") return new Set();
+  return new Set(
+    structuredRows(payload.modeConfigurations)
+      .map((entry) => optionalString(entry.modeId))
+      .filter((modeId): modeId is string => Boolean(modeId))
+  );
 }
 
 async function validateRevisionRelationships(
@@ -1457,6 +1926,13 @@ async function validateRevisionMasterReferences(
   for (const entry of activeStructuredRows(advanced.modeOverrides)) {
     addOptionalId(modeIds, entry.modeId);
   }
+  const legacyModeConfigurationReferences = structuredRows(advanced.modeConfigurations)
+    .map((entry, index) => ({
+      modeId: optionalString(entry.modeId),
+      path: `payload.modeConfigurations.${index}.modeId`
+    }))
+    .filter((entry): entry is { modeId: string; path: string } => Boolean(entry.modeId));
+  for (const entry of legacyModeConfigurationReferences) modeIds.add(entry.modeId);
 
   const surfaceIds = new Set<string>([
     ...stringArray(overview.surfaceIds),
@@ -1471,10 +1947,24 @@ async function validateRevisionMasterReferences(
     _id: { $in: [...priorityIds] },
     status: "active"
   }).session(session).exec() !== priorityIds.size) invalidKnowledgeReference("priority");
-  if (modeIds.size > 0 && await AiEstimatorKnowledgeModeModel.countDocuments({
-    _id: { $in: [...modeIds] },
-    status: "active"
-  }).session(session).exec() !== modeIds.size) invalidKnowledgeReference("mode");
+  if (modeIds.size > 0) {
+    const activeModes = await AiEstimatorKnowledgeModeModel.find({
+      _id: { $in: [...modeIds] },
+      status: "active"
+    }).select({ _id: 1 }).session(session).lean().exec();
+    const activeModeIds = new Set(activeModes.map((document) => requiredString(asRow(document)?._id)));
+    const unavailableConfigurations = legacyModeConfigurationReferences.filter(
+      ({ modeId }) => !activeModeIds.has(modeId)
+    );
+    if (unavailableConfigurations.length > 0) {
+      invalidRevisionSectionRules(unavailableConfigurations.map(({ path }) => validationIssue(
+        path,
+        "INVALID_REFERENCE",
+        "The selected Mode reference is not active or does not exist."
+      )));
+    }
+    if (activeModeIds.size !== modeIds.size) invalidKnowledgeReference("mode");
+  }
   if (surfaceIds.size > 0 && await AiEstimatorKnowledgeSurfaceModel.countDocuments({
     _id: { $in: [...surfaceIds] },
     status: "active"
@@ -1617,6 +2107,18 @@ function invalidKnowledgeReference(label: string): never {
     409,
     "KNOWLEDGE_REFERENCE_INVALID",
     `An active ${label} reference is unavailable.`
+  );
+}
+
+function invalidSpecificationRemoval(): never {
+  throw new ApiError(
+    409,
+    "KNOWLEDGE_REFERENCE_INVALID",
+    "A Specification referenced by saved pricing cannot be removed.",
+    {
+      "payload.specifications":
+        "This Specification is retained because immutable saved price history references it; edit it or keep it in this revision."
+    }
   );
 }
 

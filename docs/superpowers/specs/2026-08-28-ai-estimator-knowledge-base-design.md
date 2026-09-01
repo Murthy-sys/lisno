@@ -196,6 +196,7 @@ All five permissions are granted only to `super_admin` in this release. No exist
 | Create Basket/Main Line/master/revision | Allow | 403 | 401 |
 | Update any section, rule, master, or pricing | Allow | 403 | 401 |
 | Activate/deactivate/duplicate/archive | Allow | 403 | 401 |
+| Permanently delete an eligible empty custom Basket | Allow | 403 | 401 |
 | Physical delete of historical data | Not exposed | Not exposed | Not exposed |
 
 Every mutation must:
@@ -276,6 +277,8 @@ An item revision contains immutable identity metadata, revision number, revision
 
 This avoids one giant global document, supports independent section reads/writes, and still provides one atomic activation boundary.
 
+These eight keys remain the authoritative backend section contract. The current item-workspace frontend presents four first-level destinations—Overview, Mode, Recommendations, and Quality—while Overview summarizes configured values from the hidden backend sections. **Mode** is a presentation group rather than a persisted section: it composes mode-specific dynamic configuration from `advanced`, pricing from `pricing`, and quantity/margin configuration from `quantity-margin`. The underlying sections retain their existing ownership, independent applicability, version/CAS, validation, and API behavior; no `mode` section key is stored or sent to the backend. The primary UOM remains owned and edited by `overview`.
+
 Section payloads are strict and bounded. The implementation must define conservative array and string limits within the existing 300 KiB JSON request ceiling; oversized/unbounded rule documents are rejected rather than silently truncated.
 
 ### Section ownership
@@ -337,6 +340,7 @@ Recommendations are suggestions only. Saving or resolving one never adds an Esti
 
 - item-to-item dependencies;
 - mode-specific overrides not owned by another section;
+- optional, stable-ID-owned mode configurations containing ordered `text | textarea | number | radio | dropdown | checkbox` field definitions and typed values;
 - revision lineage; and
 - read-only audit/change history presentation.
 
@@ -403,7 +407,7 @@ All new schemas use strict validation, `versionKey: false`, explicit integer `ve
 - Editing an Active item first creates a copied Draft revision. The current Active revision remains context-readable until the new Draft is activated.
 - Deactivation excludes the item from new default context resolution but retains the last Active revision.
 - Reactivation requires activation review; no stale draft is silently promoted.
-- Archive is terminal and never physically deletes revisions, prices, taxes, or audit events.
+- Archive is terminal and never physically deletes revisions, prices, taxes, or audit events. The sole physical-delete exception is a custom Basket that is empty, unreferenced across all stored history, and not bootstrap-owned; its guarded workflow removes only the Basket document and appends immutable audit evidence.
 - Duplicate creates a new Main Line and Draft revision with new IDs. Internal step IDs are remapped; external relationship target IDs remain explicit. Copied price rows are marked for review and are not Active by inheritance.
 
 ### CAS
@@ -575,6 +579,8 @@ Resource families:
 
 - `GET|POST /baskets`
 - `PATCH|DELETE /baskets/:basketId`
+- `GET /baskets/:basketId/deletion-impact`
+- `DELETE /baskets/:basketId/permanent`
 - `GET|POST /baskets/:basketId/main-lines`
 - `PATCH|DELETE /main-lines/:mainLineId`
 - `GET /items` for searched/filtered/paginated Estimation Item presentation
@@ -589,7 +595,9 @@ Resource families:
 - `POST /preview`
 - `GET|POST /<masterType>` and `PATCH|DELETE /<masterType>/:id`, where `<masterType>` is a closed set of `uoms`, `vendors`, `taxes`, `priorities`, `surfaces`, and `modes`.
 
-`DELETE` is a Super Admin-only soft-archive operation with expected version and reason. It never physically deletes historical configuration. Active items must be deactivated before archive; referenced masters/targets return 409 until references are safely revised.
+The existing resource `DELETE` operations are Super Admin-only soft archives with expected version and reason. They never physically delete historical configuration. Active items must be deactivated before archive; referenced masters/targets return 409 until references are safely revised.
+
+The distinct Basket `/permanent` operation may physically remove only a custom Basket with no Main Line in any status, no stored section relationship targeting it, and no bootstrap-manifest ownership. It requires an authoritative impact check, exact current-name confirmation, non-empty reason, expected version, and same-document dependency coordination against concurrent Main Line/reference creation. The guarded delete and sanitized audit append commit atomically; it never cascades into items, revisions, sections, prices, taxes, or prior audit history.
 
 ### Context namespace
 
@@ -665,13 +673,14 @@ Header shows:
 Sections:
 
 ```text
-Overview | Pricing | Quantity & margin | Scope |
-Recommendations | Quality | Execution | Advanced
+Overview | Mode | Recommendations | Quality
 ```
 
 Desktop/tablet use a feature-owned accessible tablist. Mobile uses a full-width labelled **Configuration section** selector so the page does not horizontally scroll.
 
-Each section saves independently. Unsaved navigation offers **Save changes**, **Discard changes**, and **Stay here**. A section mutation updates the header, completeness, history, list cache, and affected context cache only after server success.
+**Mode** is a frontend-only presentation group with **Mode configuration**, **Pricing**, and **Quantity & margin** blocks in that order. Mode configuration edits the full `advanced` envelope while preserving its dependencies, overrides, and lineage; it stores optional `modeConfigurations` associated by reusable Mode stable ID. PMC and Execution may coexist, and the selector only chooses which configuration is being edited. Super Admin can add, label, reorder, remove, and enter values for bounded text, textarea, number, radio, dropdown, and checkbox controls. A dynamic-configuration mutation marks Advanced `configured` so activated context cannot omit the saved knowledge; selector navigation alone has no such effect. Canonical choices are resolved over all Mode pages with backend-compatible normalization, and stale Draft references have an explicit remove-and-replace recovery path while remaining read-only in history. Dynamic references block Mode archival, and new/replacement references coordinate with archive through an internal, legacy-compatible Mode dependency epoch so concurrent commits cannot create a dangling reference. The epoch is not part of public versions, DTOs, timestamps, OpenAPI, or audit state. Arbitrary executable components and Description fields are not supported. Pricing and Quantity & margin continue to use the separate `pricing` and `quantity-margin` backend sections. The primary UOM remains stored and edited in Overview.
+
+Non-Mode sections continue to save independently. Mode uses one **Save Mode** action that saves dirty underlying sections in stable order: `advanced` → `pricing` → `quantity-margin`. Saving stops at the first validation, API, or version-conflict failure. Blocks saved before the failure become clean; the failing block and every unattempted dirty block remain dirty and visibly identified, and the UI must not announce that Mode is fully saved. A block conflict identifies the underlying section, preserves other unsaved Mode edits, and retains the established review/discard behavior. Unsaved navigation offers **Save changes**, **Discard changes**, and **Stay here**; for Mode, save uses the same ordered routine and discard restores all three buffers from their latest server values. A successful underlying mutation updates the header, completeness, history, list cache, and affected context cache only after that server success.
 
 ### Lifecycle actions
 
@@ -714,7 +723,9 @@ The feature must handle:
 
 - Reuse Lisno tokens, Lucide icons, visible focus, and existing reduced-motion behavior.
 - Keep touch targets at least 44×44 px and support the repository's 320 px minimum width.
-- Tabs implement roving tabindex, Arrow Left/Right, Home/End, `aria-selected`, `aria-controls`, and stable panels.
+- The four-item desktop/tablet tablist implements roving tabindex, Arrow Left/Right, Home/End, `aria-selected`, `aria-controls`, and stable panels.
+- Mode owns one correctly associated tabpanel. Its Mode configuration, Pricing, and Quantity & margin blocks use semantic headings and independently named status controls, with save, error, and status feedback adjacent to the affected block.
+- Mobile exposes one **Mode** option in the labelled **Configuration section** selector, not separate Pricing or Quantity & margin options; all Mode blocks stack without page-level horizontal scrolling.
 - Route changes focus the new `h1` through the existing route focus manager.
 - Repeaters move focus to the new row and restore it predictably after removal.
 - Status and completeness use text plus tone/icon, never color alone.
@@ -730,6 +741,7 @@ The feature must handle:
 - Reject duplicate non-archived Main Line names within one Basket.
 - Reject invalid, inactive-for-new-use, cross-type, self, and duplicate references.
 - Names/labels never serve as relation keys.
+- Permanently delete only a custom Basket with no Main Line in any status and no historical section relationship reference; bootstrap-owned Baskets and every Basket with retained lineage remain archive-only.
 
 ### Financial and quantity validation
 
@@ -872,7 +884,7 @@ Code rollback removes the new route/navigation usage. Existing application versi
 
 - Route/navigation/direct-access permission tests.
 - Index tests for search, filters, pagination, grouped/flat results, loading, empty, error, and 403.
-- Workspace tests for all eight sections, independent save, quick add, repeaters, server previews, completeness, lifecycle actions, history, duplicate, and cache invalidation.
+- Workspace tests for the four first-level destinations and all eight underlying backend sections, including dynamic Mode fields, exact PMC/Execution isolation, ordered/partial Mode save behavior, independent non-Mode save, quick add, repeaters, server previews, completeness, lifecycle actions, history, duplicate, and cache invalidation.
 - Conflict tests retaining local draft and preventing automatic replay.
 - Keyboard, focus, accessible-name, axe, reduced-motion, and responsive visual checks for the specified viewport/state matrix.
 - Frontend typecheck, full tests, and production build.
@@ -892,8 +904,8 @@ At minimum rerun the existing estimator, Estimate route, PDF, publication, clien
 
 1. Super Admin sees one new **Configuration** destination in the existing Lisno shell and can open the AI Estimator Knowledge Base.
 2. No other role sees or can directly open the configuration routes; every non-Super-Admin mutation returns 403 from backend enforcement.
-3. Super Admin can create/edit/deactivate/archive Baskets, Main Lines, UOMs, Vendor references, Taxes, Priorities, Surfaces, and Modes without code changes.
-4. Super Admin can configure one Basket → Main Line item through the eight-section workspace without navigating unrelated CRUD screens.
+3. Super Admin can create/edit/deactivate/archive Baskets, Main Lines, UOMs, Vendor references, Taxes, Priorities, Surfaces, and Modes without code changes, and can permanently delete only an empty, unreferenced, non-bootstrap Basket through the guarded confirmation workflow.
+4. Super Admin can configure one Basket → Main Line item through four first-level workspace destinations, with Mode presenting stable-ID-owned dynamic mode configuration, Pricing, and Quantity & margin over the unchanged eight-section backend contract, without navigating unrelated CRUD screens.
 5. Quick-added reusable values become immediately selectable without losing parent-form state.
 6. Pricing stores immutable effective versions with separate base, tax, and total paise values; historical versions never change.
 7. Quantity, margin, PMC, GST, wastage, and duration previews are deterministic, server-owned, and match the supplied examples.

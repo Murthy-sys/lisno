@@ -1,7 +1,10 @@
 import { randomUUID } from "node:crypto";
 import mongoose, { type ClientSession, type Model } from "mongoose";
 
-import type { KnowledgeTaxVersion } from "../contracts/ai-estimator-knowledge.js";
+import type {
+  KnowledgeBasketDeletionBlockerCode,
+  KnowledgeTaxVersion
+} from "../contracts/ai-estimator-knowledge.js";
 import type { KnowledgeMasterStatus, KnowledgeTaxTreatment, KnowledgeVersionStatus } from "../domain/ai-estimator-knowledge.js";
 import {
   AI_ESTIMATOR_KNOWLEDGE_BASIS_POINTS,
@@ -28,6 +31,7 @@ import { AiEstimatorKnowledgeTaxRuleModel } from "../models/AiEstimatorKnowledge
 import { AiEstimatorKnowledgeTaxVersionModel } from "../models/AiEstimatorKnowledgeTaxVersion.js";
 import { AiEstimatorKnowledgeUomModel } from "../models/AiEstimatorKnowledgeUom.js";
 import { AiEstimatorKnowledgeVendorModel } from "../models/AiEstimatorKnowledgeVendor.js";
+import { AI_ESTIMATOR_KNOWLEDGE_BOOTSTRAP_MANIFEST } from "../operations/ai-estimator-knowledge-bootstrap.manifest.js";
 import type { PageResult, PaginationInput } from "../repositories/types.js";
 import type { AuditService } from "./audit.service.js";
 import {
@@ -45,6 +49,12 @@ import { systemClock, type Clock } from "./workflow.js";
 
 type Row = Record<string, unknown>;
 type MutableMasterStatus = Exclude<KnowledgeMasterStatus, "archived">;
+
+const bootstrapBasketIds = new Set(
+  AI_ESTIMATOR_KNOWLEDGE_BOOTSTRAP_MANIFEST.resources
+    .filter((resource) => resource.kind === "basket")
+    .map((resource) => String(resource.document._id))
+);
 
 export const AI_ESTIMATOR_KNOWLEDGE_MASTER_TYPES = [
   "uoms",
@@ -128,6 +138,34 @@ export interface AiEstimatorKnowledgeArchiveInput {
   readonly reason?: string | null;
 }
 
+export interface AiEstimatorKnowledgeBasketDeletionBlocker {
+  readonly code: KnowledgeBasketDeletionBlockerCode;
+  readonly message: string;
+}
+
+export interface AiEstimatorKnowledgeBasketDeletionImpact {
+  readonly basketId: string;
+  readonly basketName: string;
+  readonly version: number;
+  readonly mainLineCount: number;
+  readonly historicalReferenceCount: number;
+  readonly bootstrapOwned: boolean;
+  readonly canDelete: boolean;
+  readonly blockers: readonly AiEstimatorKnowledgeBasketDeletionBlocker[];
+}
+
+export interface AiEstimatorKnowledgePermanentDeleteBasketInput {
+  readonly expectedVersion: number;
+  readonly confirmationName: string;
+  readonly reason: string;
+}
+
+export interface AiEstimatorKnowledgePermanentDeleteBasketResult {
+  readonly basketId: string;
+  readonly deleted: true;
+  readonly deletedAt: string;
+}
+
 export interface AiEstimatorKnowledgeCreateMasterInput {
   readonly code: string;
   readonly name: string;
@@ -169,6 +207,15 @@ export interface AiEstimatorKnowledgeReferenceService {
     basketId: string,
     input: AiEstimatorKnowledgeArchiveInput
   ): Promise<AiEstimatorKnowledgeBasketDto>;
+  getBasketDeletionImpact(
+    actor: PublicUser,
+    basketId: string
+  ): Promise<AiEstimatorKnowledgeBasketDeletionImpact>;
+  permanentlyDeleteBasket(
+    actor: PublicUser,
+    basketId: string,
+    input: AiEstimatorKnowledgePermanentDeleteBasketInput
+  ): Promise<AiEstimatorKnowledgePermanentDeleteBasketResult>;
   listMasters(
     actor: PublicUser,
     masterType: AiEstimatorKnowledgeMasterType,
@@ -364,6 +411,72 @@ export function createAiEstimatorKnowledgeReferenceService(
       });
     },
 
+    async getBasketDeletionImpact(actor, basketId) {
+      await actorGuard.requireReadActor(actor);
+      const basket = await AiEstimatorKnowledgeBasketModel.findById(basketId)
+        .lean()
+        .exec() as Row | null;
+      if (!basket) notFound();
+      return basketDeletionImpact(basket, basketId);
+    },
+
+    async permanentlyDeleteBasket(actor, basketId, input) {
+      return withMongoTransaction(startSession, async (session) => {
+        const authorized = await actorGuard.requireMutationActor(actor, session);
+        validatePermanentDeleteBasketInput(input);
+        const current = await AiEstimatorKnowledgeBasketModel.findById(basketId)
+          .session(session)
+          .lean()
+          .exec() as Row | null;
+        if (!current) notFound();
+        if (current.version !== input.expectedVersion) versionConflict();
+        if (current.name !== input.confirmationName) {
+          throw new ApiError(
+            400,
+            "VALIDATION_ERROR",
+            "Basket confirmation name must exactly match the stored name.",
+            { confirmationName: "Enter the exact current Basket name." }
+          );
+        }
+
+        const impact = await basketDeletionImpact(current, basketId, session);
+        if (!impact.canDelete) basketDeleteBlocked();
+
+        const dependencyEpoch = safeDependencyEpoch(current.dependencyEpoch);
+        const dependencyEpochFilter = dependencyEpoch === 0
+          ? { $or: [{ dependencyEpoch: 0 }, { dependencyEpoch: { $exists: false } }] }
+          : { dependencyEpoch };
+        const deleted = await AiEstimatorKnowledgeBasketModel.deleteOne({
+          _id: basketId,
+          version: input.expectedVersion,
+          ...dependencyEpochFilter
+        }).session(session).exec();
+        if (deleted.deletedCount !== 1) versionConflict();
+
+        const timestamp = now();
+        await dependencies.audit.appendInMongoTransaction({
+          actorId: authorized.id,
+          action: "ai_estimator_knowledge_basket_permanently_deleted",
+          entityType: "ai_estimator_knowledge_basket",
+          entityId: basketId,
+          occurredAt: timestamp.toISOString(),
+          oldValues: {
+            name: current.name,
+            status: current.status,
+            displayOrder: current.displayOrder,
+            version: current.version,
+            bootstrapOwned: impact.bootstrapOwned
+          },
+          reason: input.reason.trim()
+        }, session);
+        return {
+          basketId,
+          deleted: true,
+          deletedAt: timestamp.toISOString()
+        };
+      });
+    },
+
     async listMasters(actor, masterType, filters, pagination) {
       await actorGuard.requireReadActor(actor);
       validateListFilters(filters);
@@ -543,9 +656,22 @@ export function createAiEstimatorKnowledgeReferenceService(
         requireCurrent(current, input.expectedVersion);
         if (current.status === "archived") archived();
         await requireNoMasterReferences(masterType, id, session);
+        const modeDependencyEpoch = masterType === "modes"
+          ? safeDependencyEpoch(current.dependencyEpoch, "Mode")
+          : null;
+        const modeDependencyEpochFilter = modeDependencyEpoch === null
+          ? {}
+          : modeDependencyEpoch === 0
+            ? { $or: [{ dependencyEpoch: 0 }, { dependencyEpoch: { $exists: false } }] }
+            : { dependencyEpoch: modeDependencyEpoch };
         const timestamp = now();
         const updated = await model.findOneAndUpdate(
-          { _id: id, version: input.expectedVersion, status: { $ne: "archived" } },
+          {
+            _id: id,
+            version: input.expectedVersion,
+            status: { $ne: "archived" },
+            ...modeDependencyEpochFilter
+          },
           { $set: { status: "archived", archivedAt: timestamp, archivedById: authorized.id, updatedAt: timestamp, updatedById: authorized.id }, $inc: { version: 1 } },
           { returnDocument: "after", runValidators: true, session }
         ).lean().exec() as Row | null;
@@ -570,6 +696,112 @@ export function createAiEstimatorKnowledgeReferenceService(
       });
     }
   };
+}
+
+async function basketDeletionImpact(
+  basket: Row,
+  basketId: string,
+  session?: ClientSession
+): Promise<AiEstimatorKnowledgeBasketDeletionImpact> {
+  const mainLineCountQuery = AiEstimatorKnowledgeMainLineModel.countDocuments({ basketId });
+  const sectionQuery = AiEstimatorKnowledgeSectionModel.find({
+    $or: [
+      { "payload.exclusions.targetBasketId": basketId },
+      { "payload.recommendations.targetBasketId": basketId },
+      { "payload.dependencies.targetBasketId": basketId }
+    ]
+  }).select({ payload: 1 });
+  if (session) {
+    mainLineCountQuery.session(session);
+    sectionQuery.session(session);
+  }
+  const [mainLineCount, sections] = await Promise.all([
+    mainLineCountQuery.exec(),
+    sectionQuery.lean().exec()
+  ]);
+  const historicalReferenceCount = sections.reduce(
+    (count, section) => count + basketReferenceCount(
+      (section as unknown as Row).payload,
+      basketId
+    ),
+    0
+  );
+  const bootstrapOwned = bootstrapBasketIds.has(basketId);
+  const blockers: AiEstimatorKnowledgeBasketDeletionBlocker[] = [];
+  if (bootstrapOwned) {
+    blockers.push({
+      code: "BOOTSTRAP_OWNED",
+      message: "Bootstrap-owned Baskets cannot be permanently deleted."
+    });
+  }
+  if (mainLineCount > 0) {
+    blockers.push({
+      code: "HAS_MAIN_LINES",
+      message: "Baskets with Estimation Items are archive-only."
+    });
+  }
+  if (historicalReferenceCount > 0) {
+    blockers.push({
+      code: "HAS_HISTORICAL_REFERENCES",
+      message: "Baskets retained by historical knowledge relationships are archive-only."
+    });
+  }
+  return {
+    basketId,
+    basketName: String(basket.name),
+    version: Number(basket.version),
+    mainLineCount,
+    historicalReferenceCount,
+    bootstrapOwned,
+    canDelete: blockers.length === 0,
+    blockers
+  };
+}
+
+function basketReferenceCount(payload: unknown, basketId: string): number {
+  const row = payload && typeof payload === "object" && !Array.isArray(payload)
+    ? payload as Row
+    : {};
+  return [row.exclusions, row.recommendations, row.dependencies]
+    .flatMap((value) => Array.isArray(value) ? value : value == null ? [] : [value])
+    .reduce((count, candidate) => {
+      const relation = candidate && typeof candidate === "object" && !Array.isArray(candidate)
+        ? candidate as Row
+        : null;
+      return count + (relation?.targetBasketId === basketId ? 1 : 0);
+    }, 0);
+}
+
+function safeDependencyEpoch(value: unknown, label: "Basket" | "Mode" = "Basket"): number {
+  if (value === undefined || value === null) return 0;
+  if (!Number.isSafeInteger(value) || Number(value) < 0) {
+    throw new Error(`Knowledge ${label} dependency epoch is corrupt.`);
+  }
+  return Number(value);
+}
+
+function validatePermanentDeleteBasketInput(
+  input: AiEstimatorKnowledgePermanentDeleteBasketInput
+): void {
+  validateExpectedVersion(input.expectedVersion);
+  if (
+    typeof input.confirmationName !== "string" ||
+    input.confirmationName.length < 1 ||
+    input.confirmationName.length > AI_ESTIMATOR_KNOWLEDGE_MAX_SHORT_TEXT
+  ) {
+    throw new ApiError(400, "VALIDATION_ERROR", "Basket confirmation name is invalid.", {
+      confirmationName: "Enter the exact current Basket name."
+    });
+  }
+  if (
+    typeof input.reason !== "string" ||
+    input.reason.trim().length < 1 ||
+    input.reason.length > 1_000
+  ) {
+    throw new ApiError(400, "VALIDATION_ERROR", "Permanent deletion reason is invalid.", {
+      reason: "Enter a non-empty reason of at most 1000 characters."
+    });
+  }
 }
 
 function requireMasterModel(masterType: AiEstimatorKnowledgeMasterType): Model<any> {
@@ -949,7 +1181,12 @@ async function requireNoMasterReferences(masterType: AiEstimatorKnowledgeMasterT
     taxes: ["payload.priceEntries.taxRuleId"],
     priorities: ["payload.priorityId", "payload.recommendations.priorityId"],
     surfaces: ["payload.surfaceIds"],
-    modes: ["payload.modeIds", "payload.priceEntries.modeId", "payload.modeOverrides.modeId"]
+    modes: [
+      "payload.modeIds",
+      "payload.priceEntries.modeId",
+      "payload.modeOverrides.modeId",
+      "payload.modeConfigurations.modeId"
+    ]
   };
   if (revisionIds.length > 0 && await AiEstimatorKnowledgeSectionModel.exists({ revisionId: { $in: revisionIds }, $or: sectionPaths[masterType].map((path) => ({ [path]: id })) }).session(session)) {
     referenceConflict("Knowledge master has an active or Draft section reference.");
@@ -1064,3 +1301,4 @@ function archived(): never { throw new ApiError(409, "RESOURCE_ARCHIVED", "Archi
 function versionConflict(): never { throw new ApiError(409, "VERSION_CONFLICT", "The knowledge resource changed elsewhere."); }
 function duplicateIdentity(): never { throw new ApiError(409, "DUPLICATE_IDENTITY", "A non-archived knowledge resource already uses that identity."); }
 function referenceConflict(message: string): never { throw new ApiError(409, "ACTIVE_REFERENCE_CONFLICT", message); }
+function basketDeleteBlocked(): never { throw new ApiError(409, "BASKET_DELETE_BLOCKED", "The Basket has permanent-deletion blockers and is archive-only."); }

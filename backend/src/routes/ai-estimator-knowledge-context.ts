@@ -1,6 +1,10 @@
 import { Router } from "express";
 import { z } from "zod";
 
+import {
+  AI_ESTIMATOR_KNOWLEDGE_EXECUTION_SOURCES,
+  AI_ESTIMATOR_KNOWLEDGE_MODE_KINDS
+} from "../domain/ai-estimator-knowledge.js";
 import { authenticate } from "../middleware/auth.js";
 import { requireOperation } from "../middleware/authorization.js";
 import { validateBody } from "../middleware/validate.js";
@@ -22,9 +26,25 @@ export const aiEstimatorKnowledgeContextRequestSchema = z
     quantity: canonicalDecimalSchema.optional(),
     uomId: stableIdSchema.optional(),
     surfaceId: stableIdSchema.optional(),
-    modeId: stableIdSchema.optional()
+    modeId: stableIdSchema.optional(),
+    modeKind: z.enum(AI_ESTIMATOR_KNOWLEDGE_MODE_KINDS).optional(),
+    executionSource: z.enum(AI_ESTIMATOR_KNOWLEDGE_EXECUTION_SOURCES).optional()
   })
-  .strict();
+  .strict()
+  .refine(
+    ({ modeId, modeKind }) => !(modeId && modeKind),
+    {
+      path: ["modeKind"],
+      message: "modeKind and modeId cannot be supplied together."
+    }
+  )
+  .refine(
+    ({ executionSource, modeKind }) => !executionSource || modeKind === "execution",
+    {
+      path: ["executionSource"],
+      message: "executionSource requires modeKind to be execution."
+    }
+  );
 
 export function createAiEstimatorKnowledgeContextRouter(
   auth: AuthService,
