@@ -2,19 +2,41 @@ import { describe, expect, it } from "vitest";
 
 import {
   KNOWLEDGE_SECTION_LABELS,
+  KNOWLEDGE_WORKSPACE_SECTION_LABELS,
   formatKnowledgeDateTime,
   formatKnowledgeMoney,
   formatKnowledgePercentage,
   formatPaiseForRupeeInput,
   parseRupeeInputToPaise
 } from "./knowledgePresentation";
+import {
+  KNOWLEDGE_WORKSPACE_BACKEND_SECTIONS,
+  KNOWLEDGE_WORKSPACE_SECTION_KEYS
+} from "./knowledgeWorkspaceSections";
 
 describe("knowledge presentation", () => {
-  it("uses the exact closed section vocabulary", () => {
+  it("preserves the exact closed backend section vocabulary for editors", () => {
     expect(KNOWLEDGE_SECTION_LABELS["quantity-margin"]).toBe(
       "Quantity & margin"
     );
     expect(Object.keys(KNOWLEDGE_SECTION_LABELS)).toHaveLength(8);
+  });
+
+  it("uses the exact four-key workspace vocabulary without changing backend ownership", () => {
+    expect(KNOWLEDGE_WORKSPACE_SECTION_KEYS).toEqual([
+      "overview",
+      "mode",
+      "recommendations",
+      "quality"
+    ]);
+    expect(KNOWLEDGE_WORKSPACE_SECTION_LABELS.mode).toBe("Mode");
+    expect(Object.keys(KNOWLEDGE_WORKSPACE_SECTION_LABELS)).toHaveLength(4);
+    expect(KNOWLEDGE_WORKSPACE_BACKEND_SECTIONS.mode).toEqual([
+      "advanced",
+      "pricing",
+      "quantity-margin"
+    ]);
+    expect(KNOWLEDGE_SECTION_LABELS.pricing).toBe("Pricing");
   });
 
   it("formats paise and basis points only at the presentation boundary", () => {

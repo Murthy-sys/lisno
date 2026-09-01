@@ -1,6 +1,7 @@
 import { apiClient } from "../../api/client";
 import type {
   KnowledgeBasket,
+  KnowledgeBasketDeletionImpact,
   KnowledgeBasketListResponse,
   KnowledgeContext,
   KnowledgeHistoryResponse,
@@ -14,8 +15,12 @@ import type {
   KnowledgeMasterListResponse,
   KnowledgeMasterStatus,
   KnowledgeMasterType,
+  KnowledgeModeKind,
+  KnowledgeExecutionSource,
   KnowledgePreview,
+  KnowledgePermanentDeleteBasketResult,
   KnowledgeSectionEnvelope,
+  KnowledgeSectionMutationEnvelope,
   KnowledgeSectionKey
 } from "./knowledgeTypes";
 
@@ -110,6 +115,8 @@ export interface KnowledgeContextRequest {
   readonly uomId?: string;
   readonly surfaceId?: string;
   readonly modeId?: string;
+  readonly modeKind?: KnowledgeModeKind;
+  readonly executionSource?: KnowledgeExecutionSource;
 }
 
 export interface KnowledgePreviewRequest {
@@ -146,6 +153,12 @@ export interface KnowledgeUpdateBasketInput {
   readonly description?: string | null;
   readonly displayOrder?: number;
   readonly status?: "active" | "inactive";
+}
+
+export interface KnowledgePermanentDeleteBasketInput {
+  readonly expectedVersion: number;
+  readonly confirmationName: string;
+  readonly reason: string;
 }
 
 export interface KnowledgeCreateMainLineInput {
@@ -238,8 +251,8 @@ export function updateKnowledgeSection<TPayload extends KnowledgeJsonObject>(
   revisionId: string,
   sectionKey: KnowledgeSectionKey,
   input: KnowledgeSectionUpdate<TPayload>
-): Promise<KnowledgeSectionEnvelope<TPayload>> {
-  return apiClient.put<KnowledgeSectionEnvelope<TPayload>>(
+): Promise<KnowledgeSectionMutationEnvelope<TPayload>> {
+  return apiClient.put<KnowledgeSectionMutationEnvelope<TPayload>>(
     `${ADMIN_PREFIX}/main-lines/${segment(mainLineId)}/revisions/${segment(revisionId)}/sections/${segment(sectionKey)}`,
     input
   );
@@ -316,6 +329,24 @@ export function archiveKnowledgeBasket(
 ): Promise<KnowledgeBasket> {
   return apiClient.delete<KnowledgeBasket>(
     `${ADMIN_PREFIX}/baskets/${segment(basketId)}`,
+    input
+  );
+}
+
+export function getKnowledgeBasketDeletionImpact(
+  basketId: string
+): Promise<KnowledgeBasketDeletionImpact> {
+  return apiClient.get<KnowledgeBasketDeletionImpact>(
+    `${ADMIN_PREFIX}/baskets/${segment(basketId)}/deletion-impact`
+  );
+}
+
+export function permanentlyDeleteKnowledgeBasket(
+  basketId: string,
+  input: KnowledgePermanentDeleteBasketInput
+): Promise<KnowledgePermanentDeleteBasketResult> {
+  return apiClient.delete<KnowledgePermanentDeleteBasketResult>(
+    `${ADMIN_PREFIX}/baskets/${segment(basketId)}/permanent`,
     input
   );
 }

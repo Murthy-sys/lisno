@@ -2,7 +2,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { apiClient } from "../../api/client";
 import {
+  getKnowledgeBasketDeletionImpact,
   listKnowledgeItems,
+  permanentlyDeleteKnowledgeBasket,
   resolveKnowledgeContext,
   updateKnowledgeSection
 } from "./knowledgeApi";
@@ -24,6 +26,27 @@ describe("knowledge API", () => {
 
     expect(get).toHaveBeenCalledWith(
       "/admin/ai-estimator-knowledge/items?modeId=mode%2Fsite&search=wall+%26+ceiling&status=active"
+    );
+  });
+
+  it("uses encoded Basket deletion paths and sends only the locked confirmation payload", async () => {
+    const get = vi.spyOn(apiClient, "get").mockResolvedValue({});
+    const remove = vi.spyOn(apiClient, "delete").mockResolvedValue({});
+    const input = {
+      expectedVersion: 7,
+      confirmationName: "Joinery & trim",
+      reason: "Created by mistake"
+    } as const;
+
+    await getKnowledgeBasketDeletionImpact("basket/one");
+    await permanentlyDeleteKnowledgeBasket("basket/one", input);
+
+    expect(get).toHaveBeenCalledWith(
+      "/admin/ai-estimator-knowledge/baskets/basket%2Fone/deletion-impact"
+    );
+    expect(remove).toHaveBeenCalledWith(
+      "/admin/ai-estimator-knowledge/baskets/basket%2Fone/permanent",
+      input
     );
   });
 
@@ -53,13 +76,15 @@ describe("knowledge API", () => {
     );
   });
 
-  it("uses the read-only context namespace with stable IDs and canonical quantities", async () => {
+  it("uses the read-only context namespace with a fixed Mode kind and canonical quantities", async () => {
     const post = vi.spyOn(apiClient, "post").mockResolvedValue({});
     const input = {
       mainBasketId: "basket-1",
       mainLineId: "line-1",
       quantity: "1500.000",
-      uomId: "uom-1"
+      uomId: "uom-1",
+      modeKind: "execution",
+      executionSource: "sub_vendor"
     } as const;
 
     await resolveKnowledgeContext(input);

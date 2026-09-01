@@ -2,15 +2,16 @@ import type { QueryClient } from "@tanstack/react-query";
 
 import { knowledgeQueryKeys } from "./knowledgeQueryKeys";
 import type {
+  KnowledgeBasketListResponse,
   KnowledgeItemDetail,
   KnowledgeMasterType,
-  KnowledgeSectionEnvelope
+  KnowledgeSectionMutationEnvelope
 } from "./knowledgeTypes";
 
-export async function syncKnowledgeSectionMutation(
+export function commitKnowledgeSectionMutation(
   queryClient: QueryClient,
-  section: KnowledgeSectionEnvelope
-): Promise<void> {
+  section: KnowledgeSectionMutationEnvelope
+): void {
   queryClient.setQueryData(
     knowledgeQueryKeys.section(
       section.mainLineId,
@@ -19,19 +20,91 @@ export async function syncKnowledgeSectionMutation(
     ),
     section
   );
+  queryClient.setQueryData<KnowledgeItemDetail>(
+    knowledgeQueryKeys.item(section.mainLineId),
+    (current) => current
+      ? { ...current, version: section.aggregateVersion }
+      : current
+  );
+}
 
-  await Promise.all([
+export async function invalidateKnowledgeSectionMutation(
+  queryClient: QueryClient,
+  mainLineId: string
+): Promise<void> {
+  await Promise.allSettled([
     queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.itemLists() }),
     queryClient.invalidateQueries({
-      queryKey: knowledgeQueryKeys.item(section.mainLineId)
+      queryKey: knowledgeQueryKeys.item(mainLineId)
     }),
     queryClient.invalidateQueries({
       queryKey: knowledgeQueryKeys.histories()
     }),
     queryClient.invalidateQueries({
       queryKey: knowledgeQueryKeys.activationReviews()
-    })
+    }),
+    queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.contexts() })
   ]);
+}
+
+export async function syncKnowledgeSectionMutation(
+  queryClient: QueryClient,
+  section: KnowledgeSectionMutationEnvelope
+): Promise<void> {
+  commitKnowledgeSectionMutation(queryClient, section);
+  await invalidateKnowledgeSectionMutation(queryClient, section.mainLineId);
+}
+
+export async function syncKnowledgeBasketDeletion(
+  queryClient: QueryClient,
+  basketId: string
+): Promise<void> {
+  const cachedBasketLists = queryClient.getQueriesData<KnowledgeBasketListResponse>({
+    queryKey: knowledgeQueryKeys.basketLists()
+  });
+  const affectedFamilies = new Set(
+    cachedBasketLists
+      .filter(([, current]) => current?.items.some((basket) => basket.id === basketId))
+      .map(([queryKey]) => basketListFilterFamily(queryKey))
+  );
+
+  for (const [queryKey, current] of cachedBasketLists) {
+    if (!current) continue;
+    const familyAffected = affectedFamilies.has(basketListFilterFamily(queryKey));
+    const items = current.items.filter((basket) => basket.id !== basketId);
+    queryClient.setQueryData<KnowledgeBasketListResponse>(queryKey, {
+      ...current,
+      items,
+      pagination: familyAffected
+        ? {
+            ...current.pagination,
+            total: Math.max(0, current.pagination.total - 1)
+          }
+        : current.pagination
+    });
+  }
+  queryClient.removeQueries({
+    queryKey: knowledgeQueryKeys.basketDeletionImpact(basketId),
+    exact: true
+  });
+
+  await Promise.all([
+    queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.basketLists() }),
+    queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.itemLists() }),
+    queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.mainLineLists() }),
+    queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.items() }),
+    queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.contexts() })
+  ]);
+}
+
+function basketListFilterFamily(queryKey: readonly unknown[]): string {
+  const params = queryKey[2];
+  if (!params || typeof params !== "object" || Array.isArray(params)) return "[]";
+  return JSON.stringify(
+    Object.entries(params)
+      .filter(([key, value]) => key !== "limit" && key !== "offset" && value !== undefined)
+      .sort(([left], [right]) => left.localeCompare(right))
+  );
 }
 
 export async function syncKnowledgeLifecycleMutation(

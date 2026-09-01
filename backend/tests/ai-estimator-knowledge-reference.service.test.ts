@@ -2,9 +2,11 @@ import mongoose from "mongoose";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { ApiError } from "../src/middleware/errors.js";
+import { AI_ESTIMATOR_KNOWLEDGE_BOOTSTRAP_IDS } from "../src/operations/ai-estimator-knowledge-bootstrap.manifest.js";
 import { AiEstimatorKnowledgeBasketModel } from "../src/models/AiEstimatorKnowledgeBasket.js";
 import { AiEstimatorKnowledgeDisplayOrderSequenceModel } from "../src/models/AiEstimatorKnowledgeDisplayOrderSequence.js";
 import { AiEstimatorKnowledgeMainLineModel } from "../src/models/AiEstimatorKnowledgeMainLine.js";
+import { AiEstimatorKnowledgeModeModel } from "../src/models/AiEstimatorKnowledgeMode.js";
 import { AiEstimatorKnowledgePriceVersionModel } from "../src/models/AiEstimatorKnowledgePriceVersion.js";
 import { AiEstimatorKnowledgeRevisionModel } from "../src/models/AiEstimatorKnowledgeRevision.js";
 import { AiEstimatorKnowledgeSectionModel } from "../src/models/AiEstimatorKnowledgeSection.js";
@@ -35,6 +37,7 @@ beforeAll(async () => {
     AiEstimatorKnowledgeBasketModel.init(),
     AiEstimatorKnowledgeDisplayOrderSequenceModel.init(),
     AiEstimatorKnowledgeMainLineModel.init(),
+    AiEstimatorKnowledgeModeModel.init(),
     AiEstimatorKnowledgeRevisionModel.init(),
     AiEstimatorKnowledgeSectionModel.init(),
     AiEstimatorKnowledgePriceVersionModel.init(),
@@ -126,6 +129,8 @@ describe("AI estimator knowledge reference service", () => {
     const secondPage = await service.listBaskets(actor, {}, { limit: 1, offset: 1 });
     expect(firstPage).toMatchObject({ total: 2, items: [{ name: "POP / Gypsum", version: 1 }] });
     expect(secondPage).toMatchObject({ total: 2, items: [{ name: "Electrical", version: 1 }] });
+    expect(firstPage.items[0]).not.toHaveProperty("dependencyEpoch");
+    expect(secondPage.items[0]).not.toHaveProperty("dependencyEpoch");
     expect(audit.appendInMongoTransaction).toHaveBeenCalledTimes(2);
     expect(actorGuard.requireMutationActor).toHaveBeenCalledTimes(2);
     expect(actorGuard.requireReadActor).toHaveBeenCalledTimes(2);
@@ -159,6 +164,36 @@ describe("AI estimator knowledge reference service", () => {
       }),
       expect.anything()
     );
+  });
+
+  it("deletes an eligible legacy Basket that predates the dependency guard", async () => {
+    await AiEstimatorKnowledgeBasketModel.collection.insertOne({
+      _id: "legacy-empty-basket",
+      name: "Legacy Empty Basket",
+      nameNormalized: "legacy empty basket",
+      description: null,
+      displayOrder: 7,
+      status: "inactive",
+      version: 2,
+      createdById: actor.id,
+      updatedById: actor.id,
+      archivedAt: null,
+      archivedById: null,
+      createdAt: fixedNow,
+      updatedAt: fixedNow
+    });
+    const { service } = harness();
+
+    await expect(service.permanentlyDeleteBasket(actor, "legacy-empty-basket", {
+      expectedVersion: 2,
+      confirmationName: "Legacy Empty Basket",
+      reason: "Remove pre-guard empty Basket"
+    })).resolves.toMatchObject({
+      basketId: "legacy-empty-basket",
+      deleted: true
+    });
+    expect(await AiEstimatorKnowledgeBasketModel.exists({ _id: "legacy-empty-basket" }))
+      .toBeNull();
   });
 
   it("maps normalized duplicate races to 409 and permits identity reuse after soft archive", async () => {
@@ -218,6 +253,255 @@ describe("AI estimator knowledge reference service", () => {
       expectApiError(error, 409, "ACTIVE_REFERENCE_CONFLICT");
       return true;
     });
+  });
+
+  it("preflights and atomically deletes only an eligible custom empty Basket", async () => {
+    const { service, audit } = harness();
+    const basket = await service.createBasket(actor, { name: "Accidental Basket" });
+
+    await expect(service.getBasketDeletionImpact(actor, basket.id)).resolves.toEqual({
+      basketId: basket.id,
+      basketName: "Accidental Basket",
+      version: 1,
+      mainLineCount: 0,
+      historicalReferenceCount: 0,
+      bootstrapOwned: false,
+      canDelete: true,
+      blockers: []
+    });
+    await expect(service.permanentlyDeleteBasket(actor, basket.id, {
+      expectedVersion: 1,
+      confirmationName: "Accidental Basket",
+      reason: "Created by mistake"
+    })).resolves.toEqual({
+      basketId: basket.id,
+      deleted: true,
+      deletedAt: fixedNow.toISOString()
+    });
+
+    expect(await AiEstimatorKnowledgeBasketModel.findById(basket.id).lean()).toBeNull();
+    expect(audit.appendInMongoTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "ai_estimator_knowledge_basket_permanently_deleted",
+        entityType: "ai_estimator_knowledge_basket",
+        entityId: basket.id,
+        occurredAt: fixedNow.toISOString(),
+        oldValues: {
+          name: "Accidental Basket",
+          status: "active",
+          displayOrder: 0,
+          version: 1,
+          bootstrapOwned: false
+        },
+        reason: "Created by mistake"
+      }),
+      expect.anything()
+    );
+    const next = await service.createBasket(actor, { name: "After Deletion" });
+    expect(next.displayOrder).toBe(1);
+  });
+
+  it("reports and enforces bootstrap, any-status Main Line, and historical relationship blockers", async () => {
+    const { service } = harness();
+    const [lineBasket, referencedBasket] = await Promise.all([
+      service.createBasket(actor, { name: "Used Basket" }),
+      service.createBasket(actor, { name: "Historically Referenced Basket" })
+    ]);
+    await AiEstimatorKnowledgeBasketModel.create({
+      _id: AI_ESTIMATOR_KNOWLEDGE_BOOTSTRAP_IDS.electricalBasket,
+      name: "Electrical",
+      nameNormalized: "electrical",
+      description: null,
+      displayOrder: 10,
+      status: "active",
+      version: 1,
+      createdById: actor.id,
+      updatedById: actor.id,
+      archivedAt: null,
+      archivedById: null
+    });
+    await AiEstimatorKnowledgeMainLineModel.create({
+      _id: "archived-line-1",
+      basketId: lineBasket.id,
+      name: "Archived Item",
+      description: null,
+      displayOrder: 0,
+      status: "archived",
+      activeRevisionId: null,
+      draftRevisionId: null,
+      version: 4,
+      createdById: actor.id,
+      updatedById: actor.id,
+      deactivatedAt: null,
+      deactivatedById: null,
+      archivedAt: fixedNow,
+      archivedById: actor.id
+    });
+    await AiEstimatorKnowledgeSectionModel.insertMany([
+      {
+        _id: "historical-superseded-scope",
+        mainLineId: "historical-source-line",
+        revisionId: "historical-superseded-revision",
+        sectionKey: "scope",
+        applicability: "configured",
+        payload: {
+          exclusions: [{
+            id: "inactive-historical-exclusion",
+            targetBasketId: referencedBasket.id,
+            targetMainLineId: null,
+            reason: "Retained inactive history",
+            active: false
+          }]
+        },
+        version: 2,
+        createdById: actor.id,
+        updatedById: actor.id
+      },
+      {
+        _id: "historical-superseded-recommendations",
+        mainLineId: "historical-source-line",
+        revisionId: "historical-superseded-revision",
+        sectionKey: "recommendations",
+        applicability: "configured",
+        payload: {
+          recommendations: [{
+            id: "inactive-historical-recommendation",
+            targetBasketId: referencedBasket.id,
+            targetMainLineId: "historical-target-line",
+            type: "recommended",
+            priorityId: null,
+            reason: "Retained recommendation history",
+            quantityRelationship: "same_quantity",
+            quantityValue: null,
+            dependency: false,
+            active: false
+          }]
+        },
+        version: 2,
+        createdById: actor.id,
+        updatedById: actor.id
+      },
+      {
+        _id: "historical-superseded-advanced",
+        mainLineId: "historical-source-line",
+        revisionId: "historical-superseded-revision",
+        sectionKey: "advanced",
+        applicability: "configured",
+        payload: {
+          dependencies: [{
+            id: "inactive-historical-dependency",
+            targetBasketId: referencedBasket.id,
+            targetMainLineId: "historical-target-line",
+            reason: "Retained dependency history",
+            active: false
+          }]
+        },
+        version: 2,
+        createdById: actor.id,
+        updatedById: actor.id
+      }
+    ]);
+
+    const cases = [
+      {
+        id: AI_ESTIMATOR_KNOWLEDGE_BOOTSTRAP_IDS.electricalBasket,
+        name: "Electrical",
+        impact: expect.objectContaining({
+          bootstrapOwned: true,
+          canDelete: false,
+          blockers: [expect.objectContaining({ code: "BOOTSTRAP_OWNED" })]
+        })
+      },
+      {
+        id: lineBasket.id,
+        name: lineBasket.name,
+        impact: expect.objectContaining({
+          mainLineCount: 1,
+          canDelete: false,
+          blockers: [expect.objectContaining({ code: "HAS_MAIN_LINES" })]
+        })
+      },
+      {
+        id: referencedBasket.id,
+        name: referencedBasket.name,
+        impact: expect.objectContaining({
+          historicalReferenceCount: 3,
+          canDelete: false,
+          blockers: [expect.objectContaining({ code: "HAS_HISTORICAL_REFERENCES" })]
+        })
+      }
+    ];
+
+    for (const candidate of cases) {
+      await expect(service.getBasketDeletionImpact(actor, candidate.id))
+        .resolves.toEqual(candidate.impact);
+      await expect(service.permanentlyDeleteBasket(actor, candidate.id, {
+        expectedVersion: 1,
+        confirmationName: candidate.name,
+        reason: "Must remain archive-only"
+      })).rejects.toSatisfy((error) => {
+        expectApiError(error, 409, "BASKET_DELETE_BLOCKED");
+        return true;
+      });
+      expect(await AiEstimatorKnowledgeBasketModel.exists({ _id: candidate.id })).not.toBeNull();
+    }
+  });
+
+  it("leaves the Basket unchanged for unknown identity, stale version, or inexact confirmation", async () => {
+    const { service } = harness();
+    const basket = await service.createBasket(actor, { name: "Exact Name" });
+
+    await expect(service.getBasketDeletionImpact(actor, "unknown-basket"))
+      .rejects.toSatisfy((error) => {
+        expectApiError(error, 404, "NOT_FOUND");
+        return true;
+      });
+    await expect(service.permanentlyDeleteBasket(actor, "unknown-basket", {
+      expectedVersion: 1,
+      confirmationName: "Unknown",
+      reason: "Unknown identity"
+    })).rejects.toSatisfy((error) => {
+      expectApiError(error, 404, "NOT_FOUND");
+      return true;
+    });
+    await expect(service.permanentlyDeleteBasket(actor, basket.id, {
+      expectedVersion: 2,
+      confirmationName: "Exact Name",
+      reason: "Stale writer"
+    })).rejects.toSatisfy((error) => {
+      expectApiError(error, 409, "VERSION_CONFLICT");
+      return true;
+    });
+    for (const input of [
+      { expectedVersion: 1, confirmationName: "Exact Name ", reason: "Mismatch" },
+      { expectedVersion: 1, confirmationName: "Exact Name", reason: "   " }
+    ]) {
+      await expect(service.permanentlyDeleteBasket(actor, basket.id, input))
+        .rejects.toSatisfy((error) => {
+          expectApiError(error, 400, "VALIDATION_ERROR");
+          return true;
+        });
+    }
+    expect(await AiEstimatorKnowledgeBasketModel.findById(basket.id).lean())
+      .toMatchObject({ name: "Exact Name", version: 1 });
+  });
+
+  it("rolls back permanent deletion when the audit append fails", async () => {
+    const basket = await harness().service.createBasket(actor, { name: "Audit Protected" });
+    const audit = {
+      appendInMongoTransaction: vi.fn(async () => {
+        throw new Error("audit unavailable");
+      })
+    };
+    const { service } = harness({ audit });
+
+    await expect(service.permanentlyDeleteBasket(actor, basket.id, {
+      expectedVersion: 1,
+      confirmationName: "Audit Protected",
+      reason: "Deletion must be atomic"
+    })).rejects.toThrow("audit unavailable");
+    expect(await AiEstimatorKnowledgeBasketModel.findById(basket.id).lean())
+      .toMatchObject({ name: "Audit Protected", version: 1 });
   });
 
   it("creates, updates, filters, and archives reusable masters without label joins", async () => {
@@ -394,6 +678,190 @@ describe("AI estimator knowledge reference service", () => {
     await expect(service.archiveMaster(actor, "uoms", uom.id, { expectedVersion: 1 })).rejects.toSatisfy((error) => {
       expectApiError(error, 409, "ACTIVE_REFERENCE_CONFLICT");
       return true;
+    });
+  });
+
+  it("atomically blocks archiving Modes referenced only by Draft or Active dynamic configurations", async () => {
+    const { service, audit } = harness();
+    const basket = await service.createBasket(actor, { name: "Dynamic Mode Basket" });
+    const draftMode = await service.createMaster(actor, "modes", {
+      code: "PMC",
+      name: "PMC"
+    });
+    const activeMode = await service.createMaster(actor, "modes", {
+      code: "EXECUTION",
+      name: "Execution"
+    });
+    expect(draftMode).not.toHaveProperty("dependencyEpoch");
+    expect(activeMode).not.toHaveProperty("dependencyEpoch");
+    const references = [
+      {
+        suffix: "draft",
+        mode: draftMode,
+        revisionStatus: "draft" as const,
+        mainLineStatus: "draft" as const,
+        activeRevisionId: null,
+        draftRevisionId: "revision-dynamic-draft"
+      },
+      {
+        suffix: "active",
+        mode: activeMode,
+        revisionStatus: "active" as const,
+        mainLineStatus: "active" as const,
+        activeRevisionId: "revision-dynamic-active",
+        draftRevisionId: null
+      }
+    ];
+
+    await AiEstimatorKnowledgeMainLineModel.insertMany(references.map((reference, index) => ({
+      _id: `line-dynamic-${reference.suffix}`,
+      basketId: basket.id,
+      name: `Dynamic ${reference.suffix} line`,
+      description: null,
+      displayOrder: index,
+      status: reference.mainLineStatus,
+      activeRevisionId: reference.activeRevisionId,
+      draftRevisionId: reference.draftRevisionId,
+      version: 1,
+      createdById: actor.id,
+      updatedById: actor.id,
+      deactivatedAt: null,
+      deactivatedById: null,
+      archivedAt: null,
+      archivedById: null
+    })));
+    await AiEstimatorKnowledgeRevisionModel.insertMany(references.map((reference, index) => ({
+      _id: `revision-dynamic-${reference.suffix}`,
+      mainLineId: `line-dynamic-${reference.suffix}`,
+      revisionNumber: index + 1,
+      status: reference.revisionStatus,
+      sourceRevisionId: null,
+      contentDigest: reference.revisionStatus === "active" ? "a".repeat(64) : null,
+      completeness: { percentage: 0, sections: [], blockers: [], warnings: [] },
+      version: 1,
+      createdById: actor.id,
+      updatedById: actor.id,
+      activatedAt: reference.revisionStatus === "active" ? fixedNow : null,
+      activatedById: reference.revisionStatus === "active" ? actor.id : null,
+      supersededAt: null,
+      supersededById: null
+    })));
+    await AiEstimatorKnowledgeSectionModel.insertMany(references.map((reference) => ({
+      _id: `section-dynamic-${reference.suffix}`,
+      mainLineId: `line-dynamic-${reference.suffix}`,
+      revisionId: `revision-dynamic-${reference.suffix}`,
+      sectionKey: "advanced",
+      applicability: "configured",
+      payload: {
+        modeConfigurations: [{
+          id: `configuration-${reference.suffix}`,
+          modeId: reference.mode.id,
+          fields: [{
+            id: `field-${reference.suffix}`,
+            type: "text",
+            label: `${reference.suffix} marker`,
+            options: [],
+            value: reference.suffix
+          }]
+        }]
+      },
+      version: 1,
+      createdById: actor.id,
+      updatedById: actor.id
+    })));
+    audit.appendInMongoTransaction.mockClear();
+
+    for (const reference of references) {
+      await expect(service.archiveMaster(actor, "modes", reference.mode.id, {
+        expectedVersion: 1,
+        reason: `Must retain ${reference.suffix} reference`
+      })).rejects.toSatisfy((error) => {
+        expectApiError(error, 409, "ACTIVE_REFERENCE_CONFLICT");
+        return true;
+      });
+      expect(await AiEstimatorKnowledgeModeModel.findById(reference.mode.id).lean())
+        .toMatchObject({
+          status: "active",
+          version: 1,
+          dependencyEpoch: 0,
+          archivedAt: null,
+          archivedById: null
+        });
+    }
+    expect(audit.appendInMongoTransaction).not.toHaveBeenCalled();
+  });
+
+  it("does not treat canonical modeKind configurations as reusable Mode references", async () => {
+    const { service } = harness();
+    const basket = await service.createBasket(actor, { name: "Canonical Mode Basket" });
+    const reusableMode = await service.createMaster(actor, "modes", {
+      code: "PMC",
+      name: "Legacy PMC master"
+    });
+    await AiEstimatorKnowledgeMainLineModel.create({
+      _id: "line-canonical-mode-kind",
+      basketId: basket.id,
+      name: "Canonical Mode line",
+      description: null,
+      displayOrder: 0,
+      status: "draft",
+      activeRevisionId: null,
+      draftRevisionId: "revision-canonical-mode-kind",
+      version: 1,
+      createdById: actor.id,
+      updatedById: actor.id,
+      deactivatedAt: null,
+      deactivatedById: null,
+      archivedAt: null,
+      archivedById: null
+    });
+    await AiEstimatorKnowledgeRevisionModel.create({
+      _id: "revision-canonical-mode-kind",
+      mainLineId: "line-canonical-mode-kind",
+      revisionNumber: 1,
+      status: "draft",
+      sourceRevisionId: null,
+      contentDigest: null,
+      completeness: { percentage: 0, sections: [], blockers: [], warnings: [] },
+      version: 1,
+      createdById: actor.id,
+      updatedById: actor.id,
+      activatedAt: null,
+      activatedById: null,
+      supersededAt: null,
+      supersededById: null
+    });
+    await AiEstimatorKnowledgeSectionModel.create({
+      _id: "section-canonical-mode-kind",
+      mainLineId: "line-canonical-mode-kind",
+      revisionId: "revision-canonical-mode-kind",
+      sectionKey: "advanced",
+      applicability: "configured",
+      payload: {
+        modeConfigurations: [{
+          id: "configuration-canonical-pmc",
+          modeKind: "pmc",
+          fields: [{
+            id: "field-canonical-pmc",
+            type: "text",
+            label: "PMC marker",
+            options: [],
+            value: "A1"
+          }]
+        }]
+      },
+      version: 1,
+      createdById: actor.id,
+      updatedById: actor.id
+    });
+
+    await expect(service.archiveMaster(actor, "modes", reusableMode.id, {
+      expectedVersion: reusableMode.version,
+      reason: "Canonical configurations do not retain reusable Mode masters"
+    })).resolves.toMatchObject({
+      id: reusableMode.id,
+      status: "archived",
+      version: reusableMode.version + 1
     });
   });
 

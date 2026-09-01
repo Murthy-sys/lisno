@@ -1,6 +1,6 @@
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Archive, ArrowLeft, Copy, Plus, Save, ShieldCheck } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
+import { Archive, ArrowLeft, Copy, Plus, ShieldCheck } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 
 import { ApiError } from "../../api/client";
@@ -8,11 +8,10 @@ import { useAuth } from "../../auth/AuthProvider";
 import { hasFrontendPermission } from "../../auth/authorization";
 import { Button } from "../../components/ui/Button";
 import { Dialog } from "../../components/ui/Dialog";
-import { Field, Input, Select, Textarea } from "../../components/ui/Field";
+import { Field, Input, Textarea } from "../../components/ui/Field";
 import { InlineMessage } from "../../components/ui/InlineMessage";
 import { PageHeader } from "../../components/ui/PageHeader";
 import { PageState } from "../../components/ui/PageState";
-import { ProgressBar } from "../../components/ui/ProgressBar";
 import { StatusBadge } from "../../components/ui/StatusBadge";
 import { Surface } from "../../components/ui/Surface";
 import {
@@ -27,35 +26,45 @@ import {
   listKnowledgeBaskets,
   listKnowledgeItems,
   listKnowledgeMasters,
-  previewKnowledge,
-  updateKnowledgeSection,
-  type KnowledgePreviewRequest
+  updateKnowledgeSection
 } from "./knowledgeApi";
 import { KnowledgeLifecycleDialog, type KnowledgeLifecycleAction } from "./KnowledgeLifecycleDialogs";
 import { KnowledgeMasterEditorDialog } from "./KnowledgeMasterEditorDialog";
+import { KnowledgeModePanel, type KnowledgeModePanelHandle } from "./KnowledgeModePanel";
+import { KnowledgeConflictReview } from "./KnowledgeConflictReview";
+import { KnowledgeRevisionHistory } from "./KnowledgeRevisionHistory";
+import { KnowledgeSectionCommandBar } from "./KnowledgeSectionCommandBar";
+import { KnowledgeWorkspaceStatus } from "./KnowledgeWorkspaceStatus";
 import { syncKnowledgeLifecycleMutation, syncKnowledgeSectionMutation } from "./knowledgeMutationSync";
+import {
+  KnowledgeOverviewPanel,
+  type KnowledgeOverviewSectionState
+} from "./KnowledgeOverviewPanel";
+import { projectKnowledgeOverviewSummary } from "./knowledgeOverviewSummary";
 import {
   KNOWLEDGE_ITEM_STATUS_LABELS,
   KNOWLEDGE_SECTION_LABELS,
+  KNOWLEDGE_WORKSPACE_SECTION_LABELS,
   formatKnowledgeDateTime,
-  formatKnowledgeMoney,
-  formatKnowledgePercentage,
-  formatPaiseForRupeeInput,
-  parseRupeeInputToPaise
 } from "./knowledgePresentation";
 import { knowledgeQueryKeys } from "./knowledgeQueryKeys";
+import { collectAllKnowledgeMasterPages } from "./knowledgeMasterPagination";
+import {
+  knowledgeOverviewPayloadForUpdate,
+  knowledgeSectionPayloadForUpdate,
+  type KnowledgeOverviewEditableField
+} from "./knowledgeSectionPayload";
 import { KnowledgeSectionEditor } from "./KnowledgeSectionEditor";
 import { KnowledgeSectionNavigation } from "./KnowledgeSectionNavigation";
 import { KnowledgeSafetyNotice } from "./KnowledgeSafetyNotice";
 import { KnowledgeUnsavedChangesDialog } from "./KnowledgeUnsavedChangesDialog";
 import { KnowledgeVersionConflictDialog } from "./KnowledgeVersionConflictDialog";
+import type { KnowledgeWorkspaceSectionKey } from "./knowledgeWorkspaceSections";
 import type {
   KnowledgeItemDetail,
   KnowledgeJsonObject,
   KnowledgeMaster,
   KnowledgeMasterType,
-  KnowledgePreview,
-  KnowledgeSectionApplicability,
   KnowledgeSectionEnvelope,
   KnowledgeSectionKey
 } from "./knowledgeTypes";
@@ -63,6 +72,15 @@ import { useUnsavedKnowledgeGuard } from "./useUnsavedKnowledgeGuard";
 import "./ai-estimator-knowledge.css";
 
 const MASTER_TYPES = ["uoms", "vendors", "taxes", "priorities", "surfaces", "modes"] as const satisfies readonly KnowledgeMasterType[];
+const OVERVIEW_SUMMARY_SECTION_KEYS = [
+  "pricing",
+  "quantity-margin",
+  "scope",
+  "recommendations",
+  "quality",
+  "execution",
+  "advanced"
+] as const satisfies readonly KnowledgeSectionKey[];
 
 interface ConflictState {
   readonly localVersion: number;
@@ -75,15 +93,20 @@ export function KnowledgeItemWorkspacePage() {
   const auth = useAuth();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const [activeSection, setActiveSection] = useState<KnowledgeSectionKey>("overview");
+  const modePanelRef = useRef<KnowledgeModePanelHandle>(null);
+  const [activeSection, setActiveSection] = useState<KnowledgeWorkspaceSectionKey>("overview");
   const [payload, setPayload] = useState<KnowledgeJsonObject>({});
-  const [applicability, setApplicability] = useState<KnowledgeSectionApplicability>("not_configured");
   const [dirty, setDirty] = useState(false);
+  const [overviewDirtyFields, setOverviewDirtyFields] = useState<ReadonlySet<KnowledgeOverviewEditableField>>(() => new Set());
+  const [modeDirty, setModeDirty] = useState(false);
+  const [modeSaving, setModeSaving] = useState(false);
+  const [modeBusy, setModeBusy] = useState(false);
+  const [modeSaveError, setModeSaveError] = useState<string | null>(null);
   const [editorValid, setEditorValid] = useState(true);
   const [validationAttempt, setValidationAttempt] = useState(0);
   const [announcement, setAnnouncement] = useState("");
   const [conflict, setConflict] = useState<ConflictState | null>(null);
-  const [serverReview, setServerReview] = useState<KnowledgeSectionEnvelope<KnowledgeJsonObject> | null>(null);
+  const [serverReview, setServerReview] = useState<ConflictState | null>(null);
   const [quickAdd, setQuickAdd] = useState<{ type: KnowledgeMasterType; select: (master: KnowledgeMaster) => void } | null>(null);
   const [lifecycleAction, setLifecycleAction] = useState<KnowledgeLifecycleAction | null>(null);
   const [lifecycleReason, setLifecycleReason] = useState("");
@@ -101,10 +124,20 @@ export function KnowledgeItemWorkspacePage() {
   });
   const item = itemQuery.data;
   const revision = item?.draftRevision ?? item?.activeRevision ?? null;
+  const backendSection: KnowledgeSectionKey | null = activeSection === "mode"
+    ? null
+    : activeSection;
   const sectionQuery = useQuery({
-    queryKey: knowledgeQueryKeys.section(mainLineId, revision?.id ?? "", activeSection),
-    queryFn: () => getKnowledgeSection<KnowledgeJsonObject>(mainLineId, revision!.id, activeSection),
-    enabled: Boolean(mainLineId && revision?.id)
+    queryKey: knowledgeQueryKeys.section(mainLineId, revision?.id ?? "", backendSection ?? "overview"),
+    queryFn: () => getKnowledgeSection<KnowledgeJsonObject>(mainLineId, revision!.id, backendSection!),
+    enabled: Boolean(mainLineId && revision?.id && backendSection)
+  });
+  const overviewSummaryQueries = useQueries({
+    queries: OVERVIEW_SUMMARY_SECTION_KEYS.map((sectionKey) => ({
+      queryKey: knowledgeQueryKeys.section(mainLineId, revision?.id ?? "", sectionKey),
+      queryFn: () => getKnowledgeSection<KnowledgeJsonObject>(mainLineId, revision!.id, sectionKey),
+      enabled: Boolean(mainLineId && revision?.id && activeSection === "overview")
+    }))
   });
   const historyQuery = useQuery({
     queryKey: knowledgeQueryKeys.history(mainLineId, { limit: 100, offset: 0 }),
@@ -121,47 +154,150 @@ export function KnowledgeItemWorkspacePage() {
   });
   const masterQueries = useQueries({
     queries: MASTER_TYPES.map((type) => ({
-      queryKey: knowledgeQueryKeys.masterList(type, { limit: 100, offset: 0 }),
-      queryFn: () => listKnowledgeMasters(type, { limit: 100, offset: 0 })
+      queryKey: type === "modes"
+        ? knowledgeQueryKeys.masterCatalog(type)
+        : knowledgeQueryKeys.masterList(type, { limit: 100, offset: 0 }),
+      queryFn: () => type === "modes"
+        ? collectAllKnowledgeMasterPages((params) => listKnowledgeMasters(type, params))
+        : listKnowledgeMasters(type, { limit: 100, offset: 0 })
     }))
   });
   const masters = useMemo(
     () => Object.fromEntries(MASTER_TYPES.map((type, index) => [type, masterQueries[index].data?.items ?? []])) as Readonly<Record<KnowledgeMasterType, readonly KnowledgeMaster[]>>,
     [masterQueries]
   );
+  const modesQuery = masterQueries[MASTER_TYPES.indexOf("modes")]!;
+  const modesHaveData = Boolean(modesQuery.data);
+  const legacyModeCatalogState = {
+    status: modesQuery.isError && !modesHaveData
+      ? "error" as const
+      : modesQuery.isPending && !modesHaveData
+        ? "loading" as const
+        : "ready" as const,
+    refreshing: modesHaveData && modesQuery.isFetching,
+    errorMessage: modesQuery.error instanceof Error ? modesQuery.error.message : undefined,
+    onRetry: () => { void modesQuery.refetch(); }
+  };
   const editable = Boolean(item && revision?.status === "draft" && item.status !== "archived" && canUpdate && item.allowedActions.includes("update_section"));
+  const overviewDraftPayload = activeSection === "overview" && sectionQuery.data
+    ? dirty ? payload : sectionQuery.data.payload
+    : payload;
+  const overviewSections: Partial<Record<KnowledgeSectionKey, KnowledgeJsonObject>> = {};
+  if (activeSection === "overview" && sectionQuery.data?.sectionKey === "overview") {
+    overviewSections.overview = overviewDraftPayload;
+  }
+  OVERVIEW_SUMMARY_SECTION_KEYS.forEach((sectionKey, index) => {
+    const envelope = overviewSummaryQueries[index]?.data;
+    if (envelope) overviewSections[sectionKey] = envelope.payload;
+  });
+  const overviewSummary = projectKnowledgeOverviewSummary({
+    sections: overviewSections,
+    masters,
+    baskets: relationshipBasketsQuery.data?.items ?? [],
+    items: relationshipItemsQuery.data?.items ?? [],
+    completeness: revision?.completeness ?? item?.completeness ?? null
+  });
+  const overviewSectionStates = Object.fromEntries(
+    OVERVIEW_SUMMARY_SECTION_KEYS.map((sectionKey, index) => {
+      const query = overviewSummaryQueries[index]!;
+      const hasData = Boolean(query.data);
+      const state: KnowledgeOverviewSectionState = {
+        status: query.isError && !hasData
+          ? "error"
+          : query.isPending && !hasData
+            ? "loading"
+            : "ready",
+        refreshing: hasData && query.isFetching,
+        errorMessage: query.error instanceof Error ? query.error.message : undefined,
+        refreshErrorMessage: query.isError && hasData && query.error instanceof Error
+          ? query.error.message
+          : undefined,
+        onRetry: () => { void query.refetch(); }
+      };
+      return [sectionKey, state];
+    })
+  ) as Readonly<Partial<Record<KnowledgeSectionKey, KnowledgeOverviewSectionState>>>;
+  const overviewMasterStates = Object.fromEntries(
+    MASTER_TYPES.map((type, index) => {
+      const query = masterQueries[index]!;
+      const hasData = Boolean(query.data);
+      const state: KnowledgeOverviewSectionState = {
+        status: query.isError && !hasData
+          ? "error"
+          : query.isPending && !hasData
+            ? "loading"
+            : "ready",
+        refreshing: hasData && query.isFetching,
+        errorMessage: query.error instanceof Error ? query.error.message : undefined,
+        refreshErrorMessage: query.isError && hasData && query.error instanceof Error
+          ? query.error.message
+          : undefined,
+        onRetry: () => { void query.refetch(); }
+      };
+      return [type, state];
+    })
+  ) as Readonly<Partial<Record<KnowledgeMasterType, KnowledgeOverviewSectionState>>>;
+  const relationshipsHaveData = Boolean(
+    relationshipBasketsQuery.data && relationshipItemsQuery.data
+  );
+  const relationshipsError = relationshipBasketsQuery.error ?? relationshipItemsQuery.error;
+  const overviewRelationshipState: KnowledgeOverviewSectionState = {
+    status: (relationshipBasketsQuery.isError || relationshipItemsQuery.isError) && !relationshipsHaveData
+      ? "error"
+      : (relationshipBasketsQuery.isPending || relationshipItemsQuery.isPending) && !relationshipsHaveData
+        ? "loading"
+        : "ready",
+    refreshing: relationshipsHaveData && (
+      relationshipBasketsQuery.isFetching || relationshipItemsQuery.isFetching
+    ),
+    errorMessage: relationshipsError instanceof Error ? relationshipsError.message : undefined,
+    refreshErrorMessage: relationshipsHaveData && relationshipsError instanceof Error
+      ? relationshipsError.message
+      : undefined,
+    onRetry: () => {
+      if (relationshipBasketsQuery.isError) void relationshipBasketsQuery.refetch();
+      if (relationshipItemsQuery.isError) void relationshipItemsQuery.refetch();
+    }
+  };
 
   useEffect(() => {
     if (!sectionQuery.data || dirty) return;
     setPayload(sectionQuery.data.payload);
-    setApplicability(sectionQuery.data.applicability);
     setEditorValid(true);
     setServerReview(null);
+    setOverviewDirtyFields(new Set());
   }, [dirty, sectionQuery.data]);
 
   const saveMutation = useMutation({
     mutationFn: async () => {
-      if (!item || !revision || !sectionQuery.data) throw new Error("The draft section is unavailable.");
-      return updateKnowledgeSection(mainLineId, revision.id, activeSection, {
+      if (!item || !revision || !backendSection || !sectionQuery.data) throw new Error("The draft section is unavailable.");
+      const rebasedPayload = backendSection === "overview"
+        ? knowledgeOverviewPayloadForUpdate(
+            sectionQuery.data.payload,
+            payload,
+            overviewDirtyFields
+          )
+        : payload;
+      return updateKnowledgeSection(mainLineId, revision.id, backendSection, {
         expectedVersion: sectionQuery.data.version,
         expectedAggregateVersion: item.version,
-        applicability,
-        payload: sectionPayloadForUpdate(activeSection, payload)
+        applicability: sectionQuery.data.applicability,
+        payload: knowledgeSectionPayloadForUpdate(backendSection, rebasedPayload)
       });
     },
     onSuccess: async (saved) => {
       await syncKnowledgeSectionMutation(queryClient, saved);
       setPayload(saved.payload);
-      setApplicability(saved.applicability);
       setDirty(false);
+      setOverviewDirtyFields(new Set());
       setConflict(null);
       setServerReview(null);
-      setAnnouncement(`${KNOWLEDGE_SECTION_LABELS[activeSection]} saved.`);
+      setAnnouncement(`${KNOWLEDGE_SECTION_LABELS[saved.sectionKey]} saved.`);
     }
   });
 
   const saveSection = useCallback(async (): Promise<boolean> => {
-    if (!editable || !sectionQuery.data) return false;
+    if (!editable || !backendSection || !sectionQuery.data) return false;
     if (!editorValid) { setValidationAttempt((value) => value + 1); return false; }
     try {
       await saveMutation.mutateAsync();
@@ -173,19 +309,42 @@ export function KnowledgeItemWorkspacePage() {
       }
       return false;
     }
-  }, [editable, editorValid, itemQuery, saveMutation, sectionQuery]);
+  }, [backendSection, editable, editorValid, itemQuery, saveMutation, sectionQuery]);
+
+  const saveActiveSection = useCallback(async (): Promise<boolean> => {
+    if (activeSection === "mode") {
+      return modePanelRef.current?.save() ?? false;
+    }
+    return saveSection();
+  }, [activeSection, saveSection]);
+
+  const discardActiveSection = useCallback(() => {
+    if (activeSection === "mode") {
+      modePanelRef.current?.discard();
+      setModeDirty(false);
+      setModeSaveError(null);
+      return;
+    }
+    if (sectionQuery.data) {
+      setPayload(sectionQuery.data.payload);
+    }
+    setDirty(false);
+    setOverviewDirtyFields(new Set());
+    setEditorValid(true);
+  }, [activeSection, sectionQuery.data]);
+
+  const activeDirty = activeSection === "mode" ? modeDirty : dirty;
+  const activeSaving = activeSection === "mode" ? modeSaving : saveMutation.isPending;
+  const activeSaveError = activeSection === "mode"
+    ? modeSaveError
+    : saveMutation.error && !(saveMutation.error instanceof ApiError && saveMutation.error.code === "VERSION_CONFLICT")
+      ? saveMutation.error.message
+      : null;
 
   const guard = useUnsavedKnowledgeGuard({
-    hasUnsavedChanges: dirty,
-    onSave: saveSection,
-    onDiscard: () => {
-      if (sectionQuery.data) {
-        setPayload(sectionQuery.data.payload);
-        setApplicability(sectionQuery.data.applicability);
-      }
-      setDirty(false);
-      setEditorValid(true);
-    }
+    hasUnsavedChanges: activeDirty,
+    onSave: saveActiveSection,
+    onDiscard: discardActiveSection
   });
 
   const lifecycleMutation = useMutation({
@@ -202,7 +361,11 @@ export function KnowledgeItemWorkspacePage() {
       setLifecycleAction(null);
       setLifecycleReason("");
       setDirty(false);
+      setOverviewDirtyFields(new Set());
+      setModeDirty(false);
+      setModeSaveError(null);
       setAnnouncement(variables.action === "activate" ? "Revision activated and available to the AI knowledge context service." : `Item ${variables.action}d.`);
+      if (variables.action === "archive") navigate("/admin/configuration/estimation", { replace: true });
     }
   });
   const commandMutation = useMutation({
@@ -220,53 +383,140 @@ export function KnowledgeItemWorkspacePage() {
     }
   });
 
+  function selectWorkspaceSection(next: KnowledgeWorkspaceSectionKey) {
+    guard.requestNavigation(() => {
+      setActiveSection(next);
+      setDirty(false);
+      setOverviewDirtyFields(new Set());
+      setModeDirty(false);
+      setModeSaveError(null);
+      setEditorValid(true);
+      setConflict(null);
+      setServerReview(null);
+      saveMutation.reset();
+    });
+  }
+
   if (itemQuery.isPending) return <PageState state="loading" message="Loading estimation item workspace…" />;
   if (itemQuery.isError) return <PageState state="error" message={itemQuery.error instanceof ApiError && itemQuery.error.status === 404 ? "This estimation item is unavailable." : itemQuery.error.message} action={{ label: "Try again", onAction: () => void itemQuery.refetch() }} />;
   if (!item) return <PageState state="empty" message="This estimation item is unavailable." />;
 
   const lifecycleError = lifecycleMutation.error instanceof ApiError && lifecycleMutation.error.code === "VERSION_CONFLICT" ? "This item changed elsewhere. Refresh before retrying." : lifecycleMutation.error?.message ?? null;
   const commandError = commandMutation.error instanceof ApiError && commandMutation.error.code === "VERSION_CONFLICT" ? "This item changed elsewhere. Refresh before retrying." : commandMutation.error?.message ?? null;
+  const activeSectionLabel = KNOWLEDGE_WORKSPACE_SECTION_LABELS[activeSection];
+  const commandVersionLabel = activeSection === "mode"
+    ? revision
+      ? `Version ${revision.revisionNumber}`
+      : "Version unavailable"
+    : sectionQuery.data
+      ? `Version ${sectionQuery.data.version}`
+      : "Version unavailable";
 
   return (
-    <div className="knowledge-page">
+    <div className="knowledge-page knowledge-page--item-workspace">
       <PageHeader
         id="knowledge-item-title"
-        breadcrumb={<Button variant="quiet" size="compact" leadingIcon={<ArrowLeft />} onClick={() => guard.requestNavigation(() => navigate("/admin/configuration/estimation"))}>Back to knowledge base</Button>}
-        eyebrow={`${item.basketName} → Main Line`}
+        breadcrumb={<Button variant="quiet" size="compact" leadingIcon={<ArrowLeft />} onClick={() => guard.requestNavigation(() => navigate("/admin/configuration/estimation"))}>Back to Main Baskets</Button>}
+        eyebrow={`Main Basket · ${item.basketName}`}
         title={item.mainLineName}
-        description={item.description ?? "No description provided."}
-        metadata={<div className="knowledge-header-metadata"><StatusBadge label={KNOWLEDGE_ITEM_STATUS_LABELS[item.status]} tone={item.status === "active" ? "success" : item.status === "draft" ? "warning" : item.status === "archived" ? "danger" : "neutral"} /><span>Updated {formatKnowledgeDateTime(item.updatedAt)} by {item.updatedById}</span></div>}
-        actions={<WorkspaceActions item={item} dirty={dirty} canCreate={canCreate} canLifecycle={canLifecycle} onSave={() => void saveSection()} onCommand={(next) => guard.requestNavigation(() => setCommand(next))} onLifecycle={(next) => guard.requestNavigation(() => setLifecycleAction(next))} saveBusy={saveMutation.isPending} saveDisabled={!editable || !dirty} />}
+        metadata={<div className="knowledge-header-metadata"><StatusBadge label={KNOWLEDGE_ITEM_STATUS_LABELS[item.status]} tone={item.status === "active" ? "success" : item.status === "draft" ? "warning" : item.status === "archived" ? "danger" : "neutral"} /><span>Updated {formatKnowledgeDateTime(item.updatedAt)}</span></div>}
+        actions={<WorkspaceActions item={item} canCreate={canCreate} canLifecycle={canLifecycle} onCommand={(next) => guard.requestNavigation(() => setCommand(next))} onLifecycle={(next) => guard.requestNavigation(() => setLifecycleAction(next))} />}
       />
       <KnowledgeSafetyNotice />
-      <Surface as="section" className="knowledge-workspace-summary" variant="subtle" aria-label="Revision summary">
-        <div className="knowledge-summary-progress"><div><strong>{item.completeness.percentage}% complete</strong><span>Backend-derived activation readiness</span></div><ProgressBar value={item.completeness.percentage} label="Knowledge completeness" valueText={`${item.completeness.percentage}% complete`} /></div>
-        <dl className="knowledge-summary-list"><div><dt>Active revision</dt><dd>{item.activeRevision ? `Revision ${item.activeRevision.revisionNumber}` : "None"}</dd></div><div><dt>Draft revision</dt><dd>{item.draftRevision ? `Revision ${item.draftRevision.revisionNumber}` : "None"}</dd></div><div><dt>Current view</dt><dd>{revision ? `${revision.status} revision ${revision.revisionNumber}` : "Unavailable"}</dd></div></dl>
-      </Surface>
+      <KnowledgeWorkspaceStatus item={item} revision={revision} />
       {announcement ? <p className="sr-only" role="status">{announcement}</p> : null}
-      {item.status === "archived" ? <InlineMessage tone="warning" title="Archived configuration">This item and its revision history are read-only.</InlineMessage> : !editable && revision?.status !== "draft" ? <InlineMessage tone="info" title="Active history is read-only">Create a Draft revision to change section data. The active revision remains available until a new Draft is activated.</InlineMessage> : null}
+      {item.status === "archived" ? <InlineMessage tone="warning" title="Archived configuration">This item and its revision history are read-only.</InlineMessage> : revision && !editable && revision.status !== "draft" ? <InlineMessage tone="info" title="Active history is read-only">Create a Draft revision to change section data. The active revision remains available until a new Draft is activated.</InlineMessage> : null}
 
-      <KnowledgeSectionNavigation activeSection={activeSection} onSectionChange={(next) => guard.requestNavigation(() => { setActiveSection(next); setDirty(false); setEditorValid(true); setConflict(null); setServerReview(null); })} panelBusy={sectionQuery.isFetching}>
-        {sectionQuery.isPending ? <PageState state="loading" message={`Loading ${KNOWLEDGE_SECTION_LABELS[activeSection]}…`} /> : sectionQuery.isError ? <PageState state="error" message={sectionQuery.error.message} action={{ label: "Try again", onAction: () => void sectionQuery.refetch() }} /> : sectionQuery.data ? (
-          <Surface as="section" className="knowledge-workspace-section">
-            <div className="knowledge-section-toolbar">
-              <Field id="knowledge-applicability" label="Section state" className="knowledge-section-toolbar__field">{(props) => <Select {...props} disabled={!editable} value={applicability} onChange={(event) => { setApplicability(event.target.value as KnowledgeSectionApplicability); setDirty(true); }}><option value="configured">Configured</option><option value="not_configured">Not configured</option><option value="not_applicable">Not applicable</option></Select>}</Field>
-              <span className="knowledge-section-toolbar__meta">Section version {sectionQuery.data.version}</span>
-              {editable ? <Button className="knowledge-section-toolbar__save" leadingIcon={<Save />} busy={saveMutation.isPending} disabled={!dirty} onClick={() => void saveSection()}>Save section</Button> : null}
-            </div>
-            {serverReview ? <Surface as="section" variant="subtle" className="knowledge-conflict-review" aria-label="Latest server version"><h3>Latest server version {serverReview.version}</h3><p>Your unsaved local editor remains below for comparison.</p><pre>{JSON.stringify(serverReview.payload, null, 2)}</pre></Surface> : null}
-            {(relationshipBasketsQuery.isError || relationshipItemsQuery.isError) && ["scope", "recommendations", "advanced"].includes(activeSection) ? <InlineMessage tone="warning">Some Basket or Main Line choices could not be loaded. Existing stable-ID selections remain visible; retry before changing relationships.</InlineMessage> : null}
-            <KnowledgeSectionEditor sectionKey={activeSection} payload={payload} masters={masters} relationshipBaskets={relationshipBasketsQuery.data?.items ?? []} relationshipItems={relationshipItemsQuery.data?.items ?? []} currentMainLineId={mainLineId} readOnly={!editable} canQuickAdd={canCreate} resetKey={`${sectionQuery.data.id}-${sectionQuery.data.version}`} validationAttempt={validationAttempt} onChange={setPayload} onDirty={() => setDirty(true)} onValidationChange={setEditorValid} onQuickAdd={(type, select) => setQuickAdd({ type, select })} />
-            {activeSection === "quantity-margin" ? <KnowledgePreviewPanel disabled={false} /> : null}
-            {saveMutation.error && !(saveMutation.error instanceof ApiError && saveMutation.error.code === "VERSION_CONFLICT") ? <InlineMessage tone="error" role="alert">{saveMutation.error.message}</InlineMessage> : null}
-          </Surface>
-        ) : <PageState state="empty" message="This revision has no section data." />}
-      </KnowledgeSectionNavigation>
-
-      <Surface as="section" className="knowledge-history" aria-labelledby="knowledge-history-title"><div className="knowledge-section-heading"><div><h2 id="knowledge-history-title">Revision history</h2><p>Activated revisions remain immutable.</p></div></div>{historyQuery.isPending ? <PageState state="loading" message="Loading revision history…" /> : historyQuery.isError ? <InlineMessage tone="error">{historyQuery.error.message}</InlineMessage> : historyQuery.data.items.length ? <ol>{historyQuery.data.items.map((entry) => <li key={entry.id}><div><strong>Revision {entry.revisionNumber}</strong><StatusBadge label={entry.status} tone={entry.status === "active" ? "success" : entry.status === "draft" ? "warning" : "neutral"} /></div><span>Updated {formatKnowledgeDateTime(entry.updatedAt)} · {entry.completeness.percentage}% complete</span></li>)}</ol> : <p>No revision history is available.</p>}</Surface>
+      <div className="knowledge-workspace-layout">
+        <div className="knowledge-workspace-main">
+          <KnowledgeSectionNavigation activeSection={activeSection} onSectionChange={selectWorkspaceSection} panelBusy={activeSection === "mode" ? modeBusy : activeSection === "overview" ? sectionQuery.isFetching || overviewSummaryQueries.some(({ isFetching }) => isFetching) : sectionQuery.isFetching}>
+            {revision ? (
+              <KnowledgeSectionCommandBar
+                sectionLabel={activeSectionLabel}
+                versionLabel={commandVersionLabel}
+                editable={editable}
+                dirty={activeDirty}
+                saving={activeSaving}
+                saveError={activeSaveError}
+                onSave={() => void saveActiveSection()}
+              />
+            ) : null}
+            {!revision ? (
+              <PageState state="empty" message="This item has no revision to display." />
+            ) : activeSection === "mode" ? (
+              <KnowledgeModePanel
+                ref={modePanelRef}
+                item={item}
+                revisionId={revision.id}
+                masters={masters}
+                relationshipBaskets={relationshipBasketsQuery.data?.items ?? []}
+                relationshipItems={relationshipItemsQuery.data?.items ?? []}
+                editable={editable}
+                canQuickAdd={canCreate}
+                legacyModeCatalogState={legacyModeCatalogState}
+                onQuickAdd={(type, select) => setQuickAdd({ type, select })}
+                onDirtyChange={setModeDirty}
+                onSavingChange={setModeSaving}
+                onBusyChange={setModeBusy}
+                onSaveErrorChange={setModeSaveError}
+                onAnnouncement={setAnnouncement}
+              />
+            ) : sectionQuery.isPending ? <PageState state="loading" message={`Loading ${activeSectionLabel}…`} /> : sectionQuery.isError ? <PageState state="error" message={sectionQuery.error.message} action={{ label: "Try again", onAction: () => void sectionQuery.refetch() }} /> : sectionQuery.data && backendSection ? (
+              <Surface as="section" className={`knowledge-workspace-section${backendSection === "overview" ? " knowledge-workspace-section--overview" : ""}`}>
+                {serverReview ? (
+                  <KnowledgeConflictReview
+                    sectionKey={serverReview.server.sectionKey}
+                    localVersion={serverReview.localVersion}
+                    serverVersion={serverReview.server.version}
+                    payload={serverReview.server.payload}
+                    masters={masters}
+                    relationshipBaskets={relationshipBasketsQuery.data?.items ?? []}
+                    relationshipItems={relationshipItemsQuery.data?.items ?? []}
+                  />
+                ) : null}
+                {(relationshipBasketsQuery.isError || relationshipItemsQuery.isError) && activeSection === "recommendations" ? <InlineMessage tone="warning">Some Basket or Main Line choices could not be loaded. Existing stable-ID selections remain visible; retry before changing relationships.</InlineMessage> : null}
+                {backendSection === "overview" && revision ? (
+                  <KnowledgeOverviewPanel
+                    key={revision.id}
+                    item={item}
+                    revision={revision}
+                    overviewPayload={overviewDraftPayload}
+                    summary={overviewSummary}
+                    masters={masters}
+                    sectionStates={overviewSectionStates}
+                    referenceStates={{
+                      masters: overviewMasterStates,
+                      relationships: overviewRelationshipState
+                    }}
+                    editable={editable}
+                    canQuickAdd={canCreate}
+                    onOverviewPayloadChange={setPayload}
+                    onOverviewDirty={(field) => {
+                      setOverviewDirtyFields((current) => new Set(current).add(field));
+                      setDirty(true);
+                    }}
+                    onQuickAddUom={(select) => setQuickAdd({ type: "uoms", select })}
+                    onOpenSection={selectWorkspaceSection}
+                  />
+                ) : (
+                  <KnowledgeSectionEditor sectionKey={backendSection} payload={payload} masters={masters} relationshipBaskets={relationshipBasketsQuery.data?.items ?? []} relationshipItems={relationshipItemsQuery.data?.items ?? []} currentMainLineId={mainLineId} readOnly={!editable} canQuickAdd={canCreate} resetKey={`${sectionQuery.data.id}-${sectionQuery.data.version}`} validationAttempt={validationAttempt} onChange={setPayload} onDirty={() => setDirty(true)} onValidationChange={setEditorValid} onQuickAdd={(type, select) => setQuickAdd({ type, select })} />
+                )}
+                {activeSaveError ? <InlineMessage tone="error" role="alert">{activeSaveError}</InlineMessage> : null}
+              </Surface>
+            ) : <PageState state="empty" message="This revision has no section data." />}
+          </KnowledgeSectionNavigation>
+        </div>
+        <KnowledgeRevisionHistory
+          entries={historyQuery.data?.items}
+          loading={historyQuery.isPending}
+          refreshing={historyQuery.isFetching}
+          error={historyQuery.error instanceof Error ? historyQuery.error : null}
+          onRetry={() => void historyQuery.refetch()}
+        />
+      </div>
 
       {guard.dialogOpen ? <KnowledgeUnsavedChangesDialog onSave={() => void guard.saveAndContinue()} onDiscard={guard.discardAndContinue} onStay={guard.stayHere} busy={guard.busy} error={guard.error} /> : null}
-      {conflict ? <KnowledgeVersionConflictDialog localVersion={conflict.localVersion} serverVersion={conflict.server.version} onKeepEditing={() => setConflict(null)} onReviewServerVersion={() => { setServerReview(conflict.server); setConflict(null); }} onDiscardLocalChanges={() => { setPayload(conflict.server.payload); setApplicability(conflict.server.applicability); setDirty(false); setConflict(null); setServerReview(null); }} /> : null}
+      {conflict ? <KnowledgeVersionConflictDialog sectionLabel={backendSection ? KNOWLEDGE_SECTION_LABELS[backendSection] : undefined} localVersion={conflict.localVersion} serverVersion={conflict.server.version} onKeepEditing={() => setConflict(null)} onReviewServerVersion={() => { setServerReview(conflict); setConflict(null); }} onDiscardLocalChanges={() => { setPayload(conflict.server.payload); setDirty(false); setOverviewDirtyFields(new Set()); setConflict(null); setServerReview(null); }} /> : null}
       {quickAdd ? <KnowledgeMasterEditorDialog masterType={quickAdd.type} quickAdd onSaved={quickAdd.select} onClose={() => setQuickAdd(null)} /> : null}
       {lifecycleAction ? <KnowledgeLifecycleDialog action={lifecycleAction} blockers={lifecycleAction === "activate" ? item.blockers : []} warnings={lifecycleAction === "activate" ? item.warnings : []} reason={lifecycleReason} onReasonChange={setLifecycleReason} onClose={() => { setLifecycleAction(null); lifecycleMutation.reset(); }} onConfirm={() => lifecycleMutation.mutate({ action: lifecycleAction, target: item })} busy={lifecycleMutation.isPending} error={lifecycleError} /> : null}
       {command ? <KnowledgeCommandDialog kind={command} reason={commandReason} duplicateName={duplicateName} onReasonChange={setCommandReason} onNameChange={setDuplicateName} onClose={() => { setCommand(null); commandMutation.reset(); }} onConfirm={() => commandMutation.mutate({ kind: command, target: item })} busy={commandMutation.isPending} error={commandError} /> : null}
@@ -274,33 +524,17 @@ export function KnowledgeItemWorkspacePage() {
   );
 }
 
-function sectionPayloadForUpdate(sectionKey: KnowledgeSectionKey, payload: KnowledgeJsonObject): KnowledgeJsonObject {
-  if (sectionKey !== "pricing" || !Array.isArray(payload.priceEntries)) return payload;
-  return {
-    ...payload,
-    priceEntries: payload.priceEntries.map((entry) => {
-      if (entry === null || typeof entry !== "object" || Array.isArray(entry) || entry.operation !== "reference") return entry;
-      return {
-        operation: "reference",
-        priceEntryId: typeof entry.priceEntryId === "string" ? entry.priceEntryId : "",
-        priceVersionId: typeof entry.priceVersionId === "string" ? entry.priceVersionId : ""
-      };
-    })
-  };
-}
-
-function WorkspaceActions({ item, dirty, canCreate, canLifecycle, onSave, onCommand, onLifecycle, saveBusy, saveDisabled }: {
+function WorkspaceActions({ item, canCreate, canLifecycle, onCommand, onLifecycle }: {
   readonly item: KnowledgeItemDetail;
-  readonly dirty: boolean;
   readonly canCreate: boolean;
   readonly canLifecycle: boolean;
-  readonly onSave: () => void;
   readonly onCommand: (command: "revision" | "duplicate") => void;
   readonly onLifecycle: (action: KnowledgeLifecycleAction) => void;
-  readonly saveBusy: boolean;
-  readonly saveDisabled: boolean;
 }) {
-  return <>{dirty ? <Button leadingIcon={<Save />} busy={saveBusy} disabled={saveDisabled} onClick={onSave}>Save section</Button> : null}{canLifecycle && item.allowedActions.includes("review_and_activate") ? <Button variant="success" leadingIcon={<ShieldCheck />} onClick={() => onLifecycle("activate")}>Review and activate</Button> : null}{canCreate && item.allowedActions.includes("create_revision") ? <Button leadingIcon={<Plus />} onClick={() => onCommand("revision")}>Create revision</Button> : null}{canCreate && item.allowedActions.includes("duplicate") ? <Button variant="secondary" leadingIcon={<Copy />} onClick={() => onCommand("duplicate")}>Duplicate</Button> : null}{canLifecycle && item.allowedActions.includes("deactivate") ? <Button variant="destructive-outline" onClick={() => onLifecycle("deactivate")}>Deactivate</Button> : null}{canLifecycle && item.allowedActions.includes("archive") ? <Button variant="destructive-outline" leadingIcon={<Archive />} onClick={() => onLifecycle("archive")}>Archive</Button> : null}</>;
+  const activationLabel = item.blockers.length > 0
+    ? "Review activation"
+    : "Review and activate";
+  return <>{canLifecycle && item.allowedActions.includes("review_and_activate") ? <Button variant={item.blockers.length > 0 ? "secondary" : "success"} leadingIcon={<ShieldCheck />} onClick={() => onLifecycle("activate")}>{activationLabel}</Button> : null}{canCreate && item.allowedActions.includes("create_revision") ? <Button leadingIcon={<Plus />} onClick={() => onCommand("revision")}>Create revision</Button> : null}{canCreate && item.allowedActions.includes("duplicate") ? <Button variant="secondary" leadingIcon={<Copy />} onClick={() => onCommand("duplicate")}>Duplicate</Button> : null}{canLifecycle && item.allowedActions.includes("deactivate") ? <Button variant="destructive-outline" onClick={() => onLifecycle("deactivate")}>Deactivate</Button> : null}{canLifecycle && item.allowedActions.includes("archive") ? <Button variant="destructive-outline" leadingIcon={<Archive />} onClick={() => onLifecycle("archive")}>Archive</Button> : null}</>;
 }
 
 function KnowledgeCommandDialog({ kind, reason, duplicateName, onReasonChange, onNameChange, onClose, onConfirm, busy, error }: {
@@ -315,62 +549,4 @@ function KnowledgeCommandDialog({ kind, reason, duplicateName, onReasonChange, o
   readonly error: string | null;
 }) {
   return <Dialog title={kind === "revision" ? "Create a Draft revision?" : "Duplicate this estimation item?"} eyebrow="Estimation configuration" description={kind === "revision" ? "The current Active revision stays available while the new Draft is edited." : "The duplicate receives independent stable IDs and Draft history."} onClose={onClose} busy={busy} role="alertdialog"><form className="knowledge-dialog-form" onSubmit={(event) => { event.preventDefault(); onConfirm(); }}><div className="knowledge-dialog-body">{error ? <InlineMessage tone="error" role="alert">{error}</InlineMessage> : null}{kind === "duplicate" ? <Field id="duplicate-name" label="New Main Line name" hint="Leave empty to use the server-generated copy name.">{(props) => <Input {...props} value={duplicateName} onChange={(event) => onNameChange(event.target.value)} />}</Field> : null}<Field id="command-reason" label="Reason" required hint="Recorded on the audit trail for this configuration change.">{(props) => <Textarea {...props} value={reason} onChange={(event) => onReasonChange(event.target.value)} />}</Field></div><div className="knowledge-dialog-actions"><Button type="button" variant="quiet" onClick={onClose}>Cancel</Button><Button type="submit" busy={busy} disabled={!reason.trim()}>{kind === "revision" ? "Create Draft" : "Duplicate item"}</Button></div></form></Dialog>;
-}
-
-function KnowledgePreviewPanel({ disabled }: { readonly disabled: boolean }) {
-  const [unitRateRupees, setUnitRateRupees] = useState("");
-  const [quantity, setQuantity] = useState("");
-  const [quantityScale, setQuantityScale] = useState("0");
-  const [quantityAdjustmentBps, setQuantityAdjustmentBps] = useState("");
-  const [wastageBps, setWastageBps] = useState("");
-  const [taxRateBps, setTaxRateBps] = useState("");
-  const [taxTreatment, setTaxTreatment] = useState<"exclusive" | "inclusive">("exclusive");
-  const [startMarginBps, setStartMarginBps] = useState("");
-  const [bottomMarginBps, setBottomMarginBps] = useState("");
-  const [pmcMarkupBps, setPmcMarkupBps] = useState("");
-  const parsedUnitRate = parseRupeeInputToPaise(unitRateRupees);
-  const unitRateError = unitRateRupees === "" || parsedUnitRate.status === "valid"
-    ? undefined
-    : parsedUnitRate.status === "incomplete"
-      ? "Complete the rupee amount with one or two digits after the decimal point."
-      : parsedUnitRate.reason === "unsafe"
-        ? "Enter a rupee amount within the supported range."
-        : "Enter a non-negative rupee amount with no more than two decimal places.";
-  const mutation = useMutation({
-    mutationFn: () => previewKnowledge(previewRequest({ unitRateRupees, quantity, quantityScale, quantityAdjustmentBps, wastageBps, taxRateBps, taxTreatment, startMarginBps, bottomMarginBps, pmcMarkupBps }))
-  });
-  const ready = parsedUnitRate.status === "valid" && /^(?:0|[1-9]\d*)(?:\.\d+)?$/u.test(quantity) && isBoundedInteger(quantityScale, 0, 18);
-  return <Surface as="section" variant="subtle" className="knowledge-preview-panel" aria-labelledby="knowledge-preview-title"><div className="knowledge-section-heading"><div><h3 id="knowledge-preview-title">Server calculation preview</h3><p>The server remains authoritative for monetary amounts, percentages, and canonical decimal quantities; the client does not calculate totals.</p></div></div><div className="knowledge-form-grid"><Field id="preview-rate" label="Unit rate (₹)" hint="Enter a non-negative rupee amount with up to two decimal places, for example 0, 0.01, or 125.50." error={unitRateError}>{(props) => <Input {...props} type="text" inputMode="decimal" value={unitRateRupees} onChange={(event) => setUnitRateRupees(event.target.value)} onBlur={() => { if (parsedUnitRate.status === "valid") setUnitRateRupees(formatPaiseForRupeeInput(parsedUnitRate.paise)); }} />}</Field><PreviewInput id="preview-quantity" label="Quantity" value={quantity} setValue={setQuantity} text /><PreviewInput id="preview-scale" label="Quantity scale" value={quantityScale} setValue={setQuantityScale} /><PreviewInput id="preview-adjustment" label="Quantity adjustment (BPS)" value={quantityAdjustmentBps} setValue={setQuantityAdjustmentBps} /><PreviewInput id="preview-wastage" label="Wastage (BPS)" value={wastageBps} setValue={setWastageBps} /><PreviewInput id="preview-tax" label="Tax rate (BPS)" value={taxRateBps} setValue={setTaxRateBps} />{taxRateBps !== "" ? <Field id="preview-treatment" label="Tax treatment">{(props) => <Select {...props} value={taxTreatment} onChange={(event) => setTaxTreatment(event.target.value as typeof taxTreatment)}><option value="exclusive">Exclusive</option><option value="inclusive">Inclusive</option></Select>}</Field> : null}<PreviewInput id="preview-start-margin" label="Start margin (BPS)" value={startMarginBps} setValue={setStartMarginBps} /><PreviewInput id="preview-bottom-margin" label="Bottom margin (BPS)" value={bottomMarginBps} setValue={setBottomMarginBps} /><PreviewInput id="preview-pmc" label="PMC markup (BPS)" value={pmcMarkupBps} setValue={setPmcMarkupBps} /></div><div className="knowledge-preview-actions"><Button variant="secondary" busy={mutation.isPending} disabled={disabled || !ready} onClick={() => mutation.mutate()}>Run server preview</Button></div>{mutation.error ? <InlineMessage tone="error" role="alert">{mutation.error.message}</InlineMessage> : mutation.data ? <KnowledgePreviewResult preview={mutation.data} /> : null}</Surface>;
-}
-
-function PreviewInput({ id, label, value, setValue, text = false }: { readonly id: string; readonly label: string; readonly value: string; readonly setValue: (value: string) => void; readonly text?: boolean }) {
-  return <Field id={id} label={label}>{(props) => <Input {...props} type={text ? "text" : "number"} min={text ? undefined : 0} step={text ? undefined : 1} value={value} onChange={(event) => setValue(event.target.value)} />}</Field>;
-}
-
-function previewRequest(values: Readonly<{
-  unitRateRupees: string;
-  quantity: string;
-  quantityScale: string;
-  quantityAdjustmentBps: string;
-  wastageBps: string;
-  taxRateBps: string;
-  taxTreatment: string;
-  startMarginBps: string;
-  bottomMarginBps: string;
-  pmcMarkupBps: string;
-}>): KnowledgePreviewRequest {
-  const unitRate = parseRupeeInputToPaise(values.unitRateRupees);
-  if (unitRate.status !== "valid") throw new Error("Enter a valid unit rate in rupees before running the preview.");
-  const integer = (value: string) => value === "" ? undefined : Number(value);
-  const taxRateBps = integer(values.taxRateBps);
-  return { unitRatePaise: unitRate.paise, quantity: values.quantity || null, quantityScale: Number(values.quantityScale), quantityAdjustmentBps: integer(values.quantityAdjustmentBps), wastageBps: integer(values.wastageBps), taxRateBps, ...(taxRateBps === undefined ? {} : { taxTreatment: values.taxTreatment as "exclusive" | "inclusive" }), startMarginBps: integer(values.startMarginBps), bottomMarginBps: integer(values.bottomMarginBps), pmcMarkupBps: integer(values.pmcMarkupBps) };
-}
-
-function isBoundedInteger(value: string, minimum: number, maximum: number): boolean {
-  return value !== "" && Number.isInteger(Number(value)) && Number(value) >= minimum && Number(value) <= maximum;
-}
-
-function KnowledgePreviewResult({ preview }: { readonly preview: KnowledgePreview }) {
-  const amounts = [["Effective unit rate", preview.effectiveUnitRatePaise], ["Vendor pre-tax", preview.vendorPreTax?.amountPaise], ["Vendor tax", preview.vendorTax?.amountPaise], ["Vendor total", preview.vendorTotal?.amountPaise], ["Start margin", preview.startMargin?.amountPaise], ["Bottom margin", preview.bottomMargin?.amountPaise], ["PMC markup", preview.pmcMarkup?.amountPaise]] as const;
-  return <div className="knowledge-preview-result" role="status"><h4>Preview components</h4><dl>{amounts.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{typeof value === "number" ? formatKnowledgeMoney(value) : "Not resolved"}</dd></div>)}<div><dt>Procurement quantity</dt><dd>{preview.procurementQuantity ?? "Not resolved"}</dd></div>{preview.startMargin?.rateBps !== null && preview.startMargin?.rateBps !== undefined ? <div><dt>Start margin rate</dt><dd>{formatKnowledgePercentage(preview.startMargin.rateBps)}</dd></div> : null}</dl></div>;
 }

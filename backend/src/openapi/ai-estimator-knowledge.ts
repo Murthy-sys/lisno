@@ -1,12 +1,22 @@
 import {
+  AI_ESTIMATOR_KNOWLEDGE_BASKET_DELETION_BLOCKER_CODES
+} from "../contracts/ai-estimator-knowledge.js";
+import {
   AI_ESTIMATOR_KNOWLEDGE_AVAILABILITY_STATES,
   AI_ESTIMATOR_KNOWLEDGE_COMPLETENESS_STATES,
   AI_ESTIMATOR_KNOWLEDGE_DURATION_UNITS,
+  AI_ESTIMATOR_KNOWLEDGE_EXECUTION_SOURCES,
   AI_ESTIMATOR_KNOWLEDGE_ITEM_STATUSES,
   AI_ESTIMATOR_KNOWLEDGE_MASTER_STATUSES,
+  AI_ESTIMATOR_KNOWLEDGE_MAX_MODE_FIELDS,
+  AI_ESTIMATOR_KNOWLEDGE_MAX_MODE_FIELD_OPTIONS,
+  AI_ESTIMATOR_KNOWLEDGE_MAX_SPECIFICATION_FIELDS,
+  AI_ESTIMATOR_KNOWLEDGE_MAX_SPECIFICATION_FIELD_OPTIONS,
+  AI_ESTIMATOR_KNOWLEDGE_MODE_KINDS,
   AI_ESTIMATOR_KNOWLEDGE_REVISION_STATUSES,
   AI_ESTIMATOR_KNOWLEDGE_SECTION_APPLICABILITY,
   AI_ESTIMATOR_KNOWLEDGE_SECTION_KEYS,
+  AI_ESTIMATOR_KNOWLEDGE_SPECIFICATION_FIELD_TYPES,
   AI_ESTIMATOR_KNOWLEDGE_TAX_TREATMENTS,
   AI_ESTIMATOR_KNOWLEDGE_VERSION_STATUSES
 } from "../domain/ai-estimator-knowledge.js";
@@ -27,6 +37,7 @@ export const AI_ESTIMATOR_KNOWLEDGE_REQUEST_BODIES: Readonly<Record<string, Open
   [`POST ${admin}/baskets`]: jsonRequest("KnowledgeBasketCreateRequest"),
   [`PATCH ${admin}/baskets/:basketId`]: jsonRequest("KnowledgeBasketUpdateRequest"),
   [`DELETE ${admin}/baskets/:basketId`]: jsonRequest("KnowledgeArchiveRequest"),
+  [`DELETE ${admin}/baskets/:basketId/permanent`]: jsonRequest("KnowledgePermanentDeleteBasketRequest"),
   [`POST ${admin}/baskets/:basketId/main-lines`]: jsonRequest("KnowledgeMainLineCreateRequest"),
   [`PATCH ${admin}/main-lines/:mainLineId`]: jsonRequest("KnowledgeMainLineUpdateRequest"),
   [`DELETE ${admin}/main-lines/:mainLineId`]: jsonRequest("KnowledgeArchiveRequest"),
@@ -61,6 +72,8 @@ export const AI_ESTIMATOR_KNOWLEDGE_RESPONSE_SCHEMAS: Readonly<Record<string, st
   [`POST ${admin}/baskets`]: "KnowledgeBasket",
   [`PATCH ${admin}/baskets/:basketId`]: "KnowledgeBasket",
   [`DELETE ${admin}/baskets/:basketId`]: "KnowledgeBasket",
+  [`GET ${admin}/baskets/:basketId/deletion-impact`]: "KnowledgeBasketDeletionImpact",
+  [`DELETE ${admin}/baskets/:basketId/permanent`]: "KnowledgePermanentDeleteBasketResult",
   [`GET ${admin}/baskets/:basketId/main-lines`]: "KnowledgeMainLinePage",
   [`POST ${admin}/baskets/:basketId/main-lines`]: "KnowledgeItemDetail",
   [`PATCH ${admin}/main-lines/:mainLineId`]: "KnowledgeItemDetail",
@@ -70,7 +83,7 @@ export const AI_ESTIMATOR_KNOWLEDGE_RESPONSE_SCHEMAS: Readonly<Record<string, st
   [`GET ${admin}/main-lines/:mainLineId/history`]: "KnowledgeRevisionPage",
   [`POST ${admin}/main-lines/:mainLineId/revisions`]: "KnowledgeRevision",
   [`GET ${admin}/main-lines/:mainLineId/revisions/:revisionId/sections/:sectionKey`]: "KnowledgeSectionEnvelope",
-  [`PUT ${admin}/main-lines/:mainLineId/revisions/:revisionId/sections/:sectionKey`]: "KnowledgeSectionEnvelope",
+  [`PUT ${admin}/main-lines/:mainLineId/revisions/:revisionId/sections/:sectionKey`]: "KnowledgeSectionMutationEnvelope",
   [`POST ${admin}/main-lines/:mainLineId/revisions/:revisionId/activate`]: "KnowledgeItemDetail",
   [`POST ${admin}/main-lines/:mainLineId/deactivate`]: "KnowledgeItemDetail",
   [`POST ${admin}/main-lines/:mainLineId/duplicate`]: "KnowledgeItemDetail",
@@ -89,6 +102,8 @@ export const AI_ESTIMATOR_KNOWLEDGE_OPERATION_SUMMARIES: Readonly<Record<string,
   [`POST ${admin}/baskets`]: "Create a knowledge Basket",
   [`PATCH ${admin}/baskets/:basketId`]: "Update a knowledge Basket",
   [`DELETE ${admin}/baskets/:basketId`]: "Archive a knowledge Basket",
+  [`GET ${admin}/baskets/:basketId/deletion-impact`]: "Read permanent-deletion impact for a knowledge Basket",
+  [`DELETE ${admin}/baskets/:basketId/permanent`]: "Permanently delete an empty knowledge Basket",
   [`GET ${admin}/baskets/:basketId/main-lines`]: "List a Basket's Main Lines",
   [`POST ${admin}/baskets/:basketId/main-lines`]: "Create a Main Line and Draft revision",
   [`PATCH ${admin}/main-lines/:mainLineId`]: "Update a knowledge Main Line",
@@ -247,6 +262,14 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
     expectedVersion: version,
     reason: { type: "string", minLength: 1, maxLength: 1_000 }
   }),
+  KnowledgePermanentDeleteBasketRequest: strictObject(
+    ["expectedVersion", "confirmationName", "reason"],
+    {
+      expectedVersion: version,
+      confirmationName: { type: "string", minLength: 1, maxLength: 240 },
+      reason: { type: "string", minLength: 1, maxLength: 1_000 }
+    }
+  ),
   KnowledgeExpectedVersionRequest: strictObject(["expectedVersion"], {
     expectedVersion: version,
     reason: { type: "string", minLength: 1, maxLength: 1_000 }
@@ -346,12 +369,353 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
       payload: ref("KnowledgeSectionPayload")
     }
   ),
+  KnowledgeDescriptiveSpecification: {
+    ...strictObject(
+      ["id", "name"],
+      {
+        id,
+        name: { type: "string", minLength: 1, maxLength: 240 },
+        description
+      }
+    ),
+    example: {
+      id: "specification-plywood",
+      name: "Plywood",
+      description: "18 mm BWP-grade plywood for the cabinet carcass."
+    }
+  },
+  KnowledgeLegacySpecification: {
+    deprecated: true,
+    description: "Deprecated schema name for a descriptive Specification row.",
+    allOf: [ref("KnowledgeDescriptiveSpecification")]
+  },
+  KnowledgeCanonicalSpecification: {
+    deprecated: true,
+    description: "Compatibility-only schema for typed Specification rows already stored in a revision. New typed rows and typed-field changes are rejected.",
+    oneOf: [
+      ...(["text", "textarea"] as const).map((type) => strictObject(
+        ["id", "name", "type", "options", "value"],
+        {
+          id,
+          name: { type: "string", minLength: 1, maxLength: 240 },
+          description,
+          type: { type: "string", enum: [type] },
+          options: { type: "array", maxItems: 0, items: { type: "string" } },
+          value: { type: "string", maxLength: 4_000, nullable: true }
+        }
+      )),
+      strictObject(
+        ["id", "name", "type", "options", "value"],
+        {
+          id,
+          name: { type: "string", minLength: 1, maxLength: 240 },
+          description,
+          type: { type: "string", enum: ["number"] },
+          options: { type: "array", maxItems: 0, items: { type: "string" } },
+          value: {
+            type: "string",
+            maxLength: 64,
+            pattern: "^(0|[1-9][0-9]*)(\\.[0-9]{1,6})?$",
+            nullable: true
+          }
+        }
+      ),
+      ...(["radio", "dropdown"] as const).map((type) => strictObject(
+        ["id", "name", "type", "options", "value"],
+        {
+          id,
+          name: { type: "string", minLength: 1, maxLength: 240 },
+          description,
+          type: { type: "string", enum: [type] },
+          options: {
+            type: "array",
+            minItems: 1,
+            maxItems: AI_ESTIMATOR_KNOWLEDGE_MAX_SPECIFICATION_FIELD_OPTIONS,
+            uniqueItems: true,
+            description: "Non-empty options must also be unique after normalized, case-insensitive comparison.",
+            items: { type: "string", minLength: 1, maxLength: 240 }
+          },
+          value: {
+            type: "string",
+            maxLength: 240,
+            nullable: true,
+            description: "Null or one of the configured options."
+          }
+        }
+      )),
+      strictObject(
+        ["id", "name", "type", "options", "value"],
+        {
+          id,
+          name: { type: "string", minLength: 1, maxLength: 240 },
+          description,
+          type: { type: "string", enum: ["checkbox"] },
+          options: { type: "array", maxItems: 0, items: { type: "string" } },
+          value: { type: "boolean" }
+        }
+      )
+    ],
+    "x-lisno-field-types": [...AI_ESTIMATOR_KNOWLEDGE_SPECIFICATION_FIELD_TYPES],
+    example: {
+      id: "specification-finish",
+      name: "Finish",
+      description: "Choose the approved finish.",
+      type: "dropdown",
+      options: ["Matte", "Gloss"],
+      value: "Matte"
+    }
+  },
+  KnowledgeSpecification: {
+    description: "A descriptive Specification row for current writes, or an unchanged stored typed row retained for compatibility.",
+    oneOf: [
+      ref("KnowledgeDescriptiveSpecification"),
+      ref("KnowledgeCanonicalSpecification")
+    ]
+  },
+  KnowledgePriceEntryAppendCommand: strictObject(
+    [
+      "operation", "priceEntryId", "vendorId", "uomId", "specificationId",
+      "modeId", "taxRuleId", "taxVersionId", "inputAmountPaise", "treatment",
+      "effectiveFrom", "effectiveTo", "status"
+    ],
+    {
+      operation: { type: "string", enum: ["append"] },
+      priceEntryId: id,
+      vendorId: id,
+      uomId: id,
+      specificationId: {
+        type: "string",
+        nullable: true,
+        enum: [null],
+        description: "Must be null. Descriptive Specifications are not a price dimension."
+      },
+      modeId: { ...id, nullable: true },
+      taxRuleId: id,
+      taxVersionId: id,
+      inputAmountPaise: {
+        type: "integer",
+        minimum: 0,
+        maximum: Number.MAX_SAFE_INTEGER,
+        description: "Price input in integer paise."
+      },
+      treatment: { type: "string", enum: [...AI_ESTIMATOR_KNOWLEDGE_TAX_TREATMENTS] },
+      effectiveFrom: { type: "string", format: "date-time" },
+      effectiveTo: { type: "string", format: "date-time", nullable: true },
+      status: { type: "string", enum: [...AI_ESTIMATOR_KNOWLEDGE_VERSION_STATUSES] }
+    }
+  ),
+  KnowledgePriceEntryReferenceCommand: strictObject(
+    ["operation", "priceEntryId", "priceVersionId"],
+    {
+      operation: { type: "string", enum: ["reference"] },
+      priceEntryId: id,
+      priceVersionId: {
+        ...id,
+        description: "Same-revision immutable price version; historical versions may retain a non-null Specification ID."
+      }
+    }
+  ),
+  KnowledgePriceEntryCommand: {
+    oneOf: [
+      ref("KnowledgePriceEntryAppendCommand"),
+      ref("KnowledgePriceEntryReferenceCommand")
+    ]
+  },
+  KnowledgeModeNonChoiceField: strictObject(
+    ["id", "type", "label", "options"],
+    {
+      id,
+      type: { type: "string", enum: ["text", "textarea", "number", "checkbox"] },
+      label: { type: "string", minLength: 1, maxLength: 240 },
+      options: {
+        type: "array",
+        maxItems: 0,
+        items: { type: "string", minLength: 1, maxLength: 240 }
+      }
+    }
+  ),
+  KnowledgeModeChoiceField: strictObject(
+    ["id", "type", "label", "options"],
+    {
+      id,
+      type: { type: "string", enum: ["radio", "dropdown"] },
+      label: { type: "string", minLength: 1, maxLength: 240 },
+      options: {
+        type: "array",
+        minItems: 1,
+        maxItems: AI_ESTIMATOR_KNOWLEDGE_MAX_MODE_FIELD_OPTIONS,
+        uniqueItems: true,
+        items: {
+          type: "string",
+          minLength: 1,
+          maxLength: 240,
+          pattern: "^\\S(?:[\\s\\S]*\\S)?$"
+        },
+        description: "Trimmed options are required. Runtime validation also rejects normalized duplicate options."
+      }
+    }
+  ),
+  KnowledgeModeField: {
+    description: "Definition-only Mode field. Choice and non-choice option constraints are type-specific.",
+    oneOf: [
+      ref("KnowledgeModeNonChoiceField"),
+      ref("KnowledgeModeChoiceField")
+    ]
+  },
+  KnowledgeLegacyValuedNonChoiceModeField: {
+    ...strictObject(
+      ["id", "type", "label", "options", "value"],
+      {
+        id,
+        type: { type: "string", enum: ["text", "textarea", "number", "checkbox"] },
+        label: { type: "string", minLength: 1, maxLength: 240 },
+        options: {
+          type: "array",
+          maxItems: 0,
+          items: { type: "string", minLength: 1, maxLength: 240 }
+        },
+        value: {
+          oneOf: [
+            { type: "string", maxLength: 4_000, nullable: true },
+            { type: "boolean" }
+          ],
+          description: "Immutable stored answer retained only for compatibility with an existing stable field ID."
+        }
+      }
+    ),
+    deprecated: true,
+    description: "Compatibility-only stored non-choice Mode field. New writes must omit value."
+  },
+  KnowledgeLegacyValuedChoiceModeField: {
+    ...strictObject(
+      ["id", "type", "label", "options", "value"],
+      {
+        id,
+        type: { type: "string", enum: ["radio", "dropdown"] },
+        label: { type: "string", minLength: 1, maxLength: 240 },
+        options: {
+          type: "array",
+          minItems: 1,
+          maxItems: AI_ESTIMATOR_KNOWLEDGE_MAX_MODE_FIELD_OPTIONS,
+          uniqueItems: true,
+          items: {
+            type: "string",
+            minLength: 1,
+            maxLength: 240,
+            pattern: "^\\S(?:[\\s\\S]*\\S)?$"
+          },
+          description: "Trimmed options are required. Runtime validation also rejects normalized duplicate options."
+        },
+        value: {
+          oneOf: [
+            { type: "string", maxLength: 4_000, nullable: true },
+            { type: "boolean" }
+          ],
+          description: "Immutable stored answer retained only for compatibility with an existing stable field ID."
+        }
+      }
+    ),
+    deprecated: true,
+    description: "Compatibility-only stored choice Mode field. New writes must omit value."
+  },
+  KnowledgeLegacyValuedModeField: {
+    deprecated: true,
+    description: "Compatibility-only stored Mode field. New writes must use KnowledgeModeField without value.",
+    oneOf: [
+      ref("KnowledgeLegacyValuedNonChoiceModeField"),
+      ref("KnowledgeLegacyValuedChoiceModeField")
+    ]
+  },
+  KnowledgeModeFieldInput: {
+    description: "Definition-only field for new writes, or an unchanged compatibility-valued field already present in the Draft.",
+    oneOf: [
+      ref("KnowledgeModeField"),
+      ref("KnowledgeLegacyValuedModeField")
+    ]
+  },
+  KnowledgeModeConfiguration: {
+    description: "Canonical PMC or source-scoped Execution definition template, with deprecated unscoped/Mode-ID compatibility variants.",
+    oneOf: [
+      strictObject(
+        ["id", "modeKind", "fields"],
+        {
+          id,
+          modeKind: {
+            type: "string",
+            enum: ["pmc"],
+            description: "Canonical direct PMC component template."
+          },
+          fields: {
+            type: "array",
+            maxItems: AI_ESTIMATOR_KNOWLEDGE_MAX_MODE_FIELDS,
+            items: ref("KnowledgeModeFieldInput")
+          }
+        }
+      ),
+      strictObject(
+        ["id", "modeKind", "executionSource", "fields"],
+        {
+          id,
+          modeKind: {
+            type: "string",
+            enum: ["execution"]
+          },
+          executionSource: {
+            type: "string",
+            enum: [...AI_ESTIMATOR_KNOWLEDGE_EXECUTION_SOURCES],
+            description: "Required source identity for a canonical Execution component template."
+          },
+          fields: {
+            type: "array",
+            maxItems: AI_ESTIMATOR_KNOWLEDGE_MAX_MODE_FIELDS,
+            items: ref("KnowledgeModeFieldInput")
+          }
+        }
+      ),
+      {
+        ...strictObject(
+          ["id", "modeKind", "fields"],
+          {
+            id,
+            modeKind: { type: "string", enum: ["execution"] },
+            fields: {
+              type: "array",
+              maxItems: AI_ESTIMATOR_KNOWLEDGE_MAX_MODE_FIELDS,
+              items: ref("KnowledgeModeFieldInput")
+            }
+          }
+        ),
+        deprecated: true,
+        description: "Compatibility-only unscoped Execution configuration. It may remain unchanged or be explicitly assigned to an empty source."
+      },
+      {
+        ...strictObject(
+          ["id", "modeId", "fields"],
+          {
+            id,
+            modeId: {
+              ...id,
+              deprecated: true,
+              description: "Legacy reusable Mode reference retained for compatibility."
+            },
+            fields: {
+              type: "array",
+              maxItems: AI_ESTIMATOR_KNOWLEDGE_MAX_MODE_FIELDS,
+              items: ref("KnowledgeModeFieldInput")
+            }
+          }
+        ),
+        deprecated: true,
+        description: "Compatibility-only reusable-Mode configuration. New writes use canonical modeKind identities."
+      }
+    ]
+  },
   KnowledgeSectionPayload: {
     anyOf: AI_ESTIMATOR_KNOWLEDGE_SECTION_KEYS.map((sectionKey) => ({
       type: "object",
       additionalProperties: false,
       description: `${sectionKey} section payload. Nested rule rows are validated by the authoritative route schema.`,
-      properties: Object.fromEntries(sectionPayloadKeys(sectionKey).map((key) => [key, {}]))
+      properties: sectionPayloadProperties(sectionKey)
     }))
   },
   KnowledgePreviewRequest: strictObject(["quantityScale"], {
@@ -376,15 +740,45 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
     minimum: { ...decimal, nullable: true },
     maximum: { ...decimal, nullable: true }
   }),
-  KnowledgeContextRequest: strictObject(["mainBasketId", "mainLineId"], {
-    mainBasketId: id,
-    mainLineId: id,
-    specificationId: id,
-    quantity: decimal,
-    uomId: id,
-    surfaceId: id,
-    modeId: id
-  }),
+  KnowledgeContextRequest: {
+    ...strictObject(["mainBasketId", "mainLineId"], {
+      mainBasketId: id,
+      mainLineId: id,
+      specificationId: {
+        ...id,
+        description: "Optional descriptive-guidance selector. It filters returned Specification guidance only and never changes price resolution."
+      },
+      quantity: decimal,
+      uomId: id,
+      surfaceId: id,
+      modeId: {
+        ...id,
+        description: "Legacy or generic reusable Mode selector. Cannot be combined with modeKind."
+      },
+      modeKind: {
+        type: "string",
+        enum: [...AI_ESTIMATOR_KNOWLEDGE_MODE_KINDS],
+        description: "Canonical Mode-tab selector. Cannot be combined with modeId."
+      },
+      executionSource: {
+        type: "string",
+        enum: [...AI_ESTIMATOR_KNOWLEDGE_EXECUTION_SOURCES],
+        description: "Optional Execution definition group selector. Valid only when modeKind is execution."
+      }
+    }),
+    allOf: [
+      { not: { required: ["modeId", "modeKind"] } },
+      {
+        anyOf: [
+          { not: { required: ["executionSource"] } },
+          {
+            required: ["modeKind"],
+            properties: { modeKind: { enum: ["execution"] } }
+          }
+        ]
+      }
+    ]
+  },
   KnowledgeBasket: strictObject(
     ["id", "name", "description", "displayOrder", "status", "version", ...Object.keys(actorMetadata)],
     {
@@ -395,6 +789,46 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
       status: masterStatus,
       version,
       ...actorMetadata
+    }
+  ),
+  KnowledgeBasketDeletionBlocker: strictObject(["code", "message"], {
+    code: {
+      type: "string",
+      enum: [...AI_ESTIMATOR_KNOWLEDGE_BASKET_DELETION_BLOCKER_CODES]
+    },
+    message: { type: "string" }
+  }),
+  KnowledgeBasketDeletionImpact: strictObject(
+    [
+      "basketId",
+      "basketName",
+      "version",
+      "mainLineCount",
+      "historicalReferenceCount",
+      "bootstrapOwned",
+      "canDelete",
+      "blockers"
+    ],
+    {
+      basketId: id,
+      basketName: masterProperties.name,
+      version,
+      mainLineCount: { type: "integer", minimum: 0 },
+      historicalReferenceCount: { type: "integer", minimum: 0 },
+      bootstrapOwned: { type: "boolean" },
+      canDelete: { type: "boolean" },
+      blockers: {
+        type: "array",
+        items: ref("KnowledgeBasketDeletionBlocker")
+      }
+    }
+  ),
+  KnowledgePermanentDeleteBasketResult: strictObject(
+    ["basketId", "deleted", "deletedAt"],
+    {
+      basketId: id,
+      deleted: { type: "boolean", enum: [true] },
+      deletedAt: dateTime
     }
   ),
   KnowledgeMaster: strictObject(masterRequiredProperties, masterProperties),
@@ -518,8 +952,35 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
       sectionKey: { type: "string", enum: [...AI_ESTIMATOR_KNOWLEDGE_SECTION_KEYS] },
       applicability: sectionApplicability,
       payload: ref("KnowledgeSectionPayload"),
+      referenceState: ref("KnowledgeSectionReferenceState"),
       version,
       ...actorMetadata
+    }
+  ),
+  KnowledgeSectionMutationEnvelope: strictObject(
+    ["id", "mainLineId", "revisionId", "sectionKey", "applicability", "payload", "version", "aggregateVersion", ...Object.keys(actorMetadata)],
+    {
+      id,
+      mainLineId: id,
+      revisionId: id,
+      sectionKey: { type: "string", enum: [...AI_ESTIMATOR_KNOWLEDGE_SECTION_KEYS] },
+      applicability: sectionApplicability,
+      payload: ref("KnowledgeSectionPayload"),
+      referenceState: ref("KnowledgeSectionReferenceState"),
+      version,
+      aggregateVersion: version,
+      ...actorMetadata
+    }
+  ),
+  KnowledgeSectionReferenceState: strictObject(
+    ["specificationIds"],
+    {
+      specificationIds: {
+        type: "array",
+        uniqueItems: true,
+        description: "Revision-wide Specification IDs referenced by immutable saved price versions. Response-only removal guidance.",
+        items: id
+      }
     }
   ),
   KnowledgePreviewAmountComponent: amountComponent,
@@ -598,13 +1059,38 @@ function nullableRef(name: string): OpenApiObject {
 function sectionPayloadKeys(sectionKey: string): readonly string[] {
   const keys: Readonly<Record<string, readonly string[]>> = {
     overview: ["description", "uomId", "priorityId", "surfaceIds", "modeIds", "sectionApplicability"],
-    pricing: ["specifications", "brands", "technicalDescription", "qualityLevel", "internalVendorNotes"],
+    pricing: ["specifications", "brands", "technicalDescription", "qualityLevel", "internalVendorNotes", "priceEntries"],
     "quantity-margin": ["quantitySlabs", "gapBehavior", "startMarginBps", "bottomMarginBps", "pmcMarkupBps", "wastageBps", "previewInputs"],
     scope: ["modeIds", "surfaceIds", "exclusions"],
     recommendations: ["recommendations"],
     quality: ["parameters"],
     execution: ["steps", "productivity"],
-    advanced: ["dependencies", "modeOverrides", "revisionLineage"]
+    advanced: ["dependencies", "modeOverrides", "revisionLineage", "modeConfigurations"]
   };
   return keys[sectionKey] ?? [];
+}
+
+function sectionPayloadProperties(sectionKey: string): Readonly<Record<string, unknown>> {
+  const properties = Object.fromEntries(
+    sectionPayloadKeys(sectionKey).map((key) => [key, {}])
+  );
+  if (sectionKey === "advanced") {
+    properties.modeConfigurations = {
+      type: "array",
+      items: ref("KnowledgeModeConfiguration")
+    };
+  }
+  if (sectionKey === "pricing") {
+    properties.specifications = {
+      type: "array",
+      maxItems: AI_ESTIMATOR_KNOWLEDGE_MAX_SPECIFICATION_FIELDS,
+      items: ref("KnowledgeSpecification")
+    };
+    properties.priceEntries = {
+      type: "array",
+      description: "New append commands use null Specification scope. Same-revision immutable references may retain historical non-null Specification lineage.",
+      items: ref("KnowledgePriceEntryCommand")
+    };
+  }
+  return properties;
 }

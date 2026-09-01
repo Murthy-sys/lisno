@@ -1,4 +1,4 @@
-import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Archive, ArrowLeft, Pencil, Plus } from "lucide-react";
 import { useId, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
@@ -24,7 +24,13 @@ import type { KnowledgeMaster, KnowledgeMasterStatus, KnowledgeMasterType } from
 import "./ai-estimator-knowledge.css";
 
 const PAGE_SIZE = 25;
-const MASTER_TYPES = Object.keys(KNOWLEDGE_MASTER_LABELS) as KnowledgeMasterType[];
+const MASTER_TYPES: readonly KnowledgeMasterType[] = [
+  "uoms",
+  "vendors",
+  "taxes",
+  "priorities",
+  "surfaces"
+];
 
 export function KnowledgeReusableValuesPage() {
   const auth = useAuth();
@@ -55,7 +61,8 @@ export function KnowledgeReusableValuesPage() {
   const query = useQuery({
     queryKey: knowledgeQueryKeys.masterList(masterType, params),
     queryFn: () => listKnowledgeMasters(masterType, params),
-    placeholderData: keepPreviousData
+    placeholderData: (previousData, previousQuery) =>
+      previousQuery?.queryKey[2] === masterType ? previousData : undefined
   });
   const archiveMutation = useMutation({
     mutationFn: (target: KnowledgeMaster) =>
@@ -107,7 +114,7 @@ export function KnowledgeReusableValuesPage() {
         id="knowledge-reusable-title"
         eyebrow="Configuration"
         title="Reusable estimation values"
-        description="Manage shared UOM, vendor, tax, priority, surface, and mode values for the additive AI estimator knowledge base."
+        description="Manage shared UOM, vendor, tax, priority, and surface values for the additive AI estimator knowledge base."
         actions={
           <>
             <Button variant="secondary" leadingIcon={<ArrowLeft />} onClick={() => navigate("/admin/configuration/estimation")}>Back to knowledge base</Button>
@@ -165,7 +172,7 @@ export function KnowledgeReusableValuesPage() {
                 <tr key={master.id}>
                   <td><strong>{master.name}</strong><span>{master.code}</span></td>
                   <td><StatusBadge label={capitalize(master.status)} tone={master.status === "active" ? "success" : master.status === "archived" ? "danger" : "neutral"} /></td>
-                  <td><MasterDetails master={master} masterType={masterType} /></td>
+                  <td><MasterDetails master={master} masterType={master.masterType} /></td>
                   <td>{formatKnowledgeDateTime(master.updatedAt)}</td>
                   <td><div className="knowledge-row-actions">
                     {canUpdate && master.status !== "archived" ? <Button size="compact" variant="quiet" leadingIcon={<Pencil />} onClick={() => setEditor(master)}>Edit<span className="sr-only"> {master.name}</span></Button> : null}
@@ -181,7 +188,7 @@ export function KnowledgeReusableValuesPage() {
 
       {total > PAGE_SIZE ? <nav className="knowledge-pagination" aria-label={`${label} pages`}><Button variant="secondary" disabled={offset === 0} onClick={() => setOffset((value) => Math.max(0, value - PAGE_SIZE))}>Previous</Button><span>{offset + 1}–{Math.min(offset + PAGE_SIZE, total)} of {total}</span><Button variant="secondary" disabled={offset + PAGE_SIZE >= total} onClick={() => setOffset((value) => value + PAGE_SIZE)}>Next</Button></nav> : null}
 
-      {editor ? <KnowledgeMasterEditorDialog masterType={masterType} existing={editor === "create" ? undefined : editor} onClose={() => setEditor(null)} /> : null}
+      {editor ? <KnowledgeMasterEditorDialog masterType={editor === "create" ? masterType : editor.masterType} existing={editor === "create" ? undefined : editor} onClose={() => setEditor(null)} /> : null}
       {archiveTarget ? <KnowledgeLifecycleDialog action="archive" reason={archiveReason} onReasonChange={setArchiveReason} onClose={() => setArchiveTarget(null)} onConfirm={() => archiveMutation.mutate(archiveTarget)} busy={archiveMutation.isPending} error={archiveError} /> : null}
       <Link className="sr-only" to="/admin/configuration/estimation">Return to AI estimator knowledge base</Link>
     </div>

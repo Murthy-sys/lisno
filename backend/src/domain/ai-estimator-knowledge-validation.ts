@@ -5,9 +5,16 @@ import type {
 import {
   AI_ESTIMATOR_KNOWLEDGE_BASIS_POINTS,
   AI_ESTIMATOR_KNOWLEDGE_DURATION_UNITS,
+  AI_ESTIMATOR_KNOWLEDGE_EXECUTION_SOURCES,
   AI_ESTIMATOR_KNOWLEDGE_MAX_ARRAY_ITEMS,
+  AI_ESTIMATOR_KNOWLEDGE_MAX_MODE_FIELDS,
+  AI_ESTIMATOR_KNOWLEDGE_MAX_MODE_FIELD_OPTIONS,
+  AI_ESTIMATOR_KNOWLEDGE_MAX_SPECIFICATION_FIELDS,
+  AI_ESTIMATOR_KNOWLEDGE_MAX_SPECIFICATION_FIELD_OPTIONS,
   AI_ESTIMATOR_KNOWLEDGE_MAX_SHORT_TEXT,
   AI_ESTIMATOR_KNOWLEDGE_MAX_TEXT,
+  AI_ESTIMATOR_KNOWLEDGE_MODE_FIELD_TYPES,
+  AI_ESTIMATOR_KNOWLEDGE_MODE_KINDS,
   AI_ESTIMATOR_KNOWLEDGE_QUANTITY_GAP_BEHAVIORS,
   AI_ESTIMATOR_KNOWLEDGE_QUANTITY_RELATIONSHIPS,
   AI_ESTIMATOR_KNOWLEDGE_QUALITY_PARAMETER_TYPES,
@@ -15,6 +22,7 @@ import {
   AI_ESTIMATOR_KNOWLEDGE_REVISION_STATUSES,
   AI_ESTIMATOR_KNOWLEDGE_SECTION_APPLICABILITY,
   AI_ESTIMATOR_KNOWLEDGE_SECTION_KEYS,
+  AI_ESTIMATOR_KNOWLEDGE_SPECIFICATION_FIELD_TYPES,
   AI_ESTIMATOR_KNOWLEDGE_TAX_TREATMENTS,
   AI_ESTIMATOR_KNOWLEDGE_VERSION_STATUSES,
   AI_ESTIMATOR_KNOWLEDGE_MAX_MONEY_PAISE,
@@ -277,7 +285,7 @@ const ALLOWED_SECTION_KEYS: Record<KnowledgeSectionKey, ReadonlySet<string>> = {
   recommendations: new Set(["recommendations"]),
   quality: new Set(["parameters"]),
   execution: new Set(["steps", "productivity"]),
-  advanced: new Set(["dependencies", "modeOverrides", "revisionLineage"])
+  advanced: new Set(["dependencies", "modeOverrides", "revisionLineage", "modeConfigurations"])
 };
 
 function inspectBoundedValue(
@@ -373,47 +381,11 @@ function validatePricingPayload(
   record: Record<string, unknown>
 ): KnowledgeValidationIssue[] {
   const issues: KnowledgeValidationIssue[] = [];
-  for (const field of ["specifications", "brands"] as const) {
-    if (!(field in record)) continue;
-    const path = `payload.${field}`;
-    const rows = validateObjectArray(record[field], path, issues);
-    const ids = new Set<string>();
-    const names = new Set<string>();
-    rows.forEach((row, index) => {
-      const rowPath = `${path}.${index}`;
-      validateExactRowKeys(
-        row,
-        ["id", "name", "description"],
-        ["id", "name"],
-        rowPath,
-        issues
-      );
-      validateStableId(row.id, `${rowPath}.id`, issues);
-      validateText(
-        row.name,
-        `${rowPath}.name`,
-        issues,
-        AI_ESTIMATOR_KNOWLEDGE_MAX_SHORT_TEXT
-      );
-      if ("description" in row) {
-        validateNullableText(
-          row.description,
-          `${rowPath}.description`,
-          issues,
-          AI_ESTIMATOR_KNOWLEDGE_MAX_TEXT
-        );
-      }
-      addUniqueString(row.id, ids, `${rowPath}.id`, "DUPLICATE_ID", issues);
-      if (typeof row.name === "string" && row.name.trim().length > 0) {
-        addUniqueString(
-          normalizeKnowledgeIdentity(row.name),
-          names,
-          `${rowPath}.name`,
-          "DUPLICATE_NAME",
-          issues
-        );
-      }
-    });
+  if ("specifications" in record) {
+    validateSpecificationRows(record.specifications, issues);
+  }
+  if ("brands" in record) {
+    validateNamedPricingRows(record.brands, "payload.brands", issues);
   }
   if ("technicalDescription" in record) {
     validateNullableText(
@@ -440,6 +412,219 @@ function validatePricingPayload(
     );
   }
   return issues;
+}
+
+function validateSpecificationRows(
+  value: unknown,
+  issues: KnowledgeValidationIssue[]
+): void {
+  const path = "payload.specifications";
+  const rows = validateObjectArray(value, path, issues);
+  if (
+    Array.isArray(value) &&
+    value.length > AI_ESTIMATOR_KNOWLEDGE_MAX_SPECIFICATION_FIELDS
+  ) {
+    issues.push({
+      path,
+      code: "TOO_MANY_SPECIFICATIONS",
+      message: `Pricing supports at most ${AI_ESTIMATOR_KNOWLEDGE_MAX_SPECIFICATION_FIELDS} Specifications.`
+    });
+  }
+  const ids = new Set<string>();
+  const names = new Set<string>();
+  rows.forEach((row, index) => {
+    const rowPath = `${path}.${index}`;
+    const isCanonical = ["type", "options", "value"].some((key) => key in row);
+    validateExactRowKeys(
+      row,
+      isCanonical
+        ? ["id", "name", "description", "type", "options", "value"]
+        : ["id", "name", "description"],
+      isCanonical
+        ? ["id", "name", "type", "options", "value"]
+        : ["id", "name"],
+      rowPath,
+      issues
+    );
+    validateNamedPricingRow(row, rowPath, ids, names, issues);
+    if (isCanonical) {
+      validateCanonicalSpecification(row, rowPath, issues);
+    }
+  });
+}
+
+function validateNamedPricingRows(
+  value: unknown,
+  path: string,
+  issues: KnowledgeValidationIssue[]
+): void {
+  const rows = validateObjectArray(value, path, issues);
+  const ids = new Set<string>();
+  const names = new Set<string>();
+  rows.forEach((row, index) => {
+    const rowPath = `${path}.${index}`;
+    validateExactRowKeys(
+      row,
+      ["id", "name", "description"],
+      ["id", "name"],
+      rowPath,
+      issues
+    );
+    validateNamedPricingRow(row, rowPath, ids, names, issues);
+  });
+}
+
+function validateNamedPricingRow(
+  row: Record<string, unknown>,
+  path: string,
+  ids: Set<string>,
+  names: Set<string>,
+  issues: KnowledgeValidationIssue[]
+): void {
+  validateStableId(row.id, `${path}.id`, issues);
+  validateText(
+    row.name,
+    `${path}.name`,
+    issues,
+    AI_ESTIMATOR_KNOWLEDGE_MAX_SHORT_TEXT
+  );
+  if ("description" in row) {
+    validateNullableText(
+      row.description,
+      `${path}.description`,
+      issues,
+      AI_ESTIMATOR_KNOWLEDGE_MAX_TEXT
+    );
+  }
+  addUniqueString(row.id, ids, `${path}.id`, "DUPLICATE_ID", issues);
+  if (typeof row.name === "string" && row.name.trim().length > 0) {
+    addUniqueString(
+      normalizeKnowledgeIdentity(row.name),
+      names,
+      `${path}.name`,
+      "DUPLICATE_NAME",
+      issues
+    );
+  }
+}
+
+function validateCanonicalSpecification(
+  specification: Record<string, unknown>,
+  path: string,
+  issues: KnowledgeValidationIssue[]
+): void {
+  validateClosedEnum(
+    specification.type,
+    AI_ESTIMATOR_KNOWLEDGE_SPECIFICATION_FIELD_TYPES,
+    `${path}.type`,
+    issues
+  );
+  validateSpecificationOptionsAndValue(specification, path, issues);
+}
+
+function validateSpecificationOptionsAndValue(
+  specification: Record<string, unknown>,
+  path: string,
+  issues: KnowledgeValidationIssue[]
+): void {
+  const optionsPath = `${path}.options`;
+  const choiceType =
+    specification.type === "radio" || specification.type === "dropdown";
+  if (!Array.isArray(specification.options)) {
+    issues.push(invalidTypeIssue(optionsPath, "an array of strings"));
+  } else if (choiceType) {
+    if (specification.options.length === 0) {
+      issues.push(requiredIssue(optionsPath));
+    }
+    if (
+      specification.options.length >
+      AI_ESTIMATOR_KNOWLEDGE_MAX_SPECIFICATION_FIELD_OPTIONS
+    ) {
+      issues.push({
+        path: optionsPath,
+        code: "TOO_MANY_OPTIONS",
+        message: `A Specification choice supports at most ${AI_ESTIMATOR_KNOWLEDGE_MAX_SPECIFICATION_FIELD_OPTIONS} options.`
+      });
+    }
+    const normalizedOptions = new Set<string>();
+    specification.options.forEach((option, optionIndex) => {
+      const optionPath = `${optionsPath}.${optionIndex}`;
+      validateText(
+        option,
+        optionPath,
+        issues,
+        AI_ESTIMATOR_KNOWLEDGE_MAX_SHORT_TEXT
+      );
+      if (typeof option !== "string" || option.trim().length === 0) return;
+      if (option !== option.trim()) {
+        issues.push({
+          path: optionPath,
+          code: "OPTION_NOT_TRIMMED",
+          message: "Specification options must not have surrounding whitespace."
+        });
+      }
+      addUniqueString(
+        normalizeKnowledgeIdentity(option),
+        normalizedOptions,
+        optionPath,
+        "DUPLICATE_OPTION",
+        issues
+      );
+    });
+  } else if (specification.options.length > 0) {
+    issues.push(irrelevantFieldIssue(optionsPath));
+  }
+
+  const valuePath = `${path}.value`;
+  if (
+    !AI_ESTIMATOR_KNOWLEDGE_SPECIFICATION_FIELD_TYPES.includes(
+      specification.type as never
+    )
+  ) {
+    return;
+  }
+  switch (specification.type) {
+    case "text":
+    case "textarea":
+      if (
+        specification.value !== null &&
+        (
+          typeof specification.value !== "string" ||
+          specification.value.length > AI_ESTIMATOR_KNOWLEDGE_MAX_TEXT
+        )
+      ) {
+        issues.push(
+          invalidTypeIssue(
+            valuePath,
+            `a string up to ${AI_ESTIMATOR_KNOWLEDGE_MAX_TEXT} characters or null`
+          )
+        );
+      }
+      break;
+    case "number":
+      validateNullableCanonicalDecimal(specification.value, valuePath, issues);
+      break;
+    case "radio":
+    case "dropdown":
+      if (
+        specification.value !== null &&
+        (
+          typeof specification.value !== "string" ||
+          !Array.isArray(specification.options) ||
+          !specification.options.includes(specification.value)
+        )
+      ) {
+        issues.push({
+          path: valuePath,
+          code: "INVALID_CHOICE",
+          message: "A Specification choice value must be null or one of its configured options."
+        });
+      }
+      break;
+    case "checkbox":
+      validateBoolean(specification.value, valuePath, issues);
+      break;
+  }
 }
 
 function validateNonPricingSectionPayload(
@@ -1119,7 +1304,256 @@ function validateAdvancedPayload(
   if ("revisionLineage" in record) {
     validateRevisionLineage(record.revisionLineage, issues);
   }
+  if ("modeConfigurations" in record) {
+    validateModeConfigurations(record.modeConfigurations, issues);
+  }
   return issues;
+}
+
+function validateModeConfigurations(
+  value: unknown,
+  issues: KnowledgeValidationIssue[]
+): void {
+  const path = "payload.modeConfigurations";
+  const configurations = validateObjectArray(value, path, issues);
+  const configurationIds = new Set<string>();
+  const canonicalIdentities = new Set<string>();
+  const legacyModeIds = new Set<string>();
+  configurations.forEach((configuration, configurationIndex) => {
+    const configurationPath = `${path}.${configurationIndex}`;
+    validateExactRowKeys(
+      configuration,
+      ["id", "modeKind", "executionSource", "modeId", "fields"],
+      ["id", "fields"],
+      configurationPath,
+      issues
+    );
+    validateModeOwnedStableId(configuration.id, `${configurationPath}.id`, issues);
+    addUniqueString(
+      configuration.id,
+      configurationIds,
+      `${configurationPath}.id`,
+      "DUPLICATE_ID",
+      issues
+    );
+    const hasModeKind = "modeKind" in configuration;
+    const hasModeId = "modeId" in configuration;
+    if (hasModeKind === hasModeId) {
+      issues.push({
+        path: configurationPath,
+        code: "INVALID_MODE_CONFIGURATION_IDENTITY",
+        message: "A Mode configuration must contain exactly one of modeKind or legacy modeId."
+      });
+    }
+    if (hasModeKind) {
+      validateClosedEnum(
+        configuration.modeKind,
+        AI_ESTIMATOR_KNOWLEDGE_MODE_KINDS,
+        `${configurationPath}.modeKind`,
+        issues
+      );
+      if (configuration.modeKind === "pmc") {
+        if ("executionSource" in configuration) {
+          issues.push(irrelevantFieldIssue(`${configurationPath}.executionSource`));
+        }
+        addUniqueString(
+          "pmc",
+          canonicalIdentities,
+          `${configurationPath}.modeKind`,
+          "DUPLICATE_MODE_CONFIGURATION",
+          issues
+        );
+      } else if (configuration.modeKind === "execution") {
+        if ("executionSource" in configuration) {
+          validateClosedEnum(
+            configuration.executionSource,
+            AI_ESTIMATOR_KNOWLEDGE_EXECUTION_SOURCES,
+            `${configurationPath}.executionSource`,
+            issues
+          );
+        }
+        const executionIdentity = typeof configuration.executionSource === "string" &&
+          AI_ESTIMATOR_KNOWLEDGE_EXECUTION_SOURCES.includes(
+            configuration.executionSource as never
+          )
+          ? `execution:${configuration.executionSource}`
+          : "execution:unscoped";
+        addUniqueString(
+          executionIdentity,
+          canonicalIdentities,
+          "executionSource" in configuration
+            ? `${configurationPath}.executionSource`
+            : `${configurationPath}.modeKind`,
+          "DUPLICATE_MODE_CONFIGURATION",
+          issues
+        );
+      } else if ("executionSource" in configuration) {
+        issues.push(irrelevantFieldIssue(`${configurationPath}.executionSource`));
+      }
+    }
+    if (hasModeId) {
+      if ("executionSource" in configuration) {
+        issues.push(irrelevantFieldIssue(`${configurationPath}.executionSource`));
+      }
+      validateModeOwnedStableId(
+        configuration.modeId,
+        `${configurationPath}.modeId`,
+        issues
+      );
+      addUniqueString(
+        configuration.modeId,
+        legacyModeIds,
+        `${configurationPath}.modeId`,
+        "DUPLICATE_MODE_CONFIGURATION",
+        issues
+      );
+    }
+    validateModeConfigurationFields(
+      configuration.fields,
+      `${configurationPath}.fields`,
+      issues
+    );
+  });
+}
+
+function validateModeConfigurationFields(
+  value: unknown,
+  path: string,
+  issues: KnowledgeValidationIssue[]
+): void {
+  const fields = validateObjectArray(value, path, issues);
+  if (Array.isArray(value) && value.length > AI_ESTIMATOR_KNOWLEDGE_MAX_MODE_FIELDS) {
+    issues.push({
+      path,
+      code: "TOO_MANY_MODE_FIELDS",
+      message: `A mode configuration supports at most ${AI_ESTIMATOR_KNOWLEDGE_MAX_MODE_FIELDS} fields.`
+    });
+  }
+  const fieldIds = new Set<string>();
+  const normalizedLabels = new Set<string>();
+  fields.forEach((field, fieldIndex) => {
+    const fieldPath = `${path}.${fieldIndex}`;
+    validateExactRowKeys(
+      field,
+      ["id", "type", "label", "options", "value"],
+      ["id", "type", "label", "options"],
+      fieldPath,
+      issues
+    );
+    validateModeOwnedStableId(field.id, `${fieldPath}.id`, issues);
+    validateClosedEnum(
+      field.type,
+      AI_ESTIMATOR_KNOWLEDGE_MODE_FIELD_TYPES,
+      `${fieldPath}.type`,
+      issues
+    );
+    validateText(
+      field.label,
+      `${fieldPath}.label`,
+      issues,
+      AI_ESTIMATOR_KNOWLEDGE_MAX_SHORT_TEXT
+    );
+    addUniqueString(field.id, fieldIds, `${fieldPath}.id`, "DUPLICATE_ID", issues);
+    if (typeof field.label === "string" && field.label.trim().length > 0) {
+      addUniqueString(
+        normalizeKnowledgeIdentity(field.label),
+        normalizedLabels,
+        `${fieldPath}.label`,
+        "DUPLICATE_LABEL",
+        issues
+      );
+    }
+    validateModeFieldOptions(field, fieldPath, issues);
+    if ("value" in field) validateLegacyModeFieldValue(field.value, `${fieldPath}.value`, issues);
+  });
+}
+
+function validateModeFieldOptions(
+  field: Record<string, unknown>,
+  path: string,
+  issues: KnowledgeValidationIssue[]
+): void {
+  const optionsPath = `${path}.options`;
+  const choiceType = field.type === "radio" || field.type === "dropdown";
+  if (!Array.isArray(field.options)) {
+    issues.push(invalidTypeIssue(optionsPath, "an array of strings"));
+  } else if (choiceType) {
+    if (field.options.length === 0) {
+      issues.push(requiredIssue(optionsPath));
+    }
+    if (field.options.length > AI_ESTIMATOR_KNOWLEDGE_MAX_MODE_FIELD_OPTIONS) {
+      issues.push({
+        path: optionsPath,
+        code: "TOO_MANY_OPTIONS",
+        message: `A choice field supports at most ${AI_ESTIMATOR_KNOWLEDGE_MAX_MODE_FIELD_OPTIONS} options.`
+      });
+    }
+    const normalizedOptions = new Set<string>();
+    field.options.forEach((option, optionIndex) => {
+      const optionPath = `${optionsPath}.${optionIndex}`;
+      validateText(
+        option,
+        optionPath,
+        issues,
+        AI_ESTIMATOR_KNOWLEDGE_MAX_SHORT_TEXT
+      );
+      if (typeof option !== "string" || option.trim().length === 0) return;
+      if (option !== option.trim()) {
+        issues.push({
+          path: optionPath,
+          code: "OPTION_NOT_TRIMMED",
+          message: "Mode field options must not have surrounding whitespace."
+        });
+      }
+      addUniqueString(
+        normalizeKnowledgeIdentity(option),
+        normalizedOptions,
+        optionPath,
+        "DUPLICATE_OPTION",
+        issues
+      );
+    });
+  } else if (field.options.length > 0) {
+    issues.push(irrelevantFieldIssue(optionsPath));
+  }
+
+}
+
+function validateLegacyModeFieldValue(
+  value: unknown,
+  path: string,
+  issues: KnowledgeValidationIssue[]
+): void {
+  if (
+    value !== null &&
+    typeof value !== "boolean" &&
+    (typeof value !== "string" || value.length > AI_ESTIMATOR_KNOWLEDGE_MAX_TEXT)
+  ) {
+    issues.push(invalidTypeIssue(
+      path,
+      `a string up to ${AI_ESTIMATOR_KNOWLEDGE_MAX_TEXT} characters, a boolean, or null`
+    ));
+  }
+}
+
+function validateModeOwnedStableId(
+  value: unknown,
+  path: string,
+  issues: KnowledgeValidationIssue[]
+): void {
+  const issueCount = issues.length;
+  validateStableId(value, path, issues);
+  if (
+    issues.length === issueCount &&
+    typeof value === "string" &&
+    (value.trim().length === 0 || value !== value.trim())
+  ) {
+    issues.push({
+      path,
+      code: "INVALID_REFERENCE",
+      message: "Generated stable IDs must be nonempty and must not have surrounding whitespace."
+    });
+  }
 }
 
 function validateRelationshipRows(
@@ -1535,8 +1969,15 @@ function validatePriceEntryCommands(value: unknown): KnowledgeValidationIssue[] 
     for (const key of ["priceEntryId", "vendorId", "uomId", "taxRuleId", "taxVersionId"] as const) {
       validateStableId(record[key], `${path}.${key}`, issues);
     }
-    for (const key of ["specificationId", "modeId"] as const) {
-      if (record[key] !== null) validateStableId(record[key], `${path}.${key}`, issues);
+    if (record.specificationId !== null) {
+      issues.push({
+        path: `${path}.specificationId`,
+        code: "INVALID_PRICE_SPECIFICATION_SCOPE",
+        message: "New prices cannot be scoped to a descriptive Specification; specificationId must be null."
+      });
+    }
+    if (record.modeId !== null) {
+      validateStableId(record.modeId, `${path}.modeId`, issues);
     }
     if (!Number.isSafeInteger(record.inputAmountPaise) || (record.inputAmountPaise as number) < 0 || (record.inputAmountPaise as number) > AI_ESTIMATOR_KNOWLEDGE_MAX_MONEY_PAISE) {
       issues.push({ path: `${path}.inputAmountPaise`, code: "INVALID_AMOUNT", message: "Price input must be a nonnegative safe integer in paise." });

@@ -40,6 +40,21 @@ function services() {
     createBasket: vi.fn(async () => ({ id: "basket-1" })),
     updateBasket: vi.fn(async () => ({ id: "basket-1" })),
     archiveBasket: vi.fn(async () => ({ id: "basket-1", status: "archived" })),
+    getBasketDeletionImpact: vi.fn(async () => ({
+      basketId: "basket-1",
+      basketName: "Custom basket",
+      version: 3,
+      mainLineCount: 0,
+      historicalReferenceCount: 0,
+      bootstrapOwned: false,
+      canDelete: true,
+      blockers: []
+    })),
+    permanentlyDeleteBasket: vi.fn(async () => ({
+      basketId: "basket-1",
+      deleted: true as const,
+      deletedAt: "2026-08-31T12:00:00.000Z"
+    })),
     listMasters: vi.fn(async () => ({ items: [], total: 0 })),
     createMaster: vi.fn(async () => ({ id: "master-1" })),
     updateMaster: vi.fn(async () => ({ id: "master-1" })),
@@ -183,6 +198,115 @@ describe("AI Estimator Knowledge HTTP routes", () => {
     });
   });
 
+  it("returns a closed Basket deletion impact for an authorized Super Admin", async () => {
+    const testServices = services();
+    const response = await request(appFor(testServices))
+      .get("/api/v1/admin/ai-estimator-knowledge/baskets/basket-1/deletion-impact")
+      .set("Authorization", "Bearer super-admin-token");
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({
+      data: {
+        basketId: "basket-1",
+        basketName: "Custom basket",
+        version: 3,
+        mainLineCount: 0,
+        historicalReferenceCount: 0,
+        bootstrapOwned: false,
+        canDelete: true,
+        blockers: []
+      }
+    });
+    expect(testServices.reference.getBasketDeletionImpact).toHaveBeenCalledWith(
+      superAdmin,
+      "basket-1"
+    );
+  });
+
+  it("authorizes Basket deletion impact before resource disclosure", async () => {
+    const testServices = services();
+
+    const denied = await request(appFor(testServices))
+      .get("/api/v1/admin/ai-estimator-knowledge/baskets/hidden-basket/deletion-impact")
+      .set("Authorization", "Bearer admin-token");
+    const anonymous = await request(appFor(testServices))
+      .get("/api/v1/admin/ai-estimator-knowledge/baskets/hidden-basket/deletion-impact");
+
+    expect(denied.status).toBe(403);
+    expect(denied.body.error.code).toBe("FORBIDDEN");
+    expect(anonymous.status).toBe(401);
+    expect(testServices.reference.getBasketDeletionImpact).not.toHaveBeenCalled();
+  });
+
+  it("permanently deletes through a distinct strict Basket command", async () => {
+    const testServices = services();
+    const input = {
+      expectedVersion: 3,
+      confirmationName: "Custom basket",
+      reason: "Created by mistake"
+    };
+    const response = await request(appFor(testServices))
+      .delete("/api/v1/admin/ai-estimator-knowledge/baskets/basket-1/permanent")
+      .set("Authorization", "Bearer super-admin-token")
+      .send(input);
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({
+      data: {
+        basketId: "basket-1",
+        deleted: true,
+        deletedAt: "2026-08-31T12:00:00.000Z"
+      }
+    });
+    expect(testServices.reference.permanentlyDeleteBasket).toHaveBeenCalledWith(
+      superAdmin,
+      "basket-1",
+      input
+    );
+  });
+
+  it("rejects malformed permanent-delete input only after authorization", async () => {
+    const testServices = services();
+    const malformed = {
+      expectedVersion: 3,
+      confirmationName: "Custom basket",
+      reason: "Created by mistake",
+      cascade: true
+    };
+
+    const denied = await request(appFor(testServices))
+      .delete("/api/v1/admin/ai-estimator-knowledge/baskets/basket-1/permanent")
+      .set("Authorization", "Bearer admin-token")
+      .send(malformed);
+    const rejected = await request(appFor(testServices))
+      .delete("/api/v1/admin/ai-estimator-knowledge/baskets/basket-1/permanent")
+      .set("Authorization", "Bearer super-admin-token")
+      .send(malformed);
+
+    expect(denied.status).toBe(403);
+    expect(rejected.status).toBe(400);
+    expect(rejected.body.error.code).toBe("VALIDATION_ERROR");
+    expect(rejected.body.error.fields.cascade).toContain("Unrecognized field");
+    expect(testServices.reference.permanentlyDeleteBasket).not.toHaveBeenCalled();
+  });
+
+  it("keeps the existing Basket DELETE route archive-only", async () => {
+    const testServices = services();
+    const input = { expectedVersion: 3, reason: "No longer needed" };
+    const response = await request(appFor(testServices))
+      .delete("/api/v1/admin/ai-estimator-knowledge/baskets/basket-1")
+      .set("Authorization", "Bearer super-admin-token")
+      .send(input);
+
+    expect(response.status).toBe(200);
+    expect(testServices.reference.archiveBasket).toHaveBeenCalledWith(
+      superAdmin,
+      "basket-1",
+      input
+    );
+    expect(testServices.reference.permanentlyDeleteBasket).not.toHaveBeenCalled();
+  });
+
   it("dispatches each reusable-value family with its closed plural type", async () => {
     const testServices = services();
     const response = await request(appFor(testServices))
@@ -251,6 +375,211 @@ describe("AI Estimator Knowledge HTTP routes", () => {
     expect(testServices.item.updateSection).not.toHaveBeenCalled();
   });
 
+  it("accepts mixed legacy and canonical Specifications and rejects partial canonical rows", async () => {
+    const testServices = services();
+    const input = {
+      expectedVersion: 3,
+      expectedAggregateVersion: 7,
+      payload: {
+        specifications: [
+          {
+            id: "specification-legacy",
+            name: "Legacy specification",
+            description: null
+          },
+          {
+            id: "specification-thickness",
+            name: "Board thickness",
+            description: "Use the approved finished thickness.",
+            type: "dropdown",
+            options: ["12 mm", "18 mm"],
+            value: "18 mm"
+          },
+          {
+            id: "specification-approved",
+            name: "Approved",
+            type: "checkbox",
+            options: [],
+            value: false
+          }
+        ]
+      }
+    };
+    const accepted = await request(appFor(testServices))
+      .put("/api/v1/admin/ai-estimator-knowledge/main-lines/line-1/revisions/revision-1/sections/pricing")
+      .set("Authorization", "Bearer super-admin-token")
+      .send(input);
+
+    expect(accepted.status).toBe(200);
+    expect(testServices.item.updateSection).toHaveBeenCalledWith(
+      superAdmin,
+      "line-1",
+      "revision-1",
+      "pricing",
+      input
+    );
+
+    const rejected = await request(appFor(testServices))
+      .put("/api/v1/admin/ai-estimator-knowledge/main-lines/line-1/revisions/revision-1/sections/pricing")
+      .set("Authorization", "Bearer super-admin-token")
+      .send({
+        expectedVersion: 3,
+        expectedAggregateVersion: 7,
+        payload: {
+          specifications: [{
+            id: "specification-incomplete",
+            name: "Incomplete",
+            type: "radio"
+          }]
+        }
+      });
+
+    expect(rejected.status).toBe(400);
+    expect(rejected.body.error).toMatchObject({
+      code: "VALIDATION_ERROR",
+      fields: {
+        "payload.specifications.0.options": expect.any(String),
+        "payload.specifications.0.value": expect.any(String)
+      }
+    });
+    expect(testServices.item.updateSection).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects non-null Specification scope before a price append reaches the service", async () => {
+    const testServices = services();
+    const response = await request(appFor(testServices))
+      .put("/api/v1/admin/ai-estimator-knowledge/main-lines/line-1/revisions/revision-1/sections/pricing")
+      .set("Authorization", "Bearer super-admin-token")
+      .send({
+        expectedVersion: 3,
+        expectedAggregateVersion: 7,
+        payload: {
+          specifications: [{ id: "specification-plywood", name: "Plywood" }],
+          priceEntries: [{
+            operation: "append",
+            priceEntryId: "price-entry-1",
+            vendorId: "vendor-1",
+            uomId: "uom-1",
+            specificationId: "specification-plywood",
+            modeId: null,
+            taxRuleId: "tax-rule-1",
+            taxVersionId: "tax-version-1",
+            inputAmountPaise: 7_500,
+            treatment: "exclusive",
+            effectiveFrom: "2026-08-28T00:00:00.000Z",
+            effectiveTo: null,
+            status: "active"
+          }]
+        }
+      });
+
+    expect(response.status).toBe(400);
+    expect(response.body.error).toMatchObject({
+      code: "VALIDATION_ERROR",
+      fields: {
+        "payload.priceEntries.0.specificationId": expect.stringContaining("must be null")
+      }
+    });
+    expect(testServices.item.updateSection).not.toHaveBeenCalled();
+  });
+
+  it("accepts strict mode configurations and rejects malformed fields after authorization", async () => {
+    const testServices = services();
+    const input = {
+      expectedVersion: 3,
+      expectedAggregateVersion: 7,
+      payload: {
+        dependencies: [],
+        modeConfigurations: [
+          {
+            id: "configuration-pmc",
+            modeKind: "pmc",
+            fields: [{
+              id: "field-pmc-mark",
+              type: "text",
+              label: "PMC mark",
+              options: []
+            }]
+          },
+          {
+            id: "configuration-execution-sub-vendor",
+            modeKind: "execution",
+            executionSource: "sub_vendor",
+            fields: [{
+              id: "field-crew-code",
+              type: "text",
+              label: "Crew code",
+              options: []
+            }]
+          },
+          {
+            id: "configuration-execution-in-house",
+            modeKind: "execution",
+            executionSource: "in_house",
+            fields: [{
+              id: "field-work-package",
+              type: "dropdown",
+              label: "Work package",
+              options: ["Carpentry", "Electrical"]
+            }]
+          }
+        ]
+      }
+    };
+    const accepted = await request(appFor(testServices))
+      .put("/api/v1/admin/ai-estimator-knowledge/main-lines/line-1/revisions/revision-1/sections/advanced")
+      .set("Authorization", "Bearer super-admin-token")
+      .send(input);
+
+    expect(accepted.status).toBe(200);
+    expect(testServices.item.updateSection).toHaveBeenCalledWith(
+      superAdmin,
+      "line-1",
+      "revision-1",
+      "advanced",
+      input
+    );
+
+    const malformed = {
+      expectedVersion: 3,
+      payload: {
+        modeConfigurations: [{
+          id: "configuration-pmc",
+          modeKind: "pmc",
+          executionSource: "sub_vendor",
+          fields: [{
+            id: "field-pmc-mark",
+            type: "radio",
+            label: "PMC mark",
+            options: [],
+            description: "not allowed"
+          }]
+        }]
+      }
+    };
+    const denied = await request(appFor(testServices))
+      .put("/api/v1/admin/ai-estimator-knowledge/main-lines/line-1/revisions/revision-1/sections/advanced")
+      .set("Authorization", "Bearer admin-token")
+      .send(malformed);
+    const rejected = await request(appFor(testServices))
+      .put("/api/v1/admin/ai-estimator-knowledge/main-lines/line-1/revisions/revision-1/sections/advanced")
+      .set("Authorization", "Bearer super-admin-token")
+      .send(malformed);
+
+    expect(denied.status).toBe(403);
+    expect(denied.body.error.code).toBe("FORBIDDEN");
+    expect(rejected.status).toBe(400);
+    expect(rejected.body.error).toMatchObject({
+      code: "VALIDATION_ERROR",
+      fields: {
+        "payload.modeConfigurations.0.fields.0.options": expect.any(String),
+        "payload.modeConfigurations.0.fields.0.description": expect.any(String),
+        "payload.modeConfigurations.0.executionSource": expect.any(String)
+      }
+    });
+    expect(testServices.item.updateSection).toHaveBeenCalledTimes(1);
+  });
+
   it("accepts only the deterministic preview contract", async () => {
     const testServices = services();
     const input = {
@@ -280,6 +609,13 @@ describe("AI Estimator Knowledge HTTP routes", () => {
     expect(response.status).toBe(200);
     expect(testServices.context.preview).toHaveBeenCalledWith(superAdmin, input);
     expect(response.body.data).not.toHaveProperty("finalPrice");
+
+    const selectorResponse = await request(appFor(testServices))
+      .post("/api/v1/admin/ai-estimator-knowledge/preview")
+      .set("Authorization", "Bearer super-admin-token")
+      .send({ ...input, modeKind: "pmc" });
+    expect(selectorResponse.status).toBe(400);
+    expect(testServices.context.preview).toHaveBeenCalledTimes(1);
   });
 
   it("resolves context through the read service without calling mutations", async () => {
@@ -291,7 +627,8 @@ describe("AI Estimator Knowledge HTTP routes", () => {
       quantity: "1500.000",
       uomId: "uom-1",
       surfaceId: "surface-1",
-      modeId: "mode-1"
+      modeKind: "execution",
+      executionSource: "sub_vendor"
     };
     const response = await request(appFor(testServices))
       .post("/api/v1/ai-estimator-knowledge/context")
@@ -302,6 +639,46 @@ describe("AI Estimator Knowledge HTTP routes", () => {
     expect(testServices.context.resolve).toHaveBeenCalledWith(superAdmin, input);
     expect(testServices.reference.createBasket).not.toHaveBeenCalled();
     expect(testServices.item.updateSection).not.toHaveBeenCalled();
+  });
+
+  it("rejects ambiguous, unknown, and incompatible context Mode selectors", async () => {
+    const testServices = services();
+    const ambiguous = await request(appFor(testServices))
+      .post("/api/v1/ai-estimator-knowledge/context")
+      .set("Authorization", "Bearer super-admin-token")
+      .send({
+        mainBasketId: "basket-1",
+        mainLineId: "line-1",
+        modeKind: "pmc",
+        modeId: "mode-1"
+      });
+    const unknown = await request(appFor(testServices))
+      .post("/api/v1/ai-estimator-knowledge/context")
+      .set("Authorization", "Bearer super-admin-token")
+      .send({ mainBasketId: "basket-1", mainLineId: "line-1", modeKind: "design" });
+    const sourceWithoutExecution = await request(appFor(testServices))
+      .post("/api/v1/ai-estimator-knowledge/context")
+      .set("Authorization", "Bearer super-admin-token")
+      .send({
+        mainBasketId: "basket-1",
+        mainLineId: "line-1",
+        modeKind: "pmc",
+        executionSource: "sub_vendor"
+      });
+    const sourceWithoutMode = await request(appFor(testServices))
+      .post("/api/v1/ai-estimator-knowledge/context")
+      .set("Authorization", "Bearer super-admin-token")
+      .send({
+        mainBasketId: "basket-1",
+        mainLineId: "line-1",
+        executionSource: "in_house"
+      });
+
+    expect(ambiguous.status).toBe(400);
+    expect(unknown.status).toBe(400);
+    expect(sourceWithoutExecution.status).toBe(400);
+    expect(sourceWithoutMode.status).toBe(400);
+    expect(testServices.context.resolve).not.toHaveBeenCalled();
   });
 
   it("rejects generic objects for context and preview", async () => {

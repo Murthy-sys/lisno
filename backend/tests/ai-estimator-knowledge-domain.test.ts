@@ -2,7 +2,10 @@ import { describe, expect, it } from "vitest";
 
 import {
   AI_ESTIMATOR_KNOWLEDGE_FORMULA_VERSION,
+  AI_ESTIMATOR_KNOWLEDGE_EXECUTION_SOURCES,
+  AI_ESTIMATOR_KNOWLEDGE_MODE_FIELD_TYPES,
   AI_ESTIMATOR_KNOWLEDGE_SECTION_KEYS,
+  AI_ESTIMATOR_KNOWLEDGE_SPECIFICATION_FIELD_TYPES,
   canonicalKnowledgeJson,
   createKnowledgeContentDigest,
   createKnowledgePriceScopeKey,
@@ -25,6 +28,26 @@ describe("AI estimator knowledge domain", () => {
       "quality",
       "execution",
       "advanced"
+    ]);
+    expect(AI_ESTIMATOR_KNOWLEDGE_MODE_FIELD_TYPES).toEqual([
+      "text",
+      "textarea",
+      "number",
+      "radio",
+      "dropdown",
+      "checkbox"
+    ]);
+    expect(AI_ESTIMATOR_KNOWLEDGE_EXECUTION_SOURCES).toEqual([
+      "sub_vendor",
+      "in_house"
+    ]);
+    expect(AI_ESTIMATOR_KNOWLEDGE_SPECIFICATION_FIELD_TYPES).toEqual([
+      "text",
+      "textarea",
+      "number",
+      "radio",
+      "dropdown",
+      "checkbox"
     ]);
   });
 
@@ -91,6 +114,47 @@ describe("AI estimator knowledge domain", () => {
     const pricing = { sectionKey: "pricing" as const, applicability: "not_configured" as const, payload: {} };
     expect(createKnowledgeRevisionDigest({ mainLineId: "line-1", revisionNumber: 1, sections: [pricing, overview] })).toBe(
       createKnowledgeRevisionDigest({ mainLineId: "line-1", revisionNumber: 1, sections: [overview, pricing] })
+    );
+  });
+
+  it("includes ordered mode configurations in revision content lineage", () => {
+    const base = {
+      mainLineId: "line-1",
+      revisionNumber: 1,
+      sections: [{
+        sectionKey: "advanced" as const,
+        applicability: "configured" as const,
+        payload: {
+          modeConfigurations: [{
+            id: "configuration-pmc",
+            modeId: "mode-pmc",
+            fields: [{
+              id: "field-pmc-mark",
+              type: "text",
+              label: "PMC mark",
+              options: [],
+              value: "A1"
+            }]
+          }]
+        }
+      }]
+    };
+    expect(createKnowledgeRevisionDigest(base)).not.toBe(
+      createKnowledgeRevisionDigest({
+        ...base,
+        sections: [{
+          ...base.sections[0]!,
+          payload: {
+            modeConfigurations: [{
+              ...base.sections[0]!.payload.modeConfigurations[0]!,
+              fields: [{
+                ...base.sections[0]!.payload.modeConfigurations[0]!.fields[0]!,
+                value: "A2"
+              }]
+            }]
+          }
+        }]
+      })
     );
   });
 });

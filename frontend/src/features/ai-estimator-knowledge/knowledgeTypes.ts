@@ -24,6 +24,8 @@ export type KnowledgeMasterType = (typeof KNOWLEDGE_MASTER_TYPES)[number];
 export type KnowledgeItemStatus = "draft" | "active" | "inactive" | "archived";
 export type KnowledgeRevisionStatus = "draft" | "active" | "superseded";
 export type KnowledgeMasterStatus = "active" | "inactive" | "archived";
+export type KnowledgeModeKind = "pmc" | "execution";
+export type KnowledgeExecutionSource = "sub_vendor" | "in_house";
 export type KnowledgeSectionApplicability =
   | "configured"
   | "not_configured"
@@ -131,6 +133,37 @@ export interface KnowledgeBasket extends KnowledgeVersionedResource {
   readonly status: KnowledgeMasterStatus;
 }
 
+export const KNOWLEDGE_BASKET_DELETION_BLOCKER_CODES = [
+  "BOOTSTRAP_OWNED",
+  "HAS_MAIN_LINES",
+  "HAS_HISTORICAL_REFERENCES"
+] as const;
+
+export type KnowledgeBasketDeletionBlockerCode =
+  (typeof KNOWLEDGE_BASKET_DELETION_BLOCKER_CODES)[number];
+
+export interface KnowledgeBasketDeletionBlocker {
+  readonly code: KnowledgeBasketDeletionBlockerCode;
+  readonly message: string;
+}
+
+export interface KnowledgeBasketDeletionImpact {
+  readonly basketId: string;
+  readonly basketName: string;
+  readonly version: number;
+  readonly mainLineCount: number;
+  readonly historicalReferenceCount: number;
+  readonly bootstrapOwned: boolean;
+  readonly canDelete: boolean;
+  readonly blockers: readonly KnowledgeBasketDeletionBlocker[];
+}
+
+export interface KnowledgePermanentDeleteBasketResult {
+  readonly basketId: string;
+  readonly deleted: true;
+  readonly deletedAt: string;
+}
+
 export interface KnowledgeMainLine extends KnowledgeVersionedResource {
   readonly basketId: string;
   readonly name: string;
@@ -188,6 +221,15 @@ export interface KnowledgeSectionEnvelope<
   readonly sectionKey: KnowledgeSectionKey;
   readonly applicability: KnowledgeSectionApplicability;
   readonly payload: TPayload;
+  readonly referenceState?: {
+    readonly specificationIds: readonly string[];
+  };
+}
+
+export interface KnowledgeSectionMutationEnvelope<
+  TPayload extends KnowledgeJsonValue = KnowledgeJsonObject
+> extends KnowledgeSectionEnvelope<TPayload> {
+  readonly aggregateVersion: number;
 }
 
 export interface KnowledgeActivationReview {

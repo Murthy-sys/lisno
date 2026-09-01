@@ -1,4 +1,5 @@
 import {
+  useEffect,
   useId,
   useMemo,
   useRef,
@@ -7,17 +8,17 @@ import {
 } from "react";
 
 import { Field, Select } from "../../components/ui/Field";
+import { KNOWLEDGE_WORKSPACE_SECTION_LABELS } from "./knowledgePresentation";
 import {
-  KNOWLEDGE_SECTION_KEYS,
-  type KnowledgeSectionKey
-} from "./knowledgeTypes";
-import { KNOWLEDGE_SECTION_LABELS } from "./knowledgePresentation";
+  KNOWLEDGE_WORKSPACE_SECTION_KEYS,
+  type KnowledgeWorkspaceSectionKey
+} from "./knowledgeWorkspaceSections";
 
 export interface KnowledgeSectionNavigationProps {
-  readonly activeSection: KnowledgeSectionKey;
-  readonly onSectionChange: (section: KnowledgeSectionKey) => void;
+  readonly activeSection: KnowledgeWorkspaceSectionKey;
+  readonly onSectionChange: (section: KnowledgeWorkspaceSectionKey) => void;
   readonly children: ReactNode;
-  readonly disabledSections?: readonly KnowledgeSectionKey[];
+  readonly disabledSections?: readonly KnowledgeWorkspaceSectionKey[];
   readonly panelBusy?: boolean;
 }
 
@@ -29,10 +30,13 @@ export function KnowledgeSectionNavigation({
   panelBusy = false
 }: KnowledgeSectionNavigationProps) {
   const id = useId().replace(/:/g, "");
-  const tabRefs = useRef(new Map<KnowledgeSectionKey, HTMLButtonElement>());
+  const tabRefs = useRef(
+    new Map<KnowledgeWorkspaceSectionKey, HTMLButtonElement>()
+  );
+  const pendingFocusRef = useRef<KnowledgeWorkspaceSectionKey | null>(null);
   const enabledSections = useMemo(
     () =>
-      KNOWLEDGE_SECTION_KEYS.filter(
+      KNOWLEDGE_WORKSPACE_SECTION_KEYS.filter(
         (section) => !disabledSections.includes(section)
       ),
     [disabledSections]
@@ -40,15 +44,29 @@ export function KnowledgeSectionNavigation({
   const activeTabId = `${id}-${activeSection}-tab`;
   const panelId = `${id}-panel`;
 
-  function selectAndFocus(section: KnowledgeSectionKey) {
+  useEffect(() => {
+    if (pendingFocusRef.current !== activeSection) return;
+    pendingFocusRef.current = null;
+    tabRefs.current.get(activeSection)?.focus();
+  }, [activeSection]);
+
+  function requestSelection(section: KnowledgeWorkspaceSectionKey) {
+    if (section === activeSection) {
+      tabRefs.current.get(section)?.focus();
+      return;
+    }
+    pendingFocusRef.current = section;
     onSectionChange(section);
-    tabRefs.current.get(section)?.focus();
   }
 
-  function handleKeyDown(event: KeyboardEvent<HTMLButtonElement>) {
+  function handleKeyDown(
+    event: KeyboardEvent<HTMLButtonElement>,
+    focusedSection: KnowledgeWorkspaceSectionKey
+  ) {
     if (!enabledSections.length) return;
-    const currentIndex = enabledSections.indexOf(activeSection);
-    let nextSection: KnowledgeSectionKey | undefined;
+    const currentIndex = enabledSections.indexOf(focusedSection);
+    if (currentIndex < 0) return;
+    let nextSection: KnowledgeWorkspaceSectionKey | undefined;
 
     if (event.key === "ArrowRight") {
       nextSection = enabledSections[(currentIndex + 1) % enabledSections.length];
@@ -65,41 +83,46 @@ export function KnowledgeSectionNavigation({
 
     if (!nextSection) return;
     event.preventDefault();
-    selectAndFocus(nextSection);
+    requestSelection(nextSection);
   }
 
   return (
     <div className="knowledge-section-navigation">
-      <div
-        className="knowledge-section-tabs"
-        role="tablist"
-        aria-label="Configuration sections"
-      >
-        {KNOWLEDGE_SECTION_KEYS.map((section) => {
-          const selected = section === activeSection;
-          const disabled = disabledSections.includes(section);
-          return (
-            <button
-              key={section}
-              ref={(node) => {
-                if (node) tabRefs.current.set(section, node);
-                else tabRefs.current.delete(section);
-              }}
-              id={`${id}-${section}-tab`}
-              className="knowledge-section-tab"
-              type="button"
-              role="tab"
-              aria-selected={selected}
-              aria-controls={panelId}
-              tabIndex={selected ? 0 : -1}
-              disabled={disabled}
-              onClick={() => onSectionChange(section)}
-              onKeyDown={handleKeyDown}
-            >
-              {KNOWLEDGE_SECTION_LABELS[section]}
-            </button>
-          );
-        })}
+      <div className="knowledge-section-tabs-shell">
+        <div
+          className="knowledge-section-tabs"
+          role="tablist"
+          aria-label="Configuration sections"
+        >
+          {KNOWLEDGE_WORKSPACE_SECTION_KEYS.map((section) => {
+            const selected = section === activeSection;
+            const disabled = disabledSections.includes(section);
+            return (
+              <button
+                key={section}
+                ref={(node) => {
+                  if (node) tabRefs.current.set(section, node);
+                  else tabRefs.current.delete(section);
+                }}
+                id={`${id}-${section}-tab`}
+                className="knowledge-section-tab"
+                type="button"
+                role="tab"
+                aria-selected={selected}
+                aria-controls={panelId}
+                tabIndex={selected ? 0 : -1}
+                disabled={disabled}
+                onMouseDown={(event) => {
+                  if (section !== activeSection) event.preventDefault();
+                }}
+                onClick={() => requestSelection(section)}
+                onKeyDown={(event) => handleKeyDown(event, section)}
+              >
+                {KNOWLEDGE_WORKSPACE_SECTION_LABELS[section]}
+              </button>
+            );
+          })}
+        </div>
       </div>
 
       <div className="knowledge-section-select">
@@ -109,16 +132,18 @@ export function KnowledgeSectionNavigation({
               {...controlProps}
               value={activeSection}
               onChange={(event) =>
-                onSectionChange(event.target.value as KnowledgeSectionKey)
+                onSectionChange(
+                  event.target.value as KnowledgeWorkspaceSectionKey
+                )
               }
             >
-              {KNOWLEDGE_SECTION_KEYS.map((section) => (
+              {KNOWLEDGE_WORKSPACE_SECTION_KEYS.map((section) => (
                 <option
                   key={section}
                   value={section}
                   disabled={disabledSections.includes(section)}
                 >
-                  {KNOWLEDGE_SECTION_LABELS[section]}
+                  {KNOWLEDGE_WORKSPACE_SECTION_LABELS[section]}
                 </option>
               ))}
             </Select>

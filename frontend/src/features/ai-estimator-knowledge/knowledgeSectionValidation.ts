@@ -1,4 +1,5 @@
 import type { KnowledgeJsonObject, KnowledgeJsonValue, KnowledgeSectionKey } from "./knowledgeTypes";
+import { parseKnowledgeSpecifications } from "./knowledgeSpecificationConfiguration";
 
 export interface KnowledgeValidationIssue {
   readonly path: string;
@@ -13,14 +14,17 @@ export function validateKnowledgeSection(sectionKey: KnowledgeSectionKey, payloa
   const requireString = (row: KnowledgeJsonObject, key: string, path: string) => {
     if (typeof row[key] !== "string" || !row[key].trim()) issues.push({ path: `${path}.${key}`, message: `${label(key)} is required.` });
   };
-  if (sectionKey === "pricing") rows("priceEntries").forEach((row, index) => {
-    const path = `priceEntries.${index}`;
-    requireString(row, "priceEntryId", path);
-    if (row.operation === "reference") requireString(row, "priceVersionId", path);
-    else for (const key of ["vendorId", "uomId", "taxRuleId", "taxVersionId", "treatment", "effectiveFrom", "status"]) requireString(row, key, path);
-    if (row.operation !== "reference" && (!Number.isSafeInteger(row.inputAmountPaise) || (row.inputAmountPaise as number) < 0)) issues.push({ path: `${path}.inputAmountPaise`, message: "Enter a non-negative rupee amount with up to two decimal places." });
-    if (typeof row.effectiveFrom === "string" && typeof row.effectiveTo === "string" && row.effectiveTo && row.effectiveTo <= row.effectiveFrom) issues.push({ path: `${path}.effectiveTo`, message: "Effective to must be later than effective from." });
-  });
+  if (sectionKey === "pricing") {
+    issues.push(...parseKnowledgeSpecifications(payload.specifications).issues);
+    rows("priceEntries").forEach((row, index) => {
+      const path = `priceEntries.${index}`;
+      requireString(row, "priceEntryId", path);
+      if (row.operation === "reference") requireString(row, "priceVersionId", path);
+      else for (const key of ["vendorId", "uomId", "taxRuleId", "taxVersionId", "treatment", "effectiveFrom", "status"]) requireString(row, key, path);
+      if (row.operation !== "reference" && (!Number.isSafeInteger(row.inputAmountPaise) || (row.inputAmountPaise as number) < 0)) issues.push({ path: `${path}.inputAmountPaise`, message: "Enter a non-negative rupee amount with up to two decimal places." });
+      if (typeof row.effectiveFrom === "string" && typeof row.effectiveTo === "string" && row.effectiveTo && row.effectiveTo <= row.effectiveFrom) issues.push({ path: `${path}.effectiveTo`, message: "Effective to must be later than effective from." });
+    });
+  }
   if (sectionKey === "quantity-margin") {
     for (const key of ["startMarginBps", "bottomMarginBps", "pmcMarkupBps", "wastageBps"]) {
       const value = payload[key];

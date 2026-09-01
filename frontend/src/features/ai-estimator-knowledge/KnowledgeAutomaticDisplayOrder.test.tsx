@@ -219,8 +219,7 @@ describe("automatic knowledge-base display order forms", () => {
     "vendors",
     "taxes",
     "priorities",
-    "surfaces",
-    "modes"
+    "surfaces"
   ])("does not expose display order when quick-adding %s", async (masterType) => {
     const view = renderWithQuery(
       <KnowledgeMasterEditorDialog
@@ -262,6 +261,7 @@ describe("automatic knowledge-base display order forms", () => {
     );
 
     const dialog = screen.getByRole("dialog", { name: "Quick add UOM" });
+    expect(within(dialog).getByRole("textbox", { name: "Code" })).toBeRequired();
     await user.type(within(dialog).getByRole("textbox", { name: "Code" }), "SQM");
     await user.type(within(dialog).getByRole("textbox", { name: "Name" }), "Square metre");
     await user.selectOptions(
