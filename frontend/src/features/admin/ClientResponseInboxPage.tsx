@@ -191,10 +191,11 @@ export function ClientResponseInboxPage() {
         headingTabIndex={-1}
       />
 
-      <nav className="client-responses__filters" aria-label="Client response filters">
+      <nav className="client-responses__filters ui-tab-nav" aria-label="Client response filters">
         {filters.map((filter) => (
           <Button
             key={filter.label}
+            className="ui-tab-nav__item"
             size="compact"
             variant={status === filter.status ? "primary" : "quiet"}
             aria-pressed={status === filter.status}
