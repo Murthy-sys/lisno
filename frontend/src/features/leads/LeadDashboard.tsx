@@ -145,7 +145,7 @@ function LeadRow({
           fallbackFilename={`lisno-${estimate.id}.pdf`}
           getFile={() => downloadEstimatePdf(estimate.id)}
         />
-        <Link className="secondary-button lead-row__open" to={`${leadPath}/estimate`}>
+        <Link className="button button--primary lead-row__open" to={`${leadPath}/estimate`}>
           {estimate.status === "draft" ? "Continue estimate" : "View details"}
         </Link>
       </> : <Link className="secondary-button lead-row__open" to={leadPath}>Open lead</Link>}
