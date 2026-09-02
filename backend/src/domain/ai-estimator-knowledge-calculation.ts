@@ -269,6 +269,18 @@ export function multiplyMoneyByQuantity(
   );
 }
 
+export function calculateSlabRateEstimatedCost(input: {
+  unitRatePaise: number;
+  quantity: string;
+  quantityScale: number;
+}): number {
+  return multiplyMoneyByQuantity(
+    input.unitRatePaise,
+    input.quantity,
+    input.quantityScale
+  );
+}
+
 export function calculateProcurementQuantity(input: {
   quantity: string;
   quantityScale: number;

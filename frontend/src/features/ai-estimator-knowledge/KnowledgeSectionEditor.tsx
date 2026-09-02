@@ -1,9 +1,13 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { Button } from "../../components/ui/Button";
 import { Checkbox, Field, Input, Select, Textarea } from "../../components/ui/Field";
 import { InlineMessage } from "../../components/ui/InlineMessage";
 import { KnowledgeRepeater } from "./KnowledgeRepeater";
+import {
+  KnowledgeQuantitySlabBuilder,
+  type KnowledgeUomCatalogState
+} from "./KnowledgeQuantitySlabBuilder";
 import { KnowledgeSpecificationBuilder } from "./KnowledgeSpecificationBuilder";
 import {
   KNOWLEDGE_SECTION_LABELS,
@@ -29,7 +33,7 @@ import {
 const ARRAY_FIELDS = {
   overview: [],
   pricing: ["specifications", "brands", "priceEntries"],
-  "quantity-margin": ["quantitySlabs"],
+  "quantity-margin": [],
   scope: ["exclusions"],
   recommendations: ["recommendations"],
   quality: ["parameters"],
@@ -72,6 +76,10 @@ export interface KnowledgeSectionEditorProps {
   readonly resetKey: string;
   readonly specificationScopeKey?: string;
   readonly specificationReferenceIds?: readonly string[];
+  readonly slabSpecificationReferenceIds?: readonly string[];
+  readonly pricingSpecifications?: KnowledgeJsonValue;
+  readonly uomCatalogState?: KnowledgeUomCatalogState;
+  readonly pricingAfterSpecifications?: ReactNode;
   readonly validationAttempt?: number;
   readonly serverIssues?: readonly KnowledgeValidationIssue[];
   readonly onChange: (payload: KnowledgeJsonObject) => void;
@@ -143,6 +151,10 @@ export function KnowledgeSectionEditor({
   resetKey,
   specificationScopeKey,
   specificationReferenceIds = [],
+  slabSpecificationReferenceIds = [],
+  pricingSpecifications,
+  uomCatalogState = { status: "ready" },
+  pricingAfterSpecifications,
   validationAttempt = 0,
   serverIssues = [],
   onChange,
@@ -151,8 +163,12 @@ export function KnowledgeSectionEditor({
   onQuickAdd
 }: KnowledgeSectionEditorProps) {
   const issues = useMemo(
-    () => [...validateKnowledgeSection(sectionKey, payload), ...serverIssues],
-    [payload, sectionKey, serverIssues]
+    () => [...validateKnowledgeSection(sectionKey, payload, {
+      specifications: pricingSpecifications,
+      uoms: masters.uoms,
+      uomCatalogStatus: uomCatalogState.status
+    }), ...serverIssues],
+    [masters.uoms, payload, pricingSpecifications, sectionKey, serverIssues, uomCatalogState.status]
   );
   const validationSummaryRef = useRef<HTMLDivElement>(null);
   useEffect(() => { onValidationChange(issues.length === 0); }, [issues.length, onValidationChange, resetKey]);
@@ -167,6 +183,12 @@ export function KnowledgeSectionEditor({
     const next = { ...payload } as Record<string, KnowledgeJsonValue>;
     if (value === undefined || value === "") delete next[key];
     else next[key] = value;
+    if (
+      key === "quantitySlabs" &&
+      Array.isArray(value) &&
+      value.length > 0 &&
+      !Object.prototype.hasOwnProperty.call(payload, "gapBehavior")
+    ) next.gapBehavior = "no_adjustment";
     onChange(next);
   }
 
@@ -184,12 +206,41 @@ export function KnowledgeSectionEditor({
       {issues.length ? <div ref={validationSummaryRef} className="knowledge-validation-summary" role="alert" tabIndex={-1}><strong>Review {issues.length} section issue{issues.length === 1 ? "" : "s"}</strong><ul>{issues.map((issue) => <li key={`${issue.path}-${issue.message}`}><span>{validationPathLabel(issue.path)}: </span>{issue.message}</li>)}</ul></div> : null}
 
       {sectionKey === "quantity-margin" ? (
-        <div className="knowledge-form-grid">
-          <EnumField id="quantity-gap-behavior" label="Gap behavior" value={stringValue(payload.gapBehavior)} values={["reject", "no_adjustment"]} disabled={readOnly} onChange={(value) => change("gapBehavior", value || undefined)} />
-          {(["startMarginBps", "bottomMarginBps", "pmcMarkupBps", "wastageBps"] as const).map((field) => (
-            <NumberField key={field} field={field} label={BPS_LABELS[field]} value={payload[field]} disabled={readOnly} max={field === "startMarginBps" || field === "bottomMarginBps" ? 9999 : undefined} onChange={(value) => change(field, value)} />
-          ))}
-        </div>
+        <>
+          <div className="knowledge-form-grid">
+            {(["startMarginBps", "bottomMarginBps", "pmcMarkupBps", "wastageBps"] as const).map((field) => (
+              <NumberField key={field} field={field} label={BPS_LABELS[field]} value={payload[field]} disabled={readOnly} max={field === "startMarginBps" || field === "bottomMarginBps" ? 9999 : undefined} onChange={(value) => change(field, value)} />
+            ))}
+          </div>
+          <KnowledgeQuantitySlabBuilder
+            value={payload.slabRates}
+            specifications={pricingSpecifications}
+            uoms={masters.uoms ?? []}
+            uomCatalogState={uomCatalogState}
+            issues={issues.filter((issue) => issue.path === "slabRates" || issue.path.startsWith("slabRates."))}
+            readOnly={readOnly}
+            onDirty={onDirty}
+            onChange={(value) => change("slabRates", value)}
+          />
+          {objectArray(payload.quantitySlabs).length > 0 ? (
+            <StructuredArrayEditor
+              field="quantitySlabs"
+              label="Legacy adjustment slabs"
+              value={payload.quantitySlabs}
+              sectionPayload={payload}
+              masters={masters}
+              relationshipBaskets={relationshipBaskets}
+              relationshipItems={relationshipItems}
+              currentMainLineId={currentMainLineId}
+              disabled={readOnly}
+              canQuickAdd={canQuickAdd}
+              showAdd={false}
+              onQuickAdd={onQuickAdd}
+              onDirty={onDirty}
+              onChange={(value) => change("quantitySlabs", value)}
+            />
+          ) : null}
+        </>
       ) : null}
 
       {sectionKey === "scope" ? (
@@ -200,16 +251,19 @@ export function KnowledgeSectionEditor({
       ) : null}
 
       {ARRAY_FIELDS[sectionKey].map((field) => field === "specifications" ? (
-        <KnowledgeSpecificationBuilder
-          key={`${specificationScopeKey ?? resetKey}-${field}`}
-          value={payload.specifications}
-          priceEntries={payload.priceEntries}
-          referencedSpecificationIds={specificationReferenceIds}
-          readOnly={readOnly}
-          issues={issues.filter((issue) => issue.path === "specifications" || issue.path.startsWith("specifications."))}
-          onDirty={onDirty}
-          onChange={(value) => change(field, value)}
-        />
+        <Fragment key={`${specificationScopeKey ?? resetKey}-${field}`}>
+          <KnowledgeSpecificationBuilder
+            value={payload.specifications}
+            priceEntries={payload.priceEntries}
+            referencedSpecificationIds={specificationReferenceIds}
+            slabReferencedSpecificationIds={slabSpecificationReferenceIds}
+            readOnly={readOnly}
+            issues={issues.filter((issue) => issue.path === "specifications" || issue.path.startsWith("specifications."))}
+            onDirty={onDirty}
+            onChange={(value) => change(field, value)}
+          />
+          {pricingAfterSpecifications}
+        </Fragment>
       ) : (
         <StructuredArrayEditor
           key={`${resetKey}-${field}`}
@@ -258,17 +312,6 @@ function NumberField({ field, label, value, disabled, max, onChange }: {
   return <Field id={`knowledge-${field}`} label={label} hint="Integer; 100 bps = 1%.">{(props) => <Input {...props} type="number" min={0} max={max} step={1} disabled={disabled} value={typeof value === "number" ? value : ""} onChange={(event) => onChange(event.target.value === "" ? undefined : Number(event.target.value))} />}</Field>;
 }
 
-function EnumField({ id, label, value, values, disabled, onChange }: {
-  readonly id: string;
-  readonly label: string;
-  readonly value: string;
-  readonly values: readonly string[];
-  readonly disabled: boolean;
-  readonly onChange: (value: string) => void;
-}) {
-  return <Field id={id} label={label}>{(props) => <Select {...props} disabled={disabled} value={value} onChange={(event) => onChange(event.target.value)}><option value="">Not configured</option>{values.map((item) => <option key={item} value={item}>{item.replaceAll("_", " ")}</option>)}</Select>}</Field>;
-}
-
 function MasterSelect({ id, label, type, value, masters, disabled, quickAddDisabled, onChange, onQuickAdd }: {
   readonly id: string;
   readonly label: string;
@@ -299,7 +342,7 @@ function MasterMultiSelect({ id, label, type, values, masters, disabled, quickAd
 
 interface EditorRow { readonly id: string; readonly value: KnowledgeJsonObject }
 
-function StructuredArrayEditor({ field, label, value, sectionPayload, masters, relationshipBaskets, relationshipItems, currentMainLineId, disabled, canQuickAdd, onQuickAdd, onDirty, onChange }: {
+function StructuredArrayEditor({ field, label, value, sectionPayload, masters, relationshipBaskets, relationshipItems, currentMainLineId, disabled, canQuickAdd, showAdd = true, onQuickAdd, onDirty, onChange }: {
   readonly field: string;
   readonly label: string;
   readonly value: KnowledgeJsonValue | undefined;
@@ -310,6 +353,7 @@ function StructuredArrayEditor({ field, label, value, sectionPayload, masters, r
   readonly currentMainLineId: string;
   readonly disabled: boolean;
   readonly canQuickAdd: boolean;
+  readonly showAdd?: boolean;
   readonly onQuickAdd: KnowledgeSectionEditorProps["onQuickAdd"];
   readonly onDirty: () => void;
   readonly onChange: (value: readonly KnowledgeJsonValue[]) => void;
@@ -319,7 +363,7 @@ function StructuredArrayEditor({ field, label, value, sectionPayload, masters, r
     const values = rows.map((row, rowIndex) => rowIndex === index ? next : row.value);
     onChange(values);
   }
-  return <KnowledgeRepeater label={label} addLabel={field === "brands" ? "Add vendor" : `Add ${singular(label)}`} items={rows} disabled={disabled} readOnly={field === "brands" && disabled} emptyMessage={`No ${label.toLowerCase()} configured.`}
+  return <KnowledgeRepeater label={label} addLabel={field === "brands" ? "Add vendor" : `Add ${singular(label)}`} items={rows} disabled={disabled} showAdd={showAdd} readOnly={field === "brands" && disabled} emptyMessage={`No ${label.toLowerCase()} configured.`}
     onAdd={() => { onDirty(); onChange([...rows.map(({ value: row }) => row), newRow(field)]); }}
     onRemove={(id) => { onDirty(); onChange(rows.filter((row) => row.id !== id).map((row) => row.value)); }}
     onMove={(id, direction) => { onDirty(); const current = [...rows]; const from = current.findIndex((row) => row.id === id); const to = direction === "up" ? from - 1 : from + 1; if (from < 0 || to < 0 || to >= current.length) return; [current[from], current[to]] = [current[to], current[from]]; onChange(current.map((row) => row.value)); }}
@@ -606,7 +650,7 @@ function sectionHelp(sectionKey: KnowledgeSectionKey): string {
   return ({
     overview: "Set the item identity and compatible reusable values.",
     pricing: "Maintain specifications, immutable price-version commands, and internal pricing notes. Enter price amounts in rupees.",
-    "quantity-margin": "Configure quantity slabs and basis-point margins. Preview calculations remain server-owned.",
+    "quantity-margin": "Configure priced Quantity slabs and shared basis-point margins. Legacy adjustment slabs retain their existing calculation behavior.",
     scope: "Define applicable modes, surfaces, and explicit exclusions.",
     recommendations: "Relate this item to other stable Basket and Main Line IDs.",
     quality: "Define customer-facing and technical quality parameters.",

@@ -1,5 +1,14 @@
-import type { KnowledgeJsonObject, KnowledgeJsonValue, KnowledgeSectionKey } from "./knowledgeTypes";
+import {
+  estimateSlabCostPaise,
+  parseScaledQuantity
+} from "./knowledgeSlabRate";
 import { parseKnowledgeSpecifications } from "./knowledgeSpecificationConfiguration";
+import type {
+  KnowledgeJsonObject,
+  KnowledgeJsonValue,
+  KnowledgeMaster,
+  KnowledgeSectionKey
+} from "./knowledgeTypes";
 
 export interface KnowledgeValidationIssue {
   readonly path: string;
@@ -8,7 +17,17 @@ export interface KnowledgeValidationIssue {
 
 const DECIMAL = /^(?:0|[1-9]\d*)(?:\.\d+)?$/u;
 
-export function validateKnowledgeSection(sectionKey: KnowledgeSectionKey, payload: KnowledgeJsonObject): readonly KnowledgeValidationIssue[] {
+export interface KnowledgeSectionValidationContext {
+  readonly specifications?: KnowledgeJsonValue;
+  readonly uoms?: readonly KnowledgeMaster[];
+  readonly uomCatalogStatus?: "loading" | "ready" | "error";
+}
+
+export function validateKnowledgeSection(
+  sectionKey: KnowledgeSectionKey,
+  payload: KnowledgeJsonObject,
+  context: KnowledgeSectionValidationContext = {}
+): readonly KnowledgeValidationIssue[] {
   const issues: KnowledgeValidationIssue[] = [];
   const rows = (key: string) => Array.isArray(payload[key]) ? payload[key].filter(isObject) : [];
   const requireString = (row: KnowledgeJsonObject, key: string, path: string) => {
@@ -35,6 +54,93 @@ export function validateKnowledgeSection(sectionKey: KnowledgeSectionKey, payloa
       requireCanonical(row.minimumQuantity, `${path}.minimumQuantity`, issues);
       if (row.maximumQuantity !== null && row.maximumQuantity !== undefined) requireCanonical(row.maximumQuantity, `${path}.maximumQuantity`, issues);
       if (typeof row.minimumQuantity === "string" && typeof row.maximumQuantity === "string" && Number(row.minimumQuantity) >= Number(row.maximumQuantity)) issues.push({ path: `${path}.maximumQuantity`, message: "Maximum quantity must be greater than minimum quantity." });
+    });
+    const slabRates = rows("slabRates");
+    if (slabRates.length > 0 && context.uomCatalogStatus && context.uomCatalogStatus !== "ready") {
+      issues.push({ path: "slabRates", message: "Load the complete Unit of measure list before saving Quantity slabs." });
+    }
+    const parsedSpecifications = context.specifications === undefined
+      ? null
+      : parseKnowledgeSpecifications(context.specifications);
+    const invalidSpecificationIndices = new Set(parsedSpecifications?.issues.flatMap(({ path }) => {
+      const match = /^specifications\.(\d+)\.name$/u.exec(path);
+      return match ? [Number(match[1])] : [];
+    }) ?? []);
+    const specificationIds = new Set(parsedSpecifications?.specifications
+      .filter((specification, index) => specification.id.trim() && specification.name.trim() && !invalidSpecificationIndices.has(index))
+      .map(({ id }) => id) ?? []);
+    const rowIds = new Set<string>();
+    const tuples = new Set<string>();
+    slabRates.forEach((row, index) => {
+      const path = `slabRates.${index}`;
+      requireString(row, "id", path);
+      if (!string(row.specificationId)) {
+        issues.push({ path: `${path}.specificationId`, message: "Specification is required." });
+      }
+      if (!string(row.uomId)) {
+        issues.push({ path: `${path}.uomId`, message: "Unit of measure is required." });
+      }
+      const id = string(row.id);
+      if (id && rowIds.has(id)) issues.push({ path: `${path}.id`, message: "Quantity slab IDs must be unique." });
+      if (id) rowIds.add(id);
+
+      const specificationId = string(row.specificationId);
+      if (specificationId && parsedSpecifications && !specificationIds.has(specificationId)) {
+        issues.push({ path: `${path}.specificationId`, message: "Choose an available Specification from Pricing." });
+      }
+
+      const uomId = string(row.uomId);
+      const uom = context.uoms?.find(({ id: candidateId }) => candidateId === uomId);
+      const quantity = typeof row.quantity === "string" ? row.quantity : "";
+      let normalizedTupleQuantity: string | null = null;
+      if (!quantity) {
+        issues.push({ path: `${path}.quantity`, message: "Quantity is required." });
+      } else if (uom && typeof uom.decimalScale === "number") {
+        const parsedQuantity = parseScaledQuantity(quantity, uom.decimalScale);
+        if (parsedQuantity.status !== "valid") {
+          issues.push({
+            path: `${path}.quantity`,
+            message: parsedQuantity.reason === "scale"
+              ? `Quantity supports up to ${uom.decimalScale} decimal place${uom.decimalScale === 1 ? "" : "s"} for this Unit.`
+              : parsedQuantity.reason === "positive"
+                ? "Quantity must be greater than zero."
+                : "Enter a positive canonical decimal Quantity."
+          });
+        } else {
+          normalizedTupleQuantity = parsedQuantity.scaledQuantity.toString();
+        }
+      } else if (!DECIMAL.test(quantity) || /^0(?:\.0+)?$/u.test(quantity)) {
+        issues.push({ path: `${path}.quantity`, message: "Enter a positive canonical decimal Quantity." });
+      } else {
+        normalizedTupleQuantity = normalizeCanonicalDecimal(quantity);
+      }
+
+      const unitRatePaise = row.unitRatePaise;
+      if (!Number.isSafeInteger(unitRatePaise) || (unitRatePaise as number) < 0) {
+        issues.push({ path: `${path}.unitRatePaise`, message: "Enter a non-negative Unit rate in rupees with up to two decimal places." });
+      }
+      if (Object.hasOwn(row, "estimatedCostPaise")) {
+        issues.push({ path: `${path}.estimatedCostPaise`, message: "Estimated cost is calculated and must not be stored." });
+      }
+
+      if (specificationId && uomId && normalizedTupleQuantity !== null) {
+        const tuple = JSON.stringify([specificationId, uomId, normalizedTupleQuantity]);
+        if (tuples.has(tuple)) {
+          issues.push({ path, message: "Specification, Unit, and Quantity must be unique within Quantity slabs." });
+        }
+        tuples.add(tuple);
+      }
+      if (
+        uom &&
+        typeof uom.decimalScale === "number" &&
+        Number.isSafeInteger(unitRatePaise) &&
+        (unitRatePaise as number) >= 0 &&
+        quantity &&
+        parseScaledQuantity(quantity, uom.decimalScale).status === "valid" &&
+        estimateSlabCostPaise(quantity, unitRatePaise as number, uom.decimalScale) === null
+      ) {
+        issues.push({ path: `${path}.unitRatePaise`, message: "Quantity × Unit rate exceeds the supported money range." });
+      }
     });
   }
   if (sectionKey === "scope") rows("exclusions").forEach((row, index) => {
@@ -82,6 +188,11 @@ function requireCanonical(value: KnowledgeJsonValue | undefined, path: string, i
 function string(value: KnowledgeJsonValue | undefined): string { return typeof value === "string" ? value.trim() : ""; }
 function isObject(value: KnowledgeJsonValue): value is KnowledgeJsonObject { return value !== null && typeof value === "object" && !Array.isArray(value); }
 function label(value: string): string { return value.replace(/([A-Z])/gu, " $1").replace(/^./u, (char) => char.toUpperCase()); }
+function normalizeCanonicalDecimal(value: string): string {
+  const [whole, fraction = ""] = value.split(".");
+  const normalizedFraction = fraction.replace(/0+$/u, "");
+  return normalizedFraction ? `${whole}.${normalizedFraction}` : whole!;
+}
 function hasCycle(edges: ReadonlyMap<string, readonly string[]>): boolean {
   const visiting = new Set<string>(); const visited = new Set<string>();
   const visit = (id: string): boolean => { if (visiting.has(id)) return true; if (visited.has(id)) return false; visiting.add(id); for (const next of edges.get(id) ?? []) if (visit(next)) return true; visiting.delete(id); visited.add(id); return false; };

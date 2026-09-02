@@ -3,6 +3,7 @@ import mongoose, { type ClientSession, type Model } from "mongoose";
 
 import type {
   KnowledgeBasketDeletionBlockerCode,
+  KnowledgePrioritySemanticTier,
   KnowledgeTaxVersion
 } from "../contracts/ai-estimator-knowledge.js";
 import type { KnowledgeMasterStatus, KnowledgeTaxTreatment, KnowledgeVersionStatus } from "../domain/ai-estimator-knowledge.js";
@@ -18,6 +19,12 @@ import {
   findOverlappingEffectiveWindows,
   validateEffectiveWindow
 } from "../domain/ai-estimator-knowledge-validation.js";
+import {
+  findCanonicalKnowledgePriorityById,
+  findCanonicalKnowledgePriorityByTier,
+  isKnowledgePrioritySemanticTier,
+  type CanonicalKnowledgePriority
+} from "../domain/ai-estimator-knowledge-priority.js";
 import { ApiError } from "../middleware/errors.js";
 import { AiEstimatorKnowledgeBasketModel } from "../models/AiEstimatorKnowledgeBasket.js";
 import { AiEstimatorKnowledgeMainLineModel } from "../models/AiEstimatorKnowledgeMainLine.js";
@@ -97,6 +104,7 @@ export interface AiEstimatorKnowledgeMasterDto {
   readonly status: KnowledgeMasterStatus;
   readonly version: number;
   readonly decimalScale?: number;
+  readonly semanticTier?: KnowledgePrioritySemanticTier;
   readonly taxVersions?: readonly KnowledgeTaxVersion[];
   readonly createdById: string;
   readonly updatedById: string;
@@ -575,6 +583,9 @@ export function createAiEstimatorKnowledgeReferenceService(
         const current = await model.findById(id).session(session).lean().exec() as Row | null;
         requireCurrent(current, input.expectedVersion);
         if (current.status === "archived") archived();
+        if (masterType === "priorities") {
+          assertCanonicalPriorityGenericUpdate(current, input);
+        }
         const timestamp = now();
         const set: Record<string, unknown> = { updatedById: authorized.id, updatedAt: timestamp };
         const codeNormalized = input.code === undefined ? String(current.codeNormalized) : normalizeKnowledgeIdentity(input.code);
@@ -594,21 +605,30 @@ export function createAiEstimatorKnowledgeReferenceService(
           set.displayOrder = input.displayOrder;
         }
         if (input.status !== undefined) set.status = input.status;
+        let dependencyEpochFilter: Record<string, unknown> = {};
         if (masterType === "uoms" && input.decimalScale !== undefined) {
-          if (
-            Number(current.decimalScale) !== input.decimalScale &&
-            await uomHasAnyKnowledgeReference(id, session)
-          ) {
-            throw new ApiError(
-              409,
-              "REFERENCED_UOM_SCALE_IMMUTABLE",
-              "UOM decimal scale cannot change after the UOM has been referenced."
-            );
+          if (Number(current.decimalScale) !== input.decimalScale) {
+            if (await uomHasAnyKnowledgeReference(id, session)) {
+              throw new ApiError(
+                409,
+                "REFERENCED_UOM_SCALE_IMMUTABLE",
+                "UOM decimal scale cannot change after the UOM has been referenced."
+              );
+            }
+            const dependencyEpoch = safeDependencyEpoch(current.dependencyEpoch, "UOM");
+            dependencyEpochFilter = dependencyEpoch === 0
+              ? { $or: [{ dependencyEpoch: 0 }, { dependencyEpoch: { $exists: false } }] }
+              : { dependencyEpoch };
           }
           set.decimalScale = input.decimalScale;
         }
         const updated = await model.findOneAndUpdate(
-          { _id: id, version: input.expectedVersion, status: { $ne: "archived" } },
+          {
+            _id: id,
+            version: input.expectedVersion,
+            status: { $ne: "archived" },
+            ...dependencyEpochFilter
+          },
           { $set: set, $inc: { version: 1 } },
           { returnDocument: "after", runValidators: true, session }
         ).lean().exec() as Row | null;
@@ -656,21 +676,33 @@ export function createAiEstimatorKnowledgeReferenceService(
         requireCurrent(current, input.expectedVersion);
         if (current.status === "archived") archived();
         await requireNoMasterReferences(masterType, id, session);
-        const modeDependencyEpoch = masterType === "modes"
-          ? safeDependencyEpoch(current.dependencyEpoch, "Mode")
+        if (masterType === "priorities" && canonicalPriorityIdentityForRow(current)) {
+          canonicalPriorityImmutable();
+        }
+        const guardedDependencyEpoch = masterType === "modes" ||
+          masterType === "uoms" ||
+          masterType === "priorities"
+          ? safeDependencyEpoch(
+              current.dependencyEpoch,
+              masterType === "modes"
+                ? "Mode"
+                : masterType === "uoms"
+                  ? "UOM"
+                  : "Priority"
+            )
           : null;
-        const modeDependencyEpochFilter = modeDependencyEpoch === null
+        const guardedDependencyEpochFilter = guardedDependencyEpoch === null
           ? {}
-          : modeDependencyEpoch === 0
+          : guardedDependencyEpoch === 0
             ? { $or: [{ dependencyEpoch: 0 }, { dependencyEpoch: { $exists: false } }] }
-            : { dependencyEpoch: modeDependencyEpoch };
+            : { dependencyEpoch: guardedDependencyEpoch };
         const timestamp = now();
         const updated = await model.findOneAndUpdate(
           {
             _id: id,
             version: input.expectedVersion,
             status: { $ne: "archived" },
-            ...modeDependencyEpochFilter
+            ...guardedDependencyEpochFilter
           },
           { $set: { status: "archived", archivedAt: timestamp, archivedById: authorized.id, updatedAt: timestamp, updatedById: authorized.id }, $inc: { version: 1 } },
           { returnDocument: "after", runValidators: true, session }
@@ -772,7 +804,10 @@ function basketReferenceCount(payload: unknown, basketId: string): number {
     }, 0);
 }
 
-function safeDependencyEpoch(value: unknown, label: "Basket" | "Mode" = "Basket"): number {
+function safeDependencyEpoch(
+  value: unknown,
+  label: "Basket" | "Mode" | "Priority" | "UOM" = "Basket"
+): number {
   if (value === undefined || value === null) return 0;
   if (!Number.isSafeInteger(value) || Number(value) < 0) {
     throw new Error(`Knowledge ${label} dependency epoch is corrupt.`);
@@ -1009,7 +1044,8 @@ async function uomHasAnyKnowledgeReference(
       $or: [
         { "payload.uomId": uomId },
         { "payload.productivity.uomId": uomId },
-        { "payload.priceEntries.uomId": uomId }
+        { "payload.priceEntries.uomId": uomId },
+        { "payload.slabRates.uomId": uomId }
       ]
     }).session(session),
     AiEstimatorKnowledgePriceVersionModel.exists({ uomId }).session(session)
@@ -1176,7 +1212,7 @@ async function requireNoMasterReferences(masterType: AiEstimatorKnowledgeMasterT
   const revisions = await AiEstimatorKnowledgeRevisionModel.find({ mainLineId: { $in: mainLines.map((row) => row._id) }, status: { $in: ["draft", "active"] } }).select({ _id: 1 }).session(session).lean().exec();
   const revisionIds = revisions.map((row) => row._id);
   const sectionPaths: Record<AiEstimatorKnowledgeMasterType, string[]> = {
-    uoms: ["payload.uomId", "payload.productivity.uomId", "payload.priceEntries.uomId"],
+    uoms: ["payload.uomId", "payload.productivity.uomId", "payload.priceEntries.uomId", "payload.slabRates.uomId"],
     vendors: ["payload.priceEntries.vendorId"],
     taxes: ["payload.priceEntries.taxRuleId"],
     priorities: ["payload.priorityId", "payload.recommendations.priorityId"],
@@ -1218,6 +1254,9 @@ function masterDto(
   row: Row,
   taxVersions?: readonly KnowledgeTaxVersion[]
 ): AiEstimatorKnowledgeMasterDto {
+  const canonicalPriority = masterType === "priorities"
+    ? canonicalPriorityForRow(row)
+    : null;
   return {
     id: String(row._id),
     masterType,
@@ -1228,12 +1267,56 @@ function masterDto(
     status: row.status as KnowledgeMasterStatus,
     version: Number(row.version),
     ...(masterType === "uoms" ? { decimalScale: Number(row.decimalScale) } : {}),
+    ...(canonicalPriority ? { semanticTier: canonicalPriority.semanticTier } : {}),
     ...(masterType === "taxes" ? { taxVersions: taxVersions ?? [] } : {}),
     createdById: String(row.createdById),
     updatedById: String(row.updatedById),
     createdAt: iso(row.createdAt),
     updatedAt: iso(row.updatedAt)
   };
+}
+
+function canonicalPriorityForRow(row: Row): CanonicalKnowledgePriority | null {
+  const id = typeof row._id === "string" ? row._id : String(row._id);
+  const byId = findCanonicalKnowledgePriorityById(id);
+  const tier = isKnowledgePrioritySemanticTier(row.semanticTier)
+    ? row.semanticTier
+    : null;
+  const canonical = byId ?? (tier ? findCanonicalKnowledgePriorityByTier(tier) : null);
+  if (!canonical) return null;
+  return row._id === canonical.id &&
+    row.semanticTier === canonical.semanticTier &&
+    row.code === canonical.code &&
+    row.name === canonical.name &&
+    row.displayOrder === canonical.displayOrder &&
+    row.status === "active"
+    ? canonical
+    : null;
+}
+
+function canonicalPriorityIdentityForRow(row: Row): CanonicalKnowledgePriority | null {
+  const id = typeof row._id === "string" ? row._id : String(row._id);
+  const byId = findCanonicalKnowledgePriorityById(id);
+  if (byId) return byId;
+  return isKnowledgePrioritySemanticTier(row.semanticTier)
+    ? findCanonicalKnowledgePriorityByTier(row.semanticTier)
+    : null;
+}
+
+function assertCanonicalPriorityGenericUpdate(
+  current: Row,
+  input: AiEstimatorKnowledgeUpdateMasterInput
+): void {
+  const canonical = canonicalPriorityIdentityForRow(current);
+  if (!canonical) return;
+  if (
+    (input.code !== undefined && input.code !== current.code) ||
+    (input.name !== undefined && input.name !== current.name) ||
+    (input.displayOrder !== undefined && input.displayOrder !== current.displayOrder) ||
+    (input.status !== undefined && input.status !== current.status)
+  ) {
+    canonicalPriorityImmutable();
+  }
 }
 
 async function taxVersionsByRuleIds(
@@ -1301,4 +1384,5 @@ function archived(): never { throw new ApiError(409, "RESOURCE_ARCHIVED", "Archi
 function versionConflict(): never { throw new ApiError(409, "VERSION_CONFLICT", "The knowledge resource changed elsewhere."); }
 function duplicateIdentity(): never { throw new ApiError(409, "DUPLICATE_IDENTITY", "A non-archived knowledge resource already uses that identity."); }
 function referenceConflict(message: string): never { throw new ApiError(409, "ACTIVE_REFERENCE_CONFLICT", message); }
+function canonicalPriorityImmutable(): never { throw new ApiError(409, "CANONICAL_PRIORITY_IMMUTABLE", "Canonical Priority identity and availability are system managed."); }
 function basketDeleteBlocked(): never { throw new ApiError(409, "BASKET_DELETE_BLOCKED", "The Basket has permanent-deletion blockers and is archive-only."); }

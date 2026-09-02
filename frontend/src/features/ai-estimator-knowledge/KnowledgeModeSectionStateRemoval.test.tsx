@@ -1,7 +1,8 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   createRef,
-  type ComponentProps
+  type ComponentProps,
+  type ReactNode
 } from "react";
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -32,21 +33,25 @@ vi.mock("./knowledgeApi", async (importOriginal) => {
 });
 
 vi.mock("./KnowledgeSectionEditor", () => ({
-  KnowledgeSectionEditor: ({ sectionKey, onChange, onDirty }: {
+  KnowledgeSectionEditor: ({ sectionKey, pricingAfterSpecifications, onChange, onDirty }: {
     readonly sectionKey: KnowledgeSectionKey;
+    readonly pricingAfterSpecifications?: ReactNode;
     readonly onChange: (payload: KnowledgeJsonObject) => void;
     readonly onDirty: () => void;
   }) => (
-    <button type="button" onClick={() => {
-      onChange(
-        sectionKey === "pricing"
-          ? { specifications: [{ id: "spec-mode-1", name: "Updated specification" }] }
-          : { startMarginBps: 250 }
-      );
-      onDirty();
-    }}>
-      Edit {sectionKey}
-    </button>
+    <>
+      <button type="button" onClick={() => {
+        onChange(
+          sectionKey === "pricing"
+            ? { specifications: [{ id: "spec-mode-1", name: "Updated specification" }] }
+            : { startMarginBps: 250 }
+        );
+        onDirty();
+      }}>
+        Edit {sectionKey}
+      </button>
+      {sectionKey === "pricing" ? pricingAfterSpecifications : null}
+    </>
   )
 }));
 
@@ -86,21 +91,24 @@ const item: KnowledgeItemDetail = {
 const applicabilityBySection = {
   advanced: "configured",
   pricing: "not_applicable",
+  overview: "configured",
   "quantity-margin": "configured"
 } as const satisfies Readonly<
-  Record<"advanced" | "pricing" | "quantity-margin", KnowledgeSectionApplicability>
+  Record<"advanced" | "pricing" | "overview" | "quantity-margin", KnowledgeSectionApplicability>
 >;
 
 const versionBySection = {
   advanced: 11,
   pricing: 12,
+  overview: 10,
   "quantity-margin": 13
 } as const;
 
 function section(
-  sectionKey: "advanced" | "pricing" | "quantity-margin",
+  sectionKey: "advanced" | "pricing" | "overview" | "quantity-margin",
   applicability: KnowledgeSectionApplicability = applicabilityBySection[sectionKey],
-  payload: KnowledgeJsonObject = {}
+  payload: KnowledgeJsonObject = {},
+  version: number = versionBySection[sectionKey]
 ): KnowledgeSectionEnvelope<KnowledgeJsonObject> {
   return {
     id: `section-${sectionKey}`,
@@ -109,13 +117,13 @@ function section(
     sectionKey,
     applicability,
     payload,
-    version: versionBySection[sectionKey],
+    version,
     ...actorMetadata
   };
 }
 
 function savedSection(
-  sectionKey: "advanced" | "pricing" | "quantity-margin",
+  sectionKey: "advanced" | "pricing" | "overview" | "quantity-margin",
   input: {
     readonly applicability?: KnowledgeSectionApplicability;
     readonly payload: KnowledgeJsonObject;
@@ -160,6 +168,24 @@ const modes: readonly KnowledgeMaster[] = [
   }
 ];
 
+const priorities: readonly KnowledgeMaster[] = [
+  ["priority-low", "Low", "low"],
+  ["priority-medium", "Medium", "medium"],
+  ["priority-high", "High", "high"],
+  ["priority-non-negotiable", "Non Negotiable", "non_negotiable"]
+].map(([id, name, semanticTier], displayOrder) => ({
+  id: id!,
+  masterType: "priorities" as const,
+  code: id!.toUpperCase(),
+  name: name!,
+  description: null,
+  displayOrder,
+  status: "active" as const,
+  semanticTier: semanticTier as "low" | "medium" | "high" | "non_negotiable",
+  version: 1,
+  ...actorMetadata
+}));
+
 function renderPanel(
   ref: React.RefObject<KnowledgeModePanelHandle | null>,
   panelModes: readonly KnowledgeMaster[] = modes
@@ -170,7 +196,7 @@ function renderPanel(
   const props: ComponentProps<typeof KnowledgeModePanel> = {
     item,
     revisionId: "revision-1",
-    masters: { modes: panelModes },
+    masters: { modes: panelModes, priorities },
     relationshipBaskets: [],
     relationshipItems: [],
     editable: true,
@@ -187,7 +213,7 @@ function renderPanel(
       <KnowledgeModePanel
         ref={ref}
         {...props}
-        masters={{ modes: currentModes }}
+        masters={{ modes: currentModes, priorities }}
       />
     </QueryClientProvider>
   );
@@ -217,7 +243,7 @@ describe("Knowledge Mode section-state removal", () => {
     );
   });
 
-  it("loads Mode configuration, Pricing, and Quantity in order and preserves independent section metadata", async () => {
+  it("loads the supporting Overview with Mode configuration, Pricing, and Quantity while preserving independent section metadata", async () => {
     const user = userEvent.setup();
     const ref = createRef<KnowledgeModePanelHandle>();
     renderPanel(ref);
@@ -228,6 +254,7 @@ describe("Knowledge Mode section-state removal", () => {
     expect(vi.mocked(knowledgeApi.getKnowledgeSection).mock.calls.map((call) => call[2])).toEqual([
       "advanced",
       "pricing",
+      "overview",
       "quantity-margin"
     ]);
     expect(screen.queryByRole("button", { name: "Edit UOM" })).not.toBeInTheDocument();
@@ -263,7 +290,7 @@ describe("Knowledge Mode section-state removal", () => {
     expect(vi.mocked(knowledgeApi.updateKnowledgeSection)).toHaveBeenCalledTimes(2);
     expect(screen.getByText("Section version 13")).toBeVisible();
     expect(screen.getByText("Section version 14")).toBeVisible();
-    expect(vi.mocked(knowledgeApi.getKnowledgeSection).mock.calls.some((call) => call[2] === "overview")).toBe(false);
+    expect(vi.mocked(knowledgeApi.getKnowledgeSection).mock.calls.some((call) => call[2] === "overview")).toBe(true);
     expect(vi.mocked(knowledgeApi.updateKnowledgeSection).mock.calls.some((call) => call[2] === "overview")).toBe(false);
   });
 
@@ -346,6 +373,345 @@ describe("Knowledge Mode section-state removal", () => {
     });
     expect(JSON.stringify(vi.mocked(knowledgeApi.updateKnowledgeSection).mock.calls[0]?.[3].payload))
       .not.toContain('"value"');
+  });
+
+  it("saves Priority through Overview in CAS order and rebases it onto the latest complete Overview payload", async () => {
+    const user = userEvent.setup();
+    vi.mocked(knowledgeApi.getKnowledgeSection).mockImplementation(
+      async (_mainLineId, _revisionId, sectionKey) => section(
+        sectionKey as "advanced" | "pricing" | "overview" | "quantity-margin",
+        applicabilityBySection[sectionKey as keyof typeof applicabilityBySection],
+        sectionKey === "overview"
+          ? {
+              uomId: "uom-original",
+              priorityId: "priority-medium",
+              surfaceIds: ["surface-preserve"],
+              hiddenCompatibility: { preserve: "original" }
+            }
+          : {}
+      )
+    );
+    vi.mocked(knowledgeApi.updateKnowledgeSection).mockImplementation(
+      async (_mainLineId, _revisionId, sectionKey, input) => savedSection(
+        sectionKey as "advanced" | "pricing" | "overview" | "quantity-margin",
+        input
+      )
+    );
+    const ref = createRef<KnowledgeModePanelHandle>();
+    const panel = renderPanel(ref);
+
+    await user.click(await screen.findByRole("button", { name: "Add component" }));
+    await user.type(screen.getByRole("textbox", { name: "Component label" }), "PMC mark");
+    await user.click(screen.getByRole("button", { name: "Edit pricing" }));
+    await user.selectOptions(screen.getByRole("combobox", { name: "Priority" }), "priority-high");
+    await user.click(screen.getByRole("button", { name: "Edit quantity-margin" }));
+
+    panel.queryClient.setQueryData(
+      knowledgeQueryKeys.section(item.mainLineId, "revision-1", "overview"),
+      section("overview", "configured", {
+        uomId: "uom-newer-server",
+        priorityId: "priority-low",
+        surfaceIds: ["surface-newer-server"],
+        hiddenCompatibility: { preserve: "newer" }
+      }, 15)
+    );
+
+    await act(async () => {
+      expect(await ref.current?.save()).toBe(true);
+    });
+
+    const calls = vi.mocked(knowledgeApi.updateKnowledgeSection).mock.calls;
+    expect(calls.map((call) => call[2])).toEqual([
+      "advanced",
+      "pricing",
+      "overview",
+      "quantity-margin"
+    ]);
+    expect(calls.map((call) => call[3].expectedAggregateVersion)).toEqual([7, 8, 9, 10]);
+    const overviewCall = calls.find((call) => call[2] === "overview");
+    expect(overviewCall?.[3]).toMatchObject({
+      expectedVersion: 15,
+      applicability: "configured",
+      payload: {
+        uomId: "uom-newer-server",
+        priorityId: "priority-high",
+        surfaceIds: ["surface-newer-server"],
+        hiddenCompatibility: { preserve: "newer" }
+      }
+    });
+  });
+
+  it("promotes a fresh not-configured Overview when selecting Priority and preserves the latest full payload", async () => {
+    const user = userEvent.setup();
+    vi.mocked(knowledgeApi.getKnowledgeSection).mockImplementation(
+      async (_mainLineId, _revisionId, sectionKey) => section(
+        sectionKey as "advanced" | "pricing" | "overview" | "quantity-margin",
+        sectionKey === "overview"
+          ? "not_configured"
+          : applicabilityBySection[sectionKey as keyof typeof applicabilityBySection],
+        sectionKey === "overview"
+          ? {
+              uomId: "uom-original",
+              surfaceIds: ["surface-original"],
+              hiddenCompatibility: { preserve: "original" }
+            }
+          : {}
+      )
+    );
+    vi.mocked(knowledgeApi.updateKnowledgeSection).mockImplementation(
+      async (_mainLineId, _revisionId, sectionKey, input) => savedSection(
+        sectionKey as "advanced" | "pricing" | "overview" | "quantity-margin",
+        input
+      )
+    );
+    const ref = createRef<KnowledgeModePanelHandle>();
+    const panel = renderPanel(ref);
+
+    await user.selectOptions(
+      await screen.findByRole("combobox", { name: "Priority" }),
+      "priority-non-negotiable"
+    );
+    panel.queryClient.setQueryData(
+      knowledgeQueryKeys.section(item.mainLineId, "revision-1", "overview"),
+      section("overview", "not_configured", {
+        uomId: "uom-latest",
+        surfaceIds: ["surface-latest"],
+        hiddenCompatibility: { preserve: "latest" }
+      }, 19)
+    );
+
+    await act(async () => {
+      expect(await ref.current?.save()).toBe(true);
+    });
+
+    expect(vi.mocked(knowledgeApi.updateKnowledgeSection)).toHaveBeenCalledOnce();
+    expect(vi.mocked(knowledgeApi.updateKnowledgeSection).mock.calls[0]).toEqual([
+      item.mainLineId,
+      "revision-1",
+      "overview",
+      {
+        expectedVersion: 19,
+        expectedAggregateVersion: 7,
+        applicability: "configured",
+        payload: {
+          uomId: "uom-latest",
+          surfaceIds: ["surface-latest"],
+          hiddenCompatibility: { preserve: "latest" },
+          priorityId: "priority-non-negotiable"
+        }
+      }
+    ]);
+  });
+
+  it("locks Priority for the full sequential Save Mode operation", async () => {
+    const user = userEvent.setup();
+    let releasePricing: ((value: KnowledgeSectionMutationEnvelope<KnowledgeJsonObject>) => void) | undefined;
+    vi.mocked(knowledgeApi.updateKnowledgeSection).mockImplementation(
+      async (_mainLineId, _revisionId, sectionKey, input) => {
+        if (sectionKey === "pricing") {
+          return new Promise<KnowledgeSectionMutationEnvelope<KnowledgeJsonObject>>((resolve) => {
+            releasePricing = resolve;
+          });
+        }
+        return savedSection(
+          sectionKey as "advanced" | "pricing" | "overview" | "quantity-margin",
+          input
+        );
+      }
+    );
+    const ref = createRef<KnowledgeModePanelHandle>();
+    renderPanel(ref);
+
+    await user.click(await screen.findByRole("button", { name: "Edit pricing" }));
+    const priority = screen.getByRole("combobox", { name: "Priority" });
+    await user.selectOptions(priority, "priority-high");
+    let savePromise!: Promise<boolean>;
+    act(() => {
+      savePromise = ref.current!.save();
+    });
+
+    await waitFor(() => expect(knowledgeApi.updateKnowledgeSection).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(knowledgeApi.updateKnowledgeSection).mock.calls[0]?.[2]).toBe("pricing");
+    expect(priority).toBeDisabled();
+
+    releasePricing!(savedSection("pricing", {
+      applicability: "not_applicable",
+      payload: { specifications: [{ id: "spec-mode-1", name: "Updated specification" }] },
+      expectedVersion: 12,
+      expectedAggregateVersion: 7
+    }));
+    await act(async () => {
+      expect(await savePromise!).toBe(true);
+    });
+    expect(vi.mocked(knowledgeApi.updateKnowledgeSection).mock.calls.map((call) => call[2]))
+      .toEqual(["pricing", "overview"]);
+  });
+
+  it("keeps acknowledged Pricing saved and retries the remaining Priority and Quantity drafts after a partial failure", async () => {
+    const user = userEvent.setup();
+    let overviewAttempts = 0;
+    vi.mocked(knowledgeApi.updateKnowledgeSection).mockImplementation(
+      async (_mainLineId, _revisionId, sectionKey, input) => {
+        if (sectionKey === "overview" && overviewAttempts++ === 0) {
+          throw new ApiError(503, "UPSTREAM_UNAVAILABLE", "Priority unavailable.");
+        }
+        return savedSection(
+          sectionKey as "advanced" | "pricing" | "overview" | "quantity-margin",
+          input
+        );
+      }
+    );
+    const ref = createRef<KnowledgeModePanelHandle>();
+    renderPanel(ref);
+
+    await user.click(await screen.findByRole("button", { name: "Edit pricing" }));
+    await user.selectOptions(screen.getByRole("combobox", { name: "Priority" }), "priority-high");
+    await user.click(screen.getByRole("button", { name: "Edit quantity-margin" }));
+
+    await act(async () => {
+      expect(await ref.current?.save()).toBe(false);
+    });
+    expect(vi.mocked(knowledgeApi.updateKnowledgeSection).mock.calls.map((call) => call[2]))
+      .toEqual(["pricing", "overview"]);
+    expect(screen.getByRole("combobox", { name: "Priority" })).toHaveValue("priority-high");
+    expect(screen.getByRole("alert")).toHaveTextContent("Priority unavailable.");
+    expect(screen.getAllByText("Unsaved changes")).toHaveLength(2);
+
+    await act(async () => {
+      expect(await ref.current?.save()).toBe(true);
+    });
+    expect(vi.mocked(knowledgeApi.updateKnowledgeSection).mock.calls.map((call) => call[2]))
+      .toEqual(["pricing", "overview", "overview", "quantity-margin"]);
+    expect(vi.mocked(knowledgeApi.updateKnowledgeSection).mock.calls.slice(2).map((call) => call[3].expectedAggregateVersion))
+      .toEqual([8, 9]);
+    expect(screen.queryByText("Unsaved changes")).not.toBeInTheDocument();
+  });
+
+  it("keeps local Priority through a conflict review, compares labels, and rebases the retry onto the latest Overview", async () => {
+    const user = userEvent.setup();
+    let overviewLoads = 0;
+    vi.mocked(knowledgeApi.getKnowledgeSection).mockImplementation(
+      async (_mainLineId, _revisionId, sectionKey) => {
+        if (sectionKey !== "overview") {
+          return section(sectionKey as "advanced" | "pricing" | "quantity-margin");
+        }
+        overviewLoads += 1;
+        return overviewLoads === 1
+          ? section("overview", "configured", {
+              uomId: "uom-original",
+              priorityId: "priority-medium",
+              hiddenCompatibility: { version: "original" }
+            }, 10)
+          : section("overview", "configured", {
+              uomId: "uom-latest",
+              priorityId: "priority-low",
+              hiddenCompatibility: { version: "latest" }
+            }, 22);
+      }
+    );
+    vi.mocked(knowledgeApi.getKnowledgeItem).mockResolvedValue({ ...item, version: 31 });
+    vi.mocked(knowledgeApi.updateKnowledgeSection)
+      .mockRejectedValueOnce(new ApiError(409, "VERSION_CONFLICT", "Changed elsewhere."))
+      .mockImplementation(async (_mainLineId, _revisionId, sectionKey, input) => savedSection(
+        sectionKey as "advanced" | "pricing" | "overview" | "quantity-margin",
+        input,
+        32
+      ));
+    const ref = createRef<KnowledgeModePanelHandle>();
+    renderPanel(ref);
+
+    const priority = await screen.findByRole("combobox", { name: "Priority" });
+    await user.selectOptions(priority, "priority-high");
+    await act(async () => {
+      expect(await ref.current?.save()).toBe(false);
+    });
+
+    const dialog = screen.getByRole("alertdialog", { name: "This section changed elsewhere" });
+    expect(dialog).toHaveTextContent("Priority");
+    expect(priority).toHaveValue("priority-high");
+    await user.click(within(dialog).getByRole("button", { name: "Review server version" }));
+    const review = screen.getByRole("region", { name: "Latest Overview server version" });
+    expect(review).toHaveTextContent("PriorityLow");
+    expect(review).not.toHaveTextContent("priority-low");
+    expect(priority).toHaveValue("priority-high");
+
+    await act(async () => {
+      expect(await ref.current?.save()).toBe(true);
+    });
+    expect(vi.mocked(knowledgeApi.updateKnowledgeSection).mock.calls[1]?.[3]).toMatchObject({
+      expectedVersion: 22,
+      expectedAggregateVersion: 31,
+      payload: {
+        uomId: "uom-latest",
+        priorityId: "priority-high",
+        hiddenCompatibility: { version: "latest" }
+      }
+    });
+  });
+
+  it("discards Priority locally, then supports clear and a second save without remounting", async () => {
+    const user = userEvent.setup();
+    vi.mocked(knowledgeApi.getKnowledgeSection).mockImplementation(
+      async (_mainLineId, _revisionId, sectionKey) => section(
+        sectionKey as "advanced" | "pricing" | "overview" | "quantity-margin",
+        applicabilityBySection[sectionKey as keyof typeof applicabilityBySection],
+        sectionKey === "overview"
+          ? { priorityId: "priority-medium", hiddenCompatibility: { preserve: true } }
+          : {}
+      )
+    );
+    vi.mocked(knowledgeApi.updateKnowledgeSection).mockImplementation(
+      async (_mainLineId, _revisionId, sectionKey, input) => savedSection(
+        sectionKey as "advanced" | "pricing" | "overview" | "quantity-margin",
+        input
+      )
+    );
+    const ref = createRef<KnowledgeModePanelHandle>();
+    renderPanel(ref);
+
+    const priority = await screen.findByRole("combobox", { name: "Priority" });
+    await user.selectOptions(priority, "priority-high");
+    act(() => ref.current?.discard());
+    expect(priority).toHaveValue("priority-medium");
+
+    await user.selectOptions(priority, "priority-high");
+    await act(async () => {
+      expect(await ref.current?.save()).toBe(true);
+    });
+    await waitFor(() => expect(priority).toBeEnabled());
+    await user.selectOptions(priority, "");
+    await act(async () => {
+      expect(await ref.current?.save()).toBe(true);
+    });
+
+    const calls = vi.mocked(knowledgeApi.updateKnowledgeSection).mock.calls;
+    expect(calls.map((call) => call[2])).toEqual(["overview", "overview"]);
+    expect(calls.map((call) => call[3].expectedVersion)).toEqual([10, 11]);
+    expect(calls.map((call) => call[3].expectedAggregateVersion)).toEqual([7, 8]);
+    expect(calls[1]?.[3].payload).toEqual({ hiddenCompatibility: { preserve: true } });
+  });
+
+  it("maps authoritative Priority validation to the select and clears it on edit", async () => {
+    const user = userEvent.setup();
+    vi.mocked(knowledgeApi.updateKnowledgeSection).mockRejectedValueOnce(
+      new ApiError(400, "VALIDATION_ERROR", "Priority is invalid.", {
+        "payload.priorityId": "Choose an active canonical Priority."
+      })
+    );
+    const ref = createRef<KnowledgeModePanelHandle>();
+    renderPanel(ref);
+
+    const priority = await screen.findByRole("combobox", { name: "Priority" });
+    await user.selectOptions(priority, "priority-high");
+    await act(async () => {
+      expect(await ref.current?.save()).toBe(false);
+    });
+
+    expect(priority).toHaveAttribute("aria-invalid", "true");
+    expect(priority).toHaveAccessibleDescription(/Choose an active canonical Priority\./u);
+    await user.selectOptions(priority, "priority-low");
+    await waitFor(() => expect(priority).not.toHaveAttribute("aria-invalid"));
+    expect(screen.queryByText("Choose an active canonical Priority.")).not.toBeInTheDocument();
   });
 
   it("does not let a pending secondary refresh block later PUTs or post-save editability", async () => {

@@ -49,6 +49,30 @@ describe("knowledge section update payloads", () => {
     ).toEqual({ surfaceIds: ["surface-local"], hidden: "preserve" });
   });
 
+  it("rebases only a locally edited Priority and supports clearing it", () => {
+    const latest = {
+      uomId: "uom-newer",
+      priorityId: "priority-server",
+      surfaceIds: ["surface-newer"],
+      hiddenCompatibility: { source: "server" }
+    } as const;
+
+    expect(knowledgeOverviewPayloadForUpdate(
+      latest,
+      { priorityId: "priority-local", uomId: "uom-stale" },
+      new Set(["priorityId"])
+    )).toEqual({ ...latest, priorityId: "priority-local" });
+    expect(knowledgeOverviewPayloadForUpdate(
+      latest,
+      { uomId: "uom-stale" },
+      new Set(["priorityId"])
+    )).toEqual({
+      uomId: "uom-newer",
+      surfaceIds: ["surface-newer"],
+      hiddenCompatibility: { source: "server" }
+    });
+  });
+
   it("still strips server-enriched immutable price reference fields", () => {
     expect(knowledgeSectionPayloadForUpdate("pricing", {
       priceEntries: [{

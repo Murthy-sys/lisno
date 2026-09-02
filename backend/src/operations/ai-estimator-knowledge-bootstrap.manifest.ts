@@ -4,6 +4,11 @@ import {
   normalizeKnowledgeIdentity
 } from "../domain/ai-estimator-knowledge.js";
 import { deriveKnowledgeCompleteness } from "../domain/ai-estimator-knowledge-completeness.js";
+import {
+  AI_ESTIMATOR_KNOWLEDGE_CANONICAL_PRIORITIES,
+  AI_ESTIMATOR_KNOWLEDGE_CANONICAL_PRIORITY_IDS,
+  type CanonicalKnowledgePriority
+} from "../domain/ai-estimator-knowledge-priority.js";
 
 export const AI_ESTIMATOR_KNOWLEDGE_BOOTSTRAP_SYSTEM_ACTOR_ID =
   "system-ai-estimator-knowledge-bootstrap-v1" as const;
@@ -38,7 +43,7 @@ export const AI_ESTIMATOR_KNOWLEDGE_BOOTSTRAP_IDS = Object.freeze({
   uom: "knowledge-uom-bootstrap-square-feet",
   taxRule: "knowledge-tax-bootstrap-gst-18",
   taxVersion: "knowledge-tax-version-bootstrap-gst-18-v1",
-  priority: "knowledge-priority-bootstrap-medium",
+  priority: AI_ESTIMATOR_KNOWLEDGE_CANONICAL_PRIORITY_IDS.medium,
   surface: "knowledge-surface-bootstrap-ceiling",
   mode: "knowledge-mode-bootstrap-pmc",
   mainLine: "knowledge-main-line-bootstrap-plain-false-ceiling",
@@ -103,15 +108,13 @@ const masters: AiEstimatorKnowledgeBootstrapManifestResource[] = [
       name: "GST 18%"
     })
   },
-  {
-    collection: "aiEstimatorKnowledgePriorities",
-    kind: "master",
-    document: masterDocument({
-      id: AI_ESTIMATOR_KNOWLEDGE_BOOTSTRAP_IDS.priority,
-      code: "MEDIUM",
-      name: "Medium"
+  ...AI_ESTIMATOR_KNOWLEDGE_CANONICAL_PRIORITIES.map(
+    (priority): AiEstimatorKnowledgeBootstrapManifestResource => ({
+      collection: "aiEstimatorKnowledgePriorities",
+      kind: "master",
+      document: priorityMasterDocument(priority)
     })
-  },
+  ),
   {
     collection: "aiEstimatorKnowledgeSurfaces",
     kind: "master",
@@ -336,6 +339,7 @@ function masterDocument(input: {
   id: string;
   code: string;
   name: string;
+  displayOrder?: number;
   decimalScale?: number;
 }): Record<string, unknown> {
   return {
@@ -345,12 +349,27 @@ function masterDocument(input: {
     name: input.name,
     nameNormalized: normalizeKnowledgeIdentity(input.name),
     description: null,
-    displayOrder: 0,
+    displayOrder: input.displayOrder ?? 0,
     status: "active",
     ...(input.decimalScale === undefined ? {} : { decimalScale: input.decimalScale }),
     version: 1,
     ...actorMetadata,
     archivedAt: null,
     archivedById: null
+  };
+}
+
+function priorityMasterDocument(
+  priority: CanonicalKnowledgePriority
+): Record<string, unknown> {
+  return {
+    ...masterDocument({
+      id: priority.id,
+      code: priority.code,
+      name: priority.name,
+      displayOrder: priority.displayOrder
+    }),
+    semanticTier: priority.semanticTier,
+    dependencyEpoch: 0
   };
 }

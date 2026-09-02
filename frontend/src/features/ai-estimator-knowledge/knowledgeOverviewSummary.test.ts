@@ -382,6 +382,7 @@ describe("projectKnowledgeOverviewSummary", () => {
       bottomMarginBps: 2_222,
       pmcMarkupBps: 3_333,
       wastageBps: 4_444,
+      slabRateCount: 0,
       quantitySlabs: [
         {
           id: "slab-low",
@@ -686,6 +687,7 @@ describe("projectKnowledgeOverviewSummary", () => {
       bottomMarginBps: null,
       pmcMarkupBps: null,
       wastageBps: null,
+      slabRateCount: 0,
       quantitySlabs: []
     });
     expect(first.hasSharedQuantityMargin).toBe(false);
@@ -771,6 +773,24 @@ describe("configured-only Overview metadata", () => {
       hasConfiguredContent: true,
       counts: [{ label: "Parameters", value: 1 }]
     });
+  });
+
+  it("counts priced and legacy Quantity slabs together without projecting priced details", () => {
+    const summary = projectKnowledgeOverviewSummary({
+      sections: {
+        "quantity-margin": {
+          quantitySlabs: [{ id: "legacy-1" }],
+          slabRates: [
+            { id: "priced-1", specificationId: "spec-1", uomId: "uom-1", quantity: "2", unitRatePaise: 500 },
+            { id: "priced-2", specificationId: "spec-2", uomId: "uom-1", quantity: "3", unitRatePaise: 700 }
+          ]
+        }
+      }
+    });
+
+    expect(summary.sharedQuantityMargin.slabRateCount).toBe(2);
+    expect(summary.sectionCards.find(({ key }) => key === "mode")?.counts)
+      .toContainEqual({ label: "Quantity slabs", value: 3 });
   });
 
   it('preserves a genuinely saved highlight label exactly "Not configured"', () => {

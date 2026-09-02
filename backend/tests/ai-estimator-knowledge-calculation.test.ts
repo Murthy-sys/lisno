@@ -8,6 +8,7 @@ import {
   calculateKnowledgePreview,
   calculateMarginSellingPrice,
   calculateProcurementQuantity,
+  calculateSlabRateEstimatedCost,
   canonicalizeScaledDecimal,
   deriveTaxAmounts,
   parseScaledDecimal
@@ -52,6 +53,34 @@ describe("AI estimator knowledge calculation", () => {
     expect(preview.requiredQuantity).toBe("10");
     expect(preview.procurementQuantity).toBe("10.5");
     expect(preview.vendorPreTax?.amountPaise).toBe(75_000);
+  });
+
+  it("derives priced slab cost with checked half-up paise arithmetic", () => {
+    expect(calculateSlabRateEstimatedCost({
+      unitRatePaise: 8_000,
+      quantity: "12.5",
+      quantityScale: 1
+    })).toBe(100_000);
+    expect(calculateSlabRateEstimatedCost({
+      unitRatePaise: 1,
+      quantity: "0.5",
+      quantityScale: 1
+    })).toBe(1);
+    expect(calculateSlabRateEstimatedCost({
+      unitRatePaise: 0,
+      quantity: "999",
+      quantityScale: 0
+    })).toBe(0);
+    expect(calculateSlabRateEstimatedCost({
+      unitRatePaise: Number.MAX_SAFE_INTEGER,
+      quantity: "1",
+      quantityScale: 0
+    })).toBe(Number.MAX_SAFE_INTEGER);
+    expect(() => calculateSlabRateEstimatedCost({
+      unitRatePaise: Number.MAX_SAFE_INTEGER,
+      quantity: "2",
+      quantityScale: 0
+    })).toThrowError(/safe-integer boundary/u);
   });
 
   it("rounds duration half-up to at most six digits and then clamps", () => {

@@ -34,6 +34,8 @@ export interface KnowledgeConflictReviewProps {
   readonly localVersion: number;
   readonly serverVersion: number;
   readonly payload: KnowledgeJsonObject;
+  readonly specifications?: KnowledgeJsonValue;
+  readonly overviewFields?: readonly KnowledgeOverviewConflictField[];
   readonly masters: Readonly<Partial<Record<KnowledgeMasterType, readonly KnowledgeMaster[]>>>;
   readonly relationshipBaskets: readonly KnowledgeBasket[];
   readonly relationshipItems: readonly KnowledgeItemListItem[];
@@ -44,6 +46,8 @@ export function KnowledgeConflictReview({
   localVersion,
   serverVersion,
   payload,
+  specifications,
+  overviewFields,
   masters,
   relationshipBaskets,
   relationshipItems
@@ -53,10 +57,11 @@ export function KnowledgeConflictReview({
     masters,
     relationshipBaskets,
     relationshipItems,
-    rootPayload: payload
+    rootPayload: payload,
+    specifications: specifications ?? payload.specifications
   } satisfies ProjectionContext;
   const values = sectionKey === "overview"
-    ? overviewValues(payload, masters)
+    ? overviewValues(payload, masters, overviewFields)
     : sectionKey === "pricing"
       ? pricingValues(payload, context)
       : sectionKey === "advanced"
@@ -155,20 +160,28 @@ function definitionConflictValues(
   ];
 }
 
+export type KnowledgeOverviewConflictField = "uomId" | "surfaceIds" | "priorityId";
+
 function overviewValues(
   payload: KnowledgeJsonObject,
-  masters: Readonly<Partial<Record<KnowledgeMasterType, readonly KnowledgeMaster[]>>>
+  masters: Readonly<Partial<Record<KnowledgeMasterType, readonly KnowledgeMaster[]>>>,
+  fields: readonly KnowledgeOverviewConflictField[] = ["uomId", "surfaceIds"]
 ): readonly ConflictReviewValue[] {
-  return [
-    {
+  const values: Readonly<Record<KnowledgeOverviewConflictField, ConflictReviewValue>> = {
+    uomId: {
       label: "Unit of measure (UOM)",
       value: resolveMaster(payload.uomId, masters.uoms)
     },
-    {
+    surfaceIds: {
       label: "Surfaces",
       value: resolveMasterList(payload.surfaceIds, masters.surfaces)
+    },
+    priorityId: {
+      label: "Priority",
+      value: resolveMaster(payload.priorityId, masters.priorities, "Unavailable priority")
     }
-  ];
+  };
+  return fields.map((field) => values[field]);
 }
 
 interface ProjectionContext {
@@ -176,6 +189,7 @@ interface ProjectionContext {
   readonly relationshipBaskets: readonly KnowledgeBasket[];
   readonly relationshipItems: readonly KnowledgeItemListItem[];
   readonly rootPayload: KnowledgeJsonObject;
+  readonly specifications: KnowledgeJsonValue | undefined;
 }
 
 /**
@@ -321,7 +335,7 @@ function resolveReference(
     return resolveNamedValue(value, context.relationshipItems, (entry) => entry.mainLineId, (entry) => entry.mainLineName);
   }
   if (key === "specificationId") {
-    const specifications = objectArray(context.rootPayload.specifications);
+    const specifications = objectArray(context.specifications);
     return resolveNamedValue(
       value,
       specifications,
@@ -361,11 +375,12 @@ const MASTER_REFERENCE_KEYS: Readonly<Record<string, KnowledgeMasterType>> = {
 
 function resolveMaster(
   value: KnowledgeJsonValue | undefined,
-  masters: readonly KnowledgeMaster[] | undefined
+  masters: readonly KnowledgeMaster[] | undefined,
+  unavailableLabel = "Unavailable value"
 ): string {
   const id = stringValue(value);
   if (!id) return "Not configured";
-  return masters?.find((master) => master.id === id)?.name ?? "Unavailable value";
+  return masters?.find((master) => master.id === id)?.name ?? unavailableLabel;
 }
 
 function resolveMasterList(

@@ -126,6 +126,107 @@ describe("AI estimator knowledge models", () => {
     expect(dependencyEpoch.isRequired).not.toBe(true);
   });
 
+  it("keeps the UOM dependency epoch optional for legacy documents", async () => {
+    const uom = new AiEstimatorKnowledgeUomModel({
+      _id: "uom-guarded",
+      code: "SFT",
+      name: "Square feet",
+      description: null,
+      decimalScale: 2,
+      displayOrder: 0,
+      status: "active",
+      version: 1,
+      ...actor,
+      archivedAt: null,
+      archivedById: null
+    });
+
+    await expect(uom.validate()).resolves.toBeUndefined();
+    expect(uom.dependencyEpoch).toBe(0);
+    const dependencyEpoch = AiEstimatorKnowledgeUomModel.schema.path("dependencyEpoch");
+    expect(dependencyEpoch).toBeDefined();
+    expect(dependencyEpoch.isRequired).not.toBe(true);
+  });
+
+  it("stores optional canonical Priority semantics with a private legacy-safe epoch", async () => {
+    const canonical = new AiEstimatorKnowledgePriorityModel({
+      _id: "knowledge-priority-bootstrap-high",
+      code: "HIGH",
+      name: "High",
+      description: null,
+      displayOrder: 1,
+      status: "active",
+      semanticTier: "high",
+      version: 1,
+      ...actor,
+      archivedAt: null,
+      archivedById: null
+    });
+    await expect(canonical.validate()).resolves.toBeUndefined();
+    expect(canonical.semanticTier).toBe("high");
+    expect(canonical.dependencyEpoch).toBe(0);
+
+    const legacy = AiEstimatorKnowledgePriorityModel.hydrate({
+      _id: "knowledge-priority-legacy",
+      code: "CUSTOM",
+      codeNormalized: "custom",
+      name: "Custom",
+      nameNormalized: "custom",
+      description: null,
+      displayOrder: 10,
+      status: "active",
+      version: 1,
+      ...actor,
+      archivedAt: null,
+      archivedById: null
+    });
+    await expect(legacy.validate()).resolves.toBeUndefined();
+    expect(legacy.semanticTier).toBeUndefined();
+    expect(legacy.dependencyEpoch).toBe(0);
+
+    const semanticTier = AiEstimatorKnowledgePriorityModel.schema.path("semanticTier");
+    expect(semanticTier).toBeDefined();
+    expect(semanticTier.isRequired).not.toBe(true);
+    expect((semanticTier as unknown as { enumValues: string[] }).enumValues).toEqual([
+      "non_negotiable",
+      "high",
+      "medium",
+      "low"
+    ]);
+    const dependencyEpoch = AiEstimatorKnowledgePriorityModel.schema.path("dependencyEpoch");
+    expect(dependencyEpoch).toBeDefined();
+    expect(dependencyEpoch.isRequired).not.toBe(true);
+
+    expect(AiEstimatorKnowledgePriorityModel.schema.indexes()).toContainEqual([
+      { semanticTier: 1 },
+      expect.objectContaining({
+        unique: true,
+        partialFilterExpression: {
+          status: { $in: ["active", "inactive"] },
+          semanticTier: { $type: "string" }
+        }
+      })
+    ]);
+  });
+
+  it("rejects unknown Priority semantic tiers", async () => {
+    const priority = new AiEstimatorKnowledgePriorityModel({
+      _id: "knowledge-priority-urgent",
+      code: "URGENT",
+      name: "Urgent",
+      description: null,
+      displayOrder: 4,
+      status: "active",
+      semanticTier: "urgent",
+      version: 1,
+      ...actor,
+      archivedAt: null,
+      archivedById: null
+    });
+
+    await expect(priority.validate()).rejects.toThrow(/semanticTier/u);
+  });
+
   it("allows archived identity reuse by excluding archived records from unique indexes", () => {
     for (const model of [
       AiEstimatorKnowledgeBasketModel,
@@ -139,7 +240,7 @@ describe("AI estimator knowledge models", () => {
       const uniqueIndexes = model.schema.indexes().filter(([, options]) => options.unique);
       expect(uniqueIndexes.length).toBeGreaterThan(0);
       uniqueIndexes.forEach(([, options]) => {
-        expect(options.partialFilterExpression).toEqual({
+        expect(options.partialFilterExpression).toMatchObject({
           status: { $in: ["active", "inactive"] }
         });
       });

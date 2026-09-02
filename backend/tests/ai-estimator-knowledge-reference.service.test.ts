@@ -2,12 +2,17 @@ import mongoose from "mongoose";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { ApiError } from "../src/middleware/errors.js";
+import {
+  AI_ESTIMATOR_KNOWLEDGE_CANONICAL_PRIORITY_IDS,
+  findCanonicalKnowledgePriorityById
+} from "../src/domain/ai-estimator-knowledge-priority.js";
 import { AI_ESTIMATOR_KNOWLEDGE_BOOTSTRAP_IDS } from "../src/operations/ai-estimator-knowledge-bootstrap.manifest.js";
 import { AiEstimatorKnowledgeBasketModel } from "../src/models/AiEstimatorKnowledgeBasket.js";
 import { AiEstimatorKnowledgeDisplayOrderSequenceModel } from "../src/models/AiEstimatorKnowledgeDisplayOrderSequence.js";
 import { AiEstimatorKnowledgeMainLineModel } from "../src/models/AiEstimatorKnowledgeMainLine.js";
 import { AiEstimatorKnowledgeModeModel } from "../src/models/AiEstimatorKnowledgeMode.js";
 import { AiEstimatorKnowledgePriceVersionModel } from "../src/models/AiEstimatorKnowledgePriceVersion.js";
+import { AiEstimatorKnowledgePriorityModel } from "../src/models/AiEstimatorKnowledgePriority.js";
 import { AiEstimatorKnowledgeRevisionModel } from "../src/models/AiEstimatorKnowledgeRevision.js";
 import { AiEstimatorKnowledgeSectionModel } from "../src/models/AiEstimatorKnowledgeSection.js";
 import { AiEstimatorKnowledgeTaxRuleModel } from "../src/models/AiEstimatorKnowledgeTaxRule.js";
@@ -41,6 +46,7 @@ beforeAll(async () => {
     AiEstimatorKnowledgeRevisionModel.init(),
     AiEstimatorKnowledgeSectionModel.init(),
     AiEstimatorKnowledgePriceVersionModel.init(),
+    AiEstimatorKnowledgePriorityModel.init(),
     AiEstimatorKnowledgeUomModel.init(),
     AiEstimatorKnowledgeVendorModel.init(),
     AiEstimatorKnowledgeTaxRuleModel.init(),
@@ -529,6 +535,105 @@ describe("AI estimator knowledge reference service", () => {
     expect((await service.listMasters(actor, "uoms", {}, { limit: 10, offset: 0 })).items.map(({ code }) => code)).toEqual(["NOS"]);
   });
 
+  it("projects canonical Priority semantics without exposing epochs and protects system identity", async () => {
+    const high = findCanonicalKnowledgePriorityById(
+      AI_ESTIMATOR_KNOWLEDGE_CANONICAL_PRIORITY_IDS.high
+    )!;
+    await AiEstimatorKnowledgePriorityModel.create({
+      _id: high.id,
+      code: high.code,
+      codeNormalized: high.code.toLowerCase(),
+      name: high.name,
+      nameNormalized: high.name.toLowerCase(),
+      description: null,
+      displayOrder: high.displayOrder,
+      status: "active",
+      semanticTier: high.semanticTier,
+      dependencyEpoch: 7,
+      version: 1,
+      createdById: actor.id,
+      updatedById: actor.id,
+      createdAt: fixedNow,
+      updatedAt: fixedNow
+    });
+    const { service, audit } = harness();
+    const custom = await service.createMaster(actor, "priorities", {
+      code: "CUSTOM",
+      name: "Custom Priority",
+      displayOrder: 10
+    });
+
+    const listed = await service.listMasters(
+      actor,
+      "priorities",
+      { includeArchived: true },
+      { limit: 20, offset: 0 }
+    );
+    const canonicalDto = listed.items.find((item) => item.id === high.id);
+    const customDto = listed.items.find((item) => item.id === custom.id);
+    expect(canonicalDto).toMatchObject({
+      id: high.id,
+      semanticTier: "high",
+      code: "HIGH",
+      name: "High",
+      displayOrder: 1,
+      status: "active"
+    });
+    expect(canonicalDto).not.toHaveProperty("dependencyEpoch");
+    expect(customDto).not.toHaveProperty("semanticTier");
+    expect(customDto).not.toHaveProperty("dependencyEpoch");
+
+    const described = await service.updateMaster(actor, "priorities", high.id, {
+      expectedVersion: 1,
+      description: "Estimator classification"
+    });
+    expect(described).toMatchObject({
+      semanticTier: "high",
+      description: "Estimator classification",
+      version: 2
+    });
+
+    for (const mutation of [
+      { name: "Urgent" },
+      { code: "URGENT" },
+      { displayOrder: 20 },
+      { status: "inactive" as const }
+    ]) {
+      await expect(service.updateMaster(actor, "priorities", high.id, {
+        expectedVersion: 2,
+        ...mutation
+      })).rejects.toSatisfy((error) => {
+        expectApiError(error, 409, "CANONICAL_PRIORITY_IMMUTABLE");
+        return true;
+      });
+    }
+    await expect(service.archiveMaster(actor, "priorities", high.id, {
+      expectedVersion: 2,
+      reason: "Must remain available"
+    })).rejects.toSatisfy((error) => {
+      expectApiError(error, 409, "CANONICAL_PRIORITY_IMMUTABLE");
+      return true;
+    });
+    expect(await AiEstimatorKnowledgePriorityModel.findById(high.id).lean())
+      .toMatchObject({
+        name: "High",
+        code: "HIGH",
+        displayOrder: 1,
+        status: "active",
+        dependencyEpoch: 7,
+        version: 2
+      });
+    expect(audit.appendInMongoTransaction).toHaveBeenCalledTimes(2);
+
+    await expect(service.archiveMaster(actor, "priorities", custom.id, {
+      expectedVersion: custom.version
+    })).resolves.toMatchObject({
+      id: custom.id,
+      status: "archived",
+      version: 2
+    });
+  });
+
   it("appends reusable values independently per type and preserves a non-lowering high-water mark", async () => {
     const { service } = harness();
     const firstUom = await service.createMaster(actor, "uoms", {
@@ -642,6 +747,106 @@ describe("AI estimator knowledge reference service", () => {
     });
     expect(inactivated).toMatchObject({ status: "inactive", decimalScale: 2, version: 2 });
     expect(audit.appendInMongoTransaction).toHaveBeenCalledTimes(3);
+  });
+
+  it("protects a UOM referenced by a priced slab while allowing label-only edits", async () => {
+    const { service } = harness();
+    const basket = await service.createBasket(actor, { name: "Priced slab basket" });
+    const uom = await service.createMaster(actor, "uoms", {
+      code: "SFT",
+      name: "Square feet",
+      decimalScale: 2
+    });
+    await AiEstimatorKnowledgeMainLineModel.create({
+      _id: "line-priced-slab",
+      basketId: basket.id,
+      name: "Priced slab line",
+      nameNormalized: "priced slab line",
+      description: null,
+      displayOrder: 0,
+      status: "draft",
+      activeRevisionId: null,
+      draftRevisionId: "revision-priced-slab",
+      version: 1,
+      createdById: actor.id,
+      updatedById: actor.id,
+      deactivatedAt: null,
+      deactivatedById: null,
+      archivedAt: null,
+      archivedById: null
+    });
+    await AiEstimatorKnowledgeRevisionModel.create({
+      _id: "revision-priced-slab",
+      mainLineId: "line-priced-slab",
+      revisionNumber: 1,
+      status: "draft",
+      sourceRevisionId: null,
+      contentDigest: null,
+      completeness: { percentage: 0, sections: [], blockers: [], warnings: [] },
+      version: 1,
+      createdById: actor.id,
+      updatedById: actor.id,
+      activatedAt: null,
+      activatedById: null,
+      supersededAt: null,
+      supersededById: null
+    });
+    await AiEstimatorKnowledgeSectionModel.insertMany([
+      {
+        _id: "section-priced-slab-pricing",
+        mainLineId: "line-priced-slab",
+        revisionId: "revision-priced-slab",
+        sectionKey: "pricing",
+        applicability: "configured",
+        payload: {
+          specifications: [{ id: "specification-plywood", name: "Plywood" }],
+          priceEntries: []
+        },
+        version: 1,
+        createdById: actor.id,
+        updatedById: actor.id
+      },
+      {
+        _id: "section-priced-slab-quantity",
+        mainLineId: "line-priced-slab",
+        revisionId: "revision-priced-slab",
+        sectionKey: "quantity-margin",
+        applicability: "configured",
+        payload: {
+          slabRates: [{
+            id: "slab-rate-plywood",
+            specificationId: "specification-plywood",
+            uomId: uom.id,
+            quantity: "12.5",
+            unitRatePaise: 8_000
+          }]
+        },
+        version: 1,
+        createdById: actor.id,
+        updatedById: actor.id
+      }
+    ]);
+
+    const renamed = await service.updateMaster(actor, "uoms", uom.id, {
+      expectedVersion: uom.version,
+      name: "Square foot"
+    });
+    expect(renamed).toMatchObject({ name: "Square foot", decimalScale: 2, version: 2 });
+    await expect(service.updateMaster(actor, "uoms", uom.id, {
+      expectedVersion: renamed.version,
+      decimalScale: 3
+    })).rejects.toSatisfy((error) => {
+      expectApiError(error, 409, "REFERENCED_UOM_SCALE_IMMUTABLE");
+      return true;
+    });
+    await expect(service.archiveMaster(actor, "uoms", uom.id, {
+      expectedVersion: renamed.version
+    })).rejects.toSatisfy((error) => {
+      expectApiError(error, 409, "ACTIVE_REFERENCE_CONFLICT");
+      return true;
+    });
+    expect(await AiEstimatorKnowledgeUomModel.findById(uom.id).lean())
+      .toMatchObject({ name: "Square foot", decimalScale: 2, status: "active", version: 2 });
   });
 
   it("rejects cross-type fields at the service boundary", async () => {

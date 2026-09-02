@@ -10,6 +10,7 @@ import * as knowledgeApi from "./knowledgeApi";
 import type {
   KnowledgeItemDetail,
   KnowledgeJsonObject,
+  KnowledgeMaster,
   KnowledgeSectionEnvelope,
   KnowledgeSectionMutationEnvelope
 } from "./knowledgeTypes";
@@ -63,6 +64,19 @@ const versions = {
   "quantity-margin": 13
 } as const;
 
+const squareFoot: KnowledgeMaster = {
+  id: "uom-square-foot",
+  masterType: "uoms",
+  code: "SQFT",
+  name: "Square foot",
+  description: null,
+  displayOrder: 0,
+  status: "active",
+  decimalScale: 2,
+  version: 1,
+  ...metadata
+};
+
 function section(
   sectionKey: "advanced" | "pricing" | "quantity-margin",
   payload: KnowledgeJsonObject = {}
@@ -107,7 +121,7 @@ function renderPanel(ref: React.RefObject<KnowledgeModePanelHandle | null>) {
   const props: ComponentProps<typeof KnowledgeModePanel> = {
     item,
     revisionId: "revision-1",
-    masters: {},
+    masters: { uoms: [squareFoot] },
     relationshipBaskets: [],
     relationshipItems: [],
     editable: true,
@@ -303,6 +317,70 @@ describe("Knowledge Mode Specifications save integration", () => {
     )).toBe(true);
   });
 
+  it("saves a live renamed Specification before its priced slab with exact paise inputs", async () => {
+    const user = userEvent.setup();
+    const returnedAggregateVersions = [31, 32] as const;
+    let saveIndex = 0;
+    vi.mocked(knowledgeApi.updateKnowledgeSection).mockImplementation(
+      async (_mainLineId, _revisionId, sectionKey, input) => savedSection(
+        sectionKey as "advanced" | "pricing" | "quantity-margin",
+        input,
+        returnedAggregateVersions[saveIndex++]!
+      )
+    );
+    const ref = createRef<KnowledgeModePanelHandle>();
+    renderPanel(ref);
+
+    const specificationName = await screen.findByRole("textbox", { name: "Specification name" });
+    await user.clear(specificationName);
+    await user.type(specificationName, "Renamed plywood");
+    const quantitySection = screen.getByRole("region", { name: "Quantity & margin" });
+    await user.click(within(quantitySection).getByRole("button", { name: "Add Quantity slab" }));
+    const quantitySlab = within(quantitySection).getByRole("group", { name: "Quantity slab 1" });
+    await user.selectOptions(within(quantitySlab).getByRole("combobox", { name: "Specification" }), "spec-panel-grade");
+    await user.selectOptions(within(quantitySlab).getByRole("combobox", { name: "Unit of measure" }), squareFoot.id);
+    await user.type(within(quantitySlab).getByRole("textbox", { name: "Quantity" }), "12.5");
+    await user.type(within(quantitySlab).getByRole("textbox", { name: "Unit rate (₹)" }), "80");
+
+    await act(async () => {
+      expect(await ref.current?.save()).toBe(true);
+    });
+
+    const calls = vi.mocked(knowledgeApi.updateKnowledgeSection).mock.calls;
+    expect(calls.map((call) => call[2])).toEqual(["pricing", "quantity-margin"]);
+    expect(calls[0]?.[3].expectedAggregateVersion).toBe(7);
+    expect(calls[1]?.[3].expectedAggregateVersion).toBe(31);
+    expect(calls[1]?.[3].payload).toMatchObject({
+      slabRates: [{
+        id: expect.stringMatching(/^knowledge-slabRates-/u),
+        specificationId: "spec-panel-grade",
+        uomId: "uom-square-foot",
+        quantity: "12.5",
+        unitRatePaise: 8_000
+      }]
+    });
+    expect(calls[1]?.[3].payload).not.toHaveProperty("estimatedCostPaise");
+  });
+
+  it("preflights every dirty Mode draft before the first section update", async () => {
+    const user = userEvent.setup();
+    const ref = createRef<KnowledgeModePanelHandle>();
+    renderPanel(ref);
+
+    const description = await screen.findByRole("textbox", { name: "Brief description" });
+    await user.clear(description);
+    await user.type(description, "Valid Pricing change that must not save alone");
+    const quantitySection = screen.getByRole("region", { name: "Quantity & margin" });
+    await user.click(within(quantitySection).getByRole("button", { name: "Add Quantity slab" }));
+
+    await act(async () => {
+      expect(await ref.current?.save()).toBe(false);
+    });
+
+    expect(knowledgeApi.updateKnowledgeSection).not.toHaveBeenCalled();
+    expect(within(quantitySection).getAllByText(/Specification is required/u)[0]).toBeVisible();
+  });
+
   it("uses revision-wide response metadata to block history-only Specification removal", async () => {
     const ref = createRef<KnowledgeModePanelHandle>();
     renderPanel(ref);
@@ -312,7 +390,7 @@ describe("Knowledge Mode Specifications save integration", () => {
     });
     expect(remove).toBeDisabled();
     expect(remove).toHaveAccessibleDescription(
-      "This Specification is retained by an immutable historical price version and cannot be removed."
+      "This Specification is retained by saved configuration or immutable price history and cannot be removed."
     );
   });
 

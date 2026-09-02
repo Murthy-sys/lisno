@@ -154,11 +154,14 @@ export function KnowledgeItemWorkspacePage() {
   });
   const masterQueries = useQueries({
     queries: MASTER_TYPES.map((type) => ({
-      queryKey: type === "modes"
+      queryKey: type === "modes" || type === "uoms" || type === "priorities"
         ? knowledgeQueryKeys.masterCatalog(type)
         : knowledgeQueryKeys.masterList(type, { limit: 100, offset: 0 }),
-      queryFn: () => type === "modes"
-        ? collectAllKnowledgeMasterPages((params) => listKnowledgeMasters(type, params))
+      queryFn: () => type === "modes" || type === "uoms" || type === "priorities"
+        ? collectAllKnowledgeMasterPages(
+            (params) => listKnowledgeMasters(type, params),
+            type === "modes" ? "Mode" : type === "uoms" ? "Unit" : "Priority"
+          )
         : listKnowledgeMasters(type, { limit: 100, offset: 0 })
     }))
   });
@@ -177,6 +180,40 @@ export function KnowledgeItemWorkspacePage() {
     refreshing: modesHaveData && modesQuery.isFetching,
     errorMessage: modesQuery.error instanceof Error ? modesQuery.error.message : undefined,
     onRetry: () => { void modesQuery.refetch(); }
+  };
+  const uomsQuery = masterQueries[MASTER_TYPES.indexOf("uoms")]!;
+  const uomsHaveData = Boolean(uomsQuery.data);
+  const uomCatalogState = {
+    status: uomsQuery.isError && !uomsHaveData
+      ? "error" as const
+      : uomsQuery.isPending && !uomsHaveData
+        ? "loading" as const
+        : "ready" as const,
+    refreshing: uomsHaveData && uomsQuery.isFetching,
+    errorMessage: !uomsHaveData && uomsQuery.error instanceof Error
+      ? uomsQuery.error.message
+      : undefined,
+    refreshErrorMessage: uomsHaveData && uomsQuery.isError && uomsQuery.error instanceof Error
+      ? uomsQuery.error.message
+      : undefined,
+    onRetry: () => { void uomsQuery.refetch(); }
+  };
+  const prioritiesQuery = masterQueries[MASTER_TYPES.indexOf("priorities")]!;
+  const prioritiesHaveData = Boolean(prioritiesQuery.data);
+  const priorityCatalogState = {
+    status: prioritiesQuery.isError && !prioritiesHaveData
+      ? "error" as const
+      : prioritiesQuery.isPending && !prioritiesHaveData
+        ? "loading" as const
+        : "ready" as const,
+    refreshing: prioritiesHaveData && prioritiesQuery.isFetching,
+    errorMessage: !prioritiesHaveData && prioritiesQuery.error instanceof Error
+      ? prioritiesQuery.error.message
+      : undefined,
+    refreshErrorMessage: prioritiesHaveData && prioritiesQuery.isError && prioritiesQuery.error instanceof Error
+      ? prioritiesQuery.error.message
+      : undefined,
+    onRetry: () => { void prioritiesQuery.refetch(); }
   };
   const editable = Boolean(item && revision?.status === "draft" && item.status !== "archived" && canUpdate && item.allowedActions.includes("update_section"));
   const overviewDraftPayload = activeSection === "overview" && sectionQuery.data
@@ -454,6 +491,8 @@ export function KnowledgeItemWorkspacePage() {
                 editable={editable}
                 canQuickAdd={canCreate}
                 legacyModeCatalogState={legacyModeCatalogState}
+                uomCatalogState={uomCatalogState}
+                priorityCatalogState={priorityCatalogState}
                 onQuickAdd={(type, select) => setQuickAdd({ type, select })}
                 onDirtyChange={setModeDirty}
                 onSavingChange={setModeSaving}
