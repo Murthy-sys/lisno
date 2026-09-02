@@ -52,17 +52,17 @@ const emptyForm: ProjectInitiationForm = {
 };
 
 const fields = [
-  ["clientName", "Client name", "text"],
-  ["clientEmail", "Client email", "email"],
-  ["clientMobile", "Mobile", "text"],
-  ["projectName", "Project / property name", "text"],
-  ["location", "Location", "text"],
-  ["propertyType", "Property type", "text"],
-  ["budgetMin", "Minimum budget", "number"],
-  ["budgetMax", "Maximum budget", "number"],
-  ["nextAction", "Next action", "text"],
-  ["nextActionAt", "Next action date", "datetime-local"]
-] as const satisfies ReadonlyArray<readonly [keyof ProjectInitiationForm, string, string]>;
+  ["clientName", "Client name", "text", "Enter client name"],
+  ["clientEmail", "Client email", "email", "example@email.com"],
+  ["clientMobile", "Mobile", "text", "Enter mobile number"],
+  ["projectName", "Project / property name", "text", "Enter project / property name"],
+  ["location", "Location", "text", "Enter location"],
+  ["propertyType", "Property type", "text", "Enter property type"],
+  ["budgetMin", "Minimum budget", "number", "Enter minimum budget"],
+  ["budgetMax", "Maximum budget", "number", "Enter maximum budget"],
+  ["nextAction", "Next action", "text", "Enter next action"],
+  ["nextActionAt", "Next action date", "datetime-local", undefined]
+] as const satisfies ReadonlyArray<readonly [keyof ProjectInitiationForm, string, string, string | undefined]>;
 
 function validate(
   form: ProjectInitiationForm,
@@ -226,7 +226,7 @@ export function AdminProjectInitiationDialog({
     >
       <form className="modal-form admin-project-form" onSubmit={submit} noValidate>
         {submissionError ? <div className="form-alert admin-project-form__alert" role="alert">{submissionError}</div> : null}
-        {fields.map(([key, label, type]) => (
+        {fields.map(([key, label, type, placeholder]) => (
           <Field
             key={key}
             id={`admin-project-${key}`}
@@ -240,6 +240,7 @@ export function AdminProjectInitiationDialog({
                 ref={(node) => { refs.current[key] = node; }}
                 name={key}
                 type={type}
+                placeholder={placeholder}
                 min={key === "budgetMin" || key === "budgetMax" ? 0 : undefined}
                 step={key === "budgetMin" || key === "budgetMax" ? "any" : undefined}
                 value={form[key]}
@@ -252,6 +253,7 @@ export function AdminProjectInitiationDialog({
           <SearchCombobox
             label="Estimator/Sales"
             name="estimatorId"
+            placeholder="Search and select estimator / sales"
             value={selectedEstimator}
             onChange={(option) => {
               setSelectedEstimator(option);
@@ -283,7 +285,11 @@ export function AdminProjectInitiationDialog({
             describedBy={fieldErrors.estimatorId ? estimatorErrorId : undefined}
             inputRef={(node) => { refs.current.estimatorId = node; }}
           />
-          {fieldErrors.estimatorId ? <p className="ui-field__error" id={estimatorErrorId}>{fieldErrors.estimatorId}</p> : null}
+          {fieldErrors.estimatorId ? (
+            <p className="ui-field__error" id={estimatorErrorId}>{fieldErrors.estimatorId}</p>
+          ) : !selectedEstimator ? (
+            <p className="ui-field__hint">Pick an option from the list — Initiate project stays disabled until an Estimator/Sales is selected.</p>
+          ) : null}
         </div>
         <div className="modal-form__actions admin-project-form__actions">
           <Button variant="secondary" onClick={onClose} disabled={mutation.isPending}>Cancel</Button>

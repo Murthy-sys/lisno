@@ -12,6 +12,7 @@ import "./styles/invitations.css";
 import "./styles/client-responses.css";
 import "./styles/estimate-delivery.css";
 import "./styles/designer-design-plans.css";
+import "./styles/admin-home.css";
 
 capturePasswordResetTokenBeforeRouterMount();
 
