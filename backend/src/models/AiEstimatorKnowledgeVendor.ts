@@ -17,6 +17,13 @@ const vendorSchema = new Schema(
     displayOrder: { type: Number, required: true, min: 0, validate: Number.isSafeInteger },
     status: { type: String, enum: AI_ESTIMATOR_KNOWLEDGE_MASTER_STATUSES, required: true, default: "active" },
     version: { type: Number, required: true, default: 1, min: 1, validate: Number.isSafeInteger },
+    dependencyEpoch: {
+      type: Number,
+      default: 0,
+      min: 0,
+      max: Number.MAX_SAFE_INTEGER,
+      validate: Number.isSafeInteger
+    },
     createdById: { type: String, ref: "User", required: true, immutable: true },
     updatedById: { type: String, ref: "User", required: true },
     archivedAt: { type: Date, default: null },

@@ -483,6 +483,53 @@ describe("AI Estimator Knowledge HTTP routes", () => {
     expect(testServices.item.updateSection).not.toHaveBeenCalled();
   });
 
+  it("accepts the business-only Budget command and rejects technical Budget fields before the service", async () => {
+    const testServices = services();
+    const command = {
+      operation: "set_budget",
+      vendorId: "vendor-1",
+      uomId: "uom-1",
+      inputAmountPaise: 12_500,
+      effectiveFrom: "2026-09-02T00:00:00.000Z",
+      effectiveTo: null
+    };
+    const acceptedInput = {
+      expectedVersion: 3,
+      expectedAggregateVersion: 7,
+      payload: { priceEntries: [command] }
+    };
+    const accepted = await request(appFor(testServices))
+      .put("/api/v1/admin/ai-estimator-knowledge/main-lines/line-1/revisions/revision-1/sections/pricing")
+      .set("Authorization", "Bearer super-admin-token")
+      .send(acceptedInput);
+    expect(accepted.status).toBe(200);
+    expect(testServices.item.updateSection).toHaveBeenCalledWith(
+      superAdmin,
+      "line-1",
+      "revision-1",
+      "pricing",
+      acceptedInput
+    );
+
+    const rejected = await request(appFor(testServices))
+      .put("/api/v1/admin/ai-estimator-knowledge/main-lines/line-1/revisions/revision-1/sections/pricing")
+      .set("Authorization", "Bearer super-admin-token")
+      .send({
+        ...acceptedInput,
+        payload: { priceEntries: [{ ...command, status: "active", taxRuleId: "tax-rule-1", taxVersionId: "tax-v1" }] }
+      });
+    expect(rejected.status).toBe(400);
+    expect(rejected.body.error).toMatchObject({
+      code: "VALIDATION_ERROR",
+      fields: {
+        "payload.priceEntries.0.status": expect.any(String),
+        "payload.priceEntries.0.taxRuleId": expect.any(String),
+        "payload.priceEntries.0.taxVersionId": expect.any(String)
+      }
+    });
+    expect(testServices.item.updateSection).toHaveBeenCalledTimes(1);
+  });
+
   it("accepts exact priced slab inputs and rejects client-authored estimated cost", async () => {
     const testServices = services();
     const input = {

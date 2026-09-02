@@ -560,7 +560,7 @@ function projectSectionCards(input: {
       sourceSectionKeys: ["pricing", "quantity-margin"],
       counts: [
         { label: "Specifications", value: input.specifications.length },
-        { label: "Price versions", value: input.prices.length },
+        { label: "Budgets", value: input.prices.length },
         {
           label: "Quantity slabs",
           value: input.sharedQuantityMargin.quantitySlabs.length

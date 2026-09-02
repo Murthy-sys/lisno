@@ -491,38 +491,69 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
       ref("KnowledgeCanonicalSpecification")
     ]
   },
-  KnowledgePriceEntryAppendCommand: strictObject(
-    [
-      "operation", "priceEntryId", "vendorId", "uomId", "specificationId",
-      "modeId", "taxRuleId", "taxVersionId", "inputAmountPaise", "treatment",
-      "effectiveFrom", "effectiveTo", "status"
-    ],
-    {
-      operation: { type: "string", enum: ["append"] },
-      priceEntryId: id,
-      vendorId: id,
-      uomId: id,
-      specificationId: {
-        type: "string",
-        nullable: true,
-        enum: [null],
-        description: "Must be null. Descriptive Specifications are not a price dimension."
-      },
-      modeId: { ...id, nullable: true },
-      taxRuleId: id,
-      taxVersionId: id,
-      inputAmountPaise: {
-        type: "integer",
-        minimum: 0,
-        maximum: Number.MAX_SAFE_INTEGER,
-        description: "Price input in integer paise."
-      },
-      treatment: { type: "string", enum: [...AI_ESTIMATOR_KNOWLEDGE_TAX_TREATMENTS] },
-      effectiveFrom: { type: "string", format: "date-time" },
-      effectiveTo: { type: "string", format: "date-time", nullable: true },
-      status: { type: "string", enum: [...AI_ESTIMATOR_KNOWLEDGE_VERSION_STATUSES] }
-    }
-  ),
+  KnowledgeBudgetSetCommand: {
+    ...strictObject(
+      [
+        "operation", "vendorId", "uomId", "inputAmountPaise",
+        "effectiveFrom", "effectiveTo"
+      ],
+      {
+        operation: { type: "string", enum: ["set_budget"] },
+        sourcePriceVersionId: {
+          ...id,
+          nullable: true,
+          description: "Opaque current same-revision price-version reference. Omit or send null for a new Budget; send it only to update a retained Budget."
+        },
+        vendorId: id,
+        uomId: id,
+        inputAmountPaise: {
+          type: "integer",
+          minimum: 0,
+          maximum: Number.MAX_SAFE_INTEGER,
+          description: "Unit Budget before GST in integer paise. Base, tax, and total amounts are derived by the server."
+        },
+        effectiveFrom: { type: "string", format: "date-time" },
+        effectiveTo: { type: "string", format: "date-time", nullable: true }
+      }
+    ),
+    description: "Preferred business-only Budgeting command. Identity, scope, immutable versioning, fixed GST rule/version/treatment, status, calculated amounts, and audit are server-owned. Client-supplied Tax fields are rejected."
+  },
+  KnowledgePriceEntryAppendCommand: {
+    ...strictObject(
+      [
+        "operation", "priceEntryId", "vendorId", "uomId", "specificationId",
+        "modeId", "taxRuleId", "taxVersionId", "inputAmountPaise", "treatment",
+        "effectiveFrom", "effectiveTo", "status"
+      ],
+      {
+        operation: { type: "string", enum: ["append"] },
+        priceEntryId: id,
+        vendorId: id,
+        uomId: id,
+        specificationId: {
+          type: "string",
+          nullable: true,
+          enum: [null],
+          description: "Must be null. Descriptive Specifications are not a price dimension."
+        },
+        modeId: { ...id, nullable: true },
+        taxRuleId: id,
+        taxVersionId: id,
+        inputAmountPaise: {
+          type: "integer",
+          minimum: 0,
+          maximum: Number.MAX_SAFE_INTEGER,
+          description: "Price input in integer paise."
+        },
+        treatment: { type: "string", enum: [...AI_ESTIMATOR_KNOWLEDGE_TAX_TREATMENTS] },
+        effectiveFrom: { type: "string", format: "date-time" },
+        effectiveTo: { type: "string", format: "date-time", nullable: true },
+        status: { type: "string", enum: [...AI_ESTIMATOR_KNOWLEDGE_VERSION_STATUSES] }
+      }
+    ),
+    deprecated: true,
+    description: "Compatibility-only technical command for older clients. New clients should use set_budget. Appends are restricted to the canonical fixed GST policy."
+  },
   KnowledgePriceEntryReferenceCommand: strictObject(
     ["operation", "priceEntryId", "priceVersionId"],
     {
@@ -536,6 +567,7 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
   ),
   KnowledgePriceEntryCommand: {
     oneOf: [
+      ref("KnowledgeBudgetSetCommand"),
       ref("KnowledgePriceEntryAppendCommand"),
       ref("KnowledgePriceEntryReferenceCommand")
     ]
@@ -1139,7 +1171,7 @@ function sectionPayloadProperties(sectionKey: string): Readonly<Record<string, u
     };
     properties.priceEntries = {
       type: "array",
-      description: "New append commands use null Specification scope. Same-revision immutable references may retain historical non-null Specification lineage.",
+      description: "Use set_budget for business writes. Legacy append commands use null Specification scope. Same-revision immutable references may retain historical non-null Specification lineage.",
       items: ref("KnowledgePriceEntryCommand")
     };
   }

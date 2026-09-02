@@ -12,7 +12,6 @@ import {
   type KnowledgeTaxVersionInput
 } from "./knowledgeApi";
 import { syncKnowledgeMasterMutation } from "./knowledgeMutationSync";
-import { KNOWLEDGE_MASTER_LABELS } from "./knowledgePresentation";
 import type { KnowledgeMaster, KnowledgeMasterType } from "./knowledgeTypes";
 
 interface KnowledgeMasterEditorDialogProps {
@@ -22,6 +21,15 @@ interface KnowledgeMasterEditorDialogProps {
   readonly onClose: () => void;
   readonly onSaved?: (master: KnowledgeMaster) => void;
 }
+
+const MASTER_SINGULAR_LABELS = {
+  uoms: "UOM",
+  vendors: "Vendor",
+  taxes: "Tax",
+  priorities: "Priority",
+  surfaces: "Surface",
+  modes: "Mode"
+} as const satisfies Readonly<Record<KnowledgeMasterType, string>>;
 
 export function KnowledgeMasterEditorDialog({
   masterType,
@@ -45,7 +53,9 @@ export function KnowledgeMasterEditorDialog({
   const [taxApplicability, setTaxApplicability] = useState("");
   const [effectiveFrom, setEffectiveFrom] = useState("");
   const [effectiveTo, setEffectiveTo] = useState("");
-  const [taxStatus, setTaxStatus] = useState<"draft" | "active" | "inactive">("draft");
+  const [taxStatus, setTaxStatus] = useState<"draft" | "active" | "inactive">(
+    quickAdd && !existing && masterType === "taxes" ? "active" : "draft"
+  );
 
   const taxVersion = useMemo<KnowledgeTaxVersionInput | undefined>(() => {
     if (masterType !== "taxes" || !includeTaxVersion) return undefined;
@@ -104,7 +114,7 @@ export function KnowledgeMasterEditorDialog({
     if (formValid) mutation.mutate();
   }
 
-  const itemLabel = KNOWLEDGE_MASTER_LABELS[masterType].replace(/s$/u, "");
+  const itemLabel = MASTER_SINGULAR_LABELS[masterType];
   return (
     <Dialog
       title={`${existing ? "Edit" : quickAdd ? "Quick add" : "Add"} ${itemLabel}`}
@@ -169,9 +179,11 @@ export function KnowledgeMasterEditorDialog({
                   <Field id="tax-applicability" label="Applicability" required>
                     {(props) => <Input {...props} value={taxApplicability} onChange={(event) => setTaxApplicability(event.target.value)} />}
                   </Field>
-                  <Field id="tax-version-status" label="Version status" required>
-                    {(props) => <Select {...props} value={taxStatus} onChange={(event) => setTaxStatus(event.target.value as typeof taxStatus)}><option value="draft">Draft</option><option value="active">Active</option><option value="inactive">Inactive</option></Select>}
-                  </Field>
+                  {!quickAdd ? (
+                    <Field id="tax-version-status" label="Version status" required>
+                      {(props) => <Select {...props} value={taxStatus} onChange={(event) => setTaxStatus(event.target.value as typeof taxStatus)}><option value="draft">Draft</option><option value="active">Active</option><option value="inactive">Inactive</option></Select>}
+                    </Field>
+                  ) : null}
                   <Field id="tax-effective-from" label="Effective from" required>
                     {(props) => <Input {...props} type="datetime-local" value={effectiveFrom} onChange={(event) => setEffectiveFrom(event.target.value)} />}
                   </Field>

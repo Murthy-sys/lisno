@@ -250,6 +250,24 @@ export interface KnowledgeActivationReview {
 
 export interface KnowledgeHistoryEntry extends KnowledgeRevision {}
 
+/** Business-only Budgeting command. Every omitted pricing field is server-owned. */
+export interface KnowledgeBudgetSetCommand {
+  readonly operation: "set_budget";
+  readonly sourcePriceVersionId?: string | null;
+  readonly vendorId: string;
+  readonly uomId: string;
+  readonly inputAmountPaise: number;
+  readonly effectiveFrom: string;
+  readonly effectiveTo: string | null;
+}
+
+/** Compact immutable reference returned by the server and retained unchanged. */
+export interface KnowledgeBudgetReferenceCommand {
+  readonly operation: "reference";
+  readonly priceEntryId: string;
+  readonly priceVersionId: string;
+}
+
 export interface KnowledgePreviewAmountComponent {
   readonly amountPaise: number;
   readonly basisAmountPaise: number;

@@ -6,6 +6,7 @@ import {
   AI_ESTIMATOR_KNOWLEDGE_CANONICAL_PRIORITIES,
   AI_ESTIMATOR_KNOWLEDGE_CANONICAL_PRIORITY_IDS
 } from "../src/domain/ai-estimator-knowledge-priority.js";
+import { AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY } from "../src/domain/ai-estimator-knowledge-fixed-gst.js";
 import type { KnowledgeSectionKey } from "../src/domain/ai-estimator-knowledge.js";
 import { authorizationSnapshotFor, type AuthService, type PublicUser } from "../src/services/auth.service.js";
 import { errorHandler } from "../src/middleware/errors.js";
@@ -42,8 +43,8 @@ const NOW = new Date("2026-08-28T10:00:00.000Z");
 const BASKET_ID = "integration-basket-carpentry";
 const UOM_ID = "integration-uom-sqft";
 const VENDOR_ID = "integration-vendor-local";
-const TAX_RULE_ID = "integration-tax-gst";
-const TAX_VERSION_ID = "integration-tax-gst-v1";
+const TAX_RULE_ID = AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.rule.id;
+const TAX_VERSION_ID = AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.version.id;
 const PMC_MODE_ID = "integration-mode-pmc";
 const EXECUTION_MODE_ID = "integration-mode-execution";
 
@@ -461,19 +462,19 @@ describe("AI estimator knowledge integrated replica-set invariants", { timeout: 
     )).toBe(true);
   });
 
-  it("rejects overlapping tax and price windows atomically and resolves exact, non-leaking lineage without writes", async () => {
+  it("protects fixed GST, rejects overlapping price windows atomically, and resolves exact non-leaking lineage", async () => {
     const services = createServices();
     await expect(services.reference.updateMaster(SUPER_ADMIN, "taxes", TAX_RULE_ID, {
       expectedVersion: 1,
       taxVersion: {
         rateBps: 1_800,
-        treatment: "inclusive",
+        treatment: "exclusive",
         applicability: "overlapping interior work",
         effectiveFrom: "2026-06-01T00:00:00.000Z",
         effectiveTo: null,
         status: "active"
       }
-    })).rejects.toMatchObject({ status: 409, code: "EFFECTIVE_WINDOW_OVERLAP" });
+    })).rejects.toMatchObject({ status: 409, code: "CANONICAL_TAX_POLICY_IMMUTABLE" });
     expect((await AiEstimatorKnowledgeTaxRuleModel.findById(TAX_RULE_ID).lean().exec())?.version).toBe(1);
     expect(await AiEstimatorKnowledgeTaxVersionModel.countDocuments({ taxRuleId: TAX_RULE_ID })).toBe(1);
 
@@ -508,7 +509,7 @@ describe("AI estimator knowledge integrated replica-set invariants", { timeout: 
           internalVendorNotes: "commercially sensitive",
           priceEntries: [
             firstReference,
-            priceCommand("price-entry-overlap", "2026-06-01T00:00:00.000Z")
+            priceCommand("price-entry-overlap", "2026-09-02T00:00:00.000Z")
           ]
         }
       }
@@ -606,7 +607,7 @@ describe("AI estimator knowledge integrated replica-set invariants", { timeout: 
     expect(context.preview).toMatchObject({
       effectivePriceVersionId: price?._id,
       taxVersionId: TAX_VERSION_ID,
-      effectiveUnitRatePaise: 11_800,
+      effectiveUnitRatePaise: 10_000,
       vendorPreTax: { amountPaise: 20_000 },
       vendorTax: { amountPaise: 3_600 },
       vendorTotal: { amountPaise: 23_600 }
@@ -628,6 +629,425 @@ describe("AI estimator knowledge integrated replica-set invariants", { timeout: 
     expect(JSON.stringify(context)).not.toContain("commercially sensitive");
     expect(JSON.stringify(context)).not.toContain(SUPER_ADMIN.id);
     expect(await persistentStateCounts()).toEqual(beforeContext);
+  });
+
+  it("commits exactly one concurrent same-scope Budget command without orphan versions or audits", async () => {
+    const services = createServices();
+    const alternateVendor = await services.reference.createMaster(SUPER_ADMIN, "vendors", {
+      code: "BUDGET-ALT",
+      name: "Alternate Budget Vendor"
+    });
+    const draft = await createConfiguredDraft(
+      services.item,
+      "Concurrent Budget Wardrobe"
+    );
+    const pricing = await services.item.getSection(
+      SUPER_ADMIN,
+      draft.mainLineId,
+      draft.revisionId,
+      "pricing"
+    );
+    const command = (vendorId: string, inputAmountPaise: number) => ({
+      operation: "set_budget" as const,
+      vendorId,
+      uomId: UOM_ID,
+      inputAmountPaise,
+      effectiveFrom: "2026-08-28T00:00:00.000Z",
+      effectiveTo: null
+    });
+
+    const results = await Promise.allSettled([
+      services.item.updateSection(
+        SUPER_ADMIN,
+        draft.mainLineId,
+        draft.revisionId,
+        "pricing",
+        {
+          expectedVersion: pricing.version,
+          expectedAggregateVersion: draft.aggregateVersion,
+          payload: { priceEntries: [command(VENDOR_ID, 11_800)] }
+        }
+      ),
+      services.item.updateSection(
+        SUPER_ADMIN,
+        draft.mainLineId,
+        draft.revisionId,
+        "pricing",
+        {
+          expectedVersion: pricing.version,
+          expectedAggregateVersion: draft.aggregateVersion,
+          payload: { priceEntries: [command(alternateVendor.id, 17_500)] }
+        }
+      )
+    ]);
+
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    expect(results.find((result) => result.status === "rejected")).toMatchObject({
+      status: "rejected",
+      reason: { status: 409, code: "VERSION_CONFLICT" }
+    });
+    const prices = await AiEstimatorKnowledgePriceVersionModel.find({
+      revisionId: draft.revisionId
+    }).lean().exec();
+    expect(prices).toHaveLength(1);
+    expect([VENDOR_ID, alternateVendor.id]).toContain(prices[0]?.vendorId);
+    expect(await AuditEventModel.countDocuments({
+      action: "ai_estimator_knowledge_price_version_created",
+      "newValues.revisionId": draft.revisionId
+    })).toBe(1);
+    const persistedPricing = await services.item.getSection(
+      SUPER_ADMIN,
+      draft.mainLineId,
+      draft.revisionId,
+      "pricing"
+    );
+    expect(persistedPricing.payload.priceEntries).toEqual([
+      expect.objectContaining({
+        operation: "reference",
+        priceVersionId: prices[0]?._id
+      })
+    ]);
+  });
+
+  it.each([
+    ["vendors", "Vendor"],
+    ["uoms", "UOM"]
+  ] as const)(
+    "serializes a first Budget %s reference against archive in both commit orders",
+    async (masterType, label) => {
+      const base = createServices();
+      const createTarget = async (suffix: string) => base.reference.createMaster(
+        SUPER_ADMIN,
+        masterType,
+        {
+          code: `${label.toUpperCase()}-${suffix}`,
+          name: `${label} ${suffix}`,
+          ...(masterType === "uoms" ? { decimalScale: 2 } : {}),
+        }
+      );
+      const budgetCommand = (targetId: string) => ({
+        operation: "set_budget" as const,
+        vendorId: masterType === "vendors" ? targetId : VENDOR_ID,
+        uomId: masterType === "uoms" ? targetId : UOM_ID,
+        inputAmountPaise: 10_000,
+        effectiveFrom: "2026-08-28T00:00:00.000Z",
+        effectiveTo: null
+      });
+
+      const archiveFirstTarget = await createTarget("archive-first");
+      await clearBudgetRaceDependencyEpoch(masterType, archiveFirstTarget.id);
+      const archiveFirstDraft = await createConfiguredDraft(
+        base.item,
+        `${label} archive-first Budget`
+      );
+      const archiveFirstPricing = await base.item.getSection(
+        SUPER_ADMIN,
+        archiveFirstDraft.mainLineId,
+        archiveFirstDraft.revisionId,
+        "pricing"
+      );
+      const archiveGate = createGatedAudit("ai_estimator_knowledge_master_archived");
+      const archiving = createRaceReferenceService(archiveGate.audit).archiveMaster(
+        SUPER_ADMIN,
+        masterType,
+        archiveFirstTarget.id,
+        { expectedVersion: archiveFirstTarget.version }
+      );
+      await archiveGate.entered;
+      const losingBudget = createRaceItemService(persistentAudit()).updateSection(
+        SUPER_ADMIN,
+        archiveFirstDraft.mainLineId,
+        archiveFirstDraft.revisionId,
+        "pricing",
+        {
+          expectedVersion: archiveFirstPricing.version,
+          expectedAggregateVersion: archiveFirstDraft.aggregateVersion,
+          payload: { priceEntries: [budgetCommand(archiveFirstTarget.id)] }
+        }
+      );
+      await nextEventLoopTurn();
+      archiveGate.release();
+
+      const [archiveResult, losingBudgetResult] = await Promise.allSettled([
+        archiving,
+        losingBudget
+      ]);
+      expect(archiveResult).toMatchObject({
+        status: "fulfilled",
+        value: { id: archiveFirstTarget.id, status: "archived" }
+      });
+      expect(losingBudgetResult).toMatchObject({
+        status: "rejected",
+        reason: { status: 409, code: "KNOWLEDGE_REFERENCE_INVALID" }
+      });
+      expect(await AiEstimatorKnowledgePriceVersionModel.countDocuments({
+        revisionId: archiveFirstDraft.revisionId
+      })).toBe(0);
+      expect(await AuditEventModel.countDocuments({
+        action: "ai_estimator_knowledge_price_version_created",
+        "newValues.revisionId": archiveFirstDraft.revisionId
+      })).toBe(0);
+
+      const budgetFirstTarget = await createTarget("budget-first");
+      await clearBudgetRaceDependencyEpoch(masterType, budgetFirstTarget.id);
+      const budgetFirstDraft = await createConfiguredDraft(
+        base.item,
+        `${label} budget-first Budget`
+      );
+      const budgetFirstPricing = await base.item.getSection(
+        SUPER_ADMIN,
+        budgetFirstDraft.mainLineId,
+        budgetFirstDraft.revisionId,
+        "pricing"
+      );
+      const budgetGate = createGatedAudit(
+        "ai_estimator_knowledge_price_version_created"
+      );
+      const budgeting = createRaceItemService(budgetGate.audit).updateSection(
+        SUPER_ADMIN,
+        budgetFirstDraft.mainLineId,
+        budgetFirstDraft.revisionId,
+        "pricing",
+        {
+          expectedVersion: budgetFirstPricing.version,
+          expectedAggregateVersion: budgetFirstDraft.aggregateVersion,
+          payload: { priceEntries: [budgetCommand(budgetFirstTarget.id)] }
+        }
+      );
+      await budgetGate.entered;
+      const losingArchive = createRaceReferenceService(persistentAudit()).archiveMaster(
+        SUPER_ADMIN,
+        masterType,
+        budgetFirstTarget.id,
+        { expectedVersion: budgetFirstTarget.version }
+      );
+      await nextEventLoopTurn();
+      budgetGate.release();
+
+      const [budgetResult, losingArchiveResult] = await Promise.allSettled([
+        budgeting,
+        losingArchive
+      ]);
+      expect(budgetResult.status).toBe("fulfilled");
+      expect(losingArchiveResult).toMatchObject({
+        status: "rejected",
+        reason: { status: 409, code: "ACTIVE_REFERENCE_CONFLICT" }
+      });
+      expect(await budgetRaceMasterDocument(masterType, budgetFirstTarget.id))
+        .toMatchObject({ status: "active", dependencyEpoch: 1, version: 1 });
+      expect(await AiEstimatorKnowledgePriceVersionModel.countDocuments({
+        revisionId: budgetFirstDraft.revisionId
+      })).toBe(1);
+      expect(await AuditEventModel.countDocuments({
+        action: "ai_estimator_knowledge_master_archived",
+        entityId: budgetFirstTarget.id
+      })).toBe(0);
+    }
+  );
+
+  it("serializes a legacy Mode-scoped compatibility price against archive in both commit orders and preserves its Budget update scope", async () => {
+    const base = createServices();
+    const createMode = async (suffix: string) => {
+      const mode = await base.reference.createMaster(SUPER_ADMIN, "modes", {
+        code: `LEGACY-${suffix}`,
+        name: `Legacy ${suffix} Mode`
+      });
+      await AiEstimatorKnowledgeModeModel.updateOne(
+        { _id: mode.id },
+        { $unset: { dependencyEpoch: 1 } },
+        { timestamps: false }
+      ).exec();
+      return mode;
+    };
+    const appendCommand = (modeId: string, priceEntryId: string) => ({
+      ...priceCommand(priceEntryId, "2026-08-28T00:00:00.000Z"),
+      modeId
+    });
+
+    const archiveFirstMode = await createMode("ARCHIVE-FIRST");
+    const archiveFirstDraft = await createConfiguredDraft(
+      base.item,
+      "Legacy Mode archive-first price"
+    );
+    const archiveFirstPricing = await base.item.getSection(
+      SUPER_ADMIN,
+      archiveFirstDraft.mainLineId,
+      archiveFirstDraft.revisionId,
+      "pricing"
+    );
+    const archiveGate = createGatedAudit("ai_estimator_knowledge_master_archived");
+    const archiving = createRaceReferenceService(archiveGate.audit).archiveMaster(
+      SUPER_ADMIN,
+      "modes",
+      archiveFirstMode.id,
+      { expectedVersion: archiveFirstMode.version }
+    );
+    await archiveGate.entered;
+    const losingAppend = createRaceItemService(persistentAudit()).updateSection(
+      SUPER_ADMIN,
+      archiveFirstDraft.mainLineId,
+      archiveFirstDraft.revisionId,
+      "pricing",
+      {
+        expectedVersion: archiveFirstPricing.version,
+        expectedAggregateVersion: archiveFirstDraft.aggregateVersion,
+        payload: {
+          priceEntries: [appendCommand(
+            archiveFirstMode.id,
+            "price-entry-mode-archive-first"
+          )]
+        }
+      }
+    );
+    await nextEventLoopTurn();
+    archiveGate.release();
+
+    const [archiveResult, losingAppendResult] = await Promise.allSettled([
+      archiving,
+      losingAppend
+    ]);
+    expect(archiveResult).toMatchObject({
+      status: "fulfilled",
+      value: { id: archiveFirstMode.id, status: "archived" }
+    });
+    expect(losingAppendResult).toMatchObject({
+      status: "rejected",
+      reason: { status: 409, code: "KNOWLEDGE_REFERENCE_INVALID" }
+    });
+    expect(await AiEstimatorKnowledgePriceVersionModel.countDocuments({
+      revisionId: archiveFirstDraft.revisionId
+    })).toBe(0);
+    expect(await AuditEventModel.countDocuments({
+      action: "ai_estimator_knowledge_price_version_created",
+      "newValues.revisionId": archiveFirstDraft.revisionId
+    })).toBe(0);
+
+    const appendFirstMode = await createMode("APPEND-FIRST");
+    const appendFirstDraft = await createConfiguredDraft(
+      base.item,
+      "Legacy Mode price-first price"
+    );
+    const appendFirstPricing = await base.item.getSection(
+      SUPER_ADMIN,
+      appendFirstDraft.mainLineId,
+      appendFirstDraft.revisionId,
+      "pricing"
+    );
+    const appendGate = createGatedAudit(
+      "ai_estimator_knowledge_price_version_created"
+    );
+    const appending = createRaceItemService(appendGate.audit).updateSection(
+      SUPER_ADMIN,
+      appendFirstDraft.mainLineId,
+      appendFirstDraft.revisionId,
+      "pricing",
+      {
+        expectedVersion: appendFirstPricing.version,
+        expectedAggregateVersion: appendFirstDraft.aggregateVersion,
+        payload: {
+          priceEntries: [appendCommand(
+            appendFirstMode.id,
+            "price-entry-mode-append-first"
+          )]
+        }
+      }
+    );
+    await appendGate.entered;
+    const losingArchive = createRaceReferenceService(persistentAudit()).archiveMaster(
+      SUPER_ADMIN,
+      "modes",
+      appendFirstMode.id,
+      { expectedVersion: appendFirstMode.version }
+    );
+    await nextEventLoopTurn();
+    appendGate.release();
+
+    const [appendResult, losingArchiveResult] = await Promise.allSettled([
+      appending,
+      losingArchive
+    ]);
+    expect(appendResult.status).toBe("fulfilled");
+    expect(losingArchiveResult).toMatchObject({
+      status: "rejected",
+      reason: { status: 409, code: "ACTIVE_REFERENCE_CONFLICT" }
+    });
+    expect(await AiEstimatorKnowledgeModeModel.findById(appendFirstMode.id).lean())
+      .toMatchObject({ status: "active", dependencyEpoch: 1, version: 1 });
+    expect(await AiEstimatorKnowledgePriceVersionModel.countDocuments({
+      revisionId: appendFirstDraft.revisionId,
+      modeId: appendFirstMode.id
+    })).toBe(1);
+    expect(await AuditEventModel.countDocuments({
+      action: "ai_estimator_knowledge_master_archived",
+      entityId: appendFirstMode.id
+    })).toBe(0);
+
+    await AiEstimatorKnowledgeModeModel.updateOne(
+      { _id: appendFirstMode.id },
+      { $unset: { dependencyEpoch: 1 } },
+      { timestamps: false }
+    ).exec();
+    const modeBeforeBudgetUpdate = await AiEstimatorKnowledgeModeModel.findById(
+      appendFirstMode.id
+    ).lean().exec();
+    const retainedPricing = await base.item.getSection(
+      SUPER_ADMIN,
+      appendFirstDraft.mainLineId,
+      appendFirstDraft.revisionId,
+      "pricing"
+    );
+    const retainedReference = (retainedPricing.payload.priceEntries as Array<{
+      operation: "reference";
+      priceEntryId: string;
+      priceVersionId: string;
+    }>)[0]!;
+    const currentItem = await base.item.getItem(
+      SUPER_ADMIN,
+      appendFirstDraft.mainLineId
+    );
+
+    await base.item.updateSection(
+      SUPER_ADMIN,
+      appendFirstDraft.mainLineId,
+      appendFirstDraft.revisionId,
+      "pricing",
+      {
+        expectedVersion: retainedPricing.version,
+        expectedAggregateVersion: currentItem.version,
+        payload: {
+          priceEntries: [{
+            operation: "set_budget",
+            sourcePriceVersionId: retainedReference.priceVersionId,
+            vendorId: VENDOR_ID,
+            uomId: UOM_ID,
+            inputAmountPaise: 12_500,
+            effectiveFrom: "2026-08-28T00:00:00.000Z",
+            effectiveTo: null
+          }]
+        }
+      }
+    );
+
+    const modeAfterBudgetUpdate = await AiEstimatorKnowledgeModeModel.findById(
+      appendFirstMode.id
+    ).lean().exec();
+    expect(modeAfterBudgetUpdate).toMatchObject({
+      status: "active",
+      dependencyEpoch: 1,
+      version: modeBeforeBudgetUpdate?.version,
+      updatedAt: modeBeforeBudgetUpdate?.updatedAt
+    });
+    const retainedVersions = await AiEstimatorKnowledgePriceVersionModel.find({
+      revisionId: appendFirstDraft.revisionId,
+      priceEntryId: retainedReference.priceEntryId
+    }).sort({ versionNumber: 1 }).lean().exec();
+    expect(retainedVersions).toHaveLength(2);
+    expect(retainedVersions.map((version) => version.modeId))
+      .toEqual([appendFirstMode.id, appendFirstMode.id]);
+    expect(retainedVersions[1]).toMatchObject({
+      inputAmountPaise: 12_500,
+      versionNumber: 2
+    });
   });
 
   it("filters descriptive Specification guidance without changing effective-price resolution", async () => {
@@ -753,8 +1173,8 @@ describe("AI estimator knowledge integrated replica-set invariants", { timeout: 
 
     expect(plywood.lineage.priceVersionId).toBe(currentReference.priceVersionId);
     expect(hardware.lineage.priceVersionId).toBe(currentReference.priceVersionId);
-    expect(plywood.preview?.effectiveUnitRatePaise).toBe(11_800);
-    expect(hardware.preview?.effectiveUnitRatePaise).toBe(11_800);
+    expect(plywood.preview?.effectiveUnitRatePaise).toBe(10_000);
+    expect(hardware.preview?.effectiveUnitRatePaise).toBe(10_000);
     expect((plywood.sections.pricing as { specifications: unknown[] }).specifications).toEqual([{
       id: "spec-standard",
       name: "Plywood",
@@ -931,7 +1351,7 @@ describe("AI estimator knowledge integrated replica-set invariants", { timeout: 
           specifications: [{ id: "spec-standard", name: "Standard" }],
           internalVendorNotes: "replacement-only note",
           priceEntries: [
-            priceCommand("price-entry-replacement", "2026-01-01T00:00:00.000Z")
+            priceCommand("price-entry-replacement", "2026-08-28T00:00:00.000Z")
           ]
         }
       }
@@ -984,7 +1404,7 @@ describe("AI estimator knowledge integrated replica-set invariants", { timeout: 
     });
     expect(context.preview).toMatchObject({
       effectivePriceVersionId: retainedReference.priceVersionId,
-      effectiveUnitRatePaise: 11_800
+      effectiveUnitRatePaise: 10_000
     });
     expect(context.lineage.priceVersionId).not.toBe(copiedReference.priceVersionId);
   });
@@ -1478,9 +1898,9 @@ describe("AI estimator knowledge integrated replica-set invariants", { timeout: 
               priceVersionId: sharedEntry.priceVersionId
             },
             {
-              ...priceCommand("price-entry-legacy-pmc", "2026-01-01T00:00:00.000Z"),
+              ...priceCommand("price-entry-legacy-pmc", "2026-08-28T00:00:00.000Z"),
               modeId: PMC_MODE_ID,
-              inputAmountPaise: 23_600
+              inputAmountPaise: 20_000
             }
           ]
         }
@@ -1606,7 +2026,7 @@ describe("AI estimator knowledge integrated replica-set invariants", { timeout: 
     expect(JSON.stringify(pmcContext)).not.toContain("private-pmc-answer");
     expect(pmcContext.preview).toMatchObject({
       effectivePriceVersionId: sharedPrice?._id,
-      effectiveUnitRatePaise: 11_800
+      effectiveUnitRatePaise: 10_000
     });
     expect(executionContext.sections.advanced).toMatchObject({
       dependencies: [],
@@ -1644,12 +2064,12 @@ describe("AI estimator knowledge integrated replica-set invariants", { timeout: 
     expect(JSON.stringify(inHouseContext)).not.toContain("Sub-Vendor crew E-27");
     expect(subVendorContext.lineage.priceVersionId).toBe(sharedPrice?._id);
     expect(inHouseContext.lineage.priceVersionId).toBe(sharedPrice?._id);
-    expect(subVendorContext.preview).toMatchObject({ effectiveUnitRatePaise: 11_800 });
-    expect(inHouseContext.preview).toMatchObject({ effectiveUnitRatePaise: 11_800 });
+    expect(subVendorContext.preview).toMatchObject({ effectiveUnitRatePaise: 10_000 });
+    expect(inHouseContext.preview).toMatchObject({ effectiveUnitRatePaise: 10_000 });
     expect(executionContext.lineage.priceVersionId).toBe(sharedPrice?._id);
     expect(executionContext.preview).toMatchObject({
       effectivePriceVersionId: sharedPrice?._id,
-      effectiveUnitRatePaise: 11_800
+      effectiveUnitRatePaise: 10_000
     });
     expect(legacyContext.sections.advanced).toMatchObject({
       dependencies: [],
@@ -1662,7 +2082,7 @@ describe("AI estimator knowledge integrated replica-set invariants", { timeout: 
     expect(legacyContext.lineage.priceVersionId).toBe(legacyPmcPrice?._id);
     expect(legacyContext.preview).toMatchObject({
       effectivePriceVersionId: legacyPmcPrice?._id,
-      effectiveUnitRatePaise: 23_600
+      effectiveUnitRatePaise: 20_000
     });
     expect(selectorFreeContext.lineage.priceVersionId).toBeNull();
     expect(selectorFreeContext.preview).toBeNull();
@@ -2905,7 +3325,7 @@ async function createDuplicateRaceSource(
     expectedAggregateVersion: source.version,
     payload: {
       specifications: [{ id: "spec-standard", name: "Duplicate race" }],
-      priceEntries: [priceCommand(`price-entry-${nextId()}`, "2026-01-01T00:00:00.000Z")]
+      priceEntries: [priceCommand(`price-entry-${nextId()}`, "2026-08-28T00:00:00.000Z")]
     }
   });
   source = await item.getItem(SUPER_ADMIN, source.mainLineId);
@@ -3010,7 +3430,7 @@ async function createConfiguredDraft(
       payload: {
         specifications: [{ id: "spec-standard", name: "Standard" }],
         internalVendorNotes: "commercially sensitive",
-        priceEntries: [priceCommand(`price-entry-${nextId()}`, "2026-01-01T00:00:00.000Z")]
+        priceEntries: [priceCommand(`price-entry-${nextId()}`, "2026-08-28T00:00:00.000Z")]
       }
     });
     detail = await item.getItem(SUPER_ADMIN, detail.mainLineId);
@@ -3263,12 +3683,49 @@ function priceCommand(priceEntryId: string, effectiveFrom: string) {
     modeId: null,
     taxRuleId: TAX_RULE_ID,
     taxVersionId: TAX_VERSION_ID,
-    inputAmountPaise: 11_800,
-    treatment: "inclusive" as const,
+    inputAmountPaise: 10_000,
+    treatment: "exclusive" as const,
     effectiveFrom,
     effectiveTo: null,
     status: "active" as const
   };
+}
+
+async function budgetRaceMasterDocument(
+  masterType: "vendors" | "uoms" | "taxes",
+  id: string
+) {
+  if (masterType === "vendors") {
+    return AiEstimatorKnowledgeVendorModel.findById(id).lean().exec();
+  }
+  if (masterType === "uoms") {
+    return AiEstimatorKnowledgeUomModel.findById(id).lean().exec();
+  }
+  return AiEstimatorKnowledgeTaxRuleModel.findById(id).lean().exec();
+}
+
+async function clearBudgetRaceDependencyEpoch(
+  masterType: "vendors" | "uoms" | "taxes",
+  id: string
+): Promise<void> {
+  if (masterType === "vendors") {
+    await AiEstimatorKnowledgeVendorModel.updateOne(
+      { _id: id },
+      { $unset: { dependencyEpoch: 1 } }
+    ).exec();
+    return;
+  }
+  if (masterType === "uoms") {
+    await AiEstimatorKnowledgeUomModel.updateOne(
+      { _id: id },
+      { $unset: { dependencyEpoch: 1 } }
+    ).exec();
+    return;
+  }
+  await AiEstimatorKnowledgeTaxRuleModel.updateOne(
+    { _id: id },
+    { $unset: { dependencyEpoch: 1 } }
+  ).exec();
 }
 
 function page() {
@@ -3386,12 +3843,12 @@ async function seedKnowledgeReferences(): Promise<void> {
     }),
     AiEstimatorKnowledgeTaxRuleModel.create({
       _id: TAX_RULE_ID,
-      code: "GST18",
-      codeNormalized: "gst18",
-      name: "GST 18%",
+      code: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.rule.code,
+      codeNormalized: "gst_18",
+      name: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.rule.name,
       nameNormalized: "gst 18%",
       description: null,
-      displayOrder: 1,
+      displayOrder: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.rule.displayOrder,
       status: "active",
       version: 1,
       createdById: SUPER_ADMIN.id,
@@ -3406,9 +3863,9 @@ async function seedKnowledgeReferences(): Promise<void> {
       taxRuleId: TAX_RULE_ID,
       versionNumber: 1,
       rateBps: 1_800,
-      treatment: "inclusive",
-      applicability: "interior work",
-      effectiveFrom: new Date("2026-01-01T00:00:00.000Z"),
+      treatment: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.version.treatment,
+      applicability: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.version.applicability,
+      effectiveFrom: new Date(AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.version.effectiveFrom),
       effectiveTo: null,
       status: "active",
       version: 1,

@@ -20,7 +20,9 @@ const DECIMAL = /^(?:0|[1-9]\d*)(?:\.\d+)?$/u;
 export interface KnowledgeSectionValidationContext {
   readonly specifications?: KnowledgeJsonValue;
   readonly uoms?: readonly KnowledgeMaster[];
+  readonly vendors?: readonly KnowledgeMaster[];
   readonly uomCatalogStatus?: "loading" | "ready" | "error";
+  readonly vendorCatalogStatus?: "loading" | "ready" | "error";
 }
 
 export function validateKnowledgeSection(
@@ -37,11 +39,57 @@ export function validateKnowledgeSection(
     issues.push(...parseKnowledgeSpecifications(payload.specifications).issues);
     rows("priceEntries").forEach((row, index) => {
       const path = `priceEntries.${index}`;
-      requireString(row, "priceEntryId", path);
-      if (row.operation === "reference") requireString(row, "priceVersionId", path);
-      else for (const key of ["vendorId", "uomId", "taxRuleId", "taxVersionId", "treatment", "effectiveFrom", "status"]) requireString(row, key, path);
-      if (row.operation !== "reference" && (!Number.isSafeInteger(row.inputAmountPaise) || (row.inputAmountPaise as number) < 0)) issues.push({ path: `${path}.inputAmountPaise`, message: "Enter a non-negative rupee amount with up to two decimal places." });
-      if (typeof row.effectiveFrom === "string" && typeof row.effectiveTo === "string" && row.effectiveTo && row.effectiveTo <= row.effectiveFrom) issues.push({ path: `${path}.effectiveTo`, message: "Effective to must be later than effective from." });
+      if (row.operation === "reference") {
+        if (!string(row.priceEntryId) || !string(row.priceVersionId)) {
+          issues.push({ path, message: "Saved budget details are unavailable. Reload Budgeting and try again." });
+        }
+        return;
+      }
+      if (row.operation !== "set_budget" && row.operation !== "append") {
+        issues.push({ path, message: "This budget needs attention before it can be saved." });
+        return;
+      }
+
+      requireBudgetString(row, "vendorId", "Vendor", path, issues);
+      requireBudgetString(row, "uomId", "Unit of measure", path, issues);
+      requireBudgetString(row, "effectiveFrom", "Starts on", path, issues);
+      if (row.operation === "append") {
+        let missingCompatibilityValue = !string(row.priceEntryId);
+        for (const key of ["taxRuleId", "taxVersionId", "treatment", "status"] as const) {
+          missingCompatibilityValue ||= !string(row[key]);
+        }
+        if (missingCompatibilityValue) {
+          issues.push({ path, message: "This budget needs attention before it can be saved." });
+        }
+      }
+      if (
+        row.operation === "set_budget"
+        && row.sourcePriceVersionId !== undefined
+        && row.sourcePriceVersionId !== null
+        && (typeof row.sourcePriceVersionId !== "string" || !row.sourcePriceVersionId.trim())
+      ) {
+        issues.push({ path, message: "This saved budget can no longer be updated safely. Reload Budgeting and try again." });
+      }
+      if (!Number.isSafeInteger(row.inputAmountPaise) || (row.inputAmountPaise as number) < 0) {
+        issues.push({ path: `${path}.inputAmountPaise`, message: "Enter a non-negative rupee amount with up to two decimal places." });
+      }
+      const startsOn = typeof row.effectiveFrom === "string" ? Date.parse(row.effectiveFrom) : Number.NaN;
+      if (typeof row.effectiveFrom === "string" && row.effectiveFrom.trim() && Number.isNaN(startsOn)) {
+        issues.push({ path: `${path}.effectiveFrom`, message: "Enter a valid start date and time." });
+      }
+      if (row.effectiveTo !== null && row.effectiveTo !== undefined && row.effectiveTo !== "") {
+        const endsOn = typeof row.effectiveTo === "string" ? Date.parse(row.effectiveTo) : Number.NaN;
+        if (Number.isNaN(endsOn)) {
+          issues.push({ path: `${path}.effectiveTo`, message: "Enter a valid end date and time." });
+        } else if (!Number.isNaN(startsOn) && endsOn <= startsOn) {
+          issues.push({ path: `${path}.effectiveTo`, message: "Ends on must be later than Starts on." });
+        }
+      }
+
+      requireActiveBudgetMaster(row, "vendorId", "Vendor", context.vendors, context.vendorCatalogStatus, path, issues);
+      requireActiveBudgetMaster(row, "uomId", "Unit of measure", context.uoms, context.uomCatalogStatus, path, issues);
+      requireBudgetCatalog("vendorId", "Vendor", context.vendorCatalogStatus, path, issues);
+      requireBudgetCatalog("uomId", "Unit of measure", context.uomCatalogStatus, path, issues);
     });
   }
   if (sectionKey === "quantity-margin") {
@@ -86,7 +134,7 @@ export function validateKnowledgeSection(
 
       const specificationId = string(row.specificationId);
       if (specificationId && parsedSpecifications && !specificationIds.has(specificationId)) {
-        issues.push({ path: `${path}.specificationId`, message: "Choose an available Specification from Pricing." });
+        issues.push({ path: `${path}.specificationId`, message: "Choose an available Specification from Budgeting." });
       }
 
       const uomId = string(row.uomId);
@@ -180,6 +228,50 @@ export function validateKnowledgeSection(
     if (!string(row.targetMainLineId)) issues.push({ path: `dependencies.${index}.targetMainLineId`, message: "Target Main Line is required." });
   });
   return issues;
+}
+
+function requireActiveBudgetMaster(
+  row: KnowledgeJsonObject,
+  field: "vendorId" | "uomId",
+  fieldLabel: string,
+  masters: readonly KnowledgeMaster[] | undefined,
+  catalogStatus: "loading" | "ready" | "error" | undefined,
+  path: string,
+  issues: KnowledgeValidationIssue[]
+) {
+  const id = string(row[field]);
+  if (!id || !masters || catalogStatus !== "ready") return;
+  const selected = masters.find((master) => master.id === id);
+  if (!selected || selected.status !== "active") {
+    issues.push({ path: `${path}.${field}`, message: `Choose an active ${fieldLabel}.` });
+  }
+}
+
+function requireBudgetString(
+  row: KnowledgeJsonObject,
+  field: "vendorId" | "uomId" | "effectiveFrom",
+  fieldLabel: string,
+  path: string,
+  issues: KnowledgeValidationIssue[]
+) {
+  if (!string(row[field])) {
+    issues.push({ path: `${path}.${field}`, message: `${fieldLabel} is required.` });
+  }
+}
+
+function requireBudgetCatalog(
+  field: "vendorId" | "uomId",
+  fieldLabel: string,
+  status: "loading" | "ready" | "error" | undefined,
+  path: string,
+  issues: KnowledgeValidationIssue[]
+) {
+  if (status && status !== "ready") {
+    issues.push({
+      path: `${path}.${field}`,
+      message: `Load ${fieldLabel} options before saving this budget.`
+    });
+  }
 }
 
 function requireCanonical(value: KnowledgeJsonValue | undefined, path: string, issues: KnowledgeValidationIssue[]) {

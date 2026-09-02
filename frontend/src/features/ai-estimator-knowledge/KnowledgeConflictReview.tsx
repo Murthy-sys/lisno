@@ -192,12 +192,8 @@ interface ProjectionContext {
   readonly specifications: KnowledgeJsonValue | undefined;
 }
 
-/**
- * Pricing carries immutable IDs and compatibility metadata that are useful to
- * the editor but should never be exposed by conflict review. Keep this
- * projection intentionally allowlisted rather than recursively rendering an
- * open-ended Pricing payload.
- */
+/** Budgeting is deliberately allowlisted so wire-protocol and lineage fields
+ * never leak into the Super Admin conflict review. */
 function pricingValues(
   payload: KnowledgeJsonObject,
   context: ProjectionContext
@@ -218,48 +214,53 @@ function pricingValues(
   });
 
   objectArray(payload.priceEntries).forEach((entry, index) => {
-    const prefix = `Price ${index + 1}`;
-    const operation = entry.operation === "append" || entry.operation === "reference"
-      ? displayEnum(entry.operation)
-      : null;
-    if (operation) values.push({ label: `${prefix} · Operation`, value: operation });
-
+    const prefix = `Budget ${index + 1}`;
     const resolvedVersion = entry.operation === "reference" && isJsonObject(entry.priceVersion)
       ? entry.priceVersion
       : null;
+    if (entry.operation === "reference" && !resolvedVersion) {
+      values.push({ label: prefix, value: "Saved budget details are unavailable" });
+      return;
+    }
     const priceValues = resolvedVersion ?? entry;
-    for (const key of PRICING_REVIEW_PRICE_KEYS) {
+    for (const key of ["vendorId", "uomId"] as const) {
       const value = priceValues[key];
       if (!hasMeaningfulValue(value)) continue;
       const resolvedReference = resolveReference(key, value, context);
       values.push({
-        label: `${prefix} · ${displayLabel(key)}`,
+        label: `${prefix} · ${key === "vendorId" ? "Vendor" : "Unit of measure"}`,
         value: resolvedReference ?? formatPrimitive(key, value as string | number | boolean)
       });
+    }
+    const amountBeforeGst = entry.operation === "set_budget"
+      ? priceValues.inputAmountPaise
+      : priceValues.baseAmountPaise;
+    if (hasMeaningfulValue(amountBeforeGst)) {
+      values.push({
+        label: `${prefix} · Amount before GST`,
+        value: formatPrimitive("baseAmountPaise", amountBeforeGst as string | number | boolean)
+      });
+    }
+    for (const [key, label] of [
+      ["taxAmountPaise", "GST"],
+      ["totalAmountPaise", "Total including GST"],
+      ["effectiveFrom", "Starts on"],
+      ["effectiveTo", "Ends on"]
+    ] as const) {
+      const value = priceValues[key];
+      if (!hasMeaningfulValue(value)) continue;
+      values.push({
+        label: `${prefix} · ${label}`,
+        value: formatPrimitive(key, value as string | number | boolean)
+      });
+    }
+    if (priceValues.reviewRequired === true || (typeof priceValues.status === "string" && priceValues.status !== "active")) {
+      values.push({ label: `${prefix} · Review`, value: "Needs review" });
     }
   });
 
   return values;
 }
-
-const PRICING_REVIEW_PRICE_KEYS = [
-  "specificationId",
-  "modeId",
-  "vendorId",
-  "uomId",
-  "versionNumber",
-  "taxRuleId",
-  "taxVersionId",
-  "treatment",
-  "inputAmountPaise",
-  "baseAmountPaise",
-  "taxAmountPaise",
-  "totalAmountPaise",
-  "effectiveFrom",
-  "effectiveTo",
-  "status",
-  "reviewRequired"
-] as const;
 
 function meaningfulText(value: KnowledgeJsonValue | undefined): string | null {
   return typeof value === "string" ? value.trim() || null : null;

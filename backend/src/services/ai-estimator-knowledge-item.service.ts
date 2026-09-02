@@ -19,6 +19,11 @@ import {
   parseScaledDecimal
 } from "../domain/ai-estimator-knowledge-calculation.js";
 import {
+  AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY,
+  isExactFixedGstRule,
+  isExactFixedGstVersion
+} from "../domain/ai-estimator-knowledge-fixed-gst.js";
+import {
   createKnowledgeRevisionDigest,
   deriveKnowledgeCompleteness
 } from "../domain/ai-estimator-knowledge-completeness.js";
@@ -29,8 +34,7 @@ import {
   normalizeKnowledgeIdentity,
   type KnowledgeQuantityGapBehavior,
   type KnowledgeSectionApplicability,
-  type KnowledgeSectionKey,
-  type KnowledgeTaxTreatment
+  type KnowledgeSectionKey
 } from "../domain/ai-estimator-knowledge.js";
 import {
   findCanonicalKnowledgePriorityById,
@@ -1023,6 +1027,18 @@ async function materializePriceCommands(input: {
   const previousPriceVersionIds = new Set(
     referencedPriceVersionIds(input.previousPayload)
   );
+  const previousPriceReferences = new Map<string, string>();
+  if (Array.isArray(input.previousPayload.priceEntries)) {
+    for (const candidate of input.previousPayload.priceEntries) {
+      const reference = asRow(candidate);
+      if (reference?.operation !== "reference") continue;
+      const priceVersionId = optionalString(reference.priceVersionId);
+      const priceEntryId = optionalString(reference.priceEntryId);
+      if (priceVersionId && priceEntryId) {
+        previousPriceReferences.set(priceVersionId, priceEntryId);
+      }
+    }
+  }
   const historicalSpecificationReferences = await AiEstimatorKnowledgePriceVersionModel.find({
     mainLineId: input.mainLineId,
     revisionId: input.revisionId,
@@ -1056,11 +1072,25 @@ async function materializePriceCommands(input: {
       candidatePriceVersionIds.add(requiredString(command.priceVersionId));
     }
   }
+  const containsPriceMutation = commands.some((candidate) => {
+    const operation = asRow(candidate)?.operation;
+    return operation === "set_budget" || operation === "append";
+  });
+  if (containsPriceMutation) {
+    await assertResolvableRetainedPriceWindows({
+      revisionId: input.revisionId,
+      priceVersionIds: candidatePriceVersionIds,
+      session: input.session
+    });
+  }
+  const fixedGstPolicy = containsPriceMutation
+    ? await requireFixedGstPolicy(input.session)
+    : null;
   for (const [commandIndex, candidate] of commands.entries()) {
     const command = asRow(candidate);
     if (!command) continue;
-    const priceEntryId = requiredString(command.priceEntryId);
     if (command.operation === "reference") {
+      const priceEntryId = requiredString(command.priceEntryId);
       const priceVersionId = requiredString(command.priceVersionId);
       const referenced = asRow(await AiEstimatorKnowledgePriceVersionModel.findOne({
         _id: priceVersionId,
@@ -1082,13 +1112,52 @@ async function materializePriceCommands(input: {
       references.push({ operation: "reference", priceEntryId, priceVersionId });
       continue;
     }
-    if (command.operation !== "append") continue;
+    if (command.operation !== "set_budget" && command.operation !== "append") continue;
+
+    const isBudgetCommand = command.operation === "set_budget";
+    if (!isBudgetCommand) {
+      assertCompatibilityAppendUsesFixedGst(command, commandIndex);
+    }
+    if (!fixedGstPolicy) {
+      fixedGstPolicyUnavailable(commandIndex);
+    }
+    const sourcePriceVersionId = isBudgetCommand
+      ? optionalString(command.sourcePriceVersionId)
+      : undefined;
+    let sourcePrice: Row | null = null;
+    let priceEntryId: string;
+    let specificationId: string | null;
+    let modeId: string | null;
+    if (isBudgetCommand && sourcePriceVersionId) {
+      const retainedPriceEntryId = previousPriceReferences.get(sourcePriceVersionId);
+      if (!retainedPriceEntryId) {
+        invalidBudgetSource(commandIndex);
+      }
+      sourcePrice = asRow(await AiEstimatorKnowledgePriceVersionModel.findOne({
+        _id: sourcePriceVersionId,
+        mainLineId: input.mainLineId,
+        revisionId: input.revisionId,
+        priceEntryId: retainedPriceEntryId
+      }).session(input.session).lean().exec());
+      if (!sourcePrice) {
+        invalidBudgetSource(commandIndex);
+      }
+      priceEntryId = requiredString(sourcePrice.priceEntryId);
+      specificationId = null;
+      modeId = optionalString(sourcePrice.modeId) ?? null;
+    } else if (isBudgetCommand) {
+      priceEntryId = knowledgeId("price-entry", input.uuid());
+      specificationId = null;
+      modeId = null;
+    } else {
+      priceEntryId = requiredString(command.priceEntryId);
+      specificationId = optionalString(command.specificationId) ?? null;
+      modeId = optionalString(command.modeId) ?? null;
+    }
+
     const vendorId = requiredString(command.vendorId);
     const uomId = requiredString(command.uomId);
-    const specificationId = optionalString(command.specificationId) ?? null;
-    const modeId = optionalString(command.modeId) ?? null;
-    const taxRuleId = requiredString(command.taxRuleId);
-    const taxVersionId = requiredString(command.taxVersionId);
+    const taxRuleId = AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.rule.id;
     if (specificationId !== null) {
       throw new ApiError(
         409,
@@ -1100,54 +1169,66 @@ async function materializePriceCommands(input: {
         }
       );
     }
-    const vendor = await AiEstimatorKnowledgeVendorModel.findOne({ _id: vendorId, status: "active" })
-      .session(input.session).lean().exec();
-    const uom = await AiEstimatorKnowledgeUomModel.findOne({ _id: uomId, status: "active" })
-      .session(input.session).lean().exec();
+    const vendor = await AiEstimatorKnowledgeVendorModel.findOneAndUpdate(
+      { _id: vendorId, status: "active" },
+      { $inc: { dependencyEpoch: 1 } },
+      {
+        returnDocument: "after",
+        runValidators: true,
+        session: input.session,
+        timestamps: false
+      }
+    ).lean().exec();
+    const uom = await AiEstimatorKnowledgeUomModel.findOneAndUpdate(
+      { _id: uomId, status: "active" },
+      { $inc: { dependencyEpoch: 1 } },
+      {
+        returnDocument: "after",
+        runValidators: true,
+        session: input.session,
+        timestamps: false
+      }
+    ).lean().exec();
     const mode = modeId
-      ? await AiEstimatorKnowledgeModeModel.findOne({ _id: modeId, status: "active" })
-          .session(input.session).lean().exec()
+      ? await AiEstimatorKnowledgeModeModel.findOneAndUpdate(
+          { _id: modeId, status: "active" },
+          { $inc: { dependencyEpoch: 1 } },
+          {
+            returnDocument: "after",
+            runValidators: true,
+            session: input.session,
+            timestamps: false
+          }
+        ).lean().exec()
       : null;
-    const taxRule = await AiEstimatorKnowledgeTaxRuleModel.findOne({ _id: taxRuleId, status: "active" })
-      .session(input.session).lean().exec();
-    const taxVersionDocument = await AiEstimatorKnowledgeTaxVersionModel.findOne({
-      _id: taxVersionId,
-      taxRuleId,
-      status: "active"
-    }).session(input.session).lean().exec();
+    const effectiveFrom = validDate(command.effectiveFrom, "effectiveFrom");
+    const effectiveTo = command.effectiveTo == null ? null : validDate(command.effectiveTo, "effectiveTo");
+    if (effectiveTo && effectiveFrom >= effectiveTo) invalid("effectiveTo", "Effective end must be later than start.");
+    if (isBudgetCommand && (!vendor || !uom || (modeId && !mode))) {
+      invalidBudgetRelationships(commandIndex, {
+        vendor: Boolean(vendor),
+        uom: Boolean(uom),
+        legacyMode: !modeId || Boolean(mode)
+      });
+    }
+    assertFixedGstCoverage(effectiveFrom, effectiveTo, commandIndex);
     const latest = await AiEstimatorKnowledgePriceVersionModel.findOne({
       revisionId: input.revisionId,
       priceEntryId
     }).sort({ versionNumber: -1, _id: 1 }).session(input.session).lean().exec();
-    if (!vendor || !uom || (modeId && !mode) || !taxRule || !taxVersionDocument) {
+    if (!vendor || !uom || (modeId && !mode)) {
       throw new ApiError(409, "KNOWLEDGE_REFERENCE_INVALID", "An active price reference is unavailable.");
     }
-    const taxVersion = asRow(taxVersionDocument)!;
-    const treatment = requiredString(command.treatment) as KnowledgeTaxTreatment;
-    if (treatment !== taxVersion.treatment) {
-      throw new ApiError(409, "KNOWLEDGE_TAX_MISMATCH", "Price tax treatment does not match its immutable tax version.");
-    }
-    const effectiveFrom = validDate(command.effectiveFrom, "effectiveFrom");
-    const effectiveTo = command.effectiveTo == null ? null : validDate(command.effectiveTo, "effectiveTo");
-    if (effectiveTo && effectiveFrom >= effectiveTo) invalid("effectiveTo", "Effective end must be later than start.");
-    const taxEffectiveFrom = requiredDate(taxVersion.effectiveFrom);
-    const taxEffectiveTo = optionalDate(taxVersion.effectiveTo);
-    if (
-      effectiveFrom < taxEffectiveFrom ||
-      (taxEffectiveTo !== null && (effectiveTo === null || effectiveTo > taxEffectiveTo))
-    ) {
-      throw new ApiError(
-        409,
-        "KNOWLEDGE_TAX_WINDOW_MISMATCH",
-        "The immutable tax version must cover the complete price effective window."
-      );
-    }
+    const taxVersionId = AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.version.id;
+    const treatment = AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.version.treatment;
     const scopeKey = createKnowledgePriceScopeKey({ vendorId, uomId, specificationId, modeId });
-    if (command.status === "active") {
+    const status = isBudgetCommand ? "active" : requiredString(command.status);
+    if (status === "active") {
       const existingWindows = (await AiEstimatorKnowledgePriceVersionModel.find({
         _id: { $in: [...candidatePriceVersionIds] },
         revisionId: input.revisionId,
-        scopeKey,
+        uomId,
+        modeId: modeId === null ? { $eq: null, $exists: true } : modeId,
         status: "active"
       }).session(input.session).lean().exec()).map((row) => asRow(row)!);
       if (findOverlappingEffectiveWindows([
@@ -1158,18 +1239,25 @@ async function materializePriceCommands(input: {
         })),
         { id: priceEntryId, effectiveFrom, effectiveTo }
       ]).length > 0) {
-        throw new ApiError(409, "EFFECTIVE_WINDOW_OVERLAP", "Effective price windows cannot overlap.");
+        effectiveBudgetOverlap(`payload.priceEntries.${commandIndex}.effectiveFrom`);
       }
     }
     let amounts;
     try {
       amounts = deriveTaxAmounts({
         inputAmountPaise: requiredInteger(command.inputAmountPaise),
-        rateBps: requiredInteger(taxVersion.rateBps),
+        rateBps: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.version.rateBps,
         treatment
       });
     } catch (error) {
-      if (error instanceof KnowledgeCalculationError) invalid("inputAmountPaise", error.message);
+      if (error instanceof KnowledgeCalculationError) {
+        invalid(
+          isBudgetCommand
+            ? `payload.priceEntries.${commandIndex}.inputAmountPaise`
+            : "inputAmountPaise",
+          error.message
+        );
+      }
       throw error;
     }
     const id = knowledgeId("price-version", input.uuid());
@@ -1194,7 +1282,7 @@ async function materializePriceCommands(input: {
       totalAmountPaise: amounts.totalAmountPaise,
       effectiveFrom,
       effectiveTo,
-      status: requiredString(command.status),
+      status,
       reviewRequired: false,
       version: 1,
       createdById: input.actorId,
@@ -1214,6 +1302,9 @@ async function materializePriceCommands(input: {
         revisionId: input.revisionId,
         priceEntryId,
         versionNumber,
+        taxRuleId,
+        taxVersionId,
+        treatment,
         inputAmountPaise: amounts.inputAmountPaise,
         baseAmountPaise: amounts.baseAmountPaise,
         taxAmountPaise: amounts.taxAmountPaise,
@@ -1223,6 +1314,151 @@ async function materializePriceCommands(input: {
     references.push({ operation: "reference", priceEntryId, priceVersionId: id });
   }
   return { ...compatiblePayload, priceEntries: references };
+}
+
+async function requireFixedGstPolicy(session: ClientSession): Promise<{
+  rule: Row;
+  version: Row;
+}> {
+  const rule = asRow(await AiEstimatorKnowledgeTaxRuleModel.findOneAndUpdate(
+    {
+      _id: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.rule.id,
+      status: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.rule.status
+    },
+    { $inc: { dependencyEpoch: 1 } },
+    {
+      returnDocument: "after",
+      runValidators: true,
+      session,
+      timestamps: false
+    }
+  ).lean().exec());
+  const version = asRow(await AiEstimatorKnowledgeTaxVersionModel.findById(
+    AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.version.id
+  ).session(session).lean().exec());
+  if (!isExactFixedGstRule(rule) || !isExactFixedGstVersion(version)) {
+    fixedGstPolicyUnavailable();
+  }
+  return { rule: rule!, version: version! };
+}
+
+function assertCompatibilityAppendUsesFixedGst(command: Row, commandIndex: number): void {
+  const policy = AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY;
+  if (
+    command.taxRuleId !== policy.rule.id ||
+    command.taxVersionId !== policy.version.id ||
+    command.treatment !== policy.version.treatment
+  ) {
+    const message = "Compatibility price appends must use the system GST 18% policy.";
+    throw new ApiError(409, "KNOWLEDGE_TAX_MISMATCH", message, {
+      [`payload.priceEntries.${commandIndex}`]: message
+    });
+  }
+}
+
+function assertFixedGstCoverage(
+  effectiveFrom: Date,
+  effectiveTo: Date | null,
+  commandIndex: number
+): void {
+  const policyFrom = new Date(AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.version.effectiveFrom);
+  const policyTo = AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.version.effectiveTo;
+  if (
+    effectiveFrom < policyFrom ||
+    (policyTo !== null && (effectiveTo === null || effectiveTo > new Date(policyTo)))
+  ) {
+    fixedGstPolicyUnavailable(commandIndex);
+  }
+}
+
+async function assertResolvableRetainedPriceWindows(input: {
+  revisionId: string;
+  priceVersionIds: ReadonlySet<string>;
+  session: ClientSession;
+}): Promise<void> {
+  if (input.priceVersionIds.size < 2) return;
+  const documents = await AiEstimatorKnowledgePriceVersionModel.find({
+    _id: { $in: [...input.priceVersionIds] },
+    revisionId: input.revisionId,
+    status: "active"
+  }).session(input.session).lean().exec();
+  const groups = new Map<string, Row[]>();
+  for (const document of documents) {
+    const row = asRow(document)!;
+    const key = JSON.stringify([
+      requiredString(row.uomId),
+      optionalString(row.modeId) ?? null
+    ]);
+    const group = groups.get(key) ?? [];
+    group.push(row);
+    groups.set(key, group);
+  }
+  for (const group of groups.values()) {
+    const overlaps = findOverlappingEffectiveWindows(group.map((row) => ({
+      id: requiredString(row._id),
+      effectiveFrom: requiredDate(row.effectiveFrom),
+      effectiveTo: optionalDate(row.effectiveTo)
+    })));
+    if (overlaps.length > 0) {
+      effectiveBudgetOverlap("payload.priceEntries");
+    }
+  }
+}
+
+function invalidBudgetSource(commandIndex: number): never {
+  const message = "The saved budget is no longer available in this Draft. Reload Budgeting and try again.";
+  throw new ApiError(
+    409,
+    "KNOWLEDGE_REFERENCE_INVALID",
+    "A referenced budget is unavailable for this revision.",
+    { [`payload.priceEntries.${commandIndex}.sourcePriceVersionId`]: message }
+  );
+}
+
+function invalidBudgetRelationships(
+  commandIndex: number,
+  availability: {
+    vendor: boolean;
+    uom: boolean;
+    legacyMode: boolean;
+  }
+): never {
+  const path = `payload.priceEntries.${commandIndex}`;
+  const fields: Record<string, string> = {};
+  if (!availability.vendor) fields[`${path}.vendorId`] = "Select an active Vendor.";
+  if (!availability.uom) fields[`${path}.uomId`] = "Select an active Unit of measure.";
+  if (!availability.legacyMode) {
+    fields[`${path}.sourcePriceVersionId`] =
+      "This saved budget has an unavailable historical scope and cannot be updated.";
+  }
+  throw new ApiError(
+    409,
+    "KNOWLEDGE_REFERENCE_INVALID",
+    "An active budget reference is unavailable.",
+    fields
+  );
+}
+
+function fixedGstPolicyUnavailable(commandIndex?: number): never {
+  const message = "Budgeting is temporarily unavailable because GST could not be applied. Try again later.";
+  throw new ApiError(
+    503,
+    "FIXED_GST_POLICY_UNAVAILABLE",
+    message,
+    commandIndex === undefined
+      ? undefined
+      : { [`payload.priceEntries.${commandIndex}`]: message }
+  );
+}
+
+function effectiveBudgetOverlap(path: string): never {
+  const message = "Another budget for this unit already covers these dates.";
+  throw new ApiError(
+    409,
+    "EFFECTIVE_WINDOW_OVERLAP",
+    "Effective budget windows cannot overlap.",
+    { [path]: message }
+  );
 }
 
 function preserveTypedSpecificationCompatibility(

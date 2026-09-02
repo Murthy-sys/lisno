@@ -36,7 +36,7 @@ describe("knowledge presentation", () => {
       "pricing",
       "quantity-margin"
     ]);
-    expect(KNOWLEDGE_SECTION_LABELS.pricing).toBe("Pricing");
+    expect(KNOWLEDGE_SECTION_LABELS.pricing).toBe("Budgeting");
   });
 
   it("formats paise and basis points only at the presentation boundary", () => {

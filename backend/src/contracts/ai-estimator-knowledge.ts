@@ -208,6 +208,7 @@ export type KnowledgeSpecification =
   | KnowledgeDescriptiveSpecification
   | KnowledgeCanonicalSpecification;
 
+/** @deprecated Compatibility-only. New Budgeting writes use KnowledgeBudgetSetCommand. */
 export interface KnowledgePriceEntryAppendCommand {
   operation: "append";
   priceEntryId: KnowledgeStableId;
@@ -224,6 +225,16 @@ export interface KnowledgePriceEntryAppendCommand {
   status: KnowledgeVersionStatus;
 }
 
+export interface KnowledgeBudgetSetCommand {
+  operation: "set_budget";
+  sourcePriceVersionId?: KnowledgeStableId | null;
+  vendorId: KnowledgeStableId;
+  uomId: KnowledgeStableId;
+  inputAmountPaise: KnowledgePaise;
+  effectiveFrom: string;
+  effectiveTo: string | null;
+}
+
 export interface KnowledgePriceEntryReference {
   operation: "reference";
   priceEntryId: KnowledgeStableId;
@@ -231,6 +242,7 @@ export interface KnowledgePriceEntryReference {
 }
 
 export type KnowledgePriceEntryCommand =
+  | KnowledgeBudgetSetCommand
   | KnowledgePriceEntryAppendCommand
   | KnowledgePriceEntryReference;
 

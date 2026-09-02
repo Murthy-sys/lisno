@@ -6,6 +6,7 @@ import {
   AI_ESTIMATOR_KNOWLEDGE_CANONICAL_PRIORITY_IDS,
   findCanonicalKnowledgePriorityById
 } from "../src/domain/ai-estimator-knowledge-priority.js";
+import { AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY } from "../src/domain/ai-estimator-knowledge-fixed-gst.js";
 import { AI_ESTIMATOR_KNOWLEDGE_BOOTSTRAP_IDS } from "../src/operations/ai-estimator-knowledge-bootstrap.manifest.js";
 import { AiEstimatorKnowledgeBasketModel } from "../src/models/AiEstimatorKnowledgeBasket.js";
 import { AiEstimatorKnowledgeDisplayOrderSequenceModel } from "../src/models/AiEstimatorKnowledgeDisplayOrderSequence.js";
@@ -1142,6 +1143,73 @@ describe("AI estimator knowledge reference service", () => {
     expect(listed.items[0]?.taxVersions?.map(({ versionNumber }) => versionNumber)).toEqual([1, 2]);
     expect((await AiEstimatorKnowledgeTaxVersionModel.find({ taxRuleId: tax.id }).sort({ versionNumber: 1 }).lean()).map(({ versionNumber }) => versionNumber)).toEqual([1, 2]);
     expect(audit.appendInMongoTransaction.mock.calls.flatMap(([event]) => [(event as { action: string }).action])).toContain("ai_estimator_knowledge_tax_version_created");
+  });
+
+  it("rejects generic update, rollover, and archive operations for the canonical fixed GST policy", async () => {
+    const { service, audit } = harness();
+    const policy = AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY;
+    await AiEstimatorKnowledgeTaxRuleModel.create({
+      _id: policy.rule.id,
+      code: policy.rule.code,
+      codeNormalized: "gst_18",
+      name: policy.rule.name,
+      nameNormalized: "gst 18%",
+      description: null,
+      displayOrder: policy.rule.displayOrder,
+      status: policy.rule.status,
+      version: 1,
+      dependencyEpoch: 0,
+      createdById: actor.id,
+      updatedById: actor.id
+    });
+    await AiEstimatorKnowledgeTaxVersionModel.create({
+      _id: policy.version.id,
+      taxRuleId: policy.rule.id,
+      versionNumber: policy.version.versionNumber,
+      rateBps: policy.version.rateBps,
+      treatment: policy.version.treatment,
+      applicability: policy.version.applicability,
+      effectiveFrom: new Date(policy.version.effectiveFrom),
+      effectiveTo: null,
+      status: policy.version.status,
+      version: 1,
+      createdById: actor.id,
+      updatedById: actor.id
+    });
+    const operations = [
+      () => service.updateMaster(actor, "taxes", policy.rule.id, {
+        expectedVersion: 1,
+        description: "not allowed"
+      }),
+      () => service.updateMaster(actor, "taxes", policy.rule.id, {
+        expectedVersion: 1,
+        taxVersion: {
+          rateBps: 1_800,
+          treatment: "exclusive" as const,
+          applicability: policy.version.applicability,
+          effectiveFrom: "2027-01-01T00:00:00.000Z",
+          effectiveTo: null,
+          status: "active" as const,
+          rolloverFromVersionId: policy.version.id
+        }
+      }),
+      () => service.archiveMaster(actor, "taxes", policy.rule.id, {
+        expectedVersion: 1,
+        reason: "not allowed"
+      })
+    ];
+
+    for (const operation of operations) {
+      await expect(operation()).rejects.toMatchObject({
+        status: 409,
+        code: "CANONICAL_TAX_POLICY_IMMUTABLE"
+      });
+    }
+    expect(await AiEstimatorKnowledgeTaxRuleModel.findById(policy.rule.id).lean())
+      .toMatchObject({ status: "active", version: 1 });
+    expect(await AiEstimatorKnowledgeTaxVersionModel.findById(policy.version.id).lean())
+      .toMatchObject({ status: "active", effectiveTo: null, version: 1 });
+    expect(audit.appendInMongoTransaction).not.toHaveBeenCalled();
   });
 
   it("atomically rolls an open-ended Tax version into an explicitly named successor", async () => {

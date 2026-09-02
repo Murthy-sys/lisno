@@ -301,6 +301,11 @@ describe("OpenAPI and Swagger UI", () => {
         }
       }
     });
+    expect(
+      openApiDocument.paths[
+        "/admin/ai-estimator-knowledge/main-lines/{mainLineId}/revisions/{revisionId}/sections/{sectionKey}"
+      ]?.put?.responses?.["503"]
+    ).toEqual({ $ref: "#/components/responses/ServiceUnavailable" });
     expect(componentSchemas().KnowledgeSectionMutationEnvelope).toMatchObject({
       additionalProperties: false,
       required: expect.arrayContaining(["version", "aggregateVersion"]),
@@ -595,9 +600,31 @@ describe("OpenAPI and Swagger UI", () => {
         })
       ])
     });
+    expect(componentSchemas().KnowledgeBudgetSetCommand).toMatchObject({
+      type: "object",
+      additionalProperties: false,
+      required: [
+        "operation", "vendorId", "uomId", "inputAmountPaise",
+        "effectiveFrom", "effectiveTo"
+      ],
+      description: expect.stringContaining("business-only Budgeting command"),
+      properties: {
+        operation: { type: "string", enum: ["set_budget"] },
+        sourcePriceVersionId: expect.objectContaining({ nullable: true }),
+        inputAmountPaise: expect.objectContaining({
+          type: "integer",
+          minimum: 0,
+          description: expect.stringContaining("derived by the server")
+        })
+      }
+    });
+    expect(componentSchemas().KnowledgeBudgetSetCommand.required).not.toContain("sourcePriceVersionId");
+    expect(componentSchemas().KnowledgeBudgetSetCommand.properties).not.toHaveProperty("taxRuleId");
     expect(componentSchemas().KnowledgePriceEntryAppendCommand).toMatchObject({
       type: "object",
       additionalProperties: false,
+      deprecated: true,
+      description: expect.stringContaining("Compatibility-only"),
       required: expect.arrayContaining(["operation", "specificationId", "inputAmountPaise"]),
       properties: {
         operation: { type: "string", enum: ["append"] },
@@ -624,6 +651,13 @@ describe("OpenAPI and Swagger UI", () => {
           description: expect.stringContaining("historical versions may retain")
         })
       }
+    });
+    expect(componentSchemas().KnowledgePriceEntryCommand).toEqual({
+      oneOf: [
+        { $ref: "#/components/schemas/KnowledgeBudgetSetCommand" },
+        { $ref: "#/components/schemas/KnowledgePriceEntryAppendCommand" },
+        { $ref: "#/components/schemas/KnowledgePriceEntryReferenceCommand" }
+      ]
     });
     expect(componentSchemas().KnowledgeSlabRate).toMatchObject({
       type: "object",

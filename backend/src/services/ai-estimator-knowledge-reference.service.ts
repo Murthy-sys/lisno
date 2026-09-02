@@ -20,6 +20,10 @@ import {
   validateEffectiveWindow
 } from "../domain/ai-estimator-knowledge-validation.js";
 import {
+  isFixedGstRuleId,
+  isFixedGstVersionId
+} from "../domain/ai-estimator-knowledge-fixed-gst.js";
+import {
   findCanonicalKnowledgePriorityById,
   findCanonicalKnowledgePriorityByTier,
   isKnowledgePrioritySemanticTier,
@@ -583,6 +587,9 @@ export function createAiEstimatorKnowledgeReferenceService(
         const current = await model.findById(id).session(session).lean().exec() as Row | null;
         requireCurrent(current, input.expectedVersion);
         if (current.status === "archived") archived();
+        if (masterType === "taxes" && isFixedGstRuleId(current._id)) {
+          canonicalTaxPolicyImmutable();
+        }
         if (masterType === "priorities") {
           assertCanonicalPriorityGenericUpdate(current, input);
         }
@@ -675,12 +682,17 @@ export function createAiEstimatorKnowledgeReferenceService(
         const current = await model.findById(id).session(session).lean().exec() as Row | null;
         requireCurrent(current, input.expectedVersion);
         if (current.status === "archived") archived();
+        if (masterType === "taxes" && isFixedGstRuleId(current._id)) {
+          canonicalTaxPolicyImmutable();
+        }
         await requireNoMasterReferences(masterType, id, session);
         if (masterType === "priorities" && canonicalPriorityIdentityForRow(current)) {
           canonicalPriorityImmutable();
         }
         const guardedDependencyEpoch = masterType === "modes" ||
           masterType === "uoms" ||
+          masterType === "vendors" ||
+          masterType === "taxes" ||
           masterType === "priorities"
           ? safeDependencyEpoch(
               current.dependencyEpoch,
@@ -688,7 +700,11 @@ export function createAiEstimatorKnowledgeReferenceService(
                 ? "Mode"
                 : masterType === "uoms"
                   ? "UOM"
-                  : "Priority"
+                  : masterType === "vendors"
+                    ? "Vendor"
+                    : masterType === "taxes"
+                      ? "Tax"
+                      : "Priority"
             )
           : null;
         const guardedDependencyEpochFilter = guardedDependencyEpoch === null
@@ -806,7 +822,7 @@ function basketReferenceCount(payload: unknown, basketId: string): number {
 
 function safeDependencyEpoch(
   value: unknown,
-  label: "Basket" | "Mode" | "Priority" | "UOM" = "Basket"
+  label: "Basket" | "Mode" | "Priority" | "Tax" | "UOM" | "Vendor" = "Basket"
 ): number {
   if (value === undefined || value === null) return 0;
   if (!Number.isSafeInteger(value) || Number(value) < 0) {
@@ -1062,6 +1078,7 @@ async function appendTaxVersion(
   audit: Pick<AuditService, "appendInMongoTransaction">,
   createId: () => string
 ): Promise<{ id: string; versionNumber: number }> {
+  if (isFixedGstRuleId(taxRuleId)) canonicalTaxPolicyImmutable();
   validateTaxVersionInput(input);
   const effectiveFrom = parseDate(input.effectiveFrom, "effectiveFrom");
   const effectiveTo = input.effectiveTo == null ? null : parseDate(input.effectiveTo, "effectiveTo");
@@ -1113,6 +1130,9 @@ async function rolloverTaxVersion(
   audit: Pick<AuditService, "appendInMongoTransaction">,
   createId: () => string
 ): Promise<void> {
+  if (isFixedGstRuleId(taxRuleId) || isFixedGstVersionId(input.rolloverFromVersionId)) {
+    canonicalTaxPolicyImmutable();
+  }
   const rolloverFromVersionId = input.rolloverFromVersionId;
   if (!rolloverFromVersionId) {
     throw new ApiError(400, "VALIDATION_ERROR", "Tax rollover requires its predecessor version ID.");
@@ -1385,4 +1405,5 @@ function versionConflict(): never { throw new ApiError(409, "VERSION_CONFLICT", 
 function duplicateIdentity(): never { throw new ApiError(409, "DUPLICATE_IDENTITY", "A non-archived knowledge resource already uses that identity."); }
 function referenceConflict(message: string): never { throw new ApiError(409, "ACTIVE_REFERENCE_CONFLICT", message); }
 function canonicalPriorityImmutable(): never { throw new ApiError(409, "CANONICAL_PRIORITY_IMMUTABLE", "Canonical Priority identity and availability are system managed."); }
+function canonicalTaxPolicyImmutable(): never { throw new ApiError(409, "CANONICAL_TAX_POLICY_IMMUTABLE", "The fixed GST policy is system managed and cannot be changed through generic Tax operations."); }
 function basketDeleteBlocked(): never { throw new ApiError(409, "BASKET_DELETE_BLOCKED", "The Basket has permanent-deletion blockers and is archive-only."); }

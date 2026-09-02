@@ -73,7 +73,7 @@ export function KnowledgeSpecificationBuilder({
       emptyMessage="No Specifications configured."
       removeDisabled={(specification) => referencedIds.has(specification.id) || slabReferencedIds.has(specification.id)}
       removeDisabledReason={(specification) => slabReferencedIds.has(specification.id)
-        ? "Remove this Specification from Quantity slabs and save Quantity & margin before removing it from Pricing."
+        ? "Remove this Specification from Quantity slabs and save Quantity & margin before removing it from Budgeting."
         : referencedIds.has(specification.id)
           ? "This Specification is retained by saved configuration or immutable price history and cannot be removed."
           : undefined}

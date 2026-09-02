@@ -154,13 +154,21 @@ export function KnowledgeItemWorkspacePage() {
   });
   const masterQueries = useQueries({
     queries: MASTER_TYPES.map((type) => ({
-      queryKey: type === "modes" || type === "uoms" || type === "priorities"
+      queryKey: type === "modes" || type === "uoms" || type === "priorities" || type === "vendors" || type === "taxes"
         ? knowledgeQueryKeys.masterCatalog(type)
         : knowledgeQueryKeys.masterList(type, { limit: 100, offset: 0 }),
-      queryFn: () => type === "modes" || type === "uoms" || type === "priorities"
+      queryFn: () => type === "modes" || type === "uoms" || type === "priorities" || type === "vendors" || type === "taxes"
         ? collectAllKnowledgeMasterPages(
             (params) => listKnowledgeMasters(type, params),
-            type === "modes" ? "Mode" : type === "uoms" ? "Unit" : "Priority"
+            type === "modes"
+              ? "Mode"
+              : type === "uoms"
+                ? "Unit"
+                : type === "priorities"
+                  ? "Priority"
+                  : type === "vendors"
+                    ? "Vendor"
+                    : "Tax"
           )
         : listKnowledgeMasters(type, { limit: 100, offset: 0 })
     }))
@@ -214,6 +222,23 @@ export function KnowledgeItemWorkspacePage() {
       ? prioritiesQuery.error.message
       : undefined,
     onRetry: () => { void prioritiesQuery.refetch(); }
+  };
+  const vendorsQuery = masterQueries[MASTER_TYPES.indexOf("vendors")]!;
+  const vendorsHaveData = Boolean(vendorsQuery.data);
+  const vendorCatalogState = {
+    status: vendorsQuery.isError && !vendorsHaveData
+      ? "error" as const
+      : vendorsQuery.isPending && !vendorsHaveData
+        ? "loading" as const
+        : "ready" as const,
+    refreshing: vendorsHaveData && vendorsQuery.isFetching,
+    errorMessage: !vendorsHaveData && vendorsQuery.error instanceof Error
+      ? vendorsQuery.error.message
+      : undefined,
+    refreshErrorMessage: vendorsHaveData && vendorsQuery.isError && vendorsQuery.error instanceof Error
+      ? vendorsQuery.error.message
+      : undefined,
+    onRetry: () => { void vendorsQuery.refetch(); }
   };
   const editable = Boolean(item && revision?.status === "draft" && item.status !== "archived" && canUpdate && item.allowedActions.includes("update_section"));
   const overviewDraftPayload = activeSection === "overview" && sectionQuery.data
@@ -492,6 +517,7 @@ export function KnowledgeItemWorkspacePage() {
                 canQuickAdd={canCreate}
                 legacyModeCatalogState={legacyModeCatalogState}
                 uomCatalogState={uomCatalogState}
+                vendorCatalogState={vendorCatalogState}
                 priorityCatalogState={priorityCatalogState}
                 onQuickAdd={(type, select) => setQuickAdd({ type, select })}
                 onDirtyChange={setModeDirty}
