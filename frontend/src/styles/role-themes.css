@@ -258,7 +258,7 @@
   --role-rail: linear-gradient(196deg, #33241a 0%, #271b13 58%, #1b120c 100%);
   --role-band: linear-gradient(126deg, #3e2a1b 0%, #7a5330 52%, #a9793f 100%);
   --role-band-ink: #fbf4e8;
-  --role-band-ink-muted: #e3d2b8;.estimator-dashboard .lead-estimate-boundary { border-radius: 14px; }
+  --role-band-ink-muted: #e3d2b8;
   --role-ink: #2e2318;
   --role-ink-muted: #6e6152;
   --role-accent: #9a6c33;
