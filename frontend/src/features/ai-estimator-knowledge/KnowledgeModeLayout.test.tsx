@@ -259,6 +259,34 @@ describe("Knowledge Mode toolbar layout", () => {
     ).toBe("44px");
   });
 
+  it("keeps the Priority field bounded on desktop and full-width without narrow-screen overflow", () => {
+    const priority = declarations(
+      ".knowledge-page--item-workspace .knowledge-priority-editor",
+      professionalWorkspaceStart
+    );
+    expect(priority.get("display")).toBe("grid");
+    expect(priority.get("inline-size")).toBe("min(100%, 32rem)");
+    expect(priority.get("min-inline-size")).toBe("0");
+
+    const tabletStart = stylesheet.indexOf(
+      "@media (max-width: 768px)",
+      professionalWorkspaceStart
+    );
+    expect(declarations(
+      ".knowledge-page--item-workspace .knowledge-priority-editor",
+      tabletStart
+    ).get("inline-size")).toBe("100%");
+
+    const mobileStart = stylesheet.indexOf(
+      "@media (max-width: 480px)",
+      professionalWorkspaceStart
+    );
+    expect(declarations(
+      ".knowledge-page--item-workspace .knowledge-priority-editor__state .ui-button",
+      mobileStart
+    ).get("inline-size")).toBe("100%");
+  });
+
   it("keeps the component builder and Execution source controls shrink-safe", () => {
     const configuration = declarations(
       ".knowledge-page--item-workspace .knowledge-mode-configuration",

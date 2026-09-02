@@ -9,7 +9,8 @@ const KNOWLEDGE_MASTER_PAGE_LIMIT = 100;
 export async function collectAllKnowledgeMasterPages(
   loadPage: (
     params: Pick<KnowledgeReferenceListParams, "limit" | "offset">
-  ) => Promise<KnowledgeMasterListResponse>
+  ) => Promise<KnowledgeMasterListResponse>,
+  catalogLabel = "Reusable value"
 ): Promise<KnowledgeMasterListResponse> {
   const items: KnowledgeMaster[] = [];
   let offset = 0;
@@ -35,7 +36,7 @@ export async function collectAllKnowledgeMasterPages(
 
     const nextOffset = page.pagination.offset + page.items.length;
     if (nextOffset <= offset) {
-      throw new Error("Mode list pagination did not advance.");
+      throw new Error(`${catalogLabel} list pagination did not advance.`);
     }
     offset = nextOffset;
   }

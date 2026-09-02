@@ -24,6 +24,7 @@ export interface KnowledgeRepeaterProps<TItem extends KnowledgeRepeaterItem> {
   readonly emptyMessage?: string;
   readonly disabled?: boolean;
   readonly addDisabled?: boolean;
+  readonly showAdd?: boolean;
   readonly readOnly?: boolean;
   readonly removeDisabled?: (item: TItem, index: number) => boolean;
   readonly removeDisabledReason?: (item: TItem, index: number) => string | undefined;
@@ -41,6 +42,7 @@ export function KnowledgeRepeater<TItem extends KnowledgeRepeaterItem>({
   emptyMessage = "No entries have been added.",
   disabled = false,
   addDisabled = false,
+  showAdd = true,
   readOnly = false,
   removeDisabled = () => false,
   removeDisabledReason = () => undefined,
@@ -77,7 +79,7 @@ export function KnowledgeRepeater<TItem extends KnowledgeRepeaterItem>({
     <section className="knowledge-repeater" aria-labelledby={titleId}>
       <div className="knowledge-repeater__header">
         <h3 id={titleId}>{label}</h3>
-        {!readOnly ? (
+        {!readOnly && showAdd ? (
           <Button
             ref={addButtonRef}
             size="compact"

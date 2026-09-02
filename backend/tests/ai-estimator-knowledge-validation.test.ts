@@ -41,6 +41,65 @@ describe("AI estimator knowledge validation", () => {
     expect(validateQuantitySlabs({ decimalScale: 0, gapBehavior: "no_adjustment", slabs })).toEqual([]);
   });
 
+  it("accepts exact priced slab inputs without manufacturing legacy gap behavior", () => {
+    expect(validateKnowledgeSectionPayload("quantity-margin", {
+      quantitySlabs: [],
+      slabRates: [{
+        id: "slab-rate-plywood",
+        specificationId: "specification-plywood",
+        uomId: "uom-sqft",
+        quantity: "12.5",
+        unitRatePaise: 8_000
+      }]
+    })).toEqual([]);
+  });
+
+  it("strictly validates priced slab identity, quantity, rate, and derived-field exclusion", () => {
+    const issues = validateKnowledgeSectionPayload("quantity-margin", {
+      slabRates: [
+        {
+          id: "slab-rate-duplicate",
+          specificationId: "specification-plywood",
+          uomId: "uom-sqft",
+          quantity: "1",
+          unitRatePaise: 8_000,
+          estimatedCostPaise: 8_000
+        },
+        {
+          id: "slab-rate-duplicate",
+          specificationId: "specification-plywood",
+          uomId: "uom-sqft",
+          quantity: "1.0",
+          unitRatePaise: Number.MAX_SAFE_INTEGER + 1
+        },
+        {
+          id: "slab-rate-zero",
+          specificationId: "specification-zero",
+          uomId: "uom-sqft",
+          quantity: "0",
+          unitRatePaise: 0
+        }
+      ]
+    });
+
+    expect(issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        path: "payload.slabRates.0.estimatedCostPaise",
+        code: "UNKNOWN_FIELD"
+      }),
+      expect.objectContaining({ path: "payload.slabRates.1.id", code: "DUPLICATE_ID" }),
+      expect.objectContaining({
+        path: "payload.slabRates.1.quantity",
+        code: "DUPLICATE_SLAB_RATE"
+      }),
+      expect.objectContaining({
+        path: "payload.slabRates.1.unitRatePaise",
+        code: "INVALID_INTEGER"
+      }),
+      expect.objectContaining({ path: "payload.slabRates.2.quantity", code: "INVALID_RANGE" })
+    ]));
+  });
+
   it("rejects unknown, self, duplicate, and cyclic dependency edges", () => {
     expect(validateAcyclicGraph(["a", "b"], [{ fromId: "a", toId: "missing" }])[0]?.code).toBe("INVALID_REFERENCE");
     expect(validateAcyclicGraph(["a"], [{ fromId: "a", toId: "a" }])[0]?.code).toBe("SELF_DEPENDENCY");

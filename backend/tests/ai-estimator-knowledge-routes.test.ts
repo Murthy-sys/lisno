@@ -483,6 +483,55 @@ describe("AI Estimator Knowledge HTTP routes", () => {
     expect(testServices.item.updateSection).not.toHaveBeenCalled();
   });
 
+  it("accepts exact priced slab inputs and rejects client-authored estimated cost", async () => {
+    const testServices = services();
+    const input = {
+      expectedVersion: 3,
+      expectedAggregateVersion: 7,
+      payload: {
+        slabRates: [{
+          id: "slab-rate-plywood",
+          specificationId: "specification-plywood",
+          uomId: "uom-sqft",
+          quantity: "12.5",
+          unitRatePaise: 8_000
+        }]
+      }
+    };
+    const accepted = await request(appFor(testServices))
+      .put("/api/v1/admin/ai-estimator-knowledge/main-lines/line-1/revisions/revision-1/sections/quantity-margin")
+      .set("Authorization", "Bearer super-admin-token")
+      .send(input);
+
+    expect(accepted.status).toBe(200);
+    expect(testServices.item.updateSection).toHaveBeenCalledWith(
+      superAdmin,
+      "line-1",
+      "revision-1",
+      "quantity-margin",
+      input
+    );
+
+    const rejected = await request(appFor(testServices))
+      .put("/api/v1/admin/ai-estimator-knowledge/main-lines/line-1/revisions/revision-1/sections/quantity-margin")
+      .set("Authorization", "Bearer super-admin-token")
+      .send({
+        ...input,
+        payload: {
+          slabRates: [{ ...input.payload.slabRates[0], estimatedCostPaise: 100_000 }]
+        }
+      });
+
+    expect(rejected.status).toBe(400);
+    expect(rejected.body.error).toMatchObject({
+      code: "VALIDATION_ERROR",
+      fields: {
+        "payload.slabRates.0.estimatedCostPaise": expect.any(String)
+      }
+    });
+    expect(testServices.item.updateSection).toHaveBeenCalledTimes(1);
+  });
+
   it("accepts strict mode configurations and rejects malformed fields after authorization", async () => {
     const testServices = services();
     const input = {

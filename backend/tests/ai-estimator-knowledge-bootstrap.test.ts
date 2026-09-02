@@ -5,6 +5,7 @@ import {
   createKnowledgeContentDigest,
   type KnowledgeSectionKey
 } from "../src/domain/ai-estimator-knowledge.js";
+import { AI_ESTIMATOR_KNOWLEDGE_CANONICAL_PRIORITIES } from "../src/domain/ai-estimator-knowledge-priority.js";
 import { validateKnowledgeSectionPayload } from "../src/domain/ai-estimator-knowledge-validation.js";
 import { AiEstimatorKnowledgeBasketModel } from "../src/models/AiEstimatorKnowledgeBasket.js";
 import { AiEstimatorKnowledgeMainLineModel } from "../src/models/AiEstimatorKnowledgeMainLine.js";
@@ -125,6 +126,29 @@ describe("AI Estimator Knowledge bootstrap manifest", () => {
     expect(AI_ESTIMATOR_KNOWLEDGE_BOOTSTRAP_MANIFEST.sourceWarnings).toEqual(
       AI_ESTIMATOR_KNOWLEDGE_BOOTSTRAP_SOURCE_WARNINGS
     );
+
+    const priorities = AI_ESTIMATOR_KNOWLEDGE_BOOTSTRAP_MANIFEST.resources
+      .filter(
+        (resource) =>
+          resource.collection === "aiEstimatorKnowledgePriorities"
+      )
+      .map((resource) => resource.document);
+    expect(priorities).toHaveLength(4);
+    expect(
+      priorities.map((priority) => ({
+        id: priority._id,
+        semanticTier: priority.semanticTier,
+        code: priority.code,
+        name: priority.name,
+        displayOrder: priority.displayOrder,
+        dependencyEpoch: priority.dependencyEpoch
+      }))
+    ).toEqual(
+      AI_ESTIMATOR_KNOWLEDGE_CANONICAL_PRIORITIES.map((priority) => ({
+        ...priority,
+        dependencyEpoch: 0
+      }))
+    );
   });
 
   it("has one valid payload for every section and a stable canonical digest", () => {
@@ -155,7 +179,7 @@ describe("AI Estimator Knowledge bootstrap manifest", () => {
         )
       ).toEqual([]);
     }
-    expect(AI_ESTIMATOR_KNOWLEDGE_BOOTSTRAP_MANIFEST.resources).toHaveLength(23);
+    expect(AI_ESTIMATOR_KNOWLEDGE_BOOTSTRAP_MANIFEST.resources).toHaveLength(26);
     expect(AI_ESTIMATOR_KNOWLEDGE_BOOTSTRAP_MANIFEST_DIGEST).toMatch(
       /^[a-f0-9]{64}$/u
     );

@@ -24,6 +24,11 @@ export type KnowledgeMasterType = (typeof KNOWLEDGE_MASTER_TYPES)[number];
 export type KnowledgeItemStatus = "draft" | "active" | "inactive" | "archived";
 export type KnowledgeRevisionStatus = "draft" | "active" | "superseded";
 export type KnowledgeMasterStatus = "active" | "inactive" | "archived";
+export type KnowledgePrioritySemanticTier =
+  | "non_negotiable"
+  | "high"
+  | "medium"
+  | "low";
 export type KnowledgeModeKind = "pmc" | "execution";
 export type KnowledgeExecutionSource = "sub_vendor" | "in_house";
 export type KnowledgeSectionApplicability =
@@ -79,6 +84,7 @@ export interface KnowledgeMaster extends KnowledgeVersionedResource {
   readonly description: string | null;
   readonly displayOrder: number;
   readonly status: KnowledgeMasterStatus;
+  readonly semanticTier?: KnowledgePrioritySemanticTier;
   readonly decimalScale?: number;
   readonly taxVersions?: readonly KnowledgeTaxVersion[];
 }

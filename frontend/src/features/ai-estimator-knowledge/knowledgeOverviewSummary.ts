@@ -172,6 +172,7 @@ export interface KnowledgeOverviewSharedQuantityMargin {
   readonly pmcMarkupBps: number | null;
   readonly wastageBps: number | null;
   readonly quantitySlabs: readonly KnowledgeOverviewQuantitySlabDetail[];
+  readonly slabRateCount: number;
 }
 
 export interface KnowledgeOverviewSummary {
@@ -345,7 +346,8 @@ export function projectKnowledgeOverviewSummary(
     sharedQuantityMargin.bottomMarginBps !== null ||
     sharedQuantityMargin.pmcMarkupBps !== null ||
     sharedQuantityMargin.wastageBps !== null ||
-    sharedQuantityMargin.quantitySlabs.length > 0;
+    sharedQuantityMargin.quantitySlabs.length > 0 ||
+    sharedQuantityMargin.slabRateCount > 0;
 
   return {
     sectionCards: projectSectionCards({
@@ -508,7 +510,8 @@ function projectSharedQuantityMargin(
       minimumQuantity: optionalText(slab.minimumQuantity),
       maximumQuantity: optionalText(slab.maximumQuantity),
       adjustmentBps: optionalNumber(slab.adjustmentBps)
-    }))
+    })),
+    slabRateCount: stableObjectRows(payload?.slabRates).length
   };
 }
 
@@ -561,6 +564,7 @@ function projectSectionCards(input: {
         {
           label: "Quantity slabs",
           value: input.sharedQuantityMargin.quantitySlabs.length
+            + input.sharedQuantityMargin.slabRateCount
         }
       ],
       highlights: [referenceListHighlight("Modes", input.configuredModeReferences)]

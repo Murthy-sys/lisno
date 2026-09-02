@@ -7,11 +7,13 @@ import type {
   KnowledgeCompletenessSummary,
   KnowledgeItemListItem,
   KnowledgeQuantitySlab,
+  KnowledgeSlabRate,
   KnowledgeRevision,
   KnowledgeSectionEnvelope,
   KnowledgeSectionMutationEnvelope
 } from "../contracts/ai-estimator-knowledge.js";
 import {
+  calculateSlabRateEstimatedCost,
   deriveTaxAmounts,
   KnowledgeCalculationError,
   parseScaledDecimal
@@ -30,6 +32,10 @@ import {
   type KnowledgeSectionKey,
   type KnowledgeTaxTreatment
 } from "../domain/ai-estimator-knowledge.js";
+import {
+  findCanonicalKnowledgePriorityById,
+  type CanonicalKnowledgePriority
+} from "../domain/ai-estimator-knowledge-priority.js";
 import {
   assertValidKnowledgeSectionPayload,
   findOverlappingEffectiveWindows,
@@ -649,6 +655,18 @@ export function createAiEstimatorKnowledgeItemService(
           persistedPayload,
           session
         );
+        await coordinateNewPriorityReferences(
+          sectionKey,
+          previousPayload,
+          persistedPayload,
+          session
+        );
+        await coordinateNewSlabRateUomReferences(
+          sectionKey,
+          previousPayload,
+          persistedPayload,
+          session
+        );
         const updatedSection = await AiEstimatorKnowledgeSectionModel.findOneAndUpdate(
           { _id: section._id, version: input.expectedVersion, revisionId },
           {
@@ -672,7 +690,10 @@ export function createAiEstimatorKnowledgeItemService(
 
         const rows = (await AiEstimatorKnowledgeSectionModel.find({ mainLineId, revisionId })
           .session(session).lean().exec()).map((row) => asRow(row)!);
-        await validateRevisionRelationships(mainLineId, rows, session);
+        await validateRevisionRelationships(mainLineId, rows, session, {
+          updatedSectionKey: sectionKey,
+          previousPayload
+        });
         const completeness = completenessForRows(mainLineId, rows);
         await AiEstimatorKnowledgeRevisionModel.updateOne(
           { _id: revisionId, status: "draft" },
@@ -885,6 +906,15 @@ export function createAiEstimatorKnowledgeItemService(
           true
         );
         await coordinateCopiedBasketReferences(remappedPayloads, session);
+        await coordinateCopiedPriorityReferences(remappedPayloads, session);
+        await coordinateCopiedSlabRateUomReferences(remappedPayloads, session);
+        const copiedSlabRateIssues = await slabRateRevisionIssues(
+          remappedPayloads,
+          session
+        );
+        if (copiedSlabRateIssues.length > 0) {
+          invalidRevisionSectionRules(copiedSlabRateIssues);
+        }
         const completeness = completenessForRows(duplicateId, remappedPayloads);
         await AiEstimatorKnowledgeMainLineModel.create([{
           _id: duplicateId,
@@ -1003,6 +1033,21 @@ async function materializePriceCommands(input: {
     return specificationId !== undefined && removedSpecificationIds.has(specificationId);
   })) {
     invalidSpecificationRemoval();
+  }
+  const quantityMarginSection = asRow(
+    await AiEstimatorKnowledgeSectionModel.findOne({
+      mainLineId: input.mainLineId,
+      revisionId: input.revisionId,
+      sectionKey: "quantity-margin"
+    }).select({ payload: 1 }).session(input.session).lean().exec()
+  );
+  const slabSpecificationIds = new Set(
+    structuredRows(payloadFor(quantityMarginSection).slabRates)
+      .map((row) => optionalString(row.specificationId))
+      .filter((id): id is string => Boolean(id))
+  );
+  if ([...removedSpecificationIds].some((id) => slabSpecificationIds.has(id))) {
+    invalidSlabSpecificationRemoval();
   }
   const candidatePriceVersionIds = new Set<string>();
   for (const candidate of commands) {
@@ -1550,7 +1595,7 @@ function sectionDto(row: Row): KnowledgeSectionEnvelope<Row> {
 async function enrichPricingSectionDto(row: Row): Promise<KnowledgeSectionEnvelope<Row>> {
   const dto = sectionDto(row);
   const priceVersionIds = referencedPriceVersionIds(dto.payload);
-  const [documents, specificationReferenceDocuments] = await Promise.all([
+  const [documents, specificationReferenceDocuments, quantityMarginDocument] = await Promise.all([
     priceVersionIds.length === 0
       ? Promise.resolve([])
       : AiEstimatorKnowledgePriceVersionModel.find({
@@ -1562,7 +1607,12 @@ async function enrichPricingSectionDto(row: Row): Promise<KnowledgeSectionEnvelo
       mainLineId: dto.mainLineId,
       revisionId: dto.revisionId,
       specificationId: { $ne: null }
-    }).select({ specificationId: 1 }).lean().exec()
+    }).select({ specificationId: 1 }).lean().exec(),
+    AiEstimatorKnowledgeSectionModel.findOne({
+      mainLineId: dto.mainLineId,
+      revisionId: dto.revisionId,
+      sectionKey: "quantity-margin"
+    }).select({ payload: 1 }).lean().exec()
   ]);
   const byId = new Map(documents.map((document) => {
     const price = asRow(document)!;
@@ -1582,8 +1632,12 @@ async function enrichPricingSectionDto(row: Row): Promise<KnowledgeSectionEnvelo
     payload: { ...dto.payload, priceEntries },
     referenceState: {
       specificationIds: [...new Set(
-        specificationReferenceDocuments
-          .map((document) => optionalString(asRow(document)?.specificationId))
+        [
+          ...specificationReferenceDocuments
+            .map((document) => optionalString(asRow(document)?.specificationId)),
+          ...structuredRows(payloadFor(asRow(quantityMarginDocument)).slabRates)
+            .map((slabRate) => optionalString(slabRate.specificationId))
+        ]
           .filter((id): id is string => Boolean(id))
       )].sort()
     }
@@ -1708,6 +1762,11 @@ interface KnowledgeItemEdge {
   readonly toId: string;
 }
 
+interface RevisionRelationshipValidationContext {
+  readonly updatedSectionKey: KnowledgeSectionKey;
+  readonly previousPayload: Row;
+}
+
 async function coordinateMainLineBasketDependency(
   basketId: string,
   session: ClientSession
@@ -1762,6 +1821,128 @@ async function coordinateNewModeConfigurationReferences(
   }
 }
 
+async function coordinateNewSlabRateUomReferences(
+  sectionKey: KnowledgeSectionKey,
+  priorPayload: Row,
+  nextPayload: Row,
+  session: ClientSession
+): Promise<void> {
+  if (sectionKey !== "quantity-margin") return;
+  const priorIds = slabRateUomIds(priorPayload);
+  const nextIds = slabRateUomIds(nextPayload);
+  for (const uomId of [...nextIds].filter((id) => !priorIds.has(id)).sort()) {
+    const uom = await AiEstimatorKnowledgeUomModel.findOneAndUpdate(
+      { _id: uomId, status: "active" },
+      { $inc: { dependencyEpoch: 1 } },
+      {
+        returnDocument: "after",
+        runValidators: true,
+        session,
+        timestamps: false
+      }
+    ).select({ _id: 1 }).lean().exec();
+    if (!uom) {
+      const index = structuredRows(nextPayload.slabRates)
+        .findIndex((row) => optionalString(row.uomId) === uomId);
+      invalidRevisionSectionRules([validationIssue(
+        `payload.slabRates.${Math.max(index, 0)}.uomId`,
+        "INVALID_REFERENCE",
+        "The selected UOM is not active or does not exist."
+      )]);
+    }
+  }
+}
+
+async function coordinateNewPriorityReferences(
+  sectionKey: KnowledgeSectionKey,
+  priorPayload: Row,
+  nextPayload: Row,
+  session: ClientSession
+): Promise<void> {
+  if (sectionKey === "overview") {
+    const priorPriorityId = optionalString(priorPayload.priorityId);
+    const nextPriorityId = optionalString(nextPayload.priorityId);
+    if (!nextPriorityId || nextPriorityId === priorPriorityId) return;
+    await coordinateCanonicalMainLinePriority(nextPriorityId, session);
+    return;
+  }
+  if (sectionKey !== "recommendations") return;
+
+  const priorIds = recommendationPriorityIds(priorPayload);
+  const nextIds = recommendationPriorityIds(nextPayload);
+  for (const priorityId of [...nextIds].filter((id) => !priorIds.has(id)).sort()) {
+    await coordinateActivePriority(priorityId, session);
+  }
+}
+
+async function coordinateCanonicalMainLinePriority(
+  priorityId: string,
+  session: ClientSession
+): Promise<void> {
+  const canonical = findCanonicalKnowledgePriorityById(priorityId);
+  if (!canonical) invalidMainLinePriority();
+  const coordinated = await incrementPriorityDependencyEpoch(
+    canonicalPriorityFilter(canonical),
+    session
+  );
+  if (!coordinated) invalidMainLinePriority();
+}
+
+async function coordinateActivePriority(
+  priorityId: string,
+  session: ClientSession
+): Promise<void> {
+  const coordinated = await incrementPriorityDependencyEpoch(
+    { _id: priorityId, status: "active" },
+    session
+  );
+  if (!coordinated) invalidKnowledgeReference("priority");
+}
+
+async function incrementPriorityDependencyEpoch(
+  filter: Row,
+  session: ClientSession
+): Promise<boolean> {
+  const priority = await AiEstimatorKnowledgePriorityModel.findOneAndUpdate(
+    filter,
+    { $inc: { dependencyEpoch: 1 } },
+    {
+      returnDocument: "after",
+      runValidators: true,
+      session,
+      timestamps: false
+    }
+  ).select({ _id: 1 }).lean().exec();
+  return Boolean(priority);
+}
+
+function canonicalPriorityFilter(priority: CanonicalKnowledgePriority): Row {
+  return {
+    _id: priority.id,
+    semanticTier: priority.semanticTier,
+    code: priority.code,
+    name: priority.name,
+    displayOrder: priority.displayOrder,
+    status: "active"
+  };
+}
+
+function recommendationPriorityIds(payload: Row): Set<string> {
+  return new Set(
+    activeStructuredRows(payload.recommendations)
+      .map((row) => optionalString(row.priorityId))
+      .filter((id): id is string => Boolean(id))
+  );
+}
+
+function slabRateUomIds(payload: Row): Set<string> {
+  return new Set(
+    structuredRows(payload.slabRates)
+      .map((row) => optionalString(row.uomId))
+      .filter((id): id is string => Boolean(id))
+  );
+}
+
 async function coordinateCopiedBasketReferences(
   rows: Row[],
   session: ClientSession
@@ -1774,6 +1955,40 @@ async function coordinateCopiedBasketReferences(
     }
   }
   await coordinateBasketDependencies(basketIds, session);
+}
+
+async function coordinateCopiedSlabRateUomReferences(
+  rows: Row[],
+  session: ClientSession
+): Promise<void> {
+  const quantityMargin = rows.find(
+    (row) => row.sectionKey === "quantity-margin"
+  );
+  await coordinateNewSlabRateUomReferences(
+    "quantity-margin",
+    {},
+    payloadFor(quantityMargin),
+    session
+  );
+}
+
+async function coordinateCopiedPriorityReferences(
+  rows: Row[],
+  session: ClientSession
+): Promise<void> {
+  const overview = payloadFor(rows.find((row) => row.sectionKey === "overview"));
+  const recommendations = payloadFor(
+    rows.find((row) => row.sectionKey === "recommendations")
+  );
+  const mainLinePriorityId = optionalString(overview.priorityId);
+  if (mainLinePriorityId) {
+    await coordinateActivePriority(mainLinePriorityId, session);
+  }
+  const recommendationIds = recommendationPriorityIds(recommendations);
+  if (mainLinePriorityId) recommendationIds.delete(mainLinePriorityId);
+  for (const priorityId of [...recommendationIds].sort()) {
+    await coordinateActivePriority(priorityId, session);
+  }
 }
 
 async function coordinateBasketDependencies(
@@ -1825,11 +2040,12 @@ function legacyModeConfigurationIds(
 async function validateRevisionRelationships(
   mainLineId: string,
   rows: Row[],
-  session: ClientSession
+  session: ClientSession,
+  context?: RevisionRelationshipValidationContext
 ): Promise<void> {
   validateStoredRevisionPayloads(rows);
   await validateRevisionMasterReferences(rows, session);
-  await validateRevisionSectionRules(rows, session);
+  await validateRevisionSectionRules(rows, session, context);
   await validateScopeBasketReferences(rows, session);
   const stepIssues = sectionGraphIssues(rows);
   if (stepIssues.length > 0) {
@@ -1914,7 +2130,6 @@ async function validateRevisionMasterReferences(
   }
 
   const priorityIds = new Set<string>();
-  addOptionalId(priorityIds, overview.priorityId);
   for (const entry of activeStructuredRows(recommendations.recommendations)) {
     addOptionalId(priorityIds, entry.priorityId);
   }
@@ -1973,7 +2188,8 @@ async function validateRevisionMasterReferences(
 
 async function validateRevisionSectionRules(
   rows: Row[],
-  session: ClientSession
+  session: ClientSession,
+  context?: RevisionRelationshipValidationContext
 ): Promise<void> {
   const issues: KnowledgeValidationIssue[] = [];
   const overview = payloadFor(rows.find((row) => row.sectionKey === "overview"));
@@ -2023,6 +2239,8 @@ async function validateRevisionSectionRules(
     }
   }
 
+  issues.push(...await slabRateRevisionIssues(rows, session, context));
+
   const productivity = activeStructuredRows(execution.productivity);
   const productivityUomIds = [...new Set(productivity
     .map((rule) => optionalString(rule.uomId))
@@ -2054,6 +2272,98 @@ async function validateRevisionSectionRules(
   }
 
   if (issues.length > 0) invalidRevisionSectionRules(issues);
+}
+
+async function slabRateRevisionIssues(
+  rows: Row[],
+  session: ClientSession,
+  context?: RevisionRelationshipValidationContext
+): Promise<KnowledgeValidationIssue[]> {
+  const issues: KnowledgeValidationIssue[] = [];
+  const pricing = payloadFor(rows.find((row) => row.sectionKey === "pricing"));
+  const quantityMargin = payloadFor(
+    rows.find((row) => row.sectionKey === "quantity-margin")
+  );
+  const slabRates = structuredRows(
+    quantityMargin.slabRates
+  ) as unknown as KnowledgeSlabRate[];
+  if (slabRates.length === 0) return issues;
+
+  const specificationIds = new Set(
+    structuredRows(pricing.specifications)
+      .map((specification) => optionalString(specification.id) ?? optionalString(specification._id))
+      .filter((id): id is string => Boolean(id))
+  );
+  const uomIds = [...new Set(slabRates.map((slabRate) => slabRate.uomId))];
+  const uomDocuments = await AiEstimatorKnowledgeUomModel.find({
+    _id: { $in: uomIds }
+  }).select({ _id: 1, decimalScale: 1, status: 1 }).session(session).lean().exec();
+  const uoms = new Map(uomDocuments.map((document) => {
+    const row = asRow(document)!;
+    return [requiredString(row._id), row] as const;
+  }));
+  const priorSlabRates = context?.updatedSectionKey === "quantity-margin"
+    ? new Map(structuredRows(context.previousPayload.slabRates).map((row) => [optionalString(row.id), row]))
+    : null;
+
+  slabRates.forEach((slabRate, index) => {
+    const path = `payload.slabRates.${index}`;
+    if (!specificationIds.has(slabRate.specificationId)) {
+      issues.push(validationIssue(
+        `${path}.specificationId`,
+        "INVALID_REFERENCE",
+        "The selected Specification does not exist in this revision's Pricing section."
+      ));
+    }
+    const uom = uoms.get(slabRate.uomId);
+    const prior = priorSlabRates?.get(slabRate.id);
+    const retainedUnavailableReference = context !== undefined && (
+      context.updatedSectionKey !== "quantity-margin" ||
+      optionalString(prior?.uomId) === slabRate.uomId
+    );
+    if (!uom || (uom.status !== "active" && !retainedUnavailableReference)) {
+      issues.push(validationIssue(
+        `${path}.uomId`,
+        "INVALID_REFERENCE",
+        "The selected UOM is not active or does not exist."
+      ));
+      return;
+    }
+    try {
+      const scaledQuantity = parseScaledDecimal(
+        slabRate.quantity,
+        requiredInteger(uom.decimalScale)
+      );
+      if (scaledQuantity === 0n) {
+        issues.push(validationIssue(
+          `${path}.quantity`,
+          "INVALID_RANGE",
+          "Quantity must be greater than zero."
+        ));
+        return;
+      }
+      calculateSlabRateEstimatedCost({
+        unitRatePaise: slabRate.unitRatePaise,
+        quantity: slabRate.quantity,
+        quantityScale: requiredInteger(uom.decimalScale)
+      });
+    } catch (error) {
+      const calculationError = error instanceof KnowledgeCalculationError
+        ? error
+        : null;
+      const derivedCostOverflow = calculationError?.code === "UNSAFE_RESULT";
+      issues.push(validationIssue(
+        derivedCostOverflow ? `${path}.unitRatePaise` : `${path}.quantity`,
+        derivedCostOverflow ? "UNSAFE_RESULT" : "INVALID_DECIMAL",
+        derivedCostOverflow
+          ? "Quantity multiplied by Unit rate exceeds the supported paise boundary."
+          : error instanceof Error
+            ? error.message
+            : "Enter a Quantity matching the selected UOM precision."
+      ));
+    }
+  });
+  return issues;
 }
 
 function validateStoredRevisionPayloads(rows: Row[]): void {
@@ -2120,6 +2430,26 @@ function invalidSpecificationRemoval(): never {
         "This Specification is retained because immutable saved price history references it; edit it or keep it in this revision."
     }
   );
+}
+
+function invalidSlabSpecificationRemoval(): never {
+  throw new ApiError(
+    409,
+    "KNOWLEDGE_REFERENCE_INVALID",
+    "A Specification referenced by a saved quantity slab cannot be removed.",
+    {
+      "payload.specifications":
+        "Remove and save every priced quantity slab that references this Specification before removing it."
+    }
+  );
+}
+
+function invalidMainLinePriority(): never {
+  invalidRevisionSectionRules([validationIssue(
+    "payload.priorityId",
+    "INVALID_REFERENCE",
+    "Select an active canonical Priority."
+  )]);
 }
 
 function itemRelationsForRows(mainLineId: string, rows: Row[]): Array<{

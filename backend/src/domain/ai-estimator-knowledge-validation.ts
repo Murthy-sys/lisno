@@ -280,7 +280,7 @@ export function validateQualityParameter(
 const ALLOWED_SECTION_KEYS: Record<KnowledgeSectionKey, ReadonlySet<string>> = {
   overview: new Set(["description", "uomId", "priorityId", "surfaceIds", "modeIds", "sectionApplicability"]),
   pricing: new Set(["specifications", "brands", "technicalDescription", "qualityLevel", "internalVendorNotes", "priceEntries"]),
-  "quantity-margin": new Set(["quantitySlabs", "gapBehavior", "startMarginBps", "bottomMarginBps", "pmcMarkupBps", "wastageBps", "previewInputs"]),
+  "quantity-margin": new Set(["quantitySlabs", "slabRates", "gapBehavior", "startMarginBps", "bottomMarginBps", "pmcMarkupBps", "wastageBps", "previewInputs"]),
   scope: new Set(["modeIds", "surfaceIds", "exclusions"]),
   recommendations: new Set(["recommendations"]),
   quality: new Set(["parameters"]),
@@ -754,9 +754,9 @@ function validateQuantityMarginPayload(
         validSlabs.push(row as unknown as KnowledgeQuantitySlab);
       }
     });
-    if (!("gapBehavior" in record)) {
+    if (rows.length > 0 && !("gapBehavior" in record)) {
       issues.push(requiredIssue("payload.gapBehavior"));
-    } else if (
+    } else if (rows.length > 0 &&
       AI_ESTIMATOR_KNOWLEDGE_QUANTITY_GAP_BEHAVIORS.includes(
         record.gapBehavior as never
       ) &&
@@ -774,10 +774,64 @@ function validateQuantityMarginPayload(
       );
     }
   }
+  if ("slabRates" in record) {
+    validateSlabRates(record.slabRates, issues);
+  }
   if ("previewInputs" in record) {
     validatePreviewInputs(record.previewInputs, issues);
   }
   return issues;
+}
+
+function validateSlabRates(
+  value: unknown,
+  issues: KnowledgeValidationIssue[]
+): void {
+  const path = "payload.slabRates";
+  const rows = validateObjectArray(value, path, issues);
+  const ids = new Set<string>();
+  const tuples = new Set<string>();
+  rows.forEach((row, index) => {
+    const rowPath = `${path}.${index}`;
+    validateExactRowKeys(
+      row,
+      ["id", "specificationId", "uomId", "quantity", "unitRatePaise"],
+      ["id", "specificationId", "uomId", "quantity", "unitRatePaise"],
+      rowPath,
+      issues
+    );
+    validateStableId(row.id, `${rowPath}.id`, issues);
+    validateStableId(row.specificationId, `${rowPath}.specificationId`, issues);
+    validateStableId(row.uomId, `${rowPath}.uomId`, issues);
+    const quantity = validatePositiveCanonicalDecimal(
+      row.quantity,
+      `${rowPath}.quantity`,
+      issues
+    );
+    validateInteger(
+      row.unitRatePaise,
+      `${rowPath}.unitRatePaise`,
+      issues,
+      0,
+      AI_ESTIMATOR_KNOWLEDGE_MAX_MONEY_PAISE
+    );
+    addUniqueString(row.id, ids, `${rowPath}.id`, "DUPLICATE_ID", issues);
+    if (
+      typeof row.specificationId === "string" &&
+      row.specificationId.length > 0 &&
+      typeof row.uomId === "string" &&
+      row.uomId.length > 0 &&
+      quantity !== null
+    ) {
+      addUniqueString(
+        `${row.specificationId}\u0000${row.uomId}\u0000${quantity.toString()}`,
+        tuples,
+        `${rowPath}.quantity`,
+        "DUPLICATE_SLAB_RATE",
+        issues
+      );
+    }
+  });
 }
 
 function validatePreviewInputs(

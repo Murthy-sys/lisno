@@ -625,6 +625,29 @@ describe("OpenAPI and Swagger UI", () => {
         })
       }
     });
+    expect(componentSchemas().KnowledgeSlabRate).toMatchObject({
+      type: "object",
+      additionalProperties: false,
+      required: ["id", "specificationId", "uomId", "quantity", "unitRatePaise"],
+      description: expect.stringContaining("neither accepted nor stored"),
+      properties: {
+        specificationId: expect.any(Object),
+        uomId: expect.any(Object),
+        quantity: expect.objectContaining({
+          description: expect.stringContaining("UOM decimalScale")
+        }),
+        unitRatePaise: expect.objectContaining({
+          type: "integer",
+          minimum: 0,
+          maximum: Number.MAX_SAFE_INTEGER
+        })
+      }
+    });
+    expect(componentSchemas().KnowledgeQuantitySlab).toMatchObject({
+      type: "object",
+      additionalProperties: false,
+      required: ["id", "minimumQuantity", "maximumQuantity", "adjustmentBps"]
+    });
     expect(componentSchemas().KnowledgeContextRequest).toMatchObject({
       properties: {
         specificationId: expect.objectContaining({
@@ -640,7 +663,7 @@ describe("OpenAPI and Swagger UI", () => {
         specificationIds: {
           type: "array",
           uniqueItems: true,
-          description: expect.stringContaining("Response-only removal guidance"),
+          description: expect.stringMatching(/priced quantity slabs.*Response-only removal guidance/u),
           items: expect.any(Object)
         }
       }
@@ -653,6 +676,67 @@ describe("OpenAPI and Swagger UI", () => {
     expect(componentSchemas().KnowledgeSectionMutationEnvelope).toMatchObject({
       properties: {
         referenceState: { $ref: "#/components/schemas/KnowledgeSectionReferenceState" }
+      }
+    });
+
+    expect(componentSchemas().KnowledgePriority).toMatchObject({
+      type: "object",
+      additionalProperties: false,
+      required: expect.not.arrayContaining(["semanticTier", "dependencyEpoch"]),
+      properties: {
+        masterType: { type: "string", enum: ["priorities"] },
+        semanticTier: {
+          type: "string",
+          enum: ["non_negotiable", "high", "medium", "low"],
+          readOnly: true
+        }
+      }
+    });
+    expect(componentSchemas().KnowledgePriority.properties).not.toHaveProperty("dependencyEpoch");
+    expect(componentSchemas().KnowledgePriority.properties).not.toHaveProperty("decimalScale");
+    expect(componentSchemas().KnowledgePriorityPage).toMatchObject({
+      properties: {
+        items: {
+          type: "array",
+          items: { $ref: "#/components/schemas/KnowledgePriority" }
+        }
+      }
+    });
+
+    for (const schemaName of ["KnowledgeMasterCreateRequest", "KnowledgeMasterUpdateRequest"] as const) {
+      const writeSchema = componentSchemas()[schemaName] as {
+        properties: Record<string, unknown>;
+      };
+      expect(writeSchema.properties, schemaName).not.toHaveProperty("semanticTier");
+      expect(writeSchema.properties, schemaName).not.toHaveProperty("dependencyEpoch");
+    }
+
+    expect(
+      openApiDocument.paths["/admin/ai-estimator-knowledge/priorities"]?.get
+        ?.responses?.["2XX"]
+    ).toMatchObject({
+      content: {
+        "application/json": {
+          schema: {
+            properties: {
+              data: { $ref: "#/components/schemas/KnowledgePriorityPage" }
+            }
+          }
+        }
+      }
+    });
+    expect(
+      openApiDocument.paths["/admin/ai-estimator-knowledge/priorities"]?.post
+        ?.responses?.["2XX"]
+    ).toMatchObject({
+      content: {
+        "application/json": {
+          schema: {
+            properties: {
+              data: { $ref: "#/components/schemas/KnowledgePriority" }
+            }
+          }
+        }
       }
     });
 

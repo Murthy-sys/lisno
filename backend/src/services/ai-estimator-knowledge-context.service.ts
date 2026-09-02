@@ -20,11 +20,16 @@ import {
   type KnowledgeSectionKey,
   type KnowledgeTaxTreatment
 } from "../domain/ai-estimator-knowledge.js";
+import {
+  findCanonicalKnowledgePriorityById,
+  type CanonicalKnowledgePriority
+} from "../domain/ai-estimator-knowledge-priority.js";
 import { ApiError } from "../middleware/errors.js";
 import { AiEstimatorKnowledgeBasketModel } from "../models/AiEstimatorKnowledgeBasket.js";
 import { AiEstimatorKnowledgeMainLineModel } from "../models/AiEstimatorKnowledgeMainLine.js";
 import { AiEstimatorKnowledgeModeModel } from "../models/AiEstimatorKnowledgeMode.js";
 import { AiEstimatorKnowledgePriceVersionModel } from "../models/AiEstimatorKnowledgePriceVersion.js";
+import { AiEstimatorKnowledgePriorityModel } from "../models/AiEstimatorKnowledgePriority.js";
 import { AiEstimatorKnowledgeRevisionModel } from "../models/AiEstimatorKnowledgeRevision.js";
 import { AiEstimatorKnowledgeSectionModel } from "../models/AiEstimatorKnowledgeSection.js";
 import { AiEstimatorKnowledgeSurfaceModel } from "../models/AiEstimatorKnowledgeSurface.js";
@@ -169,6 +174,9 @@ async function resolveContext(
 
   const overview = projectedPayloads.get("overview")!;
   const advanced = projectedPayloads.get("advanced")!;
+  const resolvedPriority = sections.get("overview")?.applicability === "configured"
+    ? await resolveConfiguredPriority(overview, session)
+    : null;
   await validateRequestedMasterReferences(input, session);
   assertCompatibleReference(overview, "uomId", input.uomId);
   assertCompatibleArrayReference(overview, "surfaceIds", input.surfaceId);
@@ -285,11 +293,46 @@ async function resolveContext(
       ...contextSections,
       overview: {
         ...(contextSections.overview as Row | undefined),
+        ...(resolvedPriority ? { priority: resolvedPriority } : {}),
         basket: publicIdentity(basket),
         mainLine: publicIdentity(mainLine)
       }
     },
     preview: calculationPreview
+  };
+}
+
+async function resolveConfiguredPriority(
+  overview: Row,
+  session: ClientSession
+): Promise<Row | null> {
+  const priorityId = optionalString(overview.priorityId);
+  if (!priorityId) return null;
+  const canonical = findCanonicalKnowledgePriorityById(priorityId);
+  if (!canonical) unresolvedPriority();
+  const priority = asRow(
+    await AiEstimatorKnowledgePriorityModel.findOne({
+      _id: canonical.id,
+      semanticTier: canonical.semanticTier,
+      code: canonical.code,
+      name: canonical.name,
+      displayOrder: canonical.displayOrder,
+      status: "active"
+    }).session(session).lean().exec()
+  );
+  if (!priority) unresolvedPriority();
+  return publicPriorityIdentity(priority, canonical);
+}
+
+function publicPriorityIdentity(
+  row: Row,
+  canonical: CanonicalKnowledgePriority
+): Row {
+  return {
+    id: requiredString(row._id),
+    tier: canonical.semanticTier,
+    code: requiredString(row.code),
+    name: requiredString(row.name)
   };
 }
 
@@ -806,5 +849,13 @@ function unresolvedCore(): never {
     422,
     "KNOWLEDGE_NOT_RESOLVABLE",
     "Required active estimation knowledge is unavailable."
+  );
+}
+
+function unresolvedPriority(): never {
+  throw new ApiError(
+    422,
+    "KNOWLEDGE_PRIORITY_NOT_RESOLVABLE",
+    "Configured Main Line Priority is unavailable or invalid."
   );
 }

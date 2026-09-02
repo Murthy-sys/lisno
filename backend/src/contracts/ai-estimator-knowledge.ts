@@ -18,6 +18,9 @@ import type {
   KnowledgeTaxTreatment,
   KnowledgeVersionStatus
 } from "../domain/ai-estimator-knowledge.js";
+import type { KnowledgePrioritySemanticTier } from "../domain/ai-estimator-knowledge-priority.js";
+
+export type { KnowledgePrioritySemanticTier } from "../domain/ai-estimator-knowledge-priority.js";
 
 export type KnowledgeStableId = string;
 export type KnowledgeCanonicalDecimal = string;
@@ -55,6 +58,10 @@ export interface KnowledgeMaster extends KnowledgeVersionedResource {
 
 export interface KnowledgeUom extends KnowledgeMaster {
   decimalScale: 0 | 1 | 2 | 3;
+}
+
+export interface KnowledgePriority extends KnowledgeMaster {
+  semanticTier?: KnowledgePrioritySemanticTier;
 }
 
 export interface KnowledgeTaxVersion extends KnowledgeVersionedResource {
@@ -144,6 +151,14 @@ export interface KnowledgeQuantitySlab {
   minimumQuantity: KnowledgeCanonicalDecimal;
   maximumQuantity: KnowledgeCanonicalDecimal | null;
   adjustmentBps: number;
+}
+
+export interface KnowledgeSlabRate {
+  id: KnowledgeStableId;
+  specificationId: KnowledgeStableId;
+  uomId: KnowledgeStableId;
+  quantity: KnowledgeCanonicalDecimal;
+  unitRatePaise: KnowledgePaise;
 }
 
 export interface KnowledgeQuantityRules {

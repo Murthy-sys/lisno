@@ -8,11 +8,13 @@ import {
   AI_ESTIMATOR_KNOWLEDGE_EXECUTION_SOURCES,
   AI_ESTIMATOR_KNOWLEDGE_ITEM_STATUSES,
   AI_ESTIMATOR_KNOWLEDGE_MASTER_STATUSES,
+  AI_ESTIMATOR_KNOWLEDGE_MAX_ARRAY_ITEMS,
   AI_ESTIMATOR_KNOWLEDGE_MAX_MODE_FIELDS,
   AI_ESTIMATOR_KNOWLEDGE_MAX_MODE_FIELD_OPTIONS,
   AI_ESTIMATOR_KNOWLEDGE_MAX_SPECIFICATION_FIELDS,
   AI_ESTIMATOR_KNOWLEDGE_MAX_SPECIFICATION_FIELD_OPTIONS,
   AI_ESTIMATOR_KNOWLEDGE_MODE_KINDS,
+  AI_ESTIMATOR_KNOWLEDGE_QUANTITY_GAP_BEHAVIORS,
   AI_ESTIMATOR_KNOWLEDGE_REVISION_STATUSES,
   AI_ESTIMATOR_KNOWLEDGE_SECTION_APPLICABILITY,
   AI_ESTIMATOR_KNOWLEDGE_SECTION_KEYS,
@@ -20,6 +22,7 @@ import {
   AI_ESTIMATOR_KNOWLEDGE_TAX_TREATMENTS,
   AI_ESTIMATOR_KNOWLEDGE_VERSION_STATUSES
 } from "../domain/ai-estimator-knowledge.js";
+import { AI_ESTIMATOR_KNOWLEDGE_PRIORITY_SEMANTIC_TIERS } from "../domain/ai-estimator-knowledge-priority.js";
 
 type OpenApiObject = Readonly<Record<string, unknown>>;
 
@@ -89,12 +92,16 @@ export const AI_ESTIMATOR_KNOWLEDGE_RESPONSE_SCHEMAS: Readonly<Record<string, st
   [`POST ${admin}/main-lines/:mainLineId/duplicate`]: "KnowledgeItemDetail",
   [`POST ${admin}/preview`]: "KnowledgePreview",
   "POST /ai-estimator-knowledge/context": "KnowledgeContext",
-  ...Object.fromEntries(masterFamilies.flatMap((family) => [
-    [`GET ${admin}/${family}`, "KnowledgeMasterPage"],
-    [`POST ${admin}/${family}`, "KnowledgeMaster"],
-    [`PATCH ${admin}/${family}/:id`, "KnowledgeMaster"],
-    [`DELETE ${admin}/${family}/:id`, "KnowledgeMaster"]
-  ]))
+  ...Object.fromEntries(masterFamilies.flatMap((family) => {
+    const itemSchema = family === "priorities" ? "KnowledgePriority" : "KnowledgeMaster";
+    const pageResponseSchema = family === "priorities" ? "KnowledgePriorityPage" : "KnowledgeMasterPage";
+    return [
+      [`GET ${admin}/${family}`, pageResponseSchema],
+      [`POST ${admin}/${family}`, itemSchema],
+      [`PATCH ${admin}/${family}/:id`, itemSchema],
+      [`DELETE ${admin}/${family}/:id`, itemSchema]
+    ];
+  }))
 };
 
 export const AI_ESTIMATOR_KNOWLEDGE_OPERATION_SUMMARIES: Readonly<Record<string, string>> = {
@@ -241,6 +248,18 @@ const masterUpdateRequestProperties = {
 const masterRequiredProperties = Object.keys(masterProperties).filter(
   (key) => key !== "decimalScale"
 );
+const priorityProperties = {
+  ...Object.fromEntries(
+    Object.entries(masterProperties).filter(([key]) => key !== "decimalScale")
+  ),
+  masterType: { type: "string", enum: ["priorities"] },
+  semanticTier: {
+    type: "string",
+    enum: [...AI_ESTIMATOR_KNOWLEDGE_PRIORITY_SEMANTIC_TIERS],
+    readOnly: true,
+    description: "Backend-owned canonical Priority meaning. Omitted for legacy or non-canonical Priority masters."
+  }
+} as const;
 
 const amountComponent = {
   type: "object",
@@ -710,6 +729,36 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
       }
     ]
   },
+  KnowledgeQuantitySlab: strictObject(
+    ["id", "minimumQuantity", "maximumQuantity", "adjustmentBps"],
+    {
+      id,
+      minimumQuantity: decimal,
+      maximumQuantity: { ...decimal, nullable: true },
+      adjustmentBps: { type: "integer", minimum: 0, maximum: 10_000 }
+    }
+  ),
+  KnowledgeSlabRate: {
+    ...strictObject(
+      ["id", "specificationId", "uomId", "quantity", "unitRatePaise"],
+      {
+        id,
+        specificationId: id,
+        uomId: id,
+        quantity: {
+          ...decimal,
+          description: "Positive canonical quantity. Fractional digits cannot exceed the selected UOM decimalScale."
+        },
+        unitRatePaise: {
+          type: "integer",
+          minimum: 0,
+          maximum: Number.MAX_SAFE_INTEGER,
+          description: "Per-unit slab rate in integer paise."
+        }
+      }
+    ),
+    description: "Configured priced slab inputs. Estimated cost is derived as Quantity × Unit rate and is neither accepted nor stored."
+  },
   KnowledgeSectionPayload: {
     anyOf: AI_ESTIMATOR_KNOWLEDGE_SECTION_KEYS.map((sectionKey) => ({
       type: "object",
@@ -832,9 +881,11 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
     }
   ),
   KnowledgeMaster: strictObject(masterRequiredProperties, masterProperties),
+  KnowledgePriority: strictObject(masterRequiredProperties, priorityProperties),
   KnowledgeUom: strictObject(Object.keys(masterProperties), masterProperties),
   KnowledgeBasketPage: pageSchema("KnowledgeBasket"),
   KnowledgeMasterPage: pageSchema("KnowledgeMaster"),
+  KnowledgePriorityPage: pageSchema("KnowledgePriority"),
   KnowledgeMainLine: strictObject(
     ["id", "basketId", "name", "description", "displayOrder", "status", "activeRevisionId", "draftRevisionId", "version", ...Object.keys(actorMetadata)],
     {
@@ -978,7 +1029,7 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
       specificationIds: {
         type: "array",
         uniqueItems: true,
-        description: "Revision-wide Specification IDs referenced by immutable saved price versions. Response-only removal guidance.",
+        description: "Revision-wide Specification IDs referenced by immutable saved price versions or priced quantity slabs. Response-only removal guidance.",
         items: id
       }
     }
@@ -1060,7 +1111,7 @@ function sectionPayloadKeys(sectionKey: string): readonly string[] {
   const keys: Readonly<Record<string, readonly string[]>> = {
     overview: ["description", "uomId", "priorityId", "surfaceIds", "modeIds", "sectionApplicability"],
     pricing: ["specifications", "brands", "technicalDescription", "qualityLevel", "internalVendorNotes", "priceEntries"],
-    "quantity-margin": ["quantitySlabs", "gapBehavior", "startMarginBps", "bottomMarginBps", "pmcMarkupBps", "wastageBps", "previewInputs"],
+    "quantity-margin": ["quantitySlabs", "slabRates", "gapBehavior", "startMarginBps", "bottomMarginBps", "pmcMarkupBps", "wastageBps", "previewInputs"],
     scope: ["modeIds", "surfaceIds", "exclusions"],
     recommendations: ["recommendations"],
     quality: ["parameters"],
@@ -1090,6 +1141,25 @@ function sectionPayloadProperties(sectionKey: string): Readonly<Record<string, u
       type: "array",
       description: "New append commands use null Specification scope. Same-revision immutable references may retain historical non-null Specification lineage.",
       items: ref("KnowledgePriceEntryCommand")
+    };
+  }
+  if (sectionKey === "quantity-margin") {
+    properties.quantitySlabs = {
+      type: "array",
+      maxItems: AI_ESTIMATOR_KNOWLEDGE_MAX_ARRAY_ITEMS,
+      description: "Legacy ordered quantity ranges that adjust an immutable effective price by basis points.",
+      items: ref("KnowledgeQuantitySlab")
+    };
+    properties.slabRates = {
+      type: "array",
+      maxItems: AI_ESTIMATOR_KNOWLEDGE_MAX_ARRAY_ITEMS,
+      description: "Priced slab inputs. They do not participate in runtime effective-price selection.",
+      items: ref("KnowledgeSlabRate")
+    };
+    properties.gapBehavior = {
+      type: "string",
+      enum: [...AI_ESTIMATOR_KNOWLEDGE_QUANTITY_GAP_BEHAVIORS],
+      description: "Required only when legacy quantitySlabs contains at least one row."
     };
   }
   return properties;

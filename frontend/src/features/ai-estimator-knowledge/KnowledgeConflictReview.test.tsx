@@ -133,6 +133,71 @@ describe("KnowledgeConflictReview Pricing projection", () => {
   });
 });
 
+describe("KnowledgeConflictReview Mode Priority projection", () => {
+  it("compares the resolved Priority label without exposing other Overview values or raw IDs", () => {
+    render(
+      <KnowledgeConflictReview
+        sectionKey="overview"
+        localVersion={4}
+        serverVersion={5}
+        payload={{
+          priorityId: "private-priority-high-id",
+          uomId: "private-uom-id",
+          surfaceIds: ["private-surface-id"],
+          hiddenCompatibility: "Private Overview value"
+        }}
+        overviewFields={["priorityId"]}
+        masters={{
+          priorities: [{
+            id: "private-priority-high-id",
+            masterType: "priorities",
+            code: "HIGH",
+            name: "High",
+            description: null,
+            displayOrder: 1,
+            status: "active",
+            semanticTier: "high",
+            version: 1,
+            createdById: "super-admin-1",
+            updatedById: "super-admin-1",
+            createdAt: "2026-09-02T08:00:00.000Z",
+            updatedAt: "2026-09-02T08:00:00.000Z"
+          }]
+        }}
+        relationshipBaskets={[]}
+        relationshipItems={[]}
+      />
+    );
+
+    const review = screen.getByRole("region", { name: "Latest Overview server version" });
+    expect(review).toHaveTextContent("PriorityHigh");
+    expect(review).not.toHaveTextContent("Unit of measure");
+    expect(review).not.toHaveTextContent("Surfaces");
+    expect(review).not.toHaveTextContent("private-priority-high-id");
+    expect(review).not.toHaveTextContent("private-uom-id");
+    expect(review).not.toHaveTextContent("Private Overview value");
+  });
+
+  it("uses the safe unavailable label when the saved Priority cannot be resolved", () => {
+    render(
+      <KnowledgeConflictReview
+        sectionKey="overview"
+        localVersion={4}
+        serverVersion={5}
+        payload={{ priorityId: "private-missing-priority-id" }}
+        overviewFields={["priorityId"]}
+        masters={{ priorities: [] }}
+        relationshipBaskets={[]}
+        relationshipItems={[]}
+      />
+    );
+
+    const review = screen.getByRole("region", { name: "Latest Overview server version" });
+    expect(review).toHaveTextContent("Unavailable priority");
+    expect(review).not.toHaveTextContent("private-missing-priority-id");
+  });
+});
+
 describe("KnowledgeConflictReview Advanced Mode projection", () => {
   it("groups source-specific component definitions and hides answers and raw identities", async () => {
     render(
@@ -226,5 +291,54 @@ describe("KnowledgeConflictReview Advanced Mode projection", () => {
       rules: { "color-contrast": { enabled: false } }
     });
     expect(results.violations).toEqual([]);
+  });
+});
+
+describe("KnowledgeConflictReview Quantity slab projection", () => {
+  it("resolves priced-slab Specification and UOM names supplied by Mode", () => {
+    render(
+      <KnowledgeConflictReview
+        sectionKey="quantity-margin"
+        localVersion={9}
+        serverVersion={10}
+        payload={{
+          slabRates: [{
+            id: "private-slab-id",
+            specificationId: "private-spec-id",
+            uomId: "private-uom-id",
+            quantity: "12.5",
+            unitRatePaise: 8_000
+          }]
+        }}
+        specifications={[{ id: "private-spec-id", name: "Plywood" }]}
+        masters={{
+          uoms: [{
+            id: "private-uom-id",
+            masterType: "uoms",
+            code: "SQFT",
+            name: "Square foot",
+            description: null,
+            displayOrder: 0,
+            status: "active",
+            decimalScale: 2,
+            version: 1,
+            createdById: "super-admin-1",
+            updatedById: "super-admin-1",
+            createdAt: "2026-09-02T08:00:00.000Z",
+            updatedAt: "2026-09-02T08:00:00.000Z"
+          }]
+        }}
+        relationshipBaskets={[]}
+        relationshipItems={[]}
+      />
+    );
+
+    const review = screen.getByRole("region", { name: "Latest Quantity & margin server version" });
+    expect(review).toHaveTextContent("Plywood");
+    expect(review).toHaveTextContent("Square foot");
+    expect(review).toHaveTextContent(/₹\s?80\.00/u);
+    expect(review).not.toHaveTextContent("private-spec-id");
+    expect(review).not.toHaveTextContent("private-uom-id");
+    expect(review).not.toHaveTextContent("private-slab-id");
   });
 });
