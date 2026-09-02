@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { PenTool } from "lucide-react";
 import { useState } from "react";
 
 import { ApiError } from "../../api/client";
@@ -6,7 +7,7 @@ import type { AdminProjectSummary } from "../../api/types";
 import { Button } from "../../components/ui/Button";
 import { Field, Select } from "../../components/ui/Field";
 import { StatusBadge } from "../../components/ui/StatusBadge";
-import { Surface } from "../../components/ui/Surface";
+import { AdminDetailSection } from "./AdminDetailSection";
 import { adminProjectKeys } from "./adminProjectsApi";
 import { dashboardKeys } from "./dashboard/superAdminDashboardApi";
 import {
@@ -41,26 +42,33 @@ export function DesignAssignmentPanel({ project }: { project: AdminProjectSummar
 
   if (!project.estimate || project.estimate.status !== "client_approved") {
     return (
-      <Surface as="section" className="admin-project-detail__surface" aria-labelledby="design-assignment-title">
-        <h2 id="design-assignment-title">Design plan assignment</h2>
+      <AdminDetailSection
+        icon={<PenTool aria-hidden="true" />}
+        tone="warm"
+        title="Design plan assignment"
+        subtitle="Assign and track the Designer handoff"
+        id="design-assignment-title"
+        defaultOpen
+      >
         <p>This task opens after the Client—or an Admin acting with proof—approves the estimate.</p>
-      </Surface>
+      </AdminDetailSection>
     );
   }
 
   const workflowStatus = project.estimate.designPlanStatus ?? "pending_assignment";
   return (
-    <Surface as="section" className="admin-project-detail__surface" aria-labelledby="design-assignment-title">
-      <div className="section-heading">
-        <div>
-          <p className="eyebrow">Approved estimate handoff</p>
-          <h2 id="design-assignment-title">Design plan assignment</h2>
-        </div>
-        <StatusBadge
-          tone={workflowStatus === "approved" ? "success" : workflowStatus === "changes_requested" ? "warning" : "info"}
-          label={workflowStatus.replaceAll("_", " ")}
-        />
-      </div>
+    <AdminDetailSection
+      icon={<PenTool aria-hidden="true" />}
+      tone="warm"
+      title="Design plan assignment"
+      subtitle="Assign and track the Designer handoff"
+      id="design-assignment-title"
+      defaultOpen
+    >
+      <StatusBadge
+        tone={workflowStatus === "approved" ? "success" : workflowStatus === "changes_requested" ? "warning" : "info"}
+        label={workflowStatus.replaceAll("_", " ")}
+      />
       {workflowStatus === "approved" ? (
         <p>
           Design plan v{project.estimate.designPlanVersion ?? 0} is approved. Procurement,
@@ -118,6 +126,6 @@ export function DesignAssignmentPanel({ project }: { project: AdminProjectSummar
           </Button>
         </form>
       )}
-    </Surface>
+    </AdminDetailSection>
   );
 }

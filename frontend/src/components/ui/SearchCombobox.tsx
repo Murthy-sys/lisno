@@ -10,6 +10,7 @@ import {
 export function SearchCombobox<T>({
   label,
   name,
+  placeholder,
   value,
   onChange,
   query,
@@ -28,6 +29,7 @@ export function SearchCombobox<T>({
 }: {
   label: string;
   name?: string;
+  placeholder?: string;
   value: T | null;
   onChange: (value: T | null) => void;
   query: string;
@@ -113,6 +115,7 @@ export function SearchCombobox<T>({
         ref={inputRef}
         id={inputId}
         name={name}
+        placeholder={placeholder}
         role="combobox"
         type="text"
         autoComplete="off"

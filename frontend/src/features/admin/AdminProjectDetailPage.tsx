@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { ArrowLeft, FileEdit, MessageSquare, User } from "lucide-react";
 import { Link, useParams } from "react-router-dom";
 
 import { ApiError } from "../../api/client";
@@ -15,6 +16,7 @@ import {
   isDesignerAssignmentPending
 } from "./adminProjectPresentation";
 import { adminProjectKeys, getAdminProject } from "./adminProjectsApi";
+import { AdminDetailSection } from "./AdminDetailSection";
 import { DesignAssignmentPanel } from "./DesignAssignmentPanel";
 import { WorkerAssignmentPanel } from "./WorkerAssignmentPanel";
 import { ProjectFinancePanel } from "../finance/ProjectFinancePanel";
@@ -96,7 +98,7 @@ export function AdminProjectDetailPage() {
         eyebrow="Project administration"
         title={project.name}
         description="Review the commercial handoff and assign approved design work."
-        breadcrumb={<Link to="/admin/projects">Back to {auth.user?.role === "super_admin" ? "All Projects" : "My Projects"}</Link>}
+        breadcrumb={<Link to="/admin/projects"><ArrowLeft aria-hidden="true" /> Back to {auth.user?.role === "super_admin" ? "All Projects" : "My Projects"}</Link>}
         metadata={<StatusBadge tone="info" label={adminProjectStatusLabel(project)} />}
         actions={assignmentPending && canAssignDesigner ? (
           <a className="button button--primary" href="#design-assignment-title">
@@ -105,12 +107,31 @@ export function AdminProjectDetailPage() {
         ) : undefined}
       />
       <Surface as="section" className="admin-project-detail__surface" aria-label="Project details">
-        <div className="admin-project-detail__grid">
-          <section><h2>Project</h2><dl><div><dt>Location</dt><dd>{project.location}</dd></div><div><dt>Property type</dt><dd>{project.propertyType ?? "Not captured"}</dd></div><div><dt>Initial client budget range</dt><dd>{project.budgetMin === null || project.budgetMax === null ? "Not captured" : `${money.format(project.budgetMin)} – ${money.format(project.budgetMax)}`}</dd></div></dl></section>
-          <section><h2>Client</h2><dl><div><dt>Name</dt><dd>{project.client.name}</dd></div><div><dt>Email</dt><dd>{project.client.email}</dd></div><div><dt>Mobile</dt><dd>{project.client.mobile}</dd></div></dl></section>
-          <section><h2>Estimator/Sales</h2><dl><div><dt>Assigned to</dt><dd>{project.estimator?.name ?? "Unassigned handoff"}</dd></div>{project.estimator ? <div><dt>Email</dt><dd>{project.estimator.email}</dd></div> : null}</dl></section>
-          <section><h2>Lead progress</h2>{project.lead ? <dl><div><dt>Stage</dt><dd>{formatWorkflowLabel(project.lead.stage)}</dd></div><div><dt>Next action</dt><dd>{nextAction}</dd></div><div><dt>Next action date</dt><dd><time dateTime={project.lead.nextActionAt}>{dateTime.format(new Date(project.lead.nextActionAt))}</time></dd></div></dl> : <p>Unassigned handoff</p>}</section>
-          <section><h2>Estimate</h2>{project.estimate ? <dl><div><dt>Status</dt><dd>{formatWorkflowLabel(project.estimate.status)}</dd></div><div><dt>{estimateApproved ? "Client-approved value (incl. GST)" : "Current estimate value (incl. GST)"}</dt><dd>{estimateApproved ? approvedBaseline ? money.format(approvedBaseline.total) : "Approved baseline unavailable" : money.format(project.estimate.total)}</dd></div>{approvedBaseline ? <div><dt>Approved estimate baseline</dt><dd>Version {approvedBaseline.estimateVersion}</dd></div> : null}</dl> : <p>No estimate yet</p>}</section>
+        <div className="admin-project-detail__sections">
+          <AdminDetailSection
+            icon={<FileEdit aria-hidden="true" />}
+            tone="warm"
+            title="Project information"
+            subtitle="Client, property and budget details"
+          >
+            <h3>Project</h3>
+            <dl><div><dt>Location</dt><dd>{project.location}</dd></div><div><dt>Property type</dt><dd>{project.propertyType ?? "Not captured"}</dd></div><div><dt>Initial client budget range</dt><dd>{project.budgetMin === null || project.budgetMax === null ? "Not captured" : `${money.format(project.budgetMin)} – ${money.format(project.budgetMax)}`}</dd></div></dl>
+            <h3>Client</h3>
+            <dl><div><dt>Name</dt><dd>{project.client.name}</dd></div><div><dt>Email</dt><dd>{project.client.email}</dd></div><div><dt>Mobile</dt><dd>{project.client.mobile}</dd></div></dl>
+          </AdminDetailSection>
+          <AdminDetailSection
+            icon={<User aria-hidden="true" />}
+            tone="cool"
+            title="Assignment & progress"
+            subtitle="Estimator/Sales assignment and lead progress"
+          >
+            <h3>Estimator/Sales</h3>
+            <dl><div><dt>Assigned to</dt><dd>{project.estimator?.name ?? "Unassigned handoff"}</dd></div>{project.estimator ? <div><dt>Email</dt><dd>{project.estimator.email}</dd></div> : null}</dl>
+            <h3>Lead progress</h3>
+            {project.lead ? <dl><div><dt>Stage</dt><dd>{formatWorkflowLabel(project.lead.stage)}</dd></div><div><dt>Next action</dt><dd>{nextAction}</dd></div><div><dt>Next action date</dt><dd><time dateTime={project.lead.nextActionAt}>{dateTime.format(new Date(project.lead.nextActionAt))}</time></dd></div></dl> : <p>Unassigned handoff</p>}
+            <h3>Estimate</h3>
+            {project.estimate ? <dl><div><dt>Status</dt><dd>{formatWorkflowLabel(project.estimate.status)}</dd></div><div><dt>{estimateApproved ? "Client-approved value (incl. GST)" : "Current estimate value (incl. GST)"}</dt><dd>{estimateApproved ? approvedBaseline ? money.format(approvedBaseline.total) : "Approved baseline unavailable" : money.format(project.estimate.total)}</dd></div>{approvedBaseline ? <div><dt>Approved estimate baseline</dt><dd>Version {approvedBaseline.estimateVersion}</dd></div> : null}</dl> : <p>No estimate yet</p>}
+          </AdminDetailSection>
         </div>
       </Surface>
       {canReadFinance ? (
@@ -125,27 +146,26 @@ export function AdminProjectDetailPage() {
       <DesignAssignmentPanel project={project} />
       {canAssignWorkers ? <WorkerAssignmentPanel project={project} /> : null}
       {project.estimate?.clientReview ? (
-        <Surface
-          as="section"
-          className="admin-project-detail__surface admin-project-detail__client-response"
-          aria-label="Client response"
+        <AdminDetailSection
+          icon={<MessageSquare aria-hidden="true" />}
+          tone="cool"
+          title="Client response"
+          subtitle="Delivery status and client decision"
+          defaultOpen
         >
-          <div>
-            <h2>Client response</h2>
-            <p>
-              <StatusBadge
-                tone={
-                  project.estimate.clientReview.status === "approved"
-                    ? "success"
-                    : project.estimate.clientReview.status === "changes_requested"
-                      ? "danger"
-                      : "warning"
-                }
-                label={formatWorkflowLabel(project.estimate.clientReview.status)}
-              />
-            </p>
-            <p>{deliveryLabel(project.estimate.clientReview.deliveryStatus)}</p>
-          </div>
+          <p>
+            <StatusBadge
+              tone={
+                project.estimate.clientReview.status === "approved"
+                  ? "success"
+                  : project.estimate.clientReview.status === "changes_requested"
+                    ? "danger"
+                    : "warning"
+              }
+              label={formatWorkflowLabel(project.estimate.clientReview.status)}
+            />
+          </p>
+          <p>{deliveryLabel(project.estimate.clientReview.deliveryStatus)}</p>
           {project.estimate.hasPendingClientResponseTask && canReadClientResponses ? (
             <Link
               to={`/admin/client-responses/${encodeURIComponent(project.estimate.clientReview.id)}`}
@@ -155,7 +175,7 @@ export function AdminProjectDetailPage() {
           ) : (
             <p>Read-only Client response history</p>
           )}
-        </Surface>
+        </AdminDetailSection>
       ) : null}
     </section>
   );

@@ -1,5 +1,14 @@
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
-import { ArrowUpRight } from "lucide-react";
+import {
+  Building2,
+  CalendarClock,
+  Eye,
+  IndianRupee,
+  Settings2,
+  Tag,
+  TrendingUp,
+  User
+} from "lucide-react";
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 
@@ -33,6 +42,22 @@ function requestErrorMessage(error: unknown) {
   return error instanceof ApiError
     ? error.message
     : "We couldn't load your projects.";
+}
+
+function AdminProjectsHeaderRow() {
+  return (
+    <div className="admin-project-card__link admin-projects__header-row" aria-hidden="true">
+      <span className="admin-projects__header-cell"><Tag aria-hidden="true" /><span>Project</span></span>
+      <div className="admin-project-card__meta">
+        <div><Building2 aria-hidden="true" /><span>Location</span></div>
+        <div><User aria-hidden="true" /><span>Estimator/Sales</span></div>
+        <div><TrendingUp aria-hidden="true" /><span>Lead progress</span></div>
+        <div><CalendarClock aria-hidden="true" /><span>Next action</span></div>
+        <div><IndianRupee aria-hidden="true" /><span>Estimate</span></div>
+      </div>
+      <span className="admin-projects__header-cell admin-projects__header-action"><Settings2 aria-hidden="true" /><span>Action</span></span>
+    </div>
+  );
 }
 
 function AdminProjectCard({
@@ -71,14 +96,14 @@ function AdminProjectCard({
           </div>
           <dl className="admin-project-card__meta">
             <div>
-              <dt>Project</dt>
+              <dt className="sr-only">Location</dt>
               <dd>{project.propertyType ?? "Property not captured"} · {project.location}</dd>
             </div>
-            <div><dt>Estimator/Sales</dt><dd>{project.estimator?.name ?? "Unassigned handoff"}</dd></div>
-            <div><dt>Lead progress</dt><dd>{project.lead ? formatWorkflowLabel(project.lead.stage) : "Unassigned handoff"}</dd></div>
-            <div><dt>Next action</dt><dd>{nextAction ?? "No action pending"}</dd></div>
+            <div><dt className="sr-only">Estimator/Sales</dt><dd>{project.estimator?.name ?? "Unassigned handoff"}</dd></div>
+            <div><dt className="sr-only">Lead progress</dt><dd>{project.lead ? formatWorkflowLabel(project.lead.stage) : "Unassigned handoff"}</dd></div>
+            <div><dt className="sr-only">Next action</dt><dd>{nextAction ?? "No action pending"}</dd></div>
             <div>
-              <dt>{estimateApproved ? "Client-approved value (incl. GST)" : "Estimate"}</dt>
+              <dt className="sr-only">{estimateApproved ? "Client-approved value (incl. GST)" : "Estimate"}</dt>
               <dd>
                 {estimateApproved
                   ? estimateValue === null
@@ -90,7 +115,7 @@ function AdminProjectCard({
               </dd>
             </div>
           </dl>
-          <span className="admin-project-card__view">View project <ArrowUpRight aria-hidden="true" /></span>
+          <span className="admin-project-card__view"><Eye aria-hidden="true" /> View project</span>
         </Link>
         {assignmentPending && canAssignDesigner ? (
           <div className="admin-project-card__actions">
@@ -155,17 +180,20 @@ export function AdminProjectsPage() {
           message={isSuperAdmin ? "No projects available." : "No projects initiated yet."}
         />
       ) : (
-        <Surface as="section" padding="compact" className="admin-projects__workspace">
-          <ul className="admin-projects__list" aria-label={projectCollectionLabel} aria-busy={projectsQuery.isFetching || undefined}>
-            {page.items.map((project) => (
-              <AdminProjectCard
-                key={project.id}
-                project={project}
-                canAssignDesigner={canAssignDesigner}
-              />
-            ))}
-          </ul>
-          <nav className="access-administration__pagination" aria-label={`${projectCollectionLabel} pages`}>
+        <>
+          <Surface as="section" padding="compact" className="admin-projects__workspace">
+            <AdminProjectsHeaderRow />
+            <ul className="admin-projects__list" aria-label={projectCollectionLabel} aria-busy={projectsQuery.isFetching || undefined}>
+              {page.items.map((project) => (
+                <AdminProjectCard
+                  key={project.id}
+                  project={project}
+                  canAssignDesigner={canAssignDesigner}
+                />
+              ))}
+            </ul>
+          </Surface>
+          <nav className="access-administration__pagination admin-projects__pagination" aria-label={`${projectCollectionLabel} pages`}>
             <p aria-live="polite">
               Showing {page.pagination.offset + 1}–{Math.min(page.pagination.offset + page.items.length, page.pagination.total)} of {page.pagination.total}
             </p>
@@ -174,7 +202,7 @@ export function AdminProjectsPage() {
               <Button size="compact" variant="secondary" disabled={!page.pagination.hasMore} onClick={() => setPagination((current) => ({ ...current, offset: current.offset + current.limit }))}>Next page</Button>
             </div>
           </nav>
-        </Surface>
+        </>
       )}
       {dialogOpen ? (
         <AdminProjectInitiationDialog
