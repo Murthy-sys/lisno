@@ -135,7 +135,7 @@ export function KnowledgeOverviewPanel({
   const modeSourceAttention = sourcesNeedAttention(modeSourceKeys, sectionStates);
   const savedReferenceSources = uniqueSources([
     ...(summary.priceDetails.length
-      ? [referenceStates?.masters?.vendors, referenceStates?.masters?.taxes]
+      ? [referenceStates?.masters?.vendors]
       : []),
     ...(summary.recommendationOptions.length
       ? [referenceStates?.relationships]
@@ -147,7 +147,7 @@ export function KnowledgeOverviewPanel({
   ]);
   const loadingSavedReferenceSources = uniqueSources([
     ...(summary.priceDetails.length
-      ? [referenceStates?.masters?.vendors, referenceStates?.masters?.taxes]
+      ? [referenceStates?.masters?.vendors]
       : []),
     ...(summary.recommendationOptions.length
       ? [referenceStates?.relationships]
@@ -395,7 +395,7 @@ export function KnowledgeOverviewPanel({
           <Surface as="section" className="knowledge-overview__summary-panel" aria-labelledby="knowledge-overview-pricing-title">
           <SummaryHeading
             id="knowledge-overview-pricing-title"
-            title="Pricing"
+            title="Budgeting"
             actionLabel="Open Mode"
             onAction={() => onOpenSection("mode")}
           />
@@ -532,7 +532,7 @@ function ModeDetails({ detail }: { readonly detail: KnowledgeOverviewModeDetail 
         definitions={[
           { label: "Referenced by Overview", value: detail.referencedByOverview ? "Yes" : null },
           { label: "Referenced by Scope", value: detail.referencedByScope ? "Yes" : null },
-          { label: "Matching price entries", value: detail.prices.length > 0 ? String(detail.prices.length) : null },
+          { label: "Matching budgets", value: detail.prices.length > 0 ? String(detail.prices.length) : null },
           { label: "Advanced overrides", value: detail.overrides.length > 0 ? String(detail.overrides.length) : null }
         ]}
       />
@@ -625,7 +625,7 @@ function ModeComponentDefinitions({
   );
 }
 
-function PriceList({ prices, title = "Pricing" }: {
+function PriceList({ prices, title = "Budgets" }: {
   readonly prices: readonly KnowledgeOverviewPriceDetail[];
   readonly title?: string | null;
 }) {
@@ -652,37 +652,20 @@ function PriceList({ prices, title = "Pricing" }: {
 
 function priceDefinitions(price: KnowledgeOverviewPriceDetail): readonly DefinitionEntry[] {
   return [
-    { label: "Specification", value: referenceLabel(price.specification) },
-    { label: "Mode", value: referenceLabel(price.mode) },
     { label: "Vendor", value: referenceLabel(price.vendor) },
-    { label: "UOM", value: referenceLabel(price.uom) },
+    { label: "Unit of measure", value: referenceLabel(price.uom) },
+    { label: "Amount before GST", value: formatPaise(price.baseAmountPaise) },
+    { label: "GST", value: formatPaise(price.taxAmountPaise) },
+    { label: "Total including GST", value: formatPaise(price.totalAmountPaise) },
+    { label: "Starts on", value: formatDateTime(price.effectiveFrom) },
+    { label: "Ends on", value: formatDateTime(price.effectiveTo) },
     {
-      label: "Version number",
-      value: price.versionNumber === null ? null : String(price.versionNumber)
-    },
-    { label: "Price version", value: priceVersionLabel(price) },
-    { label: "Tax", value: referenceLabel(price.tax) },
-    { label: "Tax version", value: referenceLabel(price.taxVersion) },
-    { label: "Tax treatment", value: displayText(price.treatment) },
-    { label: "Input amount", value: formatPaise(price.inputAmountPaise) },
-    { label: "Base amount", value: formatPaise(price.baseAmountPaise) },
-    { label: "Tax amount", value: formatPaise(price.taxAmountPaise) },
-    { label: "Total amount", value: formatPaise(price.totalAmountPaise) },
-    { label: "Effective from", value: formatDateTime(price.effectiveFrom) },
-    { label: "Effective to", value: formatDateTime(price.effectiveTo) },
-    { label: "Status", value: displayText(price.status) },
-    { label: "Review required", value: formatBoolean(price.reviewRequired) }
+      label: "Review",
+      value: price.reviewRequired === true || (price.status !== null && price.status !== "active")
+        ? "Needs review"
+        : null
+    }
   ];
-}
-
-function priceVersionLabel(price: KnowledgeOverviewPriceDetail) {
-  if (!price.priceVersionId) return null;
-  if (price.operation !== "reference" || !price.resolved) {
-    return KNOWLEDGE_OVERVIEW_UNAVAILABLE_LABEL;
-  }
-  return price.versionNumber === null
-    ? "Referenced price version"
-    : `Version ${price.versionNumber}`;
 }
 
 function SourceBoundary({ keys, states, children }: {

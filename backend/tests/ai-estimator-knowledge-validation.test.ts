@@ -172,6 +172,96 @@ describe("AI estimator knowledge validation", () => {
     })).toEqual([]);
   });
 
+  it("accepts business-only Budget commands and rejects every server-owned field", () => {
+    const create = {
+      operation: "set_budget",
+      sourcePriceVersionId: null,
+      vendorId: "vendor-1",
+      uomId: "uom-1",
+      inputAmountPaise: 12_500,
+      effectiveFrom: "2026-09-02T00:00:00.000Z",
+      effectiveTo: null
+    };
+    const update = {
+      ...create,
+      sourcePriceVersionId: "price-version-1",
+      effectiveTo: "2026-10-01T00:00:00.000Z"
+    };
+    expect(validateKnowledgeSectionPayload("pricing", {
+      priceEntries: [create, update]
+    })).toEqual([]);
+
+    const issues = validateKnowledgeSectionPayload("pricing", {
+      priceEntries: [{
+        ...create,
+        priceEntryId: "client-price-entry",
+        priceVersionId: "client-price-version",
+        specificationId: null,
+        modeId: null,
+        taxRuleId: "client-tax-rule",
+        taxVersionId: "client-tax-version",
+        rateBps: 1_800,
+        currency: "INR",
+        treatment: "exclusive",
+        status: "active",
+        versionNumber: 1,
+        version: 1,
+        reviewRequired: false,
+        baseAmountPaise: 12_500,
+        taxAmountPaise: 2_250,
+        totalAmountPaise: 14_750,
+        createdById: "client-actor",
+        updatedById: "client-actor",
+        createdAt: "2026-09-02T00:00:00.000Z",
+        updatedAt: "2026-09-02T00:00:00.000Z",
+        audit: {}
+      }]
+    });
+    for (const field of [
+      "priceEntryId", "priceVersionId", "specificationId", "modeId",
+      "taxRuleId", "taxVersionId", "rateBps", "currency", "treatment",
+      "status", "versionNumber", "version", "reviewRequired", "baseAmountPaise",
+      "taxAmountPaise", "totalAmountPaise", "createdById", "updatedById",
+      "createdAt", "updatedAt", "audit"
+    ]) {
+      expect(issues).toContainEqual(expect.objectContaining({
+        path: `payload.priceEntries.0.${field}`,
+        code: "UNKNOWN_FIELD"
+      }));
+    }
+  });
+
+  it("validates required Budget money, source, and schedule fields", () => {
+    const issues = validateKnowledgeSectionPayload("pricing", {
+      priceEntries: [{
+        operation: "set_budget",
+        sourcePriceVersionId: "",
+        vendorId: "vendor-1",
+        uomId: "uom-1",
+        inputAmountPaise: -1,
+        effectiveFrom: "not-a-date",
+        effectiveTo: "2026-01-01T00:00:00.000Z"
+      }]
+    });
+    expect(issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({ path: "payload.priceEntries.0.sourcePriceVersionId", code: "INVALID_REFERENCE" }),
+      expect.objectContaining({ path: "payload.priceEntries.0.inputAmountPaise", code: "INVALID_AMOUNT" }),
+      expect.objectContaining({ path: "payload.priceEntries.0.effectiveFrom", code: "INVALID_DATE" })
+    ]));
+    expect(validateKnowledgeSectionPayload("pricing", {
+      priceEntries: [{
+        operation: "set_budget",
+        vendorId: "vendor-1",
+        uomId: "uom-1",
+        inputAmountPaise: 1,
+        effectiveFrom: "2026-09-02T00:00:00.000Z"
+      }]
+    })).toContainEqual(expect.objectContaining({
+      path: "payload.priceEntries.0.effectiveTo",
+      code: "REQUIRED"
+    }));
+  });
+
   it("rejects non-null Specification scope on new price appends", () => {
     const issues = validateKnowledgeSectionPayload("pricing", {
       specifications: [{ id: "specification-plywood", name: "Plywood" }],

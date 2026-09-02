@@ -1991,7 +1991,7 @@ function invalidTypeIssue(path: string, expected: string): KnowledgeValidationIs
 
 function validatePriceEntryCommands(value: unknown): KnowledgeValidationIssue[] {
   if (!Array.isArray(value)) {
-    return [{ path: "payload.priceEntries", code: "INVALID_PRICE_ENTRIES", message: "Price entries must be an array of append commands or version references." }];
+    return [{ path: "payload.priceEntries", code: "INVALID_PRICE_ENTRIES", message: "Price entries must be an array of budget commands or version references." }];
   }
   const issues: KnowledgeValidationIssue[] = [];
   const identities = new Set<string>();
@@ -2011,8 +2011,42 @@ function validatePriceEntryCommands(value: unknown): KnowledgeValidationIssue[] 
       identities.add(identity);
       return;
     }
+    if (record.operation === "set_budget") {
+      validateExactKeys(
+        record,
+        [
+          "operation", "sourcePriceVersionId", "vendorId", "uomId",
+          "inputAmountPaise", "effectiveFrom", "effectiveTo"
+        ],
+        path,
+        issues,
+        ["sourcePriceVersionId"]
+      );
+      if (record.sourcePriceVersionId !== undefined && record.sourcePriceVersionId !== null) {
+        validateStableId(record.sourcePriceVersionId, `${path}.sourcePriceVersionId`, issues);
+      }
+      for (const key of ["vendorId", "uomId"] as const) {
+        validateStableId(record[key], `${path}.${key}`, issues);
+      }
+      if (!Number.isSafeInteger(record.inputAmountPaise) || (record.inputAmountPaise as number) < 0 || (record.inputAmountPaise as number) > AI_ESTIMATOR_KNOWLEDGE_MAX_MONEY_PAISE) {
+        issues.push({ path: `${path}.inputAmountPaise`, code: "INVALID_AMOUNT", message: "Budget input must be a nonnegative safe integer in paise." });
+      }
+      const from = parseIsoDate(record.effectiveFrom);
+      const to = record.effectiveTo === null ? null : parseIsoDate(record.effectiveTo);
+      if (from === null) issues.push({ path: `${path}.effectiveFrom`, code: "INVALID_DATE", message: "Budget start must be an ISO date-time." });
+      if (record.effectiveTo !== null && to === null) issues.push({ path: `${path}.effectiveTo`, code: "INVALID_DATE", message: "Budget end must be an ISO date-time or null." });
+      if (from !== null && to !== null && from.getTime() >= to.getTime()) issues.push({ path: `${path}.effectiveTo`, code: "INVALID_EFFECTIVE_WINDOW", message: "Budget end must be later than its start." });
+      const sourceIdentity = record.sourcePriceVersionId == null
+        ? null
+        : `set_budget:${String(record.sourcePriceVersionId)}`;
+      if (sourceIdentity && identities.has(sourceIdentity)) {
+        issues.push({ path, code: "DUPLICATE_PRICE_ENTRY", message: "A saved budget can be updated only once per request." });
+      }
+      if (sourceIdentity) identities.add(sourceIdentity);
+      return;
+    }
     if (record.operation !== "append") {
-      issues.push({ path: `${path}.operation`, code: "INVALID_PRICE_OPERATION", message: "Price entry operation must be append or reference." });
+      issues.push({ path: `${path}.operation`, code: "INVALID_PRICE_OPERATION", message: "Price entry operation must be set_budget, append, or reference." });
       return;
     }
     validateExactKeys(record, [
@@ -2058,14 +2092,16 @@ function validateExactKeys(
   record: Record<string, unknown>,
   allowedKeys: readonly string[],
   path: string,
-  issues: KnowledgeValidationIssue[]
+  issues: KnowledgeValidationIssue[],
+  optionalKeys: readonly string[] = []
 ): void {
   const allowed = new Set(allowedKeys);
+  const optional = new Set(optionalKeys);
   for (const key of Object.keys(record)) {
     if (!allowed.has(key)) issues.push({ path: `${path}.${key}`, code: "UNKNOWN_FIELD", message: `Field ${key} is not valid for this price entry operation.` });
   }
   for (const key of allowedKeys) {
-    if (!(key in record)) issues.push({ path: `${path}.${key}`, code: "REQUIRED", message: `Price entry field ${key} is required.` });
+    if (!optional.has(key) && !(key in record)) issues.push({ path: `${path}.${key}`, code: "REQUIRED", message: `Price entry field ${key} is required.` });
   }
 }
 

@@ -26,8 +26,9 @@ export function knowledgeOverviewPayloadForUpdate(
 }
 
 /**
- * Removes server-enriched pricing details before sending immutable references
- * back through the section update contract.
+ * Keeps immutable references exact and serializes Budget drafts through the
+ * business-only command. Server-owned identity, Tax mapping, lifecycle, Mode,
+ * and calculated amounts must never cross this client boundary.
  */
 export function knowledgeSectionPayloadForUpdate(
   sectionKey: KnowledgeSectionKey,
@@ -41,11 +42,31 @@ export function knowledgeSectionPayloadForUpdate(
       if (
         entry === null ||
         typeof entry !== "object" ||
-        Array.isArray(entry) ||
-        entry.operation !== "reference"
+        Array.isArray(entry)
       ) {
         return entry;
       }
+
+      if (entry.operation === "set_budget") {
+        const command: Record<string, KnowledgeJsonObject[string]> = {
+          operation: "set_budget"
+        };
+        if (typeof entry.sourcePriceVersionId === "string" && entry.sourcePriceVersionId.trim()) {
+          command.sourcePriceVersionId = entry.sourcePriceVersionId;
+        }
+        for (const key of ["vendorId", "uomId", "effectiveFrom"] as const) {
+          if (typeof entry[key] === "string") command[key] = entry[key];
+        }
+        if (typeof entry.inputAmountPaise === "number") {
+          command.inputAmountPaise = entry.inputAmountPaise;
+        }
+        command.effectiveTo = typeof entry.effectiveTo === "string"
+          ? entry.effectiveTo
+          : null;
+        return command;
+      }
+
+      if (entry.operation !== "reference") return entry;
 
       return {
         operation: "reference",

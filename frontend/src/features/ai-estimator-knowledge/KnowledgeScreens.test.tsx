@@ -235,7 +235,7 @@ function expectHeadingsInOrder(container: HTMLElement, names: readonly string[])
 }
 
 function expectModeRegionsInOrder(container: HTMLElement) {
-  const pricing = within(container).getByRole("region", { name: "Pricing" });
+  const pricing = within(container).getByRole("region", { name: "Budgeting" });
   const quantityMargin = within(container).getByRole("region", { name: "Quantity & margin" });
   expect(
     pricing.compareDocumentPosition(quantityMargin) & Node.DOCUMENT_POSITION_FOLLOWING
@@ -243,7 +243,7 @@ function expectModeRegionsInOrder(container: HTMLElement) {
 }
 
 async function findPricingSpecificationName() {
-  const pricing = await screen.findByRole("region", { name: "Pricing" });
+  const pricing = await screen.findByRole("region", { name: "Budgeting" });
   const specifications = within(pricing).getByRole("region", { name: "Specifications" });
   return within(specifications).getByRole("textbox", { name: "Specification name" });
 }
@@ -902,7 +902,7 @@ describe("AI estimator knowledge screens", () => {
       expect(screen.queryByRole("heading", { name: "Selected Mode details" })).not.toBeInTheDocument();
       expect(screen.queryByRole("heading", { name: "Shared calculation values" })).not.toBeInTheDocument();
       expect(screen.queryByRole("heading", { name: "Specifications" })).not.toBeInTheDocument();
-      expect(screen.queryByRole("heading", { name: "Pricing" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("heading", { name: "Budgeting" })).not.toBeInTheDocument();
       expect(screen.queryByRole("heading", { name: "Recommendations", level: 2 })).not.toBeInTheDocument();
       expect(screen.queryByRole("heading", { name: "Quality", level: 2 })).not.toBeInTheDocument();
       expect(screen.queryByRole("heading", { name: "All section summaries" })).not.toBeInTheDocument();
@@ -911,19 +911,53 @@ describe("AI estimator knowledge screens", () => {
     expect(screen.queryByText(/No .* configured/u)).not.toBeInTheDocument();
   });
 
-  it("keeps descriptive specifications separate from new prices while resolving immutable tax versions", async () => {
+  it("keeps descriptive Specifications separate from a business-only saved Budget", async () => {
     const user = userEvent.setup();
+    const vendor = { ...squareFoot, id: "vendor-1", masterType: "vendors", code: "ACME", name: "Acme Vendor" } as const;
     const tax = { id: "tax-1", masterType: "taxes", code: "GST18", name: "GST 18%", description: null, displayOrder: 0, status: "active", taxVersions: [{ id: "tax-version-1", taxRuleId: "tax-1", versionNumber: 1, rateBps: 1800, treatment: "exclusive", applicability: "materials", effectiveFrom: "2026-08-01T00:00:00.000Z", effectiveTo: null, status: "active", version: 1, createdById: "super-admin-1", updatedById: "super-admin-1", createdAt: item.createdAt, updatedAt: item.updatedAt }], version: 1, createdById: "super-admin-1", updatedById: "super-admin-1", createdAt: item.createdAt, updatedAt: item.updatedAt } as const;
-    vi.mocked(knowledgeApi.listKnowledgeMasters).mockImplementation(async (type) => type === "taxes" ? { items: [tax], pagination: { ...page, total: 1 } } : { items: [], pagination: page });
-    vi.mocked(knowledgeApi.getKnowledgeSection).mockImplementation(async (_lineId, _revisionId, sectionKey) => section(sectionKey, sectionKey === "pricing" ? { specifications: [{ id: "spec-1", name: "Premium ply" }], priceEntries: [{ operation: "append", priceEntryId: "price-entry-1", specificationId: null, taxRuleId: "tax-1", taxVersionId: "tax-version-1" }] } : {}));
+    vi.mocked(knowledgeApi.listKnowledgeMasters).mockImplementation(async (type) => {
+      const items = type === "taxes" ? [tax] : type === "vendors" ? [vendor] : type === "uoms" ? [squareFoot] : [];
+      return { items, pagination: { ...page, total: items.length } };
+    });
+    vi.mocked(knowledgeApi.getKnowledgeSection).mockImplementation(async (_lineId, _revisionId, sectionKey) => section(sectionKey, sectionKey === "pricing" ? {
+      specifications: [{ id: "spec-1", name: "Premium ply" }],
+      priceEntries: [{
+        operation: "reference",
+        priceEntryId: "price-entry-1",
+        priceVersionId: "price-version-1",
+        priceVersion: {
+          id: "price-version-1",
+          priceEntryId: "price-entry-1",
+          versionNumber: 1,
+          vendorId: vendor.id,
+          uomId: squareFoot.id,
+          taxRuleId: tax.id,
+          taxVersionId: "tax-version-1",
+          inputAmountPaise: 12_000,
+          baseAmountPaise: 12_000,
+          taxAmountPaise: 2_160,
+          totalAmountPaise: 14_160,
+          treatment: "exclusive",
+          effectiveFrom: "2026-08-01T00:00:00.000Z",
+          effectiveTo: null,
+          status: "active"
+        }
+      }]
+    } : {}));
     renderRoute(<KnowledgeItemWorkspacePage />, "/admin/configuration/estimation/items/line-1", "/admin/configuration/estimation/items/:itemId");
 
     await user.click(await screen.findByRole("tab", { name: "Mode" }));
     expect(await findPricingSpecificationName()).toHaveValue("Premium ply");
     expect(screen.queryByRole("combobox", { name: "Specification" })).not.toBeInTheDocument();
-    expect(screen.getByRole("combobox", { name: "Tax rule" })).toHaveDisplayValue("GST 18%");
-    expect(screen.getByRole("combobox", { name: "Tax version" })).toHaveDisplayValue(/Version 1 · 18%/u);
-    expect(screen.queryByRole("textbox", { name: /Tax version ID/iu })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /₹\s?120\.00 per Square foot · Acme Vendor/iu }));
+    const budget = screen.getByRole("group", { name: "Saved budget details" });
+    expect(within(budget).getByText("Amount before GST")).toBeVisible();
+    expect(within(budget).getByText("GST")).toBeVisible();
+    expect(within(budget).queryByText("GST 18%")).not.toBeInTheDocument();
+    expect(within(budget).getByText(/₹\s?141\.60/u)).toBeVisible();
+    const budgeting = screen.getByRole("region", { name: "Budgeting" });
+    expect(within(budgeting).queryByRole("combobox", { name: /Tax version|Mode|Price operation/iu })).not.toBeInTheDocument();
+    expect(within(budgeting).queryByRole("textbox", { name: /Price entry|Price version|Tax version/iu })).not.toBeInTheDocument();
   });
 
   it("places Main Line Priority after Specifications, keeps it out of Overview, and saves its stable ID through Overview", async () => {
@@ -968,7 +1002,7 @@ describe("AI estimator knowledge screens", () => {
     expect(screen.queryByRole("combobox", { name: "Priority" })).not.toBeInTheDocument();
     await user.click(screen.getByRole("tab", { name: "Mode" }));
 
-    const pricing = await screen.findByRole("region", { name: "Pricing" });
+    const pricing = await screen.findByRole("region", { name: "Budgeting" });
     const specifications = within(pricing).getByRole("region", { name: "Specifications" });
     const priority = within(pricing).getByRole("combobox", { name: "Priority" });
     const prioritySection = priority.closest(".knowledge-priority-editor");
@@ -1008,17 +1042,69 @@ describe("AI estimator knowledge screens", () => {
     ]);
   });
 
-  it("renders immutable resolved price details and prepares a replacement with the same stable entry ID", async () => {
+  it("renders saved Budget totals and prepares an Update without exposing lineage", async () => {
     const user = userEvent.setup();
-    vi.mocked(knowledgeApi.getKnowledgeSection).mockImplementation(async (_lineId, _revisionId, sectionKey) => section(sectionKey, sectionKey === "pricing" ? { priceEntries: [{ operation: "reference", priceEntryId: "price-entry-1", priceVersionId: "price-version-1", priceVersion: { id: "price-version-1", priceEntryId: "price-entry-1", versionNumber: 1, vendorId: "vendor-1", uomId: "uom-1", specificationId: null, modeId: null, taxRuleId: "tax-1", taxVersionId: "tax-version-1", inputAmountPaise: 12000, baseAmountPaise: 12000, taxAmountPaise: 2160, totalAmountPaise: 14160, treatment: "exclusive", effectiveFrom: "2026-08-01T00:00:00.000Z", effectiveTo: null, status: "active", reviewRequired: false } }] } : {}));
+    const vendor = { ...squareFoot, id: "vendor-1", masterType: "vendors", code: "ACME", name: "Acme Vendor" } as const;
+    const tax = { ...squareFoot, id: "tax-1", masterType: "taxes", code: "GST18", name: "GST 18%" } as const;
+    vi.mocked(knowledgeApi.listKnowledgeMasters).mockImplementation(async (type) => {
+      const items = type === "vendors" ? [vendor] : type === "uoms" ? [squareFoot] : type === "taxes" ? [tax] : [];
+      return { items, pagination: { ...page, total: items.length } };
+    });
+    vi.mocked(knowledgeApi.getKnowledgeSection).mockImplementation(async (_lineId, _revisionId, sectionKey) => section(sectionKey, sectionKey === "pricing" ? { priceEntries: [{ operation: "reference", priceEntryId: "price-entry-1", priceVersionId: "price-version-1", priceVersion: { id: "price-version-1", priceEntryId: "price-entry-1", versionNumber: 1, vendorId: "vendor-1", uomId: squareFoot.id, specificationId: null, modeId: null, taxRuleId: "tax-1", taxVersionId: "tax-version-1", inputAmountPaise: 12000, baseAmountPaise: 12000, taxAmountPaise: 2160, totalAmountPaise: 14160, treatment: "exclusive", effectiveFrom: "2026-08-01T00:00:00.000Z", effectiveTo: null, status: "active", reviewRequired: false } }] } : {}));
     renderRoute(<KnowledgeItemWorkspacePage />, "/admin/configuration/estimation/items/line-1", "/admin/configuration/estimation/items/:itemId");
     await user.click(await screen.findByRole("tab", { name: "Mode" }));
-    const savedPrice = await screen.findByLabelText("Immutable saved price details");
-    expect(savedPrice).toHaveTextContent(/₹\s?141\.60/u);
-    expect(savedPrice).not.toHaveTextContent("paise");
-    await user.click(screen.getByRole("button", { name: "Replace price version" }));
-    expect(screen.getByRole("textbox", { name: "Price entry ID" })).toHaveValue("price-entry-1");
-    expect(screen.getByRole("textbox", { name: "Input amount (rupees)" })).toHaveValue("120.00");
+    await user.click(await screen.findByRole("button", { name: /₹\s?120\.00 per/iu }));
+    const savedBudget = screen.getByRole("group", { name: "Saved budget details" });
+    expect(savedBudget).toHaveTextContent(/₹\s?141\.60/u);
+    expect(savedBudget).not.toHaveTextContent("paise");
+    await user.click(screen.getByRole("button", { name: "Update budget" }));
+    expect(screen.getByRole("textbox", { name: "Unit budget (₹, before GST)" })).toHaveValue("120.00");
+    expect(screen.queryByRole("textbox", { name: /Price entry|Price version/iu })).not.toBeInTheDocument();
+  });
+
+  it("keeps Budgeting usable when the Tax catalog fails and maps a fixed-GST policy failure", async () => {
+    const user = userEvent.setup();
+    const vendor = { ...squareFoot, id: "vendor-1", masterType: "vendors", code: "ACME", name: "Acme Vendor" } as const;
+    vi.mocked(knowledgeApi.listKnowledgeMasters).mockImplementation(async (type) => {
+      if (type === "taxes") throw new Error("Tax catalog offline");
+      const items = type === "vendors" ? [vendor] : type === "uoms" ? [squareFoot] : [];
+      return { items, pagination: { ...page, total: items.length } };
+    });
+    vi.mocked(knowledgeApi.getKnowledgeSection).mockImplementation(
+      async (_lineId, _revisionId, sectionKey) => section(
+        sectionKey,
+        sectionKey === "pricing"
+          ? { specifications: [], brands: [], priceEntries: [] }
+          : {}
+      )
+    );
+    vi.mocked(knowledgeApi.updateKnowledgeSection).mockRejectedValueOnce(
+      new ApiError(
+        503,
+        "FIXED_GST_POLICY_UNAVAILABLE",
+        "Canonical policy is unavailable."
+      )
+    );
+    renderRoute(<KnowledgeItemWorkspacePage />, "/admin/configuration/estimation/items/line-1", "/admin/configuration/estimation/items/:itemId");
+
+    await user.click(await screen.findByRole("tab", { name: "Mode" }));
+    const budgeting = screen.getByRole("region", { name: "Budgeting" });
+    await user.click(within(budgeting).getByRole("button", { name: "Set budget" }));
+    const disclosure = within(budgeting).getByRole("button", { name: "New budget" });
+    await user.selectOptions(within(budgeting).getByRole("combobox", { name: "Vendor" }), vendor.id);
+    await user.selectOptions(within(budgeting).getByRole("combobox", { name: "Unit of measure" }), squareFoot.id);
+    const amount = within(budgeting).getByRole("textbox", { name: "Unit budget (₹, before GST)" });
+    await user.type(amount, "120.50");
+    await user.click(screen.getByRole("button", { name: "Save Mode" }));
+
+    await waitFor(() => expect(disclosure).toHaveFocus());
+    expect(disclosure).toHaveAttribute("aria-expanded", "true");
+    expect(within(budgeting).getAllByText(
+      "Budgeting is temporarily unavailable because GST could not be applied. Try again later."
+    ).length).toBeGreaterThan(0);
+    expect(amount).toHaveValue("120.50");
+    expect(within(budgeting).queryByRole("combobox", { name: "Tax" })).not.toBeInTheDocument();
+    expect(within(budgeting).queryByRole("button", { name: /^(?:Add|Configure) Tax$/iu })).not.toBeInTheDocument();
   });
 
   it("keeps fixed Mode kinds independent from paginated reusable Mode records", async () => {
@@ -1185,8 +1271,8 @@ describe("AI estimator knowledge screens", () => {
     await user.click(screen.getByRole("button", { name: "Discard changes" }));
     const modePanel = await screen.findByRole("tabpanel", { name: "Mode" });
     expectModeRegionsInOrder(modePanel);
-    const pricingRegion = within(modePanel).getByRole("region", { name: "Pricing" });
-    expect(within(pricingRegion).getByRole("heading", { name: "Pricing" })).toHaveClass("sr-only");
+    const pricingRegion = within(modePanel).getByRole("region", { name: "Budgeting" });
+    expect(within(pricingRegion).getByRole("heading", { name: "Budgeting" })).toHaveClass("sr-only");
     expect(within(pricingRegion).queryByText(/Maintain specifications, immutable price-version commands/u)).not.toBeInTheDocument();
     expect(within(pricingRegion).queryByRole("textbox", { name: "Technical description" })).not.toBeInTheDocument();
     expect(within(pricingRegion).queryByRole("textbox", { name: "Internal vendor notes" })).not.toBeInTheDocument();
@@ -1352,8 +1438,9 @@ describe("AI estimator knowledge screens", () => {
     await user.click(screen.getAllByRole("button", { name: "Save Mode" })[0]);
 
     const partialFailure = await screen.findByRole("alert");
-    expect(partialFailure).toHaveTextContent("Pricing");
-    expect(partialFailure).toHaveTextContent("Service unavailable.");
+    expect(partialFailure).toHaveTextContent("Budgeting");
+    expect(partialFailure).toHaveTextContent("Review the highlighted budget and try again.");
+    expect(partialFailure).not.toHaveTextContent("Service unavailable.");
     expect(screen.getByText("Save failed. Review the message below and try again.")).toBeVisible();
     expect(screen.getByRole("button", { name: "Save Mode" })).toBeEnabled();
     expect(vi.mocked(knowledgeApi.updateKnowledgeSection).mock.calls.map((call) => call[2])).toEqual(["pricing"]);
@@ -1404,7 +1491,7 @@ describe("AI estimator knowledge screens", () => {
     await user.click(screen.getAllByRole("button", { name: "Save Mode" })[0]);
 
     const conflict = await screen.findByRole("alertdialog", { name: "This section changed elsewhere" });
-    expect(conflict).toHaveTextContent("Pricing");
+    expect(conflict).toHaveTextContent("Budgeting");
     expect(conflict).toHaveTextContent(/version 2/iu);
     expect(conflict).toHaveTextContent(/version 3/iu);
     expect(pricingReads).toBeGreaterThan(1);
@@ -1444,6 +1531,9 @@ describe("AI estimator knowledge screens", () => {
                   versionNumber: 7,
                   vendorId: "private-vendor-id",
                   inputAmountPaise: 12_345,
+                  baseAmountPaise: 12_345,
+                  taxAmountPaise: 2_222,
+                  totalAmountPaise: 14_567,
                   reviewRequired: false
                 }
               }]
@@ -1464,13 +1554,13 @@ describe("AI estimator knowledge screens", () => {
     const dialog = await screen.findByRole("alertdialog", { name: "This section changed elsewhere" });
     await user.click(within(dialog).getByRole("button", { name: "Review server version" }));
 
-    const review = screen.getByRole("region", { name: "Latest Pricing server version" });
+    const review = screen.getByRole("region", { name: "Latest Budgeting server version" });
     expect(review).toHaveTextContent("Local version 2 · Latest server version 3");
     expect(review).toHaveTextContent("Latest server specification");
-    expect(review).toHaveTextContent("Reference");
+    expect(review).toHaveTextContent("Budget 1 · VendorUnavailable value");
     expect(review).toHaveTextContent(/₹\s?123\.45/u);
-    expect(review).toHaveTextContent("Review RequiredNo");
-    expect(review).toHaveTextContent("Unavailable value");
+    expect(review).not.toHaveTextContent("Reference");
+    expect(review).not.toHaveTextContent("Review Required");
     expect(review).not.toHaveTextContent("private-price-entry-id");
     expect(review).not.toHaveTextContent("private-price-version-id");
     expect(review).not.toHaveTextContent("private-vendor-id");
@@ -1504,7 +1594,7 @@ describe("AI estimator knowledge screens", () => {
     await user.click(screen.getAllByRole("button", { name: "Save Mode" })[0]);
 
     const error = await screen.findByRole("alert");
-    expect(error).toHaveTextContent("Pricing");
+    expect(error).toHaveTextContent("Budgeting");
     expect(error).toHaveTextContent(/latest server version could not be loaded/iu);
     expect(error).toHaveTextContent("Conflict refresh unavailable.");
     expect(specificationName).toHaveValue("My unsaved specification");
@@ -1558,7 +1648,7 @@ describe("AI estimator knowledge screens", () => {
     await user.click(within(pricingSummary as HTMLElement).getByRole("button", { name: "Try again" }));
     await waitFor(() => {
       expect(screen.queryByRole("heading", { name: "Specifications" })).not.toBeInTheDocument();
-      expect(screen.queryByRole("heading", { name: "Pricing" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("heading", { name: "Budgeting" })).not.toBeInTheDocument();
     });
     expect(screen.queryByText(/No (?:Specifications|Pricing) configured/u)).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Shared calculation values" })).toBeVisible();
@@ -1595,7 +1685,7 @@ describe("AI estimator knowledge screens", () => {
     expect(screen.queryByRole("combobox", { name: "UOM" })).not.toBeInTheDocument();
     expect(await findPricingSpecificationName()).toBeDisabled();
     expect(screen.getByRole("combobox", { name: "Priority" })).toBeDisabled();
-    expect(within(screen.getByRole("region", { name: "Pricing" })).queryByRole("textbox", { name: "Technical description" })).not.toBeInTheDocument();
+    expect(within(screen.getByRole("region", { name: "Budgeting" })).queryByRole("textbox", { name: "Technical description" })).not.toBeInTheDocument();
     expect(screen.getByRole("spinbutton", { name: "Start margin (basis points)" })).toBeDisabled();
     expect(screen.queryByRole("button", { name: "Add UOM" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Save Mode" })).not.toBeInTheDocument();
@@ -1617,7 +1707,7 @@ describe("AI estimator knowledge screens", () => {
     await user.click(screen.getByRole("tab", { name: "Mode" }));
     expect(await findPricingSpecificationName()).toBeDisabled();
     expect(screen.getByRole("combobox", { name: "Priority" })).toBeDisabled();
-    expect(within(screen.getByRole("region", { name: "Pricing" })).queryByRole("textbox", { name: "Technical description" })).not.toBeInTheDocument();
+    expect(within(screen.getByRole("region", { name: "Budgeting" })).queryByRole("textbox", { name: "Technical description" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Save Mode" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Review and activate" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Archive" })).not.toBeInTheDocument();
@@ -1737,9 +1827,9 @@ describe("AI estimator knowledge screens", () => {
       ]);
       await user.selectOptions(selector, "mode");
       expect(await screen.findByRole("tabpanel", { name: "Mode" })).toBeVisible();
-      const pricingRegion = screen.getByRole("region", { name: "Pricing" });
+      const pricingRegion = screen.getByRole("region", { name: "Budgeting" });
       expect(pricingRegion).toBeVisible();
-      expect(within(pricingRegion).getByRole("heading", { name: "Pricing" })).toHaveClass("sr-only");
+      expect(within(pricingRegion).getByRole("heading", { name: "Budgeting" })).toHaveClass("sr-only");
       expect(within(pricingRegion).getByRole("region", { name: "Specifications" })).toBeVisible();
       expect(screen.queryByRole("combobox", { name: "UOM" })).not.toBeInTheDocument();
     } else {

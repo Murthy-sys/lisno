@@ -651,7 +651,7 @@ describe("projectKnowledgeOverviewSummary", () => {
     expect(summary.priceDetails[0]?.vendor?.label).not.toBe("vendor-unresolved");
     expect(summary.sectionCards.find(({ key }) => key === "mode")).toMatchObject({
       hasConfiguredContent: true,
-      counts: [{ label: "Price versions", value: 1 }]
+      counts: [{ label: "Budgets", value: 1 }]
     });
   });
 

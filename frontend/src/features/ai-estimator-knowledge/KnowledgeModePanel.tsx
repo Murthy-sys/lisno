@@ -43,6 +43,7 @@ import {
   knowledgeSectionPayloadForUpdate
 } from "./knowledgeSectionPayload";
 import { KnowledgeSectionEditor } from "./KnowledgeSectionEditor";
+import type { KnowledgeBudgetCatalogState } from "./KnowledgeBudgetBuilder";
 import {
   KnowledgePriorityEditor,
   type KnowledgePriorityCatalogState
@@ -81,7 +82,7 @@ type ModeSectionKey = (typeof MODE_SECTION_KEYS)[number];
 
 const MODE_SECTION_LABELS = {
   advanced: "Mode configuration",
-  pricing: "Pricing",
+  pricing: "Budgeting",
   overview: "Priority",
   "quantity-margin": "Quantity & margin"
 } as const satisfies Readonly<Record<ModeSectionKey, string>>;
@@ -127,6 +128,7 @@ export interface KnowledgeModePanelProps {
   readonly canQuickAdd: boolean;
   readonly legacyModeCatalogState: KnowledgeLegacyModeCatalogState;
   readonly uomCatalogState?: KnowledgeUomCatalogState;
+  readonly vendorCatalogState?: KnowledgeBudgetCatalogState;
   readonly priorityCatalogState?: KnowledgePriorityCatalogState;
   readonly onQuickAdd: (
     type: KnowledgeMasterType,
@@ -153,6 +155,7 @@ export const KnowledgeModePanel = forwardRef<
     canQuickAdd,
     legacyModeCatalogState,
     uomCatalogState = { status: "ready" },
+    vendorCatalogState = { status: "ready" },
     priorityCatalogState = { status: "ready" },
     onQuickAdd,
     onDirtyChange,
@@ -208,7 +211,7 @@ export const KnowledgeModePanel = forwardRef<
           !envelope ||
           draft.dirty ||
           (draft.envelopeVersion !== null &&
-            envelope.version <= draft.envelopeVersion)
+            envelope.version < draft.envelopeVersion)
         ) {
           continue;
         }
@@ -226,6 +229,8 @@ export const KnowledgeModePanel = forwardRef<
     || quantityQuery.isFetching
     || uomCatalogState.status === "loading"
     || Boolean(uomCatalogState.refreshing)
+    || vendorCatalogState.status === "loading"
+    || Boolean(vendorCatalogState.refreshing)
     || priorityCatalogState.status === "loading"
     || Boolean(priorityCatalogState.refreshing);
   const liveSlabSpecificationIds = useMemo(
@@ -361,7 +366,14 @@ export const KnowledgeModePanel = forwardRef<
               uoms: masters.uoms,
               uomCatalogStatus: uomCatalogState.status
             }
-          : {}
+          : sectionKey === "pricing"
+            ? {
+                uoms: masters.uoms,
+                vendors: masters.vendors,
+                uomCatalogStatus: uomCatalogState.status,
+                vendorCatalogStatus: vendorCatalogState.status
+              }
+            : {}
       ).length > 0;
     });
     if (invalidSections.length > 0) {
@@ -511,28 +523,40 @@ export const KnowledgeModePanel = forwardRef<
               }));
             }
           } else {
-            const message =
-              failure instanceof Error
+            const message = sectionKey === "pricing"
+              ? budgetFailureMessage(failure)
+              : failure instanceof Error
                 ? failure.message
                 : "This block could not be saved.";
-            const serverIssues = failure instanceof ApiError
+            const rawServerIssues = failure instanceof ApiError
               ? sectionIssuesFromApiError(
                   failure,
                   sectionKey === "advanced"
                     ? ["modeConfigurations"]
                     : sectionKey === "pricing"
-                      ? ["specifications", "brands"]
+                      ? ["specifications", "brands", "priceEntries"]
                       : sectionKey === "overview"
                         ? ["priorityId"]
                         : ["slabRates"]
                 )
               : [];
+            const serverIssues = sectionKey === "pricing"
+              ? budgetServerIssues(
+                  draft.payload,
+                  rawServerIssues,
+                  failure instanceof ApiError ? failure.code : null
+                )
+              : rawServerIssues;
             setDrafts((current) => ({
               ...current,
               [sectionKey]: {
                 ...current[sectionKey],
                 error: message,
-                serverIssues
+                serverIssues,
+                validationAttempt: sectionKey === "pricing"
+                  && hasFocusableBudgetIssue(current[sectionKey].payload, serverIssues)
+                  ? current[sectionKey].validationAttempt + 1
+                  : current[sectionKey].validationAttempt
               }
             }));
           }
@@ -551,7 +575,7 @@ export const KnowledgeModePanel = forwardRef<
       setSavingSection(null);
       setSaving(false);
     }
-  }, [drafts, editable, mainLineId, masters.uoms, onAnnouncement, overviewQuery.data, queryClient, revisionId, saving, uomCatalogState.status]);
+  }, [drafts, editable, mainLineId, masters.uoms, masters.vendors, onAnnouncement, overviewQuery.data, queryClient, revisionId, saving, uomCatalogState.status, vendorCatalogState.status]);
 
   useImperativeHandle(ref, () => ({ save, discard }), [discard, save]);
 
@@ -562,10 +586,10 @@ export const KnowledgeModePanel = forwardRef<
   ) => {
     const label = MODE_SECTION_LABELS[sectionKey];
     const draft = drafts[sectionKey];
-    if (query.isPending) {
+    if (query.isPending && !query.data) {
       return <PageState key={sectionKey} state="loading" message={`Loading ${label}…`} />;
     }
-    if (query.isError) {
+    if (query.isError && !query.data) {
       return (
         <PageState
           key={sectionKey}
@@ -597,6 +621,17 @@ export const KnowledgeModePanel = forwardRef<
           draft={draft}
           saving={savingSection === sectionKey}
         />
+        {query.isError && query.data ? (
+          <InlineMessage
+            tone="warning"
+            title={sectionKey === "pricing" ? "Showing saved budgets" : `Showing saved ${label}`}
+            action={<Button size="compact" variant="secondary" onClick={() => void query.refetch()}>Retry</Button>}
+          >
+            {sectionKey === "pricing"
+              ? "Latest updates could not be loaded."
+              : "Latest updates could not be loaded; saved values remain visible."}
+          </InlineMessage>
+        ) : null}
         {draft.serverReview ? (
           <KnowledgeConflictReview
             sectionKey={sectionKey}
@@ -612,7 +647,7 @@ export const KnowledgeModePanel = forwardRef<
         {editor}
         {draft.error ? (
           <InlineMessage tone="error" role="alert" title={`${label} could not be saved`}>
-            {label}: {draft.error}
+            {sectionKey === "pricing" ? draft.error : `${label}: ${draft.error}`}
           </InlineMessage>
         ) : null}
       </Surface>
@@ -693,6 +728,11 @@ export const KnowledgeModePanel = forwardRef<
               ) : null}
             </>
           )}
+          vendorCatalogState={vendorCatalogState}
+          uomCatalogState={uomCatalogState}
+          budgetReadOnly={!editable}
+          budgetSaving={saving}
+          onRetrySavedBudgetDetails={() => { void pricingQuery.refetch(); }}
           validationAttempt={drafts.pricing.validationAttempt}
           serverIssues={drafts.pricing.serverIssues}
           onChange={(payload) => setPayload("pricing", payload)}
@@ -732,17 +772,28 @@ export const KnowledgeModePanel = forwardRef<
           sectionLabel={MODE_SECTION_LABELS[conflict.sectionKey]}
           localVersion={conflict.localVersion}
           serverVersion={conflict.server.version}
-          onKeepEditing={() => setConflict(null)}
+          onKeepEditing={() => {
+            setDrafts((current) => ({
+              ...current,
+              [conflict.sectionKey]: rebaseDraftAfterConflict(
+                current[conflict.sectionKey],
+                conflict.server,
+                null
+              )
+            }));
+            setConflict(null);
+          }}
           onReviewServerVersion={() => {
             setDrafts((current) => ({
               ...current,
-              [conflict.sectionKey]: {
-                ...current[conflict.sectionKey],
-                serverReview: {
+              [conflict.sectionKey]: rebaseDraftAfterConflict(
+                current[conflict.sectionKey],
+                conflict.server,
+                {
                   localVersion: conflict.localVersion,
                   server: conflict.server
                 }
-              }
+              )
             }));
             setConflict(null);
           }}
@@ -821,9 +872,24 @@ function draftFromEnvelope(
   };
 }
 
+function rebaseDraftAfterConflict(
+  draft: ModeDraft,
+  server: KnowledgeSectionEnvelope<KnowledgeJsonObject>,
+  serverReview: ModeServerReview | null
+): ModeDraft {
+  return {
+    ...draft,
+    specificationReferenceIds: server.referenceState?.specificationIds ?? [],
+    applicability: server.applicability,
+    envelopeVersion: server.version,
+    error: null,
+    serverReview
+  };
+}
+
 function sectionIssuesFromApiError(
   failure: ApiError,
-  allowedRootPaths: readonly ("modeConfigurations" | "specifications" | "brands" | "priorityId" | "slabRates")[]
+  allowedRootPaths: readonly ("modeConfigurations" | "specifications" | "brands" | "priceEntries" | "priorityId" | "slabRates")[]
 ): readonly KnowledgeModeConfigurationIssue[] {
   if (allowedRootPaths.length === 0) return [];
   return Object.entries(failure.fields ?? {}).flatMap(([path, message]) => {
@@ -836,6 +902,107 @@ function sectionIssuesFromApiError(
       ? [{ path: normalizedPath, message }]
       : [];
   });
+}
+
+function businessBudgetIssue(
+  issue: KnowledgeModeConfigurationIssue,
+  errorCode: string | null
+): KnowledgeModeConfigurationIssue {
+  if (!issue.path.startsWith("priceEntries")) return issue;
+  const rowPath = /^priceEntries\.\d+/u.exec(issue.path)?.[0] ?? "priceEntries";
+  if (errorCode === "FIXED_GST_POLICY_UNAVAILABLE") {
+    return { path: rowPath, message: FIXED_GST_POLICY_MESSAGE };
+  }
+  if (errorCode === "EFFECTIVE_WINDOW_OVERLAP") {
+    return {
+      path: `${rowPath}.effectiveFrom`,
+      message: "Another budget for this unit already covers these dates."
+    };
+  }
+  if (/\.(?:taxVersionId|treatment|taxRuleId)$/u.test(issue.path)
+    || /tax|GST policy/iu.test(issue.message)) {
+    return { path: rowPath, message: FIXED_GST_POLICY_MESSAGE };
+  }
+  if (/\.(?:sourcePriceVersionId|priceEntryId|priceVersionId|specificationId|modeId|status|versionNumber)$/u.test(issue.path)) {
+    return {
+      path: rowPath,
+      message: "This saved budget can no longer be updated safely. Reload Budgeting and try again."
+    };
+  }
+  if (issue.path.endsWith(".vendorId")) {
+    return { path: `${rowPath}.vendorId`, message: "Choose an available Vendor." };
+  }
+  if (issue.path.endsWith(".uomId")) {
+    return { path: `${rowPath}.uomId`, message: "Choose an available Unit of measure." };
+  }
+  if (issue.path.endsWith(".inputAmountPaise")) {
+    return {
+      path: `${rowPath}.inputAmountPaise`,
+      message: "Enter a non-negative Unit budget before GST in rupees with up to two decimal places."
+    };
+  }
+  if (issue.path.endsWith(".effectiveFrom")) {
+    return { path: `${rowPath}.effectiveFrom`, message: "Enter a valid Starts on date and time." };
+  }
+  if (issue.path.endsWith(".effectiveTo")) {
+    return { path: `${rowPath}.effectiveTo`, message: "Enter a valid Ends on date and time." };
+  }
+  return {
+    path: rowPath,
+    message: "Review this budget and try again."
+  };
+}
+
+const FIXED_GST_POLICY_MESSAGE = "Budgeting is temporarily unavailable because GST could not be applied. Try again later.";
+
+function budgetServerIssues(
+  payload: KnowledgeJsonObject,
+  issues: readonly KnowledgeModeConfigurationIssue[],
+  errorCode: string | null
+): readonly KnowledgeModeConfigurationIssue[] {
+  const mapped = issues.map((issue) => businessBudgetIssue(issue, errorCode));
+  if (errorCode !== "FIXED_GST_POLICY_UNAVAILABLE") return mapped;
+  if (mapped.some(({ path }) => /^priceEntries\.\d+(?:\.|$)/u.test(path))) return mapped;
+  const entries = Array.isArray(payload.priceEntries) ? payload.priceEntries : [];
+  const index = entries.findIndex((entry) => isBudgetSetCommand(entry));
+  return index < 0
+    ? mapped
+    : [...mapped, { path: `priceEntries.${index}`, message: FIXED_GST_POLICY_MESSAGE }];
+}
+
+function isBudgetSetCommand(value: unknown): boolean {
+  return value !== null
+    && typeof value === "object"
+    && !Array.isArray(value)
+    && "operation" in value
+    && value.operation === "set_budget";
+}
+
+function hasFocusableBudgetIssue(
+  payload: KnowledgeJsonObject,
+  issues: readonly KnowledgeModeConfigurationIssue[]
+): boolean {
+  const rows = Array.isArray(payload.priceEntries) ? payload.priceEntries : [];
+  return issues.some((issue) => {
+    const match = /^priceEntries\.(\d+)(?:\.|$)/u.exec(issue.path);
+    return match ? Number(match[1]) < rows.length : false;
+  });
+}
+
+function budgetFailureMessage(failure: unknown): string {
+  if (failure instanceof ApiError) {
+    if (failure.status === 403) {
+      return "You no longer have permission to update this Draft.";
+    }
+    if (failure.code === "VERSION_CONFLICT") return "Budgeting changed elsewhere.";
+    if (failure.code === "EFFECTIVE_WINDOW_OVERLAP") {
+      return "Another budget for this unit already covers these dates.";
+    }
+    if (failure.code === "FIXED_GST_POLICY_UNAVAILABLE" || failure.code === "KNOWLEDGE_TAX_WINDOW_MISMATCH") {
+      return FIXED_GST_POLICY_MESSAGE;
+    }
+  }
+  return "Review the highlighted budget and try again.";
 }
 
 function modeSectionPayloadForUpdate(

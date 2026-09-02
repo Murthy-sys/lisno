@@ -4,8 +4,8 @@ import { describe, expect, it } from "vitest";
 
 import { KnowledgeConflictReview } from "./KnowledgeConflictReview";
 
-describe("KnowledgeConflictReview Pricing projection", () => {
-  it("shows descriptive Specifications and separate price lineage without private Pricing metadata", async () => {
+describe("KnowledgeConflictReview Budgeting projection", () => {
+  it("shows descriptive Specifications and business Budget values without private metadata", async () => {
     render(
       <KnowledgeConflictReview
         sectionKey="pricing"
@@ -47,8 +47,13 @@ describe("KnowledgeConflictReview Pricing projection", () => {
               priceVersion: {
                 specificationId: "private-canonical-specification-id",
                 vendorId: "private-vendor-id",
+                taxRuleId: "private-tax-rule-id",
+                taxVersionId: "private-tax-version-id",
                 versionNumber: 0,
                 inputAmountPaise: 0,
+                baseAmountPaise: 0,
+                taxAmountPaise: 0,
+                totalAmountPaise: 0,
                 reviewRequired: false,
                 privateVersionMetadata: "Private price metadata"
               }
@@ -61,7 +66,7 @@ describe("KnowledgeConflictReview Pricing projection", () => {
       />
     );
 
-    const review = screen.getByRole("region", { name: "Latest Pricing server version" });
+    const review = screen.getByRole("region", { name: "Latest Budgeting server version" });
     expect(review).toHaveTextContent("Legacy finish");
     expect(review).toHaveTextContent("Legacy guidance");
     expect(review).toHaveTextContent("Inspection required");
@@ -72,12 +77,16 @@ describe("KnowledgeConflictReview Pricing projection", () => {
     expect(review).toHaveTextContent("Specification 2 · Brief descriptionConfirm after installation");
     expect(review).not.toHaveTextContent("Specification 2 · Value");
     expect(review).not.toHaveTextContent("Specification 3 · Value");
-    expect(review).toHaveTextContent("Price 1 · OperationReference");
-    expect(review).toHaveTextContent("Price 1 · SpecificationInspection required");
-    expect(review).toHaveTextContent("Price 1 · Version Number0");
+    expect(review).toHaveTextContent("Budget 1 · VendorUnavailable value");
+    expect(review).toHaveTextContent("Budget 1 · Amount before GST₹0.00");
+    expect(review).toHaveTextContent("Budget 1 · GST₹0.00");
+    expect(review).toHaveTextContent("Budget 1 · Total including GST₹0.00");
     expect(review).toHaveTextContent(/₹\s?0\.00/u);
-    expect(review).toHaveTextContent("Price 1 · Review RequiredNo");
     expect(review).toHaveTextContent("Unavailable value");
+    expect(review).not.toHaveTextContent("Operation");
+    expect(review).not.toHaveTextContent("SpecificationInspection required");
+    expect(review).not.toHaveTextContent("Version Number");
+    expect(review).not.toHaveTextContent("Review Required");
 
     for (const privateValue of [
       "Private technical description",
@@ -89,6 +98,8 @@ describe("KnowledgeConflictReview Pricing projection", () => {
       "private-price-entry-id",
       "private-price-version-id",
       "private-vendor-id",
+      "private-tax-rule-id",
+      "private-tax-version-id",
       "Definition-only option",
       "checkbox",
       "number",
@@ -106,7 +117,7 @@ describe("KnowledgeConflictReview Pricing projection", () => {
     expect(results.violations).toEqual([]);
   });
 
-  it("omits Pricing rows that contain only private identity metadata", () => {
+  it("omits Budgeting rows that contain only private identity metadata", () => {
     render(
       <KnowledgeConflictReview
         sectionKey="pricing"
@@ -125,7 +136,7 @@ describe("KnowledgeConflictReview Pricing projection", () => {
       />
     );
 
-    const review = screen.getByRole("region", { name: "Latest Pricing server version" });
+    const review = screen.getByRole("region", { name: "Latest Budgeting server version" });
     expect(within(review).getByText("No configured values are available in the latest server version.")).toBeVisible();
     expect(review).not.toHaveTextContent("private-empty-specification-id");
     expect(review).not.toHaveTextContent("private-empty-price-id");

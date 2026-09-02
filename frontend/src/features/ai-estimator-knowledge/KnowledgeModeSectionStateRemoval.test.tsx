@@ -261,7 +261,7 @@ describe("Knowledge Mode section-state removal", () => {
     expect(screen.queryByRole("heading", { name: "UOM" })).not.toBeInTheDocument();
     expect(screen.queryByRole("combobox", { name: "Pricing section state" })).not.toBeInTheDocument();
     expect(screen.queryByRole("combobox", { name: "Quantity & margin section state" })).not.toBeInTheDocument();
-    expect(screen.getByRole("region", { name: "Pricing" })).toBeVisible();
+    expect(screen.getByRole("region", { name: "Budgeting" })).toBeVisible();
     expect(screen.getByRole("region", { name: "Quantity & margin" })).toBeVisible();
     expect(screen.getByRole("region", { name: "Mode configuration" })).toBeVisible();
     expect(screen.getByText("Section version 11")).toBeVisible();
@@ -971,7 +971,8 @@ describe("Knowledge Mode section-state removal", () => {
       ["pricing", "not_applicable"]
     ]);
     expect(screen.getAllByText("Unsaved changes")).toHaveLength(1);
-    expect(screen.getByRole("alert")).toHaveTextContent("Pricing unavailable.");
+    expect(screen.getByRole("alert")).toHaveTextContent("Review the highlighted budget and try again.");
+    expect(screen.getByRole("alert")).not.toHaveTextContent("Pricing unavailable.");
   });
 
   it("retains the promoted Advanced draft and request semantics through a conflict", async () => {

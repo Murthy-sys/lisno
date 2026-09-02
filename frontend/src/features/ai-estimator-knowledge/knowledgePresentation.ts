@@ -7,7 +7,7 @@ import type { KnowledgeWorkspaceSectionKey } from "./knowledgeWorkspaceSections"
 
 export const KNOWLEDGE_SECTION_LABELS = {
   overview: "Overview",
-  pricing: "Pricing",
+  pricing: "Budgeting",
   "quantity-margin": "Quantity & margin",
   scope: "Scope",
   recommendations: "Recommendations",

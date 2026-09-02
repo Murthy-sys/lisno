@@ -959,6 +959,10 @@ function responsesFor(key: HumanJwtOperationKeyShape): Readonly<Record<string, O
       ? dataResponse(responseSchema, "Successful response.")
       : jsonSuccessResponse,
     ...standardProtectedErrors,
+    ...(key ===
+      "PUT /admin/ai-estimator-knowledge/main-lines/:mainLineId/revisions/:revisionId/sections/:sectionKey"
+      ? { "503": { $ref: "#/components/responses/ServiceUnavailable" } }
+      : {}),
     ...(HUMAN_JWT_OPERATION_LIST.find((operation) => operation.key === key)
       ?.availability === "ai_estimator_knowledge"
       ? { "422": { $ref: "#/components/responses/UnprocessableKnowledge" } }

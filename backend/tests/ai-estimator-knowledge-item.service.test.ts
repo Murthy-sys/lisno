@@ -4,6 +4,7 @@ import {
   AI_ESTIMATOR_KNOWLEDGE_CANONICAL_PRIORITIES,
   AI_ESTIMATOR_KNOWLEDGE_CANONICAL_PRIORITY_IDS
 } from "../src/domain/ai-estimator-knowledge-priority.js";
+import { AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY } from "../src/domain/ai-estimator-knowledge-fixed-gst.js";
 import { AiEstimatorKnowledgeBasketModel } from "../src/models/AiEstimatorKnowledgeBasket.js";
 import { AiEstimatorKnowledgeMainLineModel } from "../src/models/AiEstimatorKnowledgeMainLine.js";
 import { AiEstimatorKnowledgeModeModel } from "../src/models/AiEstimatorKnowledgeMode.js";
@@ -524,6 +525,31 @@ describe("AI estimator knowledge item service", () => {
     const revisionId = created.draftRevisionId!;
     const pricing = await service.getSection(ACTOR, created.mainLineId, revisionId, "pricing");
 
+    const auditCountBeforeLegacyTaxBypass = appendAudit.mock.calls.length;
+    await expect(service.updateSection(ACTOR, created.mainLineId, revisionId, "pricing", {
+      expectedVersion: pricing.version,
+      expectedAggregateVersion: created.version,
+      payload: {
+        priceEntries: [{
+          operation: "append",
+          priceEntryId: "price-entry-legacy-tax-bypass",
+          vendorId: "vendor-local",
+          uomId: "uom-sqft",
+          specificationId: null,
+          modeId: null,
+          taxRuleId: "tax-gst",
+          taxVersionId: "tax-gst-v1",
+          inputAmountPaise: 11_800,
+          treatment: "inclusive",
+          effectiveFrom: "2026-09-01T00:00:00.000Z",
+          effectiveTo: null,
+          status: "active"
+        }]
+      }
+    })).rejects.toMatchObject({ status: 409, code: "KNOWLEDGE_TAX_MISMATCH" });
+    expect(await AiEstimatorKnowledgePriceVersionModel.countDocuments({ revisionId })).toBe(0);
+    expect(appendAudit).toHaveBeenCalledTimes(auditCountBeforeLegacyTaxBypass);
+
     const saved = await service.updateSection(ACTOR, created.mainLineId, revisionId, "pricing", {
       expectedVersion: pricing.version,
       expectedAggregateVersion: created.version,
@@ -536,11 +562,11 @@ describe("AI estimator knowledge item service", () => {
           uomId: "uom-sqft",
           specificationId: null,
           modeId: null,
-          taxRuleId: "tax-gst",
-          taxVersionId: "tax-gst-v1",
-          inputAmountPaise: 11_800,
-          treatment: "inclusive",
-          effectiveFrom: "2026-01-01T00:00:00.000Z",
+          taxRuleId: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.rule.id,
+          taxVersionId: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.version.id,
+          inputAmountPaise: 10_000,
+          treatment: "exclusive",
+          effectiveFrom: "2026-09-01T00:00:00.000Z",
           effectiveTo: null,
           status: "active"
         }]
@@ -553,8 +579,8 @@ describe("AI estimator knowledge item service", () => {
     }).lean();
     expect(price).toMatchObject({
       specificationId: null,
-      treatment: "inclusive",
-      inputAmountPaise: 11_800,
+      treatment: "exclusive",
+      inputAmountPaise: 10_000,
       baseAmountPaise: 10_000,
       taxAmountPaise: 1_800,
       totalAmountPaise: 11_800,
@@ -581,10 +607,10 @@ describe("AI estimator knowledge item service", () => {
           uomId: "uom-sqft",
           specificationId: "spec-plywood",
           modeId: null,
-          taxRuleId: "tax-gst",
-          taxVersionId: "tax-gst-v1",
-          inputAmountPaise: 11_800,
-          treatment: "inclusive",
+          taxRuleId: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.rule.id,
+          taxVersionId: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.version.id,
+          inputAmountPaise: 10_000,
+          treatment: "exclusive",
           effectiveFrom: "2027-01-01T00:00:00.000Z",
           effectiveTo: null,
           status: "active"
@@ -614,6 +640,721 @@ describe("AI estimator knowledge item service", () => {
     })).rejects.toMatchObject({ status: 409, code: "VERSION_CONFLICT" });
     expect(await AiEstimatorKnowledgePriceVersionModel.countDocuments({ revisionId })).toBe(1);
     expect(appendAudit).toHaveBeenCalledTimes(3);
+  });
+
+  it("maps business-only Budget commands to immutable server-owned price lineage", async () => {
+    const { service, appendAudit } = createService();
+    const created = await service.createMainLine(ACTOR, "basket-carpentry", {
+      name: "Server-owned Budget"
+    });
+    const revisionId = created.draftRevisionId!;
+    const pricing = await service.getSection(ACTOR, created.mainLineId, revisionId, "pricing");
+    const noCoverageAuditCount = appendAudit.mock.calls.length;
+
+    await expect(service.updateSection(ACTOR, created.mainLineId, revisionId, "pricing", {
+      expectedVersion: pricing.version,
+      expectedAggregateVersion: created.version,
+      payload: {
+        priceEntries: [{
+          operation: "set_budget",
+          vendorId: "vendor-local",
+          uomId: "uom-sqft",
+          inputAmountPaise: 10_000,
+          effectiveFrom: "2026-06-01T00:00:00.000Z",
+          effectiveTo: null
+        }]
+      }
+    })).rejects.toMatchObject({
+      status: 503,
+      code: "FIXED_GST_POLICY_UNAVAILABLE",
+      fields: {
+        "payload.priceEntries.0": expect.stringContaining("GST could not be applied")
+      }
+    });
+    expect(await AiEstimatorKnowledgePriceVersionModel.countDocuments({ revisionId })).toBe(0);
+    expect(appendAudit).toHaveBeenCalledTimes(noCoverageAuditCount);
+
+    const saved = await service.updateSection(ACTOR, created.mainLineId, revisionId, "pricing", {
+      expectedVersion: pricing.version,
+      expectedAggregateVersion: created.version,
+      payload: {
+        priceEntries: [{
+          operation: "set_budget",
+          vendorId: "vendor-local",
+          uomId: "uom-sqft",
+          inputAmountPaise: 10_000,
+          effectiveFrom: "2026-09-02T00:00:00.000Z",
+          effectiveTo: null
+        }]
+      }
+    });
+    const firstReference = (saved.payload.priceEntries as Array<Record<string, string>>)[0]!;
+    expect(firstReference).toMatchObject({
+      operation: "reference",
+      priceEntryId: expect.stringMatching(/^ai-knowledge-price-entry-/u),
+      priceVersionId: expect.stringMatching(/^ai-knowledge-price-version-/u)
+    });
+    const firstVersion = await AiEstimatorKnowledgePriceVersionModel.findById(
+      firstReference.priceVersionId
+    ).lean();
+    expect(firstVersion).toMatchObject({
+      mainLineId: created.mainLineId,
+      revisionId,
+      priceEntryId: firstReference.priceEntryId,
+      versionNumber: 1,
+      vendorId: "vendor-local",
+      uomId: "uom-sqft",
+      specificationId: null,
+      modeId: null,
+      taxRuleId: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.rule.id,
+      taxVersionId: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.version.id,
+      treatment: "exclusive",
+      inputAmountPaise: 10_000,
+      baseAmountPaise: 10_000,
+      taxAmountPaise: 1_800,
+      totalAmountPaise: 11_800,
+      status: "active",
+      reviewRequired: false,
+      createdById: ACTOR.id
+    });
+    expect(appendAudit.mock.calls).toContainEqual([
+      expect.objectContaining({
+        action: "ai_estimator_knowledge_price_version_created",
+        entityId: firstReference.priceVersionId,
+        newValues: expect.objectContaining({
+          taxRuleId: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.rule.id,
+          taxVersionId: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.version.id,
+          treatment: "exclusive",
+          baseAmountPaise: 10_000,
+          taxAmountPaise: 1_800,
+          totalAmountPaise: 11_800
+        })
+      }),
+      expect.anything()
+    ]);
+
+    const priceAuditCount = appendAudit.mock.calls.filter(
+      ([event]) => event.action === "ai_estimator_knowledge_price_version_created"
+    ).length;
+    const unchanged = await service.updateSection(ACTOR, created.mainLineId, revisionId, "pricing", {
+      expectedVersion: saved.version,
+      expectedAggregateVersion: saved.aggregateVersion,
+      payload: {
+        qualityLevel: "No Budget change",
+        priceEntries: [{
+          operation: "reference",
+          priceEntryId: firstReference.priceEntryId,
+          priceVersionId: firstReference.priceVersionId
+        }]
+      }
+    });
+    expect(await AiEstimatorKnowledgePriceVersionModel.countDocuments({ revisionId })).toBe(1);
+    expect(appendAudit.mock.calls.filter(
+      ([event]) => event.action === "ai_estimator_knowledge_price_version_created"
+    )).toHaveLength(priceAuditCount);
+
+    const updated = await service.updateSection(ACTOR, created.mainLineId, revisionId, "pricing", {
+      expectedVersion: unchanged.version,
+      expectedAggregateVersion: unchanged.aggregateVersion,
+      payload: {
+        qualityLevel: "No Budget change",
+        priceEntries: [{
+          operation: "set_budget",
+          sourcePriceVersionId: firstReference.priceVersionId,
+          vendorId: "vendor-local",
+          uomId: "uom-sqft",
+          inputAmountPaise: 12_500,
+          effectiveFrom: "2026-10-01T00:00:00.000Z",
+          effectiveTo: null
+        }]
+      }
+    });
+    const secondReference = (updated.payload.priceEntries as Array<Record<string, string>>)[0]!;
+    expect(secondReference).toMatchObject({
+      operation: "reference",
+      priceEntryId: firstReference.priceEntryId
+    });
+    expect(secondReference.priceVersionId).not.toBe(firstReference.priceVersionId);
+    expect(await AiEstimatorKnowledgePriceVersionModel.findById(secondReference.priceVersionId).lean())
+      .toMatchObject({
+        priceEntryId: firstReference.priceEntryId,
+        versionNumber: 2,
+        specificationId: null,
+        modeId: null,
+        taxRuleId: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.rule.id,
+        taxVersionId: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.version.id,
+        treatment: "exclusive",
+        inputAmountPaise: 12_500,
+        baseAmountPaise: 12_500,
+        taxAmountPaise: 2_250,
+        totalAmountPaise: 14_750,
+        status: "active"
+      });
+    expect(await AiEstimatorKnowledgePriceVersionModel.findById(firstReference.priceVersionId).lean())
+      .toMatchObject({
+        versionNumber: 1,
+        inputAmountPaise: 10_000,
+        taxVersionId: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.version.id
+      });
+  });
+
+  it("preserves a retained legacy Mode scope on Budget update and rejects foreign sources", async () => {
+    const { service, appendAudit } = createService();
+    const created = await service.createMainLine(ACTOR, "basket-carpentry", {
+      name: "Legacy scoped Budget"
+    });
+    const revisionId = created.draftRevisionId!;
+    const pricing = await service.getSection(ACTOR, created.mainLineId, revisionId, "pricing");
+    const legacy = await service.updateSection(ACTOR, created.mainLineId, revisionId, "pricing", {
+      expectedVersion: pricing.version,
+      expectedAggregateVersion: created.version,
+      payload: {
+        priceEntries: [{
+          operation: "append",
+          priceEntryId: "legacy-mode-price-entry",
+          vendorId: "vendor-local",
+          uomId: "uom-sqft",
+          specificationId: null,
+          modeId: "mode-pmc",
+          taxRuleId: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.rule.id,
+          taxVersionId: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.version.id,
+          inputAmountPaise: 10_000,
+          treatment: "exclusive",
+          effectiveFrom: "2026-09-01T00:00:00.000Z",
+          effectiveTo: null,
+          status: "active"
+        }]
+      }
+    });
+    const source = (legacy.payload.priceEntries as Array<Record<string, string>>)[0]!;
+    const updated = await service.updateSection(ACTOR, created.mainLineId, revisionId, "pricing", {
+      expectedVersion: legacy.version,
+      expectedAggregateVersion: legacy.aggregateVersion,
+      payload: {
+        priceEntries: [{
+          operation: "set_budget",
+          sourcePriceVersionId: source.priceVersionId,
+          vendorId: "vendor-local",
+          uomId: "uom-sqft",
+          inputAmountPaise: 12_980,
+          effectiveFrom: "2026-09-01T00:00:00.000Z",
+          effectiveTo: null
+        }]
+      }
+    });
+    const replacement = (updated.payload.priceEntries as Array<Record<string, string>>)[0]!;
+    expect(replacement.priceEntryId).toBe("legacy-mode-price-entry");
+    expect(await AiEstimatorKnowledgePriceVersionModel.findById(replacement.priceVersionId).lean())
+      .toMatchObject({ modeId: "mode-pmc", versionNumber: 2, inputAmountPaise: 12_980 });
+
+    const foreign = await service.createMainLine(ACTOR, "basket-carpentry", {
+      name: "Foreign Budget target"
+    });
+    const foreignPricing = await service.getSection(
+      ACTOR,
+      foreign.mainLineId,
+      foreign.draftRevisionId!,
+      "pricing"
+    );
+    const auditCount = appendAudit.mock.calls.length;
+    await expect(service.updateSection(ACTOR, foreign.mainLineId, foreign.draftRevisionId!, "pricing", {
+      expectedVersion: foreignPricing.version,
+      expectedAggregateVersion: foreign.version,
+      payload: {
+        priceEntries: [{
+          operation: "set_budget",
+          sourcePriceVersionId: replacement.priceVersionId,
+          vendorId: "vendor-local",
+          uomId: "uom-sqft",
+          inputAmountPaise: 15_000,
+          effectiveFrom: "2026-09-01T00:00:00.000Z",
+          effectiveTo: null
+        }]
+      }
+    })).rejects.toMatchObject({
+      status: 409,
+      code: "KNOWLEDGE_REFERENCE_INVALID",
+      fields: {
+        "payload.priceEntries.0.sourcePriceVersionId": expect.stringContaining("this Draft")
+      }
+    });
+    expect(await AiEstimatorKnowledgePriceVersionModel.countDocuments({
+      revisionId: foreign.draftRevisionId
+    })).toBe(0);
+    expect(appendAudit).toHaveBeenCalledTimes(auditCount);
+  });
+
+  it("updates retained inclusive history from an explicit before-GST amount without rewriting it", async () => {
+    const { service } = createService();
+    const created = await service.createMainLine(ACTOR, "basket-carpentry", {
+      name: "Historical inclusive Budget"
+    });
+    const revisionId = created.draftRevisionId!;
+    const historicalVersionId = "price-version-inclusive-history";
+    const historicalReference = {
+      operation: "reference",
+      priceEntryId: "price-entry-inclusive-history",
+      priceVersionId: historicalVersionId
+    };
+    await AiEstimatorKnowledgePriceVersionModel.create({
+      _id: historicalVersionId,
+      mainLineId: created.mainLineId,
+      revisionId,
+      priceEntryId: historicalReference.priceEntryId,
+      versionNumber: 1,
+      vendorId: "vendor-local",
+      uomId: "uom-sqft",
+      specificationId: null,
+      modeId: null,
+      taxRuleId: "tax-gst",
+      taxVersionId: "tax-gst-v1",
+      treatment: "inclusive",
+      inputAmountPaise: 11_800,
+      baseAmountPaise: 10_000,
+      taxAmountPaise: 1_800,
+      totalAmountPaise: 11_800,
+      effectiveFrom: new Date("2026-01-01T00:00:00.000Z"),
+      effectiveTo: null,
+      status: "active",
+      reviewRequired: false,
+      version: 1,
+      createdById: ACTOR.id,
+      updatedById: ACTOR.id,
+      createdAt: NOW,
+      updatedAt: NOW
+    });
+    await AiEstimatorKnowledgeSectionModel.updateOne(
+      { mainLineId: created.mainLineId, revisionId, sectionKey: "pricing" },
+      { $set: { "payload.priceEntries": [historicalReference] } }
+    ).exec();
+    const pricing = await service.getSection(ACTOR, created.mainLineId, revisionId, "pricing");
+
+    const saved = await service.updateSection(ACTOR, created.mainLineId, revisionId, "pricing", {
+      expectedVersion: pricing.version,
+      expectedAggregateVersion: created.version,
+      payload: {
+        priceEntries: [{
+          operation: "set_budget",
+          sourcePriceVersionId: historicalVersionId,
+          vendorId: "vendor-local",
+          uomId: "uom-sqft",
+          inputAmountPaise: 10_000,
+          effectiveFrom: "2026-08-28T00:00:00.000Z",
+          effectiveTo: null
+        }]
+      }
+    });
+    const replacement = (saved.payload.priceEntries as Array<Record<string, string>>)[0]!;
+    expect(replacement.priceEntryId).toBe(historicalReference.priceEntryId);
+    expect(await AiEstimatorKnowledgePriceVersionModel.findById(historicalVersionId).lean())
+      .toMatchObject({
+        versionNumber: 1,
+        taxVersionId: "tax-gst-v1",
+        treatment: "inclusive",
+        inputAmountPaise: 11_800,
+        baseAmountPaise: 10_000,
+        totalAmountPaise: 11_800
+      });
+    expect(await AiEstimatorKnowledgePriceVersionModel.findById(replacement.priceVersionId).lean())
+      .toMatchObject({
+        versionNumber: 2,
+        taxRuleId: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.rule.id,
+        taxVersionId: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.version.id,
+        treatment: "exclusive",
+        inputAmountPaise: 10_000,
+        baseAmountPaise: 10_000,
+        taxAmountPaise: 1_800,
+        totalAmountPaise: 11_800
+      });
+  });
+
+  it("prevents new cross-Vendor Budget ambiguity while retaining reference-only legacy compatibility", async () => {
+    await AiEstimatorKnowledgeVendorModel.create({
+      _id: "vendor-alternate",
+      code: "ALT",
+      codeNormalized: "alt",
+      name: "Alternate Vendor",
+      nameNormalized: "alternate vendor",
+      description: null,
+      displayOrder: 2,
+      status: "active",
+      version: 1,
+      createdById: ACTOR.id,
+      updatedById: ACTOR.id,
+      createdAt: NOW,
+      updatedAt: NOW
+    });
+    await AiEstimatorKnowledgeUomModel.create({
+      _id: "uom-number",
+      code: "NO",
+      codeNormalized: "no",
+      name: "Number",
+      nameNormalized: "number",
+      description: null,
+      decimalScale: 0,
+      displayOrder: 2,
+      status: "active",
+      version: 1,
+      createdById: ACTOR.id,
+      updatedById: ACTOR.id,
+      createdAt: NOW,
+      updatedAt: NOW
+    });
+    const { service, appendAudit } = createService();
+    const created = await service.createMainLine(ACTOR, "basket-carpentry", {
+      name: "Unambiguous Budgets"
+    });
+    const revisionId = created.draftRevisionId!;
+    const pricing = await service.getSection(ACTOR, created.mainLineId, revisionId, "pricing");
+    const first = await service.updateSection(ACTOR, created.mainLineId, revisionId, "pricing", {
+      expectedVersion: pricing.version,
+      expectedAggregateVersion: created.version,
+      payload: {
+        priceEntries: [{
+          operation: "set_budget",
+          vendorId: "vendor-local",
+          uomId: "uom-sqft",
+          inputAmountPaise: 10_000,
+          effectiveFrom: "2026-09-01T00:00:00.000Z",
+          effectiveTo: "2026-12-01T00:00:00.000Z"
+        }]
+      }
+    });
+    const firstEntry = (first.payload.priceEntries as Array<Record<string, string>>)[0]!;
+    const firstReference = {
+      operation: "reference",
+      priceEntryId: firstEntry.priceEntryId,
+      priceVersionId: firstEntry.priceVersionId
+    };
+    const beforeOverlapAuditCount = appendAudit.mock.calls.length;
+    await expect(service.updateSection(ACTOR, created.mainLineId, revisionId, "pricing", {
+      expectedVersion: first.version,
+      expectedAggregateVersion: first.aggregateVersion,
+      payload: {
+        priceEntries: [firstReference, {
+          operation: "set_budget",
+          vendorId: "vendor-alternate",
+          uomId: "uom-sqft",
+          inputAmountPaise: 17_500,
+          effectiveFrom: "2026-11-01T00:00:00.000Z",
+          effectiveTo: "2027-01-01T00:00:00.000Z"
+        }]
+      }
+    })).rejects.toMatchObject({
+      status: 409,
+      code: "EFFECTIVE_WINDOW_OVERLAP",
+      fields: {
+        "payload.priceEntries.1.effectiveFrom": expect.stringContaining("already covers")
+      }
+    });
+    expect(await AiEstimatorKnowledgePriceVersionModel.countDocuments({ revisionId })).toBe(1);
+    expect(appendAudit).toHaveBeenCalledTimes(beforeOverlapAuditCount);
+
+    const differentUom = await service.updateSection(ACTOR, created.mainLineId, revisionId, "pricing", {
+      expectedVersion: first.version,
+      expectedAggregateVersion: first.aggregateVersion,
+      payload: {
+        priceEntries: [firstReference, {
+          operation: "set_budget",
+          vendorId: "vendor-alternate",
+          uomId: "uom-number",
+          inputAmountPaise: 17_500,
+          effectiveFrom: "2026-11-01T00:00:00.000Z",
+          effectiveTo: "2027-01-01T00:00:00.000Z"
+        }]
+      }
+    });
+    const differentUomEntry = (differentUom.payload.priceEntries as Array<Record<string, string>>)[1]!;
+    const adjacent = await service.updateSection(ACTOR, created.mainLineId, revisionId, "pricing", {
+      expectedVersion: differentUom.version,
+      expectedAggregateVersion: differentUom.aggregateVersion,
+      payload: {
+        priceEntries: [
+          firstReference,
+          {
+            operation: "reference",
+            priceEntryId: differentUomEntry.priceEntryId,
+            priceVersionId: differentUomEntry.priceVersionId
+          },
+          {
+            operation: "set_budget",
+            vendorId: "vendor-alternate",
+            uomId: "uom-sqft",
+            inputAmountPaise: 17_500,
+            effectiveFrom: "2026-12-01T00:00:00.000Z",
+            effectiveTo: null
+          }
+        ]
+      }
+    });
+    expect(adjacent.payload.priceEntries).toHaveLength(3);
+
+    const ambiguousVersionId = "price-version-legacy-ambiguous";
+    await AiEstimatorKnowledgePriceVersionModel.create({
+      _id: ambiguousVersionId,
+      mainLineId: created.mainLineId,
+      revisionId,
+      priceEntryId: "price-entry-legacy-ambiguous",
+      versionNumber: 1,
+      vendorId: "vendor-alternate",
+      uomId: "uom-sqft",
+      specificationId: null,
+      modeId: null,
+      taxRuleId: "tax-gst",
+      taxVersionId: "tax-gst-v1",
+      treatment: "inclusive",
+      inputAmountPaise: 20_060,
+      baseAmountPaise: 17_000,
+      taxAmountPaise: 3_060,
+      totalAmountPaise: 20_060,
+      effectiveFrom: new Date("2026-10-01T00:00:00.000Z"),
+      effectiveTo: new Date("2026-11-01T00:00:00.000Z"),
+      status: "active",
+      reviewRequired: false,
+      version: 1,
+      createdById: ACTOR.id,
+      updatedById: ACTOR.id,
+      createdAt: NOW,
+      updatedAt: NOW
+    });
+    const ambiguousReferences = [
+      firstReference,
+      {
+        operation: "reference",
+        priceEntryId: "price-entry-legacy-ambiguous",
+        priceVersionId: ambiguousVersionId
+      }
+    ];
+    await AiEstimatorKnowledgeSectionModel.updateOne(
+      { _id: adjacent.id },
+      { $set: { "payload.priceEntries": ambiguousReferences } }
+    ).exec();
+    const referenceOnly = await service.updateSection(ACTOR, created.mainLineId, revisionId, "pricing", {
+      expectedVersion: adjacent.version,
+      expectedAggregateVersion: adjacent.aggregateVersion,
+      payload: {
+        qualityLevel: "Retain imported history",
+        priceEntries: ambiguousReferences
+      }
+    });
+    expect(referenceOnly.payload.priceEntries).toHaveLength(2);
+    const beforeRejectedMutation = await AiEstimatorKnowledgePriceVersionModel.countDocuments({ revisionId });
+    await expect(service.updateSection(ACTOR, created.mainLineId, revisionId, "pricing", {
+      expectedVersion: referenceOnly.version,
+      expectedAggregateVersion: referenceOnly.aggregateVersion,
+      payload: {
+        qualityLevel: "Retain imported history",
+        priceEntries: [...ambiguousReferences, {
+          operation: "set_budget",
+          vendorId: "vendor-local",
+          uomId: "uom-number",
+          inputAmountPaise: 5_900,
+          effectiveFrom: "2027-01-01T00:00:00.000Z",
+          effectiveTo: null
+        }]
+      }
+    })).rejects.toMatchObject({ status: 409, code: "EFFECTIVE_WINDOW_OVERLAP" });
+    expect(await AiEstimatorKnowledgePriceVersionModel.countDocuments({ revisionId }))
+      .toBe(beforeRejectedMutation);
+  });
+
+  it("rolls back a server-owned Budget version when its audit write fails", async () => {
+    const { service, appendAudit } = createService();
+    const created = await service.createMainLine(ACTOR, "basket-carpentry", {
+      name: "Budget audit rollback"
+    });
+    const revisionId = created.draftRevisionId!;
+    const pricing = await service.getSection(ACTOR, created.mainLineId, revisionId, "pricing");
+    appendAudit.mockRejectedValueOnce(new Error("injected Budget audit failure"));
+
+    await expect(service.updateSection(ACTOR, created.mainLineId, revisionId, "pricing", {
+      expectedVersion: pricing.version,
+      expectedAggregateVersion: created.version,
+      payload: {
+        priceEntries: [{
+          operation: "set_budget",
+          vendorId: "vendor-local",
+          uomId: "uom-sqft",
+          inputAmountPaise: 10_000,
+          effectiveFrom: "2026-09-01T00:00:00.000Z",
+          effectiveTo: null
+        }]
+      }
+    })).rejects.toThrow("injected Budget audit failure");
+    expect(await AiEstimatorKnowledgePriceVersionModel.countDocuments({ revisionId })).toBe(0);
+    const persistedSection = await AiEstimatorKnowledgeSectionModel.findById(pricing.id).lean();
+    expect(persistedSection).toMatchObject({ version: pricing.version });
+    expect(persistedSection?.payload ?? {}).toEqual({});
+  });
+
+  it("rejects a fixed-GST total overflow without a partial Budget or audit write", async () => {
+    const { service, appendAudit } = createService();
+    const created = await service.createMainLine(ACTOR, "basket-carpentry", {
+      name: "Budget amount overflow"
+    });
+    const revisionId = created.draftRevisionId!;
+    const pricing = await service.getSection(ACTOR, created.mainLineId, revisionId, "pricing");
+    const auditCount = appendAudit.mock.calls.length;
+
+    await expect(service.updateSection(ACTOR, created.mainLineId, revisionId, "pricing", {
+      expectedVersion: pricing.version,
+      expectedAggregateVersion: created.version,
+      payload: {
+        priceEntries: [{
+          operation: "set_budget",
+          vendorId: "vendor-local",
+          uomId: "uom-sqft",
+          inputAmountPaise: Number.MAX_SAFE_INTEGER,
+          effectiveFrom: "2026-09-01T00:00:00.000Z",
+          effectiveTo: null
+        }]
+      }
+    })).rejects.toMatchObject({
+      status: 400,
+      code: "VALIDATION_ERROR",
+      fields: {
+        "payload.priceEntries.0.inputAmountPaise": expect.stringContaining("safe-integer boundary")
+      }
+    });
+    expect(await AiEstimatorKnowledgePriceVersionModel.countDocuments({ revisionId })).toBe(0);
+    const persistedSection = await AiEstimatorKnowledgeSectionModel.findById(pricing.id).lean();
+    expect(persistedSection).toMatchObject({ version: pricing.version });
+    expect(persistedSection?.payload ?? {}).toEqual({});
+    expect(appendAudit).toHaveBeenCalledTimes(auditCount);
+  });
+
+  it("rejects inactive Budget masters with business-field errors and no partial write", async () => {
+    const { service, appendAudit } = createService();
+    const created = await service.createMainLine(ACTOR, "basket-carpentry", {
+      name: "Unavailable Budget masters"
+    });
+    const revisionId = created.draftRevisionId!;
+    const pricing = await service.getSection(ACTOR, created.mainLineId, revisionId, "pricing");
+    const command = {
+      operation: "set_budget",
+      vendorId: "vendor-local",
+      uomId: "uom-sqft",
+      inputAmountPaise: 10_000,
+      effectiveFrom: "2026-09-01T00:00:00.000Z",
+      effectiveTo: null
+    };
+    const assertUnavailable = async (field: "vendorId" | "uomId") => {
+      await expect(service.updateSection(ACTOR, created.mainLineId, revisionId, "pricing", {
+        expectedVersion: pricing.version,
+        expectedAggregateVersion: created.version,
+        payload: { priceEntries: [command] }
+      })).rejects.toMatchObject({
+        status: 409,
+        code: "KNOWLEDGE_REFERENCE_INVALID",
+        fields: { [`payload.priceEntries.0.${field}`]: expect.any(String) }
+      });
+    };
+    const auditCount = appendAudit.mock.calls.length;
+
+    await AiEstimatorKnowledgeVendorModel.updateOne(
+      { _id: "vendor-local" },
+      { $set: { status: "inactive" } }
+    ).exec();
+    await assertUnavailable("vendorId");
+    await AiEstimatorKnowledgeVendorModel.updateOne(
+      { _id: "vendor-local" },
+      { $set: { status: "active" } }
+    ).exec();
+
+    await AiEstimatorKnowledgeUomModel.updateOne(
+      { _id: "uom-sqft" },
+      { $set: { status: "inactive" } }
+    ).exec();
+    await assertUnavailable("uomId");
+    await AiEstimatorKnowledgeUomModel.updateOne(
+      { _id: "uom-sqft" },
+      { $set: { status: "active" } }
+    ).exec();
+
+    await AiEstimatorKnowledgeTaxRuleModel.updateOne(
+      { _id: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.rule.id },
+      { $set: { status: "inactive" } }
+    ).exec();
+    await expect(service.updateSection(ACTOR, created.mainLineId, revisionId, "pricing", {
+      expectedVersion: pricing.version,
+      expectedAggregateVersion: created.version,
+      payload: { priceEntries: [command] }
+    })).rejects.toMatchObject({ status: 503, code: "FIXED_GST_POLICY_UNAVAILABLE" });
+    expect(await AiEstimatorKnowledgePriceVersionModel.countDocuments({ revisionId })).toBe(0);
+    expect(appendAudit).toHaveBeenCalledTimes(auditCount);
+  });
+
+  it.each([
+    ["missing rule", async () => {
+      await AiEstimatorKnowledgeTaxRuleModel.deleteOne({
+        _id: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.rule.id
+      }).exec();
+    }],
+    ["mismatched rule identity", async () => {
+      await AiEstimatorKnowledgeTaxRuleModel.collection.updateOne(
+        { _id: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.rule.id },
+        { $set: { code: "GST_WRONG" } }
+      );
+    }],
+    ["missing version", async () => {
+      await AiEstimatorKnowledgeTaxVersionModel.deleteOne({
+        _id: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.version.id
+      }).exec();
+    }],
+    ["inactive version", async () => {
+      await AiEstimatorKnowledgeTaxVersionModel.collection.updateOne(
+        { _id: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.version.id },
+        { $set: { status: "inactive" } }
+      );
+    }],
+    ["wrongly related version", async () => {
+      await AiEstimatorKnowledgeTaxVersionModel.collection.updateOne(
+        { _id: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.version.id },
+        { $set: { taxRuleId: "tax-gst-wrong-owner" } }
+      );
+    }],
+    ["wrong rate", async () => {
+      await AiEstimatorKnowledgeTaxVersionModel.collection.updateOne(
+        { _id: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.version.id },
+        { $set: { rateBps: 1_700 } }
+      );
+    }],
+    ["wrong treatment", async () => {
+      await AiEstimatorKnowledgeTaxVersionModel.collection.updateOne(
+        { _id: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.version.id },
+        { $set: { treatment: "inclusive" } }
+      );
+    }]
+  ] as const)("fails a Budget atomically for a %s fixed-GST policy", async (_case, corrupt) => {
+    const { service, appendAudit } = createService();
+    const created = await service.createMainLine(ACTOR, "basket-carpentry", {
+      name: "Corrupt fixed GST"
+    });
+    const revisionId = created.draftRevisionId!;
+    const pricing = await service.getSection(ACTOR, created.mainLineId, revisionId, "pricing");
+    const auditCount = appendAudit.mock.calls.length;
+    await corrupt();
+
+    await expect(service.updateSection(ACTOR, created.mainLineId, revisionId, "pricing", {
+      expectedVersion: pricing.version,
+      expectedAggregateVersion: created.version,
+      payload: {
+        priceEntries: [{
+          operation: "set_budget",
+          vendorId: "vendor-local",
+          uomId: "uom-sqft",
+          inputAmountPaise: 10_000,
+          effectiveFrom: "2026-08-28T00:00:00.000Z",
+          effectiveTo: null
+        }]
+      }
+    })).rejects.toMatchObject({ status: 503, code: "FIXED_GST_POLICY_UNAVAILABLE" });
+    expect(await AiEstimatorKnowledgePriceVersionModel.countDocuments({ revisionId })).toBe(0);
+    const persistedSection = await AiEstimatorKnowledgeSectionModel.findById(pricing.id).lean();
+    expect(persistedSection).toMatchObject({ version: pricing.version });
+    expect((persistedSection?.payload as { priceEntries?: unknown[] } | undefined)?.priceEntries ?? [])
+      .toEqual([]);
+    expect(appendAudit).toHaveBeenCalledTimes(auditCount);
   });
 
   it("preserves stored typed Specifications and historical price references without allowing new typed writes", async () => {
@@ -1407,11 +2148,11 @@ describe("AI estimator knowledge item service", () => {
           uomId: "uom-sqft",
           specificationId: null,
           modeId: null,
-          taxRuleId: "tax-gst",
-          taxVersionId: "tax-gst-v1",
+          taxRuleId: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.rule.id,
+          taxVersionId: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.version.id,
           inputAmountPaise: 10_000,
-          treatment: "inclusive",
-          effectiveFrom: "2026-01-01T00:00:00.000Z",
+          treatment: "exclusive",
+          effectiveFrom: "2026-09-01T00:00:00.000Z",
           effectiveTo: null,
           status: "active"
         }]
@@ -1461,11 +2202,11 @@ describe("AI estimator knowledge item service", () => {
           uomId: "uom-sqft",
           specificationId: null,
           modeId: null,
-          taxRuleId: "tax-gst",
-          taxVersionId: "tax-gst-v1",
-          inputAmountPaise: 11_800,
-          treatment: "inclusive",
-          effectiveFrom: "2026-01-01T00:00:00.000Z",
+          taxRuleId: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.rule.id,
+          taxVersionId: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.version.id,
+          inputAmountPaise: 10_000,
+          treatment: "exclusive",
+          effectiveFrom: "2026-09-01T00:00:00.000Z",
           effectiveTo: null,
           status: "active"
         }]
@@ -1486,7 +2227,7 @@ describe("AI estimator knowledge item service", () => {
       priceEntryId: "price-entry-original",
       versionNumber: 1,
       vendorId: "vendor-local",
-      inputAmountPaise: 11_800,
+      inputAmountPaise: 10_000,
       baseAmountPaise: 10_000,
       taxAmountPaise: 1_800,
       totalAmountPaise: 11_800
@@ -1498,11 +2239,11 @@ describe("AI estimator knowledge item service", () => {
       uomId: "uom-sqft",
       specificationId: null,
       modeId: null,
-      taxRuleId: "tax-gst",
-      taxVersionId: "tax-gst-v1",
-      inputAmountPaise: 12_980,
-      treatment: "inclusive",
-      effectiveFrom: "2026-06-01T00:00:00.000Z",
+      taxRuleId: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.rule.id,
+      taxVersionId: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.version.id,
+      inputAmountPaise: 11_000,
+      treatment: "exclusive",
+      effectiveFrom: "2026-10-01T00:00:00.000Z",
       effectiveTo: null,
       status: "active"
     };
@@ -1536,7 +2277,7 @@ describe("AI estimator knowledge item service", () => {
       priceEntryId: "price-entry-original",
       priceVersion: expect.objectContaining({
         versionNumber: 2,
-        inputAmountPaise: 12_980,
+        inputAmountPaise: 11_000,
         baseAmountPaise: 11_000,
         taxAmountPaise: 1_980,
         totalAmountPaise: 12_980
@@ -1617,11 +2358,11 @@ describe("AI estimator knowledge item service", () => {
           uomId: "uom-sqft",
           specificationId: null,
           modeId: null,
-          taxRuleId: "tax-gst",
-          taxVersionId: "tax-gst-v1",
-          inputAmountPaise: 5_900,
-          treatment: "inclusive",
-          effectiveFrom: "2026-01-01T00:00:00.000Z",
+          taxRuleId: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.rule.id,
+          taxVersionId: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.version.id,
+          inputAmountPaise: 5_000,
+          treatment: "exclusive",
+          effectiveFrom: "2026-09-01T00:00:00.000Z",
           effectiveTo: null,
           status: "active"
         }]
@@ -2952,11 +3693,26 @@ async function seedReferences(): Promise<void> {
       _id: "tax-gst",
       code: "GST18",
       codeNormalized: "gst18",
-      name: "GST 18%",
-      nameNormalized: "gst 18%",
+      name: "Legacy GST 18%",
+      nameNormalized: "legacy gst 18%",
       description: null,
       displayOrder: 1,
       status: "active",
+      version: 1,
+      createdById: ACTOR.id,
+      updatedById: ACTOR.id,
+      createdAt: NOW,
+      updatedAt: NOW
+    }),
+    AiEstimatorKnowledgeTaxRuleModel.create({
+      _id: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.rule.id,
+      code: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.rule.code,
+      codeNormalized: "gst_18",
+      name: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.rule.name,
+      nameNormalized: "gst 18%",
+      description: null,
+      displayOrder: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.rule.displayOrder,
+      status: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.rule.status,
       version: 1,
       createdById: ACTOR.id,
       updatedById: ACTOR.id,
@@ -2973,6 +3729,22 @@ async function seedReferences(): Promise<void> {
       effectiveFrom: new Date("2026-01-01T00:00:00.000Z"),
       effectiveTo: null,
       status: "active",
+      version: 1,
+      createdById: ACTOR.id,
+      updatedById: ACTOR.id,
+      createdAt: NOW,
+      updatedAt: NOW
+    }),
+    AiEstimatorKnowledgeTaxVersionModel.create({
+      _id: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.version.id,
+      taxRuleId: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.rule.id,
+      versionNumber: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.version.versionNumber,
+      rateBps: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.version.rateBps,
+      treatment: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.version.treatment,
+      applicability: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.version.applicability,
+      effectiveFrom: new Date(AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.version.effectiveFrom),
+      effectiveTo: null,
+      status: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.version.status,
       version: 1,
       createdById: ACTOR.id,
       updatedById: ACTOR.id,

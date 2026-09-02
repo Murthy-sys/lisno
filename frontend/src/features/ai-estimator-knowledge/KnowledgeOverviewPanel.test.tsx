@@ -390,7 +390,10 @@ describe("KnowledgeOverviewPanel", () => {
           priceEntryId: "price-unassigned",
           operation: "append",
           vendorId: "vendor-unresolved",
-          inputAmountPaise: 0
+          inputAmountPaise: 0,
+          baseAmountPaise: 0,
+          taxAmountPaise: 0,
+          totalAmountPaise: 0
         }]
       }
     } as const;
@@ -414,10 +417,10 @@ describe("KnowledgeOverviewPanel", () => {
     });
 
     const pricingPanel = screen
-      .getByRole("heading", { name: "Pricing" })
+      .getByRole("heading", { name: "Budgeting" })
       .closest("section");
     expect(pricingPanel).not.toBeNull();
-    expect(within(pricingPanel as HTMLElement).getByText("₹0.00")).toBeVisible();
+    expect(within(pricingPanel as HTMLElement).getAllByText("₹0.00")).toHaveLength(3);
     expect(within(pricingPanel as HTMLElement).getByText("Unavailable value")).toBeVisible();
     expect(within(pricingPanel as HTMLElement).queryByText("vendor-unresolved")).not.toBeInTheDocument();
     expect(within(pricingPanel as HTMLElement).queryByRole("combobox", {
@@ -590,7 +593,7 @@ describe("KnowledgeOverviewPanel", () => {
     expect(within(sharedPanel as HTMLElement).getByText("Not configured")).toBeVisible();
   });
 
-  it("renders complete metadata for assigned and unassigned prices", () => {
+  it("renders only business Budget information for assigned and unassigned prices", () => {
     const effectiveFrom = "2026-09-01T10:30:00.000Z";
     const effectiveTo = "2026-09-30T18:00:00.000Z";
     const metadataSections = {
@@ -631,24 +634,21 @@ describe("KnowledgeOverviewPanel", () => {
     renderPanel({ overviewPayload: metadataSections.overview, summary: metadataSummary });
 
     const pricingPanel = screen
-      .getByRole("heading", { name: "Pricing" })
+      .getByRole("heading", { name: "Budgeting" })
       .closest("section");
     expect(pricingPanel).not.toBeNull();
-    expect(within(pricingPanel as HTMLElement).getAllByText("Version number").length).toBeGreaterThan(0);
-    expect(within(pricingPanel as HTMLElement).getByText("0")).toBeVisible();
-    expect(within(pricingPanel as HTMLElement).getAllByText("Tax treatment").length).toBeGreaterThan(0);
-    expect(within(pricingPanel as HTMLElement).getByText("exclusive")).toBeVisible();
-    expect(within(pricingPanel as HTMLElement).getAllByText("Effective from").length).toBeGreaterThan(0);
-    expect(within(pricingPanel as HTMLElement).getAllByText("Effective to").length).toBeGreaterThan(0);
+    expect(within(pricingPanel as HTMLElement).queryByText("Version number")).not.toBeInTheDocument();
+    expect(within(pricingPanel as HTMLElement).queryByText("Tax treatment")).not.toBeInTheDocument();
+    expect(within(pricingPanel as HTMLElement).queryByText("exclusive")).not.toBeInTheDocument();
+    expect(within(pricingPanel as HTMLElement).getAllByText("Starts on").length).toBeGreaterThan(0);
+    expect(within(pricingPanel as HTMLElement).getAllByText("Ends on").length).toBeGreaterThan(0);
     expect(within(pricingPanel as HTMLElement).getAllByText(formatKnowledgeDateTime(effectiveFrom)).length).toBeGreaterThan(0);
     expect(within(pricingPanel as HTMLElement).getAllByText(formatKnowledgeDateTime(effectiveTo)).length).toBeGreaterThan(0);
-    expect(within(pricingPanel as HTMLElement).getAllByText("Review required").length).toBeGreaterThan(0);
-
-    expect(within(pricingPanel as HTMLElement).getByText("Price version")).toBeVisible();
-    expect(within(pricingPanel as HTMLElement).getByText("Unavailable value")).toBeVisible();
-    expect(within(pricingPanel as HTMLElement).getByText("2")).toBeVisible();
-    expect(within(pricingPanel as HTMLElement).getByText("inclusive")).toBeVisible();
-    expect(within(pricingPanel as HTMLElement).getAllByText("No")).toHaveLength(2);
+    expect(within(pricingPanel as HTMLElement).queryByText("Price version")).not.toBeInTheDocument();
+    expect(within(pricingPanel as HTMLElement).queryByText("inclusive")).not.toBeInTheDocument();
+    expect(within(pricingPanel as HTMLElement).queryByText("Operation")).not.toBeInTheDocument();
+    expect(within(pricingPanel as HTMLElement).queryByText("Tax")).not.toBeInTheDocument();
+    expect(within(pricingPanel as HTMLElement).queryByText("Tax rule")).not.toBeInTheDocument();
     expect(pricingPanel).not.toHaveTextContent("private-price-version-id");
 
     const specificationPanel = screen
@@ -738,12 +738,21 @@ describe("KnowledgeOverviewPanel", () => {
 
   it("keeps fixed-kind component definitions isolated while PMC markup remains shared", async () => {
     const user = userEvent.setup();
-    renderPanel();
+    renderPanel({
+      summary: {
+        ...summary,
+        modeDetails: summary.modeDetails.map((detail, index) => index === 0
+          ? { ...detail, prices: [summary.priceDetails[0]!] }
+          : detail)
+      }
+    });
     const modePanel = screen.getByRole("heading", { name: "Selected Mode details" }).closest("section");
     const sharedPanel = screen.getByRole("heading", { name: "Shared calculation values" }).closest("section");
     expect(modePanel).not.toBeNull();
     expect(sharedPanel).not.toBeNull();
 
+    expect(within(modePanel as HTMLElement).getByText("Matching budgets")).toBeVisible();
+    expect(within(modePanel as HTMLElement).queryByText("Matching price entries")).not.toBeInTheDocument();
     expect(within(modePanel as HTMLElement).getByText("PMC mark")).toBeVisible();
     expect(within(modePanel as HTMLElement).getByText("Text field")).toBeVisible();
     expect(within(modePanel as HTMLElement).queryByText("A1")).not.toBeInTheDocument();
@@ -905,7 +914,7 @@ describe("KnowledgeOverviewPanel", () => {
         key: "mode"
       },
       {
-        heading: screen.getByRole("heading", { name: "Pricing", level: 2 }),
+        heading: screen.getByRole("heading", { name: "Budgeting", level: 2 }),
         action: "Open Mode",
         key: "mode"
       },
@@ -964,7 +973,7 @@ describe("KnowledgeOverviewPanel", () => {
     expect(screen.getByRole("radio", { name: pmc.name })).toBeVisible();
     expect(screen.getByRole("heading", { name: "Selected Mode details" })).toBeVisible();
     expect(screen.getByRole("heading", { name: "Specifications" })).toBeVisible();
-    expect(screen.getByRole("heading", { name: "Pricing" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Budgeting" })).toBeVisible();
     const warning = screen
       .getByText("Some reusable labels are unavailable")
       .closest(".ui-inline-message");

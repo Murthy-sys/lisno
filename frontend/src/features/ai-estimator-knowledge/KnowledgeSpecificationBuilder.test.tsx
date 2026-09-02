@@ -161,7 +161,7 @@ describe("KnowledgeSpecificationBuilder", () => {
     const remove = screen.getByRole("button", { name: "Remove Specifications entry 1" });
     expect(remove).toBeDisabled();
     expect(remove).toHaveAccessibleDescription(
-      "Remove this Specification from Quantity slabs and save Quantity & margin before removing it from Pricing."
+      "Remove this Specification from Quantity slabs and save Quantity & margin before removing it from Budgeting."
     );
   });
 

@@ -4,9 +4,10 @@ import { validateKnowledgeSection } from "./knowledgeSectionValidation";
 
 describe("knowledge section client validation", () => {
   it("reports coupled pricing and effective-window errors", () => {
-    const issues = validateKnowledgeSection("pricing", { priceEntries: [{ operation: "append", priceEntryId: "price-1", inputAmountPaise: -1, effectiveFrom: "2026-09-02T00:00:00.000Z", effectiveTo: "2026-09-01T00:00:00.000Z" }] });
+    const issues = validateKnowledgeSection("pricing", { priceEntries: [{ operation: "set_budget", inputAmountPaise: -1, effectiveFrom: "2026-09-02T00:00:00.000Z", effectiveTo: "2026-09-01T00:00:00.000Z" }] });
     expect(issues.map(({ path }) => path)).toEqual(expect.arrayContaining(["priceEntries.0.vendorId", "priceEntries.0.inputAmountPaise", "priceEntries.0.effectiveTo"]));
     expect(issues.find(({ path }) => path === "priceEntries.0.inputAmountPaise")?.message).toBe("Enter a non-negative rupee amount with up to two decimal places.");
+    expect(issues.find(({ path }) => path === "priceEntries.0.vendorId")?.message).toBe("Vendor is required.");
   });
 
   it("rejects invalid quality defaults and cyclic execution graphs", () => {
@@ -16,7 +17,7 @@ describe("knowledge section client validation", () => {
   });
 
   it.each([0, 1])("accepts the exact API amount boundary of %i paise", (inputAmountPaise) => {
-    expect(validateKnowledgeSection("pricing", { priceEntries: [{ operation: "append", priceEntryId: "price-1", vendorId: "vendor-1", uomId: "uom-1", taxRuleId: "tax-1", taxVersionId: "tax-v1", treatment: "exclusive", effectiveFrom: "2026-09-01T00:00:00.000Z", status: "active", inputAmountPaise }] })).toEqual([]);
+    expect(validateKnowledgeSection("pricing", { priceEntries: [{ operation: "set_budget", vendorId: "vendor-1", uomId: "uom-1", effectiveFrom: "2026-09-01T00:00:00.000Z", effectiveTo: null, inputAmountPaise }] })).toEqual([]);
   });
 
   it("accepts zero-valued basis points", () => {
@@ -24,8 +25,60 @@ describe("knowledge section client validation", () => {
   });
 
   it("rejects amounts outside the safe integer paise boundary", () => {
-    const issues = validateKnowledgeSection("pricing", { priceEntries: [{ operation: "append", priceEntryId: "price-1", vendorId: "vendor-1", uomId: "uom-1", taxRuleId: "tax-1", taxVersionId: "tax-v1", treatment: "exclusive", effectiveFrom: "2026-09-01T00:00:00.000Z", status: "active", inputAmountPaise: Number.MAX_SAFE_INTEGER + 1 }] });
+    const issues = validateKnowledgeSection("pricing", { priceEntries: [{ operation: "set_budget", vendorId: "vendor-1", uomId: "uom-1", effectiveFrom: "2026-09-01T00:00:00.000Z", effectiveTo: null, inputAmountPaise: Number.MAX_SAFE_INTEGER + 1 }] });
     expect(issues).toContainEqual(expect.objectContaining({ path: "priceEntries.0.inputAmountPaise" }));
+  });
+
+  it("blocks budget saves while a required master catalog is unavailable", () => {
+    const issues = validateKnowledgeSection("pricing", {
+      priceEntries: [{
+        operation: "set_budget",
+        vendorId: "vendor-1",
+        uomId: "uom-1",
+        inputAmountPaise: 0,
+        effectiveFrom: "2026-09-01T00:00:00.000Z",
+        effectiveTo: null
+      }]
+    }, {
+      vendorCatalogStatus: "error",
+      uomCatalogStatus: "loading"
+    });
+
+    expect(issues).toContainEqual({
+      path: "priceEntries.0.vendorId",
+      message: "Load Vendor options before saving this budget."
+    });
+    expect(issues).toContainEqual({
+      path: "priceEntries.0.uomId",
+      message: "Load Unit of measure options before saving this budget."
+    });
+  });
+
+  it("maps invalid hidden reference lineage to one business-level issue", () => {
+    expect(validateKnowledgeSection("pricing", {
+      priceEntries: [{ operation: "reference", priceEntryId: "", priceVersionId: "" }]
+    })).toEqual([{
+      path: "priceEntries.0",
+      message: "Saved budget details are unavailable. Reload Budgeting and try again."
+    }]);
+  });
+
+  it("keeps complete legacy append commands valid for compatibility clients", () => {
+    expect(validateKnowledgeSection("pricing", {
+      priceEntries: [{
+        operation: "append",
+        priceEntryId: "price-1",
+        vendorId: "vendor-1",
+        uomId: "uom-1",
+        taxRuleId: "tax-1",
+        taxVersionId: "tax-v1",
+        treatment: "exclusive",
+        effectiveFrom: "2026-09-01T00:00:00.000Z",
+        effectiveTo: null,
+        status: "active",
+        inputAmountPaise: 1
+      }]
+    })).toEqual([]);
   });
 
   it("validates priced slabs against live Specifications, UOM scale, uniqueness, and derived totals", () => {

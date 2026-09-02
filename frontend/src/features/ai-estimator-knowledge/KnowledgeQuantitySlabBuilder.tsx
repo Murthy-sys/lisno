@@ -111,7 +111,7 @@ export function KnowledgeQuantitySlabBuilder({
           : null;
 
   const emptyMessage = specificationOptions.length === 0
-    ? "Add a Specification in Pricing to complete a Quantity slab."
+    ? "Add a Specification in Budgeting to complete a Quantity slab."
     : uomCatalogState.status === "loading"
       ? "Units are loading. You can add a slab now and select its Unit when ready."
       : uomCatalogState.status === "error"
@@ -213,7 +213,7 @@ function SlabRateRow({
           label="Specification"
           required
           error={issueFor("specificationId")}
-          hint={specifications.length === 0 ? "Add a Specification in Pricing first." : undefined}
+          hint={specifications.length === 0 ? "Add a Specification in Budgeting first." : undefined}
         >
           {(props) => (
             <Select
@@ -222,7 +222,7 @@ function SlabRateRow({
               value={specificationId}
               onChange={(event) => set("specificationId", event.target.value || undefined)}
             >
-              <option value="">{specifications.length === 0 ? "Add a Specification in Pricing first" : "Select a Specification"}</option>
+              <option value="">{specifications.length === 0 ? "Add a Specification in Budgeting first" : "Select a Specification"}</option>
               {specificationMissing ? <option value={specificationId} disabled>Unavailable saved Specification</option> : null}
               {specifications.map((specification) => <option key={specification.id} value={specification.id}>{specification.name}</option>)}
             </Select>

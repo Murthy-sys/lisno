@@ -40,6 +40,22 @@ describe("AI estimator knowledge calculation", () => {
       taxAmountPaise: 1_800,
       totalAmountPaise: 11_800
     });
+    expect(deriveTaxAmounts({ inputAmountPaise: 1, rateBps: 5_000, treatment: "exclusive" })).toEqual({
+      inputAmountPaise: 1,
+      rateBps: 5_000,
+      treatment: "exclusive",
+      baseAmountPaise: 1,
+      taxAmountPaise: 1,
+      totalAmountPaise: 2
+    });
+    expect(deriveTaxAmounts({ inputAmountPaise: 25, rateBps: 1_800, treatment: "exclusive" })).toEqual({
+      inputAmountPaise: 25,
+      rateBps: 1_800,
+      treatment: "exclusive",
+      baseAmountPaise: 25,
+      taxAmountPaise: 5,
+      totalAmountPaise: 30
+    });
   });
 
   it("keeps wastage limited to procurement quantity", () => {

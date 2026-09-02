@@ -1,8 +1,12 @@
-import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useMemo, useRef, type ReactNode } from "react";
 
 import { Button } from "../../components/ui/Button";
 import { Checkbox, Field, Input, Select, Textarea } from "../../components/ui/Field";
 import { InlineMessage } from "../../components/ui/InlineMessage";
+import {
+  KnowledgeBudgetBuilder,
+  type KnowledgeBudgetCatalogState
+} from "./KnowledgeBudgetBuilder";
 import { KnowledgeRepeater } from "./KnowledgeRepeater";
 import {
   KnowledgeQuantitySlabBuilder,
@@ -10,11 +14,7 @@ import {
 } from "./KnowledgeQuantitySlabBuilder";
 import { KnowledgeSpecificationBuilder } from "./KnowledgeSpecificationBuilder";
 import {
-  KNOWLEDGE_SECTION_LABELS,
-  formatKnowledgeMoney,
-  formatPaiseForRupeeInput,
-  parseRupeeInputToPaise,
-  type RupeeInputParseResult
+  KNOWLEDGE_SECTION_LABELS
 } from "./knowledgePresentation";
 import type {
   KnowledgeJsonObject,
@@ -32,7 +32,7 @@ import {
 
 const ARRAY_FIELDS = {
   overview: [],
-  pricing: ["specifications", "brands", "priceEntries"],
+  pricing: ["specifications", "brands"],
   "quantity-margin": [],
   scope: ["exclusions"],
   recommendations: ["recommendations"],
@@ -44,7 +44,6 @@ const ARRAY_FIELDS = {
 const ARRAY_LABELS: Readonly<Record<string, string>> = {
   specifications: "Specifications",
   brands: "Vendors",
-  priceEntries: "Price versions",
   quantitySlabs: "Quantity slabs",
   exclusions: "Exclusions",
   recommendations: "Recommendations",
@@ -79,6 +78,10 @@ export interface KnowledgeSectionEditorProps {
   readonly slabSpecificationReferenceIds?: readonly string[];
   readonly pricingSpecifications?: KnowledgeJsonValue;
   readonly uomCatalogState?: KnowledgeUomCatalogState;
+  readonly vendorCatalogState?: KnowledgeBudgetCatalogState;
+  readonly budgetReadOnly?: boolean;
+  readonly budgetSaving?: boolean;
+  readonly onRetrySavedBudgetDetails?: () => void;
   readonly pricingAfterSpecifications?: ReactNode;
   readonly validationAttempt?: number;
   readonly serverIssues?: readonly KnowledgeValidationIssue[];
@@ -154,6 +157,10 @@ export function KnowledgeSectionEditor({
   slabSpecificationReferenceIds = [],
   pricingSpecifications,
   uomCatalogState = { status: "ready" },
+  vendorCatalogState = { status: "ready" },
+  budgetReadOnly = readOnly,
+  budgetSaving = false,
+  onRetrySavedBudgetDetails,
   pricingAfterSpecifications,
   validationAttempt = 0,
   serverIssues = [],
@@ -166,9 +173,11 @@ export function KnowledgeSectionEditor({
     () => [...validateKnowledgeSection(sectionKey, payload, {
       specifications: pricingSpecifications,
       uoms: masters.uoms,
-      uomCatalogStatus: uomCatalogState.status
+      vendors: masters.vendors,
+      uomCatalogStatus: uomCatalogState.status,
+      vendorCatalogStatus: vendorCatalogState.status
     }), ...serverIssues],
-    [masters.uoms, payload, pricingSpecifications, sectionKey, serverIssues, uomCatalogState.status]
+    [masters.uoms, masters.vendors, payload, pricingSpecifications, sectionKey, serverIssues, uomCatalogState.status, vendorCatalogState.status]
   );
   const validationSummaryRef = useRef<HTMLDivElement>(null);
   useEffect(() => { onValidationChange(issues.length === 0); }, [issues.length, onValidationChange, resetKey]);
@@ -283,6 +292,26 @@ export function KnowledgeSectionEditor({
         />
       ))}
 
+      {sectionKey === "pricing" ? (
+        <KnowledgeBudgetBuilder
+          value={payload.priceEntries}
+          vendors={masters.vendors ?? []}
+          uoms={masters.uoms ?? []}
+          vendorCatalogState={vendorCatalogState}
+          uomCatalogState={uomCatalogState}
+          issues={issues.filter((issue) => issue.path === "priceEntries" || issue.path.startsWith("priceEntries."))}
+          validationAttempt={validationAttempt}
+          readOnly={budgetReadOnly}
+          saving={budgetSaving}
+          canQuickAdd={canQuickAdd}
+          resetKey={resetKey}
+          onRetrySavedDetails={onRetrySavedBudgetDetails}
+          onQuickAdd={onQuickAdd}
+          onDirty={onDirty}
+          onChange={(value) => change("priceEntries", value)}
+        />
+      ) : null}
+
       {sectionKey === "advanced" && Array.isArray(payload.revisionLineage) ? (
         <ReadOnlyStructuredData label="Revision lineage" value={payload.revisionLineage} />
       ) : null}
@@ -388,7 +417,6 @@ function GuidedRow({ field, index, value, sectionPayload, masters, relationshipB
   const prefix = `${field}-${index}`;
   const set = (key: string, next: KnowledgeJsonValue | undefined) => onChange(setObjectValue(value, key, next));
   if (field === "brands") return <div className="knowledge-form-grid"><ReadOnlyId value={stringValue(value.id)} /><RowInput id={`${prefix}-name`} label="Vendor name" value={stringValue(value.name)} disabled={disabled} required onChange={(next) => set("name", next || undefined)} /><RowInput id={`${prefix}-description`} label="Description" value={stringValue(value.description)} disabled={disabled} multiline onChange={(next) => set("description", next || undefined)} /></div>;
-  if (field === "priceEntries") return <PriceEntryRow prefix={prefix} value={value} masters={masters} disabled={disabled} canQuickAdd={canQuickAdd} onQuickAdd={onQuickAdd} set={set} onChange={onChange} />;
   if (field === "quantitySlabs") return <div className="knowledge-form-grid"><ReadOnlyId value={stringValue(value.id)} /><RowInput id={`${prefix}-minimum`} label="Minimum quantity" value={stringValue(value.minimumQuantity)} disabled={disabled} required onChange={(next) => set("minimumQuantity", next || undefined)} /><RowInput id={`${prefix}-maximum`} label="Maximum quantity" value={stringValue(value.maximumQuantity)} disabled={disabled} hint="Leave blank for no upper limit." onChange={(next) => set("maximumQuantity", next || null)} /><RowNumber id={`${prefix}-adjustment`} label="Adjustment (basis points)" value={numberValue(value.adjustmentBps)} disabled={disabled} required onChange={(next) => set("adjustmentBps", next)} /></div>;
   if (field === "exclusions" || field === "dependencies") return <RelationshipRow prefix={prefix} kind={field} value={value} baskets={relationshipBaskets} items={relationshipItems} currentMainLineId={currentMainLineId} disabled={disabled} onChange={onChange} />;
   if (field === "recommendations") return <div className="knowledge-form-grid"><ReadOnlyId value={stringValue(value.id)} /><RelationshipTargetFields prefix={prefix} value={value} baskets={relationshipBaskets} items={relationshipItems} required disabled={disabled} onChange={onChange} /><RowSelect id={`${prefix}-type`} label="Recommendation type" value={stringValue(value.type)} values={["mandatory", "recommended", "optional"]} disabled={disabled} onChange={(next) => set("type", next || undefined)} /><MasterRowSelect id={`${prefix}-priority`} label="Priority" value={stringValue(value.priorityId)} masters={masters.priorities ?? []} disabled={disabled} nullable onChange={(next) => set("priorityId", next)} /><RowInput id={`${prefix}-reason`} label="Reason" value={stringValue(value.reason)} disabled={disabled} required multiline onChange={(next) => set("reason", next || undefined)} /><RowSelect id={`${prefix}-relationship`} label="Quantity relationship" value={stringValue(value.quantityRelationship)} values={["same_quantity", "percentage_of_source", "fixed", "per_unit"]} disabled={disabled} onChange={(next) => set("quantityRelationship", next || undefined)} /><RowInput id={`${prefix}-quantity`} label="Quantity value" value={stringValue(value.quantityValue)} disabled={disabled} onChange={(next) => set("quantityValue", next || null)} /><RowCheckbox label="Dependency" checked={booleanValue(value.dependency)} disabled={disabled} onChange={(next) => set("dependency", next)} /><RowCheckbox label="Active" checked={booleanValue(value.active, true)} disabled={disabled} onChange={(next) => set("active", next)} /></div>;
@@ -443,74 +471,6 @@ function StableIdSelect({ id, label, value, options, disabled, nullable = false,
 function StableIdMultiSelect({ id, label, values, options, disabled, onChange }: { readonly id: string; readonly label: string; readonly values: readonly string[]; readonly options: readonly StableIdOption[]; readonly disabled: boolean; readonly onChange: (values: readonly string[]) => void }) {
   const unresolved = values.filter((value) => !options.some((option) => option.id === value));
   return <Field id={id} label={label} hint="Select zero or more named steps; stable IDs are stored.">{(props) => <Select {...props} multiple size={Math.max(3, Math.min(6, options.length + unresolved.length))} disabled={disabled} value={[...values]} onChange={(event) => onChange([...event.currentTarget.selectedOptions].map((option) => option.value))}>{unresolved.map((value) => <option key={value} value={value} disabled>Unavailable step · {value}</option>)}{options.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}</Select>}</Field>;
-}
-
-function PriceEntryRow({ prefix, value, masters, disabled, canQuickAdd, onQuickAdd, set, onChange }: { readonly prefix: string; readonly value: KnowledgeJsonObject; readonly masters: Readonly<Partial<Record<KnowledgeMasterType, readonly KnowledgeMaster[]>>>; readonly disabled: boolean; readonly canQuickAdd: boolean; readonly onQuickAdd: KnowledgeSectionEditorProps["onQuickAdd"]; readonly set: (key: string, value: KnowledgeJsonValue | undefined) => void; readonly onChange: (value: KnowledgeJsonObject) => void }) {
-  const operation = stringValue(value.operation);
-  const referenced = operation === "reference";
-  const taxRule = (masters.taxes ?? []).find(({ id }) => id === stringValue(value.taxRuleId));
-  const resolved = isJsonObject(value.priceVersion) ? value.priceVersion : null;
-  const replace = () => {
-    if (!resolved) return;
-    const copied: Record<string, KnowledgeJsonValue> = { operation: "append", priceEntryId: stringValue(value.priceEntryId) };
-    for (const key of ["vendorId", "uomId", "modeId", "taxRuleId", "taxVersionId", "inputAmountPaise", "treatment", "effectiveFrom", "effectiveTo", "status"] as const) {
-      const next = resolved[key];
-      if (next !== undefined) copied[key] = next;
-    }
-    copied.specificationId = null;
-    onChange(copied);
-  };
-  return <div className="knowledge-form-grid"><RowSelect id={`${prefix}-operation`} label="Price operation" value={operation} values={["append", "reference"]} disabled={disabled || referenced} onChange={(next) => set("operation", next || undefined)} /><RowInput id={`${prefix}-entry-id`} label="Price entry ID" value={stringValue(value.priceEntryId)} disabled readOnly />{referenced ? <><RowInput id={`${prefix}-version-id`} label="Price version ID" value={stringValue(value.priceVersionId)} disabled readOnly />{resolved ? <ResolvedPriceVersion value={resolved} /> : <p className="knowledge-help-text">Saved price details are unavailable.</p>}<Button size="compact" variant="secondary" disabled={disabled || !resolved} onClick={replace}>Replace price version</Button></> : <><div className="knowledge-master-control"><MasterRowSelect id={`${prefix}-vendor`} label="Vendor" value={stringValue(value.vendorId)} masters={masters.vendors ?? []} disabled={disabled} onChange={(next) => set("vendorId", next)} /><Button size="compact" variant="quiet" disabled={disabled || !canQuickAdd} onClick={() => onQuickAdd("vendors", (master) => set("vendorId", master.id))}>Add vendor</Button></div><MasterRowSelect id={`${prefix}-uom`} label="UOM" value={stringValue(value.uomId)} masters={masters.uoms ?? []} disabled={disabled} onChange={(next) => set("uomId", next)} /><MasterRowSelect id={`${prefix}-mode`} label="Mode" value={stringValue(value.modeId)} masters={masters.modes ?? []} disabled={disabled} nullable onChange={(next) => set("modeId", next)} /><div className="knowledge-master-control"><MasterRowSelect id={`${prefix}-tax-rule`} label="Tax rule" value={stringValue(value.taxRuleId)} masters={masters.taxes ?? []} disabled={disabled} onChange={(next) => onChange(setObjectValue(setObjectValue(value, "taxRuleId", next), "taxVersionId", undefined))} /><Button size="compact" variant="quiet" disabled={disabled || !canQuickAdd} onClick={() => onQuickAdd("taxes", (master) => onChange(setObjectValue(setObjectValue(value, "taxRuleId", master.id), "taxVersionId", undefined)))}>Add tax</Button></div><TaxVersionSelect id={`${prefix}-tax-version`} value={stringValue(value.taxVersionId)} taxRule={taxRule} disabled={disabled} onChange={(next) => set("taxVersionId", next || undefined)} /><RupeeAmountField id={`${prefix}-amount`} valuePaise={numberValue(value.inputAmountPaise)} disabled={disabled} onChange={(next) => set("inputAmountPaise", next)} /><RowSelect id={`${prefix}-treatment`} label="Tax treatment" value={stringValue(value.treatment)} values={["exclusive", "inclusive"]} disabled={disabled} onChange={(next) => set("treatment", next || undefined)} /><RowDateTime id={`${prefix}-from`} label="Effective from" value={stringValue(value.effectiveFrom)} disabled={disabled} required onChange={(next) => set("effectiveFrom", next || undefined)} /><RowDateTime id={`${prefix}-to`} label="Effective to" value={stringValue(value.effectiveTo)} disabled={disabled} onChange={(next) => set("effectiveTo", next || null)} /><RowSelect id={`${prefix}-status`} label="Version status" value={stringValue(value.status)} values={["draft", "active", "inactive"]} disabled={disabled} onChange={(next) => set("status", next || undefined)} /></>}</div>;
-}
-
-function ResolvedPriceVersion({ value }: { readonly value: KnowledgeJsonObject }) {
-  return <dl className="knowledge-summary-list" aria-label="Immutable saved price details"><div><dt>Version</dt><dd>{numberValue(value.versionNumber) ?? "Unavailable"}</dd></div><div><dt>Input</dt><dd>{formattedMoney(value.inputAmountPaise)}</dd></div><div><dt>Base</dt><dd>{formattedMoney(value.baseAmountPaise)}</dd></div><div><dt>Tax</dt><dd>{formattedMoney(value.taxAmountPaise)}</dd></div><div><dt>Total</dt><dd>{formattedMoney(value.totalAmountPaise)}</dd></div><div><dt>Status</dt><dd>{stringValue(value.status) || "Unavailable"}</dd></div></dl>;
-}
-
-function RupeeAmountField({ id, valuePaise, disabled, onChange }: { readonly id: string; readonly valuePaise: number | undefined; readonly disabled: boolean; readonly onChange: (value: number | undefined) => void }) {
-  const initialText = editableRupeeText(valuePaise);
-  const [text, setText] = useState(initialText);
-  const textRef = useRef(initialText);
-  const parsed = parseRupeeInputToPaise(text);
-  const setEditableText = (next: string) => {
-    textRef.current = next;
-    setText(next);
-  };
-
-  useEffect(() => {
-    const current = parseRupeeInputToPaise(textRef.current);
-    if (valuePaise === undefined) {
-      if (current.status === "valid") setEditableText("");
-      return;
-    }
-    const next = editableRupeeText(valuePaise);
-    if (current.status !== "valid" || current.paise !== valuePaise) setEditableText(next);
-  }, [valuePaise]);
-
-  return <Field id={id} label="Input amount (rupees)" required hint="Enter a non-negative rupee amount with up to two decimal places." error={rupeeInputError(parsed, text)}>{(props) => <Input {...props} type="text" inputMode="decimal" autoComplete="off" disabled={disabled} value={text} onChange={(event) => { const nextText = event.target.value; setEditableText(nextText); const next = parseRupeeInputToPaise(nextText); onChange(next.status === "valid" ? next.paise : undefined); }} />}</Field>;
-}
-
-function rupeeInputError(parsed: RupeeInputParseResult, text: string): string | undefined {
-  if (parsed.status === "valid") return undefined;
-  if (parsed.status === "incomplete") return text ? "Complete the rupee amount with one or two decimal places." : "Enter an amount in rupees.";
-  if (parsed.reason === "unsafe") return "Enter a smaller rupee amount.";
-  return "Enter a non-negative rupee amount with up to two decimal places.";
-}
-
-function editableRupeeText(valuePaise: number | undefined): string {
-  return typeof valuePaise === "number" && Number.isSafeInteger(valuePaise) && valuePaise >= 0
-    ? formatPaiseForRupeeInput(valuePaise)
-    : "";
-}
-
-function formattedMoney(value: KnowledgeJsonValue | undefined): string {
-  const amountPaise = numberValue(value);
-  return amountPaise === undefined ? "Unavailable" : formatKnowledgeMoney(amountPaise);
-}
-
-function TaxVersionSelect({ id, value, taxRule, disabled, onChange }: { readonly id: string; readonly value: string; readonly taxRule: KnowledgeMaster | undefined; readonly disabled: boolean; readonly onChange: (value: string) => void }) {
-  const versions = (taxRule?.taxVersions ?? []).filter((version) => version.status === "active" || version.id === value);
-  return <Field id={id} label="Tax version" required hint={taxRule && !versions.length ? "No active tax versions are available for the selected rule." : undefined}>{(props) => <Select {...props} value={value} disabled={disabled || !taxRule} onChange={(event) => onChange(event.target.value)}><option value="">Select a version</option>{versions.map((version) => <option key={version.id} value={version.id} disabled={version.status !== "active"}>Version {version.versionNumber} · {version.rateBps / 100}% · {version.treatment} · {version.status}</option>)}</Select>}</Field>;
 }
 
 function rowId(value: KnowledgeJsonValue, index: number): string {
@@ -583,11 +543,6 @@ function ReadOnlyStructuredData({ label, value }: { readonly label: string; read
 
 function newRow(field: string): KnowledgeJsonObject {
   const id = `knowledge-${field}-${crypto.randomUUID()}`;
-  if (field === "priceEntries") return {
-    operation: "append",
-    priceEntryId: id,
-    specificationId: null
-  };
   return { id };
 }
 
@@ -641,7 +596,14 @@ function singular(label: string): string {
 function validationPathLabel(path: string): string {
   return path.split(".").map((part) => {
     if (part === "brands") return "Vendors";
-    if (part === "inputAmountPaise") return "Input amount (rupees)";
+    if (part === "priceEntries") return "Budgets";
+    if (/^\d+$/u.test(part) && path.startsWith("priceEntries.")) return `Budget ${Number(part) + 1}`;
+    if (part === "vendorId") return "Vendor";
+    if (part === "uomId") return "Unit of measure";
+    if (part === "taxRuleId" || part === "taxVersionId" || part === "treatment") return "Budget";
+    if (part === "inputAmountPaise") return "Unit budget (₹, before GST)";
+    if (part === "effectiveFrom") return "Starts on";
+    if (part === "effectiveTo") return "Ends on";
     return part;
   }).join(" → ");
 }
@@ -649,7 +611,7 @@ function validationPathLabel(path: string): string {
 function sectionHelp(sectionKey: KnowledgeSectionKey): string {
   return ({
     overview: "Set the item identity and compatible reusable values.",
-    pricing: "Maintain specifications, immutable price-version commands, and internal pricing notes. Enter price amounts in rupees.",
+    pricing: "Maintain Specifications, Vendors, and the unit budgets used by the estimator.",
     "quantity-margin": "Configure priced Quantity slabs and shared basis-point margins. Legacy adjustment slabs retain their existing calculation behavior.",
     scope: "Define applicable modes, surfaces, and explicit exclusions.",
     recommendations: "Relate this item to other stable Basket and Main Line IDs.",
