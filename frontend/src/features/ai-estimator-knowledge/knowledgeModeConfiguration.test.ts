@@ -41,7 +41,7 @@ const configurations: readonly KnowledgeModeConfiguration[] = [
     executionSource: null,
     legacyModeId: null,
     fields: [
-      { id: "field-pmc-mark", type: "text", label: "PMC mark", options: [] }
+      { id: "field-pmc-mark", type: "text", label: "PMC mark", options: [], value: null }
     ]
   },
   {
@@ -53,7 +53,8 @@ const configurations: readonly KnowledgeModeConfiguration[] = [
       id: "field-work-package",
       type: "dropdown",
       label: "Work package",
-      options: ["Carpentry", "Electrical"]
+      options: ["Carpentry", "Electrical"],
+      value: "Carpentry"
     }]
   },
   {
@@ -65,7 +66,8 @@ const configurations: readonly KnowledgeModeConfiguration[] = [
       id: "field-crew-size",
       type: "number",
       label: "Crew size",
-      options: []
+      options: [],
+      value: null
     }]
   }
 ];
@@ -106,7 +108,8 @@ describe("Mode component definition contract", () => {
           id: "field-work-package",
           type: "dropdown",
           label: "Work package",
-          options: ["Carpentry", "Electrical"]
+          options: ["Carpentry", "Electrical"],
+          value: "Carpentry"
         }]
       },
       {
@@ -116,46 +119,87 @@ describe("Mode component definition contract", () => {
         fields: [{ id: "field-crew-size", type: "number", label: "Crew size", options: [] }]
       }
     ]);
-    expect(JSON.stringify(next.modeConfigurations)).not.toContain("value");
+    /* An unanswered component keeps no value key at all, so absent still reads
+       as unanswered rather than as an empty answer. */
+    expect(JSON.stringify(next.modeConfigurations)).not.toContain('"value":null');
     expect(parseKnowledgeModeConfigurations(next.modeConfigurations)).toEqual({
       configurations,
       issues: []
     });
   });
 
-  it("parses historical values as hidden compatibility state and never serializes them", () => {
+  it("round-trips configured values and rejects shapes no component can hold", () => {
     const raw: KnowledgeJsonObject = {
       modeConfigurations: [{
         id: "configuration-pmc",
         modeKind: "pmc",
-        fields: [{
-          id: "field-pmc-mark",
-          type: "text",
-          label: "PMC mark",
-          options: [],
-          value: "A1"
-        }]
+        fields: [
+          { id: "field-pmc-mark", type: "text", label: "PMC mark", options: [], value: "A1" },
+          { id: "field-safety", type: "checkbox", label: "Safety", options: [], value: true },
+          { id: "field-blank", type: "text", label: "Blank", options: [] }
+        ]
       }]
     };
     const parsed = parseKnowledgeModeConfigurations(raw.modeConfigurations);
 
     expect(parsed.issues).toEqual([]);
-    expect(parsed.configurations[0]?.fields[0]).toMatchObject({
-      id: "field-pmc-mark",
-      legacyValue: "A1"
-    });
-    const serialized = withKnowledgeModeConfigurations(raw, parsed.configurations);
-    expect(serialized.modeConfigurations).toEqual([{
+    expect(parsed.configurations[0]?.fields).toEqual([
+      { id: "field-pmc-mark", type: "text", label: "PMC mark", options: [], value: "A1" },
+      { id: "field-safety", type: "checkbox", label: "Safety", options: [], value: true },
+      { id: "field-blank", type: "text", label: "Blank", options: [], value: null }
+    ]);
+    expect(withKnowledgeModeConfigurations(raw, parsed.configurations).modeConfigurations)
+      .toEqual([{
+        id: "configuration-pmc",
+        modeKind: "pmc",
+        fields: [
+          { id: "field-pmc-mark", type: "text", label: "PMC mark", options: [], value: "A1" },
+          { id: "field-safety", type: "checkbox", label: "Safety", options: [], value: true },
+          { id: "field-blank", type: "text", label: "Blank", options: [] }
+        ]
+      }]);
+
+    expect(parseKnowledgeModeConfigurations([{
       id: "configuration-pmc",
       modeKind: "pmc",
-      fields: [{
-        id: "field-pmc-mark",
-        type: "text",
-        label: "PMC mark",
-        options: []
-      }]
+      fields: [{ id: "field-bad", type: "text", label: "Bad", options: [], value: 12 }]
+    }]).issues).toEqual([{
+      path: "modeConfigurations.0.fields.0.value",
+      message: "Component value must be text, a checkbox state, or empty."
     }]);
-    expect(JSON.stringify(serialized.modeConfigurations)).not.toContain("A1");
+  });
+
+  it("rejects values a component type cannot hold", () => {
+    expect(validateKnowledgeModeConfigurations([{
+      id: "configuration-pmc",
+      modeKind: "pmc",
+      executionSource: null,
+      legacyModeId: null,
+      fields: [
+        {
+          id: "field-choice",
+          type: "dropdown",
+          label: "Finish",
+          options: ["Matte"],
+          value: "Gloss"
+        },
+        { id: "field-count", type: "number", label: "Count", options: [], value: "three" },
+        { id: "field-tick", type: "checkbox", label: "Tick", options: [], value: "yes" }
+      ]
+    }])).toEqual([
+      {
+        path: "modeConfigurations.0.fields.0.value",
+        message: "Component value must be one of the allowed options."
+      },
+      {
+        path: "modeConfigurations.0.fields.1.value",
+        message: "Component value must be a number."
+      },
+      {
+        path: "modeConfigurations.0.fields.2.value",
+        message: "A checkbox value must be ticked or cleared."
+      }
+    ]);
   });
 
   it("partitions PMC, Sub-Vendor, and In-house without source crossover", () => {
@@ -218,8 +262,14 @@ describe("Mode component definition contract", () => {
         executionSource: "sub_vendor",
         legacyModeId: null,
         fields: [
-          { id: "field-1", type: "text", label: "Work  package", options: [] },
-          { id: "field-2", type: "radio", label: "Ｗork package", options: ["Phase  One", "phase one"] }
+          { id: "field-1", type: "text", label: "Work  package", options: [], value: null },
+          {
+            id: "field-2",
+            type: "radio",
+            label: "Ｗork package",
+            options: ["Phase  One", "phase one"],
+            value: null
+          }
         ]
       },
       {
@@ -243,7 +293,8 @@ describe("Mode component definition contract", () => {
       id: "field-pmc-mark",
       label: "PMC mark",
       type: "text",
-      options: []
+      options: [],
+      value: null
     }]);
     expect(projectKnowledgeModeFieldSummaries(
       configurations,
@@ -253,7 +304,8 @@ describe("Mode component definition contract", () => {
       id: "field-work-package",
       label: "Work package",
       type: "dropdown",
-      options: ["Carpentry", "Electrical"]
+      options: ["Carpentry", "Electrical"],
+      value: "Carpentry"
     }]);
     expect(projectKnowledgeModeFieldSummaries(
       configurations,
@@ -263,13 +315,14 @@ describe("Mode component definition contract", () => {
       id: "field-crew-size",
       label: "Crew size",
       type: "number",
-      options: []
+      options: [],
+      value: null
     }]);
     expect(JSON.stringify(projectKnowledgeModeFieldSummaries(
       configurations,
       "execution",
       "sub_vendor"
-    ))).not.toContain("value");
+    ))).toContain('"value":"Carpentry"');
   });
 
   it("flags invalid canonical source combinations without assigning them", () => {

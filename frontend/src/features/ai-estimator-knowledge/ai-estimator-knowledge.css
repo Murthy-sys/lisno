@@ -3003,6 +3003,16 @@ body:has(.ui-app-shell[data-role]) .modal .knowledge-dialog-actions .ui-button--
   overflow-wrap: anywhere;
 }
 
+/* Read-only context above a section heading, e.g. the item's Main Basket. */
+.knowledge-section-eyebrow {
+  margin: 0 0 var(--space-1);
+  color: var(--role-ink-muted, var(--color-text-muted));
+  font-size: 0.8125rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
 .knowledge-page--item-workspace .knowledge-overview__uom-control-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -3204,6 +3214,38 @@ body:has(.ui-app-shell[data-role]) .modal .knowledge-dialog-actions .ui-button--
    which render 36px tall and miss the 44px touch target at every viewport. */
 .knowledge-page--item-workspace .knowledge-mode-surfaces__state .ui-button {
   min-block-size: 44px;
+}
+
+/* The shared description of each selected Surface, read-only context beside the
+   picker so the author can tell similarly named surfaces apart. */
+.knowledge-page--item-workspace .knowledge-mode-surfaces__selected {
+  display: grid;
+  gap: var(--space-2);
+  min-inline-size: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.knowledge-page--item-workspace .knowledge-mode-surfaces__selected > li {
+  min-inline-size: 0;
+  padding-inline-start: var(--space-3);
+  border-inline-start: 2px solid var(--color-border);
+}
+
+.knowledge-page--item-workspace .knowledge-mode-surfaces__selected-name {
+  margin: 0;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.knowledge-page--item-workspace .knowledge-mode-surfaces__selected-description {
+  margin: 0;
+  color: var(--role-ink-muted, var(--color-text-muted));
+  font-size: var(--text-sm);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
 }
 
 .knowledge-page--item-workspace .knowledge-mode-surfaces__error {

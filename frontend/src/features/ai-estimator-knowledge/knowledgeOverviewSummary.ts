@@ -96,13 +96,9 @@ export interface KnowledgeOverviewSpecificationDetail {
 
 export interface KnowledgeOverviewRecommendationDetail {
   readonly option: KnowledgeOverviewReference;
-  readonly targetBasket: KnowledgeOverviewReference;
-  readonly targetMainLine: KnowledgeOverviewReference;
-  readonly type: string | null;
+  readonly name: string | null;
   readonly priority: KnowledgeOverviewReference | null;
   readonly reason: string | null;
-  readonly quantityRelationship: string | null;
-  readonly quantityValue: string | null;
   readonly dependency: boolean | null;
   readonly active: boolean | null;
 }
@@ -362,6 +358,7 @@ export function projectKnowledgeOverviewSummary(
       prices,
       sharedQuantityMargin,
       scope,
+      recommendations,
       recommendationDetails,
       qualityDetails,
       execution,
@@ -445,32 +442,18 @@ function projectRecommendation(
   context: ProjectionContext
 ): KnowledgeOverviewRecommendationDetail {
   const id = requiredStableId(recommendation.id)!;
-  const targetBasketId = optionalStableId(recommendation.targetBasketId);
-  const targetMainLineId = optionalStableId(recommendation.targetMainLineId);
-  const targetBasket = targetBasketId
-    ? resolveNamedEntity(targetBasketId, context.baskets.get(targetBasketId)?.name)
-    : unavailableReference("");
-  const targetMainLine = targetMainLineId
-    ? resolveNamedEntity(
-        targetMainLineId,
-        context.items.get(targetMainLineId)?.mainLineName
-      )
-    : unavailableReference("");
+  const name = optionalText(recommendation.name);
   const priorityId = optionalStableId(recommendation.priorityId);
 
   return {
     option: {
       id,
-      label: targetMainLine.label,
-      state: targetMainLine.state
+      label: name ?? KNOWLEDGE_OVERVIEW_UNAVAILABLE_LABEL,
+      state: name ? "available" : "unavailable"
     },
-    targetBasket,
-    targetMainLine,
-    type: optionalText(recommendation.type),
+    name,
     priority: priorityId ? resolveMaster("priorities", priorityId, context) : null,
     reason: optionalText(recommendation.reason),
-    quantityRelationship: optionalText(recommendation.quantityRelationship),
-    quantityValue: optionalText(recommendation.quantityValue),
     dependency: optionalBoolean(recommendation.dependency),
     active: optionalBoolean(recommendation.active)
   };
@@ -541,6 +524,7 @@ function projectSectionCards(input: {
   readonly prices: readonly KnowledgeOverviewPriceDetail[];
   readonly sharedQuantityMargin: KnowledgeOverviewSharedQuantityMargin;
   readonly scope: KnowledgeJsonObject | undefined;
+  readonly recommendations: KnowledgeJsonObject | undefined;
   readonly recommendationDetails: readonly KnowledgeOverviewRecommendationDetail[];
   readonly qualityDetails: readonly KnowledgeOverviewQualityDetail[];
   readonly execution: KnowledgeJsonObject | undefined;
@@ -595,21 +579,25 @@ function projectSectionCards(input: {
     },
     {
       key: "recommendations",
-      label: "Recommendations",
+      label: "Recommendation & Exclusions",
       sourceSectionKeys: ["recommendations"],
       counts: [
-        { label: "Recommendations", value: input.recommendationDetails.length }
+        { label: "Recommendations", value: input.recommendationDetails.length },
+        {
+          label: "Exclusions",
+          value: objectRows(input.recommendations?.exclusions).length
+        }
       ],
       highlights: [
         referenceListHighlight(
-          "Targets",
-          input.recommendationDetails.map(({ targetMainLine }) => targetMainLine)
+          "Recommendations",
+          input.recommendationDetails.map(({ option }) => option)
         )
       ]
     },
     {
       key: "quality",
-      label: "Quality",
+      label: "Quality Parameter",
       sourceSectionKeys: ["quality"],
       counts: [
         { label: "Parameters", value: input.qualityDetails.length },

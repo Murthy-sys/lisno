@@ -21,6 +21,7 @@ import {
 import {
   isChoiceField,
   knowledgeModeFieldTypeLabel,
+  knowledgeModeFieldValueLabel,
   type KnowledgeModeFieldSummary
 } from "./knowledgeModeConfiguration";
 import type { KnowledgeOverviewEditableField } from "./knowledgeSectionPayload";
@@ -412,8 +413,8 @@ export function KnowledgeOverviewPanel({
           <Surface as="section" className="knowledge-overview__summary-panel" aria-labelledby="knowledge-overview-recommendations-title">
           <SummaryHeading
             id="knowledge-overview-recommendations-title"
-            title="Recommendations"
-            actionLabel="Open Recommendations"
+            title="Recommendation & Exclusions"
+            actionLabel="Open Recommendation & Exclusions"
             onAction={() => onOpenSection("recommendations")}
           />
           <SourceBoundary
@@ -439,12 +440,8 @@ export function KnowledgeOverviewPanel({
                   <DefinitionList
                     ariaLive="polite"
                     definitions={[
-                      { label: "Target Main Basket", value: referenceLabel(selectedRecommendation.targetBasket) },
-                      { label: "Target Main Line", value: referenceLabel(selectedRecommendation.targetMainLine) },
-                      { label: "Type", value: displayText(selectedRecommendation.type) },
+                      { label: "Recommendation", value: displayText(selectedRecommendation.name) },
                       { label: "Reason", value: displayText(selectedRecommendation.reason) },
-                      { label: "Quantity relationship", value: displayText(selectedRecommendation.quantityRelationship) },
-                      { label: "Quantity value", value: displayText(selectedRecommendation.quantityValue) },
                       { label: "Dependency", value: formatBoolean(selectedRecommendation.dependency) },
                       { label: "Active", value: formatBoolean(selectedRecommendation.active) }
                     ]}
@@ -460,8 +457,8 @@ export function KnowledgeOverviewPanel({
           <Surface as="section" className="knowledge-overview__summary-panel knowledge-overview__summary-panel--wide" aria-labelledby="knowledge-overview-quality-title">
           <SummaryHeading
             id="knowledge-overview-quality-title"
-            title="Quality"
-            actionLabel="Open Quality"
+            title="Quality Parameter"
+            actionLabel="Open Quality Parameter"
             onAction={() => onOpenSection("quality")}
           />
           <SourceBoundary keys={["quality"]} states={sectionStates}>
@@ -616,7 +613,8 @@ function ModeComponentDefinitions({
                 value: isChoiceField(field.type) && field.options.length
                   ? field.options.join(", ")
                   : null
-              }
+              },
+              { label: "Value", value: knowledgeModeFieldValueLabel(field) }
             ]}
           />
         </li>

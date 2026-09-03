@@ -194,10 +194,12 @@ export function validateKnowledgeSection(
   if (sectionKey === "scope") rows("exclusions").forEach((row, index) => {
     if (!string(row.targetBasketId) && !string(row.targetMainLineId)) issues.push({ path: `exclusions.${index}`, message: "Choose a target Basket or Main Line." });
   });
+  if (sectionKey === "recommendations") rows("exclusions").forEach((row, index) => {
+    requireString(row, "name", `exclusions.${index}`);
+  });
   if (sectionKey === "recommendations") rows("recommendations").forEach((row, index) => {
     const path = `recommendations.${index}`;
-    for (const key of ["targetBasketId", "targetMainLineId", "type", "reason", "quantityRelationship"]) requireString(row, key, path);
-    if (row.quantityRelationship !== "same_quantity") requireCanonical(row.quantityValue, `${path}.quantityValue`, issues);
+    for (const key of ["name", "priorityId"]) requireString(row, key, path);
   });
   if (sectionKey === "quality") rows("parameters").forEach((row, index) => {
     const path = `parameters.${index}`;

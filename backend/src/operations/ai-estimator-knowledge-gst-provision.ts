@@ -11,11 +11,14 @@ import {
   normalizeKnowledgeIdentity
 } from "../domain/ai-estimator-knowledge.js";
 import {
-  AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY
+  AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY,
+  AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_SYSTEM_ACTOR_ID,
+  fixedGstRuleDocument,
+  fixedGstVersionDocument
 } from "../domain/ai-estimator-knowledge-fixed-gst.js";
 
 export const AI_ESTIMATOR_KNOWLEDGE_GST_PROVISION_SYSTEM_ACTOR_ID =
-  "system-ai-estimator-knowledge-gst-provision-v1" as const;
+  AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_SYSTEM_ACTOR_ID;
 export const AI_ESTIMATOR_KNOWLEDGE_GST_PROVISION_MAINTENANCE_CONFIRMATION =
   "ai_estimator_knowledge_gst_provision_has_no_other_writers" as const;
 export const AI_ESTIMATOR_KNOWLEDGE_GST_PROVISION_BACKUP_CONFIRMATION =
@@ -500,45 +503,11 @@ function createChange(kind: RecordKind, timestamp: Date): AppliedChange {
 }
 
 function createRuleDocument(timestamp: Date): Document {
-  const rule = AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.rule;
-  return {
-    _id: rule.id,
-    code: rule.code,
-    codeNormalized: normalizeKnowledgeIdentity(rule.code),
-    name: rule.name,
-    nameNormalized: normalizeKnowledgeIdentity(rule.name),
-    description: null,
-    displayOrder: rule.displayOrder,
-    status: rule.status,
-    version: 1,
-    dependencyEpoch: 0,
-    createdById: AI_ESTIMATOR_KNOWLEDGE_GST_PROVISION_SYSTEM_ACTOR_ID,
-    updatedById: AI_ESTIMATOR_KNOWLEDGE_GST_PROVISION_SYSTEM_ACTOR_ID,
-    createdAt: timestamp,
-    updatedAt: timestamp,
-    archivedAt: null,
-    archivedById: null
-  };
+  return fixedGstRuleDocument(timestamp) as Document;
 }
 
 function createVersionDocument(timestamp: Date): Document {
-  const policy = AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY;
-  return {
-    _id: policy.version.id,
-    taxRuleId: policy.rule.id,
-    versionNumber: policy.version.versionNumber,
-    rateBps: policy.version.rateBps,
-    treatment: policy.version.treatment,
-    applicability: policy.version.applicability,
-    effectiveFrom: new Date(policy.version.effectiveFrom),
-    effectiveTo: null,
-    status: policy.version.status,
-    version: 1,
-    createdById: AI_ESTIMATOR_KNOWLEDGE_GST_PROVISION_SYSTEM_ACTOR_ID,
-    updatedById: AI_ESTIMATOR_KNOWLEDGE_GST_PROVISION_SYSTEM_ACTOR_ID,
-    createdAt: timestamp,
-    updatedAt: timestamp
-  };
+  return fixedGstVersionDocument(timestamp) as Document;
 }
 
 function createAuditDocument(kind: RecordKind, timestamp: Date): AuditDocument {

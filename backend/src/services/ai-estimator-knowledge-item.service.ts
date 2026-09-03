@@ -20,6 +20,8 @@ import {
 } from "../domain/ai-estimator-knowledge-calculation.js";
 import {
   AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY,
+  fixedGstRuleDocument,
+  fixedGstVersionDocument,
   isExactFixedGstRule,
   isExactFixedGstVersion
 } from "../domain/ai-estimator-knowledge-fixed-gst.js";
@@ -62,6 +64,7 @@ import { AiEstimatorKnowledgeTaxRuleModel } from "../models/AiEstimatorKnowledge
 import { AiEstimatorKnowledgeTaxVersionModel } from "../models/AiEstimatorKnowledgeTaxVersion.js";
 import { AiEstimatorKnowledgeUomModel } from "../models/AiEstimatorKnowledgeUom.js";
 import { AiEstimatorKnowledgeVendorModel } from "../models/AiEstimatorKnowledgeVendor.js";
+import type { AuditAction } from "../domain/audit-actions.js";
 import type { AuditService } from "./audit.service.js";
 import type { PublicUser } from "./auth.service.js";
 import {
@@ -678,11 +681,19 @@ export function createAiEstimatorKnowledgeItemService(
           persistedPayload,
           session
         );
+        /* Only "not applicable" is the author's call. Otherwise the saved
+           content decides, so the flag cannot drift from the payload. */
+        const storedApplicability: KnowledgeSectionApplicability =
+          input.applicability === "not_applicable"
+            ? "not_applicable"
+            : hasKnowledgeSectionContent(persistedPayload)
+              ? "configured"
+              : "not_configured";
         const updatedSection = await AiEstimatorKnowledgeSectionModel.findOneAndUpdate(
           { _id: section._id, version: input.expectedVersion, revisionId },
           {
             $set: {
-              applicability: input.applicability ?? "configured",
+              applicability: storedApplicability,
               payload: persistedPayload,
               updatedById: storedActor.id,
               updatedAt: occurredAt
@@ -721,7 +732,7 @@ export function createAiEstimatorKnowledgeItemService(
           entityId: requiredString(section._id),
           occurredAt: occurredAt.toISOString(),
           oldValues: { mainLineId, revisionId, sectionKey, sectionVersion: input.expectedVersion, aggregateVersion: expectedAggregateVersion },
-          newValues: { sectionVersion: input.expectedVersion + 1, aggregateVersion: expectedAggregateVersion + 1, applicability: input.applicability ?? "configured" }
+          newValues: { sectionVersion: input.expectedVersion + 1, aggregateVersion: expectedAggregateVersion + 1, applicability: storedApplicability }
         }, session);
         return {
           section: asRow(updatedSection)!,
@@ -1092,7 +1103,12 @@ async function materializePriceCommands(input: {
     });
   }
   const fixedGstPolicy = containsPriceMutation
-    ? await requireFixedGstPolicy(input.session)
+    ? await requireFixedGstPolicy({
+        actorId: input.actorId,
+        occurredAt: input.occurredAt,
+        session: input.session,
+        audit: input.audit
+      })
     : null;
   for (const [commandIndex, candidate] of commands.entries()) {
     const command = asRow(candidate);
@@ -1127,7 +1143,7 @@ async function materializePriceCommands(input: {
       assertCompatibilityAppendUsesFixedGst(command, commandIndex);
     }
     if (!fixedGstPolicy) {
-      fixedGstPolicyUnavailable(commandIndex);
+      fixedGstPolicyMismatch();
     }
     const sourcePriceVersionId = isBudgetCommand
       ? optionalString(command.sourcePriceVersionId)
@@ -1324,10 +1340,19 @@ async function materializePriceCommands(input: {
   return { ...compatiblePayload, priceEntries: references };
 }
 
-async function requireFixedGstPolicy(session: ClientSession): Promise<{
+async function requireFixedGstPolicy(input: {
+  actorId: string;
+  occurredAt: Date;
+  session: ClientSession;
+  audit: Pick<AuditService, "appendInMongoTransaction">;
+}): Promise<{
   rule: Row;
   version: Row;
 }> {
+  /* GST is a fixed 18% system policy, not something a Super Admin configures.
+     A database that was never provisioned still has to price correctly, so the
+     canonical rows are written on first use inside the caller's transaction. */
+  await materializeFixedGstPolicy(input);
   const rule = asRow(await AiEstimatorKnowledgeTaxRuleModel.findOneAndUpdate(
     {
       _id: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.rule.id,
@@ -1337,17 +1362,100 @@ async function requireFixedGstPolicy(session: ClientSession): Promise<{
     {
       returnDocument: "after",
       runValidators: true,
-      session,
+      session: input.session,
       timestamps: false
     }
   ).lean().exec());
   const version = asRow(await AiEstimatorKnowledgeTaxVersionModel.findById(
     AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.version.id
-  ).session(session).lean().exec());
+  ).session(input.session).lean().exec());
   if (!isExactFixedGstRule(rule) || !isExactFixedGstVersion(version)) {
-    fixedGstPolicyUnavailable();
+    fixedGstPolicyMismatch();
   }
   return { rule: rule!, version: version! };
+}
+
+/**
+ * Writes the canonical GST 18% rule and version when they are absent. Rows that
+ * already exist are never rewritten: a stored tax policy backs money that was
+ * already quoted, so drift is reported rather than silently corrected.
+ */
+async function materializeFixedGstPolicy(input: {
+  actorId: string;
+  occurredAt: Date;
+  session: ClientSession;
+  audit: Pick<AuditService, "appendInMongoTransaction">;
+}): Promise<void> {
+  const policy = AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY;
+  await materializeFixedGstRecord({
+    ...input,
+    model: AiEstimatorKnowledgeTaxRuleModel as unknown as FixedGstRecordModel,
+    id: policy.rule.id,
+    document: () => fixedGstRuleDocument(input.occurredAt),
+    action: "ai_estimator_knowledge_master_created",
+    entityType: "ai_estimator_knowledge_tax"
+  });
+  await materializeFixedGstRecord({
+    ...input,
+    model: AiEstimatorKnowledgeTaxVersionModel as unknown as FixedGstRecordModel,
+    id: policy.version.id,
+    document: () => fixedGstVersionDocument(input.occurredAt),
+    action: "ai_estimator_knowledge_tax_version_created",
+    entityType: "ai_estimator_knowledge_tax_version"
+  });
+}
+
+async function materializeFixedGstRecord(input: {
+  actorId: string;
+  occurredAt: Date;
+  session: ClientSession;
+  audit: Pick<AuditService, "appendInMongoTransaction">;
+  model: FixedGstRecordModel;
+  id: string;
+  document: () => Record<string, unknown>;
+  action: AuditAction;
+  entityType: string;
+}): Promise<void> {
+  const existing = await input.model.findById(input.id)
+    .session(input.session).lean().exec();
+  if (existing) return;
+  const document = input.document();
+  try {
+    await input.model.create([document], { session: input.session });
+  } catch (error) {
+    /* A concurrent save in another transaction may have inserted the same
+       canonical row first, which is the outcome this wanted anyway. */
+    if (isDuplicateKeyError(error)) return;
+    throw error;
+  }
+  await input.audit.appendInMongoTransaction({
+    actorId: input.actorId,
+    action: input.action,
+    entityType: input.entityType,
+    entityId: input.id,
+    occurredAt: input.occurredAt.toISOString(),
+    newValues: {
+      fixedGstPolicyId: input.id,
+      rateBps: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.version.rateBps,
+      materializedOnDemand: true
+    },
+    reason: "Apply the fixed GST 18% policy to a Draft budget."
+  }, input.session);
+}
+
+/** The narrow slice of a Mongoose model this needs, so both tax models fit. */
+interface FixedGstRecordModel {
+  findById(id: string): {
+    session(session: ClientSession): {
+      lean(): { exec(): Promise<unknown> };
+    };
+  };
+  create(documents: readonly unknown[], options: { session: ClientSession }): Promise<unknown>;
+}
+
+function isDuplicateKeyError(error: unknown): boolean {
+  return typeof error === "object" && error !== null && "code" in error &&
+    (error as { code?: unknown }).code === 11000;
 }
 
 function assertCompatibilityAppendUsesFixedGst(command: Row, commandIndex: number): void {
@@ -1375,7 +1483,7 @@ function assertFixedGstCoverage(
     effectiveFrom < policyFrom ||
     (policyTo !== null && (effectiveTo === null || effectiveTo > new Date(policyTo)))
   ) {
-    fixedGstPolicyUnavailable(commandIndex);
+    fixedGstOutsideCoverage(commandIndex);
   }
 }
 
@@ -1413,6 +1521,13 @@ async function assertResolvableRetainedPriceWindows(input: {
   }
 }
 
+function hasKnowledgeSectionContent(payload: unknown): boolean {
+  return payload !== null &&
+    typeof payload === "object" &&
+    !Array.isArray(payload) &&
+    Object.keys(payload as Record<string, unknown>).length > 0;
+}
+
 function invalidBudgetSource(commandIndex: number): never {
   const message = "The saved budget is no longer available in this Draft. Reload Budgeting and try again.";
   throw new ApiError(
@@ -1447,16 +1562,32 @@ function invalidBudgetRelationships(
   );
 }
 
-function fixedGstPolicyUnavailable(commandIndex?: number): never {
-  const message = "Budgeting is temporarily unavailable because GST could not be applied. Try again later.";
+/**
+ * The stored GST rows exist but no longer match the system policy. Retrying
+ * cannot help, so this never claims to be temporary.
+ */
+function fixedGstPolicyMismatch(): never {
   throw new ApiError(
-    503,
-    "FIXED_GST_POLICY_UNAVAILABLE",
-    message,
-    commandIndex === undefined
-      ? undefined
-      : { [`payload.priceEntries.${commandIndex}`]: message }
+    409,
+    "FIXED_GST_POLICY_MISMATCH",
+    "The stored GST policy does not match the system GST 18% policy.",
+    undefined
   );
+}
+
+function fixedGstOutsideCoverage(commandIndex: number): never {
+  const from = new Date(AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.version.effectiveFrom);
+  const message = `GST 18% applies from ${formatPolicyDate(from)}. Choose a start date on or after that.`;
+  throw new ApiError(
+    422,
+    "FIXED_GST_OUTSIDE_COVERAGE",
+    message,
+    { [`payload.priceEntries.${commandIndex}.effectiveFrom`]: message }
+  );
+}
+
+function formatPolicyDate(value: Date): string {
+  return value.toISOString().slice(0, 10);
 }
 
 function effectiveBudgetOverlap(path: string): never {
@@ -1580,46 +1711,12 @@ function preserveModeConfigurationCompatibility(
       issues
     });
 
-    const previousFields = new Map<string, Row>();
-    for (const field of structuredRows(previous?.fields)) {
-      const fieldId = optionalString(field.id) ?? optionalString(field._id);
-      if (fieldId) previousFields.set(fieldId, field);
-    }
+    /* Component values are authored by the Super Admin, so a write owns them
+       outright: it may add one, change one, or clear one by omitting the key. */
     const fields = Array.isArray(next.fields)
-      ? next.fields.map((fieldValue, fieldIndex) => {
+      ? next.fields.map((fieldValue) => {
           const nextField = asRow(fieldValue);
-          if (!nextField) return structuredClone(fieldValue);
-          const fieldPath = `${configurationPath}.fields.${fieldIndex}`;
-          const fieldId = optionalString(nextField.id) ?? optionalString(nextField._id);
-          const previousField = fieldId ? previousFields.get(fieldId) : undefined;
-          const previousHasValue = Boolean(previousField && Object.hasOwn(previousField, "value"));
-          const nextHasValue = Object.hasOwn(nextField, "value");
-
-          if (nextHasValue && !previousHasValue) {
-            issues.push(validationIssue(
-              `${fieldPath}.value`,
-              "MODE_VALUE_COMPATIBILITY_ONLY",
-              "Mode component values are compatibility-only and cannot be introduced by a new write."
-            ));
-          } else if (
-            nextHasValue &&
-            previousField &&
-            !isDeepStrictEqual(previousField.value, nextField.value)
-          ) {
-            issues.push(validationIssue(
-              `${fieldPath}.value`,
-              "IMMUTABLE_MODE_VALUE",
-              "The retained historical Mode component value is immutable."
-            ));
-          }
-
-          if (!nextHasValue && previousHasValue && previousField) {
-            return {
-              ...structuredClone(nextField),
-              value: structuredClone(previousField.value)
-            };
-          }
-          return structuredClone(nextField);
+          return nextField ? structuredClone(nextField) : structuredClone(fieldValue);
         })
       : structuredClone(next.fields);
     const compatible = { ...structuredClone(next), fields };
@@ -2308,11 +2405,9 @@ async function coordinateBasketDependencies(
 function basketTargetIds(sectionKey: KnowledgeSectionKey, payload: Row): Set<string> {
   const candidates = sectionKey === "scope"
     ? payload.exclusions
-    : sectionKey === "recommendations"
-      ? payload.recommendations
-      : sectionKey === "advanced"
-        ? payload.dependencies
-        : null;
+    : sectionKey === "advanced"
+      ? payload.dependencies
+      : null;
   return new Set(
     structuredRows(candidates)
       .map((candidate) => optionalString(candidate.targetBasketId))
@@ -2822,13 +2917,13 @@ function itemRelationsForRows(mainLineId: string, rows: Row[]): Array<{
   }> = [];
   for (const row of rows) {
     const payload = payloadFor(row);
-    const candidates = row.sectionKey === "recommendations"
-      ? payload.recommendations
-      : row.sectionKey === "advanced"
-        ? payload.dependencies
-        : row.sectionKey === "scope"
-          ? payload.exclusions
-          : null;
+    /* Recommendations and their Exclusions are free text now, so only the
+       stable-ID relationships still form edges. */
+    const candidates = row.sectionKey === "advanced"
+      ? payload.dependencies
+      : row.sectionKey === "scope"
+        ? payload.exclusions
+        : null;
     if (!Array.isArray(candidates)) continue;
     for (const candidate of candidates) {
       const relation = asRow(candidate);

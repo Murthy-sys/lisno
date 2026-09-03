@@ -471,15 +471,13 @@ describe("OpenAPI and Swagger UI", () => {
     });
     expect(componentSchemas().KnowledgeModeNonChoiceField).not.toHaveProperty("properties.value");
     expect(componentSchemas().KnowledgeModeChoiceField).not.toHaveProperty("properties.value");
-    expect(componentSchemas().KnowledgeLegacyValuedModeField).toMatchObject({
-      deprecated: true,
+    expect(componentSchemas().KnowledgeValuedModeField).toMatchObject({
       oneOf: [
-        { $ref: "#/components/schemas/KnowledgeLegacyValuedNonChoiceModeField" },
-        { $ref: "#/components/schemas/KnowledgeLegacyValuedChoiceModeField" }
+        { $ref: "#/components/schemas/KnowledgeValuedNonChoiceModeField" },
+        { $ref: "#/components/schemas/KnowledgeValuedChoiceModeField" }
       ]
     });
-    expect(componentSchemas().KnowledgeLegacyValuedNonChoiceModeField).toMatchObject({
-      deprecated: true,
+    expect(componentSchemas().KnowledgeValuedNonChoiceModeField).toMatchObject({
       type: "object",
       additionalProperties: false,
       required: ["id", "type", "label", "options", "value"],
@@ -492,14 +490,13 @@ describe("OpenAPI and Swagger UI", () => {
         }
       }
     });
-    expect(componentSchemas().KnowledgeLegacyValuedNonChoiceModeField).toMatchObject({
+    expect(componentSchemas().KnowledgeValuedNonChoiceModeField).toMatchObject({
       properties: {
         type: { enum: ["text", "textarea", "number", "checkbox"] },
         options: { type: "array", maxItems: 0 }
       }
     });
-    expect(componentSchemas().KnowledgeLegacyValuedChoiceModeField).toMatchObject({
-      deprecated: true,
+    expect(componentSchemas().KnowledgeValuedChoiceModeField).toMatchObject({
       properties: {
         type: { enum: ["radio", "dropdown"] },
         options: {

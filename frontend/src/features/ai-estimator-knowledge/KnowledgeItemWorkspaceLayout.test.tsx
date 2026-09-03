@@ -175,11 +175,11 @@ describe("Super Admin knowledge item workspace layout", () => {
       expect(screen.getByRole("region", { name })).toHaveClass("knowledge-repeater");
     }
     expect(
-      screen.getByRole("heading", { name: "Recommendations", level: 2 })
+      screen.getByRole("heading", { name: "Recommendation & Exclusions", level: 2 })
         .closest(".knowledge-section-editor")
     ).toHaveClass("knowledge-section-editor");
     expect(
-      screen.getByRole("heading", { name: "Quality", level: 2 })
+      screen.getByRole("heading", { name: "Quality Parameter", level: 2 })
         .closest(".knowledge-section-editor")
     ).toHaveClass("knowledge-section-editor");
   });

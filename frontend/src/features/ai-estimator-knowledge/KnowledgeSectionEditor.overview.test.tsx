@@ -141,9 +141,7 @@ describe("knowledge Overview and primary UOM editors", () => {
             id: "recommendation-1",
             targetBasketId: "basket-2",
             targetMainLineId: "line-2",
-            type: "recommended",
             reason: "Recommendation reason",
-            quantityRelationship: "same_quantity",
             dependency: false,
             active: true
           }] }}
@@ -174,7 +172,7 @@ describe("knowledge Overview and primary UOM editors", () => {
     );
 
     const pricingEditor = screen.getByRole("region", { name: "Specifications" }).closest(".knowledge-section-editor");
-    const recommendationsEditor = screen.getByRole("heading", { name: "Recommendations", level: 2 }).closest(".knowledge-section-editor");
+    const recommendationsEditor = screen.getByRole("heading", { name: "Recommendation & Exclusions", level: 2 }).closest(".knowledge-section-editor");
     const executionEditor = screen.getByRole("heading", { name: "Execution", level: 2 }).closest(".knowledge-section-editor");
     const advancedEditor = screen.getByRole("heading", { name: "Advanced", level: 2 }).closest(".knowledge-section-editor");
     expect(pricingEditor).not.toBeNull();

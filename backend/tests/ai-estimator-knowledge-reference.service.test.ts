@@ -373,15 +373,13 @@ describe("AI estimator knowledge reference service", () => {
         sectionKey: "recommendations",
         applicability: "configured",
         payload: {
+          /* Named text, so this row no longer blocks the Basket. Scope and
+             Advanced below still carry the historical reference. */
           recommendations: [{
             id: "inactive-historical-recommendation",
-            targetBasketId: referencedBasket.id,
-            targetMainLineId: "historical-target-line",
-            type: "recommended",
-            priorityId: null,
+            name: "Historical recommendation",
+            priorityId: AI_ESTIMATOR_KNOWLEDGE_CANONICAL_PRIORITY_IDS.high,
             reason: "Retained recommendation history",
-            quantityRelationship: "same_quantity",
-            quantityValue: null,
             dependency: false,
             active: false
           }]
@@ -434,7 +432,8 @@ describe("AI estimator knowledge reference service", () => {
         id: referencedBasket.id,
         name: referencedBasket.name,
         impact: expect.objectContaining({
-          historicalReferenceCount: 3,
+          /* Scope and Advanced only; Recommendations no longer bind a Basket. */
+          historicalReferenceCount: 2,
           canDelete: false,
           blockers: [expect.objectContaining({ code: "HAS_HISTORICAL_REFERENCES" })]
         })

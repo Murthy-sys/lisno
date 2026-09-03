@@ -20,7 +20,61 @@ export const AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY = Object.freeze({
   })
 });
 
+/**
+ * The actor recorded against the canonical GST rows, whether they were written
+ * by the provisioning operation or materialised on first use. Both paths write
+ * the same identity so a row cannot be told apart by its origin.
+ */
+export const AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_SYSTEM_ACTOR_ID =
+  "system-ai-estimator-knowledge-gst-provision-v1" as const;
+
 export type FixedGstRow = Readonly<Record<string, unknown>>;
+
+export function fixedGstRuleDocument(
+  timestamp: Date
+): Record<string, unknown> {
+  const rule = AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.rule;
+  return {
+    _id: rule.id,
+    code: rule.code,
+    codeNormalized: normalizeKnowledgeIdentity(rule.code),
+    name: rule.name,
+    nameNormalized: normalizeKnowledgeIdentity(rule.name),
+    description: null,
+    displayOrder: rule.displayOrder,
+    status: rule.status,
+    version: 1,
+    dependencyEpoch: 0,
+    createdById: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_SYSTEM_ACTOR_ID,
+    updatedById: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_SYSTEM_ACTOR_ID,
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    archivedAt: null,
+    archivedById: null
+  };
+}
+
+export function fixedGstVersionDocument(
+  timestamp: Date
+): Record<string, unknown> {
+  const policy = AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY;
+  return {
+    _id: policy.version.id,
+    taxRuleId: policy.rule.id,
+    versionNumber: policy.version.versionNumber,
+    rateBps: policy.version.rateBps,
+    treatment: policy.version.treatment,
+    applicability: policy.version.applicability,
+    effectiveFrom: new Date(policy.version.effectiveFrom),
+    effectiveTo: null,
+    status: policy.version.status,
+    version: 1,
+    createdById: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_SYSTEM_ACTOR_ID,
+    updatedById: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_SYSTEM_ACTOR_ID,
+    createdAt: timestamp,
+    updatedAt: timestamp
+  };
+}
 
 export function isExactFixedGstRule(row: FixedGstRow | null | undefined): boolean {
   const policy = AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.rule;

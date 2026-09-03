@@ -250,7 +250,7 @@ describe("KnowledgeConflictReview Mode Overview projection", () => {
 });
 
 describe("KnowledgeConflictReview Advanced Mode projection", () => {
-  it("groups source-specific component definitions and hides answers and raw identities", async () => {
+  it("groups source-specific component definitions with their values and hides raw identities", async () => {
     render(
       <KnowledgeConflictReview
         sectionKey="advanced"
@@ -276,7 +276,7 @@ describe("KnowledgeConflictReview Advanced Mode projection", () => {
               type: "dropdown",
               label: "Installation stage",
               options: ["Preparation", "Installation"],
-              value: "private Sub-Vendor answer"
+              value: "Installation"
             }]
           }, {
             id: "private-in-house-configuration-id",
@@ -320,11 +320,14 @@ describe("KnowledgeConflictReview Advanced Mode projection", () => {
       "Execution · In-house · Component 1 · Component labelSupervisor required"
     );
     expect(review).toHaveTextContent("Mode recovery 1 · Component 1 · Component labelHistorical note");
+    expect(review).toHaveTextContent("PMC · Component 1 · Valueprivate PMC answer");
+    expect(review).toHaveTextContent(
+      "Execution · Sub-Vendor · Component 1 · ValueInstallation"
+    );
+    expect(review).toHaveTextContent("Execution · In-house · Component 1 · ValueNo");
+    expect(review).toHaveTextContent("Mode recovery 1 · Component 1 · Valueprivate recovery answer");
 
     for (const privateValue of [
-      "private PMC answer",
-      "private Sub-Vendor answer",
-      "private recovery answer",
       "private-pmc-configuration-id",
       "private-pmc-component-id",
       "private-sub-vendor-configuration-id",
@@ -336,7 +339,6 @@ describe("KnowledgeConflictReview Advanced Mode projection", () => {
     ]) {
       expect(review).not.toHaveTextContent(privateValue);
     }
-    expect(review).not.toHaveTextContent("Value");
 
     const results = await axe.run(document.body, {
       rules: { "color-contrast": { enabled: false } }

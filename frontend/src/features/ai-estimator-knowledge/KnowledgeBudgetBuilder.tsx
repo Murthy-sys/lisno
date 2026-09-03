@@ -86,6 +86,7 @@ export function KnowledgeBudgetBuilder({
   const [pendingFocus, setPendingFocus] = useState<{ readonly key: string; readonly field: FocusTarget } | null>(null);
   const setBudgetRef = useRef<HTMLButtonElement>(null);
   const focusTargets = useRef(new Map<string, HTMLElement>());
+  const lastValidationAttempt = useRef(0);
   const builderId = useId();
 
   const activeVendors = useMemo(() => selectableMasters(vendors), [vendors]);
@@ -125,7 +126,13 @@ export function KnowledgeBudgetBuilder({
   }, [expandedKey, pendingFocus, rows]);
 
   useEffect(() => {
-    if (validationAttempt <= 0) return;
+    if (validationAttempt === 0) {
+      lastValidationAttempt.current = 0;
+      return;
+    }
+    /* Same rule as the section editor: only a new save attempt may move focus,
+       so editing a budget row does not yank the caret to another row. */
+    if (validationAttempt <= lastValidationAttempt.current) return;
     const firstIssue = issues.find(({ path }) => /^priceEntries\.\d+(?:\.|$)/u.test(path));
     if (!firstIssue) return;
     const match = /^priceEntries\.(\d+)(?:\.([^\.]+))?/u.exec(firstIssue.path);
@@ -133,6 +140,7 @@ export function KnowledgeBudgetBuilder({
     const index = Number(match[1]);
     const row = rows[index];
     if (!row) return;
+    lastValidationAttempt.current = validationAttempt;
     const field = visibleFocusField(match[2]);
     setExpandedKey(row.key);
     setPendingFocus({ key: row.key, field: availableFocusTarget(field) });

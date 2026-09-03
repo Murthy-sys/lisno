@@ -1748,13 +1748,9 @@ describe("AI estimator knowledge integrated replica-set invariants", { timeout: 
     source = await updateDraftSection(services.item, source, "recommendations", {
       recommendations: [{
         id: "inactive-recommendation",
-        targetBasketId: BASKET_ID,
-        targetMainLineId: target.mainLineId,
-        type: "recommended",
+        name: "Inactive recommendation",
         priorityId: "inactive-priority-reference",
         reason: "Inactive recommendation must remain private",
-        quantityRelationship: "same_quantity",
-        quantityValue: null,
         dependency: true,
         active: false
       }]
@@ -2875,7 +2871,7 @@ describe("AI estimator knowledge integrated replica-set invariants", { timeout: 
         expectedAggregateVersion: archiveFirstSource.aggregateVersion,
         payload: priorityRecommendation(
           "recommendation-archive-first",
-          target.mainLineId,
+          "Archive-first recommendation",
           archiveFirstPriority.id
         )
       }
@@ -2922,7 +2918,7 @@ describe("AI estimator knowledge integrated replica-set invariants", { timeout: 
         expectedAggregateVersion: referenceFirstSource.aggregateVersion,
         payload: priorityRecommendation(
           "recommendation-reference-first",
-          target.mainLineId,
+          "Reference-first recommendation",
           referenceFirstPriority.id
         )
       }
@@ -4029,19 +4025,15 @@ function slabRate(id: string, uomId: string) {
 
 function priorityRecommendation(
   id: string,
-  targetMainLineId: string,
+  name: string,
   priorityId: string
 ) {
   return {
     recommendations: [{
       id,
-      targetBasketId: BASKET_ID,
-      targetMainLineId,
-      type: "recommended",
+      name,
       priorityId,
       reason: "Priority race",
-      quantityRelationship: "same_quantity",
-      quantityValue: null,
       dependency: false,
       active: true
     }]

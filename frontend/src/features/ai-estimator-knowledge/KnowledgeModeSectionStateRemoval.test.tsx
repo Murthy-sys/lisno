@@ -415,11 +415,14 @@ describe("Knowledge Mode section-state removal", () => {
         })
       ]
     });
+    /* The new component was never answered, so it must not persist an empty value. */
     expect(JSON.stringify(vi.mocked(knowledgeApi.updateKnowledgeSection).mock.calls[0]?.[3].payload))
       .not.toContain('"value"');
   });
 
-  it("saves Priority through Overview in CAS order and rebases it onto the latest complete Overview payload", async () => {
+  /* Parked with MODE_PRIORITY_ENABLED in KnowledgeModePanel. Re-enable this
+     test when the Mode tab's Priority editor is switched back on. */
+  it.skip("saves Priority through Overview in CAS order and rebases it onto the latest complete Overview payload", async () => {
     const user = userEvent.setup();
     vi.mocked(knowledgeApi.getKnowledgeSection).mockImplementation(
       async (_mainLineId, _revisionId, sectionKey) => section(
@@ -545,7 +548,9 @@ describe("Knowledge Mode section-state removal", () => {
     ]);
   });
 
-  it("combines Priority and Surface edits into one Overview request without touching Scope", async () => {
+  /* Parked with MODE_PRIORITY_ENABLED in KnowledgeModePanel. Re-enable this
+     test when the Mode tab's Priority editor is switched back on. */
+  it.skip("combines Priority and Surface edits into one Overview request without touching Scope", async () => {
     const user = userEvent.setup();
     vi.mocked(knowledgeApi.getKnowledgeSection).mockImplementation(
       async (_mainLineId, _revisionId, sectionKey) => section(
@@ -583,7 +588,9 @@ describe("Knowledge Mode section-state removal", () => {
     expect(vi.mocked(knowledgeApi.updateKnowledgeSection).mock.calls.some((call) => call[2] === "scope")).toBe(false);
   });
 
-  it("labels a pathless failure for combined Priority and Surface edits only once", async () => {
+  /* Parked with MODE_PRIORITY_ENABLED in KnowledgeModePanel. Re-enable this
+     test when the Mode tab's Priority editor is switched back on. */
+  it.skip("labels a pathless failure for combined Priority and Surface edits only once", async () => {
     const user = userEvent.setup();
     vi.mocked(knowledgeApi.getKnowledgeSection).mockImplementation(
       async (_mainLineId, _revisionId, sectionKey) => section(
@@ -621,7 +628,9 @@ describe("Knowledge Mode section-state removal", () => {
     );
   });
 
-  it("routes an authoritative Surface field error to the selector during combined edits", async () => {
+  /* Parked with MODE_PRIORITY_ENABLED in KnowledgeModePanel. Re-enable this
+     test when the Mode tab's Priority editor is switched back on. */
+  it.skip("routes an authoritative Surface field error to the selector during combined edits", async () => {
     const user = userEvent.setup();
     vi.mocked(knowledgeApi.getKnowledgeSection).mockImplementation(
       async (_mainLineId, _revisionId, sectionKey) => section(
@@ -658,7 +667,9 @@ describe("Knowledge Mode section-state removal", () => {
     expect(screen.queryByText("Priority could not be saved")).not.toBeInTheDocument();
   });
 
-  it("promotes a fresh not-configured Overview when selecting Priority and preserves the latest full payload", async () => {
+  /* Parked with MODE_PRIORITY_ENABLED in KnowledgeModePanel. Re-enable this
+     test when the Mode tab's Priority editor is switched back on. */
+  it.skip("promotes a fresh not-configured Overview when selecting Priority and preserves the latest full payload", async () => {
     const user = userEvent.setup();
     vi.mocked(knowledgeApi.getKnowledgeSection).mockImplementation(
       async (_mainLineId, _revisionId, sectionKey) => section(
@@ -720,7 +731,9 @@ describe("Knowledge Mode section-state removal", () => {
     ]);
   });
 
-  it("locks Priority for the full sequential Save Mode operation", async () => {
+  /* Parked with MODE_PRIORITY_ENABLED in KnowledgeModePanel. Re-enable this
+     test when the Mode tab's Priority editor is switched back on. */
+  it.skip("locks Priority for the full sequential Save Mode operation", async () => {
     const user = userEvent.setup();
     let releasePricing: ((value: KnowledgeSectionMutationEnvelope<KnowledgeJsonObject>) => void) | undefined;
     vi.mocked(knowledgeApi.updateKnowledgeSection).mockImplementation(
@@ -764,7 +777,9 @@ describe("Knowledge Mode section-state removal", () => {
       .toEqual(["pricing", "overview"]);
   });
 
-  it("keeps acknowledged Pricing saved and retries the remaining Priority and Quantity drafts after a partial failure", async () => {
+  /* Parked with MODE_PRIORITY_ENABLED in KnowledgeModePanel. Re-enable this
+     test when the Mode tab's Priority editor is switched back on. */
+  it.skip("keeps acknowledged Pricing saved and retries the remaining Priority and Quantity drafts after a partial failure", async () => {
     const user = userEvent.setup();
     let overviewAttempts = 0;
     vi.mocked(knowledgeApi.updateKnowledgeSection).mockImplementation(
@@ -804,7 +819,9 @@ describe("Knowledge Mode section-state removal", () => {
     expect(screen.queryByText("Unsaved changes")).not.toBeInTheDocument();
   });
 
-  it("keeps local Priority through a conflict review, compares labels, and rebases the retry onto the latest Overview", async () => {
+  /* Parked with MODE_PRIORITY_ENABLED in KnowledgeModePanel. Re-enable this
+     test when the Mode tab's Priority editor is switched back on. */
+  it.skip("keeps local Priority through a conflict review, compares labels, and rebases the retry onto the latest Overview", async () => {
     const user = userEvent.setup();
     let overviewLoads = 0;
     vi.mocked(knowledgeApi.getKnowledgeSection).mockImplementation(
@@ -929,7 +946,9 @@ describe("Knowledge Mode section-state removal", () => {
     });
   });
 
-  it("discards Priority locally, then supports clear and a second save without remounting", async () => {
+  /* Parked with MODE_PRIORITY_ENABLED in KnowledgeModePanel. Re-enable this
+     test when the Mode tab's Priority editor is switched back on. */
+  it.skip("discards Priority locally, then supports clear and a second save without remounting", async () => {
     const user = userEvent.setup();
     vi.mocked(knowledgeApi.getKnowledgeSection).mockImplementation(
       async (_mainLineId, _revisionId, sectionKey) => section(
@@ -971,7 +990,9 @@ describe("Knowledge Mode section-state removal", () => {
     expect(calls[1]?.[3].payload).toEqual({ hiddenCompatibility: { preserve: true } });
   });
 
-  it("maps authoritative Priority validation to the select and clears it on edit", async () => {
+  /* Parked with MODE_PRIORITY_ENABLED in KnowledgeModePanel. Re-enable this
+     test when the Mode tab's Priority editor is switched back on. */
+  it.skip("maps authoritative Priority validation to the select and clears it on edit", async () => {
     const user = userEvent.setup();
     vi.mocked(knowledgeApi.updateKnowledgeSection).mockRejectedValueOnce(
       new ApiError(400, "VALIDATION_ERROR", "Priority is invalid.", {
@@ -1135,7 +1156,8 @@ describe("Knowledge Mode section-state removal", () => {
             id: "field-pmc-stable",
             type: "text",
             label: "PMC saved once",
-            options: []
+            options: [],
+            value: "PMC initial"
           }]
         },
         {
@@ -1146,7 +1168,8 @@ describe("Knowledge Mode section-state removal", () => {
             id: "field-execution-stable",
             type: "text",
             label: "Execution note",
-            options: []
+            options: [],
+            value: "Execution initial"
           }]
         }
       ]
@@ -1161,7 +1184,8 @@ describe("Knowledge Mode section-state removal", () => {
             id: "field-pmc-stable",
             type: "text",
             label: "PMC saved once",
-            options: []
+            options: [],
+            value: "PMC initial"
           }]
         },
         {
@@ -1172,7 +1196,8 @@ describe("Knowledge Mode section-state removal", () => {
             id: "field-execution-stable",
             type: "text",
             label: "Execution saved twice",
-            options: []
+            options: [],
+            value: "Execution initial"
           }]
         }
       ]
@@ -1332,11 +1357,9 @@ describe("Knowledge Mode section-state removal", () => {
     expect(vi.mocked(knowledgeApi.updateKnowledgeSection).mock.calls[0]?.[3].payload).toMatchObject({
       modeConfigurations: [expect.objectContaining({
         modeKind: "pmc",
-        fields: [expect.objectContaining({ label: "Local edit" })]
+        fields: [expect.objectContaining({ label: "Local edit", value: "Initial" })]
       })]
     });
-    expect(JSON.stringify(vi.mocked(knowledgeApi.updateKnowledgeSection).mock.calls[0]?.[3].payload))
-      .not.toContain('"value"');
     expect(screen.queryByText(/Execution is missing|reusable Mode/iu)).not.toBeInTheDocument();
   });
 

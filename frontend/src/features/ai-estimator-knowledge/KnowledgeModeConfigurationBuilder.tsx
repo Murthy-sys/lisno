@@ -1,16 +1,18 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { Button } from "../../components/ui/Button";
-import { Field, Input, Radio, Select, Textarea } from "../../components/ui/Field";
+import { Checkbox, Field, Input, Radio, Select, Textarea } from "../../components/ui/Field";
 import { InlineMessage } from "../../components/ui/InlineMessage";
 import {
   KNOWLEDGE_EXECUTION_SOURCE_OPTIONS,
   KNOWLEDGE_MODE_FIELD_TYPES,
   KNOWLEDGE_MODE_OPTIONS,
+  coerceKnowledgeModeFieldValue,
   createKnowledgeModeConfiguration,
   createKnowledgeModeField,
   isChoiceField,
   knowledgeModeFieldTypeLabel,
+  knowledgeModeFieldValueLabel,
   parseKnowledgeModeConfigurations,
   partitionKnowledgeModeConfigurations,
   withKnowledgeModeConfigurations,
@@ -19,6 +21,7 @@ import {
   type KnowledgeModeConfigurationField,
   type KnowledgeModeConfigurationIssue,
   type KnowledgeModeFieldType,
+  type KnowledgeModeFieldValue,
   type KnowledgeModeKind
 } from "./knowledgeModeConfiguration";
 import { KnowledgeRepeater } from "./KnowledgeRepeater";
@@ -207,7 +210,7 @@ export function KnowledgeModeConfigurationBuilder({
       <div className="knowledge-section-heading">
         <div>
           <h2 id="knowledge-mode-configuration-title">Mode configuration</h2>
-          <p>Define the required inputs for each Mode. Entered answers are not stored here.</p>
+          <p>Define the required inputs for each Mode and the value the estimator should use.</p>
         </div>
         {readOnly ? <span className="knowledge-readonly-label">Read-only revision</span> : null}
       </div>
@@ -313,10 +316,12 @@ export function KnowledgeModeConfigurationBuilder({
                       value={field.type}
                       onChange={(event) => {
                         const type = event.target.value as KnowledgeModeFieldType;
+                        const options = isChoiceField(type) ? field.options : [];
                         replaceField(field.id, {
                           ...field,
                           type,
-                          options: isChoiceField(type) ? field.options : []
+                          options,
+                          value: coerceKnowledgeModeFieldValue(field.value, type, options)
                         });
                       }}
                     >
@@ -358,16 +363,31 @@ export function KnowledgeModeConfigurationBuilder({
                         {...props}
                         disabled={readOnly}
                         value={field.options.join("\n")}
-                        onChange={(event) => replaceField(field.id, {
-                          ...field,
-                          options: event.target.value === ""
+                        onChange={(event) => {
+                          const options = event.target.value === ""
                             ? []
-                            : event.target.value.split("\n")
-                        })}
+                            : event.target.value.split("\n");
+                          replaceField(field.id, {
+                            ...field,
+                            options,
+                            value: coerceKnowledgeModeFieldValue(
+                              field.value,
+                              field.type,
+                              options
+                            )
+                          });
+                        }}
                       />
                     )}
                   </Field>
                 ) : null}
+                <ModeFieldValueControl
+                  field={field}
+                  id={`${domId(field.id)}-value`}
+                  readOnly={readOnly}
+                  error={issueFor(`${fieldPath}.value`)}
+                  onChange={(value) => replaceField(field.id, { ...field, value })}
+                />
               </div>
             </div>
           );
@@ -464,6 +484,99 @@ export function KnowledgeModeConfigurationBuilder({
   );
 }
 
+/**
+ * Renders the configured answer using the control the component type describes,
+ * so a dropdown component is answered from its own allowed options rather than
+ * free text that would later fail validation.
+ */
+function ModeFieldValueControl({
+  field,
+  id,
+  readOnly,
+  error,
+  onChange
+}: {
+  readonly field: KnowledgeModeConfigurationField;
+  readonly id: string;
+  readonly readOnly: boolean;
+  readonly error?: string;
+  readonly onChange: (value: KnowledgeModeFieldValue) => void;
+}) {
+  if (field.type === "checkbox") {
+    return (
+      <Field id={id} label="Value" hint="Leave cleared if this is not decided yet." error={error}>
+        {(props) => (
+          <Checkbox
+            {...props}
+            disabled={readOnly}
+            checked={field.value === true}
+            onChange={(event) => onChange(event.target.checked)}
+          />
+        )}
+      </Field>
+    );
+  }
+
+  const text = typeof field.value === "string" ? field.value : "";
+
+  if (isChoiceField(field.type)) {
+    return (
+      <Field
+        id={id}
+        label="Value"
+        hint={field.options.length ? undefined : "Add allowed options first."}
+        error={error}
+      >
+        {(props) => (
+          <Select
+            {...props}
+            disabled={readOnly || field.options.length === 0}
+            value={text}
+            onChange={(event) => onChange(event.target.value || null)}
+          >
+            <option value="">Not set</option>
+            {field.options.map((option) => (
+              <option key={option} value={option}>{option}</option>
+            ))}
+          </Select>
+        )}
+      </Field>
+    );
+  }
+
+  if (field.type === "textarea") {
+    return (
+      <Field id={id} label="Value" error={error}>
+        {(props) => (
+          <Textarea
+            {...props}
+            maxLength={4000}
+            disabled={readOnly}
+            value={text}
+            onChange={(event) => onChange(event.target.value || null)}
+          />
+        )}
+      </Field>
+    );
+  }
+
+  return (
+    <Field id={id} label="Value" error={error}>
+      {(props) => (
+        <Input
+          {...props}
+          type={field.type === "number" ? "number" : "text"}
+          inputMode={field.type === "number" ? "decimal" : undefined}
+          maxLength={field.type === "number" ? undefined : 4000}
+          disabled={readOnly}
+          value={text}
+          onChange={(event) => onChange(event.target.value || null)}
+        />
+      )}
+    </Field>
+  );
+}
+
 function RecoveryModeFields({
   fields,
   index
@@ -481,6 +594,9 @@ function RecoveryModeFields({
             {knowledgeModeFieldTypeLabel(field.type)}
             {isChoiceField(field.type) && field.options.length
               ? ` · ${field.options.join(", ")}`
+              : ""}
+            {knowledgeModeFieldValueLabel(field)
+              ? ` · Value: ${knowledgeModeFieldValueLabel(field)}`
               : ""}
           </dd>
         </div>
@@ -561,9 +677,11 @@ function focusIssue(
     ? "[id$='-label']"
     : issue.path.endsWith(".type")
       ? "[id$='-type']"
-      : issue.path.includes(".options")
-        ? "[id$='-options']"
-        : undefined;
+      : issue.path.endsWith(".value")
+        ? "[id$='-value']"
+        : issue.path.includes(".options")
+          ? "[id$='-options']"
+          : undefined;
   const target = entry?.[1].querySelector<HTMLElement>(issueControl ??
     "[aria-invalid='true'], input, select, textarea, button"
   );

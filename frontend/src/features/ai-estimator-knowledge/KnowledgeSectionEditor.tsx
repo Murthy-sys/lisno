@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useRef, type ReactNode } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { Button } from "../../components/ui/Button";
 import { Checkbox, Field, Input, Select, Textarea } from "../../components/ui/Field";
@@ -35,7 +35,7 @@ const ARRAY_FIELDS = {
   pricing: ["specifications", "brands"],
   "quantity-margin": [],
   scope: ["exclusions"],
-  recommendations: ["recommendations"],
+  recommendations: ["recommendations", "exclusions"],
   quality: ["parameters"],
   execution: ["steps", "productivity"],
   advanced: ["dependencies", "modeOverrides"]
@@ -70,7 +70,13 @@ export interface KnowledgeSectionEditorProps {
   readonly relationshipBaskets: readonly KnowledgeBasket[];
   readonly relationshipItems: readonly KnowledgeItemListItem[];
   readonly currentMainLineId: string;
+  /* The item's own Main Basket, shown as context where a row used to select
+     one. Display only — this section never changes it. */
+  readonly basketName?: string;
   readonly readOnly: boolean;
+  /* True only when the revision itself cannot be edited. `readOnly` also covers
+     a save in flight, and hiding controls for that would make them flicker. */
+  readonly readOnlyRevision?: boolean;
   readonly canQuickAdd: boolean;
   readonly resetKey: string;
   readonly specificationScopeKey?: string;
@@ -149,7 +155,9 @@ export function KnowledgeSectionEditor({
   relationshipBaskets,
   relationshipItems,
   currentMainLineId,
+  basketName,
   readOnly,
+  readOnlyRevision = readOnly,
   canQuickAdd,
   resetKey,
   specificationScopeKey,
@@ -180,9 +188,19 @@ export function KnowledgeSectionEditor({
     [masters.uoms, masters.vendors, payload, pricingSpecifications, sectionKey, serverIssues, uomCatalogState.status, vendorCatalogState.status]
   );
   const validationSummaryRef = useRef<HTMLDivElement>(null);
+  const lastValidationAttempt = useRef(0);
   useEffect(() => { onValidationChange(issues.length === 0); }, [issues.length, onValidationChange, resetKey]);
   useEffect(() => {
-    if (validationAttempt <= 0 || !issues.length) return;
+    if (validationAttempt === 0) {
+      lastValidationAttempt.current = 0;
+      return;
+    }
+    /* Only a new save attempt may move focus. The issue count also changes while
+       the author is typing, and re-running then would pull the caret out of the
+       field mid-edit. Attempts with nothing to focus are left unconsumed so that
+       server issues arriving a render later still land on the right control. */
+    if (validationAttempt <= lastValidationAttempt.current || !issues.length) return;
+    lastValidationAttempt.current = validationAttempt;
     const firstInvalidField = validationSummaryRef.current?.parentElement?.querySelector<HTMLElement>("[aria-invalid='true'], input:invalid, select:invalid, textarea:invalid");
     (firstInvalidField ?? validationSummaryRef.current)?.focus();
   }, [issues.length, validationAttempt]);
@@ -206,6 +224,9 @@ export function KnowledgeSectionEditor({
       {sectionKey !== "pricing" ? (
         <div className="knowledge-section-heading">
           <div>
+            {sectionKey === "recommendations" && basketName
+              ? <p className="knowledge-section-eyebrow">Main Basket · {basketName}</p>
+              : null}
             <h2>{KNOWLEDGE_SECTION_LABELS[sectionKey]}</h2>
             <p>{sectionHelp(sectionKey)}</p>
           </div>
@@ -242,6 +263,7 @@ export function KnowledgeSectionEditor({
               relationshipItems={relationshipItems}
               currentMainLineId={currentMainLineId}
               disabled={readOnly}
+              hideActions={readOnlyRevision}
               canQuickAdd={canQuickAdd}
               showAdd={false}
               onQuickAdd={onQuickAdd}
@@ -285,6 +307,7 @@ export function KnowledgeSectionEditor({
           relationshipItems={relationshipItems}
           currentMainLineId={currentMainLineId}
           disabled={readOnly}
+          hideActions={readOnlyRevision}
           canQuickAdd={canQuickAdd}
           onQuickAdd={onQuickAdd}
           onDirty={onDirty}
@@ -371,7 +394,7 @@ function MasterMultiSelect({ id, label, type, values, masters, disabled, quickAd
 
 interface EditorRow { readonly id: string; readonly value: KnowledgeJsonObject }
 
-function StructuredArrayEditor({ field, label, value, sectionPayload, masters, relationshipBaskets, relationshipItems, currentMainLineId, disabled, canQuickAdd, showAdd = true, onQuickAdd, onDirty, onChange }: {
+function StructuredArrayEditor({ field, label, value, sectionPayload, masters, relationshipBaskets, relationshipItems, currentMainLineId, disabled, hideActions, canQuickAdd, showAdd = true, onQuickAdd, onDirty, onChange }: {
   readonly field: string;
   readonly label: string;
   readonly value: KnowledgeJsonValue | undefined;
@@ -381,6 +404,7 @@ function StructuredArrayEditor({ field, label, value, sectionPayload, masters, r
   readonly relationshipItems: readonly KnowledgeItemListItem[];
   readonly currentMainLineId: string;
   readonly disabled: boolean;
+  readonly hideActions: boolean;
   readonly canQuickAdd: boolean;
   readonly showAdd?: boolean;
   readonly onQuickAdd: KnowledgeSectionEditorProps["onQuickAdd"];
@@ -392,7 +416,7 @@ function StructuredArrayEditor({ field, label, value, sectionPayload, masters, r
     const values = rows.map((row, rowIndex) => rowIndex === index ? next : row.value);
     onChange(values);
   }
-  return <KnowledgeRepeater label={label} addLabel={field === "brands" ? "Add vendor" : `Add ${singular(label)}`} items={rows} disabled={disabled} showAdd={showAdd} readOnly={field === "brands" && disabled} emptyMessage={`No ${label.toLowerCase()} configured.`}
+  return <KnowledgeRepeater label={label} addLabel={field === "brands" ? "Add vendor" : `Add ${singular(label)}`} items={rows} disabled={disabled} showAdd={showAdd} readOnly={hideActions} emptyMessage={`No ${label.toLowerCase()} configured.`}
     onAdd={() => { onDirty(); onChange([...rows.map(({ value: row }) => row), newRow(field)]); }}
     onRemove={(id) => { onDirty(); onChange(rows.filter((row) => row.id !== id).map((row) => row.value)); }}
     onMove={(id, direction) => { onDirty(); const current = [...rows]; const from = current.findIndex((row) => row.id === id); const to = direction === "up" ? from - 1 : from + 1; if (from < 0 || to < 0 || to >= current.length) return; [current[from], current[to]] = [current[to], current[from]]; onChange(current.map((row) => row.value)); }}
@@ -416,14 +440,14 @@ function GuidedRow({ field, index, value, sectionPayload, masters, relationshipB
 }) {
   const prefix = `${field}-${index}`;
   const set = (key: string, next: KnowledgeJsonValue | undefined) => onChange(setObjectValue(value, key, next));
-  if (field === "brands") return <div className="knowledge-form-grid"><ReadOnlyId value={stringValue(value.id)} /><RowInput id={`${prefix}-name`} label="Vendor name" value={stringValue(value.name)} disabled={disabled} required onChange={(next) => set("name", next || undefined)} /><RowInput id={`${prefix}-description`} label="Description" value={stringValue(value.description)} disabled={disabled} multiline onChange={(next) => set("description", next || undefined)} /></div>;
-  if (field === "quantitySlabs") return <div className="knowledge-form-grid"><ReadOnlyId value={stringValue(value.id)} /><RowInput id={`${prefix}-minimum`} label="Minimum quantity" value={stringValue(value.minimumQuantity)} disabled={disabled} required onChange={(next) => set("minimumQuantity", next || undefined)} /><RowInput id={`${prefix}-maximum`} label="Maximum quantity" value={stringValue(value.maximumQuantity)} disabled={disabled} hint="Leave blank for no upper limit." onChange={(next) => set("maximumQuantity", next || null)} /><RowNumber id={`${prefix}-adjustment`} label="Adjustment (basis points)" value={numberValue(value.adjustmentBps)} disabled={disabled} required onChange={(next) => set("adjustmentBps", next)} /></div>;
+  if (field === "brands") return <div className="knowledge-form-grid"><RowInput id={`${prefix}-name`} label="Vendor name" value={stringValue(value.name)} disabled={disabled} required onChange={(next) => set("name", next || undefined)} /><RowInput id={`${prefix}-description`} label="Description" value={stringValue(value.description)} disabled={disabled} multiline onChange={(next) => set("description", next || undefined)} /></div>;
+  if (field === "quantitySlabs") return <div className="knowledge-form-grid"><RowInput id={`${prefix}-minimum`} label="Minimum quantity" value={stringValue(value.minimumQuantity)} disabled={disabled} required onChange={(next) => set("minimumQuantity", next || undefined)} /><RowInput id={`${prefix}-maximum`} label="Maximum quantity" value={stringValue(value.maximumQuantity)} disabled={disabled} hint="Leave blank for no upper limit." onChange={(next) => set("maximumQuantity", next || null)} /><RowNumber id={`${prefix}-adjustment`} label="Adjustment (basis points)" value={numberValue(value.adjustmentBps)} disabled={disabled} required onChange={(next) => set("adjustmentBps", next)} /></div>;
   if (field === "exclusions" || field === "dependencies") return <RelationshipRow prefix={prefix} kind={field} value={value} baskets={relationshipBaskets} items={relationshipItems} currentMainLineId={currentMainLineId} disabled={disabled} onChange={onChange} />;
-  if (field === "recommendations") return <div className="knowledge-form-grid"><ReadOnlyId value={stringValue(value.id)} /><RelationshipTargetFields prefix={prefix} value={value} baskets={relationshipBaskets} items={relationshipItems} required disabled={disabled} onChange={onChange} /><RowSelect id={`${prefix}-type`} label="Recommendation type" value={stringValue(value.type)} values={["mandatory", "recommended", "optional"]} disabled={disabled} onChange={(next) => set("type", next || undefined)} /><MasterRowSelect id={`${prefix}-priority`} label="Priority" value={stringValue(value.priorityId)} masters={masters.priorities ?? []} disabled={disabled} nullable onChange={(next) => set("priorityId", next)} /><RowInput id={`${prefix}-reason`} label="Reason" value={stringValue(value.reason)} disabled={disabled} required multiline onChange={(next) => set("reason", next || undefined)} /><RowSelect id={`${prefix}-relationship`} label="Quantity relationship" value={stringValue(value.quantityRelationship)} values={["same_quantity", "percentage_of_source", "fixed", "per_unit"]} disabled={disabled} onChange={(next) => set("quantityRelationship", next || undefined)} /><RowInput id={`${prefix}-quantity`} label="Quantity value" value={stringValue(value.quantityValue)} disabled={disabled} onChange={(next) => set("quantityValue", next || null)} /><RowCheckbox label="Dependency" checked={booleanValue(value.dependency)} disabled={disabled} onChange={(next) => set("dependency", next)} /><RowCheckbox label="Active" checked={booleanValue(value.active, true)} disabled={disabled} onChange={(next) => set("active", next)} /></div>;
+  if (field === "recommendations") return <div className="knowledge-form-grid"><MasterRowSelect id={`${prefix}-priority`} label="Priority" value={stringValue(value.priorityId)} masters={masters.priorities ?? []} disabled={disabled} onChange={(next) => set("priorityId", next)} /><RowInput id={`${prefix}-name`} label="Recommendation" value={stringValue(value.name)} disabled={disabled} required onChange={(next) => set("name", next || undefined)} /><RowInput id={`${prefix}-reason`} label="Reason" value={stringValue(value.reason)} disabled={disabled} multiline onChange={(next) => set("reason", next || null)} /></div>;
   if (field === "parameters") return <QualityRow prefix={prefix} value={value} disabled={disabled} onChange={onChange} />;
   if (field === "steps") return <ExecutionStepRow prefix={prefix} value={value} steps={objectArray(sectionPayload.steps)} disabled={disabled} set={set} />;
-  if (field === "productivity") return <div className="knowledge-form-grid"><ReadOnlyId value={stringValue(value.id)} /><RowInput id={`${prefix}-value`} label="Productivity value" value={stringValue(value.value)} disabled={disabled} required onChange={(next) => set("value", next || undefined)} /><MasterRowSelect id={`${prefix}-uom`} label="UOM" value={stringValue(value.uomId)} masters={masters.uoms ?? []} disabled={disabled} onChange={(next) => set("uomId", next)} /><RowNumber id={`${prefix}-crew`} label="Crew size" value={numberValue(value.crewSize)} disabled={disabled} onChange={(next) => set("crewSize", next)} /><RowInput id={`${prefix}-skill`} label="Skill type" value={stringValue(value.skillType)} disabled={disabled} onChange={(next) => set("skillType", next || null)} /><RowInput id={`${prefix}-minimum`} label="Minimum duration" value={stringValue(value.minimumDuration)} disabled={disabled} onChange={(next) => set("minimumDuration", next || null)} /><RowInput id={`${prefix}-maximum`} label="Maximum duration" value={stringValue(value.maximumDuration)} disabled={disabled} onChange={(next) => set("maximumDuration", next || null)} /><RowSelect id={`${prefix}-unit`} label="Duration unit" value={stringValue(value.durationUnit)} values={["minutes", "hours", "days", "weeks"]} disabled={disabled} onChange={(next) => set("durationUnit", next || null)} /><RowCheckbox label="Active" checked={booleanValue(value.active, true)} disabled={disabled} onChange={(next) => set("active", next)} /></div>;
-  if (field === "modeOverrides") return <div className="knowledge-form-grid"><ReadOnlyId value={stringValue(value.id)} /><MasterRowSelect id={`${prefix}-mode`} label="Mode" value={stringValue(value.modeId)} masters={masters.modes ?? []} disabled={disabled} onChange={(next) => set("modeId", next)} /><RowInput id={`${prefix}-description`} label="Override description" value={stringValue(value.description)} disabled={disabled} required multiline onChange={(next) => set("description", next || undefined)} /><RowCheckbox label="Active" checked={booleanValue(value.active, true)} disabled={disabled} onChange={(next) => set("active", next)} /></div>;
+  if (field === "productivity") return <div className="knowledge-form-grid"><RowInput id={`${prefix}-value`} label="Productivity value" value={stringValue(value.value)} disabled={disabled} required onChange={(next) => set("value", next || undefined)} /><MasterRowSelect id={`${prefix}-uom`} label="UOM" value={stringValue(value.uomId)} masters={masters.uoms ?? []} disabled={disabled} onChange={(next) => set("uomId", next)} /><RowNumber id={`${prefix}-crew`} label="Crew size" value={numberValue(value.crewSize)} disabled={disabled} onChange={(next) => set("crewSize", next)} /><RowInput id={`${prefix}-skill`} label="Skill type" value={stringValue(value.skillType)} disabled={disabled} onChange={(next) => set("skillType", next || null)} /><RowInput id={`${prefix}-minimum`} label="Minimum duration" value={stringValue(value.minimumDuration)} disabled={disabled} onChange={(next) => set("minimumDuration", next || null)} /><RowInput id={`${prefix}-maximum`} label="Maximum duration" value={stringValue(value.maximumDuration)} disabled={disabled} onChange={(next) => set("maximumDuration", next || null)} /><RowSelect id={`${prefix}-unit`} label="Duration unit" value={stringValue(value.durationUnit)} values={["minutes", "hours", "days", "weeks"]} disabled={disabled} onChange={(next) => set("durationUnit", next || null)} /><RowCheckbox label="Active" checked={booleanValue(value.active, true)} disabled={disabled} onChange={(next) => set("active", next)} /></div>;
+  if (field === "modeOverrides") return <div className="knowledge-form-grid"><MasterRowSelect id={`${prefix}-mode`} label="Mode" value={stringValue(value.modeId)} masters={masters.modes ?? []} disabled={disabled} onChange={(next) => set("modeId", next)} /><RowInput id={`${prefix}-description`} label="Override description" value={stringValue(value.description)} disabled={disabled} required multiline onChange={(next) => set("description", next || undefined)} /><RowCheckbox label="Active" checked={booleanValue(value.active, true)} disabled={disabled} onChange={(next) => set("active", next)} /></div>;
   return <InlineMessage tone="warning">This structured row type is unavailable.</InlineMessage>;
 }
 
@@ -439,7 +463,8 @@ function RelationshipRow({ prefix, kind, value, baskets, items, currentMainLineI
 }) {
   const set = (key: string, next: KnowledgeJsonValue | undefined) => onChange(setObjectValue(value, key, next));
   const exclusion = kind === "exclusions";
-  return <div className="knowledge-form-grid"><ReadOnlyId value={stringValue(value.id)} /><RelationshipTargetFields prefix={prefix} value={value} baskets={baskets} items={items} required={!exclusion} excludeMainLineId={kind === "dependencies" ? currentMainLineId : undefined} disabled={disabled} hint={exclusion ? "Choose a Basket or a Main Line; at least one target is required." : undefined} onChange={onChange} /><RowInput id={`${prefix}-reason`} label="Reason" value={stringValue(value.reason)} disabled={disabled} multiline onChange={(next) => set("reason", next || undefined)} /><RowCheckbox label="Active" checked={booleanValue(value.active, true)} disabled={disabled} onChange={(next) => set("active", next)} /></div>;
+  if (exclusion) return <div className="knowledge-form-grid"><RowInput id={`${prefix}-name`} label="Exclusion" value={stringValue(value.name)} disabled={disabled} required onChange={(next) => set("name", next || undefined)} /><RowInput id={`${prefix}-reason`} label="Reason" value={stringValue(value.reason)} disabled={disabled} multiline onChange={(next) => set("reason", next || null)} /></div>;
+  return <div className="knowledge-form-grid"><RelationshipTargetFields prefix={prefix} value={value} baskets={baskets} items={items} required excludeMainLineId={currentMainLineId} disabled={disabled} onChange={onChange} /><RowInput id={`${prefix}-reason`} label="Reason" value={stringValue(value.reason)} disabled={disabled} multiline onChange={(next) => set("reason", next || undefined)} /><RowCheckbox label="Active" checked={booleanValue(value.active, true)} disabled={disabled} onChange={(next) => set("active", next)} /></div>;
 }
 
 function RelationshipTargetFields({ prefix, value, baskets, items, required, excludeMainLineId, disabled, hint, onChange }: {
@@ -479,6 +504,31 @@ function rowId(value: KnowledgeJsonValue, index: number): string {
   return `knowledge-row-${index}`;
 }
 
+/**
+ * The payload stores a trimmed array, so echoing that back on every keystroke
+ * would delete the comma or space the author is still typing. The typed text is
+ * kept here and only re-synced when the payload changes for some other reason.
+ */
+function AllowedValuesInput({ id, values, disabled, onChange }: { readonly id: string; readonly values: readonly string[]; readonly disabled: boolean; readonly onChange: (values: readonly string[]) => void }) {
+  const [text, setText] = useState(() => values.join(", "));
+  const ownValues = useRef(values);
+  useEffect(() => {
+    if (sameStrings(ownValues.current, values)) return;
+    ownValues.current = values;
+    setText(values.join(", "));
+  }, [values]);
+  return <RowInput id={id} label="Allowed values" hint="Separate each value with a comma." value={text} disabled={disabled} onChange={(next) => {
+    setText(next);
+    const parsed = next.split(",").map((entry) => entry.trim()).filter(Boolean);
+    ownValues.current = parsed;
+    onChange(parsed);
+  }} />;
+}
+
+function sameStrings(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
 function QualityRow({ prefix, value, disabled, onChange }: { readonly prefix: string; readonly value: KnowledgeJsonObject; readonly disabled: boolean; readonly onChange: (value: KnowledgeJsonObject) => void }) {
   const set = (key: string, next: KnowledgeJsonValue | undefined) => onChange(setObjectValue(value, key, next));
   const type = stringValue(value.type);
@@ -493,7 +543,7 @@ function QualityRow({ prefix, value, disabled, onChange }: { readonly prefix: st
     onChange(copy);
   };
   const allowed = stringArray(value.allowedValues);
-  return <div className="knowledge-form-grid"><ReadOnlyId value={stringValue(value.id)} /><RowSelect id={`${prefix}-type`} label="Parameter type" value={type} values={["text", "number", "dropdown", "radio", "checkbox", "multi_select", "boolean"]} disabled={disabled} onChange={changeType} /><RowInput id={`${prefix}-label`} label="Label" value={stringValue(value.label)} disabled={disabled} required onChange={(next) => set("label", next || undefined)} />{numeric ? <><RowInput id={`${prefix}-unit`} label="Unit" value={stringValue(value.unit)} disabled={disabled} onChange={(next) => set("unit", next || null)} /><RowInput id={`${prefix}-minimum`} label="Minimum" value={stringValue(value.minimum)} disabled={disabled} onChange={(next) => set("minimum", next || null)} /><RowInput id={`${prefix}-maximum`} label="Maximum" value={stringValue(value.maximum)} disabled={disabled} onChange={(next) => set("maximum", next || null)} /></> : null}{choice ? <RowInput id={`${prefix}-values`} label="Allowed values" hint="Comma-separated values." value={allowed.join(", ")} disabled={disabled} onChange={(next) => set("allowedValues", next.split(",").map((entry) => entry.trim()).filter(Boolean))} /> : null}<QualityDefaultControl prefix={prefix} type={type} value={value.defaultValue} allowedValues={allowed} disabled={disabled} onChange={(next) => set("defaultValue", next)} /><RowInput id={`${prefix}-category`} label="Category" value={stringValue(value.category)} disabled={disabled} onChange={(next) => set("category", next || null)} /><RowCheckbox label="Required" checked={booleanValue(value.required)} disabled={disabled} onChange={(next) => set("required", next)} /><RowCheckbox label="Active" checked={booleanValue(value.active, true)} disabled={disabled} onChange={(next) => set("active", next)} /></div>;
+  return <div className="knowledge-form-grid"><RowSelect id={`${prefix}-type`} label="Parameter type" value={type} values={["text", "number", "dropdown", "radio", "checkbox", "multi_select", "boolean"]} disabled={disabled} onChange={changeType} /><RowInput id={`${prefix}-label`} label="Label" value={stringValue(value.label)} disabled={disabled} required onChange={(next) => set("label", next || undefined)} />{numeric ? <><RowInput id={`${prefix}-unit`} label="Unit" value={stringValue(value.unit)} disabled={disabled} onChange={(next) => set("unit", next || null)} /><RowInput id={`${prefix}-minimum`} label="Minimum" value={stringValue(value.minimum)} disabled={disabled} onChange={(next) => set("minimum", next || null)} /><RowInput id={`${prefix}-maximum`} label="Maximum" value={stringValue(value.maximum)} disabled={disabled} onChange={(next) => set("maximum", next || null)} /></> : null}{choice ? <AllowedValuesInput id={`${prefix}-values`} values={allowed} disabled={disabled} onChange={(next) => set("allowedValues", next)} /> : null}<QualityDefaultControl prefix={prefix} type={type} value={value.defaultValue} allowedValues={allowed} disabled={disabled} onChange={(next) => set("defaultValue", next)} /><RowInput id={`${prefix}-category`} label="Category" value={stringValue(value.category)} disabled={disabled} onChange={(next) => set("category", next || null)} /><RowCheckbox label="Required" checked={booleanValue(value.required)} disabled={disabled} onChange={(next) => set("required", next)} /><RowCheckbox label="Active" checked={booleanValue(value.active, true)} disabled={disabled} onChange={(next) => set("active", next)} /></div>;
 }
 
 function QualityDefaultControl({ prefix, type, value, allowedValues, disabled, onChange }: { readonly prefix: string; readonly type: string; readonly value: KnowledgeJsonValue | undefined; readonly allowedValues: readonly string[]; readonly disabled: boolean; readonly onChange: (value: KnowledgeJsonValue) => void }) {
@@ -506,7 +556,7 @@ function QualityDefaultControl({ prefix, type, value, allowedValues, disabled, o
 function ExecutionStepRow({ prefix, value, steps, disabled, set }: { readonly prefix: string; readonly value: KnowledgeJsonObject; readonly steps: readonly KnowledgeJsonObject[]; readonly disabled: boolean; readonly set: (key: string, value: KnowledgeJsonValue | undefined) => void }) {
   const stepId = stringValue(value.id);
   const options = steps.filter((step) => stringValue(step.id) && stringValue(step.id) !== stepId).map((step) => ({ id: stringValue(step.id), label: stringValue(step.name) || "Unnamed step" }));
-  return <div className="knowledge-form-grid"><ReadOnlyId value={stepId} /><RowNumber id={`${prefix}-order`} label="Step order" value={numberValue(value.order)} disabled={disabled} min={0} required onChange={(next) => set("order", next)} /><RowInput id={`${prefix}-name`} label="Step name" value={stringValue(value.name)} disabled={disabled} required onChange={(next) => set("name", next || undefined)} /><RowInput id={`${prefix}-description`} label="Description" value={stringValue(value.description)} disabled={disabled} multiline onChange={(next) => set("description", next || null)} /><RowInput id={`${prefix}-duration`} label="Duration value" value={stringValue(value.durationValue)} disabled={disabled} onChange={(next) => set("durationValue", next || null)} /><RowSelect id={`${prefix}-unit`} label="Duration unit" value={stringValue(value.durationUnit)} values={["minutes", "hours", "days", "weeks"]} disabled={disabled} onChange={(next) => set("durationUnit", next || null)} /><RowNumber id={`${prefix}-crew`} label="Crew size" value={numberValue(value.crewSize)} disabled={disabled} min={1} onChange={(next) => set("crewSize", next ?? null)} /><RowInput id={`${prefix}-skill`} label="Skill type" value={stringValue(value.skillType)} disabled={disabled} onChange={(next) => set("skillType", next || null)} /><StableIdMultiSelect id={`${prefix}-dependencies`} label="Dependency steps" values={stringArray(value.dependencyStepIds)} options={options} disabled={disabled} onChange={(next) => set("dependencyStepIds", next)} /><RowCheckbox label="Mandatory" checked={booleanValue(value.mandatory)} disabled={disabled} onChange={(next) => set("mandatory", next)} /><RowCheckbox label="Parallelizable" checked={booleanValue(value.parallelizable)} disabled={disabled} onChange={(next) => set("parallelizable", next)} /><RowCheckbox label="Active" checked={booleanValue(value.active, true)} disabled={disabled} onChange={(next) => set("active", next)} /></div>;
+  return <div className="knowledge-form-grid"><RowNumber id={`${prefix}-order`} label="Step order" value={numberValue(value.order)} disabled={disabled} min={0} required onChange={(next) => set("order", next)} /><RowInput id={`${prefix}-name`} label="Step name" value={stringValue(value.name)} disabled={disabled} required onChange={(next) => set("name", next || undefined)} /><RowInput id={`${prefix}-description`} label="Description" value={stringValue(value.description)} disabled={disabled} multiline onChange={(next) => set("description", next || null)} /><RowInput id={`${prefix}-duration`} label="Duration value" value={stringValue(value.durationValue)} disabled={disabled} onChange={(next) => set("durationValue", next || null)} /><RowSelect id={`${prefix}-unit`} label="Duration unit" value={stringValue(value.durationUnit)} values={["minutes", "hours", "days", "weeks"]} disabled={disabled} onChange={(next) => set("durationUnit", next || null)} /><RowNumber id={`${prefix}-crew`} label="Crew size" value={numberValue(value.crewSize)} disabled={disabled} min={1} onChange={(next) => set("crewSize", next ?? null)} /><RowInput id={`${prefix}-skill`} label="Skill type" value={stringValue(value.skillType)} disabled={disabled} onChange={(next) => set("skillType", next || null)} /><StableIdMultiSelect id={`${prefix}-dependencies`} label="Dependency steps" values={stringArray(value.dependencyStepIds)} options={options} disabled={disabled} onChange={(next) => set("dependencyStepIds", next)} /><RowCheckbox label="Mandatory" checked={booleanValue(value.mandatory)} disabled={disabled} onChange={(next) => set("mandatory", next)} /><RowCheckbox label="Parallelizable" checked={booleanValue(value.parallelizable)} disabled={disabled} onChange={(next) => set("parallelizable", next)} /><RowCheckbox label="Active" checked={booleanValue(value.active, true)} disabled={disabled} onChange={(next) => set("active", next)} /></div>;
 }
 
 function RowInput({ id, label, value, disabled, onChange, multiline = false, required = false, hint, readOnly = false }: { readonly id: string; readonly label: string; readonly value: string; readonly disabled: boolean; readonly onChange?: (value: string) => void; readonly multiline?: boolean; readonly required?: boolean; readonly hint?: string; readonly readOnly?: boolean }) {
@@ -533,17 +583,21 @@ function RowDateTime({ id, label, value, disabled, onChange, required = false }:
   return <Field id={id} label={label} required={required}>{(props) => <Input {...props} type="datetime-local" disabled={disabled} value={toLocalDateTime(value)} onChange={(event) => onChange(event.target.value ? new Date(event.target.value).toISOString() : "")} />}</Field>;
 }
 
-function ReadOnlyId({ value }: { readonly value: string }) {
-  return <Field id={`knowledge-stable-id-${value}`} label="Stable ID">{(props) => <Input {...props} value={value} readOnly />}</Field>;
-}
-
 function ReadOnlyStructuredData({ label, value }: { readonly label: string; readonly value: readonly KnowledgeJsonValue[] }) {
   return <section className="knowledge-readonly-data" aria-label={label}><h3>{label}</h3>{value.length ? <ol>{value.map((entry, index) => <li key={index}><code>{JSON.stringify(entry)}</code></li>)}</ol> : <p>No {label.toLowerCase()} recorded.</p>}</section>;
 }
 
+/* Fields the backend requires on every row but the author never sees. Hiding a
+   control does not remove it from the contract, so new rows carry its default. */
+const NEW_ROW_DEFAULTS: Readonly<Record<string, KnowledgeJsonObject>> = {
+  parameters: { required: false, active: true },
+  recommendations: { active: true, dependency: false },
+  exclusions: { active: true }
+};
+
 function newRow(field: string): KnowledgeJsonObject {
   const id = `knowledge-${field}-${crypto.randomUUID()}`;
-  return { id };
+  return { id, ...NEW_ROW_DEFAULTS[field] };
 }
 
 function setObjectValue(value: KnowledgeJsonObject, key: string, next: KnowledgeJsonValue | undefined): KnowledgeJsonObject {
@@ -614,7 +668,7 @@ function sectionHelp(sectionKey: KnowledgeSectionKey): string {
     pricing: "Maintain Specifications, Vendors, and the unit budgets used by the estimator.",
     "quantity-margin": "Configure priced Quantity slabs and shared basis-point margins. Legacy adjustment slabs retain their existing calculation behavior.",
     scope: "Define applicable modes, surfaces, and explicit exclusions.",
-    recommendations: "Relate this item to other stable Basket and Main Line IDs.",
+    recommendations: "Recommend related components, and exclude Baskets or Main Lines this item never covers.",
     quality: "Define customer-facing and technical quality parameters.",
     execution: "Order execution steps and productivity rules.",
     advanced: "Maintain dependencies, mode overrides, and revision lineage."
