@@ -2524,6 +2524,317 @@ describe("AI estimator knowledge integrated replica-set invariants", { timeout: 
     })).toBe(0);
   });
 
+  it("rejects an archived Surface when creating a Draft from an Active revision", async () => {
+    const services = createServices();
+    const surface = await services.reference.createMaster(
+      SUPER_ADMIN,
+      "surfaces",
+      { name: "Archived revision-copy Surface" }
+    );
+    const draft = await createConfiguredDraft(
+      services.item,
+      "Archived Surface revision-copy source"
+    );
+    const overview = await services.item.getSection(
+      SUPER_ADMIN,
+      draft.mainLineId,
+      draft.revisionId,
+      "overview"
+    );
+    const assigned = await services.item.updateSection(
+      SUPER_ADMIN,
+      draft.mainLineId,
+      draft.revisionId,
+      "overview",
+      {
+        expectedVersion: overview.version,
+        expectedAggregateVersion: draft.aggregateVersion,
+        payload: { ...overview.payload, surfaceIds: [surface.id] }
+      }
+    );
+    const active = await services.item.activate(
+      SUPER_ADMIN,
+      draft.mainLineId,
+      draft.revisionId,
+      { expectedVersion: assigned.aggregateVersion }
+    );
+    await AiEstimatorKnowledgeSurfaceModel.updateOne(
+      { _id: surface.id },
+      {
+        $set: {
+          status: "archived",
+          archivedAt: NOW,
+          archivedById: SUPER_ADMIN.id
+        }
+      }
+    ).exec();
+    const auditCount = await AuditEventModel.countDocuments({
+      action: "ai_estimator_knowledge_revision_created",
+      "newValues.mainLineId": draft.mainLineId
+    });
+
+    await expect(services.item.createRevision(
+      SUPER_ADMIN,
+      draft.mainLineId,
+      { expectedVersion: active.version }
+    )).rejects.toMatchObject({
+      status: 409,
+      code: "KNOWLEDGE_REFERENCE_INVALID"
+    });
+    expect(await AiEstimatorKnowledgeRevisionModel.countDocuments({
+      mainLineId: draft.mainLineId
+    })).toBe(1);
+    expect(await AiEstimatorKnowledgeMainLineModel.findById(draft.mainLineId).lean())
+      .toMatchObject({
+        activeRevisionId: draft.revisionId,
+        draftRevisionId: null,
+        version: active.version
+      });
+    expect(await AuditEventModel.countDocuments({
+      action: "ai_estimator_knowledge_revision_created",
+      "newValues.mainLineId": draft.mainLineId
+    })).toBe(auditCount);
+  });
+
+  it("serializes first Main Line Surface assignment against archive in both commit orders", async () => {
+    const base = createServices();
+
+    const archiveFirstSurface = await base.reference.createMaster(
+      SUPER_ADMIN,
+      "surfaces",
+      { name: "Archive-first Surface" }
+    );
+    const archiveFirstDraft = await createConfiguredDraft(
+      base.item,
+      "Archive-first Surface assignment"
+    );
+    const archiveFirstOverview = await base.item.getSection(
+      SUPER_ADMIN,
+      archiveFirstDraft.mainLineId,
+      archiveFirstDraft.revisionId,
+      "overview"
+    );
+    const archiveGate = createGatedAudit("ai_estimator_knowledge_master_archived");
+    const archiving = createRaceReferenceService(archiveGate.audit).archiveMaster(
+      SUPER_ADMIN,
+      "surfaces",
+      archiveFirstSurface.id,
+      { expectedVersion: archiveFirstSurface.version }
+    );
+    await archiveGate.entered;
+    const losingAssignment = createRaceItemService(persistentAudit()).updateSection(
+      SUPER_ADMIN,
+      archiveFirstDraft.mainLineId,
+      archiveFirstDraft.revisionId,
+      "overview",
+      {
+        expectedVersion: archiveFirstOverview.version,
+        expectedAggregateVersion: archiveFirstDraft.aggregateVersion,
+        payload: {
+          ...archiveFirstOverview.payload,
+          surfaceIds: [archiveFirstSurface.id]
+        }
+      }
+    );
+    await nextEventLoopTurn();
+    archiveGate.release();
+
+    const [archiveResult, losingAssignmentResult] = await Promise.allSettled([
+      archiving,
+      losingAssignment
+    ]);
+    expect(archiveResult).toMatchObject({
+      status: "fulfilled",
+      value: { id: archiveFirstSurface.id, status: "archived" }
+    });
+    expect(losingAssignmentResult).toMatchObject({
+      status: "rejected",
+      reason: { status: 409, code: "KNOWLEDGE_REFERENCE_INVALID" }
+    });
+    expect(await AiEstimatorKnowledgeSectionModel.exists({
+      revisionId: archiveFirstDraft.revisionId,
+      "payload.surfaceIds": archiveFirstSurface.id
+    })).toBeNull();
+
+    const assignmentFirstSurface = await base.reference.createMaster(
+      SUPER_ADMIN,
+      "surfaces",
+      { name: "Assignment-first Surface" }
+    );
+    const assignmentFirstDraft = await createConfiguredDraft(
+      base.item,
+      "Assignment-first Surface assignment"
+    );
+    const assignmentFirstOverview = await base.item.getSection(
+      SUPER_ADMIN,
+      assignmentFirstDraft.mainLineId,
+      assignmentFirstDraft.revisionId,
+      "overview"
+    );
+    const assignmentGate = createGatedAudit("ai_estimator_knowledge_section_updated");
+    const assigning = createRaceItemService(assignmentGate.audit).updateSection(
+      SUPER_ADMIN,
+      assignmentFirstDraft.mainLineId,
+      assignmentFirstDraft.revisionId,
+      "overview",
+      {
+        expectedVersion: assignmentFirstOverview.version,
+        expectedAggregateVersion: assignmentFirstDraft.aggregateVersion,
+        payload: {
+          ...assignmentFirstOverview.payload,
+          surfaceIds: [assignmentFirstSurface.id]
+        }
+      }
+    );
+    await assignmentGate.entered;
+    const losingArchive = createRaceReferenceService(persistentAudit()).archiveMaster(
+      SUPER_ADMIN,
+      "surfaces",
+      assignmentFirstSurface.id,
+      { expectedVersion: assignmentFirstSurface.version }
+    );
+    await nextEventLoopTurn();
+    assignmentGate.release();
+
+    const [assignmentResult, losingArchiveResult] = await Promise.allSettled([
+      assigning,
+      losingArchive
+    ]);
+    expect(assignmentResult.status).toBe("fulfilled");
+    expect(losingArchiveResult).toMatchObject({
+      status: "rejected",
+      reason: { status: 409, code: "ACTIVE_REFERENCE_CONFLICT" }
+    });
+    expect(await AiEstimatorKnowledgeSurfaceModel.findById(
+      assignmentFirstSurface.id
+    ).lean()).toMatchObject({
+      status: "active",
+      dependencyEpoch: 1,
+      version: 1
+    });
+    expect(await AuditEventModel.countDocuments({
+      action: "ai_estimator_knowledge_master_archived",
+      entityType: "ai_estimator_knowledge_surface"
+    })).toBe(1);
+    expect(await AuditEventModel.countDocuments({
+      action: "ai_estimator_knowledge_master_archived",
+      entityId: assignmentFirstSurface.id
+    })).toBe(0);
+    expect(await AuditEventModel.countDocuments({
+      action: "ai_estimator_knowledge_section_updated",
+      entityId: assignmentFirstOverview.id
+    })).toBe(2);
+  });
+
+  it("serializes stale Main Line Surface duplication against archive in both commit orders", async () => {
+    const base = createServices();
+
+    const archiveFirstSurface = await base.reference.createMaster(
+      SUPER_ADMIN,
+      "surfaces",
+      { name: "Archive-first duplicate Surface" }
+    );
+    const archiveFirstSource = await createSurfaceDuplicateRaceSource(
+      base.item,
+      archiveFirstSurface.id,
+      "Archive-first Surface duplicate source"
+    );
+    const beforeArchiveFirstLines = await AiEstimatorKnowledgeMainLineModel.countDocuments();
+    const duplicateReadGate = createGatedAudit(
+      "ai_estimator_knowledge_price_version_created"
+    );
+    const losingDuplicate = createRaceItemService(duplicateReadGate.audit).duplicate(
+      SUPER_ADMIN,
+      archiveFirstSource.mainLineId,
+      {
+        expectedVersion: archiveFirstSource.aggregateVersion,
+        name: "Must not copy archived Surface"
+      }
+    );
+    await duplicateReadGate.entered;
+    await removeSurfaceFromDuplicateRaceSource(base.item, archiveFirstSource);
+    await expect(base.reference.archiveMaster(
+      SUPER_ADMIN,
+      "surfaces",
+      archiveFirstSurface.id,
+      { expectedVersion: archiveFirstSurface.version }
+    )).resolves.toMatchObject({ id: archiveFirstSurface.id, status: "archived" });
+    duplicateReadGate.release();
+
+    const [losingDuplicateResult] = await Promise.allSettled([losingDuplicate]);
+    expect(losingDuplicateResult.status).toBe("rejected");
+    if (losingDuplicateResult.status === "rejected") {
+      expect(losingDuplicateResult.reason).toMatchObject({ status: 409 });
+      expect(["KNOWLEDGE_REFERENCE_INVALID", "VERSION_CONFLICT"])
+        .toContain(losingDuplicateResult.reason.code);
+    }
+    expect(await AiEstimatorKnowledgeMainLineModel.countDocuments())
+      .toBe(beforeArchiveFirstLines);
+    expect(await AiEstimatorKnowledgeSectionModel.exists({
+      mainLineId: { $ne: archiveFirstSource.mainLineId },
+      "payload.surfaceIds": archiveFirstSurface.id
+    })).toBeNull();
+
+    const duplicateFirstSurface = await base.reference.createMaster(
+      SUPER_ADMIN,
+      "surfaces",
+      { name: "Duplicate-first Surface" }
+    );
+    const duplicateFirstSource = await createSurfaceDuplicateRaceSource(
+      base.item,
+      duplicateFirstSurface.id,
+      "Duplicate-first Surface source"
+    );
+    const duplicateCommitGate = createGatedAudit(
+      "ai_estimator_knowledge_main_line_duplicated"
+    );
+    const winningDuplicate = createRaceItemService(duplicateCommitGate.audit).duplicate(
+      SUPER_ADMIN,
+      duplicateFirstSource.mainLineId,
+      {
+        expectedVersion: duplicateFirstSource.aggregateVersion,
+        name: "Committed Surface copy"
+      }
+    );
+    await duplicateCommitGate.entered;
+    await removeSurfaceFromDuplicateRaceSource(base.item, duplicateFirstSource);
+    const losingArchive = createRaceReferenceService(persistentAudit()).archiveMaster(
+      SUPER_ADMIN,
+      "surfaces",
+      duplicateFirstSurface.id,
+      { expectedVersion: duplicateFirstSurface.version }
+    );
+    await nextEventLoopTurn();
+    duplicateCommitGate.release();
+
+    const [winningDuplicateResult, losingArchiveResult] = await Promise.allSettled([
+      winningDuplicate,
+      losingArchive
+    ]);
+    if (winningDuplicateResult.status !== "fulfilled") {
+      throw winningDuplicateResult.reason;
+    }
+    expect(losingArchiveResult).toMatchObject({
+      status: "rejected",
+      reason: { status: 409, code: "ACTIVE_REFERENCE_CONFLICT" }
+    });
+    expect(winningDuplicateResult.value.surfaceIds).toEqual([duplicateFirstSurface.id]);
+    expect(await AiEstimatorKnowledgeSurfaceModel.findById(
+      duplicateFirstSurface.id
+    ).lean()).toMatchObject({
+      status: "active",
+      dependencyEpoch: 2,
+      version: 1
+    });
+    expect(await AuditEventModel.countDocuments({
+      action: "ai_estimator_knowledge_main_line_duplicated"
+    })).toBe(1);
+    expect(await AuditEventModel.countDocuments({
+      action: "ai_estimator_knowledge_master_archived",
+      entityType: "ai_estimator_knowledge_surface"
+    })).toBe(1);
+  });
+
   it("serializes a first recommendation Priority reference against archive in both commit orders", async () => {
     const base = createServices();
     const target = await createAndActivateOverviewOnly(
@@ -3371,6 +3682,70 @@ async function createSlabDuplicateRaceSource(
     }
   );
   return { ...source, aggregateVersion: saved.aggregateVersion };
+}
+
+async function createSurfaceDuplicateRaceSource(
+  item: AiEstimatorKnowledgeItemService,
+  surfaceId: string,
+  name: string
+): Promise<{
+  mainLineId: string;
+  revisionId: string;
+  aggregateVersion: number;
+  overviewVersion: number;
+}> {
+  const source = await createConfiguredDraft(item, name, { withPrice: true });
+  const overview = await item.getSection(
+    SUPER_ADMIN,
+    source.mainLineId,
+    source.revisionId,
+    "overview"
+  );
+  const saved = await item.updateSection(
+    SUPER_ADMIN,
+    source.mainLineId,
+    source.revisionId,
+    "overview",
+    {
+      expectedVersion: overview.version,
+      expectedAggregateVersion: source.aggregateVersion,
+      payload: { ...overview.payload, surfaceIds: [surfaceId] }
+    }
+  );
+  return {
+    mainLineId: source.mainLineId,
+    revisionId: source.revisionId,
+    aggregateVersion: saved.aggregateVersion,
+    overviewVersion: saved.version
+  };
+}
+
+async function removeSurfaceFromDuplicateRaceSource(
+  item: AiEstimatorKnowledgeItemService,
+  source: {
+    mainLineId: string;
+    revisionId: string;
+    aggregateVersion: number;
+    overviewVersion: number;
+  }
+): Promise<void> {
+  const overview = await item.getSection(
+    SUPER_ADMIN,
+    source.mainLineId,
+    source.revisionId,
+    "overview"
+  );
+  await item.updateSection(
+    SUPER_ADMIN,
+    source.mainLineId,
+    source.revisionId,
+    "overview",
+    {
+      expectedVersion: source.overviewVersion,
+      expectedAggregateVersion: source.aggregateVersion,
+      payload: { ...overview.payload, surfaceIds: [] }
+    }
+  );
 }
 
 async function removeSlabRateFromDuplicateRaceSource(

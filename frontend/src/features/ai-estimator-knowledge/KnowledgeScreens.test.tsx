@@ -19,7 +19,8 @@ import type {
   KnowledgeRevision,
   KnowledgeSectionEnvelope,
   KnowledgeSectionMutationEnvelope,
-  KnowledgeSectionKey
+  KnowledgeSectionKey,
+  KnowledgeSurface
 } from "./knowledgeTypes";
 
 vi.mock("../../auth/AuthProvider", () => ({
@@ -39,6 +40,7 @@ vi.mock("./knowledgeApi", async (importOriginal) => {
     listKnowledgeBaskets: vi.fn(),
     listKnowledgeMasters: vi.fn(),
     createKnowledgeMaster: vi.fn(),
+    createKnowledgeSurface: vi.fn(),
     getKnowledgeItem: vi.fn(),
     getKnowledgeHistory: vi.fn(),
     getKnowledgeSection: vi.fn(),
@@ -236,9 +238,13 @@ function expectHeadingsInOrder(container: HTMLElement, names: readonly string[])
 
 function expectModeRegionsInOrder(container: HTMLElement) {
   const pricing = within(container).getByRole("region", { name: "Budgeting" });
+  const surfaces = within(container).getByRole("region", { name: "Surfaces" });
   const quantityMargin = within(container).getByRole("region", { name: "Quantity & margin" });
   expect(
-    pricing.compareDocumentPosition(quantityMargin) & Node.DOCUMENT_POSITION_FOLLOWING
+    pricing.compareDocumentPosition(surfaces) & Node.DOCUMENT_POSITION_FOLLOWING
+  ).toBeTruthy();
+  expect(
+    surfaces.compareDocumentPosition(quantityMargin) & Node.DOCUMENT_POSITION_FOLLOWING
   ).toBeTruthy();
 }
 
@@ -1213,6 +1219,105 @@ describe("AI estimator knowledge screens", () => {
       .map(([, params]) => params?.offset ?? 0)).toEqual([0, 100]);
   });
 
+  it("collects every Surface page for the Mode selector", async () => {
+    const user = userEvent.setup();
+    const firstPageSurfaces: readonly KnowledgeSurface[] = Array.from(
+      { length: 100 },
+      (_, index) => ({
+        ...wallSurface,
+        id: `surface-decoy-${index + 1}`,
+        masterType: "surfaces" as const,
+        code: `SURFACE_DECOY_${index + 1}`,
+        name: `Surface decoy ${index + 1}`
+      })
+    );
+    const pageTwoSurface: KnowledgeSurface = {
+      ...wallSurface,
+      id: "surface-page-101",
+      masterType: "surfaces",
+      code: "SURFACE_PAGE_101",
+      name: "Zellige surface"
+    };
+    vi.mocked(knowledgeApi.listKnowledgeMasters).mockImplementation(async (type, params = {}) => {
+      if (type === "uoms") {
+        return {
+          items: [squareFoot, squareMetre],
+          pagination: { ...page, total: 2 }
+        };
+      }
+      if (type !== "surfaces") return { items: [], pagination: page };
+      return (params.offset ?? 0) === 0
+        ? {
+            items: firstPageSurfaces,
+            pagination: { limit: 100, offset: 0, total: 101, hasMore: true }
+          }
+        : {
+            items: [pageTwoSurface],
+            pagination: { limit: 100, offset: 100, total: 101, hasMore: false }
+          };
+    });
+    renderRoute(
+      <KnowledgeItemWorkspacePage />,
+      "/admin/configuration/estimation/items/line-1",
+      "/admin/configuration/estimation/items/:itemId"
+    );
+
+    await user.click(await screen.findByRole("tab", { name: "Mode" }));
+    await user.click(await screen.findByRole("button", { name: "Applicable surfaces" }));
+    await user.type(screen.getByRole("searchbox", { name: "Search surfaces" }), "Zellige");
+    expect(screen.getByRole("option", { name: "Zellige surface" })).toBeVisible();
+    const surfaceCalls = vi.mocked(knowledgeApi.listKnowledgeMasters).mock.calls
+      .filter(([type]) => type === "surfaces");
+    expect(surfaceCalls.map(([, params]) => params?.offset ?? 0)).toEqual([0, 100]);
+    expect(surfaceCalls.every(([, params]) => params?.includeArchived === true)).toBe(true);
+  });
+
+  it("collects every Surface page for the Main Line filter", async () => {
+    const user = userEvent.setup();
+    const firstPageSurfaces: readonly KnowledgeMaster[] = Array.from(
+      { length: 100 },
+      (_, index) => ({
+        ...wallSurface,
+        id: `surface-filter-decoy-${index + 1}`,
+        code: `SURFACE_FILTER_DECOY_${index + 1}`,
+        name: `Filter surface ${index + 1}`
+      })
+    );
+    const pageTwoSurface = {
+      ...wallSurface,
+      id: "surface-filter-101",
+      code: "SURFACE_FILTER_101",
+      name: "Zellige filter surface"
+    };
+    vi.mocked(knowledgeApi.listKnowledgeMasters).mockImplementation(async (type, params = {}) => {
+      if (type !== "surfaces") return { items: [], pagination: page };
+      return (params.offset ?? 0) === 0
+        ? {
+            items: firstPageSurfaces,
+            pagination: { limit: 100, offset: 0, total: 101, hasMore: true }
+          }
+        : {
+            items: [pageTwoSurface],
+            pagination: { limit: 100, offset: 100, total: 101, hasMore: false }
+          };
+    });
+    renderRoute(
+      <KnowledgeBaseIndexPage />,
+      "/admin/configuration/estimation",
+      "/admin/configuration/estimation"
+    );
+
+    await user.click(await screen.findByRole("button", { name: "Filters" }));
+    const filter = screen.getByRole("combobox", { name: "Surface" });
+    expect(within(filter).getByRole("option", { name: "Zellige filter surface" })).toHaveValue(
+      pageTwoSurface.id
+    );
+    const surfaceCalls = vi.mocked(knowledgeApi.listKnowledgeMasters).mock.calls
+      .filter(([type]) => type === "surfaces");
+    expect(surfaceCalls.map(([, params]) => params?.offset ?? 0)).toEqual([0, 100]);
+    expect(surfaceCalls.every(([, params]) => params?.includeArchived === true)).toBe(true);
+  });
+
   it("renders four guided sections without hidden-section Overview summaries while preserving Overview and Mode behavior", async () => {
     const user = userEvent.setup();
     const relatedItem: KnowledgeItemDetail = { ...item, id: "line-2", mainLineId: "line-2", mainLineName: "Related panel", draftRevisionId: null, draftRevision: null, activeRevisionId: "revision-2" };
@@ -1766,6 +1871,97 @@ describe("AI estimator knowledge screens", () => {
         }
       })
     ));
+  });
+
+  it("quick-adds by returned Surface ID, preserves the failed Mode draft, and keeps the Surface after discard", async () => {
+    const user = userEvent.setup();
+    let created = false;
+    const counterSurface: KnowledgeSurface = {
+      ...wallSurface,
+      id: "surface-counter-returned",
+      masterType: "surfaces",
+      code: "GENERATED_SURFACE_CODE",
+      name: "Counter surface",
+      description: "Granite, quartz, marble",
+      version: 1
+    };
+    vi.mocked(knowledgeApi.listKnowledgeMasters).mockImplementation(async (type) => ({
+      items: type === "uoms"
+        ? [squareFoot]
+        : type === "surfaces" && created
+          ? [counterSurface]
+          : [],
+      pagination: {
+        ...page,
+        total: type === "uoms" || (type === "surfaces" && created) ? 1 : 0
+      }
+    }));
+    vi.mocked(knowledgeApi.getKnowledgeSection).mockImplementation(async (_lineId, _revisionId, sectionKey) =>
+      section(sectionKey, sectionKey === "overview" ? {
+        priorityId: "priority-preserved",
+        hiddenCompatibility: { preserve: true }
+      } : {})
+    );
+    vi.mocked(knowledgeApi.createKnowledgeSurface).mockImplementation(async () => {
+      created = true;
+      return counterSurface;
+    });
+    vi.mocked(knowledgeApi.updateKnowledgeSection).mockRejectedValue(
+      new ApiError(503, "UPSTREAM_UNAVAILABLE", "Mode assignment unavailable.")
+    );
+    renderRoute(
+      <KnowledgeItemWorkspacePage />,
+      "/admin/configuration/estimation/items/line-1",
+      "/admin/configuration/estimation/items/:itemId"
+    );
+
+    await user.click(await screen.findByRole("tab", { name: "Mode" }));
+    await user.click(await screen.findByRole("button", { name: "Add Surface" }));
+    const dialog = screen.getByRole("dialog", { name: "Add Surface" });
+    await user.type(within(dialog).getByRole("textbox", { name: "Surface name" }), "Counter surface");
+    await user.type(
+      within(dialog).getByRole("textbox", { name: "Examples / components" }),
+      "Granite, quartz, marble"
+    );
+    await user.click(within(dialog).getByRole("button", { name: "Add Surface" }));
+
+    await waitFor(() => expect(knowledgeApi.createKnowledgeSurface).toHaveBeenCalledWith({
+      name: "Counter surface",
+      description: "Granite, quartz, marble"
+    }));
+    expect(knowledgeApi.createKnowledgeSurface).toHaveBeenCalledWith(
+      expect.not.objectContaining({ code: expect.anything() })
+    );
+    expect(await screen.findByText("Counter surface added. Save Mode to apply it.")).toBeInTheDocument();
+    const selector = screen.getByRole("button", { name: "Applicable surfaces" });
+    expect(selector).toHaveAccessibleDescription("Counter surface");
+
+    await user.click(screen.getByRole("button", { name: "Save Mode" }));
+    await waitFor(() => expect(knowledgeApi.updateKnowledgeSection).toHaveBeenCalledWith(
+      item.mainLineId,
+      revision.id,
+      "overview",
+      expect.objectContaining({
+        payload: {
+          priorityId: "priority-preserved",
+          hiddenCompatibility: { preserve: true },
+          surfaceIds: [counterSurface.id]
+        }
+      })
+    ));
+    expect(await screen.findByText("Mode assignment unavailable.")).toBeVisible();
+    expect(selector).toHaveAccessibleDescription(
+      "Counter surface Mode assignment unavailable."
+    );
+
+    await user.click(screen.getByRole("tab", { name: "Overview" }));
+    const unsaved = screen.getByRole("alertdialog", { name: "Save changes before leaving?" });
+    await user.click(within(unsaved).getByRole("button", { name: "Discard changes" }));
+    await user.click(await screen.findByRole("tab", { name: "Mode" }));
+    const restoredSelector = await screen.findByRole("button", { name: "Applicable surfaces" });
+    expect(restoredSelector).toHaveAccessibleDescription("Select surfaces");
+    await user.click(restoredSelector);
+    expect(screen.getByRole("option", { name: "Counter surface" })).toBeVisible();
   });
 
   it("preserves arrow, Home, End, and wraparound order across the four workspace tabs", async () => {

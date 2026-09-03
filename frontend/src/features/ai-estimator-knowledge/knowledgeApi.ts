@@ -21,7 +21,9 @@ import type {
   KnowledgePermanentDeleteBasketResult,
   KnowledgeSectionEnvelope,
   KnowledgeSectionMutationEnvelope,
-  KnowledgeSectionKey
+  KnowledgeSectionKey,
+  KnowledgeSurface,
+  KnowledgeSurfaceListResponse
 } from "./knowledgeTypes";
 
 const ADMIN_PREFIX = "/admin/ai-estimator-knowledge";
@@ -194,6 +196,19 @@ export interface KnowledgeCreateMasterInput {
 
 export interface KnowledgeUpdateMasterInput extends Partial<KnowledgeCreateMasterInput> {
   readonly expectedVersion: number;
+  readonly status?: "active" | "inactive";
+}
+
+export interface KnowledgeCreateSurfaceInput {
+  readonly code?: string;
+  readonly name: string;
+  readonly description?: string | null;
+}
+
+export interface KnowledgeUpdateSurfaceInput {
+  readonly expectedVersion: number;
+  readonly name?: string;
+  readonly description?: string | null;
   readonly status?: "active" | "inactive";
 }
 
@@ -396,6 +411,30 @@ export function listKnowledgeMasters(
 ): Promise<KnowledgeMasterListResponse> {
   return apiClient.get<KnowledgeMasterListResponse>(
     withQuery(`${ADMIN_PREFIX}/${type}`, params)
+  );
+}
+
+export function listKnowledgeSurfaces(
+  params: KnowledgeReferenceListParams = {}
+): Promise<KnowledgeSurfaceListResponse> {
+  return apiClient.get<KnowledgeSurfaceListResponse>(
+    withQuery(`${ADMIN_PREFIX}/surfaces`, params)
+  );
+}
+
+export function createKnowledgeSurface(
+  input: KnowledgeCreateSurfaceInput
+): Promise<KnowledgeSurface> {
+  return apiClient.post<KnowledgeSurface>(`${ADMIN_PREFIX}/surfaces`, input);
+}
+
+export function updateKnowledgeSurface(
+  id: string,
+  input: KnowledgeUpdateSurfaceInput
+): Promise<KnowledgeSurface> {
+  return apiClient.patch<KnowledgeSurface>(
+    `${ADMIN_PREFIX}/surfaces/${segment(id)}`,
+    input
   );
 }
 

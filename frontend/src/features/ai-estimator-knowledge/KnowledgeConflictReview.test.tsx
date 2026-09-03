@@ -144,7 +144,7 @@ describe("KnowledgeConflictReview Budgeting projection", () => {
   });
 });
 
-describe("KnowledgeConflictReview Mode Priority projection", () => {
+describe("KnowledgeConflictReview Mode Overview projection", () => {
   it("compares the resolved Priority label without exposing other Overview values or raw IDs", () => {
     render(
       <KnowledgeConflictReview
@@ -206,6 +206,46 @@ describe("KnowledgeConflictReview Mode Priority projection", () => {
     const review = screen.getByRole("region", { name: "Latest Overview server version" });
     expect(review).toHaveTextContent("Unavailable priority");
     expect(review).not.toHaveTextContent("private-missing-priority-id");
+  });
+
+  it("scopes Surface conflict review and never exposes an unresolved stable ID", () => {
+    render(
+      <KnowledgeConflictReview
+        sectionKey="overview"
+        localVersion={8}
+        serverVersion={9}
+        payload={{
+          surfaceIds: ["surface-wall", "private-missing-surface-id"],
+          priorityId: "private-priority-id",
+          hiddenCompatibility: "Private Overview value"
+        }}
+        overviewFields={["surfaceIds"]}
+        masters={{
+          surfaces: [{
+            id: "surface-wall",
+            masterType: "surfaces",
+            code: "SURFACE_WALL",
+            name: "Wall surface",
+            description: null,
+            displayOrder: 1,
+            status: "active",
+            version: 1,
+            createdById: "super-admin-1",
+            updatedById: "super-admin-1",
+            createdAt: "2026-09-03T08:00:00.000Z",
+            updatedAt: "2026-09-03T08:00:00.000Z"
+          }]
+        }}
+        relationshipBaskets={[]}
+        relationshipItems={[]}
+      />
+    );
+
+    const review = screen.getByRole("region", { name: "Latest Overview server version" });
+    expect(review).toHaveTextContent("SurfacesWall surface, Unavailable value");
+    expect(review).not.toHaveTextContent("private-missing-surface-id");
+    expect(review).not.toHaveTextContent("private-priority-id");
+    expect(review).not.toHaveTextContent("Private Overview value");
   });
 });
 

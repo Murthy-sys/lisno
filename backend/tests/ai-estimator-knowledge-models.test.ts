@@ -148,6 +148,49 @@ describe("AI estimator knowledge models", () => {
     expect(dependencyEpoch.isRequired).not.toBe(true);
   });
 
+  it("keeps Surface identity legacy-safe without unit guidance", async () => {
+    const surface = new AiEstimatorKnowledgeSurfaceModel({
+      _id: "surface-wall",
+      code: "WALL",
+      name: "Wall surface",
+      description: "Paint, wallpaper",
+      displayOrder: 0,
+      status: "active",
+      version: 1,
+      ...actor,
+      archivedAt: null,
+      archivedById: null
+    });
+
+    await expect(surface.validate()).resolves.toBeUndefined();
+    expect(surface.dependencyEpoch).toBe(0);
+    expect(AiEstimatorKnowledgeSurfaceModel.schema.path("typicalUomIds")).toBeUndefined();
+    expect(AiEstimatorKnowledgeSurfaceModel.schema.indexes()).not.toContainEqual([
+      { typicalUomIds: 1, status: 1 },
+      expect.any(Object)
+    ]);
+
+    const legacy = AiEstimatorKnowledgeSurfaceModel.hydrate({
+      _id: "surface-legacy",
+      code: "LEGACY",
+      codeNormalized: "legacy",
+      name: "Legacy surface",
+      nameNormalized: "legacy surface",
+      description: null,
+      displayOrder: 1,
+      status: "active",
+      version: 1,
+      ...actor,
+      archivedAt: null,
+      archivedById: null
+    });
+    await expect(legacy.validate()).resolves.toBeUndefined();
+    expect(legacy.dependencyEpoch).toBe(0);
+
+    expect(AiEstimatorKnowledgeSurfaceModel.schema.path("dependencyEpoch")).toBeDefined();
+    expect(AiEstimatorKnowledgeSurfaceModel.schema.path("dependencyEpoch").isRequired).not.toBe(true);
+  });
+
   it("stores optional canonical Priority semantics with a private legacy-safe epoch", async () => {
     const canonical = new AiEstimatorKnowledgePriorityModel({
       _id: "knowledge-priority-bootstrap-high",

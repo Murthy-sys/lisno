@@ -7,6 +7,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { KnowledgeBaseIndexPage } from "./KnowledgeBaseIndexPage";
 import { KnowledgeMasterEditorDialog } from "./KnowledgeMasterEditorDialog";
+import { KnowledgeSurfaceEditorDialog } from "./KnowledgeSurfaceEditorDialog";
 import * as knowledgeApi from "./knowledgeApi";
 import type {
   KnowledgeBasket,
@@ -218,8 +219,7 @@ describe("automatic knowledge-base display order forms", () => {
     "uoms",
     "vendors",
     "taxes",
-    "priorities",
-    "surfaces"
+    "priorities"
   ])("does not expose display order when quick-adding %s", async (masterType) => {
     const view = renderWithQuery(
       <KnowledgeMasterEditorDialog
@@ -233,6 +233,20 @@ describe("automatic knowledge-base display order forms", () => {
     expect(within(dialog).queryByRole("spinbutton", { name: "Display order" })).not.toBeInTheDocument();
     await expectNoAutomatedAccessibilityViolations();
     view.unmount();
+  });
+
+  it("does not expose display order or Code when quick-adding a Surface", async () => {
+    renderWithQuery(
+      <KnowledgeSurfaceEditorDialog
+        quickAdd
+        onClose={vi.fn()}
+      />
+    );
+
+    const dialog = screen.getByRole("dialog", { name: "Add Surface" });
+    expect(within(dialog).queryByRole("spinbutton", { name: "Display order" })).not.toBeInTheDocument();
+    expect(within(dialog).queryByRole("textbox", { name: "Code" })).not.toBeInTheDocument();
+    await expectNoAutomatedAccessibilityViolations();
   });
 
   it("does not expose display order in the standard reusable-value create dialog", () => {

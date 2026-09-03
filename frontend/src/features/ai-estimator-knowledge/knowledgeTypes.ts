@@ -89,6 +89,10 @@ export interface KnowledgeMaster extends KnowledgeVersionedResource {
   readonly taxVersions?: readonly KnowledgeTaxVersion[];
 }
 
+export interface KnowledgeSurface extends KnowledgeMaster {
+  readonly masterType: "surfaces";
+}
+
 export interface KnowledgeTaxVersion extends KnowledgeVersionedResource {
   readonly taxRuleId: string;
   readonly versionNumber: number;
@@ -329,6 +333,9 @@ export interface KnowledgeHistoryResponse
 
 export interface KnowledgeMasterListResponse
   extends KnowledgePageEnvelope<KnowledgeMaster> {}
+
+export interface KnowledgeSurfaceListResponse
+  extends KnowledgePageEnvelope<KnowledgeSurface> {}
 
 export interface KnowledgeBasketListResponse
   extends KnowledgePageEnvelope<KnowledgeBasket> {}

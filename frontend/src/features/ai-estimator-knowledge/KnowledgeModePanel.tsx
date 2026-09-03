@@ -40,7 +40,8 @@ import {
 import { knowledgeQueryKeys } from "./knowledgeQueryKeys";
 import {
   knowledgeOverviewPayloadForUpdate,
-  knowledgeSectionPayloadForUpdate
+  knowledgeSectionPayloadForUpdate,
+  type KnowledgeOverviewEditableField
 } from "./knowledgeSectionPayload";
 import { KnowledgeSectionEditor } from "./KnowledgeSectionEditor";
 import type { KnowledgeBudgetCatalogState } from "./KnowledgeBudgetBuilder";
@@ -57,6 +58,10 @@ import {
 } from "./KnowledgeModeConfigurationBuilder";
 import type { KnowledgeModeConfigurationIssue } from "./knowledgeModeConfiguration";
 import { KnowledgeConflictReview } from "./KnowledgeConflictReview";
+import {
+  KnowledgeModeSurfacePanel,
+  type KnowledgeSurfaceCatalogState
+} from "./KnowledgeModeSurfacePanel";
 import { KnowledgeVersionConflictDialog } from "./KnowledgeVersionConflictDialog";
 import type {
   KnowledgeBasket,
@@ -98,6 +103,7 @@ interface ModeDraft {
   readonly error: string | null;
   readonly serverIssues: readonly KnowledgeModeConfigurationIssue[];
   readonly serverReview: ModeServerReview | null;
+  readonly editedFields: ReadonlySet<KnowledgeOverviewEditableField>;
 }
 
 interface ModeServerReview {
@@ -130,6 +136,7 @@ export interface KnowledgeModePanelProps {
   readonly uomCatalogState?: KnowledgeUomCatalogState;
   readonly vendorCatalogState?: KnowledgeBudgetCatalogState;
   readonly priorityCatalogState?: KnowledgePriorityCatalogState;
+  readonly surfaceCatalogState?: KnowledgeSurfaceCatalogState;
   readonly onQuickAdd: (
     type: KnowledgeMasterType,
     select: (master: KnowledgeMaster) => void
@@ -157,6 +164,7 @@ export const KnowledgeModePanel = forwardRef<
     uomCatalogState = { status: "ready" },
     vendorCatalogState = { status: "ready" },
     priorityCatalogState = { status: "ready" },
+    surfaceCatalogState = { status: "ready" },
     onQuickAdd,
     onDirtyChange,
     onSavingChange,
@@ -288,7 +296,30 @@ export const KnowledgeModePanel = forwardRef<
           applicability: priorityId ? "configured" : current.overview.applicability,
           dirty: true,
           error: null,
-          serverIssues: []
+          serverIssues: current.overview.serverIssues.filter(
+            ({ path }) => path !== "priorityId" && !path.startsWith("priorityId.")
+          ),
+          editedFields: new Set(current.overview.editedFields).add("priorityId")
+        }
+      };
+    });
+  }, []);
+  const setSurfaceIds = useCallback((surfaceIds: readonly string[]) => {
+    setDrafts((current) => {
+      const payload = { ...current.overview.payload } as Record<string, KnowledgeJsonObject[string]>;
+      payload.surfaceIds = [...new Set(surfaceIds)];
+      return {
+        ...current,
+        overview: {
+          ...current.overview,
+          payload,
+          applicability: surfaceIds.length > 0 ? "configured" : current.overview.applicability,
+          dirty: true,
+          error: null,
+          serverIssues: current.overview.serverIssues.filter(
+            ({ path }) => path !== "surfaceIds" && !path.startsWith("surfaceIds.")
+          ),
+          editedFields: new Set(current.overview.editedFields).add("surfaceIds")
         }
       };
     });
@@ -422,15 +453,14 @@ export const KnowledgeModePanel = forwardRef<
           : undefined;
         const envelopeVersion = latestOverview?.version ?? draft.envelopeVersion!;
         const applicability = sectionKey === "overview"
-          && typeof draft.payload.priorityId === "string"
-          && draft.payload.priorityId.trim()
+          && overviewHasConfiguration(draft.payload)
           ? "configured"
           : latestOverview?.applicability ?? draft.applicability;
         const payload = sectionKey === "overview"
           ? knowledgeOverviewPayloadForUpdate(
               latestOverview?.payload ?? draft.payload,
               draft.payload,
-              new Set(["priorityId"])
+              draft.editedFields
             )
           : modeSectionPayloadForUpdate(sectionKey, draft.payload);
         setSavingSection(sectionKey);
@@ -536,7 +566,7 @@ export const KnowledgeModePanel = forwardRef<
                     : sectionKey === "pricing"
                       ? ["specifications", "brands", "priceEntries"]
                       : sectionKey === "overview"
-                        ? ["priorityId"]
+                        ? ["priorityId", "surfaceIds"]
                         : ["slabRates"]
                 )
               : [];
@@ -689,13 +719,15 @@ export const KnowledgeModePanel = forwardRef<
           slabSpecificationReferenceIds={liveSlabSpecificationIds}
           pricingAfterSpecifications={(
             <>
-              {drafts.overview.serverReview ? (
+              {drafts.overview.serverReview && drafts.overview.editedFields.has("priorityId") ? (
                 <KnowledgeConflictReview
                   sectionKey="overview"
                   localVersion={drafts.overview.serverReview.localVersion}
                   serverVersion={drafts.overview.serverReview.server.version}
                   payload={drafts.overview.serverReview.server.payload}
-                  overviewFields={["priorityId"]}
+                  overviewFields={drafts.overview.editedFields.has("surfaceIds")
+                    ? ["priorityId", "surfaceIds"]
+                    : ["priorityId"]}
                   masters={masters}
                   relationshipBaskets={relationshipBaskets}
                   relationshipItems={relationshipItems}
@@ -717,11 +749,14 @@ export const KnowledgeModePanel = forwardRef<
                 }}
                 readOnly={!editable}
                 saving={saving}
-                dirty={drafts.overview.dirty}
+                dirty={drafts.overview.editedFields.has("priorityId")}
                 error={drafts.overview.serverIssues.find(({ path }) => path === "priorityId")?.message}
                 onChange={setPriorityId}
               />
-              {drafts.overview.error ? (
+              {drafts.overview.error
+              && drafts.overview.editedFields.has("priorityId")
+              && !drafts.overview.editedFields.has("surfaceIds")
+              && drafts.overview.serverIssues.length === 0 ? (
                 <InlineMessage tone="error" role="alert" title="Priority could not be saved">
                   Priority: {drafts.overview.error}
                 </InlineMessage>
@@ -741,6 +776,72 @@ export const KnowledgeModePanel = forwardRef<
           onQuickAdd={onQuickAdd}
         />
       )}
+      <Surface
+        as="section"
+        aria-label="Surfaces"
+        className="knowledge-workspace-section knowledge-mode-block knowledge-mode-surface-block"
+      >
+        {overviewQuery.isError && overviewQuery.data ? (
+          <InlineMessage
+            tone="warning"
+            title="Showing saved Surfaces"
+            action={<Button size="compact" variant="secondary" onClick={() => void overviewQuery.refetch()}>Retry</Button>}
+          >
+            Latest updates could not be loaded; saved values remain visible.
+          </InlineMessage>
+        ) : null}
+        {drafts.overview.serverReview
+        && drafts.overview.editedFields.has("surfaceIds")
+        && !drafts.overview.editedFields.has("priorityId") ? (
+          <KnowledgeConflictReview
+            sectionKey="overview"
+            localVersion={drafts.overview.serverReview.localVersion}
+            serverVersion={drafts.overview.serverReview.server.version}
+            payload={drafts.overview.serverReview.server.payload}
+            overviewFields={["surfaceIds"]}
+            masters={masters}
+            relationshipBaskets={relationshipBaskets}
+            relationshipItems={relationshipItems}
+          />
+        ) : null}
+        {drafts.overview.error
+        && drafts.overview.editedFields.has("priorityId")
+        && drafts.overview.editedFields.has("surfaceIds")
+        && drafts.overview.serverIssues.length === 0 ? (
+          <InlineMessage tone="error" role="alert" title="Priority and Surfaces could not be saved">
+            Priority and Surfaces: {drafts.overview.error}
+          </InlineMessage>
+        ) : null}
+        <KnowledgeModeSurfacePanel
+          selectedIds={stringIds(drafts.overview.payload.surfaceIds)}
+          surfaces={masters.surfaces ?? []}
+          catalogState={surfaceCatalogState}
+          sectionState={{
+            status: overviewQuery.isError && !overviewQuery.data
+              ? "error"
+              : overviewQuery.isPending && !overviewQuery.data
+                ? "loading"
+                : "ready",
+            onRetry: () => { void overviewQuery.refetch(); }
+          }}
+          readOnly={!editable}
+          saving={saving}
+          dirty={drafts.overview.editedFields.has("surfaceIds")}
+          canQuickAdd={canQuickAdd && !saving}
+          error={drafts.overview.serverIssues.find(({ path }) => path === "surfaceIds" || path.startsWith("surfaceIds."))?.message
+            ?? (drafts.overview.error
+              && drafts.overview.serverIssues.length === 0
+              && drafts.overview.editedFields.has("surfaceIds")
+              && !drafts.overview.editedFields.has("priorityId")
+              ? drafts.overview.error
+              : undefined)}
+          onChange={setSurfaceIds}
+          onQuickAdd={(select) => onQuickAdd("surfaces", (surface) => {
+            select(surface);
+            onAnnouncement(`${surface.name} added. Save Mode to apply it.`);
+          })}
+        />
+      </Surface>
       {renderBlock(
         "quantity-margin",
         quantityQuery,
@@ -769,7 +870,9 @@ export const KnowledgeModePanel = forwardRef<
 
       {conflict ? (
         <KnowledgeVersionConflictDialog
-          sectionLabel={MODE_SECTION_LABELS[conflict.sectionKey]}
+          sectionLabel={conflict.sectionKey === "overview"
+            ? overviewFieldLabel(drafts.overview.editedFields)
+            : MODE_SECTION_LABELS[conflict.sectionKey]}
           localVersion={conflict.localVersion}
           serverVersion={conflict.server.version}
           onKeepEditing={() => {
@@ -831,6 +934,25 @@ function ignoreSaveError() {
   // Parent error reporting is optional for standalone Mode panel consumers.
 }
 
+function overviewHasConfiguration(payload: KnowledgeJsonObject) {
+  return (typeof payload.priorityId === "string" && Boolean(payload.priorityId.trim()))
+    || stringIds(payload.surfaceIds).length > 0;
+}
+
+function stringIds(value: KnowledgeJsonObject[string]): readonly string[] {
+  return Array.isArray(value)
+    ? [...new Set(value.filter((entry): entry is string => typeof entry === "string"))]
+    : [];
+}
+
+function overviewFieldLabel(fields: ReadonlySet<KnowledgeOverviewEditableField>) {
+  const priority = fields.has("priorityId");
+  const surfaces = fields.has("surfaceIds");
+  if (priority && surfaces) return "Priority and Surfaces";
+  if (surfaces) return "Surfaces";
+  return "Priority";
+}
+
 function emptyModeDraft(): ModeDraft {
   return {
     payload: {},
@@ -842,7 +964,8 @@ function emptyModeDraft(): ModeDraft {
     validationAttempt: 0,
     error: null,
     serverIssues: [],
-    serverReview: null
+    serverReview: null,
+    editedFields: new Set()
   };
 }
 
@@ -868,7 +991,8 @@ function draftFromEnvelope(
     validationAttempt: 0,
     error: null,
     serverIssues: [],
-    serverReview: null
+    serverReview: null,
+    editedFields: new Set()
   };
 }
 
@@ -889,7 +1013,7 @@ function rebaseDraftAfterConflict(
 
 function sectionIssuesFromApiError(
   failure: ApiError,
-  allowedRootPaths: readonly ("modeConfigurations" | "specifications" | "brands" | "priceEntries" | "priorityId" | "slabRates")[]
+  allowedRootPaths: readonly ("modeConfigurations" | "specifications" | "brands" | "priceEntries" | "priorityId" | "surfaceIds" | "slabRates")[]
 ): readonly KnowledgeModeConfigurationIssue[] {
   if (allowedRootPaths.length === 0) return [];
   return Object.entries(failure.fields ?? {}).flatMap(([path, message]) => {

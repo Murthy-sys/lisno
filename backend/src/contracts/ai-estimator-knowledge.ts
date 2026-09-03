@@ -60,6 +60,8 @@ export interface KnowledgeUom extends KnowledgeMaster {
   decimalScale: 0 | 1 | 2 | 3;
 }
 
+export type KnowledgeSurface = KnowledgeMaster;
+
 export interface KnowledgePriority extends KnowledgeMaster {
   semanticTier?: KnowledgePrioritySemanticTier;
 }
