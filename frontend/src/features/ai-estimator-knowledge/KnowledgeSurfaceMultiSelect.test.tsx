@@ -18,12 +18,22 @@ const ceiling = surface(
 function ControlledSurfaces({
   initialSelectedIds = [],
   masters = [wall, ceiling, floor],
+  label,
+  placeholder,
+  searchable = false,
+  describedBy,
+  invalid = false,
   disabled = false,
   readOnly = false,
   onChange = vi.fn()
 }: {
   readonly initialSelectedIds?: readonly string[];
   readonly masters?: readonly KnowledgeMaster[];
+  readonly label?: string;
+  readonly placeholder?: string;
+  readonly searchable?: boolean;
+  readonly describedBy?: string;
+  readonly invalid?: boolean;
   readonly disabled?: boolean;
   readonly readOnly?: boolean;
   readonly onChange?: (selectedIds: readonly string[]) => void;
@@ -34,6 +44,11 @@ function ControlledSurfaces({
     <KnowledgeSurfaceMultiSelect
       selectedIds={selectedIds}
       masters={masters}
+      label={label}
+      placeholder={placeholder}
+      searchable={searchable}
+      describedBy={describedBy}
+      invalid={invalid}
       disabled={disabled}
       readOnly={readOnly}
       onChange={(nextSelectedIds) => {
@@ -45,7 +60,7 @@ function ControlledSurfaces({
 }
 
 describe("KnowledgeSurfaceMultiSelect", () => {
-  it("selects and deselects without modifier keys and returns IDs in master display order", async () => {
+  it("selects and deselects without modifier keys and returns IDs in normalized-name order", async () => {
     const user = userEvent.setup();
     const onChange = vi.fn();
     render(<ControlledSurfaces onChange={onChange} />);
@@ -61,9 +76,9 @@ describe("KnowledgeSurfaceMultiSelect", () => {
     expect(listbox).toHaveAttribute("aria-multiselectable", "true");
     expect(trigger).toHaveAttribute("aria-controls", listbox.id);
     expect(screen.getAllByRole("option").map((option) => option.textContent)).toEqual([
+      ceiling.name,
       "Floor",
-      "Wall",
-      ceiling.name
+      "Wall"
     ]);
 
     await user.click(screen.getByRole("option", { name: "Wall" }));
@@ -173,20 +188,20 @@ describe("KnowledgeSurfaceMultiSelect", () => {
     expect(trigger).toHaveFocus();
 
     await user.keyboard("{ArrowDown}");
-    const floorOption = screen.getByRole("option", { name: "Floor" });
-    expect(floorOption).toHaveFocus();
+    const ceilingOption = screen.getByRole("option", { name: ceiling.name });
+    expect(ceilingOption).toHaveFocus();
     await user.keyboard(" ");
-    expect(floorOption).toHaveAttribute("aria-selected", "true");
+    expect(ceilingOption).toHaveAttribute("aria-selected", "true");
 
     await user.keyboard("{ArrowDown}");
-    const wallOption = screen.getByRole("option", { name: "Wall" });
-    expect(wallOption).toHaveFocus();
-    await user.keyboard("{Enter}");
-    expect(wallOption).toHaveAttribute("aria-selected", "true");
-    await user.keyboard("{End}");
-    expect(screen.getByRole("option", { name: ceiling.name })).toHaveFocus();
-    await user.keyboard("{Home}");
+    const floorOption = screen.getByRole("option", { name: "Floor" });
     expect(floorOption).toHaveFocus();
+    await user.keyboard("{Enter}");
+    expect(floorOption).toHaveAttribute("aria-selected", "true");
+    await user.keyboard("{End}");
+    expect(screen.getByRole("option", { name: "Wall" })).toHaveFocus();
+    await user.keyboard("{Home}");
+    expect(ceilingOption).toHaveFocus();
 
     await user.keyboard("{Escape}");
     expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
@@ -194,11 +209,11 @@ describe("KnowledgeSurfaceMultiSelect", () => {
 
     await user.keyboard("{Enter}");
     expect(screen.getByRole("listbox")).toBeInTheDocument();
-    expect(screen.getByRole("option", { name: "Floor" })).toHaveFocus();
+    expect(screen.getByRole("option", { name: ceiling.name })).toHaveFocus();
     await user.keyboard("{Escape}");
 
     await user.click(trigger);
-    expect(screen.getByRole("option", { name: "Floor" })).toHaveFocus();
+    expect(screen.getByRole("option", { name: ceiling.name })).toHaveFocus();
     await user.tab();
     expect(screen.getByRole("button", { name: "Outside action" })).toHaveFocus();
     expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
@@ -219,7 +234,7 @@ describe("KnowledgeSurfaceMultiSelect", () => {
 
     expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
     const status = screen.getByRole("status");
-    expect(status).toHaveTextContent("No Surface options available.");
+    expect(status).toHaveTextContent("No surfaces have been added.");
     expect(trigger).toHaveAttribute("aria-controls", status.id);
     expect(screen.queryByRole("option")).not.toBeInTheDocument();
     const results = await axe.run(document.body, {
@@ -241,6 +256,51 @@ describe("KnowledgeSurfaceMultiSelect", () => {
     });
 
     expect(results.violations).toEqual([]);
+  });
+
+  it("supports searchable Surface summaries without exposing stable IDs", async () => {
+    const user = userEvent.setup();
+    const counter = surface("surface-counter", "Counter surface", 1);
+    render(
+      <ControlledSurfaces
+        initialSelectedIds={[counter.id]}
+        masters={[counter, wall]}
+        label="Applicable surfaces"
+        placeholder="Select surfaces"
+        searchable
+      />
+    );
+
+    const trigger = screen.getByRole("button", { name: "Applicable surfaces" });
+    expect(trigger).toHaveAccessibleDescription("Counter surface");
+    expect(document.body).not.toHaveTextContent(counter.id);
+    await user.click(trigger);
+
+    const search = screen.getByRole("searchbox", { name: "Search surfaces" });
+    expect(search).toHaveFocus();
+    await user.type(search, "wall");
+    expect(screen.getByRole("option", { name: "Wall" })).toBeVisible();
+    expect(screen.queryByRole("option", { name: /Counter surface/u })).not.toBeInTheDocument();
+
+    await user.clear(search);
+    await user.type(search, "nothing here");
+    expect(screen.getByRole("status")).toHaveTextContent("No surfaces match your search.");
+    await user.click(screen.getByRole("button", { name: "Clear search" }));
+    expect(screen.getByRole("option", { name: "Counter surface" })).toBeVisible();
+  });
+
+  it("associates an external validation message with the trigger", () => {
+    render(
+      <>
+        <p id="surface-error">Choose at least one Surface.</p>
+        <ControlledSurfaces describedBy="surface-error" invalid />
+      </>
+    );
+
+    const trigger = screen.getByRole("button", { name: "Surfaces" });
+    expect(trigger).toHaveAttribute("aria-invalid", "true");
+    expect(trigger.getAttribute("aria-describedby")?.split(" ")).toContain("surface-error");
+    expect(trigger).toHaveAccessibleDescription(/Choose at least one Surface\./u);
   });
 });
 

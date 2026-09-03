@@ -13,6 +13,8 @@
     "seed": "tsx src/seed/run.ts",
     "bootstrap:production-super-admin": "tsx src/operations/production-super-admin-bootstrap.ts",
     "bootstrap:ai-estimator-knowledge": "tsx src/operations/ai-estimator-knowledge-bootstrap.ts",
+    "provision:ai-estimator-knowledge-priorities": "tsx src/operations/ai-estimator-knowledge-priority-provision.ts",
+    "provision:ai-estimator-knowledge-gst": "tsx src/operations/ai-estimator-knowledge-gst-provision.ts",
     "migrate:client-linking": "tsx src/migrations/client-email-project-linking.ts",
     "migrate:estimate-design-mapping": "tsx src/migrations/estimate-design-mapping.ts",
     "migrate:project-finance-backfill": "tsx src/migrations/project-finance-backfill.ts",

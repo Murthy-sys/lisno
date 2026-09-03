@@ -8,11 +8,13 @@ import {
   AI_ESTIMATOR_KNOWLEDGE_EXECUTION_SOURCES,
   AI_ESTIMATOR_KNOWLEDGE_ITEM_STATUSES,
   AI_ESTIMATOR_KNOWLEDGE_MASTER_STATUSES,
+  AI_ESTIMATOR_KNOWLEDGE_MAX_ARRAY_ITEMS,
   AI_ESTIMATOR_KNOWLEDGE_MAX_MODE_FIELDS,
   AI_ESTIMATOR_KNOWLEDGE_MAX_MODE_FIELD_OPTIONS,
   AI_ESTIMATOR_KNOWLEDGE_MAX_SPECIFICATION_FIELDS,
   AI_ESTIMATOR_KNOWLEDGE_MAX_SPECIFICATION_FIELD_OPTIONS,
   AI_ESTIMATOR_KNOWLEDGE_MODE_KINDS,
+  AI_ESTIMATOR_KNOWLEDGE_QUANTITY_GAP_BEHAVIORS,
   AI_ESTIMATOR_KNOWLEDGE_REVISION_STATUSES,
   AI_ESTIMATOR_KNOWLEDGE_SECTION_APPLICABILITY,
   AI_ESTIMATOR_KNOWLEDGE_SECTION_KEYS,
@@ -20,6 +22,7 @@ import {
   AI_ESTIMATOR_KNOWLEDGE_TAX_TREATMENTS,
   AI_ESTIMATOR_KNOWLEDGE_VERSION_STATUSES
 } from "../domain/ai-estimator-knowledge.js";
+import { AI_ESTIMATOR_KNOWLEDGE_PRIORITY_SEMANTIC_TIERS } from "../domain/ai-estimator-knowledge-priority.js";
 
 type OpenApiObject = Readonly<Record<string, unknown>>;
 
@@ -53,11 +56,15 @@ export const AI_ESTIMATOR_KNOWLEDGE_REQUEST_BODIES: Readonly<Record<string, Open
       ? "KnowledgeUomCreateRequest"
       : family === "taxes"
         ? "KnowledgeTaxCreateRequest"
+        : family === "surfaces"
+          ? "KnowledgeSurfaceCreateRequest"
         : "KnowledgeMasterCreateRequest";
     const updateName = family === "uoms"
       ? "KnowledgeUomUpdateRequest"
       : family === "taxes"
         ? "KnowledgeTaxUpdateRequest"
+        : family === "surfaces"
+          ? "KnowledgeSurfaceUpdateRequest"
         : "KnowledgeMasterUpdateRequest";
     return [
       [`POST ${admin}/${family}`, jsonRequest(createName)],
@@ -89,12 +96,24 @@ export const AI_ESTIMATOR_KNOWLEDGE_RESPONSE_SCHEMAS: Readonly<Record<string, st
   [`POST ${admin}/main-lines/:mainLineId/duplicate`]: "KnowledgeItemDetail",
   [`POST ${admin}/preview`]: "KnowledgePreview",
   "POST /ai-estimator-knowledge/context": "KnowledgeContext",
-  ...Object.fromEntries(masterFamilies.flatMap((family) => [
-    [`GET ${admin}/${family}`, "KnowledgeMasterPage"],
-    [`POST ${admin}/${family}`, "KnowledgeMaster"],
-    [`PATCH ${admin}/${family}/:id`, "KnowledgeMaster"],
-    [`DELETE ${admin}/${family}/:id`, "KnowledgeMaster"]
-  ]))
+  ...Object.fromEntries(masterFamilies.flatMap((family) => {
+    const itemSchema = family === "priorities"
+      ? "KnowledgePriority"
+      : family === "surfaces"
+        ? "KnowledgeSurface"
+        : "KnowledgeMaster";
+    const pageResponseSchema = family === "priorities"
+      ? "KnowledgePriorityPage"
+      : family === "surfaces"
+        ? "KnowledgeSurfacePage"
+        : "KnowledgeMasterPage";
+    return [
+      [`GET ${admin}/${family}`, pageResponseSchema],
+      [`POST ${admin}/${family}`, itemSchema],
+      [`PATCH ${admin}/${family}/:id`, itemSchema],
+      [`DELETE ${admin}/${family}/:id`, itemSchema]
+    ];
+  }))
 };
 
 export const AI_ESTIMATOR_KNOWLEDGE_OPERATION_SUMMARIES: Readonly<Record<string, string>> = {
@@ -241,6 +260,24 @@ const masterUpdateRequestProperties = {
 const masterRequiredProperties = Object.keys(masterProperties).filter(
   (key) => key !== "decimalScale"
 );
+const priorityProperties = {
+  ...Object.fromEntries(
+    Object.entries(masterProperties).filter(([key]) => key !== "decimalScale")
+  ),
+  masterType: { type: "string", enum: ["priorities"] },
+  semanticTier: {
+    type: "string",
+    enum: [...AI_ESTIMATOR_KNOWLEDGE_PRIORITY_SEMANTIC_TIERS],
+    readOnly: true,
+    description: "Backend-owned canonical Priority meaning. Omitted for legacy or non-canonical Priority masters."
+  }
+} as const;
+const surfaceProperties = {
+  ...Object.fromEntries(
+    Object.entries(masterProperties).filter(([key]) => key !== "decimalScale")
+  ),
+  masterType: { type: "string", enum: ["surfaces"] }
+} as const;
 
 const amountComponent = {
   type: "object",
@@ -312,6 +349,9 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
     name: masterProperties.name
   }),
   KnowledgeMasterCreateRequest: strictObject(["code", "name"], masterCreateRequestProperties),
+  KnowledgeSurfaceCreateRequest: strictObject(["name"], {
+    ...masterCreateRequestProperties
+  }),
   KnowledgeUomCreateRequest: strictObject(["code", "name", "decimalScale"], {
     ...masterCreateRequestProperties,
     decimalScale: { type: "integer", minimum: 0, maximum: 3 }
@@ -344,6 +384,11 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
     taxVersion: ref("KnowledgeTaxVersionRequest")
   }),
   KnowledgeMasterUpdateRequest: strictObject(["expectedVersion"], {
+    expectedVersion: version,
+    ...masterUpdateRequestProperties,
+    status: { type: "string", enum: ["active", "inactive"] }
+  }),
+  KnowledgeSurfaceUpdateRequest: strictObject(["expectedVersion"], {
     expectedVersion: version,
     ...masterUpdateRequestProperties,
     status: { type: "string", enum: ["active", "inactive"] }
@@ -472,38 +517,69 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
       ref("KnowledgeCanonicalSpecification")
     ]
   },
-  KnowledgePriceEntryAppendCommand: strictObject(
-    [
-      "operation", "priceEntryId", "vendorId", "uomId", "specificationId",
-      "modeId", "taxRuleId", "taxVersionId", "inputAmountPaise", "treatment",
-      "effectiveFrom", "effectiveTo", "status"
-    ],
-    {
-      operation: { type: "string", enum: ["append"] },
-      priceEntryId: id,
-      vendorId: id,
-      uomId: id,
-      specificationId: {
-        type: "string",
-        nullable: true,
-        enum: [null],
-        description: "Must be null. Descriptive Specifications are not a price dimension."
-      },
-      modeId: { ...id, nullable: true },
-      taxRuleId: id,
-      taxVersionId: id,
-      inputAmountPaise: {
-        type: "integer",
-        minimum: 0,
-        maximum: Number.MAX_SAFE_INTEGER,
-        description: "Price input in integer paise."
-      },
-      treatment: { type: "string", enum: [...AI_ESTIMATOR_KNOWLEDGE_TAX_TREATMENTS] },
-      effectiveFrom: { type: "string", format: "date-time" },
-      effectiveTo: { type: "string", format: "date-time", nullable: true },
-      status: { type: "string", enum: [...AI_ESTIMATOR_KNOWLEDGE_VERSION_STATUSES] }
-    }
-  ),
+  KnowledgeBudgetSetCommand: {
+    ...strictObject(
+      [
+        "operation", "vendorId", "uomId", "inputAmountPaise",
+        "effectiveFrom", "effectiveTo"
+      ],
+      {
+        operation: { type: "string", enum: ["set_budget"] },
+        sourcePriceVersionId: {
+          ...id,
+          nullable: true,
+          description: "Opaque current same-revision price-version reference. Omit or send null for a new Budget; send it only to update a retained Budget."
+        },
+        vendorId: id,
+        uomId: id,
+        inputAmountPaise: {
+          type: "integer",
+          minimum: 0,
+          maximum: Number.MAX_SAFE_INTEGER,
+          description: "Unit Budget before GST in integer paise. Base, tax, and total amounts are derived by the server."
+        },
+        effectiveFrom: { type: "string", format: "date-time" },
+        effectiveTo: { type: "string", format: "date-time", nullable: true }
+      }
+    ),
+    description: "Preferred business-only Budgeting command. Identity, scope, immutable versioning, fixed GST rule/version/treatment, status, calculated amounts, and audit are server-owned. Client-supplied Tax fields are rejected."
+  },
+  KnowledgePriceEntryAppendCommand: {
+    ...strictObject(
+      [
+        "operation", "priceEntryId", "vendorId", "uomId", "specificationId",
+        "modeId", "taxRuleId", "taxVersionId", "inputAmountPaise", "treatment",
+        "effectiveFrom", "effectiveTo", "status"
+      ],
+      {
+        operation: { type: "string", enum: ["append"] },
+        priceEntryId: id,
+        vendorId: id,
+        uomId: id,
+        specificationId: {
+          type: "string",
+          nullable: true,
+          enum: [null],
+          description: "Must be null. Descriptive Specifications are not a price dimension."
+        },
+        modeId: { ...id, nullable: true },
+        taxRuleId: id,
+        taxVersionId: id,
+        inputAmountPaise: {
+          type: "integer",
+          minimum: 0,
+          maximum: Number.MAX_SAFE_INTEGER,
+          description: "Price input in integer paise."
+        },
+        treatment: { type: "string", enum: [...AI_ESTIMATOR_KNOWLEDGE_TAX_TREATMENTS] },
+        effectiveFrom: { type: "string", format: "date-time" },
+        effectiveTo: { type: "string", format: "date-time", nullable: true },
+        status: { type: "string", enum: [...AI_ESTIMATOR_KNOWLEDGE_VERSION_STATUSES] }
+      }
+    ),
+    deprecated: true,
+    description: "Compatibility-only technical command for older clients. New clients should use set_budget. Appends are restricted to the canonical fixed GST policy."
+  },
   KnowledgePriceEntryReferenceCommand: strictObject(
     ["operation", "priceEntryId", "priceVersionId"],
     {
@@ -517,6 +593,7 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
   ),
   KnowledgePriceEntryCommand: {
     oneOf: [
+      ref("KnowledgeBudgetSetCommand"),
       ref("KnowledgePriceEntryAppendCommand"),
       ref("KnowledgePriceEntryReferenceCommand")
     ]
@@ -562,7 +639,7 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
       ref("KnowledgeModeChoiceField")
     ]
   },
-  KnowledgeLegacyValuedNonChoiceModeField: {
+  KnowledgeValuedNonChoiceModeField: {
     ...strictObject(
       ["id", "type", "label", "options", "value"],
       {
@@ -579,14 +656,13 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
             { type: "string", maxLength: 4_000, nullable: true },
             { type: "boolean" }
           ],
-          description: "Immutable stored answer retained only for compatibility with an existing stable field ID."
+          description: "Configured answer for this component. Absent or null means the component is unanswered."
         }
       }
     ),
-    deprecated: true,
-    description: "Compatibility-only stored non-choice Mode field. New writes must omit value."
+    description: "Non-choice Mode field carrying its configured answer."
   },
-  KnowledgeLegacyValuedChoiceModeField: {
+  KnowledgeValuedChoiceModeField: {
     ...strictObject(
       ["id", "type", "label", "options", "value"],
       {
@@ -611,26 +687,24 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
             { type: "string", maxLength: 4_000, nullable: true },
             { type: "boolean" }
           ],
-          description: "Immutable stored answer retained only for compatibility with an existing stable field ID."
+          description: "Configured answer for this component. Absent or null means the component is unanswered."
         }
       }
     ),
-    deprecated: true,
-    description: "Compatibility-only stored choice Mode field. New writes must omit value."
+    description: "Choice Mode field carrying its configured answer, drawn from its own options."
   },
-  KnowledgeLegacyValuedModeField: {
-    deprecated: true,
-    description: "Compatibility-only stored Mode field. New writes must use KnowledgeModeField without value.",
+  KnowledgeValuedModeField: {
+    description: "Mode field carrying the configured answer alongside its definition.",
     oneOf: [
-      ref("KnowledgeLegacyValuedNonChoiceModeField"),
-      ref("KnowledgeLegacyValuedChoiceModeField")
+      ref("KnowledgeValuedNonChoiceModeField"),
+      ref("KnowledgeValuedChoiceModeField")
     ]
   },
   KnowledgeModeFieldInput: {
-    description: "Definition-only field for new writes, or an unchanged compatibility-valued field already present in the Draft.",
+    description: "Mode field written either without an answer or with its configured value.",
     oneOf: [
       ref("KnowledgeModeField"),
-      ref("KnowledgeLegacyValuedModeField")
+      ref("KnowledgeValuedModeField")
     ]
   },
   KnowledgeModeConfiguration: {
@@ -709,6 +783,36 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
         description: "Compatibility-only reusable-Mode configuration. New writes use canonical modeKind identities."
       }
     ]
+  },
+  KnowledgeQuantitySlab: strictObject(
+    ["id", "minimumQuantity", "maximumQuantity", "adjustmentBps"],
+    {
+      id,
+      minimumQuantity: decimal,
+      maximumQuantity: { ...decimal, nullable: true },
+      adjustmentBps: { type: "integer", minimum: 0, maximum: 10_000 }
+    }
+  ),
+  KnowledgeSlabRate: {
+    ...strictObject(
+      ["id", "specificationId", "uomId", "quantity", "unitRatePaise"],
+      {
+        id,
+        specificationId: id,
+        uomId: id,
+        quantity: {
+          ...decimal,
+          description: "Positive canonical quantity. Fractional digits cannot exceed the selected UOM decimalScale."
+        },
+        unitRatePaise: {
+          type: "integer",
+          minimum: 0,
+          maximum: Number.MAX_SAFE_INTEGER,
+          description: "Per-unit slab rate in integer paise."
+        }
+      }
+    ),
+    description: "Configured priced slab inputs. Estimated cost is derived as Quantity × Unit rate and is neither accepted nor stored."
   },
   KnowledgeSectionPayload: {
     anyOf: AI_ESTIMATOR_KNOWLEDGE_SECTION_KEYS.map((sectionKey) => ({
@@ -832,9 +936,13 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
     }
   ),
   KnowledgeMaster: strictObject(masterRequiredProperties, masterProperties),
+  KnowledgePriority: strictObject(masterRequiredProperties, priorityProperties),
+  KnowledgeSurface: strictObject(masterRequiredProperties, surfaceProperties),
   KnowledgeUom: strictObject(Object.keys(masterProperties), masterProperties),
   KnowledgeBasketPage: pageSchema("KnowledgeBasket"),
   KnowledgeMasterPage: pageSchema("KnowledgeMaster"),
+  KnowledgePriorityPage: pageSchema("KnowledgePriority"),
+  KnowledgeSurfacePage: pageSchema("KnowledgeSurface"),
   KnowledgeMainLine: strictObject(
     ["id", "basketId", "name", "description", "displayOrder", "status", "activeRevisionId", "draftRevisionId", "version", ...Object.keys(actorMetadata)],
     {
@@ -978,7 +1086,7 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
       specificationIds: {
         type: "array",
         uniqueItems: true,
-        description: "Revision-wide Specification IDs referenced by immutable saved price versions. Response-only removal guidance.",
+        description: "Revision-wide Specification IDs referenced by immutable saved price versions or priced quantity slabs. Response-only removal guidance.",
         items: id
       }
     }
@@ -1060,7 +1168,7 @@ function sectionPayloadKeys(sectionKey: string): readonly string[] {
   const keys: Readonly<Record<string, readonly string[]>> = {
     overview: ["description", "uomId", "priorityId", "surfaceIds", "modeIds", "sectionApplicability"],
     pricing: ["specifications", "brands", "technicalDescription", "qualityLevel", "internalVendorNotes", "priceEntries"],
-    "quantity-margin": ["quantitySlabs", "gapBehavior", "startMarginBps", "bottomMarginBps", "pmcMarkupBps", "wastageBps", "previewInputs"],
+    "quantity-margin": ["quantitySlabs", "slabRates", "gapBehavior", "startMarginBps", "bottomMarginBps", "pmcMarkupBps", "wastageBps", "previewInputs"],
     scope: ["modeIds", "surfaceIds", "exclusions"],
     recommendations: ["recommendations"],
     quality: ["parameters"],
@@ -1088,8 +1196,27 @@ function sectionPayloadProperties(sectionKey: string): Readonly<Record<string, u
     };
     properties.priceEntries = {
       type: "array",
-      description: "New append commands use null Specification scope. Same-revision immutable references may retain historical non-null Specification lineage.",
+      description: "Use set_budget for business writes. Legacy append commands use null Specification scope. Same-revision immutable references may retain historical non-null Specification lineage.",
       items: ref("KnowledgePriceEntryCommand")
+    };
+  }
+  if (sectionKey === "quantity-margin") {
+    properties.quantitySlabs = {
+      type: "array",
+      maxItems: AI_ESTIMATOR_KNOWLEDGE_MAX_ARRAY_ITEMS,
+      description: "Legacy ordered quantity ranges that adjust an immutable effective price by basis points.",
+      items: ref("KnowledgeQuantitySlab")
+    };
+    properties.slabRates = {
+      type: "array",
+      maxItems: AI_ESTIMATOR_KNOWLEDGE_MAX_ARRAY_ITEMS,
+      description: "Priced slab inputs. They do not participate in runtime effective-price selection.",
+      items: ref("KnowledgeSlabRate")
+    };
+    properties.gapBehavior = {
+      type: "string",
+      enum: [...AI_ESTIMATOR_KNOWLEDGE_QUANTITY_GAP_BEHAVIORS],
+      description: "Required only when legacy quantitySlabs contains at least one row."
     };
   }
   return properties;

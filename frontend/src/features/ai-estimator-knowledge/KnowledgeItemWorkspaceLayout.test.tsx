@@ -104,9 +104,13 @@ describe("Super Admin knowledge item workspace layout", () => {
     expect(pageHeaderSource).not.toContain("knowledge-page--item-workspace");
     expect(fieldSource).not.toContain("knowledge-overview__");
     expect(overviewPanelSource).toContain('className="knowledge-overview__configured-grid"');
+    expect(overviewPanelSource).toContain('className="knowledge-overview__uom-control-row"');
     expect(overviewPanelSource).toContain('className="knowledge-overview__context"');
     expect(overviewPanelSource).toContain('className="knowledge-overview__principal-grid"');
-    expect(overviewPanelSource).toContain('className="knowledge-overview__cards"');
+    expect(overviewPanelSource).not.toContain("KnowledgeSurfaceMultiSelect");
+    expect(overviewPanelSource).not.toContain("knowledge-overview__configured-field--surfaces");
+    expect(overviewPanelSource).not.toContain("knowledge-overview__cards");
+    expect(overviewPanelSource).not.toContain("knowledge-overview-card");
 
     render(
       <KnowledgeSectionEditor
@@ -171,11 +175,11 @@ describe("Super Admin knowledge item workspace layout", () => {
       expect(screen.getByRole("region", { name })).toHaveClass("knowledge-repeater");
     }
     expect(
-      screen.getByRole("heading", { name: "Recommendations", level: 2 })
+      screen.getByRole("heading", { name: "Recommendation & Exclusions", level: 2 })
         .closest(".knowledge-section-editor")
     ).toHaveClass("knowledge-section-editor");
     expect(
-      screen.getByRole("heading", { name: "Quality", level: 2 })
+      screen.getByRole("heading", { name: "Quality Parameter", level: 2 })
         .closest(".knowledge-section-editor")
     ).toHaveClass("knowledge-section-editor");
   });
@@ -582,7 +586,7 @@ describe("Super Admin knowledge item workspace layout", () => {
     ).toBe("var(--space-3)");
   });
 
-  it("uses a compact Overview hierarchy and equal configured-field geometry", () => {
+  it("uses a compact Overview hierarchy and one shrink-safe inline UOM row", () => {
     const overview = declarations(
       ".knowledge-page--item-workspace .knowledge-workspace-section--overview .knowledge-overview",
       professionalWorkspaceStart
@@ -616,7 +620,7 @@ describe("Super Admin knowledge item workspace layout", () => {
       ".knowledge-page--item-workspace .knowledge-overview__configured-grid",
       professionalWorkspaceStart
     );
-    expect(configured.get("grid-template-columns")).toBe("repeat(2, minmax(0, 1fr))");
+    expect(configured.get("grid-template-columns")).toBe("minmax(0, 1fr)");
     expect(configured.get("align-items")).toBe("start");
     expect(configured.get("gap")).toBe("var(--space-5)");
     expect(configured.get("min-inline-size")).toBe("0");
@@ -634,52 +638,54 @@ describe("Super Admin knowledge item workspace layout", () => {
       ".knowledge-page--item-workspace .knowledge-overview__configured-field .ui-field__label",
       professionalWorkspaceStart
     );
-    const surfaceLabel = declarations(
-      ".knowledge-page--item-workspace .knowledge-overview__configured-field .knowledge-surface-multiselect__label",
+    expect(fieldLabel.get("min-block-size")).toBe("1.5rem");
+    expect(fieldLabel.get("margin")).toBe("0 0 var(--space-2)");
+    expect(fieldLabel.get("line-height")).toBe("1.5");
+    expect(fieldLabel.get("overflow-wrap")).toBe("anywhere");
+
+    const uomRow = declarations(
+      ".knowledge-page--item-workspace .knowledge-overview__uom-control-row",
       professionalWorkspaceStart
     );
-    for (const label of [fieldLabel, surfaceLabel]) {
-      expect(label.get("min-block-size")).toBe("1.5rem");
-      expect(label.get("margin")).toBe("0 0 var(--space-2)");
-      expect(label.get("line-height")).toBe("1.5");
-      expect(label.get("overflow-wrap")).toBe("anywhere");
-    }
-
-    const cards = declarations(".knowledge-overview__cards");
-    expect(cards.get("grid-template-columns")).toBe("repeat(3, minmax(0, 1fr))");
-    expect(cards.get("min-width")).toBe("0");
+    expect(uomRow.get("display")).toBe("grid");
+    expect(uomRow.get("grid-template-columns")).toBe("minmax(0, 1fr) auto");
+    expect(uomRow.get("align-items")).toBe("center");
+    expect(uomRow.get("gap")).toBe("var(--space-2)");
+    expect(uomRow.get("min-inline-size")).toBe("0");
 
     const configuredControl = declarations(
-      ".knowledge-overview__configured-field .ui-control",
+      ".knowledge-overview__uom-control-row .ui-control",
       professionalWorkspaceStart
     );
-    const surfaceTrigger = declarations(
-      ".knowledge-overview__configured-field .knowledge-surface-multiselect__trigger",
-      professionalWorkspaceStart
-    );
-    for (const control of [configuredControl, surfaceTrigger]) {
-      expect(control.get("inline-size")).toBe("100%");
-      expect(control.get("max-inline-size")).toBe("100%");
-      expect(control.get("min-block-size")).toBe("44px");
-    }
+    expect(configuredControl.get("inline-size")).toBe("100%");
+    expect(configuredControl.get("max-inline-size")).toBe("100%");
+    expect(configuredControl.get("min-inline-size")).toBe("0");
+    expect(configuredControl.get("min-block-size")).toBe("44px");
 
     const quickAdd = declarations(
       ".knowledge-overview__quick-add",
       professionalWorkspaceStart
     );
-    expect(quickAdd.get("justify-self")).toBe("start");
+    expect(quickAdd.get("justify-self")).toBe("end");
+    expect(quickAdd.get("inline-size")).toBe("max-content");
+    expect(quickAdd.get("max-inline-size")).toBe("100%");
     expect(quickAdd.get("margin")).toBe("0");
+    expect(quickAdd.get("white-space")).toBe("nowrap");
 
     expect(stylesheet).not.toContain(".knowledge-overview__description");
     expect(stylesheet).not.toContain(".knowledge-overview__priority-grid");
     expect(stylesheet).not.toContain(".knowledge-overview__classification-grid");
+    expect(stylesheet).not.toContain(".knowledge-overview__configured-field .knowledge-surface-multiselect");
+    expect(stylesheet).not.toContain(".knowledge-overview__cards");
+    expect(stylesheet).not.toContain(".knowledge-overview-card");
+    expect(stylesheet).toContain(".knowledge-surface-multiselect {");
 
     expect(stylesheet).not.toContain(
       ".knowledge-page--item-workspace .knowledge-mode-panel { max-inline-size"
     );
   });
 
-  it("stacks and wraps the Overview fields with compact mobile insets", () => {
+  it("keeps the UOM control row unstacked through tablet, mobile, and the 320px minimum", () => {
     const tabletStart = stylesheet.indexOf(
       "@media (max-width: 768px)",
       professionalWorkspaceStart
@@ -692,6 +698,13 @@ describe("Super Admin knowledge item workspace layout", () => {
     );
     expect(configured.get("grid-template-columns")).toBe("minmax(0, 1fr)");
     expect(configured.get("gap")).toBe("var(--space-4)");
+
+    const tabletUomRow = declarations(
+      ".knowledge-page--item-workspace .knowledge-overview__uom-control-row",
+      tabletStart
+    );
+    expect(tabletUomRow.get("grid-template-columns")).toBe("minmax(0, 1fr) auto");
+    expect(tabletUomRow.get("min-inline-size")).toBe("0");
 
     const mobileStart = stylesheet.indexOf(
       "@media (max-width: 480px)",
@@ -728,10 +741,28 @@ describe("Super Admin knowledge item workspace layout", () => {
         mobileStart
       ).get("flex-basis")
     ).toBe("100%");
+    const mobileUomRow = declarations(
+      ".knowledge-page--item-workspace .knowledge-overview__uom-control-row",
+      mobileStart
+    );
+    expect(mobileUomRow.get("grid-template-columns")).toBe("minmax(0, 1fr) auto");
+    expect(mobileUomRow.get("min-inline-size")).toBe("0");
+
+    const mobileQuickAdd = declarations(
+      ".knowledge-page--item-workspace .knowledge-overview__quick-add",
+      mobileStart
+    );
+    expect(mobileQuickAdd.get("min-block-size")).toBe("44px");
+
+    const coarseStart = stylesheet.indexOf(
+      "@media (pointer: coarse)",
+      professionalWorkspaceStart
+    );
+    expect(coarseStart).toBeGreaterThan(mobileStart);
     expect(
       declarations(
         ".knowledge-page--item-workspace .knowledge-overview__quick-add",
-        mobileStart
+        coarseStart
       ).get("min-block-size")
     ).toBe("44px");
   });

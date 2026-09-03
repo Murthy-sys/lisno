@@ -4,6 +4,7 @@ import {
   AI_ESTIMATOR_KNOWLEDGE_MAX_TEXT,
   normalizeKnowledgeIdentity
 } from "../domain/ai-estimator-knowledge.js";
+import { AI_ESTIMATOR_KNOWLEDGE_PRIORITY_SEMANTIC_TIERS } from "../domain/ai-estimator-knowledge-priority.js";
 import { model, models, Schema } from "./mongoose.js";
 
 const prioritySchema = new Schema(
@@ -16,7 +17,15 @@ const prioritySchema = new Schema(
     description: { type: String, default: null, maxlength: AI_ESTIMATOR_KNOWLEDGE_MAX_TEXT },
     displayOrder: { type: Number, required: true, min: 0, validate: Number.isSafeInteger },
     status: { type: String, enum: AI_ESTIMATOR_KNOWLEDGE_MASTER_STATUSES, required: true, default: "active" },
+    semanticTier: { type: String, enum: AI_ESTIMATOR_KNOWLEDGE_PRIORITY_SEMANTIC_TIERS },
     version: { type: Number, required: true, default: 1, min: 1, validate: Number.isSafeInteger },
+    dependencyEpoch: {
+      type: Number,
+      default: 0,
+      min: 0,
+      max: Number.MAX_SAFE_INTEGER,
+      validate: Number.isSafeInteger
+    },
     createdById: { type: String, ref: "User", required: true, immutable: true },
     updatedById: { type: String, ref: "User", required: true },
     archivedAt: { type: Date, default: null },
@@ -41,6 +50,16 @@ prioritySchema.pre("validate", function normalizeMaster() {
 const nonArchived = { status: { $in: ["active", "inactive"] } };
 prioritySchema.index({ codeNormalized: 1 }, { unique: true, partialFilterExpression: nonArchived });
 prioritySchema.index({ nameNormalized: 1 }, { unique: true, partialFilterExpression: nonArchived });
+prioritySchema.index(
+  { semanticTier: 1 },
+  {
+    unique: true,
+    partialFilterExpression: {
+      ...nonArchived,
+      semanticTier: { $type: "string" }
+    }
+  }
+);
 prioritySchema.index({ status: 1, displayOrder: 1, _id: 1 });
 
 export const AiEstimatorKnowledgePriorityModel =

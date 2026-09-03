@@ -17,6 +17,7 @@ export interface KnowledgeSpecificationBuilderProps {
   readonly value: KnowledgeJsonValue | undefined;
   readonly priceEntries: KnowledgeJsonValue | undefined;
   readonly referencedSpecificationIds?: readonly string[];
+  readonly slabReferencedSpecificationIds?: readonly string[];
   readonly readOnly: boolean;
   readonly issues?: readonly KnowledgeSpecificationIssue[];
   readonly onChange: (value: readonly KnowledgeJsonValue[]) => void;
@@ -27,6 +28,7 @@ export function KnowledgeSpecificationBuilder({
   value,
   priceEntries,
   referencedSpecificationIds = [],
+  slabReferencedSpecificationIds = [],
   readOnly,
   issues: suppliedIssues,
   onChange,
@@ -40,6 +42,10 @@ export function KnowledgeSpecificationBuilder({
       ...referencedSpecificationIdsFromPrices(priceEntries)
     ]),
     [priceEntries, referencedSpecificationIds]
+  );
+  const slabReferencedIds = useMemo(
+    () => new Set(slabReferencedSpecificationIds),
+    [slabReferencedSpecificationIds]
   );
 
   function update(next: readonly KnowledgeSpecificationConfiguration[]) {
@@ -65,10 +71,12 @@ export function KnowledgeSpecificationBuilder({
       readOnly={readOnly}
       addDisabled={parsed.specifications.length >= KNOWLEDGE_MAX_SPECIFICATIONS}
       emptyMessage="No Specifications configured."
-      removeDisabled={(specification) => referencedIds.has(specification.id)}
-      removeDisabledReason={(specification) => referencedIds.has(specification.id)
-        ? "This Specification is retained by an immutable historical price version and cannot be removed."
-        : undefined}
+      removeDisabled={(specification) => referencedIds.has(specification.id) || slabReferencedIds.has(specification.id)}
+      removeDisabledReason={(specification) => slabReferencedIds.has(specification.id)
+        ? "Remove this Specification from Quantity slabs and save Quantity & margin before removing it from Budgeting."
+        : referencedIds.has(specification.id)
+          ? "This Specification is retained by saved configuration or immutable price history and cannot be removed."
+          : undefined}
       onAdd={() => update([...parsed.specifications, createKnowledgeSpecification()])}
       onRemove={(id) => update(parsed.specifications.filter((specification) =>
         specification.id !== id

@@ -6,12 +6,20 @@ import type {
 
 const KNOWLEDGE_MASTER_PAGE_LIMIT = 100;
 
-export async function collectAllKnowledgeMasterPages(
+type KnowledgeMasterPage<TMaster extends KnowledgeMaster> = Omit<
+  KnowledgeMasterListResponse,
+  "items"
+> & {
+  readonly items: readonly TMaster[];
+};
+
+export async function collectAllKnowledgeMasterPages<TMaster extends KnowledgeMaster = KnowledgeMaster>(
   loadPage: (
     params: Pick<KnowledgeReferenceListParams, "limit" | "offset">
-  ) => Promise<KnowledgeMasterListResponse>
-): Promise<KnowledgeMasterListResponse> {
-  const items: KnowledgeMaster[] = [];
+  ) => Promise<KnowledgeMasterPage<TMaster>>,
+  catalogLabel = "Reusable value"
+): Promise<KnowledgeMasterPage<TMaster>> {
+  const items: TMaster[] = [];
   let offset = 0;
 
   while (true) {
@@ -35,7 +43,7 @@ export async function collectAllKnowledgeMasterPages(
 
     const nextOffset = page.pagination.offset + page.items.length;
     if (nextOffset <= offset) {
-      throw new Error("Mode list pagination did not advance.");
+      throw new Error(`${catalogLabel} list pagination did not advance.`);
     }
     offset = nextOffset;
   }

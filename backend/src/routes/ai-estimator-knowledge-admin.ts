@@ -183,6 +183,15 @@ const commonMasterFields = {
 } as const;
 
 const commonMasterCreateSchema = z.object(commonMasterFields).strict();
+const surfaceCreateSchema = z
+  .object({
+    code: commonMasterFields.code.optional(),
+    name: commonMasterFields.name,
+    description: commonMasterFields.description,
+    displayOrder: commonMasterFields.displayOrder,
+    status: commonMasterFields.status
+  })
+  .strict();
 const uomCreateSchema = z
   .object({ ...commonMasterFields, decimalScale: z.number().int().min(0).max(3) })
   .strict();
@@ -213,6 +222,10 @@ const commonMasterUpdateFields = {
 } as const;
 const commonMasterUpdateSchema = z
   .object(commonMasterUpdateFields)
+  .strict()
+  .refine(hasMasterChange, { message: "At least one reusable-value field must be changed." });
+const surfaceUpdateSchema = z
+  .object({ ...commonMasterUpdateFields })
   .strict()
   .refine(hasMasterChange, { message: "At least one reusable-value field must be changed." });
 const uomUpdateSchema = z
@@ -269,7 +282,7 @@ const masterRoutes = [
   { path: "vendors", kind: "vendors", createSchema: commonMasterCreateSchema, updateSchema: commonMasterUpdateSchema },
   { path: "taxes", kind: "taxes", createSchema: taxCreateSchema, updateSchema: taxUpdateSchema },
   { path: "priorities", kind: "priorities", createSchema: commonMasterCreateSchema, updateSchema: commonMasterUpdateSchema },
-  { path: "surfaces", kind: "surfaces", createSchema: commonMasterCreateSchema, updateSchema: commonMasterUpdateSchema },
+  { path: "surfaces", kind: "surfaces", createSchema: surfaceCreateSchema, updateSchema: surfaceUpdateSchema },
   { path: "modes", kind: "modes", createSchema: commonMasterCreateSchema, updateSchema: commonMasterUpdateSchema }
 ] as const;
 

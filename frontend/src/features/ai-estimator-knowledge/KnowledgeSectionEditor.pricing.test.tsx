@@ -17,8 +17,8 @@ const actorMetadata = {
 } as const;
 
 const masters = {
-  vendors: [{ id: "vendor-1", masterType: "vendors", code: "VENDOR", name: "Vendor", description: null, displayOrder: 0, status: "active", ...actorMetadata }],
-  uoms: [{ id: "uom-1", masterType: "uoms", code: "UNIT", name: "Unit", description: null, displayOrder: 0, status: "active", ...actorMetadata }],
+  vendors: [{ id: "vendor-1", masterType: "vendors", code: "ACME", name: "Acme Vendor", description: null, displayOrder: 0, status: "active", ...actorMetadata }],
+  uoms: [{ id: "uom-1", masterType: "uoms", code: "SQFT", name: "Square foot", description: null, displayOrder: 0, status: "active", ...actorMetadata }],
   taxes: [{
     id: "tax-1",
     masterType: "taxes",
@@ -31,6 +31,31 @@ const masters = {
     ...actorMetadata
   }]
 } as const satisfies Readonly<Partial<Record<"vendors" | "uoms" | "taxes", readonly KnowledgeMaster[]>>>;
+
+const savedBudget = {
+  operation: "reference",
+  priceEntryId: "price-entry-1",
+  priceVersionId: "price-version-1",
+  priceVersion: {
+    id: "price-version-1",
+    priceEntryId: "price-entry-1",
+    versionNumber: 7,
+    vendorId: "vendor-1",
+    uomId: "uom-1",
+    specificationId: null,
+    modeId: null,
+    taxRuleId: "tax-1",
+    taxVersionId: "tax-version-1",
+    inputAmountPaise: 12_000,
+    baseAmountPaise: 12_000,
+    taxAmountPaise: 2_160,
+    totalAmountPaise: 14_160,
+    treatment: "exclusive",
+    effectiveFrom: "2026-08-01T00:00:00.000Z",
+    effectiveTo: null,
+    status: "active"
+  }
+} as const;
 
 function PricingEditorHarness({
   initialPayload,
@@ -71,236 +96,184 @@ function PricingEditorHarness({
   );
 }
 
-function currentPriceEntry(): Record<string, unknown> {
+function currentBudget(): Record<string, unknown> {
   const payload = JSON.parse(screen.getByTestId("pricing-payload").textContent ?? "{}") as {
     priceEntries?: Array<Record<string, unknown>>;
   };
   return payload.priceEntries?.[0] ?? {};
 }
 
-const validAppendEntry = {
-  operation: "append",
-  priceEntryId: "price-entry-1",
-  vendorId: "vendor-1",
-  uomId: "uom-1",
-  taxRuleId: "tax-1",
-  taxVersionId: "tax-version-1",
-  inputAmountPaise: 12_000,
-  treatment: "exclusive",
-  effectiveFrom: "2026-08-01T00:00:00.000Z",
-  effectiveTo: null,
-  status: "active"
-} as const;
-
-describe("knowledge pricing editor", () => {
-  it("removes the introductory form while preserving structured pricing data and hidden payload keys", async () => {
+describe("knowledge Budgeting editor", () => {
+  it("keeps Specifications and Vendors while presenting saved prices as collapsed Budgets", async () => {
     const user = userEvent.setup();
     render(
       <PricingEditorHarness
         initialPayload={{
-          technicalDescription: "Existing technical detail",
-          internalVendorNotes: "Existing vendor note",
-          qualityLevel: "premium",
-          specifications: [{ id: "specification-1", name: "Original specification", description: "Structured description" }],
-          brands: [
-            { id: "brand-1", name: "Existing vendor", description: "Preferred supplier" },
-            { id: "brand-2", name: "Backup vendor", description: "Secondary supplier" }
-          ],
-          priceEntries: [validAppendEntry]
+          technicalDescription: "Preserved compatibility value",
+          specifications: [{ id: "specification-1", name: "Plywood", description: "Structured description" }],
+          brands: [{ id: "brand-1", name: "Preferred vendor", description: "Retained description" }],
+          priceEntries: [savedBudget]
         }}
       />
     );
-
-    expect(screen.queryByRole("heading", { name: "Pricing" })).not.toBeInTheDocument();
-    expect(screen.queryByText(/Maintain specifications, immutable price-version commands/u)).not.toBeInTheDocument();
-    expect(screen.queryByRole("textbox", { name: "Technical description" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("textbox", { name: "Internal vendor notes" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("textbox", { name: "Quality level" })).not.toBeInTheDocument();
 
     expect(screen.getByRole("heading", { name: "Specifications" })).toBeVisible();
     const vendors = screen.getByRole("region", { name: "Vendors" });
-    expect(within(vendors).getByRole("heading", { name: "Vendors" })).toBeVisible();
-    expect(screen.queryByRole("heading", { name: "Brands" })).not.toBeInTheDocument();
-    expect(within(vendors).getByRole("button", { name: "Add vendor" })).toBeVisible();
-    expect(screen.queryByRole("button", { name: /brand/iu })).not.toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Price versions" })).toBeVisible();
-    expect(screen.getByRole("textbox", { name: "Input amount (rupees)" })).toHaveValue("120.00");
-    const vendorNames = screen.getAllByRole("textbox", { name: "Vendor name" });
-    expect(vendorNames).toHaveLength(2);
-    expect(vendorNames[0]).toHaveValue("Existing vendor");
-    expect(vendorNames[1]).toHaveValue("Backup vendor");
+    expect(vendors).toBeVisible();
+    /* Stable IDs are storage detail. The author edits the Vendor by name, and
+       the row's own ID never reaches the screen. */
+    expect(within(vendors).getByRole("textbox", { name: "Vendor name" })).toHaveValue("Preferred vendor");
+    expect(within(vendors).queryByRole("textbox", { name: "Stable ID" })).not.toBeInTheDocument();
+    expect(vendors).not.toHaveTextContent("brand-1");
+    expect(screen.getByRole("heading", { name: "Budgets" })).toBeVisible();
+    expect(screen.getByText("Set the unit budget used by the estimator. Complete the details, then Save Mode.")).toBeVisible();
+    expect(screen.queryByRole("heading", { name: /price versions/iu })).not.toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: "Technical description" })).not.toBeInTheDocument();
 
-    const specificationName = screen.getByRole("textbox", { name: "Specification name" });
-    await user.clear(specificationName);
-    await user.type(specificationName, "Updated specification");
-    await user.clear(vendorNames[0]);
-    await user.type(vendorNames[0], "Updated vendor");
+    const trigger = screen.getByRole("button", { name: /₹\s?120\.00 per Square foot · Acme Vendor/iu });
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByRole("region", { name: /₹\s?120\.00 per Square foot/iu })).not.toBeInTheDocument();
 
-    await waitFor(() => {
-      const nextPayload = JSON.parse(screen.getByTestId("pricing-payload").textContent ?? "{}") as Record<string, unknown>;
-      expect(nextPayload).toMatchObject({
-        technicalDescription: "Existing technical detail",
-        internalVendorNotes: "Existing vendor note",
-        qualityLevel: "premium",
-        specifications: [{ id: "specification-1", name: "Updated specification", description: "Structured description" }],
-        brands: [
-          { id: "brand-1", name: "Updated vendor", description: "Preferred supplier" },
-          { id: "brand-2", name: "Backup vendor", description: "Secondary supplier" }
-        ],
-        priceEntries: [validAppendEntry]
-      });
-    });
-    expect(screen.getByRole("textbox", { name: "Brief description" }))
-      .toHaveValue("Structured description");
-    expect(screen.queryByRole("combobox", { name: "Component type" }))
-      .not.toBeInTheDocument();
+    await user.click(trigger);
+    expect(trigger).toHaveAttribute("aria-expanded", "true");
+    const details = screen.getByRole("group", { name: "Saved budget details" });
+    expect(details).toBeVisible();
+    expect(screen.getByText(/₹\s?141\.60/u)).toBeVisible();
+    expect(screen.queryByLabelText(/price operation|price entry|price version|tax version|tax treatment|version status|mode/iu)).not.toBeInTheDocument();
+    const budgets = screen.getByRole("region", { name: "Budgets" });
+    expect(within(budgets).queryByRole("button", { name: /move .* (up|down)/iu })).not.toBeInTheDocument();
   });
 
-  it("uses Vendor terminology for the empty and read-only subsection states", () => {
-    const emptyState = render(<PricingEditorHarness initialPayload={{ brands: [] }} />);
-
-    expect(screen.getByRole("heading", { name: "Vendors" })).toBeVisible();
-    expect(screen.getByText("No vendors configured.")).toBeVisible();
-    expect(screen.getByRole("button", { name: "Add vendor" })).toBeEnabled();
-    expect(screen.queryByRole("heading", { name: "Brands" })).not.toBeInTheDocument();
-
-    emptyState.unmount();
-    render(
-      <PricingEditorHarness
-        initialPayload={{ brands: [{ id: "brand-1", name: "Read-only vendor", description: "Retained description" }] }}
-        readOnly
-      />
-    );
-
-    expect(screen.getByRole("heading", { name: "Vendors" })).toBeVisible();
-    expect(screen.getByRole("textbox", { name: "Vendor name" })).toBeDisabled();
-    expect(screen.queryByRole("button", { name: "Add vendor" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /remove vendors/iu })).not.toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: "Brands" })).not.toBeInTheDocument();
-  });
-
-  it("presents server validation paths with Vendor terminology", () => {
-    render(
-      <PricingEditorHarness
-        initialPayload={{ brands: [{ id: "brand-1", name: "", description: null }] }}
-        serverIssues={[{ path: "brands.0.name", message: "Name is required." }]}
-      />
-    );
-
-    const alert = screen.getByRole("alert");
-    expect(alert).toHaveTextContent("Vendors → 0 → name");
-    expect(alert).not.toHaveTextContent(/brands/iu);
-  });
-
-  it("preserves editable rupee text and writes paise only for a valid amount", async () => {
+  it("creates a business-only budget draft, opens it, and focuses Vendor", async () => {
     const user = userEvent.setup();
-    render(<PricingEditorHarness initialPayload={{ priceEntries: [validAppendEntry] }} />);
+    render(<PricingEditorHarness initialPayload={{ priceEntries: [] }} />);
 
-    const amount = screen.getByRole("textbox", { name: "Input amount (rupees)" });
-    expect(amount).toHaveValue("120.00");
+    await user.click(screen.getByRole("button", { name: "Set budget" }));
 
-    await user.clear(amount);
-    await user.type(amount, "0");
-    await waitFor(() => expect(currentPriceEntry().inputAmountPaise).toBe(0));
+    const vendor = screen.getByRole("combobox", { name: "Vendor" });
+    await waitFor(() => expect(vendor).toHaveFocus());
+    expect(screen.getByRole("button", { name: "New budget" })).toHaveAttribute("aria-expanded", "true");
+    expect(currentBudget()).toMatchObject({
+      operation: "set_budget",
+      effectiveTo: null
+    });
+    expect(new Date(String(currentBudget().effectiveFrom)).toString()).not.toBe("Invalid Date");
+    expect(Object.keys(currentBudget()).sort()).toEqual(["effectiveFrom", "effectiveTo", "operation"]);
 
-    await user.type(amount, ".");
-    expect(amount).toHaveValue("0.");
-    await waitFor(() => expect(currentPriceEntry()).not.toHaveProperty("inputAmountPaise"));
-    expect(amount).toHaveAttribute("aria-invalid", "true");
-    expect(screen.getByText("Complete the rupee amount with one or two decimal places.")).toBeVisible();
-    expect(screen.getByRole("alert")).toHaveTextContent("Input amount (rupees)");
-    expect(screen.getByRole("alert")).not.toHaveTextContent("inputAmountPaise");
-    expect(screen.getByTestId("pricing-validity")).toHaveTextContent("invalid");
+    expect(screen.getByRole("combobox", { name: "Unit of measure" })).toBeVisible();
+    expect(screen.queryByRole("combobox", { name: "Tax" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^(?:Add|Configure) Tax$/iu })).not.toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "Unit budget (₹, before GST)" })).toBeVisible();
+    expect(screen.getByText("GST is fixed at 18% and is added when you save.")).toBeVisible();
+    expect(screen.getByLabelText(/Starts on/u)).toBeVisible();
+    expect(screen.getByRole("button", { name: "Schedule options" })).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByLabelText("Ends on (optional)")).not.toBeVisible();
+  });
 
-    await user.type(amount, "01");
-    expect(amount).toHaveValue("0.01");
-    await waitFor(() => expect(currentPriceEntry().inputAmountPaise).toBe(1));
-    expect(amount).not.toHaveAttribute("aria-invalid");
-    expect(screen.getByTestId("pricing-validity")).toHaveTextContent("valid");
+  it("retains editable rupee text, stores paise only when valid, and focuses the error", async () => {
+    const user = userEvent.setup();
+    render(<PricingEditorHarness initialPayload={{ priceEntries: [] }} />);
+    await user.click(screen.getByRole("button", { name: "Set budget" }));
+
+    await user.selectOptions(screen.getByRole("combobox", { name: "Vendor" }), "vendor-1");
+    await user.selectOptions(screen.getByRole("combobox", { name: "Unit of measure" }), "uom-1");
+
+    const amount = screen.getByRole("textbox", { name: "Unit budget (₹, before GST)" });
+    await user.type(amount, "0.01");
+    await waitFor(() => expect(currentBudget().inputAmountPaise).toBe(1));
 
     await user.type(amount, "1");
     expect(amount).toHaveValue("0.011");
-    await waitFor(() => expect(currentPriceEntry()).not.toHaveProperty("inputAmountPaise"));
-    expect(amount).toHaveAccessibleDescription(/up to two decimal places/u);
+    await waitFor(() => expect(currentBudget()).not.toHaveProperty("inputAmountPaise"));
     expect(amount).toHaveAttribute("aria-invalid", "true");
+    expect(screen.getAllByText("Enter a non-negative rupee amount with up to two decimal places.").length).toBeGreaterThan(0);
+
     await user.click(screen.getByRole("button", { name: "Attempt save" }));
     await waitFor(() => expect(amount).toHaveFocus());
+    expect(screen.getByTestId("pricing-validity")).toHaveTextContent("invalid");
   });
 
-  it("creates a new price append without a Specification selector or price scope", async () => {
+  it("shows only server-returned totals and turns Update budget into a strict business draft", async () => {
     const user = userEvent.setup();
-    render(<PricingEditorHarness initialPayload={{
-      specifications: [{ id: "spec-plywood", name: "Plywood" }],
-      priceEntries: []
-    }} />);
+    render(<PricingEditorHarness initialPayload={{ priceEntries: [savedBudget] }} />);
 
-    expect(screen.queryByRole("combobox", { name: "Specification" }))
-      .not.toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Add Price version" }));
+    const trigger = screen.getByRole("button", { name: /₹\s?120\.00 per Square foot · Acme Vendor/iu });
+    await user.click(trigger);
+    const savedDetails = screen.getByRole("group", { name: "Saved budget details" });
+    expect(within(savedDetails).getByText(/₹\s?120\.00/u)).toBeVisible();
+    expect(within(savedDetails).getByText(/₹\s?21\.60/u)).toBeVisible();
+    expect(within(savedDetails).getByText(/₹\s?141\.60/u)).toBeVisible();
+    expect(within(savedDetails).getByText("Amount before GST")).toBeVisible();
+    expect(within(savedDetails).getByText("GST")).toBeVisible();
+    expect(within(savedDetails).getByText("Total including GST")).toBeVisible();
+    expect(within(savedDetails).queryByText("Tax")).not.toBeInTheDocument();
 
-    expect(currentPriceEntry()).toMatchObject({
-      operation: "append",
-      specificationId: null
+    await user.click(screen.getByRole("button", { name: "Update budget" }));
+    await waitFor(() => expect(screen.getByRole("combobox", { name: "Vendor" })).toHaveFocus());
+    expect(currentBudget()).toEqual({
+      operation: "set_budget",
+      sourcePriceVersionId: "price-version-1",
+      vendorId: "vendor-1",
+      uomId: "uom-1",
+      inputAmountPaise: 12_000,
+      effectiveFrom: "2026-08-01T00:00:00.000Z",
+      effectiveTo: null
     });
-    expect(screen.queryByRole("combobox", { name: "Specification" }))
-      .not.toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: "Saved budget details" })).not.toBeInTheDocument();
+    expect(screen.queryByText(/₹\s?141\.60/u)).not.toBeInTheDocument();
   });
 
-  it("formats immutable amounts in INR and replaces historical Specification scope with null", async () => {
+  it("prefills a historical inclusive Update from the authoritative base amount", async () => {
     const user = userEvent.setup();
+    const historicalInclusive = {
+      ...savedBudget,
+      priceVersion: {
+        ...savedBudget.priceVersion,
+        inputAmountPaise: 11_800,
+        baseAmountPaise: 10_000,
+        taxAmountPaise: 1_800,
+        totalAmountPaise: 11_800,
+        treatment: "inclusive"
+      }
+    };
+    render(<PricingEditorHarness initialPayload={{ priceEntries: [historicalInclusive] }} />);
+
+    await user.click(screen.getByRole("button", { name: /₹\s?100\.00 per Square foot/iu }));
+    await user.click(screen.getByRole("button", { name: "Update budget" }));
+
+    expect(screen.getByRole("textbox", { name: "Unit budget (₹, before GST)" })).toHaveValue("100.00");
+    expect(currentBudget()).not.toHaveProperty("taxRuleId");
+    expect(currentBudget().inputAmountPaise).toBe(10_000);
+  });
+
+  it("keeps saved summaries readable while omitting every mutation action in read-only mode", async () => {
+    const user = userEvent.setup();
+    render(<PricingEditorHarness initialPayload={{ priceEntries: [savedBudget] }} readOnly />);
+
+    expect(screen.queryByRole("button", { name: "Set budget" })).not.toBeInTheDocument();
+    const trigger = screen.getByRole("button", { name: /₹\s?120\.00 per Square foot · Acme Vendor/iu });
+    await user.click(trigger);
+    expect(screen.getByRole("group", { name: "Saved budget details" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Update budget" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Remove .* from this Draft/iu })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Add vendor" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Add tax" })).not.toBeInTheDocument();
+  });
+
+  it("uses business terminology in validation summaries", () => {
     render(
       <PricingEditorHarness
-        initialPayload={{
-          priceEntries: [{
-            operation: "reference",
-            priceEntryId: "price-entry-1",
-            priceVersionId: "price-version-1",
-            priceVersion: {
-              id: "price-version-1",
-              priceEntryId: "price-entry-1",
-              versionNumber: 1,
-              vendorId: "vendor-1",
-              uomId: "uom-1",
-              specificationId: "historical-specification",
-              modeId: null,
-              taxRuleId: "tax-1",
-              taxVersionId: "tax-version-1",
-              inputAmountPaise: 12_000,
-              baseAmountPaise: 12_000,
-              taxAmountPaise: 2_160,
-              totalAmountPaise: 14_160,
-              treatment: "exclusive",
-              effectiveFrom: "2026-08-01T00:00:00.000Z",
-              effectiveTo: "2026-09-01T00:00:00.000Z",
-              status: "active"
-            }
-          }]
-        }}
+        initialPayload={{ priceEntries: [{ operation: "set_budget", effectiveFrom: "invalid" }] }}
+        serverIssues={[{
+          path: "priceEntries.0",
+          message: "The stored GST policy does not match the system GST 18% policy. Contact support."
+        }]}
       />
     );
 
-    const summary = screen.getByLabelText("Immutable saved price details");
-    expect(within(summary).getByText(/₹\s?141\.60/u)).toBeVisible();
-    expect(summary).not.toHaveTextContent("paise");
-
-    await user.click(screen.getByRole("button", { name: "Replace price version" }));
-    const amount = await screen.findByRole("textbox", { name: "Input amount (rupees)" });
-    await waitFor(() => expect(amount).toHaveValue("120.00"));
-    expect(currentPriceEntry()).toMatchObject({
-      operation: "append",
-      priceEntryId: "price-entry-1",
-      vendorId: "vendor-1",
-      uomId: "uom-1",
-      specificationId: null,
-      taxRuleId: "tax-1",
-      taxVersionId: "tax-version-1",
-      inputAmountPaise: 12_000,
-      treatment: "exclusive",
-      effectiveFrom: "2026-08-01T00:00:00.000Z",
-      effectiveTo: "2026-09-01T00:00:00.000Z",
-      status: "active"
-    });
-    expect(currentPriceEntry()).not.toHaveProperty("priceVersionId");
-    expect(currentPriceEntry()).not.toHaveProperty("priceVersion");
+    const alerts = screen.getAllByRole("alert");
+    expect(alerts.some((alert) => alert.textContent?.includes("Budgets → Budget 1"))).toBe(true);
+    expect(alerts.some((alert) => alert.textContent?.includes("system GST 18% policy"))).toBe(true);
+    expect(alerts.every((alert) => !/priceEntries|taxRuleId|inputAmountPaise/iu.test(alert.textContent ?? ""))).toBe(true);
   });
 });

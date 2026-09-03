@@ -48,6 +48,7 @@ import { syncKnowledgeBasketDeletion } from "./knowledgeMutationSync";
 import { knowledgeQueryKeys } from "./knowledgeQueryKeys";
 import { KNOWLEDGE_ITEM_STATUS_LABELS } from "./knowledgePresentation";
 import { KnowledgeSafetyNotice } from "./KnowledgeSafetyNotice";
+import { collectAllKnowledgeMasterPages } from "./knowledgeMasterPagination";
 import { KnowledgeLifecycleDialog } from "./KnowledgeLifecycleDialogs";
 import type {
   KnowledgeBasket,
@@ -60,6 +61,14 @@ import type {
   KnowledgePermanentDeleteBasketResult
 } from "./knowledgeTypes";
 import "./ai-estimator-knowledge.css";
+
+/*
+ * Priority is hidden on the Main Line cards for now and will be switched back
+ * on if it is needed. Flip this to true to restore the row. The Priority filter
+ * below is deliberately unaffected, and Recommendation rows still require a
+ * Priority, so the master itself stays in use.
+ */
+const ITEM_CARD_PRIORITY_ENABLED = false;
 
 const PAGE_SIZE = 20;
 const BASKET_MANAGEMENT_PAGE_SIZE = 100;
@@ -150,8 +159,18 @@ export function KnowledgeBaseIndexPage() {
   });
   const masterQueries = useQueries({
     queries: FILTER_MASTER_TYPES.map((type) => ({
-      queryKey: knowledgeQueryKeys.masterList(type, { limit: 100, offset: 0 }),
-      queryFn: () => listKnowledgeMasters(type, { limit: 100, offset: 0 })
+      queryKey: type === "surfaces"
+        ? knowledgeQueryKeys.masterCatalog(type)
+        : knowledgeQueryKeys.masterList(type, { limit: 100, offset: 0 }),
+      queryFn: () => type === "surfaces"
+        ? collectAllKnowledgeMasterPages(
+            (params) => listKnowledgeMasters(type, {
+              ...params,
+              includeArchived: true
+            }),
+            "Surface"
+          )
+        : listKnowledgeMasters(type, { limit: 100, offset: 0 })
     }))
   });
   const masters = useMemo(
@@ -409,7 +428,9 @@ export function KnowledgeBaseIndexPage() {
                 id={`knowledge-${type}-filter`}
                 label={filterLabel(type)}
                 value={filters[filterKey(type)]}
-                options={masters[type].map(({ id, name }) => ({ id, name }))}
+                options={masters[type]
+                  .filter((master) => type !== "surfaces" || master.status === "active")
+                  .map(({ id, name }) => ({ id, name }))}
                 onChange={(value) =>
                   setFilters((current) => ({ ...current, [filterKey(type)]: value }))
                 }
@@ -528,7 +549,7 @@ export function KnowledgeBaseIndexPage() {
                     <dl className="knowledge-item-metadata">
                       <div><dt>Revision</dt><dd>{item.revisionNumber ?? "Not available"}</dd></div>
                       <div><dt>UOM</dt><dd>{nameFor(masters.uoms, item.uomId)}</dd></div>
-                      <div><dt>Priority</dt><dd>{nameFor(masters.priorities, item.priorityId)}</dd></div>
+                      {ITEM_CARD_PRIORITY_ENABLED ? <div><dt>Priority</dt><dd>{nameFor(masters.priorities, item.priorityId)}</dd></div> : null}
                       <div><dt>Modes</dt><dd>{namesFor(masters.modes, item.modeIds)}</dd></div>
                       <div><dt>Surfaces</dt><dd>{namesFor(masters.surfaces, item.surfaceIds)}</dd></div>
                       <div><dt>Updated</dt><dd>{new Date(item.updatedAt).toLocaleDateString("en-IN")}</dd></div>

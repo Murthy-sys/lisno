@@ -90,7 +90,6 @@ const revision = {
 const squareFoot = master("uom-square-foot", "uoms", "Square foot", 10);
 const squareMetre = master("uom-square-metre", "uoms", "Square metre", 20);
 const wall = master("surface-wall", "surfaces", "Wall", 10);
-const ceiling = master("surface-ceiling", "surfaces", "Ceiling", 20);
 const pmc = master("mode-pmc", "modes", "PMC", 10);
 const labour = master("mode-labour", "modes", "Labour only", 20);
 const vendor = master("vendor-a", "vendors", "Acme supply", 10);
@@ -98,7 +97,7 @@ const tax = master("tax-gst", "taxes", "GST", 10);
 
 const masters = {
   uoms: [squareFoot, squareMetre],
-  surfaces: [wall, ceiling],
+  surfaces: [wall],
   modes: [pmc, labour],
   vendors: [vendor],
   taxes: [tax],
@@ -164,21 +163,14 @@ const sections = {
   recommendations: {
     recommendations: [{
       id: "recommendation-one",
-      targetBasketId: "basket-target",
-      targetMainLineId: "line-target-one",
-      type: "recommended",
+      name: "Veneer finish",
       reason: "Use on feature walls",
-      quantityRelationship: "same_quantity",
       dependency: false,
       active: true
     }, {
       id: "recommendation-two",
-      targetBasketId: "basket-target",
-      targetMainLineId: "line-target-two",
-      type: "alternative",
+      name: "Laminate finish",
       reason: "Use when moisture resistant",
-      quantityRelationship: "fixed",
-      quantityValue: "2",
       dependency: true,
       active: true
     }]
@@ -272,8 +264,20 @@ function renderPanel(overrides: Partial<KnowledgeOverviewPanelProps> = {}) {
   return props;
 }
 
+function expectSectionSummaryCardsAbsent() {
+  expect(screen.queryByRole("heading", { name: "All section summaries" })).not.toBeInTheDocument();
+  expect(screen.queryByText(
+    "Review completeness and key configured values before opening a detailed editor."
+  )).not.toBeInTheDocument();
+  expect(document.querySelector(".knowledge-overview__cards")).not.toBeInTheDocument();
+  expect(document.querySelectorAll(".knowledge-overview-card")).toHaveLength(0);
+  for (const label of ["Mode", "Scope", "Recommendation & Exclusions", "Quality Parameter", "Execution", "Advanced"]) {
+    expect(screen.queryByRole("heading", { name: label, level: 3 })).not.toBeInTheDocument();
+  }
+}
+
 describe("KnowledgeOverviewPanel", () => {
-  it("renders only compact context and UOM/Surfaces editors after every empty source is ready", async () => {
+  it("renders only compact context and the UOM editor after every empty source is ready", async () => {
     const readyReferenceState = {
       status: "ready",
       onRetry: vi.fn()
@@ -314,17 +318,25 @@ describe("KnowledgeOverviewPanel", () => {
     expect(screen.queryByText("Completeness")).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Configured values" })).toBeVisible();
     expect(screen.getByText("Reusable values for this Main Line.")).toBeVisible();
-    expect(screen.getByRole("combobox", { name: "Unit of measure (UOM)" })).toBeVisible();
-    expect(screen.getByRole("button", { name: "Surfaces" })).toBeVisible();
-    expect(screen.getByRole("button", { name: "Add unit of measure" })).toBeVisible();
+    const uomControlRow = document.querySelector(".knowledge-overview__uom-control-row");
+    expect(uomControlRow).not.toBeNull();
+    expect(within(uomControlRow as HTMLElement).getByRole("combobox", {
+      name: "Unit of measure (UOM)"
+    })).toBeVisible();
+    expect(within(uomControlRow as HTMLElement).getByRole("button", {
+      name: "Add Unit"
+    })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Add unit of measure" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Surfaces" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("listbox", { name: "Surface options" })).not.toBeInTheDocument();
     expect(screen.queryByRole("radiogroup", { name: "Modes" })).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Selected Mode details" })).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Shared calculation values" })).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Specifications" })).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Pricing" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: "Recommendations" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: "Quality" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: "All section summaries" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Recommendation & Exclusions" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Quality Parameter" })).not.toBeInTheDocument();
+    expectSectionSummaryCardsAbsent();
     expect(screen.queryByRole("button", { name: /^Open /u })).not.toBeInTheDocument();
     expect(screen.queryByText("Some reusable labels are unavailable")).not.toBeInTheDocument();
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
@@ -333,6 +345,33 @@ describe("KnowledgeOverviewPanel", () => {
       rules: { "color-contrast": { enabled: false } }
     });
     expect(results.violations).toEqual([]);
+  });
+
+  it("ignores a failed Surface reference without affecting available UOM controls", () => {
+    const retrySurface = vi.fn();
+    renderPanel({
+      referenceStates: {
+        masters: {
+          uoms: { status: "ready", onRetry: vi.fn() },
+          surfaces: {
+            status: "error",
+            errorMessage: "Surface options failed",
+            onRetry: retrySurface
+          }
+        }
+      }
+    });
+
+    expect(screen.getByRole("combobox", { name: "Unit of measure (UOM)" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Add Unit" })).toBeEnabled();
+    expect(screen.queryByRole("button", { name: "Surfaces" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("listbox", { name: "Surface options" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Surface options failed")).not.toBeInTheDocument();
+    expect(screen.queryByText("Surface options unavailable.")).not.toBeInTheDocument();
+    expect(screen.queryByText("Loading Surface options…")).not.toBeInTheDocument();
+    expect(screen.queryByText("Some reusable labels are unavailable")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Try again" })).not.toBeInTheDocument();
+    expect(retrySurface).not.toHaveBeenCalled();
   });
 
   it("keeps a saved price visible with one non-blocking reference-loading status", () => {
@@ -344,7 +383,10 @@ describe("KnowledgeOverviewPanel", () => {
           priceEntryId: "price-unassigned",
           operation: "append",
           vendorId: "vendor-unresolved",
-          inputAmountPaise: 0
+          inputAmountPaise: 0,
+          baseAmountPaise: 0,
+          taxAmountPaise: 0,
+          totalAmountPaise: 0
         }]
       }
     } as const;
@@ -368,10 +410,10 @@ describe("KnowledgeOverviewPanel", () => {
     });
 
     const pricingPanel = screen
-      .getByRole("heading", { name: "Pricing" })
+      .getByRole("heading", { name: "Budgeting" })
       .closest("section");
     expect(pricingPanel).not.toBeNull();
-    expect(within(pricingPanel as HTMLElement).getByText("₹0.00")).toBeVisible();
+    expect(within(pricingPanel as HTMLElement).getAllByText("₹0.00")).toHaveLength(3);
     expect(within(pricingPanel as HTMLElement).getByText("Unavailable value")).toBeVisible();
     expect(within(pricingPanel as HTMLElement).queryByText("vendor-unresolved")).not.toBeInTheDocument();
     expect(within(pricingPanel as HTMLElement).queryByRole("combobox", {
@@ -470,8 +512,6 @@ describe("KnowledgeOverviewPanel", () => {
       recommendations: {
         recommendations: [{
           id: "recommendation-loading-labels",
-          targetBasketId: "basket-unresolved",
-          targetMainLineId: "main-line-unresolved",
           active: true
         }]
       }
@@ -493,10 +533,12 @@ describe("KnowledgeOverviewPanel", () => {
     });
 
     const recommendationPanel = screen
-      .getByRole("heading", { name: "Recommendations", level: 2 })
+      .getByRole("heading", { name: "Recommendation & Exclusions", level: 2 })
       .closest("section");
     expect(recommendationPanel).not.toBeNull();
-    expect(within(recommendationPanel as HTMLElement).getAllByText("Unavailable value")).toHaveLength(3);
+    /* Only the Recommendation's own name can be unresolved now; it no longer
+       carries Basket or Component references. */
+    expect(within(recommendationPanel as HTMLElement).getAllByText("Unavailable value")).toHaveLength(1);
     expect(within(recommendationPanel as HTMLElement).getByText("Yes")).toBeVisible();
     expect(screen.getAllByRole("status")).toHaveLength(1);
     expect(screen.getByRole("status")).toHaveTextContent("Loading reusable labels…");
@@ -544,7 +586,7 @@ describe("KnowledgeOverviewPanel", () => {
     expect(within(sharedPanel as HTMLElement).getByText("Not configured")).toBeVisible();
   });
 
-  it("renders complete metadata for assigned and unassigned prices", () => {
+  it("renders only business Budget information for assigned and unassigned prices", () => {
     const effectiveFrom = "2026-09-01T10:30:00.000Z";
     const effectiveTo = "2026-09-30T18:00:00.000Z";
     const metadataSections = {
@@ -585,24 +627,21 @@ describe("KnowledgeOverviewPanel", () => {
     renderPanel({ overviewPayload: metadataSections.overview, summary: metadataSummary });
 
     const pricingPanel = screen
-      .getByRole("heading", { name: "Pricing" })
+      .getByRole("heading", { name: "Budgeting" })
       .closest("section");
     expect(pricingPanel).not.toBeNull();
-    expect(within(pricingPanel as HTMLElement).getAllByText("Version number").length).toBeGreaterThan(0);
-    expect(within(pricingPanel as HTMLElement).getByText("0")).toBeVisible();
-    expect(within(pricingPanel as HTMLElement).getAllByText("Tax treatment").length).toBeGreaterThan(0);
-    expect(within(pricingPanel as HTMLElement).getByText("exclusive")).toBeVisible();
-    expect(within(pricingPanel as HTMLElement).getAllByText("Effective from").length).toBeGreaterThan(0);
-    expect(within(pricingPanel as HTMLElement).getAllByText("Effective to").length).toBeGreaterThan(0);
+    expect(within(pricingPanel as HTMLElement).queryByText("Version number")).not.toBeInTheDocument();
+    expect(within(pricingPanel as HTMLElement).queryByText("Tax treatment")).not.toBeInTheDocument();
+    expect(within(pricingPanel as HTMLElement).queryByText("exclusive")).not.toBeInTheDocument();
+    expect(within(pricingPanel as HTMLElement).getAllByText("Starts on").length).toBeGreaterThan(0);
+    expect(within(pricingPanel as HTMLElement).getAllByText("Ends on").length).toBeGreaterThan(0);
     expect(within(pricingPanel as HTMLElement).getAllByText(formatKnowledgeDateTime(effectiveFrom)).length).toBeGreaterThan(0);
     expect(within(pricingPanel as HTMLElement).getAllByText(formatKnowledgeDateTime(effectiveTo)).length).toBeGreaterThan(0);
-    expect(within(pricingPanel as HTMLElement).getAllByText("Review required").length).toBeGreaterThan(0);
-
-    expect(within(pricingPanel as HTMLElement).getByText("Price version")).toBeVisible();
-    expect(within(pricingPanel as HTMLElement).getByText("Unavailable value")).toBeVisible();
-    expect(within(pricingPanel as HTMLElement).getByText("2")).toBeVisible();
-    expect(within(pricingPanel as HTMLElement).getByText("inclusive")).toBeVisible();
-    expect(within(pricingPanel as HTMLElement).getAllByText("No")).toHaveLength(2);
+    expect(within(pricingPanel as HTMLElement).queryByText("Price version")).not.toBeInTheDocument();
+    expect(within(pricingPanel as HTMLElement).queryByText("inclusive")).not.toBeInTheDocument();
+    expect(within(pricingPanel as HTMLElement).queryByText("Operation")).not.toBeInTheDocument();
+    expect(within(pricingPanel as HTMLElement).queryByText("Tax")).not.toBeInTheDocument();
+    expect(within(pricingPanel as HTMLElement).queryByText("Tax rule")).not.toBeInTheDocument();
     expect(pricingPanel).not.toHaveTextContent("private-price-version-id");
 
     const specificationPanel = screen
@@ -617,7 +656,25 @@ describe("KnowledgeOverviewPanel", () => {
 
   it("renders the approved summary hierarchy and preserves hidden Overview values on edits", async () => {
     const user = userEvent.setup();
-    const props = renderPanel();
+    const props = renderPanel({
+      summary: {
+        ...summary,
+        sectionCards: summary.sectionCards.map((card) => card.key === "mode" ? {
+          ...card,
+          warnings: [{
+            code: "pricing_not_configured",
+            sectionKey: "pricing",
+            message: "pricing is not configured.",
+            blocking: false
+          }, {
+            code: "quantity_margin_not_configured",
+            sectionKey: "quantity-margin",
+            message: "quantity-margin is not configured.",
+            blocking: false
+          }]
+        } : card)
+      }
+    });
 
     expect(screen.getByText(item.mainLineName)).toBeVisible();
     expect(screen.getByText(item.basketName)).toBeVisible();
@@ -626,8 +683,22 @@ describe("KnowledgeOverviewPanel", () => {
     expect(screen.queryByRole("combobox", { name: "Priority" })).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Section applicability rules" })).not.toBeInTheDocument();
     expect(document.body).not.toHaveTextContent(item.description!);
+    expectSectionSummaryCardsAbsent();
+    expect(screen.queryByText("pricing is not configured.")).not.toBeInTheDocument();
+    expect(screen.queryByText("quantity-margin is not configured.")).not.toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "Open Mode" })).toHaveLength(3);
+    expect(screen.getAllByRole("button", { name: "Open Recommendation & Exclusions" })).toHaveLength(1);
+    expect(screen.getAllByRole("button", { name: "Open Quality Parameter" })).toHaveLength(1);
 
-    await user.click(screen.getByRole("button", { name: "Add unit of measure" }));
+    const uomControlRow = document.querySelector(".knowledge-overview__uom-control-row");
+    expect(uomControlRow).not.toBeNull();
+    expect(within(uomControlRow as HTMLElement).getByRole("combobox", {
+      name: "Unit of measure (UOM)"
+    })).toBeVisible();
+    await user.click(within(uomControlRow as HTMLElement).getByRole("button", {
+      name: "Add Unit"
+    }));
+    expect(screen.queryByRole("button", { name: "Add unit of measure" })).not.toBeInTheDocument();
     expect(props.onQuickAddUom).toHaveBeenCalledTimes(1);
     const selectQuickAddedUom = vi.mocked(props.onQuickAddUom).mock.calls[0]?.[0];
     selectQuickAddedUom?.(squareMetre);
@@ -643,13 +714,7 @@ describe("KnowledgeOverviewPanel", () => {
       ...overviewPayload,
       uomId: squareMetre.id
     });
-
-    await user.click(screen.getByRole("button", { name: "Surfaces" }));
-    await user.click(screen.getByRole("option", { name: ceiling.name }));
-    expect(props.onOverviewPayloadChange).toHaveBeenLastCalledWith({
-      ...overviewPayload,
-      surfaceIds: [wall.id, ceiling.id]
-    });
+    expect(screen.queryByRole("button", { name: "Surfaces" })).not.toBeInTheDocument();
 
     const payloadCallCount = vi.mocked(props.onOverviewPayloadChange).mock.calls.length;
     await user.selectOptions(
@@ -666,15 +731,24 @@ describe("KnowledgeOverviewPanel", () => {
 
   it("keeps fixed-kind component definitions isolated while PMC markup remains shared", async () => {
     const user = userEvent.setup();
-    renderPanel();
+    renderPanel({
+      summary: {
+        ...summary,
+        modeDetails: summary.modeDetails.map((detail, index) => index === 0
+          ? { ...detail, prices: [summary.priceDetails[0]!] }
+          : detail)
+      }
+    });
     const modePanel = screen.getByRole("heading", { name: "Selected Mode details" }).closest("section");
     const sharedPanel = screen.getByRole("heading", { name: "Shared calculation values" }).closest("section");
     expect(modePanel).not.toBeNull();
     expect(sharedPanel).not.toBeNull();
 
+    expect(within(modePanel as HTMLElement).getByText("Matching budgets")).toBeVisible();
+    expect(within(modePanel as HTMLElement).queryByText("Matching price entries")).not.toBeInTheDocument();
     expect(within(modePanel as HTMLElement).getByText("PMC mark")).toBeVisible();
     expect(within(modePanel as HTMLElement).getByText("Text field")).toBeVisible();
-    expect(within(modePanel as HTMLElement).queryByText("A1")).not.toBeInTheDocument();
+    expect(within(modePanel as HTMLElement).getByText("A1")).toBeVisible();
     expect(within(modePanel as HTMLElement).queryByText("Execution phase")).not.toBeInTheDocument();
     expect(within(modePanel as HTMLElement).queryByText("PMC procurement workflow")).not.toBeInTheDocument();
     expect(within(sharedPanel as HTMLElement).getByText("25.00%")).toBeVisible();
@@ -682,12 +756,12 @@ describe("KnowledgeOverviewPanel", () => {
     await user.click(screen.getByRole("radio", { name: "Execution" }));
     expect(within(modePanel as HTMLElement).getByRole("heading", { name: "Sub-Vendor" })).toBeVisible();
     expect(within(modePanel as HTMLElement).getByText("Execution phase")).toBeVisible();
-    expect(within(modePanel as HTMLElement).queryByText("Install")).not.toBeInTheDocument();
+    expect(within(modePanel as HTMLElement).getByText("Install")).toBeVisible();
     expect(within(modePanel as HTMLElement).queryByText("PMC mark")).not.toBeInTheDocument();
     expect(within(sharedPanel as HTMLElement).getByText("25.00%")).toBeVisible();
   });
 
-  it("shows only the selected Mode's component definitions without saved answers", async () => {
+  it("shows only the selected Mode's component definitions and their values", async () => {
     const user = userEvent.setup();
     const executionMode = master("mode-execution-asymmetric", "modes", "Execution", 20);
     const dynamicSummary = projectKnowledgeOverviewSummary({
@@ -723,17 +797,19 @@ describe("KnowledgeOverviewPanel", () => {
     const modePanel = screen.getByRole("heading", { name: "Selected Mode details" }).closest("section");
     expect(modePanel).not.toBeNull();
     expect(within(modePanel as HTMLElement).getByText("PMC mark")).toBeVisible();
-    expect(within(modePanel as HTMLElement).queryByText("A1")).not.toBeInTheDocument();
+    expect(within(modePanel as HTMLElement).getByText("A1")).toBeVisible();
     expect(within(modePanel as HTMLElement).getByText("Reviewed")).toBeVisible();
     expect(within(modePanel as HTMLElement).getByText("Checkbox")).toBeVisible();
-    expect(within(modePanel as HTMLElement).queryByText("No")).not.toBeInTheDocument();
+    expect(within(modePanel as HTMLElement).getByText("No")).toBeVisible();
     expect(within(modePanel as HTMLElement).getByText("Empty note")).toBeVisible();
     expect(within(modePanel as HTMLElement).queryByText("Execution phase")).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("radio", { name: "Execution" }));
     expect(within(modePanel as HTMLElement).getByRole("heading", { name: "Sub-Vendor" })).toBeVisible();
     expect(within(modePanel as HTMLElement).getByText("Execution phase")).toBeVisible();
-    expect(within(modePanel as HTMLElement).getByText("Install")).toBeVisible();
+    /* "Install" reads twice here: once as the allowed option and once as the
+       configured value. */
+    expect(within(modePanel as HTMLElement).getAllByText("Install")).toHaveLength(2);
     expect(within(modePanel as HTMLElement).queryByText("PMC mark")).not.toBeInTheDocument();
     expect(within(modePanel as HTMLElement).queryByText("Reviewed")).not.toBeInTheDocument();
   });
@@ -784,17 +860,15 @@ describe("KnowledgeOverviewPanel", () => {
     expect(screen.getByText("Modes reference failed")).toBeVisible();
     expect(screen.queryByText("Some reusable labels are unavailable")).not.toBeInTheDocument();
     expect(screen.getByText("Saved legacy mark")).toBeVisible();
-    expect(screen.queryByText("Keep visible")).not.toBeInTheDocument();
+    expect(screen.getByText("Keep visible")).toBeVisible();
     expect(document.body).not.toHaveTextContent("private-unresolved-mode-id");
 
     await user.click(screen.getByRole("button", { name: "Try again" }));
     expect(retryModes).toHaveBeenCalledTimes(1);
   });
 
-  it("keeps saved hidden-section cards and their local source states without dead Open actions", async () => {
-    const user = userEvent.setup();
+  it("omits section-summary cards, warnings, and retries when card-only sources fail", () => {
     const retryExecution = vi.fn();
-    const retryAdvanced = vi.fn();
     const states = {
       ...readyStates(),
       scope: {
@@ -805,39 +879,21 @@ describe("KnowledgeOverviewPanel", () => {
         status: "error",
         errorMessage: "Execution summary failed",
         onRetry: retryExecution
-      } satisfies KnowledgeOverviewSectionState,
-      advanced: {
-        status: "ready",
-        refreshErrorMessage: "Latest Advanced summary failed",
-        onRetry: retryAdvanced
       } satisfies KnowledgeOverviewSectionState
     };
     renderPanel({ sectionStates: states });
 
-    const scopeCard = screen.getByRole("heading", { name: "Scope", level: 3 }).closest("article");
-    const executionCard = screen.getByRole("heading", { name: "Execution", level: 3 }).closest("article");
-    const advancedCard = screen.getByRole("heading", { name: "Advanced", level: 3 }).closest("article");
-    expect(scopeCard).not.toBeNull();
-    expect(executionCard).not.toBeNull();
-    expect(advancedCard).not.toBeNull();
-    expect(within(scopeCard as HTMLElement).getByText("Loading…")).toBeVisible();
-    expect(within(executionCard as HTMLElement).getByText("Execution summary failed")).toBeVisible();
-    expect(within(advancedCard as HTMLElement).getByText("Latest Advanced summary failed")).toBeVisible();
-    expect(within(advancedCard as HTMLElement).getByText("Mode overrides")).toBeVisible();
-
+    expectSectionSummaryCardsAbsent();
+    expect(screen.queryByText("Loading…")).not.toBeInTheDocument();
+    expect(screen.queryByText("Execution summary failed")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Try again" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Open Scope" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Open Execution" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Open Advanced" })).not.toBeInTheDocument();
-
-    await user.click(within(executionCard as HTMLElement).getByRole("button", { name: "Try again" }));
-    expect(retryExecution).toHaveBeenCalledTimes(1);
-    expect(retryAdvanced).not.toHaveBeenCalled();
-    await user.click(within(advancedCard as HTMLElement).getByRole("button", { name: "Try again" }));
-    expect(retryExecution).toHaveBeenCalledTimes(1);
-    expect(retryAdvanced).toHaveBeenCalledTimes(1);
+    expect(retryExecution).not.toHaveBeenCalled();
   });
 
-  it("keeps principal and summary-card actions for every navigable Overview destination", async () => {
+  it("keeps principal actions for every navigable Overview destination", async () => {
     const user = userEvent.setup();
     const props = renderPanel();
 
@@ -853,18 +909,18 @@ describe("KnowledgeOverviewPanel", () => {
         key: "mode"
       },
       {
-        heading: screen.getByRole("heading", { name: "Pricing", level: 2 }),
+        heading: screen.getByRole("heading", { name: "Budgeting", level: 2 }),
         action: "Open Mode",
         key: "mode"
       },
       {
-        heading: screen.getByRole("heading", { name: "Recommendations", level: 2 }),
-        action: "Open Recommendations",
+        heading: screen.getByRole("heading", { name: "Recommendation & Exclusions", level: 2 }),
+        action: "Open Recommendation & Exclusions",
         key: "recommendations"
       },
       {
-        heading: screen.getByRole("heading", { name: "Quality", level: 2 }),
-        action: "Open Quality",
+        heading: screen.getByRole("heading", { name: "Quality Parameter", level: 2 }),
+        action: "Open Quality Parameter",
         key: "quality"
       }
     ] as const;
@@ -874,86 +930,52 @@ describe("KnowledgeOverviewPanel", () => {
       await user.click(within(panel as HTMLElement).getByRole("button", { name: action }));
     }
 
-    const cardActions = [
-      { card: "Mode", action: "Open Mode", key: "mode" },
-      {
-        card: "Recommendations",
-        action: "Open Recommendations",
-        key: "recommendations"
-      },
-      { card: "Quality", action: "Open Quality", key: "quality" }
-    ] as const;
-    for (const { card, action } of cardActions) {
-      const article = screen.getByRole("heading", { name: card, level: 3 }).closest("article");
-      expect(article).not.toBeNull();
-      await user.click(within(article as HTMLElement).getByRole("button", { name: action }));
-    }
-
-    expect(props.onOpenSection).toHaveBeenCalledTimes(8);
+    expectSectionSummaryCardsAbsent();
+    expect(props.onOpenSection).toHaveBeenCalledTimes(5);
     expect(vi.mocked(props.onOpenSection).mock.calls.map(([key]) => key)).toEqual([
-      ...principalPanels.map(({ key }) => key),
-      ...cardActions.map(({ key }) => key)
+      ...principalPanels.map(({ key }) => key)
     ]);
   });
 
-  it("isolates a failed section card, retries it, and keeps other summaries usable", async () => {
+  it("keeps saved summaries visible when UOM labels fail and ignores Surface failure", async () => {
     const user = userEvent.setup();
-    const retryScope = vi.fn();
-    const retryQuality = vi.fn();
-    const states = {
-      ...readyStates(),
-      scope: {
-        status: "error",
-        errorMessage: "Scope summary failed",
-        onRetry: retryScope
-      } satisfies KnowledgeOverviewSectionState,
-      quality: {
-        status: "ready",
-        refreshErrorMessage: "Latest Quality summary failed",
-        onRetry: retryQuality
-      } satisfies KnowledgeOverviewSectionState
-    };
-    renderPanel({ sectionStates: states });
-
-    const scopeCard = screen.getByRole("heading", { name: "Scope", level: 3 }).closest("article");
-    const qualityCard = screen.getByRole("heading", { name: "Quality", level: 3 }).closest("article");
-    expect(scopeCard).not.toBeNull();
-    expect(qualityCard).not.toBeNull();
-    expect(within(scopeCard as HTMLElement).getByText("Scope summary failed")).toBeVisible();
-    expect(within(qualityCard as HTMLElement).getAllByText("Parameters").length).toBeGreaterThan(0);
-    expect(within(qualityCard as HTMLElement).getByText("Latest Quality summary failed")).toBeVisible();
-    await user.click(within(scopeCard as HTMLElement).getByRole("button", { name: "Try again" }));
-    expect(retryScope).toHaveBeenCalledTimes(1);
-    await user.click(within(qualityCard as HTMLElement).getByRole("button", { name: "Try again" }));
-    expect(retryQuality).toHaveBeenCalledTimes(1);
-  });
-
-  it("keeps saved summaries visible when their reusable labels fail", async () => {
-    const user = userEvent.setup();
-    const retryModes = vi.fn();
-    const failedState = {
+    const retryUom = vi.fn();
+    const retrySurface = vi.fn();
+    const failedUomState = {
       status: "error",
       errorMessage: "Reusable values failed",
-      onRetry: retryModes
+      onRetry: retryUom
+    } satisfies KnowledgeOverviewSectionState;
+    const failedSurfaceState = {
+      status: "error",
+      errorMessage: "Surface values failed",
+      onRetry: retrySurface
     } satisfies KnowledgeOverviewSectionState;
     renderPanel({
       referenceStates: {
-        masters: { uoms: failedState, surfaces: failedState, modes: failedState }
+        masters: { uoms: failedUomState, surfaces: failedSurfaceState }
       }
     });
 
     expect(screen.getByRole("combobox", { name: "Unit of measure (UOM)" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Surfaces" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Add Unit" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Add unit of measure" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Surfaces" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("listbox", { name: "Surface options" })).not.toBeInTheDocument();
+    expect(screen.getByText("UOM options unavailable.")).toBeVisible();
+    expect(screen.queryByText("Surface values failed")).not.toBeInTheDocument();
+    expect(screen.queryByText("Surface options unavailable.")).not.toBeInTheDocument();
     expect(screen.getByRole("radio", { name: pmc.name })).toBeVisible();
     expect(screen.getByRole("heading", { name: "Selected Mode details" })).toBeVisible();
     expect(screen.getByRole("heading", { name: "Specifications" })).toBeVisible();
-    expect(screen.getByRole("heading", { name: "Pricing" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Budgeting" })).toBeVisible();
     const warning = screen
       .getByText("Some reusable labels are unavailable")
       .closest(".ui-inline-message");
     expect(warning).not.toBeNull();
     await user.click(within(warning as HTMLElement).getByRole("button", { name: "Try again" }));
-    expect(retryModes).toHaveBeenCalled();
+    expect(retryUom).toHaveBeenCalledTimes(1);
+    expect(retrySurface).not.toHaveBeenCalled();
 
     const results = await axe.run(document.body, {
       rules: { "color-contrast": { enabled: false } }
@@ -969,8 +991,6 @@ describe("KnowledgeOverviewPanel", () => {
       recommendations: {
         recommendations: [{
           id: "recommendation-partial",
-          targetBasketId: "missing-basket-id",
-          targetMainLineId: "missing-main-line-id",
           dependency: false,
           active: false
         }]
@@ -1011,17 +1031,15 @@ describe("KnowledgeOverviewPanel", () => {
     expect(screen.queryByRole("heading", { name: "Selected Mode details" })).not.toBeInTheDocument();
 
     const recommendationPanel = screen
-      .getByRole("heading", { name: "Recommendations", level: 2 })
+      .getByRole("heading", { name: "Recommendation & Exclusions", level: 2 })
       .closest("section");
     expect(recommendationPanel).not.toBeNull();
     expect(within(recommendationPanel as HTMLElement).getAllByText("No")).toHaveLength(2);
     expect(within(recommendationPanel as HTMLElement).queryByText("Type")).not.toBeInTheDocument();
     expect(within(recommendationPanel as HTMLElement).queryByText("Reason")).not.toBeInTheDocument();
-    expect(within(recommendationPanel as HTMLElement).getAllByText("Unavailable value")).toHaveLength(3);
-    expect(recommendationPanel).not.toHaveTextContent("missing-basket-id");
-    expect(recommendationPanel).not.toHaveTextContent("missing-main-line-id");
+    expect(within(recommendationPanel as HTMLElement).getAllByText("Unavailable value")).toHaveLength(1);
 
-    const qualityPanel = screen.getByRole("heading", { name: "Quality", level: 2 }).closest("section");
+    const qualityPanel = screen.getByRole("heading", { name: "Quality Parameter", level: 2 }).closest("section");
     expect(qualityPanel).not.toBeNull();
     expect(within(qualityPanel as HTMLElement).getByText("Optional")).toBeVisible();
     expect(within(qualityPanel as HTMLElement).getByText("Inactive")).toBeVisible();
@@ -1030,9 +1048,7 @@ describe("KnowledgeOverviewPanel", () => {
     expect(within(qualityPanel as HTMLElement).queryByText("No maximum")).not.toBeInTheDocument();
     expect(within(qualityPanel as HTMLElement).queryByText("Unit")).not.toBeInTheDocument();
 
-    const modeCard = screen.getByRole("heading", { name: "Mode", level: 3 }).closest("article");
-    expect(modeCard).not.toBeNull();
-    expect(within(modeCard as HTMLElement).queryByText("Quantity slabs")).not.toBeInTheDocument();
+    expectSectionSummaryCardsAbsent();
   });
 
   it("keeps loading, failed, and cached-refresh sources operational without empty copy", async () => {
@@ -1070,14 +1086,14 @@ describe("KnowledgeOverviewPanel", () => {
     expect(screen.queryByRole("heading", { name: "Pricing" })).not.toBeInTheDocument();
     expect(screen.getAllByText("Loading…").length).toBeGreaterThan(0);
     const recommendationsPanel = screen
-      .getByRole("heading", { name: "Recommendations", level: 2 })
+      .getByRole("heading", { name: "Recommendation & Exclusions", level: 2 })
       .closest("section");
     expect(recommendationsPanel).not.toBeNull();
     expect(within(recommendationsPanel as HTMLElement).getByText("Recommendations failed")).toBeVisible();
     await user.click(within(recommendationsPanel as HTMLElement).getByRole("button", { name: "Try again" }));
     expect(retryRecommendations).toHaveBeenCalledTimes(1);
 
-    const qualityPanel = screen.getByRole("heading", { name: "Quality", level: 2 }).closest("section");
+    const qualityPanel = screen.getByRole("heading", { name: "Quality Parameter", level: 2 }).closest("section");
     expect(qualityPanel).not.toBeNull();
     expect(within(qualityPanel as HTMLElement).getByText("Cached finish")).toBeVisible();
     expect(within(qualityPanel as HTMLElement).getByText("Latest Quality failed")).toBeVisible();
@@ -1086,8 +1102,7 @@ describe("KnowledgeOverviewPanel", () => {
     expect(screen.queryByText(/No .* configured/u)).not.toBeInTheDocument();
   });
 
-  it("renders stable-only records and a failed canonical source without empty definition lists", async () => {
-    const user = userEvent.setup();
+  it("renders stable-only records without card-only failures or empty definition lists", async () => {
     const retryExecution = vi.fn();
     const stableOnlySections = {
       ...emptySections,
@@ -1126,13 +1141,9 @@ describe("KnowledgeOverviewPanel", () => {
     expect(document.body).not.toHaveTextContent("private-stable-quality-id");
     expect(document.querySelectorAll("dl:empty")).toHaveLength(0);
 
-    const executionCard = screen
-      .getByRole("heading", { name: "Execution", level: 3 })
-      .closest("article");
-    expect(executionCard).not.toBeNull();
-    expect(within(executionCard as HTMLElement).getByText("Execution summary failed")).toBeVisible();
-    await user.click(within(executionCard as HTMLElement).getByRole("button", { name: "Try again" }));
-    expect(retryExecution).toHaveBeenCalledTimes(1);
+    expectSectionSummaryCardsAbsent();
+    expect(screen.queryByText("Execution summary failed")).not.toBeInTheDocument();
+    expect(retryExecution).not.toHaveBeenCalled();
 
     const results = await axe.run(document.body, {
       rules: { "color-contrast": { enabled: false } }
@@ -1145,9 +1156,10 @@ describe("KnowledgeOverviewPanel", () => {
     const props = renderPanel({ editable: false, canQuickAdd: false });
 
     expect(screen.getByRole("combobox", { name: "Unit of measure (UOM)" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Add Unit" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Add unit of measure" })).not.toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Surfaces" }));
-    expect(screen.getByRole("listbox", { name: "Surface options" })).toHaveAttribute("aria-readonly", "true");
+    expect(screen.queryByRole("button", { name: "Surfaces" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("listbox", { name: "Surface options" })).not.toBeInTheDocument();
     await user.click(screen.getByRole("radio", { name: "Execution" }));
     expect(screen.getByRole("radio", { name: "Execution" })).toBeChecked();
     expect(props.onOverviewPayloadChange).not.toHaveBeenCalled();

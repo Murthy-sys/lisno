@@ -41,6 +41,65 @@ describe("AI estimator knowledge validation", () => {
     expect(validateQuantitySlabs({ decimalScale: 0, gapBehavior: "no_adjustment", slabs })).toEqual([]);
   });
 
+  it("accepts exact priced slab inputs without manufacturing legacy gap behavior", () => {
+    expect(validateKnowledgeSectionPayload("quantity-margin", {
+      quantitySlabs: [],
+      slabRates: [{
+        id: "slab-rate-plywood",
+        specificationId: "specification-plywood",
+        uomId: "uom-sqft",
+        quantity: "12.5",
+        unitRatePaise: 8_000
+      }]
+    })).toEqual([]);
+  });
+
+  it("strictly validates priced slab identity, quantity, rate, and derived-field exclusion", () => {
+    const issues = validateKnowledgeSectionPayload("quantity-margin", {
+      slabRates: [
+        {
+          id: "slab-rate-duplicate",
+          specificationId: "specification-plywood",
+          uomId: "uom-sqft",
+          quantity: "1",
+          unitRatePaise: 8_000,
+          estimatedCostPaise: 8_000
+        },
+        {
+          id: "slab-rate-duplicate",
+          specificationId: "specification-plywood",
+          uomId: "uom-sqft",
+          quantity: "1.0",
+          unitRatePaise: Number.MAX_SAFE_INTEGER + 1
+        },
+        {
+          id: "slab-rate-zero",
+          specificationId: "specification-zero",
+          uomId: "uom-sqft",
+          quantity: "0",
+          unitRatePaise: 0
+        }
+      ]
+    });
+
+    expect(issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        path: "payload.slabRates.0.estimatedCostPaise",
+        code: "UNKNOWN_FIELD"
+      }),
+      expect.objectContaining({ path: "payload.slabRates.1.id", code: "DUPLICATE_ID" }),
+      expect.objectContaining({
+        path: "payload.slabRates.1.quantity",
+        code: "DUPLICATE_SLAB_RATE"
+      }),
+      expect.objectContaining({
+        path: "payload.slabRates.1.unitRatePaise",
+        code: "INVALID_INTEGER"
+      }),
+      expect.objectContaining({ path: "payload.slabRates.2.quantity", code: "INVALID_RANGE" })
+    ]));
+  });
+
   it("rejects unknown, self, duplicate, and cyclic dependency edges", () => {
     expect(validateAcyclicGraph(["a", "b"], [{ fromId: "a", toId: "missing" }])[0]?.code).toBe("INVALID_REFERENCE");
     expect(validateAcyclicGraph(["a"], [{ fromId: "a", toId: "a" }])[0]?.code).toBe("SELF_DEPENDENCY");
@@ -111,6 +170,96 @@ describe("AI estimator knowledge validation", () => {
       internalVendorNotes: null,
       priceEntries: [append, reference]
     })).toEqual([]);
+  });
+
+  it("accepts business-only Budget commands and rejects every server-owned field", () => {
+    const create = {
+      operation: "set_budget",
+      sourcePriceVersionId: null,
+      vendorId: "vendor-1",
+      uomId: "uom-1",
+      inputAmountPaise: 12_500,
+      effectiveFrom: "2026-09-02T00:00:00.000Z",
+      effectiveTo: null
+    };
+    const update = {
+      ...create,
+      sourcePriceVersionId: "price-version-1",
+      effectiveTo: "2026-10-01T00:00:00.000Z"
+    };
+    expect(validateKnowledgeSectionPayload("pricing", {
+      priceEntries: [create, update]
+    })).toEqual([]);
+
+    const issues = validateKnowledgeSectionPayload("pricing", {
+      priceEntries: [{
+        ...create,
+        priceEntryId: "client-price-entry",
+        priceVersionId: "client-price-version",
+        specificationId: null,
+        modeId: null,
+        taxRuleId: "client-tax-rule",
+        taxVersionId: "client-tax-version",
+        rateBps: 1_800,
+        currency: "INR",
+        treatment: "exclusive",
+        status: "active",
+        versionNumber: 1,
+        version: 1,
+        reviewRequired: false,
+        baseAmountPaise: 12_500,
+        taxAmountPaise: 2_250,
+        totalAmountPaise: 14_750,
+        createdById: "client-actor",
+        updatedById: "client-actor",
+        createdAt: "2026-09-02T00:00:00.000Z",
+        updatedAt: "2026-09-02T00:00:00.000Z",
+        audit: {}
+      }]
+    });
+    for (const field of [
+      "priceEntryId", "priceVersionId", "specificationId", "modeId",
+      "taxRuleId", "taxVersionId", "rateBps", "currency", "treatment",
+      "status", "versionNumber", "version", "reviewRequired", "baseAmountPaise",
+      "taxAmountPaise", "totalAmountPaise", "createdById", "updatedById",
+      "createdAt", "updatedAt", "audit"
+    ]) {
+      expect(issues).toContainEqual(expect.objectContaining({
+        path: `payload.priceEntries.0.${field}`,
+        code: "UNKNOWN_FIELD"
+      }));
+    }
+  });
+
+  it("validates required Budget money, source, and schedule fields", () => {
+    const issues = validateKnowledgeSectionPayload("pricing", {
+      priceEntries: [{
+        operation: "set_budget",
+        sourcePriceVersionId: "",
+        vendorId: "vendor-1",
+        uomId: "uom-1",
+        inputAmountPaise: -1,
+        effectiveFrom: "not-a-date",
+        effectiveTo: "2026-01-01T00:00:00.000Z"
+      }]
+    });
+    expect(issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({ path: "payload.priceEntries.0.sourcePriceVersionId", code: "INVALID_REFERENCE" }),
+      expect.objectContaining({ path: "payload.priceEntries.0.inputAmountPaise", code: "INVALID_AMOUNT" }),
+      expect.objectContaining({ path: "payload.priceEntries.0.effectiveFrom", code: "INVALID_DATE" })
+    ]));
+    expect(validateKnowledgeSectionPayload("pricing", {
+      priceEntries: [{
+        operation: "set_budget",
+        vendorId: "vendor-1",
+        uomId: "uom-1",
+        inputAmountPaise: 1,
+        effectiveFrom: "2026-09-02T00:00:00.000Z"
+      }]
+    })).toContainEqual(expect.objectContaining({
+      path: "payload.priceEntries.0.effectiveTo",
+      code: "REQUIRED"
+    }));
   });
 
   it("rejects non-null Specification scope on new price appends", () => {
@@ -346,17 +495,41 @@ describe("AI estimator knowledge validation", () => {
     expect(validateKnowledgeSectionPayload("recommendations", {
       recommendations: [{
         id: "recommendation-wiring",
-        targetBasketId: "basket-electrical",
-        targetMainLineId: "line-wiring",
-        type: "mandatory",
-        priorityId: null,
+        name: "Electrical wiring",
+        priorityId: "priority-high",
         reason: "Complete before boards close the ceiling",
-        quantityRelationship: "same_quantity",
-        quantityValue: null,
         dependency: true,
         active: true
       }]
     })).toEqual([]);
+
+    /* Exclusions are authored beside Recommendations in one section and keep
+       the Scope relationship rules, so a Basket-only exclusion stays valid. */
+    expect(validateKnowledgeSectionPayload("recommendations", {
+      recommendations: [{
+        id: "recommendation-wiring",
+        name: "Electrical wiring",
+        priorityId: "priority-high",
+        reason: "Wiring precedes the boards",
+        dependency: false,
+        active: true
+      }],
+      exclusions: [
+        { id: "exclusion-painting", name: "Painting", reason: "Priced separately", active: true },
+        { id: "exclusion-light-fittings", name: "Light fittings", reason: null, active: true }
+      ]
+    })).toEqual([]);
+
+    expect(validateKnowledgeSectionPayload("recommendations", {
+      exclusions: [{
+        id: "exclusion-unnamed",
+        name: "",
+        reason: null,
+        active: true
+      }]
+    })).toContainEqual(expect.objectContaining({
+      path: "payload.exclusions.0.name"
+    }));
 
     expect(validateKnowledgeSectionPayload("quality", {
       parameters: [
@@ -388,6 +561,49 @@ describe("AI estimator knowledge validation", () => {
         }
       ]
     })).toEqual([]);
+
+    /* The editor only writes the fields a parameter's own type uses, so a radio
+       carries no numeric bounds and a text field carries no allowed values. */
+    expect(validateKnowledgeSectionPayload("quality", {
+      parameters: [
+        {
+          id: "quality-is-needed",
+          type: "radio",
+          label: "Is Needed",
+          allowedValues: ["Yes", "No"],
+          defaultValue: "Yes",
+          required: true,
+          category: "Client Quality Parameter",
+          active: true
+        },
+        { id: "quality-bare", type: "text", label: "Notes" }
+      ]
+    })).toEqual([]);
+
+    /* Relaxing the required keys must not weaken the type-aware rules. */
+    expect(validateKnowledgeSectionPayload("quality", {
+      parameters: [{ id: "quality-empty-choice", type: "radio", label: "Needed" }]
+    })).toContainEqual(expect.objectContaining({
+      path: "payload.parameters.0.allowedValues",
+      code: "REQUIRED"
+    }));
+    expect(validateKnowledgeSectionPayload("quality", {
+      parameters: [{
+        id: "quality-unknown-default",
+        type: "radio",
+        label: "Needed",
+        allowedValues: ["Yes"],
+        defaultValue: "Maybe"
+      }]
+    })).toContainEqual(expect.objectContaining({
+      path: "payload.parameters.0.defaultValue",
+      code: "INVALID_DEFAULT"
+    }));
+    expect(validateKnowledgeSectionPayload("quality", {
+      parameters: [{ id: "quality-bad-active", type: "text", label: "Notes", active: "yes" }]
+    })).toContainEqual(expect.objectContaining({
+      path: "payload.parameters.0.active"
+    }));
 
     expect(validateKnowledgeSectionPayload("execution", {
       steps: [
@@ -631,43 +847,66 @@ describe("AI estimator knowledge validation", () => {
       "REQUIRED_REFERENCE"
     ]));
 
+    /* A Recommendation names its target in free text. Stable-ID targets and the
+       retired strength fields are rejected as unknown. */
     const recommendation = validateKnowledgeSectionPayload("recommendations", {
       recommendations: [{
         id: "recommendation-1",
+        name: "Electrical wiring",
         targetBasketId: "basket-1",
         targetMainLineId: "line-1",
-        type: "automatic",
-        priorityId: null,
+        priorityId: "priority-high",
         reason: "Required",
-        quantityRelationship: "same_quantity",
-        quantityValue: "2",
         dependency: "yes",
         active: true
       }]
     });
     expect(recommendation.map(({ code }) => code)).toEqual(expect.arrayContaining([
-      "INVALID_ENUM",
-      "IRRELEVANT_FIELD",
+      "UNKNOWN_FIELD",
       "INVALID_TYPE"
     ]));
+    expect(recommendation.map(({ path }) => path)).toEqual(expect.arrayContaining([
+      "payload.recommendations.0.targetBasketId",
+      "payload.recommendations.0.targetMainLineId",
+      "payload.recommendations.0.dependency"
+    ]));
+
+    /* Reason is optional, so a Recommendation is complete with a name and a
+       Priority alone. The editor drops the key entirely when it is blank, so
+       an absent key must pass exactly like an explicit null. */
+    expect(validateKnowledgeSectionPayload("recommendations", {
+      recommendations: [{
+        id: "recommendation-no-reason",
+        name: "Electrical wiring",
+        priorityId: "priority-high",
+        reason: null,
+        dependency: false,
+        active: true
+      }]
+    })).toEqual([]);
 
     expect(validateKnowledgeSectionPayload("recommendations", {
       recommendations: [{
-        id: "recommendation-missing-basket",
-        targetMainLineId: "line-1",
-        type: "mandatory",
-        priorityId: null,
+        id: "recommendation-absent-reason",
+        name: "Electrical wiring",
+        priorityId: "priority-high",
+        dependency: false,
+        active: true
+      }],
+      exclusions: [{ id: "exclusion-absent-reason", name: "Painting", active: true }]
+    })).toEqual([]);
+
+    expect(validateKnowledgeSectionPayload("recommendations", {
+      recommendations: [{
+        id: "recommendation-unnamed",
+        name: "",
+        priorityId: "priority-high",
         reason: "Required",
-        quantityRelationship: "same_quantity",
-        quantityValue: null,
         dependency: true,
         active: true
       }]
     })).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        path: "payload.recommendations.0.targetBasketId",
-        code: "REQUIRED"
-      })
+      expect.objectContaining({ path: "payload.recommendations.0.name" })
     ]));
   });
 

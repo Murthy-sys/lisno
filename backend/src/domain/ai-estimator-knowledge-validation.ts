@@ -16,9 +16,7 @@ import {
   AI_ESTIMATOR_KNOWLEDGE_MODE_FIELD_TYPES,
   AI_ESTIMATOR_KNOWLEDGE_MODE_KINDS,
   AI_ESTIMATOR_KNOWLEDGE_QUANTITY_GAP_BEHAVIORS,
-  AI_ESTIMATOR_KNOWLEDGE_QUANTITY_RELATIONSHIPS,
   AI_ESTIMATOR_KNOWLEDGE_QUALITY_PARAMETER_TYPES,
-  AI_ESTIMATOR_KNOWLEDGE_RECOMMENDATION_TYPES,
   AI_ESTIMATOR_KNOWLEDGE_REVISION_STATUSES,
   AI_ESTIMATOR_KNOWLEDGE_SECTION_APPLICABILITY,
   AI_ESTIMATOR_KNOWLEDGE_SECTION_KEYS,
@@ -280,9 +278,9 @@ export function validateQualityParameter(
 const ALLOWED_SECTION_KEYS: Record<KnowledgeSectionKey, ReadonlySet<string>> = {
   overview: new Set(["description", "uomId", "priorityId", "surfaceIds", "modeIds", "sectionApplicability"]),
   pricing: new Set(["specifications", "brands", "technicalDescription", "qualityLevel", "internalVendorNotes", "priceEntries"]),
-  "quantity-margin": new Set(["quantitySlabs", "gapBehavior", "startMarginBps", "bottomMarginBps", "pmcMarkupBps", "wastageBps", "previewInputs"]),
+  "quantity-margin": new Set(["quantitySlabs", "slabRates", "gapBehavior", "startMarginBps", "bottomMarginBps", "pmcMarkupBps", "wastageBps", "previewInputs"]),
   scope: new Set(["modeIds", "surfaceIds", "exclusions"]),
-  recommendations: new Set(["recommendations"]),
+  recommendations: new Set(["recommendations", "exclusions"]),
   quality: new Set(["parameters"]),
   execution: new Set(["steps", "productivity"]),
   advanced: new Set(["dependencies", "modeOverrides", "revisionLineage", "modeConfigurations"])
@@ -754,9 +752,9 @@ function validateQuantityMarginPayload(
         validSlabs.push(row as unknown as KnowledgeQuantitySlab);
       }
     });
-    if (!("gapBehavior" in record)) {
+    if (rows.length > 0 && !("gapBehavior" in record)) {
       issues.push(requiredIssue("payload.gapBehavior"));
-    } else if (
+    } else if (rows.length > 0 &&
       AI_ESTIMATOR_KNOWLEDGE_QUANTITY_GAP_BEHAVIORS.includes(
         record.gapBehavior as never
       ) &&
@@ -774,10 +772,64 @@ function validateQuantityMarginPayload(
       );
     }
   }
+  if ("slabRates" in record) {
+    validateSlabRates(record.slabRates, issues);
+  }
   if ("previewInputs" in record) {
     validatePreviewInputs(record.previewInputs, issues);
   }
   return issues;
+}
+
+function validateSlabRates(
+  value: unknown,
+  issues: KnowledgeValidationIssue[]
+): void {
+  const path = "payload.slabRates";
+  const rows = validateObjectArray(value, path, issues);
+  const ids = new Set<string>();
+  const tuples = new Set<string>();
+  rows.forEach((row, index) => {
+    const rowPath = `${path}.${index}`;
+    validateExactRowKeys(
+      row,
+      ["id", "specificationId", "uomId", "quantity", "unitRatePaise"],
+      ["id", "specificationId", "uomId", "quantity", "unitRatePaise"],
+      rowPath,
+      issues
+    );
+    validateStableId(row.id, `${rowPath}.id`, issues);
+    validateStableId(row.specificationId, `${rowPath}.specificationId`, issues);
+    validateStableId(row.uomId, `${rowPath}.uomId`, issues);
+    const quantity = validatePositiveCanonicalDecimal(
+      row.quantity,
+      `${rowPath}.quantity`,
+      issues
+    );
+    validateInteger(
+      row.unitRatePaise,
+      `${rowPath}.unitRatePaise`,
+      issues,
+      0,
+      AI_ESTIMATOR_KNOWLEDGE_MAX_MONEY_PAISE
+    );
+    addUniqueString(row.id, ids, `${rowPath}.id`, "DUPLICATE_ID", issues);
+    if (
+      typeof row.specificationId === "string" &&
+      row.specificationId.length > 0 &&
+      typeof row.uomId === "string" &&
+      row.uomId.length > 0 &&
+      quantity !== null
+    ) {
+      addUniqueString(
+        `${row.specificationId}\u0000${row.uomId}\u0000${quantity.toString()}`,
+        tuples,
+        `${rowPath}.quantity`,
+        "DUPLICATE_SLAB_RATE",
+        issues
+      );
+    }
+  });
 }
 
 function validatePreviewInputs(
@@ -923,6 +975,12 @@ function validateRecommendationsPayload(
   record: Record<string, unknown>
 ): KnowledgeValidationIssue[] {
   const issues: KnowledgeValidationIssue[] = [];
+  /* Recommendations and Exclusions are authored as free text beside the Main
+     Line they belong to. The Basket is the item's own, so neither row selects
+     one, and neither participates in the relationship graph. */
+  if ("exclusions" in record) {
+    validateNamedRows(record.exclusions, "payload.exclusions", issues, false);
+  }
   if (!("recommendations" in record)) return issues;
   const rows = validateObjectArray(
     record.recommendations,
@@ -934,64 +992,18 @@ function validateRecommendationsPayload(
     const path = `payload.recommendations.${index}`;
     validateExactRowKeys(
       row,
-      [
-        "id",
-        "targetBasketId",
-        "targetMainLineId",
-        "type",
-        "priorityId",
-        "reason",
-        "quantityRelationship",
-        "quantityValue",
-        "dependency",
-        "active"
-      ],
-      [
-        "id",
-        "targetBasketId",
-        "targetMainLineId",
-        "type",
-        "priorityId",
-        "reason",
-        "quantityRelationship",
-        "quantityValue",
-        "dependency",
-        "active"
-      ],
+      ["id", "name", "priorityId", "reason", "dependency", "active"],
+      ["id", "name", "priorityId", "dependency", "active"],
       path,
       issues
     );
     validateStableId(row.id, `${path}.id`, issues);
-    validateStableId(row.targetBasketId, `${path}.targetBasketId`, issues);
-    validateStableId(row.targetMainLineId, `${path}.targetMainLineId`, issues);
-    validateClosedEnum(
-      row.type,
-      AI_ESTIMATOR_KNOWLEDGE_RECOMMENDATION_TYPES,
-      `${path}.type`,
-      issues
-    );
-    validateNullableStableId(row.priorityId, `${path}.priorityId`, issues);
-    validateText(row.reason, `${path}.reason`, issues, AI_ESTIMATOR_KNOWLEDGE_MAX_TEXT);
-    validateClosedEnum(
-      row.quantityRelationship,
-      AI_ESTIMATOR_KNOWLEDGE_QUANTITY_RELATIONSHIPS,
-      `${path}.quantityRelationship`,
-      issues
-    );
-    const quantity = validateNullableCanonicalDecimal(
-      row.quantityValue,
-      `${path}.quantityValue`,
-      issues
-    );
-    if (row.quantityRelationship === "same_quantity" && row.quantityValue !== null) {
-      issues.push(irrelevantFieldIssue(`${path}.quantityValue`));
-    } else if (
-      ["percentage_of_source", "fixed", "per_unit"].includes(
-        String(row.quantityRelationship)
-      ) &&
-      (quantity === null || quantity === 0n)
-    ) {
-      issues.push(requiredIssue(`${path}.quantityValue`));
+    validateText(row.name, `${path}.name`, issues, AI_ESTIMATOR_KNOWLEDGE_MAX_SHORT_TEXT);
+    validateStableId(row.priorityId, `${path}.priorityId`, issues);
+    /* Reason is optional context for the estimator. The editor drops the key
+       when it is blank, so absent and null both have to pass. */
+    if ("reason" in row) {
+      validateNullableText(row.reason, `${path}.reason`, issues, AI_ESTIMATOR_KNOWLEDGE_MAX_TEXT);
     }
     validateBoolean(row.dependency, `${path}.dependency`, issues);
     validateBoolean(row.active, `${path}.active`, issues);
@@ -1009,6 +1021,9 @@ function validateQualityPayload(
   const ids = new Set<string>();
   rows.forEach((row, index) => {
     const path = `payload.parameters.${index}`;
+    /* Only identity and type are always meaningful. The rest describe one shape
+       of parameter each, so a radio carries no numeric bounds and a text field
+       carries no allowed values; absent reads as unset, not as invalid. */
     validateExactRowKeys(
       row,
       [
@@ -1024,19 +1039,7 @@ function validateQualityPayload(
         "category",
         "active"
       ],
-      [
-        "id",
-        "type",
-        "label",
-        "unit",
-        "allowedValues",
-        "minimum",
-        "maximum",
-        "defaultValue",
-        "required",
-        "category",
-        "active"
-      ],
+      ["id", "type", "label"],
       path,
       issues
     );
@@ -1048,17 +1051,28 @@ function validateQualityPayload(
       issues
     );
     validateText(row.label, `${path}.label`, issues, AI_ESTIMATOR_KNOWLEDGE_MAX_SHORT_TEXT);
-    validateNullableText(row.unit, `${path}.unit`, issues, AI_ESTIMATOR_KNOWLEDGE_MAX_SHORT_TEXT);
-    validateStringArray(row.allowedValues, `${path}.allowedValues`, issues);
-    validateNullableCanonicalDecimal(row.minimum, `${path}.minimum`, issues);
-    validateNullableCanonicalDecimal(row.maximum, `${path}.maximum`, issues);
-    validateBoolean(row.required, `${path}.required`, issues);
-    validateNullableText(row.category, `${path}.category`, issues, AI_ESTIMATOR_KNOWLEDGE_MAX_SHORT_TEXT);
-    validateBoolean(row.active, `${path}.active`, issues);
+    if ("unit" in row) {
+      validateNullableText(row.unit, `${path}.unit`, issues, AI_ESTIMATOR_KNOWLEDGE_MAX_SHORT_TEXT);
+    }
+    if ("allowedValues" in row) {
+      validateStringArray(row.allowedValues, `${path}.allowedValues`, issues);
+    }
+    if ("minimum" in row) {
+      validateNullableCanonicalDecimal(row.minimum, `${path}.minimum`, issues);
+    }
+    if ("maximum" in row) {
+      validateNullableCanonicalDecimal(row.maximum, `${path}.maximum`, issues);
+    }
+    if ("required" in row) validateBoolean(row.required, `${path}.required`, issues);
+    if ("category" in row) {
+      validateNullableText(row.category, `${path}.category`, issues, AI_ESTIMATOR_KNOWLEDGE_MAX_SHORT_TEXT);
+    }
+    if ("active" in row) validateBoolean(row.active, `${path}.active`, issues);
     addUniqueString(row.id, ids, `${path}.id`, "DUPLICATE_ID", issues);
-    if (isStructurallyValidQualityParameter(row)) {
+    const parameter = completeQualityParameter(row);
+    if (parameter) {
       issues.push(
-        ...validateQualityParameter(row as unknown as KnowledgeQualityParameter).map(
+        ...validateQualityParameter(parameter).map(
           (issue) => ({ ...issue, path: `${path}.${issue.path}` })
         )
       );
@@ -1067,23 +1081,44 @@ function validateQualityPayload(
   return issues;
 }
 
-function isStructurallyValidQualityParameter(
+/**
+ * Fills the shape-specific fields an author never set, so the type-aware rules
+ * below still run on a row that only carries the fields its own type uses.
+ * Returns null when the row is too malformed to judge, because the per-field
+ * checks above have already reported why.
+ */
+function completeQualityParameter(
   row: Record<string, unknown>
-): boolean {
-  return (
-    typeof row.id === "string" &&
-    typeof row.type === "string" &&
-    AI_ESTIMATOR_KNOWLEDGE_QUALITY_PARAMETER_TYPES.includes(row.type as never) &&
-    typeof row.label === "string" &&
-    (row.unit === null || typeof row.unit === "string") &&
-    Array.isArray(row.allowedValues) &&
-    row.allowedValues.every((value) => typeof value === "string") &&
-    (row.minimum === null || typeof row.minimum === "string") &&
-    (row.maximum === null || typeof row.maximum === "string") &&
-    typeof row.required === "boolean" &&
-    (row.category === null || typeof row.category === "string") &&
-    typeof row.active === "boolean"
-  );
+): KnowledgeQualityParameter | null {
+  const optional = (value: unknown) =>
+    value === undefined || value === null || typeof value === "string";
+  if (
+    typeof row.id !== "string" ||
+    typeof row.type !== "string" ||
+    !AI_ESTIMATOR_KNOWLEDGE_QUALITY_PARAMETER_TYPES.includes(row.type as never) ||
+    typeof row.label !== "string" ||
+    !optional(row.unit) ||
+    !optional(row.minimum) ||
+    !optional(row.maximum) ||
+    !optional(row.category) ||
+    (row.allowedValues !== undefined && (
+      !Array.isArray(row.allowedValues) ||
+      !row.allowedValues.every((value) => typeof value === "string")
+    )) ||
+    (row.required !== undefined && typeof row.required !== "boolean") ||
+    (row.active !== undefined && typeof row.active !== "boolean")
+  ) return null;
+  return {
+    ...row,
+    unit: row.unit ?? null,
+    allowedValues: row.allowedValues ?? [],
+    minimum: row.minimum ?? null,
+    maximum: row.maximum ?? null,
+    defaultValue: row.defaultValue ?? null,
+    required: row.required ?? false,
+    category: row.category ?? null,
+    active: row.active ?? true
+  } as unknown as KnowledgeQualityParameter;
 }
 
 function validateExecutionPayload(
@@ -1464,7 +1499,7 @@ function validateModeConfigurationFields(
       );
     }
     validateModeFieldOptions(field, fieldPath, issues);
-    if ("value" in field) validateLegacyModeFieldValue(field.value, `${fieldPath}.value`, issues);
+    if ("value" in field) validateModeFieldValue(field.value, `${fieldPath}.value`, issues);
   });
 }
 
@@ -1519,7 +1554,7 @@ function validateModeFieldOptions(
 
 }
 
-function validateLegacyModeFieldValue(
+function validateModeFieldValue(
   value: unknown,
   path: string,
   issues: KnowledgeValidationIssue[]
@@ -1554,6 +1589,36 @@ function validateModeOwnedStableId(
       message: "Generated stable IDs must be nonempty and must not have surrounding whitespace."
     });
   }
+}
+
+/*
+ * Rows that name something in free text rather than pointing at a stable ID.
+ * Used where the author is describing intent for the estimator, not linking
+ * two configured items together.
+ */
+function validateNamedRows(
+  value: unknown,
+  path: string,
+  issues: KnowledgeValidationIssue[],
+  requirePriority: boolean
+): void {
+  const rows = validateObjectArray(value, path, issues);
+  const ids = new Set<string>();
+  const keys = requirePriority
+    ? ["id", "name", "priorityId", "reason", "dependency", "active"]
+    : ["id", "name", "reason", "active"];
+  const required = keys.filter((key) => key !== "reason");
+  rows.forEach((row, index) => {
+    const rowPath = `${path}.${index}`;
+    validateExactRowKeys(row, keys, required, rowPath, issues);
+    validateStableId(row.id, `${rowPath}.id`, issues);
+    validateText(row.name, `${rowPath}.name`, issues, AI_ESTIMATOR_KNOWLEDGE_MAX_SHORT_TEXT);
+    if ("reason" in row) {
+      validateNullableText(row.reason, `${rowPath}.reason`, issues, AI_ESTIMATOR_KNOWLEDGE_MAX_TEXT);
+    }
+    validateBoolean(row.active, `${rowPath}.active`, issues);
+    addUniqueString(row.id, ids, `${rowPath}.id`, "DUPLICATE_ID", issues);
+  });
 }
 
 function validateRelationshipRows(
@@ -1937,7 +2002,7 @@ function invalidTypeIssue(path: string, expected: string): KnowledgeValidationIs
 
 function validatePriceEntryCommands(value: unknown): KnowledgeValidationIssue[] {
   if (!Array.isArray(value)) {
-    return [{ path: "payload.priceEntries", code: "INVALID_PRICE_ENTRIES", message: "Price entries must be an array of append commands or version references." }];
+    return [{ path: "payload.priceEntries", code: "INVALID_PRICE_ENTRIES", message: "Price entries must be an array of budget commands or version references." }];
   }
   const issues: KnowledgeValidationIssue[] = [];
   const identities = new Set<string>();
@@ -1957,8 +2022,42 @@ function validatePriceEntryCommands(value: unknown): KnowledgeValidationIssue[] 
       identities.add(identity);
       return;
     }
+    if (record.operation === "set_budget") {
+      validateExactKeys(
+        record,
+        [
+          "operation", "sourcePriceVersionId", "vendorId", "uomId",
+          "inputAmountPaise", "effectiveFrom", "effectiveTo"
+        ],
+        path,
+        issues,
+        ["sourcePriceVersionId"]
+      );
+      if (record.sourcePriceVersionId !== undefined && record.sourcePriceVersionId !== null) {
+        validateStableId(record.sourcePriceVersionId, `${path}.sourcePriceVersionId`, issues);
+      }
+      for (const key of ["vendorId", "uomId"] as const) {
+        validateStableId(record[key], `${path}.${key}`, issues);
+      }
+      if (!Number.isSafeInteger(record.inputAmountPaise) || (record.inputAmountPaise as number) < 0 || (record.inputAmountPaise as number) > AI_ESTIMATOR_KNOWLEDGE_MAX_MONEY_PAISE) {
+        issues.push({ path: `${path}.inputAmountPaise`, code: "INVALID_AMOUNT", message: "Budget input must be a nonnegative safe integer in paise." });
+      }
+      const from = parseIsoDate(record.effectiveFrom);
+      const to = record.effectiveTo === null ? null : parseIsoDate(record.effectiveTo);
+      if (from === null) issues.push({ path: `${path}.effectiveFrom`, code: "INVALID_DATE", message: "Budget start must be an ISO date-time." });
+      if (record.effectiveTo !== null && to === null) issues.push({ path: `${path}.effectiveTo`, code: "INVALID_DATE", message: "Budget end must be an ISO date-time or null." });
+      if (from !== null && to !== null && from.getTime() >= to.getTime()) issues.push({ path: `${path}.effectiveTo`, code: "INVALID_EFFECTIVE_WINDOW", message: "Budget end must be later than its start." });
+      const sourceIdentity = record.sourcePriceVersionId == null
+        ? null
+        : `set_budget:${String(record.sourcePriceVersionId)}`;
+      if (sourceIdentity && identities.has(sourceIdentity)) {
+        issues.push({ path, code: "DUPLICATE_PRICE_ENTRY", message: "A saved budget can be updated only once per request." });
+      }
+      if (sourceIdentity) identities.add(sourceIdentity);
+      return;
+    }
     if (record.operation !== "append") {
-      issues.push({ path: `${path}.operation`, code: "INVALID_PRICE_OPERATION", message: "Price entry operation must be append or reference." });
+      issues.push({ path: `${path}.operation`, code: "INVALID_PRICE_OPERATION", message: "Price entry operation must be set_budget, append, or reference." });
       return;
     }
     validateExactKeys(record, [
@@ -2004,14 +2103,16 @@ function validateExactKeys(
   record: Record<string, unknown>,
   allowedKeys: readonly string[],
   path: string,
-  issues: KnowledgeValidationIssue[]
+  issues: KnowledgeValidationIssue[],
+  optionalKeys: readonly string[] = []
 ): void {
   const allowed = new Set(allowedKeys);
+  const optional = new Set(optionalKeys);
   for (const key of Object.keys(record)) {
     if (!allowed.has(key)) issues.push({ path: `${path}.${key}`, code: "UNKNOWN_FIELD", message: `Field ${key} is not valid for this price entry operation.` });
   }
   for (const key of allowedKeys) {
-    if (!(key in record)) issues.push({ path: `${path}.${key}`, code: "REQUIRED", message: `Price entry field ${key} is required.` });
+    if (!optional.has(key) && !(key in record)) issues.push({ path: `${path}.${key}`, code: "REQUIRED", message: `Price entry field ${key} is required.` });
   }
 }
 

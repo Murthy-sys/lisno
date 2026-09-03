@@ -322,6 +322,73 @@ describe("AI Estimator Knowledge HTTP routes", () => {
     );
   });
 
+  it("uses a strict Surface-only contract with an optional technical code", async () => {
+    const testServices = services();
+    const input = {
+      name: "Counter surface",
+      description: "Granite, quartz, marble"
+    };
+    const created = await request(appFor(testServices))
+      .post("/api/v1/admin/ai-estimator-knowledge/surfaces")
+      .set("Authorization", "Bearer super-admin-token")
+      .send(input);
+    expect(created.status).toBe(201);
+    expect(testServices.reference.createMaster).toHaveBeenCalledWith(
+      superAdmin,
+      "surfaces",
+      input
+    );
+
+    const updated = await request(appFor(testServices))
+      .patch("/api/v1/admin/ai-estimator-knowledge/surfaces/surface-1")
+      .set("Authorization", "Bearer super-admin-token")
+      .send({ expectedVersion: 2, name: "Counter surface" });
+    expect(updated.status).toBe(200);
+    expect(testServices.reference.updateMaster).toHaveBeenCalledWith(
+      superAdmin,
+      "surfaces",
+      "surface-1",
+      { expectedVersion: 2, name: "Counter surface" }
+    );
+  });
+
+  it("rejects unknown Surface fields, including retired unit guidance", async () => {
+    const testServices = services();
+    for (const body of [
+      { name: "Retired typical units", typicalUomIds: ["uom-1"] },
+      { name: "Unknown field", unexpected: true },
+      { description: "Missing name" }
+    ]) {
+      const response = await request(appFor(testServices))
+        .post("/api/v1/admin/ai-estimator-knowledge/surfaces")
+        .set("Authorization", "Bearer super-admin-token")
+        .send(body);
+      expect(response.status).toBe(400);
+    }
+    const unrelated = await request(appFor(testServices))
+      .post("/api/v1/admin/ai-estimator-knowledge/vendors")
+      .set("Authorization", "Bearer super-admin-token")
+      .send({ name: "Vendor", typicalUomIds: ["uom-1"] });
+    expect(unrelated.status).toBe(400);
+    expect(testServices.reference.createMaster).not.toHaveBeenCalled();
+  });
+
+  it("authorizes Surface writes before validating their specialized body", async () => {
+    const testServices = services();
+    const denied = await request(appFor(testServices))
+      .post("/api/v1/admin/ai-estimator-knowledge/surfaces")
+      .set("Authorization", "Bearer admin-token")
+      .send({ unexpected: true });
+    const unauthenticated = await request(appFor(testServices))
+      .post("/api/v1/admin/ai-estimator-knowledge/surfaces")
+      .send({ unexpected: true });
+
+    expect(denied.status).toBe(403);
+    expect(denied.body.error.code).toBe("FORBIDDEN");
+    expect(unauthenticated.status).toBe(401);
+    expect(testServices.reference.createMaster).not.toHaveBeenCalled();
+  });
+
   it("accepts explicit Tax rollover intent only on the update contract", async () => {
     const testServices = services();
     const taxVersion = {
@@ -481,6 +548,102 @@ describe("AI Estimator Knowledge HTTP routes", () => {
       }
     });
     expect(testServices.item.updateSection).not.toHaveBeenCalled();
+  });
+
+  it("accepts the business-only Budget command and rejects technical Budget fields before the service", async () => {
+    const testServices = services();
+    const command = {
+      operation: "set_budget",
+      vendorId: "vendor-1",
+      uomId: "uom-1",
+      inputAmountPaise: 12_500,
+      effectiveFrom: "2026-09-02T00:00:00.000Z",
+      effectiveTo: null
+    };
+    const acceptedInput = {
+      expectedVersion: 3,
+      expectedAggregateVersion: 7,
+      payload: { priceEntries: [command] }
+    };
+    const accepted = await request(appFor(testServices))
+      .put("/api/v1/admin/ai-estimator-knowledge/main-lines/line-1/revisions/revision-1/sections/pricing")
+      .set("Authorization", "Bearer super-admin-token")
+      .send(acceptedInput);
+    expect(accepted.status).toBe(200);
+    expect(testServices.item.updateSection).toHaveBeenCalledWith(
+      superAdmin,
+      "line-1",
+      "revision-1",
+      "pricing",
+      acceptedInput
+    );
+
+    const rejected = await request(appFor(testServices))
+      .put("/api/v1/admin/ai-estimator-knowledge/main-lines/line-1/revisions/revision-1/sections/pricing")
+      .set("Authorization", "Bearer super-admin-token")
+      .send({
+        ...acceptedInput,
+        payload: { priceEntries: [{ ...command, status: "active", taxRuleId: "tax-rule-1", taxVersionId: "tax-v1" }] }
+      });
+    expect(rejected.status).toBe(400);
+    expect(rejected.body.error).toMatchObject({
+      code: "VALIDATION_ERROR",
+      fields: {
+        "payload.priceEntries.0.status": expect.any(String),
+        "payload.priceEntries.0.taxRuleId": expect.any(String),
+        "payload.priceEntries.0.taxVersionId": expect.any(String)
+      }
+    });
+    expect(testServices.item.updateSection).toHaveBeenCalledTimes(1);
+  });
+
+  it("accepts exact priced slab inputs and rejects client-authored estimated cost", async () => {
+    const testServices = services();
+    const input = {
+      expectedVersion: 3,
+      expectedAggregateVersion: 7,
+      payload: {
+        slabRates: [{
+          id: "slab-rate-plywood",
+          specificationId: "specification-plywood",
+          uomId: "uom-sqft",
+          quantity: "12.5",
+          unitRatePaise: 8_000
+        }]
+      }
+    };
+    const accepted = await request(appFor(testServices))
+      .put("/api/v1/admin/ai-estimator-knowledge/main-lines/line-1/revisions/revision-1/sections/quantity-margin")
+      .set("Authorization", "Bearer super-admin-token")
+      .send(input);
+
+    expect(accepted.status).toBe(200);
+    expect(testServices.item.updateSection).toHaveBeenCalledWith(
+      superAdmin,
+      "line-1",
+      "revision-1",
+      "quantity-margin",
+      input
+    );
+
+    const rejected = await request(appFor(testServices))
+      .put("/api/v1/admin/ai-estimator-knowledge/main-lines/line-1/revisions/revision-1/sections/quantity-margin")
+      .set("Authorization", "Bearer super-admin-token")
+      .send({
+        ...input,
+        payload: {
+          slabRates: [{ ...input.payload.slabRates[0], estimatedCostPaise: 100_000 }]
+        }
+      });
+
+    expect(rejected.status).toBe(400);
+    expect(rejected.body.error).toMatchObject({
+      code: "VALIDATION_ERROR",
+      fields: {
+        "payload.slabRates.0.estimatedCostPaise": expect.any(String)
+      }
+    });
+    expect(testServices.item.updateSection).toHaveBeenCalledTimes(1);
   });
 
   it("accepts strict mode configurations and rejects malformed fields after authorization", async () => {

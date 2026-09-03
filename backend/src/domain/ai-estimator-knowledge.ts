@@ -66,19 +66,6 @@ export const AI_ESTIMATOR_KNOWLEDGE_AVAILABILITY_STATES = [
   "not_resolvable"
 ] as const;
 
-export const AI_ESTIMATOR_KNOWLEDGE_RECOMMENDATION_TYPES = [
-  "mandatory",
-  "recommended",
-  "optional"
-] as const;
-
-export const AI_ESTIMATOR_KNOWLEDGE_QUANTITY_RELATIONSHIPS = [
-  "same_quantity",
-  "percentage_of_source",
-  "fixed",
-  "per_unit"
-] as const;
-
 export const AI_ESTIMATOR_KNOWLEDGE_QUANTITY_GAP_BEHAVIORS = [
   "reject",
   "no_adjustment"
@@ -156,10 +143,6 @@ export type KnowledgeCompletenessState =
   (typeof AI_ESTIMATOR_KNOWLEDGE_COMPLETENESS_STATES)[number];
 export type KnowledgeAvailabilityState =
   (typeof AI_ESTIMATOR_KNOWLEDGE_AVAILABILITY_STATES)[number];
-export type KnowledgeRecommendationType =
-  (typeof AI_ESTIMATOR_KNOWLEDGE_RECOMMENDATION_TYPES)[number];
-export type KnowledgeQuantityRelationship =
-  (typeof AI_ESTIMATOR_KNOWLEDGE_QUANTITY_RELATIONSHIPS)[number];
 export type KnowledgeQuantityGapBehavior =
   (typeof AI_ESTIMATOR_KNOWLEDGE_QUANTITY_GAP_BEHAVIORS)[number];
 export type KnowledgeQualityParameterType =

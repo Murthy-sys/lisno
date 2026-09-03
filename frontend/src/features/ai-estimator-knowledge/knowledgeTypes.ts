@@ -24,6 +24,11 @@ export type KnowledgeMasterType = (typeof KNOWLEDGE_MASTER_TYPES)[number];
 export type KnowledgeItemStatus = "draft" | "active" | "inactive" | "archived";
 export type KnowledgeRevisionStatus = "draft" | "active" | "superseded";
 export type KnowledgeMasterStatus = "active" | "inactive" | "archived";
+export type KnowledgePrioritySemanticTier =
+  | "non_negotiable"
+  | "high"
+  | "medium"
+  | "low";
 export type KnowledgeModeKind = "pmc" | "execution";
 export type KnowledgeExecutionSource = "sub_vendor" | "in_house";
 export type KnowledgeSectionApplicability =
@@ -79,8 +84,13 @@ export interface KnowledgeMaster extends KnowledgeVersionedResource {
   readonly description: string | null;
   readonly displayOrder: number;
   readonly status: KnowledgeMasterStatus;
+  readonly semanticTier?: KnowledgePrioritySemanticTier;
   readonly decimalScale?: number;
   readonly taxVersions?: readonly KnowledgeTaxVersion[];
+}
+
+export interface KnowledgeSurface extends KnowledgeMaster {
+  readonly masterType: "surfaces";
 }
 
 export interface KnowledgeTaxVersion extends KnowledgeVersionedResource {
@@ -244,6 +254,24 @@ export interface KnowledgeActivationReview {
 
 export interface KnowledgeHistoryEntry extends KnowledgeRevision {}
 
+/** Business-only Budgeting command. Every omitted pricing field is server-owned. */
+export interface KnowledgeBudgetSetCommand {
+  readonly operation: "set_budget";
+  readonly sourcePriceVersionId?: string | null;
+  readonly vendorId: string;
+  readonly uomId: string;
+  readonly inputAmountPaise: number;
+  readonly effectiveFrom: string;
+  readonly effectiveTo: string | null;
+}
+
+/** Compact immutable reference returned by the server and retained unchanged. */
+export interface KnowledgeBudgetReferenceCommand {
+  readonly operation: "reference";
+  readonly priceEntryId: string;
+  readonly priceVersionId: string;
+}
+
 export interface KnowledgePreviewAmountComponent {
   readonly amountPaise: number;
   readonly basisAmountPaise: number;
@@ -305,6 +333,9 @@ export interface KnowledgeHistoryResponse
 
 export interface KnowledgeMasterListResponse
   extends KnowledgePageEnvelope<KnowledgeMaster> {}
+
+export interface KnowledgeSurfaceListResponse
+  extends KnowledgePageEnvelope<KnowledgeSurface> {}
 
 export interface KnowledgeBasketListResponse
   extends KnowledgePageEnvelope<KnowledgeBasket> {}

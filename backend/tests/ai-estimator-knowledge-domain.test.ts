@@ -100,6 +100,67 @@ describe("AI estimator knowledge domain", () => {
     expect(completeness.blockers).toEqual([]);
   });
 
+  it("leaves sections with no editor outside the completeness denominator", () => {
+    /* Scope and Execution have no screen in the configuration tool. Counting
+       them would cap every item below 100% and raise warnings nobody can act
+       on, so completeness reflects only what an author can actually fill in. */
+    const configurable = [
+      "overview",
+      "pricing",
+      "quantity-margin",
+      "recommendations",
+      "quality",
+      "advanced"
+    ] as const;
+    const completeness = deriveKnowledgeCompleteness({
+      identity: { basketId: "basket-1", mainLineId: "line-1", uomId: "uom-1" },
+      sections: configurable.map((sectionKey) => ({
+        sectionKey,
+        applicability: "configured" as const,
+        payload: { configured: true }
+      }))
+    });
+
+    expect(completeness.percentage).toBe(100);
+    expect(completeness.blockers).toEqual([]);
+    expect(completeness.warnings).toEqual([]);
+    expect(completeness.sections
+      .filter(({ state }) => state === "not_applicable")
+      .map(({ sectionKey }) => sectionKey)).toEqual(["scope", "execution"]);
+
+    const half = deriveKnowledgeCompleteness({
+      identity: { basketId: "basket-1", mainLineId: "line-1", uomId: "uom-1" },
+      sections: configurable.map((sectionKey, index) => ({
+        sectionKey,
+        applicability: index < 3 ? "configured" as const : "not_configured" as const,
+        payload: index < 3 ? { configured: true } : {}
+      }))
+    });
+    expect(half.percentage).toBe(50);
+  });
+
+  it("counts a section by its saved content, not by a stale applicability flag", () => {
+    /* Section writes used to leave applicability behind, so a Draft holding a
+       real budget or Quality parameter still reported as not configured. */
+    const completeness = deriveKnowledgeCompleteness({
+      identity: { basketId: "basket-1", mainLineId: "line-1", uomId: "uom-1" },
+      sections: [
+        { sectionKey: "overview", applicability: "configured", payload: { uomId: "uom-1" } },
+        {
+          sectionKey: "quantity-margin",
+          applicability: "not_configured",
+          payload: { startMarginBps: 10, bottomMarginBps: 12 }
+        },
+        { sectionKey: "quality", applicability: "not_configured", payload: {} }
+      ]
+    });
+
+    expect(completeness.sections.find(({ sectionKey }) => sectionKey === "quantity-margin")?.state)
+      .toBe("complete");
+    expect(completeness.sections.find(({ sectionKey }) => sectionKey === "quality")?.state)
+      .toBe("not_configured");
+  });
+
   it("reports missing core identity as blockers while optional gaps remain warnings", () => {
     const completeness = deriveKnowledgeCompleteness({
       identity: { basketId: "basket-1", mainLineId: "line-1", uomId: null },

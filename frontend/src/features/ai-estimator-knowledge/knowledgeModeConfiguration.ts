@@ -36,13 +36,18 @@ export const KNOWLEDGE_EXECUTION_SOURCE_OPTIONS = [
 
 export type { KnowledgeExecutionSource, KnowledgeModeKind } from "./knowledgeTypes";
 
+/**
+ * The answer an author configures for a component. Checkbox components hold a
+ * boolean, every other type holds text, and null means the author left it blank.
+ */
+export type KnowledgeModeFieldValue = string | boolean | null;
+
 export interface KnowledgeModeConfigurationField {
   readonly id: string;
   readonly type: KnowledgeModeFieldType;
   readonly label: string;
   readonly options: readonly string[];
-  /** Compatibility-only historical answer, never rendered or serialized. */
-  readonly legacyValue?: KnowledgeJsonValue;
+  readonly value: KnowledgeModeFieldValue;
 }
 
 export interface KnowledgeModeConfiguration {
@@ -69,6 +74,7 @@ export interface KnowledgeModeFieldSummary {
   readonly label: string;
   readonly type: KnowledgeModeFieldType;
   readonly options: readonly string[];
+  readonly value: KnowledgeModeFieldValue;
 }
 
 export interface KnowledgeModeLegacyMasterEvidence {
@@ -102,6 +108,7 @@ export interface PartitionedKnowledgeModeConfigurations {
 }
 
 const MAX_SHORT_TEXT = 240;
+const MAX_TEXT = 4000;
 const MAX_FIELDS = 50;
 const MAX_OPTIONS = 50;
 let fallbackIdCounter = 0;
@@ -212,15 +219,19 @@ export function parseKnowledgeModeConfigurations(
       } else if (options.length !== fieldEntry.options.length) {
         issues.push({ path: `${fieldPath}.options`, message: "Every component option must be text." });
       }
+      if (fieldEntry.value !== undefined && !isModeFieldValue(fieldEntry.value)) {
+        issues.push({
+          path: `${fieldPath}.value`,
+          message: "Component value must be text, a checkbox state, or empty."
+        });
+      }
       if (fieldId && type) {
         fields.push({
           id: fieldId,
           type,
           label,
           options,
-          ...(Object.hasOwn(fieldEntry, "value")
-            ? { legacyValue: fieldEntry.value }
-            : {})
+          value: isModeFieldValue(fieldEntry.value) ? fieldEntry.value : null
         });
       }
     });
@@ -359,7 +370,38 @@ function validateConfigurationFields(
         normalizedOptions.add(normalized);
       });
     }
+    validateFieldValue(field, fieldPath, issues);
   });
+}
+
+function validateFieldValue(
+  field: KnowledgeModeConfigurationField,
+  fieldPath: string,
+  issues: KnowledgeModeConfigurationIssue[]
+) {
+  const path = `${fieldPath}.value`;
+  if (field.value === null) return;
+  if (field.type === "checkbox") {
+    if (typeof field.value !== "boolean") {
+      issues.push({ path, message: "A checkbox value must be ticked or cleared." });
+    }
+    return;
+  }
+  if (typeof field.value !== "string") {
+    issues.push({ path, message: "Component value must be text." });
+    return;
+  }
+  if (field.value.length > MAX_TEXT) {
+    issues.push({ path, message: `Component value must be ${MAX_TEXT} characters or fewer.` });
+    return;
+  }
+  if (isChoiceField(field.type) && !field.options.includes(field.value)) {
+    issues.push({ path, message: "Component value must be one of the allowed options." });
+    return;
+  }
+  if (field.type === "number" && !/^-?\d*\.?\d+$/u.test(field.value.trim())) {
+    issues.push({ path, message: "Component value must be a number." });
+  }
 }
 
 export function resolveLegacyKnowledgeModeKind(
@@ -470,7 +512,12 @@ export function withKnowledgeModeConfigurations(
         id: field.id,
         type: field.type,
         label: field.label,
-        options: [...field.options]
+        options: [...field.options],
+        /* A blank answer drops the key so an unanswered component stays absent
+           rather than persisting an empty string the estimator would read. */
+        ...(field.value === null || field.value === undefined
+          ? {}
+          : { value: field.value })
       }))
     }))
   };
@@ -494,8 +541,34 @@ export function createKnowledgeModeField(): KnowledgeModeConfigurationField {
     id: createStableKnowledgeId("field"),
     type: "text",
     label: "",
-    options: []
+    options: [],
+    value: null
   };
+}
+
+/**
+ * Keeps an already-entered value only when the component's new shape can still
+ * hold it, so switching a text component to a checkbox does not smuggle a
+ * stale string past validation.
+ */
+export function coerceKnowledgeModeFieldValue(
+  value: KnowledgeModeFieldValue,
+  type: KnowledgeModeFieldType,
+  options: readonly string[]
+): KnowledgeModeFieldValue {
+  if (type === "checkbox") return typeof value === "boolean" ? value : null;
+  if (typeof value !== "string") return null;
+  if (isChoiceField(type)) return options.includes(value) ? value : null;
+  if (type === "number") return /^-?\d*\.?\d*$/u.test(value.trim()) ? value : null;
+  return value;
+}
+
+export function knowledgeModeFieldValueLabel(
+  field: Pick<KnowledgeModeConfigurationField, "type" | "value">
+): string | null {
+  if (field.value === null) return null;
+  if (typeof field.value === "boolean") return field.value ? "Yes" : "No";
+  return field.value.trim() || null;
 }
 
 export function isChoiceField(type: KnowledgeModeFieldType): boolean {
@@ -528,7 +601,8 @@ export function projectKnowledgeModeConfigurationFieldSummaries(
       id: field.id,
       label,
       type: field.type,
-      options: [...field.options]
+      options: [...field.options],
+      value: field.value
     }];
   });
 }
@@ -575,6 +649,12 @@ function createStableKnowledgeId(kind: "configuration" | "field"): string {
   if (random) return `knowledge-mode-${kind}-${random}`;
   fallbackIdCounter += 1;
   return `knowledge-mode-${kind}-${Date.now().toString(36)}-${fallbackIdCounter}`;
+}
+
+function isModeFieldValue(
+  value: KnowledgeJsonValue | undefined
+): value is KnowledgeModeFieldValue {
+  return value === null || typeof value === "string" || typeof value === "boolean";
 }
 
 function isKnowledgeModeFieldType(

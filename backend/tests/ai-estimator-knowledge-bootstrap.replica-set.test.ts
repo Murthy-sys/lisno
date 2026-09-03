@@ -202,6 +202,54 @@ describe("AI Estimator Knowledge guarded bootstrap on a local replica set", () =
     for (const basket of basketDocuments) {
       expect(basket).not.toHaveProperty("dependencyEpoch");
     }
+    const priorityDocuments = await mongoose.connection.db!
+      .collection("aiEstimatorKnowledgePriorities")
+      .find({})
+      .sort({ displayOrder: 1 })
+      .toArray();
+    expect(
+      priorityDocuments.map((priority) => ({
+        id: priority._id,
+        semanticTier: priority.semanticTier,
+        code: priority.code,
+        name: priority.name,
+        displayOrder: priority.displayOrder,
+        dependencyEpoch: priority.dependencyEpoch
+      }))
+    ).toEqual([
+      {
+        id: "knowledge-priority-bootstrap-non-negotiable",
+        semanticTier: "non_negotiable",
+        code: "NON_NEGOTIABLE",
+        name: "Non Negotiable",
+        displayOrder: 0,
+        dependencyEpoch: 0
+      },
+      {
+        id: "knowledge-priority-bootstrap-high",
+        semanticTier: "high",
+        code: "HIGH",
+        name: "High",
+        displayOrder: 1,
+        dependencyEpoch: 0
+      },
+      {
+        id: "knowledge-priority-bootstrap-medium",
+        semanticTier: "medium",
+        code: "MEDIUM",
+        name: "Medium",
+        displayOrder: 2,
+        dependencyEpoch: 0
+      },
+      {
+        id: "knowledge-priority-bootstrap-low",
+        semanticTier: "low",
+        code: "LOW",
+        name: "Low",
+        displayOrder: 3,
+        dependencyEpoch: 0
+      }
+    ]);
     const afterFirstRun = await snapshotDatabase();
 
     const rerun = await runAiEstimatorKnowledgeBootstrap(config(true));

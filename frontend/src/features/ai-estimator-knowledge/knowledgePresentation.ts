@@ -7,11 +7,11 @@ import type { KnowledgeWorkspaceSectionKey } from "./knowledgeWorkspaceSections"
 
 export const KNOWLEDGE_SECTION_LABELS = {
   overview: "Overview",
-  pricing: "Pricing",
+  pricing: "Budgeting",
   "quantity-margin": "Quantity & margin",
   scope: "Scope",
-  recommendations: "Recommendations",
-  quality: "Quality",
+  recommendations: "Recommendation & Exclusions",
+  quality: "Quality Parameter",
   execution: "Execution",
   advanced: "Advanced"
 } as const satisfies Readonly<Record<KnowledgeSectionKey, string>>;
@@ -19,8 +19,8 @@ export const KNOWLEDGE_SECTION_LABELS = {
 export const KNOWLEDGE_WORKSPACE_SECTION_LABELS = {
   overview: "Overview",
   mode: "Mode",
-  recommendations: "Recommendations",
-  quality: "Quality"
+  recommendations: "Recommendation & Exclusions",
+  quality: "Quality Parameter"
 } as const satisfies Readonly<Record<KnowledgeWorkspaceSectionKey, string>>;
 
 export const KNOWLEDGE_MASTER_LABELS = {

@@ -1,11 +1,18 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
+import {
+  AI_ESTIMATOR_KNOWLEDGE_CANONICAL_PRIORITIES,
+  AI_ESTIMATOR_KNOWLEDGE_CANONICAL_PRIORITY_IDS
+} from "../src/domain/ai-estimator-knowledge-priority.js";
+import { AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY } from "../src/domain/ai-estimator-knowledge-fixed-gst.js";
 import { AiEstimatorKnowledgeBasketModel } from "../src/models/AiEstimatorKnowledgeBasket.js";
 import { AiEstimatorKnowledgeMainLineModel } from "../src/models/AiEstimatorKnowledgeMainLine.js";
 import { AiEstimatorKnowledgeModeModel } from "../src/models/AiEstimatorKnowledgeMode.js";
 import { AiEstimatorKnowledgePriceVersionModel } from "../src/models/AiEstimatorKnowledgePriceVersion.js";
+import { AiEstimatorKnowledgePriorityModel } from "../src/models/AiEstimatorKnowledgePriority.js";
 import { AiEstimatorKnowledgeRevisionModel } from "../src/models/AiEstimatorKnowledgeRevision.js";
 import { AiEstimatorKnowledgeSectionModel } from "../src/models/AiEstimatorKnowledgeSection.js";
+import { AiEstimatorKnowledgeSurfaceModel } from "../src/models/AiEstimatorKnowledgeSurface.js";
 import { AiEstimatorKnowledgeTaxRuleModel } from "../src/models/AiEstimatorKnowledgeTaxRule.js";
 import { AiEstimatorKnowledgeTaxVersionModel } from "../src/models/AiEstimatorKnowledgeTaxVersion.js";
 import { AiEstimatorKnowledgeUomModel } from "../src/models/AiEstimatorKnowledgeUom.js";
@@ -32,8 +39,10 @@ beforeAll(async () => {
     AiEstimatorKnowledgeMainLineModel.syncIndexes(),
     AiEstimatorKnowledgeModeModel.syncIndexes(),
     AiEstimatorKnowledgePriceVersionModel.syncIndexes(),
+    AiEstimatorKnowledgePriorityModel.syncIndexes(),
     AiEstimatorKnowledgeRevisionModel.syncIndexes(),
     AiEstimatorKnowledgeSectionModel.syncIndexes(),
+    AiEstimatorKnowledgeSurfaceModel.syncIndexes(),
     AiEstimatorKnowledgeTaxRuleModel.syncIndexes(),
     AiEstimatorKnowledgeTaxVersionModel.syncIndexes(),
     AiEstimatorKnowledgeUomModel.syncIndexes(),
@@ -51,6 +60,664 @@ afterAll(async () => {
 });
 
 describe("AI estimator knowledge item service", () => {
+  it("coordinates Overview Surface assignments, preserves Priority, and retains unavailable history", async () => {
+    const { service, appendAudit } = createService();
+    const created = await service.createMainLine(ACTOR, "basket-carpentry", {
+      name: "Surface-aware line"
+    });
+    const revisionId = created.draftRevisionId!;
+    const overview = await service.getSection(
+      ACTOR,
+      created.mainLineId,
+      revisionId,
+      "overview"
+    );
+
+    const assigned = await service.updateSection(
+      ACTOR,
+      created.mainLineId,
+      revisionId,
+      "overview",
+      {
+        expectedVersion: overview.version,
+        expectedAggregateVersion: created.version,
+        payload: {
+          description: "Wall finish",
+          uomId: "uom-sqft",
+          priorityId: AI_ESTIMATOR_KNOWLEDGE_CANONICAL_PRIORITY_IDS.high,
+          surfaceIds: ["surface-wall"],
+          modeIds: []
+        }
+      }
+    );
+    expect(assigned.payload).toMatchObject({
+      priorityId: AI_ESTIMATOR_KNOWLEDGE_CANONICAL_PRIORITY_IDS.high,
+      surfaceIds: ["surface-wall"]
+    });
+    expect(await AiEstimatorKnowledgeSurfaceModel.findById("surface-wall").lean())
+      .toMatchObject({ dependencyEpoch: 1, status: "active", version: 1 });
+    await expect(service.getItem(ACTOR, created.mainLineId)).resolves.toMatchObject({
+      priorityId: AI_ESTIMATOR_KNOWLEDGE_CANONICAL_PRIORITY_IDS.high,
+      surfaceIds: ["surface-wall"]
+    });
+    await expect(service.listItems(
+      ACTOR,
+      { surfaceId: "surface-wall" },
+      { limit: 20, offset: 0 }
+    )).resolves.toMatchObject({
+      total: 1,
+      items: [expect.objectContaining({ mainLineId: created.mainLineId })]
+    });
+
+    const duplicate = await service.duplicate(ACTOR, created.mainLineId, {
+      expectedVersion: assigned.aggregateVersion,
+      name: "Surface-aware copy"
+    });
+    expect(duplicate).toMatchObject({
+      priorityId: AI_ESTIMATOR_KNOWLEDGE_CANONICAL_PRIORITY_IDS.high,
+      surfaceIds: ["surface-wall"]
+    });
+    expect(await AiEstimatorKnowledgeSurfaceModel.findById("surface-wall").lean())
+      .toMatchObject({ dependencyEpoch: 2, version: 1 });
+
+    await AiEstimatorKnowledgeSurfaceModel.updateOne(
+      { _id: "surface-wall" },
+      { $set: { status: "inactive" } }
+    ).exec();
+    const retained = await service.updateSection(
+      ACTOR,
+      created.mainLineId,
+      revisionId,
+      "overview",
+      {
+        expectedVersion: assigned.version,
+        expectedAggregateVersion: assigned.aggregateVersion,
+        payload: { ...assigned.payload, description: "Updated wall finish" }
+      }
+    );
+    expect(retained.payload).toMatchObject({
+      description: "Updated wall finish",
+      priorityId: AI_ESTIMATOR_KNOWLEDGE_CANONICAL_PRIORITY_IDS.high,
+      surfaceIds: ["surface-wall"]
+    });
+
+    const auditCount = appendAudit.mock.calls.length;
+    await expect(service.updateSection(
+      ACTOR,
+      created.mainLineId,
+      revisionId,
+      "overview",
+      {
+        expectedVersion: retained.version,
+        expectedAggregateVersion: retained.aggregateVersion,
+        payload: {
+          ...retained.payload,
+          surfaceIds: ["surface-wall", "surface-missing"]
+        }
+      }
+    )).rejects.toMatchObject({ status: 409, code: "KNOWLEDGE_REFERENCE_INVALID" });
+    expect(appendAudit).toHaveBeenCalledTimes(auditCount);
+    expect(await AiEstimatorKnowledgeSectionModel.findById(overview.id).lean())
+      .toMatchObject({
+        version: retained.version,
+        payload: expect.objectContaining({ surfaceIds: ["surface-wall"] })
+      });
+
+    await expect(service.activate(
+      ACTOR,
+      created.mainLineId,
+      revisionId,
+      { expectedVersion: retained.aggregateVersion }
+    )).rejects.toMatchObject({
+      status: 409,
+      code: "KNOWLEDGE_REFERENCE_INVALID",
+      message: "An active surface reference is unavailable: Wall surface.",
+      fields: {
+        "payload.surfaceIds": "Remove or reactivate Wall surface before activating."
+      }
+    });
+  });
+
+  it("names every Surface that blocks activation, including hidden legacy Scope references", async () => {
+    await AiEstimatorKnowledgeSurfaceModel.create({
+      _id: "surface-ceiling",
+      code: "CEILING",
+      codeNormalized: "ceiling",
+      name: "Ceiling surface",
+      nameNormalized: "ceiling surface",
+      description: null,
+      displayOrder: 2,
+      status: "active",
+      version: 1,
+      createdById: ACTOR.id,
+      updatedById: ACTOR.id,
+      createdAt: NOW,
+      updatedAt: NOW,
+      archivedAt: null,
+      archivedById: null
+    });
+    const { service } = createService();
+    const created = await service.createMainLine(ACTOR, "basket-carpentry", {
+      name: "Surface activation line"
+    });
+    const revisionId = created.draftRevisionId!;
+    const overview = await service.getSection(ACTOR, created.mainLineId, revisionId, "overview");
+    const assigned = await service.updateSection(
+      ACTOR,
+      created.mainLineId,
+      revisionId,
+      "overview",
+      {
+        expectedVersion: overview.version,
+        expectedAggregateVersion: created.version,
+        payload: {
+          description: "Wall finish",
+          uomId: "uom-sqft",
+          priorityId: AI_ESTIMATOR_KNOWLEDGE_CANONICAL_PRIORITY_IDS.high,
+          surfaceIds: ["surface-wall"],
+          modeIds: []
+        }
+      }
+    );
+    const scope = await service.getSection(ACTOR, created.mainLineId, revisionId, "scope");
+    const scopeSaved = await service.updateSection(
+      ACTOR,
+      created.mainLineId,
+      revisionId,
+      "scope",
+      {
+        expectedVersion: scope.version,
+        expectedAggregateVersion: assigned.aggregateVersion,
+        payload: { modeIds: [], surfaceIds: ["surface-ceiling"], exclusions: [] }
+      }
+    );
+
+    await AiEstimatorKnowledgeSurfaceModel.updateMany(
+      { _id: { $in: ["surface-wall", "surface-ceiling"] } },
+      { $set: { status: "inactive" } }
+    ).exec();
+
+    await expect(service.activate(ACTOR, created.mainLineId, revisionId, {
+      expectedVersion: scopeSaved.aggregateVersion
+    })).rejects.toMatchObject({
+      status: 409,
+      code: "KNOWLEDGE_REFERENCE_INVALID",
+      message: "An active surface reference is unavailable: Ceiling surface, Wall surface.",
+      fields: {
+        "payload.surfaceIds": "Remove or reactivate Wall surface before activating.",
+        "scope.surfaceIds": "Legacy Scope data still references Ceiling surface."
+      }
+    });
+
+    /* A deleted Surface is described, never identified: activation errors must
+       not leak a stable ID the actor never sees anywhere else. */
+    await AiEstimatorKnowledgeSurfaceModel.deleteOne({ _id: "surface-ceiling" }).exec();
+    await expect(service.activate(ACTOR, created.mainLineId, revisionId, {
+      expectedVersion: scopeSaved.aggregateVersion
+    })).rejects.toMatchObject({
+      message: expect.not.stringContaining("surface-ceiling"),
+      fields: {
+        "scope.surfaceIds": "Legacy Scope data still references a Surface that no longer exists."
+      }
+    });
+  });
+
+  it("coordinates retained Surface references when creating a Draft from an Active revision", async () => {
+    const { service } = createService();
+    const created = await service.createMainLine(ACTOR, "basket-carpentry", {
+      name: "Surface revision copy"
+    });
+    const revisionId = created.draftRevisionId!;
+    const overview = await service.getSection(
+      ACTOR,
+      created.mainLineId,
+      revisionId,
+      "overview"
+    );
+    const assigned = await service.updateSection(
+      ACTOR,
+      created.mainLineId,
+      revisionId,
+      "overview",
+      {
+        expectedVersion: overview.version,
+        expectedAggregateVersion: created.version,
+        payload: {
+          description: "Retained Surface",
+          uomId: "uom-sqft",
+          priorityId: null,
+          surfaceIds: ["surface-wall"],
+          modeIds: []
+        }
+      }
+    );
+    await AiEstimatorKnowledgeSurfaceModel.updateOne(
+      { _id: "surface-wall" },
+      { $set: { status: "inactive" } }
+    ).exec();
+    await Promise.all([
+      AiEstimatorKnowledgeRevisionModel.updateOne(
+        { _id: revisionId },
+        { $set: { status: "active", activatedAt: NOW, activatedById: ACTOR.id } }
+      ).exec(),
+      AiEstimatorKnowledgeMainLineModel.updateOne(
+        { _id: created.mainLineId },
+        {
+          $set: {
+            status: "active",
+            activeRevisionId: revisionId,
+            draftRevisionId: null
+          }
+        }
+      ).exec()
+    ]);
+
+    const copied = await service.createRevision(ACTOR, created.mainLineId, {
+      expectedVersion: assigned.aggregateVersion
+    });
+    expect(copied.draftRevisionId).not.toBeNull();
+    const copiedOverview = await service.getSection(
+      ACTOR,
+      created.mainLineId,
+      copied.draftRevisionId!,
+      "overview"
+    );
+    expect(copiedOverview.payload).toMatchObject({ surfaceIds: ["surface-wall"] });
+    expect(await AiEstimatorKnowledgeSurfaceModel.findById("surface-wall").lean())
+      .toMatchObject({ status: "inactive", dependencyEpoch: 2, version: 1 });
+  });
+
+  it("rejects archived or missing Surface references when creating a Draft copy", async () => {
+    const { service, appendAudit } = createService();
+
+    for (const unavailableState of ["archived", "missing"] as const) {
+      const surfaceId = `surface-copy-${unavailableState}`;
+      await AiEstimatorKnowledgeSurfaceModel.create({
+        _id: surfaceId,
+        code: `COPY-${unavailableState.toUpperCase()}`,
+        codeNormalized: `copy-${unavailableState}`,
+        name: `Copy ${unavailableState} Surface`,
+        nameNormalized: `copy ${unavailableState} surface`,
+        description: null,
+          displayOrder: unavailableState === "archived" ? 2 : 3,
+        status: "active",
+        version: 1,
+        createdById: ACTOR.id,
+        updatedById: ACTOR.id,
+        createdAt: NOW,
+        updatedAt: NOW,
+        archivedAt: null,
+        archivedById: null
+      });
+      const created = await service.createMainLine(ACTOR, "basket-carpentry", {
+        name: `Copy rejects ${unavailableState} Surface`
+      });
+      const revisionId = created.draftRevisionId!;
+      const overview = await service.getSection(
+        ACTOR,
+        created.mainLineId,
+        revisionId,
+        "overview"
+      );
+      const assigned = await service.updateSection(
+        ACTOR,
+        created.mainLineId,
+        revisionId,
+        "overview",
+        {
+          expectedVersion: overview.version,
+          expectedAggregateVersion: created.version,
+          payload: {
+            description: "Unavailable Surface copy guard",
+            uomId: "uom-sqft",
+            priorityId: null,
+            surfaceIds: [surfaceId],
+            modeIds: []
+          }
+        }
+      );
+      await Promise.all([
+        AiEstimatorKnowledgeRevisionModel.updateOne(
+          { _id: revisionId },
+          { $set: { status: "active", activatedAt: NOW, activatedById: ACTOR.id } }
+        ).exec(),
+        AiEstimatorKnowledgeMainLineModel.updateOne(
+          { _id: created.mainLineId },
+          {
+            $set: {
+              status: "active",
+              activeRevisionId: revisionId,
+              draftRevisionId: null
+            }
+          }
+        ).exec()
+      ]);
+      if (unavailableState === "archived") {
+        await AiEstimatorKnowledgeSurfaceModel.updateOne(
+          { _id: surfaceId },
+          {
+            $set: {
+              status: "archived",
+              archivedAt: NOW,
+              archivedById: ACTOR.id
+            }
+          }
+        ).exec();
+      } else {
+        await AiEstimatorKnowledgeSurfaceModel.deleteOne({ _id: surfaceId }).exec();
+      }
+
+      const auditCount = appendAudit.mock.calls.length;
+      await expect(service.createRevision(ACTOR, created.mainLineId, {
+        expectedVersion: assigned.aggregateVersion
+      })).rejects.toMatchObject({
+        status: 409,
+        code: "KNOWLEDGE_REFERENCE_INVALID"
+      });
+      expect(appendAudit).toHaveBeenCalledTimes(auditCount);
+      expect(await AiEstimatorKnowledgeRevisionModel.countDocuments({
+        mainLineId: created.mainLineId
+      })).toBe(1);
+      expect(await AiEstimatorKnowledgeMainLineModel.findById(created.mainLineId).lean())
+        .toMatchObject({ activeRevisionId: revisionId, draftRevisionId: null });
+    }
+  });
+
+  it("persists only changed active canonical Main Line Priorities and keeps summary/filter identity", async () => {
+    const { service, appendAudit } = createService();
+    const created = await service.createMainLine(ACTOR, "basket-carpentry", {
+      name: "Priority classified line"
+    });
+    const revisionId = created.draftRevisionId!;
+    const overview = await service.getSection(
+      ACTOR,
+      created.mainLineId,
+      revisionId,
+      "overview"
+    );
+
+    const high = await service.updateSection(
+      ACTOR,
+      created.mainLineId,
+      revisionId,
+      "overview",
+      {
+        expectedVersion: overview.version,
+        expectedAggregateVersion: created.version,
+        payload: {
+          description: "High priority",
+          uomId: "uom-sqft",
+          priorityId: AI_ESTIMATOR_KNOWLEDGE_CANONICAL_PRIORITY_IDS.high,
+          surfaceIds: [],
+          modeIds: []
+        }
+      }
+    );
+
+    expect(high.payload).toMatchObject({
+      priorityId: AI_ESTIMATOR_KNOWLEDGE_CANONICAL_PRIORITY_IDS.high
+    });
+    expect(await AiEstimatorKnowledgePriorityModel.findById(
+      AI_ESTIMATOR_KNOWLEDGE_CANONICAL_PRIORITY_IDS.high
+    ).lean()).toMatchObject({ dependencyEpoch: 1, version: 1 });
+    await expect(service.getItem(ACTOR, created.mainLineId)).resolves.toMatchObject({
+      priorityId: AI_ESTIMATOR_KNOWLEDGE_CANONICAL_PRIORITY_IDS.high
+    });
+    await expect(service.listItems(
+      ACTOR,
+      { priorityId: AI_ESTIMATOR_KNOWLEDGE_CANONICAL_PRIORITY_IDS.high },
+      { limit: 20, offset: 0 }
+    )).resolves.toMatchObject({
+      total: 1,
+      items: [expect.objectContaining({ mainLineId: created.mainLineId })]
+    });
+    await expect(service.listItems(
+      ACTOR,
+      { priorityId: AI_ESTIMATOR_KNOWLEDGE_CANONICAL_PRIORITY_IDS.low },
+      { limit: 20, offset: 0 }
+    )).resolves.toMatchObject({ total: 0, items: [] });
+
+    const low = await service.updateSection(
+      ACTOR,
+      created.mainLineId,
+      revisionId,
+      "overview",
+      {
+        expectedVersion: high.version,
+        expectedAggregateVersion: high.aggregateVersion,
+        payload: {
+          ...high.payload,
+          priorityId: AI_ESTIMATOR_KNOWLEDGE_CANONICAL_PRIORITY_IDS.low
+        }
+      }
+    );
+    expect(await AiEstimatorKnowledgePriorityModel.findById(
+      AI_ESTIMATOR_KNOWLEDGE_CANONICAL_PRIORITY_IDS.low
+    ).lean()).toMatchObject({ dependencyEpoch: 1, version: 1 });
+
+    const duplicate = await service.duplicate(ACTOR, created.mainLineId, {
+      expectedVersion: low.aggregateVersion,
+      name: "Priority classified copy"
+    });
+    expect(duplicate.priorityId).toBe(AI_ESTIMATOR_KNOWLEDGE_CANONICAL_PRIORITY_IDS.low);
+    expect(await AiEstimatorKnowledgePriorityModel.findById(
+      AI_ESTIMATOR_KNOWLEDGE_CANONICAL_PRIORITY_IDS.low
+    ).lean()).toMatchObject({ dependencyEpoch: 2, version: 1 });
+
+    const cleared = await service.updateSection(
+      ACTOR,
+      created.mainLineId,
+      revisionId,
+      "overview",
+      {
+        expectedVersion: low.version,
+        expectedAggregateVersion: low.aggregateVersion,
+        payload: { ...low.payload, priorityId: null }
+      }
+    );
+    expect(cleared.payload).toMatchObject({ priorityId: null });
+
+    await AiEstimatorKnowledgePriorityModel.create({
+      _id: "knowledge-priority-custom",
+      code: "CUSTOM",
+      codeNormalized: "custom",
+      name: "Custom",
+      nameNormalized: "custom",
+      description: null,
+      displayOrder: 10,
+      status: "active",
+      version: 1,
+      createdById: ACTOR.id,
+      updatedById: ACTOR.id,
+      createdAt: NOW,
+      updatedAt: NOW
+    });
+    const auditCount = appendAudit.mock.calls.length;
+    await expect(service.updateSection(
+      ACTOR,
+      created.mainLineId,
+      revisionId,
+      "overview",
+      {
+        expectedVersion: cleared.version,
+        expectedAggregateVersion: cleared.aggregateVersion,
+        payload: { ...cleared.payload, priorityId: "knowledge-priority-custom" }
+      }
+    )).rejects.toMatchObject({
+      status: 400,
+      code: "VALIDATION_ERROR",
+      fields: { "payload.priorityId": expect.stringContaining("canonical") }
+    });
+    expect(await AiEstimatorKnowledgePriorityModel.findById(
+      "knowledge-priority-custom"
+    ).lean()).toMatchObject({ dependencyEpoch: 0, version: 1 });
+    expect(appendAudit).toHaveBeenCalledTimes(auditCount);
+
+    await AiEstimatorKnowledgePriorityModel.updateOne(
+      { _id: AI_ESTIMATOR_KNOWLEDGE_CANONICAL_PRIORITY_IDS.high },
+      { $set: { status: "inactive" } }
+    ).exec();
+    await AiEstimatorKnowledgePriorityModel.collection.updateOne(
+      { _id: AI_ESTIMATOR_KNOWLEDGE_CANONICAL_PRIORITY_IDS.medium },
+      { $unset: { semanticTier: "" } }
+    );
+    for (const priorityId of [
+      AI_ESTIMATOR_KNOWLEDGE_CANONICAL_PRIORITY_IDS.high,
+      AI_ESTIMATOR_KNOWLEDGE_CANONICAL_PRIORITY_IDS.medium
+    ]) {
+      await expect(service.updateSection(
+        ACTOR,
+        created.mainLineId,
+        revisionId,
+        "overview",
+        {
+          expectedVersion: cleared.version,
+          expectedAggregateVersion: cleared.aggregateVersion,
+          payload: { ...cleared.payload, priorityId }
+        }
+      )).rejects.toMatchObject({
+        status: 400,
+        code: "VALIDATION_ERROR",
+        fields: { "payload.priorityId": expect.any(String) }
+      });
+    }
+    expect(appendAudit).toHaveBeenCalledTimes(auditCount);
+  });
+
+  it("retains an unchanged inactive legacy Main Line Priority but never substitutes it", async () => {
+    await AiEstimatorKnowledgePriorityModel.create({
+      _id: "knowledge-priority-legacy-inactive",
+      code: "LEGACY",
+      codeNormalized: "legacy",
+      name: "Legacy inactive",
+      nameNormalized: "legacy inactive",
+      description: null,
+      displayOrder: 10,
+      status: "inactive",
+      version: 1,
+      createdById: ACTOR.id,
+      updatedById: ACTOR.id,
+      createdAt: NOW,
+      updatedAt: NOW
+    });
+    const { service, appendAudit } = createService();
+    const created = await service.createMainLine(ACTOR, "basket-carpentry", {
+      name: "Legacy priority retention"
+    });
+    const revisionId = created.draftRevisionId!;
+    await AiEstimatorKnowledgeSectionModel.updateOne(
+      { mainLineId: created.mainLineId, revisionId, sectionKey: "overview" },
+      {
+        $set: {
+          applicability: "configured",
+          payload: {
+            description: "Legacy saved value",
+            uomId: "uom-sqft",
+            priorityId: "knowledge-priority-legacy-inactive",
+            surfaceIds: [],
+            modeIds: []
+          }
+        }
+      }
+    ).exec();
+    const overview = await service.getSection(
+      ACTOR,
+      created.mainLineId,
+      revisionId,
+      "overview"
+    );
+
+    const retained = await service.updateSection(
+      ACTOR,
+      created.mainLineId,
+      revisionId,
+      "overview",
+      {
+        expectedVersion: overview.version,
+        expectedAggregateVersion: created.version,
+        payload: { ...overview.payload, description: "Unrelated edit" }
+      }
+    );
+    expect(retained.payload).toMatchObject({
+      description: "Unrelated edit",
+      priorityId: "knowledge-priority-legacy-inactive"
+    });
+
+    const auditCount = appendAudit.mock.calls.length;
+    await expect(service.updateSection(
+      ACTOR,
+      created.mainLineId,
+      revisionId,
+      "overview",
+      {
+        expectedVersion: retained.version,
+        expectedAggregateVersion: retained.aggregateVersion,
+        payload: {
+          ...retained.payload,
+          priorityId: "knowledge-priority-custom-missing"
+        }
+      }
+    )).rejects.toMatchObject({
+      status: 400,
+      code: "VALIDATION_ERROR",
+      fields: { "payload.priorityId": expect.any(String) }
+    });
+    expect((await AiEstimatorKnowledgeSectionModel.findById(retained.id).lean())?.payload)
+      .toMatchObject({ priorityId: "knowledge-priority-legacy-inactive" });
+    expect(appendAudit).toHaveBeenCalledTimes(auditCount);
+  });
+
+  it("retains and coordinates an active legacy Main Line Priority during duplication", async () => {
+    await AiEstimatorKnowledgePriorityModel.create({
+      _id: "knowledge-priority-legacy-active",
+      code: "LEGACY_ACTIVE",
+      codeNormalized: "legacy_active",
+      name: "Legacy active",
+      nameNormalized: "legacy active",
+      description: null,
+      displayOrder: 10,
+      status: "active",
+      version: 1,
+      createdById: ACTOR.id,
+      updatedById: ACTOR.id,
+      createdAt: NOW,
+      updatedAt: NOW
+    });
+    const { service } = createService();
+    const source = await service.createMainLine(ACTOR, "basket-carpentry", {
+      name: "Legacy priority duplicate source"
+    });
+    await AiEstimatorKnowledgeSectionModel.updateOne(
+      {
+        mainLineId: source.mainLineId,
+        revisionId: source.draftRevisionId,
+        sectionKey: "overview"
+      },
+      {
+        $set: {
+          applicability: "configured",
+          payload: {
+            description: "Retained legacy selection",
+            uomId: "uom-sqft",
+            priorityId: "knowledge-priority-legacy-active",
+            surfaceIds: [],
+            modeIds: []
+          }
+        }
+      }
+    ).exec();
+
+    const duplicate = await service.duplicate(ACTOR, source.mainLineId, {
+      expectedVersion: source.version,
+      name: "Legacy priority duplicate"
+    });
+
+    expect(duplicate.priorityId).toBe("knowledge-priority-legacy-active");
+    expect(await AiEstimatorKnowledgePriorityModel.findById(
+      "knowledge-priority-legacy-active"
+    ).lean()).toMatchObject({ dependencyEpoch: 1, status: "active", version: 1 });
+  });
+
   it("creates one Draft aggregate atomically and rejects a stale aggregate mutation", async () => {
     const { service, appendAudit } = createService();
     const created = await service.createMainLine(ACTOR, "basket-carpentry", {
@@ -223,6 +890,31 @@ describe("AI estimator knowledge item service", () => {
     const revisionId = created.draftRevisionId!;
     const pricing = await service.getSection(ACTOR, created.mainLineId, revisionId, "pricing");
 
+    const auditCountBeforeLegacyTaxBypass = appendAudit.mock.calls.length;
+    await expect(service.updateSection(ACTOR, created.mainLineId, revisionId, "pricing", {
+      expectedVersion: pricing.version,
+      expectedAggregateVersion: created.version,
+      payload: {
+        priceEntries: [{
+          operation: "append",
+          priceEntryId: "price-entry-legacy-tax-bypass",
+          vendorId: "vendor-local",
+          uomId: "uom-sqft",
+          specificationId: null,
+          modeId: null,
+          taxRuleId: "tax-gst",
+          taxVersionId: "tax-gst-v1",
+          inputAmountPaise: 11_800,
+          treatment: "inclusive",
+          effectiveFrom: "2026-09-01T00:00:00.000Z",
+          effectiveTo: null,
+          status: "active"
+        }]
+      }
+    })).rejects.toMatchObject({ status: 409, code: "KNOWLEDGE_TAX_MISMATCH" });
+    expect(await AiEstimatorKnowledgePriceVersionModel.countDocuments({ revisionId })).toBe(0);
+    expect(appendAudit).toHaveBeenCalledTimes(auditCountBeforeLegacyTaxBypass);
+
     const saved = await service.updateSection(ACTOR, created.mainLineId, revisionId, "pricing", {
       expectedVersion: pricing.version,
       expectedAggregateVersion: created.version,
@@ -235,11 +927,11 @@ describe("AI estimator knowledge item service", () => {
           uomId: "uom-sqft",
           specificationId: null,
           modeId: null,
-          taxRuleId: "tax-gst",
-          taxVersionId: "tax-gst-v1",
-          inputAmountPaise: 11_800,
-          treatment: "inclusive",
-          effectiveFrom: "2026-01-01T00:00:00.000Z",
+          taxRuleId: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.rule.id,
+          taxVersionId: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.version.id,
+          inputAmountPaise: 10_000,
+          treatment: "exclusive",
+          effectiveFrom: "2026-09-01T00:00:00.000Z",
           effectiveTo: null,
           status: "active"
         }]
@@ -252,8 +944,8 @@ describe("AI estimator knowledge item service", () => {
     }).lean();
     expect(price).toMatchObject({
       specificationId: null,
-      treatment: "inclusive",
-      inputAmountPaise: 11_800,
+      treatment: "exclusive",
+      inputAmountPaise: 10_000,
       baseAmountPaise: 10_000,
       taxAmountPaise: 1_800,
       totalAmountPaise: 11_800,
@@ -280,10 +972,10 @@ describe("AI estimator knowledge item service", () => {
           uomId: "uom-sqft",
           specificationId: "spec-plywood",
           modeId: null,
-          taxRuleId: "tax-gst",
-          taxVersionId: "tax-gst-v1",
-          inputAmountPaise: 11_800,
-          treatment: "inclusive",
+          taxRuleId: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.rule.id,
+          taxVersionId: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.version.id,
+          inputAmountPaise: 10_000,
+          treatment: "exclusive",
           effectiveFrom: "2027-01-01T00:00:00.000Z",
           effectiveTo: null,
           status: "active"
@@ -313,6 +1005,814 @@ describe("AI estimator knowledge item service", () => {
     })).rejects.toMatchObject({ status: 409, code: "VERSION_CONFLICT" });
     expect(await AiEstimatorKnowledgePriceVersionModel.countDocuments({ revisionId })).toBe(1);
     expect(appendAudit).toHaveBeenCalledTimes(3);
+  });
+
+  it("maps business-only Budget commands to immutable server-owned price lineage", async () => {
+    const { service, appendAudit } = createService();
+    const created = await service.createMainLine(ACTOR, "basket-carpentry", {
+      name: "Server-owned Budget"
+    });
+    const revisionId = created.draftRevisionId!;
+    const pricing = await service.getSection(ACTOR, created.mainLineId, revisionId, "pricing");
+    const noCoverageAuditCount = appendAudit.mock.calls.length;
+
+    await expect(service.updateSection(ACTOR, created.mainLineId, revisionId, "pricing", {
+      expectedVersion: pricing.version,
+      expectedAggregateVersion: created.version,
+      payload: {
+        priceEntries: [{
+          operation: "set_budget",
+          vendorId: "vendor-local",
+          uomId: "uom-sqft",
+          inputAmountPaise: 10_000,
+          effectiveFrom: "2026-06-01T00:00:00.000Z",
+          effectiveTo: null
+        }]
+      }
+    })).rejects.toMatchObject({
+      status: 422,
+      code: "FIXED_GST_OUTSIDE_COVERAGE",
+      fields: {
+        "payload.priceEntries.0.effectiveFrom": expect.stringContaining("GST 18% applies from")
+      }
+    });
+    expect(await AiEstimatorKnowledgePriceVersionModel.countDocuments({ revisionId })).toBe(0);
+    expect(appendAudit).toHaveBeenCalledTimes(noCoverageAuditCount);
+
+    const saved = await service.updateSection(ACTOR, created.mainLineId, revisionId, "pricing", {
+      expectedVersion: pricing.version,
+      expectedAggregateVersion: created.version,
+      payload: {
+        priceEntries: [{
+          operation: "set_budget",
+          vendorId: "vendor-local",
+          uomId: "uom-sqft",
+          inputAmountPaise: 10_000,
+          effectiveFrom: "2026-09-02T00:00:00.000Z",
+          effectiveTo: null
+        }]
+      }
+    });
+    const firstReference = (saved.payload.priceEntries as Array<Record<string, string>>)[0]!;
+    expect(firstReference).toMatchObject({
+      operation: "reference",
+      priceEntryId: expect.stringMatching(/^ai-knowledge-price-entry-/u),
+      priceVersionId: expect.stringMatching(/^ai-knowledge-price-version-/u)
+    });
+    const firstVersion = await AiEstimatorKnowledgePriceVersionModel.findById(
+      firstReference.priceVersionId
+    ).lean();
+    expect(firstVersion).toMatchObject({
+      mainLineId: created.mainLineId,
+      revisionId,
+      priceEntryId: firstReference.priceEntryId,
+      versionNumber: 1,
+      vendorId: "vendor-local",
+      uomId: "uom-sqft",
+      specificationId: null,
+      modeId: null,
+      taxRuleId: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.rule.id,
+      taxVersionId: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.version.id,
+      treatment: "exclusive",
+      inputAmountPaise: 10_000,
+      baseAmountPaise: 10_000,
+      taxAmountPaise: 1_800,
+      totalAmountPaise: 11_800,
+      status: "active",
+      reviewRequired: false,
+      createdById: ACTOR.id
+    });
+    expect(appendAudit.mock.calls).toContainEqual([
+      expect.objectContaining({
+        action: "ai_estimator_knowledge_price_version_created",
+        entityId: firstReference.priceVersionId,
+        newValues: expect.objectContaining({
+          taxRuleId: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.rule.id,
+          taxVersionId: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.version.id,
+          treatment: "exclusive",
+          baseAmountPaise: 10_000,
+          taxAmountPaise: 1_800,
+          totalAmountPaise: 11_800
+        })
+      }),
+      expect.anything()
+    ]);
+
+    const priceAuditCount = appendAudit.mock.calls.filter(
+      ([event]) => event.action === "ai_estimator_knowledge_price_version_created"
+    ).length;
+    const unchanged = await service.updateSection(ACTOR, created.mainLineId, revisionId, "pricing", {
+      expectedVersion: saved.version,
+      expectedAggregateVersion: saved.aggregateVersion,
+      payload: {
+        qualityLevel: "No Budget change",
+        priceEntries: [{
+          operation: "reference",
+          priceEntryId: firstReference.priceEntryId,
+          priceVersionId: firstReference.priceVersionId
+        }]
+      }
+    });
+    expect(await AiEstimatorKnowledgePriceVersionModel.countDocuments({ revisionId })).toBe(1);
+    expect(appendAudit.mock.calls.filter(
+      ([event]) => event.action === "ai_estimator_knowledge_price_version_created"
+    )).toHaveLength(priceAuditCount);
+
+    const updated = await service.updateSection(ACTOR, created.mainLineId, revisionId, "pricing", {
+      expectedVersion: unchanged.version,
+      expectedAggregateVersion: unchanged.aggregateVersion,
+      payload: {
+        qualityLevel: "No Budget change",
+        priceEntries: [{
+          operation: "set_budget",
+          sourcePriceVersionId: firstReference.priceVersionId,
+          vendorId: "vendor-local",
+          uomId: "uom-sqft",
+          inputAmountPaise: 12_500,
+          effectiveFrom: "2026-10-01T00:00:00.000Z",
+          effectiveTo: null
+        }]
+      }
+    });
+    const secondReference = (updated.payload.priceEntries as Array<Record<string, string>>)[0]!;
+    expect(secondReference).toMatchObject({
+      operation: "reference",
+      priceEntryId: firstReference.priceEntryId
+    });
+    expect(secondReference.priceVersionId).not.toBe(firstReference.priceVersionId);
+    expect(await AiEstimatorKnowledgePriceVersionModel.findById(secondReference.priceVersionId).lean())
+      .toMatchObject({
+        priceEntryId: firstReference.priceEntryId,
+        versionNumber: 2,
+        specificationId: null,
+        modeId: null,
+        taxRuleId: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.rule.id,
+        taxVersionId: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.version.id,
+        treatment: "exclusive",
+        inputAmountPaise: 12_500,
+        baseAmountPaise: 12_500,
+        taxAmountPaise: 2_250,
+        totalAmountPaise: 14_750,
+        status: "active"
+      });
+    expect(await AiEstimatorKnowledgePriceVersionModel.findById(firstReference.priceVersionId).lean())
+      .toMatchObject({
+        versionNumber: 1,
+        inputAmountPaise: 10_000,
+        taxVersionId: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.version.id
+      });
+  });
+
+  it("preserves a retained legacy Mode scope on Budget update and rejects foreign sources", async () => {
+    const { service, appendAudit } = createService();
+    const created = await service.createMainLine(ACTOR, "basket-carpentry", {
+      name: "Legacy scoped Budget"
+    });
+    const revisionId = created.draftRevisionId!;
+    const pricing = await service.getSection(ACTOR, created.mainLineId, revisionId, "pricing");
+    const legacy = await service.updateSection(ACTOR, created.mainLineId, revisionId, "pricing", {
+      expectedVersion: pricing.version,
+      expectedAggregateVersion: created.version,
+      payload: {
+        priceEntries: [{
+          operation: "append",
+          priceEntryId: "legacy-mode-price-entry",
+          vendorId: "vendor-local",
+          uomId: "uom-sqft",
+          specificationId: null,
+          modeId: "mode-pmc",
+          taxRuleId: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.rule.id,
+          taxVersionId: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.version.id,
+          inputAmountPaise: 10_000,
+          treatment: "exclusive",
+          effectiveFrom: "2026-09-01T00:00:00.000Z",
+          effectiveTo: null,
+          status: "active"
+        }]
+      }
+    });
+    const source = (legacy.payload.priceEntries as Array<Record<string, string>>)[0]!;
+    const updated = await service.updateSection(ACTOR, created.mainLineId, revisionId, "pricing", {
+      expectedVersion: legacy.version,
+      expectedAggregateVersion: legacy.aggregateVersion,
+      payload: {
+        priceEntries: [{
+          operation: "set_budget",
+          sourcePriceVersionId: source.priceVersionId,
+          vendorId: "vendor-local",
+          uomId: "uom-sqft",
+          inputAmountPaise: 12_980,
+          effectiveFrom: "2026-09-01T00:00:00.000Z",
+          effectiveTo: null
+        }]
+      }
+    });
+    const replacement = (updated.payload.priceEntries as Array<Record<string, string>>)[0]!;
+    expect(replacement.priceEntryId).toBe("legacy-mode-price-entry");
+    expect(await AiEstimatorKnowledgePriceVersionModel.findById(replacement.priceVersionId).lean())
+      .toMatchObject({ modeId: "mode-pmc", versionNumber: 2, inputAmountPaise: 12_980 });
+
+    const foreign = await service.createMainLine(ACTOR, "basket-carpentry", {
+      name: "Foreign Budget target"
+    });
+    const foreignPricing = await service.getSection(
+      ACTOR,
+      foreign.mainLineId,
+      foreign.draftRevisionId!,
+      "pricing"
+    );
+    const auditCount = appendAudit.mock.calls.length;
+    await expect(service.updateSection(ACTOR, foreign.mainLineId, foreign.draftRevisionId!, "pricing", {
+      expectedVersion: foreignPricing.version,
+      expectedAggregateVersion: foreign.version,
+      payload: {
+        priceEntries: [{
+          operation: "set_budget",
+          sourcePriceVersionId: replacement.priceVersionId,
+          vendorId: "vendor-local",
+          uomId: "uom-sqft",
+          inputAmountPaise: 15_000,
+          effectiveFrom: "2026-09-01T00:00:00.000Z",
+          effectiveTo: null
+        }]
+      }
+    })).rejects.toMatchObject({
+      status: 409,
+      code: "KNOWLEDGE_REFERENCE_INVALID",
+      fields: {
+        "payload.priceEntries.0.sourcePriceVersionId": expect.stringContaining("this Draft")
+      }
+    });
+    expect(await AiEstimatorKnowledgePriceVersionModel.countDocuments({
+      revisionId: foreign.draftRevisionId
+    })).toBe(0);
+    expect(appendAudit).toHaveBeenCalledTimes(auditCount);
+  });
+
+  it("updates retained inclusive history from an explicit before-GST amount without rewriting it", async () => {
+    const { service } = createService();
+    const created = await service.createMainLine(ACTOR, "basket-carpentry", {
+      name: "Historical inclusive Budget"
+    });
+    const revisionId = created.draftRevisionId!;
+    const historicalVersionId = "price-version-inclusive-history";
+    const historicalReference = {
+      operation: "reference",
+      priceEntryId: "price-entry-inclusive-history",
+      priceVersionId: historicalVersionId
+    };
+    await AiEstimatorKnowledgePriceVersionModel.create({
+      _id: historicalVersionId,
+      mainLineId: created.mainLineId,
+      revisionId,
+      priceEntryId: historicalReference.priceEntryId,
+      versionNumber: 1,
+      vendorId: "vendor-local",
+      uomId: "uom-sqft",
+      specificationId: null,
+      modeId: null,
+      taxRuleId: "tax-gst",
+      taxVersionId: "tax-gst-v1",
+      treatment: "inclusive",
+      inputAmountPaise: 11_800,
+      baseAmountPaise: 10_000,
+      taxAmountPaise: 1_800,
+      totalAmountPaise: 11_800,
+      effectiveFrom: new Date("2026-01-01T00:00:00.000Z"),
+      effectiveTo: null,
+      status: "active",
+      reviewRequired: false,
+      version: 1,
+      createdById: ACTOR.id,
+      updatedById: ACTOR.id,
+      createdAt: NOW,
+      updatedAt: NOW
+    });
+    await AiEstimatorKnowledgeSectionModel.updateOne(
+      { mainLineId: created.mainLineId, revisionId, sectionKey: "pricing" },
+      { $set: { "payload.priceEntries": [historicalReference] } }
+    ).exec();
+    const pricing = await service.getSection(ACTOR, created.mainLineId, revisionId, "pricing");
+
+    const saved = await service.updateSection(ACTOR, created.mainLineId, revisionId, "pricing", {
+      expectedVersion: pricing.version,
+      expectedAggregateVersion: created.version,
+      payload: {
+        priceEntries: [{
+          operation: "set_budget",
+          sourcePriceVersionId: historicalVersionId,
+          vendorId: "vendor-local",
+          uomId: "uom-sqft",
+          inputAmountPaise: 10_000,
+          effectiveFrom: "2026-08-28T00:00:00.000Z",
+          effectiveTo: null
+        }]
+      }
+    });
+    const replacement = (saved.payload.priceEntries as Array<Record<string, string>>)[0]!;
+    expect(replacement.priceEntryId).toBe(historicalReference.priceEntryId);
+    expect(await AiEstimatorKnowledgePriceVersionModel.findById(historicalVersionId).lean())
+      .toMatchObject({
+        versionNumber: 1,
+        taxVersionId: "tax-gst-v1",
+        treatment: "inclusive",
+        inputAmountPaise: 11_800,
+        baseAmountPaise: 10_000,
+        totalAmountPaise: 11_800
+      });
+    expect(await AiEstimatorKnowledgePriceVersionModel.findById(replacement.priceVersionId).lean())
+      .toMatchObject({
+        versionNumber: 2,
+        taxRuleId: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.rule.id,
+        taxVersionId: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.version.id,
+        treatment: "exclusive",
+        inputAmountPaise: 10_000,
+        baseAmountPaise: 10_000,
+        taxAmountPaise: 1_800,
+        totalAmountPaise: 11_800
+      });
+  });
+
+  it("prevents new cross-Vendor Budget ambiguity while retaining reference-only legacy compatibility", async () => {
+    await AiEstimatorKnowledgeVendorModel.create({
+      _id: "vendor-alternate",
+      code: "ALT",
+      codeNormalized: "alt",
+      name: "Alternate Vendor",
+      nameNormalized: "alternate vendor",
+      description: null,
+      displayOrder: 2,
+      status: "active",
+      version: 1,
+      createdById: ACTOR.id,
+      updatedById: ACTOR.id,
+      createdAt: NOW,
+      updatedAt: NOW
+    });
+    await AiEstimatorKnowledgeUomModel.create({
+      _id: "uom-number",
+      code: "NO",
+      codeNormalized: "no",
+      name: "Number",
+      nameNormalized: "number",
+      description: null,
+      decimalScale: 0,
+      displayOrder: 2,
+      status: "active",
+      version: 1,
+      createdById: ACTOR.id,
+      updatedById: ACTOR.id,
+      createdAt: NOW,
+      updatedAt: NOW
+    });
+    const { service, appendAudit } = createService();
+    const created = await service.createMainLine(ACTOR, "basket-carpentry", {
+      name: "Unambiguous Budgets"
+    });
+    const revisionId = created.draftRevisionId!;
+    const pricing = await service.getSection(ACTOR, created.mainLineId, revisionId, "pricing");
+    const first = await service.updateSection(ACTOR, created.mainLineId, revisionId, "pricing", {
+      expectedVersion: pricing.version,
+      expectedAggregateVersion: created.version,
+      payload: {
+        priceEntries: [{
+          operation: "set_budget",
+          vendorId: "vendor-local",
+          uomId: "uom-sqft",
+          inputAmountPaise: 10_000,
+          effectiveFrom: "2026-09-01T00:00:00.000Z",
+          effectiveTo: "2026-12-01T00:00:00.000Z"
+        }]
+      }
+    });
+    const firstEntry = (first.payload.priceEntries as Array<Record<string, string>>)[0]!;
+    const firstReference = {
+      operation: "reference",
+      priceEntryId: firstEntry.priceEntryId,
+      priceVersionId: firstEntry.priceVersionId
+    };
+    const beforeOverlapAuditCount = appendAudit.mock.calls.length;
+    await expect(service.updateSection(ACTOR, created.mainLineId, revisionId, "pricing", {
+      expectedVersion: first.version,
+      expectedAggregateVersion: first.aggregateVersion,
+      payload: {
+        priceEntries: [firstReference, {
+          operation: "set_budget",
+          vendorId: "vendor-alternate",
+          uomId: "uom-sqft",
+          inputAmountPaise: 17_500,
+          effectiveFrom: "2026-11-01T00:00:00.000Z",
+          effectiveTo: "2027-01-01T00:00:00.000Z"
+        }]
+      }
+    })).rejects.toMatchObject({
+      status: 409,
+      code: "EFFECTIVE_WINDOW_OVERLAP",
+      fields: {
+        "payload.priceEntries.1.effectiveFrom": expect.stringContaining("already covers")
+      }
+    });
+    expect(await AiEstimatorKnowledgePriceVersionModel.countDocuments({ revisionId })).toBe(1);
+    expect(appendAudit).toHaveBeenCalledTimes(beforeOverlapAuditCount);
+
+    const differentUom = await service.updateSection(ACTOR, created.mainLineId, revisionId, "pricing", {
+      expectedVersion: first.version,
+      expectedAggregateVersion: first.aggregateVersion,
+      payload: {
+        priceEntries: [firstReference, {
+          operation: "set_budget",
+          vendorId: "vendor-alternate",
+          uomId: "uom-number",
+          inputAmountPaise: 17_500,
+          effectiveFrom: "2026-11-01T00:00:00.000Z",
+          effectiveTo: "2027-01-01T00:00:00.000Z"
+        }]
+      }
+    });
+    const differentUomEntry = (differentUom.payload.priceEntries as Array<Record<string, string>>)[1]!;
+    const adjacent = await service.updateSection(ACTOR, created.mainLineId, revisionId, "pricing", {
+      expectedVersion: differentUom.version,
+      expectedAggregateVersion: differentUom.aggregateVersion,
+      payload: {
+        priceEntries: [
+          firstReference,
+          {
+            operation: "reference",
+            priceEntryId: differentUomEntry.priceEntryId,
+            priceVersionId: differentUomEntry.priceVersionId
+          },
+          {
+            operation: "set_budget",
+            vendorId: "vendor-alternate",
+            uomId: "uom-sqft",
+            inputAmountPaise: 17_500,
+            effectiveFrom: "2026-12-01T00:00:00.000Z",
+            effectiveTo: null
+          }
+        ]
+      }
+    });
+    expect(adjacent.payload.priceEntries).toHaveLength(3);
+
+    const ambiguousVersionId = "price-version-legacy-ambiguous";
+    await AiEstimatorKnowledgePriceVersionModel.create({
+      _id: ambiguousVersionId,
+      mainLineId: created.mainLineId,
+      revisionId,
+      priceEntryId: "price-entry-legacy-ambiguous",
+      versionNumber: 1,
+      vendorId: "vendor-alternate",
+      uomId: "uom-sqft",
+      specificationId: null,
+      modeId: null,
+      taxRuleId: "tax-gst",
+      taxVersionId: "tax-gst-v1",
+      treatment: "inclusive",
+      inputAmountPaise: 20_060,
+      baseAmountPaise: 17_000,
+      taxAmountPaise: 3_060,
+      totalAmountPaise: 20_060,
+      effectiveFrom: new Date("2026-10-01T00:00:00.000Z"),
+      effectiveTo: new Date("2026-11-01T00:00:00.000Z"),
+      status: "active",
+      reviewRequired: false,
+      version: 1,
+      createdById: ACTOR.id,
+      updatedById: ACTOR.id,
+      createdAt: NOW,
+      updatedAt: NOW
+    });
+    const ambiguousReferences = [
+      firstReference,
+      {
+        operation: "reference",
+        priceEntryId: "price-entry-legacy-ambiguous",
+        priceVersionId: ambiguousVersionId
+      }
+    ];
+    await AiEstimatorKnowledgeSectionModel.updateOne(
+      { _id: adjacent.id },
+      { $set: { "payload.priceEntries": ambiguousReferences } }
+    ).exec();
+    const referenceOnly = await service.updateSection(ACTOR, created.mainLineId, revisionId, "pricing", {
+      expectedVersion: adjacent.version,
+      expectedAggregateVersion: adjacent.aggregateVersion,
+      payload: {
+        qualityLevel: "Retain imported history",
+        priceEntries: ambiguousReferences
+      }
+    });
+    expect(referenceOnly.payload.priceEntries).toHaveLength(2);
+    const beforeRejectedMutation = await AiEstimatorKnowledgePriceVersionModel.countDocuments({ revisionId });
+    await expect(service.updateSection(ACTOR, created.mainLineId, revisionId, "pricing", {
+      expectedVersion: referenceOnly.version,
+      expectedAggregateVersion: referenceOnly.aggregateVersion,
+      payload: {
+        qualityLevel: "Retain imported history",
+        priceEntries: [...ambiguousReferences, {
+          operation: "set_budget",
+          vendorId: "vendor-local",
+          uomId: "uom-number",
+          inputAmountPaise: 5_900,
+          effectiveFrom: "2027-01-01T00:00:00.000Z",
+          effectiveTo: null
+        }]
+      }
+    })).rejects.toMatchObject({ status: 409, code: "EFFECTIVE_WINDOW_OVERLAP" });
+    expect(await AiEstimatorKnowledgePriceVersionModel.countDocuments({ revisionId }))
+      .toBe(beforeRejectedMutation);
+  });
+
+  it("rolls back a server-owned Budget version when its audit write fails", async () => {
+    const { service, appendAudit } = createService();
+    const created = await service.createMainLine(ACTOR, "basket-carpentry", {
+      name: "Budget audit rollback"
+    });
+    const revisionId = created.draftRevisionId!;
+    const pricing = await service.getSection(ACTOR, created.mainLineId, revisionId, "pricing");
+    appendAudit.mockRejectedValueOnce(new Error("injected Budget audit failure"));
+
+    await expect(service.updateSection(ACTOR, created.mainLineId, revisionId, "pricing", {
+      expectedVersion: pricing.version,
+      expectedAggregateVersion: created.version,
+      payload: {
+        priceEntries: [{
+          operation: "set_budget",
+          vendorId: "vendor-local",
+          uomId: "uom-sqft",
+          inputAmountPaise: 10_000,
+          effectiveFrom: "2026-09-01T00:00:00.000Z",
+          effectiveTo: null
+        }]
+      }
+    })).rejects.toThrow("injected Budget audit failure");
+    expect(await AiEstimatorKnowledgePriceVersionModel.countDocuments({ revisionId })).toBe(0);
+    const persistedSection = await AiEstimatorKnowledgeSectionModel.findById(pricing.id).lean();
+    expect(persistedSection).toMatchObject({ version: pricing.version });
+    expect(persistedSection?.payload ?? {}).toEqual({});
+  });
+
+  it("rejects a fixed-GST total overflow without a partial Budget or audit write", async () => {
+    const { service, appendAudit } = createService();
+    const created = await service.createMainLine(ACTOR, "basket-carpentry", {
+      name: "Budget amount overflow"
+    });
+    const revisionId = created.draftRevisionId!;
+    const pricing = await service.getSection(ACTOR, created.mainLineId, revisionId, "pricing");
+    const auditCount = appendAudit.mock.calls.length;
+
+    await expect(service.updateSection(ACTOR, created.mainLineId, revisionId, "pricing", {
+      expectedVersion: pricing.version,
+      expectedAggregateVersion: created.version,
+      payload: {
+        priceEntries: [{
+          operation: "set_budget",
+          vendorId: "vendor-local",
+          uomId: "uom-sqft",
+          inputAmountPaise: Number.MAX_SAFE_INTEGER,
+          effectiveFrom: "2026-09-01T00:00:00.000Z",
+          effectiveTo: null
+        }]
+      }
+    })).rejects.toMatchObject({
+      status: 400,
+      code: "VALIDATION_ERROR",
+      fields: {
+        "payload.priceEntries.0.inputAmountPaise": expect.stringContaining("safe-integer boundary")
+      }
+    });
+    expect(await AiEstimatorKnowledgePriceVersionModel.countDocuments({ revisionId })).toBe(0);
+    const persistedSection = await AiEstimatorKnowledgeSectionModel.findById(pricing.id).lean();
+    expect(persistedSection).toMatchObject({ version: pricing.version });
+    expect(persistedSection?.payload ?? {}).toEqual({});
+    expect(appendAudit).toHaveBeenCalledTimes(auditCount);
+  });
+
+  it("rejects inactive Budget masters with business-field errors and no partial write", async () => {
+    const { service, appendAudit } = createService();
+    const created = await service.createMainLine(ACTOR, "basket-carpentry", {
+      name: "Unavailable Budget masters"
+    });
+    const revisionId = created.draftRevisionId!;
+    const pricing = await service.getSection(ACTOR, created.mainLineId, revisionId, "pricing");
+    const command = {
+      operation: "set_budget",
+      vendorId: "vendor-local",
+      uomId: "uom-sqft",
+      inputAmountPaise: 10_000,
+      effectiveFrom: "2026-09-01T00:00:00.000Z",
+      effectiveTo: null
+    };
+    const assertUnavailable = async (field: "vendorId" | "uomId") => {
+      await expect(service.updateSection(ACTOR, created.mainLineId, revisionId, "pricing", {
+        expectedVersion: pricing.version,
+        expectedAggregateVersion: created.version,
+        payload: { priceEntries: [command] }
+      })).rejects.toMatchObject({
+        status: 409,
+        code: "KNOWLEDGE_REFERENCE_INVALID",
+        fields: { [`payload.priceEntries.0.${field}`]: expect.any(String) }
+      });
+    };
+    const auditCount = appendAudit.mock.calls.length;
+
+    await AiEstimatorKnowledgeVendorModel.updateOne(
+      { _id: "vendor-local" },
+      { $set: { status: "inactive" } }
+    ).exec();
+    await assertUnavailable("vendorId");
+    await AiEstimatorKnowledgeVendorModel.updateOne(
+      { _id: "vendor-local" },
+      { $set: { status: "active" } }
+    ).exec();
+
+    await AiEstimatorKnowledgeUomModel.updateOne(
+      { _id: "uom-sqft" },
+      { $set: { status: "inactive" } }
+    ).exec();
+    await assertUnavailable("uomId");
+    await AiEstimatorKnowledgeUomModel.updateOne(
+      { _id: "uom-sqft" },
+      { $set: { status: "active" } }
+    ).exec();
+
+    await AiEstimatorKnowledgeTaxRuleModel.updateOne(
+      { _id: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.rule.id },
+      { $set: { status: "inactive" } }
+    ).exec();
+    await expect(service.updateSection(ACTOR, created.mainLineId, revisionId, "pricing", {
+      expectedVersion: pricing.version,
+      expectedAggregateVersion: created.version,
+      payload: { priceEntries: [command] }
+    })).rejects.toMatchObject({ status: 409, code: "FIXED_GST_POLICY_MISMATCH" });
+    expect(await AiEstimatorKnowledgePriceVersionModel.countDocuments({ revisionId })).toBe(0);
+    expect(appendAudit).toHaveBeenCalledTimes(auditCount);
+  });
+
+  it.each([
+    ["mismatched rule identity", async () => {
+      await AiEstimatorKnowledgeTaxRuleModel.collection.updateOne(
+        { _id: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.rule.id },
+        { $set: { code: "GST_WRONG" } }
+      );
+    }],
+    ["inactive version", async () => {
+      await AiEstimatorKnowledgeTaxVersionModel.collection.updateOne(
+        { _id: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.version.id },
+        { $set: { status: "inactive" } }
+      );
+    }],
+    ["wrongly related version", async () => {
+      await AiEstimatorKnowledgeTaxVersionModel.collection.updateOne(
+        { _id: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.version.id },
+        { $set: { taxRuleId: "tax-gst-wrong-owner" } }
+      );
+    }],
+    ["wrong rate", async () => {
+      await AiEstimatorKnowledgeTaxVersionModel.collection.updateOne(
+        { _id: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.version.id },
+        { $set: { rateBps: 1_700 } }
+      );
+    }],
+    ["wrong treatment", async () => {
+      await AiEstimatorKnowledgeTaxVersionModel.collection.updateOne(
+        { _id: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.version.id },
+        { $set: { treatment: "inclusive" } }
+      );
+    }]
+  ] as const)("fails a Budget atomically for a %s fixed-GST policy", async (_case, corrupt) => {
+    const { service, appendAudit } = createService();
+    const created = await service.createMainLine(ACTOR, "basket-carpentry", {
+      name: "Corrupt fixed GST"
+    });
+    const revisionId = created.draftRevisionId!;
+    const pricing = await service.getSection(ACTOR, created.mainLineId, revisionId, "pricing");
+    const auditCount = appendAudit.mock.calls.length;
+    await corrupt();
+
+    await expect(service.updateSection(ACTOR, created.mainLineId, revisionId, "pricing", {
+      expectedVersion: pricing.version,
+      expectedAggregateVersion: created.version,
+      payload: {
+        priceEntries: [{
+          operation: "set_budget",
+          vendorId: "vendor-local",
+          uomId: "uom-sqft",
+          inputAmountPaise: 10_000,
+          effectiveFrom: "2026-08-28T00:00:00.000Z",
+          effectiveTo: null
+        }]
+      }
+    })).rejects.toMatchObject({ status: 409, code: "FIXED_GST_POLICY_MISMATCH" });
+    expect(await AiEstimatorKnowledgePriceVersionModel.countDocuments({ revisionId })).toBe(0);
+    const persistedSection = await AiEstimatorKnowledgeSectionModel.findById(pricing.id).lean();
+    expect(persistedSection).toMatchObject({ version: pricing.version });
+    expect((persistedSection?.payload as { priceEntries?: unknown[] } | undefined)?.priceEntries ?? [])
+      .toEqual([]);
+    expect(appendAudit).toHaveBeenCalledTimes(auditCount);
+  });
+
+  it.each([
+    ["rule", async () => {
+      await AiEstimatorKnowledgeTaxRuleModel.deleteOne({
+        _id: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.rule.id
+      }).exec();
+    }],
+    ["version", async () => {
+      await AiEstimatorKnowledgeTaxVersionModel.deleteOne({
+        _id: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.version.id
+      }).exec();
+    }],
+    ["rule and version", async () => {
+      await AiEstimatorKnowledgeTaxRuleModel.deleteOne({
+        _id: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.rule.id
+      }).exec();
+      await AiEstimatorKnowledgeTaxVersionModel.deleteOne({
+        _id: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.version.id
+      }).exec();
+    }]
+  ] as const)(
+    "applies GST 18%% by materializing the canonical policy when the %s is absent",
+    async (_case, remove) => {
+      const { service } = createService();
+      const created = await service.createMainLine(ACTOR, "basket-carpentry", {
+        name: "Unprovisioned fixed GST"
+      });
+      const revisionId = created.draftRevisionId!;
+      const pricing = await service.getSection(ACTOR, created.mainLineId, revisionId, "pricing");
+      await remove();
+
+      await service.updateSection(ACTOR, created.mainLineId, revisionId, "pricing", {
+        expectedVersion: pricing.version,
+        expectedAggregateVersion: created.version,
+        payload: {
+          priceEntries: [{
+            operation: "set_budget",
+            vendorId: "vendor-local",
+            uomId: "uom-sqft",
+            inputAmountPaise: 10_000,
+            effectiveFrom: "2026-08-28T00:00:00.000Z",
+            effectiveTo: null
+          }]
+        }
+      });
+
+      /* 10000 paise before GST at a fixed 1800bps becomes 1800 paise of GST. */
+      const priceVersion = await AiEstimatorKnowledgePriceVersionModel
+        .findOne({ revisionId }).lean();
+      expect(priceVersion).toMatchObject({
+        taxRuleId: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.rule.id,
+        taxVersionId: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.version.id,
+        baseAmountPaise: 10_000,
+        taxAmountPaise: 1_800,
+        totalAmountPaise: 11_800
+      });
+      expect(await AiEstimatorKnowledgeTaxRuleModel.findById(
+        AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.rule.id
+      ).lean()).toMatchObject({ code: "GST_18", status: "active" });
+      expect(await AiEstimatorKnowledgeTaxVersionModel.findById(
+        AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.version.id
+      ).lean()).toMatchObject({ rateBps: 1_800, treatment: "exclusive", status: "active" });
+    }
+  );
+
+  it("stores applicability from the saved content rather than the requested flag", async () => {
+    const { service } = createService();
+    const created = await service.createMainLine(ACTOR, "basket-carpentry", {
+      name: "Applicability from content"
+    });
+    const revisionId = created.draftRevisionId!;
+    let quality = await service.getSection(ACTOR, created.mainLineId, revisionId, "quality");
+    expect(quality.applicability).toBe("not_configured");
+
+    /* A stale "not_configured" from the client must not outrank real content,
+       or the Draft reports as empty while showing saved parameters. */
+    quality = await service.updateSection(ACTOR, created.mainLineId, revisionId, "quality", {
+      expectedVersion: quality.version,
+      expectedAggregateVersion: created.version,
+      applicability: "not_configured",
+      payload: { parameters: [{ id: "quality-1", type: "text", label: "Notes" }] }
+    });
+    expect(quality.applicability).toBe("configured");
+    expect((await service.getItem(ACTOR, created.mainLineId)).completeness.sections
+      .find(({ sectionKey }) => sectionKey === "quality")?.state).toBe("complete");
+
+    /* Clearing the section returns it to not configured. */
+    quality = await service.updateSection(ACTOR, created.mainLineId, revisionId, "quality", {
+      expectedVersion: quality.version,
+      expectedAggregateVersion: quality.aggregateVersion,
+      payload: {}
+    });
+    expect(quality.applicability).toBe("not_configured");
+
+    /* "Not applicable" stays the author's explicit call. */
+    quality = await service.updateSection(ACTOR, created.mainLineId, revisionId, "quality", {
+      expectedVersion: quality.version,
+      expectedAggregateVersion: quality.aggregateVersion,
+      applicability: "not_applicable",
+      payload: { parameters: [{ id: "quality-1", type: "text", label: "Notes" }] }
+    });
+    expect(quality.applicability).toBe("not_applicable");
   });
 
   it("preserves stored typed Specifications and historical price references without allowing new typed writes", async () => {
@@ -667,8 +2167,7 @@ describe("AI estimator knowledge item service", () => {
       }
     )).rejects.toMatchObject({ status: 409, code: "VERSION_CONFLICT" });
 
-    const auditCount = appendAudit.mock.calls.length;
-    await expect(service.updateSection(
+    const valued = await service.updateSection(
       ACTOR,
       created.mainLineId,
       revisionId,
@@ -681,19 +2180,17 @@ describe("AI estimator knowledge item service", () => {
           modeConfigurations: payload.modeConfigurations.map((configuration, index) => index === 0
             ? {
                 ...configuration,
-                fields: configuration.fields.map((field) => ({ ...field, value: "promoted" }))
+                fields: configuration.fields.map((field) => ({ ...field, value: "authored" }))
               }
             : configuration)
         }
       }
-    )).rejects.toMatchObject({
-      status: 400,
-      code: "VALIDATION_ERROR",
-      fields: {
-        "payload.modeConfigurations.0.fields.0.value": expect.stringContaining("compatibility-only")
-      }
-    });
-    expect(appendAudit).toHaveBeenCalledTimes(auditCount);
+    );
+    expect((valued.payload as { modeConfigurations: { fields: { value?: unknown }[] }[] })
+      .modeConfigurations[0]!.fields[0]!.value).toBe("authored");
+
+    const auditCount = appendAudit.mock.calls.length;
+    /* The next write omits every value, which clears the one just authored. */
     const nextPayload = {
       ...payload,
       modeConfigurations: payload.modeConfigurations.map((configuration) => ({
@@ -710,27 +2207,27 @@ describe("AI estimator knowledge item service", () => {
       revisionId,
       "advanced",
       {
-        expectedVersion: saved.version,
-        expectedAggregateVersion: saved.aggregateVersion,
+        expectedVersion: valued.version,
+        expectedAggregateVersion: valued.aggregateVersion,
         payload: nextPayload
       }
     )).resolves.toMatchObject({
       payload: nextPayload,
-      version: saved.version + 1,
-      aggregateVersion: saved.aggregateVersion + 1
+      version: valued.version + 1,
+      aggregateVersion: valued.aggregateVersion + 1
     });
     expect(await service.getSection(
       ACTOR,
       created.mainLineId,
       revisionId,
       "advanced"
-    )).toMatchObject({ version: saved.version + 1, payload: nextPayload });
-    expect((await service.getItem(ACTOR, created.mainLineId)).version).toBe(created.version + 2);
+    )).toMatchObject({ version: valued.version + 1, payload: nextPayload });
+    expect((await service.getItem(ACTOR, created.mainLineId)).version).toBe(created.version + 3);
     expect(await AiEstimatorKnowledgeModeModel.countDocuments()).toBe(0);
     expect(appendAudit).toHaveBeenCalledTimes(auditCount + 1);
   });
 
-  it("preserves legacy values by stable configuration/field ID and rejects value or identity promotion", async () => {
+  it("lets a write own Mode component values and still rejects identity promotion", async () => {
     const { service, appendAudit } = createService();
     const created = await service.createMainLine(ACTOR, "basket-carpentry", {
       name: "Legacy Mode compatibility"
@@ -795,17 +2292,61 @@ describe("AI estimator knowledge item service", () => {
         }
       }
     );
+    /* Omitting the key clears the stored answer instead of resurrecting it. */
+    expect((edited.payload as { modeConfigurations: { fields: unknown[] }[] })
+      .modeConfigurations[0]!.fields[0]).toEqual({
+      id: "field-pmc-mark",
+      type: "dropdown",
+      label: "PMC grade",
+      options: ["Premium", "Standard"]
+    });
     expect(edited.payload).toMatchObject({
+      modeConfigurations: [
+        { id: "configuration-pmc" },
+        historicalPayload.modeConfigurations[1]!
+      ]
+    });
+
+    const revalued = await service.updateSection(ACTOR, created.mainLineId, revisionId, "advanced", {
+      expectedVersion: edited.version,
+      expectedAggregateVersion: edited.aggregateVersion,
+      payload: {
+        dependencies: [],
+        modeConfigurations: [
+          {
+            id: "configuration-pmc",
+            modeKind: "pmc",
+            fields: [
+              {
+                id: "field-pmc-mark",
+                type: "dropdown",
+                label: "PMC grade",
+                options: ["Premium", "Standard"],
+                value: "Premium"
+              },
+              {
+                id: "field-pmc-reviewed",
+                type: "checkbox",
+                label: "Reviewed",
+                options: [],
+                value: false
+              }
+            ]
+          },
+          historicalPayload.modeConfigurations[1]!
+        ]
+      }
+    });
+    /* A Super Admin owns these answers: changing one and introducing another
+       on a brand-new component both persist. */
+    expect(revalued.payload).toMatchObject({
       modeConfigurations: [
         {
           id: "configuration-pmc",
-          fields: [{
-            id: "field-pmc-mark",
-            type: "dropdown",
-            label: "PMC grade",
-            options: ["Premium", "Standard"],
-            value: "A1"
-          }]
+          fields: [
+            { id: "field-pmc-mark", value: "Premium" },
+            { id: "field-pmc-reviewed", value: false }
+          ]
         },
         historicalPayload.modeConfigurations[1]!
       ]
@@ -813,30 +2354,9 @@ describe("AI estimator knowledge item service", () => {
 
     const auditCount = appendAudit.mock.calls.length;
     const baseInput = {
-      expectedVersion: edited.version,
-      expectedAggregateVersion: edited.aggregateVersion
+      expectedVersion: revalued.version,
+      expectedAggregateVersion: revalued.aggregateVersion
     };
-    await expect(service.updateSection(ACTOR, created.mainLineId, revisionId, "advanced", {
-      ...baseInput,
-      payload: {
-        dependencies: [],
-        modeConfigurations: [{
-          id: "configuration-pmc",
-          modeKind: "pmc",
-          fields: [{
-            id: "field-pmc-mark",
-            type: "text",
-            label: "PMC mark",
-            options: [],
-            value: "A2"
-          }]
-        }]
-      }
-    })).rejects.toMatchObject({
-      status: 400,
-      code: "VALIDATION_ERROR",
-      fields: { "payload.modeConfigurations.0.fields.0.value": expect.stringContaining("immutable") }
-    });
     await expect(service.updateSection(ACTOR, created.mainLineId, revisionId, "advanced", {
       ...baseInput,
       payload: {
@@ -857,27 +2377,6 @@ describe("AI estimator knowledge item service", () => {
       payload: {
         dependencies: [],
         modeConfigurations: [{
-          id: "configuration-new-pmc",
-          modeKind: "pmc",
-          fields: [{
-            id: "field-new-valued",
-            type: "checkbox",
-            label: "New valued field",
-            options: [],
-            value: false
-          }]
-        }]
-      }
-    })).rejects.toMatchObject({
-      status: 400,
-      code: "VALIDATION_ERROR",
-      fields: { "payload.modeConfigurations.0.fields.0.value": expect.stringContaining("compatibility-only") }
-    });
-    await expect(service.updateSection(ACTOR, created.mainLineId, revisionId, "advanced", {
-      ...baseInput,
-      payload: {
-        dependencies: [],
-        modeConfigurations: [{
           id: "configuration-new-legacy-mode",
           modeId: "mode-pmc",
           fields: []
@@ -890,7 +2389,7 @@ describe("AI estimator knowledge item service", () => {
     });
     expect(appendAudit).toHaveBeenCalledTimes(auditCount);
     expect((await service.getSection(ACTOR, created.mainLineId, revisionId, "advanced")).version)
-      .toBe(edited.version);
+      .toBe(revalued.version);
   });
 
   it("requires explicit unscoped Execution recovery into a previously empty source", async () => {
@@ -1006,16 +2505,20 @@ describe("AI estimator knowledge item service", () => {
         }
       }
     );
+    /* Recovery assigns the source and keeps the definition; the omitted value is
+       cleared, because the write owns it. */
     expect(assigned.payload).toMatchObject({
       modeConfigurations: [
         {
           id: "configuration-execution-recovery",
           executionSource: "sub_vendor",
-          fields: [{ value: "hidden" }]
+          fields: [{ id: "field-recovery", label: "Recovered Sub-Vendor field" }]
         },
         { executionSource: "in_house" }
       ]
     });
+    expect((assigned.payload as { modeConfigurations: { fields: unknown[] }[] })
+      .modeConfigurations[0]!.fields[0]).not.toHaveProperty("value");
   });
 
   it("retains active-reference validation for legacy modeId configurations", async () => {
@@ -1043,23 +2546,25 @@ describe("AI estimator knowledge item service", () => {
       { _id: advanced.id },
       { $set: { payload } }
     ).exec();
+    const definitionOnlyPayload = {
+      modeConfigurations: [{
+        id: "configuration-legacy",
+        modeId: "mode-pmc",
+        fields: [{
+          id: "field-legacy",
+          type: "text",
+          label: "Legacy marker",
+          options: []
+        }]
+      }]
+    };
     const saved = await service.updateSection(ACTOR, created.mainLineId, revisionId, "advanced", {
       expectedVersion: advanced.version,
       expectedAggregateVersion: created.version,
-      payload: {
-        modeConfigurations: [{
-          id: "configuration-legacy",
-          modeId: "mode-pmc",
-          fields: [{
-            id: "field-legacy",
-            type: "text",
-            label: "Legacy marker",
-            options: []
-          }]
-        }]
-      }
+      payload: definitionOnlyPayload
     });
-    expect(saved.payload).toEqual(payload);
+    /* The write omitted the stored answer, so it is cleared rather than kept. */
+    expect(saved.payload).toEqual(definitionOnlyPayload);
     expect(await AiEstimatorKnowledgeModeModel.findById("mode-pmc").lean())
       .toMatchObject({ dependencyEpoch: 0, status: "active" });
 
@@ -1106,11 +2611,11 @@ describe("AI estimator knowledge item service", () => {
           uomId: "uom-sqft",
           specificationId: null,
           modeId: null,
-          taxRuleId: "tax-gst",
-          taxVersionId: "tax-gst-v1",
+          taxRuleId: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.rule.id,
+          taxVersionId: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.version.id,
           inputAmountPaise: 10_000,
-          treatment: "inclusive",
-          effectiveFrom: "2026-01-01T00:00:00.000Z",
+          treatment: "exclusive",
+          effectiveFrom: "2026-09-01T00:00:00.000Z",
           effectiveTo: null,
           status: "active"
         }]
@@ -1160,11 +2665,11 @@ describe("AI estimator knowledge item service", () => {
           uomId: "uom-sqft",
           specificationId: null,
           modeId: null,
-          taxRuleId: "tax-gst",
-          taxVersionId: "tax-gst-v1",
-          inputAmountPaise: 11_800,
-          treatment: "inclusive",
-          effectiveFrom: "2026-01-01T00:00:00.000Z",
+          taxRuleId: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.rule.id,
+          taxVersionId: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.version.id,
+          inputAmountPaise: 10_000,
+          treatment: "exclusive",
+          effectiveFrom: "2026-09-01T00:00:00.000Z",
           effectiveTo: null,
           status: "active"
         }]
@@ -1185,7 +2690,7 @@ describe("AI estimator knowledge item service", () => {
       priceEntryId: "price-entry-original",
       versionNumber: 1,
       vendorId: "vendor-local",
-      inputAmountPaise: 11_800,
+      inputAmountPaise: 10_000,
       baseAmountPaise: 10_000,
       taxAmountPaise: 1_800,
       totalAmountPaise: 11_800
@@ -1197,11 +2702,11 @@ describe("AI estimator knowledge item service", () => {
       uomId: "uom-sqft",
       specificationId: null,
       modeId: null,
-      taxRuleId: "tax-gst",
-      taxVersionId: "tax-gst-v1",
-      inputAmountPaise: 12_980,
-      treatment: "inclusive",
-      effectiveFrom: "2026-06-01T00:00:00.000Z",
+      taxRuleId: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.rule.id,
+      taxVersionId: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.version.id,
+      inputAmountPaise: 11_000,
+      treatment: "exclusive",
+      effectiveFrom: "2026-10-01T00:00:00.000Z",
       effectiveTo: null,
       status: "active"
     };
@@ -1235,7 +2740,7 @@ describe("AI estimator knowledge item service", () => {
       priceEntryId: "price-entry-original",
       priceVersion: expect.objectContaining({
         versionNumber: 2,
-        inputAmountPaise: 12_980,
+        inputAmountPaise: 11_000,
         baseAmountPaise: 11_000,
         taxAmountPaise: 1_980,
         totalAmountPaise: 12_980
@@ -1316,11 +2821,11 @@ describe("AI estimator knowledge item service", () => {
           uomId: "uom-sqft",
           specificationId: null,
           modeId: null,
-          taxRuleId: "tax-gst",
-          taxVersionId: "tax-gst-v1",
-          inputAmountPaise: 5_900,
-          treatment: "inclusive",
-          effectiveFrom: "2026-01-01T00:00:00.000Z",
+          taxRuleId: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.rule.id,
+          taxVersionId: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.version.id,
+          inputAmountPaise: 5_000,
+          treatment: "exclusive",
+          effectiveFrom: "2026-09-01T00:00:00.000Z",
           effectiveTo: null,
           status: "active"
         }]
@@ -1437,6 +2942,74 @@ describe("AI estimator knowledge item service", () => {
       .toMatchObject({ dependencyEpoch: 2, version: 1 });
   });
 
+  it("revalidates copied slab quantities against the current UOM scale and rolls back its dependency guard", async () => {
+    const { service, appendAudit } = createService();
+    const source = await service.createMainLine(ACTOR, "basket-carpentry", {
+      name: "Slab scale copy source"
+    });
+    const revisionId = source.draftRevisionId!;
+    const pricing = await service.getSection(ACTOR, source.mainLineId, revisionId, "pricing");
+    const savedPricing = await service.updateSection(
+      ACTOR,
+      source.mainLineId,
+      revisionId,
+      "pricing",
+      {
+        expectedVersion: pricing.version,
+        expectedAggregateVersion: source.version,
+        payload: {
+          specifications: [{ id: "specification-plywood", name: "Plywood" }],
+          priceEntries: []
+        }
+      }
+    );
+    const quantityMargin = await service.getSection(
+      ACTOR,
+      source.mainLineId,
+      revisionId,
+      "quantity-margin"
+    );
+    const savedQuantity = await service.updateSection(
+      ACTOR,
+      source.mainLineId,
+      revisionId,
+      "quantity-margin",
+      {
+        expectedVersion: quantityMargin.version,
+        expectedAggregateVersion: savedPricing.aggregateVersion,
+        payload: {
+          slabRates: [{
+            id: "slab-rate-plywood",
+            specificationId: "specification-plywood",
+            uomId: "uom-sqft",
+            quantity: "1.25",
+            unitRatePaise: 8_000
+          }]
+        }
+      }
+    );
+    await AiEstimatorKnowledgeUomModel.updateOne(
+      { _id: "uom-sqft" },
+      { $set: { decimalScale: 1 } }
+    ).exec();
+    const auditCount = appendAudit.mock.calls.length;
+    const mainLineCount = await AiEstimatorKnowledgeMainLineModel.countDocuments();
+
+    await expect(service.duplicate(ACTOR, source.mainLineId, {
+      expectedVersion: savedQuantity.aggregateVersion,
+      name: "Rejected slab scale copy"
+    })).rejects.toMatchObject({
+      status: 400,
+      code: "VALIDATION_ERROR",
+      fields: { "payload.slabRates.0.quantity": expect.any(String) }
+    });
+
+    expect(await AiEstimatorKnowledgeMainLineModel.countDocuments()).toBe(mainLineCount);
+    expect(await AiEstimatorKnowledgeUomModel.findById("uom-sqft").lean())
+      .toMatchObject({ decimalScale: 1, dependencyEpoch: 1, version: 1 });
+    expect(appendAudit).toHaveBeenCalledTimes(auditCount);
+  });
+
   it("coordinates every copied Basket relationship and rolls back when a stale target disappeared", async () => {
     await AiEstimatorKnowledgeBasketModel.insertMany([
       basketDocument("basket-copy-scope", "Copy Scope Target", "active", 2),
@@ -1475,13 +3048,9 @@ describe("AI estimator knowledge item service", () => {
       payload: {
         recommendations: [{
           id: "copy-recommendation-active",
-          targetBasketId: "basket-copy-recommendation",
-          targetMainLineId: "historical-recommendation-main-line",
-          type: "recommended",
-          priorityId: null,
+          name: "Copy Recommendation Target",
+          priorityId: AI_ESTIMATOR_KNOWLEDGE_CANONICAL_PRIORITY_IDS.high,
           reason: "Retained inactive recommendation",
-          quantityRelationship: "same_quantity",
-          quantityValue: null,
           dependency: false,
           active: false
         }]
@@ -1502,24 +3071,20 @@ describe("AI estimator knowledge item service", () => {
       }
     });
 
-    for (const basketId of [
-      "basket-copy-scope",
-      "basket-copy-recommendation",
-      "basket-copy-advanced"
-    ]) {
+    /* Recommendations are free text, so only Scope and Advanced still bind a
+       Basket and bump its dependency epoch. */
+    for (const basketId of ["basket-copy-scope", "basket-copy-advanced"]) {
       expect(await AiEstimatorKnowledgeBasketModel.findById(basketId).lean())
         .toMatchObject({ dependencyEpoch: 1, version: 1 });
     }
+    expect(await AiEstimatorKnowledgeBasketModel.findById("basket-copy-recommendation").lean())
+      .toMatchObject({ dependencyEpoch: 0, version: 1 });
 
     const duplicate = await service.duplicate(ACTOR, source.mainLineId, {
       expectedVersion: 4,
       name: "Relationship Copy"
     });
-    for (const basketId of [
-      "basket-copy-scope",
-      "basket-copy-recommendation",
-      "basket-copy-advanced"
-    ]) {
+    for (const basketId of ["basket-copy-scope", "basket-copy-advanced"]) {
       expect(await AiEstimatorKnowledgeBasketModel.findById(basketId).lean())
         .toMatchObject({ dependencyEpoch: 2, version: 1 });
     }
@@ -1528,7 +3093,6 @@ describe("AI estimator knowledge item service", () => {
       sectionKey: { $in: ["scope", "recommendations", "advanced"] }
     }).lean();
     expect(JSON.stringify(copiedRelationshipSections)).toContain("basket-copy-scope");
-    expect(JSON.stringify(copiedRelationshipSections)).toContain("basket-copy-recommendation");
     expect(JSON.stringify(copiedRelationshipSections)).toContain("basket-copy-advanced");
 
     await AiEstimatorKnowledgeBasketModel.deleteOne({ _id: "basket-copy-advanced" });
@@ -1544,7 +3108,7 @@ describe("AI estimator knowledge item service", () => {
     expect(await AiEstimatorKnowledgeBasketModel.findById("basket-copy-scope").lean())
       .toMatchObject({ dependencyEpoch: 2, version: 1 });
     expect(await AiEstimatorKnowledgeBasketModel.findById("basket-copy-recommendation").lean())
-      .toMatchObject({ dependencyEpoch: 2, version: 1 });
+      .toMatchObject({ dependencyEpoch: 0, version: 1 });
   });
 
   it("accepts a basket-only scope exclusion without treating it as an item dependency", async () => {
@@ -1690,7 +3254,7 @@ describe("AI estimator knowledge item service", () => {
       .toMatchObject({ dependencyEpoch: 1, version: 1 });
   });
 
-  it("coordinates newly introduced Recommendation and Advanced Basket relationships", async () => {
+  it("coordinates newly introduced Advanced Basket relationships", async () => {
     await AiEstimatorKnowledgeBasketModel.insertMany([
       basketDocument("basket-recommendation-target", "Recommendation Target", "inactive", 2),
       basketDocument("basket-advanced-target", "Advanced Target", "active", 3)
@@ -1712,13 +3276,9 @@ describe("AI estimator knowledge item service", () => {
       payload: {
         recommendations: [{
           id: "inactive-recommendation-reference",
-          targetBasketId: "basket-recommendation-target",
-          targetMainLineId: "historical-recommendation-line",
-          type: "recommended",
-          priorityId: null,
+          name: "Recommendation Target",
+          priorityId: AI_ESTIMATOR_KNOWLEDGE_CANONICAL_PRIORITY_IDS.high,
           reason: "Retained inactive recommendation",
-          quantityRelationship: "same_quantity",
-          quantityValue: null,
           dependency: false,
           active: false
         }]
@@ -1739,8 +3299,9 @@ describe("AI estimator knowledge item service", () => {
       }
     });
 
+    /* A named Recommendation binds no Basket, so only Advanced coordinates one. */
     expect(await AiEstimatorKnowledgeBasketModel.findById("basket-recommendation-target").lean())
-      .toMatchObject({ dependencyEpoch: 1, version: 1 });
+      .toMatchObject({ dependencyEpoch: 0, version: 1 });
     expect(await AiEstimatorKnowledgeBasketModel.findById("basket-advanced-target").lean())
       .toMatchObject({ dependencyEpoch: 1, version: 1 });
   });
@@ -1789,6 +3350,287 @@ describe("AI estimator knowledge item service", () => {
       expect((await AiEstimatorKnowledgeMainLineModel.findById(created.mainLineId).lean())?.version).toBe(2);
       expect(appendAudit).toHaveBeenCalledTimes(auditCount);
     }
+  });
+
+  it("persists priced slab inputs and protects their same-revision Specification", async () => {
+    const { service, appendAudit } = createService();
+    const created = await service.createMainLine(ACTOR, "basket-carpentry", {
+      name: "Priced quantity slabs"
+    });
+    const revisionId = created.draftRevisionId!;
+    const pricing = await service.getSection(
+      ACTOR,
+      created.mainLineId,
+      revisionId,
+      "pricing"
+    );
+    const savedPricing = await service.updateSection(
+      ACTOR,
+      created.mainLineId,
+      revisionId,
+      "pricing",
+      {
+        expectedVersion: pricing.version,
+        expectedAggregateVersion: created.version,
+        payload: {
+          specifications: [{ id: "specification-plywood", name: "Plywood" }],
+          priceEntries: []
+        }
+      }
+    );
+    const quantity = await service.getSection(
+      ACTOR,
+      created.mainLineId,
+      revisionId,
+      "quantity-margin"
+    );
+    const savedQuantity = await service.updateSection(
+      ACTOR,
+      created.mainLineId,
+      revisionId,
+      "quantity-margin",
+      {
+        expectedVersion: quantity.version,
+        expectedAggregateVersion: savedPricing.aggregateVersion,
+        payload: {
+          slabRates: [{
+            id: "slab-rate-plywood",
+            specificationId: "specification-plywood",
+            uomId: "uom-sqft",
+            quantity: "12.5",
+            unitRatePaise: 8_000
+          }]
+        }
+      }
+    );
+
+    expect(savedQuantity.payload).toEqual({
+      slabRates: [{
+        id: "slab-rate-plywood",
+        specificationId: "specification-plywood",
+        uomId: "uom-sqft",
+        quantity: "12.5",
+        unitRatePaise: 8_000
+      }]
+    });
+    expect(savedQuantity.payload.slabRates).not.toEqual([
+      expect.objectContaining({ estimatedCostPaise: expect.anything() })
+    ]);
+    expect(await service.getSection(
+      ACTOR,
+      created.mainLineId,
+      revisionId,
+      "pricing"
+    )).toMatchObject({
+      referenceState: { specificationIds: ["specification-plywood"] }
+    });
+    expect(await AiEstimatorKnowledgeUomModel.findById("uom-sqft").lean())
+      .toMatchObject({ dependencyEpoch: 1, version: 1 });
+
+    const auditCount = appendAudit.mock.calls.length;
+    await expect(service.updateSection(
+      ACTOR,
+      created.mainLineId,
+      revisionId,
+      "pricing",
+      {
+        expectedVersion: savedPricing.version,
+        expectedAggregateVersion: savedQuantity.aggregateVersion,
+        payload: { specifications: [], priceEntries: [] }
+      }
+    )).rejects.toMatchObject({
+      status: 409,
+      code: "KNOWLEDGE_REFERENCE_INVALID",
+      fields: {
+        "payload.specifications": expect.stringContaining("priced quantity slab")
+      }
+    });
+    expect((await AiEstimatorKnowledgeSectionModel.findById(savedPricing.id).lean())?.payload)
+      .toMatchObject({ specifications: [{ id: "specification-plywood" }] });
+    expect((await AiEstimatorKnowledgeMainLineModel.findById(created.mainLineId).lean())?.version)
+      .toBe(savedQuantity.aggregateVersion);
+    expect(appendAudit).toHaveBeenCalledTimes(auditCount);
+  });
+
+  it("rejects dangling Specifications, inactive UOMs, precision overflow, and unsafe slab costs atomically", async () => {
+    await AiEstimatorKnowledgeUomModel.create({
+      _id: "uom-inactive",
+      code: "INACTIVE",
+      codeNormalized: "inactive",
+      name: "Inactive UOM",
+      nameNormalized: "inactive uom",
+      description: null,
+      decimalScale: 2,
+      displayOrder: 2,
+      status: "inactive",
+      version: 1,
+      createdById: ACTOR.id,
+      updatedById: ACTOR.id,
+      createdAt: NOW,
+      updatedAt: NOW
+    });
+    const { service, appendAudit } = createService();
+    const created = await service.createMainLine(ACTOR, "basket-carpentry", {
+      name: "Invalid priced quantity slabs"
+    });
+    const revisionId = created.draftRevisionId!;
+    const pricing = await service.getSection(ACTOR, created.mainLineId, revisionId, "pricing");
+    const savedPricing = await service.updateSection(
+      ACTOR,
+      created.mainLineId,
+      revisionId,
+      "pricing",
+      {
+        expectedVersion: pricing.version,
+        expectedAggregateVersion: created.version,
+        payload: {
+          specifications: [{ id: "specification-plywood", name: "Plywood" }],
+          priceEntries: []
+        }
+      }
+    );
+    const quantity = await service.getSection(
+      ACTOR,
+      created.mainLineId,
+      revisionId,
+      "quantity-margin"
+    );
+    const invalidRows = [
+      {
+        id: "slab-rate-missing-specification",
+        specificationId: "specification-missing",
+        uomId: "uom-sqft",
+        quantity: "1",
+        unitRatePaise: 100
+      },
+      {
+        id: "slab-rate-inactive-uom",
+        specificationId: "specification-plywood",
+        uomId: "uom-inactive",
+        quantity: "1",
+        unitRatePaise: 100
+      },
+      {
+        id: "slab-rate-precision",
+        specificationId: "specification-plywood",
+        uomId: "uom-sqft",
+        quantity: "1.001",
+        unitRatePaise: 100
+      },
+      {
+        id: "slab-rate-overflow",
+        specificationId: "specification-plywood",
+        uomId: "uom-sqft",
+        quantity: "2",
+        unitRatePaise: Number.MAX_SAFE_INTEGER
+      }
+    ];
+    const auditCount = appendAudit.mock.calls.length;
+
+    for (const slabRate of invalidRows) {
+      await expect(service.updateSection(
+        ACTOR,
+        created.mainLineId,
+        revisionId,
+        "quantity-margin",
+        {
+          expectedVersion: quantity.version,
+          expectedAggregateVersion: savedPricing.aggregateVersion,
+          payload: { slabRates: [slabRate] }
+        }
+      )).rejects.toMatchObject({
+        status: 400,
+        code: "VALIDATION_ERROR"
+      });
+      expect((await AiEstimatorKnowledgeSectionModel.findById(quantity.id).lean())?.version)
+        .toBe(quantity.version);
+      expect((await AiEstimatorKnowledgeMainLineModel.findById(created.mainLineId).lean())?.version)
+        .toBe(savedPricing.aggregateVersion);
+      expect(appendAudit).toHaveBeenCalledTimes(auditCount);
+    }
+  });
+
+  it("retains an unavailable saved slab UOM during Draft edits but blocks activation", async () => {
+    const { service, appendAudit } = createService();
+    const created = await service.createMainLine(ACTOR, "basket-carpentry", {
+      name: "Unavailable saved slab UOM"
+    });
+    const revisionId = created.draftRevisionId!;
+    const pricing = await service.getSection(ACTOR, created.mainLineId, revisionId, "pricing");
+    const savedPricing = await service.updateSection(
+      ACTOR,
+      created.mainLineId,
+      revisionId,
+      "pricing",
+      {
+        expectedVersion: pricing.version,
+        expectedAggregateVersion: created.version,
+        payload: {
+          specifications: [{ id: "specification-plywood", name: "Plywood" }],
+          priceEntries: []
+        }
+      }
+    );
+    const quantity = await service.getSection(
+      ACTOR,
+      created.mainLineId,
+      revisionId,
+      "quantity-margin"
+    );
+    const savedQuantity = await service.updateSection(
+      ACTOR,
+      created.mainLineId,
+      revisionId,
+      "quantity-margin",
+      {
+        expectedVersion: quantity.version,
+        expectedAggregateVersion: savedPricing.aggregateVersion,
+        payload: {
+          slabRates: [{
+            id: "slab-rate-plywood",
+            specificationId: "specification-plywood",
+            uomId: "uom-sqft",
+            quantity: "1.5",
+            unitRatePaise: 8_000
+          }]
+        }
+      }
+    );
+    await AiEstimatorKnowledgeUomModel.updateOne(
+      { _id: "uom-sqft" },
+      { $set: { status: "inactive" } }
+    ).exec();
+
+    const retained = await service.updateSection(
+      ACTOR,
+      created.mainLineId,
+      revisionId,
+      "quantity-margin",
+      {
+        expectedVersion: savedQuantity.version,
+        expectedAggregateVersion: savedQuantity.aggregateVersion,
+        payload: {
+          slabRates: [{
+            id: "slab-rate-plywood",
+            specificationId: "specification-plywood",
+            uomId: "uom-sqft",
+            quantity: "2.5",
+            unitRatePaise: 9_000
+          }]
+        }
+      }
+    );
+    expect(retained.payload).toMatchObject({
+      slabRates: [{ uomId: "uom-sqft", quantity: "2.5", unitRatePaise: 9_000 }]
+    });
+    const auditCount = appendAudit.mock.calls.length;
+
+    await expect(service.activate(ACTOR, created.mainLineId, revisionId, {
+      expectedVersion: retained.aggregateVersion
+    })).rejects.toMatchObject({ status: 400, code: "VALIDATION_ERROR" });
+    expect(await AiEstimatorKnowledgeRevisionModel.findById(revisionId).lean())
+      .toMatchObject({ status: "draft" });
+    expect(appendAudit).toHaveBeenCalledTimes(auditCount);
   });
 
   it("rejects irrelevant quality fields without changing the Draft", async () => {
@@ -2206,6 +4048,24 @@ function basketDocument(
 
 async function seedReferences(): Promise<void> {
   await Promise.all([
+    AiEstimatorKnowledgePriorityModel.insertMany(
+      AI_ESTIMATOR_KNOWLEDGE_CANONICAL_PRIORITIES.map((priority) => ({
+        _id: priority.id,
+        code: priority.code,
+        codeNormalized: priority.code.toLowerCase(),
+        name: priority.name,
+        nameNormalized: priority.name.toLowerCase(),
+        description: null,
+        displayOrder: priority.displayOrder,
+        status: "active",
+        semanticTier: priority.semanticTier,
+        version: 1,
+        createdById: ACTOR.id,
+        updatedById: ACTOR.id,
+        createdAt: NOW,
+        updatedAt: NOW
+      }))
+    ),
     AiEstimatorKnowledgeBasketModel.create({
       _id: "basket-carpentry",
       name: "Carpentry",
@@ -2265,6 +4125,21 @@ async function seedReferences(): Promise<void> {
       createdAt: NOW,
       updatedAt: NOW
     }),
+    AiEstimatorKnowledgeSurfaceModel.create({
+      _id: "surface-wall",
+      code: "WALL",
+      codeNormalized: "wall",
+      name: "Wall surface",
+      nameNormalized: "wall surface",
+      description: "Paint, wallpaper",
+      displayOrder: 1,
+      status: "active",
+      version: 1,
+      createdById: ACTOR.id,
+      updatedById: ACTOR.id,
+      createdAt: NOW,
+      updatedAt: NOW
+    }),
     AiEstimatorKnowledgeVendorModel.create({
       _id: "vendor-local",
       code: "LOCAL",
@@ -2284,11 +4159,26 @@ async function seedReferences(): Promise<void> {
       _id: "tax-gst",
       code: "GST18",
       codeNormalized: "gst18",
-      name: "GST 18%",
-      nameNormalized: "gst 18%",
+      name: "Legacy GST 18%",
+      nameNormalized: "legacy gst 18%",
       description: null,
       displayOrder: 1,
       status: "active",
+      version: 1,
+      createdById: ACTOR.id,
+      updatedById: ACTOR.id,
+      createdAt: NOW,
+      updatedAt: NOW
+    }),
+    AiEstimatorKnowledgeTaxRuleModel.create({
+      _id: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.rule.id,
+      code: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.rule.code,
+      codeNormalized: "gst_18",
+      name: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.rule.name,
+      nameNormalized: "gst 18%",
+      description: null,
+      displayOrder: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.rule.displayOrder,
+      status: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.rule.status,
       version: 1,
       createdById: ACTOR.id,
       updatedById: ACTOR.id,
@@ -2305,6 +4195,22 @@ async function seedReferences(): Promise<void> {
       effectiveFrom: new Date("2026-01-01T00:00:00.000Z"),
       effectiveTo: null,
       status: "active",
+      version: 1,
+      createdById: ACTOR.id,
+      updatedById: ACTOR.id,
+      createdAt: NOW,
+      updatedAt: NOW
+    }),
+    AiEstimatorKnowledgeTaxVersionModel.create({
+      _id: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.version.id,
+      taxRuleId: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.rule.id,
+      versionNumber: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.version.versionNumber,
+      rateBps: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.version.rateBps,
+      treatment: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.version.treatment,
+      applicability: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.version.applicability,
+      effectiveFrom: new Date(AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.version.effectiveFrom),
+      effectiveTo: null,
+      status: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.version.status,
       version: 1,
       createdById: ACTOR.id,
       updatedById: ACTOR.id,

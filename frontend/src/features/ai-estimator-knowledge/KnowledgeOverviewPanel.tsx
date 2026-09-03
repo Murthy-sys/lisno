@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Button } from "../../components/ui/Button";
 import { Field, Radio, Select } from "../../components/ui/Field";
 import { InlineMessage } from "../../components/ui/InlineMessage";
-import { StatusBadge, type StatusTone } from "../../components/ui/StatusBadge";
+import { StatusBadge } from "../../components/ui/StatusBadge";
 import { Surface } from "../../components/ui/Surface";
 import {
   formatKnowledgeDateTime,
@@ -13,19 +13,17 @@ import {
 } from "./knowledgePresentation";
 import {
   KNOWLEDGE_OVERVIEW_UNAVAILABLE_LABEL,
-  type KnowledgeOverviewCardKey,
   type KnowledgeOverviewModeDetail,
   type KnowledgeOverviewModeRecoveryDetail,
   type KnowledgeOverviewPriceDetail,
-  type KnowledgeOverviewSectionCard,
   type KnowledgeOverviewSummary
 } from "./knowledgeOverviewSummary";
 import {
   isChoiceField,
   knowledgeModeFieldTypeLabel,
+  knowledgeModeFieldValueLabel,
   type KnowledgeModeFieldSummary
 } from "./knowledgeModeConfiguration";
-import { KnowledgeSurfaceMultiSelect } from "./KnowledgeSurfaceMultiSelect";
 import type { KnowledgeOverviewEditableField } from "./knowledgeSectionPayload";
 import type {
   KnowledgeItemDetail,
@@ -125,14 +123,12 @@ export function KnowledgeOverviewPanel({
     ({ option }) => option.id === currentRecommendationId
   );
   const uomId = stringValue(overviewPayload.uomId);
-  const surfaceIds = stringArray(overviewPayload.surfaceIds);
   const uomOptions = useMemo(
     () => orderedSelectableMasters(masters.uoms ?? [], uomId),
     [masters.uoms, uomId]
   );
   const uomResolved = !uomId || uomOptions.some(({ id }) => id === uomId);
   const uomReferenceState = referenceStates?.masters?.uoms;
-  const surfaceReferenceState = referenceStates?.masters?.surfaces;
   const legacyModeReferenceState = summary.legacyModeMappingRequired
     ? referenceStates?.masters?.modes
     : undefined;
@@ -140,7 +136,7 @@ export function KnowledgeOverviewPanel({
   const modeSourceAttention = sourcesNeedAttention(modeSourceKeys, sectionStates);
   const savedReferenceSources = uniqueSources([
     ...(summary.priceDetails.length
-      ? [referenceStates?.masters?.vendors, referenceStates?.masters?.taxes]
+      ? [referenceStates?.masters?.vendors]
       : []),
     ...(summary.recommendationOptions.length
       ? [referenceStates?.relationships]
@@ -148,12 +144,11 @@ export function KnowledgeOverviewPanel({
   ]);
   const relevantReferenceSources = uniqueSources([
     uomReferenceState,
-    surfaceReferenceState,
     ...savedReferenceSources
   ]);
   const loadingSavedReferenceSources = uniqueSources([
     ...(summary.priceDetails.length
-      ? [referenceStates?.masters?.vendors, referenceStates?.masters?.taxes]
+      ? [referenceStates?.masters?.vendors]
       : []),
     ...(summary.recommendationOptions.length
       ? [referenceStates?.relationships]
@@ -182,17 +177,11 @@ export function KnowledgeOverviewPanel({
   const qualityVisible =
     summary.qualityDetails.length > 0 ||
     sourcesNeedAttention(["quality"], sectionStates);
-  const visibleSectionCards = summary.sectionCards.filter(
-    (card) =>
-      card.hasConfiguredContent ||
-      sourcesNeedAttention(card.sourceSectionKeys, sectionStates)
-  );
-
-  function changeOverviewValue(key: "uomId" | "surfaceIds", value: KnowledgeJsonValue) {
-    onOverviewDirty(key);
+  function changeOverviewValue(value: KnowledgeJsonValue) {
+    onOverviewDirty("uomId");
     const next = { ...overviewPayload } as Record<string, KnowledgeJsonValue>;
-    if (key === "uomId" && value === "") delete next.uomId;
-    else next[key] = value;
+    if (value === "") delete next.uomId;
+    else next.uomId = value;
     onOverviewPayloadChange(next);
   }
 
@@ -232,47 +221,38 @@ export function KnowledgeOverviewPanel({
           <div className="knowledge-master-control knowledge-overview__configured-field knowledge-overview__configured-field--uom">
             <Field id="knowledge-overview-uom" label="Unit of measure (UOM)">
               {(props) => (
-                <Select
-                  {...props}
-                  disabled={!editable || referenceUnavailable(uomReferenceState)}
-                  value={uomId}
-                  onChange={(event) => changeOverviewValue("uomId", event.target.value)}
-                >
-                  <option value="">Not configured</option>
-                  {!uomResolved ? (
-                    <option value={uomId}>{KNOWLEDGE_OVERVIEW_UNAVAILABLE_LABEL}</option>
+                <div className="knowledge-overview__uom-control-row">
+                  <Select
+                    {...props}
+                    disabled={!editable || referenceUnavailable(uomReferenceState)}
+                    value={uomId}
+                    onChange={(event) => changeOverviewValue(event.target.value)}
+                  >
+                    <option value="">Not configured</option>
+                    {!uomResolved ? (
+                      <option value={uomId}>{KNOWLEDGE_OVERVIEW_UNAVAILABLE_LABEL}</option>
+                    ) : null}
+                    {uomOptions.map((master) => (
+                      <option key={master.id} value={master.id}>{master.name}</option>
+                    ))}
+                  </Select>
+                  {editable && canQuickAdd ? (
+                    <Button
+                      className="knowledge-overview__quick-add"
+                      size="compact"
+                      variant="quiet"
+                      leadingIcon={<Plus />}
+                      disabled={referenceUnavailable(uomReferenceState)}
+                      onClick={() => onQuickAddUom((master) => changeOverviewValue(master.id))}
+                    >
+                      Add Unit
+                    </Button>
                   ) : null}
-                  {uomOptions.map((master) => (
-                    <option key={master.id} value={master.id}>{master.name}</option>
-                  ))}
-                </Select>
+                </div>
               )}
             </Field>
-            {editable && canQuickAdd ? (
-              <Button
-                className="knowledge-overview__quick-add"
-                size="compact"
-                variant="quiet"
-                leadingIcon={<Plus />}
-                disabled={referenceUnavailable(uomReferenceState)}
-                onClick={() => onQuickAddUom((master) => changeOverviewValue("uomId", master.id))}
-              >
-                Add unit of measure
-              </Button>
-            ) : null}
             {uomReferenceState?.status === "loading" ? <p className="knowledge-overview__source-state" role="status">Loading UOM options…</p> : null}
             {uomReferenceState?.status === "error" ? <p className="knowledge-overview__source-state" role="alert">UOM options unavailable.</p> : null}
-          </div>
-          <div className="knowledge-overview__reference-control knowledge-overview__configured-field knowledge-overview__configured-field--surfaces">
-            <KnowledgeSurfaceMultiSelect
-              selectedIds={surfaceIds}
-              masters={masters.surfaces ?? []}
-              disabled={referenceUnavailable(surfaceReferenceState)}
-              readOnly={!editable}
-              onChange={(ids) => changeOverviewValue("surfaceIds", [...ids])}
-            />
-            {surfaceReferenceState?.status === "loading" ? <p className="knowledge-overview__source-state" role="status">Loading Surface options…</p> : null}
-            {surfaceReferenceState?.status === "error" ? <p className="knowledge-overview__source-state" role="alert">Surface options unavailable.</p> : null}
           </div>
         </div>
 
@@ -353,8 +333,8 @@ export function KnowledgeOverviewPanel({
                 { label: "Gap behavior", value: displayText(summary.sharedQuantityMargin.gapBehavior) },
                 {
                   label: "Quantity slabs",
-                  value: summary.sharedQuantityMargin.quantitySlabs.length > 0
-                    ? String(summary.sharedQuantityMargin.quantitySlabs.length)
+                  value: summary.sharedQuantityMargin.quantitySlabs.length + summary.sharedQuantityMargin.slabRateCount > 0
+                    ? String(summary.sharedQuantityMargin.quantitySlabs.length + summary.sharedQuantityMargin.slabRateCount)
                     : null
                 }
               ]}
@@ -416,7 +396,7 @@ export function KnowledgeOverviewPanel({
           <Surface as="section" className="knowledge-overview__summary-panel" aria-labelledby="knowledge-overview-pricing-title">
           <SummaryHeading
             id="knowledge-overview-pricing-title"
-            title="Pricing"
+            title="Budgeting"
             actionLabel="Open Mode"
             onAction={() => onOpenSection("mode")}
           />
@@ -433,8 +413,8 @@ export function KnowledgeOverviewPanel({
           <Surface as="section" className="knowledge-overview__summary-panel" aria-labelledby="knowledge-overview-recommendations-title">
           <SummaryHeading
             id="knowledge-overview-recommendations-title"
-            title="Recommendations"
-            actionLabel="Open Recommendations"
+            title="Recommendation & Exclusions"
+            actionLabel="Open Recommendation & Exclusions"
             onAction={() => onOpenSection("recommendations")}
           />
           <SourceBoundary
@@ -460,12 +440,8 @@ export function KnowledgeOverviewPanel({
                   <DefinitionList
                     ariaLive="polite"
                     definitions={[
-                      { label: "Target Main Basket", value: referenceLabel(selectedRecommendation.targetBasket) },
-                      { label: "Target Main Line", value: referenceLabel(selectedRecommendation.targetMainLine) },
-                      { label: "Type", value: displayText(selectedRecommendation.type) },
+                      { label: "Recommendation", value: displayText(selectedRecommendation.name) },
                       { label: "Reason", value: displayText(selectedRecommendation.reason) },
-                      { label: "Quantity relationship", value: displayText(selectedRecommendation.quantityRelationship) },
-                      { label: "Quantity value", value: displayText(selectedRecommendation.quantityValue) },
                       { label: "Dependency", value: formatBoolean(selectedRecommendation.dependency) },
                       { label: "Active", value: formatBoolean(selectedRecommendation.active) }
                     ]}
@@ -481,8 +457,8 @@ export function KnowledgeOverviewPanel({
           <Surface as="section" className="knowledge-overview__summary-panel knowledge-overview__summary-panel--wide" aria-labelledby="knowledge-overview-quality-title">
           <SummaryHeading
             id="knowledge-overview-quality-title"
-            title="Quality"
-            actionLabel="Open Quality"
+            title="Quality Parameter"
+            actionLabel="Open Quality Parameter"
             onAction={() => onOpenSection("quality")}
           />
           <SourceBoundary keys={["quality"]} states={sectionStates}>
@@ -514,35 +490,6 @@ export function KnowledgeOverviewPanel({
           </Surface>
         ) : null}
         </div>
-      ) : null}
-
-      {visibleSectionCards.length ? (
-        <section className="knowledge-overview__section" aria-labelledby="knowledge-overview-all-sections-title">
-        <div className="knowledge-section-heading">
-          <div>
-            <h2 id="knowledge-overview-all-sections-title">All section summaries</h2>
-            <p>Review completeness and key configured values before opening a detailed editor.</p>
-          </div>
-        </div>
-        <div className="knowledge-overview__cards">
-          {visibleSectionCards.map((card) => {
-            const navigableKey = isNavigableOverviewCardKey(card.key)
-              ? card.key
-              : null;
-            const onOpen = navigableKey
-              ? () => onOpenSection(navigableKey)
-              : undefined;
-            return (
-              <SectionSummaryCard
-                key={card.key}
-                card={card}
-                sectionStates={sectionStates}
-                onOpen={onOpen}
-              />
-            );
-          })}
-        </div>
-        </section>
       ) : null}
     </div>
   );
@@ -582,7 +529,7 @@ function ModeDetails({ detail }: { readonly detail: KnowledgeOverviewModeDetail 
         definitions={[
           { label: "Referenced by Overview", value: detail.referencedByOverview ? "Yes" : null },
           { label: "Referenced by Scope", value: detail.referencedByScope ? "Yes" : null },
-          { label: "Matching price entries", value: detail.prices.length > 0 ? String(detail.prices.length) : null },
+          { label: "Matching budgets", value: detail.prices.length > 0 ? String(detail.prices.length) : null },
           { label: "Advanced overrides", value: detail.overrides.length > 0 ? String(detail.overrides.length) : null }
         ]}
       />
@@ -666,7 +613,8 @@ function ModeComponentDefinitions({
                 value: isChoiceField(field.type) && field.options.length
                   ? field.options.join(", ")
                   : null
-              }
+              },
+              { label: "Value", value: knowledgeModeFieldValueLabel(field) }
             ]}
           />
         </li>
@@ -675,7 +623,7 @@ function ModeComponentDefinitions({
   );
 }
 
-function PriceList({ prices, title = "Pricing" }: {
+function PriceList({ prices, title = "Budgets" }: {
   readonly prices: readonly KnowledgeOverviewPriceDetail[];
   readonly title?: string | null;
 }) {
@@ -702,100 +650,20 @@ function PriceList({ prices, title = "Pricing" }: {
 
 function priceDefinitions(price: KnowledgeOverviewPriceDetail): readonly DefinitionEntry[] {
   return [
-    { label: "Specification", value: referenceLabel(price.specification) },
-    { label: "Mode", value: referenceLabel(price.mode) },
     { label: "Vendor", value: referenceLabel(price.vendor) },
-    { label: "UOM", value: referenceLabel(price.uom) },
+    { label: "Unit of measure", value: referenceLabel(price.uom) },
+    { label: "Amount before GST", value: formatPaise(price.baseAmountPaise) },
+    { label: "GST", value: formatPaise(price.taxAmountPaise) },
+    { label: "Total including GST", value: formatPaise(price.totalAmountPaise) },
+    { label: "Starts on", value: formatDateTime(price.effectiveFrom) },
+    { label: "Ends on", value: formatDateTime(price.effectiveTo) },
     {
-      label: "Version number",
-      value: price.versionNumber === null ? null : String(price.versionNumber)
-    },
-    { label: "Price version", value: priceVersionLabel(price) },
-    { label: "Tax", value: referenceLabel(price.tax) },
-    { label: "Tax version", value: referenceLabel(price.taxVersion) },
-    { label: "Tax treatment", value: displayText(price.treatment) },
-    { label: "Input amount", value: formatPaise(price.inputAmountPaise) },
-    { label: "Base amount", value: formatPaise(price.baseAmountPaise) },
-    { label: "Tax amount", value: formatPaise(price.taxAmountPaise) },
-    { label: "Total amount", value: formatPaise(price.totalAmountPaise) },
-    { label: "Effective from", value: formatDateTime(price.effectiveFrom) },
-    { label: "Effective to", value: formatDateTime(price.effectiveTo) },
-    { label: "Status", value: displayText(price.status) },
-    { label: "Review required", value: formatBoolean(price.reviewRequired) }
+      label: "Review",
+      value: price.reviewRequired === true || (price.status !== null && price.status !== "active")
+        ? "Needs review"
+        : null
+    }
   ];
-}
-
-function priceVersionLabel(price: KnowledgeOverviewPriceDetail) {
-  if (!price.priceVersionId) return null;
-  if (price.operation !== "reference" || !price.resolved) {
-    return KNOWLEDGE_OVERVIEW_UNAVAILABLE_LABEL;
-  }
-  return price.versionNumber === null
-    ? "Referenced price version"
-    : `Version ${price.versionNumber}`;
-}
-
-function SectionSummaryCard({ card, sectionStates, onOpen }: {
-  readonly card: KnowledgeOverviewSectionCard;
-  readonly sectionStates: KnowledgeOverviewPanelProps["sectionStates"];
-  readonly onOpen?: () => void;
-}) {
-  const completeness = card.completeness.map(({ state }) => state);
-  const completenessLabel = completeness.length
-    ? [...new Set(completeness.map(humanize))].join(" / ")
-    : "Unavailable";
-  const tone = completenessTone(completeness);
-  const visibleCounts = card.counts.filter(({ value }) => value > 0);
-  const visibleHighlights = card.highlights.filter(({ value }) => hasDisplayValue(value));
-  return (
-    <Surface as="article" variant="subtle" className="knowledge-overview-card">
-      <div className="knowledge-overview-card__heading">
-        <h3>{card.label}</h3>
-        <StatusBadge label={completenessLabel} tone={tone} />
-      </div>
-      <SourceBoundary keys={card.sourceSectionKeys} states={sectionStates}>
-        <DefinitionList
-          className="knowledge-overview-card__counts"
-          definitions={visibleCounts.map((count) => ({
-            label: count.label,
-            value: String(count.value)
-          }))}
-        />
-        <DefinitionList
-          className="knowledge-overview-card__highlights"
-          definitions={visibleHighlights}
-        />
-        {card.blockers.length ? (
-          <div className="knowledge-overview-card__findings knowledge-overview-card__findings--blocking">
-            <strong>Blockers</strong>
-            <ul>{card.blockers.map((finding) => <li key={finding.code}>{finding.message}</li>)}</ul>
-          </div>
-        ) : null}
-        {card.warnings.length ? (
-          <div className="knowledge-overview-card__findings">
-            <strong>Warnings</strong>
-            <ul>{card.warnings.map((finding) => <li key={finding.code}>{finding.message}</li>)}</ul>
-          </div>
-        ) : null}
-      </SourceBoundary>
-      {onOpen ? (
-        <Button size="compact" variant="quiet" trailingIcon={<ArrowRight />} onClick={onOpen}>
-          {`Open ${card.label}`}
-        </Button>
-      ) : null}
-    </Surface>
-  );
-}
-
-type NavigableOverviewCardKey = Extract<
-  KnowledgeOverviewCardKey,
-  KnowledgeWorkspaceSectionKey
->;
-
-function isNavigableOverviewCardKey(
-  key: KnowledgeOverviewCardKey
-): key is NavigableOverviewCardKey {
-  return key === "mode" || key === "recommendations" || key === "quality";
 }
 
 function SourceBoundary({ keys, states, children }: {
@@ -923,12 +791,6 @@ function stringValue(value: KnowledgeJsonValue | undefined) {
   return typeof value === "string" ? value : "";
 }
 
-function stringArray(value: KnowledgeJsonValue | undefined): readonly string[] {
-  return Array.isArray(value)
-    ? value.filter((entry): entry is string => typeof entry === "string")
-    : [];
-}
-
 function displayText(value: string | null) {
   return value?.trim() || null;
 }
@@ -984,14 +846,4 @@ function referenceLabel(
 
 function hasDisplayValue(value: string | null | undefined): value is string {
   return Boolean(value?.trim());
-}
-
-function humanize(value: string) {
-  return value.replaceAll("_", " ").replace(/^./u, (character) => character.toUpperCase());
-}
-
-function completenessTone(states: readonly string[]): StatusTone {
-  if (states.some((state) => state === "needs_attention")) return "warning";
-  if (states.length && states.every((state) => state === "complete")) return "success";
-  return "neutral";
 }

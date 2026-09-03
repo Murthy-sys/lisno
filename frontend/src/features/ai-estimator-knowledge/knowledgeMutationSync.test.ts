@@ -11,6 +11,7 @@ import { knowledgeQueryKeys } from "./knowledgeQueryKeys";
 import type {
   KnowledgeCompleteness,
   KnowledgeItemDetail,
+  KnowledgeMaster,
   KnowledgeSectionMutationEnvelope
 } from "./knowledgeTypes";
 
@@ -221,5 +222,59 @@ describe("knowledge mutation cache synchronization", () => {
       client.getQueryState(knowledgeQueryKeys.masterLists("uoms"))?.isInvalidated
     ).toBe(false);
     expect(client.getQueryState(knowledgeQueryKeys.contexts())?.isInvalidated).toBe(true);
+  });
+
+  it("refreshes every Surface catalog consumer after create, edit, or lifecycle changes", async () => {
+    const client = queryClient();
+    const surfacePage = knowledgeQueryKeys.masterList("surfaces", { limit: 25, offset: 0 });
+    const surfaceCatalog = knowledgeQueryKeys.masterCatalog("surfaces");
+    const unitCatalog = knowledgeQueryKeys.masterCatalog("uoms");
+    client.setQueryData(surfacePage, { items: [] });
+    client.setQueryData(surfaceCatalog, { items: [] });
+    client.setQueryData(unitCatalog, { items: [] });
+    client.setQueryData(knowledgeQueryKeys.itemLists(), []);
+    client.setQueryData(knowledgeQueryKeys.contexts(), {});
+
+    await syncKnowledgeMasterMutation(client, "surfaces");
+
+    expect(client.getQueryState(surfacePage)?.isInvalidated).toBe(true);
+    expect(client.getQueryState(surfaceCatalog)?.isInvalidated).toBe(true);
+    expect(client.getQueryState(unitCatalog)?.isInvalidated).toBe(false);
+    expect(client.getQueryState(knowledgeQueryKeys.itemLists())?.isInvalidated).toBe(true);
+    expect(client.getQueryState(knowledgeQueryKeys.contexts())?.isInvalidated).toBe(true);
+  });
+
+  it("commits a returned Surface before non-blocking refresh failures", async () => {
+    const client = queryClient();
+    const surfaceCatalog = knowledgeQueryKeys.masterCatalog("surfaces");
+    client.setQueryData(surfaceCatalog, {
+      items: [],
+      pagination: { limit: 100, offset: 0, total: 0, hasMore: false }
+    });
+    const returnedSurface: KnowledgeMaster = {
+      id: "surface-returned-id",
+      masterType: "surfaces",
+      code: "GENERATED_CODE",
+      name: "Counter surface",
+      description: "Granite, quartz",
+      displayOrder: 1,
+      status: "active",
+      version: 1,
+      createdById: "super-admin-1",
+      updatedById: "super-admin-1",
+      createdAt: actor.createdAt,
+      updatedAt: actor.updatedAt
+    };
+    const invalidate = vi.spyOn(client, "invalidateQueries").mockRejectedValue(
+      new Error("Background refresh failed.")
+    );
+
+    await expect(
+      syncKnowledgeMasterMutation(client, "surfaces", returnedSurface)
+    ).resolves.toBeUndefined();
+
+    expect(client.getQueryData<{ items: readonly KnowledgeMaster[] }>(surfaceCatalog)?.items)
+      .toEqual([returnedSurface]);
+    expect(invalidate).toHaveBeenCalledTimes(3);
   });
 });

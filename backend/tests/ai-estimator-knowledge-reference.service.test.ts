@@ -2,14 +2,21 @@ import mongoose from "mongoose";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { ApiError } from "../src/middleware/errors.js";
+import {
+  AI_ESTIMATOR_KNOWLEDGE_CANONICAL_PRIORITY_IDS,
+  findCanonicalKnowledgePriorityById
+} from "../src/domain/ai-estimator-knowledge-priority.js";
+import { AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY } from "../src/domain/ai-estimator-knowledge-fixed-gst.js";
 import { AI_ESTIMATOR_KNOWLEDGE_BOOTSTRAP_IDS } from "../src/operations/ai-estimator-knowledge-bootstrap.manifest.js";
 import { AiEstimatorKnowledgeBasketModel } from "../src/models/AiEstimatorKnowledgeBasket.js";
 import { AiEstimatorKnowledgeDisplayOrderSequenceModel } from "../src/models/AiEstimatorKnowledgeDisplayOrderSequence.js";
 import { AiEstimatorKnowledgeMainLineModel } from "../src/models/AiEstimatorKnowledgeMainLine.js";
 import { AiEstimatorKnowledgeModeModel } from "../src/models/AiEstimatorKnowledgeMode.js";
 import { AiEstimatorKnowledgePriceVersionModel } from "../src/models/AiEstimatorKnowledgePriceVersion.js";
+import { AiEstimatorKnowledgePriorityModel } from "../src/models/AiEstimatorKnowledgePriority.js";
 import { AiEstimatorKnowledgeRevisionModel } from "../src/models/AiEstimatorKnowledgeRevision.js";
 import { AiEstimatorKnowledgeSectionModel } from "../src/models/AiEstimatorKnowledgeSection.js";
+import { AiEstimatorKnowledgeSurfaceModel } from "../src/models/AiEstimatorKnowledgeSurface.js";
 import { AiEstimatorKnowledgeTaxRuleModel } from "../src/models/AiEstimatorKnowledgeTaxRule.js";
 import { AiEstimatorKnowledgeTaxVersionModel } from "../src/models/AiEstimatorKnowledgeTaxVersion.js";
 import { AiEstimatorKnowledgeUomModel } from "../src/models/AiEstimatorKnowledgeUom.js";
@@ -40,7 +47,9 @@ beforeAll(async () => {
     AiEstimatorKnowledgeModeModel.init(),
     AiEstimatorKnowledgeRevisionModel.init(),
     AiEstimatorKnowledgeSectionModel.init(),
+    AiEstimatorKnowledgeSurfaceModel.init(),
     AiEstimatorKnowledgePriceVersionModel.init(),
+    AiEstimatorKnowledgePriorityModel.init(),
     AiEstimatorKnowledgeUomModel.init(),
     AiEstimatorKnowledgeVendorModel.init(),
     AiEstimatorKnowledgeTaxRuleModel.init(),
@@ -364,15 +373,13 @@ describe("AI estimator knowledge reference service", () => {
         sectionKey: "recommendations",
         applicability: "configured",
         payload: {
+          /* Named text, so this row no longer blocks the Basket. Scope and
+             Advanced below still carry the historical reference. */
           recommendations: [{
             id: "inactive-historical-recommendation",
-            targetBasketId: referencedBasket.id,
-            targetMainLineId: "historical-target-line",
-            type: "recommended",
-            priorityId: null,
+            name: "Historical recommendation",
+            priorityId: AI_ESTIMATOR_KNOWLEDGE_CANONICAL_PRIORITY_IDS.high,
             reason: "Retained recommendation history",
-            quantityRelationship: "same_quantity",
-            quantityValue: null,
             dependency: false,
             active: false
           }]
@@ -425,7 +432,8 @@ describe("AI estimator knowledge reference service", () => {
         id: referencedBasket.id,
         name: referencedBasket.name,
         impact: expect.objectContaining({
-          historicalReferenceCount: 3,
+          /* Scope and Advanced only; Recommendations no longer bind a Basket. */
+          historicalReferenceCount: 2,
           canDelete: false,
           blockers: [expect.objectContaining({ code: "HAS_HISTORICAL_REFERENCES" })]
         })
@@ -527,6 +535,214 @@ describe("AI estimator knowledge reference service", () => {
     const archived = await service.archiveMaster(actor, "uoms", uom.id, { expectedVersion: 2 });
     expect(archived).toMatchObject({ status: "archived", version: 3 });
     expect((await service.listMasters(actor, "uoms", {}, { limit: 10, offset: 0 })).items.map(({ code }) => code)).toEqual(["NOS"]);
+  });
+
+  it("creates Surface guidance with generated or explicit technical codes and legacy-safe DTOs", async () => {
+    const { service, audit } = harness();
+
+    const created = await service.createMaster(actor, "surfaces", {
+      name: "Counter surface",
+      description: "Granite, quartz, marble"
+    });
+    expect(created).toMatchObject({
+      masterType: "surfaces",
+      name: "Counter surface",
+      description: "Granite, quartz, marble",
+      status: "active",
+      version: 1
+    });
+    expect(created.code).toMatch(/^surface-[a-f0-9]{48}$/u);
+    expect(created).not.toHaveProperty("dependencyEpoch");
+    expect(created).not.toHaveProperty("typicalUomIds");
+    expect(audit.appendInMongoTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "ai_estimator_knowledge_master_created",
+        entityType: "ai_estimator_knowledge_surface",
+        newValues: expect.objectContaining({
+          masterType: "surfaces",
+          name: "Counter surface",
+          description: "Granite, quartz, marble",
+          status: "active",
+          version: 1
+        })
+      }),
+      expect.anything()
+    );
+
+    await expect(service.createMaster(actor, "surfaces", {
+      code: "WALL",
+      name: "Wall surface"
+    })).resolves.toMatchObject({ code: "WALL" });
+
+    await AiEstimatorKnowledgeSurfaceModel.collection.insertOne({
+      _id: "knowledge-surface-legacy",
+      code: "LEGACY",
+      codeNormalized: "legacy",
+      name: "Legacy surface",
+      nameNormalized: "legacy surface",
+      description: null,
+      displayOrder: 99,
+      status: "active",
+      version: 1,
+      createdById: actor.id,
+      updatedById: actor.id,
+      archivedAt: null,
+      archivedById: null,
+      createdAt: fixedNow,
+      updatedAt: fixedNow
+    });
+    const listed = await service.listMasters(
+      actor,
+      "surfaces",
+      { includeArchived: true },
+      { limit: 20, offset: 0 }
+    );
+    expect(listed.items.find(({ id }) => id === "knowledge-surface-legacy"))
+      .toMatchObject({ name: "Legacy surface" });
+  });
+
+  it("rolls back Surface creation and display allocation when audit persistence fails", async () => {
+    const audit = {
+      appendInMongoTransaction: vi.fn(async () => {
+        throw new Error("audit unavailable");
+      })
+    };
+    const { service } = harness({ audit });
+
+    await expect(service.createMaster(actor, "surfaces", {
+      name: "Rolled back surface"
+    })).rejects.toThrow("audit unavailable");
+    expect(await AiEstimatorKnowledgeSurfaceModel.countDocuments()).toBe(0);
+  });
+
+  it("rolls back Surface edits and archival when audit persistence fails", async () => {
+    const setup = harness();
+    const surface = await setup.service.createMaster(actor, "surfaces", {
+      name: "Audit rollback Surface"
+    });
+    const audit = {
+      appendInMongoTransaction: vi.fn(async () => {
+        throw new Error("audit unavailable");
+      })
+    };
+    const { service } = harness({ audit });
+
+    await expect(service.updateMaster(actor, "surfaces", surface.id, {
+      expectedVersion: surface.version,
+      description: "Rolled back description"
+    })).rejects.toThrow("audit unavailable");
+    expect(await AiEstimatorKnowledgeSurfaceModel.findById(surface.id).lean())
+      .toMatchObject({
+        status: "active",
+        description: null,
+        version: surface.version
+      });
+
+    await expect(service.archiveMaster(actor, "surfaces", surface.id, {
+      expectedVersion: surface.version,
+      reason: "Exercise archive rollback"
+    })).rejects.toThrow("audit unavailable");
+    expect(await AiEstimatorKnowledgeSurfaceModel.findById(surface.id).lean())
+      .toMatchObject({ status: "active", version: surface.version });
+  });
+
+  it("projects canonical Priority semantics without exposing epochs and protects system identity", async () => {
+    const high = findCanonicalKnowledgePriorityById(
+      AI_ESTIMATOR_KNOWLEDGE_CANONICAL_PRIORITY_IDS.high
+    )!;
+    await AiEstimatorKnowledgePriorityModel.create({
+      _id: high.id,
+      code: high.code,
+      codeNormalized: high.code.toLowerCase(),
+      name: high.name,
+      nameNormalized: high.name.toLowerCase(),
+      description: null,
+      displayOrder: high.displayOrder,
+      status: "active",
+      semanticTier: high.semanticTier,
+      dependencyEpoch: 7,
+      version: 1,
+      createdById: actor.id,
+      updatedById: actor.id,
+      createdAt: fixedNow,
+      updatedAt: fixedNow
+    });
+    const { service, audit } = harness();
+    const custom = await service.createMaster(actor, "priorities", {
+      code: "CUSTOM",
+      name: "Custom Priority",
+      displayOrder: 10
+    });
+
+    const listed = await service.listMasters(
+      actor,
+      "priorities",
+      { includeArchived: true },
+      { limit: 20, offset: 0 }
+    );
+    const canonicalDto = listed.items.find((item) => item.id === high.id);
+    const customDto = listed.items.find((item) => item.id === custom.id);
+    expect(canonicalDto).toMatchObject({
+      id: high.id,
+      semanticTier: "high",
+      code: "HIGH",
+      name: "High",
+      displayOrder: 1,
+      status: "active"
+    });
+    expect(canonicalDto).not.toHaveProperty("dependencyEpoch");
+    expect(customDto).not.toHaveProperty("semanticTier");
+    expect(customDto).not.toHaveProperty("dependencyEpoch");
+
+    const described = await service.updateMaster(actor, "priorities", high.id, {
+      expectedVersion: 1,
+      description: "Estimator classification"
+    });
+    expect(described).toMatchObject({
+      semanticTier: "high",
+      description: "Estimator classification",
+      version: 2
+    });
+
+    for (const mutation of [
+      { name: "Urgent" },
+      { code: "URGENT" },
+      { displayOrder: 20 },
+      { status: "inactive" as const }
+    ]) {
+      await expect(service.updateMaster(actor, "priorities", high.id, {
+        expectedVersion: 2,
+        ...mutation
+      })).rejects.toSatisfy((error) => {
+        expectApiError(error, 409, "CANONICAL_PRIORITY_IMMUTABLE");
+        return true;
+      });
+    }
+    await expect(service.archiveMaster(actor, "priorities", high.id, {
+      expectedVersion: 2,
+      reason: "Must remain available"
+    })).rejects.toSatisfy((error) => {
+      expectApiError(error, 409, "CANONICAL_PRIORITY_IMMUTABLE");
+      return true;
+    });
+    expect(await AiEstimatorKnowledgePriorityModel.findById(high.id).lean())
+      .toMatchObject({
+        name: "High",
+        code: "HIGH",
+        displayOrder: 1,
+        status: "active",
+        dependencyEpoch: 7,
+        version: 2
+      });
+    expect(audit.appendInMongoTransaction).toHaveBeenCalledTimes(2);
+
+    await expect(service.archiveMaster(actor, "priorities", custom.id, {
+      expectedVersion: custom.version
+    })).resolves.toMatchObject({
+      id: custom.id,
+      status: "archived",
+      version: 2
+    });
   });
 
   it("appends reusable values independently per type and preserves a non-lowering high-water mark", async () => {
@@ -642,6 +858,106 @@ describe("AI estimator knowledge reference service", () => {
     });
     expect(inactivated).toMatchObject({ status: "inactive", decimalScale: 2, version: 2 });
     expect(audit.appendInMongoTransaction).toHaveBeenCalledTimes(3);
+  });
+
+  it("protects a UOM referenced by a priced slab while allowing label-only edits", async () => {
+    const { service } = harness();
+    const basket = await service.createBasket(actor, { name: "Priced slab basket" });
+    const uom = await service.createMaster(actor, "uoms", {
+      code: "SFT",
+      name: "Square feet",
+      decimalScale: 2
+    });
+    await AiEstimatorKnowledgeMainLineModel.create({
+      _id: "line-priced-slab",
+      basketId: basket.id,
+      name: "Priced slab line",
+      nameNormalized: "priced slab line",
+      description: null,
+      displayOrder: 0,
+      status: "draft",
+      activeRevisionId: null,
+      draftRevisionId: "revision-priced-slab",
+      version: 1,
+      createdById: actor.id,
+      updatedById: actor.id,
+      deactivatedAt: null,
+      deactivatedById: null,
+      archivedAt: null,
+      archivedById: null
+    });
+    await AiEstimatorKnowledgeRevisionModel.create({
+      _id: "revision-priced-slab",
+      mainLineId: "line-priced-slab",
+      revisionNumber: 1,
+      status: "draft",
+      sourceRevisionId: null,
+      contentDigest: null,
+      completeness: { percentage: 0, sections: [], blockers: [], warnings: [] },
+      version: 1,
+      createdById: actor.id,
+      updatedById: actor.id,
+      activatedAt: null,
+      activatedById: null,
+      supersededAt: null,
+      supersededById: null
+    });
+    await AiEstimatorKnowledgeSectionModel.insertMany([
+      {
+        _id: "section-priced-slab-pricing",
+        mainLineId: "line-priced-slab",
+        revisionId: "revision-priced-slab",
+        sectionKey: "pricing",
+        applicability: "configured",
+        payload: {
+          specifications: [{ id: "specification-plywood", name: "Plywood" }],
+          priceEntries: []
+        },
+        version: 1,
+        createdById: actor.id,
+        updatedById: actor.id
+      },
+      {
+        _id: "section-priced-slab-quantity",
+        mainLineId: "line-priced-slab",
+        revisionId: "revision-priced-slab",
+        sectionKey: "quantity-margin",
+        applicability: "configured",
+        payload: {
+          slabRates: [{
+            id: "slab-rate-plywood",
+            specificationId: "specification-plywood",
+            uomId: uom.id,
+            quantity: "12.5",
+            unitRatePaise: 8_000
+          }]
+        },
+        version: 1,
+        createdById: actor.id,
+        updatedById: actor.id
+      }
+    ]);
+
+    const renamed = await service.updateMaster(actor, "uoms", uom.id, {
+      expectedVersion: uom.version,
+      name: "Square foot"
+    });
+    expect(renamed).toMatchObject({ name: "Square foot", decimalScale: 2, version: 2 });
+    await expect(service.updateMaster(actor, "uoms", uom.id, {
+      expectedVersion: renamed.version,
+      decimalScale: 3
+    })).rejects.toSatisfy((error) => {
+      expectApiError(error, 409, "REFERENCED_UOM_SCALE_IMMUTABLE");
+      return true;
+    });
+    await expect(service.archiveMaster(actor, "uoms", uom.id, {
+      expectedVersion: renamed.version
+    })).rejects.toSatisfy((error) => {
+      expectApiError(error, 409, "ACTIVE_REFERENCE_CONFLICT");
+      return true;
+    });
+    expect(await AiEstimatorKnowledgeUomModel.findById(uom.id).lean())
+      .toMatchObject({ name: "Square foot", decimalScale: 2, status: "active", version: 2 });
   });
 
   it("rejects cross-type fields at the service boundary", async () => {
@@ -937,6 +1253,73 @@ describe("AI estimator knowledge reference service", () => {
     expect(listed.items[0]?.taxVersions?.map(({ versionNumber }) => versionNumber)).toEqual([1, 2]);
     expect((await AiEstimatorKnowledgeTaxVersionModel.find({ taxRuleId: tax.id }).sort({ versionNumber: 1 }).lean()).map(({ versionNumber }) => versionNumber)).toEqual([1, 2]);
     expect(audit.appendInMongoTransaction.mock.calls.flatMap(([event]) => [(event as { action: string }).action])).toContain("ai_estimator_knowledge_tax_version_created");
+  });
+
+  it("rejects generic update, rollover, and archive operations for the canonical fixed GST policy", async () => {
+    const { service, audit } = harness();
+    const policy = AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY;
+    await AiEstimatorKnowledgeTaxRuleModel.create({
+      _id: policy.rule.id,
+      code: policy.rule.code,
+      codeNormalized: "gst_18",
+      name: policy.rule.name,
+      nameNormalized: "gst 18%",
+      description: null,
+      displayOrder: policy.rule.displayOrder,
+      status: policy.rule.status,
+      version: 1,
+      dependencyEpoch: 0,
+      createdById: actor.id,
+      updatedById: actor.id
+    });
+    await AiEstimatorKnowledgeTaxVersionModel.create({
+      _id: policy.version.id,
+      taxRuleId: policy.rule.id,
+      versionNumber: policy.version.versionNumber,
+      rateBps: policy.version.rateBps,
+      treatment: policy.version.treatment,
+      applicability: policy.version.applicability,
+      effectiveFrom: new Date(policy.version.effectiveFrom),
+      effectiveTo: null,
+      status: policy.version.status,
+      version: 1,
+      createdById: actor.id,
+      updatedById: actor.id
+    });
+    const operations = [
+      () => service.updateMaster(actor, "taxes", policy.rule.id, {
+        expectedVersion: 1,
+        description: "not allowed"
+      }),
+      () => service.updateMaster(actor, "taxes", policy.rule.id, {
+        expectedVersion: 1,
+        taxVersion: {
+          rateBps: 1_800,
+          treatment: "exclusive" as const,
+          applicability: policy.version.applicability,
+          effectiveFrom: "2027-01-01T00:00:00.000Z",
+          effectiveTo: null,
+          status: "active" as const,
+          rolloverFromVersionId: policy.version.id
+        }
+      }),
+      () => service.archiveMaster(actor, "taxes", policy.rule.id, {
+        expectedVersion: 1,
+        reason: "not allowed"
+      })
+    ];
+
+    for (const operation of operations) {
+      await expect(operation()).rejects.toMatchObject({
+        status: 409,
+        code: "CANONICAL_TAX_POLICY_IMMUTABLE"
+      });
+    }
+    expect(await AiEstimatorKnowledgeTaxRuleModel.findById(policy.rule.id).lean())
+      .toMatchObject({ status: "active", version: 1 });
+    expect(await AiEstimatorKnowledgeTaxVersionModel.findById(policy.version.id).lean())
+      .toMatchObject({ status: "active", effectiveTo: null, version: 1 });
+    expect(audit.appendInMongoTransaction).not.toHaveBeenCalled();
   });
 
   it("atomically rolls an open-ended Tax version into an explicitly named successor", async () => {

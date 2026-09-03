@@ -22,6 +22,15 @@ export interface KnowledgeCoreIdentityInput {
   uomId: string | null;
 }
 
+/*
+ * Sections the configuration tool has no editor for. An author cannot fill them
+ * in from any screen, so counting them would hold completeness below 100% for
+ * every item forever and report warnings nobody can clear. Delete an entry here
+ * when its editor ships.
+ */
+const AI_ESTIMATOR_KNOWLEDGE_UNCONFIGURABLE_SECTION_KEYS: ReadonlySet<KnowledgeSectionKey> =
+  new Set<KnowledgeSectionKey>(["scope", "execution"]);
+
 function hasConfiguredContent(payload: unknown): boolean {
   return payload !== null &&
     typeof payload === "object" &&
@@ -51,10 +60,16 @@ export function deriveKnowledgeCompleteness(input: {
         }
       }
     }
-    if (section?.applicability === "not_applicable") {
+    if (
+      section?.applicability === "not_applicable" ||
+      AI_ESTIMATOR_KNOWLEDGE_UNCONFIGURABLE_SECTION_KEYS.has(sectionKey)
+    ) {
       return { sectionKey, state: "not_applicable" as const, findings };
     }
-    if (!section || section.applicability === "not_configured" || !hasConfiguredContent(section.payload)) {
+    /* Content decides, not the stored flag. A section that holds real data is
+       configured even if an older write left its applicability behind, so the
+       percentage always reflects what the author can actually see saved. */
+    if (!section || !hasConfiguredContent(section.payload)) {
       const optional = ["pricing", "recommendations", "quality", "execution"].includes(sectionKey);
       findings.push({
         code: "SECTION_NOT_CONFIGURED",

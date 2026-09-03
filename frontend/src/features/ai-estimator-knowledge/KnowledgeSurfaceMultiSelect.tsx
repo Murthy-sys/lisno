@@ -12,6 +12,11 @@ import type { KnowledgeMaster } from "./knowledgeTypes";
 export interface KnowledgeSurfaceMultiSelectProps {
   readonly selectedIds: readonly string[];
   readonly masters: readonly KnowledgeMaster[];
+  readonly label?: string;
+  readonly placeholder?: string;
+  readonly searchable?: boolean;
+  readonly describedBy?: string;
+  readonly invalid?: boolean;
   readonly disabled?: boolean;
   readonly readOnly?: boolean;
   readonly onChange: (selectedIds: readonly string[]) => void;
@@ -20,6 +25,7 @@ export interface KnowledgeSurfaceMultiSelectProps {
 interface SurfaceOption {
   readonly id: string;
   readonly label: string;
+  readonly searchText: string;
   readonly statusLabel: string | null;
   readonly selected: boolean;
   readonly unavailable: boolean;
@@ -28,6 +34,11 @@ interface SurfaceOption {
 export function KnowledgeSurfaceMultiSelect({
   selectedIds,
   masters,
+  label = "Surfaces",
+  placeholder = "Not configured",
+  searchable = false,
+  describedBy,
+  invalid = false,
   disabled = false,
   readOnly = false,
   onChange
@@ -38,9 +49,11 @@ export function KnowledgeSurfaceMultiSelect({
   const listboxId = `${generatedId}-listbox`;
   const rootRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
   const optionRefs = useRef(new Map<string, HTMLButtonElement>());
   const [open, setOpen] = useState(false);
   const [activeId, setActiveId] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
 
   const orderedMasters = useMemo(() => orderUniqueMasters(masters), [masters]);
   const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
@@ -48,12 +61,13 @@ export function KnowledgeSurfaceMultiSelect({
     () => new Set(orderedMasters.map(({ id }) => id)),
     [orderedMasters]
   );
-  const options = useMemo<readonly SurfaceOption[]>(() => {
+  const allOptions = useMemo<readonly SurfaceOption[]>(() => {
     const available = orderedMasters
       .filter(({ id, status }) => status === "active" || selectedSet.has(id))
       .map((master) => ({
         id: master.id,
         label: master.name,
+        searchText: master.name,
         statusLabel: master.status === "active" ? null : statusLabel(master.status),
         selected: selectedSet.has(master.id),
         unavailable: false
@@ -63,6 +77,7 @@ export function KnowledgeSurfaceMultiSelect({
       .map((id) => ({
         id,
         label: "Unavailable value",
+        searchText: "Unavailable value",
         statusLabel: null,
         selected: true,
         unavailable: true
@@ -70,6 +85,13 @@ export function KnowledgeSurfaceMultiSelect({
 
     return [...available, ...unresolved];
   }, [knownIds, orderedMasters, selectedIds, selectedSet]);
+  const normalizedSearch = search.trim().toLocaleLowerCase();
+  const options = useMemo(
+    () => normalizedSearch
+      ? allOptions.filter(({ searchText }) => searchText.toLocaleLowerCase().includes(normalizedSearch))
+      : allOptions,
+    [allOptions, normalizedSearch]
+  );
   const interactiveOptionIds = useMemo(
     () => options.filter(({ unavailable }) => !unavailable).map(({ id }) => id),
     [options]
@@ -77,7 +99,7 @@ export function KnowledgeSurfaceMultiSelect({
   const selectedSummary = useMemo(() => {
     const selectedNames = orderedMasters
       .filter(({ id }) => selectedSet.has(id))
-      .map(({ name }) => name);
+      .map((master) => master.name);
     const unresolvedCount = unique(selectedIds).filter((id) => !knownIds.has(id)).length;
     const unresolvedLabels = Array.from(
       { length: unresolvedCount },
@@ -85,8 +107,8 @@ export function KnowledgeSurfaceMultiSelect({
     );
     const labels = [...selectedNames, ...unresolvedLabels];
 
-    return labels.length > 0 ? labels.join(", ") : "Not configured";
-  }, [knownIds, orderedMasters, selectedIds, selectedSet]);
+    return labels.length > 0 ? labels.join(", ") : placeholder;
+  }, [knownIds, orderedMasters, placeholder, selectedIds, selectedSet]);
 
   useEffect(() => {
     if (!open) return;
@@ -105,13 +127,18 @@ export function KnowledgeSurfaceMultiSelect({
   useEffect(() => {
     if (!open || readOnly) return;
 
+    if (searchable && activeId === null) {
+      searchRef.current?.focus();
+      return;
+    }
+
     const nextActiveId =
       activeId && interactiveOptionIds.includes(activeId)
         ? activeId
         : interactiveOptionIds[0] ?? null;
     if (nextActiveId !== activeId) setActiveId(nextActiveId);
     if (nextActiveId) optionRefs.current.get(nextActiveId)?.focus();
-  }, [activeId, interactiveOptionIds, open, readOnly]);
+  }, [activeId, interactiveOptionIds, open, readOnly, searchable]);
 
   function openList(preferred: "selected" | "first" | "last" = "selected") {
     if (disabled) return;
@@ -126,12 +153,13 @@ export function KnowledgeSurfaceMultiSelect({
           ? interactiveOptionIds[0] ?? null
           : firstSelectedId ?? interactiveOptionIds[0] ?? null;
     setOpen(true);
-    setActiveId(nextActiveId);
+    setActiveId(searchable && preferred === "selected" ? null : nextActiveId);
   }
 
   function closeList({ returnFocus = false } = {}) {
     setOpen(false);
     setActiveId(null);
+    setSearch("");
     if (returnFocus) triggerRef.current?.focus();
   }
 
@@ -204,7 +232,7 @@ export function KnowledgeSurfaceMultiSelect({
       }}
     >
       <span id={labelId} className="knowledge-surface-multiselect__label">
-        Surfaces
+        {label}
       </span>
       <button
         ref={triggerRef}
@@ -212,7 +240,8 @@ export function KnowledgeSurfaceMultiSelect({
         type="button"
         className="knowledge-surface-multiselect__trigger"
         aria-labelledby={labelId}
-        aria-describedby={summaryId}
+        aria-describedby={[summaryId, describedBy].filter(Boolean).join(" ")}
+        aria-invalid={invalid || undefined}
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-controls={open ? listboxId : undefined}
@@ -245,6 +274,41 @@ export function KnowledgeSurfaceMultiSelect({
 
       {open ? (
         <div className="knowledge-surface-multiselect__popup">
+          {searchable && allOptions.length > 0 ? (
+            <label className="knowledge-surface-multiselect__search">
+              <span>Search surfaces</span>
+              <input
+                ref={searchRef}
+                type="search"
+                value={search}
+                onChange={(event) => {
+                  setSearch(event.target.value);
+                  setActiveId(null);
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === "ArrowDown") {
+                    event.preventDefault();
+                    const firstId = interactiveOptionIds[0];
+                    if (firstId) {
+                      setActiveId(firstId);
+                      optionRefs.current.get(firstId)?.focus();
+                    }
+                  } else if (event.key === "ArrowUp") {
+                    event.preventDefault();
+                    const lastId = interactiveOptionIds.at(-1);
+                    if (lastId) {
+                      setActiveId(lastId);
+                      optionRefs.current.get(lastId)?.focus();
+                    }
+                  } else if (event.key === "Escape") {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    closeList({ returnFocus: true });
+                  }
+                }}
+              />
+            </label>
+          ) : null}
           {options.length > 0 ? (
             <div
               id={listboxId}
@@ -297,13 +361,12 @@ export function KnowledgeSurfaceMultiSelect({
               })}
             </div>
           ) : (
-            <p
-              id={listboxId}
-              className="knowledge-surface-multiselect__empty"
-              role="status"
-            >
-              No Surface options available.
-            </p>
+            <div className="knowledge-surface-multiselect__empty">
+              <p id={listboxId} role="status">{normalizedSearch ? "No surfaces match your search." : "No surfaces have been added."}</p>
+              {normalizedSearch ? (
+                <button type="button" onClick={() => setSearch("")}>Clear search</button>
+              ) : null}
+            </div>
           )}
         </div>
       ) : null}
@@ -313,8 +376,7 @@ export function KnowledgeSurfaceMultiSelect({
 
 function orderUniqueMasters(masters: readonly KnowledgeMaster[]) {
   const ordered = [...masters].sort((left, right) =>
-    left.displayOrder - right.displayOrder ||
-    left.name.localeCompare(right.name) ||
+    left.name.localeCompare(right.name, undefined, { sensitivity: "base" }) ||
     left.id.localeCompare(right.id)
   );
   const seen = new Set<string>();

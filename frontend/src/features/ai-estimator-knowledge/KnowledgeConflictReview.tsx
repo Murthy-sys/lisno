@@ -8,6 +8,7 @@ import {
 import {
   isChoiceField,
   knowledgeModeFieldTypeLabel,
+  knowledgeModeFieldValueLabel,
   parseKnowledgeModeConfigurations,
   partitionKnowledgeModeConfigurations,
   projectKnowledgeModeConfigurationFieldSummaries,
@@ -34,6 +35,8 @@ export interface KnowledgeConflictReviewProps {
   readonly localVersion: number;
   readonly serverVersion: number;
   readonly payload: KnowledgeJsonObject;
+  readonly specifications?: KnowledgeJsonValue;
+  readonly overviewFields?: readonly KnowledgeOverviewConflictField[];
   readonly masters: Readonly<Partial<Record<KnowledgeMasterType, readonly KnowledgeMaster[]>>>;
   readonly relationshipBaskets: readonly KnowledgeBasket[];
   readonly relationshipItems: readonly KnowledgeItemListItem[];
@@ -44,6 +47,8 @@ export function KnowledgeConflictReview({
   localVersion,
   serverVersion,
   payload,
+  specifications,
+  overviewFields,
   masters,
   relationshipBaskets,
   relationshipItems
@@ -53,10 +58,11 @@ export function KnowledgeConflictReview({
     masters,
     relationshipBaskets,
     relationshipItems,
-    rootPayload: payload
+    rootPayload: payload,
+    specifications: specifications ?? payload.specifications
   } satisfies ProjectionContext;
   const values = sectionKey === "overview"
-    ? overviewValues(payload, masters)
+    ? overviewValues(payload, masters, overviewFields)
     : sectionKey === "pricing"
       ? pricingValues(payload, context)
       : sectionKey === "advanced"
@@ -151,24 +157,35 @@ function definitionConflictValues(
     },
     ...(isChoiceField(field.type) && field.options.length
       ? [{ label: `${component} · Allowed options`, value: field.options.join(", ") }]
+      : []),
+    ...(knowledgeModeFieldValueLabel(field)
+      ? [{ label: `${component} · Value`, value: knowledgeModeFieldValueLabel(field)! }]
       : [])
   ];
 }
 
+export type KnowledgeOverviewConflictField = "uomId" | "surfaceIds" | "priorityId";
+
 function overviewValues(
   payload: KnowledgeJsonObject,
-  masters: Readonly<Partial<Record<KnowledgeMasterType, readonly KnowledgeMaster[]>>>
+  masters: Readonly<Partial<Record<KnowledgeMasterType, readonly KnowledgeMaster[]>>>,
+  fields: readonly KnowledgeOverviewConflictField[] = ["uomId", "surfaceIds"]
 ): readonly ConflictReviewValue[] {
-  return [
-    {
+  const values: Readonly<Record<KnowledgeOverviewConflictField, ConflictReviewValue>> = {
+    uomId: {
       label: "Unit of measure (UOM)",
       value: resolveMaster(payload.uomId, masters.uoms)
     },
-    {
+    surfaceIds: {
       label: "Surfaces",
       value: resolveMasterList(payload.surfaceIds, masters.surfaces)
+    },
+    priorityId: {
+      label: "Priority",
+      value: resolveMaster(payload.priorityId, masters.priorities, "Unavailable priority")
     }
-  ];
+  };
+  return fields.map((field) => values[field]);
 }
 
 interface ProjectionContext {
@@ -176,14 +193,11 @@ interface ProjectionContext {
   readonly relationshipBaskets: readonly KnowledgeBasket[];
   readonly relationshipItems: readonly KnowledgeItemListItem[];
   readonly rootPayload: KnowledgeJsonObject;
+  readonly specifications: KnowledgeJsonValue | undefined;
 }
 
-/**
- * Pricing carries immutable IDs and compatibility metadata that are useful to
- * the editor but should never be exposed by conflict review. Keep this
- * projection intentionally allowlisted rather than recursively rendering an
- * open-ended Pricing payload.
- */
+/** Budgeting is deliberately allowlisted so wire-protocol and lineage fields
+ * never leak into the Super Admin conflict review. */
 function pricingValues(
   payload: KnowledgeJsonObject,
   context: ProjectionContext
@@ -204,48 +218,53 @@ function pricingValues(
   });
 
   objectArray(payload.priceEntries).forEach((entry, index) => {
-    const prefix = `Price ${index + 1}`;
-    const operation = entry.operation === "append" || entry.operation === "reference"
-      ? displayEnum(entry.operation)
-      : null;
-    if (operation) values.push({ label: `${prefix} · Operation`, value: operation });
-
+    const prefix = `Budget ${index + 1}`;
     const resolvedVersion = entry.operation === "reference" && isJsonObject(entry.priceVersion)
       ? entry.priceVersion
       : null;
+    if (entry.operation === "reference" && !resolvedVersion) {
+      values.push({ label: prefix, value: "Saved budget details are unavailable" });
+      return;
+    }
     const priceValues = resolvedVersion ?? entry;
-    for (const key of PRICING_REVIEW_PRICE_KEYS) {
+    for (const key of ["vendorId", "uomId"] as const) {
       const value = priceValues[key];
       if (!hasMeaningfulValue(value)) continue;
       const resolvedReference = resolveReference(key, value, context);
       values.push({
-        label: `${prefix} · ${displayLabel(key)}`,
+        label: `${prefix} · ${key === "vendorId" ? "Vendor" : "Unit of measure"}`,
         value: resolvedReference ?? formatPrimitive(key, value as string | number | boolean)
       });
+    }
+    const amountBeforeGst = entry.operation === "set_budget"
+      ? priceValues.inputAmountPaise
+      : priceValues.baseAmountPaise;
+    if (hasMeaningfulValue(amountBeforeGst)) {
+      values.push({
+        label: `${prefix} · Amount before GST`,
+        value: formatPrimitive("baseAmountPaise", amountBeforeGst as string | number | boolean)
+      });
+    }
+    for (const [key, label] of [
+      ["taxAmountPaise", "GST"],
+      ["totalAmountPaise", "Total including GST"],
+      ["effectiveFrom", "Starts on"],
+      ["effectiveTo", "Ends on"]
+    ] as const) {
+      const value = priceValues[key];
+      if (!hasMeaningfulValue(value)) continue;
+      values.push({
+        label: `${prefix} · ${label}`,
+        value: formatPrimitive(key, value as string | number | boolean)
+      });
+    }
+    if (priceValues.reviewRequired === true || (typeof priceValues.status === "string" && priceValues.status !== "active")) {
+      values.push({ label: `${prefix} · Review`, value: "Needs review" });
     }
   });
 
   return values;
 }
-
-const PRICING_REVIEW_PRICE_KEYS = [
-  "specificationId",
-  "modeId",
-  "vendorId",
-  "uomId",
-  "versionNumber",
-  "taxRuleId",
-  "taxVersionId",
-  "treatment",
-  "inputAmountPaise",
-  "baseAmountPaise",
-  "taxAmountPaise",
-  "totalAmountPaise",
-  "effectiveFrom",
-  "effectiveTo",
-  "status",
-  "reviewRequired"
-] as const;
 
 function meaningfulText(value: KnowledgeJsonValue | undefined): string | null {
   return typeof value === "string" ? value.trim() || null : null;
@@ -321,7 +340,7 @@ function resolveReference(
     return resolveNamedValue(value, context.relationshipItems, (entry) => entry.mainLineId, (entry) => entry.mainLineName);
   }
   if (key === "specificationId") {
-    const specifications = objectArray(context.rootPayload.specifications);
+    const specifications = objectArray(context.specifications);
     return resolveNamedValue(
       value,
       specifications,
@@ -361,11 +380,12 @@ const MASTER_REFERENCE_KEYS: Readonly<Record<string, KnowledgeMasterType>> = {
 
 function resolveMaster(
   value: KnowledgeJsonValue | undefined,
-  masters: readonly KnowledgeMaster[] | undefined
+  masters: readonly KnowledgeMaster[] | undefined,
+  unavailableLabel = "Unavailable value"
 ): string {
   const id = stringValue(value);
   if (!id) return "Not configured";
-  return masters?.find((master) => master.id === id)?.name ?? "Unavailable value";
+  return masters?.find((master) => master.id === id)?.name ?? unavailableLabel;
 }
 
 function resolveMasterList(

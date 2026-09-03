@@ -7,6 +7,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { KnowledgeBaseIndexPage } from "./KnowledgeBaseIndexPage";
 import { KnowledgeMasterEditorDialog } from "./KnowledgeMasterEditorDialog";
+import { KnowledgeSurfaceEditorDialog } from "./KnowledgeSurfaceEditorDialog";
 import * as knowledgeApi from "./knowledgeApi";
 import type {
   KnowledgeBasket,
@@ -218,8 +219,7 @@ describe("automatic knowledge-base display order forms", () => {
     "uoms",
     "vendors",
     "taxes",
-    "priorities",
-    "surfaces"
+    "priorities"
   ])("does not expose display order when quick-adding %s", async (masterType) => {
     const view = renderWithQuery(
       <KnowledgeMasterEditorDialog
@@ -233,6 +233,20 @@ describe("automatic knowledge-base display order forms", () => {
     expect(within(dialog).queryByRole("spinbutton", { name: "Display order" })).not.toBeInTheDocument();
     await expectNoAutomatedAccessibilityViolations();
     view.unmount();
+  });
+
+  it("does not expose display order or Code when quick-adding a Surface", async () => {
+    renderWithQuery(
+      <KnowledgeSurfaceEditorDialog
+        quickAdd
+        onClose={vi.fn()}
+      />
+    );
+
+    const dialog = screen.getByRole("dialog", { name: "Add Surface" });
+    expect(within(dialog).queryByRole("spinbutton", { name: "Display order" })).not.toBeInTheDocument();
+    expect(within(dialog).queryByRole("textbox", { name: "Code" })).not.toBeInTheDocument();
+    await expectNoAutomatedAccessibilityViolations();
   });
 
   it("does not expose display order in the standard reusable-value create dialog", () => {
@@ -288,6 +302,41 @@ describe("automatic knowledge-base display order forms", () => {
       name: "Square metre"
     })));
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("creates a quick-added Tax with an active rate without exposing version status", async () => {
+    const user = userEvent.setup();
+    renderWithQuery(
+      <KnowledgeMasterEditorDialog
+        masterType="taxes"
+        quickAdd
+        onClose={vi.fn()}
+      />
+    );
+
+    const dialog = screen.getByRole("dialog", { name: "Quick add Tax" });
+    expect(within(dialog).queryByRole("combobox", { name: "Version status" })).not.toBeInTheDocument();
+    await user.type(within(dialog).getByRole("textbox", { name: "Code" }), "GST18");
+    await user.type(within(dialog).getByRole("textbox", { name: "Name" }), "GST 18%");
+    await user.type(within(dialog).getByRole("spinbutton", { name: "Rate (basis points)" }), "1800");
+    await user.type(within(dialog).getByRole("textbox", { name: "Applicability" }), "standard work");
+    const effectiveFrom = within(dialog).getByLabelText(/^Effective from/u);
+    await user.type(effectiveFrom, "2026-09-02T09:30");
+    await user.click(within(dialog).getByRole("button", { name: "Add Tax" }));
+
+    await waitFor(() => expect(knowledgeApi.createKnowledgeMaster).toHaveBeenCalledWith(
+      "taxes",
+      expect.objectContaining({
+        taxVersion: expect.objectContaining({
+          rateBps: 1800,
+          treatment: "exclusive",
+          applicability: "standard work",
+          effectiveFrom: new Date("2026-09-02T09:30").toISOString(),
+          effectiveTo: null,
+          status: "active"
+        })
+      })
+    ));
   });
 
   it("keeps display order required and explicit when editing a reusable value", async () => {

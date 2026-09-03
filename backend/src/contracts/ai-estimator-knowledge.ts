@@ -8,9 +8,7 @@ import type {
   KnowledgeModeKind,
   KnowledgeExecutionSource,
   KnowledgeQuantityGapBehavior,
-  KnowledgeQuantityRelationship,
   KnowledgeQualityParameterType,
-  KnowledgeRecommendationType,
   KnowledgeRevisionStatus,
   KnowledgeSectionApplicability,
   KnowledgeSectionKey,
@@ -18,6 +16,9 @@ import type {
   KnowledgeTaxTreatment,
   KnowledgeVersionStatus
 } from "../domain/ai-estimator-knowledge.js";
+import type { KnowledgePrioritySemanticTier } from "../domain/ai-estimator-knowledge-priority.js";
+
+export type { KnowledgePrioritySemanticTier } from "../domain/ai-estimator-knowledge-priority.js";
 
 export type KnowledgeStableId = string;
 export type KnowledgeCanonicalDecimal = string;
@@ -55,6 +56,12 @@ export interface KnowledgeMaster extends KnowledgeVersionedResource {
 
 export interface KnowledgeUom extends KnowledgeMaster {
   decimalScale: 0 | 1 | 2 | 3;
+}
+
+export type KnowledgeSurface = KnowledgeMaster;
+
+export interface KnowledgePriority extends KnowledgeMaster {
+  semanticTier?: KnowledgePrioritySemanticTier;
 }
 
 export interface KnowledgeTaxVersion extends KnowledgeVersionedResource {
@@ -146,6 +153,14 @@ export interface KnowledgeQuantitySlab {
   adjustmentBps: number;
 }
 
+export interface KnowledgeSlabRate {
+  id: KnowledgeStableId;
+  specificationId: KnowledgeStableId;
+  uomId: KnowledgeStableId;
+  quantity: KnowledgeCanonicalDecimal;
+  unitRatePaise: KnowledgePaise;
+}
+
 export interface KnowledgeQuantityRules {
   gapBehavior: KnowledgeQuantityGapBehavior;
   slabs: KnowledgeQuantitySlab[];
@@ -193,6 +208,7 @@ export type KnowledgeSpecification =
   | KnowledgeDescriptiveSpecification
   | KnowledgeCanonicalSpecification;
 
+/** @deprecated Compatibility-only. New Budgeting writes use KnowledgeBudgetSetCommand. */
 export interface KnowledgePriceEntryAppendCommand {
   operation: "append";
   priceEntryId: KnowledgeStableId;
@@ -209,6 +225,16 @@ export interface KnowledgePriceEntryAppendCommand {
   status: KnowledgeVersionStatus;
 }
 
+export interface KnowledgeBudgetSetCommand {
+  operation: "set_budget";
+  sourcePriceVersionId?: KnowledgeStableId | null;
+  vendorId: KnowledgeStableId;
+  uomId: KnowledgeStableId;
+  inputAmountPaise: KnowledgePaise;
+  effectiveFrom: string;
+  effectiveTo: string | null;
+}
+
 export interface KnowledgePriceEntryReference {
   operation: "reference";
   priceEntryId: KnowledgeStableId;
@@ -216,19 +242,23 @@ export interface KnowledgePriceEntryReference {
 }
 
 export type KnowledgePriceEntryCommand =
+  | KnowledgeBudgetSetCommand
   | KnowledgePriceEntryAppendCommand
   | KnowledgePriceEntryReference;
 
 export interface KnowledgeRecommendation {
   id: KnowledgeStableId;
-  targetBasketId: KnowledgeStableId;
-  targetMainLineId: KnowledgeStableId;
-  type: KnowledgeRecommendationType;
-  priorityId: KnowledgeStableId | null;
-  reason: string;
-  quantityRelationship: KnowledgeQuantityRelationship;
-  quantityValue: KnowledgeCanonicalDecimal | null;
+  name: string;
+  priorityId: KnowledgeStableId;
+  reason: string | null;
   dependency: boolean;
+  active: boolean;
+}
+
+export interface KnowledgeExclusion {
+  id: KnowledgeStableId;
+  name: string;
+  reason: string | null;
   active: boolean;
 }
 

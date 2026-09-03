@@ -122,7 +122,7 @@ describe("KnowledgeModeConfigurationBuilder", () => {
     expect(screen.getByRole("button", { name: "Add component" })).toBeEnabled();
     expect(screen.queryByRole("group", { name: "Execution source" }))
       .not.toBeInTheDocument();
-    expect(screen.getByText(/Entered answers are not stored here/u)).toBeVisible();
+    expect(screen.getByText(/the value the estimator should use/u)).toBeVisible();
 
     const results = await axe.run(document.body, {
       rules: { "color-contrast": { enabled: false } }
@@ -177,28 +177,62 @@ describe("KnowledgeModeConfigurationBuilder", () => {
         executionSource: "in_house"
       })
     ]));
-    expect(JSON.stringify(latest.modeConfigurations)).not.toContain("value");
+    /* No value was entered in any buffer, so an unanswered component must not
+       persist an empty answer key. */
+    expect(JSON.stringify(latest.modeConfigurations)).not.toContain('"value"');
     expect(JSON.stringify(latest.modeConfigurations)).not.toContain("modeId");
   });
 
-  it("renders six definition types without any answer or default controls", async () => {
+  it("renders six definition types each with a value control matching its own type", async () => {
     const user = userEvent.setup();
     render(<Harness initialPayload={definitionPayload} />);
 
     expect(screen.getAllByRole("combobox", { name: "Component type" })).toHaveLength(6);
     expect(screen.getAllByRole("textbox", { name: "Component label" })).toHaveLength(6);
     expect(screen.getAllByRole("textbox", { name: "Allowed options" })).toHaveLength(2);
-    expect(screen.queryByRole("textbox", { name: "PMC mark" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("checkbox", { name: "Safety required" })).not.toBeInTheDocument();
-    expect(screen.queryByText("legacy answer")).not.toBeInTheDocument();
-    expect(document.body.textContent).not.toContain("saved value was cleared");
+    /* Text and text-area answer in a textbox, number in a spin button, the two
+       choice types pick from their own allowed options, and checkbox ticks. */
+    expect(screen.getAllByRole("textbox", { name: "Value" })).toHaveLength(2);
+    expect(screen.getAllByRole("spinbutton", { name: "Value" })).toHaveLength(1);
+    expect(screen.getAllByRole("combobox", { name: "Value" })).toHaveLength(2);
+    expect(screen.getAllByRole("checkbox", { name: "Value" })).toHaveLength(1);
+    expect(screen.getAllByRole("textbox", { name: "Value" })[0]).toHaveValue("legacy answer");
+    expect(
+      within(screen.getAllByRole("combobox", { name: "Value" })[1]!)
+        .getAllByRole("option")
+        .map((option) => option.textContent)
+    ).toEqual(["Not set", "Matte", "Gloss"]);
 
     await user.selectOptions(
       screen.getAllByRole("combobox", { name: "Component type" })[0]!,
       "dropdown"
     );
     expect(screen.getAllByRole("textbox", { name: "Allowed options" })).toHaveLength(3);
-    expect(JSON.stringify(payload())).not.toContain("value");
+    /* A text answer cannot survive the switch to a choice component, so it is
+       dropped rather than saved as an option that does not exist. */
+    expect(JSON.stringify(payload())).not.toContain("legacy answer");
+  });
+
+  it("saves an entered value beside its component definition", async () => {
+    const user = userEvent.setup();
+    const onPayload = vi.fn();
+    render(<Harness initialPayload={definitionPayload} onPayload={onPayload} />);
+
+    await user.type(screen.getAllByRole("textbox", { name: "Value" })[1]!, "Two coats");
+    await user.selectOptions(screen.getAllByRole("combobox", { name: "Value" })[1]!, "Gloss");
+    await user.click(screen.getByRole("checkbox", { name: "Value" }));
+
+    const fields = (
+      (onPayload.mock.calls.at(-1)?.[0] as KnowledgeJsonObject)
+        .modeConfigurations as KnowledgeJsonObject[]
+    )[0]?.fields as KnowledgeJsonObject[];
+    expect(fields).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "field-textarea", value: "Two coats" }),
+      expect.objectContaining({ id: "field-dropdown", value: "Gloss" }),
+      expect.objectContaining({ id: "field-checkbox", value: true })
+    ]));
+    /* Untouched components stay unanswered instead of persisting an empty string. */
+    expect(fields.find(({ id }) => id === "field-number")).not.toHaveProperty("value");
   });
 
   it("reorders and removes definitions while retaining stable component IDs", async () => {
@@ -285,7 +319,7 @@ describe("KnowledgeModeConfigurationBuilder", () => {
         {
           id: "configuration-unscoped",
           modeKind: "execution",
-          fields: [{ id: "field-unscoped", type: "dropdown", label: "Recovered work", options: ["A", "B"], value: "Private saved answer" }]
+          fields: [{ id: "field-unscoped", type: "dropdown", label: "Recovered work", options: ["A", "B"], value: "B" }]
         }
       ]
     }} />);
@@ -300,7 +334,7 @@ describe("KnowledgeModeConfigurationBuilder", () => {
     expect(recovery).toHaveTextContent("Move it to an empty Execution source");
     expect(recovery).toHaveTextContent("Recovered work");
     expect(recovery).toHaveTextContent("Dropdown · A, B");
-    expect(recovery).not.toHaveTextContent("Private saved answer");
+    expect(recovery).toHaveTextContent("Value: B");
 
     await user.click(within(recovery).getByRole("button", { name: "Move to In-house" }));
     const latest = onPayload.mock.calls.at(-1)?.[0] as KnowledgeJsonObject;
@@ -312,10 +346,10 @@ describe("KnowledgeModeConfigurationBuilder", () => {
         executionSource: "in_house"
       })
     ]));
-    expect(JSON.stringify(latest.modeConfigurations)).not.toContain("value");
+    expect(JSON.stringify(latest.modeConfigurations)).toContain('"value":"B"');
   });
 
-  it("keeps legacy reusable rows explicit and removable without exposing saved answers or IDs", async () => {
+  it("keeps legacy reusable rows explicit and removable without exposing internal IDs", async () => {
     const user = userEvent.setup();
     const onPayload = vi.fn();
     render(<Harness
@@ -340,7 +374,7 @@ describe("KnowledgeModeConfigurationBuilder", () => {
       name: "Saved Mode configurations needing recovery"
     });
     expect(recovery).toHaveTextContent("Legacy scope");
-    expect(recovery).not.toHaveTextContent("Private old answer");
+    expect(recovery).toHaveTextContent("Value: Private old answer");
     expect(recovery).not.toHaveTextContent(legacyExecution.id);
     expect(within(recovery).queryByRole("button", { name: "Move to Sub-Vendor" }))
       .not.toBeInTheDocument();

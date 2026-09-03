@@ -7,15 +7,24 @@ import type {
   KnowledgeCompletenessSummary,
   KnowledgeItemListItem,
   KnowledgeQuantitySlab,
+  KnowledgeSlabRate,
   KnowledgeRevision,
   KnowledgeSectionEnvelope,
   KnowledgeSectionMutationEnvelope
 } from "../contracts/ai-estimator-knowledge.js";
 import {
+  calculateSlabRateEstimatedCost,
   deriveTaxAmounts,
   KnowledgeCalculationError,
   parseScaledDecimal
 } from "../domain/ai-estimator-knowledge-calculation.js";
+import {
+  AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY,
+  fixedGstRuleDocument,
+  fixedGstVersionDocument,
+  isExactFixedGstRule,
+  isExactFixedGstVersion
+} from "../domain/ai-estimator-knowledge-fixed-gst.js";
 import {
   createKnowledgeRevisionDigest,
   deriveKnowledgeCompleteness
@@ -27,9 +36,12 @@ import {
   normalizeKnowledgeIdentity,
   type KnowledgeQuantityGapBehavior,
   type KnowledgeSectionApplicability,
-  type KnowledgeSectionKey,
-  type KnowledgeTaxTreatment
+  type KnowledgeSectionKey
 } from "../domain/ai-estimator-knowledge.js";
+import {
+  findCanonicalKnowledgePriorityById,
+  type CanonicalKnowledgePriority
+} from "../domain/ai-estimator-knowledge-priority.js";
 import {
   assertValidKnowledgeSectionPayload,
   findOverlappingEffectiveWindows,
@@ -52,6 +64,7 @@ import { AiEstimatorKnowledgeTaxRuleModel } from "../models/AiEstimatorKnowledge
 import { AiEstimatorKnowledgeTaxVersionModel } from "../models/AiEstimatorKnowledgeTaxVersion.js";
 import { AiEstimatorKnowledgeUomModel } from "../models/AiEstimatorKnowledgeUom.js";
 import { AiEstimatorKnowledgeVendorModel } from "../models/AiEstimatorKnowledgeVendor.js";
+import type { AuditAction } from "../domain/audit-actions.js";
 import type { AuditService } from "./audit.service.js";
 import type { PublicUser } from "./auth.service.js";
 import {
@@ -531,6 +544,7 @@ export function createAiEstimatorKnowledgeItemService(
           remapPriceEntryIds: false
         });
         const copiedSections = copyRevisionSections(sourceSections, priceReferences, uuid, false);
+        await coordinateCopiedSurfaceReferences(copiedSections, session, false);
         const completeness = completenessForRows(mainLineId, copiedSections);
         await AiEstimatorKnowledgeRevisionModel.create([{
           _id: revisionId,
@@ -649,11 +663,37 @@ export function createAiEstimatorKnowledgeItemService(
           persistedPayload,
           session
         );
+        await coordinateNewPriorityReferences(
+          sectionKey,
+          previousPayload,
+          persistedPayload,
+          session
+        );
+        await coordinateNewSurfaceReferences(
+          sectionKey,
+          previousPayload,
+          persistedPayload,
+          session
+        );
+        await coordinateNewSlabRateUomReferences(
+          sectionKey,
+          previousPayload,
+          persistedPayload,
+          session
+        );
+        /* Only "not applicable" is the author's call. Otherwise the saved
+           content decides, so the flag cannot drift from the payload. */
+        const storedApplicability: KnowledgeSectionApplicability =
+          input.applicability === "not_applicable"
+            ? "not_applicable"
+            : hasKnowledgeSectionContent(persistedPayload)
+              ? "configured"
+              : "not_configured";
         const updatedSection = await AiEstimatorKnowledgeSectionModel.findOneAndUpdate(
           { _id: section._id, version: input.expectedVersion, revisionId },
           {
             $set: {
-              applicability: input.applicability ?? "configured",
+              applicability: storedApplicability,
               payload: persistedPayload,
               updatedById: storedActor.id,
               updatedAt: occurredAt
@@ -672,7 +712,10 @@ export function createAiEstimatorKnowledgeItemService(
 
         const rows = (await AiEstimatorKnowledgeSectionModel.find({ mainLineId, revisionId })
           .session(session).lean().exec()).map((row) => asRow(row)!);
-        await validateRevisionRelationships(mainLineId, rows, session);
+        await validateRevisionRelationships(mainLineId, rows, session, {
+          updatedSectionKey: sectionKey,
+          previousPayload
+        });
         const completeness = completenessForRows(mainLineId, rows);
         await AiEstimatorKnowledgeRevisionModel.updateOne(
           { _id: revisionId, status: "draft" },
@@ -689,7 +732,7 @@ export function createAiEstimatorKnowledgeItemService(
           entityId: requiredString(section._id),
           occurredAt: occurredAt.toISOString(),
           oldValues: { mainLineId, revisionId, sectionKey, sectionVersion: input.expectedVersion, aggregateVersion: expectedAggregateVersion },
-          newValues: { sectionVersion: input.expectedVersion + 1, aggregateVersion: expectedAggregateVersion + 1, applicability: input.applicability ?? "configured" }
+          newValues: { sectionVersion: input.expectedVersion + 1, aggregateVersion: expectedAggregateVersion + 1, applicability: storedApplicability }
         }, session);
         return {
           section: asRow(updatedSection)!,
@@ -885,6 +928,16 @@ export function createAiEstimatorKnowledgeItemService(
           true
         );
         await coordinateCopiedBasketReferences(remappedPayloads, session);
+        await coordinateCopiedPriorityReferences(remappedPayloads, session);
+        await coordinateCopiedSurfaceReferences(remappedPayloads, session, true);
+        await coordinateCopiedSlabRateUomReferences(remappedPayloads, session);
+        const copiedSlabRateIssues = await slabRateRevisionIssues(
+          remappedPayloads,
+          session
+        );
+        if (copiedSlabRateIssues.length > 0) {
+          invalidRevisionSectionRules(copiedSlabRateIssues);
+        }
         const completeness = completenessForRows(duplicateId, remappedPayloads);
         await AiEstimatorKnowledgeMainLineModel.create([{
           _id: duplicateId,
@@ -993,6 +1046,18 @@ async function materializePriceCommands(input: {
   const previousPriceVersionIds = new Set(
     referencedPriceVersionIds(input.previousPayload)
   );
+  const previousPriceReferences = new Map<string, string>();
+  if (Array.isArray(input.previousPayload.priceEntries)) {
+    for (const candidate of input.previousPayload.priceEntries) {
+      const reference = asRow(candidate);
+      if (reference?.operation !== "reference") continue;
+      const priceVersionId = optionalString(reference.priceVersionId);
+      const priceEntryId = optionalString(reference.priceEntryId);
+      if (priceVersionId && priceEntryId) {
+        previousPriceReferences.set(priceVersionId, priceEntryId);
+      }
+    }
+  }
   const historicalSpecificationReferences = await AiEstimatorKnowledgePriceVersionModel.find({
     mainLineId: input.mainLineId,
     revisionId: input.revisionId,
@@ -1004,6 +1069,21 @@ async function materializePriceCommands(input: {
   })) {
     invalidSpecificationRemoval();
   }
+  const quantityMarginSection = asRow(
+    await AiEstimatorKnowledgeSectionModel.findOne({
+      mainLineId: input.mainLineId,
+      revisionId: input.revisionId,
+      sectionKey: "quantity-margin"
+    }).select({ payload: 1 }).session(input.session).lean().exec()
+  );
+  const slabSpecificationIds = new Set(
+    structuredRows(payloadFor(quantityMarginSection).slabRates)
+      .map((row) => optionalString(row.specificationId))
+      .filter((id): id is string => Boolean(id))
+  );
+  if ([...removedSpecificationIds].some((id) => slabSpecificationIds.has(id))) {
+    invalidSlabSpecificationRemoval();
+  }
   const candidatePriceVersionIds = new Set<string>();
   for (const candidate of commands) {
     const command = asRow(candidate);
@@ -1011,11 +1091,30 @@ async function materializePriceCommands(input: {
       candidatePriceVersionIds.add(requiredString(command.priceVersionId));
     }
   }
+  const containsPriceMutation = commands.some((candidate) => {
+    const operation = asRow(candidate)?.operation;
+    return operation === "set_budget" || operation === "append";
+  });
+  if (containsPriceMutation) {
+    await assertResolvableRetainedPriceWindows({
+      revisionId: input.revisionId,
+      priceVersionIds: candidatePriceVersionIds,
+      session: input.session
+    });
+  }
+  const fixedGstPolicy = containsPriceMutation
+    ? await requireFixedGstPolicy({
+        actorId: input.actorId,
+        occurredAt: input.occurredAt,
+        session: input.session,
+        audit: input.audit
+      })
+    : null;
   for (const [commandIndex, candidate] of commands.entries()) {
     const command = asRow(candidate);
     if (!command) continue;
-    const priceEntryId = requiredString(command.priceEntryId);
     if (command.operation === "reference") {
+      const priceEntryId = requiredString(command.priceEntryId);
       const priceVersionId = requiredString(command.priceVersionId);
       const referenced = asRow(await AiEstimatorKnowledgePriceVersionModel.findOne({
         _id: priceVersionId,
@@ -1037,13 +1136,52 @@ async function materializePriceCommands(input: {
       references.push({ operation: "reference", priceEntryId, priceVersionId });
       continue;
     }
-    if (command.operation !== "append") continue;
+    if (command.operation !== "set_budget" && command.operation !== "append") continue;
+
+    const isBudgetCommand = command.operation === "set_budget";
+    if (!isBudgetCommand) {
+      assertCompatibilityAppendUsesFixedGst(command, commandIndex);
+    }
+    if (!fixedGstPolicy) {
+      fixedGstPolicyMismatch();
+    }
+    const sourcePriceVersionId = isBudgetCommand
+      ? optionalString(command.sourcePriceVersionId)
+      : undefined;
+    let sourcePrice: Row | null = null;
+    let priceEntryId: string;
+    let specificationId: string | null;
+    let modeId: string | null;
+    if (isBudgetCommand && sourcePriceVersionId) {
+      const retainedPriceEntryId = previousPriceReferences.get(sourcePriceVersionId);
+      if (!retainedPriceEntryId) {
+        invalidBudgetSource(commandIndex);
+      }
+      sourcePrice = asRow(await AiEstimatorKnowledgePriceVersionModel.findOne({
+        _id: sourcePriceVersionId,
+        mainLineId: input.mainLineId,
+        revisionId: input.revisionId,
+        priceEntryId: retainedPriceEntryId
+      }).session(input.session).lean().exec());
+      if (!sourcePrice) {
+        invalidBudgetSource(commandIndex);
+      }
+      priceEntryId = requiredString(sourcePrice.priceEntryId);
+      specificationId = null;
+      modeId = optionalString(sourcePrice.modeId) ?? null;
+    } else if (isBudgetCommand) {
+      priceEntryId = knowledgeId("price-entry", input.uuid());
+      specificationId = null;
+      modeId = null;
+    } else {
+      priceEntryId = requiredString(command.priceEntryId);
+      specificationId = optionalString(command.specificationId) ?? null;
+      modeId = optionalString(command.modeId) ?? null;
+    }
+
     const vendorId = requiredString(command.vendorId);
     const uomId = requiredString(command.uomId);
-    const specificationId = optionalString(command.specificationId) ?? null;
-    const modeId = optionalString(command.modeId) ?? null;
-    const taxRuleId = requiredString(command.taxRuleId);
-    const taxVersionId = requiredString(command.taxVersionId);
+    const taxRuleId = AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.rule.id;
     if (specificationId !== null) {
       throw new ApiError(
         409,
@@ -1055,54 +1193,66 @@ async function materializePriceCommands(input: {
         }
       );
     }
-    const vendor = await AiEstimatorKnowledgeVendorModel.findOne({ _id: vendorId, status: "active" })
-      .session(input.session).lean().exec();
-    const uom = await AiEstimatorKnowledgeUomModel.findOne({ _id: uomId, status: "active" })
-      .session(input.session).lean().exec();
+    const vendor = await AiEstimatorKnowledgeVendorModel.findOneAndUpdate(
+      { _id: vendorId, status: "active" },
+      { $inc: { dependencyEpoch: 1 } },
+      {
+        returnDocument: "after",
+        runValidators: true,
+        session: input.session,
+        timestamps: false
+      }
+    ).lean().exec();
+    const uom = await AiEstimatorKnowledgeUomModel.findOneAndUpdate(
+      { _id: uomId, status: "active" },
+      { $inc: { dependencyEpoch: 1 } },
+      {
+        returnDocument: "after",
+        runValidators: true,
+        session: input.session,
+        timestamps: false
+      }
+    ).lean().exec();
     const mode = modeId
-      ? await AiEstimatorKnowledgeModeModel.findOne({ _id: modeId, status: "active" })
-          .session(input.session).lean().exec()
+      ? await AiEstimatorKnowledgeModeModel.findOneAndUpdate(
+          { _id: modeId, status: "active" },
+          { $inc: { dependencyEpoch: 1 } },
+          {
+            returnDocument: "after",
+            runValidators: true,
+            session: input.session,
+            timestamps: false
+          }
+        ).lean().exec()
       : null;
-    const taxRule = await AiEstimatorKnowledgeTaxRuleModel.findOne({ _id: taxRuleId, status: "active" })
-      .session(input.session).lean().exec();
-    const taxVersionDocument = await AiEstimatorKnowledgeTaxVersionModel.findOne({
-      _id: taxVersionId,
-      taxRuleId,
-      status: "active"
-    }).session(input.session).lean().exec();
+    const effectiveFrom = validDate(command.effectiveFrom, "effectiveFrom");
+    const effectiveTo = command.effectiveTo == null ? null : validDate(command.effectiveTo, "effectiveTo");
+    if (effectiveTo && effectiveFrom >= effectiveTo) invalid("effectiveTo", "Effective end must be later than start.");
+    if (isBudgetCommand && (!vendor || !uom || (modeId && !mode))) {
+      invalidBudgetRelationships(commandIndex, {
+        vendor: Boolean(vendor),
+        uom: Boolean(uom),
+        legacyMode: !modeId || Boolean(mode)
+      });
+    }
+    assertFixedGstCoverage(effectiveFrom, effectiveTo, commandIndex);
     const latest = await AiEstimatorKnowledgePriceVersionModel.findOne({
       revisionId: input.revisionId,
       priceEntryId
     }).sort({ versionNumber: -1, _id: 1 }).session(input.session).lean().exec();
-    if (!vendor || !uom || (modeId && !mode) || !taxRule || !taxVersionDocument) {
+    if (!vendor || !uom || (modeId && !mode)) {
       throw new ApiError(409, "KNOWLEDGE_REFERENCE_INVALID", "An active price reference is unavailable.");
     }
-    const taxVersion = asRow(taxVersionDocument)!;
-    const treatment = requiredString(command.treatment) as KnowledgeTaxTreatment;
-    if (treatment !== taxVersion.treatment) {
-      throw new ApiError(409, "KNOWLEDGE_TAX_MISMATCH", "Price tax treatment does not match its immutable tax version.");
-    }
-    const effectiveFrom = validDate(command.effectiveFrom, "effectiveFrom");
-    const effectiveTo = command.effectiveTo == null ? null : validDate(command.effectiveTo, "effectiveTo");
-    if (effectiveTo && effectiveFrom >= effectiveTo) invalid("effectiveTo", "Effective end must be later than start.");
-    const taxEffectiveFrom = requiredDate(taxVersion.effectiveFrom);
-    const taxEffectiveTo = optionalDate(taxVersion.effectiveTo);
-    if (
-      effectiveFrom < taxEffectiveFrom ||
-      (taxEffectiveTo !== null && (effectiveTo === null || effectiveTo > taxEffectiveTo))
-    ) {
-      throw new ApiError(
-        409,
-        "KNOWLEDGE_TAX_WINDOW_MISMATCH",
-        "The immutable tax version must cover the complete price effective window."
-      );
-    }
+    const taxVersionId = AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.version.id;
+    const treatment = AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.version.treatment;
     const scopeKey = createKnowledgePriceScopeKey({ vendorId, uomId, specificationId, modeId });
-    if (command.status === "active") {
+    const status = isBudgetCommand ? "active" : requiredString(command.status);
+    if (status === "active") {
       const existingWindows = (await AiEstimatorKnowledgePriceVersionModel.find({
         _id: { $in: [...candidatePriceVersionIds] },
         revisionId: input.revisionId,
-        scopeKey,
+        uomId,
+        modeId: modeId === null ? { $eq: null, $exists: true } : modeId,
         status: "active"
       }).session(input.session).lean().exec()).map((row) => asRow(row)!);
       if (findOverlappingEffectiveWindows([
@@ -1113,18 +1263,25 @@ async function materializePriceCommands(input: {
         })),
         { id: priceEntryId, effectiveFrom, effectiveTo }
       ]).length > 0) {
-        throw new ApiError(409, "EFFECTIVE_WINDOW_OVERLAP", "Effective price windows cannot overlap.");
+        effectiveBudgetOverlap(`payload.priceEntries.${commandIndex}.effectiveFrom`);
       }
     }
     let amounts;
     try {
       amounts = deriveTaxAmounts({
         inputAmountPaise: requiredInteger(command.inputAmountPaise),
-        rateBps: requiredInteger(taxVersion.rateBps),
+        rateBps: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.version.rateBps,
         treatment
       });
     } catch (error) {
-      if (error instanceof KnowledgeCalculationError) invalid("inputAmountPaise", error.message);
+      if (error instanceof KnowledgeCalculationError) {
+        invalid(
+          isBudgetCommand
+            ? `payload.priceEntries.${commandIndex}.inputAmountPaise`
+            : "inputAmountPaise",
+          error.message
+        );
+      }
       throw error;
     }
     const id = knowledgeId("price-version", input.uuid());
@@ -1149,7 +1306,7 @@ async function materializePriceCommands(input: {
       totalAmountPaise: amounts.totalAmountPaise,
       effectiveFrom,
       effectiveTo,
-      status: requiredString(command.status),
+      status,
       reviewRequired: false,
       version: 1,
       createdById: input.actorId,
@@ -1169,6 +1326,9 @@ async function materializePriceCommands(input: {
         revisionId: input.revisionId,
         priceEntryId,
         versionNumber,
+        taxRuleId,
+        taxVersionId,
+        treatment,
         inputAmountPaise: amounts.inputAmountPaise,
         baseAmountPaise: amounts.baseAmountPaise,
         taxAmountPaise: amounts.taxAmountPaise,
@@ -1178,6 +1338,266 @@ async function materializePriceCommands(input: {
     references.push({ operation: "reference", priceEntryId, priceVersionId: id });
   }
   return { ...compatiblePayload, priceEntries: references };
+}
+
+async function requireFixedGstPolicy(input: {
+  actorId: string;
+  occurredAt: Date;
+  session: ClientSession;
+  audit: Pick<AuditService, "appendInMongoTransaction">;
+}): Promise<{
+  rule: Row;
+  version: Row;
+}> {
+  /* GST is a fixed 18% system policy, not something a Super Admin configures.
+     A database that was never provisioned still has to price correctly, so the
+     canonical rows are written on first use inside the caller's transaction. */
+  await materializeFixedGstPolicy(input);
+  const rule = asRow(await AiEstimatorKnowledgeTaxRuleModel.findOneAndUpdate(
+    {
+      _id: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.rule.id,
+      status: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.rule.status
+    },
+    { $inc: { dependencyEpoch: 1 } },
+    {
+      returnDocument: "after",
+      runValidators: true,
+      session: input.session,
+      timestamps: false
+    }
+  ).lean().exec());
+  const version = asRow(await AiEstimatorKnowledgeTaxVersionModel.findById(
+    AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.version.id
+  ).session(input.session).lean().exec());
+  if (!isExactFixedGstRule(rule) || !isExactFixedGstVersion(version)) {
+    fixedGstPolicyMismatch();
+  }
+  return { rule: rule!, version: version! };
+}
+
+/**
+ * Writes the canonical GST 18% rule and version when they are absent. Rows that
+ * already exist are never rewritten: a stored tax policy backs money that was
+ * already quoted, so drift is reported rather than silently corrected.
+ */
+async function materializeFixedGstPolicy(input: {
+  actorId: string;
+  occurredAt: Date;
+  session: ClientSession;
+  audit: Pick<AuditService, "appendInMongoTransaction">;
+}): Promise<void> {
+  const policy = AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY;
+  await materializeFixedGstRecord({
+    ...input,
+    model: AiEstimatorKnowledgeTaxRuleModel as unknown as FixedGstRecordModel,
+    id: policy.rule.id,
+    document: () => fixedGstRuleDocument(input.occurredAt),
+    action: "ai_estimator_knowledge_master_created",
+    entityType: "ai_estimator_knowledge_tax"
+  });
+  await materializeFixedGstRecord({
+    ...input,
+    model: AiEstimatorKnowledgeTaxVersionModel as unknown as FixedGstRecordModel,
+    id: policy.version.id,
+    document: () => fixedGstVersionDocument(input.occurredAt),
+    action: "ai_estimator_knowledge_tax_version_created",
+    entityType: "ai_estimator_knowledge_tax_version"
+  });
+}
+
+async function materializeFixedGstRecord(input: {
+  actorId: string;
+  occurredAt: Date;
+  session: ClientSession;
+  audit: Pick<AuditService, "appendInMongoTransaction">;
+  model: FixedGstRecordModel;
+  id: string;
+  document: () => Record<string, unknown>;
+  action: AuditAction;
+  entityType: string;
+}): Promise<void> {
+  const existing = await input.model.findById(input.id)
+    .session(input.session).lean().exec();
+  if (existing) return;
+  const document = input.document();
+  try {
+    await input.model.create([document], { session: input.session });
+  } catch (error) {
+    /* A concurrent save in another transaction may have inserted the same
+       canonical row first, which is the outcome this wanted anyway. */
+    if (isDuplicateKeyError(error)) return;
+    throw error;
+  }
+  await input.audit.appendInMongoTransaction({
+    actorId: input.actorId,
+    action: input.action,
+    entityType: input.entityType,
+    entityId: input.id,
+    occurredAt: input.occurredAt.toISOString(),
+    newValues: {
+      fixedGstPolicyId: input.id,
+      rateBps: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.version.rateBps,
+      materializedOnDemand: true
+    },
+    reason: "Apply the fixed GST 18% policy to a Draft budget."
+  }, input.session);
+}
+
+/** The narrow slice of a Mongoose model this needs, so both tax models fit. */
+interface FixedGstRecordModel {
+  findById(id: string): {
+    session(session: ClientSession): {
+      lean(): { exec(): Promise<unknown> };
+    };
+  };
+  create(documents: readonly unknown[], options: { session: ClientSession }): Promise<unknown>;
+}
+
+function isDuplicateKeyError(error: unknown): boolean {
+  return typeof error === "object" && error !== null && "code" in error &&
+    (error as { code?: unknown }).code === 11000;
+}
+
+function assertCompatibilityAppendUsesFixedGst(command: Row, commandIndex: number): void {
+  const policy = AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY;
+  if (
+    command.taxRuleId !== policy.rule.id ||
+    command.taxVersionId !== policy.version.id ||
+    command.treatment !== policy.version.treatment
+  ) {
+    const message = "Compatibility price appends must use the system GST 18% policy.";
+    throw new ApiError(409, "KNOWLEDGE_TAX_MISMATCH", message, {
+      [`payload.priceEntries.${commandIndex}`]: message
+    });
+  }
+}
+
+function assertFixedGstCoverage(
+  effectiveFrom: Date,
+  effectiveTo: Date | null,
+  commandIndex: number
+): void {
+  const policyFrom = new Date(AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.version.effectiveFrom);
+  const policyTo = AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.version.effectiveTo;
+  if (
+    effectiveFrom < policyFrom ||
+    (policyTo !== null && (effectiveTo === null || effectiveTo > new Date(policyTo)))
+  ) {
+    fixedGstOutsideCoverage(commandIndex);
+  }
+}
+
+async function assertResolvableRetainedPriceWindows(input: {
+  revisionId: string;
+  priceVersionIds: ReadonlySet<string>;
+  session: ClientSession;
+}): Promise<void> {
+  if (input.priceVersionIds.size < 2) return;
+  const documents = await AiEstimatorKnowledgePriceVersionModel.find({
+    _id: { $in: [...input.priceVersionIds] },
+    revisionId: input.revisionId,
+    status: "active"
+  }).session(input.session).lean().exec();
+  const groups = new Map<string, Row[]>();
+  for (const document of documents) {
+    const row = asRow(document)!;
+    const key = JSON.stringify([
+      requiredString(row.uomId),
+      optionalString(row.modeId) ?? null
+    ]);
+    const group = groups.get(key) ?? [];
+    group.push(row);
+    groups.set(key, group);
+  }
+  for (const group of groups.values()) {
+    const overlaps = findOverlappingEffectiveWindows(group.map((row) => ({
+      id: requiredString(row._id),
+      effectiveFrom: requiredDate(row.effectiveFrom),
+      effectiveTo: optionalDate(row.effectiveTo)
+    })));
+    if (overlaps.length > 0) {
+      effectiveBudgetOverlap("payload.priceEntries");
+    }
+  }
+}
+
+function hasKnowledgeSectionContent(payload: unknown): boolean {
+  return payload !== null &&
+    typeof payload === "object" &&
+    !Array.isArray(payload) &&
+    Object.keys(payload as Record<string, unknown>).length > 0;
+}
+
+function invalidBudgetSource(commandIndex: number): never {
+  const message = "The saved budget is no longer available in this Draft. Reload Budgeting and try again.";
+  throw new ApiError(
+    409,
+    "KNOWLEDGE_REFERENCE_INVALID",
+    "A referenced budget is unavailable for this revision.",
+    { [`payload.priceEntries.${commandIndex}.sourcePriceVersionId`]: message }
+  );
+}
+
+function invalidBudgetRelationships(
+  commandIndex: number,
+  availability: {
+    vendor: boolean;
+    uom: boolean;
+    legacyMode: boolean;
+  }
+): never {
+  const path = `payload.priceEntries.${commandIndex}`;
+  const fields: Record<string, string> = {};
+  if (!availability.vendor) fields[`${path}.vendorId`] = "Select an active Vendor.";
+  if (!availability.uom) fields[`${path}.uomId`] = "Select an active Unit of measure.";
+  if (!availability.legacyMode) {
+    fields[`${path}.sourcePriceVersionId`] =
+      "This saved budget has an unavailable historical scope and cannot be updated.";
+  }
+  throw new ApiError(
+    409,
+    "KNOWLEDGE_REFERENCE_INVALID",
+    "An active budget reference is unavailable.",
+    fields
+  );
+}
+
+/**
+ * The stored GST rows exist but no longer match the system policy. Retrying
+ * cannot help, so this never claims to be temporary.
+ */
+function fixedGstPolicyMismatch(): never {
+  throw new ApiError(
+    409,
+    "FIXED_GST_POLICY_MISMATCH",
+    "The stored GST policy does not match the system GST 18% policy.",
+    undefined
+  );
+}
+
+function fixedGstOutsideCoverage(commandIndex: number): never {
+  const from = new Date(AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.version.effectiveFrom);
+  const message = `GST 18% applies from ${formatPolicyDate(from)}. Choose a start date on or after that.`;
+  throw new ApiError(
+    422,
+    "FIXED_GST_OUTSIDE_COVERAGE",
+    message,
+    { [`payload.priceEntries.${commandIndex}.effectiveFrom`]: message }
+  );
+}
+
+function formatPolicyDate(value: Date): string {
+  return value.toISOString().slice(0, 10);
+}
+
+function effectiveBudgetOverlap(path: string): never {
+  const message = "Another budget for this unit already covers these dates.";
+  throw new ApiError(
+    409,
+    "EFFECTIVE_WINDOW_OVERLAP",
+    "Effective budget windows cannot overlap.",
+    { [path]: message }
+  );
 }
 
 function preserveTypedSpecificationCompatibility(
@@ -1291,46 +1711,12 @@ function preserveModeConfigurationCompatibility(
       issues
     });
 
-    const previousFields = new Map<string, Row>();
-    for (const field of structuredRows(previous?.fields)) {
-      const fieldId = optionalString(field.id) ?? optionalString(field._id);
-      if (fieldId) previousFields.set(fieldId, field);
-    }
+    /* Component values are authored by the Super Admin, so a write owns them
+       outright: it may add one, change one, or clear one by omitting the key. */
     const fields = Array.isArray(next.fields)
-      ? next.fields.map((fieldValue, fieldIndex) => {
+      ? next.fields.map((fieldValue) => {
           const nextField = asRow(fieldValue);
-          if (!nextField) return structuredClone(fieldValue);
-          const fieldPath = `${configurationPath}.fields.${fieldIndex}`;
-          const fieldId = optionalString(nextField.id) ?? optionalString(nextField._id);
-          const previousField = fieldId ? previousFields.get(fieldId) : undefined;
-          const previousHasValue = Boolean(previousField && Object.hasOwn(previousField, "value"));
-          const nextHasValue = Object.hasOwn(nextField, "value");
-
-          if (nextHasValue && !previousHasValue) {
-            issues.push(validationIssue(
-              `${fieldPath}.value`,
-              "MODE_VALUE_COMPATIBILITY_ONLY",
-              "Mode component values are compatibility-only and cannot be introduced by a new write."
-            ));
-          } else if (
-            nextHasValue &&
-            previousField &&
-            !isDeepStrictEqual(previousField.value, nextField.value)
-          ) {
-            issues.push(validationIssue(
-              `${fieldPath}.value`,
-              "IMMUTABLE_MODE_VALUE",
-              "The retained historical Mode component value is immutable."
-            ));
-          }
-
-          if (!nextHasValue && previousHasValue && previousField) {
-            return {
-              ...structuredClone(nextField),
-              value: structuredClone(previousField.value)
-            };
-          }
-          return structuredClone(nextField);
+          return nextField ? structuredClone(nextField) : structuredClone(fieldValue);
         })
       : structuredClone(next.fields);
     const compatible = { ...structuredClone(next), fields };
@@ -1550,7 +1936,7 @@ function sectionDto(row: Row): KnowledgeSectionEnvelope<Row> {
 async function enrichPricingSectionDto(row: Row): Promise<KnowledgeSectionEnvelope<Row>> {
   const dto = sectionDto(row);
   const priceVersionIds = referencedPriceVersionIds(dto.payload);
-  const [documents, specificationReferenceDocuments] = await Promise.all([
+  const [documents, specificationReferenceDocuments, quantityMarginDocument] = await Promise.all([
     priceVersionIds.length === 0
       ? Promise.resolve([])
       : AiEstimatorKnowledgePriceVersionModel.find({
@@ -1562,7 +1948,12 @@ async function enrichPricingSectionDto(row: Row): Promise<KnowledgeSectionEnvelo
       mainLineId: dto.mainLineId,
       revisionId: dto.revisionId,
       specificationId: { $ne: null }
-    }).select({ specificationId: 1 }).lean().exec()
+    }).select({ specificationId: 1 }).lean().exec(),
+    AiEstimatorKnowledgeSectionModel.findOne({
+      mainLineId: dto.mainLineId,
+      revisionId: dto.revisionId,
+      sectionKey: "quantity-margin"
+    }).select({ payload: 1 }).lean().exec()
   ]);
   const byId = new Map(documents.map((document) => {
     const price = asRow(document)!;
@@ -1582,8 +1973,12 @@ async function enrichPricingSectionDto(row: Row): Promise<KnowledgeSectionEnvelo
     payload: { ...dto.payload, priceEntries },
     referenceState: {
       specificationIds: [...new Set(
-        specificationReferenceDocuments
-          .map((document) => optionalString(asRow(document)?.specificationId))
+        [
+          ...specificationReferenceDocuments
+            .map((document) => optionalString(asRow(document)?.specificationId)),
+          ...structuredRows(payloadFor(asRow(quantityMarginDocument)).slabRates)
+            .map((slabRate) => optionalString(slabRate.specificationId))
+        ]
           .filter((id): id is string => Boolean(id))
       )].sort()
     }
@@ -1708,6 +2103,11 @@ interface KnowledgeItemEdge {
   readonly toId: string;
 }
 
+interface RevisionRelationshipValidationContext {
+  readonly updatedSectionKey: KnowledgeSectionKey;
+  readonly previousPayload: Row;
+}
+
 async function coordinateMainLineBasketDependency(
   basketId: string,
   session: ClientSession
@@ -1762,6 +2162,152 @@ async function coordinateNewModeConfigurationReferences(
   }
 }
 
+async function coordinateNewSlabRateUomReferences(
+  sectionKey: KnowledgeSectionKey,
+  priorPayload: Row,
+  nextPayload: Row,
+  session: ClientSession
+): Promise<void> {
+  if (sectionKey !== "quantity-margin") return;
+  const priorIds = slabRateUomIds(priorPayload);
+  const nextIds = slabRateUomIds(nextPayload);
+  for (const uomId of [...nextIds].filter((id) => !priorIds.has(id)).sort()) {
+    const uom = await AiEstimatorKnowledgeUomModel.findOneAndUpdate(
+      { _id: uomId, status: "active" },
+      { $inc: { dependencyEpoch: 1 } },
+      {
+        returnDocument: "after",
+        runValidators: true,
+        session,
+        timestamps: false
+      }
+    ).select({ _id: 1 }).lean().exec();
+    if (!uom) {
+      const index = structuredRows(nextPayload.slabRates)
+        .findIndex((row) => optionalString(row.uomId) === uomId);
+      invalidRevisionSectionRules([validationIssue(
+        `payload.slabRates.${Math.max(index, 0)}.uomId`,
+        "INVALID_REFERENCE",
+        "The selected UOM is not active or does not exist."
+      )]);
+    }
+  }
+}
+
+async function coordinateNewPriorityReferences(
+  sectionKey: KnowledgeSectionKey,
+  priorPayload: Row,
+  nextPayload: Row,
+  session: ClientSession
+): Promise<void> {
+  if (sectionKey === "overview") {
+    const priorPriorityId = optionalString(priorPayload.priorityId);
+    const nextPriorityId = optionalString(nextPayload.priorityId);
+    if (!nextPriorityId || nextPriorityId === priorPriorityId) return;
+    await coordinateCanonicalMainLinePriority(nextPriorityId, session);
+    return;
+  }
+  if (sectionKey !== "recommendations") return;
+
+  const priorIds = recommendationPriorityIds(priorPayload);
+  const nextIds = recommendationPriorityIds(nextPayload);
+  for (const priorityId of [...nextIds].filter((id) => !priorIds.has(id)).sort()) {
+    await coordinateActivePriority(priorityId, session);
+  }
+}
+
+async function coordinateNewSurfaceReferences(
+  sectionKey: KnowledgeSectionKey,
+  priorPayload: Row,
+  nextPayload: Row,
+  session: ClientSession
+): Promise<void> {
+  if (sectionKey !== "overview" && sectionKey !== "scope") return;
+  const priorIds = new Set(stringArray(priorPayload.surfaceIds));
+  const nextIds = new Set(stringArray(nextPayload.surfaceIds));
+  for (const surfaceId of [...nextIds].filter((id) => !priorIds.has(id)).sort()) {
+    const surface = await AiEstimatorKnowledgeSurfaceModel.findOneAndUpdate(
+      { _id: surfaceId, status: "active" },
+      { $inc: { dependencyEpoch: 1 } },
+      {
+        returnDocument: "after",
+        runValidators: true,
+        session,
+        timestamps: false
+      }
+    ).select({ _id: 1 }).lean().exec();
+    if (!surface) invalidKnowledgeReference("surface");
+  }
+}
+
+async function coordinateCanonicalMainLinePriority(
+  priorityId: string,
+  session: ClientSession
+): Promise<void> {
+  const canonical = findCanonicalKnowledgePriorityById(priorityId);
+  if (!canonical) invalidMainLinePriority();
+  const coordinated = await incrementPriorityDependencyEpoch(
+    canonicalPriorityFilter(canonical),
+    session
+  );
+  if (!coordinated) invalidMainLinePriority();
+}
+
+async function coordinateActivePriority(
+  priorityId: string,
+  session: ClientSession
+): Promise<void> {
+  const coordinated = await incrementPriorityDependencyEpoch(
+    { _id: priorityId, status: "active" },
+    session
+  );
+  if (!coordinated) invalidKnowledgeReference("priority");
+}
+
+async function incrementPriorityDependencyEpoch(
+  filter: Row,
+  session: ClientSession
+): Promise<boolean> {
+  const priority = await AiEstimatorKnowledgePriorityModel.findOneAndUpdate(
+    filter,
+    { $inc: { dependencyEpoch: 1 } },
+    {
+      returnDocument: "after",
+      runValidators: true,
+      session,
+      timestamps: false
+    }
+  ).select({ _id: 1 }).lean().exec();
+  return Boolean(priority);
+}
+
+function canonicalPriorityFilter(priority: CanonicalKnowledgePriority): Row {
+  return {
+    _id: priority.id,
+    semanticTier: priority.semanticTier,
+    code: priority.code,
+    name: priority.name,
+    displayOrder: priority.displayOrder,
+    status: "active"
+  };
+}
+
+function recommendationPriorityIds(payload: Row): Set<string> {
+  return new Set(
+    activeStructuredRows(payload.recommendations)
+      .map((row) => optionalString(row.priorityId))
+      .filter((id): id is string => Boolean(id))
+  );
+}
+
+function slabRateUomIds(payload: Row): Set<string> {
+  return new Set(
+    structuredRows(payload.slabRates)
+      .map((row) => optionalString(row.uomId))
+      .filter((id): id is string => Boolean(id))
+  );
+}
+
 async function coordinateCopiedBasketReferences(
   rows: Row[],
   session: ClientSession
@@ -1774,6 +2320,67 @@ async function coordinateCopiedBasketReferences(
     }
   }
   await coordinateBasketDependencies(basketIds, session);
+}
+
+async function coordinateCopiedSlabRateUomReferences(
+  rows: Row[],
+  session: ClientSession
+): Promise<void> {
+  const quantityMargin = rows.find(
+    (row) => row.sectionKey === "quantity-margin"
+  );
+  await coordinateNewSlabRateUomReferences(
+    "quantity-margin",
+    {},
+    payloadFor(quantityMargin),
+    session
+  );
+}
+
+async function coordinateCopiedPriorityReferences(
+  rows: Row[],
+  session: ClientSession
+): Promise<void> {
+  const overview = payloadFor(rows.find((row) => row.sectionKey === "overview"));
+  const recommendations = payloadFor(
+    rows.find((row) => row.sectionKey === "recommendations")
+  );
+  const mainLinePriorityId = optionalString(overview.priorityId);
+  if (mainLinePriorityId) {
+    await coordinateActivePriority(mainLinePriorityId, session);
+  }
+  const recommendationIds = recommendationPriorityIds(recommendations);
+  if (mainLinePriorityId) recommendationIds.delete(mainLinePriorityId);
+  for (const priorityId of [...recommendationIds].sort()) {
+    await coordinateActivePriority(priorityId, session);
+  }
+}
+
+async function coordinateCopiedSurfaceReferences(
+  rows: Row[],
+  session: ClientSession,
+  requireActive: boolean
+): Promise<void> {
+  const surfaceIds = new Set<string>();
+  for (const sectionKey of ["overview", "scope"] as const) {
+    const payload = payloadFor(rows.find((row) => row.sectionKey === sectionKey));
+    for (const surfaceId of stringArray(payload.surfaceIds)) surfaceIds.add(surfaceId);
+  }
+  for (const surfaceId of [...surfaceIds].sort()) {
+    const surface = await AiEstimatorKnowledgeSurfaceModel.findOneAndUpdate(
+      requireActive
+        ? { _id: surfaceId, status: "active" }
+        : { _id: surfaceId, status: { $ne: "archived" } },
+      { $inc: { dependencyEpoch: 1 } },
+      {
+        returnDocument: "after",
+        runValidators: true,
+        session,
+        timestamps: false
+      }
+    ).select({ _id: 1 }).lean().exec();
+    if (!surface) invalidKnowledgeReference("surface");
+  }
 }
 
 async function coordinateBasketDependencies(
@@ -1798,11 +2405,9 @@ async function coordinateBasketDependencies(
 function basketTargetIds(sectionKey: KnowledgeSectionKey, payload: Row): Set<string> {
   const candidates = sectionKey === "scope"
     ? payload.exclusions
-    : sectionKey === "recommendations"
-      ? payload.recommendations
-      : sectionKey === "advanced"
-        ? payload.dependencies
-        : null;
+    : sectionKey === "advanced"
+      ? payload.dependencies
+      : null;
   return new Set(
     structuredRows(candidates)
       .map((candidate) => optionalString(candidate.targetBasketId))
@@ -1825,11 +2430,12 @@ function legacyModeConfigurationIds(
 async function validateRevisionRelationships(
   mainLineId: string,
   rows: Row[],
-  session: ClientSession
+  session: ClientSession,
+  context?: RevisionRelationshipValidationContext
 ): Promise<void> {
   validateStoredRevisionPayloads(rows);
-  await validateRevisionMasterReferences(rows, session);
-  await validateRevisionSectionRules(rows, session);
+  await validateRevisionMasterReferences(rows, session, context);
+  await validateRevisionSectionRules(rows, session, context);
   await validateScopeBasketReferences(rows, session);
   const stepIssues = sectionGraphIssues(rows);
   if (stepIssues.length > 0) {
@@ -1899,7 +2505,8 @@ async function validateRevisionRelationships(
 
 async function validateRevisionMasterReferences(
   rows: Row[],
-  session: ClientSession
+  session: ClientSession,
+  context?: RevisionRelationshipValidationContext
 ): Promise<void> {
   const overview = payloadFor(rows.find((row) => row.sectionKey === "overview"));
   const scope = payloadFor(rows.find((row) => row.sectionKey === "scope"));
@@ -1914,7 +2521,6 @@ async function validateRevisionMasterReferences(
   }
 
   const priorityIds = new Set<string>();
-  addOptionalId(priorityIds, overview.priorityId);
   for (const entry of activeStructuredRows(recommendations.recommendations)) {
     addOptionalId(priorityIds, entry.priorityId);
   }
@@ -1965,15 +2571,19 @@ async function validateRevisionMasterReferences(
     }
     if (activeModeIds.size !== modeIds.size) invalidKnowledgeReference("mode");
   }
-  if (surfaceIds.size > 0 && await AiEstimatorKnowledgeSurfaceModel.countDocuments({
-    _id: { $in: [...surfaceIds] },
-    status: "active"
-  }).session(session).exec() !== surfaceIds.size) invalidKnowledgeReference("surface");
+  if (!context && surfaceIds.size > 0) {
+    await requireActiveSurfaceReferences(
+      stringArray(overview.surfaceIds),
+      stringArray(scope.surfaceIds),
+      session
+    );
+  }
 }
 
 async function validateRevisionSectionRules(
   rows: Row[],
-  session: ClientSession
+  session: ClientSession,
+  context?: RevisionRelationshipValidationContext
 ): Promise<void> {
   const issues: KnowledgeValidationIssue[] = [];
   const overview = payloadFor(rows.find((row) => row.sectionKey === "overview"));
@@ -2023,6 +2633,8 @@ async function validateRevisionSectionRules(
     }
   }
 
+  issues.push(...await slabRateRevisionIssues(rows, session, context));
+
   const productivity = activeStructuredRows(execution.productivity);
   const productivityUomIds = [...new Set(productivity
     .map((rule) => optionalString(rule.uomId))
@@ -2054,6 +2666,98 @@ async function validateRevisionSectionRules(
   }
 
   if (issues.length > 0) invalidRevisionSectionRules(issues);
+}
+
+async function slabRateRevisionIssues(
+  rows: Row[],
+  session: ClientSession,
+  context?: RevisionRelationshipValidationContext
+): Promise<KnowledgeValidationIssue[]> {
+  const issues: KnowledgeValidationIssue[] = [];
+  const pricing = payloadFor(rows.find((row) => row.sectionKey === "pricing"));
+  const quantityMargin = payloadFor(
+    rows.find((row) => row.sectionKey === "quantity-margin")
+  );
+  const slabRates = structuredRows(
+    quantityMargin.slabRates
+  ) as unknown as KnowledgeSlabRate[];
+  if (slabRates.length === 0) return issues;
+
+  const specificationIds = new Set(
+    structuredRows(pricing.specifications)
+      .map((specification) => optionalString(specification.id) ?? optionalString(specification._id))
+      .filter((id): id is string => Boolean(id))
+  );
+  const uomIds = [...new Set(slabRates.map((slabRate) => slabRate.uomId))];
+  const uomDocuments = await AiEstimatorKnowledgeUomModel.find({
+    _id: { $in: uomIds }
+  }).select({ _id: 1, decimalScale: 1, status: 1 }).session(session).lean().exec();
+  const uoms = new Map(uomDocuments.map((document) => {
+    const row = asRow(document)!;
+    return [requiredString(row._id), row] as const;
+  }));
+  const priorSlabRates = context?.updatedSectionKey === "quantity-margin"
+    ? new Map(structuredRows(context.previousPayload.slabRates).map((row) => [optionalString(row.id), row]))
+    : null;
+
+  slabRates.forEach((slabRate, index) => {
+    const path = `payload.slabRates.${index}`;
+    if (!specificationIds.has(slabRate.specificationId)) {
+      issues.push(validationIssue(
+        `${path}.specificationId`,
+        "INVALID_REFERENCE",
+        "The selected Specification does not exist in this revision's Pricing section."
+      ));
+    }
+    const uom = uoms.get(slabRate.uomId);
+    const prior = priorSlabRates?.get(slabRate.id);
+    const retainedUnavailableReference = context !== undefined && (
+      context.updatedSectionKey !== "quantity-margin" ||
+      optionalString(prior?.uomId) === slabRate.uomId
+    );
+    if (!uom || (uom.status !== "active" && !retainedUnavailableReference)) {
+      issues.push(validationIssue(
+        `${path}.uomId`,
+        "INVALID_REFERENCE",
+        "The selected UOM is not active or does not exist."
+      ));
+      return;
+    }
+    try {
+      const scaledQuantity = parseScaledDecimal(
+        slabRate.quantity,
+        requiredInteger(uom.decimalScale)
+      );
+      if (scaledQuantity === 0n) {
+        issues.push(validationIssue(
+          `${path}.quantity`,
+          "INVALID_RANGE",
+          "Quantity must be greater than zero."
+        ));
+        return;
+      }
+      calculateSlabRateEstimatedCost({
+        unitRatePaise: slabRate.unitRatePaise,
+        quantity: slabRate.quantity,
+        quantityScale: requiredInteger(uom.decimalScale)
+      });
+    } catch (error) {
+      const calculationError = error instanceof KnowledgeCalculationError
+        ? error
+        : null;
+      const derivedCostOverflow = calculationError?.code === "UNSAFE_RESULT";
+      issues.push(validationIssue(
+        derivedCostOverflow ? `${path}.unitRatePaise` : `${path}.quantity`,
+        derivedCostOverflow ? "UNSAFE_RESULT" : "INVALID_DECIMAL",
+        derivedCostOverflow
+          ? "Quantity multiplied by Unit rate exceeds the supported paise boundary."
+          : error instanceof Error
+            ? error.message
+            : "Enter a Quantity matching the selected UOM precision."
+      ));
+    }
+  });
+  return issues;
 }
 
 function validateStoredRevisionPayloads(rows: Row[]): void {
@@ -2102,6 +2806,65 @@ function addOptionalId(target: Set<string>, value: unknown): void {
   if (id) target.add(id);
 }
 
+/* Section saves keep a Surface that was deactivated after it was assigned, so
+   activation is the first place the actor learns it is stale. Name the Surface
+   rather than the reference: a bare "surface is unavailable" cannot be acted on,
+   and legacy Scope IDs have no editor at all, so they need saying out loud. */
+async function requireActiveSurfaceReferences(
+  overviewSurfaceIds: readonly string[],
+  scopeSurfaceIds: readonly string[],
+  session: ClientSession
+): Promise<void> {
+  const referencedIds = new Set([...overviewSurfaceIds, ...scopeSurfaceIds]);
+  if (referencedIds.size === 0) return;
+
+  const surfaces = await AiEstimatorKnowledgeSurfaceModel
+    .find({ _id: { $in: [...referencedIds] } })
+    .select({ _id: 1, name: 1, status: 1 })
+    .session(session)
+    .lean()
+    .exec();
+  const activeIds = new Set<string>();
+  const namesById = new Map<string, string>();
+  for (const document of surfaces) {
+    const row = asRow(document);
+    if (!row) continue;
+    const id = requiredString(row._id);
+    const name = optionalString(row.name);
+    if (name) namesById.set(id, name);
+    if (row.status === "active") activeIds.add(id);
+  }
+
+  const unavailableIds = [...referencedIds].filter((id) => !activeIds.has(id));
+  if (unavailableIds.length === 0) return;
+
+  /* Stable IDs stay out of every user-facing string; a Surface that no longer
+     exists is described, never identified. */
+  const describe = (ids: readonly string[]) => [...new Set(
+    ids.map((id) => namesById.get(id) ?? "a Surface that no longer exists")
+  )].sort((left, right) => left.localeCompare(right)).join(", ");
+
+  const overviewReferenced = new Set(overviewSurfaceIds);
+  const unavailableInOverview = unavailableIds.filter((id) => overviewReferenced.has(id));
+  const unavailableInScopeOnly = unavailableIds.filter((id) => !overviewReferenced.has(id));
+  const fields: Record<string, string> = {};
+  if (unavailableInOverview.length > 0) {
+    fields["payload.surfaceIds"] =
+      `Remove or reactivate ${describe(unavailableInOverview)} before activating.`;
+  }
+  if (unavailableInScopeOnly.length > 0) {
+    fields["scope.surfaceIds"] =
+      `Legacy Scope data still references ${describe(unavailableInScopeOnly)}.`;
+  }
+
+  throw new ApiError(
+    409,
+    "KNOWLEDGE_REFERENCE_INVALID",
+    `An active surface reference is unavailable: ${describe(unavailableIds)}.`,
+    fields
+  );
+}
+
 function invalidKnowledgeReference(label: string): never {
   throw new ApiError(
     409,
@@ -2122,6 +2885,26 @@ function invalidSpecificationRemoval(): never {
   );
 }
 
+function invalidSlabSpecificationRemoval(): never {
+  throw new ApiError(
+    409,
+    "KNOWLEDGE_REFERENCE_INVALID",
+    "A Specification referenced by a saved quantity slab cannot be removed.",
+    {
+      "payload.specifications":
+        "Remove and save every priced quantity slab that references this Specification before removing it."
+    }
+  );
+}
+
+function invalidMainLinePriority(): never {
+  invalidRevisionSectionRules([validationIssue(
+    "payload.priorityId",
+    "INVALID_REFERENCE",
+    "Select an active canonical Priority."
+  )]);
+}
+
 function itemRelationsForRows(mainLineId: string, rows: Row[]): Array<{
   targetMainLineId: string;
   targetBasketId: string | null;
@@ -2134,13 +2917,13 @@ function itemRelationsForRows(mainLineId: string, rows: Row[]): Array<{
   }> = [];
   for (const row of rows) {
     const payload = payloadFor(row);
-    const candidates = row.sectionKey === "recommendations"
-      ? payload.recommendations
-      : row.sectionKey === "advanced"
-        ? payload.dependencies
-        : row.sectionKey === "scope"
-          ? payload.exclusions
-          : null;
+    /* Recommendations and their Exclusions are free text now, so only the
+       stable-ID relationships still form edges. */
+    const candidates = row.sectionKey === "advanced"
+      ? payload.dependencies
+      : row.sectionKey === "scope"
+        ? payload.exclusions
+        : null;
     if (!Array.isArray(candidates)) continue;
     for (const candidate of candidates) {
       const relation = asRow(candidate);

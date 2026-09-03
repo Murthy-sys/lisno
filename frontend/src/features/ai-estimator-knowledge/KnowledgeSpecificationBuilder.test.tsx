@@ -11,12 +11,14 @@ function Harness({
   initialValue = [],
   priceEntries = [],
   referencedSpecificationIds = [],
+  slabReferencedSpecificationIds = [],
   readOnly = false,
   onValue = vi.fn()
 }: {
   readonly initialValue?: KnowledgeJsonValue;
   readonly priceEntries?: KnowledgeJsonValue;
   readonly referencedSpecificationIds?: readonly string[];
+  readonly slabReferencedSpecificationIds?: readonly string[];
   readonly readOnly?: boolean;
   readonly onValue?: (value: readonly KnowledgeJsonValue[]) => void;
 }) {
@@ -27,6 +29,7 @@ function Harness({
         value={value}
         priceEntries={priceEntries}
         referencedSpecificationIds={referencedSpecificationIds}
+        slabReferencedSpecificationIds={slabReferencedSpecificationIds}
         readOnly={readOnly}
         onDirty={() => undefined}
         onChange={(next) => {
@@ -144,9 +147,22 @@ describe("KnowledgeSpecificationBuilder", () => {
     const remove = screen.getByRole("button", { name: "Remove Specifications entry 1" });
     expect(remove).toBeDisabled();
     expect(remove).toHaveAccessibleDescription(
-      "This Specification is retained by an immutable historical price version and cannot be removed."
+      "This Specification is retained by saved configuration or immutable price history and cannot be removed."
     );
-    expect(screen.getByText(/immutable historical price version/u)).toBeVisible();
+    expect(screen.getByText(/saved configuration or immutable price history/u)).toBeVisible();
+  });
+
+  it("uses slab-specific guidance for live priced-slab references", () => {
+    render(<Harness
+      initialValue={[{ id: "spec-slab", name: "Slab plywood" }]}
+      slabReferencedSpecificationIds={["spec-slab"]}
+    />);
+
+    const remove = screen.getByRole("button", { name: "Remove Specifications entry 1" });
+    expect(remove).toBeDisabled();
+    expect(remove).toHaveAccessibleDescription(
+      "Remove this Specification from Quantity slabs and save Quantity & margin before removing it from Budgeting."
+    );
   });
 
   it("keeps descriptive values visible and disables controls in read-only mode", () => {

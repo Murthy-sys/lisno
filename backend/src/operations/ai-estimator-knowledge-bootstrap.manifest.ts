@@ -4,6 +4,12 @@ import {
   normalizeKnowledgeIdentity
 } from "../domain/ai-estimator-knowledge.js";
 import { deriveKnowledgeCompleteness } from "../domain/ai-estimator-knowledge-completeness.js";
+import {
+  AI_ESTIMATOR_KNOWLEDGE_CANONICAL_PRIORITIES,
+  AI_ESTIMATOR_KNOWLEDGE_CANONICAL_PRIORITY_IDS,
+  type CanonicalKnowledgePriority
+} from "../domain/ai-estimator-knowledge-priority.js";
+import { AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY } from "../domain/ai-estimator-knowledge-fixed-gst.js";
 
 export const AI_ESTIMATOR_KNOWLEDGE_BOOTSTRAP_SYSTEM_ACTOR_ID =
   "system-ai-estimator-knowledge-bootstrap-v1" as const;
@@ -36,9 +42,9 @@ export const AI_ESTIMATOR_KNOWLEDGE_BOOTSTRAP_IDS = Object.freeze({
   electricalBasket: basketId("Electrical"),
   paintingBasket: basketId("Painting"),
   uom: "knowledge-uom-bootstrap-square-feet",
-  taxRule: "knowledge-tax-bootstrap-gst-18",
-  taxVersion: "knowledge-tax-version-bootstrap-gst-18-v1",
-  priority: "knowledge-priority-bootstrap-medium",
+  taxRule: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.rule.id,
+  taxVersion: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.version.id,
+  priority: AI_ESTIMATOR_KNOWLEDGE_CANONICAL_PRIORITY_IDS.medium,
   surface: "knowledge-surface-bootstrap-ceiling",
   mode: "knowledge-mode-bootstrap-pmc",
   mainLine: "knowledge-main-line-bootstrap-plain-false-ceiling",
@@ -99,19 +105,18 @@ const masters: AiEstimatorKnowledgeBootstrapManifestResource[] = [
     kind: "master",
     document: masterDocument({
       id: AI_ESTIMATOR_KNOWLEDGE_BOOTSTRAP_IDS.taxRule,
-      code: "GST_18",
-      name: "GST 18%"
+      code: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.rule.code,
+      name: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.rule.name,
+      displayOrder: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.rule.displayOrder
     })
   },
-  {
-    collection: "aiEstimatorKnowledgePriorities",
-    kind: "master",
-    document: masterDocument({
-      id: AI_ESTIMATOR_KNOWLEDGE_BOOTSTRAP_IDS.priority,
-      code: "MEDIUM",
-      name: "Medium"
+  ...AI_ESTIMATOR_KNOWLEDGE_CANONICAL_PRIORITIES.map(
+    (priority): AiEstimatorKnowledgeBootstrapManifestResource => ({
+      collection: "aiEstimatorKnowledgePriorities",
+      kind: "master",
+      document: priorityMasterDocument(priority)
     })
-  },
+  ),
   {
     collection: "aiEstimatorKnowledgeSurfaces",
     kind: "master",
@@ -307,13 +312,13 @@ const taxVersion: AiEstimatorKnowledgeBootstrapManifestResource = {
   document: {
     _id: AI_ESTIMATOR_KNOWLEDGE_BOOTSTRAP_IDS.taxVersion,
     taxRuleId: AI_ESTIMATOR_KNOWLEDGE_BOOTSTRAP_IDS.taxRule,
-    versionNumber: 1,
-    rateBps: 1_800,
-    treatment: "exclusive",
-    applicability: "Interior estimation",
-    effectiveFrom: new Date(AI_ESTIMATOR_KNOWLEDGE_BOOTSTRAP_TIMESTAMP),
-    effectiveTo: null,
-    status: "active",
+    versionNumber: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.version.versionNumber,
+    rateBps: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.version.rateBps,
+    treatment: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.version.treatment,
+    applicability: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.version.applicability,
+    effectiveFrom: new Date(AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.version.effectiveFrom),
+    effectiveTo: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.version.effectiveTo,
+    status: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.version.status,
     version: 1,
     ...actorMetadata
   }
@@ -336,6 +341,7 @@ function masterDocument(input: {
   id: string;
   code: string;
   name: string;
+  displayOrder?: number;
   decimalScale?: number;
 }): Record<string, unknown> {
   return {
@@ -345,12 +351,27 @@ function masterDocument(input: {
     name: input.name,
     nameNormalized: normalizeKnowledgeIdentity(input.name),
     description: null,
-    displayOrder: 0,
+    displayOrder: input.displayOrder ?? 0,
     status: "active",
     ...(input.decimalScale === undefined ? {} : { decimalScale: input.decimalScale }),
     version: 1,
     ...actorMetadata,
     archivedAt: null,
     archivedById: null
+  };
+}
+
+function priorityMasterDocument(
+  priority: CanonicalKnowledgePriority
+): Record<string, unknown> {
+  return {
+    ...masterDocument({
+      id: priority.id,
+      code: priority.code,
+      name: priority.name,
+      displayOrder: priority.displayOrder
+    }),
+    semanticTier: priority.semanticTier,
+    dependencyEpoch: 0
   };
 }

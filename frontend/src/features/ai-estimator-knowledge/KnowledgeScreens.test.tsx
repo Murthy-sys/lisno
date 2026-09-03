@@ -19,7 +19,8 @@ import type {
   KnowledgeRevision,
   KnowledgeSectionEnvelope,
   KnowledgeSectionMutationEnvelope,
-  KnowledgeSectionKey
+  KnowledgeSectionKey,
+  KnowledgeSurface
 } from "./knowledgeTypes";
 
 vi.mock("../../auth/AuthProvider", () => ({
@@ -39,6 +40,7 @@ vi.mock("./knowledgeApi", async (importOriginal) => {
     listKnowledgeBaskets: vi.fn(),
     listKnowledgeMasters: vi.fn(),
     createKnowledgeMaster: vi.fn(),
+    createKnowledgeSurface: vi.fn(),
     getKnowledgeItem: vi.fn(),
     getKnowledgeHistory: vi.fn(),
     getKnowledgeSection: vi.fn(),
@@ -128,6 +130,26 @@ const wallSurface: KnowledgeMaster = {
   decimalScale: undefined
 };
 
+const canonicalPriorities: readonly KnowledgeMaster[] = [
+  { id: "priority-low", name: "Low", code: "LOW", semanticTier: "low" },
+  { id: "priority-high", name: "High", code: "HIGH", semanticTier: "high" },
+  { id: "priority-medium", name: "Medium", code: "MEDIUM", semanticTier: "medium" },
+  {
+    id: "priority-non-negotiable",
+    name: "Non Negotiable",
+    code: "NON_NEGOTIABLE",
+    semanticTier: "non_negotiable"
+  }
+].map((priority, displayOrder) => ({
+  ...squareFoot,
+  ...priority,
+  masterType: "priorities" as const,
+  semanticTier: priority.semanticTier as KnowledgeMaster["semanticTier"],
+  description: null,
+  displayOrder,
+  decimalScale: undefined
+}));
+
 const serverPricingSpecification = {
   id: "spec-mode-1",
   name: "Server specification"
@@ -215,20 +237,26 @@ function expectHeadingsInOrder(container: HTMLElement, names: readonly string[])
 }
 
 function expectModeRegionsInOrder(container: HTMLElement) {
-  const pricing = within(container).getByRole("region", { name: "Pricing" });
+  const pricing = within(container).getByRole("region", { name: "Budgeting" });
+  const surfaces = within(container).getByRole("region", { name: "Surfaces" });
   const quantityMargin = within(container).getByRole("region", { name: "Quantity & margin" });
   expect(
-    pricing.compareDocumentPosition(quantityMargin) & Node.DOCUMENT_POSITION_FOLLOWING
+    pricing.compareDocumentPosition(surfaces) & Node.DOCUMENT_POSITION_FOLLOWING
+  ).toBeTruthy();
+  expect(
+    surfaces.compareDocumentPosition(quantityMargin) & Node.DOCUMENT_POSITION_FOLLOWING
   ).toBeTruthy();
 }
 
 async function findPricingSpecificationName() {
-  const pricing = await screen.findByRole("region", { name: "Pricing" });
+  const pricing = await screen.findByRole("region", { name: "Budgeting" });
   const specifications = within(pricing).getByRole("region", { name: "Specifications" });
   return within(specifications).getByRole("textbox", { name: "Specification name" });
 }
 
-function mockConfiguredModeSections() {
+function mockConfiguredModeSections(
+  quantityMarginPayload: KnowledgeJsonObject = { startMarginBps: 100, gapBehavior: "no_adjustment" }
+) {
   vi.mocked(knowledgeApi.listKnowledgeMasters).mockImplementation(async (type) => ({
     items: type === "uoms" ? [squareFoot, squareMetre] : type === "surfaces" ? [wallSurface] : [],
     pagination: { ...page, total: type === "uoms" ? 2 : type === "surfaces" ? 1 : 0 }
@@ -236,7 +264,7 @@ function mockConfiguredModeSections() {
   vi.mocked(knowledgeApi.getKnowledgeSection).mockImplementation(async (_lineId, _revisionId, sectionKey) => {
     if (sectionKey === "overview") return section(sectionKey, { description: "Server overview", uomId: squareFoot.id });
     if (sectionKey === "pricing") return section(sectionKey, configuredPricingPayload());
-    if (sectionKey === "quantity-margin") return section(sectionKey, { startMarginBps: 100 });
+    if (sectionKey === "quantity-margin") return section(sectionKey, quantityMarginPayload);
     return section(sectionKey);
   });
 }
@@ -288,12 +316,12 @@ describe("AI estimator knowledge screens", () => {
     expect(screen.getByText("Main Basket · Carpentry")).toBeVisible();
 
     const status = screen.getByRole("region", { name: "Workspace status" });
+    expect(within(status).getByText("Configuration completeness")).toBeVisible();
     expect(within(status).getByText("50%")).toBeVisible();
-    expect(within(status).getByText("Ready to activate")).toBeVisible();
-    expect(within(status).getByText("Draft revision 1")).toBeVisible();
-    expect(within(status).getByText("No active revision")).toBeVisible();
-    expect(status).not.toHaveTextContent("Backend-derived activation readiness");
-    expect(status).not.toHaveTextContent("Current view");
+    /* Completeness is the only status here. Revision numbers and activation
+       readiness belong to the section header and the activation dialog. */
+    expect(status).not.toHaveTextContent(/revision/iu);
+    expect(status).not.toHaveTextContent(/Ready|Blocked|Archived|Inactive/u);
 
     const pageActions = screen.getByRole("group", { name: "Page actions" });
     expect(within(pageActions).queryByRole("button", { name: /^Save /u })).not.toBeInTheDocument();
@@ -302,77 +330,6 @@ describe("AI estimator knowledge screens", () => {
     expect(main).not.toBeNull();
     expect(history).not.toBeNull();
     expect(main!.compareDocumentPosition(history!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
-  });
-
-  it("reports an active revision as Active instead of activation-ready", async () => {
-    const activeRevision: KnowledgeRevision = {
-      ...revision,
-      status: "active",
-      activatedAt: revision.updatedAt,
-      activatedById: "super-admin-1"
-    };
-    vi.mocked(knowledgeApi.getKnowledgeItem).mockResolvedValue({
-      ...item,
-      status: "active",
-      activeRevisionId: activeRevision.id,
-      draftRevisionId: null,
-      activeRevision,
-      draftRevision: null
-    });
-    vi.mocked(knowledgeApi.getKnowledgeHistory).mockResolvedValue({ items: [activeRevision], pagination: page });
-    renderRoute(<KnowledgeItemWorkspacePage />, "/admin/configuration/estimation/items/line-1", "/admin/configuration/estimation/items/:itemId");
-
-    const status = await screen.findByRole("region", { name: "Workspace status" });
-    expect(within(status).getByText("Active")).toBeVisible();
-    expect(within(status).queryByText("Ready to activate")).not.toBeInTheDocument();
-  });
-
-  it("reports an archived item as Archived regardless of its saved revision state", async () => {
-    vi.mocked(knowledgeApi.getKnowledgeItem).mockResolvedValue({
-      ...item,
-      status: "archived",
-      allowedActions: ["duplicate"]
-    });
-    renderRoute(<KnowledgeItemWorkspacePage />, "/admin/configuration/estimation/items/line-1", "/admin/configuration/estimation/items/:itemId");
-
-    const status = await screen.findByRole("region", { name: "Workspace status" });
-    expect(within(status).getByText("Archived")).toBeVisible();
-    expect(within(status).queryByText("Ready to activate")).not.toBeInTheDocument();
-  });
-
-  it("reports a deactivated Main Line as Inactive even when it retains an active revision", async () => {
-    const retainedRevision: KnowledgeRevision = {
-      ...revision,
-      status: "active",
-      activatedAt: revision.updatedAt,
-      activatedById: "super-admin-1"
-    };
-    vi.mocked(knowledgeApi.getKnowledgeItem).mockResolvedValue({
-      ...item,
-      status: "inactive",
-      activeRevisionId: retainedRevision.id,
-      draftRevisionId: null,
-      activeRevision: retainedRevision,
-      draftRevision: null
-    });
-    vi.mocked(knowledgeApi.getKnowledgeHistory).mockResolvedValue({ items: [retainedRevision], pagination: page });
-    renderRoute(<KnowledgeItemWorkspacePage />, "/admin/configuration/estimation/items/line-1", "/admin/configuration/estimation/items/:itemId");
-
-    const status = await screen.findByRole("region", { name: "Workspace status" });
-    expect(within(status).getByText("Inactive")).toBeVisible();
-    expect(within(status).queryByText("Active")).not.toBeInTheDocument();
-  });
-
-  it("reports Draft activation readiness for an inactive Main Line that has a new Draft", async () => {
-    vi.mocked(knowledgeApi.getKnowledgeItem).mockResolvedValue({
-      ...item,
-      status: "inactive"
-    });
-    renderRoute(<KnowledgeItemWorkspacePage />, "/admin/configuration/estimation/items/line-1", "/admin/configuration/estimation/items/:itemId");
-
-    const status = await screen.findByRole("region", { name: "Workspace status" });
-    expect(within(status).getByText("Ready to activate")).toBeVisible();
-    expect(within(status).queryByText("Inactive")).not.toBeInTheDocument();
   });
 
   it("shows a terminal empty state with no Save when the item has no revision", async () => {
@@ -386,7 +343,6 @@ describe("AI estimator knowledge screens", () => {
     renderRoute(<KnowledgeItemWorkspacePage />, "/admin/configuration/estimation/items/line-1", "/admin/configuration/estimation/items/:itemId");
 
     expect(await screen.findByText("This item has no revision to display.")).toBeVisible();
-    expect(within(screen.getByRole("region", { name: "Workspace status" })).getByText("No revision")).toBeVisible();
     expect(screen.queryByRole("button", { name: /^Save /u })).not.toBeInTheDocument();
     expect(screen.queryByText("Loading Overview…")).not.toBeInTheDocument();
     expect(screen.queryByText("Active history is read-only")).not.toBeInTheDocument();
@@ -407,7 +363,6 @@ describe("AI estimator knowledge screens", () => {
     renderRoute(<KnowledgeItemWorkspacePage />, "/admin/configuration/estimation/items/line-1", "/admin/configuration/estimation/items/:itemId");
 
     await screen.findByRole("heading", { name: "Configured values" });
-    expect(screen.getByText("Blocked · 2 blockers")).toBeVisible();
     const actions = screen.getByRole("group", { name: "Page actions" });
     expect(within(actions).getAllByRole("button")).toEqual([
       within(actions).getByRole("button", { name: "Review activation" }),
@@ -434,9 +389,9 @@ describe("AI estimator knowledge screens", () => {
     });
     renderRoute(<KnowledgeItemWorkspacePage />, "/admin/configuration/estimation/items/line-1", "/admin/configuration/estimation/items/:itemId");
 
-    expect(await screen.findByText("Ready with 2 warnings")).toBeVisible();
-    expect(screen.getByRole("button", { name: "Review and activate" })).toBeVisible();
-    expect(screen.queryByText(/Blocked/u)).not.toBeInTheDocument();
+    /* Warnings do not block, so the action still reads as a plain activation. */
+    expect(await screen.findByRole("button", { name: "Review and activate" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Review activation" })).not.toBeInTheDocument();
   });
 
   it("requires both frontend permission and backend allowed actions for workspace mutations", async () => {
@@ -572,7 +527,7 @@ describe("AI estimator knowledge screens", () => {
     await screen.findByRole("heading", { name: "Configured values", level: 2 });
     expect(screen.queryByRole("combobox", { name: "Section state" })).not.toBeInTheDocument();
 
-    for (const sectionName of ["Recommendations", "Quality"]) {
+    for (const sectionName of ["Recommendation & Exclusions", "Quality Parameter"]) {
       await user.click(screen.getByRole("tab", { name: sectionName }));
       await screen.findByRole("heading", { name: sectionName, level: 2 });
       expect(screen.queryByRole("combobox", { name: "Section state" })).not.toBeInTheDocument();
@@ -872,47 +827,219 @@ describe("AI estimator knowledge screens", () => {
 
     expect(await screen.findByRole("heading", { name: "Configured values" })).toBeVisible();
     expect(screen.getByRole("combobox", { name: "Unit of measure (UOM)" })).toBeVisible();
-    expect(screen.getByRole("button", { name: "Surfaces" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Add Unit" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Add unit of measure" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Surfaces" })).not.toBeInTheDocument();
     await waitFor(() => {
       expect(screen.queryByRole("radiogroup", { name: "Modes" })).not.toBeInTheDocument();
       expect(screen.queryByRole("heading", { name: "Selected Mode details" })).not.toBeInTheDocument();
       expect(screen.queryByRole("heading", { name: "Shared calculation values" })).not.toBeInTheDocument();
       expect(screen.queryByRole("heading", { name: "Specifications" })).not.toBeInTheDocument();
-      expect(screen.queryByRole("heading", { name: "Pricing" })).not.toBeInTheDocument();
-      expect(screen.queryByRole("heading", { name: "Recommendations", level: 2 })).not.toBeInTheDocument();
-      expect(screen.queryByRole("heading", { name: "Quality", level: 2 })).not.toBeInTheDocument();
+      expect(screen.queryByRole("heading", { name: "Budgeting" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("heading", { name: "Recommendation & Exclusions", level: 2 })).not.toBeInTheDocument();
+      expect(screen.queryByRole("heading", { name: "Quality Parameter", level: 2 })).not.toBeInTheDocument();
       expect(screen.queryByRole("heading", { name: "All section summaries" })).not.toBeInTheDocument();
     });
     expect(screen.queryByRole("button", { name: /^Open /u })).not.toBeInTheDocument();
     expect(screen.queryByText(/No .* configured/u)).not.toBeInTheDocument();
   });
 
-  it("keeps descriptive specifications separate from new prices while resolving immutable tax versions", async () => {
+  it("keeps descriptive Specifications separate from a business-only saved Budget", async () => {
     const user = userEvent.setup();
+    const vendor = { ...squareFoot, id: "vendor-1", masterType: "vendors", code: "ACME", name: "Acme Vendor" } as const;
     const tax = { id: "tax-1", masterType: "taxes", code: "GST18", name: "GST 18%", description: null, displayOrder: 0, status: "active", taxVersions: [{ id: "tax-version-1", taxRuleId: "tax-1", versionNumber: 1, rateBps: 1800, treatment: "exclusive", applicability: "materials", effectiveFrom: "2026-08-01T00:00:00.000Z", effectiveTo: null, status: "active", version: 1, createdById: "super-admin-1", updatedById: "super-admin-1", createdAt: item.createdAt, updatedAt: item.updatedAt }], version: 1, createdById: "super-admin-1", updatedById: "super-admin-1", createdAt: item.createdAt, updatedAt: item.updatedAt } as const;
-    vi.mocked(knowledgeApi.listKnowledgeMasters).mockImplementation(async (type) => type === "taxes" ? { items: [tax], pagination: { ...page, total: 1 } } : { items: [], pagination: page });
-    vi.mocked(knowledgeApi.getKnowledgeSection).mockImplementation(async (_lineId, _revisionId, sectionKey) => section(sectionKey, sectionKey === "pricing" ? { specifications: [{ id: "spec-1", name: "Premium ply" }], priceEntries: [{ operation: "append", priceEntryId: "price-entry-1", specificationId: null, taxRuleId: "tax-1", taxVersionId: "tax-version-1" }] } : {}));
+    vi.mocked(knowledgeApi.listKnowledgeMasters).mockImplementation(async (type) => {
+      const items = type === "taxes" ? [tax] : type === "vendors" ? [vendor] : type === "uoms" ? [squareFoot] : [];
+      return { items, pagination: { ...page, total: items.length } };
+    });
+    vi.mocked(knowledgeApi.getKnowledgeSection).mockImplementation(async (_lineId, _revisionId, sectionKey) => section(sectionKey, sectionKey === "pricing" ? {
+      specifications: [{ id: "spec-1", name: "Premium ply" }],
+      priceEntries: [{
+        operation: "reference",
+        priceEntryId: "price-entry-1",
+        priceVersionId: "price-version-1",
+        priceVersion: {
+          id: "price-version-1",
+          priceEntryId: "price-entry-1",
+          versionNumber: 1,
+          vendorId: vendor.id,
+          uomId: squareFoot.id,
+          taxRuleId: tax.id,
+          taxVersionId: "tax-version-1",
+          inputAmountPaise: 12_000,
+          baseAmountPaise: 12_000,
+          taxAmountPaise: 2_160,
+          totalAmountPaise: 14_160,
+          treatment: "exclusive",
+          effectiveFrom: "2026-08-01T00:00:00.000Z",
+          effectiveTo: null,
+          status: "active"
+        }
+      }]
+    } : {}));
     renderRoute(<KnowledgeItemWorkspacePage />, "/admin/configuration/estimation/items/line-1", "/admin/configuration/estimation/items/:itemId");
 
     await user.click(await screen.findByRole("tab", { name: "Mode" }));
     expect(await findPricingSpecificationName()).toHaveValue("Premium ply");
     expect(screen.queryByRole("combobox", { name: "Specification" })).not.toBeInTheDocument();
-    expect(screen.getByRole("combobox", { name: "Tax rule" })).toHaveDisplayValue("GST 18%");
-    expect(screen.getByRole("combobox", { name: "Tax version" })).toHaveDisplayValue(/Version 1 · 18%/u);
-    expect(screen.queryByRole("textbox", { name: /Tax version ID/iu })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /₹\s?120\.00 per Square foot · Acme Vendor/iu }));
+    const budget = screen.getByRole("group", { name: "Saved budget details" });
+    expect(within(budget).getByText("Amount before GST")).toBeVisible();
+    expect(within(budget).getByText("GST")).toBeVisible();
+    expect(within(budget).queryByText("GST 18%")).not.toBeInTheDocument();
+    expect(within(budget).getByText(/₹\s?141\.60/u)).toBeVisible();
+    const budgeting = screen.getByRole("region", { name: "Budgeting" });
+    expect(within(budgeting).queryByRole("combobox", { name: /Tax version|Mode|Price operation/iu })).not.toBeInTheDocument();
+    expect(within(budgeting).queryByRole("textbox", { name: /Price entry|Price version|Tax version/iu })).not.toBeInTheDocument();
   });
 
-  it("renders immutable resolved price details and prepares a replacement with the same stable entry ID", async () => {
+  /* Parked with MODE_PRIORITY_ENABLED in KnowledgeModePanel. Re-enable this
+     test when the Mode tab's Priority editor is switched back on. */
+  it.skip("places Main Line Priority after Specifications, keeps it out of Overview, and saves its stable ID through Overview", async () => {
     const user = userEvent.setup();
-    vi.mocked(knowledgeApi.getKnowledgeSection).mockImplementation(async (_lineId, _revisionId, sectionKey) => section(sectionKey, sectionKey === "pricing" ? { priceEntries: [{ operation: "reference", priceEntryId: "price-entry-1", priceVersionId: "price-version-1", priceVersion: { id: "price-version-1", priceEntryId: "price-entry-1", versionNumber: 1, vendorId: "vendor-1", uomId: "uom-1", specificationId: null, modeId: null, taxRuleId: "tax-1", taxVersionId: "tax-version-1", inputAmountPaise: 12000, baseAmountPaise: 12000, taxAmountPaise: 2160, totalAmountPaise: 14160, treatment: "exclusive", effectiveFrom: "2026-08-01T00:00:00.000Z", effectiveTo: null, status: "active", reviewRequired: false } }] } : {}));
+    vi.mocked(knowledgeApi.listKnowledgeMasters).mockImplementation(async (type) => ({
+      items: type === "priorities" ? canonicalPriorities : [],
+      pagination: { ...page, total: type === "priorities" ? canonicalPriorities.length : 0 }
+    }));
+    vi.mocked(knowledgeApi.getKnowledgeSection).mockImplementation(async (_lineId, _revisionId, sectionKey) => {
+      if (sectionKey === "overview") {
+        return section(sectionKey, {
+          uomId: "uom-preserve",
+          priorityId: "priority-medium",
+          surfaceIds: ["surface-preserve"],
+          hiddenCompatibility: { preserve: true }
+        }, 8);
+      }
+      if (sectionKey === "pricing") {
+        return section(sectionKey, {
+          specifications: [{ id: "spec-priority", name: "Premium ply" }],
+          brands: [{ id: "brand-priority", name: "Acme supplier" }],
+          priceEntries: []
+        });
+      }
+      return section(sectionKey);
+    });
+    vi.mocked(knowledgeApi.updateKnowledgeSection).mockImplementation(
+      async (_lineId, _revisionId, sectionKey, input) => mutationSection(
+        sectionKey,
+        input.payload,
+        input.expectedVersion + 1,
+        (input.expectedAggregateVersion ?? item.version) + 1
+      )
+    );
+    renderRoute(
+      <KnowledgeItemWorkspacePage />,
+      "/admin/configuration/estimation/items/line-1",
+      "/admin/configuration/estimation/items/:itemId"
+    );
+
+    await screen.findByRole("heading", { name: "Configured values" });
+    expect(screen.queryByRole("combobox", { name: "Priority" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("tab", { name: "Mode" }));
+
+    const pricing = await screen.findByRole("region", { name: "Budgeting" });
+    const specifications = within(pricing).getByRole("region", { name: "Specifications" });
+    const priority = within(pricing).getByRole("combobox", { name: "Priority" });
+    const prioritySection = priority.closest(".knowledge-priority-editor");
+    const vendors = within(pricing).getByRole("region", { name: "Vendors" });
+    expect(prioritySection).not.toBeNull();
+    expect(
+      specifications.compareDocumentPosition(prioritySection!) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy();
+    expect(
+      prioritySection!.compareDocumentPosition(vendors) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy();
+    expect(within(priority).getAllByRole("option").map((option) => option.textContent)).toEqual([
+      "Select priority",
+      "Non Negotiable",
+      "High",
+      "Medium",
+      "Low"
+    ]);
+
+    await user.selectOptions(priority, "priority-high");
+    await user.click(screen.getByRole("button", { name: "Save Mode" }));
+    await waitFor(() => expect(knowledgeApi.updateKnowledgeSection).toHaveBeenCalledOnce());
+    expect(vi.mocked(knowledgeApi.updateKnowledgeSection).mock.calls[0]).toEqual([
+      "line-1",
+      "revision-1",
+      "overview",
+      expect.objectContaining({
+        expectedVersion: 8,
+        expectedAggregateVersion: 4,
+        payload: {
+          uomId: "uom-preserve",
+          priorityId: "priority-high",
+          surfaceIds: ["surface-preserve"],
+          hiddenCompatibility: { preserve: true }
+        }
+      })
+    ]);
+  });
+
+  it("renders saved Budget totals and prepares an Update without exposing lineage", async () => {
+    const user = userEvent.setup();
+    const vendor = { ...squareFoot, id: "vendor-1", masterType: "vendors", code: "ACME", name: "Acme Vendor" } as const;
+    const tax = { ...squareFoot, id: "tax-1", masterType: "taxes", code: "GST18", name: "GST 18%" } as const;
+    vi.mocked(knowledgeApi.listKnowledgeMasters).mockImplementation(async (type) => {
+      const items = type === "vendors" ? [vendor] : type === "uoms" ? [squareFoot] : type === "taxes" ? [tax] : [];
+      return { items, pagination: { ...page, total: items.length } };
+    });
+    vi.mocked(knowledgeApi.getKnowledgeSection).mockImplementation(async (_lineId, _revisionId, sectionKey) => section(sectionKey, sectionKey === "pricing" ? { priceEntries: [{ operation: "reference", priceEntryId: "price-entry-1", priceVersionId: "price-version-1", priceVersion: { id: "price-version-1", priceEntryId: "price-entry-1", versionNumber: 1, vendorId: "vendor-1", uomId: squareFoot.id, specificationId: null, modeId: null, taxRuleId: "tax-1", taxVersionId: "tax-version-1", inputAmountPaise: 12000, baseAmountPaise: 12000, taxAmountPaise: 2160, totalAmountPaise: 14160, treatment: "exclusive", effectiveFrom: "2026-08-01T00:00:00.000Z", effectiveTo: null, status: "active", reviewRequired: false } }] } : {}));
     renderRoute(<KnowledgeItemWorkspacePage />, "/admin/configuration/estimation/items/line-1", "/admin/configuration/estimation/items/:itemId");
     await user.click(await screen.findByRole("tab", { name: "Mode" }));
-    const savedPrice = await screen.findByLabelText("Immutable saved price details");
-    expect(savedPrice).toHaveTextContent(/₹\s?141\.60/u);
-    expect(savedPrice).not.toHaveTextContent("paise");
-    await user.click(screen.getByRole("button", { name: "Replace price version" }));
-    expect(screen.getByRole("textbox", { name: "Price entry ID" })).toHaveValue("price-entry-1");
-    expect(screen.getByRole("textbox", { name: "Input amount (rupees)" })).toHaveValue("120.00");
+    await user.click(await screen.findByRole("button", { name: /₹\s?120\.00 per/iu }));
+    const savedBudget = screen.getByRole("group", { name: "Saved budget details" });
+    expect(savedBudget).toHaveTextContent(/₹\s?141\.60/u);
+    expect(savedBudget).not.toHaveTextContent("paise");
+    await user.click(screen.getByRole("button", { name: "Update budget" }));
+    expect(screen.getByRole("textbox", { name: "Unit budget (₹, before GST)" })).toHaveValue("120.00");
+    expect(screen.queryByRole("textbox", { name: /Price entry|Price version/iu })).not.toBeInTheDocument();
+  });
+
+  it("keeps Budgeting usable when the Tax catalog fails and maps a fixed-GST policy failure", async () => {
+    const user = userEvent.setup();
+    const vendor = { ...squareFoot, id: "vendor-1", masterType: "vendors", code: "ACME", name: "Acme Vendor" } as const;
+    vi.mocked(knowledgeApi.listKnowledgeMasters).mockImplementation(async (type) => {
+      if (type === "taxes") throw new Error("Tax catalog offline");
+      const items = type === "vendors" ? [vendor] : type === "uoms" ? [squareFoot] : [];
+      return { items, pagination: { ...page, total: items.length } };
+    });
+    vi.mocked(knowledgeApi.getKnowledgeSection).mockImplementation(
+      async (_lineId, _revisionId, sectionKey) => section(
+        sectionKey,
+        sectionKey === "pricing"
+          ? { specifications: [], brands: [], priceEntries: [] }
+          : {}
+      )
+    );
+    vi.mocked(knowledgeApi.updateKnowledgeSection).mockRejectedValueOnce(
+      new ApiError(
+        409,
+        "FIXED_GST_POLICY_MISMATCH",
+        "The stored GST policy does not match the system GST 18% policy."
+      )
+    );
+    renderRoute(<KnowledgeItemWorkspacePage />, "/admin/configuration/estimation/items/line-1", "/admin/configuration/estimation/items/:itemId");
+
+    await user.click(await screen.findByRole("tab", { name: "Mode" }));
+    const budgeting = screen.getByRole("region", { name: "Budgeting" });
+    await user.click(within(budgeting).getByRole("button", { name: "Set budget" }));
+    const disclosure = within(budgeting).getByRole("button", { name: "New budget" });
+    await user.selectOptions(within(budgeting).getByRole("combobox", { name: "Vendor" }), vendor.id);
+    await user.selectOptions(within(budgeting).getByRole("combobox", { name: "Unit of measure" }), squareFoot.id);
+    const amount = within(budgeting).getByRole("textbox", { name: "Unit budget (₹, before GST)" });
+    await user.type(amount, "120.50");
+    await user.click(screen.getByRole("button", { name: "Save Mode" }));
+
+    await waitFor(() => expect(disclosure).toHaveFocus());
+    expect(disclosure).toHaveAttribute("aria-expanded", "true");
+    expect(within(budgeting).getAllByText(
+      "The stored GST policy does not match the system GST 18% policy. Contact support."
+    ).length).toBeGreaterThan(0);
+    expect(amount).toHaveValue("120.50");
+    expect(within(budgeting).queryByRole("combobox", { name: "Tax" })).not.toBeInTheDocument();
+    expect(within(budgeting).queryByRole("button", { name: /^(?:Add|Configure) Tax$/iu })).not.toBeInTheDocument();
   });
 
   it("keeps fixed Mode kinds independent from paginated reusable Mode records", async () => {
@@ -974,7 +1101,155 @@ describe("AI estimator knowledge screens", () => {
       .map(([, params]) => params?.offset ?? 0)).toEqual([0, 100]);
   });
 
-  it("renders four guided sections while preserving hidden-section Overview summaries and Mode behavior", async () => {
+  /* Parked with MODE_PRIORITY_ENABLED in KnowledgeModePanel. Re-enable this
+     test when the Mode tab's Priority editor is switched back on. */
+  it.skip("collects every Priority page before enabling the four canonical choices", async () => {
+    const user = userEvent.setup();
+    const decoys: readonly KnowledgeMaster[] = Array.from({ length: 100 }, (_, index) => ({
+      ...canonicalPriorities[0]!,
+      id: `priority-decoy-${index + 1}`,
+      code: `PRIORITY_DECOY_${index + 1}`,
+      name: `Priority decoy ${index + 1}`,
+      semanticTier: undefined,
+      displayOrder: index
+    }));
+    vi.mocked(knowledgeApi.listKnowledgeMasters).mockImplementation(async (type, params = {}) => {
+      if (type !== "priorities") return { items: [], pagination: page };
+      const offset = params.offset ?? 0;
+      return offset === 0
+        ? {
+            items: decoys,
+            pagination: { limit: 100, offset: 0, total: 104, hasMore: true }
+          }
+        : {
+            items: canonicalPriorities,
+            pagination: { limit: 100, offset: 100, total: 104, hasMore: false }
+          };
+    });
+    vi.mocked(knowledgeApi.getKnowledgeSection).mockImplementation(async (_lineId, _revisionId, sectionKey) =>
+      section(sectionKey, sectionKey === "overview" ? { priorityId: "priority-medium" } : {})
+    );
+    renderRoute(
+      <KnowledgeItemWorkspacePage />,
+      "/admin/configuration/estimation/items/line-1",
+      "/admin/configuration/estimation/items/:itemId"
+    );
+
+    await user.click(await screen.findByRole("tab", { name: "Mode" }));
+    const priority = await screen.findByRole("combobox", { name: "Priority" });
+    expect(priority).toBeEnabled();
+    expect(within(priority).getAllByRole("option").map((option) => option.textContent)).toEqual([
+      "Select priority",
+      "Non Negotiable",
+      "High",
+      "Medium",
+      "Low"
+    ]);
+    expect(vi.mocked(knowledgeApi.listKnowledgeMasters).mock.calls
+      .filter(([type]) => type === "priorities")
+      .map(([, params]) => params?.offset ?? 0)).toEqual([0, 100]);
+  });
+
+  it("collects every Surface page for the Mode selector", async () => {
+    const user = userEvent.setup();
+    const firstPageSurfaces: readonly KnowledgeSurface[] = Array.from(
+      { length: 100 },
+      (_, index) => ({
+        ...wallSurface,
+        id: `surface-decoy-${index + 1}`,
+        masterType: "surfaces" as const,
+        code: `SURFACE_DECOY_${index + 1}`,
+        name: `Surface decoy ${index + 1}`
+      })
+    );
+    const pageTwoSurface: KnowledgeSurface = {
+      ...wallSurface,
+      id: "surface-page-101",
+      masterType: "surfaces",
+      code: "SURFACE_PAGE_101",
+      name: "Zellige surface"
+    };
+    vi.mocked(knowledgeApi.listKnowledgeMasters).mockImplementation(async (type, params = {}) => {
+      if (type === "uoms") {
+        return {
+          items: [squareFoot, squareMetre],
+          pagination: { ...page, total: 2 }
+        };
+      }
+      if (type !== "surfaces") return { items: [], pagination: page };
+      return (params.offset ?? 0) === 0
+        ? {
+            items: firstPageSurfaces,
+            pagination: { limit: 100, offset: 0, total: 101, hasMore: true }
+          }
+        : {
+            items: [pageTwoSurface],
+            pagination: { limit: 100, offset: 100, total: 101, hasMore: false }
+          };
+    });
+    renderRoute(
+      <KnowledgeItemWorkspacePage />,
+      "/admin/configuration/estimation/items/line-1",
+      "/admin/configuration/estimation/items/:itemId"
+    );
+
+    await user.click(await screen.findByRole("tab", { name: "Mode" }));
+    await user.click(await screen.findByRole("button", { name: "Applicable surfaces" }));
+    await user.type(screen.getByRole("searchbox", { name: "Search surfaces" }), "Zellige");
+    expect(screen.getByRole("option", { name: "Zellige surface" })).toBeVisible();
+    const surfaceCalls = vi.mocked(knowledgeApi.listKnowledgeMasters).mock.calls
+      .filter(([type]) => type === "surfaces");
+    expect(surfaceCalls.map(([, params]) => params?.offset ?? 0)).toEqual([0, 100]);
+    expect(surfaceCalls.every(([, params]) => params?.includeArchived === true)).toBe(true);
+  });
+
+  it("collects every Surface page for the Main Line filter", async () => {
+    const user = userEvent.setup();
+    const firstPageSurfaces: readonly KnowledgeMaster[] = Array.from(
+      { length: 100 },
+      (_, index) => ({
+        ...wallSurface,
+        id: `surface-filter-decoy-${index + 1}`,
+        code: `SURFACE_FILTER_DECOY_${index + 1}`,
+        name: `Filter surface ${index + 1}`
+      })
+    );
+    const pageTwoSurface = {
+      ...wallSurface,
+      id: "surface-filter-101",
+      code: "SURFACE_FILTER_101",
+      name: "Zellige filter surface"
+    };
+    vi.mocked(knowledgeApi.listKnowledgeMasters).mockImplementation(async (type, params = {}) => {
+      if (type !== "surfaces") return { items: [], pagination: page };
+      return (params.offset ?? 0) === 0
+        ? {
+            items: firstPageSurfaces,
+            pagination: { limit: 100, offset: 0, total: 101, hasMore: true }
+          }
+        : {
+            items: [pageTwoSurface],
+            pagination: { limit: 100, offset: 100, total: 101, hasMore: false }
+          };
+    });
+    renderRoute(
+      <KnowledgeBaseIndexPage />,
+      "/admin/configuration/estimation",
+      "/admin/configuration/estimation"
+    );
+
+    await user.click(await screen.findByRole("button", { name: "Filters" }));
+    const filter = screen.getByRole("combobox", { name: "Surface" });
+    expect(within(filter).getByRole("option", { name: "Zellige filter surface" })).toHaveValue(
+      pageTwoSurface.id
+    );
+    const surfaceCalls = vi.mocked(knowledgeApi.listKnowledgeMasters).mock.calls
+      .filter(([type]) => type === "surfaces");
+    expect(surfaceCalls.map(([, params]) => params?.offset ?? 0)).toEqual([0, 100]);
+    expect(surfaceCalls.every(([, params]) => params?.includeArchived === true)).toBe(true);
+  });
+
+  it("renders four guided sections without hidden-section Overview summaries while preserving Overview and Mode behavior", async () => {
     const user = userEvent.setup();
     const relatedItem: KnowledgeItemDetail = { ...item, id: "line-2", mainLineId: "line-2", mainLineName: "Related panel", draftRevisionId: null, draftRevision: null, activeRevisionId: "revision-2" };
     vi.mocked(knowledgeApi.listKnowledgeBaskets).mockResolvedValue({ items: [{ id: "basket-1", name: "Carpentry", description: null, displayOrder: 0, status: "active", version: 1, createdById: "super-admin-1", updatedById: "super-admin-1", createdAt: item.createdAt, updatedAt: item.updatedAt }], pagination: { ...page, total: 1 } });
@@ -986,7 +1261,7 @@ describe("AI estimator knowledge screens", () => {
     vi.mocked(knowledgeApi.getKnowledgeSection).mockImplementation(async (_lineId, _revisionId, sectionKey) => {
       if (sectionKey === "overview") return section(sectionKey, { description: "Stored description", uomId: squareFoot.id, sectionApplicability: [{ id: "applicability-1", sectionKey: "pricing", applicability: "configured" }] });
       if (sectionKey === "scope") return section(sectionKey, { exclusions: [{ id: "exclusion-1", reason: "Protect finished flooring" }] });
-      if (sectionKey === "recommendations") return section(sectionKey, { recommendations: [{ id: "recommendation-1", targetBasketId: "basket-1", targetMainLineId: "line-2", type: "recommended", reason: "Use matching panel", quantityRelationship: "same_quantity", dependency: false, active: true }] });
+      if (sectionKey === "recommendations") return section(sectionKey, { recommendations: [{ id: "recommendation-1", name: "Related panel", priorityId: "priority-1", reason: "Use matching panel", dependency: false, active: true }] });
       if (sectionKey === "quality") return section(sectionKey, { parameters: [{ id: "quality-1", type: "number", label: "Thickness", unit: "mm", required: true, active: true }] });
       if (sectionKey === "execution") return section(sectionKey, { steps: [{ id: "step-1", order: 1, name: "Measure", dependencyStepIds: [], active: true }, { id: "step-2", order: 2, name: "Install", dependencyStepIds: ["step-1"], active: true }] });
       if (sectionKey === "advanced") return section(sectionKey, { dependencies: [{ id: "dependency-1", targetMainLineId: "line-2" }] });
@@ -999,8 +1274,8 @@ describe("AI estimator knowledge screens", () => {
     expect(within(tablist).getAllByRole("tab").map((tab) => tab.textContent)).toEqual([
       "Overview",
       "Mode",
-      "Recommendations",
-      "Quality"
+      "Recommendation & Exclusions",
+      "Quality Parameter"
     ]);
     expect(within(tablist).queryByRole("tab", { name: "Scope" })).not.toBeInTheDocument();
     expect(within(tablist).queryByRole("tab", { name: "Execution" })).not.toBeInTheDocument();
@@ -1012,26 +1287,28 @@ describe("AI estimator knowledge screens", () => {
     expect(screen.queryByRole("combobox", { name: "Section key" })).not.toBeInTheDocument();
     expect(screen.queryByRole("textbox", { name: "Description" })).not.toBeInTheDocument();
     expect(screen.getByRole("combobox", { name: "Unit of measure (UOM)" })).toHaveDisplayValue("Square foot");
-    const scopeSummary = screen.getByRole("heading", { name: "Scope", level: 3 }).closest("article");
-    const executionSummary = screen.getByRole("heading", { name: "Execution", level: 3 }).closest("article");
-    const advancedSummary = screen.getByRole("heading", { name: "Advanced", level: 3 }).closest("article");
-    expect(scopeSummary).not.toBeNull();
-    expect(executionSummary).not.toBeNull();
-    expect(advancedSummary).not.toBeNull();
-    expect(within(scopeSummary as HTMLElement).getByText("Exclusions")).toBeVisible();
-    expect(within(scopeSummary as HTMLElement).getByText("1")).toBeVisible();
-    expect(within(executionSummary as HTMLElement).getByText("2")).toBeVisible();
-    expect(within(executionSummary as HTMLElement).getByText("Measure, Install")).toBeVisible();
-    expect(within(advancedSummary as HTMLElement).getByText("Dependencies")).toBeVisible();
-    expect(within(advancedSummary as HTMLElement).getByText("1")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Add Unit" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Add unit of measure" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Surfaces" })).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Recommendation & Exclusions", level: 2 })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Quality Parameter", level: 2 })).toBeVisible();
+    expect(screen.getByText("Use matching panel")).toBeVisible();
+    expect(screen.getByText("Thickness")).toBeVisible();
+    const overview = document.querySelector(".knowledge-overview");
+    expect(overview).not.toBeNull();
+    expect(within(overview as HTMLElement).queryByRole("heading", { name: "All section summaries" })).not.toBeInTheDocument();
+    expect(within(overview as HTMLElement).queryByRole("heading", { name: "Scope", level: 3 })).not.toBeInTheDocument();
+    expect(within(overview as HTMLElement).queryByRole("heading", { name: "Execution", level: 3 })).not.toBeInTheDocument();
+    expect(within(overview as HTMLElement).queryByRole("heading", { name: "Advanced", level: 3 })).not.toBeInTheDocument();
+    expect(overview?.querySelectorAll("article.knowledge-overview-card")).toHaveLength(0);
     await user.selectOptions(screen.getByRole("combobox", { name: "Unit of measure (UOM)" }), squareMetre.id);
     await user.click(screen.getByRole("tab", { name: "Mode" }));
     expect(screen.getByRole("alertdialog", { name: "Save changes before leaving?" })).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Discard changes" }));
     const modePanel = await screen.findByRole("tabpanel", { name: "Mode" });
     expectModeRegionsInOrder(modePanel);
-    const pricingRegion = within(modePanel).getByRole("region", { name: "Pricing" });
-    expect(within(pricingRegion).getByRole("heading", { name: "Pricing" })).toHaveClass("sr-only");
+    const pricingRegion = within(modePanel).getByRole("region", { name: "Budgeting" });
+    expect(within(pricingRegion).getByRole("heading", { name: "Budgeting" })).toHaveClass("sr-only");
     expect(within(pricingRegion).queryByText(/Maintain specifications, immutable price-version commands/u)).not.toBeInTheDocument();
     expect(within(pricingRegion).queryByRole("textbox", { name: "Technical description" })).not.toBeInTheDocument();
     expect(within(pricingRegion).queryByRole("textbox", { name: "Internal vendor notes" })).not.toBeInTheDocument();
@@ -1054,12 +1331,18 @@ describe("AI estimator knowledge screens", () => {
     await waitFor(() => expect(knowledgeApi.previewKnowledge).toHaveBeenLastCalledWith(expect.objectContaining({ unitRatePaise: 11_800 })));
     expect(screen.queryByText(/paise/iu)).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole("tab", { name: "Recommendations" }));
-    expect(await screen.findByRole("combobox", { name: "Target Basket" })).toHaveDisplayValue("Carpentry");
-    expect(screen.getByRole("combobox", { name: "Target Main Line" })).toHaveDisplayValue("Related panel");
+    await user.click(screen.getByRole("tab", { name: "Recommendation & Exclusions" }));
+    /* Recommendation is free text now; the Basket is context above the section
+       rather than anything selectable inside a row. */
+    expect(await screen.findByRole("textbox", { name: "Recommendation" })).toHaveValue("Related panel");
+    expect(screen.queryByRole("combobox", { name: "Recommendation" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("combobox", { name: "Target Basket" })).not.toBeInTheDocument();
+    const recommendationSection = document.querySelector(".knowledge-section-editor");
+    expect(recommendationSection).not.toBeNull();
+    expect(within(recommendationSection as HTMLElement).getByText(/Main Basket ·/u)).toBeVisible();
     expect(screen.getByRole("textbox", { name: "Reason" })).toHaveValue("Use matching panel");
 
-    await user.click(screen.getByRole("tab", { name: "Quality" }));
+    await user.click(screen.getByRole("tab", { name: "Quality Parameter" }));
     expect(await screen.findByRole("combobox", { name: "Parameter type" })).toHaveValue("number");
     expect(screen.getByRole("textbox", { name: "Label" })).toHaveValue("Thickness");
 
@@ -1077,6 +1360,8 @@ describe("AI estimator knowledge screens", () => {
     renderRoute(<KnowledgeItemWorkspacePage />, "/admin/configuration/estimation/items/line-1", "/admin/configuration/estimation/items/:itemId");
 
     await user.click(await screen.findByRole("tab", { name: "Mode" }));
+    const quantityMargin = screen.getByRole("region", { name: "Quantity & margin" });
+    expect(within(quantityMargin).queryByRole("combobox", { name: "Gap behavior" })).not.toBeInTheDocument();
     const specificationName = await findPricingSpecificationName();
     await user.clear(specificationName);
     await user.type(specificationName, "Updated specification");
@@ -1099,8 +1384,51 @@ describe("AI estimator knowledge screens", () => {
       expectedVersion: 2,
       expectedAggregateVersion: 5,
       applicability: "configured",
-      payload: { startMarginBps: 250 }
+      payload: { startMarginBps: 250, gapBehavior: "no_adjustment" }
     });
+  });
+
+  it("saves the first priced Quantity slab without manufacturing legacy Gap behavior", async () => {
+    const user = userEvent.setup();
+    mockConfiguredModeSections({});
+    vi.mocked(knowledgeApi.updateKnowledgeSection).mockImplementation(async (_lineId, _revisionId, sectionKey, input) => (
+      mutationSection(sectionKey, input.payload, 3, 5)
+    ));
+    renderRoute(<KnowledgeItemWorkspacePage />, "/admin/configuration/estimation/items/line-1", "/admin/configuration/estimation/items/:itemId");
+
+    await user.click(await screen.findByRole("tab", { name: "Mode" }));
+    const quantityMargin = screen.getByRole("region", { name: "Quantity & margin" });
+    expect(within(quantityMargin).queryByRole("combobox", { name: "Gap behavior" })).not.toBeInTheDocument();
+
+    await user.click(within(quantityMargin).getByRole("button", { name: "Add Quantity slab" }));
+    const quantitySlab = within(quantityMargin).getByRole("group", { name: "Quantity slab 1" });
+    await user.selectOptions(within(quantitySlab).getByRole("combobox", { name: "Specification" }), serverPricingSpecification.id);
+    await user.selectOptions(within(quantitySlab).getByRole("combobox", { name: "Unit of measure" }), squareFoot.id);
+    await user.type(within(quantitySlab).getByRole("textbox", { name: "Quantity" }), "12.5");
+    await user.type(within(quantitySlab).getByRole("textbox", { name: "Unit rate (₹)" }), "80");
+    expect(within(quantitySlab).getByLabelText(/Estimated cost:/u)).toHaveTextContent(/₹\s?1,000\.00/u);
+    await user.click(screen.getByRole("button", { name: "Save Mode" }));
+
+    await waitFor(() => expect(knowledgeApi.updateKnowledgeSection).toHaveBeenCalledTimes(1));
+    expect(knowledgeApi.updateKnowledgeSection).toHaveBeenCalledWith(
+      "line-1",
+      "revision-1",
+      "quantity-margin",
+      {
+        expectedVersion: 2,
+        expectedAggregateVersion: 4,
+        applicability: "configured",
+        payload: {
+          slabRates: [{
+            id: expect.stringMatching(/^knowledge-slabRates-/u),
+            specificationId: serverPricingSpecification.id,
+            uomId: squareFoot.id,
+            quantity: "12.5",
+            unitRatePaise: 8_000
+          }]
+        }
+      }
+    );
   });
 
   it("keeps one contextual Mode Save across clean, dirty, and saving states", async () => {
@@ -1152,8 +1480,9 @@ describe("AI estimator knowledge screens", () => {
     await user.click(screen.getAllByRole("button", { name: "Save Mode" })[0]);
 
     const partialFailure = await screen.findByRole("alert");
-    expect(partialFailure).toHaveTextContent("Pricing");
-    expect(partialFailure).toHaveTextContent("Service unavailable.");
+    expect(partialFailure).toHaveTextContent("Budgeting");
+    expect(partialFailure).toHaveTextContent("Review the highlighted budget and try again.");
+    expect(partialFailure).not.toHaveTextContent("Service unavailable.");
     expect(screen.getByText("Save failed. Review the message below and try again.")).toBeVisible();
     expect(screen.getByRole("button", { name: "Save Mode" })).toBeEnabled();
     expect(vi.mocked(knowledgeApi.updateKnowledgeSection).mock.calls.map((call) => call[2])).toEqual(["pricing"]);
@@ -1204,7 +1533,7 @@ describe("AI estimator knowledge screens", () => {
     await user.click(screen.getAllByRole("button", { name: "Save Mode" })[0]);
 
     const conflict = await screen.findByRole("alertdialog", { name: "This section changed elsewhere" });
-    expect(conflict).toHaveTextContent("Pricing");
+    expect(conflict).toHaveTextContent("Budgeting");
     expect(conflict).toHaveTextContent(/version 2/iu);
     expect(conflict).toHaveTextContent(/version 3/iu);
     expect(pricingReads).toBeGreaterThan(1);
@@ -1244,6 +1573,9 @@ describe("AI estimator knowledge screens", () => {
                   versionNumber: 7,
                   vendorId: "private-vendor-id",
                   inputAmountPaise: 12_345,
+                  baseAmountPaise: 12_345,
+                  taxAmountPaise: 2_222,
+                  totalAmountPaise: 14_567,
                   reviewRequired: false
                 }
               }]
@@ -1264,13 +1596,13 @@ describe("AI estimator knowledge screens", () => {
     const dialog = await screen.findByRole("alertdialog", { name: "This section changed elsewhere" });
     await user.click(within(dialog).getByRole("button", { name: "Review server version" }));
 
-    const review = screen.getByRole("region", { name: "Latest Pricing server version" });
+    const review = screen.getByRole("region", { name: "Latest Budgeting server version" });
     expect(review).toHaveTextContent("Local version 2 · Latest server version 3");
     expect(review).toHaveTextContent("Latest server specification");
-    expect(review).toHaveTextContent("Reference");
+    expect(review).toHaveTextContent("Budget 1 · VendorUnavailable value");
     expect(review).toHaveTextContent(/₹\s?123\.45/u);
-    expect(review).toHaveTextContent("Review RequiredNo");
-    expect(review).toHaveTextContent("Unavailable value");
+    expect(review).not.toHaveTextContent("Reference");
+    expect(review).not.toHaveTextContent("Review Required");
     expect(review).not.toHaveTextContent("private-price-entry-id");
     expect(review).not.toHaveTextContent("private-price-version-id");
     expect(review).not.toHaveTextContent("private-vendor-id");
@@ -1304,7 +1636,7 @@ describe("AI estimator knowledge screens", () => {
     await user.click(screen.getAllByRole("button", { name: "Save Mode" })[0]);
 
     const error = await screen.findByRole("alert");
-    expect(error).toHaveTextContent("Pricing");
+    expect(error).toHaveTextContent("Budgeting");
     expect(error).toHaveTextContent(/latest server version could not be loaded/iu);
     expect(error).toHaveTextContent("Conflict refresh unavailable.");
     expect(specificationName).toHaveValue("My unsaved specification");
@@ -1323,11 +1655,11 @@ describe("AI estimator knowledge screens", () => {
     await user.type(specificationName, "Local specification");
     await user.clear(screen.getByRole("spinbutton", { name: "Start margin (basis points)" }));
     await user.type(screen.getByRole("spinbutton", { name: "Start margin (basis points)" }), "350");
-    await user.click(screen.getByRole("tab", { name: "Recommendations" }));
+    await user.click(screen.getByRole("tab", { name: "Recommendation & Exclusions" }));
     const guard = screen.getByRole("alertdialog", { name: "Save changes before leaving?" });
     await user.click(within(guard).getByRole("button", { name: "Discard changes" }));
 
-    expect(await screen.findByRole("tabpanel", { name: "Recommendations" })).toBeVisible();
+    expect(await screen.findByRole("tabpanel", { name: "Recommendation & Exclusions" })).toBeVisible();
     await user.click(screen.getByRole("tab", { name: "Mode" }));
     expect(await findPricingSpecificationName()).toHaveValue("Server specification");
     expect(screen.getByRole("spinbutton", { name: "Start margin (basis points)" })).toHaveValue(100);
@@ -1358,7 +1690,7 @@ describe("AI estimator knowledge screens", () => {
     await user.click(within(pricingSummary as HTMLElement).getByRole("button", { name: "Try again" }));
     await waitFor(() => {
       expect(screen.queryByRole("heading", { name: "Specifications" })).not.toBeInTheDocument();
-      expect(screen.queryByRole("heading", { name: "Pricing" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("heading", { name: "Budgeting" })).not.toBeInTheDocument();
     });
     expect(screen.queryByText(/No (?:Specifications|Pricing) configured/u)).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Shared calculation values" })).toBeVisible();
@@ -1380,21 +1712,19 @@ describe("AI estimator knowledge screens", () => {
     renderRoute(<KnowledgeItemWorkspacePage />, "/admin/configuration/estimation/items/line-1", "/admin/configuration/estimation/items/:itemId");
 
     expect(await screen.findByRole("combobox", { name: "Unit of measure (UOM)" })).toBeDisabled();
-    const status = screen.getByRole("region", { name: "Workspace status" });
-    expect(within(status).getByText("Active revision 1")).toBeVisible();
-    expect(within(status).getByText("Revision 1")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Add Unit" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Add unit of measure" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Save Overview" })).not.toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Surfaces" }));
-    expect(screen.getByRole("listbox", { name: "Surface options" })).toHaveAttribute("aria-readonly", "true");
-    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("button", { name: "Surfaces" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("listbox", { name: "Surface options" })).not.toBeInTheDocument();
 
     await user.click(await screen.findByRole("tab", { name: "Mode" }));
     const panel = await screen.findByRole("tabpanel", { name: "Mode" });
     expectModeRegionsInOrder(panel);
     expect(screen.queryByRole("combobox", { name: "UOM" })).not.toBeInTheDocument();
     expect(await findPricingSpecificationName()).toBeDisabled();
-    expect(within(screen.getByRole("region", { name: "Pricing" })).queryByRole("textbox", { name: "Technical description" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("combobox", { name: "Priority" })).not.toBeInTheDocument();
+    expect(within(screen.getByRole("region", { name: "Budgeting" })).queryByRole("textbox", { name: "Technical description" })).not.toBeInTheDocument();
     expect(screen.getByRole("spinbutton", { name: "Start margin (basis points)" })).toBeDisabled();
     expect(screen.queryByRole("button", { name: "Add UOM" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Save Mode" })).not.toBeInTheDocument();
@@ -1415,7 +1745,8 @@ describe("AI estimator knowledge screens", () => {
     expect(screen.queryByRole("button", { name: "Save Overview" })).not.toBeInTheDocument();
     await user.click(screen.getByRole("tab", { name: "Mode" }));
     expect(await findPricingSpecificationName()).toBeDisabled();
-    expect(within(screen.getByRole("region", { name: "Pricing" })).queryByRole("textbox", { name: "Technical description" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("combobox", { name: "Priority" })).not.toBeInTheDocument();
+    expect(within(screen.getByRole("region", { name: "Budgeting" })).queryByRole("textbox", { name: "Technical description" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Save Mode" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Review and activate" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Archive" })).not.toBeInTheDocument();
@@ -1431,7 +1762,11 @@ describe("AI estimator knowledge screens", () => {
       pagination: { ...page, total: type === "uoms" ? (created ? 2 : 1) : 0 }
     }));
     vi.mocked(knowledgeApi.getKnowledgeSection).mockImplementation(async (_lineId, _revisionId, sectionKey) =>
-      section(sectionKey, sectionKey === "overview" ? { description: "Server overview", uomId: squareFoot.id } : {})
+      section(sectionKey, sectionKey === "overview" ? {
+        description: "Server overview",
+        uomId: squareFoot.id,
+        surfaceIds: [wallSurface.id]
+      } : {})
     );
     vi.mocked(knowledgeApi.createKnowledgeMaster).mockImplementation(async () => {
       created = true;
@@ -1442,7 +1777,8 @@ describe("AI estimator knowledge screens", () => {
     );
     renderRoute(<KnowledgeItemWorkspacePage />, "/admin/configuration/estimation/items/line-1", "/admin/configuration/estimation/items/:itemId");
 
-    await user.click(await screen.findByRole("button", { name: "Add unit of measure" }));
+    expect(screen.queryByRole("button", { name: "Add unit of measure" })).not.toBeInTheDocument();
+    await user.click(await screen.findByRole("button", { name: "Add Unit" }));
     const dialog = screen.getByRole("dialog", { name: "Quick add UOM" });
     await user.type(within(dialog).getByRole("textbox", { name: "Code" }), "SQM");
     await user.type(within(dialog).getByRole("textbox", { name: "Name" }), "Square metre");
@@ -1461,8 +1797,105 @@ describe("AI estimator knowledge screens", () => {
       "line-1",
       "revision-1",
       "overview",
-      expect.objectContaining({ payload: { description: "Server overview", uomId: squareMetre.id } })
+      expect.objectContaining({
+        payload: {
+          description: "Server overview",
+          uomId: squareMetre.id,
+          surfaceIds: [wallSurface.id]
+        }
+      })
     ));
+  });
+
+  it("quick-adds by returned Surface ID, preserves the failed Mode draft, and keeps the Surface after discard", async () => {
+    const user = userEvent.setup();
+    let created = false;
+    const counterSurface: KnowledgeSurface = {
+      ...wallSurface,
+      id: "surface-counter-returned",
+      masterType: "surfaces",
+      code: "GENERATED_SURFACE_CODE",
+      name: "Counter surface",
+      description: "Granite, quartz, marble",
+      version: 1
+    };
+    vi.mocked(knowledgeApi.listKnowledgeMasters).mockImplementation(async (type) => ({
+      items: type === "uoms"
+        ? [squareFoot]
+        : type === "surfaces" && created
+          ? [counterSurface]
+          : [],
+      pagination: {
+        ...page,
+        total: type === "uoms" || (type === "surfaces" && created) ? 1 : 0
+      }
+    }));
+    vi.mocked(knowledgeApi.getKnowledgeSection).mockImplementation(async (_lineId, _revisionId, sectionKey) =>
+      section(sectionKey, sectionKey === "overview" ? {
+        priorityId: "priority-preserved",
+        hiddenCompatibility: { preserve: true }
+      } : {})
+    );
+    vi.mocked(knowledgeApi.createKnowledgeSurface).mockImplementation(async () => {
+      created = true;
+      return counterSurface;
+    });
+    vi.mocked(knowledgeApi.updateKnowledgeSection).mockRejectedValue(
+      new ApiError(503, "UPSTREAM_UNAVAILABLE", "Mode assignment unavailable.")
+    );
+    renderRoute(
+      <KnowledgeItemWorkspacePage />,
+      "/admin/configuration/estimation/items/line-1",
+      "/admin/configuration/estimation/items/:itemId"
+    );
+
+    await user.click(await screen.findByRole("tab", { name: "Mode" }));
+    await user.click(await screen.findByRole("button", { name: "Add Surface" }));
+    const dialog = screen.getByRole("dialog", { name: "Add Surface" });
+    await user.type(within(dialog).getByRole("textbox", { name: "Surface name" }), "Counter surface");
+    await user.type(
+      within(dialog).getByRole("textbox", { name: "Examples / components" }),
+      "Granite, quartz, marble"
+    );
+    await user.click(within(dialog).getByRole("button", { name: "Add Surface" }));
+
+    await waitFor(() => expect(knowledgeApi.createKnowledgeSurface).toHaveBeenCalledWith({
+      name: "Counter surface",
+      description: "Granite, quartz, marble"
+    }));
+    expect(knowledgeApi.createKnowledgeSurface).toHaveBeenCalledWith(
+      expect.not.objectContaining({ code: expect.anything() })
+    );
+    expect(await screen.findByText("Counter surface added. Save Mode to apply it.")).toBeInTheDocument();
+    const selector = screen.getByRole("button", { name: "Applicable surfaces" });
+    expect(selector).toHaveAccessibleDescription("Counter surface");
+
+    await user.click(screen.getByRole("button", { name: "Save Mode" }));
+    await waitFor(() => expect(knowledgeApi.updateKnowledgeSection).toHaveBeenCalledWith(
+      item.mainLineId,
+      revision.id,
+      "overview",
+      expect.objectContaining({
+        payload: {
+          priorityId: "priority-preserved",
+          hiddenCompatibility: { preserve: true },
+          surfaceIds: [counterSurface.id]
+        }
+      })
+    ));
+    expect(await screen.findByText("Mode assignment unavailable.")).toBeVisible();
+    expect(selector).toHaveAccessibleDescription(
+      "Counter surface Mode assignment unavailable."
+    );
+
+    await user.click(screen.getByRole("tab", { name: "Overview" }));
+    const unsaved = screen.getByRole("alertdialog", { name: "Save changes before leaving?" });
+    await user.click(within(unsaved).getByRole("button", { name: "Discard changes" }));
+    await user.click(await screen.findByRole("tab", { name: "Mode" }));
+    const restoredSelector = await screen.findByRole("button", { name: "Applicable surfaces" });
+    expect(restoredSelector).toHaveAccessibleDescription("Select surfaces");
+    await user.click(restoredSelector);
+    expect(screen.getByRole("option", { name: "Counter surface" })).toBeVisible();
   });
 
   it("preserves arrow, Home, End, and wraparound order across the four workspace tabs", async () => {
@@ -1476,13 +1909,13 @@ describe("AI estimator knowledge screens", () => {
     await user.keyboard("{ArrowRight}");
     expect(screen.getByRole("tab", { name: "Mode" })).toHaveFocus();
     await user.keyboard("{ArrowRight}");
-    expect(screen.getByRole("tab", { name: "Recommendations" })).toHaveFocus();
+    expect(screen.getByRole("tab", { name: "Recommendation & Exclusions" })).toHaveFocus();
     await user.keyboard("{End}");
-    expect(screen.getByRole("tab", { name: "Quality" })).toHaveFocus();
+    expect(screen.getByRole("tab", { name: "Quality Parameter" })).toHaveFocus();
     await user.keyboard("{Home}");
     expect(overview).toHaveFocus();
     await user.keyboard("{ArrowLeft}");
-    expect(screen.getByRole("tab", { name: "Quality" })).toHaveFocus();
+    expect(screen.getByRole("tab", { name: "Quality Parameter" })).toHaveFocus();
   });
 
   it("keeps focus on the selected Mode tab when dirty keyboard navigation is declined", async () => {
@@ -1500,12 +1933,12 @@ describe("AI estimator knowledge screens", () => {
     await user.keyboard("{ArrowRight}");
     const guard = screen.getByRole("alertdialog", { name: "Save changes before leaving?" });
     expect(mode).toHaveAttribute("aria-selected", "true");
-    expect(screen.getByRole("tab", { name: "Recommendations" })).toHaveAttribute("aria-selected", "false");
+    expect(screen.getByRole("tab", { name: "Recommendation & Exclusions" })).toHaveAttribute("aria-selected", "false");
     await user.click(within(guard).getByRole("button", { name: "Stay here" }));
 
     await waitFor(() => expect(mode).toHaveFocus());
     expect(mode).toHaveAttribute("tabindex", "0");
-    expect(screen.getByRole("tab", { name: "Recommendations" })).toHaveAttribute("tabindex", "-1");
+    expect(screen.getByRole("tab", { name: "Recommendation & Exclusions" })).toHaveAttribute("tabindex", "-1");
   });
 
   it.each([1440, 1024, 768, 390, 320])("keeps section and category navigation operable at %ipx", async (width) => {
@@ -1519,14 +1952,14 @@ describe("AI estimator knowledge screens", () => {
       expect(within(selector).getAllByRole("option").map((option) => option.textContent)).toEqual([
         "Overview",
         "Mode",
-        "Recommendations",
-        "Quality"
+        "Recommendation & Exclusions",
+        "Quality Parameter"
       ]);
       await user.selectOptions(selector, "mode");
       expect(await screen.findByRole("tabpanel", { name: "Mode" })).toBeVisible();
-      const pricingRegion = screen.getByRole("region", { name: "Pricing" });
+      const pricingRegion = screen.getByRole("region", { name: "Budgeting" });
       expect(pricingRegion).toBeVisible();
-      expect(within(pricingRegion).getByRole("heading", { name: "Pricing" })).toHaveClass("sr-only");
+      expect(within(pricingRegion).getByRole("heading", { name: "Budgeting" })).toHaveClass("sr-only");
       expect(within(pricingRegion).getByRole("region", { name: "Specifications" })).toBeVisible();
       expect(screen.queryByRole("combobox", { name: "UOM" })).not.toBeInTheDocument();
     } else {
@@ -1574,7 +2007,7 @@ describe("AI estimator knowledge screens", () => {
       selector.focus();
       await user.selectOptions(selector, "quality");
       expect(selector).toHaveFocus();
-      expect(await screen.findByRole("heading", { name: "Quality" })).toBeVisible();
+      expect(await screen.findByRole("heading", { name: "Quality Parameter" })).toBeVisible();
     } finally {
       vi.unstubAllGlobals();
     }

@@ -4,8 +4,8 @@ import { describe, expect, it } from "vitest";
 
 import { KnowledgeConflictReview } from "./KnowledgeConflictReview";
 
-describe("KnowledgeConflictReview Pricing projection", () => {
-  it("shows descriptive Specifications and separate price lineage without private Pricing metadata", async () => {
+describe("KnowledgeConflictReview Budgeting projection", () => {
+  it("shows descriptive Specifications and business Budget values without private metadata", async () => {
     render(
       <KnowledgeConflictReview
         sectionKey="pricing"
@@ -47,8 +47,13 @@ describe("KnowledgeConflictReview Pricing projection", () => {
               priceVersion: {
                 specificationId: "private-canonical-specification-id",
                 vendorId: "private-vendor-id",
+                taxRuleId: "private-tax-rule-id",
+                taxVersionId: "private-tax-version-id",
                 versionNumber: 0,
                 inputAmountPaise: 0,
+                baseAmountPaise: 0,
+                taxAmountPaise: 0,
+                totalAmountPaise: 0,
                 reviewRequired: false,
                 privateVersionMetadata: "Private price metadata"
               }
@@ -61,7 +66,7 @@ describe("KnowledgeConflictReview Pricing projection", () => {
       />
     );
 
-    const review = screen.getByRole("region", { name: "Latest Pricing server version" });
+    const review = screen.getByRole("region", { name: "Latest Budgeting server version" });
     expect(review).toHaveTextContent("Legacy finish");
     expect(review).toHaveTextContent("Legacy guidance");
     expect(review).toHaveTextContent("Inspection required");
@@ -72,12 +77,16 @@ describe("KnowledgeConflictReview Pricing projection", () => {
     expect(review).toHaveTextContent("Specification 2 · Brief descriptionConfirm after installation");
     expect(review).not.toHaveTextContent("Specification 2 · Value");
     expect(review).not.toHaveTextContent("Specification 3 · Value");
-    expect(review).toHaveTextContent("Price 1 · OperationReference");
-    expect(review).toHaveTextContent("Price 1 · SpecificationInspection required");
-    expect(review).toHaveTextContent("Price 1 · Version Number0");
+    expect(review).toHaveTextContent("Budget 1 · VendorUnavailable value");
+    expect(review).toHaveTextContent("Budget 1 · Amount before GST₹0.00");
+    expect(review).toHaveTextContent("Budget 1 · GST₹0.00");
+    expect(review).toHaveTextContent("Budget 1 · Total including GST₹0.00");
     expect(review).toHaveTextContent(/₹\s?0\.00/u);
-    expect(review).toHaveTextContent("Price 1 · Review RequiredNo");
     expect(review).toHaveTextContent("Unavailable value");
+    expect(review).not.toHaveTextContent("Operation");
+    expect(review).not.toHaveTextContent("SpecificationInspection required");
+    expect(review).not.toHaveTextContent("Version Number");
+    expect(review).not.toHaveTextContent("Review Required");
 
     for (const privateValue of [
       "Private technical description",
@@ -89,6 +98,8 @@ describe("KnowledgeConflictReview Pricing projection", () => {
       "private-price-entry-id",
       "private-price-version-id",
       "private-vendor-id",
+      "private-tax-rule-id",
+      "private-tax-version-id",
       "Definition-only option",
       "checkbox",
       "number",
@@ -106,7 +117,7 @@ describe("KnowledgeConflictReview Pricing projection", () => {
     expect(results.violations).toEqual([]);
   });
 
-  it("omits Pricing rows that contain only private identity metadata", () => {
+  it("omits Budgeting rows that contain only private identity metadata", () => {
     render(
       <KnowledgeConflictReview
         sectionKey="pricing"
@@ -125,7 +136,7 @@ describe("KnowledgeConflictReview Pricing projection", () => {
       />
     );
 
-    const review = screen.getByRole("region", { name: "Latest Pricing server version" });
+    const review = screen.getByRole("region", { name: "Latest Budgeting server version" });
     expect(within(review).getByText("No configured values are available in the latest server version.")).toBeVisible();
     expect(review).not.toHaveTextContent("private-empty-specification-id");
     expect(review).not.toHaveTextContent("private-empty-price-id");
@@ -133,8 +144,113 @@ describe("KnowledgeConflictReview Pricing projection", () => {
   });
 });
 
+describe("KnowledgeConflictReview Mode Overview projection", () => {
+  it("compares the resolved Priority label without exposing other Overview values or raw IDs", () => {
+    render(
+      <KnowledgeConflictReview
+        sectionKey="overview"
+        localVersion={4}
+        serverVersion={5}
+        payload={{
+          priorityId: "private-priority-high-id",
+          uomId: "private-uom-id",
+          surfaceIds: ["private-surface-id"],
+          hiddenCompatibility: "Private Overview value"
+        }}
+        overviewFields={["priorityId"]}
+        masters={{
+          priorities: [{
+            id: "private-priority-high-id",
+            masterType: "priorities",
+            code: "HIGH",
+            name: "High",
+            description: null,
+            displayOrder: 1,
+            status: "active",
+            semanticTier: "high",
+            version: 1,
+            createdById: "super-admin-1",
+            updatedById: "super-admin-1",
+            createdAt: "2026-09-02T08:00:00.000Z",
+            updatedAt: "2026-09-02T08:00:00.000Z"
+          }]
+        }}
+        relationshipBaskets={[]}
+        relationshipItems={[]}
+      />
+    );
+
+    const review = screen.getByRole("region", { name: "Latest Overview server version" });
+    expect(review).toHaveTextContent("PriorityHigh");
+    expect(review).not.toHaveTextContent("Unit of measure");
+    expect(review).not.toHaveTextContent("Surfaces");
+    expect(review).not.toHaveTextContent("private-priority-high-id");
+    expect(review).not.toHaveTextContent("private-uom-id");
+    expect(review).not.toHaveTextContent("Private Overview value");
+  });
+
+  it("uses the safe unavailable label when the saved Priority cannot be resolved", () => {
+    render(
+      <KnowledgeConflictReview
+        sectionKey="overview"
+        localVersion={4}
+        serverVersion={5}
+        payload={{ priorityId: "private-missing-priority-id" }}
+        overviewFields={["priorityId"]}
+        masters={{ priorities: [] }}
+        relationshipBaskets={[]}
+        relationshipItems={[]}
+      />
+    );
+
+    const review = screen.getByRole("region", { name: "Latest Overview server version" });
+    expect(review).toHaveTextContent("Unavailable priority");
+    expect(review).not.toHaveTextContent("private-missing-priority-id");
+  });
+
+  it("scopes Surface conflict review and never exposes an unresolved stable ID", () => {
+    render(
+      <KnowledgeConflictReview
+        sectionKey="overview"
+        localVersion={8}
+        serverVersion={9}
+        payload={{
+          surfaceIds: ["surface-wall", "private-missing-surface-id"],
+          priorityId: "private-priority-id",
+          hiddenCompatibility: "Private Overview value"
+        }}
+        overviewFields={["surfaceIds"]}
+        masters={{
+          surfaces: [{
+            id: "surface-wall",
+            masterType: "surfaces",
+            code: "SURFACE_WALL",
+            name: "Wall surface",
+            description: null,
+            displayOrder: 1,
+            status: "active",
+            version: 1,
+            createdById: "super-admin-1",
+            updatedById: "super-admin-1",
+            createdAt: "2026-09-03T08:00:00.000Z",
+            updatedAt: "2026-09-03T08:00:00.000Z"
+          }]
+        }}
+        relationshipBaskets={[]}
+        relationshipItems={[]}
+      />
+    );
+
+    const review = screen.getByRole("region", { name: "Latest Overview server version" });
+    expect(review).toHaveTextContent("SurfacesWall surface, Unavailable value");
+    expect(review).not.toHaveTextContent("private-missing-surface-id");
+    expect(review).not.toHaveTextContent("private-priority-id");
+    expect(review).not.toHaveTextContent("Private Overview value");
+  });
+});
+
 describe("KnowledgeConflictReview Advanced Mode projection", () => {
-  it("groups source-specific component definitions and hides answers and raw identities", async () => {
+  it("groups source-specific component definitions with their values and hides raw identities", async () => {
     render(
       <KnowledgeConflictReview
         sectionKey="advanced"
@@ -160,7 +276,7 @@ describe("KnowledgeConflictReview Advanced Mode projection", () => {
               type: "dropdown",
               label: "Installation stage",
               options: ["Preparation", "Installation"],
-              value: "private Sub-Vendor answer"
+              value: "Installation"
             }]
           }, {
             id: "private-in-house-configuration-id",
@@ -204,11 +320,14 @@ describe("KnowledgeConflictReview Advanced Mode projection", () => {
       "Execution · In-house · Component 1 · Component labelSupervisor required"
     );
     expect(review).toHaveTextContent("Mode recovery 1 · Component 1 · Component labelHistorical note");
+    expect(review).toHaveTextContent("PMC · Component 1 · Valueprivate PMC answer");
+    expect(review).toHaveTextContent(
+      "Execution · Sub-Vendor · Component 1 · ValueInstallation"
+    );
+    expect(review).toHaveTextContent("Execution · In-house · Component 1 · ValueNo");
+    expect(review).toHaveTextContent("Mode recovery 1 · Component 1 · Valueprivate recovery answer");
 
     for (const privateValue of [
-      "private PMC answer",
-      "private Sub-Vendor answer",
-      "private recovery answer",
       "private-pmc-configuration-id",
       "private-pmc-component-id",
       "private-sub-vendor-configuration-id",
@@ -220,11 +339,59 @@ describe("KnowledgeConflictReview Advanced Mode projection", () => {
     ]) {
       expect(review).not.toHaveTextContent(privateValue);
     }
-    expect(review).not.toHaveTextContent("Value");
 
     const results = await axe.run(document.body, {
       rules: { "color-contrast": { enabled: false } }
     });
     expect(results.violations).toEqual([]);
+  });
+});
+
+describe("KnowledgeConflictReview Quantity slab projection", () => {
+  it("resolves priced-slab Specification and UOM names supplied by Mode", () => {
+    render(
+      <KnowledgeConflictReview
+        sectionKey="quantity-margin"
+        localVersion={9}
+        serverVersion={10}
+        payload={{
+          slabRates: [{
+            id: "private-slab-id",
+            specificationId: "private-spec-id",
+            uomId: "private-uom-id",
+            quantity: "12.5",
+            unitRatePaise: 8_000
+          }]
+        }}
+        specifications={[{ id: "private-spec-id", name: "Plywood" }]}
+        masters={{
+          uoms: [{
+            id: "private-uom-id",
+            masterType: "uoms",
+            code: "SQFT",
+            name: "Square foot",
+            description: null,
+            displayOrder: 0,
+            status: "active",
+            decimalScale: 2,
+            version: 1,
+            createdById: "super-admin-1",
+            updatedById: "super-admin-1",
+            createdAt: "2026-09-02T08:00:00.000Z",
+            updatedAt: "2026-09-02T08:00:00.000Z"
+          }]
+        }}
+        relationshipBaskets={[]}
+        relationshipItems={[]}
+      />
+    );
+
+    const review = screen.getByRole("region", { name: "Latest Quantity & margin server version" });
+    expect(review).toHaveTextContent("Plywood");
+    expect(review).toHaveTextContent("Square foot");
+    expect(review).toHaveTextContent(/₹\s?80\.00/u);
+    expect(review).not.toHaveTextContent("private-spec-id");
+    expect(review).not.toHaveTextContent("private-uom-id");
+    expect(review).not.toHaveTextContent("private-slab-id");
   });
 });
