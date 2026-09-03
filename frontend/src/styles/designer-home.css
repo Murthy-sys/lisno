@@ -1,0 +1,790 @@
+/*
+ * Designer dashboard: flattens the Teak theme's frosted-glass/orb-texture
+ * canvas (role-themes.css) to a clean, flat white surface for the Designer
+ * role only, while keeping the same warm gold/brown accent tokens that
+ * palette already defines. Mirrors admin-home.css's approach — redefine the
+ * shared --role-* tokens on a role-scoped selector, loaded after
+ * role-themes.css so it wins the tie on identical attribute-selector
+ * specificity — but only touches canvas/glass, leaving the rail, accent and
+ * ink tokens untouched so the rest of the Teak identity (shared with
+ * client/estimator_sales/design_manager/design_head) is unaffected.
+ */
+
+.ui-app-shell[data-role="designer"] {
+  --role-canvas: #ffffff;
+  --role-rail: linear-gradient(190deg, #16234a 0%, #101a38 55%, #0a1226 100%);
+  --role-glass: #ffffff;
+  --role-glass-strong: #ffffff;
+  --role-glass-edge: #e5decf;
+  --role-glass-filter: none;
+  --role-glass-sheen: none;
+}
+
+/* The LISNO logo is a single flat-color SVG rendered as an <img> with
+   filter: brightness(0) invert(1) to turn it white — a CSS filter can't
+   recolor only part of a bitmap, so the icon can't be tinted gold without
+   also tinting the wordmark. Instead, overlay a gold copy of just the icon
+   (lisno-logo-icon.svg, same viewBox/coordinates as the full logo, mask-
+   sized/positioned identically) on top of the existing white logo — the
+   gold icon paints over the white icon underneath while the "LISNO"
+   wordmark stays visible and untouched. */
+.ui-app-shell[data-role="designer"] .ui-sidebar__brand {
+  position: relative;
+}
+
+.ui-app-shell[data-role="designer"] .ui-sidebar__brand::before {
+  content: "";
+  position: absolute;
+  inset-inline-start: var(--space-3);
+  inset-block-start: 0;
+  inline-size: 6.875rem;
+  block-size: 1.875rem;
+  background: #c8852f;
+  -webkit-mask-image: url("/lisno-logo-icon.svg");
+  mask-image: url("/lisno-logo-icon.svg");
+  -webkit-mask-size: contain;
+  mask-size: contain;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-position: left center;
+  mask-position: left center;
+  pointer-events: none;
+  z-index: 1;
+}
+
+/* Hide the page scrollbar's visible track while keeping the page scrollable
+   by wheel/touch/keyboard, so a tall page doesn't show a scrollbar UI. */
+html:has(.ui-app-shell[data-role="designer"]) {
+  scrollbar-width: none;
+}
+
+html:has(.ui-app-shell[data-role="designer"])::-webkit-scrollbar {
+  display: none;
+}
+
+body:has(.ui-app-shell[data-role="designer"]) {
+  --role-glass-strong: #ffffff;
+}
+
+/* ------------------------------------------------------------- responsive */
+
+/*
+ * shell.css only swaps the fixed sidebar rail for the hamburger-triggered
+ * MobileHeader/Drawer below 767px, so a tablet viewport (768-1024px) got
+ * the full 17rem rail squeezed against the content instead of the
+ * collapsible drawer. MobileHeader is already rendered unconditionally in
+ * AppShell and is role-agnostic; this mirrors admin-home.css's identical
+ * fix — shell.css's own mobile block, at a wider breakpoint, scoped to
+ * designer only, so the existing toggle/drawer mechanism activates for
+ * tablets here without changing the breakpoint for every other role.
+ */
+@media (max-width: 1024px) {
+  .ui-app-shell[data-role="designer"] {
+    display: block;
+    padding-block-start: calc(4.25rem + env(safe-area-inset-top));
+  }
+
+  .ui-app-shell[data-role="designer"] .ui-sidebar-rail {
+    display: none;
+  }
+
+  .ui-app-shell[data-role="designer"] .ui-mobile-header {
+    align-items: center;
+    background: var(--color-surface);
+    border-block-end: 1px solid var(--color-border);
+    box-shadow: var(--shadow-soft);
+    color: var(--color-brand-midnight);
+    display: flex;
+    inset-block-start: 0;
+    inset-inline: 0;
+    justify-content: space-between;
+    min-block-size: calc(4.25rem + env(safe-area-inset-top));
+    padding: env(safe-area-inset-top)
+      max(var(--space-4), env(safe-area-inset-right))
+      0
+      max(var(--space-4), env(safe-area-inset-left));
+    position: fixed;
+    z-index: var(--z-raised);
+  }
+
+  .ui-app-shell[data-role="designer"] .ui-workspace {
+    min-block-size: calc(100vh - 4.25rem);
+    padding: var(--space-6)
+      max(var(--space-4), env(safe-area-inset-right))
+      max(var(--space-8), env(safe-area-inset-bottom))
+      max(var(--space-4), env(safe-area-inset-left));
+  }
+}
+
+/* Tighter section rhythm and a bigger page title, matched to the reference
+   layout's denser vertical spacing. Scoped to the designer page only —
+   PageHeader and .ui-workspace > * spacing are shared by every role. */
+.ui-app-shell[data-role="designer"] .designer-dashboard {
+  gap: var(--space-3);
+}
+
+.ui-app-shell[data-role="designer"] .ui-page-header__title {
+  font-size: 2rem;
+  color: #241e41;
+}
+
+.ui-app-shell[data-role="designer"] .ui-page-header__eyebrow {
+  color: #c8852f;
+}
+
+/* .ui-page-header is a shared flex row with justify-content: space-between,
+   which put the breadcrumb link and the title/description at opposite ends
+   of the same row on pages that add a breadcrumb (e.g. Design plan
+   workspace's "Back to dashboard"), and left no way to keep an action
+   button level with the title specifically. A 2-row grid fixes both: the
+   breadcrumb (when present) spans its own row on top, and the title block
+   shares a row with the action button, so the button sits directly across
+   from the title instead of floating separately below everything. */
+.ui-app-shell[data-role="designer"] .ui-page-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas:
+    "breadcrumb breadcrumb"
+    "content actions";
+  align-items: start;
+  column-gap: var(--space-4);
+  row-gap: var(--space-2);
+}
+
+/* role-themes.css styles every "Back to X" link as a bordered/filled pill
+   button (Teak convention); flatten it to a plain gold text link here, and
+   drop its own 2rem margin-bottom (index.css .back-link), which was the
+   real source of the big gap above the title — the grid's own row-gap
+   above is enough on its own. */
+.ui-app-shell[data-role="designer"] .ui-page-header__breadcrumb {
+  grid-area: breadcrumb;
+}
+
+.ui-app-shell[data-role="designer"] .back-link {
+  margin-bottom: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: #c8852f;
+}
+
+.ui-app-shell[data-role="designer"] .back-link:hover {
+  color: #a66a1f;
+}
+
+.ui-app-shell[data-role="designer"] .ui-page-header__content {
+  grid-area: content;
+}
+
+.ui-app-shell[data-role="designer"] .ui-page-header__actions {
+  grid-area: actions;
+  align-self: center;
+}
+
+/* Header action buttons (e.g. "Create request") use gold, distinct from
+   the navy used for pagination/other controls elsewhere on the page. */
+.ui-app-shell[data-role="designer"] .ui-page-header__actions .ui-button {
+  border: 1px solid transparent !important;
+  background: linear-gradient(135deg, #a66a1f 0%, #c8852f 58%, #e2ab5c 100%) !important;
+  color: #ffffff !important;
+}
+
+/* Round, pill-shaped buttons everywhere in this role, matching the admin
+   "Initiate project" CTA convention instead of the default rectangular
+   shape — with wider horizontal padding so the label clears the curved
+   ends instead of crowding them. Dialogs (Dialog.tsx) portal to
+   document.body, landing outside .ui-app-shell, so every rule here is
+   duplicated under body:has(...) to reach them too. Excludes .modal-backdrop:
+   Dialog.tsx implements the full-screen click-to-close overlay as a
+   <Button variant="quiet"> for accessibility, so these selectors would
+   otherwise paint that invisible, viewport-sized backdrop with a white
+   fill, border, and pill radius. */
+.ui-app-shell[data-role="designer"] .ui-button:not(.modal-backdrop):not(.ui-drawer-backdrop),
+.ui-app-shell[data-role="designer"] .ui-icon-button:not(.modal-backdrop):not(.ui-drawer-backdrop),
+body:has(.ui-app-shell[data-role="designer"]) .ui-button:not(.modal-backdrop):not(.ui-drawer-backdrop),
+body:has(.ui-app-shell[data-role="designer"]) .ui-icon-button:not(.modal-backdrop):not(.ui-drawer-backdrop) {
+  border-radius: var(--radius-pill);
+}
+
+.ui-app-shell[data-role="designer"] .ui-button:not(.modal-backdrop):not(.ui-drawer-backdrop):not(.ui-button--compact),
+body:has(.ui-app-shell[data-role="designer"]) .ui-button:not(.modal-backdrop):not(.ui-drawer-backdrop):not(.ui-button--compact) {
+  padding-inline: var(--space-6);
+}
+
+/* Small, regular-weight button label everywhere in this role, not just one
+   dialog — the shared button styles default to bold. */
+.ui-app-shell[data-role="designer"] .ui-button:not(.modal-backdrop):not(.ui-drawer-backdrop),
+body:has(.ui-app-shell[data-role="designer"]) .ui-button:not(.modal-backdrop):not(.ui-drawer-backdrop) {
+  font-size: 0.875rem;
+  font-weight: 400;
+}
+
+/* Explicit white text: inside a portalled dialog (outside .ui-app-shell),
+   role-themes.css's [data-role] ink-color rule can't reach this button, so
+   it was falling back to a color that blended into the new navy fill. */
+.ui-app-shell[data-role="designer"] .ui-button--primary:not(.modal-backdrop):not(.ui-drawer-backdrop),
+body:has(.ui-app-shell[data-role="designer"]) .ui-button--primary:not(.modal-backdrop):not(.ui-drawer-backdrop) {
+  background: #1e183b;
+  color: #ffffff;
+}
+
+.ui-app-shell[data-role="designer"] .ui-button--quiet:not(.modal-backdrop):not(.ui-drawer-backdrop),
+body:has(.ui-app-shell[data-role="designer"]) .ui-button--quiet:not(.modal-backdrop):not(.ui-drawer-backdrop) {
+  border: 1px solid var(--color-border-strong);
+  background: #ffffff;
+}
+
+/* ------------------------------------------------------- access request */
+
+/* Balanced modal size — 38rem was reading as oversized next to the shorter
+   3-field form, and tall enough to force its own scrollbar. Rounded on all
+   four corners (border-radius applies to the whole box; nothing here clips
+   or squares any edge). */
+body:has(.ui-app-shell[data-role="designer"]) .modal:has(.access-request-dialog) {
+  width: min(100%, 32rem);
+  max-height: 90vh;
+  border: 1px solid var(--color-border);
+  border-radius: 15px;
+  box-shadow: var(--shadow-raised);
+  scrollbar-width: none;
+}
+
+/* Tighter, gold eyebrow-to-title-to-description header block. */
+body:has(.ui-app-shell[data-role="designer"]) .modal:has(.access-request-dialog) .modal__header {
+  padding-block: var(--space-4) var(--space-3);
+}
+
+body:has(.ui-app-shell[data-role="designer"]) .modal:has(.access-request-dialog) .eyebrow {
+  color: #f0c012;
+  margin-block-end: var(--space-1);
+  font-weight: 400;
+}
+
+body:has(.ui-app-shell[data-role="designer"]) .modal:has(.access-request-dialog) .modal__header p:last-child {
+  margin-block-start: var(--space-1);
+}
+
+/* Stays scrollable by wheel/touch/keyboard on short windows; just hides the
+   visible scrollbar track, which squared off against the rounded corners. */
+body:has(.ui-app-shell[data-role="designer"]) .modal:has(.access-request-dialog)::-webkit-scrollbar {
+  display: none;
+}
+
+/* .ui-control's border defaults to a very light grey that all but
+   disappears against this dialog's off-white background — the Module
+   select and Reason textarea read as unbordered plain text even with
+   --color-border-strong. Use an explicit, clearly-visible light-grey
+   border instead, with roomier padding around placeholder text, and a
+   navy focus ring (the shared --focus-ring-color is violet) matching this
+   role's new button accent. */
+body:has(.ui-app-shell[data-role="designer"]) .access-request-dialog .ui-control {
+  border: 1px solid #e5e5e5 !important;
+  border-radius: 12px;
+  padding-inline: var(--space-3);
+  background-color: #ffffff;
+}
+
+body:has(.ui-app-shell[data-role="designer"]) .access-request-dialog .ui-control:focus-visible {
+  border-color: #b8a5f3 !important;
+  box-shadow: 0 0 0 3px rgb(30 24 59 / 10%);
+}
+
+body:has(.ui-app-shell[data-role="designer"]) .access-request-dialog .ui-textarea {
+  min-block-size: 4rem;
+}
+
+/* Comfortable, consistent spacing between fields — the form had no gap of
+   its own between Field blocks beyond each field's internal label/hint
+   spacing. Kept tight (space-3) so the whole form fits inside shorter
+   browser windows without needing to scroll at all. */
+body:has(.ui-app-shell[data-role="designer"]) .access-request-dialog {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+body:has(.ui-app-shell[data-role="designer"]) .access-request-dialog__actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-3);
+  padding-block-start: var(--space-3);
+  border-block-start: 1px solid var(--color-border);
+}
+
+@media (max-width: 480px) {
+  body:has(.ui-app-shell[data-role="designer"]) .access-request-dialog__actions {
+    flex-direction: column-reverse;
+  }
+
+  body:has(.ui-app-shell[data-role="designer"]) .access-request-dialog__actions .ui-button {
+    inline-size: 100%;
+  }
+}
+
+/* The editorial serif font (Georgia) draws its "0" glyph almost identically
+   to a capital "O"; switch these numeric displays to the sans-serif
+   interface font so 0 reads as a digit, not a letter. */
+.ui-app-shell[data-role="designer"] .kpi-score strong,
+.ui-app-shell[data-role="designer"] .designer-metric-chip__value {
+  font-family: var(--font-interface);
+}
+
+/* Less dead air above the title and below the sidebar footer. */
+.ui-workspace[data-role="designer"] {
+  padding-block: var(--space-3) var(--space-6);
+}
+
+.ui-app-shell[data-role="designer"] .ui-sidebar__account {
+  padding-block-end: var(--space-3);
+}
+
+/* One consistent sans-serif card-title size everywhere in this role,
+   matching the admin AdminDetailSection card-title convention
+   (admin-home.css .admin-project-detail__section-title: 1.05rem/700) instead
+   of each card picking its own size off the shared, larger --type-* scale. */
+.ui-app-shell[data-role="designer"] .designer-kpi__identity h2,
+.ui-app-shell[data-role="designer"] .section-heading h2 {
+  font-family: var(--font-interface);
+  font-size: 1.05rem;
+  font-weight: 700;
+  letter-spacing: normal;
+}
+
+/* Every "assigned"-style badge (the page-header status badge and the count
+   next to "Design projects") reads as one consistent, medium-sized gold
+   pill across the designer role — not two different shapes/colors/sizes. */
+.ui-app-shell[data-role="designer"] .ui-status--info,
+.ui-app-shell[data-role="designer"] .designer-projects .section-heading > span {
+  min-block-size: 1.375rem;
+  padding-inline: var(--space-2);
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, #c8852f 12%, transparent);
+  color: #c8852f;
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+/* Status badges (e.g. "Pending"/"Cancelled" in the access-requests table)
+   default to a tight 4px/8px padding — roomier here so the icon and label
+   aren't crowded against the pill's edges. */
+.ui-app-shell[data-role="designer"] .ui-status {
+  min-block-size: 1.5rem;
+  padding: var(--space-1) var(--space-3);
+}
+
+/* ------------------------------------------------------------- KPI panel */
+
+.ui-app-shell[data-role="designer"] .designer-kpi {
+  padding: var(--space-3);
+  gap: var(--space-3);
+  border-color: #ecdfc4;
+  background-color: #fbf3e6;
+  background-image: linear-gradient(135deg, #f7e6c8 0%, #fbf3e6 45%, #ffffff 100%);
+}
+
+.ui-app-shell[data-role="designer"] .designer-kpi__content {
+  gap: var(--space-2);
+}
+
+.ui-app-shell[data-role="designer"] .designer-kpi .kpi-breakdown {
+  gap: var(--space-2);
+}
+
+/*
+ * The base rule (index.css) stretches these 5 columns with equal 1fr tracks,
+ * so on a wide window each card grows to fill the row and reads as
+ * oversized. Capping the card's own max-width and centering it in its track
+ * keeps every card the same compact size regardless of viewport width,
+ * instead of resizing with the browser.
+ */
+.ui-app-shell[data-role="designer"] .designer-kpi .kpi-breakdown {
+  justify-items: center;
+  align-items: stretch;
+}
+
+.ui-app-shell[data-role="designer"] .designer-kpi .kpi-component {
+  position: relative;
+  min-width: 0;
+  max-inline-size: 15.5rem !important;
+  min-block-size: 5.5rem;
+  padding: var(--space-3);
+  padding-inline-start: calc(1.875rem + var(--space-3) + var(--space-2));
+  border-color: var(--color-border);
+  border-radius: var(--radius-field);
+  background-color: #ffffff;
+  background-image: none;
+  box-shadow: none;
+}
+
+/* The icon sits pinned in the top-left corner, with the whole card's text
+   content inset to clear it (padding-inline-start above) — so every wrapped
+   line of a long title lines up under the first, instead of a second line
+   falling back out to the card's left edge under the icon. */
+.ui-app-shell[data-role="designer"] .designer-kpi .kpi-component::before {
+  position: absolute;
+  inset-block-start: var(--space-3);
+  inset-inline-start: var(--space-3);
+  margin-block-end: 0;
+}
+
+/* The score placeholder dash next to each title is redundant with the
+   "Not available" line right below it. */
+.ui-app-shell[data-role="designer"] .designer-kpi .kpi-component__heading b {
+  display: none;
+}
+
+/* Smaller "Show/Hide breakdown" toggle and score/reporting-period labels —
+   the shared 44px touch-target button and 1rem field label read oversized
+   next to these compact cards. */
+.ui-app-shell[data-role="designer"] .designer-kpi__toggle {
+  min-block-size: 36px;
+  padding-inline: var(--space-1);
+  font-size: 0.8125rem;
+  font-weight: 400;
+}
+
+.ui-app-shell[data-role="designer"] .designer-kpi__period .ui-field__label {
+  font-size: 0.8125rem;
+}
+
+/* The default --color-border is too light to read against this panel's
+   warm cream gradient background — same issue as the access-request
+   dialog fields; give it a clearly visible border, matching the "Show
+   breakdown" button beside it. */
+.ui-app-shell[data-role="designer"] .designer-kpi__period .ui-select-menu__trigger {
+  min-block-size: 36px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 12px;
+  padding-inline: var(--space-4);
+  font-size: 0.8125rem;
+}
+
+.ui-app-shell[data-role="designer"] .designer-kpi__period .ui-select-menu__popup {
+  border-radius: 12px;
+  padding: var(--space-1);
+}
+
+.ui-app-shell[data-role="designer"] .designer-kpi__period .ui-select-menu__option {
+  padding: var(--space-2) var(--space-3);
+}
+
+/* The color here had accidentally become hwb(34 1% 93%) — a near-black,
+   93% blackness value, not the intended gold accent, so the selected
+   option lost its highlight entirely. */
+.ui-app-shell[data-role="designer"] .designer-kpi__period .ui-select-menu__option.is-selected {
+  color: #0e0b07;
+}
+
+.ui-app-shell[data-role="designer"] .kpi-score p {
+  font-size: 0.75rem;
+}
+
+.ui-app-shell[data-role="designer"] .designer-kpi .kpi-component strong,
+.ui-app-shell[data-role="designer"] .designer-kpi .kpi-component span,
+.ui-app-shell[data-role="designer"] .designer-kpi .kpi-component p {
+  font-size: 0.8125rem;
+}
+
+/* Decorative icon badge per KPI component: pure CSS (::before, no markup
+   change) so KpiBreakdown stays the one shared component every operational
+   role renders — the colour/icon pairing is keyed to card position, which is
+   fixed by the KPI config the API returns. */
+.ui-app-shell[data-role="designer"] .designer-kpi .kpi-component::before {
+  content: "";
+  display: block;
+  inline-size: 1.875rem;
+  block-size: 1.875rem;
+  margin-block-end: var(--space-1);
+  border-radius: var(--radius-pill);
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 0.85rem;
+}
+
+.ui-app-shell[data-role="designer"] .designer-kpi .kpi-component:nth-of-type(1)::before {
+  background-color: #fbead2;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23c8852f' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='9'/%3E%3Cpath d='M12 7v5l3.2 2'/%3E%3C/svg%3E");
+}
+
+.ui-app-shell[data-role="designer"] .designer-kpi .kpi-component:nth-of-type(2)::before {
+  background-color: #e4ecfb;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%233b6fd4' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 3l7 3v6c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6z'/%3E%3Cpath d='m9 12 2 2 4-4'/%3E%3C/svg%3E");
+}
+
+.ui-app-shell[data-role="designer"] .designer-kpi .kpi-component:nth-of-type(3)::before {
+  background-color: #ece9f4;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23767a94' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 12a9 9 0 0 1 15-6.7L21 8'/%3E%3Cpath d='M21 3v5h-5'/%3E%3Cpath d='M21 12a9 9 0 0 1-15 6.7L3 16'/%3E%3Cpath d='M3 21v-5h5'/%3E%3C/svg%3E");
+}
+
+.ui-app-shell[data-role="designer"] .designer-kpi .kpi-component:nth-of-type(4)::before {
+  background-color: #fbe6d6;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23d9762e' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 8a6 6 0 0 1 12 0c0 5 2 6 2 6H4s2-1 2-6'/%3E%3Cpath d='M10 20a2 2 0 0 0 4 0'/%3E%3C/svg%3E");
+}
+
+.ui-app-shell[data-role="designer"] .designer-kpi .kpi-component:nth-of-type(5)::before {
+  background-color: #e0f2e6;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%232f9e58' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 6 9 17l-5-5'/%3E%3C/svg%3E");
+}
+
+/* The empty-state numeral used a stray light-violet tint left over from the
+   generic .project-empty recipe; soften it toward the role's own neutral
+   line colour so it reads as part of the same palette. */
+.ui-app-shell[data-role="designer"] .project-empty > span {
+  color: #d7d2e6;
+}
+
+/* More outer padding so the dashed empty-state box reads as a distinct
+   nested card with clear breathing room from the white card's own edges
+   (top, sides, and bottom alike), instead of nearly touching them. */
+.ui-app-shell[data-role="designer"] .designer-projects {
+  gap: var(--space-3);
+  padding: var(--space-5) !important;
+}
+
+/* Numeral on the left; the icon+copy group centers itself in the remaining
+   space (auto margins on a flex item absorb the leftover space evenly on
+   both sides), with generous padding so nothing touches the dashed border. */
+.ui-app-shell[data-role="designer"] .designer-projects .project-empty {
+  display: flex;
+  min-height: 0;
+  align-items: center;
+  justify-content: flex-start;
+  padding: var(--space-4);
+}
+
+.ui-app-shell[data-role="designer"] .designer-projects .project-empty > div {
+  max-inline-size: 32rem;
+  margin-inline: auto;
+}
+
+/* The "01" is decorative list-index typography (aria-hidden, not a data
+   value), but reads as a stale "1 project" count now that the page can
+   genuinely show 0. Hide the literal characters and paint "0" instead. */
+.ui-app-shell[data-role="designer"] .designer-projects .project-empty > span {
+  font-size: 0;
+}
+
+.ui-app-shell[data-role="designer"] .designer-projects .project-empty > span::before {
+  content: "0";
+  font-size: 1.75rem;
+}
+
+.ui-app-shell[data-role="designer"] .designer-projects .project-empty h3 {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  font-size: 1.15rem;
+}
+
+.ui-app-shell[data-role="designer"] .designer-projects .project-empty h3::before {
+  content: "";
+  flex: none;
+  inline-size: 2.75rem;
+  block-size: 2.75rem;
+  border-radius: var(--radius-pill);
+  background-color: #e4ecfb;
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 1.2rem;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%233b6fd4' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='4' y='4' width='16' height='16' rx='2'/%3E%3Cpath d='M8 10h8M8 14h5'/%3E%3C/svg%3E");
+}
+
+.ui-app-shell[data-role="designer"] .designer-projects .project-empty p {
+  margin-block-start: 0.35rem;
+  font-size: 0.875rem;
+}
+
+/* -------------------------------------------------------- section header */
+
+.ui-app-shell[data-role="designer"] .designer-projects .section-heading > span {
+  display: inline-flex;
+  align-items: center;
+  text-transform: capitalize;
+}
+
+/* --------------------------------------------------------- metric chips */
+
+/* Match the KPI cards' modest corner radius and explicit white fill instead
+   of the default full-pill capsule shape, which read as too rounded next to
+   the rest of the row. */
+.ui-app-shell[data-role="designer"] .designer-metric-chip {
+  min-block-size: 3rem;
+  padding-inline: var(--space-3);
+  padding-block: var(--space-2);
+  border-radius: var(--radius-field);
+  background-color: #ffffff;
+}
+
+.ui-app-shell[data-role="designer"] .designer-metric-chip__icon {
+  border-radius: var(--radius-control);
+}
+
+.ui-app-shell[data-role="designer"] .designer-metric-chip__label {
+  font-size: 0.9rem;
+}
+
+.ui-app-shell[data-role="designer"] .designer-metric-chip__value {
+  margin-inline-start: var(--space-2);
+}
+
+/* --------------------------------------------------------- access requests
+   ("My access requests" list/history table) */
+
+/* No outer card padding here — the light-blue header row needs to reach
+   every edge of the card (including the top, flush against its rounded
+   corners) the way the admin projects list header band does. Padding
+   moves onto the individual pieces that still need it (cells, pagination)
+   instead of the card as a whole. */
+.ui-app-shell[data-role="designer"] .access-administration__directory {
+  padding: 0;
+  overflow: hidden;
+}
+
+.ui-app-shell[data-role="designer"] .access-administration__pagination {
+  padding: var(--space-4) var(--space-6);
+}
+
+/* access-administration.css hardcodes this table 76rem/58rem wide (both
+   .access-requests__table AND the base .access-administration__table
+   class on the same <table> carry their own independent min-inline-size),
+   regardless of how much space its columns actually need — forcing the
+   table wider than the viewport on narrow screens even with the
+   .access-requests__table override, since the base class's 58rem rule
+   still applied on its own. Neutralize both so the table fits its
+   container instead of forcing horizontal overflow on the whole page. */
+.ui-app-shell[data-role="designer"] .access-requests__table,
+.ui-app-shell[data-role="designer"] .access-administration__table {
+  min-inline-size: 0;
+}
+
+/* Grid/flex items default to min-width: auto (sized to their content, not
+   shrinking below it) — .access-administration__directory is a grid, so
+   even with the table's own min-inline-size zeroed out above, the
+   .table-scroll wrapper (a grid item) and the surface/section around it
+   would still refuse to shrink below the table's full intrinsic width,
+   pushing the whole page wider than a narrow viewport instead of letting
+   the wrapper's own overflow-x: auto contain it. */
+.ui-app-shell[data-role="designer"] .access-administration,
+.ui-app-shell[data-role="designer"] .access-administration__directory,
+.ui-app-shell[data-role="designer"] .access-administration__table-scroll {
+  min-inline-size: 0;
+}
+
+/* The 8-column request-history table can't fit a phone screen at any
+   padding — it will always need its own horizontal scroll. Rather than
+   leave that as the only way to see the row, drop the least essential
+   columns (Created/Updated/Reviewed — the same information exists on every
+   row's own detail) below 600px, so what's left (Project ID, Module,
+   Status, Reason, Actions) fits without needing to scroll at all. */
+@media (max-width: 600px) {
+  .ui-app-shell[data-role="designer"] .access-administration__table th:nth-child(5),
+  .ui-app-shell[data-role="designer"] .access-administration__table td:nth-child(5),
+  .ui-app-shell[data-role="designer"] .access-administration__table th:nth-child(6),
+  .ui-app-shell[data-role="designer"] .access-administration__table td:nth-child(6),
+  .ui-app-shell[data-role="designer"] .access-administration__table th:nth-child(7),
+  .ui-app-shell[data-role="designer"] .access-administration__table td:nth-child(7) {
+    display: none;
+  }
+}
+
+.ui-app-shell[data-role="designer"] .access-administration__table th,
+.ui-app-shell[data-role="designer"] .access-administration__table td {
+  padding: var(--space-2) var(--space-3);
+}
+
+.ui-app-shell[data-role="designer"] .access-administration__table th:first-child,
+.ui-app-shell[data-role="designer"] .access-administration__table td:first-child {
+  padding-inline-start: var(--space-6);
+}
+
+.ui-app-shell[data-role="designer"] .access-administration__table th:last-child,
+.ui-app-shell[data-role="designer"] .access-administration__table td:last-child {
+  padding-inline-end: var(--space-6);
+}
+
+/* Light-blue header row, matching the admin projects list table
+   (admin-home.css .admin-projects__header-row: background #eaf2ff, border
+   #d7e3f7) — including its top corners, rounded to match the card's own,
+   now that the card supplies no padding of its own above it. */
+.ui-app-shell[data-role="designer"] .access-administration__table thead tr {
+  background: #eaf2ff;
+}
+
+.ui-app-shell[data-role="designer"] .access-administration__table th {
+  padding-block: 1.1rem;
+  border-block-end-color: #d7e3f7;
+}
+
+.ui-app-shell[data-role="designer"] .access-administration__table thead th:first-child {
+  border-start-start-radius: var(--radius-surface);
+}
+
+.ui-app-shell[data-role="designer"] .access-administration__table thead th:last-child {
+  border-start-end-radius: var(--radius-surface);
+}
+
+/* Previous/Next page both filled navy, matching the primary CTA elsewhere
+   in this role, instead of the shared quiet/secondary outline styles.
+   !important because Previous page is variant="quiet" — its own
+   .ui-button--quiet rule (earlier in this file) has higher specificity than
+   a plain two-class selector and would otherwise keep its white background
+   while this rule's color: #fff still won, producing invisible white-on-
+   white text. */
+.ui-app-shell[data-role="designer"] .access-administration__pagination .ui-button {
+  border: 1px solid transparent !important;
+  background: #1e183b !important;
+  color: #ffffff !important;
+}
+
+/* Smaller pagination/row-action buttons, and no drop shadow — several
+   sitting close together (Cancel request, Previous page, Next page) made
+   their default box-shadow: var(--shadow-soft) visibly overlap into one
+   smudged blob. */
+.ui-app-shell[data-role="designer"] .access-administration__pagination .ui-button,
+.ui-app-shell[data-role="designer"] .access-requests__table .ui-button {
+  min-block-size: 32px;
+  padding-inline: var(--space-3);
+  font-size: 0.8125rem;
+  box-shadow: none;
+}
+
+.ui-app-shell[data-role="designer"] .access-requests__table .ui-button {
+  border: 1px solid transparent !important;
+  background: #1e183b !important;
+  color: #ffffff !important;
+}
+
+/* Force the busy-state spinner+label to center itself explicitly, instead
+   of only relying on the parent's justify-content: center, on every button
+   that shows a loading state in this role (Cancel request, Create
+   request). */
+.ui-app-shell[data-role="designer"] .ui-button__busy,
+body:has(.ui-app-shell[data-role="designer"]) .ui-button__busy {
+  margin-inline: auto;
+  justify-self: center;
+}
+
+/* --------------------------------------------------------------- overflow */
+
+/*
+ * Defensive containment: every flex/grid item here defaults to a min-size of
+ * "auto" (its content's intrinsic width), which is what lets a long value or
+ * a fixed-size child force its row wider than the viewport and put a
+ * horizontal scrollbar on the whole shell. Pinning min-inline-size: 0 on the
+ * row-level flex/grid containers lets them actually shrink to the available
+ * width instead.
+ */
+.ui-app-shell[data-role="designer"] .designer-page,
+.ui-app-shell[data-role="designer"] .designer-dashboard,
+.ui-app-shell[data-role="designer"] .designer-kpi__summary,
+.ui-app-shell[data-role="designer"] .designer-kpi__identity,
+.ui-app-shell[data-role="designer"] .designer-kpi__controls,
+.ui-app-shell[data-role="designer"] .designer-metrics,
+.ui-app-shell[data-role="designer"] .designer-metric-chip,
+.ui-app-shell[data-role="designer"] .designer-metric-chip__copy,
+.ui-app-shell[data-role="designer"] .designer-projects,
+.ui-app-shell[data-role="designer"] .section-heading {
+  min-inline-size: 0;
+  max-inline-size: 100%;
+}
