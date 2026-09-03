@@ -13,6 +13,7 @@ import "./styles/client-responses.css";
 import "./styles/estimate-delivery.css";
 import "./styles/designer-design-plans.css";
 import "./styles/admin-home.css";
+import "./styles/designer-home.css";
 
 capturePasswordResetTokenBeforeRouterMount();
 

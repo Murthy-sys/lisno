@@ -123,6 +123,7 @@ export function AccessRequestDialog({
           id="access-request-project-id"
           label="Project ID"
           required
+          hint="Paste the identifier exactly as provided."
           error={errors.projectId ? <span role="alert">{errors.projectId}</span> : undefined}
         >
           {(controlProps) => (
@@ -132,6 +133,7 @@ export function AccessRequestDialog({
               value={projectId}
               disabled={mutation.isPending}
               autoComplete="off"
+              placeholder="Enter the opaque project identifier"
               onChange={(event) => {
                 setProjectId(event.target.value);
                 setErrors((current) => ({ ...current, projectId: undefined, form: undefined }));
@@ -139,7 +141,12 @@ export function AccessRequestDialog({
             />
           )}
         </Field>
-        <Field id="access-request-module" label="Module" required>
+        <Field
+          id="access-request-module"
+          label="Module"
+          required
+          hint="Select the module you need access to."
+        >
           {(controlProps) => (
             <Select {...controlProps} value={module} disabled>
               <option value={module}>{module}</option>
@@ -150,6 +157,7 @@ export function AccessRequestDialog({
           id="access-request-reason"
           label="Reason"
           required
+          hint="Provide a brief explanation for your request."
           error={errors.reason ? <span role="alert">{errors.reason}</span> : undefined}
         >
           {(controlProps) => (
@@ -158,6 +166,7 @@ export function AccessRequestDialog({
               rows={5}
               value={reason}
               disabled={mutation.isPending}
+              placeholder="Enter the reason for requesting access"
               onChange={(event) => {
                 setReason(event.target.value);
                 setErrors((current) => ({ ...current, reason: undefined, form: undefined }));
@@ -166,10 +175,10 @@ export function AccessRequestDialog({
           )}
         </Field>
         <div className="access-request-dialog__actions">
-          <Button variant="quiet" disabled={mutation.isPending} onClick={onClose}>
+          <Button variant="quiet" size="compact" disabled={mutation.isPending} onClick={onClose}>
             Cancel
           </Button>
-          <Button type="submit" busy={mutation.isPending} busyLabel="Submitting…">
+          <Button type="submit" size="compact" busy={mutation.isPending} busyLabel="Submitting…">
             Create request
           </Button>
         </div>

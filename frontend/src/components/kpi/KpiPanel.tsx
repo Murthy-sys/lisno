@@ -4,9 +4,14 @@ import { useState } from "react";
 
 import { KpiBreakdown } from "./KpiBreakdown";
 import { KpiScore } from "./KpiScore";
-import { Field, Select } from "../ui/Field";
+import { SelectMenu } from "../ui/SelectMenu";
 import { Surface } from "../ui/Surface";
 import { kpiQueryOptions, reviewPeriod } from "../../features/designer/designerApi";
+
+const periodOptions = [
+  { value: "0", label: "Current month" },
+  { value: "-1", label: "Previous month" }
+];
 
 /**
  * The shared performance panel. Designers and every operational or worker role
@@ -32,22 +37,14 @@ export function KpiPanel({ userId }: { userId: string }) {
         </div>
         <KpiScore score={kpi.score} />
         <div className="designer-kpi__controls">
-          <Field
+          <SelectMenu
             id="reporting-period"
             className="designer-kpi__period"
             label="Reporting period"
-          >
-            {(controlProps) => (
-              <Select
-                {...controlProps}
-                value={periodOffset}
-                onChange={(event) => setPeriodOffset(Number(event.target.value))}
-              >
-                <option value={0}>Current month</option>
-                <option value={-1}>Previous month</option>
-              </Select>
-            )}
-          </Field>
+            value={String(periodOffset)}
+            options={periodOptions}
+            onChange={(next) => setPeriodOffset(Number(next))}
+          />
           <button
             type="button"
             className="designer-kpi__toggle"
