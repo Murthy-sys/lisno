@@ -11,7 +11,7 @@
  */
 
 .ui-app-shell[data-role="designer"] {
-  --role-canvas: #f7f5f1;
+  --role-canvas: #ffffff;
   --role-rail: linear-gradient(190deg, #16234a 0%, #101a38 55%, #0a1226 100%);
   --role-glass: #ffffff;
   --role-glass-strong: #ffffff;
@@ -631,8 +631,18 @@ body:has(.ui-app-shell[data-role="designer"]) .access-request-dialog__actions {
 /* --------------------------------------------------------- access requests
    ("My access requests" list/history table) */
 
+/* No outer card padding here — the light-blue header row needs to reach
+   every edge of the card (including the top, flush against its rounded
+   corners) the way the admin projects list header band does. Padding
+   moves onto the individual pieces that still need it (cells, pagination)
+   instead of the card as a whole. */
 .ui-app-shell[data-role="designer"] .access-administration__directory {
-  padding: var(--space-6);
+  padding: 0;
+  overflow: hidden;
+}
+
+.ui-app-shell[data-role="designer"] .access-administration__pagination {
+  padding: var(--space-4) var(--space-6);
 }
 
 /* access-administration.css hardcodes this table 76rem/58rem wide (both
@@ -683,6 +693,37 @@ body:has(.ui-app-shell[data-role="designer"]) .access-request-dialog__actions {
   padding: var(--space-2) var(--space-3);
 }
 
+.ui-app-shell[data-role="designer"] .access-administration__table th:first-child,
+.ui-app-shell[data-role="designer"] .access-administration__table td:first-child {
+  padding-inline-start: var(--space-6);
+}
+
+.ui-app-shell[data-role="designer"] .access-administration__table th:last-child,
+.ui-app-shell[data-role="designer"] .access-administration__table td:last-child {
+  padding-inline-end: var(--space-6);
+}
+
+/* Light-blue header row, matching the admin projects list table
+   (admin-home.css .admin-projects__header-row: background #eaf2ff, border
+   #d7e3f7) — including its top corners, rounded to match the card's own,
+   now that the card supplies no padding of its own above it. */
+.ui-app-shell[data-role="designer"] .access-administration__table thead tr {
+  background: #eaf2ff;
+}
+
+.ui-app-shell[data-role="designer"] .access-administration__table th {
+  padding-block: 1.1rem;
+  border-block-end-color: #d7e3f7;
+}
+
+.ui-app-shell[data-role="designer"] .access-administration__table thead th:first-child {
+  border-start-start-radius: var(--radius-surface);
+}
+
+.ui-app-shell[data-role="designer"] .access-administration__table thead th:last-child {
+  border-start-end-radius: var(--radius-surface);
+}
+
 /* Previous/Next page both filled navy, matching the primary CTA elsewhere
    in this role, instead of the shared quiet/secondary outline styles.
    !important because Previous page is variant="quiet" — its own
@@ -708,12 +749,9 @@ body:has(.ui-app-shell[data-role="designer"]) .access-request-dialog__actions {
   box-shadow: none;
 }
 
-/* Cancel request gets its own gold-gradient fill so it reads as a distinct
-   action from the neutral navy pagination controls, even though both start
-   from the same shared "secondary" button variant. */
 .ui-app-shell[data-role="designer"] .access-requests__table .ui-button {
   border: 1px solid transparent !important;
-  background: linear-gradient(135deg, #a66a1f 0%, #c8852f 58%, #e2ab5c 100%) !important;
+  background: #1e183b !important;
   color: #ffffff !important;
 }
 
