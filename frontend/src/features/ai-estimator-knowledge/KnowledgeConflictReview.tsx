@@ -8,6 +8,7 @@ import {
 import {
   isChoiceField,
   knowledgeModeFieldTypeLabel,
+  knowledgeModeFieldValueLabel,
   parseKnowledgeModeConfigurations,
   partitionKnowledgeModeConfigurations,
   projectKnowledgeModeConfigurationFieldSummaries,
@@ -156,6 +157,9 @@ function definitionConflictValues(
     },
     ...(isChoiceField(field.type) && field.options.length
       ? [{ label: `${component} · Allowed options`, value: field.options.join(", ") }]
+      : []),
+    ...(knowledgeModeFieldValueLabel(field)
+      ? [{ label: `${component} · Value`, value: knowledgeModeFieldValueLabel(field)! }]
       : [])
   ];
 }

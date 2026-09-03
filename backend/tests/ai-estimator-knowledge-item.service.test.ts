@@ -1030,10 +1030,10 @@ describe("AI estimator knowledge item service", () => {
         }]
       }
     })).rejects.toMatchObject({
-      status: 503,
-      code: "FIXED_GST_POLICY_UNAVAILABLE",
+      status: 422,
+      code: "FIXED_GST_OUTSIDE_COVERAGE",
       fields: {
-        "payload.priceEntries.0": expect.stringContaining("GST could not be applied")
+        "payload.priceEntries.0.effectiveFrom": expect.stringContaining("GST 18% applies from")
       }
     });
     expect(await AiEstimatorKnowledgePriceVersionModel.countDocuments({ revisionId })).toBe(0);
@@ -1644,27 +1644,17 @@ describe("AI estimator knowledge item service", () => {
       expectedVersion: pricing.version,
       expectedAggregateVersion: created.version,
       payload: { priceEntries: [command] }
-    })).rejects.toMatchObject({ status: 503, code: "FIXED_GST_POLICY_UNAVAILABLE" });
+    })).rejects.toMatchObject({ status: 409, code: "FIXED_GST_POLICY_MISMATCH" });
     expect(await AiEstimatorKnowledgePriceVersionModel.countDocuments({ revisionId })).toBe(0);
     expect(appendAudit).toHaveBeenCalledTimes(auditCount);
   });
 
   it.each([
-    ["missing rule", async () => {
-      await AiEstimatorKnowledgeTaxRuleModel.deleteOne({
-        _id: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.rule.id
-      }).exec();
-    }],
     ["mismatched rule identity", async () => {
       await AiEstimatorKnowledgeTaxRuleModel.collection.updateOne(
         { _id: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.rule.id },
         { $set: { code: "GST_WRONG" } }
       );
-    }],
-    ["missing version", async () => {
-      await AiEstimatorKnowledgeTaxVersionModel.deleteOne({
-        _id: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.version.id
-      }).exec();
     }],
     ["inactive version", async () => {
       await AiEstimatorKnowledgeTaxVersionModel.collection.updateOne(
@@ -1713,13 +1703,116 @@ describe("AI estimator knowledge item service", () => {
           effectiveTo: null
         }]
       }
-    })).rejects.toMatchObject({ status: 503, code: "FIXED_GST_POLICY_UNAVAILABLE" });
+    })).rejects.toMatchObject({ status: 409, code: "FIXED_GST_POLICY_MISMATCH" });
     expect(await AiEstimatorKnowledgePriceVersionModel.countDocuments({ revisionId })).toBe(0);
     const persistedSection = await AiEstimatorKnowledgeSectionModel.findById(pricing.id).lean();
     expect(persistedSection).toMatchObject({ version: pricing.version });
     expect((persistedSection?.payload as { priceEntries?: unknown[] } | undefined)?.priceEntries ?? [])
       .toEqual([]);
     expect(appendAudit).toHaveBeenCalledTimes(auditCount);
+  });
+
+  it.each([
+    ["rule", async () => {
+      await AiEstimatorKnowledgeTaxRuleModel.deleteOne({
+        _id: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.rule.id
+      }).exec();
+    }],
+    ["version", async () => {
+      await AiEstimatorKnowledgeTaxVersionModel.deleteOne({
+        _id: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.version.id
+      }).exec();
+    }],
+    ["rule and version", async () => {
+      await AiEstimatorKnowledgeTaxRuleModel.deleteOne({
+        _id: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.rule.id
+      }).exec();
+      await AiEstimatorKnowledgeTaxVersionModel.deleteOne({
+        _id: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.version.id
+      }).exec();
+    }]
+  ] as const)(
+    "applies GST 18%% by materializing the canonical policy when the %s is absent",
+    async (_case, remove) => {
+      const { service } = createService();
+      const created = await service.createMainLine(ACTOR, "basket-carpentry", {
+        name: "Unprovisioned fixed GST"
+      });
+      const revisionId = created.draftRevisionId!;
+      const pricing = await service.getSection(ACTOR, created.mainLineId, revisionId, "pricing");
+      await remove();
+
+      await service.updateSection(ACTOR, created.mainLineId, revisionId, "pricing", {
+        expectedVersion: pricing.version,
+        expectedAggregateVersion: created.version,
+        payload: {
+          priceEntries: [{
+            operation: "set_budget",
+            vendorId: "vendor-local",
+            uomId: "uom-sqft",
+            inputAmountPaise: 10_000,
+            effectiveFrom: "2026-08-28T00:00:00.000Z",
+            effectiveTo: null
+          }]
+        }
+      });
+
+      /* 10000 paise before GST at a fixed 1800bps becomes 1800 paise of GST. */
+      const priceVersion = await AiEstimatorKnowledgePriceVersionModel
+        .findOne({ revisionId }).lean();
+      expect(priceVersion).toMatchObject({
+        taxRuleId: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.rule.id,
+        taxVersionId: AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.version.id,
+        baseAmountPaise: 10_000,
+        taxAmountPaise: 1_800,
+        totalAmountPaise: 11_800
+      });
+      expect(await AiEstimatorKnowledgeTaxRuleModel.findById(
+        AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.rule.id
+      ).lean()).toMatchObject({ code: "GST_18", status: "active" });
+      expect(await AiEstimatorKnowledgeTaxVersionModel.findById(
+        AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY.version.id
+      ).lean()).toMatchObject({ rateBps: 1_800, treatment: "exclusive", status: "active" });
+    }
+  );
+
+  it("stores applicability from the saved content rather than the requested flag", async () => {
+    const { service } = createService();
+    const created = await service.createMainLine(ACTOR, "basket-carpentry", {
+      name: "Applicability from content"
+    });
+    const revisionId = created.draftRevisionId!;
+    let quality = await service.getSection(ACTOR, created.mainLineId, revisionId, "quality");
+    expect(quality.applicability).toBe("not_configured");
+
+    /* A stale "not_configured" from the client must not outrank real content,
+       or the Draft reports as empty while showing saved parameters. */
+    quality = await service.updateSection(ACTOR, created.mainLineId, revisionId, "quality", {
+      expectedVersion: quality.version,
+      expectedAggregateVersion: created.version,
+      applicability: "not_configured",
+      payload: { parameters: [{ id: "quality-1", type: "text", label: "Notes" }] }
+    });
+    expect(quality.applicability).toBe("configured");
+    expect((await service.getItem(ACTOR, created.mainLineId)).completeness.sections
+      .find(({ sectionKey }) => sectionKey === "quality")?.state).toBe("complete");
+
+    /* Clearing the section returns it to not configured. */
+    quality = await service.updateSection(ACTOR, created.mainLineId, revisionId, "quality", {
+      expectedVersion: quality.version,
+      expectedAggregateVersion: quality.aggregateVersion,
+      payload: {}
+    });
+    expect(quality.applicability).toBe("not_configured");
+
+    /* "Not applicable" stays the author's explicit call. */
+    quality = await service.updateSection(ACTOR, created.mainLineId, revisionId, "quality", {
+      expectedVersion: quality.version,
+      expectedAggregateVersion: quality.aggregateVersion,
+      applicability: "not_applicable",
+      payload: { parameters: [{ id: "quality-1", type: "text", label: "Notes" }] }
+    });
+    expect(quality.applicability).toBe("not_applicable");
   });
 
   it("preserves stored typed Specifications and historical price references without allowing new typed writes", async () => {
@@ -2074,8 +2167,7 @@ describe("AI estimator knowledge item service", () => {
       }
     )).rejects.toMatchObject({ status: 409, code: "VERSION_CONFLICT" });
 
-    const auditCount = appendAudit.mock.calls.length;
-    await expect(service.updateSection(
+    const valued = await service.updateSection(
       ACTOR,
       created.mainLineId,
       revisionId,
@@ -2088,19 +2180,17 @@ describe("AI estimator knowledge item service", () => {
           modeConfigurations: payload.modeConfigurations.map((configuration, index) => index === 0
             ? {
                 ...configuration,
-                fields: configuration.fields.map((field) => ({ ...field, value: "promoted" }))
+                fields: configuration.fields.map((field) => ({ ...field, value: "authored" }))
               }
             : configuration)
         }
       }
-    )).rejects.toMatchObject({
-      status: 400,
-      code: "VALIDATION_ERROR",
-      fields: {
-        "payload.modeConfigurations.0.fields.0.value": expect.stringContaining("compatibility-only")
-      }
-    });
-    expect(appendAudit).toHaveBeenCalledTimes(auditCount);
+    );
+    expect((valued.payload as { modeConfigurations: { fields: { value?: unknown }[] }[] })
+      .modeConfigurations[0]!.fields[0]!.value).toBe("authored");
+
+    const auditCount = appendAudit.mock.calls.length;
+    /* The next write omits every value, which clears the one just authored. */
     const nextPayload = {
       ...payload,
       modeConfigurations: payload.modeConfigurations.map((configuration) => ({
@@ -2117,27 +2207,27 @@ describe("AI estimator knowledge item service", () => {
       revisionId,
       "advanced",
       {
-        expectedVersion: saved.version,
-        expectedAggregateVersion: saved.aggregateVersion,
+        expectedVersion: valued.version,
+        expectedAggregateVersion: valued.aggregateVersion,
         payload: nextPayload
       }
     )).resolves.toMatchObject({
       payload: nextPayload,
-      version: saved.version + 1,
-      aggregateVersion: saved.aggregateVersion + 1
+      version: valued.version + 1,
+      aggregateVersion: valued.aggregateVersion + 1
     });
     expect(await service.getSection(
       ACTOR,
       created.mainLineId,
       revisionId,
       "advanced"
-    )).toMatchObject({ version: saved.version + 1, payload: nextPayload });
-    expect((await service.getItem(ACTOR, created.mainLineId)).version).toBe(created.version + 2);
+    )).toMatchObject({ version: valued.version + 1, payload: nextPayload });
+    expect((await service.getItem(ACTOR, created.mainLineId)).version).toBe(created.version + 3);
     expect(await AiEstimatorKnowledgeModeModel.countDocuments()).toBe(0);
     expect(appendAudit).toHaveBeenCalledTimes(auditCount + 1);
   });
 
-  it("preserves legacy values by stable configuration/field ID and rejects value or identity promotion", async () => {
+  it("lets a write own Mode component values and still rejects identity promotion", async () => {
     const { service, appendAudit } = createService();
     const created = await service.createMainLine(ACTOR, "basket-carpentry", {
       name: "Legacy Mode compatibility"
@@ -2202,17 +2292,61 @@ describe("AI estimator knowledge item service", () => {
         }
       }
     );
+    /* Omitting the key clears the stored answer instead of resurrecting it. */
+    expect((edited.payload as { modeConfigurations: { fields: unknown[] }[] })
+      .modeConfigurations[0]!.fields[0]).toEqual({
+      id: "field-pmc-mark",
+      type: "dropdown",
+      label: "PMC grade",
+      options: ["Premium", "Standard"]
+    });
     expect(edited.payload).toMatchObject({
+      modeConfigurations: [
+        { id: "configuration-pmc" },
+        historicalPayload.modeConfigurations[1]!
+      ]
+    });
+
+    const revalued = await service.updateSection(ACTOR, created.mainLineId, revisionId, "advanced", {
+      expectedVersion: edited.version,
+      expectedAggregateVersion: edited.aggregateVersion,
+      payload: {
+        dependencies: [],
+        modeConfigurations: [
+          {
+            id: "configuration-pmc",
+            modeKind: "pmc",
+            fields: [
+              {
+                id: "field-pmc-mark",
+                type: "dropdown",
+                label: "PMC grade",
+                options: ["Premium", "Standard"],
+                value: "Premium"
+              },
+              {
+                id: "field-pmc-reviewed",
+                type: "checkbox",
+                label: "Reviewed",
+                options: [],
+                value: false
+              }
+            ]
+          },
+          historicalPayload.modeConfigurations[1]!
+        ]
+      }
+    });
+    /* A Super Admin owns these answers: changing one and introducing another
+       on a brand-new component both persist. */
+    expect(revalued.payload).toMatchObject({
       modeConfigurations: [
         {
           id: "configuration-pmc",
-          fields: [{
-            id: "field-pmc-mark",
-            type: "dropdown",
-            label: "PMC grade",
-            options: ["Premium", "Standard"],
-            value: "A1"
-          }]
+          fields: [
+            { id: "field-pmc-mark", value: "Premium" },
+            { id: "field-pmc-reviewed", value: false }
+          ]
         },
         historicalPayload.modeConfigurations[1]!
       ]
@@ -2220,30 +2354,9 @@ describe("AI estimator knowledge item service", () => {
 
     const auditCount = appendAudit.mock.calls.length;
     const baseInput = {
-      expectedVersion: edited.version,
-      expectedAggregateVersion: edited.aggregateVersion
+      expectedVersion: revalued.version,
+      expectedAggregateVersion: revalued.aggregateVersion
     };
-    await expect(service.updateSection(ACTOR, created.mainLineId, revisionId, "advanced", {
-      ...baseInput,
-      payload: {
-        dependencies: [],
-        modeConfigurations: [{
-          id: "configuration-pmc",
-          modeKind: "pmc",
-          fields: [{
-            id: "field-pmc-mark",
-            type: "text",
-            label: "PMC mark",
-            options: [],
-            value: "A2"
-          }]
-        }]
-      }
-    })).rejects.toMatchObject({
-      status: 400,
-      code: "VALIDATION_ERROR",
-      fields: { "payload.modeConfigurations.0.fields.0.value": expect.stringContaining("immutable") }
-    });
     await expect(service.updateSection(ACTOR, created.mainLineId, revisionId, "advanced", {
       ...baseInput,
       payload: {
@@ -2264,27 +2377,6 @@ describe("AI estimator knowledge item service", () => {
       payload: {
         dependencies: [],
         modeConfigurations: [{
-          id: "configuration-new-pmc",
-          modeKind: "pmc",
-          fields: [{
-            id: "field-new-valued",
-            type: "checkbox",
-            label: "New valued field",
-            options: [],
-            value: false
-          }]
-        }]
-      }
-    })).rejects.toMatchObject({
-      status: 400,
-      code: "VALIDATION_ERROR",
-      fields: { "payload.modeConfigurations.0.fields.0.value": expect.stringContaining("compatibility-only") }
-    });
-    await expect(service.updateSection(ACTOR, created.mainLineId, revisionId, "advanced", {
-      ...baseInput,
-      payload: {
-        dependencies: [],
-        modeConfigurations: [{
           id: "configuration-new-legacy-mode",
           modeId: "mode-pmc",
           fields: []
@@ -2297,7 +2389,7 @@ describe("AI estimator knowledge item service", () => {
     });
     expect(appendAudit).toHaveBeenCalledTimes(auditCount);
     expect((await service.getSection(ACTOR, created.mainLineId, revisionId, "advanced")).version)
-      .toBe(edited.version);
+      .toBe(revalued.version);
   });
 
   it("requires explicit unscoped Execution recovery into a previously empty source", async () => {
@@ -2413,16 +2505,20 @@ describe("AI estimator knowledge item service", () => {
         }
       }
     );
+    /* Recovery assigns the source and keeps the definition; the omitted value is
+       cleared, because the write owns it. */
     expect(assigned.payload).toMatchObject({
       modeConfigurations: [
         {
           id: "configuration-execution-recovery",
           executionSource: "sub_vendor",
-          fields: [{ value: "hidden" }]
+          fields: [{ id: "field-recovery", label: "Recovered Sub-Vendor field" }]
         },
         { executionSource: "in_house" }
       ]
     });
+    expect((assigned.payload as { modeConfigurations: { fields: unknown[] }[] })
+      .modeConfigurations[0]!.fields[0]).not.toHaveProperty("value");
   });
 
   it("retains active-reference validation for legacy modeId configurations", async () => {
@@ -2450,23 +2546,25 @@ describe("AI estimator knowledge item service", () => {
       { _id: advanced.id },
       { $set: { payload } }
     ).exec();
+    const definitionOnlyPayload = {
+      modeConfigurations: [{
+        id: "configuration-legacy",
+        modeId: "mode-pmc",
+        fields: [{
+          id: "field-legacy",
+          type: "text",
+          label: "Legacy marker",
+          options: []
+        }]
+      }]
+    };
     const saved = await service.updateSection(ACTOR, created.mainLineId, revisionId, "advanced", {
       expectedVersion: advanced.version,
       expectedAggregateVersion: created.version,
-      payload: {
-        modeConfigurations: [{
-          id: "configuration-legacy",
-          modeId: "mode-pmc",
-          fields: [{
-            id: "field-legacy",
-            type: "text",
-            label: "Legacy marker",
-            options: []
-          }]
-        }]
-      }
+      payload: definitionOnlyPayload
     });
-    expect(saved.payload).toEqual(payload);
+    /* The write omitted the stored answer, so it is cleared rather than kept. */
+    expect(saved.payload).toEqual(definitionOnlyPayload);
     expect(await AiEstimatorKnowledgeModeModel.findById("mode-pmc").lean())
       .toMatchObject({ dependencyEpoch: 0, status: "active" });
 
@@ -2950,13 +3048,9 @@ describe("AI estimator knowledge item service", () => {
       payload: {
         recommendations: [{
           id: "copy-recommendation-active",
-          targetBasketId: "basket-copy-recommendation",
-          targetMainLineId: "historical-recommendation-main-line",
-          type: "recommended",
-          priorityId: null,
+          name: "Copy Recommendation Target",
+          priorityId: AI_ESTIMATOR_KNOWLEDGE_CANONICAL_PRIORITY_IDS.high,
           reason: "Retained inactive recommendation",
-          quantityRelationship: "same_quantity",
-          quantityValue: null,
           dependency: false,
           active: false
         }]
@@ -2977,24 +3071,20 @@ describe("AI estimator knowledge item service", () => {
       }
     });
 
-    for (const basketId of [
-      "basket-copy-scope",
-      "basket-copy-recommendation",
-      "basket-copy-advanced"
-    ]) {
+    /* Recommendations are free text, so only Scope and Advanced still bind a
+       Basket and bump its dependency epoch. */
+    for (const basketId of ["basket-copy-scope", "basket-copy-advanced"]) {
       expect(await AiEstimatorKnowledgeBasketModel.findById(basketId).lean())
         .toMatchObject({ dependencyEpoch: 1, version: 1 });
     }
+    expect(await AiEstimatorKnowledgeBasketModel.findById("basket-copy-recommendation").lean())
+      .toMatchObject({ dependencyEpoch: 0, version: 1 });
 
     const duplicate = await service.duplicate(ACTOR, source.mainLineId, {
       expectedVersion: 4,
       name: "Relationship Copy"
     });
-    for (const basketId of [
-      "basket-copy-scope",
-      "basket-copy-recommendation",
-      "basket-copy-advanced"
-    ]) {
+    for (const basketId of ["basket-copy-scope", "basket-copy-advanced"]) {
       expect(await AiEstimatorKnowledgeBasketModel.findById(basketId).lean())
         .toMatchObject({ dependencyEpoch: 2, version: 1 });
     }
@@ -3003,7 +3093,6 @@ describe("AI estimator knowledge item service", () => {
       sectionKey: { $in: ["scope", "recommendations", "advanced"] }
     }).lean();
     expect(JSON.stringify(copiedRelationshipSections)).toContain("basket-copy-scope");
-    expect(JSON.stringify(copiedRelationshipSections)).toContain("basket-copy-recommendation");
     expect(JSON.stringify(copiedRelationshipSections)).toContain("basket-copy-advanced");
 
     await AiEstimatorKnowledgeBasketModel.deleteOne({ _id: "basket-copy-advanced" });
@@ -3019,7 +3108,7 @@ describe("AI estimator knowledge item service", () => {
     expect(await AiEstimatorKnowledgeBasketModel.findById("basket-copy-scope").lean())
       .toMatchObject({ dependencyEpoch: 2, version: 1 });
     expect(await AiEstimatorKnowledgeBasketModel.findById("basket-copy-recommendation").lean())
-      .toMatchObject({ dependencyEpoch: 2, version: 1 });
+      .toMatchObject({ dependencyEpoch: 0, version: 1 });
   });
 
   it("accepts a basket-only scope exclusion without treating it as an item dependency", async () => {
@@ -3165,7 +3254,7 @@ describe("AI estimator knowledge item service", () => {
       .toMatchObject({ dependencyEpoch: 1, version: 1 });
   });
 
-  it("coordinates newly introduced Recommendation and Advanced Basket relationships", async () => {
+  it("coordinates newly introduced Advanced Basket relationships", async () => {
     await AiEstimatorKnowledgeBasketModel.insertMany([
       basketDocument("basket-recommendation-target", "Recommendation Target", "inactive", 2),
       basketDocument("basket-advanced-target", "Advanced Target", "active", 3)
@@ -3187,13 +3276,9 @@ describe("AI estimator knowledge item service", () => {
       payload: {
         recommendations: [{
           id: "inactive-recommendation-reference",
-          targetBasketId: "basket-recommendation-target",
-          targetMainLineId: "historical-recommendation-line",
-          type: "recommended",
-          priorityId: null,
+          name: "Recommendation Target",
+          priorityId: AI_ESTIMATOR_KNOWLEDGE_CANONICAL_PRIORITY_IDS.high,
           reason: "Retained inactive recommendation",
-          quantityRelationship: "same_quantity",
-          quantityValue: null,
           dependency: false,
           active: false
         }]
@@ -3214,8 +3299,9 @@ describe("AI estimator knowledge item service", () => {
       }
     });
 
+    /* A named Recommendation binds no Basket, so only Advanced coordinates one. */
     expect(await AiEstimatorKnowledgeBasketModel.findById("basket-recommendation-target").lean())
-      .toMatchObject({ dependencyEpoch: 1, version: 1 });
+      .toMatchObject({ dependencyEpoch: 0, version: 1 });
     expect(await AiEstimatorKnowledgeBasketModel.findById("basket-advanced-target").lean())
       .toMatchObject({ dependencyEpoch: 1, version: 1 });
   });

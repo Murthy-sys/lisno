@@ -94,6 +94,28 @@ export function KnowledgeModeSurfacePanel({
         ) : null}
       </div>
 
+      {selectedIds.length && sectionState.status === "ready" && catalogState.status === "ready" ? (
+        <ul className="knowledge-mode-surfaces__selected" aria-label="Selected surface details">
+          {selectedIds.map((surfaceId) => {
+            const surface = surfaces.find(({ id }) => id === surfaceId);
+            return (
+              <li key={surfaceId}>
+                <p className="knowledge-mode-surfaces__selected-name">
+                  {surface?.name ?? "Unavailable value"}
+                </p>
+                {/* The shared Surface description, shown so the author can tell
+                    surfaces apart here. It is edited in Reusable Values. */}
+                <p className="knowledge-mode-surfaces__selected-description">
+                  {surface
+                    ? surface.description?.trim() || "No examples recorded."
+                    : "This Surface is no longer available."}
+                </p>
+              </li>
+            );
+          })}
+        </ul>
+      ) : null}
+
       {sectionState.status === "loading" ? (
         <p className="knowledge-mode-surfaces__state" role="status">Loading saved Surfaces…</p>
       ) : sectionState.status === "error" ? (

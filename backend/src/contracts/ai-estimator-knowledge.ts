@@ -8,9 +8,7 @@ import type {
   KnowledgeModeKind,
   KnowledgeExecutionSource,
   KnowledgeQuantityGapBehavior,
-  KnowledgeQuantityRelationship,
   KnowledgeQualityParameterType,
-  KnowledgeRecommendationType,
   KnowledgeRevisionStatus,
   KnowledgeSectionApplicability,
   KnowledgeSectionKey,
@@ -250,14 +248,17 @@ export type KnowledgePriceEntryCommand =
 
 export interface KnowledgeRecommendation {
   id: KnowledgeStableId;
-  targetBasketId: KnowledgeStableId;
-  targetMainLineId: KnowledgeStableId;
-  type: KnowledgeRecommendationType;
-  priorityId: KnowledgeStableId | null;
-  reason: string;
-  quantityRelationship: KnowledgeQuantityRelationship;
-  quantityValue: KnowledgeCanonicalDecimal | null;
+  name: string;
+  priorityId: KnowledgeStableId;
+  reason: string | null;
   dependency: boolean;
+  active: boolean;
+}
+
+export interface KnowledgeExclusion {
+  id: KnowledgeStableId;
+  name: string;
+  reason: string | null;
   active: boolean;
 }
 

@@ -50,13 +50,15 @@ function QuantityMarginEditorHarness({
   readOnly = false,
   availableUoms = [uom],
   availableSpecifications = specifications,
-  uomCatalogState
+  uomCatalogState,
+  validationAttempt = 0
 }: {
   readonly initialPayload?: KnowledgeJsonObject;
   readonly readOnly?: boolean;
   readonly availableUoms?: readonly KnowledgeMaster[];
   readonly availableSpecifications?: KnowledgeJsonObject[] | typeof specifications;
   readonly uomCatalogState?: KnowledgeUomCatalogState;
+  readonly validationAttempt?: number;
 }) {
   const [payload, setPayload] = useState<KnowledgeJsonObject>(initialPayload);
 
@@ -74,6 +76,7 @@ function QuantityMarginEditorHarness({
         resetKey={`quantity-margin-${readOnly ? "readonly" : "editable"}`}
         pricingSpecifications={availableSpecifications}
         uomCatalogState={uomCatalogState}
+        validationAttempt={validationAttempt}
         onChange={setPayload}
         onDirty={() => undefined}
         onValidationChange={() => undefined}
@@ -85,6 +88,28 @@ function QuantityMarginEditorHarness({
 }
 
 describe("knowledge quantity and margin editor", () => {
+  it("keeps focus in a margin field while typing after a failed save attempt", async () => {
+    const user = userEvent.setup();
+    /* validationAttempt stays non-zero once a save has been rejected. Typing
+       changes the issue count, which must not move focus away from the field. */
+    render(<QuantityMarginEditorHarness validationAttempt={1} />);
+
+    const startMargin = screen.getByRole("spinbutton", { name: "Start margin (basis points)" });
+    await user.clear(startMargin);
+    await user.type(startMargin, "20000");
+
+    expect(startMargin).toHaveFocus();
+    expect(startMargin).toHaveValue(20_000);
+
+    const wastage = screen.getByRole("spinbutton", { name: "Wastage (basis points)" });
+    await user.clear(wastage);
+    await user.type(wastage, "45000");
+
+    expect(wastage).toHaveFocus();
+    expect(wastage).toHaveValue(45_000);
+  });
+
+
   it("removes Gap behavior while preserving the remaining controls and hidden payload data", async () => {
     const user = userEvent.setup();
     render(<QuantityMarginEditorHarness />);

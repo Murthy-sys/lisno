@@ -639,7 +639,7 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
       ref("KnowledgeModeChoiceField")
     ]
   },
-  KnowledgeLegacyValuedNonChoiceModeField: {
+  KnowledgeValuedNonChoiceModeField: {
     ...strictObject(
       ["id", "type", "label", "options", "value"],
       {
@@ -656,14 +656,13 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
             { type: "string", maxLength: 4_000, nullable: true },
             { type: "boolean" }
           ],
-          description: "Immutable stored answer retained only for compatibility with an existing stable field ID."
+          description: "Configured answer for this component. Absent or null means the component is unanswered."
         }
       }
     ),
-    deprecated: true,
-    description: "Compatibility-only stored non-choice Mode field. New writes must omit value."
+    description: "Non-choice Mode field carrying its configured answer."
   },
-  KnowledgeLegacyValuedChoiceModeField: {
+  KnowledgeValuedChoiceModeField: {
     ...strictObject(
       ["id", "type", "label", "options", "value"],
       {
@@ -688,26 +687,24 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
             { type: "string", maxLength: 4_000, nullable: true },
             { type: "boolean" }
           ],
-          description: "Immutable stored answer retained only for compatibility with an existing stable field ID."
+          description: "Configured answer for this component. Absent or null means the component is unanswered."
         }
       }
     ),
-    deprecated: true,
-    description: "Compatibility-only stored choice Mode field. New writes must omit value."
+    description: "Choice Mode field carrying its configured answer, drawn from its own options."
   },
-  KnowledgeLegacyValuedModeField: {
-    deprecated: true,
-    description: "Compatibility-only stored Mode field. New writes must use KnowledgeModeField without value.",
+  KnowledgeValuedModeField: {
+    description: "Mode field carrying the configured answer alongside its definition.",
     oneOf: [
-      ref("KnowledgeLegacyValuedNonChoiceModeField"),
-      ref("KnowledgeLegacyValuedChoiceModeField")
+      ref("KnowledgeValuedNonChoiceModeField"),
+      ref("KnowledgeValuedChoiceModeField")
     ]
   },
   KnowledgeModeFieldInput: {
-    description: "Definition-only field for new writes, or an unchanged compatibility-valued field already present in the Draft.",
+    description: "Mode field written either without an answer or with its configured value.",
     oneOf: [
       ref("KnowledgeModeField"),
-      ref("KnowledgeLegacyValuedModeField")
+      ref("KnowledgeValuedModeField")
     ]
   },
   KnowledgeModeConfiguration: {

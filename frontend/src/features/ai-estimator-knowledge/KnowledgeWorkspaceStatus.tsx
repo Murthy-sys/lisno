@@ -1,33 +1,18 @@
 import { ProgressBar } from "../../components/ui/ProgressBar";
 import { Surface } from "../../components/ui/Surface";
-import type { KnowledgeItemDetail, KnowledgeRevision } from "./knowledgeTypes";
+import type { KnowledgeItemDetail } from "./knowledgeTypes";
 
 export interface KnowledgeWorkspaceStatusProps {
   readonly item: KnowledgeItemDetail;
-  readonly revision: KnowledgeRevision | null;
 }
 
-export function KnowledgeWorkspaceStatus({
-  item,
-  revision
-}: KnowledgeWorkspaceStatusProps) {
-  const blockerCount = item.blockers.length;
-  const warningCount = item.warnings.length;
-  const draftReadiness = blockerCount > 0
-    ? `Blocked · ${blockerCount} ${blockerCount === 1 ? "blocker" : "blockers"}`
-    : warningCount > 0
-      ? `Ready with ${warningCount} ${warningCount === 1 ? "warning" : "warnings"}`
-      : "Ready to activate";
-  const activationStatus = item.status === "archived"
-    ? "Archived"
-    : revision?.status === "draft"
-      ? draftReadiness
-      : item.status === "inactive"
-        ? "Inactive"
-        : revision?.status === "active"
-          ? "Active"
-          : "No revision";
-
+/*
+ * Completeness is the only status an author acts on here. Revision numbers and
+ * activation readiness are lifecycle detail: the revision is already named in
+ * the section header, and blockers and warnings are listed in the activation
+ * dialog, where they can actually be resolved.
+ */
+export function KnowledgeWorkspaceStatus({ item }: KnowledgeWorkspaceStatusProps) {
   return (
     <Surface
       as="section"
@@ -46,28 +31,6 @@ export function KnowledgeWorkspaceStatus({
           valueText={`${item.completeness.percentage}% complete`}
         />
       </div>
-      <dl className="knowledge-summary-list">
-        <div>
-          <dt>Activation status</dt>
-          <dd>{activationStatus}</dd>
-        </div>
-        <div>
-          <dt>{revision?.status === "draft" ? "Editing" : "Viewing"}</dt>
-          <dd>
-            {revision
-              ? `${revision.status === "draft" ? "Draft" : "Active"} revision ${revision.revisionNumber}`
-              : "No revision available"}
-          </dd>
-        </div>
-        <div>
-          <dt>Active revision</dt>
-          <dd>
-            {item.activeRevision
-              ? `Revision ${item.activeRevision.revisionNumber}`
-              : "No active revision"}
-          </dd>
-        </div>
-      </dl>
     </Surface>
   );
 }

@@ -1,5 +1,5 @@
 import axe from "axe-core";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
@@ -39,6 +39,33 @@ function renderPanel(
 }
 
 describe("KnowledgeModeSurfacePanel", () => {
+  it("shows each selected Surface's shared description as read-only context", () => {
+    const described = { ...wallSurface, description: "Paint, wallpaper, texture, paneling" };
+    renderPanel({
+      selectedIds: [described.id, floorSurface.id, "surface-removed"],
+      surfaces: [described, floorSurface]
+    });
+
+    const details = screen.getByRole("list", { name: "Selected surface details" });
+    expect(within(details).getByText("Wall surface")).toBeVisible();
+    expect(within(details).getByText("Paint, wallpaper, texture, paneling")).toBeVisible();
+    /* A Surface with nothing recorded still lists, so the author can see the
+       gap rather than wonder whether the description failed to load. */
+    expect(within(details).getByText("Floor surface")).toBeVisible();
+    expect(within(details).getByText("No examples recorded.")).toBeVisible();
+    expect(within(details).getByText("Unavailable value")).toBeVisible();
+    expect(within(details).getByText("This Surface is no longer available.")).toBeVisible();
+    /* Descriptions are context only: this panel never edits them. */
+    expect(within(details).queryByRole("textbox")).not.toBeInTheDocument();
+    expect(details).not.toHaveTextContent("surface-removed");
+  });
+
+  it("omits the description list until the Surface catalog is ready", () => {
+    renderPanel({ catalogState: { status: "loading" } });
+    expect(screen.queryByRole("list", { name: "Selected surface details" })).not.toBeInTheDocument();
+  });
+
+
   it("shows the approved labels and selects the returned quick-add stable ID", async () => {
     const user = userEvent.setup();
     const onChange = vi.fn();

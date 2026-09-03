@@ -98,25 +98,17 @@ function asymmetricInput(): KnowledgeOverviewSummaryInput {
         recommendations: [
           {
             id: "recommendation-trim",
-            targetBasketId: "basket-finishes",
-            targetMainLineId: "line-trim",
-            type: "mandatory",
+            name: "Perimeter trim",
             priorityId: "priority-high",
             reason: "Close the perimeter",
-            quantityRelationship: "same_quantity",
-            quantityValue: null,
             dependency: true,
             active: true
           },
           {
             id: "recommendation-insulation",
-            targetBasketId: "basket-insulation",
-            targetMainLineId: "line-insulation",
-            type: "optional",
+            name: "Acoustic insulation",
             priorityId: null,
             reason: "Improve acoustics",
-            quantityRelationship: "percentage_of_source",
-            quantityValue: "37.5",
             dependency: false,
             active: false
           }
@@ -269,9 +261,8 @@ describe("projectKnowledgeOverviewSummary", () => {
       { id: "recommendation-insulation", label: "Acoustic insulation" }
     ]);
     expect(summary.recommendationDetails[1]).toMatchObject({
-      targetBasket: { id: "basket-insulation", label: "Insulation systems" },
-      targetMainLine: { id: "line-insulation", label: "Acoustic insulation" },
-      quantityValue: "37.5",
+      name: "Acoustic insulation",
+      reason: "Improve acoustics",
       dependency: false,
       active: false
     });
@@ -427,9 +418,9 @@ describe("projectKnowledgeOverviewSummary", () => {
       "execution"
     ]);
     expect(summary.modeDetails.find(({ option }) => option.id === "pmc")?.dynamicFields).toEqual([
-      { id: "field-pmc-mark", label: "PMC mark", type: "text", options: [] },
-      { id: "field-pmc-empty", label: "Empty note", type: "text", options: [] },
-      { id: "field-pmc-check", label: "Reviewed", type: "checkbox", options: [] }
+      { id: "field-pmc-mark", label: "PMC mark", type: "text", options: [], value: "A1" },
+      { id: "field-pmc-empty", label: "Empty note", type: "text", options: [], value: "" },
+      { id: "field-pmc-check", label: "Reviewed", type: "checkbox", options: [], value: false }
     ]);
     expect(summary.modeDetails.find(({ option }) => option.id === "execution")?.dynamicFields)
       .toEqual([]);
@@ -441,10 +432,10 @@ describe("projectKnowledgeOverviewSummary", () => {
           id: "field-execution-phase",
           label: "Execution phase",
           type: "dropdown",
-          options: ["Install"]
+          options: ["Install"],
+          value: "Install"
         }]
       }]);
-    expect(JSON.stringify(summary.modeDetails)).not.toContain('"value"');
   });
 
   it("keeps resolved and unresolved legacy definitions as explicit non-ID recovery", () => {
@@ -475,7 +466,8 @@ describe("projectKnowledgeOverviewSummary", () => {
         id: "field-legacy-pmc",
         label: "Legacy mark",
         type: "text",
-        options: []
+        options: [],
+        value: "A1"
       }]
     }]);
     expect(resolved.legacyModeMappingRequired).toBe(false);
@@ -489,7 +481,8 @@ describe("projectKnowledgeOverviewSummary", () => {
         id: "field-legacy-pmc",
         label: "Legacy mark",
         type: "text",
-        options: []
+        options: [],
+        value: "A1"
       }]
     }]);
     expect(unresolved.legacyModeMappingRequired).toBe(true);
@@ -520,7 +513,7 @@ describe("projectKnowledgeOverviewSummary", () => {
       { id: "pmc", label: "PMC", state: "available" }
     ]);
     expect(summary.modeDetails[0]?.dynamicFields).toEqual([
-      { id: "field-canonical-pmc", label: "Canonical mark", type: "text", options: [] }
+      { id: "field-canonical-pmc", label: "Canonical mark", type: "text", options: [], value: "Canonical" }
     ]);
     expect(summary.modeRecoveryDetails).toEqual([{
       key: "configuration-legacy-pmc",
@@ -530,11 +523,11 @@ describe("projectKnowledgeOverviewSummary", () => {
         id: "field-legacy-pmc",
         label: "Legacy mark",
         type: "text",
-        options: []
+        options: [],
+        value: "Legacy"
       }]
     }]);
     expect(summary.legacyModeMappingRequired).toBe(false);
-    expect(JSON.stringify(summary.modeRecoveryDetails)).not.toContain('"value"');
   });
 
   it("keeps unresolved generic Mode references out of the fixed selector and raw IDs out of labels", () => {
@@ -582,11 +575,7 @@ describe("projectKnowledgeOverviewSummary", () => {
         },
         recommendations: {
           recommendations: [
-            {
-              id: "recommendation-unresolved",
-              targetBasketId: "basket-unresolved",
-              targetMainLineId: "line-unresolved"
-            }
+            { id: "recommendation-unresolved" }
           ]
         }
       }
@@ -601,10 +590,10 @@ describe("projectKnowledgeOverviewSummary", () => {
       mode: { id: "mode-unresolved", label: KNOWLEDGE_OVERVIEW_UNAVAILABLE_LABEL, state: "unavailable" },
       vendor: { id: "vendor-unresolved", label: KNOWLEDGE_OVERVIEW_UNAVAILABLE_LABEL, state: "unavailable" }
     });
+    /* An unnamed Recommendation reads as unavailable rather than showing its ID. */
     expect(summary.recommendationDetails[0]).toMatchObject({
-      option: { label: KNOWLEDGE_OVERVIEW_UNAVAILABLE_LABEL, state: "unavailable" },
-      targetBasket: { label: KNOWLEDGE_OVERVIEW_UNAVAILABLE_LABEL, state: "unavailable" },
-      targetMainLine: { label: KNOWLEDGE_OVERVIEW_UNAVAILABLE_LABEL, state: "unavailable" }
+      name: null,
+      option: { state: "unavailable" }
     });
     const allLabels = [
       ...summary.specificationOptions,

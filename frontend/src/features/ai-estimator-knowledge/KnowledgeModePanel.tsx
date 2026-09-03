@@ -85,6 +85,13 @@ const MODE_SECTION_KEYS = [
 
 type ModeSectionKey = (typeof MODE_SECTION_KEYS)[number];
 
+/*
+ * Priority is hidden in the Mode tab for now and will be switched back on if it
+ * is needed. Flip this to true to restore the editor — every draft, conflict,
+ * save and error path below is left wired, so nothing else has to change.
+ */
+const MODE_PRIORITY_ENABLED = false;
+
 const MODE_SECTION_LABELS = {
   advanced: "Mode configuration",
   pricing: "Budgeting",
@@ -712,12 +719,13 @@ export const KnowledgeModePanel = forwardRef<
           relationshipItems={relationshipItems}
           currentMainLineId={mainLineId}
           readOnly={!editable || saving}
+          readOnlyRevision={!editable}
           canQuickAdd={canQuickAdd && !saving}
           resetKey={`${revisionId}-pricing-${drafts.pricing.envelopeVersion ?? "pending"}`}
           specificationScopeKey={revisionId}
           specificationReferenceIds={drafts.pricing.specificationReferenceIds}
           slabSpecificationReferenceIds={liveSlabSpecificationIds}
-          pricingAfterSpecifications={(
+          pricingAfterSpecifications={MODE_PRIORITY_ENABLED ? (
             <>
               {drafts.overview.serverReview && drafts.overview.editedFields.has("priorityId") ? (
                 <KnowledgeConflictReview
@@ -762,7 +770,7 @@ export const KnowledgeModePanel = forwardRef<
                 </InlineMessage>
               ) : null}
             </>
-          )}
+          ) : null}
           vendorCatalogState={vendorCatalogState}
           uomCatalogState={uomCatalogState}
           budgetReadOnly={!editable}
@@ -854,6 +862,7 @@ export const KnowledgeModePanel = forwardRef<
             relationshipItems={relationshipItems}
             currentMainLineId={mainLineId}
             readOnly={!editable || saving}
+            readOnlyRevision={!editable}
             canQuickAdd={canQuickAdd && !saving}
             resetKey={`${revisionId}-quantity-margin-${drafts["quantity-margin"].envelopeVersion ?? "pending"}`}
             pricingSpecifications={drafts.pricing.payload.specifications}
@@ -1034,8 +1043,11 @@ function businessBudgetIssue(
 ): KnowledgeModeConfigurationIssue {
   if (!issue.path.startsWith("priceEntries")) return issue;
   const rowPath = /^priceEntries\.\d+/u.exec(issue.path)?.[0] ?? "priceEntries";
-  if (errorCode === "FIXED_GST_POLICY_UNAVAILABLE") {
+  if (errorCode === "FIXED_GST_POLICY_MISMATCH") {
     return { path: rowPath, message: FIXED_GST_POLICY_MESSAGE };
+  }
+  if (errorCode === "FIXED_GST_OUTSIDE_COVERAGE") {
+    return { path: `${rowPath}.effectiveFrom`, message: issue.message };
   }
   if (errorCode === "EFFECTIVE_WINDOW_OVERLAP") {
     return {
@@ -1077,7 +1089,9 @@ function businessBudgetIssue(
   };
 }
 
-const FIXED_GST_POLICY_MESSAGE = "Budgeting is temporarily unavailable because GST could not be applied. Try again later.";
+/* GST is a fixed 18% system policy the server applies on save, so the only way
+   it can fail is stored policy drift, which retrying never clears. */
+const FIXED_GST_POLICY_MESSAGE = "The stored GST policy does not match the system GST 18% policy. Contact support.";
 
 function budgetServerIssues(
   payload: KnowledgeJsonObject,
@@ -1085,7 +1099,7 @@ function budgetServerIssues(
   errorCode: string | null
 ): readonly KnowledgeModeConfigurationIssue[] {
   const mapped = issues.map((issue) => businessBudgetIssue(issue, errorCode));
-  if (errorCode !== "FIXED_GST_POLICY_UNAVAILABLE") return mapped;
+  if (errorCode !== "FIXED_GST_POLICY_MISMATCH") return mapped;
   if (mapped.some(({ path }) => /^priceEntries\.\d+(?:\.|$)/u.test(path))) return mapped;
   const entries = Array.isArray(payload.priceEntries) ? payload.priceEntries : [];
   const index = entries.findIndex((entry) => isBudgetSetCommand(entry));
@@ -1122,7 +1136,10 @@ function budgetFailureMessage(failure: unknown): string {
     if (failure.code === "EFFECTIVE_WINDOW_OVERLAP") {
       return "Another budget for this unit already covers these dates.";
     }
-    if (failure.code === "FIXED_GST_POLICY_UNAVAILABLE" || failure.code === "KNOWLEDGE_TAX_WINDOW_MISMATCH") {
+    if (failure.code === "FIXED_GST_OUTSIDE_COVERAGE") {
+      return "This budget starts before GST 18% took effect. Choose a later start date.";
+    }
+    if (failure.code === "FIXED_GST_POLICY_MISMATCH" || failure.code === "KNOWLEDGE_TAX_WINDOW_MISMATCH") {
       return FIXED_GST_POLICY_MESSAGE;
     }
   }

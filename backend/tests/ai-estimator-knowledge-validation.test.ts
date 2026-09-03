@@ -495,17 +495,41 @@ describe("AI estimator knowledge validation", () => {
     expect(validateKnowledgeSectionPayload("recommendations", {
       recommendations: [{
         id: "recommendation-wiring",
-        targetBasketId: "basket-electrical",
-        targetMainLineId: "line-wiring",
-        type: "mandatory",
-        priorityId: null,
+        name: "Electrical wiring",
+        priorityId: "priority-high",
         reason: "Complete before boards close the ceiling",
-        quantityRelationship: "same_quantity",
-        quantityValue: null,
         dependency: true,
         active: true
       }]
     })).toEqual([]);
+
+    /* Exclusions are authored beside Recommendations in one section and keep
+       the Scope relationship rules, so a Basket-only exclusion stays valid. */
+    expect(validateKnowledgeSectionPayload("recommendations", {
+      recommendations: [{
+        id: "recommendation-wiring",
+        name: "Electrical wiring",
+        priorityId: "priority-high",
+        reason: "Wiring precedes the boards",
+        dependency: false,
+        active: true
+      }],
+      exclusions: [
+        { id: "exclusion-painting", name: "Painting", reason: "Priced separately", active: true },
+        { id: "exclusion-light-fittings", name: "Light fittings", reason: null, active: true }
+      ]
+    })).toEqual([]);
+
+    expect(validateKnowledgeSectionPayload("recommendations", {
+      exclusions: [{
+        id: "exclusion-unnamed",
+        name: "",
+        reason: null,
+        active: true
+      }]
+    })).toContainEqual(expect.objectContaining({
+      path: "payload.exclusions.0.name"
+    }));
 
     expect(validateKnowledgeSectionPayload("quality", {
       parameters: [
@@ -537,6 +561,49 @@ describe("AI estimator knowledge validation", () => {
         }
       ]
     })).toEqual([]);
+
+    /* The editor only writes the fields a parameter's own type uses, so a radio
+       carries no numeric bounds and a text field carries no allowed values. */
+    expect(validateKnowledgeSectionPayload("quality", {
+      parameters: [
+        {
+          id: "quality-is-needed",
+          type: "radio",
+          label: "Is Needed",
+          allowedValues: ["Yes", "No"],
+          defaultValue: "Yes",
+          required: true,
+          category: "Client Quality Parameter",
+          active: true
+        },
+        { id: "quality-bare", type: "text", label: "Notes" }
+      ]
+    })).toEqual([]);
+
+    /* Relaxing the required keys must not weaken the type-aware rules. */
+    expect(validateKnowledgeSectionPayload("quality", {
+      parameters: [{ id: "quality-empty-choice", type: "radio", label: "Needed" }]
+    })).toContainEqual(expect.objectContaining({
+      path: "payload.parameters.0.allowedValues",
+      code: "REQUIRED"
+    }));
+    expect(validateKnowledgeSectionPayload("quality", {
+      parameters: [{
+        id: "quality-unknown-default",
+        type: "radio",
+        label: "Needed",
+        allowedValues: ["Yes"],
+        defaultValue: "Maybe"
+      }]
+    })).toContainEqual(expect.objectContaining({
+      path: "payload.parameters.0.defaultValue",
+      code: "INVALID_DEFAULT"
+    }));
+    expect(validateKnowledgeSectionPayload("quality", {
+      parameters: [{ id: "quality-bad-active", type: "text", label: "Notes", active: "yes" }]
+    })).toContainEqual(expect.objectContaining({
+      path: "payload.parameters.0.active"
+    }));
 
     expect(validateKnowledgeSectionPayload("execution", {
       steps: [
@@ -780,43 +847,66 @@ describe("AI estimator knowledge validation", () => {
       "REQUIRED_REFERENCE"
     ]));
 
+    /* A Recommendation names its target in free text. Stable-ID targets and the
+       retired strength fields are rejected as unknown. */
     const recommendation = validateKnowledgeSectionPayload("recommendations", {
       recommendations: [{
         id: "recommendation-1",
+        name: "Electrical wiring",
         targetBasketId: "basket-1",
         targetMainLineId: "line-1",
-        type: "automatic",
-        priorityId: null,
+        priorityId: "priority-high",
         reason: "Required",
-        quantityRelationship: "same_quantity",
-        quantityValue: "2",
         dependency: "yes",
         active: true
       }]
     });
     expect(recommendation.map(({ code }) => code)).toEqual(expect.arrayContaining([
-      "INVALID_ENUM",
-      "IRRELEVANT_FIELD",
+      "UNKNOWN_FIELD",
       "INVALID_TYPE"
     ]));
+    expect(recommendation.map(({ path }) => path)).toEqual(expect.arrayContaining([
+      "payload.recommendations.0.targetBasketId",
+      "payload.recommendations.0.targetMainLineId",
+      "payload.recommendations.0.dependency"
+    ]));
+
+    /* Reason is optional, so a Recommendation is complete with a name and a
+       Priority alone. The editor drops the key entirely when it is blank, so
+       an absent key must pass exactly like an explicit null. */
+    expect(validateKnowledgeSectionPayload("recommendations", {
+      recommendations: [{
+        id: "recommendation-no-reason",
+        name: "Electrical wiring",
+        priorityId: "priority-high",
+        reason: null,
+        dependency: false,
+        active: true
+      }]
+    })).toEqual([]);
 
     expect(validateKnowledgeSectionPayload("recommendations", {
       recommendations: [{
-        id: "recommendation-missing-basket",
-        targetMainLineId: "line-1",
-        type: "mandatory",
-        priorityId: null,
+        id: "recommendation-absent-reason",
+        name: "Electrical wiring",
+        priorityId: "priority-high",
+        dependency: false,
+        active: true
+      }],
+      exclusions: [{ id: "exclusion-absent-reason", name: "Painting", active: true }]
+    })).toEqual([]);
+
+    expect(validateKnowledgeSectionPayload("recommendations", {
+      recommendations: [{
+        id: "recommendation-unnamed",
+        name: "",
+        priorityId: "priority-high",
         reason: "Required",
-        quantityRelationship: "same_quantity",
-        quantityValue: null,
         dependency: true,
         active: true
       }]
     })).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        path: "payload.recommendations.0.targetBasketId",
-        code: "REQUIRED"
-      })
+      expect.objectContaining({ path: "payload.recommendations.0.name" })
     ]));
   });
 

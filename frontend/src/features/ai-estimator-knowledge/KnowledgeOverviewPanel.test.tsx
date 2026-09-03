@@ -163,21 +163,14 @@ const sections = {
   recommendations: {
     recommendations: [{
       id: "recommendation-one",
-      targetBasketId: "basket-target",
-      targetMainLineId: "line-target-one",
-      type: "recommended",
+      name: "Veneer finish",
       reason: "Use on feature walls",
-      quantityRelationship: "same_quantity",
       dependency: false,
       active: true
     }, {
       id: "recommendation-two",
-      targetBasketId: "basket-target",
-      targetMainLineId: "line-target-two",
-      type: "alternative",
+      name: "Laminate finish",
       reason: "Use when moisture resistant",
-      quantityRelationship: "fixed",
-      quantityValue: "2",
       dependency: true,
       active: true
     }]
@@ -278,7 +271,7 @@ function expectSectionSummaryCardsAbsent() {
   )).not.toBeInTheDocument();
   expect(document.querySelector(".knowledge-overview__cards")).not.toBeInTheDocument();
   expect(document.querySelectorAll(".knowledge-overview-card")).toHaveLength(0);
-  for (const label of ["Mode", "Scope", "Recommendations", "Quality", "Execution", "Advanced"]) {
+  for (const label of ["Mode", "Scope", "Recommendation & Exclusions", "Quality Parameter", "Execution", "Advanced"]) {
     expect(screen.queryByRole("heading", { name: label, level: 3 })).not.toBeInTheDocument();
   }
 }
@@ -341,8 +334,8 @@ describe("KnowledgeOverviewPanel", () => {
     expect(screen.queryByRole("heading", { name: "Shared calculation values" })).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Specifications" })).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Pricing" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: "Recommendations" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: "Quality" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Recommendation & Exclusions" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Quality Parameter" })).not.toBeInTheDocument();
     expectSectionSummaryCardsAbsent();
     expect(screen.queryByRole("button", { name: /^Open /u })).not.toBeInTheDocument();
     expect(screen.queryByText("Some reusable labels are unavailable")).not.toBeInTheDocument();
@@ -519,8 +512,6 @@ describe("KnowledgeOverviewPanel", () => {
       recommendations: {
         recommendations: [{
           id: "recommendation-loading-labels",
-          targetBasketId: "basket-unresolved",
-          targetMainLineId: "main-line-unresolved",
           active: true
         }]
       }
@@ -542,10 +533,12 @@ describe("KnowledgeOverviewPanel", () => {
     });
 
     const recommendationPanel = screen
-      .getByRole("heading", { name: "Recommendations", level: 2 })
+      .getByRole("heading", { name: "Recommendation & Exclusions", level: 2 })
       .closest("section");
     expect(recommendationPanel).not.toBeNull();
-    expect(within(recommendationPanel as HTMLElement).getAllByText("Unavailable value")).toHaveLength(3);
+    /* Only the Recommendation's own name can be unresolved now; it no longer
+       carries Basket or Component references. */
+    expect(within(recommendationPanel as HTMLElement).getAllByText("Unavailable value")).toHaveLength(1);
     expect(within(recommendationPanel as HTMLElement).getByText("Yes")).toBeVisible();
     expect(screen.getAllByRole("status")).toHaveLength(1);
     expect(screen.getByRole("status")).toHaveTextContent("Loading reusable labels…");
@@ -694,8 +687,8 @@ describe("KnowledgeOverviewPanel", () => {
     expect(screen.queryByText("pricing is not configured.")).not.toBeInTheDocument();
     expect(screen.queryByText("quantity-margin is not configured.")).not.toBeInTheDocument();
     expect(screen.getAllByRole("button", { name: "Open Mode" })).toHaveLength(3);
-    expect(screen.getAllByRole("button", { name: "Open Recommendations" })).toHaveLength(1);
-    expect(screen.getAllByRole("button", { name: "Open Quality" })).toHaveLength(1);
+    expect(screen.getAllByRole("button", { name: "Open Recommendation & Exclusions" })).toHaveLength(1);
+    expect(screen.getAllByRole("button", { name: "Open Quality Parameter" })).toHaveLength(1);
 
     const uomControlRow = document.querySelector(".knowledge-overview__uom-control-row");
     expect(uomControlRow).not.toBeNull();
@@ -755,7 +748,7 @@ describe("KnowledgeOverviewPanel", () => {
     expect(within(modePanel as HTMLElement).queryByText("Matching price entries")).not.toBeInTheDocument();
     expect(within(modePanel as HTMLElement).getByText("PMC mark")).toBeVisible();
     expect(within(modePanel as HTMLElement).getByText("Text field")).toBeVisible();
-    expect(within(modePanel as HTMLElement).queryByText("A1")).not.toBeInTheDocument();
+    expect(within(modePanel as HTMLElement).getByText("A1")).toBeVisible();
     expect(within(modePanel as HTMLElement).queryByText("Execution phase")).not.toBeInTheDocument();
     expect(within(modePanel as HTMLElement).queryByText("PMC procurement workflow")).not.toBeInTheDocument();
     expect(within(sharedPanel as HTMLElement).getByText("25.00%")).toBeVisible();
@@ -763,12 +756,12 @@ describe("KnowledgeOverviewPanel", () => {
     await user.click(screen.getByRole("radio", { name: "Execution" }));
     expect(within(modePanel as HTMLElement).getByRole("heading", { name: "Sub-Vendor" })).toBeVisible();
     expect(within(modePanel as HTMLElement).getByText("Execution phase")).toBeVisible();
-    expect(within(modePanel as HTMLElement).queryByText("Install")).not.toBeInTheDocument();
+    expect(within(modePanel as HTMLElement).getByText("Install")).toBeVisible();
     expect(within(modePanel as HTMLElement).queryByText("PMC mark")).not.toBeInTheDocument();
     expect(within(sharedPanel as HTMLElement).getByText("25.00%")).toBeVisible();
   });
 
-  it("shows only the selected Mode's component definitions without saved answers", async () => {
+  it("shows only the selected Mode's component definitions and their values", async () => {
     const user = userEvent.setup();
     const executionMode = master("mode-execution-asymmetric", "modes", "Execution", 20);
     const dynamicSummary = projectKnowledgeOverviewSummary({
@@ -804,17 +797,19 @@ describe("KnowledgeOverviewPanel", () => {
     const modePanel = screen.getByRole("heading", { name: "Selected Mode details" }).closest("section");
     expect(modePanel).not.toBeNull();
     expect(within(modePanel as HTMLElement).getByText("PMC mark")).toBeVisible();
-    expect(within(modePanel as HTMLElement).queryByText("A1")).not.toBeInTheDocument();
+    expect(within(modePanel as HTMLElement).getByText("A1")).toBeVisible();
     expect(within(modePanel as HTMLElement).getByText("Reviewed")).toBeVisible();
     expect(within(modePanel as HTMLElement).getByText("Checkbox")).toBeVisible();
-    expect(within(modePanel as HTMLElement).queryByText("No")).not.toBeInTheDocument();
+    expect(within(modePanel as HTMLElement).getByText("No")).toBeVisible();
     expect(within(modePanel as HTMLElement).getByText("Empty note")).toBeVisible();
     expect(within(modePanel as HTMLElement).queryByText("Execution phase")).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("radio", { name: "Execution" }));
     expect(within(modePanel as HTMLElement).getByRole("heading", { name: "Sub-Vendor" })).toBeVisible();
     expect(within(modePanel as HTMLElement).getByText("Execution phase")).toBeVisible();
-    expect(within(modePanel as HTMLElement).getByText("Install")).toBeVisible();
+    /* "Install" reads twice here: once as the allowed option and once as the
+       configured value. */
+    expect(within(modePanel as HTMLElement).getAllByText("Install")).toHaveLength(2);
     expect(within(modePanel as HTMLElement).queryByText("PMC mark")).not.toBeInTheDocument();
     expect(within(modePanel as HTMLElement).queryByText("Reviewed")).not.toBeInTheDocument();
   });
@@ -865,7 +860,7 @@ describe("KnowledgeOverviewPanel", () => {
     expect(screen.getByText("Modes reference failed")).toBeVisible();
     expect(screen.queryByText("Some reusable labels are unavailable")).not.toBeInTheDocument();
     expect(screen.getByText("Saved legacy mark")).toBeVisible();
-    expect(screen.queryByText("Keep visible")).not.toBeInTheDocument();
+    expect(screen.getByText("Keep visible")).toBeVisible();
     expect(document.body).not.toHaveTextContent("private-unresolved-mode-id");
 
     await user.click(screen.getByRole("button", { name: "Try again" }));
@@ -919,13 +914,13 @@ describe("KnowledgeOverviewPanel", () => {
         key: "mode"
       },
       {
-        heading: screen.getByRole("heading", { name: "Recommendations", level: 2 }),
-        action: "Open Recommendations",
+        heading: screen.getByRole("heading", { name: "Recommendation & Exclusions", level: 2 }),
+        action: "Open Recommendation & Exclusions",
         key: "recommendations"
       },
       {
-        heading: screen.getByRole("heading", { name: "Quality", level: 2 }),
-        action: "Open Quality",
+        heading: screen.getByRole("heading", { name: "Quality Parameter", level: 2 }),
+        action: "Open Quality Parameter",
         key: "quality"
       }
     ] as const;
@@ -996,8 +991,6 @@ describe("KnowledgeOverviewPanel", () => {
       recommendations: {
         recommendations: [{
           id: "recommendation-partial",
-          targetBasketId: "missing-basket-id",
-          targetMainLineId: "missing-main-line-id",
           dependency: false,
           active: false
         }]
@@ -1038,17 +1031,15 @@ describe("KnowledgeOverviewPanel", () => {
     expect(screen.queryByRole("heading", { name: "Selected Mode details" })).not.toBeInTheDocument();
 
     const recommendationPanel = screen
-      .getByRole("heading", { name: "Recommendations", level: 2 })
+      .getByRole("heading", { name: "Recommendation & Exclusions", level: 2 })
       .closest("section");
     expect(recommendationPanel).not.toBeNull();
     expect(within(recommendationPanel as HTMLElement).getAllByText("No")).toHaveLength(2);
     expect(within(recommendationPanel as HTMLElement).queryByText("Type")).not.toBeInTheDocument();
     expect(within(recommendationPanel as HTMLElement).queryByText("Reason")).not.toBeInTheDocument();
-    expect(within(recommendationPanel as HTMLElement).getAllByText("Unavailable value")).toHaveLength(3);
-    expect(recommendationPanel).not.toHaveTextContent("missing-basket-id");
-    expect(recommendationPanel).not.toHaveTextContent("missing-main-line-id");
+    expect(within(recommendationPanel as HTMLElement).getAllByText("Unavailable value")).toHaveLength(1);
 
-    const qualityPanel = screen.getByRole("heading", { name: "Quality", level: 2 }).closest("section");
+    const qualityPanel = screen.getByRole("heading", { name: "Quality Parameter", level: 2 }).closest("section");
     expect(qualityPanel).not.toBeNull();
     expect(within(qualityPanel as HTMLElement).getByText("Optional")).toBeVisible();
     expect(within(qualityPanel as HTMLElement).getByText("Inactive")).toBeVisible();
@@ -1095,14 +1086,14 @@ describe("KnowledgeOverviewPanel", () => {
     expect(screen.queryByRole("heading", { name: "Pricing" })).not.toBeInTheDocument();
     expect(screen.getAllByText("Loading…").length).toBeGreaterThan(0);
     const recommendationsPanel = screen
-      .getByRole("heading", { name: "Recommendations", level: 2 })
+      .getByRole("heading", { name: "Recommendation & Exclusions", level: 2 })
       .closest("section");
     expect(recommendationsPanel).not.toBeNull();
     expect(within(recommendationsPanel as HTMLElement).getByText("Recommendations failed")).toBeVisible();
     await user.click(within(recommendationsPanel as HTMLElement).getByRole("button", { name: "Try again" }));
     expect(retryRecommendations).toHaveBeenCalledTimes(1);
 
-    const qualityPanel = screen.getByRole("heading", { name: "Quality", level: 2 }).closest("section");
+    const qualityPanel = screen.getByRole("heading", { name: "Quality Parameter", level: 2 }).closest("section");
     expect(qualityPanel).not.toBeNull();
     expect(within(qualityPanel as HTMLElement).getByText("Cached finish")).toBeVisible();
     expect(within(qualityPanel as HTMLElement).getByText("Latest Quality failed")).toBeVisible();

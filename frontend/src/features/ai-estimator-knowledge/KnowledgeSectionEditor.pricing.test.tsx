@@ -118,7 +118,13 @@ describe("knowledge Budgeting editor", () => {
     );
 
     expect(screen.getByRole("heading", { name: "Specifications" })).toBeVisible();
-    expect(screen.getByRole("region", { name: "Vendors" })).toBeVisible();
+    const vendors = screen.getByRole("region", { name: "Vendors" });
+    expect(vendors).toBeVisible();
+    /* Stable IDs are storage detail. The author edits the Vendor by name, and
+       the row's own ID never reaches the screen. */
+    expect(within(vendors).getByRole("textbox", { name: "Vendor name" })).toHaveValue("Preferred vendor");
+    expect(within(vendors).queryByRole("textbox", { name: "Stable ID" })).not.toBeInTheDocument();
+    expect(vendors).not.toHaveTextContent("brand-1");
     expect(screen.getByRole("heading", { name: "Budgets" })).toBeVisible();
     expect(screen.getByText("Set the unit budget used by the estimator. Complete the details, then Save Mode.")).toBeVisible();
     expect(screen.queryByRole("heading", { name: /price versions/iu })).not.toBeInTheDocument();
@@ -260,14 +266,14 @@ describe("knowledge Budgeting editor", () => {
         initialPayload={{ priceEntries: [{ operation: "set_budget", effectiveFrom: "invalid" }] }}
         serverIssues={[{
           path: "priceEntries.0",
-          message: "Budgeting is temporarily unavailable because GST could not be applied. Try again later."
+          message: "The stored GST policy does not match the system GST 18% policy. Contact support."
         }]}
       />
     );
 
     const alerts = screen.getAllByRole("alert");
     expect(alerts.some((alert) => alert.textContent?.includes("Budgets → Budget 1"))).toBe(true);
-    expect(alerts.some((alert) => alert.textContent?.includes("GST could not be applied"))).toBe(true);
+    expect(alerts.some((alert) => alert.textContent?.includes("system GST 18% policy"))).toBe(true);
     expect(alerts.every((alert) => !/priceEntries|taxRuleId|inputAmountPaise/iu.test(alert.textContent ?? ""))).toBe(true);
   });
 });

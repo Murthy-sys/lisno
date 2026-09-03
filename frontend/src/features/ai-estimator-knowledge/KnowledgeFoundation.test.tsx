@@ -107,8 +107,8 @@ describe("knowledge feature foundation", () => {
     ).toEqual([
       "Overview",
       "Mode",
-      "Recommendations",
-      "Quality"
+      "Recommendation & Exclusions",
+      "Quality Parameter"
     ]);
     expect(
       within(tablist).queryByRole("tab", { name: "Pricing" })
@@ -125,8 +125,8 @@ describe("knowledge feature foundation", () => {
     ).toEqual([
       "Overview",
       "Mode",
-      "Recommendations",
-      "Quality"
+      "Recommendation & Exclusions",
+      "Quality Parameter"
     ]);
 
     const overview = screen.getByRole("tab", { name: "Overview" });
@@ -144,7 +144,7 @@ describe("knowledge feature foundation", () => {
     expect(panel).not.toHaveAttribute("aria-busy");
 
     await user.keyboard("{End}");
-    const quality = screen.getByRole("tab", { name: "Quality" });
+    const quality = screen.getByRole("tab", { name: "Quality Parameter" });
     expect(quality).toHaveFocus();
     await user.keyboard("{ArrowRight}");
     expect(overview).toHaveFocus();
@@ -154,11 +154,11 @@ describe("knowledge feature foundation", () => {
     expect(overview).toHaveFocus();
 
     await user.selectOptions(selector, "recommendations");
-    expect(screen.getByRole("tab", { name: "Recommendations" })).toHaveAttribute(
+    expect(screen.getByRole("tab", { name: "Recommendation & Exclusions" })).toHaveAttribute(
       "aria-selected",
       "true"
     );
-    expect(panel).toHaveAccessibleName("Recommendations");
+    expect(panel).toHaveAccessibleName("Recommendation & Exclusions");
   });
 
   it("announces only the active panel as busy without changing tab ownership", () => {
@@ -182,7 +182,7 @@ describe("knowledge feature foundation", () => {
 
     overview.focus();
     await user.keyboard("{ArrowRight}");
-    expect(screen.getByRole("tab", { name: "Recommendations" })).toHaveFocus();
+    expect(screen.getByRole("tab", { name: "Recommendation & Exclusions" })).toHaveFocus();
   });
 
   it("adds, reorders, and removes repeater rows with predictable focus", async () => {
