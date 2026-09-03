@@ -12,6 +12,7 @@ import { AiEstimatorKnowledgePriceVersionModel } from "../src/models/AiEstimator
 import { AiEstimatorKnowledgePriorityModel } from "../src/models/AiEstimatorKnowledgePriority.js";
 import { AiEstimatorKnowledgeRevisionModel } from "../src/models/AiEstimatorKnowledgeRevision.js";
 import { AiEstimatorKnowledgeSectionModel } from "../src/models/AiEstimatorKnowledgeSection.js";
+import { AiEstimatorKnowledgeSurfaceModel } from "../src/models/AiEstimatorKnowledgeSurface.js";
 import { AiEstimatorKnowledgeTaxRuleModel } from "../src/models/AiEstimatorKnowledgeTaxRule.js";
 import { AiEstimatorKnowledgeTaxVersionModel } from "../src/models/AiEstimatorKnowledgeTaxVersion.js";
 import { AiEstimatorKnowledgeUomModel } from "../src/models/AiEstimatorKnowledgeUom.js";
@@ -41,6 +42,7 @@ beforeAll(async () => {
     AiEstimatorKnowledgePriorityModel.syncIndexes(),
     AiEstimatorKnowledgeRevisionModel.syncIndexes(),
     AiEstimatorKnowledgeSectionModel.syncIndexes(),
+    AiEstimatorKnowledgeSurfaceModel.syncIndexes(),
     AiEstimatorKnowledgeTaxRuleModel.syncIndexes(),
     AiEstimatorKnowledgeTaxVersionModel.syncIndexes(),
     AiEstimatorKnowledgeUomModel.syncIndexes(),
@@ -58,6 +60,369 @@ afterAll(async () => {
 });
 
 describe("AI estimator knowledge item service", () => {
+  it("coordinates Overview Surface assignments, preserves Priority, and retains unavailable history", async () => {
+    const { service, appendAudit } = createService();
+    const created = await service.createMainLine(ACTOR, "basket-carpentry", {
+      name: "Surface-aware line"
+    });
+    const revisionId = created.draftRevisionId!;
+    const overview = await service.getSection(
+      ACTOR,
+      created.mainLineId,
+      revisionId,
+      "overview"
+    );
+
+    const assigned = await service.updateSection(
+      ACTOR,
+      created.mainLineId,
+      revisionId,
+      "overview",
+      {
+        expectedVersion: overview.version,
+        expectedAggregateVersion: created.version,
+        payload: {
+          description: "Wall finish",
+          uomId: "uom-sqft",
+          priorityId: AI_ESTIMATOR_KNOWLEDGE_CANONICAL_PRIORITY_IDS.high,
+          surfaceIds: ["surface-wall"],
+          modeIds: []
+        }
+      }
+    );
+    expect(assigned.payload).toMatchObject({
+      priorityId: AI_ESTIMATOR_KNOWLEDGE_CANONICAL_PRIORITY_IDS.high,
+      surfaceIds: ["surface-wall"]
+    });
+    expect(await AiEstimatorKnowledgeSurfaceModel.findById("surface-wall").lean())
+      .toMatchObject({ dependencyEpoch: 1, status: "active", version: 1 });
+    await expect(service.getItem(ACTOR, created.mainLineId)).resolves.toMatchObject({
+      priorityId: AI_ESTIMATOR_KNOWLEDGE_CANONICAL_PRIORITY_IDS.high,
+      surfaceIds: ["surface-wall"]
+    });
+    await expect(service.listItems(
+      ACTOR,
+      { surfaceId: "surface-wall" },
+      { limit: 20, offset: 0 }
+    )).resolves.toMatchObject({
+      total: 1,
+      items: [expect.objectContaining({ mainLineId: created.mainLineId })]
+    });
+
+    const duplicate = await service.duplicate(ACTOR, created.mainLineId, {
+      expectedVersion: assigned.aggregateVersion,
+      name: "Surface-aware copy"
+    });
+    expect(duplicate).toMatchObject({
+      priorityId: AI_ESTIMATOR_KNOWLEDGE_CANONICAL_PRIORITY_IDS.high,
+      surfaceIds: ["surface-wall"]
+    });
+    expect(await AiEstimatorKnowledgeSurfaceModel.findById("surface-wall").lean())
+      .toMatchObject({ dependencyEpoch: 2, version: 1 });
+
+    await AiEstimatorKnowledgeSurfaceModel.updateOne(
+      { _id: "surface-wall" },
+      { $set: { status: "inactive" } }
+    ).exec();
+    const retained = await service.updateSection(
+      ACTOR,
+      created.mainLineId,
+      revisionId,
+      "overview",
+      {
+        expectedVersion: assigned.version,
+        expectedAggregateVersion: assigned.aggregateVersion,
+        payload: { ...assigned.payload, description: "Updated wall finish" }
+      }
+    );
+    expect(retained.payload).toMatchObject({
+      description: "Updated wall finish",
+      priorityId: AI_ESTIMATOR_KNOWLEDGE_CANONICAL_PRIORITY_IDS.high,
+      surfaceIds: ["surface-wall"]
+    });
+
+    const auditCount = appendAudit.mock.calls.length;
+    await expect(service.updateSection(
+      ACTOR,
+      created.mainLineId,
+      revisionId,
+      "overview",
+      {
+        expectedVersion: retained.version,
+        expectedAggregateVersion: retained.aggregateVersion,
+        payload: {
+          ...retained.payload,
+          surfaceIds: ["surface-wall", "surface-missing"]
+        }
+      }
+    )).rejects.toMatchObject({ status: 409, code: "KNOWLEDGE_REFERENCE_INVALID" });
+    expect(appendAudit).toHaveBeenCalledTimes(auditCount);
+    expect(await AiEstimatorKnowledgeSectionModel.findById(overview.id).lean())
+      .toMatchObject({
+        version: retained.version,
+        payload: expect.objectContaining({ surfaceIds: ["surface-wall"] })
+      });
+
+    await expect(service.activate(
+      ACTOR,
+      created.mainLineId,
+      revisionId,
+      { expectedVersion: retained.aggregateVersion }
+    )).rejects.toMatchObject({
+      status: 409,
+      code: "KNOWLEDGE_REFERENCE_INVALID",
+      message: "An active surface reference is unavailable: Wall surface.",
+      fields: {
+        "payload.surfaceIds": "Remove or reactivate Wall surface before activating."
+      }
+    });
+  });
+
+  it("names every Surface that blocks activation, including hidden legacy Scope references", async () => {
+    await AiEstimatorKnowledgeSurfaceModel.create({
+      _id: "surface-ceiling",
+      code: "CEILING",
+      codeNormalized: "ceiling",
+      name: "Ceiling surface",
+      nameNormalized: "ceiling surface",
+      description: null,
+      displayOrder: 2,
+      status: "active",
+      version: 1,
+      createdById: ACTOR.id,
+      updatedById: ACTOR.id,
+      createdAt: NOW,
+      updatedAt: NOW,
+      archivedAt: null,
+      archivedById: null
+    });
+    const { service } = createService();
+    const created = await service.createMainLine(ACTOR, "basket-carpentry", {
+      name: "Surface activation line"
+    });
+    const revisionId = created.draftRevisionId!;
+    const overview = await service.getSection(ACTOR, created.mainLineId, revisionId, "overview");
+    const assigned = await service.updateSection(
+      ACTOR,
+      created.mainLineId,
+      revisionId,
+      "overview",
+      {
+        expectedVersion: overview.version,
+        expectedAggregateVersion: created.version,
+        payload: {
+          description: "Wall finish",
+          uomId: "uom-sqft",
+          priorityId: AI_ESTIMATOR_KNOWLEDGE_CANONICAL_PRIORITY_IDS.high,
+          surfaceIds: ["surface-wall"],
+          modeIds: []
+        }
+      }
+    );
+    const scope = await service.getSection(ACTOR, created.mainLineId, revisionId, "scope");
+    const scopeSaved = await service.updateSection(
+      ACTOR,
+      created.mainLineId,
+      revisionId,
+      "scope",
+      {
+        expectedVersion: scope.version,
+        expectedAggregateVersion: assigned.aggregateVersion,
+        payload: { modeIds: [], surfaceIds: ["surface-ceiling"], exclusions: [] }
+      }
+    );
+
+    await AiEstimatorKnowledgeSurfaceModel.updateMany(
+      { _id: { $in: ["surface-wall", "surface-ceiling"] } },
+      { $set: { status: "inactive" } }
+    ).exec();
+
+    await expect(service.activate(ACTOR, created.mainLineId, revisionId, {
+      expectedVersion: scopeSaved.aggregateVersion
+    })).rejects.toMatchObject({
+      status: 409,
+      code: "KNOWLEDGE_REFERENCE_INVALID",
+      message: "An active surface reference is unavailable: Ceiling surface, Wall surface.",
+      fields: {
+        "payload.surfaceIds": "Remove or reactivate Wall surface before activating.",
+        "scope.surfaceIds": "Legacy Scope data still references Ceiling surface."
+      }
+    });
+
+    /* A deleted Surface is described, never identified: activation errors must
+       not leak a stable ID the actor never sees anywhere else. */
+    await AiEstimatorKnowledgeSurfaceModel.deleteOne({ _id: "surface-ceiling" }).exec();
+    await expect(service.activate(ACTOR, created.mainLineId, revisionId, {
+      expectedVersion: scopeSaved.aggregateVersion
+    })).rejects.toMatchObject({
+      message: expect.not.stringContaining("surface-ceiling"),
+      fields: {
+        "scope.surfaceIds": "Legacy Scope data still references a Surface that no longer exists."
+      }
+    });
+  });
+
+  it("coordinates retained Surface references when creating a Draft from an Active revision", async () => {
+    const { service } = createService();
+    const created = await service.createMainLine(ACTOR, "basket-carpentry", {
+      name: "Surface revision copy"
+    });
+    const revisionId = created.draftRevisionId!;
+    const overview = await service.getSection(
+      ACTOR,
+      created.mainLineId,
+      revisionId,
+      "overview"
+    );
+    const assigned = await service.updateSection(
+      ACTOR,
+      created.mainLineId,
+      revisionId,
+      "overview",
+      {
+        expectedVersion: overview.version,
+        expectedAggregateVersion: created.version,
+        payload: {
+          description: "Retained Surface",
+          uomId: "uom-sqft",
+          priorityId: null,
+          surfaceIds: ["surface-wall"],
+          modeIds: []
+        }
+      }
+    );
+    await AiEstimatorKnowledgeSurfaceModel.updateOne(
+      { _id: "surface-wall" },
+      { $set: { status: "inactive" } }
+    ).exec();
+    await Promise.all([
+      AiEstimatorKnowledgeRevisionModel.updateOne(
+        { _id: revisionId },
+        { $set: { status: "active", activatedAt: NOW, activatedById: ACTOR.id } }
+      ).exec(),
+      AiEstimatorKnowledgeMainLineModel.updateOne(
+        { _id: created.mainLineId },
+        {
+          $set: {
+            status: "active",
+            activeRevisionId: revisionId,
+            draftRevisionId: null
+          }
+        }
+      ).exec()
+    ]);
+
+    const copied = await service.createRevision(ACTOR, created.mainLineId, {
+      expectedVersion: assigned.aggregateVersion
+    });
+    expect(copied.draftRevisionId).not.toBeNull();
+    const copiedOverview = await service.getSection(
+      ACTOR,
+      created.mainLineId,
+      copied.draftRevisionId!,
+      "overview"
+    );
+    expect(copiedOverview.payload).toMatchObject({ surfaceIds: ["surface-wall"] });
+    expect(await AiEstimatorKnowledgeSurfaceModel.findById("surface-wall").lean())
+      .toMatchObject({ status: "inactive", dependencyEpoch: 2, version: 1 });
+  });
+
+  it("rejects archived or missing Surface references when creating a Draft copy", async () => {
+    const { service, appendAudit } = createService();
+
+    for (const unavailableState of ["archived", "missing"] as const) {
+      const surfaceId = `surface-copy-${unavailableState}`;
+      await AiEstimatorKnowledgeSurfaceModel.create({
+        _id: surfaceId,
+        code: `COPY-${unavailableState.toUpperCase()}`,
+        codeNormalized: `copy-${unavailableState}`,
+        name: `Copy ${unavailableState} Surface`,
+        nameNormalized: `copy ${unavailableState} surface`,
+        description: null,
+          displayOrder: unavailableState === "archived" ? 2 : 3,
+        status: "active",
+        version: 1,
+        createdById: ACTOR.id,
+        updatedById: ACTOR.id,
+        createdAt: NOW,
+        updatedAt: NOW,
+        archivedAt: null,
+        archivedById: null
+      });
+      const created = await service.createMainLine(ACTOR, "basket-carpentry", {
+        name: `Copy rejects ${unavailableState} Surface`
+      });
+      const revisionId = created.draftRevisionId!;
+      const overview = await service.getSection(
+        ACTOR,
+        created.mainLineId,
+        revisionId,
+        "overview"
+      );
+      const assigned = await service.updateSection(
+        ACTOR,
+        created.mainLineId,
+        revisionId,
+        "overview",
+        {
+          expectedVersion: overview.version,
+          expectedAggregateVersion: created.version,
+          payload: {
+            description: "Unavailable Surface copy guard",
+            uomId: "uom-sqft",
+            priorityId: null,
+            surfaceIds: [surfaceId],
+            modeIds: []
+          }
+        }
+      );
+      await Promise.all([
+        AiEstimatorKnowledgeRevisionModel.updateOne(
+          { _id: revisionId },
+          { $set: { status: "active", activatedAt: NOW, activatedById: ACTOR.id } }
+        ).exec(),
+        AiEstimatorKnowledgeMainLineModel.updateOne(
+          { _id: created.mainLineId },
+          {
+            $set: {
+              status: "active",
+              activeRevisionId: revisionId,
+              draftRevisionId: null
+            }
+          }
+        ).exec()
+      ]);
+      if (unavailableState === "archived") {
+        await AiEstimatorKnowledgeSurfaceModel.updateOne(
+          { _id: surfaceId },
+          {
+            $set: {
+              status: "archived",
+              archivedAt: NOW,
+              archivedById: ACTOR.id
+            }
+          }
+        ).exec();
+      } else {
+        await AiEstimatorKnowledgeSurfaceModel.deleteOne({ _id: surfaceId }).exec();
+      }
+
+      const auditCount = appendAudit.mock.calls.length;
+      await expect(service.createRevision(ACTOR, created.mainLineId, {
+        expectedVersion: assigned.aggregateVersion
+      })).rejects.toMatchObject({
+        status: 409,
+        code: "KNOWLEDGE_REFERENCE_INVALID"
+      });
+      expect(appendAudit).toHaveBeenCalledTimes(auditCount);
+      expect(await AiEstimatorKnowledgeRevisionModel.countDocuments({
+        mainLineId: created.mainLineId
+      })).toBe(1);
+      expect(await AiEstimatorKnowledgeMainLineModel.findById(created.mainLineId).lean())
+        .toMatchObject({ activeRevisionId: revisionId, draftRevisionId: null });
+    }
+  });
+
   it("persists only changed active canonical Main Line Priorities and keeps summary/filter identity", async () => {
     const { service, appendAudit } = createService();
     const created = await service.createMainLine(ACTOR, "basket-carpentry", {
@@ -3666,6 +4031,21 @@ async function seedReferences(): Promise<void> {
       nameNormalized: "square foot",
       description: null,
       decimalScale: 2,
+      displayOrder: 1,
+      status: "active",
+      version: 1,
+      createdById: ACTOR.id,
+      updatedById: ACTOR.id,
+      createdAt: NOW,
+      updatedAt: NOW
+    }),
+    AiEstimatorKnowledgeSurfaceModel.create({
+      _id: "surface-wall",
+      code: "WALL",
+      codeNormalized: "wall",
+      name: "Wall surface",
+      nameNormalized: "wall surface",
+      description: "Paint, wallpaper",
       displayOrder: 1,
       status: "active",
       version: 1,

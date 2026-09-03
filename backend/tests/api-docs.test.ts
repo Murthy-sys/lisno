@@ -737,6 +737,84 @@ describe("OpenAPI and Swagger UI", () => {
       }
     });
 
+    expect(componentSchemas().KnowledgeSurface).toMatchObject({
+      type: "object",
+      additionalProperties: false,
+      required: expect.arrayContaining(["id", "code", "name"]),
+      properties: {
+        masterType: { type: "string", enum: ["surfaces"] }
+      }
+    });
+    expect(componentSchemas().KnowledgeSurface.properties).not.toHaveProperty("typicalUomIds");
+    expect(componentSchemas().KnowledgeSurface.properties).not.toHaveProperty("dependencyEpoch");
+    expect(componentSchemas().KnowledgeSurface.properties).not.toHaveProperty("decimalScale");
+    expect(componentSchemas().KnowledgeSurfacePage).toMatchObject({
+      properties: {
+        items: {
+          type: "array",
+          items: { $ref: "#/components/schemas/KnowledgeSurface" }
+        }
+      }
+    });
+    expect(componentSchemas().KnowledgeSurfaceCreateRequest).toMatchObject({
+      type: "object",
+      additionalProperties: false,
+      required: ["name"],
+      properties: {
+        code: expect.any(Object)
+      }
+    });
+    expect(componentSchemas().KnowledgeSurfaceCreateRequest.properties).not.toHaveProperty("typicalUomIds");
+    expect(componentSchemas().KnowledgeSurfaceUpdateRequest).toMatchObject({
+      type: "object",
+      additionalProperties: false,
+      required: ["expectedVersion"]
+    });
+    expect(componentSchemas().KnowledgeSurfaceUpdateRequest.properties).not.toHaveProperty("typicalUomIds");
+
+    for (const method of ["get", "post", "patch", "delete"] as const) {
+      expect(
+        openApiDocument.paths[
+          method === "get" || method === "post"
+            ? "/admin/ai-estimator-knowledge/surfaces"
+            : "/admin/ai-estimator-knowledge/surfaces/{id}"
+        ]?.[method]?.responses?.["2XX"]
+      ).toMatchObject({
+        content: {
+          "application/json": {
+            schema: {
+              properties: {
+                data: method === "get"
+                  ? { $ref: "#/components/schemas/KnowledgeSurfacePage" }
+                  : { $ref: "#/components/schemas/KnowledgeSurface" }
+              }
+            }
+          }
+        }
+      });
+    }
+
+    expect(
+      openApiDocument.paths["/admin/ai-estimator-knowledge/surfaces"]?.post
+        ?.requestBody
+    ).toMatchObject({
+      content: {
+        "application/json": {
+          schema: { $ref: "#/components/schemas/KnowledgeSurfaceCreateRequest" }
+        }
+      }
+    });
+    expect(
+      openApiDocument.paths["/admin/ai-estimator-knowledge/surfaces/{id}"]?.patch
+        ?.requestBody
+    ).toMatchObject({
+      content: {
+        "application/json": {
+          schema: { $ref: "#/components/schemas/KnowledgeSurfaceUpdateRequest" }
+        }
+      }
+    });
+
     for (const schemaName of ["KnowledgeMasterCreateRequest", "KnowledgeMasterUpdateRequest"] as const) {
       const writeSchema = componentSchemas()[schemaName] as {
         properties: Record<string, unknown>;
@@ -779,6 +857,7 @@ describe("OpenAPI and Swagger UI", () => {
       "KnowledgeMainLineCreateRequest",
       "KnowledgeMasterCreateRequest",
       "KnowledgeUomCreateRequest",
+      "KnowledgeSurfaceCreateRequest",
       "KnowledgeTaxCreateRequest"
     ] as const;
     const basketResponse = componentSchemas().KnowledgeBasket as {

@@ -1,7 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { collectAllKnowledgeMasterPages } from "./knowledgeMasterPagination";
-import type { KnowledgeMaster, KnowledgeMasterListResponse } from "./knowledgeTypes";
+import type {
+  KnowledgeMaster,
+  KnowledgeMasterListResponse,
+  KnowledgeSurface
+} from "./knowledgeTypes";
 
 function response(
   items: readonly KnowledgeMaster[],
@@ -109,5 +113,34 @@ describe("knowledge master pagination", () => {
 
     expect(loadPage).toHaveBeenCalledTimes(2);
     expect(result.items.at(-1)).toMatchObject({ id: "priority-104", semanticTier: "low" });
+  });
+
+  it("keeps Surface records beyond record 100", async () => {
+    const surfaces: readonly KnowledgeSurface[] = Array.from({ length: 101 }, (_, index) => ({
+      id: `surface-${index + 1}`,
+      masterType: "surfaces" as const,
+      code: `SURFACE_${index + 1}`,
+      name: `Surface ${index + 1}`,
+      description: index === 100 ? "Last page surface" : null,
+      displayOrder: index,
+      status: "active" as const,
+      version: 1,
+      createdById: "super-admin-1",
+      updatedById: "super-admin-1",
+      createdAt: "2026-09-03T08:00:00.000Z",
+      updatedAt: "2026-09-03T08:00:00.000Z"
+    }));
+    const loadPage = vi.fn(async ({ offset = 0 }: { readonly offset?: number }) => ({
+      ...response(surfaces.slice(offset, offset + 100), offset, surfaces.length),
+      items: surfaces.slice(offset, offset + 100)
+    }));
+
+    const result = await collectAllKnowledgeMasterPages<KnowledgeSurface>(loadPage, "Surface");
+
+    expect(loadPage).toHaveBeenCalledTimes(2);
+    expect(result.items.at(-1)).toMatchObject({
+      id: "surface-101",
+      description: "Last page surface"
+    });
   });
 });

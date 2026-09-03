@@ -4,9 +4,10 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { hasFrontendPermission } from "../../auth/authorization";
 import { KnowledgeReusableValuesPage } from "./KnowledgeReusableValuesPage";
 import * as knowledgeApi from "./knowledgeApi";
-import type { KnowledgeMaster } from "./knowledgeTypes";
+import type { KnowledgeMaster, KnowledgeSurface } from "./knowledgeTypes";
 
 vi.mock("../../auth/AuthProvider", () => ({
   useAuth: () => ({
@@ -23,7 +24,11 @@ vi.mock("../../auth/authorization", () => ({
 
 vi.mock("./knowledgeApi", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./knowledgeApi")>();
-  return { ...actual, listKnowledgeMasters: vi.fn() };
+  return {
+    ...actual,
+    listKnowledgeMasters: vi.fn(),
+    updateKnowledgeSurface: vi.fn()
+  };
 });
 
 const timestamp = "2026-09-01T08:00:00.000Z";
@@ -42,6 +47,28 @@ const uom: KnowledgeMaster = {
   createdAt: timestamp,
   updatedAt: timestamp
 };
+const wallSurface: KnowledgeSurface = {
+  id: "surface-wall",
+  masterType: "surfaces",
+  code: "SURFACE_WALL_INTERNAL",
+  name: "Wall surface",
+  description: "Paint, wallpaper, texture",
+  displayOrder: 10,
+  status: "active",
+  version: 4,
+  createdById: "super-admin-1",
+  updatedById: "super-admin-1",
+  createdAt: timestamp,
+  updatedAt: timestamp
+};
+const legacySurface: KnowledgeSurface = {
+  ...wallSurface,
+  id: "surface-legacy",
+  code: "SURFACE_LEGACY_INTERNAL",
+  name: "Legacy surface",
+  description: null,
+  status: "inactive"
+};
 
 function renderPage() {
   const queryClient = new QueryClient({
@@ -56,13 +83,23 @@ function renderPage() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.mocked(hasFrontendPermission).mockReturnValue(true);
   vi.mocked(knowledgeApi.listKnowledgeMasters).mockImplementation(async (type) => {
-    const items = type === "uoms" ? [uom] : [];
+    const items = type === "uoms"
+      ? [uom]
+      : type === "surfaces"
+        ? [wallSurface, legacySurface]
+        : [];
     return {
       items,
       pagination: { limit: 25, offset: 0, total: items.length, hasMore: false }
     };
   });
+  vi.mocked(knowledgeApi.updateKnowledgeSurface).mockImplementation(async (id, input) => ({
+    ...(id === wallSurface.id ? wallSurface : legacySurface),
+    status: input.status ?? (id === wallSurface.id ? wallSurface.status : legacySurface.status),
+    version: (id === wallSurface.id ? wallSurface.version : legacySurface.version) + 1
+  }));
 });
 
 describe("reusable estimation value categories", () => {
@@ -102,5 +139,50 @@ describe("reusable estimation value categories", () => {
     uoms.focus();
     await user.keyboard("{End}");
     expect(screen.getByRole("tab", { name: "Surfaces" })).toHaveFocus();
+  });
+
+  it("presents specialized Surface management without technical fields", async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(screen.getByRole("tab", { name: "Surfaces" }));
+    expect(await screen.findByRole("heading", { level: 1, name: "Surfaces" })).toBeVisible();
+    expect(screen.getByText("Create reusable surface options for Main Lines and the estimator.")).toBeVisible();
+    const table = await screen.findByRole("table");
+    expect(within(table).getAllByRole("columnheader").map((header) => header.textContent)).toEqual([
+      "Surface",
+      "Examples / components",
+      "Status",
+      "Actions"
+    ]);
+    const wallRow = within(table).getByRole("row", { name: /Wall surface/iu });
+    expect(within(wallRow).getByText("Paint, wallpaper, texture")).toBeVisible();
+    const legacyRow = within(table).getByRole("row", { name: /Legacy surface/iu });
+    expect(within(legacyRow).getByText("Not configured")).toBeVisible();
+    expect(within(table).queryByText(/SURFACE_.*_INTERNAL/iu)).not.toBeInTheDocument();
+
+    await user.click(within(wallRow).getByRole("button", { name: "Deactivate Wall surface" }));
+    expect(knowledgeApi.updateKnowledgeSurface).toHaveBeenCalledWith(wallSurface.id, {
+      expectedVersion: wallSurface.version,
+      status: "inactive"
+    });
+
+    await user.click(screen.getByRole("button", { name: "Add Surface" }));
+    const dialog = screen.getByRole("dialog", { name: "Add Surface" });
+    expect(within(dialog).getByRole("textbox", { name: "Surface name" })).toBeVisible();
+    expect(within(dialog).getByRole("textbox", { name: "Examples / components" })).toBeVisible();
+    expect(within(dialog).queryByText(/Code|Stable ID|Display order|Version/iu)).not.toBeInTheDocument();
+  });
+
+  it("keeps Surface management actions permission-gated", async () => {
+    const user = userEvent.setup();
+    vi.mocked(hasFrontendPermission).mockReturnValue(false);
+    renderPage();
+
+    await user.click(screen.getByRole("tab", { name: "Surfaces" }));
+    const table = await screen.findByRole("table");
+    expect(screen.queryByRole("button", { name: "Add Surface" })).not.toBeInTheDocument();
+    expect(within(table).queryByRole("button", { name: /Edit/iu })).not.toBeInTheDocument();
+    expect(within(table).queryByRole("button", { name: /Archive/iu })).not.toBeInTheDocument();
   });
 });

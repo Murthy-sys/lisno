@@ -257,6 +257,12 @@ describe("Knowledge Mode toolbar layout", () => {
         coarseStart
       ).get("min-block-size")
     ).toBe("44px");
+    expect(
+      declarations(
+        ".knowledge-page--item-workspace .knowledge-surface-multiselect__option",
+        coarseStart
+      ).get("min-block-size")
+    ).toBe("44px");
   });
 
   it("keeps the Priority field bounded on desktop and full-width without narrow-screen overflow", () => {
@@ -285,6 +291,54 @@ describe("Knowledge Mode toolbar layout", () => {
       ".knowledge-page--item-workspace .knowledge-priority-editor__state .ui-button",
       mobileStart
     ).get("inline-size")).toBe("100%");
+  });
+
+  it("keeps the Mode Surface selector adjacent on wide screens and stacked on narrow screens", () => {
+    expect(
+      declarations("\n.knowledge-surface-multiselect__option {").get("min-block-size")
+    ).toBe("44px");
+    const surfacePanel = declarations(
+      ".knowledge-page--item-workspace .knowledge-mode-surfaces",
+      professionalWorkspaceStart
+    );
+    expect(surfacePanel.get("display")).toBe("grid");
+    expect(surfacePanel.get("min-inline-size")).toBe("0");
+
+    const controls = declarations(
+      ".knowledge-page--item-workspace .knowledge-mode-surfaces__controls",
+      professionalWorkspaceStart
+    );
+    expect(controls.get("grid-template-columns")).toBe("minmax(0, 32rem) auto");
+    expect(controls.get("min-inline-size")).toBe("0");
+
+    const mobileStart = stylesheet.indexOf(
+      "@media (max-width: 480px)",
+      professionalWorkspaceStart
+    );
+    expect(declarations(
+      ".knowledge-page--item-workspace .knowledge-mode-surfaces__controls",
+      mobileStart
+    ).get("grid-template-columns")).toBe("minmax(0, 1fr)");
+    expect(declarations(
+      ".knowledge-page--item-workspace .knowledge-mode-surfaces__controls > .ui-button",
+      mobileStart
+    ).get("inline-size")).toBe("100%");
+  });
+
+  it("turns the single Surface table DOM into non-overflowing mobile cards", () => {
+    const mobileStart = stylesheet.indexOf(
+      "@media (max-width: 480px)",
+      professionalWorkspaceStart
+    );
+    const scroll = declarations(".knowledge-surface-table-scroll", mobileStart);
+    expect(scroll.get("overflow")).toBe("visible");
+    const table = declarations("\n  .knowledge-surface-table {", mobileStart);
+    expect(table.get("display")).toBe("block");
+    expect(table.get("min-width")).toBe("0");
+    const cell = declarations(".knowledge-surface-table td,", mobileStart);
+    expect(cell.get("display")).toBe("grid");
+    expect(cell.get("grid-template-columns")).toContain("minmax(0, 1fr)");
+    expect(cell.get("white-space")).toBe("normal");
   });
 
   it("keeps the component builder and Execution source controls shrink-safe", () => {

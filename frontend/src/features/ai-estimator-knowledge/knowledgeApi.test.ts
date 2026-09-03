@@ -2,10 +2,13 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { apiClient } from "../../api/client";
 import {
+  createKnowledgeSurface,
   getKnowledgeBasketDeletionImpact,
+  listKnowledgeSurfaces,
   listKnowledgeItems,
   permanentlyDeleteKnowledgeBasket,
   resolveKnowledgeContext,
+  updateKnowledgeSurface,
   updateKnowledgeSection
 } from "./knowledgeApi";
 
@@ -92,6 +95,37 @@ describe("knowledge API", () => {
     expect(post).toHaveBeenCalledWith(
       "/ai-estimator-knowledge/context",
       input
+    );
+  });
+
+  it("uses the specialized Surface contract without manufacturing technical fields", async () => {
+    const get = vi.spyOn(apiClient, "get").mockResolvedValue({});
+    const post = vi.spyOn(apiClient, "post").mockResolvedValue({});
+    const patch = vi.spyOn(apiClient, "patch").mockResolvedValue({});
+    const createInput = {
+      name: "Counter surface",
+      description: "Granite, quartz, marble"
+    } as const;
+    const updateInput = {
+      expectedVersion: 7,
+      description: "Granite and marble"
+    } as const;
+
+    await listKnowledgeSurfaces({ includeArchived: true, limit: 100, offset: 100 });
+    await createKnowledgeSurface(createInput);
+    await updateKnowledgeSurface("surface/one", updateInput);
+
+    expect(get).toHaveBeenCalledWith(
+      "/admin/ai-estimator-knowledge/surfaces?includeArchived=true&limit=100&offset=100"
+    );
+    expect(post).toHaveBeenCalledWith(
+      "/admin/ai-estimator-knowledge/surfaces",
+      createInput
+    );
+    expect(post.mock.calls[0]?.[1]).not.toHaveProperty("code");
+    expect(patch).toHaveBeenCalledWith(
+      "/admin/ai-estimator-knowledge/surfaces/surface%2Fone",
+      updateInput
     );
   });
 });

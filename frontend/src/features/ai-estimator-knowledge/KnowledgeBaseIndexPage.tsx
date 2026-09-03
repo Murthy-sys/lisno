@@ -48,6 +48,7 @@ import { syncKnowledgeBasketDeletion } from "./knowledgeMutationSync";
 import { knowledgeQueryKeys } from "./knowledgeQueryKeys";
 import { KNOWLEDGE_ITEM_STATUS_LABELS } from "./knowledgePresentation";
 import { KnowledgeSafetyNotice } from "./KnowledgeSafetyNotice";
+import { collectAllKnowledgeMasterPages } from "./knowledgeMasterPagination";
 import { KnowledgeLifecycleDialog } from "./KnowledgeLifecycleDialogs";
 import type {
   KnowledgeBasket,
@@ -150,8 +151,18 @@ export function KnowledgeBaseIndexPage() {
   });
   const masterQueries = useQueries({
     queries: FILTER_MASTER_TYPES.map((type) => ({
-      queryKey: knowledgeQueryKeys.masterList(type, { limit: 100, offset: 0 }),
-      queryFn: () => listKnowledgeMasters(type, { limit: 100, offset: 0 })
+      queryKey: type === "surfaces"
+        ? knowledgeQueryKeys.masterCatalog(type)
+        : knowledgeQueryKeys.masterList(type, { limit: 100, offset: 0 }),
+      queryFn: () => type === "surfaces"
+        ? collectAllKnowledgeMasterPages(
+            (params) => listKnowledgeMasters(type, {
+              ...params,
+              includeArchived: true
+            }),
+            "Surface"
+          )
+        : listKnowledgeMasters(type, { limit: 100, offset: 0 })
     }))
   });
   const masters = useMemo(
@@ -409,7 +420,9 @@ export function KnowledgeBaseIndexPage() {
                 id={`knowledge-${type}-filter`}
                 label={filterLabel(type)}
                 value={filters[filterKey(type)]}
-                options={masters[type].map(({ id, name }) => ({ id, name }))}
+                options={masters[type]
+                  .filter((master) => type !== "surfaces" || master.status === "active")
+                  .map(({ id, name }) => ({ id, name }))}
                 onChange={(value) =>
                   setFilters((current) => ({ ...current, [filterKey(type)]: value }))
                 }

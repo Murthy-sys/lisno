@@ -16,6 +16,7 @@ import { AiEstimatorKnowledgePriceVersionModel } from "../src/models/AiEstimator
 import { AiEstimatorKnowledgePriorityModel } from "../src/models/AiEstimatorKnowledgePriority.js";
 import { AiEstimatorKnowledgeRevisionModel } from "../src/models/AiEstimatorKnowledgeRevision.js";
 import { AiEstimatorKnowledgeSectionModel } from "../src/models/AiEstimatorKnowledgeSection.js";
+import { AiEstimatorKnowledgeSurfaceModel } from "../src/models/AiEstimatorKnowledgeSurface.js";
 import { AiEstimatorKnowledgeTaxRuleModel } from "../src/models/AiEstimatorKnowledgeTaxRule.js";
 import { AiEstimatorKnowledgeTaxVersionModel } from "../src/models/AiEstimatorKnowledgeTaxVersion.js";
 import { AiEstimatorKnowledgeUomModel } from "../src/models/AiEstimatorKnowledgeUom.js";
@@ -46,6 +47,7 @@ beforeAll(async () => {
     AiEstimatorKnowledgeModeModel.init(),
     AiEstimatorKnowledgeRevisionModel.init(),
     AiEstimatorKnowledgeSectionModel.init(),
+    AiEstimatorKnowledgeSurfaceModel.init(),
     AiEstimatorKnowledgePriceVersionModel.init(),
     AiEstimatorKnowledgePriorityModel.init(),
     AiEstimatorKnowledgeUomModel.init(),
@@ -534,6 +536,115 @@ describe("AI estimator knowledge reference service", () => {
     const archived = await service.archiveMaster(actor, "uoms", uom.id, { expectedVersion: 2 });
     expect(archived).toMatchObject({ status: "archived", version: 3 });
     expect((await service.listMasters(actor, "uoms", {}, { limit: 10, offset: 0 })).items.map(({ code }) => code)).toEqual(["NOS"]);
+  });
+
+  it("creates Surface guidance with generated or explicit technical codes and legacy-safe DTOs", async () => {
+    const { service, audit } = harness();
+
+    const created = await service.createMaster(actor, "surfaces", {
+      name: "Counter surface",
+      description: "Granite, quartz, marble"
+    });
+    expect(created).toMatchObject({
+      masterType: "surfaces",
+      name: "Counter surface",
+      description: "Granite, quartz, marble",
+      status: "active",
+      version: 1
+    });
+    expect(created.code).toMatch(/^surface-[a-f0-9]{48}$/u);
+    expect(created).not.toHaveProperty("dependencyEpoch");
+    expect(created).not.toHaveProperty("typicalUomIds");
+    expect(audit.appendInMongoTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "ai_estimator_knowledge_master_created",
+        entityType: "ai_estimator_knowledge_surface",
+        newValues: expect.objectContaining({
+          masterType: "surfaces",
+          name: "Counter surface",
+          description: "Granite, quartz, marble",
+          status: "active",
+          version: 1
+        })
+      }),
+      expect.anything()
+    );
+
+    await expect(service.createMaster(actor, "surfaces", {
+      code: "WALL",
+      name: "Wall surface"
+    })).resolves.toMatchObject({ code: "WALL" });
+
+    await AiEstimatorKnowledgeSurfaceModel.collection.insertOne({
+      _id: "knowledge-surface-legacy",
+      code: "LEGACY",
+      codeNormalized: "legacy",
+      name: "Legacy surface",
+      nameNormalized: "legacy surface",
+      description: null,
+      displayOrder: 99,
+      status: "active",
+      version: 1,
+      createdById: actor.id,
+      updatedById: actor.id,
+      archivedAt: null,
+      archivedById: null,
+      createdAt: fixedNow,
+      updatedAt: fixedNow
+    });
+    const listed = await service.listMasters(
+      actor,
+      "surfaces",
+      { includeArchived: true },
+      { limit: 20, offset: 0 }
+    );
+    expect(listed.items.find(({ id }) => id === "knowledge-surface-legacy"))
+      .toMatchObject({ name: "Legacy surface" });
+  });
+
+  it("rolls back Surface creation and display allocation when audit persistence fails", async () => {
+    const audit = {
+      appendInMongoTransaction: vi.fn(async () => {
+        throw new Error("audit unavailable");
+      })
+    };
+    const { service } = harness({ audit });
+
+    await expect(service.createMaster(actor, "surfaces", {
+      name: "Rolled back surface"
+    })).rejects.toThrow("audit unavailable");
+    expect(await AiEstimatorKnowledgeSurfaceModel.countDocuments()).toBe(0);
+  });
+
+  it("rolls back Surface edits and archival when audit persistence fails", async () => {
+    const setup = harness();
+    const surface = await setup.service.createMaster(actor, "surfaces", {
+      name: "Audit rollback Surface"
+    });
+    const audit = {
+      appendInMongoTransaction: vi.fn(async () => {
+        throw new Error("audit unavailable");
+      })
+    };
+    const { service } = harness({ audit });
+
+    await expect(service.updateMaster(actor, "surfaces", surface.id, {
+      expectedVersion: surface.version,
+      description: "Rolled back description"
+    })).rejects.toThrow("audit unavailable");
+    expect(await AiEstimatorKnowledgeSurfaceModel.findById(surface.id).lean())
+      .toMatchObject({
+        status: "active",
+        description: null,
+        version: surface.version
+      });
+
+    await expect(service.archiveMaster(actor, "surfaces", surface.id, {
+      expectedVersion: surface.version,
+      reason: "Exercise archive rollback"
+    })).rejects.toThrow("audit unavailable");
+    expect(await AiEstimatorKnowledgeSurfaceModel.findById(surface.id).lean())
+      .toMatchObject({ status: "active", version: surface.version });
   });
 
   it("projects canonical Priority semantics without exposing epochs and protects system identity", async () => {

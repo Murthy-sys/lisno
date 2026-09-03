@@ -30,6 +30,7 @@ import {
 } from "./knowledgeApi";
 import { KnowledgeLifecycleDialog, type KnowledgeLifecycleAction } from "./KnowledgeLifecycleDialogs";
 import { KnowledgeMasterEditorDialog } from "./KnowledgeMasterEditorDialog";
+import { KnowledgeSurfaceEditorDialog } from "./KnowledgeSurfaceEditorDialog";
 import { KnowledgeModePanel, type KnowledgeModePanelHandle } from "./KnowledgeModePanel";
 import { KnowledgeConflictReview } from "./KnowledgeConflictReview";
 import { KnowledgeRevisionHistory } from "./KnowledgeRevisionHistory";
@@ -154,12 +155,15 @@ export function KnowledgeItemWorkspacePage() {
   });
   const masterQueries = useQueries({
     queries: MASTER_TYPES.map((type) => ({
-      queryKey: type === "modes" || type === "uoms" || type === "priorities" || type === "vendors" || type === "taxes"
+      queryKey: type === "modes" || type === "uoms" || type === "priorities" || type === "vendors" || type === "taxes" || type === "surfaces"
         ? knowledgeQueryKeys.masterCatalog(type)
         : knowledgeQueryKeys.masterList(type, { limit: 100, offset: 0 }),
-      queryFn: () => type === "modes" || type === "uoms" || type === "priorities" || type === "vendors" || type === "taxes"
+      queryFn: () => type === "modes" || type === "uoms" || type === "priorities" || type === "vendors" || type === "taxes" || type === "surfaces"
         ? collectAllKnowledgeMasterPages(
-            (params) => listKnowledgeMasters(type, params),
+            (params) => listKnowledgeMasters(type, {
+              ...params,
+              ...(type === "surfaces" ? { includeArchived: true } : {})
+            }),
             type === "modes"
               ? "Mode"
               : type === "uoms"
@@ -168,7 +172,9 @@ export function KnowledgeItemWorkspacePage() {
                   ? "Priority"
                   : type === "vendors"
                     ? "Vendor"
-                    : "Tax"
+                    : type === "taxes"
+                      ? "Tax"
+                      : "Surface"
           )
         : listKnowledgeMasters(type, { limit: 100, offset: 0 })
     }))
@@ -239,6 +245,23 @@ export function KnowledgeItemWorkspacePage() {
       ? vendorsQuery.error.message
       : undefined,
     onRetry: () => { void vendorsQuery.refetch(); }
+  };
+  const surfacesQuery = masterQueries[MASTER_TYPES.indexOf("surfaces")]!;
+  const surfacesHaveData = Boolean(surfacesQuery.data);
+  const surfaceCatalogState = {
+    status: surfacesQuery.isError && !surfacesHaveData
+      ? "error" as const
+      : surfacesQuery.isPending && !surfacesHaveData
+        ? "loading" as const
+        : "ready" as const,
+    refreshing: surfacesHaveData && surfacesQuery.isFetching,
+    errorMessage: !surfacesHaveData && surfacesQuery.error instanceof Error
+      ? surfacesQuery.error.message
+      : undefined,
+    refreshErrorMessage: surfacesHaveData && surfacesQuery.isError && surfacesQuery.error instanceof Error
+      ? surfacesQuery.error.message
+      : undefined,
+    onRetry: () => { void surfacesQuery.refetch(); }
   };
   const editable = Boolean(item && revision?.status === "draft" && item.status !== "archived" && canUpdate && item.allowedActions.includes("update_section"));
   const overviewDraftPayload = activeSection === "overview" && sectionQuery.data
@@ -519,6 +542,7 @@ export function KnowledgeItemWorkspacePage() {
                 uomCatalogState={uomCatalogState}
                 vendorCatalogState={vendorCatalogState}
                 priorityCatalogState={priorityCatalogState}
+                surfaceCatalogState={surfaceCatalogState}
                 onQuickAdd={(type, select) => setQuickAdd({ type, select })}
                 onDirtyChange={setModeDirty}
                 onSavingChange={setModeSaving}
@@ -582,7 +606,11 @@ export function KnowledgeItemWorkspacePage() {
 
       {guard.dialogOpen ? <KnowledgeUnsavedChangesDialog onSave={() => void guard.saveAndContinue()} onDiscard={guard.discardAndContinue} onStay={guard.stayHere} busy={guard.busy} error={guard.error} /> : null}
       {conflict ? <KnowledgeVersionConflictDialog sectionLabel={backendSection ? KNOWLEDGE_SECTION_LABELS[backendSection] : undefined} localVersion={conflict.localVersion} serverVersion={conflict.server.version} onKeepEditing={() => setConflict(null)} onReviewServerVersion={() => { setServerReview(conflict); setConflict(null); }} onDiscardLocalChanges={() => { setPayload(conflict.server.payload); setDirty(false); setOverviewDirtyFields(new Set()); setConflict(null); setServerReview(null); }} /> : null}
-      {quickAdd ? <KnowledgeMasterEditorDialog masterType={quickAdd.type} quickAdd onSaved={quickAdd.select} onClose={() => setQuickAdd(null)} /> : null}
+      {quickAdd ? quickAdd.type === "surfaces" ? (
+        <KnowledgeSurfaceEditorDialog quickAdd onSaved={quickAdd.select} onClose={() => setQuickAdd(null)} />
+      ) : (
+        <KnowledgeMasterEditorDialog masterType={quickAdd.type} quickAdd onSaved={quickAdd.select} onClose={() => setQuickAdd(null)} />
+      ) : null}
       {lifecycleAction ? <KnowledgeLifecycleDialog action={lifecycleAction} blockers={lifecycleAction === "activate" ? item.blockers : []} warnings={lifecycleAction === "activate" ? item.warnings : []} reason={lifecycleReason} onReasonChange={setLifecycleReason} onClose={() => { setLifecycleAction(null); lifecycleMutation.reset(); }} onConfirm={() => lifecycleMutation.mutate({ action: lifecycleAction, target: item })} busy={lifecycleMutation.isPending} error={lifecycleError} /> : null}
       {command ? <KnowledgeCommandDialog kind={command} reason={commandReason} duplicateName={duplicateName} onReasonChange={setCommandReason} onNameChange={setDuplicateName} onClose={() => { setCommand(null); commandMutation.reset(); }} onConfirm={() => commandMutation.mutate({ kind: command, target: item })} busy={commandMutation.isPending} error={commandError} /> : null}
     </div>

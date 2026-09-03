@@ -19,7 +19,8 @@ import type {
   KnowledgeSectionApplicability,
   KnowledgeSectionEnvelope,
   KnowledgeSectionMutationEnvelope,
-  KnowledgeSectionKey
+  KnowledgeSectionKey,
+  KnowledgeSurface
 } from "./knowledgeTypes";
 
 vi.mock("./knowledgeApi", async (importOriginal) => {
@@ -186,6 +187,46 @@ const priorities: readonly KnowledgeMaster[] = [
   ...actorMetadata
 }));
 
+const uoms: readonly KnowledgeMaster[] = [
+  {
+    id: "uom-square-foot",
+    masterType: "uoms",
+    code: "SQFT",
+    name: "Sq.ft",
+    description: null,
+    displayOrder: 1,
+    status: "active",
+    decimalScale: 2,
+    version: 1,
+    ...actorMetadata
+  }
+];
+
+const surfaces: readonly KnowledgeSurface[] = [
+  {
+    id: "surface-floor",
+    masterType: "surfaces",
+    code: "SURFACE_FLOOR",
+    name: "Floor surface",
+    description: "Tile, marble",
+    displayOrder: 20,
+    status: "active",
+    version: 1,
+    ...actorMetadata
+  },
+  {
+    id: "surface-wall",
+    masterType: "surfaces",
+    code: "SURFACE_WALL",
+    name: "Wall surface",
+    description: "Paint, wallpaper",
+    displayOrder: 10,
+    status: "active",
+    version: 1,
+    ...actorMetadata
+  }
+];
+
 function renderPanel(
   ref: React.RefObject<KnowledgeModePanelHandle | null>,
   panelModes: readonly KnowledgeMaster[] = modes
@@ -196,7 +237,7 @@ function renderPanel(
   const props: ComponentProps<typeof KnowledgeModePanel> = {
     item,
     revisionId: "revision-1",
-    masters: { modes: panelModes, priorities },
+    masters: { modes: panelModes, priorities, surfaces, uoms },
     relationshipBaskets: [],
     relationshipItems: [],
     editable: true,
@@ -213,7 +254,7 @@ function renderPanel(
       <KnowledgeModePanel
         ref={ref}
         {...props}
-        masters={{ modes: currentModes, priorities }}
+        masters={{ modes: currentModes, priorities, surfaces, uoms }}
       />
     </QueryClientProvider>
   );
@@ -250,7 +291,10 @@ describe("Knowledge Mode section-state removal", () => {
 
     const pricingEditor = await screen.findByRole("button", { name: "Edit pricing" });
     const quantityEditor = await screen.findByRole("button", { name: "Edit quantity-margin" });
+    const surfacePanel = screen.getByRole("region", { name: "Surfaces" });
     expect(pricingEditor.compareDocumentPosition(quantityEditor) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(pricingEditor.compareDocumentPosition(surfacePanel) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(surfacePanel.compareDocumentPosition(quantityEditor) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(vi.mocked(knowledgeApi.getKnowledgeSection).mock.calls.map((call) => call[2])).toEqual([
       "advanced",
       "pricing",
@@ -439,6 +483,179 @@ describe("Knowledge Mode section-state removal", () => {
         hiddenCompatibility: { preserve: "newer" }
       }
     });
+  });
+
+  it("saves Surface-only edits through Overview and preserves the latest Priority and hidden payload", async () => {
+    const user = userEvent.setup();
+    vi.mocked(knowledgeApi.getKnowledgeSection).mockImplementation(
+      async (_mainLineId, _revisionId, sectionKey) => section(
+        sectionKey as "advanced" | "pricing" | "overview" | "quantity-margin",
+        applicabilityBySection[sectionKey as keyof typeof applicabilityBySection],
+        sectionKey === "overview"
+          ? {
+              priorityId: "priority-medium",
+              surfaceIds: ["surface-wall"],
+              hiddenCompatibility: { preserve: "original" }
+            }
+          : {}
+      )
+    );
+    vi.mocked(knowledgeApi.updateKnowledgeSection).mockImplementation(
+      async (_mainLineId, _revisionId, sectionKey, input) => savedSection(
+        sectionKey as "advanced" | "pricing" | "overview" | "quantity-margin",
+        input
+      )
+    );
+    const ref = createRef<KnowledgeModePanelHandle>();
+    const panel = renderPanel(ref);
+
+    const surfaceSelector = await screen.findByRole("button", { name: "Applicable surfaces" });
+    await waitFor(() => expect(surfaceSelector).toHaveAccessibleDescription("Wall surface"));
+    await user.click(surfaceSelector);
+    await user.click(screen.getByRole("option", { name: "Floor surface" }));
+
+    panel.queryClient.setQueryData(
+      knowledgeQueryKeys.section(item.mainLineId, "revision-1", "overview"),
+      section("overview", "configured", {
+        priorityId: "priority-low",
+        surfaceIds: ["surface-wall"],
+        hiddenCompatibility: { preserve: "latest" }
+      }, 18)
+    );
+
+    await act(async () => {
+      expect(await ref.current?.save()).toBe(true);
+    });
+
+    expect(vi.mocked(knowledgeApi.updateKnowledgeSection)).toHaveBeenCalledOnce();
+    expect(vi.mocked(knowledgeApi.updateKnowledgeSection).mock.calls[0]).toEqual([
+      item.mainLineId,
+      "revision-1",
+      "overview",
+      {
+        expectedVersion: 18,
+        expectedAggregateVersion: 7,
+        applicability: "configured",
+        payload: {
+          priorityId: "priority-low",
+          surfaceIds: ["surface-floor", "surface-wall"],
+          hiddenCompatibility: { preserve: "latest" }
+        }
+      }
+    ]);
+  });
+
+  it("combines Priority and Surface edits into one Overview request without touching Scope", async () => {
+    const user = userEvent.setup();
+    vi.mocked(knowledgeApi.getKnowledgeSection).mockImplementation(
+      async (_mainLineId, _revisionId, sectionKey) => section(
+        sectionKey as "advanced" | "pricing" | "overview" | "quantity-margin",
+        applicabilityBySection[sectionKey as keyof typeof applicabilityBySection],
+        sectionKey === "overview"
+          ? { priorityId: "priority-medium", surfaceIds: ["surface-wall"], uomId: "uom-square-foot" }
+          : {}
+      )
+    );
+    vi.mocked(knowledgeApi.updateKnowledgeSection).mockImplementation(
+      async (_mainLineId, _revisionId, sectionKey, input) => savedSection(
+        sectionKey as "advanced" | "pricing" | "overview" | "quantity-margin",
+        input
+      )
+    );
+    const ref = createRef<KnowledgeModePanelHandle>();
+    renderPanel(ref);
+
+    await user.selectOptions(await screen.findByRole("combobox", { name: "Priority" }), "priority-high");
+    await user.click(screen.getByRole("button", { name: "Applicable surfaces" }));
+    await user.click(screen.getByRole("option", { name: "Floor surface" }));
+    await act(async () => {
+      expect(await ref.current?.save()).toBe(true);
+    });
+
+    expect(vi.mocked(knowledgeApi.updateKnowledgeSection)).toHaveBeenCalledOnce();
+    expect(vi.mocked(knowledgeApi.updateKnowledgeSection).mock.calls[0]?.[2]).toBe("overview");
+    expect(vi.mocked(knowledgeApi.updateKnowledgeSection).mock.calls[0]?.[3].payload).toEqual({
+      priorityId: "priority-high",
+      surfaceIds: ["surface-floor", "surface-wall"],
+      uomId: "uom-square-foot"
+    });
+    expect(vi.mocked(knowledgeApi.getKnowledgeSection).mock.calls.some((call) => call[2] === "scope")).toBe(false);
+    expect(vi.mocked(knowledgeApi.updateKnowledgeSection).mock.calls.some((call) => call[2] === "scope")).toBe(false);
+  });
+
+  it("labels a pathless failure for combined Priority and Surface edits only once", async () => {
+    const user = userEvent.setup();
+    vi.mocked(knowledgeApi.getKnowledgeSection).mockImplementation(
+      async (_mainLineId, _revisionId, sectionKey) => section(
+        sectionKey as "advanced" | "pricing" | "overview" | "quantity-margin",
+        applicabilityBySection[sectionKey as keyof typeof applicabilityBySection],
+        sectionKey === "overview"
+          ? { priorityId: "priority-medium", surfaceIds: ["surface-wall"] }
+          : {}
+      )
+    );
+    vi.mocked(knowledgeApi.updateKnowledgeSection).mockRejectedValueOnce(
+      new ApiError(503, "UPSTREAM_UNAVAILABLE", "Overview service unavailable.")
+    );
+    const ref = createRef<KnowledgeModePanelHandle>();
+    renderPanel(ref);
+
+    const priority = await screen.findByRole("combobox", { name: "Priority" });
+    await user.selectOptions(priority, "priority-high");
+    const surfaceSelector = screen.getByRole("button", { name: "Applicable surfaces" });
+    await user.click(surfaceSelector);
+    await user.click(screen.getByRole("option", { name: "Floor surface" }));
+
+    await act(async () => {
+      expect(await ref.current?.save()).toBe(false);
+    });
+
+    const alerts = screen.getAllByRole("alert");
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0]).toHaveTextContent("Priority and Surfaces could not be saved");
+    expect(alerts[0]).toHaveTextContent("Overview service unavailable.");
+    expect(screen.queryByText("Priority could not be saved")).not.toBeInTheDocument();
+    expect(priority).toHaveValue("priority-high");
+    expect(surfaceSelector).toHaveAccessibleDescription(
+      "Floor surface, Wall surface"
+    );
+  });
+
+  it("routes an authoritative Surface field error to the selector during combined edits", async () => {
+    const user = userEvent.setup();
+    vi.mocked(knowledgeApi.getKnowledgeSection).mockImplementation(
+      async (_mainLineId, _revisionId, sectionKey) => section(
+        sectionKey as "advanced" | "pricing" | "overview" | "quantity-margin",
+        applicabilityBySection[sectionKey as keyof typeof applicabilityBySection],
+        sectionKey === "overview"
+          ? { priorityId: "priority-medium", surfaceIds: ["surface-wall"] }
+          : {}
+      )
+    );
+    vi.mocked(knowledgeApi.updateKnowledgeSection).mockRejectedValueOnce(
+      new ApiError(400, "VALIDATION_ERROR", "Overview is invalid.", {
+        "payload.surfaceIds": "Choose an active Surface."
+      })
+    );
+    const ref = createRef<KnowledgeModePanelHandle>();
+    renderPanel(ref);
+
+    const priority = await screen.findByRole("combobox", { name: "Priority" });
+    await user.selectOptions(priority, "priority-high");
+    const surfaceSelector = screen.getByRole("button", { name: "Applicable surfaces" });
+    await user.click(surfaceSelector);
+    await user.click(screen.getByRole("option", { name: "Floor surface" }));
+
+    await act(async () => {
+      expect(await ref.current?.save()).toBe(false);
+    });
+
+    expect(priority).not.toHaveAttribute("aria-invalid", "true");
+    expect(surfaceSelector).toHaveAttribute("aria-invalid", "true");
+    expect(surfaceSelector).toHaveAccessibleDescription(/Choose an active Surface\./u);
+    expect(screen.getByRole("alert")).toHaveTextContent("Choose an active Surface.");
+    expect(screen.queryByText("Priority and Surfaces could not be saved")).not.toBeInTheDocument();
+    expect(screen.queryByText("Priority could not be saved")).not.toBeInTheDocument();
   });
 
   it("promotes a fresh not-configured Overview when selecting Priority and preserves the latest full payload", async () => {
@@ -644,6 +861,69 @@ describe("Knowledge Mode section-state removal", () => {
       payload: {
         uomId: "uom-latest",
         priorityId: "priority-high",
+        hiddenCompatibility: { version: "latest" }
+      }
+    });
+  });
+
+  it("keeps local Surfaces through conflict review and rebases only Surface IDs onto the latest Overview", async () => {
+    const user = userEvent.setup();
+    let overviewLoads = 0;
+    vi.mocked(knowledgeApi.getKnowledgeSection).mockImplementation(
+      async (_mainLineId, _revisionId, sectionKey) => {
+        if (sectionKey !== "overview") {
+          return section(sectionKey as "advanced" | "pricing" | "quantity-margin");
+        }
+        overviewLoads += 1;
+        return overviewLoads === 1
+          ? section("overview", "configured", {
+              priorityId: "priority-medium",
+              surfaceIds: ["surface-wall"],
+              hiddenCompatibility: { version: "original" }
+            }, 10)
+          : section("overview", "configured", {
+              priorityId: "priority-low",
+              surfaceIds: ["surface-wall"],
+              hiddenCompatibility: { version: "latest" }
+            }, 24);
+      }
+    );
+    vi.mocked(knowledgeApi.getKnowledgeItem).mockResolvedValue({ ...item, version: 35 });
+    vi.mocked(knowledgeApi.updateKnowledgeSection)
+      .mockRejectedValueOnce(new ApiError(409, "VERSION_CONFLICT", "Changed elsewhere."))
+      .mockImplementation(async (_mainLineId, _revisionId, sectionKey, input) => savedSection(
+        sectionKey as "advanced" | "pricing" | "overview" | "quantity-margin",
+        input,
+        36
+      ));
+    const ref = createRef<KnowledgeModePanelHandle>();
+    renderPanel(ref);
+
+    const selector = await screen.findByRole("button", { name: "Applicable surfaces" });
+    await waitFor(() => expect(selector).toHaveAccessibleDescription("Wall surface"));
+    await user.click(selector);
+    await user.click(screen.getByRole("option", { name: "Floor surface" }));
+    await act(async () => {
+      expect(await ref.current?.save()).toBe(false);
+    });
+
+    const dialog = screen.getByRole("alertdialog", { name: "This section changed elsewhere" });
+    expect(dialog).toHaveTextContent("Surfaces");
+    expect(selector).toHaveAccessibleDescription("Floor surface, Wall surface");
+    await user.click(within(dialog).getByRole("button", { name: "Review server version" }));
+    const review = screen.getByRole("region", { name: "Latest Overview server version" });
+    expect(review).toHaveTextContent("SurfacesWall surface");
+    expect(review).not.toHaveTextContent("surface-wall");
+
+    await act(async () => {
+      expect(await ref.current?.save()).toBe(true);
+    });
+    expect(vi.mocked(knowledgeApi.updateKnowledgeSection).mock.calls[1]?.[3]).toMatchObject({
+      expectedVersion: 24,
+      expectedAggregateVersion: 35,
+      payload: {
+        priorityId: "priority-low",
+        surfaceIds: ["surface-floor", "surface-wall"],
         hiddenCompatibility: { version: "latest" }
       }
     });

@@ -4,6 +4,8 @@ import { knowledgeQueryKeys } from "./knowledgeQueryKeys";
 import type {
   KnowledgeBasketListResponse,
   KnowledgeItemDetail,
+  KnowledgeMaster,
+  KnowledgeMasterListResponse,
   KnowledgeMasterType,
   KnowledgeSectionMutationEnvelope
 } from "./knowledgeTypes";
@@ -130,13 +132,46 @@ export async function syncKnowledgeLifecycleMutation(
 
 export async function syncKnowledgeMasterMutation(
   queryClient: QueryClient,
-  masterType: KnowledgeMasterType
+  masterType: KnowledgeMasterType,
+  master?: KnowledgeMaster
 ): Promise<void> {
-  await Promise.all([
+  if (master) commitKnowledgeMasterCatalogMutation(queryClient, master);
+
+  await Promise.allSettled([
     queryClient.invalidateQueries({
       queryKey: knowledgeQueryKeys.masterLists(masterType)
     }),
     queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.itemLists() }),
     queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.contexts() })
   ]);
+}
+
+export function commitKnowledgeMasterCatalogMutation(
+  queryClient: QueryClient,
+  master: KnowledgeMaster
+): void {
+  queryClient.setQueryData<KnowledgeMasterListResponse>(
+    knowledgeQueryKeys.masterCatalog(master.masterType),
+    (current) => {
+      if (!current) {
+        return {
+          items: [master],
+          pagination: { limit: 100, offset: 0, total: 1, hasMore: false }
+        };
+      }
+      const existing = current.items.some(({ id }) => id === master.id);
+      return {
+        ...current,
+        items: existing
+          ? current.items.map((item) => item.id === master.id ? master : item)
+          : [...current.items, master],
+        pagination: existing
+          ? current.pagination
+          : {
+              ...current.pagination,
+              total: current.pagination.total + 1
+            }
+      };
+    }
+  );
 }

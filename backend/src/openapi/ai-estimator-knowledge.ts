@@ -56,11 +56,15 @@ export const AI_ESTIMATOR_KNOWLEDGE_REQUEST_BODIES: Readonly<Record<string, Open
       ? "KnowledgeUomCreateRequest"
       : family === "taxes"
         ? "KnowledgeTaxCreateRequest"
+        : family === "surfaces"
+          ? "KnowledgeSurfaceCreateRequest"
         : "KnowledgeMasterCreateRequest";
     const updateName = family === "uoms"
       ? "KnowledgeUomUpdateRequest"
       : family === "taxes"
         ? "KnowledgeTaxUpdateRequest"
+        : family === "surfaces"
+          ? "KnowledgeSurfaceUpdateRequest"
         : "KnowledgeMasterUpdateRequest";
     return [
       [`POST ${admin}/${family}`, jsonRequest(createName)],
@@ -93,8 +97,16 @@ export const AI_ESTIMATOR_KNOWLEDGE_RESPONSE_SCHEMAS: Readonly<Record<string, st
   [`POST ${admin}/preview`]: "KnowledgePreview",
   "POST /ai-estimator-knowledge/context": "KnowledgeContext",
   ...Object.fromEntries(masterFamilies.flatMap((family) => {
-    const itemSchema = family === "priorities" ? "KnowledgePriority" : "KnowledgeMaster";
-    const pageResponseSchema = family === "priorities" ? "KnowledgePriorityPage" : "KnowledgeMasterPage";
+    const itemSchema = family === "priorities"
+      ? "KnowledgePriority"
+      : family === "surfaces"
+        ? "KnowledgeSurface"
+        : "KnowledgeMaster";
+    const pageResponseSchema = family === "priorities"
+      ? "KnowledgePriorityPage"
+      : family === "surfaces"
+        ? "KnowledgeSurfacePage"
+        : "KnowledgeMasterPage";
     return [
       [`GET ${admin}/${family}`, pageResponseSchema],
       [`POST ${admin}/${family}`, itemSchema],
@@ -260,6 +272,12 @@ const priorityProperties = {
     description: "Backend-owned canonical Priority meaning. Omitted for legacy or non-canonical Priority masters."
   }
 } as const;
+const surfaceProperties = {
+  ...Object.fromEntries(
+    Object.entries(masterProperties).filter(([key]) => key !== "decimalScale")
+  ),
+  masterType: { type: "string", enum: ["surfaces"] }
+} as const;
 
 const amountComponent = {
   type: "object",
@@ -331,6 +349,9 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
     name: masterProperties.name
   }),
   KnowledgeMasterCreateRequest: strictObject(["code", "name"], masterCreateRequestProperties),
+  KnowledgeSurfaceCreateRequest: strictObject(["name"], {
+    ...masterCreateRequestProperties
+  }),
   KnowledgeUomCreateRequest: strictObject(["code", "name", "decimalScale"], {
     ...masterCreateRequestProperties,
     decimalScale: { type: "integer", minimum: 0, maximum: 3 }
@@ -363,6 +384,11 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
     taxVersion: ref("KnowledgeTaxVersionRequest")
   }),
   KnowledgeMasterUpdateRequest: strictObject(["expectedVersion"], {
+    expectedVersion: version,
+    ...masterUpdateRequestProperties,
+    status: { type: "string", enum: ["active", "inactive"] }
+  }),
+  KnowledgeSurfaceUpdateRequest: strictObject(["expectedVersion"], {
     expectedVersion: version,
     ...masterUpdateRequestProperties,
     status: { type: "string", enum: ["active", "inactive"] }
@@ -914,10 +940,12 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
   ),
   KnowledgeMaster: strictObject(masterRequiredProperties, masterProperties),
   KnowledgePriority: strictObject(masterRequiredProperties, priorityProperties),
+  KnowledgeSurface: strictObject(masterRequiredProperties, surfaceProperties),
   KnowledgeUom: strictObject(Object.keys(masterProperties), masterProperties),
   KnowledgeBasketPage: pageSchema("KnowledgeBasket"),
   KnowledgeMasterPage: pageSchema("KnowledgeMaster"),
   KnowledgePriorityPage: pageSchema("KnowledgePriority"),
+  KnowledgeSurfacePage: pageSchema("KnowledgeSurface"),
   KnowledgeMainLine: strictObject(
     ["id", "basketId", "name", "description", "displayOrder", "status", "activeRevisionId", "draftRevisionId", "version", ...Object.keys(actorMetadata)],
     {

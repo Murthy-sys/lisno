@@ -541,6 +541,7 @@ export function createAiEstimatorKnowledgeItemService(
           remapPriceEntryIds: false
         });
         const copiedSections = copyRevisionSections(sourceSections, priceReferences, uuid, false);
+        await coordinateCopiedSurfaceReferences(copiedSections, session, false);
         const completeness = completenessForRows(mainLineId, copiedSections);
         await AiEstimatorKnowledgeRevisionModel.create([{
           _id: revisionId,
@@ -660,6 +661,12 @@ export function createAiEstimatorKnowledgeItemService(
           session
         );
         await coordinateNewPriorityReferences(
+          sectionKey,
+          previousPayload,
+          persistedPayload,
+          session
+        );
+        await coordinateNewSurfaceReferences(
           sectionKey,
           previousPayload,
           persistedPayload,
@@ -911,6 +918,7 @@ export function createAiEstimatorKnowledgeItemService(
         );
         await coordinateCopiedBasketReferences(remappedPayloads, session);
         await coordinateCopiedPriorityReferences(remappedPayloads, session);
+        await coordinateCopiedSurfaceReferences(remappedPayloads, session, true);
         await coordinateCopiedSlabRateUomReferences(remappedPayloads, session);
         const copiedSlabRateIssues = await slabRateRevisionIssues(
           remappedPayloads,
@@ -2111,6 +2119,30 @@ async function coordinateNewPriorityReferences(
   }
 }
 
+async function coordinateNewSurfaceReferences(
+  sectionKey: KnowledgeSectionKey,
+  priorPayload: Row,
+  nextPayload: Row,
+  session: ClientSession
+): Promise<void> {
+  if (sectionKey !== "overview" && sectionKey !== "scope") return;
+  const priorIds = new Set(stringArray(priorPayload.surfaceIds));
+  const nextIds = new Set(stringArray(nextPayload.surfaceIds));
+  for (const surfaceId of [...nextIds].filter((id) => !priorIds.has(id)).sort()) {
+    const surface = await AiEstimatorKnowledgeSurfaceModel.findOneAndUpdate(
+      { _id: surfaceId, status: "active" },
+      { $inc: { dependencyEpoch: 1 } },
+      {
+        returnDocument: "after",
+        runValidators: true,
+        session,
+        timestamps: false
+      }
+    ).select({ _id: 1 }).lean().exec();
+    if (!surface) invalidKnowledgeReference("surface");
+  }
+}
+
 async function coordinateCanonicalMainLinePriority(
   priorityId: string,
   session: ClientSession
@@ -2227,6 +2259,33 @@ async function coordinateCopiedPriorityReferences(
   }
 }
 
+async function coordinateCopiedSurfaceReferences(
+  rows: Row[],
+  session: ClientSession,
+  requireActive: boolean
+): Promise<void> {
+  const surfaceIds = new Set<string>();
+  for (const sectionKey of ["overview", "scope"] as const) {
+    const payload = payloadFor(rows.find((row) => row.sectionKey === sectionKey));
+    for (const surfaceId of stringArray(payload.surfaceIds)) surfaceIds.add(surfaceId);
+  }
+  for (const surfaceId of [...surfaceIds].sort()) {
+    const surface = await AiEstimatorKnowledgeSurfaceModel.findOneAndUpdate(
+      requireActive
+        ? { _id: surfaceId, status: "active" }
+        : { _id: surfaceId, status: { $ne: "archived" } },
+      { $inc: { dependencyEpoch: 1 } },
+      {
+        returnDocument: "after",
+        runValidators: true,
+        session,
+        timestamps: false
+      }
+    ).select({ _id: 1 }).lean().exec();
+    if (!surface) invalidKnowledgeReference("surface");
+  }
+}
+
 async function coordinateBasketDependencies(
   basketIds: ReadonlySet<string>,
   session: ClientSession
@@ -2280,7 +2339,7 @@ async function validateRevisionRelationships(
   context?: RevisionRelationshipValidationContext
 ): Promise<void> {
   validateStoredRevisionPayloads(rows);
-  await validateRevisionMasterReferences(rows, session);
+  await validateRevisionMasterReferences(rows, session, context);
   await validateRevisionSectionRules(rows, session, context);
   await validateScopeBasketReferences(rows, session);
   const stepIssues = sectionGraphIssues(rows);
@@ -2351,7 +2410,8 @@ async function validateRevisionRelationships(
 
 async function validateRevisionMasterReferences(
   rows: Row[],
-  session: ClientSession
+  session: ClientSession,
+  context?: RevisionRelationshipValidationContext
 ): Promise<void> {
   const overview = payloadFor(rows.find((row) => row.sectionKey === "overview"));
   const scope = payloadFor(rows.find((row) => row.sectionKey === "scope"));
@@ -2416,10 +2476,13 @@ async function validateRevisionMasterReferences(
     }
     if (activeModeIds.size !== modeIds.size) invalidKnowledgeReference("mode");
   }
-  if (surfaceIds.size > 0 && await AiEstimatorKnowledgeSurfaceModel.countDocuments({
-    _id: { $in: [...surfaceIds] },
-    status: "active"
-  }).session(session).exec() !== surfaceIds.size) invalidKnowledgeReference("surface");
+  if (!context && surfaceIds.size > 0) {
+    await requireActiveSurfaceReferences(
+      stringArray(overview.surfaceIds),
+      stringArray(scope.surfaceIds),
+      session
+    );
+  }
 }
 
 async function validateRevisionSectionRules(
@@ -2646,6 +2709,65 @@ function invalidRevisionSectionRules(issues: readonly KnowledgeValidationIssue[]
 function addOptionalId(target: Set<string>, value: unknown): void {
   const id = optionalString(value);
   if (id) target.add(id);
+}
+
+/* Section saves keep a Surface that was deactivated after it was assigned, so
+   activation is the first place the actor learns it is stale. Name the Surface
+   rather than the reference: a bare "surface is unavailable" cannot be acted on,
+   and legacy Scope IDs have no editor at all, so they need saying out loud. */
+async function requireActiveSurfaceReferences(
+  overviewSurfaceIds: readonly string[],
+  scopeSurfaceIds: readonly string[],
+  session: ClientSession
+): Promise<void> {
+  const referencedIds = new Set([...overviewSurfaceIds, ...scopeSurfaceIds]);
+  if (referencedIds.size === 0) return;
+
+  const surfaces = await AiEstimatorKnowledgeSurfaceModel
+    .find({ _id: { $in: [...referencedIds] } })
+    .select({ _id: 1, name: 1, status: 1 })
+    .session(session)
+    .lean()
+    .exec();
+  const activeIds = new Set<string>();
+  const namesById = new Map<string, string>();
+  for (const document of surfaces) {
+    const row = asRow(document);
+    if (!row) continue;
+    const id = requiredString(row._id);
+    const name = optionalString(row.name);
+    if (name) namesById.set(id, name);
+    if (row.status === "active") activeIds.add(id);
+  }
+
+  const unavailableIds = [...referencedIds].filter((id) => !activeIds.has(id));
+  if (unavailableIds.length === 0) return;
+
+  /* Stable IDs stay out of every user-facing string; a Surface that no longer
+     exists is described, never identified. */
+  const describe = (ids: readonly string[]) => [...new Set(
+    ids.map((id) => namesById.get(id) ?? "a Surface that no longer exists")
+  )].sort((left, right) => left.localeCompare(right)).join(", ");
+
+  const overviewReferenced = new Set(overviewSurfaceIds);
+  const unavailableInOverview = unavailableIds.filter((id) => overviewReferenced.has(id));
+  const unavailableInScopeOnly = unavailableIds.filter((id) => !overviewReferenced.has(id));
+  const fields: Record<string, string> = {};
+  if (unavailableInOverview.length > 0) {
+    fields["payload.surfaceIds"] =
+      `Remove or reactivate ${describe(unavailableInOverview)} before activating.`;
+  }
+  if (unavailableInScopeOnly.length > 0) {
+    fields["scope.surfaceIds"] =
+      `Legacy Scope data still references ${describe(unavailableInScopeOnly)}.`;
+  }
+
+  throw new ApiError(
+    409,
+    "KNOWLEDGE_REFERENCE_INVALID",
+    `An active surface reference is unavailable: ${describe(unavailableIds)}.`,
+    fields
+  );
 }
 
 function invalidKnowledgeReference(label: string): never {

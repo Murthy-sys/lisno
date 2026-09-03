@@ -322,6 +322,73 @@ describe("AI Estimator Knowledge HTTP routes", () => {
     );
   });
 
+  it("uses a strict Surface-only contract with an optional technical code", async () => {
+    const testServices = services();
+    const input = {
+      name: "Counter surface",
+      description: "Granite, quartz, marble"
+    };
+    const created = await request(appFor(testServices))
+      .post("/api/v1/admin/ai-estimator-knowledge/surfaces")
+      .set("Authorization", "Bearer super-admin-token")
+      .send(input);
+    expect(created.status).toBe(201);
+    expect(testServices.reference.createMaster).toHaveBeenCalledWith(
+      superAdmin,
+      "surfaces",
+      input
+    );
+
+    const updated = await request(appFor(testServices))
+      .patch("/api/v1/admin/ai-estimator-knowledge/surfaces/surface-1")
+      .set("Authorization", "Bearer super-admin-token")
+      .send({ expectedVersion: 2, name: "Counter surface" });
+    expect(updated.status).toBe(200);
+    expect(testServices.reference.updateMaster).toHaveBeenCalledWith(
+      superAdmin,
+      "surfaces",
+      "surface-1",
+      { expectedVersion: 2, name: "Counter surface" }
+    );
+  });
+
+  it("rejects unknown Surface fields, including retired unit guidance", async () => {
+    const testServices = services();
+    for (const body of [
+      { name: "Retired typical units", typicalUomIds: ["uom-1"] },
+      { name: "Unknown field", unexpected: true },
+      { description: "Missing name" }
+    ]) {
+      const response = await request(appFor(testServices))
+        .post("/api/v1/admin/ai-estimator-knowledge/surfaces")
+        .set("Authorization", "Bearer super-admin-token")
+        .send(body);
+      expect(response.status).toBe(400);
+    }
+    const unrelated = await request(appFor(testServices))
+      .post("/api/v1/admin/ai-estimator-knowledge/vendors")
+      .set("Authorization", "Bearer super-admin-token")
+      .send({ name: "Vendor", typicalUomIds: ["uom-1"] });
+    expect(unrelated.status).toBe(400);
+    expect(testServices.reference.createMaster).not.toHaveBeenCalled();
+  });
+
+  it("authorizes Surface writes before validating their specialized body", async () => {
+    const testServices = services();
+    const denied = await request(appFor(testServices))
+      .post("/api/v1/admin/ai-estimator-knowledge/surfaces")
+      .set("Authorization", "Bearer admin-token")
+      .send({ unexpected: true });
+    const unauthenticated = await request(appFor(testServices))
+      .post("/api/v1/admin/ai-estimator-knowledge/surfaces")
+      .send({ unexpected: true });
+
+    expect(denied.status).toBe(403);
+    expect(denied.body.error.code).toBe("FORBIDDEN");
+    expect(unauthenticated.status).toBe(401);
+    expect(testServices.reference.createMaster).not.toHaveBeenCalled();
+  });
+
   it("accepts explicit Tax rollover intent only on the update contract", async () => {
     const testServices = services();
     const taxVersion = {
