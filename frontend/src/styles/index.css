@@ -5,6 +5,7 @@
 @import "./motion.css" layer(components);
 @import "./primitives.css" layer(components);
 @import "./shell.css" layer(shell);
+@import "./charts.css" layer(components);
 
 @theme {
   --color-lisno-navy: #17213f;
