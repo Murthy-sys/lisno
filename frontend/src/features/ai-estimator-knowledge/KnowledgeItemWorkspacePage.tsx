@@ -16,7 +16,7 @@ import { StatusBadge } from "../../components/ui/StatusBadge";
 import { Surface } from "../../components/ui/Surface";
 import {
   activateKnowledgeRevision,
-  archiveKnowledgeMainLine,
+  permanentlyDeleteKnowledgeMainLine,
   createKnowledgeRevision,
   deactivateKnowledgeItem,
   duplicateKnowledgeItem,
@@ -36,7 +36,11 @@ import { KnowledgeConflictReview } from "./KnowledgeConflictReview";
 import { KnowledgeRevisionHistory } from "./KnowledgeRevisionHistory";
 import { KnowledgeSectionCommandBar } from "./KnowledgeSectionCommandBar";
 import { KnowledgeWorkspaceStatus } from "./KnowledgeWorkspaceStatus";
-import { syncKnowledgeLifecycleMutation, syncKnowledgeSectionMutation } from "./knowledgeMutationSync";
+import {
+  syncKnowledgeLifecycleMutation,
+  syncKnowledgeMainLineDeletion,
+  syncKnowledgeSectionMutation
+} from "./knowledgeMutationSync";
 import {
   KnowledgeOverviewPanel,
   type KnowledgeOverviewSectionState
@@ -439,17 +443,26 @@ export function KnowledgeItemWorkspacePage() {
         return activateKnowledgeRevision(mainLineId, target.draftRevision.id, { expectedVersion: target.version });
       }
       if (action === "deactivate") return deactivateKnowledgeItem(mainLineId, { expectedVersion: target.version, reason: lifecycleReason.trim() });
-      return archiveKnowledgeMainLine(mainLineId, { expectedVersion: target.version, reason: lifecycleReason.trim() });
+      return permanentlyDeleteKnowledgeMainLine(mainLineId, { expectedVersion: target.version, reason: lifecycleReason.trim() });
     },
     onSuccess: async (updated, variables) => {
-      await syncKnowledgeLifecycleMutation(queryClient, updated);
+      if (variables.action === "archive") {
+        /* The item is gone; there is no detail left to write back into the cache. */
+        await syncKnowledgeMainLineDeletion(queryClient, mainLineId);
+      } else {
+        await syncKnowledgeLifecycleMutation(queryClient, updated as KnowledgeItemDetail);
+      }
       setLifecycleAction(null);
       setLifecycleReason("");
       setDirty(false);
       setOverviewDirtyFields(new Set());
       setModeDirty(false);
       setModeSaveError(null);
-      setAnnouncement(variables.action === "activate" ? "Revision activated and available to the AI knowledge context service." : `Item ${variables.action}d.`);
+      setAnnouncement(variables.action === "activate"
+        ? "Revision activated and available to the AI knowledge context service."
+        : variables.action === "archive"
+          ? "Main Line permanently deleted."
+          : `Item ${variables.action}d.`);
       if (variables.action === "archive") navigate("/admin/configuration/estimation", { replace: true });
     }
   });

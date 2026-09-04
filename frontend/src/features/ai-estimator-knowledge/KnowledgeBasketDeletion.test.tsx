@@ -86,9 +86,7 @@ const eligibleImpact: KnowledgeBasketDeletionImpact = {
   version: emptyBasket.version,
   mainLineCount: 0,
   historicalReferenceCount: 0,
-  bootstrapOwned: false,
-  canDelete: true,
-  blockers: []
+  bootstrapOwned: false
 };
 
 function renderPage() {
@@ -164,7 +162,7 @@ beforeEach(() => {
 });
 
 describe("Super Admin permanent Main Basket deletion", () => {
-  it("lazily lists empty and archived baskets while retaining distinct lifecycle actions", async () => {
+  it("lazily lists empty and archived baskets with one delete action each", async () => {
     const user = userEvent.setup();
     renderPage();
 
@@ -179,10 +177,10 @@ describe("Super Admin permanent Main Basket deletion", () => {
       offset: 0
     });
     expect(within(management).getByRole("button", { name: `Edit ${emptyBasket.name}` })).toBeVisible();
-    expect(within(management).getByRole("button", { name: `Delete ${emptyBasket.name}` })).toBeVisible();
+    /* Archive and permanent deletion are the same act, so the row offers it once. */
     expect(within(management).getByRole("button", { name: `Delete ${emptyBasket.name} permanently` })).toBeVisible();
+    expect(within(management).queryByRole("button", { name: `Delete ${emptyBasket.name}` })).not.toBeInTheDocument();
     expect(within(management).queryByRole("button", { name: `Edit ${archivedBasket.name}` })).not.toBeInTheDocument();
-    expect(within(management).queryByRole("button", { name: `Delete ${archivedBasket.name}` })).not.toBeInTheDocument();
     expect(knowledgeApi.getKnowledgeBasketDeletionImpact).not.toHaveBeenCalled();
   });
 
@@ -293,32 +291,54 @@ describe("Super Admin permanent Main Basket deletion", () => {
     expect(await within(errorManagement).findByText(emptyBasket.name)).toBeVisible();
   });
 
-  it("shows authoritative blocker counts and prevents deletion", async () => {
+  it("names everything a deletion carries away instead of refusing it", async () => {
     const user = userEvent.setup();
     vi.mocked(knowledgeApi.getKnowledgeBasketDeletionImpact).mockResolvedValue({
-      ...eligibleImpact,
+      basketId: emptyBasket.id,
+      basketName: emptyBasket.name,
+      version: emptyBasket.version,
       mainLineCount: 2,
       historicalReferenceCount: 1,
-      canDelete: false,
-      blockers: [
-        { code: "HAS_MAIN_LINES", message: "This Basket has Main Lines." },
-        {
-          code: "HAS_HISTORICAL_REFERENCES",
-          message: "This Basket is retained in historical configuration."
-        }
-      ]
+      bootstrapOwned: false
     });
     renderPage();
 
     const dialog = await openPermanentDelete(user);
 
-    expect(await within(dialog).findByText("Permanent deletion is blocked")).toBeVisible();
-    expect(within(dialog).getByText("This Basket has Main Lines.")).toBeVisible();
-    expect(within(dialog).getByText("This Basket is retained in historical configuration.")).toBeVisible();
-    const impact = within(dialog).getByText("Main Lines").closest("dl");
+    /* Counts are stated up front; nothing about them blocks the command. */
+    const impact = (await within(dialog).findByText("Main Lines deleted with it")).closest("dl");
     expect(impact).not.toBeNull();
     expect(within(impact as HTMLElement).getByText("2")).toBeVisible();
     expect(within(impact as HTMLElement).getByText("1")).toBeVisible();
+    expect(within(dialog).getByText(/also deletes 2 Main Lines/)).toBeVisible();
+    expect(within(dialog).getByText(/point at this basket/)).toBeVisible();
+    expect(within(dialog).getByText(/can add this basket again afterwards/)).toBeVisible();
+    expect(within(dialog).queryByText("Permanent deletion is blocked")).not.toBeInTheDocument();
+
+    /* Still gated on the typed name, exactly as an empty Basket is. */
+    expect(within(dialog).getByRole("button", { name: "Delete" })).toBeDisabled();
+    await user.type(
+      within(dialog).getByRole("textbox", { name: "Type basket name to confirm" }),
+      emptyBasket.name
+    );
+    await user.type(within(dialog).getByRole("textbox", { name: "Reason" }), "Wrong taxonomy");
+    expect(within(dialog).getByRole("button", { name: "Delete" })).toBeEnabled();
+  });
+
+  it("says out loud when the Basket was supplied with the system", async () => {
+    const user = userEvent.setup();
+    vi.mocked(knowledgeApi.getKnowledgeBasketDeletionImpact).mockResolvedValue({
+      basketId: emptyBasket.id,
+      basketName: emptyBasket.name,
+      version: emptyBasket.version,
+      mainLineCount: 0,
+      historicalReferenceCount: 0,
+      bootstrapOwned: true
+    });
+    renderPage();
+
+    const dialog = await openPermanentDelete(user);
+    expect(await within(dialog).findByText("Supplied with the system")).toBeVisible();
     expect(within(dialog).getByRole("button", { name: "Delete" })).toBeDisabled();
   });
 

@@ -39,7 +39,6 @@ function services() {
     listBaskets: vi.fn(async () => ({ items: [{ id: "basket-1" }], total: 1 })),
     createBasket: vi.fn(async () => ({ id: "basket-1" })),
     updateBasket: vi.fn(async () => ({ id: "basket-1" })),
-    archiveBasket: vi.fn(async () => ({ id: "basket-1", status: "archived" })),
     getBasketDeletionImpact: vi.fn(async () => ({
       basketId: "basket-1",
       basketName: "Custom basket",
@@ -64,7 +63,11 @@ function services() {
     listMainLines: vi.fn(async () => ({ items: [], total: 0 })),
     createMainLine: vi.fn(async () => ({ id: "line-1" })),
     updateMainLine: vi.fn(async () => ({ id: "line-1" })),
-    archiveMainLine: vi.fn(async () => ({ id: "line-1", status: "archived" })),
+    permanentlyDeleteMainLine: vi.fn(async () => ({
+      mainLineId: "main-line-1",
+      deleted: true,
+      deletedAt: "2026-08-31T12:00:00.000Z"
+    })),
     listItems: vi.fn(async () => ({ items: [], total: 0 })),
     getItem: vi.fn(async () => ({ id: "line-1" })),
     history: vi.fn(async () => ({ items: [], total: 0 })),
@@ -238,7 +241,7 @@ describe("AI Estimator Knowledge HTTP routes", () => {
     expect(testServices.reference.getBasketDeletionImpact).not.toHaveBeenCalled();
   });
 
-  it("permanently deletes through a distinct strict Basket command", async () => {
+  it("permanently deletes through the strict Basket DELETE command", async () => {
     const testServices = services();
     const input = {
       expectedVersion: 3,
@@ -246,7 +249,7 @@ describe("AI Estimator Knowledge HTTP routes", () => {
       reason: "Created by mistake"
     };
     const response = await request(appFor(testServices))
-      .delete("/api/v1/admin/ai-estimator-knowledge/baskets/basket-1/permanent")
+      .delete("/api/v1/admin/ai-estimator-knowledge/baskets/basket-1")
       .set("Authorization", "Bearer super-admin-token")
       .send(input);
 
@@ -275,11 +278,11 @@ describe("AI Estimator Knowledge HTTP routes", () => {
     };
 
     const denied = await request(appFor(testServices))
-      .delete("/api/v1/admin/ai-estimator-knowledge/baskets/basket-1/permanent")
+      .delete("/api/v1/admin/ai-estimator-knowledge/baskets/basket-1")
       .set("Authorization", "Bearer admin-token")
       .send(malformed);
     const rejected = await request(appFor(testServices))
-      .delete("/api/v1/admin/ai-estimator-knowledge/baskets/basket-1/permanent")
+      .delete("/api/v1/admin/ai-estimator-knowledge/baskets/basket-1")
       .set("Authorization", "Bearer super-admin-token")
       .send(malformed);
 
@@ -290,21 +293,31 @@ describe("AI Estimator Knowledge HTTP routes", () => {
     expect(testServices.reference.permanentlyDeleteBasket).not.toHaveBeenCalled();
   });
 
-  it("keeps the existing Basket DELETE route archive-only", async () => {
+  it("refuses a Basket DELETE that omits the typed confirmation name", async () => {
     const testServices = services();
-    const input = { expectedVersion: 3, reason: "No longer needed" };
     const response = await request(appFor(testServices))
       .delete("/api/v1/admin/ai-estimator-knowledge/baskets/basket-1")
+      .set("Authorization", "Bearer super-admin-token")
+      .send({ expectedVersion: 3, reason: "No longer needed" });
+
+    expect(response.status).toBe(400);
+    expect(testServices.reference.permanentlyDeleteBasket).not.toHaveBeenCalled();
+  });
+
+  it("permanently deletes a Main Line through its own DELETE route", async () => {
+    const testServices = services();
+    const input = { expectedVersion: 2, reason: "Superseded" };
+    const response = await request(appFor(testServices))
+      .delete("/api/v1/admin/ai-estimator-knowledge/main-lines/main-line-1")
       .set("Authorization", "Bearer super-admin-token")
       .send(input);
 
     expect(response.status).toBe(200);
-    expect(testServices.reference.archiveBasket).toHaveBeenCalledWith(
+    expect(testServices.item.permanentlyDeleteMainLine).toHaveBeenCalledWith(
       superAdmin,
-      "basket-1",
+      "main-line-1",
       input
     );
-    expect(testServices.reference.permanentlyDeleteBasket).not.toHaveBeenCalled();
   });
 
   it("dispatches each reusable-value family with its closed plural type", async () => {

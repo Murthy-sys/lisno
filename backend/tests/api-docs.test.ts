@@ -209,7 +209,7 @@ describe("OpenAPI and Swagger UI", () => {
     }
   });
 
-  it("contains all 190 routes without versioning paths twice", () => {
+  it("contains all 189 routes without versioning paths twice", () => {
     const methods = new Set(["get", "post", "put", "patch", "delete"]);
     const operationCount = Object.values(openApiDocument.paths).reduce(
       (total, pathItem) =>
@@ -218,7 +218,7 @@ describe("OpenAPI and Swagger UI", () => {
     );
 
     expect(operationCount).toBe(HUMAN_JWT_OPERATION_LIST.length + 13);
-    expect(operationCount).toBe(190);
+    expect(operationCount).toBe(189);
     expect(Object.keys(openApiDocument.paths).some((path) =>
       path.startsWith("/api/v1")
     )).toBe(false);
@@ -228,7 +228,7 @@ describe("OpenAPI and Swagger UI", () => {
     const knowledgeOperations = HUMAN_JWT_OPERATION_LIST.filter(
       ({ availability }) => availability === "ai_estimator_knowledge"
     );
-    expect(knowledgeOperations).toHaveLength(45);
+    expect(knowledgeOperations).toHaveLength(44);
 
     for (const registered of knowledgeOperations) {
       const { method, path } = splitHumanOperationKey(registered.key);
@@ -899,6 +899,7 @@ describe("OpenAPI and Swagger UI", () => {
       required?: string[];
       properties?: Record<string, unknown>;
     };
+    /* The impact reports what a deletion carries away; nothing can block one. */
     expect(impact).toMatchObject({
       additionalProperties: false,
       required: [
@@ -907,27 +908,17 @@ describe("OpenAPI and Swagger UI", () => {
         "version",
         "mainLineCount",
         "historicalReferenceCount",
-        "bootstrapOwned",
-        "canDelete",
-        "blockers"
+        "bootstrapOwned"
       ],
       properties: {
-        blockers: {
-          type: "array",
-          items: { $ref: "#/components/schemas/KnowledgeBasketDeletionBlocker" }
-        }
+        mainLineCount: { type: "integer", minimum: 0 },
+        historicalReferenceCount: { type: "integer", minimum: 0 }
       }
     });
-    expect(componentSchemas().KnowledgeBasketDeletionBlocker).toMatchObject({
+    expect(componentSchemas().KnowledgeBasketDeletionBlocker).toBeUndefined();
+    expect(componentSchemas().KnowledgeMainLineDeletionResult).toMatchObject({
       additionalProperties: false,
-      required: ["code", "message"],
-      properties: {
-        code: {
-          type: "string",
-          enum: ["BOOTSTRAP_OWNED", "HAS_MAIN_LINES", "HAS_HISTORICAL_REFERENCES"]
-        },
-        message: { type: "string" }
-      }
+      required: ["mainLineId", "deleted", "deletedAt"]
     });
     expect(componentSchemas().KnowledgePermanentDeleteBasketResult).toMatchObject({
       additionalProperties: false,
@@ -960,7 +951,7 @@ describe("OpenAPI and Swagger UI", () => {
     });
     expect(
       openApiDocument.paths[
-        "/admin/ai-estimator-knowledge/baskets/{basketId}/permanent"
+        "/admin/ai-estimator-knowledge/baskets/{basketId}"
       ]?.delete?.requestBody
     ).toMatchObject({
       required: true,
@@ -975,7 +966,7 @@ describe("OpenAPI and Swagger UI", () => {
     });
     expect(
       openApiDocument.paths[
-        "/admin/ai-estimator-knowledge/baskets/{basketId}/permanent"
+        "/admin/ai-estimator-knowledge/baskets/{basketId}"
       ]?.delete?.responses?.["2XX"]
     ).toMatchObject({
       content: {
@@ -991,7 +982,7 @@ describe("OpenAPI and Swagger UI", () => {
     expect(
       openApiDocument.paths["/admin/ai-estimator-knowledge/baskets/{basketId}"]
         ?.delete?.summary
-    ).toBe("Archive a knowledge Basket");
+    ).toBe("Permanently delete a knowledge Basket and everything in it");
   });
 
   it("documents exact workflow multipart contracts and separate worker security", () => {

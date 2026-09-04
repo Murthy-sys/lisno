@@ -36,7 +36,7 @@ vi.mock("./knowledgeApi", async (importOriginal) => {
   return {
     ...actual,
     activateKnowledgeRevision: vi.fn(),
-    archiveKnowledgeMainLine: vi.fn(),
+    permanentlyDeleteKnowledgeMainLine: vi.fn(),
     deactivateKnowledgeItem: vi.fn(),
     getKnowledgeHistory: vi.fn(),
     getKnowledgeItem: vi.fn(),
@@ -48,7 +48,11 @@ vi.mock("./knowledgeApi", async (importOriginal) => {
 });
 vi.mock("./knowledgeMutationSync", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./knowledgeMutationSync")>();
-  return { ...actual, syncKnowledgeLifecycleMutation: vi.fn() };
+  return {
+    ...actual,
+    syncKnowledgeLifecycleMutation: vi.fn(),
+    syncKnowledgeMainLineDeletion: vi.fn()
+  };
 });
 
 const pagination = { limit: 100, offset: 0, total: 0, hasMore: false } as const;
@@ -135,7 +139,7 @@ async function submitReasonedLifecycleAction(buttonName: "Delete" | "Deactivate"
   const user = userEvent.setup();
   await user.click(await screen.findByRole("button", { name: buttonName }));
   await user.type(screen.getByRole("textbox", { name: "Reason" }), reason);
-  await user.click(screen.getByRole("button", { name: buttonName === "Delete" ? "Delete configuration" : "Deactivate item" }));
+  await user.click(screen.getByRole("button", { name: buttonName === "Delete" ? "Delete permanently" : "Deactivate item" }));
 }
 
 beforeEach(() => {
@@ -147,24 +151,27 @@ beforeEach(() => {
   vi.mocked(knowledgeApi.listKnowledgeItems).mockResolvedValue({ items: [], pagination: { ...pagination, limit: 20 } });
   vi.mocked(knowledgeApi.listKnowledgeMasters).mockResolvedValue({ items: [], pagination });
   vi.mocked(knowledgeMutationSync.syncKnowledgeLifecycleMutation).mockResolvedValue();
+  vi.mocked(knowledgeMutationSync.syncKnowledgeMainLineDeletion).mockResolvedValue();
 });
 
-describe("Estimation Item archive redirect", () => {
-  it("redirects with replacement only after archive cache synchronization succeeds", async () => {
+describe("Estimation Item deletion redirect", () => {
+  it("redirects with replacement only after deletion cache synchronization succeeds", async () => {
     let finishSynchronization: (() => void) | undefined;
     const synchronization = new Promise<void>((resolve) => { finishSynchronization = resolve; });
-    const archived = { ...draftItem, status: "archived" as const, allowedActions: [] };
-    vi.mocked(knowledgeApi.archiveKnowledgeMainLine).mockResolvedValue(archived);
-    vi.mocked(knowledgeMutationSync.syncKnowledgeLifecycleMutation).mockReturnValue(synchronization);
+    const receipt = { mainLineId: "line-1", deleted: true as const, deletedAt: "2026-09-04T12:00:00.000Z" };
+    vi.mocked(knowledgeApi.permanentlyDeleteKnowledgeMainLine).mockResolvedValue(receipt);
+    vi.mocked(knowledgeMutationSync.syncKnowledgeMainLineDeletion).mockReturnValue(synchronization);
     renderWorkspace();
 
     await submitReasonedLifecycleAction("Delete", "No longer used");
 
-    await waitFor(() => expect(knowledgeApi.archiveKnowledgeMainLine).toHaveBeenCalledWith("line-1", {
+    await waitFor(() => expect(knowledgeApi.permanentlyDeleteKnowledgeMainLine).toHaveBeenCalledWith("line-1", {
       expectedVersion: draftItem.version,
       reason: "No longer used"
     }));
-    expect(knowledgeMutationSync.syncKnowledgeLifecycleMutation).toHaveBeenCalledWith(expect.any(QueryClient), archived);
+    /* The row is gone, so the cached detail is dropped rather than written back. */
+    expect(knowledgeMutationSync.syncKnowledgeMainLineDeletion).toHaveBeenCalledWith(expect.any(QueryClient), "line-1");
+    expect(knowledgeMutationSync.syncKnowledgeLifecycleMutation).not.toHaveBeenCalled();
     expect(navigateMock).not.toHaveBeenCalled();
 
     finishSynchronization?.();
@@ -172,14 +179,14 @@ describe("Estimation Item archive redirect", () => {
     await waitFor(() => expect(navigateMock).toHaveBeenCalledWith("/admin/configuration/estimation", { replace: true }));
   });
 
-  it("keeps the archive dialog and workspace in place when the archive request fails", async () => {
-    vi.mocked(knowledgeApi.archiveKnowledgeMainLine).mockRejectedValue(new Error("Archive is temporarily unavailable."));
+  it("keeps the delete dialog and workspace in place when the request fails", async () => {
+    vi.mocked(knowledgeApi.permanentlyDeleteKnowledgeMainLine).mockRejectedValue(new Error("Deletion is temporarily unavailable."));
     renderWorkspace();
 
     await submitReasonedLifecycleAction("Delete", "No longer used");
 
-    expect(await screen.findByRole("alert")).toHaveTextContent("Archive is temporarily unavailable.");
-    expect(screen.getByRole("alertdialog", { name: "Delete this configuration?" })).toBeVisible();
+    expect(await screen.findByRole("alert")).toHaveTextContent("Deletion is temporarily unavailable.");
+    expect(screen.getByRole("alertdialog", { name: "Delete this Main Line?" })).toBeVisible();
     expect(screen.getByRole("heading", { name: draftItem.mainLineName })).toBeVisible();
     expect(knowledgeMutationSync.syncKnowledgeLifecycleMutation).not.toHaveBeenCalled();
     expect(navigateMock).not.toHaveBeenCalled();

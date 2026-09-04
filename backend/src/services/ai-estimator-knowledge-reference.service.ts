@@ -2,7 +2,6 @@ import { createHash, randomUUID } from "node:crypto";
 import mongoose, { type ClientSession, type Model } from "mongoose";
 
 import type {
-  KnowledgeBasketDeletionBlockerCode,
   KnowledgePrioritySemanticTier,
   KnowledgeTaxVersion
 } from "../contracts/ai-estimator-knowledge.js";
@@ -32,6 +31,7 @@ import {
 import { ApiError } from "../middleware/errors.js";
 import { AiEstimatorKnowledgeBasketModel } from "../models/AiEstimatorKnowledgeBasket.js";
 import { AiEstimatorKnowledgeMainLineModel } from "../models/AiEstimatorKnowledgeMainLine.js";
+import { cascadeDeleteMainLines, stripReferencesToDeleted } from "./ai-estimator-knowledge-cascade.js";
 import { AiEstimatorKnowledgeModeModel } from "../models/AiEstimatorKnowledgeMode.js";
 import { AiEstimatorKnowledgePriceVersionModel } from "../models/AiEstimatorKnowledgePriceVersion.js";
 import { AiEstimatorKnowledgePriorityModel } from "../models/AiEstimatorKnowledgePriority.js";
@@ -150,20 +150,17 @@ export interface AiEstimatorKnowledgeArchiveInput {
   readonly reason?: string | null;
 }
 
-export interface AiEstimatorKnowledgeBasketDeletionBlocker {
-  readonly code: KnowledgeBasketDeletionBlockerCode;
-  readonly message: string;
-}
-
+/** What a Basket deletion takes with it. Every count here is cascaded, never refused. */
 export interface AiEstimatorKnowledgeBasketDeletionImpact {
   readonly basketId: string;
   readonly basketName: string;
   readonly version: number;
+  /** Main Lines deleted with the Basket, along with their revision history. */
   readonly mainLineCount: number;
+  /** Relationship rows in other configurations that are stripped. */
   readonly historicalReferenceCount: number;
+  /** Seeded by the knowledge bootstrap; deletable, but flagged to the reader. */
   readonly bootstrapOwned: boolean;
-  readonly canDelete: boolean;
-  readonly blockers: readonly AiEstimatorKnowledgeBasketDeletionBlocker[];
 }
 
 export interface AiEstimatorKnowledgePermanentDeleteBasketInput {
@@ -242,11 +239,6 @@ export interface AiEstimatorKnowledgeReferenceService {
     actor: PublicUser,
     basketId: string,
     input: AiEstimatorKnowledgeUpdateBasketInput
-  ): Promise<AiEstimatorKnowledgeBasketDto>;
-  archiveBasket(
-    actor: PublicUser,
-    basketId: string,
-    input: AiEstimatorKnowledgeArchiveInput
   ): Promise<AiEstimatorKnowledgeBasketDto>;
   getBasketDeletionImpact(
     actor: PublicUser,
@@ -421,37 +413,6 @@ export function createAiEstimatorKnowledgeReferenceService(
       }));
     },
 
-    async archiveBasket(actor, basketId, input) {
-      return withMongoTransaction(startSession, async (session) => {
-        const authorized = await actorGuard.requireMutationActor(actor, session);
-        validateArchiveInput(input);
-        const current = await AiEstimatorKnowledgeBasketModel.findById(basketId).session(session).lean().exec() as Row | null;
-        requireCurrent(current, input.expectedVersion);
-        if (current.status === "archived") archived();
-        if (await AiEstimatorKnowledgeMainLineModel.exists({ basketId, status: { $ne: "archived" } }).session(session)) {
-          referenceConflict("Basket has non-archived Main Lines.");
-        }
-        const timestamp = now();
-        const updated = await AiEstimatorKnowledgeBasketModel.findOneAndUpdate(
-          { _id: basketId, version: input.expectedVersion, status: { $ne: "archived" } },
-          { $set: { status: "archived", archivedAt: timestamp, archivedById: authorized.id, updatedAt: timestamp, updatedById: authorized.id }, $inc: { version: 1 } },
-          { returnDocument: "after", runValidators: true, session }
-        ).lean().exec() as Row | null;
-        if (!updated) versionConflict();
-        await dependencies.audit.appendInMongoTransaction({
-          actorId: authorized.id,
-          action: "ai_estimator_knowledge_basket_archived",
-          entityType: "ai_estimator_knowledge_basket",
-          entityId: basketId,
-          occurredAt: timestamp.toISOString(),
-          oldValues: auditState(current),
-          newValues: auditState(updated!),
-          reason: input.reason ?? null
-        }, session);
-        return basketDto(updated!);
-      });
-    },
-
     async getBasketDeletionImpact(actor, basketId) {
       await actorGuard.requireReadActor(actor);
       const basket = await AiEstimatorKnowledgeBasketModel.findById(basketId)
@@ -481,8 +442,23 @@ export function createAiEstimatorKnowledgeReferenceService(
         }
 
         const impact = await basketDeletionImpact(current, basketId, session);
-        if (!impact.canDelete) basketDeleteBlocked();
 
+        /*
+         * The Basket takes its Main Lines with it. They are collected before
+         * anything is removed so the surviving configurations can be cleaned
+         * of references to them in the same transaction.
+         */
+        const mainLineIds = (await AiEstimatorKnowledgeMainLineModel.find({ basketId })
+          .select({ _id: 1 })
+          .session(session)
+          .lean()
+          .exec() as Row[]).map((row) => String(row._id));
+        /*
+         * The guarded Basket delete goes first, before anything is cascaded.
+         * Its version-and-epoch filter is what serializes this against a
+         * concurrent Main Line write; writing to the Main Line collection
+         * ahead of it would decide the race on the wrong document.
+         */
         const dependencyEpoch = safeDependencyEpoch(current.dependencyEpoch);
         const dependencyEpochFilter = dependencyEpoch === 0
           ? { $or: [{ dependencyEpoch: 0 }, { dependencyEpoch: { $exists: false } }] }
@@ -493,6 +469,13 @@ export function createAiEstimatorKnowledgeReferenceService(
           ...dependencyEpochFilter
         }).session(session).exec();
         if (deleted.deletedCount !== 1) versionConflict();
+
+        const cascade = await cascadeDeleteMainLines(mainLineIds, session);
+        const strippedReferences = await stripReferencesToDeleted(
+          { basketIds: new Set([basketId]), mainLineIds: new Set(mainLineIds) },
+          { mainLineId: { $nin: mainLineIds } },
+          session
+        );
 
         const timestamp = now();
         await dependencies.audit.appendInMongoTransaction({
@@ -506,7 +489,13 @@ export function createAiEstimatorKnowledgeReferenceService(
             status: current.status,
             displayOrder: current.displayOrder,
             version: current.version,
-            bootstrapOwned: impact.bootstrapOwned
+            bootstrapOwned: impact.bootstrapOwned,
+            /* What went with it, so the trail explains the cascade. */
+            deletedMainLineIds: mainLineIds,
+            deletedRevisionCount: cascade.revisions,
+            deletedSectionCount: cascade.sections,
+            deletedPriceVersionCount: cascade.priceVersions,
+            strippedReferenceCount: strippedReferences
           },
           reason: input.reason.trim()
         }, session);
@@ -815,35 +804,20 @@ async function basketDeletionImpact(
     ),
     0
   );
-  const bootstrapOwned = bootstrapBasketIds.has(basketId);
-  const blockers: AiEstimatorKnowledgeBasketDeletionBlocker[] = [];
-  if (bootstrapOwned) {
-    blockers.push({
-      code: "BOOTSTRAP_OWNED",
-      message: "Bootstrap-owned Baskets cannot be permanently deleted."
-    });
-  }
-  if (mainLineCount > 0) {
-    blockers.push({
-      code: "HAS_MAIN_LINES",
-      message: "Baskets with Estimation Items are archive-only."
-    });
-  }
-  if (historicalReferenceCount > 0) {
-    blockers.push({
-      code: "HAS_HISTORICAL_REFERENCES",
-      message: "Baskets retained by historical knowledge relationships are archive-only."
-    });
-  }
+  /*
+   * Nothing blocks a deletion any more, so this reports what will go with the
+   * Basket rather than whether it may go at all: the Main Lines that are
+   * deleted alongside it, and the relationship rows in other configurations
+   * that are stripped so none of them is left pointing at a row that no
+   * longer exists.
+   */
   return {
     basketId,
     basketName: String(basket.name),
     version: Number(basket.version),
     mainLineCount,
     historicalReferenceCount,
-    bootstrapOwned,
-    canDelete: blockers.length === 0,
-    blockers
+    bootstrapOwned: bootstrapBasketIds.has(basketId)
   };
 }
 
@@ -1475,4 +1449,3 @@ function duplicateIdentity(): never { throw new ApiError(409, "DUPLICATE_IDENTIT
 function referenceConflict(message: string): never { throw new ApiError(409, "ACTIVE_REFERENCE_CONFLICT", message); }
 function canonicalPriorityImmutable(): never { throw new ApiError(409, "CANONICAL_PRIORITY_IMMUTABLE", "Canonical Priority identity and availability are system managed."); }
 function canonicalTaxPolicyImmutable(): never { throw new ApiError(409, "CANONICAL_TAX_POLICY_IMMUTABLE", "The fixed GST policy is system managed and cannot be changed through generic Tax operations."); }
-function basketDeleteBlocked(): never { throw new ApiError(409, "BASKET_DELETE_BLOCKED", "The Basket has permanent-deletion blockers and is archive-only."); }

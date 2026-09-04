@@ -109,6 +109,28 @@ function basketListFilterFamily(queryKey: readonly unknown[]): string {
   );
 }
 
+/**
+ * A deleted Main Line has no row to write back, so its cached detail is dropped
+ * rather than refetched — a refetch would only 404 on the way to the same place.
+ */
+export async function syncKnowledgeMainLineDeletion(
+  queryClient: QueryClient,
+  mainLineId: string
+): Promise<void> {
+  queryClient.removeQueries({
+    queryKey: knowledgeQueryKeys.item(mainLineId),
+    exact: true
+  });
+
+  await Promise.all([
+    queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.itemLists() }),
+    queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.mainLineLists() }),
+    queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.histories() }),
+    queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.activationReviews() }),
+    queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.contexts() })
+  ]);
+}
+
 export async function syncKnowledgeLifecycleMutation(
   queryClient: QueryClient,
   item: KnowledgeItemDetail

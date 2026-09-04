@@ -25,15 +25,6 @@ export type KnowledgeCanonicalDecimal = string;
 export type KnowledgePaise = number;
 export type KnowledgeBasisPoints = number;
 
-export const AI_ESTIMATOR_KNOWLEDGE_BASKET_DELETION_BLOCKER_CODES = [
-  "BOOTSTRAP_OWNED",
-  "HAS_MAIN_LINES",
-  "HAS_HISTORICAL_REFERENCES"
-] as const;
-
-export type KnowledgeBasketDeletionBlockerCode =
-  (typeof AI_ESTIMATOR_KNOWLEDGE_BASKET_DELETION_BLOCKER_CODES)[number];
-
 export interface KnowledgeActorMetadata {
   createdById: KnowledgeStableId;
   updatedById: KnowledgeStableId;

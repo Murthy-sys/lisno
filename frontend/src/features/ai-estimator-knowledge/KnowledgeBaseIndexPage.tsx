@@ -34,7 +34,6 @@ import { Surface } from "../../components/ui/Surface";
 import {
   createKnowledgeBasket,
   createKnowledgeMainLine,
-  archiveKnowledgeBasket,
   getKnowledgeBasketDeletionImpact,
   listKnowledgeBaskets,
   listKnowledgeItems,
@@ -124,9 +123,7 @@ export function KnowledgeBaseIndexPage() {
   const [basketDialogOpen, setBasketDialogOpen] = useState(false);
   const [basketManagerOpen, setBasketManagerOpen] = useState(false);
   const [basketEditor, setBasketEditor] = useState<KnowledgeBasket | null>(null);
-  const [basketArchive, setBasketArchive] = useState<KnowledgeBasket | null>(null);
   const [basketDelete, setBasketDelete] = useState<KnowledgeBasket | null>(null);
-  const [basketArchiveReason, setBasketArchiveReason] = useState("");
   const [itemDialogOpen, setItemDialogOpen] = useState(false);
   const [announcement, setAnnouncement] = useState("");
   const [advancedFiltersOpen, setAdvancedFiltersOpen] = useState(false);
@@ -511,7 +508,7 @@ export function KnowledgeBaseIndexPage() {
                         "Add estimation item" alone would name them all alike. */}
                     {canCreate ? <Button size="compact" variant="secondary" leadingIcon={<Plus />} onClick={() => setItemDialogOpen(true)}>Add estimation item<span className="sr-only"> to {group.basketName}</span></Button> : null}
                     {canUpdate ? <Button size="compact" variant="quiet" leadingIcon={<Pencil />} onClick={() => setBasketEditor((basketsQuery.data?.items ?? []).find(({ id }) => id === basketId) ?? null)}>Edit basket</Button> : null}
-                    {canLifecycle ? <Button size="compact" variant="destructive-outline" leadingIcon={<Trash2 />} onClick={() => { setBasketArchive((basketsQuery.data?.items ?? []).find(({ id }) => id === basketId) ?? null); setBasketArchiveReason(""); }}>Delete<span className="sr-only"> {group.basketName}</span></Button> : null}
+                    {canLifecycle ? <Button size="compact" variant="destructive-outline" leadingIcon={<Trash2 />} onClick={() => setBasketDelete((basketsQuery.data?.items ?? []).find(({ id }) => id === basketId) ?? null)}>Delete<span className="sr-only"> {group.basketName}</span></Button> : null}
                   </div>
                 </div>
               </div>
@@ -602,12 +599,8 @@ export function KnowledgeBaseIndexPage() {
           canUpdate={canUpdate}
           onClose={closeBasketManager}
           onEdit={setBasketEditor}
-          onArchive={(basket) => {
-            setBasketArchive(basket);
-            setBasketArchiveReason("");
-          }}
           onDelete={setBasketDelete}
-          childDialogOpen={Boolean(basketEditor || basketArchive || basketDelete)}
+          childDialogOpen={Boolean(basketEditor || basketDelete)}
         />
       ) : null}
       {basketEditor ? (
@@ -623,21 +616,6 @@ export function KnowledgeBaseIndexPage() {
           }}
         />
       ) : null}
-      {basketArchive ? (
-        <ArchiveBasketDialog
-          basket={basketArchive}
-          reason={basketArchiveReason}
-          onReasonChange={setBasketArchiveReason}
-          onClose={() => setBasketArchive(null)}
-          onArchived={async () => {
-            await Promise.all([
-              queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.basketLists() }),
-              queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.itemLists() })
-            ]);
-            setBasketArchive(null);
-          }}
-        />
-      ) : null}
       {basketDelete ? (
         <PermanentDeleteBasketDialog
           basket={basketDelete}
@@ -646,8 +624,11 @@ export function KnowledgeBaseIndexPage() {
             await syncKnowledgeBasketDeletion(queryClient, result.basketId);
             setAnnouncement(`Main basket “${basketName}” was permanently deleted.`);
             setBasketDelete(null);
-            setBasketManagerOpen(false);
-            returnFocusToBasketManagerButton();
+            /* Only return focus to the manager if the deletion started there. */
+            if (basketManagerOpen) {
+              setBasketManagerOpen(false);
+              returnFocusToBasketManagerButton();
+            }
           }}
         />
       ) : null}
@@ -680,14 +661,12 @@ function MainBasketManagementDialog({
   canUpdate,
   onClose,
   onEdit,
-  onArchive,
   onDelete,
   childDialogOpen
 }: {
   readonly canUpdate: boolean;
   readonly onClose: () => void;
   readonly onEdit: (basket: KnowledgeBasket) => void;
-  readonly onArchive: (basket: KnowledgeBasket) => void;
   readonly onDelete: (basket: KnowledgeBasket) => void;
   readonly childDialogOpen: boolean;
 }) {
@@ -720,7 +699,7 @@ function MainBasketManagementDialog({
     <Dialog
       title="Manage main baskets"
       eyebrow="Estimation configuration"
-      description="Edit or delete existing baskets. Permanent deletion is limited to custom baskets with no items or historical references."
+      description="Edit or permanently delete existing baskets. Deleting a basket also deletes the Main Lines inside it."
       onClose={onClose}
       contentInert={childDialogOpen}
     >
@@ -774,17 +753,6 @@ function MainBasketManagementDialog({
                             Edit
                           </Button>
                         ) : null}
-                        {basket.status !== "archived" ? (
-                          <Button
-                            size="compact"
-                            variant="destructive-outline"
-                            leadingIcon={<Trash2 />}
-                            aria-label={`Delete ${basket.name}`}
-                            onClick={() => onArchive(basket)}
-                          >
-                            Delete
-                          </Button>
-                        ) : null}
                         <Button
                           size="compact"
                           variant="destructive-outline"
@@ -792,7 +760,7 @@ function MainBasketManagementDialog({
                           aria-label={`Delete ${basket.name} permanently`}
                           onClick={() => onDelete(basket)}
                         >
-                          Delete permanently
+                          Delete
                         </Button>
                       </div>
                     </li>
@@ -902,16 +870,13 @@ function PermanentDeleteBasketDialog({
         setConfirmationName("");
         await queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.basketLists() });
         setConflictRefresh(await refreshImpact() ? "refreshed" : "failed");
-      } else if (error instanceof ApiError && error.code === "BASKET_DELETE_BLOCKED") {
-        setConfirmationName("");
-        await refreshImpact();
       }
     }
   });
   const busy = impactQuery.isFetching || mutation.isPending || requiresFreshImpact;
   const nameMatches = Boolean(impact && confirmationName === impact.basketName);
   const canSubmit = Boolean(
-    impact?.canDelete && nameMatches && reason.trim() && !busy && !impactQuery.isError
+    impact && nameMatches && reason.trim() && !busy && !impactQuery.isError
   );
   const mutationError = mutation.error;
   const mutationErrorMessage =
@@ -923,7 +888,7 @@ function PermanentDeleteBasketDialog({
     <Dialog
       title="Delete basket?"
       eyebrow="Irrecoverable action"
-      description={`This can permanently remove only the “${impact?.basketName ?? basket.name}” basket. It never deletes estimation items or history.`}
+      description={`“${impact?.basketName ?? basket.name}” and everything inside it will be permanently deleted. This cannot be undone.`}
       onClose={onClose}
       busy={mutation.isPending}
       role="alertdialog"
@@ -1022,39 +987,48 @@ function PermanentDeleteBasketDialog({
   );
 }
 
+/*
+ * Nothing here can stop the deletion any more, so this is a manifest rather
+ * than a gate: it names everything that goes at the same time, before the
+ * reader types the Basket name to confirm.
+ */
 function BasketDeletionImpactSummary({ impact }: {
   readonly impact: KnowledgeBasketDeletionImpact;
 }) {
+  const plural = (count: number, one: string, many: string) => count === 1 ? one : many;
   return (
     <div className="knowledge-basket-delete__impact">
       <dl>
         <div>
-          <dt>Main Lines</dt>
+          <dt>Main Lines deleted with it</dt>
           <dd>{impact.mainLineCount}</dd>
         </div>
         <div>
-          <dt>Historical references</dt>
+          <dt>References removed elsewhere</dt>
           <dd>{impact.historicalReferenceCount}</dd>
         </div>
-        <div>
-          <dt>Bootstrap owned</dt>
-          <dd>{impact.bootstrapOwned ? "Yes" : "No"}</dd>
-        </div>
       </dl>
-      {!impact.canDelete ? (
-        <InlineMessage tone="error" title="Permanent deletion is blocked" role="alert">
-          <p>This basket is archive-only for the following reason{impact.blockers.length === 1 ? "" : "s"}:</p>
-          <ul>
-            {impact.blockers.map((blocker) => (
-              <li key={blocker.code}>{blocker.message}</li>
-            ))}
-          </ul>
+      <InlineMessage tone="warning" title="This action cannot be undone">
+        <p>
+          {impact.mainLineCount === 0
+            ? "This basket is empty. Deleting it removes the basket itself."
+            : `Deleting this basket also deletes ${impact.mainLineCount} ${plural(impact.mainLineCount, "Main Line", "Main Lines")} inside it, together with every revision, section and price version they own.`}
+        </p>
+        {impact.historicalReferenceCount > 0 ? (
+          <p>
+            {impact.historicalReferenceCount} {plural(impact.historicalReferenceCount, "exclusion or dependency", "exclusions and dependencies")} in other
+            configurations point at this basket. {plural(impact.historicalReferenceCount, "It", "They")} will be removed so
+            nothing is left pointing at something that no longer exists.
+          </p>
+        ) : null}
+        <p>A Super Admin can add this basket again afterwards; nothing is restored with it.</p>
+      </InlineMessage>
+      {impact.bootstrapOwned ? (
+        <InlineMessage tone="warning" title="Supplied with the system">
+          This basket was seeded when the knowledge base was set up. Deleting it is
+          permitted, and it will not come back on its own.
         </InlineMessage>
-      ) : (
-        <InlineMessage tone="warning" title="This action cannot be undone">
-          The basket is empty and unreferenced. Only its Basket record will be deleted.
-        </InlineMessage>
-      )}
+      ) : null}
     </div>
   );
 }
@@ -1140,21 +1114,6 @@ function BasketEditorDialog({ existing, onClose, onCreated }: {
       </form>
     </Dialog>
   );
-}
-
-function ArchiveBasketDialog({ basket, reason, onReasonChange, onClose, onArchived }: {
-  readonly basket: KnowledgeBasket;
-  readonly reason: string;
-  readonly onReasonChange: (value: string) => void;
-  readonly onClose: () => void;
-  readonly onArchived: () => Promise<void>;
-}) {
-  const mutation = useMutation({
-    mutationFn: () => archiveKnowledgeBasket(basket.id, { expectedVersion: basket.version, reason: reason.trim() }),
-    onSuccess: onArchived
-  });
-  const error = mutation.error instanceof ApiError && mutation.error.code === "VERSION_CONFLICT" ? "This basket changed elsewhere. Refresh the list before retrying." : mutation.error?.message ?? null;
-  return <KnowledgeLifecycleDialog action="archive" reason={reason} onReasonChange={onReasonChange} onClose={onClose} onConfirm={() => mutation.mutate()} busy={mutation.isPending} error={error} />;
 }
 
 function CreateItemDialog({ baskets, onClose, onCreated }: {
