@@ -131,11 +131,11 @@ function renderWorkspace() {
   );
 }
 
-async function submitReasonedLifecycleAction(buttonName: "Archive" | "Deactivate", reason: string) {
+async function submitReasonedLifecycleAction(buttonName: "Delete" | "Deactivate", reason: string) {
   const user = userEvent.setup();
   await user.click(await screen.findByRole("button", { name: buttonName }));
   await user.type(screen.getByRole("textbox", { name: "Reason" }), reason);
-  await user.click(screen.getByRole("button", { name: buttonName === "Archive" ? "Archive configuration" : "Deactivate item" }));
+  await user.click(screen.getByRole("button", { name: buttonName === "Delete" ? "Delete configuration" : "Deactivate item" }));
 }
 
 beforeEach(() => {
@@ -158,7 +158,7 @@ describe("Estimation Item archive redirect", () => {
     vi.mocked(knowledgeMutationSync.syncKnowledgeLifecycleMutation).mockReturnValue(synchronization);
     renderWorkspace();
 
-    await submitReasonedLifecycleAction("Archive", "No longer used");
+    await submitReasonedLifecycleAction("Delete", "No longer used");
 
     await waitFor(() => expect(knowledgeApi.archiveKnowledgeMainLine).toHaveBeenCalledWith("line-1", {
       expectedVersion: draftItem.version,
@@ -176,10 +176,10 @@ describe("Estimation Item archive redirect", () => {
     vi.mocked(knowledgeApi.archiveKnowledgeMainLine).mockRejectedValue(new Error("Archive is temporarily unavailable."));
     renderWorkspace();
 
-    await submitReasonedLifecycleAction("Archive", "No longer used");
+    await submitReasonedLifecycleAction("Delete", "No longer used");
 
     expect(await screen.findByRole("alert")).toHaveTextContent("Archive is temporarily unavailable.");
-    expect(screen.getByRole("alertdialog", { name: "Archive this configuration?" })).toBeVisible();
+    expect(screen.getByRole("alertdialog", { name: "Delete this configuration?" })).toBeVisible();
     expect(screen.getByRole("heading", { name: draftItem.mainLineName })).toBeVisible();
     expect(knowledgeMutationSync.syncKnowledgeLifecycleMutation).not.toHaveBeenCalled();
     expect(navigateMock).not.toHaveBeenCalled();
