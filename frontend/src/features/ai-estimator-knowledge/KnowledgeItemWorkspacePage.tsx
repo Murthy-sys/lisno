@@ -187,86 +187,46 @@ export function KnowledgeItemWorkspacePage() {
     () => Object.fromEntries(MASTER_TYPES.map((type, index) => [type, masterQueries[index].data?.items ?? []])) as Readonly<Record<KnowledgeMasterType, readonly KnowledgeMaster[]>>,
     [masterQueries]
   );
+  /*
+   * One load state per reusable-value catalog, derived from the same queries
+   * that feed `masters`. Every consumer reads from here, so a catalog can
+   * never appear ready to one panel and unloaded to another.
+   */
+  const masterCatalogStates = useMemo(
+    () => Object.fromEntries(MASTER_TYPES.map((type, index) => {
+      const query = masterQueries[index]!;
+      const hasData = Boolean(query.data);
+      const message = query.error instanceof Error ? query.error.message : undefined;
+      return [type, {
+        status: query.isError && !hasData
+          ? "error" as const
+          : query.isPending && !hasData
+            ? "loading" as const
+            : "ready" as const,
+        refreshing: hasData && query.isFetching,
+        errorMessage: hasData ? undefined : message,
+        refreshErrorMessage: hasData && query.isError ? message : undefined,
+        onRetry: () => { void query.refetch(); }
+      }];
+    })) as Readonly<Record<KnowledgeMasterType, {
+      status: "loading" | "ready" | "error";
+      refreshing: boolean;
+      errorMessage?: string;
+      refreshErrorMessage?: string;
+      onRetry: () => void;
+    }>>,
+    [masterQueries]
+  );
   const modesQuery = masterQueries[MASTER_TYPES.indexOf("modes")]!;
-  const modesHaveData = Boolean(modesQuery.data);
   const legacyModeCatalogState = {
-    status: modesQuery.isError && !modesHaveData
-      ? "error" as const
-      : modesQuery.isPending && !modesHaveData
-        ? "loading" as const
-        : "ready" as const,
-    refreshing: modesHaveData && modesQuery.isFetching,
-    errorMessage: modesQuery.error instanceof Error ? modesQuery.error.message : undefined,
-    onRetry: () => { void modesQuery.refetch(); }
+    ...masterCatalogStates.modes,
+    /* Mode surfacing has always shown the message even while data is cached. */
+    errorMessage: modesQuery.error instanceof Error ? modesQuery.error.message : undefined
   };
-  const uomsQuery = masterQueries[MASTER_TYPES.indexOf("uoms")]!;
-  const uomsHaveData = Boolean(uomsQuery.data);
-  const uomCatalogState = {
-    status: uomsQuery.isError && !uomsHaveData
-      ? "error" as const
-      : uomsQuery.isPending && !uomsHaveData
-        ? "loading" as const
-        : "ready" as const,
-    refreshing: uomsHaveData && uomsQuery.isFetching,
-    errorMessage: !uomsHaveData && uomsQuery.error instanceof Error
-      ? uomsQuery.error.message
-      : undefined,
-    refreshErrorMessage: uomsHaveData && uomsQuery.isError && uomsQuery.error instanceof Error
-      ? uomsQuery.error.message
-      : undefined,
-    onRetry: () => { void uomsQuery.refetch(); }
-  };
-  const prioritiesQuery = masterQueries[MASTER_TYPES.indexOf("priorities")]!;
-  const prioritiesHaveData = Boolean(prioritiesQuery.data);
-  const priorityCatalogState = {
-    status: prioritiesQuery.isError && !prioritiesHaveData
-      ? "error" as const
-      : prioritiesQuery.isPending && !prioritiesHaveData
-        ? "loading" as const
-        : "ready" as const,
-    refreshing: prioritiesHaveData && prioritiesQuery.isFetching,
-    errorMessage: !prioritiesHaveData && prioritiesQuery.error instanceof Error
-      ? prioritiesQuery.error.message
-      : undefined,
-    refreshErrorMessage: prioritiesHaveData && prioritiesQuery.isError && prioritiesQuery.error instanceof Error
-      ? prioritiesQuery.error.message
-      : undefined,
-    onRetry: () => { void prioritiesQuery.refetch(); }
-  };
-  const vendorsQuery = masterQueries[MASTER_TYPES.indexOf("vendors")]!;
-  const vendorsHaveData = Boolean(vendorsQuery.data);
-  const vendorCatalogState = {
-    status: vendorsQuery.isError && !vendorsHaveData
-      ? "error" as const
-      : vendorsQuery.isPending && !vendorsHaveData
-        ? "loading" as const
-        : "ready" as const,
-    refreshing: vendorsHaveData && vendorsQuery.isFetching,
-    errorMessage: !vendorsHaveData && vendorsQuery.error instanceof Error
-      ? vendorsQuery.error.message
-      : undefined,
-    refreshErrorMessage: vendorsHaveData && vendorsQuery.isError && vendorsQuery.error instanceof Error
-      ? vendorsQuery.error.message
-      : undefined,
-    onRetry: () => { void vendorsQuery.refetch(); }
-  };
-  const surfacesQuery = masterQueries[MASTER_TYPES.indexOf("surfaces")]!;
-  const surfacesHaveData = Boolean(surfacesQuery.data);
-  const surfaceCatalogState = {
-    status: surfacesQuery.isError && !surfacesHaveData
-      ? "error" as const
-      : surfacesQuery.isPending && !surfacesHaveData
-        ? "loading" as const
-        : "ready" as const,
-    refreshing: surfacesHaveData && surfacesQuery.isFetching,
-    errorMessage: !surfacesHaveData && surfacesQuery.error instanceof Error
-      ? surfacesQuery.error.message
-      : undefined,
-    refreshErrorMessage: surfacesHaveData && surfacesQuery.isError && surfacesQuery.error instanceof Error
-      ? surfacesQuery.error.message
-      : undefined,
-    onRetry: () => { void surfacesQuery.refetch(); }
-  };
+  const uomCatalogState = masterCatalogStates.uoms;
+  const priorityCatalogState = masterCatalogStates.priorities;
+  const vendorCatalogState = masterCatalogStates.vendors;
+  const surfaceCatalogState = masterCatalogStates.surfaces;
   const editable = Boolean(item && revision?.status === "draft" && item.status !== "archived" && canUpdate && item.allowedActions.includes("update_section"));
   const overviewDraftPayload = activeSection === "overview" && sectionQuery.data
     ? dirty ? payload : sectionQuery.data.payload
@@ -601,7 +561,7 @@ export function KnowledgeItemWorkspacePage() {
                     onOpenSection={selectWorkspaceSection}
                   />
                 ) : (
-                  <KnowledgeSectionEditor sectionKey={backendSection} payload={payload} masters={masters} relationshipBaskets={relationshipBasketsQuery.data?.items ?? []} relationshipItems={relationshipItemsQuery.data?.items ?? []} currentMainLineId={mainLineId} basketName={item.basketName} readOnly={!editable} canQuickAdd={canCreate} resetKey={`${sectionQuery.data.id}-${sectionQuery.data.version}`} validationAttempt={validationAttempt} onChange={setPayload} onDirty={() => setDirty(true)} onValidationChange={setEditorValid} onQuickAdd={(type, select) => setQuickAdd({ type, select })} />
+                  <KnowledgeSectionEditor sectionKey={backendSection} payload={payload} masters={masters} relationshipBaskets={relationshipBasketsQuery.data?.items ?? []} relationshipItems={relationshipItemsQuery.data?.items ?? []} currentMainLineId={mainLineId} basketName={item.basketName} readOnly={!editable} canQuickAdd={canCreate} uomCatalogState={uomCatalogState} vendorCatalogState={vendorCatalogState} masterCatalogStates={masterCatalogStates} resetKey={`${sectionQuery.data.id}-${sectionQuery.data.version}`} validationAttempt={validationAttempt} onChange={setPayload} onDirty={() => setDirty(true)} onValidationChange={setEditorValid} onQuickAdd={(type, select) => setQuickAdd({ type, select })} />
                 )}
                 {activeSaveError ? <InlineMessage tone="error" role="alert">{activeSaveError}</InlineMessage> : null}
               </Surface>
