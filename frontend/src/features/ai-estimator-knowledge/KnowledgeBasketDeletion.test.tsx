@@ -179,10 +179,10 @@ describe("Super Admin permanent Main Basket deletion", () => {
       offset: 0
     });
     expect(within(management).getByRole("button", { name: `Edit ${emptyBasket.name}` })).toBeVisible();
-    expect(within(management).getByRole("button", { name: `Archive ${emptyBasket.name}` })).toBeVisible();
+    expect(within(management).getByRole("button", { name: `Delete ${emptyBasket.name}` })).toBeVisible();
     expect(within(management).getByRole("button", { name: `Delete ${emptyBasket.name} permanently` })).toBeVisible();
     expect(within(management).queryByRole("button", { name: `Edit ${archivedBasket.name}` })).not.toBeInTheDocument();
-    expect(within(management).queryByRole("button", { name: `Archive ${archivedBasket.name}` })).not.toBeInTheDocument();
+    expect(within(management).queryByRole("button", { name: `Delete ${archivedBasket.name}` })).not.toBeInTheDocument();
     expect(knowledgeApi.getKnowledgeBasketDeletionImpact).not.toHaveBeenCalled();
   });
 

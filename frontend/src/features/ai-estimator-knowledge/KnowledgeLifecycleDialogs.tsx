@@ -21,11 +21,16 @@ const lifecycleCopy = {
       "The item will no longer resolve through the AI knowledge context service.",
     confirm: "Deactivate item"
   },
+  /*
+   * Spoken as "delete", because that is what it means to the person doing it:
+   * the configuration leaves every list they pick from. The description is what
+   * keeps the promise honest — nothing is erased, and the record stays.
+   */
   archive: {
-    title: "Archive this configuration?",
+    title: "Delete this configuration?",
     description:
-      "Archived configuration remains in history and cannot be selected for new use.",
-    confirm: "Archive configuration"
+      "Deleted configuration remains in history and cannot be selected for new use.",
+    confirm: "Delete configuration"
   }
 } as const;
 

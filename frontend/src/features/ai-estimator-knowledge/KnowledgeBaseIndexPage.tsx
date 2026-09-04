@@ -6,7 +6,6 @@ import {
   useQueryClient
 } from "@tanstack/react-query";
 import {
-  Archive,
   ChevronDown,
   ListTree,
   Pencil,
@@ -512,7 +511,7 @@ export function KnowledgeBaseIndexPage() {
                         "Add estimation item" alone would name them all alike. */}
                     {canCreate ? <Button size="compact" variant="secondary" leadingIcon={<Plus />} onClick={() => setItemDialogOpen(true)}>Add estimation item<span className="sr-only"> to {group.basketName}</span></Button> : null}
                     {canUpdate ? <Button size="compact" variant="quiet" leadingIcon={<Pencil />} onClick={() => setBasketEditor((basketsQuery.data?.items ?? []).find(({ id }) => id === basketId) ?? null)}>Edit basket</Button> : null}
-                    {canLifecycle ? <Button size="compact" variant="destructive-outline" leadingIcon={<Archive />} onClick={() => { setBasketArchive((basketsQuery.data?.items ?? []).find(({ id }) => id === basketId) ?? null); setBasketArchiveReason(""); }}>Archive<span className="sr-only"> {group.basketName}</span></Button> : null}
+                    {canLifecycle ? <Button size="compact" variant="destructive-outline" leadingIcon={<Trash2 />} onClick={() => { setBasketArchive((basketsQuery.data?.items ?? []).find(({ id }) => id === basketId) ?? null); setBasketArchiveReason(""); }}>Delete<span className="sr-only"> {group.basketName}</span></Button> : null}
                   </div>
                 </div>
               </div>
@@ -721,7 +720,7 @@ function MainBasketManagementDialog({
     <Dialog
       title="Manage main baskets"
       eyebrow="Estimation configuration"
-      description="Edit or archive existing baskets. Permanent deletion is limited to custom baskets with no items or historical references."
+      description="Edit or delete existing baskets. Permanent deletion is limited to custom baskets with no items or historical references."
       onClose={onClose}
       contentInert={childDialogOpen}
     >
@@ -779,11 +778,11 @@ function MainBasketManagementDialog({
                           <Button
                             size="compact"
                             variant="destructive-outline"
-                            leadingIcon={<Archive />}
-                            aria-label={`Archive ${basket.name}`}
+                            leadingIcon={<Trash2 />}
+                            aria-label={`Delete ${basket.name}`}
                             onClick={() => onArchive(basket)}
                           >
-                            Archive
+                            Delete
                           </Button>
                         ) : null}
                         <Button
@@ -793,7 +792,7 @@ function MainBasketManagementDialog({
                           aria-label={`Delete ${basket.name} permanently`}
                           onClick={() => onDelete(basket)}
                         >
-                          Delete
+                          Delete permanently
                         </Button>
                       </div>
                     </li>
