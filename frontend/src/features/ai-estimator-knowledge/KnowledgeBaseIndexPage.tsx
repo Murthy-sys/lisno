@@ -512,7 +512,7 @@ export function KnowledgeBaseIndexPage() {
                         "Add estimation item" alone would name them all alike. */}
                     {canCreate ? <Button size="compact" variant="secondary" leadingIcon={<Plus />} onClick={() => setItemDialogOpen(true)}>Add estimation item<span className="sr-only"> to {group.basketName}</span></Button> : null}
                     {canUpdate ? <Button size="compact" variant="quiet" leadingIcon={<Pencil />} onClick={() => setBasketEditor((basketsQuery.data?.items ?? []).find(({ id }) => id === basketId) ?? null)}>Edit basket</Button> : null}
-                    {canLifecycle ? <Button size="compact" variant="destructive-outline" leadingIcon={<Archive />} onClick={() => { setBasketArchive((basketsQuery.data?.items ?? []).find(({ id }) => id === basketId) ?? null); setBasketArchiveReason(""); }}>Archive basket</Button> : null}
+                    {canLifecycle ? <Button size="compact" variant="destructive-outline" leadingIcon={<Archive />} onClick={() => { setBasketArchive((basketsQuery.data?.items ?? []).find(({ id }) => id === basketId) ?? null); setBasketArchiveReason(""); }}>Archive<span className="sr-only"> {group.basketName}</span></Button> : null}
                   </div>
                 </div>
               </div>
@@ -793,7 +793,7 @@ function MainBasketManagementDialog({
                           aria-label={`Delete ${basket.name} permanently`}
                           onClick={() => onDelete(basket)}
                         >
-                          Delete permanently
+                          Delete
                         </Button>
                       </div>
                     </li>
@@ -922,7 +922,7 @@ function PermanentDeleteBasketDialog({
 
   return (
     <Dialog
-      title="Delete main basket permanently?"
+      title="Delete basket?"
       eyebrow="Irrecoverable action"
       description={`This can permanently remove only the “${impact?.basketName ?? basket.name}” basket. It never deletes estimation items or history.`}
       onClose={onClose}
@@ -1015,7 +1015,7 @@ function PermanentDeleteBasketDialog({
             busyLabel="Deleting…"
             disabled={!canSubmit}
           >
-            Delete permanently
+            Delete
           </Button>
         </div>
       </form>

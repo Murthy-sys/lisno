@@ -127,7 +127,7 @@ async function openPermanentDelete(
     })
   );
   return screen.findByRole("alertdialog", {
-    name: "Delete main basket permanently?"
+    name: "Delete basket?"
   });
 }
 
@@ -247,7 +247,7 @@ describe("Super Admin permanent Main Basket deletion", () => {
       name: `Delete ${laterBasket.name} permanently`
     }));
     const deletion = await screen.findByRole("alertdialog", {
-      name: "Delete main basket permanently?"
+      name: "Delete basket?"
     });
     await within(deletion).findByText("This action cannot be undone");
     await user.type(
@@ -255,7 +255,7 @@ describe("Super Admin permanent Main Basket deletion", () => {
       laterBasket.name
     );
     await user.type(within(deletion).getByRole("textbox", { name: "Reason" }), "Duplicate setup");
-    await user.click(within(deletion).getByRole("button", { name: "Delete permanently" }));
+    await user.click(within(deletion).getByRole("button", { name: "Delete" }));
 
     await waitFor(() => expect(knowledgeApi.permanentlyDeleteKnowledgeBasket).toHaveBeenCalledWith(
       laterBasket.id,
@@ -319,14 +319,14 @@ describe("Super Admin permanent Main Basket deletion", () => {
     expect(impact).not.toBeNull();
     expect(within(impact as HTMLElement).getByText("2")).toBeVisible();
     expect(within(impact as HTMLElement).getByText("1")).toBeVisible();
-    expect(within(dialog).getByRole("button", { name: "Delete permanently" })).toBeDisabled();
+    expect(within(dialog).getByRole("button", { name: "Delete" })).toBeDisabled();
   });
 
   it("requires the exact current name and a reason, then announces success and restores focus", async () => {
     const user = userEvent.setup();
     renderPage();
     const dialog = await openPermanentDelete(user);
-    const deleteButton = within(dialog).getByRole("button", { name: "Delete permanently" });
+    const deleteButton = within(dialog).getByRole("button", { name: "Delete" });
     expect(await within(dialog).findByText("This action cannot be undone")).toBeVisible();
     expect(deleteButton).toBeDisabled();
 
@@ -377,16 +377,16 @@ describe("Super Admin permanent Main Basket deletion", () => {
     const reason = within(dialog).getByRole("textbox", { name: "Reason" });
     await user.type(confirmation, emptyBasket.name);
     await user.type(reason, "Duplicate setup");
-    await user.click(within(dialog).getByRole("button", { name: "Delete permanently" }));
+    await user.click(within(dialog).getByRole("button", { name: "Delete" }));
 
     expect(await within(dialog).findByText("Basket changed")).toBeVisible();
     expect(confirmation).toHaveValue("");
     expect(knowledgeApi.getKnowledgeBasketDeletionImpact).toHaveBeenCalledTimes(2);
     expect(knowledgeApi.permanentlyDeleteKnowledgeBasket).toHaveBeenCalledTimes(1);
-    expect(within(dialog).getByRole("button", { name: "Delete permanently" })).toBeDisabled();
+    expect(within(dialog).getByRole("button", { name: "Delete" })).toBeDisabled();
 
     await user.type(confirmation, emptyBasket.name);
-    await user.click(within(dialog).getByRole("button", { name: "Delete permanently" }));
+    await user.click(within(dialog).getByRole("button", { name: "Delete" }));
     await waitFor(() => expect(knowledgeApi.permanentlyDeleteKnowledgeBasket).toHaveBeenCalledTimes(2));
     expect(knowledgeApi.permanentlyDeleteKnowledgeBasket).toHaveBeenLastCalledWith(
       emptyBasket.id,
@@ -411,13 +411,13 @@ describe("Super Admin permanent Main Basket deletion", () => {
       emptyBasket.name
     );
     await user.type(within(dialog).getByRole("textbox", { name: "Reason" }), "Duplicate setup");
-    await user.click(within(dialog).getByRole("button", { name: "Delete permanently" }));
+    await user.click(within(dialog).getByRole("button", { name: "Delete" }));
 
     expect(await within(dialog).findByText("Impact refresh failed")).toBeVisible();
     expect(within(dialog).getByText("Impact refresh unavailable")).toBeVisible();
     expect(within(dialog).queryByText(/latest deletion impact was loaded/i)).not.toBeInTheDocument();
     expect(within(dialog).queryByText("Basket changed")).not.toBeInTheDocument();
-    expect(within(dialog).getByRole("button", { name: "Delete permanently" })).toBeDisabled();
+    expect(within(dialog).getByRole("button", { name: "Delete" })).toBeDisabled();
     expect(knowledgeApi.permanentlyDeleteKnowledgeBasket).toHaveBeenCalledTimes(1);
 
     await user.click(within(dialog).getByRole("button", { name: "Retry impact check" }));
