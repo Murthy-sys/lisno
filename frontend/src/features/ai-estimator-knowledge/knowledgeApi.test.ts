@@ -48,7 +48,7 @@ describe("knowledge API", () => {
       "/admin/ai-estimator-knowledge/baskets/basket%2Fone/deletion-impact"
     );
     expect(remove).toHaveBeenCalledWith(
-      "/admin/ai-estimator-knowledge/baskets/basket%2Fone/permanent",
+      "/admin/ai-estimator-knowledge/baskets/basket%2Fone",
       input
     );
   });

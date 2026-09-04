@@ -1645,7 +1645,44 @@ describe("AI estimator knowledge integrated replica-set invariants", { timeout: 
     });
   });
 
-  it("blocks inbound archives and rolls back step and item dependency cycles", async () => {
+  it("strips the inbound pointer when a referenced Main Line is deleted", async () => {
+    const services = createServices();
+    const target = await createAndActivateOverviewOnly(services.item, "Referenced Target");
+    const source = await createAndActivateOverviewOnly(services.item, "Referencing Source", {
+      targetMainLineId: target.mainLineId
+    });
+    const inactiveTarget = await services.item.deactivate(SUPER_ADMIN, target.mainLineId, {
+      expectedVersion: target.aggregateVersion,
+      reason: "Taken out of circulation"
+    });
+
+    /*
+     * An inbound reference no longer protects the target. Deletion is
+     * permanent, so it takes the pointer with it instead of refusing and
+     * leaving the reader with nothing they can act on.
+     */
+    await expect(services.item.permanentlyDeleteMainLine(SUPER_ADMIN, target.mainLineId, {
+      expectedVersion: inactiveTarget.version,
+      reason: "Superseded"
+    })).resolves.toMatchObject({ deleted: true });
+    expect(await AiEstimatorKnowledgeMainLineModel.findById(target.mainLineId).lean().exec())
+      .toBeNull();
+
+    const sourceSections = await AiEstimatorKnowledgeSectionModel
+      .find({ mainLineId: source.mainLineId })
+      .lean()
+      .exec() as Array<{ payload?: Record<string, unknown> }>;
+    for (const section of sourceSections) {
+      for (const field of ["exclusions", "dependencies", "recommendations"]) {
+        const rows = section.payload?.[field];
+        if (!Array.isArray(rows)) continue;
+        expect(rows.some((row) => (row as { targetMainLineId?: string }).targetMainLineId === target.mainLineId))
+          .toBe(false);
+      }
+    }
+  });
+
+  it("rolls back step and item dependency cycles", async () => {
     const services = createServices();
     const target = await createAndActivateOverviewOnly(services.item, "Cycle Target");
     const source = await createAndActivateOverviewOnly(services.item, "Cycle Source", {
@@ -1654,14 +1691,8 @@ describe("AI estimator knowledge integrated replica-set invariants", { timeout: 
 
     const inactiveTarget = await services.item.deactivate(SUPER_ADMIN, target.mainLineId, {
       expectedVersion: target.aggregateVersion,
-      reason: "Archive preparation"
+      reason: "Taken out of circulation"
     });
-    await expect(services.item.archiveMainLine(SUPER_ADMIN, target.mainLineId, {
-      expectedVersion: inactiveTarget.version,
-      reason: "Should be protected by inbound reference"
-    })).rejects.toMatchObject({ status: 409, code: "ACTIVE_REFERENCE" });
-    expect((await AiEstimatorKnowledgeMainLineModel.findById(target.mainLineId).lean().exec())?.status)
-      .toBe("inactive");
 
     const stepCandidate = await services.item.createMainLine(SUPER_ADMIN, BASKET_ID, {
       name: "Step Cycle Candidate"
@@ -1814,10 +1845,10 @@ describe("AI estimator knowledge integrated replica-set invariants", { timeout: 
       expectedVersion: target.aggregateVersion,
       reason: "Archive target referenced only by inactive rows"
     });
-    await expect(services.item.archiveMainLine(SUPER_ADMIN, target.mainLineId, {
+    await expect(services.item.permanentlyDeleteMainLine(SUPER_ADMIN, target.mainLineId, {
       expectedVersion: inactiveTarget.version,
-      reason: "Inactive references do not block archive"
-    })).resolves.toMatchObject({ status: "archived" });
+      reason: "Inactive references do not block deletion"
+    })).resolves.toMatchObject({ deleted: true });
 
     await AiEstimatorKnowledgeUomModel.updateOne(
       { _id: UOM_ID },
@@ -2504,20 +2535,23 @@ describe("AI estimator knowledge integrated replica-set invariants", { timeout: 
       creation,
       losingDeletion
     ]);
+    /*
+     * A Main Line no longer holds its Basket open, so in this order both
+     * commit: the item is created and the deletion then carries it away. What
+     * still has to hold is that nothing is left behind pointing at a Basket
+     * that is gone.
+     */
     expect(createFirstResult.status).toBe("fulfilled");
-    expect(losingDeletionResult).toMatchObject({
-      status: "rejected",
-      reason: { status: 409, code: "BASKET_DELETE_BLOCKED" }
-    });
+    expect(losingDeletionResult.status).toBe("fulfilled");
     expect(await AiEstimatorKnowledgeBasketModel.findById(createFirstBasket.id).lean())
-      .toMatchObject({ dependencyEpoch: 1, version: 1 });
+      .toBeNull();
     expect(await AiEstimatorKnowledgeMainLineModel.countDocuments({
       basketId: createFirstBasket.id
-    })).toBe(1);
+    })).toBe(0);
     expect(await AuditEventModel.countDocuments({
       action: "ai_estimator_knowledge_basket_permanently_deleted",
       entityId: createFirstBasket.id
-    })).toBe(0);
+    })).toBe(1);
   });
 
   it("rejects an archived Surface when creating a Draft from an Active revision", async () => {
@@ -3161,21 +3195,22 @@ describe("AI estimator knowledge integrated replica-set invariants", { timeout: 
       referenceWrite,
       losingDeletion
     ]);
+    /*
+     * A reference written a moment earlier does not hold the Basket open; the
+     * deletion strips it instead. The reference row must not survive pointing
+     * at a Basket that is gone.
+     */
     expect(referenceFirstResult.status).toBe("fulfilled");
-    expect(losingDeletionResult).toMatchObject({
-      status: "rejected",
-      reason: { status: 409, code: "BASKET_DELETE_BLOCKED" }
-    });
+    expect(losingDeletionResult.status).toBe("fulfilled");
     expect(await AiEstimatorKnowledgeBasketModel.findById(referenceFirstTarget.id).lean())
-      .toMatchObject({ dependencyEpoch: 1, version: 1 });
-    await expect(base.reference.getBasketDeletionImpact(
-      SUPER_ADMIN,
-      referenceFirstTarget.id
-    )).resolves.toMatchObject({
-      historicalReferenceCount: 1,
-      canDelete: false,
-      blockers: [expect.objectContaining({ code: "HAS_HISTORICAL_REFERENCES" })]
-    });
+      .toBeNull();
+    const survivingScope = await AiEstimatorKnowledgeSectionModel
+      .findById(referenceFirstScope.id).lean().exec() as { payload?: { exclusions?: unknown[] } };
+    expect(
+      (survivingScope.payload?.exclusions ?? []).some(
+        (row) => (row as { targetBasketId?: string }).targetBasketId === referenceFirstTarget.id
+      )
+    ).toBe(false);
   });
 
   it("serializes stale Draft duplication against last-reference removal and permanent deletion", async () => {
@@ -3284,21 +3319,18 @@ describe("AI estimator knowledge integrated replica-set invariants", { timeout: 
       winningDuplicate,
       losingDeletion
     ]);
+    /*
+     * The duplicate carried the relationship into a fresh copy, and the
+     * deletion still goes through — stripping the copy's pointer with it, so
+     * the race cannot mint a reference that outlives its target.
+     */
     expect(winningDuplicateResult.status).toBe("fulfilled");
-    expect(losingDeletionResult).toMatchObject({
-      status: "rejected",
-      reason: { status: 409, code: "BASKET_DELETE_BLOCKED" }
-    });
+    expect(losingDeletionResult.status).toBe("fulfilled");
     expect(await AiEstimatorKnowledgeBasketModel.findById(duplicateFirstTarget.id).lean())
-      .toMatchObject({ dependencyEpoch: 2, version: 1 });
-    await expect(base.reference.getBasketDeletionImpact(
-      SUPER_ADMIN,
-      duplicateFirstTarget.id
-    )).resolves.toMatchObject({
-      historicalReferenceCount: 1,
-      canDelete: false,
-      blockers: [expect.objectContaining({ code: "HAS_HISTORICAL_REFERENCES" })]
-    });
+      .toBeNull();
+    expect(await AiEstimatorKnowledgeSectionModel.countDocuments({
+      "payload.exclusions.targetBasketId": duplicateFirstTarget.id
+    })).toBe(0);
   });
 
   it("serializes stale priced-slab duplication against UOM archive in both commit orders", async () => {

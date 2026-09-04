@@ -322,8 +322,12 @@ export function createAiEstimatorKnowledgeAdminRouter(
     `${prefix}/baskets/:basketId`,
     protectedRoute,
     requireOperation("DELETE /admin/ai-estimator-knowledge/baskets/:basketId"),
-    validateBody(archiveSchema),
-    handler(async (request) => services.reference.archiveBasket(request.authenticatedUser!, String(request.params.basketId), request.body))
+    validateBody(permanentDeleteBasketSchema),
+    handler(async (request) => services.reference.permanentlyDeleteBasket(
+      request.authenticatedUser!,
+      String(request.params.basketId),
+      request.body
+    ))
   );
   router.get(
     `${prefix}/baskets/:basketId/deletion-impact`,
@@ -332,17 +336,6 @@ export function createAiEstimatorKnowledgeAdminRouter(
     handler(async (request) => services.reference.getBasketDeletionImpact(
       request.authenticatedUser!,
       String(request.params.basketId)
-    ))
-  );
-  router.delete(
-    `${prefix}/baskets/:basketId/permanent`,
-    protectedRoute,
-    requireOperation("DELETE /admin/ai-estimator-knowledge/baskets/:basketId/permanent"),
-    validateBody(permanentDeleteBasketSchema),
-    handler(async (request) => services.reference.permanentlyDeleteBasket(
-      request.authenticatedUser!,
-      String(request.params.basketId),
-      request.body
     ))
   );
   router.get(
@@ -374,7 +367,7 @@ export function createAiEstimatorKnowledgeAdminRouter(
     protectedRoute,
     requireOperation("DELETE /admin/ai-estimator-knowledge/main-lines/:mainLineId"),
     validateBody(archiveSchema),
-    handler(async (request) => services.item.archiveMainLine(request.authenticatedUser!, String(request.params.mainLineId), request.body))
+    handler(async (request) => services.item.permanentlyDeleteMainLine(request.authenticatedUser!, String(request.params.mainLineId), request.body))
   );
   router.get(
     `${prefix}/items`,

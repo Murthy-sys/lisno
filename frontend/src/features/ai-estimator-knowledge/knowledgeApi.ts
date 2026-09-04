@@ -2,6 +2,7 @@ import { apiClient } from "../../api/client";
 import type {
   KnowledgeBasket,
   KnowledgeBasketDeletionImpact,
+  KnowledgeMainLineDeletionResult,
   KnowledgeBasketListResponse,
   KnowledgeContext,
   KnowledgeHistoryResponse,
@@ -338,16 +339,6 @@ export function updateKnowledgeBasket(
   );
 }
 
-export function archiveKnowledgeBasket(
-  basketId: string,
-  input: KnowledgeExpectedVersionCommand
-): Promise<KnowledgeBasket> {
-  return apiClient.delete<KnowledgeBasket>(
-    `${ADMIN_PREFIX}/baskets/${segment(basketId)}`,
-    input
-  );
-}
-
 export function getKnowledgeBasketDeletionImpact(
   basketId: string
 ): Promise<KnowledgeBasketDeletionImpact> {
@@ -361,7 +352,7 @@ export function permanentlyDeleteKnowledgeBasket(
   input: KnowledgePermanentDeleteBasketInput
 ): Promise<KnowledgePermanentDeleteBasketResult> {
   return apiClient.delete<KnowledgePermanentDeleteBasketResult>(
-    `${ADMIN_PREFIX}/baskets/${segment(basketId)}/permanent`,
+    `${ADMIN_PREFIX}/baskets/${segment(basketId)}`,
     input
   );
 }
@@ -395,11 +386,11 @@ export function updateKnowledgeMainLine(
   );
 }
 
-export function archiveKnowledgeMainLine(
+export function permanentlyDeleteKnowledgeMainLine(
   mainLineId: string,
   input: KnowledgeExpectedVersionCommand
-): Promise<KnowledgeItemDetail> {
-  return apiClient.delete<KnowledgeItemDetail>(
+): Promise<KnowledgeMainLineDeletionResult> {
+  return apiClient.delete<KnowledgeMainLineDeletionResult>(
     `${ADMIN_PREFIX}/main-lines/${segment(mainLineId)}`,
     input
   );
