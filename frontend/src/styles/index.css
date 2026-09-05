@@ -81,7 +81,7 @@
 .estimate-review-card__toggle svg { transition: transform 160ms ease; }
 .estimate-review-card__toggle[aria-expanded="true"] svg { transform: rotate(180deg); }
 .estimate-review-card__client-content { display: grid; min-width: 0; overflow: clip; gap: .75rem; margin-top: .85rem; padding-top: .85rem; border-top: 1px solid #dedbea; }
-.estimate-review-card__total { color: #34277d; font-family: var(--font-display, Georgia, serif); font-size: var(--text-3xl); }
+.estimate-review-card__total { color: #34277d; font-family: var(--font-editorial); font-weight: 400; font-size: var(--text-3xl); }
 .estimate-review-card label { display: grid; gap: .35rem; font-size: var(--text-sm); font-weight: 800; }
 .estimate-review-card select, .estimate-review-card textarea { width: 100%; padding: .65rem; border: 1px solid #d8d4e8; border-radius: var(--radius-control); background: #fff; font: inherit; }
 .estimate-review-card textarea { min-height: 5rem; resize: vertical; }
@@ -428,9 +428,9 @@
 .login-story h2 {
   max-width: 32rem;
   margin: 0;
-  font-family: Georgia, "Times New Roman", serif;
+  font-family: var(--font-editorial);
   font-size: clamp(3rem, 5.3vw, 5.6rem);
-  font-weight: 500;
+  font-weight: 400;
   letter-spacing: -0.045em;
   line-height: 0.95;
 }
@@ -470,9 +470,9 @@
 .login-card h1 {
   margin: 0;
   color: var(--color-lisno-navy);
-  font-family: Georgia, "Times New Roman", serif;
+  font-family: var(--font-editorial);
   font-size: clamp(2.55rem, 4vw, 3.7rem);
-  font-weight: 500;
+  font-weight: 400;
   letter-spacing: -0.035em;
   line-height: 1;
 }
@@ -779,9 +779,9 @@
 }
 
 .sidebar__role strong {
-  font-family: Georgia, "Times New Roman", serif;
+  font-family: var(--font-editorial);
   font-size: var(--text-lg);
-  font-weight: 500;
+  font-weight: 400;
 }
 
 .sidebar__nav {
@@ -914,9 +914,9 @@
 .workspace-header h1 {
   margin: 0;
   color: var(--color-lisno-navy);
-  font-family: Georgia, "Times New Roman", serif;
+  font-family: var(--font-editorial);
   font-size: clamp(2.3rem, 4vw, 4rem);
-  font-weight: 500;
+  font-weight: 400;
   letter-spacing: -0.04em;
   line-height: 1;
 }
@@ -1000,7 +1000,7 @@
   color: var(--color-text);
   font-family: var(--font-editorial);
   font-size: clamp(1.75rem, 3vw, 2.5rem);
-  font-weight: 500;
+  font-weight: 400;
   letter-spacing: -0.035em;
   line-height: 1.05;
 }
@@ -1027,9 +1027,9 @@
 .project-hero h1 {
   margin: 0;
   color: var(--color-lisno-navy);
-  font-family: Georgia, "Times New Roman", serif;
+  font-family: var(--font-editorial);
   font-size: clamp(2.7rem, 5vw, 5rem);
-  font-weight: 500;
+  font-weight: 400;
   letter-spacing: -0.05em;
   line-height: 0.98;
 }
@@ -1395,9 +1395,9 @@
 .kpi-panel__intro h2,
 .section-heading h2 {
   margin: 0;
-  font-family: Georgia, "Times New Roman", serif;
+  font-family: var(--font-editorial);
   font-size: clamp(1.8rem, 3vw, 2.8rem);
-  font-weight: 500;
+  font-weight: 400;
   letter-spacing: -0.035em;
   line-height: 1.05;
 }
@@ -1426,9 +1426,9 @@
 }
 
 .kpi-score strong {
-  font-family: Georgia, "Times New Roman", serif;
+  font-family: var(--font-editorial);
   font-size: 4rem;
-  font-weight: 500;
+  font-weight: 400;
   line-height: 0.9;
 }
 
@@ -1593,7 +1593,7 @@
 
 .designer-metric-chip__value {
   color: var(--color-text);
-  font: 700 1.75rem/1 var(--font-editorial);
+  font: 400 1.75rem/1 var(--font-editorial);
 }
 
 /*
@@ -1635,9 +1635,9 @@
   display: block;
   margin-top: 0.7rem;
   color: var(--color-lisno-navy);
-  font-family: Georgia, "Times New Roman", serif;
+  font-family: var(--font-editorial);
   font-size: var(--text-4xl);
-  font-weight: 500;
+  font-weight: 400;
 }
 
 .metric-card__detail {
@@ -1798,9 +1798,9 @@
 .project-card h3 {
   margin: 2rem 0 0;
   color: var(--color-lisno-navy);
-  font-family: Georgia, "Times New Roman", serif;
+  font-family: var(--font-editorial);
   font-size: var(--text-2xl);
-  font-weight: 500;
+  font-weight: 400;
 }
 
 .project-card > p {
@@ -1852,7 +1852,7 @@
 
 .project-empty > span {
   color: #d3ccf8;
-  font-family: Georgia, "Times New Roman", serif;
+  font-family: var(--font-editorial);
   font-size: 6rem;
   line-height: 0.8;
 }
@@ -1860,9 +1860,9 @@
 .project-empty h3 {
   margin: 0;
   color: var(--color-lisno-navy);
-  font-family: Georgia, "Times New Roman", serif;
+  font-family: var(--font-editorial);
   font-size: var(--text-3xl);
-  font-weight: 500;
+  font-weight: 400;
 }
 
 .project-empty p {
@@ -2115,9 +2115,9 @@
 .task-row h4 {
   margin: 0;
   color: var(--color-lisno-navy);
-  font-family: Georgia, "Times New Roman", serif;
+  font-family: var(--font-editorial);
   font-size: var(--text-xl);
-  font-weight: 500;
+  font-weight: 400;
 }
 
 .task-row__heading > div:first-child > p:last-child:not(.task-row__order) {
@@ -2281,9 +2281,9 @@
 .modal__header h2 {
   margin: 0;
   color: var(--color-lisno-navy);
-  font-family: Georgia, "Times New Roman", serif;
+  font-family: var(--font-editorial);
   font-size: var(--text-3xl);
-  font-weight: 500;
+  font-weight: 400;
 }
 
 .modal__header p:last-child:not(.eyebrow) {
@@ -3365,13 +3365,14 @@
   padding: clamp(0.5rem, 1vw, 1rem);
   background: #f3efe5;
   color: #2d2a21;
-  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+  font-family: var(--font-interface);
 }
 
 .client-page--project h1,
 .client-page--project h2,
 .client-page--project h3 {
-  font-family: Georgia, "Times New Roman", serif;
+  font-family: var(--font-editorial);
+  font-weight: 400;
 }
 
 .client-page--project .back-link {
@@ -3418,7 +3419,8 @@
 
 .client-page--project .client-project-hero__completion strong {
   color: #f4d875;
-  font-family: Georgia, "Times New Roman", serif;
+  font-family: var(--font-editorial);
+  font-weight: 400;
   font-size: 2.8rem;
   line-height: 1;
 }
@@ -5754,7 +5756,7 @@
   color: var(--color-text);
   font-family: var(--font-editorial);
   font-size: clamp(var(--text-lg), 1.7vw, var(--text-xl));
-  font-weight: 600;
+  font-weight: 400;
   line-height: 1.15;
   letter-spacing: -0.02em;
 }

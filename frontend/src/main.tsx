@@ -6,6 +6,7 @@ import {
   capturePasswordResetTokenBeforeRouterMount
 } from "./auth/passwordResetTokenVault";
 import "./styles/index.css";
+import "./styles/brand.css";
 import "./styles/role-themes.css";
 import "./styles/access-administration.css";
 import "./styles/invitations.css";
