@@ -32,6 +32,7 @@
   block-size: 100vh;
   color: var(--color-surface);
   grid-column: 1;
+  inline-size: 17rem;
   inset-block: 0;
   inset-inline-start: 0;
   position: sticky;
@@ -50,7 +51,30 @@
 }
 
 .ui-sidebar__brand {
+  position: relative;
   padding-inline: var(--space-3);
+}
+
+.ui-sidebar__brand .brand__logo {
+  visibility: hidden;
+}
+
+.ui-sidebar__brand::before {
+  content: "";
+  position: absolute;
+  inset-inline-start: var(--space-3);
+  inset-block-start: 0;
+  inline-size: 6.875rem;
+  block-size: 1.875rem;
+  background: var(--color-highlight);
+  -webkit-mask-image: url("/lisno-logo.svg");
+  mask-image: url("/lisno-logo.svg");
+  -webkit-mask-size: contain;
+  mask-size: contain;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-position: left center;
+  mask-position: left center;
 }
 
 .ui-sidebar__role {
@@ -70,9 +94,10 @@
 }
 
 .ui-sidebar__role strong {
-  font-family: var(--font-editorial);
+  color: var(--color-bg);
+  font-family: "Poppins", sans-serif;
   font-size: var(--text-lg);
-  font-weight: 500;
+  font-weight: var(--text-subheading);
 }
 
 .ui-sidebar__nav {
@@ -94,6 +119,15 @@
   padding: var(--space-3);
   text-decoration: none;
   transition: background-color var(--duration-fast) var(--ease-standard), color var(--duration-fast) var(--ease-standard);
+}
+
+.ui-sidebar__link span {
+  color: var(--color-bg);
+  font-family: "Poppins", sans-serif;
+  font-weight: var(--text-navlinklabel);
+  font-size: var(--text-navlinklabel-size);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
 }
 
 .ui-sidebar__link:hover {
@@ -236,7 +270,7 @@
 
 .ui-drawer {
   animation: ui-drawer-enter-left var(--duration-settle) var(--ease-standard) both;
-  background: var(--color-brand-midnight);
+  background: var(--color-primary);
   block-size: 100%;
   box-shadow: var(--shadow-overlay);
   color: var(--color-surface);

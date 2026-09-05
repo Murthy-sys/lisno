@@ -54,9 +54,9 @@
   --chart-track: #eceef5;
   --chart-de-emphasis: #b9bfcd;
 
-  --font-interface: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  --font-editorial: Georgia, Cambria, "Times New Roman", serif;
-  --font-tabular: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  --font-interface: "Poppins", sans-serif;
+  --font-editorial: "Poppins", sans-serif;
+  --font-tabular: "Fraunces", "Playfair Display", serif;
   --type-page-title: 2.5rem/1.08 var(--font-editorial);
   --type-section-title: 1.5rem/1.2 var(--font-interface);
   --type-body: 1rem/1.5 var(--font-interface);
@@ -107,4 +107,41 @@
   --duration-settle: 220ms;
   --duration-overlay: 320ms;
   --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+
+  /* Brand tokens */
+  --color-primary: #1e183b;
+  --color-highlight: #d5ad18;
+  --color-bg: #ffffff;
+  --color-bg-secondary: #d7e3f7;
+  --color-text-strong: #000000;
+  --color-border-default: rgb(30 24 59 / 50%); /* 50% opacity of --color-primary */
+  --color-border-hover: #e5e5e5;
+  --color-border-click: #e5e5e5;
+  --color-border-select: #e5e5e5;
+  --color-table-header: #f7f6fa;
+
+  --radius-card: 15px;
+  --shadow-card: 0px 3px 8px rgba(0, 0, 0, 0.24);
+
+  --text-title: 600;
+  --text-mainheading: 500;
+  --text-subheading: 500;
+  --text-paragraph: 400;
+  --text-subheading2: 600;
+  --text-mainheading2: 400;
+  --text-navlinklabel: 700;
+  --text-text1: 400;
+  --text-text2: 600;
+  --text-text3: 400;
+
+  --text-title-size: 1rem;
+  --text-mainheading-size: 2.5rem;
+  --text-subheading-size: 1.3rem;
+  --text-paragraph-size: 1.2rem;
+  --text-subheading2-size: 0.9rem;
+  --text-mainheading2-size: 1.8rem;
+  --text-navlinklabel-size: 0.8rem;
+  --text-text1-size: 0.9rem;
+  --text-text2-size: 1rem;
+  --text-text3-size: 0.7rem;
 }
