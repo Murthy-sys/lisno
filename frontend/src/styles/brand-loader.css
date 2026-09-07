@@ -1,32 +1,8 @@
 .lisno-loading-mark {
-  display: inline-grid;
-  position: relative;
-  place-items: center;
-  inline-size: 176px;
+  display: block;
+  inline-size: 72px;
+  block-size: 72px;
   max-inline-size: 100%;
-  min-block-size: 84px;
-  padding: 20px;
-  box-sizing: border-box;
-  border: 2px solid #b78711;
-  border-radius: 16px;
-  background: #fff;
-  box-shadow: 0 0 0 3px #fff, 0 8px 28px rgb(30 24 59 / 18%);
-  isolation: isolate;
-}
-
-.lisno-loading-mark::after {
-  content: "";
-  position: absolute;
-  inset: -2px;
-  padding: 3px;
-  border-radius: inherit;
-  background: linear-gradient(110deg, #b78711 25%, #f7d871 42%, #fff4c7 50%, #f7d871 58%, #b78711 75%);
-  background-size: 250% 100%;
-  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
-  -webkit-mask-composite: xor;
-  mask-composite: exclude;
-  animation: lisno-loading-border 1.6s linear infinite;
-  pointer-events: none;
 }
 
 .lisno-loading-mark__logo {
@@ -76,26 +52,4 @@
   max-inline-size: calc(100vw - 32px);
   box-sizing: border-box;
   pointer-events: none;
-}
-
-@keyframes lisno-loading-border {
-  from { background-position: 150% 0; }
-  to { background-position: -150% 0; }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .lisno-loading-mark::after {
-    animation: none;
-    background-position: 50% 0;
-  }
-}
-
-@media (forced-colors: active) {
-  .lisno-loading-mark {
-    border-color: Highlight;
-  }
-
-  .lisno-loading-mark::after {
-    display: none;
-  }
 }

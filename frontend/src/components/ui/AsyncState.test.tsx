@@ -2,6 +2,7 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ComponentType } from "react";
 import { describe, expect, it, vi } from "vitest";
+import loaderLogo from "../../assets/lisno-loader.svg";
 
 import { AsyncState } from "./AsyncState";
 import { PageState, type PageStateProps } from "./PageState";
@@ -29,7 +30,7 @@ describe.each(stateComponents)("$name", ({ Component, hook }) => {
     const root = container.querySelector(`[${hook}="loading"]`);
     expect(root).toHaveAttribute("aria-busy", "true");
     expect(root?.querySelector('[aria-hidden="true"]')).toBeInTheDocument();
-    expect(root?.querySelector(".lisno-loading-mark__logo")).toHaveAttribute("src", "/lisno-logo.svg");
+    expect(root?.querySelector(".lisno-loading-mark__logo")).toHaveAttribute("src", loaderLogo);
     expect(
       screen.getByRole("status", { name: "Project loading status" })
     ).toHaveTextContent("Loading project details…");
