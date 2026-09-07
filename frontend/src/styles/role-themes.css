@@ -97,6 +97,10 @@
   color: var(--auth-ink);
 }
 
+.login-page--signin .login-story h2 {
+  color: var(--color-surface);
+}
+
 .login-page--signin .login-card__intro,
 .login-page--signin .field label {
   color: var(--auth-ink-muted);

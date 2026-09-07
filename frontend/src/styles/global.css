@@ -54,13 +54,6 @@
   --chart-track: #eceef5;
   --chart-de-emphasis: #b9bfcd;
 
-  /*
-   * Unified on master's simpler single-font system (Poppins/Fraunces) during
-   * the merge with the lead-estimate-workspace rebuild, which paired this
-   * font-family swap with a coordinated font-weight: 400 across every
-   * heading. The --font-main/--subheading*/-size semantic names stay as
-   * aliases so nothing that already references them breaks.
-   */
   --font-main: "Poppins", sans-serif;
   --font-subheading: "Poppins", sans-serif;
   --font-subheading-secondary: "Poppins", sans-serif;
