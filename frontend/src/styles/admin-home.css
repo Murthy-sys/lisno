@@ -12,51 +12,56 @@
 
 .ui-app-shell[data-role="admin"],
 .ui-app-shell[data-role="super_admin"] {
-  --role-canvas: #ffffff;
-  --role-rail: linear-gradient(190deg, #16234a 0%, #101a38 55%, #0a1226 100%);
-  --role-band: linear-gradient(150deg, #1b2a54 0%, #142140 55%, #0d1730 100%);
-  --role-band-ink: #f6efe2;
-  --role-band-ink-muted: #cdbea3;
-  --role-ink: #21252e;
-  --role-ink-muted: #666e7d;
-  --role-accent: #c8852f;
-  --role-accent-bright: #e2ab5c;
-  --role-line: #ece6da;
-  --role-line-strong: #ddd0ae;
-  --role-deck: #ffffff;
-  --role-deck-tint: #faf6ec;
-  --role-glass: #ffffff;
-  --role-glass-strong: #ffffff;
-  --role-glass-edge: #ece6da;
+  --role-canvas: var(--color-bg);
+  --role-rail: var(--color-primary);
+  --role-band: var(--color-primary);
+  --role-band-ink: var(--color-surface);
+  --role-band-ink-muted: color-mix(in srgb, var(--color-surface) 72%, transparent);
+  --role-ink: var(--color-text-strong);
+  --role-ink-muted: var(--color-text-muted);
+  --role-accent: var(--color-highlight);
+  --role-accent-bright: var(--color-highlight);
+  --role-line: var(--color-border);
+  --role-line-strong: var(--color-border-strong);
+  --role-deck: var(--color-bg);
+  --role-deck-tint: var(--color-table-header);
+  --role-glass: var(--color-bg);
+  --role-glass-strong: var(--color-bg);
+  --role-glass-edge: var(--color-border);
   --role-glass-filter: none;
   --role-glass-sheen: none;
-  --role-shadow-tint: 20 18 16;
-  --role-focus: #c8852f;
-  --role-cta: linear-gradient(135deg, #a66a1f 0%, #c8852f 58%, #e2ab5c 100%);
-  --role-cta-hover: linear-gradient(135deg, #8f5a19 0%, #b3762a 58%, #d29a4e 100%);
-  --role-cta-ink: #fdf7ec;
+  --role-shadow-tint: 17 26 57;
+  --role-focus: var(--focus-ring-color);
+  --role-cta: var(--color-primary);
+  --role-cta-hover: var(--color-brand-midnight-raised);
+  --role-cta-ink: var(--color-surface);
 
   background: var(--role-canvas);
   background-attachment: fixed;
 }
 
+.ui-app-shell[data-role="admin"] .ui-workspace,
+.ui-app-shell[data-role="super_admin"] .ui-workspace {
+  background: #ffffff;
+}
+
 body:has(.ui-app-shell[data-role="admin"]),
 body:has(.ui-app-shell[data-role="super_admin"]) {
-  --role-ink: #21252e;
-  --role-ink-muted: #666e7d;
-  --role-accent: #c8852f;
-  --role-accent-bright: #e2ab5c;
-  --role-line: #ece6da;
-  --role-line-strong: #ddd0ae;
-  --role-deck: #ffffff;
-  --role-deck-tint: #faf6ec;
-  --role-glass-strong: #ffffff;
-  --role-rail: linear-gradient(190deg, #16234a 0%, #101a38 55%, #0a1226 100%);
-  --role-band-ink: #f6efe2;
-  --role-shadow-tint: 20 18 16;
-  --role-cta: linear-gradient(135deg, #a66a1f 0%, #c8852f 58%, #e2ab5c 100%);
-  --role-cta-hover: linear-gradient(135deg, #8f5a19 0%, #b3762a 58%, #d29a4e 100%);
-  --role-cta-ink: #fdf7ec;
+  --role-ink: var(--color-text-strong);
+  --role-ink-muted: var(--color-text-muted);
+  --role-accent: var(--color-highlight);
+  --role-accent-bright: var(--color-highlight);
+  --role-line: var(--color-border);
+  --role-line-strong: var(--color-border-strong);
+  --role-deck: var(--color-bg);
+  --role-deck-tint: var(--color-table-header);
+  --role-glass-strong: var(--color-bg);
+  --role-rail: var(--color-primary);
+  --role-band-ink: var(--color-surface);
+  --role-shadow-tint: 17 26 57;
+  --role-cta: var(--color-primary);
+  --role-cta-hover: var(--color-brand-midnight-raised);
+  --role-cta-ink: var(--color-surface);
 }
 
 /* --------------------------------------------------------------- buttons */
@@ -225,7 +230,7 @@ body:has(.ui-app-shell[data-role="super_admin"]) {
 .ui-app-shell[data-role="super_admin"] .ui-page-header__eyebrow {
   color: var(--role-accent);
   font-size: 1rem;
-  font-weight: 700;
+  font-weight: 400;
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
@@ -233,7 +238,7 @@ body:has(.ui-app-shell[data-role="super_admin"]) {
 .ui-app-shell[data-role="admin"] .ui-page-header__title,
 .ui-app-shell[data-role="super_admin"] .ui-page-header__title {
   color: #07070d;
-  font-size: 3rem;
+  font-size: 2rem;
   font-weight: 500;
 }
 
@@ -241,6 +246,7 @@ body:has(.ui-app-shell[data-role="super_admin"]) {
 .ui-app-shell[data-role="super_admin"] .ui-page-header__description {
   color: var(--role-ink-muted);
   font-size: 1rem;
+  font-weight: 400;
 }
 
 .ui-app-shell[data-role="admin"] .ui-page-header,
@@ -254,8 +260,8 @@ body:has(.ui-app-shell[data-role="super_admin"]) {
 .ui-app-shell[data-role="admin"] .ui-page-header__actions .ui-button--primary,
 .ui-app-shell[data-role="super_admin"] .ui-page-header__actions .ui-button--primary {
   border: 1px solid transparent;
-  background: var(--role-cta);
-  color: var(--role-cta-ink);
+  background: var(--color-highlight);
+  color: var(--color-primary);
   padding-inline: 1.5rem;
   min-block-size: 2.75rem;
   box-shadow: 0 8px 18px -12px rgb(var(--role-shadow-tint) / 65%);
@@ -263,7 +269,7 @@ body:has(.ui-app-shell[data-role="super_admin"]) {
 
 .ui-app-shell[data-role="admin"] .ui-page-header__actions .ui-button--primary:hover:not(:disabled),
 .ui-app-shell[data-role="super_admin"] .ui-page-header__actions .ui-button--primary:hover:not(:disabled) {
-  background: var(--role-cta-hover);
+  background: color-mix(in srgb, var(--color-highlight) 82%, var(--color-primary));
   box-shadow: 0 10px 22px -12px rgb(var(--role-shadow-tint) / 75%);
 }
 
@@ -281,16 +287,18 @@ body:has(.ui-app-shell[data-role="super_admin"]) {
 .ui-app-shell[data-role="admin"] .ui-status,
 .ui-app-shell[data-role="super_admin"] .ui-status {
   border: 1px solid color-mix(in srgb, currentColor 35%, transparent);
-  padding: 0.4rem 0.85rem;
-  gap: var(--space-2);
-  font-weight: 700;
+  min-block-size: 1.25rem;
+  padding: 0.15rem var(--space-2);
+  gap: var(--space-1);
+  font-size: 0.75rem;
+  font-weight: 400;
 }
 
 .ui-app-shell[data-role="admin"] .ui-status--info,
 .ui-app-shell[data-role="super_admin"] .ui-status--info {
-  border-color: color-mix(in srgb, var(--role-accent) 45%, transparent);
+  border-color: #150f2e;
   background: var(--role-deck);
-  color: var(--role-accent);
+  color: #000000;
 }
 
 /* ------------------------------------------------------------ empty state */
@@ -345,10 +353,23 @@ body:has(.ui-app-shell[data-role="super_admin"]) {
 
 .ui-app-shell[data-role="admin"] .admin-project-card__view,
 .ui-app-shell[data-role="super_admin"] .admin-project-card__view {
-  border-color: color-mix(in srgb, var(--role-accent) 30%, var(--role-line));
+  min-block-size: 32px;
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid transparent;
   border-radius: var(--radius-pill);
-  background: color-mix(in srgb, var(--role-accent) 8%, var(--role-deck));
-  color: var(--role-accent);
+  background: var(--color-primary);
+  color: var(--color-bg);
+  font-size: 0.75rem;
+  font-weight: 400;
+  justify-self: center;
+
+  margin-block-start: var(--space-1);
+}
+
+.ui-app-shell[data-role="admin"] .admin-project-card__view svg,
+.ui-app-shell[data-role="super_admin"] .admin-project-card__view svg {
+  width: 0.875rem;
+  height: 0.875rem;
 }
 
 /* The eye icon sits before the text now (not the directional arrow this
@@ -361,13 +382,13 @@ body:has(.ui-app-shell[data-role="super_admin"]) {
 
 /* ----------------------------------------------------------------- quiet */
 
-.ui-app-shell[data-role="admin"] .ui-button--quiet,
-.ui-app-shell[data-role="super_admin"] .ui-button--quiet {
+.ui-app-shell[data-role="admin"] .ui-button--quiet:not(.modal-backdrop):not(.ui-drawer-backdrop),
+.ui-app-shell[data-role="super_admin"] .ui-button--quiet:not(.modal-backdrop):not(.ui-drawer-backdrop) {
   color: var(--role-accent);
 }
 
-.ui-app-shell[data-role="admin"] .ui-button--quiet:not(:disabled):hover,
-.ui-app-shell[data-role="super_admin"] .ui-button--quiet:not(:disabled):hover {
+.ui-app-shell[data-role="admin"] .ui-button--quiet:not(.modal-backdrop):not(.ui-drawer-backdrop):not(:disabled):hover,
+.ui-app-shell[data-role="super_admin"] .ui-button--quiet:not(.modal-backdrop):not(.ui-drawer-backdrop):not(:disabled):hover {
   background: color-mix(in srgb, var(--role-accent) 10%, transparent);
 }
 
@@ -383,14 +404,20 @@ body:has(.ui-app-shell[data-role="super_admin"]) {
 
 body:has(.ui-app-shell[data-role="admin"]) .modal:has(.admin-project-form),
 body:has(.ui-app-shell[data-role="super_admin"]) .modal:has(.admin-project-form) {
+  background: var(--color-bg);
+  max-height: none;
+  overflow: visible;
   width: min(100%, 44rem);
-  border-radius: var(--radius-surface);
+  border-radius: var(--radius-card);
+  border: 1px solid var(--color-border-hover);
+  box-shadow: var(--shadow-card);
   /* The native scrollbar track paints as a flat rectangle regardless of
      border-radius, so it visibly squares off the top/bottom-right corners
      even though the card itself is clipped and rounded. Hidden here, not
      disabled — the panel still scrolls by wheel, touch, or keyboard. */
   scrollbar-width: none;
   -ms-overflow-style: none;
+  font-family: var(--font-interface);
 }
 
 body:has(.ui-app-shell[data-role="admin"]) .modal:has(.admin-project-form)::-webkit-scrollbar,
@@ -419,7 +446,25 @@ body:has(.ui-app-shell[data-role="super_admin"]) .modal:has(.admin-project-form)
 
 body:has(.ui-app-shell[data-role="admin"]) .modal:has(.admin-project-form) .modal__header,
 body:has(.ui-app-shell[data-role="super_admin"]) .modal:has(.admin-project-form) .modal__header {
+  padding: 1rem 1.5rem 0.85rem;
   position: relative;
+}
+
+body:has(.ui-app-shell[data-role="admin"]) .modal:has(.admin-project-form) .admin-project-form,
+body:has(.ui-app-shell[data-role="super_admin"]) .modal:has(.admin-project-form) .admin-project-form {
+  gap: var(--space-3);
+  padding: 0 1.5rem 1rem;
+}
+
+body:has(.ui-app-shell[data-role="admin"]) .modal:has(.admin-project-form) .ui-field,
+body:has(.ui-app-shell[data-role="super_admin"]) .modal:has(.admin-project-form) .ui-field {
+  gap: var(--space-1);
+}
+
+body:has(.ui-app-shell[data-role="admin"]) .modal:has(.admin-project-form) .admin-project-form__actions,
+body:has(.ui-app-shell[data-role="super_admin"]) .modal:has(.admin-project-form) .admin-project-form__actions {
+  margin-top: 0.5rem;
+  padding-top: 0.75rem;
 }
 
 body:has(.ui-app-shell[data-role="admin"]) .modal:has(.admin-project-form) .ui-dialog__close,
@@ -438,6 +483,7 @@ body:has(.ui-app-shell[data-role="super_admin"]) .modal:has(.admin-project-form)
 body:has(.ui-app-shell[data-role="admin"]) .admin-project-form .ui-field__label,
 body:has(.ui-app-shell[data-role="super_admin"]) .admin-project-form .ui-field__label {
   color: #24201a;
+  font-family: var(--font-subheading-secondary);
   font-weight: 700;
 }
 
@@ -445,11 +491,39 @@ body:has(.ui-app-shell[data-role="admin"]) .admin-project-form .ui-control,
 body:has(.ui-app-shell[data-role="super_admin"]) .admin-project-form .ui-control {
   padding-inline-start: 2.75rem;
   border: 1px solid var(--role-line-strong);
-  border-radius: var(--radius-field);
+  border-radius: var(--radius-control);
   background-color: var(--role-deck);
+  box-shadow: none;
+  color: var(--color-text);
+  font-family: var(--font-interface);
+  transition: border-color var(--duration-fast) var(--ease-standard), box-shadow var(--duration-fast) var(--ease-standard), background-color var(--duration-fast) var(--ease-standard);
+}
+
+/*
+ * The field icon lives on this wrapper's ::before, not on the <input>'s own
+ * background-image. Chrome's autofill repaint clobbers an autofilled
+ * input's own background-image no matter what (even with !important — it's
+ * not a normal cascade override, verified via forced :-webkit-autofill
+ * testing), so the icon has to sit on an element autofill never touches.
+ */
+body:has(.ui-app-shell[data-role="admin"]) .admin-project-form__control,
+body:has(.ui-app-shell[data-role="super_admin"]) .admin-project-form__control {
+  position: relative;
+  display: block;
+}
+
+body:has(.ui-app-shell[data-role="admin"]) .admin-project-form__control-icon,
+body:has(.ui-app-shell[data-role="super_admin"]) .admin-project-form__control-icon {
+  position: absolute;
+  inset-inline-start: 0.9rem;
+  top: 50%;
+  transform: translateY(-50%);
+  inline-size: 18px;
+  block-size: 18px;
   background-repeat: no-repeat;
-  background-position: 0.9rem center;
+  background-position: center;
   background-size: 18px 18px;
+  pointer-events: none;
 }
 
 body:has(.ui-app-shell[data-role="admin"]) .admin-project-form .ui-control::placeholder,
@@ -460,54 +534,67 @@ body:has(.ui-app-shell[data-role="super_admin"]) .admin-project-form .ui-control
 
 body:has(.ui-app-shell[data-role="admin"]) .admin-project-form .ui-control:focus-visible,
 body:has(.ui-app-shell[data-role="super_admin"]) .admin-project-form .ui-control:focus-visible {
-  border-color: var(--role-accent);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--role-accent) 22%, transparent);
+  border-color: color-mix(in srgb, var(--color-primary) 50%, transparent);
+  box-shadow: none;
+  outline: none;
 }
 
-body:has(.ui-app-shell[data-role="admin"]) .admin-project-form input[name="clientName"],
-body:has(.ui-app-shell[data-role="super_admin"]) .admin-project-form input[name="clientName"] {
+body:has(.ui-app-shell[data-role="admin"]) .admin-project-form .ui-control:hover:not(:disabled),
+body:has(.ui-app-shell[data-role="super_admin"]) .admin-project-form .ui-control:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--color-primary) 50%, transparent);
+  box-shadow: none;
+}
+
+body:has(.ui-app-shell[data-role="admin"]) .admin-project-form .ui-control:disabled,
+body:has(.ui-app-shell[data-role="super_admin"]) .admin-project-form .ui-control:disabled {
+  background: var(--color-surface-subtle);
+  box-shadow: none;
+}
+
+body:has(.ui-app-shell[data-role="admin"]) .admin-project-form__control-icon[data-field="clientName"],
+body:has(.ui-app-shell[data-role="super_admin"]) .admin-project-form__control-icon[data-field="clientName"] {
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='%23978a6c' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2'/%3E%3Ccircle cx='12' cy='7' r='4'/%3E%3C/svg%3E");
 }
 
-body:has(.ui-app-shell[data-role="admin"]) .admin-project-form input[name="clientEmail"],
-body:has(.ui-app-shell[data-role="super_admin"]) .admin-project-form input[name="clientEmail"] {
+body:has(.ui-app-shell[data-role="admin"]) .admin-project-form__control-icon[data-field="clientEmail"],
+body:has(.ui-app-shell[data-role="super_admin"]) .admin-project-form__control-icon[data-field="clientEmail"] {
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='%23978a6c' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='2' y='4' width='20' height='16' rx='2'/%3E%3Cpath d='m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7'/%3E%3C/svg%3E");
 }
 
-body:has(.ui-app-shell[data-role="admin"]) .admin-project-form input[name="clientMobile"],
-body:has(.ui-app-shell[data-role="super_admin"]) .admin-project-form input[name="clientMobile"] {
+body:has(.ui-app-shell[data-role="admin"]) .admin-project-form__control-icon[data-field="clientMobile"],
+body:has(.ui-app-shell[data-role="super_admin"]) .admin-project-form__control-icon[data-field="clientMobile"] {
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='%23978a6c' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M13.832 16.568a1 1 0 0 0 1.213-.303l.355-.465A2 2 0 0 1 17 15h3a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2A18 18 0 0 1 2 4a2 2 0 0 1 2-2h3a2 2 0 0 1 2 2v3a2 2 0 0 1-.8 1.6l-.468.351a1 1 0 0 0-.292 1.233 14 14 0 0 0 6.392 6.384'/%3E%3C/svg%3E");
 }
 
-body:has(.ui-app-shell[data-role="admin"]) .admin-project-form input[name="projectName"],
-body:has(.ui-app-shell[data-role="super_admin"]) .admin-project-form input[name="projectName"] {
+body:has(.ui-app-shell[data-role="admin"]) .admin-project-form__control-icon[data-field="projectName"],
+body:has(.ui-app-shell[data-role="super_admin"]) .admin-project-form__control-icon[data-field="projectName"] {
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='%23978a6c' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 22V4a1 1 0 0 1 1-1h8a1 1 0 0 1 1 1v18Z'/%3E%3Cpath d='M6 12H4a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h2'/%3E%3Cpath d='M18 9h2a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1h-2'/%3E%3Cpath d='M10 6h4M10 10h4M10 14h4M10 18h4'/%3E%3C/svg%3E");
 }
 
-body:has(.ui-app-shell[data-role="admin"]) .admin-project-form input[name="location"],
-body:has(.ui-app-shell[data-role="super_admin"]) .admin-project-form input[name="location"] {
+body:has(.ui-app-shell[data-role="admin"]) .admin-project-form__control-icon[data-field="location"],
+body:has(.ui-app-shell[data-role="super_admin"]) .admin-project-form__control-icon[data-field="location"] {
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='%23978a6c' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 10c0 4.993-5.539 10.193-7.399 11.799a1 1 0 0 1-1.202 0C9.539 20.193 4 14.993 4 10a8 8 0 0 1 16 0'/%3E%3Ccircle cx='12' cy='10' r='3'/%3E%3C/svg%3E");
 }
 
-body:has(.ui-app-shell[data-role="admin"]) .admin-project-form input[name="propertyType"],
-body:has(.ui-app-shell[data-role="super_admin"]) .admin-project-form input[name="propertyType"] {
+body:has(.ui-app-shell[data-role="admin"]) .admin-project-form__control-icon[data-field="propertyType"],
+body:has(.ui-app-shell[data-role="super_admin"]) .admin-project-form__control-icon[data-field="propertyType"] {
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='%23978a6c' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3' y='3' width='7' height='7' rx='1'/%3E%3Crect x='14' y='3' width='7' height='7' rx='1'/%3E%3Crect x='14' y='14' width='7' height='7' rx='1'/%3E%3Crect x='3' y='14' width='7' height='7' rx='1'/%3E%3C/svg%3E");
 }
 
-body:has(.ui-app-shell[data-role="admin"]) .admin-project-form input[name="budgetMin"],
-body:has(.ui-app-shell[data-role="super_admin"]) .admin-project-form input[name="budgetMin"],
-body:has(.ui-app-shell[data-role="admin"]) .admin-project-form input[name="budgetMax"],
-body:has(.ui-app-shell[data-role="super_admin"]) .admin-project-form input[name="budgetMax"] {
+body:has(.ui-app-shell[data-role="admin"]) .admin-project-form__control-icon[data-field="budgetMin"],
+body:has(.ui-app-shell[data-role="super_admin"]) .admin-project-form__control-icon[data-field="budgetMin"],
+body:has(.ui-app-shell[data-role="admin"]) .admin-project-form__control-icon[data-field="budgetMax"],
+body:has(.ui-app-shell[data-role="super_admin"]) .admin-project-form__control-icon[data-field="budgetMax"] {
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24'%3E%3Ctext x='5' y='18' font-family='Arial, sans-serif' font-size='16' font-weight='700' fill='%23978a6c'%3E%E2%82%B9%3C/text%3E%3C/svg%3E");
 }
 
-body:has(.ui-app-shell[data-role="admin"]) .admin-project-form input[name="nextAction"],
-body:has(.ui-app-shell[data-role="super_admin"]) .admin-project-form input[name="nextAction"] {
+body:has(.ui-app-shell[data-role="admin"]) .admin-project-form__control-icon[data-field="nextAction"],
+body:has(.ui-app-shell[data-role="super_admin"]) .admin-project-form__control-icon[data-field="nextAction"] {
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='%23978a6c' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='8' y='2' width='8' height='4' rx='1'/%3E%3Cpath d='M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2'/%3E%3Cpath d='M12 11h4M12 16h4M8 11h.01M8 16h.01'/%3E%3C/svg%3E");
 }
 
-body:has(.ui-app-shell[data-role="admin"]) .admin-project-form input[name="nextActionAt"],
-body:has(.ui-app-shell[data-role="super_admin"]) .admin-project-form input[name="nextActionAt"] {
+body:has(.ui-app-shell[data-role="admin"]) .admin-project-form__control-icon[data-field="nextActionAt"],
+body:has(.ui-app-shell[data-role="super_admin"]) .admin-project-form__control-icon[data-field="nextActionAt"] {
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='%23978a6c' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3' y='4' width='18' height='18' rx='2'/%3E%3Cpath d='M16 2v4M8 2v4M3 10h18'/%3E%3C/svg%3E");
 }
 
@@ -521,18 +608,37 @@ body:has(.ui-app-shell[data-role="admin"]) .admin-project-form__estimator .searc
 body:has(.ui-app-shell[data-role="super_admin"]) .admin-project-form__estimator .search-combobox > input {
   padding-inline-start: 2.75rem;
   border: 1px solid var(--role-line-strong);
-  border-radius: var(--radius-field);
+  border-radius: var(--radius-control);
   background-color: var(--role-deck);
   background-repeat: no-repeat;
   background-position: 0.9rem center;
   background-size: 16px 16px;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='%23978a6c' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='11' cy='11' r='8'/%3E%3Cpath d='m21 21-4.3-4.3'/%3E%3C/svg%3E");
+  box-shadow: none;
+  color: var(--color-text);
+  font-family: var(--font-interface);
+  transition: border-color var(--duration-fast) var(--ease-standard), box-shadow var(--duration-fast) var(--ease-standard), background-color var(--duration-fast) var(--ease-standard);
 }
 
 body:has(.ui-app-shell[data-role="admin"]) .admin-project-form__estimator .search-combobox > input:focus,
 body:has(.ui-app-shell[data-role="super_admin"]) .admin-project-form__estimator .search-combobox > input:focus {
-  border-color: var(--role-accent);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--role-accent) 22%, transparent);
+  border-color: color-mix(in srgb, var(--color-primary) 50%, transparent);
+  box-shadow: none;
+  outline: none;
+}
+
+body:has(.ui-app-shell[data-role="admin"]) .admin-project-form__estimator .search-combobox > input:hover:not(:disabled),
+body:has(.ui-app-shell[data-role="super_admin"]) .admin-project-form__estimator .search-combobox > input:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--color-primary) 50%, transparent);
+  box-shadow: none;
+}
+
+body:has(.ui-app-shell[data-role="admin"]) .admin-project-form__estimator .search-combobox__popup,
+body:has(.ui-app-shell[data-role="super_admin"]) .admin-project-form__estimator .search-combobox__popup {
+  border: 1px solid var(--color-border);
+  border-radius: var(--card-radius);
+  box-shadow: var(--card-shadow);
+  font-family: var(--font-interface);
 }
 
 body:has(.ui-app-shell[data-role="admin"]) .admin-project-form__estimator .search-combobox__popup [role="option"].is-active,
@@ -542,17 +648,20 @@ body:has(.ui-app-shell[data-role="super_admin"]) .admin-project-form__estimator 
   background: color-mix(in srgb, var(--role-accent) 10%, white);
 }
 
+/* Initiate project: primary navy blue, matching var(--color-primary) used for
+   Create request / View project / pagination elsewhere. */
 body:has(.ui-app-shell[data-role="admin"]) .admin-project-form__actions .ui-button--primary,
 body:has(.ui-app-shell[data-role="super_admin"]) .admin-project-form__actions .ui-button--primary {
   border: 1px solid transparent;
-  background: var(--role-cta);
-  color: var(--role-cta-ink);
-  box-shadow: 0 8px 18px -12px rgb(var(--role-shadow-tint) / 65%);
+  background: var(--color-primary);
+  color: var(--color-bg);
+  box-shadow: none;
 }
 
 body:has(.ui-app-shell[data-role="admin"]) .admin-project-form__actions .ui-button--primary:hover:not(:disabled),
 body:has(.ui-app-shell[data-role="super_admin"]) .admin-project-form__actions .ui-button--primary:hover:not(:disabled) {
-  background: var(--role-cta-hover);
+  background: #2a2350;
+  box-shadow: none;
 }
 
 body:has(.ui-app-shell[data-role="admin"]) .admin-project-form__actions .ui-button--primary::after,
@@ -563,25 +672,27 @@ body:has(.ui-app-shell[data-role="super_admin"]) .admin-project-form__actions .u
 
 body:has(.ui-app-shell[data-role="admin"]) .admin-project-form__actions .ui-button--secondary,
 body:has(.ui-app-shell[data-role="super_admin"]) .admin-project-form__actions .ui-button--secondary {
-  border-color: var(--role-line-strong);
-  background: var(--role-deck);
-  color: #24201a;
+  border: 1px solid transparent;
+  background: var(--color-primary);
+  color: var(--color-bg);
 }
 
 body:has(.ui-app-shell[data-role="admin"]) .admin-project-form__actions .ui-button,
 body:has(.ui-app-shell[data-role="super_admin"]) .admin-project-form__actions .ui-button {
-  padding-inline: 1.5rem;
-  min-block-size: 2.75rem;
+  padding-inline: var(--space-4);
+  min-block-size: 2.25rem;
   border-radius: var(--radius-pill);
+  font-size: 0.875rem;
 }
 
 /*
- * Chrome's autofill repaint clobbers any background-image on the input
- * (that's where our field icons live), not just the background-color, so
- * filled fields lost their icon. The huge transition-delay is the standard
- * trick: autofill applies its highlight via an internal CSS transition, and
- * delaying it long enough means it never visibly starts, leaving our own
- * background (color + icon) exactly as authored.
+ * Chrome autofill repaints the input's own background-color and text color;
+ * the huge transition-delay is the standard trick to defeat that (autofill
+ * applies its highlight via an internal CSS transition, and delaying it long
+ * enough means it never visibly starts). Field icons live on a separate
+ * sibling element (see .admin-project-form__control-icon below), not the
+ * input's background-image, since autofill clobbers that regardless of
+ * !important and this trick doesn't reach it.
  */
 body:has(.ui-app-shell[data-role="admin"]) .admin-project-form .ui-control:-webkit-autofill,
 body:has(.ui-app-shell[data-role="super_admin"]) .admin-project-form .ui-control:-webkit-autofill,
@@ -601,7 +712,7 @@ body:has(.ui-app-shell[data-role="super_admin"]) .admin-project-form__estimator 
 .ui-app-shell[data-role="super_admin"] .admin-projects__workspace {
   padding: var(--space-4);
   gap: 0;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .ui-app-shell[data-role="admin"] .admin-projects__list,
@@ -612,7 +723,7 @@ body:has(.ui-app-shell[data-role="super_admin"]) .admin-project-form__estimator 
 
 .ui-app-shell[data-role="admin"] .admin-project-card,
 .ui-app-shell[data-role="super_admin"] .admin-project-card {
-  padding: var(--space-5) var(--space-4);
+  padding: var(--space-3) var(--space-4);
 }
 
 /*
@@ -668,6 +779,43 @@ body:has(.ui-app-shell[data-role="super_admin"]) .admin-project-form__estimator 
   padding-inline: var(--space-2);
 }
 
+/* Previous/Next page: filled navy, matching "View project"/"Initiate
+   project" elsewhere on this page, instead of the shared quiet/secondary
+   outline styles. !important because Previous page is variant="quiet" —
+   its own .ui-button--quiet rule (below) has higher specificity than this
+   plain-class selector and would otherwise keep its transparent
+   background while this rule's color still won, risking illegible text. */
+.ui-app-shell[data-role="admin"] .admin-projects__pagination .ui-button,
+.ui-app-shell[data-role="super_admin"] .admin-projects__pagination .ui-button {
+  border: 1px solid transparent !important;
+  background: var(--color-primary) !important;
+  color: var(--color-bg) !important;
+  min-block-size: 32px !important;
+  padding-inline: var(--space-3) !important;
+  font-size: 0.8125rem !important;
+  font-weight: 400 !important;
+  box-shadow: none !important;
+}
+
+/* .ui-button gets box-shadow: var(--shadow-soft) on :hover by default,
+   which read as a second, offset border around "Next page" — flatten it
+   so hover only changes the background, not the outline. */
+.ui-app-shell[data-role="admin"] .admin-projects__pagination .ui-button:hover,
+.ui-app-shell[data-role="super_admin"] .admin-projects__pagination .ui-button:hover {
+  background: #2a2350 !important;
+  box-shadow: none !important;
+}
+
+/* The real source of the "double border" — the shared .ui-button:focus-
+   visible ring is a violet box-shadow that, layered on this navy pill,
+   reads as two offset outlines. Keep a visible focus indicator, just in
+   the same navy family instead of the mismatched default violet. */
+.ui-app-shell[data-role="admin"] .admin-projects__pagination .ui-button:focus-visible,
+.ui-app-shell[data-role="super_admin"] .admin-projects__pagination .ui-button:focus-visible {
+  box-shadow: 0 0 0 3px rgb(30 24 59 / 35%) !important;
+  outline: none !important;
+}
+
 /*
  * The header band above the rows — same two-level grid
  * (.admin-project-card__link > .admin-project-card__meta) as every data
@@ -680,6 +828,9 @@ body:has(.ui-app-shell[data-role="super_admin"]) .admin-project-form__estimator 
  */
 .ui-app-shell[data-role="admin"] .admin-projects__header-row,
 .ui-app-shell[data-role="super_admin"] .admin-projects__header-row {
+  position: sticky;
+  inset-block-start: 0;
+  z-index: var(--z-raised);
   margin-block-start: calc(-1 * var(--space-4));
   margin-inline: calc(-1 * var(--space-4));
   margin-block-end: 0;
@@ -687,6 +838,7 @@ body:has(.ui-app-shell[data-role="super_admin"]) .admin-project-form__estimator 
   border-block-end: 1px solid #d7e3f7;
   border-radius: var(--radius-surface) var(--radius-surface) 0 0;
   background: #eaf2ff;
+  box-shadow: 0 2px 8px rgb(17 26 57 / 10%);
 }
 
 .ui-app-shell[data-role="admin"] .admin-projects__header-row .admin-project-card__meta div,

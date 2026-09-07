@@ -312,7 +312,7 @@ describe("shell CSS contract", () => {
   it("preserves the layered, responsive, role-aware shell cascade", () => {
     const index = readRuntimeStyle("index.css");
     const shell = readRuntimeStyle("shell.css");
-    const tokens = readRuntimeStyle("tokens.css");
+    const tokens = readRuntimeStyle("global.css");
 
     expect(
       /@layer\s+theme,\s*base,\s*components,\s*shell,\s*utilities;/.test(index)

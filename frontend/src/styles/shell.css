@@ -230,6 +230,14 @@
   position: absolute;
 }
 
+.ui-drawer-backdrop.ui-button--quiet {
+  background: transparent;
+}
+
+.ui-drawer-backdrop.ui-button--quiet:not(:disabled):hover {
+  background: transparent;
+}
+
 .ui-drawer-backdrop > .ui-button__stack {
   pointer-events: none;
 }

@@ -136,7 +136,7 @@ const expectedColors = {
 
 describe("semantic UI foundation", () => {
   it("provides the approved semantic color and foundation token contract", () => {
-    const tokens = tokenDeclarations(readStyle("tokens.css"));
+    const tokens = tokenDeclarations(readStyle("global.css"));
 
     for (const [name, value] of Object.entries(expectedColors)) {
       expect(tokens.get(name)).toBe(value);
@@ -180,11 +180,11 @@ describe("semantic UI foundation", () => {
       "--type-metadata",
     ].forEach((name) => expect(tokens.get(name)).toBeTruthy());
 
-    expect([...tokens.keys()].filter((name) => name.startsWith("--shadow-"))).toHaveLength(3);
+    expect([...tokens.keys()].filter((name) => name.startsWith("--shadow-"))).toHaveLength(4);
   });
 
   it("keeps the approved foreground and background contrast pairs accessible", () => {
-    const tokens = tokenDeclarations(readStyle("tokens.css"));
+    const tokens = tokenDeclarations(readStyle("global.css"));
     const surface = colorToken(tokens, "--color-surface");
 
     expect(contrast(surface, colorToken(tokens, "--color-brand-violet"))).toBeGreaterThanOrEqual(4.5);
@@ -196,7 +196,7 @@ describe("semantic UI foundation", () => {
   });
 
   it("keeps semantic action and success-status text pairings above 4.5 to 1", () => {
-    const tokens = tokenDeclarations(readStyle("tokens.css"));
+    const tokens = tokenDeclarations(readStyle("global.css"));
     const surface = colorToken(tokens, "--color-surface");
     const successStatus = readStyle("primitives.css").match(
       /\.ui-status--success\s*\{[^}]*background:\s*color-mix\(in srgb, var\((--[\w-]+)\) (\d+(?:\.\d+)?)%, var\((--[\w-]+)\)\)/s
@@ -215,7 +215,7 @@ describe("semantic UI foundation", () => {
   });
 
   it("keeps muted body text readable on every foundation surface where it is used", () => {
-    const tokens = tokenDeclarations(readStyle("tokens.css"));
+    const tokens = tokenDeclarations(readStyle("global.css"));
     const muted = colorToken(tokens, "--color-text-muted");
 
     for (const background of [
@@ -257,7 +257,7 @@ describe("semantic UI foundation", () => {
   });
 
   it("keeps the focus indicator distinguishable on every foundation surface", () => {
-    const tokens = tokenDeclarations(readStyle("tokens.css"));
+    const tokens = tokenDeclarations(readStyle("global.css"));
     const focus = colorToken(tokens, "--focus-ring-color");
 
     for (const background of [
@@ -299,23 +299,18 @@ describe("semantic UI foundation", () => {
     expect(foundation).toContain("@keyframes ui-route-enter");
   });
 
-  it("steps the Super Admin shell down one type scale without touching other roles", () => {
-    const tokens = tokenDeclarations(readStyle("tokens.css"));
+  it("keeps the Super Admin shell on the shared global type scale", () => {
+    const tokens = tokenDeclarations(readStyle("global.css"));
+    const roleThemes = readStyle("role-themes.css");
     const scope = 'body:has(.ui-app-shell[data-role="super_admin"])';
-    const dense = ruleBodies(readStyle("role-themes.css"), scope);
+    const dense = ruleBodies(roleThemes, scope);
     expect(dense.length).toBeGreaterThan(0);
 
     const overrides = new Map(
       [...dense[0].matchAll(/^\s*(--[\w-]+)\s*:\s*([^;]+);/gm)]
         .map(([, name, value]) => [name, value.trim()])
     );
-    const remSize = (value: string) => {
-      const match = value.match(/^([\d.]+)rem/);
-      expect(match, `${value} must start with a rem size`).not.toBeNull();
-      return Number(match![1]);
-    };
 
-    /* Every step of the scale is redefined, and every one is smaller. */
     for (const name of [
       "--type-page-title",
       "--type-section-title",
@@ -331,27 +326,7 @@ describe("semantic UI foundation", () => {
       "--text-3xl",
       "--text-4xl"
     ]) {
-      const override = overrides.get(name);
-      expect(override, `${scope} must redefine ${name}`).toBeTruthy();
-      expect(remSize(override!), name).toBeLessThan(remSize(tokens.get(name)!));
-    }
-
-    /* 11px is the floor: metadata stays readable at the smaller scale. */
-    expect(remSize(overrides.get("--text-xs")!) * 16).toBeGreaterThanOrEqual(11);
-    expect(remSize(overrides.get("--type-body")!) * 16).toBeGreaterThanOrEqual(14);
-
-    /*
-     * Scoping from <body> is what carries the scale into portalled dialogs,
-     * drawers and tooltips, which render outside .ui-app-shell.
-     */
-    expect(readStyle("role-themes.css")).not.toContain(
-      '.ui-app-shell[data-role="super_admin"] {'
-    );
-    /* No other role may be caught by the dense scale. */
-    for (const role of ["admin", "designer", "client", "finance_head"]) {
-      expect(readStyle("role-themes.css")).not.toContain(
-        `body:has(.ui-app-shell[data-role="${role}"])`
-      );
+      expect(overrides.get(name), `${scope} must use ${name}`).toBe(tokens.get(name));
     }
   });
 
@@ -367,14 +342,14 @@ describe("semantic UI foundation", () => {
     const foundationImports = [
       "@layer theme, base, components, shell, utilities;",
       '@import "tailwindcss";',
-      '@import "./tokens.css" layer(theme);',
+      '@import "./global.css" layer(theme);',
       '@import "./base.css" layer(base);',
       '@import "./motion.css" layer(components);',
       '@import "./primitives.css" layer(components);',
       '@import "./shell.css" layer(shell);',
     ].join("\n");
 
-    expect(index.startsWith(foundationImports)).toBe(true);
+    expect(index.replace(/\r\n/g, "\n").startsWith(foundationImports)).toBe(true);
     expect(index).not.toMatch(/@layer\s+base\s*\{/);
     expect(base).toMatch(/:focus-visible\s*\{[^}]*var\(--focus-ring\)/s);
   });

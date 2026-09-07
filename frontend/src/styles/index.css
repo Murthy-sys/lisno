@@ -1,6 +1,6 @@
 @layer theme, base, components, shell, utilities;
 @import "tailwindcss";
-@import "./tokens.css" layer(theme);
+@import "./global.css" layer(theme);
 @import "./base.css" layer(base);
 @import "./motion.css" layer(components);
 @import "./primitives.css" layer(components);
@@ -80,7 +80,7 @@
 .estimate-review-card__toggle svg { transition: transform 160ms ease; }
 .estimate-review-card__toggle[aria-expanded="true"] svg { transform: rotate(180deg); }
 .estimate-review-card__client-content { display: grid; min-width: 0; overflow: clip; gap: .75rem; margin-top: .85rem; padding-top: .85rem; border-top: 1px solid #dedbea; }
-.estimate-review-card__total { color: #34277d; font-family: var(--font-display, Georgia, serif); font-size: var(--text-3xl); }
+.estimate-review-card__total { color: #34277d; font-family: var(--font-main); font-size: var(--text-3xl); }
 .estimate-review-card label { display: grid; gap: .35rem; font-size: var(--text-sm); font-weight: 800; }
 .estimate-review-card select, .estimate-review-card textarea { width: 100%; padding: .65rem; border: 1px solid #d8d4e8; border-radius: var(--radius-control); background: #fff; font: inherit; }
 .estimate-review-card textarea { min-height: 5rem; resize: vertical; }
@@ -427,7 +427,7 @@
 .login-story h2 {
   max-width: 32rem;
   margin: 0;
-  font-family: Georgia, "Times New Roman", serif;
+  font-family: var(--font-main);
   font-size: clamp(3rem, 5.3vw, 5.6rem);
   font-weight: 500;
   letter-spacing: -0.045em;
@@ -469,7 +469,7 @@
 .login-card h1 {
   margin: 0;
   color: var(--color-lisno-navy);
-  font-family: Georgia, "Times New Roman", serif;
+  font-family: var(--font-main);
   font-size: clamp(2.55rem, 4vw, 3.7rem);
   font-weight: 500;
   letter-spacing: -0.035em;
@@ -778,7 +778,7 @@
 }
 
 .sidebar__role strong {
-  font-family: Georgia, "Times New Roman", serif;
+  font-family: var(--font-subheading);
   font-size: var(--text-lg);
   font-weight: 500;
 }
@@ -913,7 +913,7 @@
 .workspace-header h1 {
   margin: 0;
   color: var(--color-lisno-navy);
-  font-family: Georgia, "Times New Roman", serif;
+  font-family: var(--font-main);
   font-size: clamp(2.3rem, 4vw, 4rem);
   font-weight: 500;
   letter-spacing: -0.04em;
@@ -1026,7 +1026,7 @@
 .project-hero h1 {
   margin: 0;
   color: var(--color-lisno-navy);
-  font-family: Georgia, "Times New Roman", serif;
+  font-family: var(--font-main);
   font-size: clamp(2.7rem, 5vw, 5rem);
   font-weight: 500;
   letter-spacing: -0.05em;
@@ -1394,7 +1394,7 @@
 .kpi-panel__intro h2,
 .section-heading h2 {
   margin: 0;
-  font-family: Georgia, "Times New Roman", serif;
+  font-family: var(--font-subheading);
   font-size: clamp(1.8rem, 3vw, 2.8rem);
   font-weight: 500;
   letter-spacing: -0.035em;
@@ -1425,7 +1425,7 @@
 }
 
 .kpi-score strong {
-  font-family: Georgia, "Times New Roman", serif;
+  font-family: var(--font-main);
   font-size: 4rem;
   font-weight: 500;
   line-height: 0.9;
@@ -1634,7 +1634,7 @@
   display: block;
   margin-top: 0.7rem;
   color: var(--color-lisno-navy);
-  font-family: Georgia, "Times New Roman", serif;
+  font-family: var(--font-main);
   font-size: var(--text-4xl);
   font-weight: 500;
 }
@@ -1797,7 +1797,7 @@
 .project-card h3 {
   margin: 2rem 0 0;
   color: var(--color-lisno-navy);
-  font-family: Georgia, "Times New Roman", serif;
+  font-family: var(--font-subheading);
   font-size: var(--text-2xl);
   font-weight: 500;
 }
@@ -1851,7 +1851,7 @@
 
 .project-empty > span {
   color: #d3ccf8;
-  font-family: Georgia, "Times New Roman", serif;
+  font-family: var(--font-main);
   font-size: 6rem;
   line-height: 0.8;
 }
@@ -1859,7 +1859,7 @@
 .project-empty h3 {
   margin: 0;
   color: var(--color-lisno-navy);
-  font-family: Georgia, "Times New Roman", serif;
+  font-family: var(--font-subheading);
   font-size: var(--text-3xl);
   font-weight: 500;
 }
@@ -2114,7 +2114,7 @@
 .task-row h4 {
   margin: 0;
   color: var(--color-lisno-navy);
-  font-family: Georgia, "Times New Roman", serif;
+  font-family: var(--font-subheading-secondary);
   font-size: var(--text-xl);
   font-weight: 500;
 }
@@ -2280,7 +2280,7 @@
 .modal__header h2 {
   margin: 0;
   color: var(--color-lisno-navy);
-  font-family: Georgia, "Times New Roman", serif;
+  font-family: var(--font-subheading);
   font-size: var(--text-3xl);
   font-weight: 500;
 }
@@ -3364,13 +3364,13 @@
   padding: clamp(0.5rem, 1vw, 1rem);
   background: #f3efe5;
   color: #2d2a21;
-  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+  font-family: var(--font-interface);
 }
 
 .client-page--project h1,
 .client-page--project h2,
 .client-page--project h3 {
-  font-family: Georgia, "Times New Roman", serif;
+  font-family: var(--font-main);
 }
 
 .client-page--project .back-link {
@@ -3417,7 +3417,7 @@
 
 .client-page--project .client-project-hero__completion strong {
   color: #f4d875;
-  font-family: Georgia, "Times New Roman", serif;
+  font-family: var(--font-main);
   font-size: 2.8rem;
   line-height: 1;
 }

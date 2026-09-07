@@ -4,9 +4,9 @@
   background-image: none;
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
-  border-radius: 15px;
+  border-radius: var(--radius-card);
   border: 1px solid #e5e5e5;
-  box-shadow: rgba(0, 0, 0, 0.24) 0px 3px 8px;
+  box-shadow: var(--shadow-card);
 }
 .ui-app-shell[data-role] .estimator-dashboard .estimate-tabs button {
   display: inline-flex;
@@ -14,13 +14,13 @@
   justify-content: center;
   gap: 0.4rem;
   background: #fff;
-  border: 1px solid rgb(30 24 59 / 50%);
-  color: #1E183B;
+  border: 1px solid var(--color-border-default);
+  color: var(--color-primary);
   transition: background-color 200ms ease, border-color 200ms ease, color 200ms ease;
 }
 .ui-app-shell[data-role] .estimator-dashboard .estimate-tabs button.is-active {
-  background: #1E183B;
-  border-color: #1E183B;
+  background: var(--color-primary);
+  border-color: var(--color-primary);
   color: #fff;
   box-shadow: none;
 }
@@ -28,25 +28,25 @@
 .ui-app-shell[data-role] .estimator-dashboard .estimate-panel {
   border-width: 1px;
   border-color: #e5e5e5;
-  border-radius: 15px;
+  border-radius: var(--radius-card);
   background-color: #fff;
   background-image: none;
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
-  box-shadow: rgba(0, 0, 0, 0.24) 0px 3px 8px;
+  box-shadow: var(--shadow-card);
 }
 .ui-app-shell[data-role] .estimator-dashboard .estimate-continue { gap: 0.4rem; }
-.ui-app-shell[data-role] .estimator-dashboard .estimate-panel h2 { color: #1E183B; font-weight: 700; }
+.ui-app-shell[data-role] .estimator-dashboard .estimate-panel h2 { color: var(--color-primary); font-weight: 700; }
 .ui-app-shell[data-role] .estimator-dashboard .estimate-chip {
   color: #fff;
-  background: #1E183B;
-  border-color: #1E183B;
+  background: var(--color-primary);
+  border-color: var(--color-primary);
   border-radius: 12px;
 }
 .ui-app-shell[data-role] .estimator-dashboard .estimate-chip--active {
   background: #fff;
-  color: #1E183B;
-  border-color: #1E183B;
+  color: var(--color-primary);
+  border-color: var(--color-primary);
 }
 .ui-app-shell[data-role] .estimator-dashboard .estimate-chip:active,
 .ui-app-shell[data-role] .estimator-dashboard .estimate-room:active {
@@ -56,40 +56,40 @@
   display: inline-flex;
   align-items: center;
   gap: 0.4rem;
-  color: #1E183B;
+  color: var(--color-primary);
   background: #fff;
-  border-color: #1E183B;
+  border-color: var(--color-primary);
   border-radius: 12px;
 }
 .ui-app-shell[data-role] .estimator-dashboard .estimate-scope > span:first-child {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  color: #1E183B;
+  color: var(--color-primary);
 }
 .ui-app-shell[data-role] .estimator-dashboard .estimate-dimensions {
   border-color: #e5e5e5;
   background-color: #fff;
   background-image: none;
-  box-shadow: rgba(0, 0, 0, 0.24) 0px 3px 8px;
+  box-shadow: var(--shadow-card);
   border-radius: 22px;
 }
 .ui-app-shell[data-role] .estimator-dashboard .estimate-dimension-row,
 .ui-app-shell[data-role] .estimator-dashboard .estimate-dimension-row label,
 .ui-app-shell[data-role] .estimator-dashboard .estimate-dimension-row b,
 .ui-app-shell[data-role] .estimator-dashboard .estimate-dimension-row button {
-  color: #1E183B;
+  color: var(--color-primary);
 }
 .ui-app-shell[data-role] .estimator-dashboard .estimate-dimension-row + .estimate-dimension-row {
   border-width: 1px;
   border-color: rgba(229, 229, 229, 0.5);
 }
 .ui-app-shell[data-role] .estimator-dashboard .estimate-dimension-row input {
-  color: #1E183B;
-  border-color: #1E183B;
+  color: var(--color-primary);
+  border-color: var(--color-primary);
 }
 .ui-app-shell[data-role] .estimator-dashboard .estimate-dimension-row input::placeholder {
-  color: #1E183B;
+  color: var(--color-primary);
   opacity: 1;
 }
 .ui-app-shell[data-role] .estimator-dashboard .estimate-dimension-row input:focus-visible {
@@ -100,12 +100,12 @@
   border-color: #e5e5e5;
   background-color: #fff;
   background-image: none;
-  box-shadow: rgba(0, 0, 0, 0.24) 0px 3px 8px;
+  box-shadow: var(--shadow-card);
   border-radius: 22px;
 }
 .ui-app-shell[data-role] .estimator-dashboard .estimate-scope strong,
 .ui-app-shell[data-role] .estimator-dashboard .estimate-scope small {
-  color: #1E183B;
+  color: var(--color-primary);
 }
 .ui-app-shell[data-role] .estimator-dashboard .estimate-scope + .estimate-scope {
   border-width: 1px;
@@ -148,7 +148,7 @@
   transition: transform 150ms ease;
 }
 .ui-app-shell[data-role] .estimator-dashboard .estimate-scope__toggle input:checked ~ .estimate-scope__toggle-track {
-  background: #1E183B;
+  background: var(--color-primary);
 }
 .ui-app-shell[data-role] .estimator-dashboard .estimate-scope__toggle input:checked ~ .estimate-scope__toggle-track::before {
   transform: translateX(1.1rem);
@@ -171,9 +171,9 @@
 }
 .ui-app-shell[data-role] .estimator-dashboard .estimate-workspace__header {
   background: transparent;
-  border-radius: 15px;
+  border-radius: var(--radius-card);
   border: 1px solid #e5e5e5;
-  box-shadow: rgba(0, 0, 0, 0.24) 0px 3px 8px;
+  box-shadow: var(--shadow-card);
   padding: 12px 20px;
 }
 .ui-app-shell[data-role] .estimator-dashboard .estimate-workspace__header .eyebrow {
@@ -183,10 +183,10 @@
 .ui-app-shell[data-role] .estimator-dashboard .estimate-workspace__header p,
 .ui-app-shell[data-role] .estimator-dashboard .estimate-workspace__summary strong,
 .ui-app-shell[data-role] .estimator-dashboard .estimate-workspace__summary span {
-  color: #1E183B;
+  color: var(--color-primary);
 }
 .ui-app-shell[data-role] .estimator-dashboard .estimate-workspace__summary {
-  border: 1px solid rgb(30 24 59 / 50%);
+  border: 1px solid var(--color-border-default);
   background: transparent;
   box-shadow: none;
   backdrop-filter: none;
@@ -200,15 +200,15 @@
   background-image: none;
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
-  border-radius: 15px;
+  border-radius: var(--radius-card);
   border-width: 1px;
   border-color: #e5e5e5;
-  box-shadow: rgba(0, 0, 0, 0.24) 0px 3px 8px;
+  box-shadow: var(--shadow-card);
 }
 .ui-app-shell[data-role] .estimator-dashboard .estimator-dashboard__overview dl > div:last-child,
 .ui-app-shell[data-role] .estimator-dashboard .lead-row:hover,
 .ui-app-shell[data-role] .estimator-dashboard .lead-row:focus-visible {
-  box-shadow: rgba(0, 0, 0, 0.24) 0px 3px 8px;
+  box-shadow: var(--shadow-card);
 }
 .ui-app-shell[data-role] .estimator-dashboard .lead-controls select option { background: #fff; }
 .ui-app-shell[data-role] .estimator-dashboard .lead-controls input,
@@ -217,20 +217,20 @@
 .ui-app-shell[data-role] .estimator-dashboard .lead-controls select:hover {
   box-shadow: none;
 }
-.ui-app-shell[data-role] .estimator-dashboard .workspace-header { box-shadow: rgba(0, 0, 0, 0.24) 0px 3px 8px; }
+.ui-app-shell[data-role] .estimator-dashboard .workspace-header { box-shadow: var(--shadow-card); }
 .estimator-dashboard .workspace-header { align-items: end; padding-block-end: var(--space-6); border-bottom: 1px solid var(--color-border); }
 .ui-app-shell[data-role] .estimator-dashboard .workspace-header { background: rgb(30 24 59 / var(--tw-bg-opacity, 1)); }
 .ui-app-shell[data-role] .lead-detail.estimator-dashboard .workspace-header {
   background: transparent;
-  border-radius: 15px;
+  border-radius: var(--radius-card);
   border: 1px solid #e5e5e5;
-  box-shadow: rgba(0, 0, 0, 0.24) 0px 3px 8px;
+  box-shadow: var(--shadow-card);
   padding: 12px 20px;
 }
 .ui-app-shell[data-role] .lead-detail.estimator-dashboard .workspace-header h1,
 .ui-app-shell[data-role] .lead-detail.estimator-dashboard .workspace-header p:last-child,
 .ui-app-shell[data-role] .lead-detail.estimator-dashboard .workspace-header label {
-  color: #1E183B;
+  color: var(--color-primary);
 }
 .ui-app-shell[data-role] .estimator-dashboard .workspace-header .eyebrow { color: #D1C281; }
 .ui-app-shell[data-role] .estimator-dashboard .workspace-header p:last-child { color: #fff; }
@@ -247,34 +247,34 @@
 }
 .ui-app-shell[data-role] .lead-page.estimator-dashboard .workspace-header h1,
 .ui-app-shell[data-role] .lead-page.estimator-dashboard .workspace-header p:last-child {
-  color: #1E183B;
+  color: var(--color-primary);
 }
-.ui-app-shell[data-role] .estimator-dashboard .workspace-header select { background: #1E183B; color: #fff; font-weight: 700; }
+.ui-app-shell[data-role] .estimator-dashboard .workspace-header select { background: var(--color-primary); color: #fff; font-weight: 700; }
 .ui-app-shell[data-role] .estimator-dashboard .workspace-header select:focus-visible,
 .ui-app-shell[data-role] .estimator-dashboard .lead-detail__grid select:focus-visible,
 .ui-app-shell[data-role] .estimator-dashboard .lead-detail__grid textarea:focus-visible,
 .ui-app-shell[data-role] .estimator-dashboard .lead-estimate-boundary .button--primary:focus-visible {
   box-shadow: none;
 }
-.ui-app-shell[data-role] .estimator-dashboard .workspace-header select option { background: #1E183B; color: #fff; font-weight: 700; }
+.ui-app-shell[data-role] .estimator-dashboard .workspace-header select option { background: var(--color-primary); color: #fff; font-weight: 700; }
 .ui-app-shell[data-role] .estimator-dashboard .workspace-header select option:checked,
 .ui-app-shell[data-role] .estimator-dashboard .workspace-header select option:hover,
-.ui-app-shell[data-role] .estimator-dashboard .workspace-header select option:focus { background: #1E183B; color: #fff; }
-.ui-app-shell[data-role] .estimator-dashboard .lead-detail__grid select { color: #1E183B; font-weight: 700; border-width: 1px; border-color: rgb(23 27 45 / 50%); }
+.ui-app-shell[data-role] .estimator-dashboard .workspace-header select option:focus { background: var(--color-primary); color: #fff; }
+.ui-app-shell[data-role] .estimator-dashboard .lead-detail__grid select { color: var(--color-primary); font-weight: 700; border-width: 1px; border-color: rgb(23 27 45 / 50%); }
 .ui-app-shell[data-role] .estimator-dashboard .lead-detail__grid select:focus-visible { border-width: 1px; border-color: #e5e5e5; }
 .ui-app-shell[data-role] .estimator-dashboard .lead-detail__grid textarea { border-width: 1px; border-color: rgb(23 27 45 / 50%); }
 .ui-app-shell[data-role] .estimator-dashboard .lead-detail__grid textarea:focus-visible { border-width: 1px; border-color: #e5e5e5; }
-.estimator-dashboard .lead-detail__grid select option { color: #1E183B; font-weight: 700; }
-.ui-app-shell[data-role] .estimator-dashboard .button--primary { background: #1E183B; color: #fff; }
+.estimator-dashboard .lead-detail__grid select option { color: var(--color-primary); font-weight: 700; }
+.ui-app-shell[data-role] .estimator-dashboard .button--primary { background: var(--color-primary); color: #fff; }
 .ui-app-shell[data-role] .estimator-dashboard .lead-estimate-boundary .button--primary { margin-block-start: 5px; }
 .ui-app-shell[data-role] .estimator-dashboard .button--primary:hover:not(:disabled),
 .ui-app-shell[data-role] .estimator-dashboard .button--primary:active:not(:disabled) {
   background: #fff;
-  color: #1E183B;
+  color: var(--color-primary);
   border: 1px solid #e5e5e5;
 }
 .estimator-dashboard .lead-detail__grid > section,
-.estimator-dashboard .lead-estimate-boundary { border-width: 1px; border-color: #e5e5e5; border-radius: 15px; box-shadow: rgba(0, 0, 0, 0.24) 0px 3px 8px; background: #fff; }
+.estimator-dashboard .lead-estimate-boundary { border-width: 1px; border-color: #e5e5e5; border-radius: var(--radius-card); box-shadow: var(--shadow-card); background: #fff; }
 .estimator-dashboard .lead-estimate-boundary { border-radius: 14px; margin-block-start: 15px; }
 .estimator-dashboard .lead-detail__grid > section { padding-block: 1.65rem; }
 .ui-app-shell[data-role] .estimator-dashboard .lead-detail__grid h2,
@@ -311,42 +311,42 @@
 .ui-app-shell[data-role] .estimator-dashboard .inline-empty p { color: rgb(30 24 59 / var(--tw-text-opacity, 1)); }
 .estimator-dashboard .lead-controls input,
 .estimator-dashboard .lead-controls select { min-block-size: 44px; border-color: var(--color-border-strong); background: var(--color-canvas); }
-.ui-app-shell[data-role] .estimator-dashboard .lead-controls input { border-color: rgb(30 24 59 / 50%); }
+.ui-app-shell[data-role] .estimator-dashboard .lead-controls input { border-color: var(--color-border-default); }
 .ui-app-shell[data-role] .estimator-dashboard .lead-controls input:focus-visible {
   border-width: 1px;
   border-color: #e5e5e5;
   box-shadow: none;
 }
-.ui-app-shell[data-role] .estimator-dashboard .lead-controls select { border-width: 1px; border-radius: 15px; border-color: rgb(30 24 59 / 50%); color: #1E183B; font-weight: 700; background: #fff; }
+.ui-app-shell[data-role] .estimator-dashboard .lead-controls select { border-width: 1px; border-radius: var(--radius-card); border-color: var(--color-border-default); color: var(--color-primary); font-weight: 700; background: #fff; }
 .ui-app-shell[data-role] .estimator-dashboard .lead-controls select:focus-visible {
   border-width: 1px;
   border-color: #e5e5e5;
   box-shadow: none;
 }
-.ui-app-shell[data-role] .estimator-dashboard .lead-controls select option { color: #1E183B; font-weight: 700; }
+.ui-app-shell[data-role] .estimator-dashboard .lead-controls select option { color: var(--color-primary); font-weight: 700; }
 .ui-app-shell[data-role] .estimator-dashboard .lead-controls select option:checked,
 .ui-app-shell[data-role] .estimator-dashboard .lead-controls select option:hover,
-.ui-app-shell[data-role] .estimator-dashboard .lead-controls select option:focus { background: #1E183B; color: #fff; }
+.ui-app-shell[data-role] .estimator-dashboard .lead-controls select option:focus { background: var(--color-primary); color: #fff; }
 .estimator-dashboard__section { display: grid; gap: var(--space-4); }
 .estimator-dashboard__section-heading { display: flex; align-items: end; justify-content: space-between; gap: var(--space-4); }
 .estimator-dashboard__section-heading h2 { margin: 0; }
 .ui-app-shell[data-role] .estimator-dashboard .estimator-dashboard__section-heading h2,
 .ui-app-shell[data-role] .estimator-dashboard .estimator-dashboard__section-heading > span { color: rgb(30 24 59 / var(--tw-text-opacity, 1)); }
 .ui-app-shell[data-role] .estimator-dashboard .estimator-dashboard__section-heading { border-block-end-color: color-mix(in srgb, rgb(30 24 59) 18%, transparent); }
-.ui-app-shell[data-role] .estimator-dashboard .estimator-dashboard__section-heading > span { border-width: 1px; border-radius: 15px; border-color: rgb(30 24 59 / 50%); background: #fff; }
+.ui-app-shell[data-role] .estimator-dashboard .estimator-dashboard__section-heading > span { border-width: 1px; border-radius: var(--radius-card); border-color: var(--color-border-default); background: #fff; }
 .ui-app-shell[data-role] .estimator-dashboard .estimator-dashboard__section-heading .eyebrow { color: #D1C281; }
 /* The actions column is a fixed width, not `auto`: the header's matching cell
    is empty, so `auto` collapsed it to 0 there and every label drifted right. */
 .lead-list__header,
 .estimator-dashboard .lead-row { grid-template-columns: minmax(0, 1.2fr) minmax(0, 1.05fr) minmax(0, .8fr) minmax(0, 1fr) 12rem; }
 .lead-list__header { display: grid; gap: var(--space-3); padding-inline: 1.1rem; color: var(--color-text-muted); font: var(--type-metadata); font-weight: 800; text-transform: uppercase; letter-spacing: .08em; }
-.ui-app-shell[data-role] .estimator-dashboard .lead-list__header { color: #1E183B; }
+.ui-app-shell[data-role] .estimator-dashboard .lead-list__header { color: var(--color-primary); }
 .estimator-dashboard .lead-row { min-block-size: 5rem; }
 .estimator-dashboard .lead-row:hover { transform: none; border-color: var(--color-border-strong); background: var(--color-surface-subtle); }
 .ui-app-shell[data-role] .estimator-dashboard .lead-row:hover,
-.ui-app-shell[data-role] .estimator-dashboard .lead-row:focus-visible { border-color: #1E183B; }
-.ui-app-shell[data-role] .estimator-dashboard .lead-row::before { background: #1E183B; }
-.ui-app-shell[data-role] .estimator-dashboard .lead-row__name:hover { color: #1E183B; }
+.ui-app-shell[data-role] .estimator-dashboard .lead-row:focus-visible { border-color: var(--color-primary); }
+.ui-app-shell[data-role] .estimator-dashboard .lead-row::before { background: var(--color-primary); }
+.ui-app-shell[data-role] .estimator-dashboard .lead-row__name:hover { color: var(--color-primary); }
 .lead-stage-badge { display: inline-flex; inline-size: max-content; padding: .3rem .6rem; border-radius: var(--radius-pill); color: var(--color-info); background: color-mix(in srgb, var(--color-info) 12%, var(--color-surface)); font-weight: 800; }
 .ui-app-shell[data-role] .estimator-dashboard .lead-stage-badge,
 .ui-app-shell[data-role] .estimator-dashboard .lead-stage-badge--contacted,
@@ -354,12 +354,12 @@
 .ui-app-shell[data-role] .estimator-dashboard .lead-stage-badge--lost,
 .ui-app-shell[data-role] .estimator-dashboard .estimate-status {
   border-width: 1px;
-  border-color: #1E183B;
-  color: #1E183B;
+  border-color: var(--color-primary);
+  color: var(--color-primary);
   background: #fff;
 }
 .ui-app-shell[data-role] .estimator-dashboard .lead-row__open,
-.ui-app-shell[data-role] .estimator-dashboard .lead-row__export { border-width: 1px; border-radius: 15px; border-color: #D1C281; background: #fff; }
+.ui-app-shell[data-role] .estimator-dashboard .lead-row__export { border-width: 1px; border-radius: var(--radius-card); border-color: #D1C281; background: #fff; }
 .ui-app-shell[data-role] .estimator-dashboard .lead-row__open:hover,
 .ui-app-shell[data-role] .estimator-dashboard .lead-row__open:active,
 .ui-app-shell[data-role] .estimator-dashboard .lead-row__export:hover,
@@ -368,7 +368,7 @@
 .ui-app-shell[data-role] .estimator-dashboard .secondary-button.lead-row__open:active:not(:disabled),
 .ui-app-shell[data-role] .estimator-dashboard .secondary-button.lead-row__export:hover:not(:disabled),
 .ui-app-shell[data-role] .estimator-dashboard .secondary-button.lead-row__export:active:not(:disabled) {
-  border-color: rgb(30 24 59 / 50%);
+  border-color: var(--color-border-default);
   background: none;
 }
 .estimator-dashboard .saved-estimate-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }

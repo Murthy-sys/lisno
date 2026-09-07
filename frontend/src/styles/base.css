@@ -29,6 +29,22 @@ body {
   font: var(--type-body);
 }
 
+h1,
+h2,
+h3 {
+  color: var(--main-heading-color);
+  font-family: var(--main-heading-font);
+  font-weight: var(--main-heading-weight);
+}
+
+h4,
+h5,
+h6 {
+  color: var(--subheading-secondary-color);
+  font-family: var(--subheading-secondary-font);
+  font-weight: var(--subheading-secondary-weight);
+}
+
 button,
 input,
 select,
