@@ -5,6 +5,7 @@ import { StrictMode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { apiClient } from "../../api/client";
+import loaderLogo from "../../assets/lisno-loader.svg";
 import { beginApiRequest, requestActivity } from "../../api/requestActivity";
 import { GlobalRequestLoader, LoadingProvider } from "./GlobalRequestLoader";
 import { PageState } from "./PageState";
@@ -32,7 +33,7 @@ describe("GlobalRequestLoader", () => {
     });
     const status = screen.getByRole("status", { name: "Request status" });
     expect(status).toHaveTextContent("Loading Lisno…");
-    expect(status.querySelector("img")).toHaveAttribute("src", "/lisno-logo.svg");
+    expect(status.querySelector("img")).toHaveAttribute("src", loaderLogo);
     expect(screen.getAllByRole("status")).toHaveLength(1);
 
     await act(async () => {
