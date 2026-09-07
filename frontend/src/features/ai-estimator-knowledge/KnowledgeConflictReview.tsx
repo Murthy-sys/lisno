@@ -461,6 +461,7 @@ function displayLabel(key: string): string {
     uomId: "Unit of measure (UOM)",
     uomIds: "Units of measure (UOM)",
     pmcMarkupBps: "PMC markup",
+    pmcMarginBps: "PMC Margin",
     taxRuleId: "Tax rule",
     taxVersionId: "Tax version",
     inputAmountPaise: "Input amount",

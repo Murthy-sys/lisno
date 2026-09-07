@@ -1,3 +1,5 @@
+import { beginApiRequest } from "./requestActivity";
+
 const TOKEN_KEY = "lisno.auth.token";
 const API_BASE_URL = (import.meta.env.VITE_API_URL ?? "/api/v1").replace(/\/$/, "");
 
@@ -143,31 +145,41 @@ async function request<T>(
   path: string,
   { body, headers, ...options }: JsonRequestOptions = {}
 ): Promise<T> {
-  const hasBody = body !== undefined;
-  const requestToken = tokenStorage.get();
-  const response = await fetchApi(path, {
-    ...options,
-    headers: buildHeaders(headers, hasBody, requestToken),
-    ...(hasBody ? { body: JSON.stringify(body) } : {})
-  }, requestToken);
-  const envelope = (await response.json()) as ApiResponse<T>;
-  return envelope.data;
+  const finish = beginApiRequest();
+  try {
+    const hasBody = body !== undefined;
+    const requestToken = tokenStorage.get();
+    const response = await fetchApi(path, {
+      ...options,
+      headers: buildHeaders(headers, hasBody, requestToken),
+      ...(hasBody ? { body: JSON.stringify(body) } : {})
+    }, requestToken);
+    const envelope = (await response.json()) as ApiResponse<T>;
+    return envelope.data;
+  } finally {
+    finish();
+  }
 }
 
 async function publicRequest<T>(
   path: string,
   { body, headers, ...options }: JsonRequestOptions = {}
 ): Promise<T> {
-  const hasBody = body !== undefined;
-  const publicHeaders = new Headers(headers);
-  publicHeaders.delete("Authorization");
-  const response = await fetchApi(path, {
-    ...options,
-    headers: buildHeaders(publicHeaders, hasBody, null),
-    ...(hasBody ? { body: JSON.stringify(body) } : {})
-  }, null);
-  const envelope = (await response.json()) as ApiResponse<T>;
-  return envelope.data;
+  const finish = beginApiRequest();
+  try {
+    const hasBody = body !== undefined;
+    const publicHeaders = new Headers(headers);
+    publicHeaders.delete("Authorization");
+    const response = await fetchApi(path, {
+      ...options,
+      headers: buildHeaders(publicHeaders, hasBody, null),
+      ...(hasBody ? { body: JSON.stringify(body) } : {})
+    }, null);
+    const envelope = (await response.json()) as ApiResponse<T>;
+    return envelope.data;
+  } finally {
+    finish();
+  }
 }
 
 function filenameFromDisposition(disposition: string | null): string | undefined {
@@ -199,14 +211,19 @@ export const apiClient = {
     return request<T>(path, { method: "DELETE", body });
   },
   async postMultipart<T>(path: string, body: FormData): Promise<T> {
-    const requestToken = tokenStorage.get();
-    const response = await fetchApi(path, {
-      method: "POST",
-      headers: buildHeaders(undefined, false, requestToken),
-      body
-    }, requestToken);
-    const envelope = (await response.json()) as ApiResponse<T>;
-    return envelope.data;
+    const finish = beginApiRequest();
+    try {
+      const requestToken = tokenStorage.get();
+      const response = await fetchApi(path, {
+        method: "POST",
+        headers: buildHeaders(undefined, false, requestToken),
+        body
+      }, requestToken);
+      const envelope = (await response.json()) as ApiResponse<T>;
+      return envelope.data;
+    } finally {
+      finish();
+    }
   },
   postMultipartWithProgress<T>(
     path: string,
@@ -215,7 +232,7 @@ export const apiClient = {
   ): Promise<T> {
     const requestToken = tokenStorage.get();
     const url = resolveApiUrl(API_BASE_URL, path);
-
+    const finish = beginApiRequest();
     return new Promise<T>((resolve, reject) => {
       const xhr = new XMLHttpRequest();
       xhr.open("POST", url);
@@ -254,23 +271,28 @@ export const apiClient = {
         reject(error);
       };
 
-      xhr.onerror = xhr.onabort = () => {
+      xhr.onerror = xhr.onabort = xhr.ontimeout = () => {
         reject(new ApiError(0, "REQUEST_FAILED", "The request could not be completed."));
       };
       xhr.send(body);
-    });
+    }).finally(finish);
   },
   async getBlob(
     path: string
   ): Promise<{ blob: Blob; filename: string | undefined }> {
-    const requestToken = tokenStorage.get();
-    const response = await fetchApi(path, {
-      method: "GET",
-      headers: buildHeaders(undefined, false, requestToken)
-    }, requestToken);
-    return {
-      blob: await response.blob(),
-      filename: filenameFromDisposition(response.headers.get("Content-Disposition"))
-    };
+    const finish = beginApiRequest();
+    try {
+      const requestToken = tokenStorage.get();
+      const response = await fetchApi(path, {
+        method: "GET",
+        headers: buildHeaders(undefined, false, requestToken)
+      }, requestToken);
+      return {
+        blob: await response.blob(),
+        filename: filenameFromDisposition(response.headers.get("Content-Disposition"))
+      };
+    } finally {
+      finish();
+    }
   }
 };

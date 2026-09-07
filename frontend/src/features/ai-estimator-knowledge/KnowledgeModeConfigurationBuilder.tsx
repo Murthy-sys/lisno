@@ -27,8 +27,9 @@ import {
 import { KnowledgeRepeater } from "./KnowledgeRepeater";
 import { KnowledgePmcScopeChecklist } from "./KnowledgePmcScopeChecklist";
 import { KnowledgeModeDescriptionEditor } from "./KnowledgeModeDescriptionEditor";
-import { generateModeDescription, modeDescriptionIssues } from "./knowledgeModeDescription";
+import { generateModeDescription, modeDescriptionIssues, syncModeDescription } from "./knowledgeModeDescription";
 import { modeCalculationIssues } from "./knowledgeModeCalculation";
+import { pmcMarginIssues } from "./knowledgePmcMargin";
 import { defaultPmcScopeItems, PMC_SCOPE_LISTS } from "./knowledgePmcScope";
 import type {
   KnowledgeJsonObject,
@@ -83,17 +84,18 @@ export function KnowledgeModeConfigurationBuilder({
     () => partitionKnowledgeModeConfigurations(parsed.configurations),
     [parsed.configurations]
   );
+  const generatedDescription = generateModeDescription(mainLineName, partitioned.primary.pmc);
+  const description = typeof payload.modeDescription === "string"
+    ? syncModeDescription(payload.modeDescription, partitioned.primary.pmc) : generatedDescription;
   const issues = useMemo(
-    () => [...parsed.issues, ...modeDescriptionIssues(payload.modeDescription), ...modeCalculationIssues(payload.modeCalculation), ...serverIssues],
-    [parsed.issues, payload.modeDescription, payload.modeCalculation, serverIssues]
+    () => [...parsed.issues, ...modeDescriptionIssues(payload.modeDescription == null || typeof payload.modeDescription === "string" ? description : payload.modeDescription), ...modeCalculationIssues(payload.modeCalculation), ...pmcMarginIssues(payload.pmcMarginBps), ...serverIssues],
+    [parsed.issues, description, payload.modeDescription, payload.modeCalculation, payload.pmcMarginBps, serverIssues]
   );
   const [paragraphPending, setParagraphPending] = useState(false);
   const handlePendingDescriptionChange = useCallback((pending: boolean) => {
     setParagraphPending(pending);
     onPendingDescriptionChange(pending);
   }, [onPendingDescriptionChange]);
-  const generatedDescription = generateModeDescription(mainLineName, partitioned.primary.pmc);
-  const description = typeof payload.modeDescription === "string" ? payload.modeDescription : generatedDescription;
   const [visibleModes, setVisibleModes] = useState<Record<KnowledgeModeKind, boolean>>({
     pmc: true,
     execution: false
@@ -123,6 +125,7 @@ export function KnowledgeModeConfigurationBuilder({
     if ((paragraphPending || !calculationValid || issues[0]?.path === "modeDescription" || issues[0]?.path.startsWith("modeCalculation")) && !visibleModes.pmc && !visibleModes.execution) showMode("pmc");
     const firstIssue = paragraphPending ? { path: "modeDescription", message: "Save or cancel the paragraph." }
       : !calculationValid ? { path: "modeCalculation", message: "Review the calculation inputs." } : issues[0]!;
+    if (firstIssue.path === "pmcMarginBps") showMode("pmc");
     selectConfigurationForIssue(
       firstIssue,
       parsed.configurations,
@@ -136,7 +139,11 @@ export function KnowledgeModeConfigurationBuilder({
 
   function updateConfigurations(next: readonly KnowledgeModeConfiguration[]) {
     onDirty();
-    onChange(withKnowledgeModeConfigurations(payload, next));
+    const nextPayload = withKnowledgeModeConfigurations(payload, next);
+    onChange(typeof payload.modeDescription === "string" ? {
+      ...nextPayload,
+      modeDescription: syncModeDescription(payload.modeDescription, partitionKnowledgeModeConfigurations(next).primary.pmc, partitioned.primary.pmc)
+    } : nextPayload);
   }
 
   function updateConfiguration(nextConfiguration: KnowledgeModeConfiguration) {
@@ -250,6 +257,7 @@ export function KnowledgeModeConfigurationBuilder({
                 <button
                   type="button"
                   onClick={() => {
+                    if (issue.path === "pmcMarginBps") showMode("pmc");
                     if ((issue.path === "modeDescription" || issue.path.startsWith("modeCalculation")) && !visibleModes.pmc && !visibleModes.execution) showMode("pmc");
                     selectConfigurationForIssue(
                       issue,
@@ -288,11 +296,16 @@ export function KnowledgeModeConfigurationBuilder({
             </label>
           ))}
         </div>
-        {visibleModes.pmc ? (
-          <p id="knowledge-mode-pmc-context" className="knowledge-mode-configuration__mode-context">
+        <div className="knowledge-mode-configuration__pmc-context" hidden={!visibleModes.pmc}
+          ref={(node) => {
+            if (node) fieldRefs.current.set("pmcMarginBps", node);
+            else fieldRefs.current.delete("pmcMarginBps");
+          }}>
+          {visibleModes.pmc ? <p id="knowledge-mode-pmc-context" className="knowledge-mode-configuration__mode-context">
             PMC for {mainLineName}
-          </p>
-        ) : null}
+          </p> : null}
+          <p className="knowledge-mode-configuration__mode-context">PMC Margin (10%–20%)</p>
+        </div>
         {visibleModes.execution ? (
           <p id="knowledge-mode-execution-context" className="knowledge-mode-configuration__mode-context">
             Execution ({selectedSourceLabel}) for {mainLineName}
@@ -309,6 +322,7 @@ export function KnowledgeModeConfigurationBuilder({
         <KnowledgeModeDescriptionEditor
           key={descriptionResetKey}
           description={description}
+          pmc={partitioned.primary.pmc}
           readOnly={readOnly}
           validationAttempt={validationAttempt}
           error={issueFor("modeDescription")}

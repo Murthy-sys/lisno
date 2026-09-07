@@ -283,7 +283,7 @@ const ALLOWED_SECTION_KEYS: Record<KnowledgeSectionKey, ReadonlySet<string>> = {
   recommendations: new Set(["recommendations", "exclusions"]),
   quality: new Set(["parameters"]),
   execution: new Set(["steps", "productivity"]),
-  advanced: new Set(["dependencies", "modeOverrides", "revisionLineage", "modeConfigurations", "modeDescription", "modeCalculation"])
+  advanced: new Set(["dependencies", "modeOverrides", "revisionLineage", "modeConfigurations", "modeDescription", "modeCalculation", "pmcMarginBps"])
 };
 
 function inspectBoundedValue(
@@ -361,7 +361,8 @@ export function validateKnowledgeSectionPayload(
     if (typeof value === "string" && value.length > AI_ESTIMATOR_KNOWLEDGE_MAX_SHORT_TEXT && !["description", "technicalDescription", "internalVendorNotes", "modeDescription"].includes(key)) {
       issues.push({ path: `payload.${key}`, code: "TEXT_TOO_LONG", message: `${key} exceeds the supported short-text length.` });
     }
-    if (key.endsWith("Bps") && (
+    const unconfiguredPmcMargin = sectionKey === "advanced" && key === "pmcMarginBps" && value === null;
+    if (key.endsWith("Bps") && !unconfiguredPmcMargin && (
       !Number.isSafeInteger(value) ||
       (value as number) < 0 ||
       (value as number) > AI_ESTIMATOR_KNOWLEDGE_BASIS_POINTS
@@ -1301,6 +1302,9 @@ function validateAdvancedPayload(
   record: Record<string, unknown>
 ): KnowledgeValidationIssue[] {
   const issues: KnowledgeValidationIssue[] = [];
+  if (record.pmcMarginBps !== undefined && record.pmcMarginBps !== null) {
+    validateInteger(record.pmcMarginBps, "payload.pmcMarginBps", issues, 1_000, 2_000);
+  }
   if (record.modeCalculation !== undefined && record.modeCalculation !== null) {
     const path = "payload.modeCalculation";
     const row = record.modeCalculation;

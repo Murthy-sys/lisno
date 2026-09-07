@@ -10,6 +10,20 @@ import {
 } from "../src/domain/ai-estimator-knowledge-validation.js";
 
 describe("AI estimator knowledge validation", () => {
+  it("accepts optional PMC margin from 10 to 20 percent and rejects out-of-range or imprecise values", () => {
+    for (const pmcMarginBps of [null, 1_000, 1_001, 1_250, 2_000]) {
+      expect(validateKnowledgeSectionPayload("advanced", { pmcMarginBps })).toEqual([]);
+    }
+    for (const pmcMarginBps of [999, 2_001, 0, -1, 1_250.5, "15", {}, true, Number.MAX_SAFE_INTEGER]) {
+      expect(validateKnowledgeSectionPayload("advanced", { pmcMarginBps }))
+        .toContainEqual(expect.objectContaining({ path: "payload.pmcMarginBps" }));
+    }
+    expect(validateKnowledgeSectionPayload("pricing", { pmcMarginBps: 1_500 }))
+      .toContainEqual(expect.objectContaining({ path: "payload.pmcMarginBps", code: "UNKNOWN_FIELD" }));
+    expect(validateKnowledgeSectionPayload("quantity-margin", { pmcMarkupBps: null }))
+      .toContainEqual(expect.objectContaining({ path: "payload.pmcMarkupBps", code: "INVALID_BPS" }));
+  });
+
   it("accepts optional shared Mode calculation inputs and rejects authored totals or invalid settings", () => {
     const modeCalculation = { baseRatePaise: 150_000, lowQuantityLimit: "15", minimumMarkupBps: 2_500, startingMarkupBps: 3_500 };
     for (const value of [null, modeCalculation]) {

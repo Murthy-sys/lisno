@@ -1,7 +1,9 @@
 import { useEffect, useId, useRef, useState } from "react";
+import { Trash2 } from "lucide-react";
 
 import { Button } from "../../components/ui/Button";
 import { Checkbox, Field, Input } from "../../components/ui/Field";
+import { IconButton } from "../../components/ui/IconButton";
 import {
   MAX_PMC_SCOPE_ITEMS,
   createPmcScopeItem,
@@ -24,6 +26,8 @@ export function KnowledgePmcScopeChecklist({ list, items, readOnly, onChange }: 
   const [error, setError] = useState<string>();
   const inputRef = useRef<HTMLInputElement>(null);
   const addButtonRef = useRef<HTMLButtonElement>(null);
+  const deleteButtonRefs = useRef(new Map<string, HTMLButtonElement>());
+  const deletionFocus = useRef<{ itemId?: string } | null>(null);
   const restoreFocus = useRef(false);
   const singular = list === "inclusions" ? "Inclusion" : "Exclusion";
   const title = list === "inclusions" ? "Inclusions" : "Exclusions";
@@ -37,6 +41,23 @@ export function KnowledgePmcScopeChecklist({ list, items, readOnly, onChange }: 
       restoreFocus.current = false;
     }
   }, [adding]);
+
+  useEffect(() => {
+    const target = deletionFocus.current;
+    if (!target) return;
+    deletionFocus.current = null;
+    const button = target.itemId ? deleteButtonRefs.current.get(target.itemId) : null;
+    (button ?? inputRef.current ?? addButtonRef.current)?.focus();
+  }, [items]);
+
+  function deleteItem(itemId: string) {
+    if (readOnly) return;
+    const index = items.findIndex((item) => item.id === itemId);
+    if (index < 0) return;
+    const next = items.filter((item) => item.id !== itemId);
+    deletionFocus.current = { itemId: next[Math.min(index, next.length - 1)]?.id };
+    onChange(next);
+  }
 
   function closeEditor() {
     setAdding(false);
@@ -65,17 +86,31 @@ export function KnowledgePmcScopeChecklist({ list, items, readOnly, onChange }: 
       <legend>{title}</legend>
       <div className="knowledge-pmc-scope__items">
         {items.map((item) => (
-          <label key={item.id}>
-            <Checkbox
-              checked={item.selected}
-              disabled={readOnly}
-              onChange={(event) => onChange(items.map((entry) => entry.id === item.id
-                ? { ...entry, selected: event.target.checked }
-                : entry))}
-            />
-            <span>{item.name}</span>
-          </label>
+          <div className="knowledge-pmc-scope__item" key={item.id}>
+            <label>
+              <Checkbox
+                checked={item.selected}
+                disabled={readOnly}
+                onChange={(event) => onChange(items.map((entry) => entry.id === item.id
+                  ? { ...entry, selected: event.target.checked }
+                  : entry))}
+              />
+              <span>{item.name}</span>
+            </label>
+            {!readOnly ? <IconButton
+              ref={(node) => {
+                if (node) deleteButtonRefs.current.set(item.id, node);
+                else deleteButtonRefs.current.delete(item.id);
+              }}
+              className="knowledge-pmc-scope__delete"
+              label={`Delete ${singular.toLowerCase()} ${item.name}`}
+              title={`Delete ${singular.toLowerCase()} ${item.name}`}
+              icon={<Trash2 aria-hidden="true" />} variant="quiet"
+              onClick={() => deleteItem(item.id)}
+            /> : null}
+          </div>
         ))}
+        {items.length === 0 ? <p className="knowledge-pmc-scope__empty">No {list} added.</p> : null}
       </div>
       {!readOnly ? (
         <div className="knowledge-pmc-scope__add">

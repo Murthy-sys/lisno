@@ -68,7 +68,7 @@ const PENDING_DESCRIPTION_MESSAGE = "Save or cancel the paragraph before saving 
 
 interface ModeDraft {
   readonly payload: KnowledgeJsonObject;
-  readonly editedAdvancedFields: readonly ("modeConfigurations" | "modeDescription" | "modeCalculation")[];
+  readonly editedAdvancedFields: readonly ("modeConfigurations" | "modeDescription" | "modeCalculation" | "pmcMarginBps")[];
   readonly specificationReferenceIds: readonly string[];
   readonly applicability: KnowledgeSectionApplicability;
   readonly envelopeVersion: number | null;
@@ -244,7 +244,7 @@ export const KnowledgeModePanel = forwardRef<
           ...current[sectionKey],
           payload,
           editedAdvancedFields: sectionKey === "advanced"
-            ? [...new Set([...current.advanced.editedAdvancedFields, ...(["modeConfigurations", "modeDescription", "modeCalculation"] as const).filter(
+            ? [...new Set([...current.advanced.editedAdvancedFields, ...(["modeConfigurations", "modeDescription", "modeCalculation", "pmcMarginBps"] as const).filter(
                 (field) => JSON.stringify(current.advanced.payload[field]) !== JSON.stringify(payload[field])
               )])]
             : current[sectionKey].editedAdvancedFields
@@ -433,7 +433,7 @@ export const KnowledgeModePanel = forwardRef<
           } else {
             const message = failure instanceof Error ? failure.message : "This block could not be saved.";
             const serverIssues = failure instanceof ApiError
-              ? sectionIssuesFromApiError(failure, sectionKey === "advanced" ? ["modeConfigurations", "modeDescription", "modeCalculation"] : ["specifications"])
+              ? sectionIssuesFromApiError(failure, sectionKey === "advanced" ? ["modeConfigurations", "modeDescription", "modeCalculation", "pmcMarginBps"] : ["specifications"])
               : [];
             setDrafts((current) => ({
               ...current,
@@ -729,7 +729,7 @@ function rebaseDraftAfterConflict(
 
 function sectionIssuesFromApiError(
   failure: ApiError,
-  allowedRootPaths: readonly ("modeConfigurations" | "modeDescription" | "modeCalculation" | "specifications")[]
+  allowedRootPaths: readonly ("modeConfigurations" | "modeDescription" | "modeCalculation" | "pmcMarginBps" | "specifications")[]
 ): readonly KnowledgeModeConfigurationIssue[] {
   if (allowedRootPaths.length === 0) return [];
   return Object.entries(failure.fields ?? {}).flatMap(([path, message]) => {

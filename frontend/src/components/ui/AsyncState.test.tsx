@@ -29,10 +29,12 @@ describe.each(stateComponents)("$name", ({ Component, hook }) => {
     const root = container.querySelector(`[${hook}="loading"]`);
     expect(root).toHaveAttribute("aria-busy", "true");
     expect(root?.querySelector('[aria-hidden="true"]')).toBeInTheDocument();
+    expect(root?.querySelector(".lisno-loading-mark__logo")).toHaveAttribute("src", "/lisno-logo.svg");
     expect(
       screen.getByRole("status", { name: "Project loading status" })
     ).toHaveTextContent("Loading project details…");
     expect(screen.getAllByRole("status")).toHaveLength(1);
+    expect(screen.getByText("Loading project details…")).toBeVisible();
     expect(screen.queryByRole("main")).not.toBeInTheDocument();
   });
 

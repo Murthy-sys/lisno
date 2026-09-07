@@ -72,11 +72,13 @@ export function KnowledgeModeCalculationEditor({ value, uom, readOnly, validatio
   return <div ref={rootRef}>
     <KnowledgeModeCalculationTable value={draft} uomLabel={uom.label} uomMessage={uom.message}
       readOnly={readOnly} errors={errors} onChange={change}
+      actions={<div className="knowledge-mode-calculation__actions">
+        {uom.onRetry ? <Button variant="secondary" onClick={uom.onRetry}>Retry UOM</Button> : null}
+        <Button variant="secondary" onClick={() => setSimulator({ scopeKey: uom.scopeKey, initialDraft: { ...draft } })}>
+          Test calculations
+        </Button>
+      </div>}
     />
-    <div className="knowledge-mode-calculation__actions">
-      {uom.onRetry ? <Button variant="quiet" onClick={uom.onRetry}>Retry UOM</Button> : null}
-      <Button variant="secondary" onClick={() => setSimulator({ scopeKey: uom.scopeKey, initialDraft: { ...draft } })}>Test calculations</Button>
-    </div>
     {simulator?.scopeKey === uom.scopeKey ? <KnowledgeModeCalculationSimulator
       key={`${uom.scopeKey}:${uom.id ?? "missing"}:${uom.decimalScale ?? "missing"}`}
       initialDraft={simulator.initialDraft} uom={uom} onClose={() => setSimulator(null)}

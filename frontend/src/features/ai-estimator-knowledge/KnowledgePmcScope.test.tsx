@@ -120,7 +120,69 @@ describe("PMC Inclusions and Exclusions", () => {
     }
     expect(screen.queryByRole("button", { name: "Add Inclusion" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Add Exclusion" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Delete (inclusion|exclusion) / })).not.toBeInTheDocument();
     expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it.each(["inclusion", "exclusion"] as const)("deletes default %s entries independently and moves keyboard focus to another row", async (kind) => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(<Harness onChange={onChange} />);
+    const chosen = screen.getByRole("group", { name: kind === "inclusion" ? "Inclusions" : "Exclusions" });
+    const other = screen.getByRole("group", { name: kind === "inclusion" ? "Exclusions" : "Inclusions" });
+    const remove = within(chosen).getByRole("button", { name: `Delete ${kind} Transport` });
+    remove.focus();
+    await user.keyboard("{Enter}");
+    expect(within(chosen).queryByRole("checkbox", { name: "Transport" })).not.toBeInTheDocument();
+    expect(within(other).getByRole("checkbox", { name: "Transport" })).not.toBeChecked();
+    expect(within(chosen).getByRole("button", { name: `Delete ${kind} Shifting` })).toHaveFocus();
+    await user.click(within(chosen).getByRole("button", { name: `Delete ${kind} Damage during` }));
+    expect(within(chosen).getByRole("button", { name: `Delete ${kind} Mathadi` })).toHaveFocus();
+    expect(onChange).toHaveBeenCalledTimes(2);
+    expect(within(chosen).getAllByRole("checkbox")).toHaveLength(4);
+    expect(within(other).getAllByRole("checkbox")).toHaveLength(6);
+  });
+
+  it("keeps a deleted last item absent on reload and preserves the other list and stable IDs", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    const view = render(<Harness initial={saved} onChange={onChange} />);
+    const inclusions = screen.getByRole("group", { name: "Inclusions" });
+    await user.click(within(inclusions).getByRole("button", { name: "Delete inclusion Transport" }));
+    expect(within(inclusions).getByText("No inclusions added.")).toBeVisible();
+    expect(within(inclusions).getByRole("button", { name: "Add Inclusion" })).toHaveFocus();
+    const next = onChange.mock.calls.at(-1)![0] as KnowledgeJsonObject;
+    expect(next.modeConfigurations).toEqual([{ ...(saved.modeConfigurations as KnowledgeJsonObject[])[0], inclusions: [] }]);
+    view.unmount();
+    render(<Harness initial={next} readOnly />);
+    expect(within(screen.getByRole("group", { name: "Inclusions" })).queryByRole("checkbox")).not.toBeInTheDocument();
+    expect(within(screen.getByRole("group", { name: "Exclusions" })).getByRole("checkbox", { name: "Transport" })).toBeChecked();
+  });
+
+  it.each(["Save", "Cancel"] as const)("clears deleted custom entries from an open paragraph and supports %s", async (action) => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    const initial = { modeDescription: "Custom installation. Inclusions: Lift service, Night unloading. Exclusions: Lift service.",
+      modeConfigurations: [{ id: "pmc-custom", modeKind: "pmc", fields: [],
+        inclusions: [{ id: "lift-in", name: "Lift service", selected: true }, { id: "night-in", name: "Night unloading", selected: true }],
+        exclusions: [{ id: "lift-out", name: "Lift service", selected: true }]
+      }] };
+    render(<Harness initial={initial} onChange={onChange} />);
+    await user.click(screen.getByRole("button", { name: "Edit Mode paragraph" }));
+    const text = screen.getByRole("textbox", { name: "Mode paragraph" });
+    await user.type(text, " Keep this edit.");
+    await user.click(screen.getByRole("button", { name: "Delete inclusion Lift service" }));
+    expect(screen.getByRole("region", { name: "Paragraph preview" }))
+      .toHaveTextContent("Custom installation. Inclusions: Night unloading. Exclusions: Lift service. Keep this edit.");
+    await user.click(screen.getByRole("button", { name: "Delete inclusion Night unloading" }));
+    const expected = "Custom installation. Inclusions: none. Exclusions: Lift service.";
+    expect(text).toHaveValue(`${expected} Keep this edit.`);
+    expect(screen.getByRole("region", { name: "Paragraph preview" })).toHaveTextContent(`${expected} Keep this edit.`);
+    await user.click(screen.getByRole("button", { name: action }));
+    const savedDescription = action === "Save" ? `${expected} Keep this edit.` : expected;
+    expect(screen.getByText(savedDescription)).toBeVisible();
+    expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ modeDescription: savedDescription }));
+    expect((await axe.run(document.body, { rules: { "color-contrast": { enabled: false } } })).violations).toEqual([]);
   });
 
   it("preserves saved PMC components when editing the visible checklists", async () => {

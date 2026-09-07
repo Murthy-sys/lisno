@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 
 import { Button } from "./Button";
 import { InlineMessage } from "./InlineMessage";
-import { Skeleton } from "./Skeleton";
+import { BrandLoadingMark } from "./BrandLoadingMark";
 
 export interface StateAction {
   label: string;
@@ -18,12 +18,10 @@ export interface PageStateProps {
   action?: StateAction;
 }
 
-function DefaultStateSkeleton() {
+function DefaultLoadingVisual() {
   return (
-    <div className="ui-state-skeleton">
-      <Skeleton />
-      <Skeleton />
-      <Skeleton shape="block" />
+    <div className="lisno-page-loader">
+      <BrandLoadingMark />
     </div>
   );
 }
@@ -39,9 +37,9 @@ export function StateContent({
     return (
       <>
         <div className="ui-state__skeleton" aria-hidden="true">
-          {skeleton ?? <DefaultStateSkeleton />}
+          {skeleton ?? <DefaultLoadingVisual />}
         </div>
-        <p className="sr-only" role="status" aria-label={statusLabel}>
+        <p className="lisno-loading-message" role="status" aria-label={statusLabel}>
           {message}
         </p>
       </>

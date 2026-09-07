@@ -689,6 +689,24 @@ describe("AI Estimator Knowledge HTTP routes", () => {
     expect(testServices.item.updateSection).toHaveBeenCalledTimes(1);
   });
 
+  it("validates the PMC margin before persisting a Mode section", async () => {
+    const testServices = services();
+    const send = (pmcMarginBps: unknown) => request(appFor(testServices))
+      .put("/api/v1/admin/ai-estimator-knowledge/main-lines/line-1/revisions/revision-1/sections/advanced")
+      .set("Authorization", "Bearer super-admin-token")
+      .send({ expectedVersion: 3, expectedAggregateVersion: 7, payload: { pmcMarginBps } });
+    expect((await send(1_250)).status).toBe(200);
+    expect(testServices.item.updateSection).toHaveBeenLastCalledWith(superAdmin, "line-1", "revision-1", "advanced", {
+      expectedVersion: 3, expectedAggregateVersion: 7, payload: { pmcMarginBps: 1_250 }
+    });
+    for (const value of [999, 2_001, 1_000.5]) {
+      const rejected = await send(value);
+      expect(rejected.status).toBe(400);
+      expect(rejected.body.error.fields).toMatchObject({ "payload.pmcMarginBps": expect.any(String) });
+    }
+    expect(testServices.item.updateSection).toHaveBeenCalledTimes(1);
+  });
+
   it("accepts strict mode configurations and rejects malformed fields after authorization", async () => {
     const testServices = services();
     const input = {

@@ -60,6 +60,31 @@ afterAll(async () => {
 });
 
 describe("AI estimator knowledge item service", () => {
+  it("persists independent PMC margins across reloads and rejects stale or invalid saves", async () => {
+    const { service } = createService();
+    for (const [name, pmcMarginBps] of [["First PMC margin line", 1_000], ["Second PMC margin line", 2_000]] as const) {
+      const created = await service.createMainLine(ACTOR, "basket-carpentry", { name });
+      const revisionId = created.draftRevisionId!;
+      const advanced = await service.getSection(ACTOR, created.mainLineId, revisionId, "advanced");
+      const payload = { pmcMarginBps, modeDescription: "Saved scope.", modeConfigurations: [{ id: "pmc", modeKind: "pmc", fields: [] }] };
+      const saved = await service.updateSection(ACTOR, created.mainLineId, revisionId, "advanced", {
+        expectedVersion: advanced.version, expectedAggregateVersion: created.version, applicability: "configured", payload
+      });
+      expect((await service.getSection(ACTOR, created.mainLineId, revisionId, "advanced")).payload).toEqual(payload);
+      await expect(service.updateSection(ACTOR, created.mainLineId, revisionId, "advanced", {
+        expectedVersion: saved.version, expectedAggregateVersion: saved.aggregateVersion, payload: { ...payload, pmcMarginBps: 2_001 }
+      })).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+      const updatedPayload = { ...payload, pmcMarginBps: 1_375 };
+      await service.updateSection(ACTOR, created.mainLineId, revisionId, "advanced", {
+        expectedVersion: saved.version, expectedAggregateVersion: saved.aggregateVersion, payload: updatedPayload
+      });
+      await expect(service.updateSection(ACTOR, created.mainLineId, revisionId, "advanced", {
+        expectedVersion: saved.version, expectedAggregateVersion: saved.aggregateVersion, payload
+      })).rejects.toMatchObject({ code: "VERSION_CONFLICT" });
+      expect((await service.getSection(ACTOR, created.mainLineId, revisionId, "advanced")).payload).toEqual(updatedPayload);
+    }
+  });
+
   it("round-trips shared Mode calculation settings with version checks and isolated main lines", async () => {
     const { service } = createService();
     const first = await service.createMainLine(ACTOR, "basket-carpentry", { name: "First calculation line" });

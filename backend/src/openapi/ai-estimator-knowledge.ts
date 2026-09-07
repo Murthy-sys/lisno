@@ -1203,7 +1203,7 @@ function sectionPayloadKeys(sectionKey: string): readonly string[] {
     recommendations: ["recommendations"],
     quality: ["parameters"],
     execution: ["steps", "productivity"],
-    advanced: ["dependencies", "modeOverrides", "revisionLineage", "modeConfigurations", "modeDescription", "modeCalculation"]
+    advanced: ["dependencies", "modeOverrides", "revisionLineage", "modeConfigurations", "modeDescription", "modeCalculation", "pmcMarginBps"]
   };
   return keys[sectionKey] ?? [];
 }
@@ -1215,6 +1215,10 @@ function sectionPayloadProperties(sectionKey: string): Readonly<Record<string, u
   if (sectionKey === "advanced") {
     properties.modeDescription = { type: "string", minLength: 1, maxLength: 4_000, nullable: true };
     properties.modeCalculation = nullableRef("KnowledgeModeCalculationSettings");
+    properties.pmcMarginBps = {
+      type: "integer", minimum: 1_000, maximum: 2_000, nullable: true,
+      description: "Configured PMC margin in basis points: 10% to 20% inclusive. Null or absent means not configured."
+    };
     properties.modeConfigurations = {
       type: "array",
       items: ref("KnowledgeModeConfiguration")

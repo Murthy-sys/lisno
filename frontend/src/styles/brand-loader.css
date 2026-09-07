@@ -1,0 +1,98 @@
+.lisno-loading-mark {
+  display: inline-grid;
+  justify-items: center;
+  gap: 14px;
+  inline-size: 132px;
+  max-inline-size: 100%;
+}
+
+.lisno-loading-mark__logo {
+  display: block;
+  inline-size: 100%;
+  block-size: auto;
+  object-fit: contain;
+}
+
+.lisno-loading-mark__track {
+  display: block;
+  position: relative;
+  inline-size: 100%;
+  block-size: 3px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #e9e4d7;
+}
+
+.lisno-loading-mark__track > span {
+  display: block;
+  inline-size: 42%;
+  block-size: 100%;
+  border-radius: inherit;
+  background: #c59d24;
+  animation: lisno-loading-sweep 1.25s ease-in-out infinite;
+}
+
+.lisno-loading-message {
+  margin: 0;
+  color: #596174;
+  font: 400 13px/1.5 Poppins, system-ui, sans-serif;
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+
+.lisno-page-loader,
+.lisno-startup-loader {
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: 16px;
+  padding: 32px 20px;
+  min-block-size: 180px;
+  box-sizing: border-box;
+}
+
+.lisno-startup-loader {
+  position: fixed;
+  inset: 0;
+  background: #faf9f6;
+}
+
+.lisno-request-loader {
+  position: fixed;
+  inset-block-start: max(12px, env(safe-area-inset-top));
+  inset-inline-start: 50%;
+  transform: translateX(-50%);
+  z-index: calc(var(--z-modal, 30) + 20);
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  max-inline-size: calc(100vw - 32px);
+  padding: 12px 20px;
+  box-sizing: border-box;
+  border: 1px solid #e4dfd2;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 4px 20px rgb(23 33 63 / 12%);
+  pointer-events: none;
+}
+
+.lisno-request-loader .lisno-loading-mark {
+  inline-size: 88px;
+  gap: 8px;
+}
+
+.lisno-request-loader .lisno-loading-message {
+  font-size: 11px;
+}
+
+@keyframes lisno-loading-sweep {
+  0% { transform: translateX(-110%); }
+  100% { transform: translateX(350%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lisno-loading-mark__track > span {
+    animation: none;
+    inline-size: 100%;
+  }
+}

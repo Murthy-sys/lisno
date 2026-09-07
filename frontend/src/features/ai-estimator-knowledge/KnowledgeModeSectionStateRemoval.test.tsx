@@ -266,6 +266,30 @@ describe("Knowledge Mode section-state removal", () => {
     );
   });
 
+  it("preserves a previously saved PMC margin when editing Mode with the range shown as text", async () => {
+    const ref = createRef<KnowledgeModePanelHandle>();
+    let saved = section("advanced", "configured", { pmcMarginBps: 1_525 });
+    vi.mocked(knowledgeApi.getKnowledgeSection).mockImplementation(async (_line, _revision, key) =>
+      key === "advanced" ? saved : section(key as "pricing" | "overview"));
+    vi.mocked(knowledgeApi.updateKnowledgeSection).mockImplementation(async (_line, _revision, key, input) => {
+      const result = savedSection(key as "advanced", input);
+      saved = result;
+      return result;
+    });
+    renderPanel(ref);
+    expect(await screen.findByText("PMC Margin (10%–20%)")).toBeVisible();
+    expect(screen.queryByRole("textbox", { name: "PMC Margin (%)" })).not.toBeInTheDocument();
+    await userEvent.click(within(screen.getByRole("group", { name: "Inclusions" })).getByRole("checkbox", { name: "Transport" }));
+    await act(async () => { expect(await ref.current?.save()).toBe(true); });
+    expect(knowledgeApi.updateKnowledgeSection).toHaveBeenLastCalledWith("line-1", "revision-1", "advanced", expect.objectContaining({
+      expectedVersion: 11, expectedAggregateVersion: 7, payload: expect.objectContaining({ pmcMarginBps: 1_525 })
+    }));
+    await userEvent.click(screen.getByRole("checkbox", { name: "PMC" }));
+    await userEvent.click(screen.getByRole("checkbox", { name: "Execution" }));
+    await act(async () => { expect(await ref.current?.save()).toBe(true); });
+    expect(knowledgeApi.updateKnowledgeSection).toHaveBeenCalledTimes(1);
+  });
+
   it("uses the saved Overview UOM and saves shared calculation inputs without the temporary test quantity", async () => {
     const ref = createRef<KnowledgeModePanelHandle>();
     const payload = { modeDescription: "Shared saved paragraph", dependencies: [] };
@@ -393,7 +417,7 @@ describe("Knowledge Mode section-state removal", () => {
     }
     const serverConfigurations = [{ id: "server-execution", modeKind: "execution", executionSource: "in_house", fields: [] }];
     const serverCalculation = { baseRatePaise: 50_000, lowQuantityLimit: "10", minimumMarkupBps: 2_000, startingMarkupBps: 3_000 };
-    const serverPayload = { modeDescription: "Server paragraph", modeConfigurations: serverConfigurations, modeCalculation: serverCalculation, dependencies: [] };
+    const serverPayload = { modeDescription: "Server paragraph", modeConfigurations: serverConfigurations, modeCalculation: serverCalculation, pmcMarginBps: 1_000, dependencies: [] };
     vi.mocked(knowledgeApi.updateKnowledgeSection).mockRejectedValueOnce(new ApiError(409, "VERSION_CONFLICT", "Changed elsewhere."));
     vi.mocked(knowledgeApi.getKnowledgeSection).mockImplementation(async (_line, _revision, key) =>
       key === "advanced" ? section("advanced", "configured", serverPayload, 25) : section("pricing"));
@@ -404,6 +428,7 @@ describe("Knowledge Mode section-state removal", () => {
     const submitted = vi.mocked(knowledgeApi.updateKnowledgeSection).mock.calls[1]?.[3];
     expect(submitted).toMatchObject({ expectedVersion: 25, expectedAggregateVersion: 30, payload: {
       modeDescription: edited === "paragraph" ? "Local paragraph" : "Server paragraph",
+      pmcMarginBps: 1_000,
       modeCalculation: edited === "calculation"
         ? { baseRatePaise: 150_000, lowQuantityLimit: "15", minimumMarkupBps: 2_500, startingMarkupBps: 3_500 }
         : serverCalculation,
@@ -429,13 +454,80 @@ describe("Knowledge Mode section-state removal", () => {
     await act(async () => { expect(await ref.current?.save()).toBe(false); });
     const text = await screen.findByRole("textbox", { name: "Mode paragraph" });
     expect(text).toHaveValue("Rejected wording");
-    expect(text).toHaveAccessibleDescription("Please correct this paragraph.");
+    expect(text).toHaveAccessibleDescription(/Please correct this paragraph\./);
     await user.clear(text);
     await user.type(text, "Corrected wording");
     await user.click(screen.getByRole("button", { name: "Save" }));
     await act(async () => { expect(await ref.current?.save()).toBe(true); });
     expect(vi.mocked(knowledgeApi.updateKnowledgeSection).mock.calls[1]?.[3].payload)
       .toMatchObject({ modeDescription: "Corrected wording" });
+  });
+
+  it("persists the paragraph with selected lists and keeps it synchronized after another checkbox change", async () => {
+    const user = userEvent.setup();
+    const ref = createRef<KnowledgeModePanelHandle>();
+    renderPanel(ref);
+    await user.click(within(await screen.findByRole("group", { name: "Inclusions" })).getByRole("checkbox", { name: "Transport" }));
+    await user.click(within(screen.getByRole("group", { name: "Exclusions" })).getByRole("checkbox", { name: "Shifting" }));
+    await user.click(screen.getByRole("button", { name: "Edit Mode paragraph" }));
+    const text = screen.getByRole("textbox", { name: "Mode paragraph" });
+    await user.clear(text);
+    await user.type(text, "Custom installation. Inclusions: none. Exclusions: none.");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await act(async () => { expect(await ref.current?.save()).toBe(true); });
+    expect(vi.mocked(knowledgeApi.updateKnowledgeSection).mock.calls[0]?.[3].payload).toMatchObject({
+      modeDescription: "Custom installation. Inclusions: Transport. Exclusions: Shifting.",
+      modeConfigurations: [expect.objectContaining({
+        inclusions: expect.arrayContaining([expect.objectContaining({ name: "Transport", selected: true })]),
+        exclusions: expect.arrayContaining([expect.objectContaining({ name: "Shifting", selected: true })])
+      })]
+    });
+    await user.click(within(screen.getByRole("group", { name: "Inclusions" })).getByRole("checkbox", { name: "Unloading" }));
+    await act(async () => { expect(await ref.current?.save()).toBe(true); });
+    expect(vi.mocked(knowledgeApi.updateKnowledgeSection).mock.calls[1]?.[3].payload).toMatchObject({
+      modeDescription: "Custom installation. Inclusions: Transport, Unloading. Exclusions: Shifting."
+    });
+  });
+
+  it("discards or saves checklist deletions with the paragraph and preserves an empty list", async () => {
+    const user = userEvent.setup();
+    const ref = createRef<KnowledgeModePanelHandle>();
+    let stored = section("advanced", "configured", {
+      modeDescription: "Custom work. Inclusions: Lift service. Exclusions: Lift service.",
+      modeConfigurations: [{ id: "pmc-delete", modeKind: "pmc", fields: [],
+        inclusions: [{ id: "lift-in", name: "Lift service", selected: true }],
+        exclusions: [{ id: "lift-out", name: "Lift service", selected: true }]
+      }]
+    });
+    vi.mocked(knowledgeApi.getKnowledgeSection).mockImplementation(async (_line, _revision, key) =>
+      key === "advanced" ? stored : section(key as "pricing" | "overview"));
+    vi.mocked(knowledgeApi.updateKnowledgeSection).mockImplementation(async (_line, _revision, key, input) => {
+      const result = savedSection(key as "advanced", input);
+      stored = result;
+      return result;
+    });
+    const { props } = renderPanel(ref);
+    await user.click(await screen.findByRole("button", { name: "Delete inclusion Lift service" }));
+    expect(props.onDirtyChange).toHaveBeenLastCalledWith(true);
+    expect(knowledgeApi.updateKnowledgeSection).not.toHaveBeenCalled();
+    act(() => ref.current?.discard());
+    expect(screen.getByRole("button", { name: "Delete inclusion Lift service" })).toBeVisible();
+    expect(screen.getByText("Custom work. Inclusions: Lift service. Exclusions: Lift service.")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Delete inclusion Lift service" }));
+    await act(async () => { expect(await ref.current?.save()).toBe(true); });
+    expect(knowledgeApi.updateKnowledgeSection).toHaveBeenLastCalledWith("line-1", "revision-1", "advanced", expect.objectContaining({
+      expectedVersion: 11, expectedAggregateVersion: 7,
+      payload: {
+        modeDescription: "Custom work. Inclusions: none. Exclusions: Lift service.",
+        modeConfigurations: [{ id: "pmc-delete", modeKind: "pmc", fields: [], inclusions: [],
+          exclusions: [{ id: "lift-out", name: "Lift service", selected: true }]
+        }]
+      }
+    }));
+    act(() => ref.current?.discard());
+    expect(screen.getByText("No inclusions added.")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Delete inclusion Lift service" })).not.toBeInTheDocument();
+    expect(within(screen.getByRole("group", { name: "Exclusions" })).getByRole("checkbox", { name: "Lift service" })).toBeChecked();
   });
 
   it("saves independent PMC checkboxes and custom names through save-edit-save", async () => {
