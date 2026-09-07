@@ -1,5 +1,5 @@
-import { ArrowRight, LogOut } from "lucide-react";
-import { useState } from "react";
+import { ArrowRight, ChevronDown, LogOut } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import { NavLink } from "react-router-dom";
 
 import {
@@ -8,7 +8,6 @@ import {
 } from "../../api/authorization-contract";
 import type { PublicUser } from "../../api/types";
 import { BrandLogo } from "../ui/BrandLogo";
-import { IconButton } from "../ui/IconButton";
 import { navigationForAuthorization } from "./navigation";
 
 export function Sidebar({
@@ -25,12 +24,26 @@ export function Sidebar({
   navigationLabel?: string;
 }) {
   const [logoutPending, setLogoutPending] = useState(false);
+  const [accountMenuOpen, setAccountMenuOpen] = useState(false);
+  const accountRef = useRef<HTMLDivElement>(null);
+  const accountMenuId = "sidebar-account-menu";
   const initials = user.name
     .split(/\s+/)
     .map((part) => part[0])
     .join("")
     .slice(0, 2)
     .toUpperCase();
+
+  useEffect(() => {
+    if (!accountMenuOpen) return;
+    const onPointerDown = (event: MouseEvent) => {
+      if (!accountRef.current?.contains(event.target as Node)) {
+        setAccountMenuOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onPointerDown);
+    return () => document.removeEventListener("mousedown", onPointerDown);
+  }, [accountMenuOpen]);
 
   const logout = async () => {
     if (logoutPending) return;
@@ -75,21 +88,52 @@ export function Sidebar({
         })}
       </nav>
 
-      <div className="ui-sidebar__account">
-        <span className="ui-sidebar__avatar" aria-hidden="true">{initials}</span>
-        <span className="ui-sidebar__identity">
-          <strong>{user.name}</strong>
-          <span>{user.email}</span>
-        </span>
-        <IconButton
-          className="ui-sidebar__sign-out"
-          label="Sign out"
-          tooltip="Sign out"
-          icon={<LogOut aria-hidden="true" />}
-          onClick={() => void logout()}
-          variant="quiet"
-          busy={logoutPending}
-        />
+      <div className="ui-sidebar__account" ref={accountRef}>
+        <button
+          type="button"
+          className="ui-sidebar__account-trigger"
+          aria-haspopup="menu"
+          aria-expanded={accountMenuOpen}
+          aria-controls={accountMenuOpen ? accountMenuId : undefined}
+          onClick={() => setAccountMenuOpen((current) => !current)}
+          onKeyDown={(event) => {
+            if (event.key === "Escape" && accountMenuOpen) {
+              event.preventDefault();
+              setAccountMenuOpen(false);
+            }
+          }}
+        >
+          <span className="ui-sidebar__avatar" aria-hidden="true">{initials}</span>
+          <span className="ui-sidebar__account-name">{user.name}</span>
+          <ChevronDown
+            aria-hidden="true"
+            className={`ui-sidebar__account-chevron${accountMenuOpen ? " is-open" : ""}`}
+          />
+        </button>
+
+        {accountMenuOpen ? (
+          <div
+            id={accountMenuId}
+            aria-label="Account"
+            className="ui-sidebar__account-menu"
+          >
+            <div className="ui-sidebar__account-menu-header">
+              <strong>{ROLE_LABELS[user.role]}</strong>
+              <span>{user.email}</span>
+            </div>
+            <button
+              type="button"
+              className="ui-sidebar__account-menu-item"
+              onClick={() => void logout()}
+              disabled={logoutPending}
+              aria-busy={logoutPending}
+              data-busy={logoutPending || undefined}
+            >
+              <LogOut aria-hidden="true" />
+              Sign out
+            </button>
+          </div>
+        ) : null}
       </div>
     </div>
   );

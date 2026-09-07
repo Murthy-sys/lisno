@@ -688,6 +688,7 @@ describe("accessibility smoke coverage", () => {
     expect(within(navigation).getByRole("link", { name: navigationLabel })).toBeVisible();
     expect(document.querySelectorAll("main#main-content")).toHaveLength(1);
     expect(document.querySelectorAll("h1")).toHaveLength(1);
+    await userEvent.click(screen.getByRole("button", { name: "Accessible Person" }));
     expect(screen.getByRole("button", { name: "Sign out" })).toBeVisible();
     await expectNoAxeViolations();
   });

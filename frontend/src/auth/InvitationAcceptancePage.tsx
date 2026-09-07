@@ -12,9 +12,9 @@ import { Link } from "react-router-dom";
 import { ROLE_LABELS } from "../api/authorization-contract";
 import { ApiError } from "../api/client";
 import type { UserInvitationInspection } from "../api/types";
-import { BrandLogo } from "../components/ui/BrandLogo";
 import { acceptUserInvitation, inspectUserInvitation } from "./userInvitationsApi";
 import { useAuth } from "./AuthProvider";
+import "./login-page.css";
 
 const TOKEN_FRAGMENT_PATTERN = /^#token=([A-Za-z0-9_-]{43})$/;
 const UNAVAILABLE_MESSAGE =
@@ -183,8 +183,8 @@ export function InvitationAcceptancePage() {
   if (inspection.status === "checking") {
     return (
       <InvitationFrame>
-        <div className="invitation-state" role="status" aria-live="polite">
-          <span className="invitation-spinner" aria-hidden="true" />
+        <div className="login-state" role="status" aria-live="polite">
+          <span className="login-spinner" aria-hidden="true" />
           <h1>Checking your invitation</h1>
           <p>Please wait while we verify that this invitation is available.</p>
         </div>
@@ -195,10 +195,10 @@ export function InvitationAcceptancePage() {
   if (inspection.status === "unavailable") {
     return (
       <InvitationFrame>
-        <div className="invitation-state" role="alert">
+        <div className="login-state" role="alert">
           <h1>Invitation unavailable</h1>
           <p>{UNAVAILABLE_MESSAGE}</p>
-          <Link className="invitation-link" to="/login">
+          <Link to="/login" className="login-submit">
             Go to sign in
           </Link>
         </div>
@@ -209,11 +209,10 @@ export function InvitationAcceptancePage() {
   if (accepted) {
     return (
       <InvitationFrame>
-        <div className="invitation-state" role="status">
-          <span className="invitation-success-mark" aria-hidden="true">✓</span>
+        <div className="login-state" role="status">
           <h1>Invitation accepted</h1>
           <p>Your Lisno account is ready. Sign in with your new password.</p>
-          <Link className="invitation-link invitation-link--primary" to="/login">
+          <Link to="/login" className="login-submit">
             Continue to sign in
           </Link>
         </div>
@@ -224,13 +223,18 @@ export function InvitationAcceptancePage() {
   const invitation = inspection.invitation;
   return (
     <InvitationFrame>
-      <div className="invitation-card__heading">
-        <p className="eyebrow">Staff invitation</p>
-        <h1>Accept your invitation</h1>
-        <p>Review your invitation and choose a password for your Lisno account.</p>
+      <div className="login-card__eyebrow">
+        <span className="login-rule login-rule--card" aria-hidden="true" />
+        <span>STAFF INVITATION</span>
       </div>
+      <h1 className="login-card__title">
+        Accept your invitation
+      </h1>
+      <p className="login-card__subtitle">
+        Review your invitation and choose a password for your Lisno account.
+      </p>
 
-      <dl className="invitation-summary" aria-label="Invitation summary">
+      <dl className="login-summary" aria-label="Invitation summary">
         <div>
           <dt>Name</dt>
           <dd aria-label={invitation.name}>{invitation.name}</dd>
@@ -252,12 +256,11 @@ export function InvitationAcceptancePage() {
       </dl>
 
       {sessionBlocked ? (
-        <section className="invitation-session-warning" aria-live="polite">
+        <section className="login-session-warning" aria-live="polite">
           <strong>Protect your current session</strong>
           <p>{sessionMessage(auth.status, auth.user?.name)}</p>
           <button
             type="button"
-            className="invitation-secondary-action"
             onClick={() => void logout()}
             disabled={loggingOut || auth.status === "signing_out"}
           >
@@ -268,10 +271,12 @@ export function InvitationAcceptancePage() {
         </section>
       ) : null}
 
-      <form className="invitation-form" onSubmit={(event) => void submit(event)} noValidate>
-        <div className="invitation-field">
-          <label htmlFor="invitation-password">Password</label>
-          <div className="invitation-password-control">
+      <form onSubmit={(event) => void submit(event)} noValidate>
+        <div className="login-field">
+          <label htmlFor="invitation-password" className="login-field__label">
+            Password
+          </label>
+          <div className="login-password-wrap">
             <input
               ref={passwordRef}
               id="invitation-password"
@@ -280,7 +285,8 @@ export function InvitationAcceptancePage() {
               autoComplete="new-password"
               value={password}
               aria-invalid={errors.password ? true : undefined}
-              aria-describedby={errors.password ? "invitation-password-error" : undefined}
+              aria-describedby="invitation-password-error"
+              className="login-input login-input--password"
               onChange={(event) => {
                 setPassword(event.target.value);
                 if (errors.password) setErrors((current) => ({ ...current, password: undefined }));
@@ -288,24 +294,31 @@ export function InvitationAcceptancePage() {
             />
             <button
               type="button"
-              className="invitation-visibility-toggle"
               aria-label={showPassword ? "Hide password" : "Show password"}
               aria-pressed={showPassword}
               onClick={() => setShowPassword((current) => !current)}
+              className="login-password-toggle"
             >
-              {showPassword ? <EyeOff aria-hidden="true" /> : <Eye aria-hidden="true" />}
+              {showPassword ? (
+                <EyeOff size={18} aria-hidden="true" />
+              ) : (
+                <Eye size={18} aria-hidden="true" />
+              )}
             </button>
           </div>
-          {errors.password ? (
-            <p id="invitation-password-error" className="invitation-field__error">
-              {errors.password}
-            </p>
-          ) : null}
+          <p
+            id="invitation-password-error"
+            className={errors.password ? "login-field__message login-field__message--error" : "login-field__message"}
+          >
+            {errors.password ?? ""}
+          </p>
         </div>
 
-        <div className="invitation-field">
-          <label htmlFor="invitation-password-confirmation">Confirm password</label>
-          <div className="invitation-password-control">
+        <div className="login-field">
+          <label htmlFor="invitation-password-confirmation" className="login-field__label">
+            Confirm password
+          </label>
+          <div className="login-password-wrap">
             <input
               ref={confirmationRef}
               id="invitation-password-confirmation"
@@ -314,11 +327,8 @@ export function InvitationAcceptancePage() {
               autoComplete="new-password"
               value={passwordConfirmation}
               aria-invalid={errors.passwordConfirmation ? true : undefined}
-              aria-describedby={
-                errors.passwordConfirmation
-                  ? "invitation-password-confirmation-error"
-                  : undefined
-              }
+              aria-describedby="invitation-password-confirmation-error"
+              className="login-input login-input--password"
               onChange={(event) => {
                 setPasswordConfirmation(event.target.value);
                 if (errors.passwordConfirmation) {
@@ -331,47 +341,58 @@ export function InvitationAcceptancePage() {
             />
             <button
               type="button"
-              className="invitation-visibility-toggle"
               aria-label={
-                showPasswordConfirmation
-                  ? "Hide confirmation password"
-                  : "Show confirmation password"
+                showPasswordConfirmation ? "Hide confirmation password" : "Show confirmation password"
               }
               aria-pressed={showPasswordConfirmation}
               onClick={() => setShowPasswordConfirmation((current) => !current)}
+              className="login-password-toggle"
             >
               {showPasswordConfirmation ? (
-                <EyeOff aria-hidden="true" />
+                <EyeOff size={18} aria-hidden="true" />
               ) : (
-                <Eye aria-hidden="true" />
+                <Eye size={18} aria-hidden="true" />
               )}
             </button>
           </div>
-          {errors.passwordConfirmation ? (
-            <p
-              id="invitation-password-confirmation-error"
-              className="invitation-field__error"
-            >
-              {errors.passwordConfirmation}
-            </p>
-          ) : null}
+          <p
+            id="invitation-password-confirmation-error"
+            className={
+              errors.passwordConfirmation
+                ? "login-field__message login-field__message--error"
+                : "login-field__message login-field__message--hint"
+            }
+          >
+            {errors.passwordConfirmation ?? "Use 12 to 128 characters. Both password fields must match."}
+          </p>
         </div>
 
-        <p className="invitation-password-hint">
-          Use 12 to 128 characters. Both password fields must match.
-        </p>
         {acceptanceError ? (
-          <p className="invitation-submit-error" role="alert">
-            We couldn't accept this invitation. Please try again.
-          </p>
+          <div role="alert" className="login-banner login-banner--error">
+            <span className="login-banner__dot" aria-hidden="true" />
+            <div className="login-banner__content">
+              <p className="login-banner__message">
+                We couldn't accept this invitation. Please try again.
+              </p>
+            </div>
+          </div>
         ) : null}
+
         <button
           type="submit"
-          className="invitation-primary-action"
+          className="login-submit"
           disabled={sessionBlocked || accepting}
           aria-busy={accepting}
+          data-busy={accepting || undefined}
         >
-          {accepting ? "Accepting invitation…" : "Accept invitation"}
+          {accepting ? (
+            <>
+              <span className="login-spinner" aria-hidden="true" />
+              Accepting invitation…
+            </>
+          ) : (
+            "Accept invitation"
+          )}
         </button>
       </form>
     </InvitationFrame>
@@ -380,11 +401,45 @@ export function InvitationAcceptancePage() {
 
 function InvitationFrame({ children }: { children: ReactNode }) {
   return (
-    <main className="invitation-page">
-      <section className="invitation-card" aria-label="Lisno invitation acceptance">
-        <BrandLogo />
-        {children}
-      </section>
+    <main className="login-screen">
+      <img
+        className="login-bg"
+        src="/login-hero.png"
+        alt=""
+        loading="eager"
+        fetchPriority="high"
+      />
+      <div className="login-scrim login-scrim--diagonal" aria-hidden="true" />
+      <div className="login-scrim login-scrim--base" aria-hidden="true" />
+
+      <div className="login-grid">
+        <section className="login-hero" aria-label="Lisno team invitation">
+          <div className="login-hero__brand">
+            <span className="login-hero__logo" role="img" aria-label="LISNO" />
+            <span className="login-hero__wordmark">LISNO</span>
+          </div>
+
+          <div className="login-hero__eyebrow">
+            <span className="login-rule login-rule--hero" aria-hidden="true" />
+            <span>STAFF INVITATION</span>
+          </div>
+
+          <h2 className="login-hero__title">Join your team on Lisno.</h2>
+
+          <p className="login-hero__body">
+            Set a password to activate your account and start collaborating on projects with
+            your team.
+          </p>
+
+          <div className="login-hero__footer">
+            <p>Clear ownership. Timely reviews. Beautiful outcomes.</p>
+          </div>
+        </section>
+
+        <div className="login-card-wrap">
+          <div className="login-card">{children}</div>
+        </div>
+      </div>
     </main>
   );
 }
@@ -394,7 +449,7 @@ function sessionMessage(status: ReturnType<typeof useAuth>["status"], name?: str
     return `You are signed in as ${name ?? "another user"}. Log out before accepting this invitation.`;
   }
   if (status === "restoring") {
-    return "We’re checking your current session. Acceptance stays blocked until you explicitly log out.";
+    return "We're checking your current session. Acceptance stays blocked until you explicitly log out.";
   }
   if (status === "error") {
     return "We couldn't safely verify your current session. Log out before accepting this invitation.";

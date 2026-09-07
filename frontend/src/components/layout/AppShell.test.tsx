@@ -131,6 +131,7 @@ describe("AppShell", () => {
         "/lisno-logo.svg"
       );
       expect(screen.getAllByText(name).length).toBeGreaterThan(0);
+      await userEvent.click(screen.getByRole("button", { name }));
       expect(screen.getAllByText(email).length).toBeGreaterThan(0);
       expect(screen.getByRole("button", { name: "Sign out" })).toBeVisible();
     }
@@ -200,12 +201,13 @@ describe("AppShell", () => {
     await userEvent.click(screen.getByRole("button", { name: "Open navigation" }));
 
     const drawer = screen.getByRole("dialog", { name: "Navigation" });
+    await userEvent.click(within(drawer).getByRole("button", { name: "Ananya Rao" }));
     await userEvent.click(within(drawer).getByRole("button", { name: "Sign out" }));
 
     await waitFor(() =>
       expect(screen.queryByRole("dialog", { name: "Navigation" })).not.toBeInTheDocument()
     );
-    expect(await screen.findByRole("heading", { name: "Welcome back" })).toBeVisible();
+    expect(await screen.findByRole("heading", { name: "Sign in" })).toBeVisible();
   });
 
   it("uses the same permission-filtered Admin links on desktop and mobile", async () => {
@@ -263,6 +265,7 @@ describe("Sidebar", () => {
       </MemoryRouter>
     );
 
+    await user.click(screen.getByRole("button", { name: "Ananya Rao" }));
     const button = screen.getByRole("button", { name: "Sign out" });
     await user.click(button);
 
@@ -280,33 +283,22 @@ describe("Sidebar", () => {
 });
 
 describe("shell CSS contract", () => {
-  it("keeps the labelled sign-out legible on midnight while interactive and busy", () => {
-    const primitives = readRuntimeStyle("primitives.css");
+  it("keeps the account trigger legible on midnight and the sign-out item disabled-while-busy", () => {
     const shell = readRuntimeStyle("shell.css");
 
     expect(
-      declarations(shell, ".ui-sidebar__sign-out.ui-button--quiet").get("color")
-    ).toBe("var(--color-surface)");
+      declarations(shell, ".ui-sidebar__account-name").get("color")
+    ).toBe("var(--color-bg)");
     expect(
-      declarations(
-        shell,
-        ".ui-sidebar__sign-out.ui-button--quiet:not(:disabled):hover"
-      ).get("background")
+      declarations(shell, ".ui-sidebar__account-trigger:hover").get(
+        "background"
+      )
     ).toBe("var(--color-brand-midnight-raised)");
     expect(
-      declarations(
-        shell,
-        ".ui-sidebar__sign-out.ui-button--quiet[data-busy]"
-      ).get("opacity")
-    ).toBe("1");
-    expect(
-      declarations(shell, ".ui-sidebar__sign-out.ui-icon-button--quiet").get(
-        "color"
+      declarations(shell, ".ui-sidebar__account-menu-item:disabled").get(
+        "opacity"
       )
-    ).toBe("var(--color-surface)");
-    expect(declarations(primitives, ".ui-button:disabled").get("opacity")).toBe(
-      "0.56"
-    );
+    ).toBe("0.56");
   });
 
   it("preserves the layered, responsive, role-aware shell cascade", () => {

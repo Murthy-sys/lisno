@@ -157,68 +157,149 @@
 }
 
 .ui-sidebar__account {
-  align-items: center;
   border-block-start: 1px solid color-mix(in srgb, var(--color-surface) 12%, transparent);
-  display: grid;
   flex: 0 0 auto;
-  gap: var(--space-2);
+  padding-block-start: var(--space-4);
+  position: relative;
+}
+
+.ui-sidebar__account-trigger {
+  align-items: center;
+  background: transparent;
+  border: 1px solid color-mix(in srgb, var(--color-surface) 12%, transparent);
+  border-radius: var(--radius-control);
+  cursor: pointer;
+  display: grid;
+  gap: var(--space-3);
   grid-template-columns: auto minmax(0, 1fr) auto;
-  padding: var(--space-4) var(--space-1) 0;
+  inline-size: 100%;
+  padding: var(--space-2) var(--space-1);
+  text-align: start;
+  transition:
+    background var(--duration-fast) var(--ease-standard),
+    color var(--duration-fast) var(--ease-standard);
+}
+
+.ui-sidebar__account-trigger:hover {
+  background: var(--color-brand-midnight-raised);
+}
+
+.ui-sidebar__account-trigger:focus-visible {
+  box-shadow: var(--focus-ring);
+  outline: none;
+}
+
+.ui-sidebar__account-trigger[aria-expanded="true"] {
+  background: color-mix(in srgb, var(--color-brand-midnight-raised), transparent);
+}
+
+.ui-sidebar__account-trigger[aria-expanded="true"] .ui-sidebar__account-name,
+.ui-sidebar__account-trigger[aria-expanded="true"] .ui-sidebar__account-chevron {
+  color: var(--color-bg);
 }
 
 .ui-sidebar__avatar {
-  background: var(--color-brand-violet);
+  background: var(--color-highlight);
   border-radius: var(--radius-pill);
-  color: var(--color-surface);
+  color: var(--color-primary);
   display: grid;
-  font: var(--type-metadata);
-  font-size: var(--text-xs);
+  font: var(--text-subheading);
+  font-size: var(--text-x);
   font-weight: 800;
   block-size: 2.5rem;
   inline-size: 2.5rem;
   place-items: center;
 }
 
-.ui-sidebar__identity {
-  display: grid;
-  gap: var(--space-1);
+.ui-sidebar__account-name {
+  color: var(--color-bg);
+  font-size: var(--text-sm);
+  font-weight: 700;
   min-inline-size: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition: color var(--duration-fast) var(--ease-standard);
 }
 
-.ui-sidebar__identity strong,
-.ui-sidebar__identity span {
+.ui-sidebar__account-chevron {
+  block-size: 1rem;
+  color: var(--color-bg);
+  flex: 0 0 auto;
+  inline-size: 1rem;
+  transition:
+    transform var(--duration-fast) var(--ease-standard),
+    color var(--duration-fast) var(--ease-standard);
+}
+
+.ui-sidebar__account-chevron.is-open {
+  transform: rotate(180deg);
+}
+
+.ui-sidebar__account-menu {
+  background: var(--color-bg);
+  border-radius: var(--radius-field);
+  box-shadow: var(--shadow-raised);
+  inline-size: 100%;
+  inset-block-end: calc(100% + var(--space-2));
+  inset-inline-start: 0;
+  overflow: hidden;
+  position: absolute;
+  z-index: var(--z-raised);
+}
+
+.ui-sidebar__account-menu-header {
+  border-block-end: 1px solid color-mix(in srgb, var(--color-primary) 12%, transparent);
+  display: grid;
+  gap: var(--space-1);
+  padding: var(--space-3) var(--space-4);
+}
+
+.ui-sidebar__account-menu-header strong {
+  color: var(--color-primary);
+  font-size: var(--text-sm);
+}
+
+.ui-sidebar__account-menu-header span {
+  color: color-mix(in srgb, var(--color-text-strong) 75%, transparent);
+  font-size: var(--text-xs);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.ui-sidebar__identity strong {
-  font-size: var(--text-sm);
+.ui-sidebar__account-menu-item {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  color: var(--color-primary);
+  cursor: pointer;
+  display: flex;
+  font: var(--type-body);
+  gap: var(--space-2);
+  inline-size: 100%;
+  padding: var(--space-3) var(--space-4);
+  text-align: start;
 }
 
-.ui-sidebar__identity span {
-  color: color-mix(in srgb, var(--color-surface) 64%, transparent);
-  font-size: var(--text-xs);
+.ui-sidebar__account-menu-item:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--color-primary) 6%, transparent);
 }
 
-.ui-sidebar__sign-out.ui-icon-button--quiet {
-  color: var(--color-surface);
+.ui-sidebar__account-menu-item:focus-visible {
+  box-shadow: var(--focus-ring);
+  outline: none;
 }
 
-.ui-sidebar__sign-out.ui-icon-button--quiet:hover {
-  background: var(--color-brand-midnight-raised);
+.ui-sidebar__account-menu-item:disabled {
+  cursor: progress;
+  opacity: 0.56;
 }
 
-.ui-sidebar__sign-out.ui-button--quiet {
-  color: var(--color-surface);
-}
-
-.ui-sidebar__sign-out.ui-button--quiet:not(:disabled):hover {
-  background: var(--color-brand-midnight-raised);
-}
-
-.ui-sidebar__sign-out.ui-button--quiet[data-busy] {
-  opacity: 1;
+.ui-sidebar__account-menu-item svg {
+  color: var(--color-primary);
+  flex: 0 0 auto;
+  inline-size: 1rem;
 }
 
 .ui-mobile-header {
