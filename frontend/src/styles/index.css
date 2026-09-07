@@ -1,6 +1,6 @@
 @layer theme, base, components, shell, utilities;
 @import "tailwindcss";
-@import "./tokens.css" layer(theme);
+@import "./global.css" layer(theme);
 @import "./base.css" layer(base);
 @import "./motion.css" layer(components);
 @import "./primitives.css" layer(components);

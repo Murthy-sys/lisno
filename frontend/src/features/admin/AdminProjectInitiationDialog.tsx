@@ -235,17 +235,20 @@ export function AdminProjectInitiationDialog({
             error={fieldErrors[key]}
           >
             {(controlProps) => (
-              <Input
-                {...controlProps}
-                ref={(node) => { refs.current[key] = node; }}
-                name={key}
-                type={type}
-                placeholder={placeholder}
-                min={key === "budgetMin" || key === "budgetMax" ? 0 : undefined}
-                step={key === "budgetMin" || key === "budgetMax" ? "any" : undefined}
-                value={form[key]}
-                onChange={update(key)}
-              />
+              <div className="admin-project-form__control">
+                <Input
+                  {...controlProps}
+                  ref={(node) => { refs.current[key] = node; }}
+                  name={key}
+                  type={type}
+                  placeholder={placeholder}
+                  min={key === "budgetMin" || key === "budgetMax" ? 0 : undefined}
+                  step={key === "budgetMin" || key === "budgetMax" ? "any" : undefined}
+                  value={form[key]}
+                  onChange={update(key)}
+                />
+                <span className="admin-project-form__control-icon" data-field={key} aria-hidden="true" />
+              </div>
             )}
           </Field>
         ))}

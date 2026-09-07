@@ -258,7 +258,7 @@
 .ui-surface {
   background: var(--color-surface);
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-surface);
+  border-radius: var(--card-radius);
 }
 
 .ui-surface--subtle {
@@ -266,7 +266,7 @@
 }
 
 .ui-surface--raised {
-  box-shadow: var(--shadow-soft);
+  box-shadow: var(--card-shadow);
 }
 
 .ui-surface--interactive {

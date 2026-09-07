@@ -97,6 +97,10 @@
   color: var(--auth-ink);
 }
 
+.login-page--signin .login-story h2 {
+  color: var(--color-surface);
+}
+
 .login-page--signin .login-card__intro,
 .login-page--signin .field label {
   color: var(--auth-ink-muted);
@@ -239,37 +243,35 @@
  * inherit it too instead of staying on the old violet canvas.
  */
 .ui-app-shell[data-role] {
-  /* Orbs are placed across the content column (the rail covers 0-23%), so the
-     colour under each deck actually shifts and the frost has something to
-     refract. Edge-hugging orbs just hide behind the panels. */
-  --role-canvas:
-    var(--role-grain),
-    radial-gradient(30rem 30rem at 34% 10%, rgb(206 146 68 / 72%), transparent 58%),
-    radial-gradient(26rem 26rem at 92% 22%, rgb(150 88 40 / 66%), transparent 56%),
-    radial-gradient(28rem 26rem at 58% 52%, rgb(224 174 105 / 60%), transparent 58%),
-    radial-gradient(30rem 28rem at 30% 84%, rgb(120 72 34 / 56%), transparent 58%),
-    radial-gradient(24rem 24rem at 84% 92%, rgb(216 158 84 / 54%), transparent 60%),
-    radial-gradient(22rem 22rem at 8% 46%, rgb(94 58 28 / 40%), transparent 62%),
-    linear-gradient(168deg, #f8f2e6 0%, #f0e6d4 46%, #e6d8bf 100%);
-  --role-rail: var(--color-primary);
-  --role-band: linear-gradient(126deg, #3e2a1b 0%, #7a5330 52%, #a9793f 100%);
-  --role-band-ink: #fbf4e8;
-  --role-band-ink-muted: #e3d2b8;.estimator-dashboard .lead-estimate-boundary { border-radius: 14px; }
-  --role-ink: #2e2318;
-  --role-ink-muted: #6e6152;
-  --role-accent: #9a6c33;
-  --role-accent-bright: #e0ae69;
-  --role-line: #e2d5be;
-  --role-line-strong: #cdb994;
-  --role-deck: #fffcf6;
-  --role-deck-tint: #f6ecdb;
-  --role-glass: rgb(255 252 246 / 54%);
-  --role-glass-strong: rgb(255 252 246 / 78%);
-  --role-glass-edge: rgb(255 255 255 / 56%);
-  --role-shadow-tint: 58 38 18;
-  --role-focus: #a9793f;
-  --role-cta: linear-gradient(140deg, #6b4a2f 0%, #8d6238 58%, #a9793f 100%);
-  --role-cta-hover: linear-gradient(140deg, #7a5636 0%, #9d6f3f 58%, #bd8a4a 100%);
+  /*
+   * Ledger — the same navy/white/gold system as admin (see the Design
+   * Tokens Reference doc: --color-primary, --color-highlight, and friends
+   * in tokens.css). Was a warm walnut/amber glass-morphism canvas with
+   * decorative orbs; unified to the flat white canvas + navy rail so every
+   * role — client, estimator_sales, designer, design_manager, design_head —
+   * matches admin/super_admin exactly instead of reading as a separate
+   * product.
+   */
+  --role-canvas: var(--color-bg);
+  --role-rail: linear-gradient(190deg, #16234a 0%, #101a38 55%, #0a1226 100%);
+  --role-band: linear-gradient(150deg, #1b2a54 0%, #142140 55%, #0d1730 100%);
+  --role-band-ink: #f6efe2;
+  --role-band-ink-muted: #cdbea3;.estimator-dashboard .lead-estimate-boundary { border-radius: 14px; }
+  --role-ink: #21252e;
+  --role-ink-muted: #666e7d;
+  --role-accent: #c8852f;
+  --role-accent-bright: #e2ab5c;
+  --role-line: #ece6da;
+  --role-line-strong: #ddd0ae;
+  --role-deck: var(--color-bg);
+  --role-deck-tint: #faf6ec;
+  --role-glass: var(--color-bg);
+  --role-glass-strong: var(--color-bg);
+  --role-glass-edge: #ece6da;
+  --role-shadow-tint: 20 18 16;
+  --role-focus: #c8852f;
+  --role-cta: linear-gradient(135deg, #a66a1f 0%, #c8852f 58%, #e2ab5c 100%);
+  --role-cta-hover: linear-gradient(135deg, #8f5a19 0%, #b3762a 58%, #d29a4e 100%);
   --role-cta-ink: #fdf7ec;
 }
 
@@ -294,16 +296,8 @@
     inset 0 -1px 0 rgb(var(--role-shadow-tint) / 9%),
     0 4px 10px rgb(var(--role-shadow-tint) / 10%),
     0 34px 72px -22px rgb(var(--role-shadow-tint) / 50%);
-  --role-glass-filter: blur(22px) saturate(180%);
-  /* Diagonal specular sweep, layered over the tint so light appears to fall
-     across the pane from the top-left. */
-  --role-glass-sheen:
-    linear-gradient(
-      148deg,
-      rgb(255 255 255 / 62%) 0%,
-      rgb(255 255 255 / 16%) 38%,
-      rgb(255 255 255 / 0%) 66%
-    );
+  --role-glass-filter: none;
+  --role-glass-sheen: none;
   --role-ease: cubic-bezier(0.2, 0, 0, 1);
 }
 
@@ -1502,31 +1496,24 @@
  * defining them here changes no existing rule.
  */
 body:has(.ui-app-shell[data-role]) {
-  --role-ink: #2e2318;
-  --role-ink-muted: #6e6152;
-  --role-accent: #9a6c33;
-  --role-accent-bright: #e0ae69;
-  --role-line: #e2d5be;
-  --role-line-strong: #cdb994;
-  --role-deck: #fffcf6;
-  --role-deck-tint: #f6ecdb;
-  --role-glass-strong: rgb(255 252 246 / 78%);
-  --role-rail: var(--color-primary);
-  --role-band-ink: #fbf4e8;
-  --role-shadow-tint: 58 38 18;
+  --role-ink: #21252e;
+  --role-ink-muted: #666e7d;
+  --role-accent: #c8852f;
+  --role-accent-bright: #e2ab5c;
+  --role-line: #ece6da;
+  --role-line-strong: #ddd0ae;
+  --role-deck: var(--color-bg);
+  --role-deck-tint: #faf6ec;
+  --role-glass-strong: var(--color-bg);
+  --role-rail: linear-gradient(190deg, #16234a 0%, #101a38 55%, #0a1226 100%);
+  --role-band-ink: #f6efe2;
+  --role-shadow-tint: 20 18 16;
   --role-shadow-soft:
-    0 1px 2px rgb(58 38 18 / 6%),
-    0 10px 26px -12px rgb(58 38 18 / 24%);
-  --role-cta: linear-gradient(140deg, #6b4a2f 0%, #8d6238 58%, #a9793f 100%);
-  --role-cta-hover: linear-gradient(140deg, #7a5636 0%, #9d6f3f 58%, #bd8a4a 100%);
+    0 1px 2px rgb(20 18 16 / 6%),
+    0 10px 26px -12px rgb(20 18 16 / 24%);
+  --role-cta: linear-gradient(135deg, #a66a1f 0%, #c8852f 58%, #e2ab5c 100%);
+  --role-cta-hover: linear-gradient(135deg, #8f5a19 0%, #b3762a 58%, #d29a4e 100%);
   --role-cta-ink: #fdf7ec;
-}
-
-/* Second, the chevron's stroke is baked into a data URI, so the whole token
-   is swapped for one drawn in the role's muted ink. */
-body:has(.ui-app-shell[data-role]) {
-  --ui-select-chevron:
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%236e6152' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
 }
 
 /* Card breadcrumbs are the same kind of label as .eyebrow, which the theme
@@ -1656,20 +1643,20 @@ body:has(.ui-app-shell[data-role]) .knowledge-dialog-body .ui-radio {
  * tooltips - which render outside `.ui-app-shell` - inherit the same scale.
  */
 body:has(.ui-app-shell[data-role="super_admin"]) {
-  --type-page-title: 1.75rem/1.15 var(--font-editorial);
-  --type-section-title: 1.125rem/1.3 var(--font-interface);
-  --type-body: 0.875rem/1.5 var(--font-interface);
-  --type-metadata: 0.75rem/1.4 var(--font-interface);
+  --type-page-title: 2.5rem/1.08 var(--font-main);
+  --type-section-title: 1.5rem/1.2 var(--font-subheading);
+  --type-body: 1rem/1.5 var(--font-interface);
+  --type-metadata: 0.8125rem/1.35 var(--font-interface);
 
-  --text-xs: 0.6875rem;
-  --text-sm: 0.75rem;
-  --text-md: 0.8125rem;
-  --text-base: 0.875rem;
-  --text-lg: 1rem;
-  --text-xl: 1.0625rem;
-  --text-2xl: 1.25rem;
-  --text-3xl: 1.5rem;
-  --text-4xl: 1.75rem;
+  --text-xs: 0.75rem;
+  --text-sm: 0.8125rem;
+  --text-md: 0.9375rem;
+  --text-base: 1rem;
+  --text-lg: 1.125rem;
+  --text-xl: 1.3125rem;
+  --text-2xl: 1.5rem;
+  --text-3xl: 2rem;
+  --text-4xl: 2.5rem;
 }
 
 /*
@@ -1704,4 +1691,31 @@ body:has(.ui-app-shell[data-role="super_admin"]) .finance-chart__ring-center str
 /* The ring is sized in rem to sit beside the old type scale. */
 body:has(.ui-app-shell[data-role="super_admin"]) .finance-chart__ring {
   width: clamp(7.5rem, 18vw, 9.5rem);
+}
+
+/* The PDF token guide is the shared visual contract for every role. */
+.ui-app-shell[data-role] {
+  --role-canvas: var(--color-bg);
+  --role-rail: var(--color-primary);
+  --role-band: var(--color-primary);
+  --role-band-ink: var(--color-surface);
+  --role-band-ink-muted: color-mix(in srgb, var(--color-surface) 72%, transparent);
+  --role-ink: var(--color-text-strong);
+  --role-ink-muted: var(--color-text-muted);
+  --role-accent: var(--color-highlight);
+  --role-accent-bright: var(--color-highlight);
+  --role-line: var(--color-border);
+  --role-line-strong: var(--color-border-strong);
+  --role-deck: var(--color-bg);
+  --role-deck-tint: var(--color-table-header);
+  --role-glass: var(--color-bg);
+  --role-glass-strong: var(--color-bg);
+  --role-glass-edge: var(--color-border);
+  --role-glass-filter: none;
+  --role-glass-sheen: none;
+  --role-shadow-tint: 17 26 57;
+  --role-focus: var(--focus-ring-color);
+  --role-cta: var(--color-primary);
+  --role-cta-hover: var(--color-brand-midnight-raised);
+  --role-cta-ink: var(--color-surface);
 }
