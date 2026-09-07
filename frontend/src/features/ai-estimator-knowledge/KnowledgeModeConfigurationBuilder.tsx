@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { Button } from "../../components/ui/Button";
 import { Checkbox, Field, Input, Radio, Select, Textarea } from "../../components/ui/Field";
@@ -28,6 +28,7 @@ import { KnowledgeRepeater } from "./KnowledgeRepeater";
 import { KnowledgePmcScopeChecklist } from "./KnowledgePmcScopeChecklist";
 import { KnowledgeModeDescriptionEditor } from "./KnowledgeModeDescriptionEditor";
 import { generateModeDescription, modeDescriptionIssues } from "./knowledgeModeDescription";
+import { modeCalculationIssues } from "./knowledgeModeCalculation";
 import { defaultPmcScopeItems, PMC_SCOPE_LISTS } from "./knowledgePmcScope";
 import type {
   KnowledgeJsonObject,
@@ -37,6 +38,8 @@ import type {
 export interface KnowledgeModeConfigurationBuilderProps {
   readonly payload: KnowledgeJsonObject;
   readonly mainLineName: string;
+  readonly calculation?: ReactNode;
+  readonly calculationValid?: boolean;
   readonly descriptionResetKey?: string;
   readonly onPendingDescriptionChange?: (pending: boolean) => void;
   readonly modes: readonly KnowledgeMaster[];
@@ -59,6 +62,8 @@ export interface KnowledgeLegacyModeCatalogState {
 export function KnowledgeModeConfigurationBuilder({
   payload,
   mainLineName,
+  calculation,
+  calculationValid = true,
   descriptionResetKey = "default",
   onPendingDescriptionChange = ignorePendingDescription,
   modes,
@@ -79,8 +84,8 @@ export function KnowledgeModeConfigurationBuilder({
     [parsed.configurations]
   );
   const issues = useMemo(
-    () => [...parsed.issues, ...modeDescriptionIssues(payload.modeDescription), ...serverIssues],
-    [parsed.issues, payload.modeDescription, serverIssues]
+    () => [...parsed.issues, ...modeDescriptionIssues(payload.modeDescription), ...modeCalculationIssues(payload.modeCalculation), ...serverIssues],
+    [parsed.issues, payload.modeDescription, payload.modeCalculation, serverIssues]
   );
   const [paragraphPending, setParagraphPending] = useState(false);
   const handlePendingDescriptionChange = useCallback((pending: boolean) => {
@@ -106,17 +111,18 @@ export function KnowledgeModeConfigurationBuilder({
   const repeaterLabel = `${selectedSourceLabel} components`;
 
   useEffect(() => {
-    onValidationChange(issues.length === 0 && !paragraphPending);
-  }, [issues.length, onValidationChange, paragraphPending]);
+    onValidationChange(issues.length === 0 && !paragraphPending && calculationValid);
+  }, [issues.length, onValidationChange, paragraphPending, calculationValid]);
   useEffect(() => {
     if (validationAttempt === 0) {
       lastValidationAttempt.current = 0;
       return;
     }
-    if (validationAttempt <= lastValidationAttempt.current || (!issues.length && !paragraphPending)) return;
+    if (validationAttempt <= lastValidationAttempt.current || (!issues.length && !paragraphPending && calculationValid)) return;
     lastValidationAttempt.current = validationAttempt;
-    if ((paragraphPending || issues[0]?.path === "modeDescription") && !visibleModes.pmc && !visibleModes.execution) showMode("pmc");
-    const firstIssue = paragraphPending ? { path: "modeDescription", message: "Save or cancel the paragraph." } : issues[0]!;
+    if ((paragraphPending || !calculationValid || issues[0]?.path === "modeDescription" || issues[0]?.path.startsWith("modeCalculation")) && !visibleModes.pmc && !visibleModes.execution) showMode("pmc");
+    const firstIssue = paragraphPending ? { path: "modeDescription", message: "Save or cancel the paragraph." }
+      : !calculationValid ? { path: "modeCalculation", message: "Review the calculation inputs." } : issues[0]!;
     selectConfigurationForIssue(
       firstIssue,
       parsed.configurations,
@@ -126,7 +132,7 @@ export function KnowledgeModeConfigurationBuilder({
     globalThis.setTimeout(() => {
       focusIssue(firstIssue, fieldRefs.current, validationSummaryRef.current);
     }, 0);
-  }, [issues, paragraphPending, parsed.configurations, showMode, validationAttempt, visibleModes]);
+  }, [issues, paragraphPending, calculationValid, parsed.configurations, showMode, validationAttempt, visibleModes]);
 
   function updateConfigurations(next: readonly KnowledgeModeConfiguration[]) {
     onDirty();
@@ -244,7 +250,7 @@ export function KnowledgeModeConfigurationBuilder({
                 <button
                   type="button"
                   onClick={() => {
-                    if (issue.path === "modeDescription" && !visibleModes.pmc && !visibleModes.execution) showMode("pmc");
+                    if ((issue.path === "modeDescription" || issue.path.startsWith("modeCalculation")) && !visibleModes.pmc && !visibleModes.execution) showMode("pmc");
                     selectConfigurationForIssue(
                       issue,
                       parsed.configurations,
@@ -340,6 +346,13 @@ export function KnowledgeModeConfigurationBuilder({
           </div>
         </div> : null}
       </section>
+
+      {calculation ? <div className="knowledge-mode-calculation-slot" hidden={!visibleModes.pmc && !visibleModes.execution}
+        ref={(node) => {
+          if (node) fieldRefs.current.set("modeCalculation", node);
+          else fieldRefs.current.delete("modeCalculation");
+        }}
+      >{calculation}</div> : null}
 
       <section id="knowledge-mode-section-execution" hidden={!visibleModes.execution} aria-labelledby="knowledge-mode-execution-title">
         {visibleModes.execution ? <div className="knowledge-mode-configuration__mode-content">
@@ -766,7 +779,10 @@ function focusIssue(
         : issue.path.includes(".options")
           ? "[id$='-options']"
           : undefined;
-  const target = entry?.[1].querySelector<HTMLElement>(issueControl ??
+  const invalidCalculationControl = issue.path.startsWith("modeCalculation")
+    ? entry?.[1].querySelector<HTMLElement>("[aria-invalid='true']")
+    : null;
+  const target = invalidCalculationControl ?? entry?.[1].querySelector<HTMLElement>(issueControl ??
     "[aria-invalid='true'], input, select, textarea, button"
   );
   (target ?? fallback)?.focus();

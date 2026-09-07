@@ -512,6 +512,7 @@ export function KnowledgeItemWorkspacePage() {
                 relationshipItems={relationshipItemsQuery.data?.items ?? []}
                 editable={editable}
                 legacyModeCatalogState={legacyModeCatalogState}
+                uomCatalogState={uomCatalogState}
                 onDirtyChange={setModeDirty}
                 onSavingChange={setModeSaving}
                 onBusyChange={setModeBusy}

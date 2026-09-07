@@ -60,6 +60,33 @@ afterAll(async () => {
 });
 
 describe("AI estimator knowledge item service", () => {
+  it("round-trips shared Mode calculation settings with version checks and isolated main lines", async () => {
+    const { service } = createService();
+    const first = await service.createMainLine(ACTOR, "basket-carpentry", { name: "First calculation line" });
+    const second = await service.createMainLine(ACTOR, "basket-carpentry", { name: "Second calculation line" });
+    for (const [created, baseRatePaise] of [[first, 150_000], [second, 50_000]] as const) {
+      const revisionId = created.draftRevisionId!;
+      const advanced = await service.getSection(ACTOR, created.mainLineId, revisionId, "advanced");
+      const payload = {
+        modeDescription: "Shared scope paragraph.",
+        modeConfigurations: [{ id: "pmc", modeKind: "pmc", fields: [] }],
+        modeCalculation: { baseRatePaise, lowQuantityLimit: "15", minimumMarkupBps: 2_500, startingMarkupBps: 3_500 }
+      };
+      const saved = await service.updateSection(ACTOR, created.mainLineId, revisionId, "advanced", {
+        expectedVersion: advanced.version, expectedAggregateVersion: created.version, applicability: "configured", payload
+      });
+      expect((await service.getSection(ACTOR, created.mainLineId, revisionId, "advanced")).payload).toEqual(payload);
+      const edited = { ...payload, modeCalculation: { ...payload.modeCalculation, startingMarkupBps: 4_000 } };
+      await service.updateSection(ACTOR, created.mainLineId, revisionId, "advanced", {
+        expectedVersion: saved.version, expectedAggregateVersion: saved.aggregateVersion, payload: edited
+      });
+      await expect(service.updateSection(ACTOR, created.mainLineId, revisionId, "advanced", {
+        expectedVersion: saved.version, expectedAggregateVersion: saved.aggregateVersion, payload
+      })).rejects.toMatchObject({ code: "VERSION_CONFLICT" });
+      expect((await service.getSection(ACTOR, created.mainLineId, revisionId, "advanced")).payload).toEqual(edited);
+    }
+  });
+
   it("stores one shared Mode paragraph across saves, reloads, and stale-version rejection", async () => {
     const { service } = createService();
     const created = await service.createMainLine(ACTOR, "basket-carpentry", { name: "Shared paragraph line" });

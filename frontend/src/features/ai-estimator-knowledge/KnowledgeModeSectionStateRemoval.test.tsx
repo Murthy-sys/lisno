@@ -3,7 +3,7 @@ import {
   createRef,
   type ComponentProps
 } from "react";
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -27,7 +27,8 @@ vi.mock("./knowledgeApi", async (importOriginal) => {
     ...actual,
     getKnowledgeItem: vi.fn(),
     getKnowledgeSection: vi.fn(),
-    updateKnowledgeSection: vi.fn()
+    updateKnowledgeSection: vi.fn(),
+    previewKnowledge: vi.fn()
   };
 });
 
@@ -244,6 +245,13 @@ function renderPanel(
 describe("Knowledge Mode section-state removal", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(knowledgeApi.previewKnowledge).mockResolvedValue({
+      formulaVersion: "knowledge-preview-v1", effectivePriceVersionId: null, taxVersionId: null,
+      effectiveUnitRatePaise: null, adjustedUnitRate: null, requiredQuantity: "1", procurementQuantity: null,
+      vendorPreTax: null, vendorTax: null, vendorTotal: null, startMargin: null, bottomMargin: null,
+      pmcMarkup: null, duration: null,
+      modeCalculation: { revisedUnitRatePaise: 165_000, revisedAmountPaise: 165_000, totalPaise: 222_750, appliedImpactBps: 1_000 }
+    });
     vi.mocked(knowledgeApi.getKnowledgeItem).mockResolvedValue(item);
     vi.mocked(knowledgeApi.getKnowledgeSection).mockImplementation(
       async (_mainLineId, _revisionId, sectionKey) =>
@@ -256,6 +264,75 @@ describe("Knowledge Mode section-state removal", () => {
           input
         )
     );
+  });
+
+  it("uses the saved Overview UOM and saves shared calculation inputs without the temporary test quantity", async () => {
+    const ref = createRef<KnowledgeModePanelHandle>();
+    const payload = { modeDescription: "Shared saved paragraph", dependencies: [] };
+    let savedAdvanced = section("advanced", "configured", payload);
+    vi.mocked(knowledgeApi.getKnowledgeSection).mockImplementation(async (_line, _revision, key) =>
+      key === "advanced" ? savedAdvanced : key === "overview" ? section("overview", "configured", { uomId: uoms[0]!.id }) : section("pricing"));
+    vi.mocked(knowledgeApi.updateKnowledgeSection).mockImplementation(async (_line, _revision, key, input) => {
+      const saved = savedSection(key as "advanced", input);
+      savedAdvanced = saved;
+      return saved;
+    });
+    const { props } = renderPanel(ref);
+    const rate = await screen.findByRole("textbox", { name: "Base Rate (₹)" });
+    await screen.findByText("Sq.ft");
+    const calculations = screen.getByRole("region", { name: "Calculations" });
+    expect(screen.getByRole("group", { name: "Exclusions" }).compareDocumentPosition(calculations) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    fireEvent.change(rate, { target: { value: "1500" } });
+    expect(screen.queryByRole("textbox", { name: "Quantity (test)" })).not.toBeInTheDocument();
+    expect(knowledgeApi.previewKnowledge).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole("button", { name: "Test calculations" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Quantity" }), { target: { value: "14.25" } });
+    fireEvent.change(within(screen.getByRole("dialog", { name: "Test calculations" })).getByRole("textbox", { name: "Base Rate (₹)" }), { target: { value: "500" } });
+    await userEvent.click(screen.getByRole("radio", { name: "Min. Gross Margin Markup" }));
+    await userEvent.click(screen.getByRole("button", { name: "Calculate" }));
+    await waitFor(() => expect(knowledgeApi.previewKnowledge).toHaveBeenLastCalledWith({
+      quantity: "14.25", quantityScale: 2, modeCalculationMarkupBasis: "minimum",
+      modeCalculation: { baseRatePaise: 50_000, lowQuantityLimit: "15", minimumMarkupBps: 2_500, startingMarkupBps: 3_500 }
+    }));
+    await userEvent.click(screen.getByRole("button", { name: "Close" }));
+    await act(async () => { expect(await ref.current?.save()).toBe(true); });
+    expect(knowledgeApi.updateKnowledgeSection).toHaveBeenCalledTimes(1);
+    expect(knowledgeApi.updateKnowledgeSection).toHaveBeenCalledWith("line-1", "revision-1", "advanced", expect.objectContaining({
+      expectedVersion: 11, expectedAggregateVersion: 7,
+      payload: { ...payload, modeCalculation: { baseRatePaise: 150_000, lowQuantityLimit: "15", minimumMarkupBps: 2_500, startingMarkupBps: 3_500 } }
+    }));
+    expect(props.onDirtyChange).toHaveBeenLastCalledWith(false);
+    await userEvent.click(screen.getByRole("checkbox", { name: "Execution" }));
+    expect(screen.getAllByRole("region", { name: "Calculations" })).toHaveLength(1);
+    fireEvent.change(screen.getByRole("textbox", { name: "Starting Gross Margin Markup (%)" }), { target: { value: "20" } });
+    await userEvent.click(screen.getByRole("checkbox", { name: "PMC" }));
+    await userEvent.click(screen.getByRole("checkbox", { name: "Execution" }));
+    await act(async () => { expect(await ref.current?.save()).toBe(false); });
+    expect(knowledgeApi.updateKnowledgeSection).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "Starting Gross Margin Markup (%)" })).toHaveFocus());
+    act(() => ref.current?.discard());
+    expect(screen.getByRole("textbox", { name: "Base Rate (₹)" })).toHaveValue("1500.00");
+    expect(screen.queryByRole("textbox", { name: "Quantity (test)" })).not.toBeInTheDocument();
+    expect(props.onDirtyChange).toHaveBeenLastCalledWith(false);
+  });
+
+  it("does not preview configured calculations when saved Overview UOM cannot be loaded", async () => {
+    vi.mocked(knowledgeApi.getKnowledgeSection).mockImplementation(async (_line, _revision, key) => {
+      if (key === "overview") throw new Error("Overview unavailable");
+      return key === "advanced" ? section("advanced", "configured", { modeCalculation: {
+        baseRatePaise: 150_000, lowQuantityLimit: "15", minimumMarkupBps: 2_500, startingMarkupBps: 3_500
+      } }) : section("pricing");
+    });
+    renderPanel(createRef<KnowledgeModePanelHandle>());
+    await screen.findByText("Could not load the UOM saved in Overview.");
+    expect(screen.queryByLabelText("Total with starting markup")).not.toBeInTheDocument();
+    expect(knowledgeApi.previewKnowledge).not.toHaveBeenCalled();
+    vi.mocked(knowledgeApi.getKnowledgeSection).mockResolvedValueOnce(section("overview", "configured", { uomId: uoms[0]!.id }));
+    await userEvent.click(screen.getByRole("button", { name: "Retry UOM" }));
+    await screen.findByText("Sq.ft");
+    await userEvent.click(screen.getByRole("button", { name: "Test calculations" }));
+    await userEvent.click(screen.getByRole("button", { name: "Calculate" }));
+    await screen.findByText("₹2,227.50");
   });
 
   it("protects pending paragraph edits, saves shared wording, and discards cancelled changes", async () => {
@@ -299,7 +376,7 @@ describe("Knowledge Mode section-state removal", () => {
     expect(props.onDirtyChange).toHaveBeenLastCalledWith(false);
   });
 
-  it.each(["paragraph", "configuration"] as const)("rebases a local %s edit without overwriting the other server value", async (edited) => {
+  it.each(["paragraph", "configuration", "calculation"] as const)("rebases a local %s edit without overwriting the other server value", async (edited) => {
     const user = userEvent.setup();
     const ref = createRef<KnowledgeModePanelHandle>();
     renderPanel(ref);
@@ -309,11 +386,14 @@ describe("Knowledge Mode section-state removal", () => {
       await user.clear(screen.getByRole("textbox", { name: "Mode paragraph" }));
       await user.type(screen.getByRole("textbox", { name: "Mode paragraph" }), "Local paragraph");
       await user.click(screen.getByRole("button", { name: "Save" }));
+    } else if (edited === "calculation") {
+      fireEvent.change(screen.getByRole("textbox", { name: "Base Rate (₹)" }), { target: { value: "1500" } });
     } else {
       await user.click(within(screen.getByRole("group", { name: "Inclusions" })).getByRole("checkbox", { name: "Transport" }));
     }
     const serverConfigurations = [{ id: "server-execution", modeKind: "execution", executionSource: "in_house", fields: [] }];
-    const serverPayload = { modeDescription: "Server paragraph", modeConfigurations: serverConfigurations, dependencies: [] };
+    const serverCalculation = { baseRatePaise: 50_000, lowQuantityLimit: "10", minimumMarkupBps: 2_000, startingMarkupBps: 3_000 };
+    const serverPayload = { modeDescription: "Server paragraph", modeConfigurations: serverConfigurations, modeCalculation: serverCalculation, dependencies: [] };
     vi.mocked(knowledgeApi.updateKnowledgeSection).mockRejectedValueOnce(new ApiError(409, "VERSION_CONFLICT", "Changed elsewhere."));
     vi.mocked(knowledgeApi.getKnowledgeSection).mockImplementation(async (_line, _revision, key) =>
       key === "advanced" ? section("advanced", "configured", serverPayload, 25) : section("pricing"));
@@ -324,9 +404,12 @@ describe("Knowledge Mode section-state removal", () => {
     const submitted = vi.mocked(knowledgeApi.updateKnowledgeSection).mock.calls[1]?.[3];
     expect(submitted).toMatchObject({ expectedVersion: 25, expectedAggregateVersion: 30, payload: {
       modeDescription: edited === "paragraph" ? "Local paragraph" : "Server paragraph",
+      modeCalculation: edited === "calculation"
+        ? { baseRatePaise: 150_000, lowQuantityLimit: "15", minimumMarkupBps: 2_500, startingMarkupBps: 3_500 }
+        : serverCalculation,
       dependencies: []
     } });
-    if (edited === "paragraph") expect(submitted?.payload.modeConfigurations).toEqual(serverConfigurations);
+    if (edited !== "configuration") expect(submitted?.payload.modeConfigurations).toEqual(serverConfigurations);
     else expect(submitted?.payload.modeConfigurations).toEqual([expect.objectContaining({ modeKind: "pmc", inclusions: expect.arrayContaining([
       expect.objectContaining({ name: "Transport", selected: true })
     ]) })]);
@@ -387,7 +470,7 @@ describe("Knowledge Mode section-state removal", () => {
     expect(within(exclusions).getByRole("checkbox", { name: "Night unloading" })).toBeChecked();
   });
 
-  it("loads only Mode and Specifications with their independent section metadata", async () => {
+  it("loads Mode, Specifications, and the saved Overview UOM with independent section metadata", async () => {
     const ref = createRef<KnowledgeModePanelHandle>();
     renderPanel(ref);
     expect(await screen.findByRole("button", { name: "Add Specification" })).toBeVisible();
@@ -396,7 +479,7 @@ describe("Knowledge Mode section-state removal", () => {
     expect(screen.getByText("Section version 11")).toBeVisible();
     expect(screen.getByText("Section version 12")).toBeVisible();
     expect(vi.mocked(knowledgeApi.getKnowledgeSection).mock.calls.map((call) => call[2]))
-      .toEqual(["advanced", "pricing"]);
+      .toEqual(["advanced", "pricing", "overview"]);
     for (const name of ["Budgeting", "Vendors", "Surfaces", "Quantity & margin"]) {
       expect(screen.queryByRole("region", { name })).not.toBeInTheDocument();
     }

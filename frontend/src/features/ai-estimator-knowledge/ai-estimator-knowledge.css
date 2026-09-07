@@ -3527,6 +3527,124 @@ body:has(.ui-app-shell[data-role]) .modal .knowledge-dialog-actions .ui-button--
   gap: 8px;
 }
 
+.knowledge-mode-calculation-slot {
+  min-inline-size: 0;
+}
+
+.knowledge-mode-calculation {
+  display: grid;
+  gap: 12px;
+  min-inline-size: 0;
+  font-size: 14px;
+}
+
+.knowledge-mode-calculation > h3,
+.knowledge-mode-calculation__hint {
+  margin: 0;
+}
+
+.knowledge-mode-calculation__table-wrap {
+  min-inline-size: 0;
+  overflow-x: auto;
+  border: 1px solid var(--role-line, var(--color-border));
+  border-radius: var(--radius-field);
+}
+
+.knowledge-mode-calculation table {
+  inline-size: 100%;
+  min-inline-size: 720px;
+  border-collapse: collapse;
+}
+
+.knowledge-mode-calculation th,
+.knowledge-mode-calculation td {
+  padding: 8px;
+  text-align: start;
+  vertical-align: top;
+  border-block-end: 1px solid var(--role-line, var(--color-border));
+}
+
+.knowledge-mode-calculation th {
+  background: var(--role-deck-tint, var(--color-surface-subtle));
+  font-weight: 700;
+}
+
+.knowledge-mode-calculation td .ui-field {
+  min-inline-size: 100px;
+}
+
+.knowledge-mode-calculation td .ui-field__label {
+  margin: 0;
+  block-size: 0;
+}
+
+.knowledge-mode-calculation__actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-block-start: 12px;
+}
+
+.knowledge-mode-simulator__fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr));
+  align-items: start;
+  gap: 16px;
+}
+
+.knowledge-mode-simulator__markup {
+  display: grid;
+  gap: 8px;
+  min-inline-size: 0;
+  margin: 0;
+  padding: 12px;
+  border: 1px solid var(--role-line, var(--color-border));
+  border-radius: var(--radius-field);
+}
+
+.knowledge-mode-simulator__markup label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+}
+
+.knowledge-mode-simulator__markup .ui-radio {
+  inline-size: 16px;
+  block-size: 16px;
+  min-inline-size: 16px;
+  min-block-size: 16px;
+  flex: 0 0 16px;
+}
+
+.knowledge-mode-simulator__result {
+  display: grid;
+  gap: 12px;
+  padding: 12px;
+  background: var(--role-deck-tint, var(--color-surface-subtle));
+  border: 1px solid var(--role-line, var(--color-border));
+  border-radius: var(--radius-field);
+}
+
+.knowledge-mode-calculation__totals {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+}
+
+.knowledge-mode-calculation__totals > div {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.knowledge-mode-calculation__totals dd {
+  margin: 0;
+  font-weight: 700;
+}
+
 .knowledge-page--item-workspace .knowledge-mode-description .ui-control {
   font-size: 14px;
   resize: vertical;

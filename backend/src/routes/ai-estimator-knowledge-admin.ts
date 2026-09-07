@@ -251,6 +251,15 @@ function hasMasterChange(input: { expectedVersion: number } & Record<string, unk
 
 export const aiEstimatorKnowledgePreviewSchema = z
   .object({
+    modeCalculationMarkupBasis: z.enum(["starting", "minimum"]).optional(),
+    modeCalculation: z.object({
+      baseRatePaise: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+      lowQuantityLimit: canonicalDecimalSchema,
+      minimumMarkupBps: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER - 10_000),
+      startingMarkupBps: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER - 10_000)
+    }).strict().refine((value) => value.startingMarkupBps >= value.minimumMarkupBps, {
+      path: ["startingMarkupBps"], message: "Starting markup must be at least the minimum markup."
+    }).optional(),
     priceVersionId: stableIdSchema.nullable().optional(),
     taxVersionId: stableIdSchema.nullable().optional(),
     unitRatePaise: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).nullable().optional(),
@@ -275,7 +284,11 @@ export const aiEstimatorKnowledgePreviewSchema = z
       .nullable()
       .optional()
   })
-  .strict();
+  .strict().refine((value) => !value.modeCalculation || value.quantity != null, {
+    path: ["quantity"], message: "A test quantity is required for Mode calculations."
+  }).refine((value) => !value.modeCalculationMarkupBasis || Boolean(value.modeCalculation), {
+    path: ["modeCalculation"], message: "Mode calculation settings are required when choosing a markup."
+  });
 
 export interface AiEstimatorKnowledgeAdminRouterServices {
   readonly reference: AiEstimatorKnowledgeReferenceService;

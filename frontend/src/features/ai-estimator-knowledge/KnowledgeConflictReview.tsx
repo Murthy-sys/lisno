@@ -466,7 +466,11 @@ function displayLabel(key: string): string {
     inputAmountPaise: "Input amount",
     baseAmountPaise: "Base amount",
     taxAmountPaise: "Tax amount",
-    totalAmountPaise: "Total amount"
+    totalAmountPaise: "Total amount",
+    modeCalculation: "Calculation settings",
+    baseRatePaise: "Base Rate",
+    minimumMarkupBps: "Min. Gross Margin Markup",
+    startingMarkupBps: "Starting Gross Margin Markup"
   };
   if (known[key]) return known[key];
   return key

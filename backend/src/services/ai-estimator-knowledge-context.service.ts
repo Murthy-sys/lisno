@@ -11,6 +11,7 @@ import {
   parseScaledDecimal,
   type CalculateKnowledgePreviewInput
 } from "../domain/ai-estimator-knowledge-calculation.js";
+import { calculateKnowledgeModePrice } from "../domain/ai-estimator-knowledge-mode-calculation.js";
 import {
   AI_ESTIMATOR_KNOWLEDGE_MODE_FIELD_TYPES,
   AI_ESTIMATOR_KNOWLEDGE_SECTION_KEYS,
@@ -83,7 +84,16 @@ export function createAiEstimatorKnowledgeContextService(
     async preview(actor, input) {
       await actorGuard.requireReadActor(actor);
       try {
-        return calculateKnowledgePreview(input);
+        if (input.modeCalculation && input.quantity == null) {
+          throw new KnowledgeCalculationError("INVALID_DECIMAL", "A test quantity is required for Mode calculations.");
+        }
+        return {
+          ...calculateKnowledgePreview(input),
+          ...(input.modeCalculation ? { modeCalculation: calculateKnowledgeModePrice({
+            ...input.modeCalculation, quantity: input.quantity!, quantityScale: input.quantityScale,
+            markupBasis: input.modeCalculationMarkupBasis
+          }) } : {})
+        };
       } catch (error) {
         if (error instanceof KnowledgeCalculationError) {
           throw new ApiError(400, "VALIDATION_ERROR", error.message, {

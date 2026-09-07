@@ -1,5 +1,6 @@
 import type {
   KnowledgeCanonicalDecimal,
+  KnowledgeModeCalculationSettings,
   KnowledgePreview,
   KnowledgePreviewAmountComponent
 } from "../contracts/ai-estimator-knowledge.js";
@@ -365,6 +366,8 @@ function amountComponent(
 }
 
 export interface CalculateKnowledgePreviewInput {
+  modeCalculation?: KnowledgeModeCalculationSettings;
+  modeCalculationMarkupBasis?: "starting" | "minimum";
   priceVersionId?: string | null;
   taxVersionId?: string | null;
   unitRatePaise?: number | null;

@@ -38,6 +38,8 @@ import {
 import type { KnowledgeModeConfigurationIssue } from "./knowledgeModeConfiguration";
 import { KnowledgeConflictReview } from "./KnowledgeConflictReview";
 import { KnowledgeVersionConflictDialog } from "./KnowledgeVersionConflictDialog";
+import { KnowledgeModeCalculationEditor, type KnowledgeModeCalculationUom } from "./KnowledgeModeCalculationEditor";
+import type { KnowledgeBudgetCatalogState } from "./KnowledgeBudgetBuilder";
 import type {
   KnowledgeBasket,
   KnowledgeItemDetail,
@@ -66,7 +68,7 @@ const PENDING_DESCRIPTION_MESSAGE = "Save or cancel the paragraph before saving 
 
 interface ModeDraft {
   readonly payload: KnowledgeJsonObject;
-  readonly editedAdvancedFields: readonly ("modeConfigurations" | "modeDescription")[];
+  readonly editedAdvancedFields: readonly ("modeConfigurations" | "modeDescription" | "modeCalculation")[];
   readonly specificationReferenceIds: readonly string[];
   readonly applicability: KnowledgeSectionApplicability;
   readonly envelopeVersion: number | null;
@@ -104,6 +106,7 @@ export interface KnowledgeModePanelProps {
   readonly relationshipItems: readonly KnowledgeItemListItem[];
   readonly editable: boolean;
   readonly legacyModeCatalogState: KnowledgeLegacyModeCatalogState;
+  readonly uomCatalogState?: KnowledgeBudgetCatalogState;
   readonly onDirtyChange: (dirty: boolean) => void;
   readonly onSavingChange: (saving: boolean) => void;
   readonly onBusyChange: (busy: boolean) => void;
@@ -123,6 +126,7 @@ export const KnowledgeModePanel = forwardRef<
     relationshipItems,
     editable,
     legacyModeCatalogState,
+    uomCatalogState = { status: "ready" },
     onDirtyChange,
     onSavingChange,
     onBusyChange,
@@ -135,7 +139,9 @@ export const KnowledgeModePanel = forwardRef<
   const mainLineId = item.mainLineId;
   const advancedQuery = useModeSectionQuery(mainLineId, revisionId, "advanced");
   const pricingQuery = useModeSectionQuery(mainLineId, revisionId, "pricing");
+  const overviewQuery = useModeSectionQuery(mainLineId, revisionId, "overview");
   const [drafts, setDrafts] = useState(createEmptyModeDrafts);
+  const [calculationValid, setCalculationValid] = useState(true);
   const [descriptionPending, setDescriptionPending] = useState(false);
   const [descriptionResetVersion, setDescriptionResetVersion] = useState(0);
   useEffect(() => {
@@ -197,7 +203,21 @@ export const KnowledgeModePanel = forwardRef<
   }, [advancedQuery.data, pricingQuery.data]);
 
   const dirty = descriptionPending || MODE_SECTION_KEYS.some((sectionKey) => drafts[sectionKey].dirty);
-  const busy = advancedQuery.isFetching || pricingQuery.isFetching;
+  const busy = advancedQuery.isFetching || pricingQuery.isFetching || overviewQuery.isFetching;
+  const savedUomId = overviewQuery.data?.payload.uomId;
+  const savedUom = (masters.uoms ?? []).find((uom) => uom.id === savedUomId);
+  const uomScopeKey = `${mainLineId}:${revisionId}`;
+  const calculationUom: KnowledgeModeCalculationUom = overviewQuery.isError
+    ? { scopeKey: uomScopeKey, label: "Unavailable", message: "Could not load the UOM saved in Overview.", onRetry: () => void overviewQuery.refetch() }
+    : !overviewQuery.data || uomCatalogState.status === "loading"
+      ? { scopeKey: uomScopeKey, label: "Loading…", message: "Loading the saved Overview UOM." }
+      : uomCatalogState.status === "error"
+        ? { scopeKey: uomScopeKey, label: "Unavailable", message: "Could not load the UOM details.", onRetry: uomCatalogState.onRetry }
+        : !savedUomId
+          ? { scopeKey: uomScopeKey, label: "Not set", message: "Save a UOM in Overview to test these calculations." }
+          : !savedUom || savedUom.decimalScale === undefined
+            ? { scopeKey: uomScopeKey, label: savedUom?.name ?? "Unavailable", message: "The saved UOM details are unavailable. Review the UOM in Overview.", onRetry: uomCatalogState.onRetry }
+            : { scopeKey: uomScopeKey, id: savedUom.id, label: savedUom.name, decimalScale: savedUom.decimalScale };
 
   useEffect(() => onDirtyChange(dirty), [dirty, onDirtyChange]);
   useEffect(() => onSavingChange(saving), [onSavingChange, saving]);
@@ -224,7 +244,7 @@ export const KnowledgeModePanel = forwardRef<
           ...current[sectionKey],
           payload,
           editedAdvancedFields: sectionKey === "advanced"
-            ? [...new Set([...current.advanced.editedAdvancedFields, ...(["modeConfigurations", "modeDescription"] as const).filter(
+            ? [...new Set([...current.advanced.editedAdvancedFields, ...(["modeConfigurations", "modeDescription", "modeCalculation"] as const).filter(
                 (field) => JSON.stringify(current.advanced.payload[field]) !== JSON.stringify(payload[field])
               )])]
             : current[sectionKey].editedAdvancedFields
@@ -413,7 +433,7 @@ export const KnowledgeModePanel = forwardRef<
           } else {
             const message = failure instanceof Error ? failure.message : "This block could not be saved.";
             const serverIssues = failure instanceof ApiError
-              ? sectionIssuesFromApiError(failure, sectionKey === "advanced" ? ["modeConfigurations", "modeDescription"] : ["specifications"])
+              ? sectionIssuesFromApiError(failure, sectionKey === "advanced" ? ["modeConfigurations", "modeDescription", "modeCalculation"] : ["specifications"])
               : [];
             setDrafts((current) => ({
               ...current,
@@ -539,6 +559,18 @@ export const KnowledgeModePanel = forwardRef<
           onChange={(payload) => setPayload("advanced", payload)}
           onDirty={markAdvancedConfigurationDirty}
           onValidationChange={setAdvancedValid}
+          calculationValid={calculationValid}
+          calculation={<KnowledgeModeCalculationEditor
+            key={`${revisionId}-${descriptionResetVersion}`}
+            value={drafts.advanced.payload.modeCalculation}
+            uom={calculationUom}
+            readOnly={!editable || saving}
+            validationAttempt={drafts.advanced.validationAttempt}
+            issues={drafts.advanced.serverIssues}
+            onChange={(modeCalculation) => setPayload("advanced", { ...drafts.advanced.payload, modeCalculation: { ...modeCalculation } })}
+            onDirty={markAdvancedConfigurationDirty}
+            onValidationChange={setCalculationValid}
+          />}
         />
       )}
       {renderBlock(
@@ -615,7 +647,7 @@ export const KnowledgeModePanel = forwardRef<
 function useModeSectionQuery(
   mainLineId: string,
   revisionId: string,
-  sectionKey: ModeSectionKey
+  sectionKey: ModeSectionKey | "overview"
 ) {
   return useQuery({
     queryKey: knowledgeQueryKeys.section(mainLineId, revisionId, sectionKey),
@@ -697,7 +729,7 @@ function rebaseDraftAfterConflict(
 
 function sectionIssuesFromApiError(
   failure: ApiError,
-  allowedRootPaths: readonly ("modeConfigurations" | "modeDescription" | "specifications")[]
+  allowedRootPaths: readonly ("modeConfigurations" | "modeDescription" | "modeCalculation" | "specifications")[]
 ): readonly KnowledgeModeConfigurationIssue[] {
   if (allowedRootPaths.length === 0) return [];
   return Object.entries(failure.fields ?? {}).flatMap(([path, message]) => {

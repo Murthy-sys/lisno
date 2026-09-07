@@ -125,6 +125,13 @@ export interface KnowledgeContextRequest {
 }
 
 export interface KnowledgePreviewRequest {
+  readonly modeCalculationMarkupBasis?: "starting" | "minimum";
+  readonly modeCalculation?: {
+    readonly baseRatePaise: number;
+    readonly lowQuantityLimit: string;
+    readonly minimumMarkupBps: number;
+    readonly startingMarkupBps: number;
+  };
   readonly priceVersionId?: string | null;
   readonly taxVersionId?: string | null;
   readonly unitRatePaise?: number | null;

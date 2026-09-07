@@ -283,7 +283,7 @@ const ALLOWED_SECTION_KEYS: Record<KnowledgeSectionKey, ReadonlySet<string>> = {
   recommendations: new Set(["recommendations", "exclusions"]),
   quality: new Set(["parameters"]),
   execution: new Set(["steps", "productivity"]),
-  advanced: new Set(["dependencies", "modeOverrides", "revisionLineage", "modeConfigurations", "modeDescription"])
+  advanced: new Set(["dependencies", "modeOverrides", "revisionLineage", "modeConfigurations", "modeDescription", "modeCalculation"])
 };
 
 function inspectBoundedValue(
@@ -1301,6 +1301,25 @@ function validateAdvancedPayload(
   record: Record<string, unknown>
 ): KnowledgeValidationIssue[] {
   const issues: KnowledgeValidationIssue[] = [];
+  if (record.modeCalculation !== undefined && record.modeCalculation !== null) {
+    const path = "payload.modeCalculation";
+    const row = record.modeCalculation;
+    if (typeof row !== "object" || Array.isArray(row)) {
+      issues.push(invalidTypeIssue(path, "a calculation settings object or null"));
+    } else {
+      const settings = row as Record<string, unknown>;
+      const keys = ["baseRatePaise", "lowQuantityLimit", "minimumMarkupBps", "startingMarkupBps"];
+      validateExactRowKeys(settings, keys, keys, path, issues);
+      validateInteger(settings.baseRatePaise, `${path}.baseRatePaise`, issues, 0, Number.MAX_SAFE_INTEGER);
+      validateCanonicalDecimal(settings.lowQuantityLimit, `${path}.lowQuantityLimit`, issues);
+      for (const key of ["minimumMarkupBps", "startingMarkupBps"] as const) {
+        validateInteger(settings[key], `${path}.${key}`, issues, 0, Number.MAX_SAFE_INTEGER - 10_000);
+      }
+      if (typeof settings.minimumMarkupBps === "number" && typeof settings.startingMarkupBps === "number" && settings.startingMarkupBps < settings.minimumMarkupBps) {
+        issues.push({ path: `${path}.startingMarkupBps`, code: "INVALID_MARKUP", message: "Starting markup must be at least the minimum markup." });
+      }
+    }
+  }
   if ("modeDescription" in record) {
     validateNullableText(record.modeDescription, "payload.modeDescription", issues, AI_ESTIMATOR_KNOWLEDGE_MAX_TEXT);
   }

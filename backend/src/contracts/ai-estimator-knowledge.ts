@@ -327,7 +327,22 @@ export interface KnowledgePreviewAmountComponent {
   rateBps: KnowledgeBasisPoints | null;
 }
 
+export interface KnowledgeModeCalculationSettings {
+  baseRatePaise: KnowledgePaise;
+  lowQuantityLimit: KnowledgeCanonicalDecimal;
+  minimumMarkupBps: KnowledgeBasisPoints;
+  startingMarkupBps: KnowledgeBasisPoints;
+}
+
+export interface KnowledgeModeCalculationPreview {
+  revisedUnitRatePaise: KnowledgePaise;
+  revisedAmountPaise: KnowledgePaise;
+  totalPaise: KnowledgePaise;
+  appliedImpactBps: KnowledgeBasisPoints;
+}
+
 export interface KnowledgePreview {
+  modeCalculation?: KnowledgeModeCalculationPreview;
   formulaVersion: "knowledge-preview-v1";
   effectivePriceVersionId: KnowledgeStableId | null;
   taxVersionId: KnowledgeStableId | null;

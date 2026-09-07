@@ -10,6 +10,25 @@ import {
 } from "../src/domain/ai-estimator-knowledge-validation.js";
 
 describe("AI estimator knowledge validation", () => {
+  it("accepts optional shared Mode calculation inputs and rejects authored totals or invalid settings", () => {
+    const modeCalculation = { baseRatePaise: 150_000, lowQuantityLimit: "15", minimumMarkupBps: 2_500, startingMarkupBps: 3_500 };
+    for (const value of [null, modeCalculation]) {
+      expect(validateKnowledgeSectionPayload("advanced", { modeCalculation: value })).toEqual([]);
+    }
+    for (const [key, value] of Object.entries({ baseRatePaise: -1, lowQuantityLimit: "01", minimumMarkupBps: 2_500.5, startingMarkupBps: 2_499 })) {
+      expect(validateKnowledgeSectionPayload("advanced", { modeCalculation: { ...modeCalculation, [key]: value } }))
+        .toContainEqual(expect.objectContaining({ path: `payload.modeCalculation.${key}` }));
+    }
+    for (const key of ["impactBps", "uomId", "quantity", "revisedUnitRatePaise", "totalPaise", "modeCalculationMarkupBasis"]) {
+      expect(validateKnowledgeSectionPayload("advanced", { modeCalculation: { ...modeCalculation, [key]: 1 } }))
+        .toContainEqual(expect.objectContaining({ path: `payload.modeCalculation.${key}`, code: "UNKNOWN_FIELD" }));
+    }
+    expect(new Set(validateKnowledgeSectionPayload("advanced", { modeCalculation: {} }).map((issue) => issue.path)))
+      .toEqual(new Set(Object.keys(modeCalculation).map((key) => `payload.modeCalculation.${key}`)));
+    expect(validateKnowledgeSectionPayload("pricing", { modeCalculation }))
+      .toContainEqual(expect.objectContaining({ path: "payload.modeCalculation", code: "UNKNOWN_FIELD" }));
+  });
+
   it("accepts a shared Mode paragraph, generated defaults, and older payloads", () => {
     for (const modeDescription of [null, "Custom shared wording", "A".repeat(4000)]) {
       expect(validateKnowledgeSectionPayload("advanced", { modeDescription })).toEqual([]);
