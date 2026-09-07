@@ -1,9 +1,32 @@
 .lisno-loading-mark {
   display: inline-grid;
-  justify-items: center;
-  gap: 14px;
-  inline-size: 132px;
+  position: relative;
+  place-items: center;
+  inline-size: 176px;
   max-inline-size: 100%;
+  min-block-size: 84px;
+  padding: 20px;
+  box-sizing: border-box;
+  border: 2px solid #b78711;
+  border-radius: 16px;
+  background: #fff;
+  box-shadow: 0 0 0 3px #fff, 0 8px 28px rgb(30 24 59 / 18%);
+  isolation: isolate;
+}
+
+.lisno-loading-mark::after {
+  content: "";
+  position: absolute;
+  inset: -2px;
+  padding: 3px;
+  border-radius: inherit;
+  background: linear-gradient(110deg, #b78711 25%, #f7d871 42%, #fff4c7 50%, #f7d871 58%, #b78711 75%);
+  background-size: 250% 100%;
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  animation: lisno-loading-border 1.6s linear infinite;
+  pointer-events: none;
 }
 
 .lisno-loading-mark__logo {
@@ -13,31 +36,16 @@
   object-fit: contain;
 }
 
-.lisno-loading-mark__track {
-  display: block;
-  position: relative;
-  inline-size: 100%;
-  block-size: 3px;
-  overflow: hidden;
-  border-radius: 999px;
-  background: #e9e4d7;
-}
-
-.lisno-loading-mark__track > span {
-  display: block;
-  inline-size: 42%;
-  block-size: 100%;
-  border-radius: inherit;
-  background: #c59d24;
-  animation: lisno-loading-sweep 1.25s ease-in-out infinite;
-}
-
 .lisno-loading-message {
-  margin: 0;
-  color: #596174;
-  font: 400 13px/1.5 Poppins, system-ui, sans-serif;
-  text-align: center;
-  overflow-wrap: anywhere;
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
 }
 
 .lisno-page-loader,
@@ -59,40 +67,35 @@
 
 .lisno-request-loader {
   position: fixed;
-  inset-block-start: max(12px, env(safe-area-inset-top));
+  inset-block-start: 50%;
   inset-inline-start: 50%;
-  transform: translateX(-50%);
+  transform: translate(-50%, -50%);
   z-index: calc(var(--z-modal, 30) + 20);
   display: grid;
   justify-items: center;
-  gap: 8px;
   max-inline-size: calc(100vw - 32px);
-  padding: 12px 20px;
   box-sizing: border-box;
-  border: 1px solid #e4dfd2;
-  border-radius: 12px;
-  background: #fff;
-  box-shadow: 0 4px 20px rgb(23 33 63 / 12%);
   pointer-events: none;
 }
 
-.lisno-request-loader .lisno-loading-mark {
-  inline-size: 88px;
-  gap: 8px;
-}
-
-.lisno-request-loader .lisno-loading-message {
-  font-size: 11px;
-}
-
-@keyframes lisno-loading-sweep {
-  0% { transform: translateX(-110%); }
-  100% { transform: translateX(350%); }
+@keyframes lisno-loading-border {
+  from { background-position: 150% 0; }
+  to { background-position: -150% 0; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .lisno-loading-mark__track > span {
+  .lisno-loading-mark::after {
     animation: none;
-    inline-size: 100%;
+    background-position: 50% 0;
+  }
+}
+
+@media (forced-colors: active) {
+  .lisno-loading-mark {
+    border-color: Highlight;
+  }
+
+  .lisno-loading-mark::after {
+    display: none;
   }
 }
