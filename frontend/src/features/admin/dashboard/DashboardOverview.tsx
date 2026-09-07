@@ -1,11 +1,36 @@
 import { Link } from "react-router-dom";
 
+import {
+  HeroFigure,
+  MeterChart,
+  StatTile,
+  type ChartStatus
+} from "../../../components/charts";
 import { MetricCard } from "../../../components/ui/MetricCard";
 import { StatusBadge } from "../../../components/ui/StatusBadge";
 import { Surface } from "../../../components/ui/Surface";
 import { PortfolioFinanceChart } from "../../finance/ProjectFinanceChart";
 import {
-  formatDashboardDate,
+  ApprovalThroughputChart,
+  BudgetConsumptionMeter,
+  ExecutionProgressMeter,
+  ExecutionRoleChart,
+  ExpenseTrendChart,
+  FinanceWaterfallChart,
+  GovernanceQueueChart,
+  MarginMeter,
+  ProcurementSpendMeter,
+  ProjectFlowChart,
+  ProjectLifecycleChart,
+  RiskDistributionChart,
+  RiskFactorChart,
+  SpendCompositionChart,
+  WorkerRoleChart,
+  WorkforceKpiMeter,
+  suppressionReason
+} from "./dashboardCharts";
+import {
+  formatBps,
   formatDashboardRatio,
   formatDays,
   formatPaise,
@@ -52,6 +77,38 @@ function SafeMetricCard({
   return <MetricCard label={label} value={presentation.value} detail={presentation.unavailable ? presentation.detail : safeDetail} />;
 }
 
+/**
+ * An attention tile. Every one of these counts something that should be going
+ * down, so the delta colouring is inverted and a rise reads as bad.
+ */
+function AttentionTile({
+  dataQuality,
+  metricKey,
+  label,
+  value,
+  detail,
+  status
+}: {
+  dataQuality: DashboardDataQuality;
+  metricKey: string;
+  label: string;
+  value: number;
+  detail?: string;
+  status: ChartStatus;
+}) {
+  const reason = suppressionReason(dataQuality, [metricKey]);
+  return (
+    <StatTile
+      label={label}
+      value={value.toLocaleString("en-IN")}
+      detail={detail}
+      status={value > 0 ? status : "good"}
+      higherIsBetter={false}
+      unavailableReason={reason}
+    />
+  );
+}
+
 function ModuleCard({
   title,
   primary,
@@ -60,7 +117,9 @@ function ModuleCard({
   days,
   dataQuality,
   primaryMetricKeys,
-  detailMetricKeys
+  detailMetricKeys,
+  meter,
+  note
 }: {
   title: string;
   primary: string;
@@ -70,6 +129,9 @@ function ModuleCard({
   dataQuality: DashboardDataQuality;
   primaryMetricKeys: string[];
   detailMetricKeys: string[];
+  meter?: { value: number | null; valueText: string; label: string; status: ChartStatus };
+  /** Verified supporting text where a module has no ratio to meter. */
+  note?: string;
 }) {
   const unavailablePrimaryKey = primaryMetricKeys.find((key) =>
     isDashboardMetricUnavailable(dataQuality, key)
@@ -80,6 +142,17 @@ function ModuleCard({
   return (
     <Surface as="article" variant="subtle" className="dashboard-module-card">
       <div><p className="eyebrow">{title}</p><strong>{unavailablePrimaryKey ? "Not available" : primary}</strong></div>
+      {meter && !unavailablePrimaryKey ? (
+        <MeterChart
+          size="compact"
+          label={meter.label}
+          value={meter.value}
+          valueText={meter.valueText}
+          status={meter.status}
+        />
+      ) : note && !unavailablePrimaryKey ? (
+        <p className="dashboard-module-card__note">{note}</p>
+      ) : null}
       <p>{unavailablePrimaryKey
         ? dashboardMetricUnavailableReason(dataQuality, unavailablePrimaryKey)
         : unavailableDetailKey
@@ -136,6 +209,7 @@ function SafeLinkedMetric({
 export function DashboardOverview({ data }: { data: SuperAdminDashboardOverview }) {
   const redRisk = riskPresentation("red");
   const yellowRisk = riskPresentation("yellow");
+  const days = data.period.days;
   const financeChartMetricKeys = [
     "finance.projectCount",
     "finance.approvedContractTotalPaise",
@@ -157,20 +231,77 @@ export function DashboardOverview({ data }: { data: SuperAdminDashboardOverview 
     isDashboardMetricUnavailable(data.dataQuality, key)
   );
 
+  const totalReason = suppressionReason(data.dataQuality, ["projects.total"]);
+  const completionReason = suppressionReason(data.dataQuality, ["projects.completionRate"]);
+  const completionShare =
+    data.projects.completionRate.rateBps === null
+      ? null
+      : data.projects.completionRate.rateBps / 10_000;
+  const createdTrend = data.trends.map((bucket) => bucket.projectsCreated);
+  const approvalShare =
+    data.design.approvalRate.rateBps === null ? null : data.design.approvalRate.rateBps / 10_000;
+  const marginShare =
+    data.finance.currentMarginBps === null
+      ? null
+      : Math.max(0, Math.min(1, data.finance.currentMarginBps / 10_000));
+  const executionShare =
+    data.execution.weightedProgress.rateBps === null
+      ? null
+      : data.execution.weightedProgress.rateBps / 10_000;
+  const kpiShare =
+    data.workforce.averageKpi.rateBps === null ? null : data.workforce.averageKpi.rateBps / 10_000;
+  const procurementProgressShare =
+    data.procurement.averageProgress.rateBps === null
+      ? null
+      : data.procurement.averageProgress.rateBps / 10_000;
+
   return (
     <div className="dashboard-overview">
+      <Surface as="section" className="dashboard-command" aria-labelledby="dashboard-command-heading">
+        <h3 id="dashboard-command-heading" className="sr-only">Portfolio headline</h3>
+        <HeroFigure
+          eyebrow="Organization portfolio"
+          value={totalReason ? "Not available" : data.projects.total.toLocaleString("en-IN")}
+          label={data.projects.total === 1 ? "project under management" : "projects under management"}
+          detail={
+            totalReason ?? (
+              <>
+                {data.projects.createdInPeriod} created and {data.projects.completed} completed in this
+                period · {data.projects.atRisk} currently at risk
+              </>
+            )
+          }
+          trend={totalReason || createdTrend.length === 0 ? undefined : createdTrend}
+          trendLabel="Projects created per day in this period"
+        />
+        <div className="dashboard-command__meters">
+          <MeterChart
+            label="Projects delivered"
+            value={completionReason ? null : completionShare}
+            valueText={formatDashboardRatio(data.projects.completionRate)}
+            detail={ratioDetail(data.projects.completionRate, "projects")}
+            status={
+              completionShare === null ? "neutral" : completionShare >= 0.6 ? "good" : "warning"
+            }
+            unavailableReason={completionReason}
+          />
+          <BudgetConsumptionMeter data={data} />
+          <ExecutionProgressMeter data={data} />
+        </div>
+      </Surface>
+
       <section aria-labelledby="dashboard-priority-heading">
         <div className="dashboard-section-heading">
           <div><p className="eyebrow">Priority now</p><h3 id="dashboard-priority-heading">Attention summary</h3></div>
           <p>Current-state signals at the dashboard observation time.</p>
         </div>
-        <div className="dashboard-metric-grid dashboard-metric-grid--priority">
-          <SafeMetricCard dataQuality={data.dataQuality} metricKey="risk.projectDistribution" label="Red-risk projects" value={data.risk.projectDistribution.red} detail="Require immediate review" />
-          <SafeMetricCard dataQuality={data.dataQuality} metricKey="risk.projectDistribution" label="Yellow-risk projects" value={data.risk.projectDistribution.yellow} detail="Need monitoring" />
-          <SafeMetricCard dataQuality={data.dataQuality} metricKey="execution.overdue" label="Overdue execution tasks" value={data.execution.overdue} />
-          <SafeMetricCard dataQuality={data.dataQuality} metricKey="finance.overBudgetProjectCount" label="Budget exceptions" value={data.finance.overBudgetProjectCount} />
-          <SafeMetricCard dataQuality={data.dataQuality} metricKey="execution.overdueUnassigned" label="Unassigned overdue tasks" value={data.execution.overdueUnassigned} />
-          <SafeMetricCard dataQuality={data.dataQuality} metricKey="governance.failedClientDeliveries" label="Failed Client deliveries" value={data.governance.failedClientDeliveries} />
+        <div className="dashboard-tile-grid">
+          <AttentionTile dataQuality={data.dataQuality} metricKey="risk.projectDistribution" label="Red-risk projects" value={data.risk.projectDistribution.red} detail="Require immediate review" status="critical" />
+          <AttentionTile dataQuality={data.dataQuality} metricKey="risk.projectDistribution" label="Yellow-risk projects" value={data.risk.projectDistribution.yellow} detail="Need monitoring" status="warning" />
+          <AttentionTile dataQuality={data.dataQuality} metricKey="execution.overdue" label="Overdue execution tasks" value={data.execution.overdue} detail="Past their due date and incomplete" status="critical" />
+          <AttentionTile dataQuality={data.dataQuality} metricKey="finance.overBudgetProjectCount" label="Budget exceptions" value={data.finance.overBudgetProjectCount} detail="Recorded cost past the budget" status="serious" />
+          <AttentionTile dataQuality={data.dataQuality} metricKey="execution.overdueUnassigned" label="Unassigned overdue tasks" value={data.execution.overdueUnassigned} detail="Overdue with no assignee" status="serious" />
+          <AttentionTile dataQuality={data.dataQuality} metricKey="governance.failedClientDeliveries" label="Failed Client deliveries" value={data.governance.failedClientDeliveries} detail="Client could not be reached" status="critical" />
         </div>
         <div className="dashboard-status-legend" aria-label="Risk status legend">
           <StatusBadge label={redRisk.label} tone={redRisk.tone} />
@@ -183,7 +314,15 @@ export function DashboardOverview({ data }: { data: SuperAdminDashboardOverview 
       <section aria-labelledby="dashboard-projects-heading">
         <div className="dashboard-section-heading">
           <div><p className="eyebrow">Portfolio snapshot</p><h3 id="dashboard-projects-heading">Project lifecycle</h3></div>
-          <Link to={tabHref("projects", data.period.days)}>View all project metrics</Link>
+          <Link to={tabHref("projects", days)}>View all project metrics</Link>
+        </div>
+        <div className="dashboard-chart-grid">
+          <Surface as="article" className="dashboard-chart-card">
+            <ProjectLifecycleChart data={data} />
+          </Surface>
+          <Surface as="article" className="dashboard-chart-card">
+            <RiskDistributionChart data={data} />
+          </Surface>
         </div>
         <div className="dashboard-metric-grid">
           <SafeMetricCard dataQuality={data.dataQuality} metricKey="projects.total" label="All projects" value={data.projects.total} detail={`${data.projects.createdInPeriod} created in this period`} detailMetricKey="projects.createdInPeriod" />
@@ -197,19 +336,37 @@ export function DashboardOverview({ data }: { data: SuperAdminDashboardOverview 
         </div>
       </section>
 
+      <section aria-labelledby="dashboard-trends-heading">
+        <div className="dashboard-section-heading">
+          <div><p className="eyebrow">Selected period</p><h3 id="dashboard-trends-heading">Operational trends</h3></div>
+          <p>Counts and money are plotted separately; they never share an axis.</p>
+        </div>
+        <div className="dashboard-chart-grid">
+          <Surface as="article" className="dashboard-chart-card">
+            <ProjectFlowChart data={data} />
+          </Surface>
+          <Surface as="article" className="dashboard-chart-card">
+            <ApprovalThroughputChart data={data} />
+          </Surface>
+        </div>
+        <Surface as="article" className="dashboard-chart-card">
+          <ExpenseTrendChart data={data} />
+        </Surface>
+      </section>
+
       <section aria-labelledby="dashboard-module-health-heading">
         <div className="dashboard-section-heading">
           <div><p className="eyebrow">Every operational area</p><h3 id="dashboard-module-health-heading">Cross-module health</h3></div>
           <p>Eligible, tracked, and unavailable values remain separate.</p>
         </div>
         <div className="dashboard-module-grid">
-          <ModuleCard title="Estimation" primary={`${data.estimation.clientApproved} Client approved`} detail={`${data.estimation.awaitingClient} awaiting Client · ${data.estimation.unavailableProjects} unavailable`} tab="estimation" days={data.period.days} dataQuality={data.dataQuality} primaryMetricKeys={["estimation.clientApproved"]} detailMetricKeys={["estimation.awaitingClient", "estimation.unavailableProjects"]} />
-          <ModuleCard title="Design" primary={`${data.design.approved} approved`} detail={`${data.design.changesRequested} changes requested · ${data.design.unavailableProjects} unavailable`} tab="design" days={data.period.days} dataQuality={data.dataQuality} primaryMetricKeys={["design.approved"]} detailMetricKeys={["design.changesRequested", "design.unavailableProjects"]} />
-          <ModuleCard title="Procurement" primary={`${data.procurement.inProgress} in progress`} detail={`${data.procurement.completed} completed · ${data.procurement.unavailableProjects} unavailable`} tab="procurement" days={data.period.days} dataQuality={data.dataQuality} primaryMetricKeys={["procurement.inProgress"]} detailMetricKeys={["procurement.completed", "procurement.unavailableProjects"]} />
-          <ModuleCard title="Finance" primary={formatPaise(data.finance.currentProfitPaise)} detail={`Current profit (live) · ${data.finance.overBudgetProjectCount} budget exceptions`} tab="finance" days={data.period.days} dataQuality={data.dataQuality} primaryMetricKeys={["finance.currentProfitPaise"]} detailMetricKeys={["finance.overBudgetProjectCount"]} />
-          <ModuleCard title="Execution" primary={`${data.execution.overdue} overdue`} detail={`${data.execution.unassigned} unassigned · ${data.execution.completedInPeriod} completed in period`} tab="execution" days={data.period.days} dataQuality={data.dataQuality} primaryMetricKeys={["execution.overdue"]} detailMetricKeys={["execution.unassigned", "execution.completedInPeriod"]} />
-          <ModuleCard title="Workforce" primary={`${data.workforce.activeWorkers} active workers`} detail={`${data.workforce.capacityAvailable ? `${data.workforce.overCapacityWorkers} over capacity` : "Capacity not available"} · ${data.workforce.kpiUnavailableWorkers} KPI unavailable`} tab="workforce" days={data.period.days} dataQuality={data.dataQuality} primaryMetricKeys={["workforce.activeWorkers"]} detailMetricKeys={["workforce.capacity", "workforce.kpiUnavailableWorkers"]} />
-          <ModuleCard title="Risk" primary={`${data.projects.atRisk} projects at risk`} detail={`${data.risk.projectDistribution.red} red · ${data.risk.projectDistribution.yellow} yellow`} tab="risk" days={data.period.days} dataQuality={data.dataQuality} primaryMetricKeys={["risk.projectDistribution"]} detailMetricKeys={["risk.projectDistribution"]} />
+          <ModuleCard title="Estimation" primary={`${data.estimation.clientApproved} Client approved`} detail={`${data.estimation.awaitingClient} awaiting Client · ${data.estimation.unavailableProjects} unavailable`} tab="estimation" days={days} dataQuality={data.dataQuality} primaryMetricKeys={["estimation.clientApproved"]} detailMetricKeys={["estimation.awaitingClient", "estimation.unavailableProjects"]} note={`Median wait ${formatDays(data.estimation.medianWaitingAgeDays)} · oldest ${formatDays(data.estimation.oldestWaitingAgeDays)}`} />
+          <ModuleCard title="Design" primary={`${data.design.approved} approved`} detail={`${data.design.changesRequested} changes requested · ${data.design.unavailableProjects} unavailable`} tab="design" days={days} dataQuality={data.dataQuality} primaryMetricKeys={["design.approved"]} detailMetricKeys={["design.changesRequested", "design.unavailableProjects"]} meter={{ label: "Approval rate", value: approvalShare, valueText: formatDashboardRatio(data.design.approvalRate), status: approvalShare !== null && approvalShare >= 0.6 ? "good" : "warning" }} />
+          <ModuleCard title="Procurement" primary={`${data.procurement.inProgress} in progress`} detail={`${data.procurement.completed} completed · ${data.procurement.unavailableProjects} unavailable`} tab="procurement" days={days} dataQuality={data.dataQuality} primaryMetricKeys={["procurement.inProgress"]} detailMetricKeys={["procurement.completed", "procurement.unavailableProjects"]} meter={{ label: "Average progress", value: procurementProgressShare, valueText: formatDashboardRatio(data.procurement.averageProgress), status: procurementProgressShare !== null && procurementProgressShare >= 0.6 ? "good" : "warning" }} />
+          <ModuleCard title="Finance" primary={formatPaise(data.finance.currentProfitPaise)} detail={`Current profit (live) · ${data.finance.overBudgetProjectCount} budget exceptions`} tab="finance" days={days} dataQuality={data.dataQuality} primaryMetricKeys={["finance.currentProfitPaise"]} detailMetricKeys={["finance.overBudgetProjectCount"]} meter={{ label: "Current margin", value: marginShare, valueText: formatBps(data.finance.currentMarginBps), status: marginShare !== null && marginShare >= 0.1 ? "good" : "warning" }} />
+          <ModuleCard title="Execution" primary={`${data.execution.overdue} overdue`} detail={`${data.execution.unassigned} unassigned · ${data.execution.completedInPeriod} completed in period`} tab="execution" days={days} dataQuality={data.dataQuality} primaryMetricKeys={["execution.overdue"]} detailMetricKeys={["execution.unassigned", "execution.completedInPeriod"]} meter={{ label: "Weighted progress", value: executionShare, valueText: formatDashboardRatio(data.execution.weightedProgress), status: executionShare !== null && executionShare >= 0.6 ? "good" : "warning" }} />
+          <ModuleCard title="Workforce" primary={`${data.workforce.activeWorkers} active workers`} detail={`${data.workforce.capacityAvailable ? `${data.workforce.overCapacityWorkers} over capacity` : "Capacity not available"} · ${data.workforce.kpiUnavailableWorkers} KPI unavailable`} tab="workforce" days={days} dataQuality={data.dataQuality} primaryMetricKeys={["workforce.activeWorkers"]} detailMetricKeys={["workforce.capacity", "workforce.kpiUnavailableWorkers"]} meter={{ label: "Average KPI", value: kpiShare, valueText: formatDashboardRatio(data.workforce.averageKpi), status: kpiShare !== null && kpiShare >= 0.6 ? "good" : "warning" }} />
+          <ModuleCard title="Risk" primary={`${data.projects.atRisk} projects at risk`} detail={`${data.risk.projectDistribution.red} red · ${data.risk.projectDistribution.yellow} yellow`} tab="risk" days={days} dataQuality={data.dataQuality} primaryMetricKeys={["risk.projectDistribution"]} detailMetricKeys={["risk.projectDistribution"]} />
         </div>
       </section>
 
@@ -217,26 +374,9 @@ export function DashboardOverview({ data }: { data: SuperAdminDashboardOverview 
         <Surface as="article" className="dashboard-analysis-card">
           <div className="dashboard-section-heading">
             <div><p className="eyebrow">Explainable signals</p><h3>Risk factor analysis</h3></div>
-            <Link to={tabHref("risk", data.period.days)}>Explore risk</Link>
+            <Link to={tabHref("risk", days)}>Explore risk</Link>
           </div>
-          {isDashboardMetricUnavailable(data.dataQuality, "risk.factorDistribution") ? (
-            <p className="dashboard-unavailable"><strong>Not available.</strong> {dashboardMetricUnavailableReason(data.dataQuality, "risk.factorDistribution")}</p>
-          ) : data.risk.factorDistribution.length === 0 ? (
-            <p>No eligible risk factors are currently tracked.</p>
-          ) : (
-            <ul className="dashboard-factor-list" aria-label="Risk factor occurrences">
-              {data.risk.factorDistribution.map((factor) => {
-                const presentation = riskPresentation(factor.level);
-                return (
-                  <li key={`${factor.kind}-${factor.level}-${factor.reasonCode}`}>
-                    <div><strong>{humanize(factor.kind)}</strong><span>{humanize(factor.reasonCode)}</span></div>
-                    <StatusBadge label={presentation.label} tone={presentation.tone} />
-                    <span>{factor.occurrenceCount} occurrences across {factor.projectCount} projects</span>
-                  </li>
-                );
-              })}
-            </ul>
-          )}
+          <RiskFactorChart data={data} />
           {isDashboardMetricUnavailable(data.dataQuality, "risk.topProjects") ? (
             <p className="dashboard-unavailable"><strong>Top affected projects are not available.</strong> {dashboardMetricUnavailableReason(data.dataQuality, "risk.topProjects")}</p>
           ) : <ol className="dashboard-top-risk" aria-label="Top affected projects">
@@ -256,6 +396,7 @@ export function DashboardOverview({ data }: { data: SuperAdminDashboardOverview 
           {financeChartUnavailableKey ? (
             <p className="dashboard-unavailable"><strong>Finance chart not available.</strong> {dashboardMetricUnavailableReason(data.dataQuality, financeChartUnavailableKey)}</p>
           ) : <PortfolioFinanceChart summary={data.finance} />}
+          <MarginMeter data={data} />
           <dl className="dashboard-definition-grid">
             <SafeDefinition dataQuality={data.dataQuality} metricKey="finance.approvedSubtotalPaise" label="Approved net revenue, excluding GST" value={formatPaise(data.finance.approvedSubtotalPaise)} />
             <SafeDefinition dataQuality={data.dataQuality} metricKey="finance.currentProfitPaise" label="Current profit (live)" value={formatPaise(data.finance.currentProfitPaise)} />
@@ -263,9 +404,26 @@ export function DashboardOverview({ data }: { data: SuperAdminDashboardOverview 
         </Surface>
       </section>
 
+      <section aria-labelledby="dashboard-finance-flow-heading">
+        <div className="dashboard-section-heading">
+          <div><p className="eyebrow">Money</p><h3 id="dashboard-finance-flow-heading">Commercial position</h3></div>
+          <Link to={tabHref("finance", days)}>View all finance metrics</Link>
+        </div>
+        <div className="dashboard-chart-grid">
+          <Surface as="article" className="dashboard-chart-card">
+            <FinanceWaterfallChart data={data} />
+          </Surface>
+          <Surface as="article" className="dashboard-chart-card">
+            <SpendCompositionChart data={data} />
+            <ProcurementSpendMeter data={data} />
+          </Surface>
+        </div>
+      </section>
+
       <section className="dashboard-overview__split" aria-label="Execution and workforce health">
         <Surface as="article">
           <div className="dashboard-section-heading"><div><p className="eyebrow">Delivery</p><h3>Execution health</h3></div></div>
+          <ExecutionRoleChart data={data} />
           <dl className="dashboard-definition-grid">
             <SafeDefinition dataQuality={data.dataQuality} metricKey="execution.weightedProgress" label="Weighted progress" value={formatDashboardRatio(data.execution.weightedProgress)} />
             <SafeDefinition dataQuality={data.dataQuality} metricKey="execution.weightedProgress" label="Tracked effort" value={`${data.execution.weightedProgress.numerator} of ${data.execution.weightedProgress.denominator}`} />
@@ -275,10 +433,12 @@ export function DashboardOverview({ data }: { data: SuperAdminDashboardOverview 
         </Surface>
         <Surface as="article">
           <div className="dashboard-section-heading"><div><p className="eyebrow">Capacity</p><h3>Workforce health</h3></div></div>
+          <WorkerRoleChart data={data} />
+          <WorkforceKpiMeter data={data} />
           <dl className="dashboard-definition-grid">
-            <SafeDefinition dataQuality={data.dataQuality} metricKey="workforce.averageKpi" label="Average calculated KPI" value={formatDashboardRatio(data.workforce.averageKpi)} />
-            <SafeDefinition dataQuality={data.dataQuality} metricKey="workforce.kpiEligibleWorkers" label="KPI eligible" value={data.workforce.kpiEligibleWorkers} />
-            <SafeDefinition dataQuality={data.dataQuality} metricKey="workforce.kpiUnavailableWorkers" label="No KPI data" value={data.workforce.kpiUnavailableWorkers} />
+            <SafeDefinition dataQuality={data.dataQuality} metricKey="workforce.activeWorkers" label="Active workers" value={data.workforce.activeWorkers} />
+            <SafeDefinition dataQuality={data.dataQuality} metricKey="workforce.capacity" label="Over capacity" value={data.workforce.capacityAvailable ? (data.workforce.overCapacityWorkers ?? "Not available") : "Not available"} />
+            <SafeDefinition dataQuality={data.dataQuality} metricKey="workforce.completedInPeriodTaskCount" label="Tasks completed in period" value={data.workforce.completedInPeriodTaskCount} />
             <SafeDefinition dataQuality={data.dataQuality} metricKey="workforce.inactiveAssigneeTaskCount" label="Inactive-assignee exceptions" value={data.workforce.inactiveAssigneeTaskCount} />
           </dl>
         </Surface>
@@ -286,6 +446,9 @@ export function DashboardOverview({ data }: { data: SuperAdminDashboardOverview 
 
       <section aria-labelledby="dashboard-governance-heading">
         <div className="dashboard-section-heading"><div><p className="eyebrow">Administrative queues</p><h3 id="dashboard-governance-heading">Governance attention</h3></div></div>
+        <Surface as="article" className="dashboard-chart-card">
+          <GovernanceQueueChart data={data} />
+        </Surface>
         <div className="dashboard-governance-grid">
           <SafeLinkedMetric dataQuality={data.dataQuality} metricKey="governance.pendingInvitations" href="/admin/users" label="Pending invitations" value={data.governance.pendingInvitations} />
           <SafeLinkedMetric dataQuality={data.dataQuality} metricKey="governance.expiredInvitations" href="/admin/users" label="Expired invitations" value={data.governance.expiredInvitations} />
@@ -297,15 +460,6 @@ export function DashboardOverview({ data }: { data: SuperAdminDashboardOverview 
           <SafeLinkedMetric dataQuality={data.dataQuality} metricKey="governance.pendingDesignResponses" href="/admin/design-approvals" label="Pending Design responses" value={data.governance.pendingDesignResponses} />
           <SafeLinkedMetric dataQuality={data.dataQuality} metricKey="governance.failedDesignDeliveries" href="/admin/design-approvals" label="Failed Design deliveries" value={data.governance.failedDesignDeliveries} />
           <SafeLinkedMetric dataQuality={data.dataQuality} metricKey="governance.disabledDesignDeliveries" href="/admin/design-approvals" label="Disabled Design deliveries" value={data.governance.disabledDesignDeliveries} />
-        </div>
-      </section>
-
-      <section aria-labelledby="dashboard-trends-heading">
-        <div className="dashboard-section-heading"><div><p className="eyebrow">Selected period</p><h3 id="dashboard-trends-heading">Operational trends</h3></div><p>{formatDashboardDate(data.period.startAt)} – {formatDashboardDate(data.period.endAt)}</p></div>
-        <div className="dashboard-table-wrap">
-          <table><caption>Daily trend values; all visual values are repeated as text.</caption><thead><tr><th>Date</th><th>Projects created</th><th>Projects completed</th><th>Estimates approved</th><th>Design plans approved</th><th>Tasks completed</th><th>Expenses posted</th></tr></thead>
-            <tbody>{data.trends.map((bucket) => <tr key={bucket.date}><th scope="row">{formatDashboardDate(bucket.date)}</th><td>{dashboardMetricPresentation(data.dataQuality, "trends.projectsCreated", bucket.projectsCreated).value}</td><td>{dashboardMetricPresentation(data.dataQuality, "trends.projectsCompleted", bucket.projectsCompleted).value}</td><td>{dashboardMetricPresentation(data.dataQuality, "trends.estimatesApproved", bucket.estimatesApproved).value}</td><td>{dashboardMetricPresentation(data.dataQuality, "trends.designPlansApproved", bucket.designPlansApproved).value}</td><td>{dashboardMetricPresentation(data.dataQuality, "trends.workflowTasksCompleted", bucket.workflowTasksCompleted).value}</td><td>{dashboardMetricPresentation(data.dataQuality, "trends.ledgerExpensesPostedPaise", formatPaise(bucket.ledgerExpensesPostedPaise)).value}</td></tr>)}</tbody>
-          </table>
         </div>
       </section>
     </div>

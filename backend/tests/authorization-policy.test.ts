@@ -414,6 +414,7 @@ describe("authorization policy", () => {
       "ai_estimator_knowledge_main_line_created",
       "ai_estimator_knowledge_main_line_updated",
       "ai_estimator_knowledge_main_line_archived",
+      "ai_estimator_knowledge_main_line_permanently_deleted",
       "ai_estimator_knowledge_main_line_deactivated",
       "ai_estimator_knowledge_main_line_duplicated",
       "ai_estimator_knowledge_master_created",

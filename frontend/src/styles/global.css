@@ -26,12 +26,47 @@
   --finance-chart-spend-overhead: #a63d8f;
   --finance-chart-remaining: #e4e7f1;
 
-  --font-main: 'Futura', 'Jost', sans-serif;
-  --font-subheading: 'Futura', 'Jost', sans-serif;
-  --font-subheading-secondary: 'Jost', sans-serif;
-  --font-interface: 'Futura', 'Jost', sans-serif;
-  --font-editorial: 'Futura', 'Jost', sans-serif;
-  --font-tabular: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  --chart-series-1: #5a45d6;
+  --chart-series-2: #eb6834;
+  --chart-series-3: #1391a8;
+  --chart-series-4: #eda100;
+  --chart-series-5: #e87ba4;
+  --chart-series-6: #008300;
+  --chart-series-7: #2a6fc4;
+  --chart-series-8: #e34948;
+
+  --chart-ordinal-1: #b3a8f1;
+  --chart-ordinal-2: #9c8dec;
+  --chart-ordinal-3: #8574e6;
+  --chart-ordinal-4: #6f5ce0;
+  --chart-ordinal-5: #5a45d6;
+  --chart-ordinal-6: #4b39b4;
+
+  --chart-status-good: #18795c;
+  --chart-status-warning: #c98a10;
+  --chart-status-serious: #c2620f;
+  --chart-status-critical: #b33a4a;
+  --chart-status-neutral: #98a0b3;
+
+  --chart-surface: #ffffff;
+  --chart-grid: #e7eaf2;
+  --chart-axis: #626a7d;
+  --chart-track: #eceef5;
+  --chart-de-emphasis: #b9bfcd;
+
+  /*
+   * Unified on master's simpler single-font system (Poppins/Fraunces) during
+   * the merge with the lead-estimate-workspace rebuild, which paired this
+   * font-family swap with a coordinated font-weight: 400 across every
+   * heading. The --font-main/--subheading*/-size semantic names stay as
+   * aliases so nothing that already references them breaks.
+   */
+  --font-main: "Poppins", sans-serif;
+  --font-subheading: "Poppins", sans-serif;
+  --font-subheading-secondary: "Poppins", sans-serif;
+  --font-interface: "Poppins", sans-serif;
+  --font-editorial: "Poppins", sans-serif;
+  --font-tabular: "Fraunces", "Playfair Display", serif;
   --type-page-title: 2.5rem/1.08 var(--font-main);
   --type-section-title: 1.5rem/1.2 var(--font-subheading);
   --type-body: 1rem/1.5 var(--font-interface);

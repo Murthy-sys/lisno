@@ -369,7 +369,7 @@ describe("AI estimator knowledge screens", () => {
       within(actions).getByRole("button", { name: "Create revision" }),
       within(actions).getByRole("button", { name: "Duplicate" }),
       within(actions).getByRole("button", { name: "Deactivate" }),
-      within(actions).getByRole("button", { name: "Archive" })
+      within(actions).getByRole("button", { name: "Delete" })
     ]);
     expect(screen.queryByRole("button", { name: "Review and activate" })).not.toBeInTheDocument();
     expect(within(actions).getByRole("button", { name: "Review activation" })).toHaveClass("ui-button--secondary");
@@ -406,7 +406,7 @@ describe("AI estimator knowledge screens", () => {
 
     await screen.findByRole("heading", { name: "Configured values" });
     expect(screen.queryByRole("button", { name: "Review and activate" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Archive" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Delete" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Duplicate" })).toBeVisible();
     expect(screen.queryByRole("button", { name: "Save Overview" })).not.toBeInTheDocument();
     expect(screen.getAllByText("Read-only revision")[0]).toBeVisible();
@@ -1749,7 +1749,7 @@ describe("AI estimator knowledge screens", () => {
     expect(within(screen.getByRole("region", { name: "Budgeting" })).queryByRole("textbox", { name: "Technical description" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Save Mode" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Review and activate" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Archive" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Delete" })).not.toBeInTheDocument();
     expect(knowledgeApi.updateKnowledgeSection).not.toHaveBeenCalled();
     await expectNoAutomatedAccessibilityViolations();
   });

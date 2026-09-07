@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { useState } from "react";
+import { Download } from "lucide-react";
 
 import type { Lead, LeadStage } from "../../api/types";
 import { AsyncState } from "../../components/ui/AsyncState";
@@ -84,7 +85,7 @@ export function LeadDashboard() {
       </header>
       {query.data.items.length ? <div className="lead-list">
         <div className="lead-list__header" aria-hidden="true">
-          <span>Client</span><span>Project</span><span>Stage</span><span>Estimate</span><span />
+          <span>Client</span><span>Project</span><span>Stage</span><span>Estimate</span><span>Actions</span>
         </div>
         {query.data.items.map((lead) => <LeadRow
           key={lead.id}
@@ -136,7 +137,10 @@ function LeadRow({
     </span>
     <span className="lead-row__actions" data-label="Actions">
       {estimate ? <>
-        <DownloadButton
+        <Link className="secondary-button lead-row__open" to={`${leadPath}/estimate`}>
+          {estimate.status === "draft" ? "Continue estimate" : "View details"}
+        </Link>
+        {estimate.status !== "draft" ? <DownloadButton
           iconOnly
           className="secondary-button lead-row__export"
           label="Export as PDF"
@@ -144,11 +148,15 @@ function LeadRow({
           errorMessage={`PDF export failed for ${lead.projectName}. Try again.`}
           fallbackFilename={`lisno-${estimate.id}.pdf`}
           getFile={() => downloadEstimatePdf(estimate.id)}
-        />
-        <Link className="secondary-button lead-row__open" to={`${leadPath}/estimate`}>
-          {estimate.status === "draft" ? "Continue estimate" : "View details"}
-        </Link>
-      </> : <Link className="secondary-button lead-row__open" to={leadPath}>Open lead</Link>}
+        /> : <div><button type="button" className="secondary-button lead-row__export" disabled aria-hidden="true" tabIndex={-1}>
+          <Download aria-hidden="true" size={18} />
+        </button></div>}
+      </> : <>
+        <Link className="secondary-button lead-row__open" to={leadPath}>Open lead</Link>
+        <div><button type="button" className="secondary-button lead-row__export" disabled aria-hidden="true" tabIndex={-1}>
+          <Download aria-hidden="true" size={18} />
+        </button></div>
+      </>}
     </span>
   </article>;
 }

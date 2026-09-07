@@ -14,6 +14,7 @@ import {
 } from "./KnowledgeQuantitySlabBuilder";
 import { KnowledgeSpecificationBuilder } from "./KnowledgeSpecificationBuilder";
 import {
+  KNOWLEDGE_MASTER_LABELS,
   KNOWLEDGE_SECTION_LABELS
 } from "./knowledgePresentation";
 import type {
@@ -63,6 +64,23 @@ const KNOWLEDGE_MASTER_SINGULAR_LABELS = {
   modes: "Mode"
 } as const satisfies Readonly<Record<KnowledgeMasterType, string>>;
 
+/*
+ * Which reusable-value catalogs each section's controls actually read. A
+ * control whose catalog is empty renders as a dropdown with nothing in it,
+ * which is indistinguishable from a broken screen — so the sections that
+ * depend on a catalog say when it is unusable instead of staying silent.
+ */
+const SECTION_MASTER_CATALOGS = {
+  overview: [],
+  pricing: ["vendors", "uoms"],
+  "quantity-margin": ["uoms"],
+  scope: ["modes", "surfaces"],
+  recommendations: ["priorities"],
+  quality: [],
+  execution: ["uoms"],
+  advanced: ["modes"]
+} as const satisfies Readonly<Record<KnowledgeSectionKey, readonly KnowledgeMasterType[]>>;
+
 export interface KnowledgeSectionEditorProps {
   readonly sectionKey: KnowledgeSectionKey;
   readonly payload: KnowledgeJsonObject;
@@ -85,6 +103,8 @@ export interface KnowledgeSectionEditorProps {
   readonly pricingSpecifications?: KnowledgeJsonValue;
   readonly uomCatalogState?: KnowledgeUomCatalogState;
   readonly vendorCatalogState?: KnowledgeBudgetCatalogState;
+  /** Per-catalog load state, so an unusable catalog can explain itself. */
+  readonly masterCatalogStates?: Readonly<Partial<Record<KnowledgeMasterType, KnowledgeBudgetCatalogState>>>;
   readonly budgetReadOnly?: boolean;
   readonly budgetSaving?: boolean;
   readonly onRetrySavedBudgetDetails?: () => void;
@@ -166,6 +186,7 @@ export function KnowledgeSectionEditor({
   pricingSpecifications,
   uomCatalogState = { status: "ready" },
   vendorCatalogState = { status: "ready" },
+  masterCatalogStates = {},
   budgetReadOnly = readOnly,
   budgetSaving = false,
   onRetrySavedBudgetDetails,
@@ -234,6 +255,8 @@ export function KnowledgeSectionEditor({
         </div>
       ) : null}
       {issues.length ? <div ref={validationSummaryRef} className="knowledge-validation-summary" role="alert" tabIndex={-1}><strong>Review {issues.length} section issue{issues.length === 1 ? "" : "s"}</strong><ul>{issues.map((issue) => <li key={`${issue.path}-${issue.message}`}><span>{validationPathLabel(issue.path)}: </span>{issue.message}</li>)}</ul></div> : null}
+
+      <MasterCatalogNotices sectionKey={sectionKey} masters={masters} states={masterCatalogStates} />
 
       {sectionKey === "quantity-margin" ? (
         <>
@@ -569,6 +592,67 @@ function RowNumber({ id, label, value, disabled, onChange, min = 0, max, require
 
 function RowSelect({ id, label, value, values, disabled, onChange }: { readonly id: string; readonly label: string; readonly value: string; readonly values: readonly string[]; readonly disabled: boolean; readonly onChange: (value: string) => void }) {
   return <Field id={id} label={label} required>{(props) => <Select {...props} disabled={disabled} value={value} onChange={(event) => onChange(event.target.value)}><option value="">Select</option>{values.map((entry) => <option key={entry} value={entry}>{entry.replaceAll("_", " ")}</option>)}</Select>}</Field>;
+}
+
+/*
+ * Says why a catalog-backed control has nothing to offer. An empty catalog is
+ * the case worth naming: loading and failure already look like something is
+ * happening, but a catalog that loaded successfully with no rows in it renders
+ * an empty dropdown that looks identical to a bug.
+ */
+function MasterCatalogNotices({ sectionKey, masters, states }: {
+  readonly sectionKey: KnowledgeSectionKey;
+  readonly masters: KnowledgeSectionEditorProps["masters"];
+  readonly states: NonNullable<KnowledgeSectionEditorProps["masterCatalogStates"]>;
+}) {
+  const notices: Array<{
+    type: KnowledgeMasterType;
+    tone: "info" | "warning" | "error";
+    message: string;
+    onRetry?: () => void;
+  }> = [];
+  for (const type of SECTION_MASTER_CATALOGS[sectionKey] as readonly KnowledgeMasterType[]) {
+    const state = states[type];
+    if (!state) continue;
+    const label = KNOWLEDGE_MASTER_LABELS[type].toLowerCase();
+    if (state.status === "loading") {
+      notices.push({ type, tone: "info", message: `Loading ${label}…` });
+      continue;
+    }
+    if (state.status === "error") {
+      notices.push({
+        type,
+        tone: "error",
+        message: state.errorMessage ?? `${KNOWLEDGE_MASTER_LABELS[type]} could not be loaded.`,
+        onRetry: state.onRetry
+      });
+      continue;
+    }
+    if ((masters[type] ?? []).some(({ status }) => status === "active")) continue;
+    notices.push({
+      type,
+      tone: "warning",
+      message: `No ${label} are configured yet, so this list is empty. Add one under Estimation configuration before choosing here.`
+    });
+  }
+
+  if (notices.length === 0) return null;
+  return (
+    <>
+      {notices.map((notice) => (
+        <InlineMessage
+          key={notice.type}
+          tone={notice.tone}
+          role={notice.tone === "error" ? "alert" : undefined}
+        >
+          {notice.message}
+          {notice.tone === "error" && notice.onRetry ? (
+            <Button size="compact" variant="quiet" onClick={notice.onRetry}>Try again</Button>
+          ) : null}
+        </InlineMessage>
+      ))}
+    </>
+  );
 }
 
 function MasterRowSelect({ id, label, value, masters, disabled, nullable = false, onChange }: { readonly id: string; readonly label: string; readonly value: string; readonly masters: readonly KnowledgeMaster[]; readonly disabled: boolean; readonly nullable?: boolean; readonly onChange: (value: string | null) => void }) {

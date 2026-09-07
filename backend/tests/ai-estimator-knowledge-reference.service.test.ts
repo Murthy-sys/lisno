@@ -205,16 +205,21 @@ describe("AI estimator knowledge reference service", () => {
       .toBeNull();
   });
 
-  it("maps normalized duplicate races to 409 and permits identity reuse after soft archive", async () => {
+  it("maps normalized duplicate races to 409 and frees the identity once deleted", async () => {
     const { service } = harness();
     const created = await service.createBasket(actor, { name: "  ＰＯＰ  / Gypsum " });
     await expect(service.createBasket(actor, { name: "pop / gypsum" })).rejects.toSatisfy((error) => {
       expectApiError(error, 409, "DUPLICATE_IDENTITY");
       return true;
     });
-    await service.archiveBasket(actor, created.id, { expectedVersion: 1, reason: "Replaced taxonomy" });
+    await service.permanentlyDeleteBasket(actor, created.id, {
+      expectedVersion: 1,
+      confirmationName: created.name,
+      reason: "Replaced taxonomy"
+    });
+    /* Adding the same Basket back is the whole point of deleting it. */
     await expect(service.createBasket(actor, { name: "pop / gypsum" })).resolves.toMatchObject({ status: "active", version: 1 });
-    expect(await AiEstimatorKnowledgeBasketModel.countDocuments({ nameNormalized: "pop / gypsum" })).toBe(2);
+    expect(await AiEstimatorKnowledgeBasketModel.countDocuments({ nameNormalized: "pop / gypsum" })).toBe(1);
   });
 
   it("uses guarded CAS and never overwrites a stale Basket", async () => {
@@ -238,7 +243,7 @@ describe("AI estimator knowledge reference service", () => {
     expect(recovered.displayOrder).toBe(0);
   });
 
-  it("blocks Basket archive while a non-archived Main Line exists", async () => {
+  it("takes the Basket's Main Lines and everything they own with it", async () => {
     const { service } = harness();
     const basket = await service.createBasket(actor, { name: "Electrical" });
     await AiEstimatorKnowledgeMainLineModel.create({
@@ -258,13 +263,70 @@ describe("AI estimator knowledge reference service", () => {
       archivedAt: null,
       archivedById: null
     });
-    await expect(service.archiveBasket(actor, basket.id, { expectedVersion: 1 })).rejects.toSatisfy((error) => {
-      expectApiError(error, 409, "ACTIVE_REFERENCE_CONFLICT");
-      return true;
+    await AiEstimatorKnowledgeSectionModel.create({
+      _id: "line-1-scope",
+      mainLineId: "line-1",
+      revisionId: "line-1-revision",
+      sectionKey: "scope",
+      applicability: "configured",
+      payload: { exclusions: [] },
+      version: 1,
+      createdById: actor.id,
+      updatedById: actor.id
     });
+
+    await expect(service.getBasketDeletionImpact(actor, basket.id)).resolves.toMatchObject({
+      mainLineCount: 1
+    });
+    await service.permanentlyDeleteBasket(actor, basket.id, {
+      expectedVersion: 1,
+      confirmationName: "Electrical",
+      reason: "Wrong taxonomy"
+    });
+
+    expect(await AiEstimatorKnowledgeBasketModel.exists({ _id: basket.id })).toBeNull();
+    expect(await AiEstimatorKnowledgeMainLineModel.exists({ _id: "line-1" })).toBeNull();
+    /* A section cannot outlive the Main Line that owns it. */
+    expect(await AiEstimatorKnowledgeSectionModel.exists({ _id: "line-1-scope" })).toBeNull();
   });
 
-  it("preflights and atomically deletes only an eligible custom empty Basket", async () => {
+  it("strips references to the deleted Basket out of the configurations that survive", async () => {
+    const { service } = harness();
+    const [target, survivor] = await Promise.all([
+      service.createBasket(actor, { name: "Doomed Basket" }),
+      service.createBasket(actor, { name: "Surviving Basket" })
+    ]);
+    await AiEstimatorKnowledgeSectionModel.create({
+      _id: "survivor-scope",
+      mainLineId: "survivor-line",
+      revisionId: "survivor-revision",
+      sectionKey: "scope",
+      applicability: "configured",
+      payload: {
+        exclusions: [
+          { id: "points-at-doomed", targetBasketId: target.id, targetMainLineId: null, reason: "Excluded", active: true },
+          { id: "points-elsewhere", targetBasketId: survivor.id, targetMainLineId: null, reason: "Kept", active: true }
+        ]
+      },
+      version: 1,
+      createdById: actor.id,
+      updatedById: actor.id
+    });
+
+    await service.permanentlyDeleteBasket(actor, target.id, {
+      expectedVersion: 1,
+      confirmationName: "Doomed Basket",
+      reason: "Merged into another Basket"
+    });
+
+    const section = await AiEstimatorKnowledgeSectionModel.findById("survivor-scope").lean() as {
+      payload: { exclusions: Array<{ id: string }> };
+    };
+    /* Only the row that pointed at the deleted Basket is gone. */
+    expect(section.payload.exclusions.map(({ id }) => id)).toEqual(["points-elsewhere"]);
+  });
+
+  it("preflights and atomically deletes a custom empty Basket", async () => {
     const { service, audit } = harness();
     const basket = await service.createBasket(actor, { name: "Accidental Basket" });
 
@@ -274,9 +336,7 @@ describe("AI estimator knowledge reference service", () => {
       version: 1,
       mainLineCount: 0,
       historicalReferenceCount: 0,
-      bootstrapOwned: false,
-      canDelete: true,
-      blockers: []
+      bootstrapOwned: false
     });
     await expect(service.permanentlyDeleteBasket(actor, basket.id, {
       expectedVersion: 1,
@@ -300,7 +360,12 @@ describe("AI estimator knowledge reference service", () => {
           status: "active",
           displayOrder: 0,
           version: 1,
-          bootstrapOwned: false
+          bootstrapOwned: false,
+          deletedMainLineIds: [],
+          deletedRevisionCount: 0,
+          deletedSectionCount: 0,
+          deletedPriceVersionCount: 0,
+          strippedReferenceCount: 0
         },
         reason: "Created by mistake"
       }),
@@ -310,7 +375,7 @@ describe("AI estimator knowledge reference service", () => {
     expect(next.displayOrder).toBe(1);
   });
 
-  it("reports and enforces bootstrap, any-status Main Line, and historical relationship blockers", async () => {
+  it("reports what a deletion carries away and refuses none of it", async () => {
     const { service } = harness();
     const [lineBasket, referencedBasket] = await Promise.all([
       service.createBasket(actor, { name: "Used Basket" }),
@@ -409,34 +474,27 @@ describe("AI estimator knowledge reference service", () => {
       }
     ]);
 
+    /*
+     * None of these three is refused any more. A seeded Basket, one that still
+     * holds a Main Line, and one other configurations point at all delete —
+     * the impact only tells the reader what goes with each.
+     */
     const cases = [
       {
         id: AI_ESTIMATOR_KNOWLEDGE_BOOTSTRAP_IDS.electricalBasket,
         name: "Electrical",
-        impact: expect.objectContaining({
-          bootstrapOwned: true,
-          canDelete: false,
-          blockers: [expect.objectContaining({ code: "BOOTSTRAP_OWNED" })]
-        })
+        impact: expect.objectContaining({ bootstrapOwned: true })
       },
       {
         id: lineBasket.id,
         name: lineBasket.name,
-        impact: expect.objectContaining({
-          mainLineCount: 1,
-          canDelete: false,
-          blockers: [expect.objectContaining({ code: "HAS_MAIN_LINES" })]
-        })
+        impact: expect.objectContaining({ mainLineCount: 1 })
       },
       {
         id: referencedBasket.id,
         name: referencedBasket.name,
-        impact: expect.objectContaining({
-          /* Scope and Advanced only; Recommendations no longer bind a Basket. */
-          historicalReferenceCount: 2,
-          canDelete: false,
-          blockers: [expect.objectContaining({ code: "HAS_HISTORICAL_REFERENCES" })]
-        })
+        /* Scope and Advanced only; Recommendations no longer bind a Basket. */
+        impact: expect.objectContaining({ historicalReferenceCount: 2 })
       }
     ];
 
@@ -446,13 +504,17 @@ describe("AI estimator knowledge reference service", () => {
       await expect(service.permanentlyDeleteBasket(actor, candidate.id, {
         expectedVersion: 1,
         confirmationName: candidate.name,
-        reason: "Must remain archive-only"
-      })).rejects.toSatisfy((error) => {
-        expectApiError(error, 409, "BASKET_DELETE_BLOCKED");
-        return true;
-      });
-      expect(await AiEstimatorKnowledgeBasketModel.exists({ _id: candidate.id })).not.toBeNull();
+        reason: "Removed by the Super Admin"
+      })).resolves.toMatchObject({ deleted: true });
+      expect(await AiEstimatorKnowledgeBasketModel.exists({ _id: candidate.id })).toBeNull();
     }
+
+    /* The Main Line inside the deleted Basket went with it. */
+    expect(await AiEstimatorKnowledgeMainLineModel.exists({ _id: "archived-line-1" })).toBeNull();
+    /* And the historical rows that pointed at the deleted Basket were stripped. */
+    const advanced = await AiEstimatorKnowledgeSectionModel
+      .findById("historical-superseded-advanced").lean() as { payload: { dependencies: unknown[] } };
+    expect(advanced.payload.dependencies).toEqual([]);
   });
 
   it("leaves the Basket unchanged for unknown identity, stale version, or inexact confirmation", async () => {

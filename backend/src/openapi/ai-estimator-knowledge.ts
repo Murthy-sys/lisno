@@ -1,5 +1,4 @@
 import {
-  AI_ESTIMATOR_KNOWLEDGE_BASKET_DELETION_BLOCKER_CODES
 } from "../contracts/ai-estimator-knowledge.js";
 import {
   AI_ESTIMATOR_KNOWLEDGE_AVAILABILITY_STATES,
@@ -39,8 +38,7 @@ const masterFamilies = ["uoms", "vendors", "taxes", "priorities", "surfaces", "m
 export const AI_ESTIMATOR_KNOWLEDGE_REQUEST_BODIES: Readonly<Record<string, OpenApiObject>> = {
   [`POST ${admin}/baskets`]: jsonRequest("KnowledgeBasketCreateRequest"),
   [`PATCH ${admin}/baskets/:basketId`]: jsonRequest("KnowledgeBasketUpdateRequest"),
-  [`DELETE ${admin}/baskets/:basketId`]: jsonRequest("KnowledgeArchiveRequest"),
-  [`DELETE ${admin}/baskets/:basketId/permanent`]: jsonRequest("KnowledgePermanentDeleteBasketRequest"),
+  [`DELETE ${admin}/baskets/:basketId`]: jsonRequest("KnowledgePermanentDeleteBasketRequest"),
   [`POST ${admin}/baskets/:basketId/main-lines`]: jsonRequest("KnowledgeMainLineCreateRequest"),
   [`PATCH ${admin}/main-lines/:mainLineId`]: jsonRequest("KnowledgeMainLineUpdateRequest"),
   [`DELETE ${admin}/main-lines/:mainLineId`]: jsonRequest("KnowledgeArchiveRequest"),
@@ -78,13 +76,12 @@ export const AI_ESTIMATOR_KNOWLEDGE_RESPONSE_SCHEMAS: Readonly<Record<string, st
   [`GET ${admin}/baskets`]: "KnowledgeBasketPage",
   [`POST ${admin}/baskets`]: "KnowledgeBasket",
   [`PATCH ${admin}/baskets/:basketId`]: "KnowledgeBasket",
-  [`DELETE ${admin}/baskets/:basketId`]: "KnowledgeBasket",
+  [`DELETE ${admin}/baskets/:basketId`]: "KnowledgePermanentDeleteBasketResult",
   [`GET ${admin}/baskets/:basketId/deletion-impact`]: "KnowledgeBasketDeletionImpact",
-  [`DELETE ${admin}/baskets/:basketId/permanent`]: "KnowledgePermanentDeleteBasketResult",
   [`GET ${admin}/baskets/:basketId/main-lines`]: "KnowledgeMainLinePage",
   [`POST ${admin}/baskets/:basketId/main-lines`]: "KnowledgeItemDetail",
   [`PATCH ${admin}/main-lines/:mainLineId`]: "KnowledgeItemDetail",
-  [`DELETE ${admin}/main-lines/:mainLineId`]: "KnowledgeItemDetail",
+  [`DELETE ${admin}/main-lines/:mainLineId`]: "KnowledgeMainLineDeletionResult",
   [`GET ${admin}/items`]: "KnowledgeItemPage",
   [`GET ${admin}/main-lines/:mainLineId`]: "KnowledgeItemDetail",
   [`GET ${admin}/main-lines/:mainLineId/history`]: "KnowledgeRevisionPage",
@@ -120,13 +117,12 @@ export const AI_ESTIMATOR_KNOWLEDGE_OPERATION_SUMMARIES: Readonly<Record<string,
   [`GET ${admin}/baskets`]: "List knowledge Baskets",
   [`POST ${admin}/baskets`]: "Create a knowledge Basket",
   [`PATCH ${admin}/baskets/:basketId`]: "Update a knowledge Basket",
-  [`DELETE ${admin}/baskets/:basketId`]: "Archive a knowledge Basket",
+  [`DELETE ${admin}/baskets/:basketId`]: "Permanently delete a knowledge Basket and everything in it",
   [`GET ${admin}/baskets/:basketId/deletion-impact`]: "Read permanent-deletion impact for a knowledge Basket",
-  [`DELETE ${admin}/baskets/:basketId/permanent`]: "Permanently delete an empty knowledge Basket",
   [`GET ${admin}/baskets/:basketId/main-lines`]: "List a Basket's Main Lines",
   [`POST ${admin}/baskets/:basketId/main-lines`]: "Create a Main Line and Draft revision",
   [`PATCH ${admin}/main-lines/:mainLineId`]: "Update a knowledge Main Line",
-  [`DELETE ${admin}/main-lines/:mainLineId`]: "Archive a knowledge Main Line",
+  [`DELETE ${admin}/main-lines/:mainLineId`]: "Permanently delete a knowledge Main Line and its revisions",
   [`GET ${admin}/items`]: "Search estimation knowledge items",
   [`GET ${admin}/main-lines/:mainLineId`]: "Read an estimation knowledge item",
   [`GET ${admin}/main-lines/:mainLineId/history`]: "Read estimation knowledge revision history",
@@ -895,13 +891,6 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
       ...actorMetadata
     }
   ),
-  KnowledgeBasketDeletionBlocker: strictObject(["code", "message"], {
-    code: {
-      type: "string",
-      enum: [...AI_ESTIMATOR_KNOWLEDGE_BASKET_DELETION_BLOCKER_CODES]
-    },
-    message: { type: "string" }
-  }),
   KnowledgeBasketDeletionImpact: strictObject(
     [
       "basketId",
@@ -909,9 +898,7 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
       "version",
       "mainLineCount",
       "historicalReferenceCount",
-      "bootstrapOwned",
-      "canDelete",
-      "blockers"
+      "bootstrapOwned"
     ],
     {
       basketId: id,
@@ -919,18 +906,21 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
       version,
       mainLineCount: { type: "integer", minimum: 0 },
       historicalReferenceCount: { type: "integer", minimum: 0 },
-      bootstrapOwned: { type: "boolean" },
-      canDelete: { type: "boolean" },
-      blockers: {
-        type: "array",
-        items: ref("KnowledgeBasketDeletionBlocker")
-      }
+      bootstrapOwned: { type: "boolean" }
     }
   ),
   KnowledgePermanentDeleteBasketResult: strictObject(
     ["basketId", "deleted", "deletedAt"],
     {
       basketId: id,
+      deleted: { type: "boolean", enum: [true] },
+      deletedAt: dateTime
+    }
+  ),
+  KnowledgeMainLineDeletionResult: strictObject(
+    ["mainLineId", "deleted", "deletedAt"],
+    {
+      mainLineId: id,
       deleted: { type: "boolean", enum: [true] },
       deletedAt: dateTime
     }

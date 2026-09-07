@@ -12,6 +12,7 @@ import { PageHeader } from "../../../components/ui/PageHeader";
 import { PageState } from "../../../components/ui/PageState";
 import { SectionState } from "../../../components/ui/SectionState";
 import { Surface } from "../../../components/ui/Surface";
+import { DashboardModuleCharts } from "./DashboardModuleCharts";
 import { DashboardNavigation } from "./DashboardNavigation";
 import { DashboardOverview } from "./DashboardOverview";
 import { DashboardProjectDrilldown } from "./DashboardProjectDrilldown";
@@ -271,7 +272,7 @@ function TabSummary({ tab, data }: { tab: Exclude<DashboardTab, "overview">; dat
     { label: "Clear projects", value: data.risk.projectDistribution.green }, { label: "Not tracked", value: data.risk.projectDistribution.gray },
     { label: "Unique projects at risk", value: data.projects.atRisk }
   ];
-  return <section className="dashboard-tab-summary" aria-label={`${humanize(tab)} summary`}>{coverage ? <CoverageDetail {...coverage} module={tab} dataQuality={data.dataQuality} /> : null}<div className="dashboard-metric-grid">{cards.map((card) => {
+  return <section className="dashboard-tab-summary" aria-label={`${humanize(tab)} summary`}>{coverage ? <CoverageDetail {...coverage} module={tab} dataQuality={data.dataQuality} /> : null}<DashboardModuleCharts tab={tab} data={data} /><div className="dashboard-metric-grid">{cards.map((card) => {
     const presentation = dashboardMetricPresentation(
       data.dataQuality,
       tabMetricKey(tab, card.label),

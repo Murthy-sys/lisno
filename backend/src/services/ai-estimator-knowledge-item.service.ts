@@ -54,6 +54,7 @@ import {
 import { ApiError } from "../middleware/errors.js";
 import { AiEstimatorKnowledgeBasketModel } from "../models/AiEstimatorKnowledgeBasket.js";
 import { AiEstimatorKnowledgeMainLineModel } from "../models/AiEstimatorKnowledgeMainLine.js";
+import { cascadeDeleteMainLines, stripReferencesToDeleted } from "./ai-estimator-knowledge-cascade.js";
 import { AiEstimatorKnowledgeModeModel } from "../models/AiEstimatorKnowledgeMode.js";
 import { AiEstimatorKnowledgePriceVersionModel } from "../models/AiEstimatorKnowledgePriceVersion.js";
 import { AiEstimatorKnowledgePriorityModel } from "../models/AiEstimatorKnowledgePriority.js";
@@ -130,6 +131,13 @@ export interface AiEstimatorKnowledgeItemDetail extends KnowledgeItemListItem {
   readonly warnings: KnowledgeCompletenessSummary["warnings"];
 }
 
+/** A deleted Main Line has no row left to return, so the receipt stands in for it. */
+export interface AiEstimatorKnowledgeMainLineDeletionResult {
+  readonly mainLineId: string;
+  readonly deleted: true;
+  readonly deletedAt: string;
+}
+
 export interface AiEstimatorKnowledgeItemService {
   listMainLines(
     actor: PublicUser,
@@ -147,11 +155,11 @@ export interface AiEstimatorKnowledgeItemService {
     mainLineId: string,
     input: KnowledgeMainLineUpdateInput
   ): Promise<AiEstimatorKnowledgeItemDetail>;
-  archiveMainLine(
+  permanentlyDeleteMainLine(
     actor: PublicUser,
     mainLineId: string,
     input: KnowledgeExpectedVersionInput
-  ): Promise<AiEstimatorKnowledgeItemDetail>;
+  ): Promise<AiEstimatorKnowledgeMainLineDeletionResult>;
   listItems(
     actor: PublicUser,
     filters: KnowledgeItemFilters,
@@ -384,7 +392,8 @@ export function createAiEstimatorKnowledgeItemService(
       return getItemAfterMutation(actor, mainLineId, actorGuard);
     },
 
-    async archiveMainLine(actor, mainLineId, input) {
+    async permanentlyDeleteMainLine(actor, mainLineId, input) {
+      let deletedAt = "";
       await mongoose.connection.transaction(async (session) => {
         const storedActor = await actorGuard.requireMutationActor(actor, session);
         const current = asRow(
@@ -394,41 +403,51 @@ export function createAiEstimatorKnowledgeItemService(
             .exec()
         );
         if (!current) notFound();
+        /*
+         * An active Main Line is still resolving through the context service.
+         * Deactivating first is what takes it out of circulation, so that stays
+         * the gate; deletion only removes something already out of use.
+         */
         if (current.status === "active") {
-          throw new ApiError(409, "ACTIVE_ITEM", "Deactivate the estimation item before archiving it.");
+          throw new ApiError(409, "ACTIVE_ITEM", "Deactivate the estimation item before deleting it.");
         }
         if (requiredInteger(current.version) !== input.expectedVersion) versionConflict();
-        if (await hasInboundReference(mainLineId, session)) {
-          throw new ApiError(409, "ACTIVE_REFERENCE", "Active knowledge still references this item.");
-        }
+
+        const deleted = await AiEstimatorKnowledgeMainLineModel.deleteOne({
+          _id: mainLineId,
+          version: input.expectedVersion
+        }).session(session).exec();
+        if (deleted.deletedCount !== 1) versionConflict();
+
+        const cascade = await cascadeDeleteMainLines([mainLineId], session);
+        const strippedReferences = await stripReferencesToDeleted(
+          { basketIds: new Set<string>(), mainLineIds: new Set([mainLineId]) },
+          { mainLineId: { $ne: mainLineId } },
+          session
+        );
+
         const occurredAt = now();
-        const updated = await AiEstimatorKnowledgeMainLineModel.findOneAndUpdate(
-          { _id: mainLineId, version: input.expectedVersion, status: { $ne: "archived" } },
-          {
-            $set: {
-              status: "archived",
-              archivedAt: occurredAt,
-              archivedById: storedActor.id,
-              updatedById: storedActor.id,
-              updatedAt: occurredAt
-            },
-            $inc: { version: 1 }
-          },
-          { new: true, runValidators: true, session }
-        ).lean().exec();
-        if (!updated) versionConflict();
+        deletedAt = occurredAt.toISOString();
         await dependencies.audit.appendInMongoTransaction({
           actorId: storedActor.id,
-          action: "ai_estimator_knowledge_main_line_archived",
+          action: "ai_estimator_knowledge_main_line_permanently_deleted",
           entityType: "ai_estimator_knowledge_main_line",
           entityId: mainLineId,
-          occurredAt: occurredAt.toISOString(),
-          oldValues: { status: current.status, version: input.expectedVersion },
-          newValues: { status: "archived", version: input.expectedVersion + 1 },
+          occurredAt: deletedAt,
+          oldValues: {
+            basketId: String(current.basketId),
+            name: String(current.name),
+            status: String(current.status),
+            version: input.expectedVersion,
+            deletedRevisionCount: cascade.revisions,
+            deletedSectionCount: cascade.sections,
+            deletedPriceVersionCount: cascade.priceVersions,
+            strippedReferenceCount: strippedReferences
+          },
           reason: input.reason ?? null
         }, session);
       });
-      return getItemAfterMutation(actor, mainLineId, actorGuard, true);
+      return { mainLineId, deleted: true as const, deletedAt };
     },
 
     async listItems(actor, filters, pagination) {

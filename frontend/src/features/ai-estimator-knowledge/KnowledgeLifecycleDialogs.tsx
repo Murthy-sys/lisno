@@ -21,11 +21,17 @@ const lifecycleCopy = {
       "The item will no longer resolve through the AI knowledge context service.",
     confirm: "Deactivate item"
   },
+  /*
+   * This one really does destroy something, so the description says exactly
+   * what goes and what does not: the revisions leave with the Main Line, the
+   * audit trail does not, and adding it back is a fresh start rather than a
+   * restore.
+   */
   archive: {
-    title: "Archive this configuration?",
+    title: "Delete this Main Line?",
     description:
-      "Archived configuration remains in history and cannot be selected for new use.",
-    confirm: "Archive configuration"
+      "This permanently deletes the Main Line and every revision, section and price version it owns. Exclusions and dependencies elsewhere that point at it are removed. A Super Admin can add it again afterwards, but nothing is restored with it.",
+    confirm: "Delete permanently"
   }
 } as const;
 

@@ -1,0 +1,71 @@
+/* Brand card + typography utilities. Uses tokens defined in tokens.css. */
+
+.lisno-card {
+  border-radius: var(--radius-card);
+  border: 1px solid var(--color-border-default);
+  box-shadow: var(--shadow-card);
+  background: var(--color-bg);
+  transition: border-color var(--duration-fast) var(--ease-standard);
+}
+
+.lisno-card:hover,
+.lisno-card:focus-within,
+.lisno-card:active {
+  border-color: var(--color-border-hover);
+}
+
+.text-title {
+  font-family: "Poppins", sans-serif;
+  font-weight: var(--text-title);
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+}
+
+.text-mainheading {
+  font-family: "Poppins", sans-serif;
+  font-weight: var(--text-mainheading);
+}
+
+.text-subheading {
+  font-family: "Poppins", sans-serif;
+  font-weight: var(--text-subheading);
+}
+
+.text-paragraph {
+  font-family: "Poppins", sans-serif;
+  font-weight: var(--text-paragraph);
+}
+
+.text-subheading2 {
+  font-family: "Poppins", sans-serif;
+  font-weight: var(--text-subheading2);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.text-mainheading2 {
+  font-family: "Poppins", sans-serif;
+  font-weight: var(--text-mainheading2);
+}
+
+.text-navlinklabel {
+  font-family: "Poppins", sans-serif;
+  font-weight: var(--text-navlinklabel);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.text-text1 {
+  font-family: "Poppins", sans-serif;
+  font-weight: var(--text-text1);
+}
+
+.text-text2 {
+  font-family: "Poppins", sans-serif;
+  font-weight: var(--text-text2);
+}
+
+.text-text3 {
+  font-family: "Poppins", sans-serif;
+  font-weight: var(--text-text3);
+}

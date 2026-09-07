@@ -143,29 +143,23 @@ export interface KnowledgeBasket extends KnowledgeVersionedResource {
   readonly status: KnowledgeMasterStatus;
 }
 
-export const KNOWLEDGE_BASKET_DELETION_BLOCKER_CODES = [
-  "BOOTSTRAP_OWNED",
-  "HAS_MAIN_LINES",
-  "HAS_HISTORICAL_REFERENCES"
-] as const;
-
-export type KnowledgeBasketDeletionBlockerCode =
-  (typeof KNOWLEDGE_BASKET_DELETION_BLOCKER_CODES)[number];
-
-export interface KnowledgeBasketDeletionBlocker {
-  readonly code: KnowledgeBasketDeletionBlockerCode;
-  readonly message: string;
-}
-
+/** What a deletion carries away. Nothing here can refuse one. */
 export interface KnowledgeBasketDeletionImpact {
   readonly basketId: string;
   readonly basketName: string;
   readonly version: number;
+  /** Main Lines deleted with the Basket, along with their revision history. */
   readonly mainLineCount: number;
+  /** Relationship rows in other configurations that are stripped. */
   readonly historicalReferenceCount: number;
+  /** Seeded by the knowledge bootstrap; deletable, but worth saying out loud. */
   readonly bootstrapOwned: boolean;
-  readonly canDelete: boolean;
-  readonly blockers: readonly KnowledgeBasketDeletionBlocker[];
+}
+
+export interface KnowledgeMainLineDeletionResult {
+  readonly mainLineId: string;
+  readonly deleted: true;
+  readonly deletedAt: string;
 }
 
 export interface KnowledgePermanentDeleteBasketResult {
