@@ -63,6 +63,7 @@ import { FinanceLedgerEntryModel } from "../src/models/FinanceLedgerEntry.js";
 import { FinanceEntryDocumentModel } from "../src/models/FinanceEntryDocument.js";
 import { ProcurementReceiptCleanupJobModel } from "../src/models/ProcurementReceiptCleanupJob.js";
 import { ProcurementReceiptReconciliationJobModel } from "../src/models/ProcurementReceiptReconciliationJob.js";
+import { AiEstimatorKnowledgeSubBasketModel } from "../src/models/AiEstimatorKnowledgeSubBasket.js";
 import { AiEstimatorKnowledgeBasketModel } from "../src/models/AiEstimatorKnowledgeBasket.js";
 import { AiEstimatorKnowledgeMainLineModel } from "../src/models/AiEstimatorKnowledgeMainLine.js";
 import { AiEstimatorKnowledgeModeModel } from "../src/models/AiEstimatorKnowledgeMode.js";
@@ -455,6 +456,10 @@ describe("production server bootstrap", () => {
       events.push("ai-estimator-knowledge-basket-index");
       return AiEstimatorKnowledgeBasketModel as never;
     });
+    vi.spyOn(AiEstimatorKnowledgeSubBasketModel, "init").mockImplementation(async () => {
+      events.push("ai-estimator-knowledge-sub-basket-index");
+      return AiEstimatorKnowledgeSubBasketModel as never;
+    });
     vi.spyOn(AiEstimatorKnowledgeMainLineModel, "init").mockImplementation(async () => {
       events.push("ai-estimator-knowledge-main-line-index");
       return AiEstimatorKnowledgeMainLineModel as never;
@@ -539,6 +544,7 @@ describe("production server bootstrap", () => {
       "procurement-receipt-cleanup-index",
       "procurement-receipt-reconciliation-index",
       "ai-estimator-knowledge-basket-index",
+      "ai-estimator-knowledge-sub-basket-index",
       "ai-estimator-knowledge-main-line-index",
       "ai-estimator-knowledge-revision-index",
       "ai-estimator-knowledge-section-index",

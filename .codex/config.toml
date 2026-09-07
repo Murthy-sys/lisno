@@ -1,10 +1,5 @@
 #:schema https://developers.openai.com/codex/config-schema.json
 
-# Repository quality floor. A stronger live Max/Ultra selection still flows to
-# child agents for that session.
-model = "gpt-5.6-sol"
-model_reasoning_effort = "xhigh"
-
 [agents]
 enabled = true
 # Three child threads plus the primary agent matches this repository's preferred

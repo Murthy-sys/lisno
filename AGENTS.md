@@ -1,16 +1,36 @@
 # Lisno repository operating instructions
 
+## Default spec-driven development workflow
+
+Apply this workflow to every user-requested change, build, fix, migration, redesign, or other implementation task unless the user explicitly says to skip, combine, or resume a stage. Direct questions, explanations, diagnoses, reviews, and other read-only requests are exempt. Do not silently advance past an approval gate.
+
+### Working documents and approvals
+
+- The specification and task plan are durable, separate files in the repository; they are not chat-only output.
+- Use `docs/superpowers/specs/YYYY-MM-DD-<slug>-design.md` for the specification and `docs/superpowers/plans/YYYY-MM-DD-<slug>.md` for the task plan.
+- Link both files when presenting them. Treat the approved specification as the source of truth, and trace the task plan to its acceptance criteria.
+- Ask each gate question once. Do not repeat the same approval request in commentary and the final response or automatically re-ask it in a later turn.
+- A response such as `approved`, `proceed`, `go ahead`, `yes`, or an explicit mode choice advances only the immediately preceding gate.
+- If feedback materially changes an approved specification or task plan, update the affected file and request approval of that file once. Otherwise, continue without reopening completed gates.
+
+### Gates
+
+1. **Specification.** Create or update only the durable specification. Include the goal, current behavior and evidence, scope and non-goals, requirements, assumptions, constraints, risks, acceptance criteria, open decisions, and relevant data/API/UX impacts. Do not create the task plan or implement code. End with exactly: `Spec created: <file link>. Approve spec?`
+2. **Task plan.** Only after the specification is approved, create or update only the separate task-plan file. Include dependency-ordered tasks, affected areas, ownership boundaries, acceptance criteria, verification, and which tasks can safely run in parallel. Do not implement. End with exactly: `Task plan created: <file link>. Approve task plan?`
+3. **Execution choice.** Only after the task plan is approved, ask exactly: `Choose execution mode: A — parallel sub-agents; B — inline implementation.` Do not recommend, justify, or ask another approval question at this gate.
+4. **Implementation.** Begin implementation only after the user selects A or B. In Mode A, use native Codex subagents only for independent, non-overlapping work with explicit ownership, then integrate and verify the complete result. In Mode B, implement inline in the primary thread without implementation subagents. In both modes, preserve every applicable safety, approval, verification, and repository-specific instruction.
+
 ## Working contract
 
 - Lead with the outcome, evidence, and recommended approach. Keep facts, assumptions, and recommendations distinct.
 - Give concise decision rationale and concrete evidence; do not expose private chain-of-thought.
-- Honor the requested mode. A request to review, diagnose, or plan does not authorize implementation. Return plan/spec artifacts in chat unless the user explicitly requests repository documents or has authorized implementation that includes them. A request to implement includes proportionate local verification, but not deployment, production mutation, commits, pushes, or customer communication.
+- Honor the requested mode and the default workflow gates. A request to review, diagnose, or plan does not authorize implementation. After the required approvals and execution choice, an implementation request includes proportionate local verification, but not deployment, production mutation, commits, pushes, or customer communication.
 - Preserve unrelated work. This repository may already be dirty: capture the initial dirty-path set and the relevant per-target diff before writers start. Never overwrite, revert, stage, or reformat changes outside the assigned scope, and do not assign a dirty target until its existing changes are understood and ownership is explicit.
-- Use `$lisno-implementation-planner` for substantial or high-risk work. A small, obvious, localized change should be handled directly without planning ceremony.
+- Use `$lisno-implementation-planner` for substantial or high-risk work. A small, obvious, localized implementation change may use a compact specification and compact task plan, but it still follows the four gates unless the user explicitly skips, combines, or resumes stages.
 
 ## Classify the work
 
-- **Small:** localized behavior or copy/style change, no shared contract, data, security, or workflow decision. Inspect, implement the bounded fix, and run a focused check.
+- **Small:** localized behavior or copy/style change, no shared contract, data, security, or workflow decision. Keep the specification and task plan compact, then implement the bounded fix and run a focused check after approval and execution-mode selection.
 - **Substantial:** multiple files or workspaces; a product workflow or API contract; persistence; permissions; finance; email; OCR; migration; or an uncertain cross-boundary defect. Publish a working brief before behavior-changing edits.
 - **High-risk:** authentication/RBAC, immutable approvals, financial calculations or lineage, schema/data migration, destructive operations, external mail/files, or production effects. Gather evidence, state invariants and options, and stop at the exact approval boundary when execution lacks authority.
 
@@ -22,21 +42,20 @@ For substantial work, make the development approach visible before coding:
 4. Data/state transitions, permission matrix, compatibility, failure handling, migration/rollback, side effects, and observability as applicable.
 5. A dependency-ordered task plan with explicit ownership and verification. Keep only one parent task in progress.
 
-Ask only about a choice that materially changes behavior, architecture, data, security, or scope and cannot be inferred safely. Otherwise state the evidence-backed assumption and proceed. When repository documents are authorized, persist a cross-cutting, high-risk, or multi-session design and plan under:
-
-- `docs/superpowers/specs/YYYY-MM-DD-<slug>-design.md`
-- `docs/superpowers/plans/YYYY-MM-DD-<slug>.md`
+Ask only about a choice that materially changes behavior, architecture, data, security, or scope and cannot be inferred safely. Otherwise state the evidence-backed assumption and continue within the current gate. Use the durable specification and plan paths defined above; give cross-cutting, high-risk, or multi-session artifacts enough detail to remain implementation-ready across sessions.
 
 Historical plans, specs, test counts, and `CODEX_IMPLEMENTATION_PLAN.md` are background, not current truth. Reconcile them with current code and the latest user request.
 
 ## Multi-agent execution
 
-- Delegate proactively when two or more bounded questions or non-overlapping implementation slices can progress independently. Do not spawn agents for ceremony.
-- Start substantial work with independent read-only audits when useful: data/source-of-truth, API/authorization, frontend consumers/UX, migration, and regression coverage.
+- Do not spawn subagents before the user selects Mode A at the execution-choice gate. Before that selection, the primary agent may perform safe read-only investigation needed for the specification or task plan.
+- In approved Mode A, delegate proactively when two or more bounded questions or non-overlapping implementation slices can progress independently. Use native Codex subagents, and do not spawn agents for ceremony.
+- In approved Mode A, start substantial implementation with independent read-only audits when useful: data/source-of-truth, API/authorization, frontend consumers/UX, migration, and regression coverage.
+- In Mode B, keep implementation, review, integration, and verification inline in the primary thread; do not spawn implementation subagents.
 - Give every child one concrete deliverable, explicit subsystem or file ownership, relevant invariants, and a no-overlap boundary.
 - The primary agent owns product interpretation, cross-layer contracts, the integrated plan, shared files, and final reconciliation.
 - After the contract is settled, implementation agents may work in parallel only on non-overlapping paths. Share discovered contract changes immediately; do not let agents invent incompatible fallbacks.
-- Run `integrity_reviewer` after substantial/high-risk work or shared-contract writes and `verification_runner` after those writers are finished. Tests during concurrent edits can observe transient shared-worktree state, so final verification must run on the integrated result. Keep the small-work path direct.
+- In Mode A, run `integrity_reviewer` after substantial/high-risk work or shared-contract writes and `verification_runner` after those writers are finished. In Mode B, the primary agent performs the equivalent integrity review and verification sequentially. Tests during concurrent edits can observe transient shared-worktree state, so final verification must run on the integrated result. Keep review and verification proportional for small work.
 - Treat agent output as evidence to review, not automatically correct conclusions. Wait for all assigned work, reconcile disagreement, inspect the final diff, and report what was actually verified.
 - A custom role's `sandbox_mode = "read-only"` is a default, not hard isolation: live parent permissions can override it and connectors have their own permissions. For a security-sensitive audit, set the parent turn to read-only and avoid write-capable connectors.
 

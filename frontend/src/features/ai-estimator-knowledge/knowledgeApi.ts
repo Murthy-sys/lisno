@@ -1,6 +1,8 @@
 import { apiClient } from "../../api/client";
 import type {
   KnowledgeBasket,
+  KnowledgeSubBasket,
+  KnowledgeSubBasketListResponse,
   KnowledgeBasketDeletionImpact,
   KnowledgeMainLineDeletionResult,
   KnowledgeBasketListResponse,
@@ -165,6 +167,8 @@ export interface KnowledgePermanentDeleteBasketInput {
 }
 
 export interface KnowledgeCreateMainLineInput {
+  readonly subBasketId?: string;
+  readonly subBasketName?: string;
   readonly name: string;
   readonly description?: string | null;
   readonly displayOrder?: number;
@@ -468,4 +472,12 @@ export function resolveKnowledgeContext(
   input: KnowledgeContextRequest
 ): Promise<KnowledgeContext> {
   return apiClient.post<KnowledgeContext>(CONTEXT_PATH, input);
+}
+
+export function listKnowledgeSubBaskets(basketId: string, params: Pick<KnowledgePageParams, "search" | "limit" | "offset"> = {}): Promise<KnowledgeSubBasketListResponse> {
+  return apiClient.get<KnowledgeSubBasketListResponse>(withQuery(`${ADMIN_PREFIX}/baskets/${segment(basketId)}/sub-baskets`, params));
+}
+
+export function createKnowledgeSubBasket(basketId: string, input: { readonly name: string }): Promise<KnowledgeSubBasket> {
+  return apiClient.post<KnowledgeSubBasket>(`${ADMIN_PREFIX}/baskets/${segment(basketId)}/sub-baskets`, input);
 }

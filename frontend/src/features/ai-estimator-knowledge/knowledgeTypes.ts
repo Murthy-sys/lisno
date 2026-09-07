@@ -144,12 +144,19 @@ export interface KnowledgeBasket extends KnowledgeVersionedResource {
 }
 
 /** What a deletion carries away. Nothing here can refuse one. */
+export interface KnowledgeSubBasket extends Omit<KnowledgeBasket, "description" | "status"> {
+  readonly basketId: string;
+}
+
+export interface KnowledgeSubBasketListResponse extends KnowledgePageEnvelope<KnowledgeSubBasket> {}
+
 export interface KnowledgeBasketDeletionImpact {
   readonly basketId: string;
   readonly basketName: string;
   readonly version: number;
   /** Main Lines deleted with the Basket, along with their revision history. */
   readonly mainLineCount: number;
+  readonly subBasketCount?: number;
   /** Relationship rows in other configurations that are stripped. */
   readonly historicalReferenceCount: number;
   /** Seeded by the knowledge bootstrap; deletable, but worth saying out loud. */
@@ -169,6 +176,7 @@ export interface KnowledgePermanentDeleteBasketResult {
 }
 
 export interface KnowledgeMainLine extends KnowledgeVersionedResource {
+  readonly subBasketId?: string | null;
   readonly basketId: string;
   readonly name: string;
   readonly description: string | null;
@@ -181,6 +189,8 @@ export interface KnowledgeMainLine extends KnowledgeVersionedResource {
 export interface KnowledgeItemListItem extends KnowledgeVersionedResource {
   readonly basketId: string;
   readonly basketName: string;
+  readonly subBasketId?: string | null;
+  readonly subBasketName?: string | null;
   readonly mainLineId: string;
   readonly mainLineName: string;
   readonly description: string | null;

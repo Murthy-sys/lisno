@@ -85,6 +85,7 @@ export async function syncKnowledgeBasketDeletion(
         : current.pagination
     });
   }
+  queryClient.removeQueries({ queryKey: knowledgeQueryKeys.subBasketLists(basketId) });
   queryClient.removeQueries({
     queryKey: knowledgeQueryKeys.basketDeletionImpact(basketId),
     exact: true

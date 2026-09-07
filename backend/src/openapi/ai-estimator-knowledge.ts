@@ -39,6 +39,7 @@ export const AI_ESTIMATOR_KNOWLEDGE_REQUEST_BODIES: Readonly<Record<string, Open
   [`POST ${admin}/baskets`]: jsonRequest("KnowledgeBasketCreateRequest"),
   [`PATCH ${admin}/baskets/:basketId`]: jsonRequest("KnowledgeBasketUpdateRequest"),
   [`DELETE ${admin}/baskets/:basketId`]: jsonRequest("KnowledgePermanentDeleteBasketRequest"),
+  [`POST ${admin}/baskets/:basketId/sub-baskets`]: jsonRequest("KnowledgeSubBasketCreateRequest"),
   [`POST ${admin}/baskets/:basketId/main-lines`]: jsonRequest("KnowledgeMainLineCreateRequest"),
   [`PATCH ${admin}/main-lines/:mainLineId`]: jsonRequest("KnowledgeMainLineUpdateRequest"),
   [`DELETE ${admin}/main-lines/:mainLineId`]: jsonRequest("KnowledgeArchiveRequest"),
@@ -73,6 +74,8 @@ export const AI_ESTIMATOR_KNOWLEDGE_REQUEST_BODIES: Readonly<Record<string, Open
 };
 
 export const AI_ESTIMATOR_KNOWLEDGE_RESPONSE_SCHEMAS: Readonly<Record<string, string>> = {
+  [`GET ${admin}/baskets/:basketId/sub-baskets`]: "KnowledgeSubBasketPage",
+  [`POST ${admin}/baskets/:basketId/sub-baskets`]: "KnowledgeSubBasket",
   [`GET ${admin}/baskets`]: "KnowledgeBasketPage",
   [`POST ${admin}/baskets`]: "KnowledgeBasket",
   [`PATCH ${admin}/baskets/:basketId`]: "KnowledgeBasket",
@@ -114,6 +117,8 @@ export const AI_ESTIMATOR_KNOWLEDGE_RESPONSE_SCHEMAS: Readonly<Record<string, st
 };
 
 export const AI_ESTIMATOR_KNOWLEDGE_OPERATION_SUMMARIES: Readonly<Record<string, string>> = {
+  [`GET ${admin}/baskets/:basketId/sub-baskets`]: "List a Main Basket’s Sub Baskets",
+  [`POST ${admin}/baskets/:basketId/sub-baskets`]: "Create a Sub Basket",
   [`GET ${admin}/baskets`]: "List knowledge Baskets",
   [`POST ${admin}/baskets`]: "Create a knowledge Basket",
   [`PATCH ${admin}/baskets/:basketId`]: "Update a knowledge Basket",
@@ -143,6 +148,7 @@ export const AI_ESTIMATOR_KNOWLEDGE_OPERATION_SUMMARIES: Readonly<Record<string,
 };
 
 export const AI_ESTIMATOR_KNOWLEDGE_PAGINATION_OPERATIONS = new Set<string>([
+  `GET ${admin}/baskets/:basketId/sub-baskets`,
   `GET ${admin}/baskets`,
   `GET ${admin}/baskets/:basketId/main-lines`,
   `GET ${admin}/items`,
@@ -172,6 +178,7 @@ const masterStatusParameter = {
 export const AI_ESTIMATOR_KNOWLEDGE_QUERY_PARAMETERS: Readonly<
   Record<string, readonly OpenApiObject[]>
 > = {
+  [`GET ${admin}/baskets/:basketId/sub-baskets`]: [searchParameter],
   [`GET ${admin}/baskets`]: [searchParameter, masterStatusParameter, includeArchivedParameter],
   [`GET ${admin}/baskets/:basketId/main-lines`]: [searchParameter, includeArchivedParameter],
   [`GET ${admin}/items`]: [
@@ -320,11 +327,14 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
     displayOrder: editableDisplayOrder,
     status: { type: "string", enum: ["active", "inactive"] }
   }),
-  KnowledgeMainLineCreateRequest: strictObject(["name"], {
+  KnowledgeSubBasketCreateRequest: strictObject(["name"], { name: masterProperties.name }),
+  KnowledgeMainLineCreateRequest: { ...strictObject(["name"], {
+    subBasketId: id,
+    subBasketName: { ...masterProperties.name, description: "Resolved or created under the selected Main Basket. Mutually exclusive with subBasketId." },
     name: masterProperties.name,
     description,
     displayOrder: createDisplayOrder
-  }),
+  }), not: { required: ["subBasketId", "subBasketName"] } },
   KnowledgeMainLineUpdateRequest: strictObject(["expectedVersion"], {
     expectedVersion: version,
     name: masterProperties.name,
@@ -879,6 +889,8 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
       }
     ]
   },
+  KnowledgeSubBasket: strictObject(["id", "basketId", "name", "displayOrder", "version", ...Object.keys(actorMetadata)], { id, basketId: id, name: masterProperties.name, displayOrder, version, ...actorMetadata }),
+  KnowledgeSubBasketPage: pageSchema("KnowledgeSubBasket"),
   KnowledgeBasket: strictObject(
     ["id", "name", "description", "displayOrder", "status", "version", ...Object.keys(actorMetadata)],
     {
@@ -897,6 +909,7 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
       "basketName",
       "version",
       "mainLineCount",
+      "subBasketCount",
       "historicalReferenceCount",
       "bootstrapOwned"
     ],
@@ -905,6 +918,7 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
       basketName: masterProperties.name,
       version,
       mainLineCount: { type: "integer", minimum: 0 },
+      subBasketCount: { type: "integer", minimum: 0 },
       historicalReferenceCount: { type: "integer", minimum: 0 },
       bootstrapOwned: { type: "boolean" }
     }
@@ -938,6 +952,7 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
     {
       id,
       basketId: id,
+      subBasketId: { ...id, nullable: true },
       name: masterProperties.name,
       description,
       displayOrder,
@@ -974,6 +989,8 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
       id,
       basketId: id,
       basketName: { type: "string" },
+      subBasketId: { ...id, nullable: true },
+      subBasketName: { type: "string", nullable: true },
       mainLineId: id,
       mainLineName: { type: "string" },
       description,
@@ -999,6 +1016,8 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
       id,
       basketId: id,
       basketName: { type: "string" },
+      subBasketId: { ...id, nullable: true },
+      subBasketName: { type: "string", nullable: true },
       mainLineId: id,
       mainLineName: { type: "string" },
       description,

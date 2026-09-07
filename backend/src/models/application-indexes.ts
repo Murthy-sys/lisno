@@ -10,6 +10,7 @@ import { ProcurementReceiptReconciliationJobModel } from "./ProcurementReceiptRe
 import { UserModel } from "./User.js";
 import { UserInvitationModel } from "./UserInvitation.js";
 import { PasswordResetRequestModel } from "./PasswordResetRequest.js";
+import { AiEstimatorKnowledgeSubBasketModel } from "./AiEstimatorKnowledgeSubBasket.js";
 import { AiEstimatorKnowledgeBasketModel } from "./AiEstimatorKnowledgeBasket.js";
 import { AiEstimatorKnowledgeMainLineModel } from "./AiEstimatorKnowledgeMainLine.js";
 import { AiEstimatorKnowledgeModeModel } from "./AiEstimatorKnowledgeMode.js";
@@ -37,6 +38,7 @@ export async function initializeApplicationIndexes(): Promise<void> {
   await ProcurementReceiptCleanupJobModel.init();
   await ProcurementReceiptReconciliationJobModel.init();
   await AiEstimatorKnowledgeBasketModel.init();
+  await AiEstimatorKnowledgeSubBasketModel.init();
   await AiEstimatorKnowledgeMainLineModel.init();
   await AiEstimatorKnowledgeRevisionModel.init();
   await AiEstimatorKnowledgeSectionModel.init();

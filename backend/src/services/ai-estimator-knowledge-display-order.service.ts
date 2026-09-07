@@ -20,6 +20,7 @@ export type AiEstimatorKnowledgeDisplayOrderMasterType =
 
 export type AiEstimatorKnowledgeDisplayOrderScope =
   | typeof AI_ESTIMATOR_KNOWLEDGE_BASKET_DISPLAY_ORDER_SCOPE
+  | `sub-baskets:${string}`
   | `main-lines:${string}`
   | `masters:${AiEstimatorKnowledgeDisplayOrderMasterType}`;
 
@@ -43,7 +44,7 @@ export interface ObserveExplicitAiEstimatorKnowledgeDisplayOrderInput
 }
 
 interface ParsedDisplayOrderScope {
-  readonly kind: "baskets" | "main-lines" | "masters";
+  readonly kind: "baskets" | "main-lines" | "sub-baskets" | "masters";
   readonly value: string | null;
 }
 
@@ -158,6 +159,11 @@ function parseDisplayOrderScope(scope: string): ParsedDisplayOrderScope {
   if (scope === AI_ESTIMATOR_KNOWLEDGE_BASKET_DISPLAY_ORDER_SCOPE) {
     return { kind: "baskets", value: null };
   }
+  if (scope.startsWith("sub-baskets:")) {
+    const basketId = scope.slice("sub-baskets:".length);
+    requireScopeValue(basketId, "Basket ID");
+    return { kind: "sub-baskets", value: basketId };
+  }
   if (scope.startsWith("main-lines:")) {
     const basketId = scope.slice("main-lines:".length);
     requireScopeValue(basketId, "Basket ID");
@@ -181,7 +187,7 @@ function validateResourceFilter(
     throw new TypeError("Display-order resource filter must be a plain object.");
   }
   const keys = Object.keys(resourceFilter);
-  if (scope.kind === "main-lines") {
+  if (scope.kind === "main-lines" || scope.kind === "sub-baskets") {
     if (
       keys.length !== 1 ||
       keys[0] !== "basketId" ||

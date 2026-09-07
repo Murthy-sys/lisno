@@ -3,6 +3,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { apiClient } from "../../api/client";
 import {
   createKnowledgeSurface,
+  createKnowledgeSubBasket,
+  createKnowledgeMainLine,
+  listKnowledgeSubBaskets,
   getKnowledgeBasketDeletionImpact,
   listKnowledgeSurfaces,
   listKnowledgeItems,
@@ -15,6 +18,19 @@ import {
 afterEach(() => vi.restoreAllMocks());
 
 describe("knowledge API", () => {
+  it("encodes the parent in Sub Basket endpoints and passes the child ID to Main Line creation", async () => {
+    const get = vi.spyOn(apiClient, "get").mockResolvedValue({});
+    const post = vi.spyOn(apiClient, "post").mockResolvedValue({});
+    await listKnowledgeSubBaskets("basket/one", { limit: 100, offset: 100 });
+    expect(get).toHaveBeenCalledWith("/admin/ai-estimator-knowledge/baskets/basket%2Fone/sub-baskets?limit=100&offset=100");
+    await createKnowledgeSubBasket("basket/one", { name: "Doors" });
+    expect(post).toHaveBeenCalledWith("/admin/ai-estimator-knowledge/baskets/basket%2Fone/sub-baskets", { name: "Doors" });
+    await createKnowledgeMainLine("basket/one", { name: "Flush door", subBasketName: "Doors" });
+    expect(post).toHaveBeenCalledWith("/admin/ai-estimator-knowledge/baskets/basket%2Fone/main-lines", { name: "Flush door", subBasketName: "Doors" });
+    await createKnowledgeMainLine("basket/one", { name: "Flush door", subBasketId: "child-1" });
+    expect(post).toHaveBeenCalledWith("/admin/ai-estimator-knowledge/baskets/basket%2Fone/main-lines", { name: "Flush door", subBasketId: "child-1" });
+  });
+
   it("keeps searched item requests inside the additive admin namespace", async () => {
     const get = vi.spyOn(apiClient, "get").mockResolvedValue({
       items: [],

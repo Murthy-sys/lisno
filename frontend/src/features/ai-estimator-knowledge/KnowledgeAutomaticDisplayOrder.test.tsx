@@ -166,12 +166,11 @@ describe("automatic knowledge-base display order forms", () => {
     expect(within(dialog).queryByRole("spinbutton", { name: "Display order" })).not.toBeInTheDocument();
 
     await user.type(within(dialog).getByRole("textbox", { name: "Basket name" }), "Plumbing");
-    await user.type(within(dialog).getByRole("textbox", { name: "Description" }), "Plumbing work");
+    expect(within(dialog).queryByRole("textbox", { name: "Description" })).not.toBeInTheDocument();
     await user.click(within(dialog).getByRole("button", { name: "Add main basket" }));
 
     await waitFor(() => expect(knowledgeApi.createKnowledgeBasket).toHaveBeenCalledWith({
-      name: "Plumbing",
-      description: "Plumbing work"
+      name: "Plumbing"
     }));
     expect(knowledgeApi.createKnowledgeBasket).toHaveBeenCalledWith(
       expect.not.objectContaining({ displayOrder: expect.anything() })

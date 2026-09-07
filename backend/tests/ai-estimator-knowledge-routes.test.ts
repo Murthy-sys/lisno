@@ -36,6 +36,8 @@ function authService(): AuthService {
 
 function services() {
   const reference = {
+    listSubBaskets: vi.fn(async () => ({ items: [{ id: "child-1", basketId: "basket-1" }], total: 1 })),
+    createSubBasket: vi.fn(async () => ({ id: "child-1", basketId: "basket-1" })),
     listBaskets: vi.fn(async () => ({ items: [{ id: "basket-1" }], total: 1 })),
     createBasket: vi.fn(async () => ({ id: "basket-1" })),
     updateBasket: vi.fn(async () => ({ id: "basket-1" })),
@@ -101,6 +103,34 @@ function appFor(testServices: AiEstimatorKnowledgeAdminRouterServices) {
 }
 
 describe("AI Estimator Knowledge HTTP routes", () => {
+  it("accepts a Sub Basket text name and rejects blank or ambiguous mappings", async () => {
+    const testServices = services();
+    const app = appFor(testServices);
+    const path = "/api/v1/admin/ai-estimator-knowledge/baskets/basket-1/main-lines";
+    expect((await request(app).post(path).set("Authorization", "Bearer super-admin-token").send({ name: "Door", subBasketName: "Doors" })).status).toBe(201);
+    expect(testServices.item.createMainLine).toHaveBeenCalledWith(superAdmin, "basket-1", { name: "Door", subBasketName: "Doors" });
+    for (const subBasket of [{ subBasketName: " " }, { subBasketName: "Doors", subBasketId: "child-1" }]) {
+      expect((await request(app).post(path).set("Authorization", "Bearer super-admin-token").send({ name: "Door", ...subBasket })).status).toBe(400);
+    }
+    expect(testServices.item.createMainLine).toHaveBeenCalledTimes(1);
+  });
+
+  it("authorizes parent-scoped Sub Basket list/create and validates names before mutation", async () => {
+    const testServices = services();
+    const app = appFor(testServices);
+    const path = "/api/v1/admin/ai-estimator-knowledge/baskets/basket-1/sub-baskets";
+    expect((await request(app).post(path).set("Authorization", "Bearer admin-token").send({ name: "Doors" })).status).toBe(403);
+    expect((await request(app).get(path).set("Authorization", "Bearer admin-token")).status).toBe(403);
+    expect(testServices.reference.createSubBasket).not.toHaveBeenCalled();
+    expect((await request(app).post(path).set("Authorization", "Bearer super-admin-token").send({ name: " " })).status).toBe(400);
+    expect((await request(app).post(path).set("Authorization", "Bearer super-admin-token").send({ name: "Doors" })).status).toBe(201);
+    expect(testServices.reference.createSubBasket).toHaveBeenCalledWith(superAdmin, "basket-1", { name: "Doors" });
+    expect((await request(app).get(path).set("Authorization", "Bearer super-admin-token").query({ limit: 1, offset: 0 })).status).toBe(200);
+    expect(testServices.reference.listSubBaskets).toHaveBeenCalledWith(superAdmin, "basket-1", {}, { limit: 1, offset: 0 });
+    expect((await request(app).post("/api/v1/admin/ai-estimator-knowledge/baskets/basket-1/main-lines").set("Authorization", "Bearer super-admin-token").send({ name: "Door", subBasketId: "child-1" })).status).toBe(201);
+    expect(testServices.item.createMainLine).toHaveBeenCalledWith(superAdmin, "basket-1", { name: "Door", subBasketId: "child-1" });
+  });
+
   it("returns 403 before strict validation for a non-Super-Admin", async () => {
     const testServices = services();
     const response = await request(appFor(testServices))

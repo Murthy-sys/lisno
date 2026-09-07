@@ -33,7 +33,6 @@ import { StatusBadge, type StatusTone } from "../../components/ui/StatusBadge";
 import { Surface } from "../../components/ui/Surface";
 import {
   createKnowledgeBasket,
-  createKnowledgeMainLine,
   getKnowledgeBasketDeletionImpact,
   listKnowledgeBaskets,
   listKnowledgeItems,
@@ -45,6 +44,7 @@ import {
 import { syncKnowledgeBasketDeletion } from "./knowledgeMutationSync";
 import { knowledgeQueryKeys } from "./knowledgeQueryKeys";
 import { KNOWLEDGE_ITEM_STATUS_LABELS } from "./knowledgePresentation";
+import { CreateKnowledgeItemDialog } from "./CreateKnowledgeItemDialog";
 import { KnowledgeSafetyNotice } from "./KnowledgeSafetyNotice";
 import { collectAllKnowledgeMasterPages } from "./knowledgeMasterPagination";
 import { KnowledgeLifecycleDialog } from "./KnowledgeLifecycleDialogs";
@@ -518,7 +518,7 @@ export function KnowledgeBaseIndexPage() {
                   <article key={item.id} className="knowledge-item-card">
                     <div className="knowledge-item-card__heading">
                       <div>
-                        <p className="knowledge-breadcrumb">{item.basketName} → Main Line</p>
+                        <p className="knowledge-breadcrumb">{item.basketName} → {item.subBasketName ? `${item.subBasketName} → ` : ""}Main Line</p>
                         <h3>
                           <Link
                             className="knowledge-item-link"
@@ -633,8 +633,7 @@ export function KnowledgeBaseIndexPage() {
         />
       ) : null}
       {itemDialogOpen ? (
-        <CreateItemDialog
-          baskets={(basketsQuery.data?.items ?? []).filter(({ status }) => status === "active")}
+        <CreateKnowledgeItemDialog
           onClose={() => setItemDialogOpen(false)}
           onCreated={async (mainLineId) => {
             await queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.itemLists() });
@@ -1004,6 +1003,10 @@ function BasketDeletionImpactSummary({ impact }: {
           <dd>{impact.mainLineCount}</dd>
         </div>
         <div>
+          <dt>Sub Baskets to delete</dt>
+          <dd>{impact.subBasketCount ?? 0}</dd>
+        </div>
+        <div>
           <dt>References removed elsewhere</dt>
           <dd>{impact.historicalReferenceCount}</dd>
         </div>
@@ -1011,7 +1014,9 @@ function BasketDeletionImpactSummary({ impact }: {
       <InlineMessage tone="warning" title="This action cannot be undone">
         <p>
           {impact.mainLineCount === 0
-            ? "This basket is empty. Deleting it removes the basket itself."
+            ? (impact.subBasketCount ?? 0) > 0
+              ? "Deleting this basket also deletes its Sub Baskets."
+              : "This basket is empty. Deleting it removes the basket itself."
             : `Deleting this basket also deletes ${impact.mainLineCount} ${plural(impact.mainLineCount, "Main Line", "Main Lines")} inside it, together with every revision, section and price version they own.`}
         </p>
         {impact.historicalReferenceCount > 0 ? (
@@ -1093,7 +1098,7 @@ function BasketEditorDialog({ existing, onClose, onCreated }: {
   const mutation = useMutation({
     mutationFn: () => existing
       ? updateKnowledgeBasket(existing.id, { expectedVersion: existing.version, name, description: description.trim() || null, displayOrder: Number(displayOrder), status })
-      : createKnowledgeBasket({ name, description: description.trim() || null }),
+      : createKnowledgeBasket({ name }),
     onSuccess: onCreated
   });
   return (
@@ -1102,7 +1107,7 @@ function BasketEditorDialog({ existing, onClose, onCreated }: {
         <div className="knowledge-dialog-body">
           {mutation.error ? <InlineMessage tone="error" role="alert">{mutation.error.message}</InlineMessage> : null}
           <Field id="basket-name" label="Basket name" required>{(props) => <Input {...props} value={name} onChange={(event) => setName(event.target.value)} />}</Field>
-          <Field id="basket-description" label="Description" hint="Optional context shown alongside the basket in the knowledge base.">{(props) => <Textarea {...props} value={description} onChange={(event) => setDescription(event.target.value)} />}</Field>
+          {existing ? <Field id="basket-description" label="Description" hint="Optional context shown alongside the basket in the knowledge base.">{(props) => <Textarea {...props} value={description} onChange={(event) => setDescription(event.target.value)} />}</Field> : null}
           {existing ? (
             <div className="knowledge-form-grid">
               <Field id="basket-order" label="Display order" required hint="Lower numbers appear first.">{(props) => <Input {...props} type="number" min={0} step={1} value={displayOrder} onChange={(event) => setDisplayOrder(event.target.value)} />}</Field>
@@ -1111,34 +1116,6 @@ function BasketEditorDialog({ existing, onClose, onCreated }: {
           ) : null}
         </div>
         <div className="knowledge-dialog-actions"><Button type="button" variant="quiet" onClick={onClose}>Cancel</Button><Button type="submit" busy={mutation.isPending} disabled={!name.trim() || !displayOrderValid}>{existing ? "Save basket" : "Add main basket"}</Button></div>
-      </form>
-    </Dialog>
-  );
-}
-
-function CreateItemDialog({ baskets, onClose, onCreated }: {
-  readonly baskets: readonly { id: string; name: string }[];
-  readonly onClose: () => void;
-  readonly onCreated: (mainLineId: string) => Promise<void>;
-}) {
-  const [basketId, setBasketId] = useState("");
-  const [name, setName] = useState("");
-  const [description, setDescription] = useState("");
-  const mutation = useMutation({
-    mutationFn: () => createKnowledgeMainLine(basketId, { name, description: description.trim() || null }),
-    onSuccess: (item) => onCreated(item.mainLineId)
-  });
-  return (
-    <Dialog title="Add estimation item" eyebrow="Estimation configuration" onClose={onClose} busy={mutation.isPending}>
-      <form className="knowledge-dialog-form" onSubmit={(event) => { event.preventDefault(); mutation.mutate(); }}>
-        <div className="knowledge-dialog-body">
-          {mutation.error ? <InlineMessage tone="error" role="alert">{mutation.error.message}</InlineMessage> : null}
-          {baskets.length === 0 ? <InlineMessage tone="warning">Add a main basket before creating an estimation item.</InlineMessage> : null}
-          <Field id="item-basket" label="Main basket" required>{(props) => <Select {...props} value={basketId} onChange={(event) => setBasketId(event.target.value)}><option value="">Select a basket</option>{baskets.map((basket) => <option key={basket.id} value={basket.id}>{basket.name}</option>)}</Select>}</Field>
-          <Field id="item-name" label="Main Line name" required>{(props) => <Input {...props} value={name} onChange={(event) => setName(event.target.value)} />}</Field>
-          <Field id="item-description" label="Description" hint="Optional context for estimators reviewing this item.">{(props) => <Textarea {...props} value={description} onChange={(event) => setDescription(event.target.value)} />}</Field>
-        </div>
-        <div className="knowledge-dialog-actions"><Button type="button" variant="quiet" onClick={onClose}>Cancel</Button><Button type="submit" busy={mutation.isPending} disabled={!basketId || !name.trim()}>Add estimation item</Button></div>
       </form>
     </Dialog>
   );
