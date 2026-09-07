@@ -118,6 +118,7 @@ export const PROCUREMENT_AUDIT_ACTIONS = [
 
 export const AI_ESTIMATOR_KNOWLEDGE_AUDIT_ACTIONS = [
   "ai_estimator_knowledge_basket_created",
+  "ai_estimator_knowledge_sub_basket_created",
   "ai_estimator_knowledge_basket_updated",
   "ai_estimator_knowledge_basket_archived",
   "ai_estimator_knowledge_basket_permanently_deleted",

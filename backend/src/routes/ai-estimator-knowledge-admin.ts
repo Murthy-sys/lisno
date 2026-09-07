@@ -109,11 +109,17 @@ const mainLineListQuerySchema = z
 
 const mainLineCreateSchema = z
   .object({
+    subBasketId: stableIdSchema.optional(),
+    subBasketName: shortTextSchema.optional(),
     name: shortTextSchema,
     description: optionalDescriptionSchema,
     displayOrder: displayOrderSchema.optional()
   })
-  .strict();
+  .strict()
+  .refine(({ subBasketId, subBasketName }) => subBasketId === undefined || subBasketName === undefined, {
+    message: "Provide either a Sub Basket name or ID, not both.",
+    path: ["subBasketName"]
+  });
 
 const mainLineUpdateSchema = z
   .object({
@@ -337,6 +343,23 @@ export function createAiEstimatorKnowledgeAdminRouter(
       request.authenticatedUser!,
       String(request.params.basketId)
     ))
+  );
+  router.get(
+    `${prefix}/baskets/:basketId/sub-baskets`,
+    protectedRoute,
+    requireOperation("GET /admin/ai-estimator-knowledge/baskets/:basketId/sub-baskets"),
+    validateQuery(z.object({ ...paginationFields, search: z.string().trim().min(1).max(240).optional() }).strict()),
+    handler(async (request, response) => {
+      const { filters, pagination } = splitPagination(response.locals.validatedQuery);
+      return pageEnvelope(await services.reference.listSubBaskets(request.authenticatedUser!, String(request.params.basketId), filters, pagination), pagination);
+    })
+  );
+  router.post(
+    `${prefix}/baskets/:basketId/sub-baskets`,
+    protectedRoute,
+    requireOperation("POST /admin/ai-estimator-knowledge/baskets/:basketId/sub-baskets"),
+    validateBody(z.object({ name: shortTextSchema }).strict()),
+    handler(async (request) => services.reference.createSubBasket(request.authenticatedUser!, String(request.params.basketId), request.body), 201)
   );
   router.get(
     `${prefix}/baskets/:basketId/main-lines`,

@@ -29,6 +29,7 @@ import {
   type CanonicalKnowledgePriority
 } from "../domain/ai-estimator-knowledge-priority.js";
 import { ApiError } from "../middleware/errors.js";
+import { AiEstimatorKnowledgeSubBasketModel } from "../models/AiEstimatorKnowledgeSubBasket.js";
 import { AiEstimatorKnowledgeBasketModel } from "../models/AiEstimatorKnowledgeBasket.js";
 import { AiEstimatorKnowledgeMainLineModel } from "../models/AiEstimatorKnowledgeMainLine.js";
 import { cascadeDeleteMainLines, stripReferencesToDeleted } from "./ai-estimator-knowledge-cascade.js";
@@ -98,6 +99,10 @@ export interface AiEstimatorKnowledgeBasketDto {
   readonly updatedAt: string;
 }
 
+export interface AiEstimatorKnowledgeSubBasketDto extends Omit<AiEstimatorKnowledgeBasketDto, "description" | "status"> {
+  readonly basketId: string;
+}
+
 export interface AiEstimatorKnowledgeMasterDto {
   readonly id: string;
   readonly masterType: AiEstimatorKnowledgeMasterType;
@@ -157,6 +162,7 @@ export interface AiEstimatorKnowledgeBasketDeletionImpact {
   readonly version: number;
   /** Main Lines deleted with the Basket, along with their revision history. */
   readonly mainLineCount: number;
+  readonly subBasketCount: number;
   /** Relationship rows in other configurations that are stripped. */
   readonly historicalReferenceCount: number;
   /** Seeded by the knowledge bootstrap; deletable, but flagged to the reader. */
@@ -226,6 +232,8 @@ type AiEstimatorKnowledgeAnyUpdateMasterInput =
   | AiEstimatorKnowledgeUpdateSurfaceInput;
 
 export interface AiEstimatorKnowledgeReferenceService {
+  listSubBaskets(actor: PublicUser, basketId: string, filters: Pick<AiEstimatorKnowledgeListFilters, "search">, pagination: PaginationInput): Promise<PageResult<AiEstimatorKnowledgeSubBasketDto>>;
+  createSubBasket(actor: PublicUser, basketId: string, input: { readonly name: string }): Promise<AiEstimatorKnowledgeSubBasketDto>;
   listBaskets(
     actor: PublicUser,
     filters: AiEstimatorKnowledgeListFilters,
@@ -302,6 +310,51 @@ export function createAiEstimatorKnowledgeReferenceService(
   const startSession = dependencies.startSession ?? (() => mongoose.startSession());
 
   return {
+    async listSubBaskets(actor, basketId, filters, pagination) {
+      await actorGuard.requireReadActor(actor);
+      validateListFilters(filters);
+      validatePagination(pagination);
+      if (!await AiEstimatorKnowledgeBasketModel.exists({ _id: basketId, status: { $ne: "archived" } })) notFound();
+      const query = { basketId, ...(filters.search ? { nameNormalized: { $regex: escapeRegex(normalizeKnowledgeIdentity(filters.search)) } } : {}) };
+      const [rows, total] = await Promise.all([
+        AiEstimatorKnowledgeSubBasketModel.find(query).sort({ displayOrder: 1, _id: 1 }).skip(pagination.offset).limit(pagination.limit).lean().exec(),
+        AiEstimatorKnowledgeSubBasketModel.countDocuments(query).exec()
+      ]);
+      return { items: rows.map((row) => subBasketDto(row as Row)), total };
+    },
+
+    async createSubBasket(actor, basketId, input) {
+      return mapMongoConflict(() => withMongoTransaction(startSession, async (session) => {
+        const authorized = await actorGuard.requireMutationActor(actor, session);
+        validateName(input.name, "name");
+        // Writing the parent serializes this create against parent deletion/status changes.
+        const parent = await AiEstimatorKnowledgeBasketModel.findOneAndUpdate(
+          { _id: basketId, status: "active" }, { $inc: { dependencyEpoch: 1 } },
+          { session, returnDocument: "after", runValidators: true, timestamps: false }
+        ).lean().exec();
+        if (!parent) notFound();
+        const nameNormalized = normalizeKnowledgeIdentity(input.name);
+        if (await AiEstimatorKnowledgeSubBasketModel.exists({ basketId, nameNormalized }).session(session)) duplicateIdentity();
+        const displayOrder = await allocateAiEstimatorKnowledgeDisplayOrder({
+          scope: `sub-baskets:${basketId}`, resourceModel: AiEstimatorKnowledgeSubBasketModel,
+          resourceFilter: { basketId }, session
+        });
+        const timestamp = now();
+        const [created] = await AiEstimatorKnowledgeSubBasketModel.create([{
+          _id: `knowledge-sub-basket-${createId()}`, basketId, name: input.name, nameNormalized,
+          displayOrder, version: 1, createdById: authorized.id, updatedById: authorized.id,
+          createdAt: timestamp, updatedAt: timestamp
+        }], { session });
+        if (!created) throw new Error("Sub Basket creation did not complete.");
+        await dependencies.audit.appendInMongoTransaction({
+          actorId: authorized.id, action: "ai_estimator_knowledge_sub_basket_created",
+          entityType: "ai_estimator_knowledge_sub_basket", entityId: String(created._id),
+          occurredAt: timestamp.toISOString(), newValues: { basketId, displayOrder, version: 1 }
+        }, session);
+        return subBasketDto(created.toObject() as Row);
+      }));
+    },
+
     async listBaskets(actor, filters, pagination) {
       await actorGuard.requireReadActor(actor);
       validateListFilters(filters);
@@ -470,6 +523,7 @@ export function createAiEstimatorKnowledgeReferenceService(
         }).session(session).exec();
         if (deleted.deletedCount !== 1) versionConflict();
 
+        const deletedSubBaskets = await AiEstimatorKnowledgeSubBasketModel.deleteMany({ basketId }).session(session).exec();
         const cascade = await cascadeDeleteMainLines(mainLineIds, session);
         const strippedReferences = await stripReferencesToDeleted(
           { basketIds: new Set([basketId]), mainLineIds: new Set(mainLineIds) },
@@ -492,6 +546,7 @@ export function createAiEstimatorKnowledgeReferenceService(
             bootstrapOwned: impact.bootstrapOwned,
             /* What went with it, so the trail explains the cascade. */
             deletedMainLineIds: mainLineIds,
+            deletedSubBasketCount: deletedSubBaskets.deletedCount,
             deletedRevisionCount: cascade.revisions,
             deletedSectionCount: cascade.sections,
             deletedPriceVersionCount: cascade.priceVersions,
@@ -782,6 +837,7 @@ async function basketDeletionImpact(
   basketId: string,
   session?: ClientSession
 ): Promise<AiEstimatorKnowledgeBasketDeletionImpact> {
+  const subBasketCountQuery = AiEstimatorKnowledgeSubBasketModel.countDocuments({ basketId });
   const mainLineCountQuery = AiEstimatorKnowledgeMainLineModel.countDocuments({ basketId });
   const sectionQuery = AiEstimatorKnowledgeSectionModel.find({
     $or: [
@@ -790,10 +846,12 @@ async function basketDeletionImpact(
     ]
   }).select({ payload: 1 });
   if (session) {
+    subBasketCountQuery.session(session);
     mainLineCountQuery.session(session);
     sectionQuery.session(session);
   }
-  const [mainLineCount, sections] = await Promise.all([
+  const [subBasketCount, mainLineCount, sections] = await Promise.all([
+    subBasketCountQuery.exec(),
     mainLineCountQuery.exec(),
     sectionQuery.lean().exec()
   ]);
@@ -816,6 +874,7 @@ async function basketDeletionImpact(
     basketName: String(basket.name),
     version: Number(basket.version),
     mainLineCount,
+    subBasketCount,
     historicalReferenceCount,
     bootstrapOwned: bootstrapBasketIds.has(basketId)
   };
@@ -1281,6 +1340,11 @@ async function requireNoMasterReferences(masterType: AiEstimatorKnowledgeMasterT
   if (field && revisionIds.length > 0 && await AiEstimatorKnowledgePriceVersionModel.exists({ revisionId: { $in: revisionIds }, status: { $in: ["draft", "active"] }, [field]: id }).session(session)) {
     referenceConflict("Knowledge master has an active or Draft price reference.");
   }
+}
+
+function subBasketDto(row: Row): AiEstimatorKnowledgeSubBasketDto {
+  const { description: _description, status: _status, ...base } = basketDto(row);
+  return { ...base, basketId: String(row.basketId) };
 }
 
 function basketDto(row: Row): AiEstimatorKnowledgeBasketDto {

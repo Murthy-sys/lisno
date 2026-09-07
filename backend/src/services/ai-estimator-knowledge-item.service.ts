@@ -30,6 +30,7 @@ import {
   deriveKnowledgeCompleteness
 } from "../domain/ai-estimator-knowledge-completeness.js";
 import {
+  AI_ESTIMATOR_KNOWLEDGE_MAX_SHORT_TEXT,
   AI_ESTIMATOR_KNOWLEDGE_QUANTITY_GAP_BEHAVIORS,
   AI_ESTIMATOR_KNOWLEDGE_SECTION_KEYS,
   createKnowledgePriceScopeKey,
@@ -52,6 +53,7 @@ import {
   type KnowledgeValidationIssue
 } from "../domain/ai-estimator-knowledge-validation.js";
 import { ApiError } from "../middleware/errors.js";
+import { AiEstimatorKnowledgeSubBasketModel } from "../models/AiEstimatorKnowledgeSubBasket.js";
 import { AiEstimatorKnowledgeBasketModel } from "../models/AiEstimatorKnowledgeBasket.js";
 import { AiEstimatorKnowledgeMainLineModel } from "../models/AiEstimatorKnowledgeMainLine.js";
 import { cascadeDeleteMainLines, stripReferencesToDeleted } from "./ai-estimator-knowledge-cascade.js";
@@ -92,12 +94,14 @@ export interface KnowledgePage<T> {
 }
 
 export interface KnowledgeMainLineInput {
+  readonly subBasketId?: string;
+  readonly subBasketName?: string;
   readonly name: string;
   readonly description?: string | null;
   readonly displayOrder?: number;
 }
 
-export interface KnowledgeMainLineUpdateInput extends Partial<KnowledgeMainLineInput> {
+export interface KnowledgeMainLineUpdateInput extends Partial<Omit<KnowledgeMainLineInput, "subBasketId" | "subBasketName">> {
   readonly expectedVersion: number;
 }
 
@@ -250,6 +254,43 @@ export function createAiEstimatorKnowledgeItemService(
         const storedActor = await actorGuard.requireMutationActor(actor, session);
         await coordinateMainLineBasketDependency(basketId, session);
         const occurredAt = now();
+        let subBasketId = input.subBasketId ?? null;
+        let createdSubBasketOrder: number | null = null;
+        if (input.subBasketId !== undefined && input.subBasketName !== undefined) {
+          throw new ApiError(400, "VALIDATION_ERROR", "Provide either a Sub Basket name or ID, not both.");
+        }
+        if (input.subBasketId !== undefined || input.subBasketName !== undefined) {
+          const activeParent = await AiEstimatorKnowledgeBasketModel.exists({ _id: basketId, status: "active" }).session(session);
+          if (!activeParent) throw new ApiError(400, "VALIDATION_ERROR", "Select an active Main Basket.");
+        }
+        if (input.subBasketName !== undefined) {
+          const subBasketName = typeof input.subBasketName === "string"
+            ? input.subBasketName.normalize("NFKC").trim().replace(/\s+/gu, " ") : "";
+          if (!subBasketName || subBasketName.length > AI_ESTIMATOR_KNOWLEDGE_MAX_SHORT_TEXT) {
+            throw new ApiError(400, "VALIDATION_ERROR", "Enter a Sub Basket name of up to 240 characters.", { subBasketName: "Enter a valid Sub Basket name." });
+          }
+          const nameNormalized = normalizeKnowledgeIdentity(subBasketName);
+          // The parent dependency write above serializes name resolution with
+          // other child creates and parent deletion in this same transaction.
+          const existing = await AiEstimatorKnowledgeSubBasketModel.findOne({ basketId, nameNormalized }).session(session).lean().exec();
+          if (existing) subBasketId = String(existing._id);
+          else {
+            subBasketId = knowledgeId("sub-basket", uuid());
+            createdSubBasketOrder = await allocateAiEstimatorKnowledgeDisplayOrder({
+              scope: `sub-baskets:${basketId}`, resourceModel: AiEstimatorKnowledgeSubBasketModel,
+              resourceFilter: { basketId }, session
+            });
+            await AiEstimatorKnowledgeSubBasketModel.create([{
+              _id: subBasketId, basketId, name: subBasketName, nameNormalized,
+              displayOrder: createdSubBasketOrder, version: 1,
+              createdById: storedActor.id, updatedById: storedActor.id,
+              createdAt: occurredAt, updatedAt: occurredAt
+            }], { session });
+          }
+        } else if (subBasketId !== null) {
+          const child = await AiEstimatorKnowledgeSubBasketModel.exists({ _id: subBasketId, basketId }).session(session);
+          if (!child) throw new ApiError(400, "VALIDATION_ERROR", "Select a Sub Basket belonging to the active Main Basket.", { subBasketId: "Sub Basket is unavailable for this Main Basket." });
+        }
         const revisionId = knowledgeId("revision", uuid());
         const completeness = emptyCompleteness(mainLineId);
         const displayOrderTarget = {
@@ -271,6 +312,7 @@ export function createAiEstimatorKnowledgeItemService(
           [{
             _id: mainLineId,
             basketId,
+            subBasketId,
             name: input.name,
             nameNormalized: normalizeKnowledgeIdentity(input.name),
             description: input.description ?? null,
@@ -319,13 +361,21 @@ export function createAiEstimatorKnowledgeItemService(
           })),
           { session }
         );
+        if (createdSubBasketOrder !== null) {
+          await dependencies.audit.appendInMongoTransaction({
+            actorId: storedActor.id, action: "ai_estimator_knowledge_sub_basket_created",
+            entityType: "ai_estimator_knowledge_sub_basket", entityId: subBasketId!,
+            occurredAt: occurredAt.toISOString(),
+            newValues: { basketId, displayOrder: createdSubBasketOrder, version: 1 }
+          }, session);
+        }
         await dependencies.audit.appendInMongoTransaction({
           actorId: storedActor.id,
           action: "ai_estimator_knowledge_main_line_created",
           entityType: "ai_estimator_knowledge_main_line",
           entityId: mainLineId,
           occurredAt: occurredAt.toISOString(),
-          newValues: { basketId, revisionId, displayOrder, version: 1 }
+          newValues: { basketId, subBasketId, revisionId, displayOrder, version: 1 }
         }, session);
       });
       return getItemAfterMutation(actor, mainLineId, actorGuard);
@@ -436,6 +486,7 @@ export function createAiEstimatorKnowledgeItemService(
           occurredAt: deletedAt,
           oldValues: {
             basketId: String(current.basketId),
+            subBasketId: current.subBasketId ?? null,
             name: String(current.name),
             status: String(current.status),
             version: input.expectedVersion,
@@ -961,6 +1012,7 @@ export function createAiEstimatorKnowledgeItemService(
         await AiEstimatorKnowledgeMainLineModel.create([{
           _id: duplicateId,
           basketId,
+          subBasketId: source.subBasketId ?? null,
           name: duplicateName,
           nameNormalized: normalizeKnowledgeIdentity(duplicateName),
           description: source.description ?? null,
@@ -1009,6 +1061,7 @@ export function createAiEstimatorKnowledgeItemService(
           occurredAt: occurredAt.toISOString(),
           newValues: {
             sourceMainLineId: mainLineId,
+            subBasketId: source.subBasketId ?? null,
             sourceRevisionId,
             revisionId,
             basketId,
@@ -1865,11 +1918,12 @@ async function getItemAfterMutation(
 
 async function buildItemSummary(line: Row): Promise<KnowledgeItemListItem> {
   const revisionId = optionalString(line.draftRevisionId) ?? optionalString(line.activeRevisionId);
-  const [basketDocument, revisionDocument, overviewDocument, pricingDocument] = await Promise.all([
+  const [basketDocument, revisionDocument, overviewDocument, pricingDocument, subBasketDocument] = await Promise.all([
     AiEstimatorKnowledgeBasketModel.findById(requiredString(line.basketId)).lean().exec(),
     revisionId ? AiEstimatorKnowledgeRevisionModel.findById(revisionId).lean().exec() : null,
     revisionId ? AiEstimatorKnowledgeSectionModel.findOne({ revisionId, sectionKey: "overview" }).lean().exec() : null,
-    revisionId ? AiEstimatorKnowledgeSectionModel.findOne({ revisionId, sectionKey: "pricing" }).lean().exec() : null
+    revisionId ? AiEstimatorKnowledgeSectionModel.findOne({ revisionId, sectionKey: "pricing" }).lean().exec() : null,
+    line.subBasketId ? AiEstimatorKnowledgeSubBasketModel.findOne({ _id: line.subBasketId, basketId: line.basketId }).lean().exec() : null
   ]);
   const retainedPriceVersionIds = referencedPriceVersionIds(payloadFor(asRow(pricingDocument)));
   const priceDocuments = !revisionId || retainedPriceVersionIds.length === 0
@@ -1887,6 +1941,8 @@ async function buildItemSummary(line: Row): Promise<KnowledgeItemListItem> {
     id: requiredString(line._id),
     basketId: requiredString(line.basketId),
     basketName: requiredString(basket.name),
+    subBasketId: optionalString(line.subBasketId) ?? null,
+    subBasketName: subBasketDocument ? requiredString(asRow(subBasketDocument)!.name) : null,
     mainLineId: requiredString(line._id),
     mainLineName: requiredString(line.name),
     description: nullableString(line.description),
@@ -3129,6 +3185,7 @@ function publicMainLine(value: unknown): Row {
   return {
     id: requiredString(row._id),
     basketId: requiredString(row.basketId),
+    subBasketId: optionalString(row.subBasketId) ?? null,
     name: requiredString(row.name),
     description: nullableString(row.description),
     displayOrder: requiredInteger(row.displayOrder),

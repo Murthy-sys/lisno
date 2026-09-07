@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { AiEstimatorKnowledgeSubBasketModel } from "../src/models/AiEstimatorKnowledgeSubBasket.js";
 import { AiEstimatorKnowledgeBasketModel } from "../src/models/AiEstimatorKnowledgeBasket.js";
 import { AiEstimatorKnowledgeMainLineModel } from "../src/models/AiEstimatorKnowledgeMainLine.js";
 import { AiEstimatorKnowledgeModeModel } from "../src/models/AiEstimatorKnowledgeMode.js";
@@ -29,6 +30,7 @@ describe("AI estimator knowledge models", () => {
   it("keeps every collection feature-specific, strict, and version-key free", () => {
     const models = [
       AiEstimatorKnowledgeBasketModel,
+      AiEstimatorKnowledgeSubBasketModel,
       AiEstimatorKnowledgeMainLineModel,
       AiEstimatorKnowledgeRevisionModel,
       AiEstimatorKnowledgeSectionModel,
@@ -41,7 +43,7 @@ describe("AI estimator knowledge models", () => {
       AiEstimatorKnowledgeSurfaceModel,
       AiEstimatorKnowledgeModeModel
     ];
-    expect(new Set(models.map((entry) => entry.collection.collectionName)).size).toBe(12);
+    expect(new Set(models.map((entry) => entry.collection.collectionName)).size).toBe(models.length);
     models.forEach((entry) => {
       expect(entry.collection.collectionName).toMatch(/^aiEstimatorKnowledge/u);
       expect(entry.schema.get("strict")).toBe("throw");

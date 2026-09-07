@@ -335,6 +335,7 @@ describe("AI estimator knowledge reference service", () => {
       basketName: "Accidental Basket",
       version: 1,
       mainLineCount: 0,
+      subBasketCount: 0,
       historicalReferenceCount: 0,
       bootstrapOwned: false
     });
@@ -362,6 +363,7 @@ describe("AI estimator knowledge reference service", () => {
           version: 1,
           bootstrapOwned: false,
           deletedMainLineIds: [],
+          deletedSubBasketCount: 0,
           deletedRevisionCount: 0,
           deletedSectionCount: 0,
           deletedPriceVersionCount: 0,

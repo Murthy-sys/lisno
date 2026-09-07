@@ -475,7 +475,7 @@ export function KnowledgeItemWorkspacePage() {
       <PageHeader
         id="knowledge-item-title"
         breadcrumb={<Button variant="quiet" size="compact" leadingIcon={<ArrowLeft />} onClick={() => guard.requestNavigation(() => navigate("/admin/configuration/estimation"))}>Back to Main Baskets</Button>}
-        eyebrow={`Main Basket · ${item.basketName}`}
+        eyebrow={`Main Basket · ${item.basketName}${item.subBasketName ? ` · Sub Basket · ${item.subBasketName}` : ""}`}
         title={item.mainLineName}
         metadata={<div className="knowledge-header-metadata"><StatusBadge label={KNOWLEDGE_ITEM_STATUS_LABELS[item.status]} tone={item.status === "active" ? "success" : item.status === "draft" ? "warning" : item.status === "archived" ? "danger" : "neutral"} /><span>Updated {formatKnowledgeDateTime(item.updatedAt)}</span></div>}
         actions={<WorkspaceActions item={item} canCreate={canCreate} canLifecycle={canLifecycle} onCommand={(next) => guard.requestNavigation(() => setCommand(next))} onLifecycle={(next) => guard.requestNavigation(() => setLifecycleAction(next))} />}

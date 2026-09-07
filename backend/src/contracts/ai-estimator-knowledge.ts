@@ -89,6 +89,8 @@ export interface KnowledgeCompletenessSummary {
 export interface KnowledgeItemListItem extends KnowledgeVersionedResource {
   basketId: KnowledgeStableId;
   basketName: string;
+  subBasketId?: KnowledgeStableId | null;
+  subBasketName?: string | null;
   mainLineId: KnowledgeStableId;
   mainLineName: string;
   description: string | null;

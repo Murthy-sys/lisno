@@ -209,7 +209,7 @@ describe("OpenAPI and Swagger UI", () => {
     }
   });
 
-  it("contains all 189 routes without versioning paths twice", () => {
+  it("contains all 191 routes without versioning paths twice", () => {
     const methods = new Set(["get", "post", "put", "patch", "delete"]);
     const operationCount = Object.values(openApiDocument.paths).reduce(
       (total, pathItem) =>
@@ -218,7 +218,7 @@ describe("OpenAPI and Swagger UI", () => {
     );
 
     expect(operationCount).toBe(HUMAN_JWT_OPERATION_LIST.length + 13);
-    expect(operationCount).toBe(189);
+    expect(operationCount).toBe(191);
     expect(Object.keys(openApiDocument.paths).some((path) =>
       path.startsWith("/api/v1")
     )).toBe(false);
@@ -228,7 +228,7 @@ describe("OpenAPI and Swagger UI", () => {
     const knowledgeOperations = HUMAN_JWT_OPERATION_LIST.filter(
       ({ availability }) => availability === "ai_estimator_knowledge"
     );
-    expect(knowledgeOperations).toHaveLength(44);
+    expect(knowledgeOperations).toHaveLength(46);
 
     for (const registered of knowledgeOperations) {
       const { method, path } = splitHumanOperationKey(registered.key);
@@ -907,11 +907,13 @@ describe("OpenAPI and Swagger UI", () => {
         "basketName",
         "version",
         "mainLineCount",
+        "subBasketCount",
         "historicalReferenceCount",
         "bootstrapOwned"
       ],
       properties: {
         mainLineCount: { type: "integer", minimum: 0 },
+        subBasketCount: { type: "integer", minimum: 0 },
         historicalReferenceCount: { type: "integer", minimum: 0 }
       }
     });

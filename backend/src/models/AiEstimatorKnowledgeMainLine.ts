@@ -10,6 +10,7 @@ const mainLineSchema = new Schema(
   {
     _id: { type: String, required: true, immutable: true },
     basketId: { type: String, ref: "AiEstimatorKnowledgeBasket", required: true, immutable: true },
+    subBasketId: { type: String, ref: "AiEstimatorKnowledgeSubBasket", default: null, immutable: true },
     name: { type: String, required: true, minlength: 1, maxlength: AI_ESTIMATOR_KNOWLEDGE_MAX_SHORT_TEXT },
     nameNormalized: { type: String, required: true, maxlength: AI_ESTIMATOR_KNOWLEDGE_MAX_SHORT_TEXT },
     description: { type: String, default: null, maxlength: AI_ESTIMATOR_KNOWLEDGE_MAX_TEXT },

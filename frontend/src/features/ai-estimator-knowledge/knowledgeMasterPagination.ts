@@ -6,14 +6,14 @@ import type {
 
 const KNOWLEDGE_MASTER_PAGE_LIMIT = 100;
 
-type KnowledgeMasterPage<TMaster extends KnowledgeMaster> = Omit<
+type KnowledgeMasterPage<TMaster extends { readonly id: string }> = Omit<
   KnowledgeMasterListResponse,
   "items"
 > & {
   readonly items: readonly TMaster[];
 };
 
-export async function collectAllKnowledgeMasterPages<TMaster extends KnowledgeMaster = KnowledgeMaster>(
+export async function collectAllKnowledgeMasterPages<TMaster extends { readonly id: string } = KnowledgeMaster>(
   loadPage: (
     params: Pick<KnowledgeReferenceListParams, "limit" | "offset">
   ) => Promise<KnowledgeMasterPage<TMaster>>,
