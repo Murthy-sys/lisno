@@ -224,9 +224,7 @@ export function KnowledgeItemWorkspacePage() {
     errorMessage: modesQuery.error instanceof Error ? modesQuery.error.message : undefined
   };
   const uomCatalogState = masterCatalogStates.uoms;
-  const priorityCatalogState = masterCatalogStates.priorities;
   const vendorCatalogState = masterCatalogStates.vendors;
-  const surfaceCatalogState = masterCatalogStates.surfaces;
   const editable = Boolean(item && revision?.status === "draft" && item.status !== "archived" && canUpdate && item.allowedActions.includes("update_section"));
   const overviewDraftPayload = activeSection === "overview" && sectionQuery.data
     ? dirty ? payload : sectionQuery.data.payload
@@ -330,7 +328,10 @@ export function KnowledgeItemWorkspacePage() {
       return updateKnowledgeSection(mainLineId, revision.id, backendSection, {
         expectedVersion: sectionQuery.data.version,
         expectedAggregateVersion: item.version,
-        applicability: sectionQuery.data.applicability,
+        applicability: backendSection === "overview" && overviewDirtyFields.has("surfaceIds")
+          && Array.isArray(rebasedPayload.surfaceIds) && rebasedPayload.surfaceIds.length > 0
+          ? "configured"
+          : sectionQuery.data.applicability,
         payload: knowledgeSectionPayloadForUpdate(backendSection, rebasedPayload)
       });
     },
@@ -510,13 +511,8 @@ export function KnowledgeItemWorkspacePage() {
                 relationshipBaskets={relationshipBasketsQuery.data?.items ?? []}
                 relationshipItems={relationshipItemsQuery.data?.items ?? []}
                 editable={editable}
-                canQuickAdd={canCreate}
                 legacyModeCatalogState={legacyModeCatalogState}
                 uomCatalogState={uomCatalogState}
-                vendorCatalogState={vendorCatalogState}
-                priorityCatalogState={priorityCatalogState}
-                surfaceCatalogState={surfaceCatalogState}
-                onQuickAdd={(type, select) => setQuickAdd({ type, select })}
                 onDirtyChange={setModeDirty}
                 onSavingChange={setModeSaving}
                 onBusyChange={setModeBusy}
@@ -558,6 +554,12 @@ export function KnowledgeItemWorkspacePage() {
                       setDirty(true);
                     }}
                     onQuickAddUom={(select) => setQuickAdd({ type: "uoms", select })}
+                    onQuickAddSurface={(select) => setQuickAdd({ type: "surfaces", select: (surface) => {
+                      select(surface);
+                      setAnnouncement(`${surface.name} added. Save Overview to apply it.`);
+                    } })}
+                    saving={saveMutation.isPending}
+                    surfacesDirty={overviewDirtyFields.has("surfaceIds")}
                     onOpenSection={selectWorkspaceSection}
                   />
                 ) : (

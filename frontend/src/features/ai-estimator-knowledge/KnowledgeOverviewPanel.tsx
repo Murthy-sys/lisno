@@ -6,6 +6,7 @@ import { Field, Radio, Select } from "../../components/ui/Field";
 import { InlineMessage } from "../../components/ui/InlineMessage";
 import { StatusBadge } from "../../components/ui/StatusBadge";
 import { Surface } from "../../components/ui/Surface";
+import { KnowledgeModeSurfacePanel } from "./KnowledgeModeSurfacePanel";
 import {
   formatKnowledgeDateTime,
   formatKnowledgeMoney,
@@ -68,6 +69,9 @@ export interface KnowledgeOverviewPanelProps {
   readonly onOverviewPayloadChange: (payload: KnowledgeJsonObject) => void;
   readonly onOverviewDirty: (field: KnowledgeOverviewEditableField) => void;
   readonly onQuickAddUom: (select: (master: KnowledgeMaster) => void) => void;
+  readonly onQuickAddSurface?: (select: (master: KnowledgeMaster) => void) => void;
+  readonly saving?: boolean;
+  readonly surfacesDirty?: boolean;
   readonly onOpenSection: (section: KnowledgeWorkspaceSectionKey) => void;
 }
 
@@ -83,6 +87,9 @@ export function KnowledgeOverviewPanel({
   onOverviewPayloadChange,
   onOverviewDirty,
   onQuickAddUom,
+  onQuickAddSurface,
+  saving = false,
+  surfacesDirty = false,
   onOpenSection
 }: KnowledgeOverviewPanelProps) {
   const [selectedModeId, setSelectedModeId] = useState("");
@@ -122,6 +129,10 @@ export function KnowledgeOverviewPanel({
   const selectedRecommendation = summary.recommendationDetails.find(
     ({ option }) => option.id === currentRecommendationId
   );
+  const surfaceIds = Array.isArray(overviewPayload.surfaceIds)
+    ? overviewPayload.surfaceIds.filter((id): id is string => typeof id === "string")
+    : [];
+  const surfaceCatalogState = referenceStates?.masters?.surfaces ?? { status: "ready" as const };
   const uomId = stringValue(overviewPayload.uomId);
   const uomOptions = useMemo(
     () => orderedSelectableMasters(masters.uoms ?? [], uomId),
@@ -224,7 +235,7 @@ export function KnowledgeOverviewPanel({
                 <div className="knowledge-overview__uom-control-row">
                   <Select
                     {...props}
-                    disabled={!editable || referenceUnavailable(uomReferenceState)}
+                    disabled={!editable || saving || referenceUnavailable(uomReferenceState)}
                     value={uomId}
                     onChange={(event) => changeOverviewValue(event.target.value)}
                   >
@@ -242,7 +253,7 @@ export function KnowledgeOverviewPanel({
                       size="compact"
                       variant="quiet"
                       leadingIcon={<Plus />}
-                      disabled={referenceUnavailable(uomReferenceState)}
+                      disabled={saving || referenceUnavailable(uomReferenceState)}
                       onClick={() => onQuickAddUom((master) => changeOverviewValue(master.id))}
                     >
                       Add Unit
@@ -277,6 +288,24 @@ export function KnowledgeOverviewPanel({
           </fieldset>
         ) : null}
       </section>
+
+      <Surface as="section" className="knowledge-overview__summary-panel" aria-label="Surfaces">
+        <KnowledgeModeSurfacePanel
+          selectedIds={surfaceIds}
+          surfaces={masters.surfaces ?? []}
+          catalogState={surfaceCatalogState}
+          sectionState={sectionStates.overview ?? { status: "ready" }}
+          readOnly={!editable}
+          saving={saving}
+          dirty={surfacesDirty}
+          canQuickAdd={canQuickAdd && Boolean(onQuickAddSurface)}
+          onChange={(nextIds) => {
+            onOverviewDirty("surfaceIds");
+            onOverviewPayloadChange({ ...overviewPayload, surfaceIds: [...new Set(nextIds)] });
+          }}
+          onQuickAdd={(select) => onQuickAddSurface?.(select)}
+        />
+      </Surface>
 
       {modesVisible || sharedValuesVisible || specificationsVisible || pricingVisible || recommendationsVisible || qualityVisible ? (
         <div className="knowledge-overview__principal-grid">
@@ -397,8 +426,6 @@ export function KnowledgeOverviewPanel({
           <SummaryHeading
             id="knowledge-overview-pricing-title"
             title="Budgeting"
-            actionLabel="Open Mode"
-            onAction={() => onOpenSection("mode")}
           />
           <SourceBoundary
             keys={["pricing"]}
@@ -533,6 +560,12 @@ function ModeDetails({ detail }: { readonly detail: KnowledgeOverviewModeDetail 
           { label: "Advanced overrides", value: detail.overrides.length > 0 ? String(detail.overrides.length) : null }
         ]}
       />
+      {detail.pmcScope ? (
+        <DefinitionList definitions={[
+          { label: "Inclusions", value: detail.pmcScope.inclusions.filter(({ selected }) => selected).map(({ name }) => name).join(", ") || "None selected" },
+          { label: "Exclusions", value: detail.pmcScope.exclusions.filter(({ selected }) => selected).map(({ name }) => name).join(", ") || "None selected" }
+        ]} />
+      ) : null}
       {detail.dynamicFields.length ? (
         <div className="knowledge-overview__subsection knowledge-overview__mode-fields">
           <h4>PMC components</h4>

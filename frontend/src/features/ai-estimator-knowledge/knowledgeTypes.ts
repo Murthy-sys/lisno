@@ -283,6 +283,12 @@ export interface KnowledgePreviewAmountComponent {
 }
 
 export interface KnowledgePreview {
+  readonly modeCalculation?: {
+    readonly revisedUnitRatePaise: number;
+    readonly revisedAmountPaise: number;
+    readonly totalPaise: number;
+    readonly appliedImpactBps: number;
+  };
   readonly formulaVersion: "knowledge-preview-v1";
   readonly effectivePriceVersionId: string | null;
   readonly taxVersionId: string | null;

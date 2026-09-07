@@ -8,7 +8,6 @@ import {
   useCallback,
   useEffect,
   useImperativeHandle,
-  useMemo,
   useRef,
   useState,
   type ReactNode
@@ -16,53 +15,31 @@ import {
 
 import { ApiError } from "../../api/client";
 import { Button } from "../../components/ui/Button";
-import { Field, Input, Select } from "../../components/ui/Field";
 import { InlineMessage } from "../../components/ui/InlineMessage";
 import { PageState } from "../../components/ui/PageState";
 import { Surface } from "../../components/ui/Surface";
 import {
   getKnowledgeItem,
   getKnowledgeSection,
-  previewKnowledge,
-  updateKnowledgeSection,
-  type KnowledgePreviewRequest
+  updateKnowledgeSection
 } from "./knowledgeApi";
 import {
   commitKnowledgeSectionMutation,
   invalidateKnowledgeSectionMutation
 } from "./knowledgeMutationSync";
-import {
-  formatKnowledgeMoney,
-  formatKnowledgePercentage,
-  formatPaiseForRupeeInput,
-  parseRupeeInputToPaise
-} from "./knowledgePresentation";
 import { knowledgeQueryKeys } from "./knowledgeQueryKeys";
-import {
-  knowledgeOverviewPayloadForUpdate,
-  knowledgeSectionPayloadForUpdate,
-  type KnowledgeOverviewEditableField
-} from "./knowledgeSectionPayload";
-import { KnowledgeSectionEditor } from "./KnowledgeSectionEditor";
-import type { KnowledgeBudgetCatalogState } from "./KnowledgeBudgetBuilder";
-import {
-  KnowledgePriorityEditor,
-  type KnowledgePriorityCatalogState
-} from "./KnowledgePriorityEditor";
-import type { KnowledgeUomCatalogState } from "./KnowledgeQuantitySlabBuilder";
-import { validateKnowledgeSection } from "./knowledgeSectionValidation";
-import { slabRateSpecificationIds } from "./knowledgeSlabRate";
+import { knowledgeSectionPayloadForUpdate } from "./knowledgeSectionPayload";
+import { KnowledgeSpecificationBuilder } from "./KnowledgeSpecificationBuilder";
+import { parseKnowledgeSpecifications } from "./knowledgeSpecificationConfiguration";
 import {
   KnowledgeModeConfigurationBuilder,
   type KnowledgeLegacyModeCatalogState
 } from "./KnowledgeModeConfigurationBuilder";
 import type { KnowledgeModeConfigurationIssue } from "./knowledgeModeConfiguration";
 import { KnowledgeConflictReview } from "./KnowledgeConflictReview";
-import {
-  KnowledgeModeSurfacePanel,
-  type KnowledgeSurfaceCatalogState
-} from "./KnowledgeModeSurfacePanel";
 import { KnowledgeVersionConflictDialog } from "./KnowledgeVersionConflictDialog";
+import { KnowledgeModeCalculationEditor, type KnowledgeModeCalculationUom } from "./KnowledgeModeCalculationEditor";
+import type { KnowledgeBudgetCatalogState } from "./KnowledgeBudgetBuilder";
 import type {
   KnowledgeBasket,
   KnowledgeItemDetail,
@@ -70,7 +47,6 @@ import type {
   KnowledgeJsonObject,
   KnowledgeMaster,
   KnowledgeMasterType,
-  KnowledgePreview,
   KnowledgeSectionApplicability,
   KnowledgeSectionEnvelope,
   KnowledgeSectionKey
@@ -78,29 +54,21 @@ import type {
 
 const MODE_SECTION_KEYS = [
   "advanced",
-  "pricing",
-  "overview",
-  "quantity-margin"
+  "pricing"
 ] as const satisfies readonly KnowledgeSectionKey[];
 
 type ModeSectionKey = (typeof MODE_SECTION_KEYS)[number];
 
-/*
- * Priority is hidden in the Mode tab for now and will be switched back on if it
- * is needed. Flip this to true to restore the editor — every draft, conflict,
- * save and error path below is left wired, so nothing else has to change.
- */
-const MODE_PRIORITY_ENABLED = false;
-
 const MODE_SECTION_LABELS = {
   advanced: "Mode configuration",
-  pricing: "Budgeting",
-  overview: "Priority",
-  "quantity-margin": "Quantity & margin"
+  pricing: "Specifications"
 } as const satisfies Readonly<Record<ModeSectionKey, string>>;
+
+const PENDING_DESCRIPTION_MESSAGE = "Save or cancel the paragraph before saving Mode.";
 
 interface ModeDraft {
   readonly payload: KnowledgeJsonObject;
+  readonly editedAdvancedFields: readonly ("modeConfigurations" | "modeDescription" | "modeCalculation" | "pmcMarginBps")[];
   readonly specificationReferenceIds: readonly string[];
   readonly applicability: KnowledgeSectionApplicability;
   readonly envelopeVersion: number | null;
@@ -110,7 +78,6 @@ interface ModeDraft {
   readonly error: string | null;
   readonly serverIssues: readonly KnowledgeModeConfigurationIssue[];
   readonly serverReview: ModeServerReview | null;
-  readonly editedFields: ReadonlySet<KnowledgeOverviewEditableField>;
 }
 
 interface ModeServerReview {
@@ -138,16 +105,8 @@ export interface KnowledgeModePanelProps {
   readonly relationshipBaskets: readonly KnowledgeBasket[];
   readonly relationshipItems: readonly KnowledgeItemListItem[];
   readonly editable: boolean;
-  readonly canQuickAdd: boolean;
   readonly legacyModeCatalogState: KnowledgeLegacyModeCatalogState;
-  readonly uomCatalogState?: KnowledgeUomCatalogState;
-  readonly vendorCatalogState?: KnowledgeBudgetCatalogState;
-  readonly priorityCatalogState?: KnowledgePriorityCatalogState;
-  readonly surfaceCatalogState?: KnowledgeSurfaceCatalogState;
-  readonly onQuickAdd: (
-    type: KnowledgeMasterType,
-    select: (master: KnowledgeMaster) => void
-  ) => void;
+  readonly uomCatalogState?: KnowledgeBudgetCatalogState;
   readonly onDirtyChange: (dirty: boolean) => void;
   readonly onSavingChange: (saving: boolean) => void;
   readonly onBusyChange: (busy: boolean) => void;
@@ -166,13 +125,8 @@ export const KnowledgeModePanel = forwardRef<
     relationshipBaskets,
     relationshipItems,
     editable,
-    canQuickAdd,
     legacyModeCatalogState,
     uomCatalogState = { status: "ready" },
-    vendorCatalogState = { status: "ready" },
-    priorityCatalogState = { status: "ready" },
-    surfaceCatalogState = { status: "ready" },
-    onQuickAdd,
     onDirtyChange,
     onSavingChange,
     onBusyChange,
@@ -186,15 +140,28 @@ export const KnowledgeModePanel = forwardRef<
   const advancedQuery = useModeSectionQuery(mainLineId, revisionId, "advanced");
   const pricingQuery = useModeSectionQuery(mainLineId, revisionId, "pricing");
   const overviewQuery = useModeSectionQuery(mainLineId, revisionId, "overview");
-  const quantityQuery = useModeSectionQuery(
-    mainLineId,
-    revisionId,
-    "quantity-margin"
-  );
   const [drafts, setDrafts] = useState(createEmptyModeDrafts);
+  const [calculationValid, setCalculationValid] = useState(true);
+  const [descriptionPending, setDescriptionPending] = useState(false);
+  const [descriptionResetVersion, setDescriptionResetVersion] = useState(0);
+  useEffect(() => {
+    if (!descriptionPending) setDrafts((current) => current.advanced.error === PENDING_DESCRIPTION_MESSAGE
+      ? { ...current, advanced: { ...current.advanced, error: null } }
+      : current);
+  }, [descriptionPending]);
   const [saving, setSaving] = useState(false);
   const [savingSection, setSavingSection] = useState<ModeSectionKey | null>(null);
   const [conflict, setConflict] = useState<ModeConflict | null>(null);
+  const specificationsRef = useRef<HTMLDivElement>(null);
+  const specificationIssues = [
+    ...parseKnowledgeSpecifications(drafts.pricing.payload.specifications).issues,
+    ...drafts.pricing.serverIssues
+  ];
+  useEffect(() => {
+    if (drafts.pricing.validationAttempt > 0 && !saving) {
+      specificationsRef.current?.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus();
+    }
+  }, [drafts.pricing.validationAttempt, saving]);
   const aggregateBaselineRef = useRef({
     revisionId,
     version: item.version
@@ -211,9 +178,7 @@ export const KnowledgeModePanel = forwardRef<
   useEffect(() => {
     const envelopes = {
       advanced: advancedQuery.data,
-      pricing: pricingQuery.data,
-      overview: overviewQuery.data,
-      "quantity-margin": quantityQuery.data
+      pricing: pricingQuery.data
     };
 
     setDrafts((current) => {
@@ -235,23 +200,24 @@ export const KnowledgeModePanel = forwardRef<
       }
       return changed ? next : current;
     });
-  }, [advancedQuery.data, overviewQuery.data, pricingQuery.data, quantityQuery.data]);
+  }, [advancedQuery.data, pricingQuery.data]);
 
-  const dirty = MODE_SECTION_KEYS.some((sectionKey) => drafts[sectionKey].dirty);
-  const busy = advancedQuery.isFetching
-    || pricingQuery.isFetching
-    || overviewQuery.isFetching
-    || quantityQuery.isFetching
-    || uomCatalogState.status === "loading"
-    || Boolean(uomCatalogState.refreshing)
-    || vendorCatalogState.status === "loading"
-    || Boolean(vendorCatalogState.refreshing)
-    || priorityCatalogState.status === "loading"
-    || Boolean(priorityCatalogState.refreshing);
-  const liveSlabSpecificationIds = useMemo(
-    () => [...slabRateSpecificationIds(drafts["quantity-margin"].payload.slabRates)],
-    [drafts]
-  );
+  const dirty = descriptionPending || MODE_SECTION_KEYS.some((sectionKey) => drafts[sectionKey].dirty);
+  const busy = advancedQuery.isFetching || pricingQuery.isFetching || overviewQuery.isFetching;
+  const savedUomId = overviewQuery.data?.payload.uomId;
+  const savedUom = (masters.uoms ?? []).find((uom) => uom.id === savedUomId);
+  const uomScopeKey = `${mainLineId}:${revisionId}`;
+  const calculationUom: KnowledgeModeCalculationUom = overviewQuery.isError
+    ? { scopeKey: uomScopeKey, label: "Unavailable", message: "Could not load the UOM saved in Overview.", onRetry: () => void overviewQuery.refetch() }
+    : !overviewQuery.data || uomCatalogState.status === "loading"
+      ? { scopeKey: uomScopeKey, label: "Loading…", message: "Loading the saved Overview UOM." }
+      : uomCatalogState.status === "error"
+        ? { scopeKey: uomScopeKey, label: "Unavailable", message: "Could not load the UOM details.", onRetry: uomCatalogState.onRetry }
+        : !savedUomId
+          ? { scopeKey: uomScopeKey, label: "Not set", message: "Save a UOM in Overview to test these calculations." }
+          : !savedUom || savedUom.decimalScale === undefined
+            ? { scopeKey: uomScopeKey, label: savedUom?.name ?? "Unavailable", message: "The saved UOM details are unavailable. Review the UOM in Overview.", onRetry: uomCatalogState.onRetry }
+            : { scopeKey: uomScopeKey, id: savedUom.id, label: savedUom.name, decimalScale: savedUom.decimalScale };
 
   useEffect(() => onDirtyChange(dirty), [dirty, onDirtyChange]);
   useEffect(() => onSavingChange(saving), [onSavingChange, saving]);
@@ -274,7 +240,15 @@ export const KnowledgeModePanel = forwardRef<
     (sectionKey: ModeSectionKey, payload: KnowledgeJsonObject) => {
       setDrafts((current) => ({
         ...current,
-        [sectionKey]: { ...current[sectionKey], payload }
+        [sectionKey]: {
+          ...current[sectionKey],
+          payload,
+          editedAdvancedFields: sectionKey === "advanced"
+            ? [...new Set([...current.advanced.editedAdvancedFields, ...(["modeConfigurations", "modeDescription", "modeCalculation", "pmcMarginBps"] as const).filter(
+                (field) => JSON.stringify(current.advanced.payload[field]) !== JSON.stringify(payload[field])
+              )])]
+            : current[sectionKey].editedAdvancedFields
+        }
       }));
     },
     []
@@ -289,47 +263,6 @@ export const KnowledgeModePanel = forwardRef<
         serverIssues: []
       }
     }));
-  }, []);
-  const setPriorityId = useCallback((priorityId: string) => {
-    setDrafts((current) => {
-      const payload = { ...current.overview.payload } as Record<string, KnowledgeJsonObject[string]>;
-      if (priorityId) payload.priorityId = priorityId;
-      else delete payload.priorityId;
-      return {
-        ...current,
-        overview: {
-          ...current.overview,
-          payload,
-          applicability: priorityId ? "configured" : current.overview.applicability,
-          dirty: true,
-          error: null,
-          serverIssues: current.overview.serverIssues.filter(
-            ({ path }) => path !== "priorityId" && !path.startsWith("priorityId.")
-          ),
-          editedFields: new Set(current.overview.editedFields).add("priorityId")
-        }
-      };
-    });
-  }, []);
-  const setSurfaceIds = useCallback((surfaceIds: readonly string[]) => {
-    setDrafts((current) => {
-      const payload = { ...current.overview.payload } as Record<string, KnowledgeJsonObject[string]>;
-      payload.surfaceIds = [...new Set(surfaceIds)];
-      return {
-        ...current,
-        overview: {
-          ...current.overview,
-          payload,
-          applicability: surfaceIds.length > 0 ? "configured" : current.overview.applicability,
-          dirty: true,
-          error: null,
-          serverIssues: current.overview.serverIssues.filter(
-            ({ path }) => path !== "surfaceIds" && !path.startsWith("surfaceIds.")
-          ),
-          editedFields: new Set(current.overview.editedFields).add("surfaceIds")
-        }
-      };
-    });
   }, []);
   const markAdvancedConfigurationDirty = useCallback(() => {
     setDrafts((current) => ({
@@ -352,39 +285,34 @@ export const KnowledgeModePanel = forwardRef<
       };
     });
   }, []);
-  const setPricingValid = useCallback(
-    (valid: boolean) => setValid("pricing", valid),
-    [setValid]
-  );
   const setAdvancedValid = useCallback(
     (valid: boolean) => setValid("advanced", valid),
     [setValid]
   );
-  const setQuantityValid = useCallback(
-    (valid: boolean) => setValid("quantity-margin", valid),
-    [setValid]
-  );
-
   const discard = useCallback(() => {
+    setDescriptionPending(false);
+    setDescriptionResetVersion((current) => current + 1);
     setDrafts({
       advanced: advancedQuery.data
         ? draftFromEnvelope(advancedQuery.data)
         : emptyModeDraft(),
       pricing: pricingQuery.data
         ? draftFromEnvelope(pricingQuery.data)
-        : emptyModeDraft(),
-      overview: overviewQuery.data
-        ? draftFromEnvelope(overviewQuery.data)
-        : emptyModeDraft(),
-      "quantity-margin": quantityQuery.data
-        ? draftFromEnvelope(quantityQuery.data)
         : emptyModeDraft()
     });
     setConflict(null);
-  }, [advancedQuery.data, overviewQuery.data, pricingQuery.data, quantityQuery.data]);
+  }, [advancedQuery.data, pricingQuery.data]);
 
   const save = useCallback(async (): Promise<boolean> => {
     if (!editable || saving) return false;
+    if (descriptionPending) {
+      setDrafts((current) => ({ ...current, advanced: {
+        ...current.advanced,
+        validationAttempt: current.advanced.validationAttempt + 1,
+        error: PENDING_DESCRIPTION_MESSAGE
+      } }));
+      return false;
+    }
     const snapshot = drafts;
     const dirtySections = MODE_SECTION_KEYS.filter(
       (sectionKey) => snapshot[sectionKey].dirty
@@ -395,24 +323,7 @@ export const KnowledgeModePanel = forwardRef<
       const draft = snapshot[sectionKey];
       if (draft.envelopeVersion === null || !draft.valid) return true;
       if (sectionKey === "advanced") return false;
-      return validateKnowledgeSection(
-        sectionKey,
-        draft.payload,
-        sectionKey === "quantity-margin"
-          ? {
-              specifications: snapshot.pricing.payload.specifications,
-              uoms: masters.uoms,
-              uomCatalogStatus: uomCatalogState.status
-            }
-          : sectionKey === "pricing"
-            ? {
-                uoms: masters.uoms,
-                vendors: masters.vendors,
-                uomCatalogStatus: uomCatalogState.status,
-                vendorCatalogStatus: vendorCatalogState.status
-              }
-            : {}
-      ).length > 0;
+      return parseKnowledgeSpecifications(draft.payload.specifications).issues.length > 0;
     });
     if (invalidSections.length > 0) {
       setDrafts((current) => Object.fromEntries(
@@ -449,27 +360,9 @@ export const KnowledgeModePanel = forwardRef<
     try {
       for (const sectionKey of dirtySections) {
         const draft = snapshot[sectionKey];
-        const cachedOverview = sectionKey === "overview"
-          ? queryClient.getQueryData<KnowledgeSectionEnvelope<KnowledgeJsonObject>>(
-              knowledgeQueryKeys.section(mainLineId, revisionId, "overview")
-            ) ?? overviewQuery.data
-          : undefined;
-        const latestOverview = cachedOverview
-          && (draft.envelopeVersion === null || cachedOverview.version >= draft.envelopeVersion)
-          ? cachedOverview
-          : undefined;
-        const envelopeVersion = latestOverview?.version ?? draft.envelopeVersion!;
-        const applicability = sectionKey === "overview"
-          && overviewHasConfiguration(draft.payload)
-          ? "configured"
-          : latestOverview?.applicability ?? draft.applicability;
-        const payload = sectionKey === "overview"
-          ? knowledgeOverviewPayloadForUpdate(
-              latestOverview?.payload ?? draft.payload,
-              draft.payload,
-              draft.editedFields
-            )
-          : modeSectionPayloadForUpdate(sectionKey, draft.payload);
+        const envelopeVersion = draft.envelopeVersion!;
+        const applicability = draft.applicability;
+        const payload = knowledgeSectionPayloadForUpdate(sectionKey, draft.payload);
         setSavingSection(sectionKey);
         try {
           const saved = await updateKnowledgeSection(
@@ -493,28 +386,6 @@ export const KnowledgeModePanel = forwardRef<
             ...current,
             [sectionKey]: draftFromEnvelope(saved)
           }));
-          if (sectionKey === "quantity-margin") {
-            try {
-              const latestPricing = await getKnowledgeSection<KnowledgeJsonObject>(
-                mainLineId,
-                revisionId,
-                "pricing"
-              );
-              queryClient.setQueryData(
-                knowledgeQueryKeys.section(mainLineId, revisionId, "pricing"),
-                latestPricing
-              );
-              setDrafts((current) => ({
-                ...current,
-                pricing: {
-                  ...current.pricing,
-                  specificationReferenceIds: latestPricing.referenceState?.specificationIds ?? []
-                }
-              }));
-            } catch {
-              // The saved section remains authoritative; a later reload refreshes guidance.
-            }
-          }
           committedAnySection = true;
         } catch (failure) {
           if (
@@ -560,40 +431,17 @@ export const KnowledgeModePanel = forwardRef<
               }));
             }
           } else {
-            const message = sectionKey === "pricing"
-              ? budgetFailureMessage(failure)
-              : failure instanceof Error
-                ? failure.message
-                : "This block could not be saved.";
-            const rawServerIssues = failure instanceof ApiError
-              ? sectionIssuesFromApiError(
-                  failure,
-                  sectionKey === "advanced"
-                    ? ["modeConfigurations"]
-                    : sectionKey === "pricing"
-                      ? ["specifications", "brands", "priceEntries"]
-                      : sectionKey === "overview"
-                        ? ["priorityId", "surfaceIds"]
-                        : ["slabRates"]
-                )
+            const message = failure instanceof Error ? failure.message : "This block could not be saved.";
+            const serverIssues = failure instanceof ApiError
+              ? sectionIssuesFromApiError(failure, sectionKey === "advanced" ? ["modeConfigurations", "modeDescription", "modeCalculation", "pmcMarginBps"] : ["specifications"])
               : [];
-            const serverIssues = sectionKey === "pricing"
-              ? budgetServerIssues(
-                  draft.payload,
-                  rawServerIssues,
-                  failure instanceof ApiError ? failure.code : null
-                )
-              : rawServerIssues;
             setDrafts((current) => ({
               ...current,
               [sectionKey]: {
                 ...current[sectionKey],
                 error: message,
                 serverIssues,
-                validationAttempt: sectionKey === "pricing"
-                  && hasFocusableBudgetIssue(current[sectionKey].payload, serverIssues)
-                  ? current[sectionKey].validationAttempt + 1
-                  : current[sectionKey].validationAttempt
+                validationAttempt: current[sectionKey].validationAttempt + 1
               }
             }));
           }
@@ -612,7 +460,7 @@ export const KnowledgeModePanel = forwardRef<
       setSavingSection(null);
       setSaving(false);
     }
-  }, [drafts, editable, mainLineId, masters.uoms, masters.vendors, onAnnouncement, overviewQuery.data, queryClient, revisionId, saving, uomCatalogState.status, vendorCatalogState.status]);
+  }, [descriptionPending, drafts, editable, mainLineId, onAnnouncement, queryClient, revisionId, saving]);
 
   useImperativeHandle(ref, () => ({ save, discard }), [discard, save]);
 
@@ -650,10 +498,9 @@ export const KnowledgeModePanel = forwardRef<
       <Surface
         key={sectionKey}
         as="section"
-        aria-label={label}
+        aria-label={sectionKey === "pricing" ? "Specifications configuration" : label}
         className="knowledge-workspace-section knowledge-mode-block"
       >
-        {sectionKey === "pricing" ? <h2 className="sr-only">{label}</h2> : null}
         <ModeBlockToolbar
           draft={draft}
           saving={savingSection === sectionKey}
@@ -661,7 +508,7 @@ export const KnowledgeModePanel = forwardRef<
         {query.isError && query.data ? (
           <InlineMessage
             tone="warning"
-            title={sectionKey === "pricing" ? "Showing saved budgets" : `Showing saved ${label}`}
+            title={`Showing saved ${label}`}
             action={<Button size="compact" variant="secondary" onClick={() => void query.refetch()}>Retry</Button>}
           >
             {sectionKey === "pricing"
@@ -672,9 +519,12 @@ export const KnowledgeModePanel = forwardRef<
         {draft.serverReview ? (
           <KnowledgeConflictReview
             sectionKey={sectionKey}
+            sectionLabel={label}
             localVersion={draft.serverReview.localVersion}
             serverVersion={draft.serverReview.server.version}
-            payload={draft.serverReview.server.payload}
+            payload={sectionKey === "pricing"
+              ? { specifications: draft.serverReview.server.payload.specifications ?? [] }
+              : draft.serverReview.server.payload}
             masters={masters}
             relationshipBaskets={relationshipBaskets}
             relationshipItems={relationshipItems}
@@ -698,6 +548,9 @@ export const KnowledgeModePanel = forwardRef<
         advancedQuery,
         <KnowledgeModeConfigurationBuilder
           payload={drafts.advanced.payload}
+          mainLineName={item.mainLineName}
+          descriptionResetKey={`${revisionId}-${descriptionResetVersion}`}
+          onPendingDescriptionChange={setDescriptionPending}
           modes={masters.modes ?? []}
           legacyModeCatalogState={legacyModeCatalogState}
           serverIssues={drafts.advanced.serverIssues}
@@ -706,182 +559,51 @@ export const KnowledgeModePanel = forwardRef<
           onChange={(payload) => setPayload("advanced", payload)}
           onDirty={markAdvancedConfigurationDirty}
           onValidationChange={setAdvancedValid}
+          calculationValid={calculationValid}
+          calculation={<KnowledgeModeCalculationEditor
+            key={`${revisionId}-${descriptionResetVersion}`}
+            value={drafts.advanced.payload.modeCalculation}
+            uom={calculationUom}
+            readOnly={!editable || saving}
+            validationAttempt={drafts.advanced.validationAttempt}
+            issues={drafts.advanced.serverIssues}
+            onChange={(modeCalculation) => setPayload("advanced", { ...drafts.advanced.payload, modeCalculation: { ...modeCalculation } })}
+            onDirty={markAdvancedConfigurationDirty}
+            onValidationChange={setCalculationValid}
+          />}
         />
       )}
       {renderBlock(
         "pricing",
         pricingQuery,
-        <KnowledgeSectionEditor
-          sectionKey="pricing"
-          payload={drafts.pricing.payload}
-          masters={masters}
-          relationshipBaskets={relationshipBaskets}
-          relationshipItems={relationshipItems}
-          currentMainLineId={mainLineId}
-          readOnly={!editable || saving}
-          readOnlyRevision={!editable}
-          canQuickAdd={canQuickAdd && !saving}
-          resetKey={`${revisionId}-pricing-${drafts.pricing.envelopeVersion ?? "pending"}`}
-          specificationScopeKey={revisionId}
-          specificationReferenceIds={drafts.pricing.specificationReferenceIds}
-          slabSpecificationReferenceIds={liveSlabSpecificationIds}
-          pricingAfterSpecifications={MODE_PRIORITY_ENABLED ? (
-            <>
-              {drafts.overview.serverReview && drafts.overview.editedFields.has("priorityId") ? (
-                <KnowledgeConflictReview
-                  sectionKey="overview"
-                  localVersion={drafts.overview.serverReview.localVersion}
-                  serverVersion={drafts.overview.serverReview.server.version}
-                  payload={drafts.overview.serverReview.server.payload}
-                  overviewFields={drafts.overview.editedFields.has("surfaceIds")
-                    ? ["priorityId", "surfaceIds"]
-                    : ["priorityId"]}
-                  masters={masters}
-                  relationshipBaskets={relationshipBaskets}
-                  relationshipItems={relationshipItems}
-                />
-              ) : null}
-              <KnowledgePriorityEditor
-                priorityId={typeof drafts.overview.payload.priorityId === "string"
-                  ? drafts.overview.payload.priorityId
-                  : ""}
-                priorities={masters.priorities ?? []}
-                catalogState={priorityCatalogState}
-                sectionState={{
-                  status: overviewQuery.isError && !overviewQuery.data
-                    ? "error"
-                    : overviewQuery.isPending && !overviewQuery.data
-                      ? "loading"
-                      : "ready",
-                  onRetry: () => { void overviewQuery.refetch(); }
-                }}
-                readOnly={!editable}
-                saving={saving}
-                dirty={drafts.overview.editedFields.has("priorityId")}
-                error={drafts.overview.serverIssues.find(({ path }) => path === "priorityId")?.message}
-                onChange={setPriorityId}
-              />
-              {drafts.overview.error
-              && drafts.overview.editedFields.has("priorityId")
-              && !drafts.overview.editedFields.has("surfaceIds")
-              && drafts.overview.serverIssues.length === 0 ? (
-                <InlineMessage tone="error" role="alert" title="Priority could not be saved">
-                  Priority: {drafts.overview.error}
-                </InlineMessage>
-              ) : null}
-            </>
-          ) : null}
-          vendorCatalogState={vendorCatalogState}
-          uomCatalogState={uomCatalogState}
-          budgetReadOnly={!editable}
-          budgetSaving={saving}
-          onRetrySavedBudgetDetails={() => { void pricingQuery.refetch(); }}
-          validationAttempt={drafts.pricing.validationAttempt}
-          serverIssues={drafts.pricing.serverIssues}
-          onChange={(payload) => setPayload("pricing", payload)}
-          onDirty={() => markDirty("pricing")}
-          onValidationChange={setPricingValid}
-          onQuickAdd={onQuickAdd}
-        />
-      )}
-      <Surface
-        as="section"
-        aria-label="Surfaces"
-        className="knowledge-workspace-section knowledge-mode-block knowledge-mode-surface-block"
-      >
-        {overviewQuery.isError && overviewQuery.data ? (
-          <InlineMessage
-            tone="warning"
-            title="Showing saved Surfaces"
-            action={<Button size="compact" variant="secondary" onClick={() => void overviewQuery.refetch()}>Retry</Button>}
-          >
-            Latest updates could not be loaded; saved values remain visible.
-          </InlineMessage>
-        ) : null}
-        {drafts.overview.serverReview
-        && drafts.overview.editedFields.has("surfaceIds")
-        && !drafts.overview.editedFields.has("priorityId") ? (
-          <KnowledgeConflictReview
-            sectionKey="overview"
-            localVersion={drafts.overview.serverReview.localVersion}
-            serverVersion={drafts.overview.serverReview.server.version}
-            payload={drafts.overview.serverReview.server.payload}
-            overviewFields={["surfaceIds"]}
-            masters={masters}
-            relationshipBaskets={relationshipBaskets}
-            relationshipItems={relationshipItems}
-          />
-        ) : null}
-        {drafts.overview.error
-        && drafts.overview.editedFields.has("priorityId")
-        && drafts.overview.editedFields.has("surfaceIds")
-        && drafts.overview.serverIssues.length === 0 ? (
-          <InlineMessage tone="error" role="alert" title="Priority and Surfaces could not be saved">
-            Priority and Surfaces: {drafts.overview.error}
-          </InlineMessage>
-        ) : null}
-        <KnowledgeModeSurfacePanel
-          selectedIds={stringIds(drafts.overview.payload.surfaceIds)}
-          surfaces={masters.surfaces ?? []}
-          catalogState={surfaceCatalogState}
-          sectionState={{
-            status: overviewQuery.isError && !overviewQuery.data
-              ? "error"
-              : overviewQuery.isPending && !overviewQuery.data
-                ? "loading"
-                : "ready",
-            onRetry: () => { void overviewQuery.refetch(); }
-          }}
-          readOnly={!editable}
-          saving={saving}
-          dirty={drafts.overview.editedFields.has("surfaceIds")}
-          canQuickAdd={canQuickAdd && !saving}
-          error={drafts.overview.serverIssues.find(({ path }) => path === "surfaceIds" || path.startsWith("surfaceIds."))?.message
-            ?? (drafts.overview.error
-              && drafts.overview.serverIssues.length === 0
-              && drafts.overview.editedFields.has("surfaceIds")
-              && !drafts.overview.editedFields.has("priorityId")
-              ? drafts.overview.error
-              : undefined)}
-          onChange={setSurfaceIds}
-          onQuickAdd={(select) => onQuickAdd("surfaces", (surface) => {
-            select(surface);
-            onAnnouncement(`${surface.name} added. Save Mode to apply it.`);
-          })}
-        />
-      </Surface>
-      {renderBlock(
-        "quantity-margin",
-        quantityQuery,
-        <>
-          <KnowledgeSectionEditor
-            sectionKey="quantity-margin"
-            payload={drafts["quantity-margin"].payload}
-            masters={masters}
-            relationshipBaskets={relationshipBaskets}
-            relationshipItems={relationshipItems}
-            currentMainLineId={mainLineId}
+        <div ref={specificationsRef}>
+          <KnowledgeSpecificationBuilder
+            value={drafts.pricing.payload.specifications}
+            priceEntries={drafts.pricing.payload.priceEntries}
+            referencedSpecificationIds={drafts.pricing.specificationReferenceIds}
             readOnly={!editable || saving}
-            readOnlyRevision={!editable}
-            canQuickAdd={canQuickAdd && !saving}
-            resetKey={`${revisionId}-quantity-margin-${drafts["quantity-margin"].envelopeVersion ?? "pending"}`}
-            pricingSpecifications={drafts.pricing.payload.specifications}
-            uomCatalogState={uomCatalogState}
-            validationAttempt={drafts["quantity-margin"].validationAttempt}
-            onChange={(payload) => setPayload("quantity-margin", payload)}
-            onDirty={() => markDirty("quantity-margin")}
-            onValidationChange={setQuantityValid}
-            onQuickAdd={onQuickAdd}
+            issues={specificationIssues}
+            onChange={(specifications) => setPayload("pricing", {
+              ...drafts.pricing.payload,
+              specifications: [...specifications]
+            })}
+            onDirty={() => markDirty("pricing")}
           />
-          <KnowledgePreviewPanel disabled={saving} />
-        </>
+          {drafts.pricing.validationAttempt > 0 && specificationIssues.length > 0 ? (
+            <InlineMessage tone="error" role="alert" title="Review Specifications">
+              <ul>
+                {specificationIssues.map((issue, index) => (
+                  <li key={`${issue.path}-${index}`}>{issue.message}</li>
+                ))}
+              </ul>
+            </InlineMessage>
+          ) : null}
+        </div>
       )}
 
       {conflict ? (
         <KnowledgeVersionConflictDialog
-          sectionLabel={conflict.sectionKey === "overview"
-            ? overviewFieldLabel(drafts.overview.editedFields)
-            : MODE_SECTION_LABELS[conflict.sectionKey]}
+          sectionLabel={MODE_SECTION_LABELS[conflict.sectionKey]}
           localVersion={conflict.localVersion}
           serverVersion={conflict.server.version}
           onKeepEditing={() => {
@@ -925,7 +647,7 @@ export const KnowledgeModePanel = forwardRef<
 function useModeSectionQuery(
   mainLineId: string,
   revisionId: string,
-  sectionKey: ModeSectionKey
+  sectionKey: ModeSectionKey | "overview"
 ) {
   return useQuery({
     queryKey: knowledgeQueryKeys.section(mainLineId, revisionId, sectionKey),
@@ -943,28 +665,10 @@ function ignoreSaveError() {
   // Parent error reporting is optional for standalone Mode panel consumers.
 }
 
-function overviewHasConfiguration(payload: KnowledgeJsonObject) {
-  return (typeof payload.priorityId === "string" && Boolean(payload.priorityId.trim()))
-    || stringIds(payload.surfaceIds).length > 0;
-}
-
-function stringIds(value: KnowledgeJsonObject[string]): readonly string[] {
-  return Array.isArray(value)
-    ? [...new Set(value.filter((entry): entry is string => typeof entry === "string"))]
-    : [];
-}
-
-function overviewFieldLabel(fields: ReadonlySet<KnowledgeOverviewEditableField>) {
-  const priority = fields.has("priorityId");
-  const surfaces = fields.has("surfaceIds");
-  if (priority && surfaces) return "Priority and Surfaces";
-  if (surfaces) return "Surfaces";
-  return "Priority";
-}
-
 function emptyModeDraft(): ModeDraft {
   return {
     payload: {},
+    editedAdvancedFields: [],
     specificationReferenceIds: [],
     applicability: "not_configured",
     envelopeVersion: null,
@@ -973,17 +677,14 @@ function emptyModeDraft(): ModeDraft {
     validationAttempt: 0,
     error: null,
     serverIssues: [],
-    serverReview: null,
-    editedFields: new Set()
+    serverReview: null
   };
 }
 
 function createEmptyModeDrafts(): Record<ModeSectionKey, ModeDraft> {
   return {
     advanced: emptyModeDraft(),
-    pricing: emptyModeDraft(),
-    overview: emptyModeDraft(),
-    "quantity-margin": emptyModeDraft()
+    pricing: emptyModeDraft()
   };
 }
 
@@ -992,6 +693,7 @@ function draftFromEnvelope(
 ): ModeDraft {
   return {
     payload: envelope.payload,
+    editedAdvancedFields: [],
     specificationReferenceIds: envelope.referenceState?.specificationIds ?? [],
     applicability: envelope.applicability,
     envelopeVersion: envelope.version,
@@ -1000,8 +702,7 @@ function draftFromEnvelope(
     validationAttempt: 0,
     error: null,
     serverIssues: [],
-    serverReview: null,
-    editedFields: new Set()
+    serverReview: null
   };
 }
 
@@ -1012,8 +713,14 @@ function rebaseDraftAfterConflict(
 ): ModeDraft {
   return {
     ...draft,
+    payload: {
+      ...server.payload,
+      ...(server.sectionKey === "pricing"
+        ? { specifications: draft.payload.specifications ?? [] }
+        : Object.fromEntries(draft.editedAdvancedFields.map((field) => [field, draft.payload[field] ?? (field === "modeConfigurations" ? [] : null)])))
+    },
     specificationReferenceIds: server.referenceState?.specificationIds ?? [],
-    applicability: server.applicability,
+    applicability: server.sectionKey === "advanced" ? draft.applicability : server.applicability,
     envelopeVersion: server.version,
     error: null,
     serverReview
@@ -1022,7 +729,7 @@ function rebaseDraftAfterConflict(
 
 function sectionIssuesFromApiError(
   failure: ApiError,
-  allowedRootPaths: readonly ("modeConfigurations" | "specifications" | "brands" | "priceEntries" | "priorityId" | "surfaceIds" | "slabRates")[]
+  allowedRootPaths: readonly ("modeConfigurations" | "modeDescription" | "modeCalculation" | "pmcMarginBps" | "specifications")[]
 ): readonly KnowledgeModeConfigurationIssue[] {
   if (allowedRootPaths.length === 0) return [];
   return Object.entries(failure.fields ?? {}).flatMap(([path, message]) => {
@@ -1035,140 +742,6 @@ function sectionIssuesFromApiError(
       ? [{ path: normalizedPath, message }]
       : [];
   });
-}
-
-function businessBudgetIssue(
-  issue: KnowledgeModeConfigurationIssue,
-  errorCode: string | null
-): KnowledgeModeConfigurationIssue {
-  if (!issue.path.startsWith("priceEntries")) return issue;
-  const rowPath = /^priceEntries\.\d+/u.exec(issue.path)?.[0] ?? "priceEntries";
-  if (errorCode === "FIXED_GST_POLICY_MISMATCH") {
-    return { path: rowPath, message: FIXED_GST_POLICY_MESSAGE };
-  }
-  if (errorCode === "FIXED_GST_OUTSIDE_COVERAGE") {
-    return { path: `${rowPath}.effectiveFrom`, message: issue.message };
-  }
-  if (errorCode === "EFFECTIVE_WINDOW_OVERLAP") {
-    return {
-      path: `${rowPath}.effectiveFrom`,
-      message: "Another budget for this unit already covers these dates."
-    };
-  }
-  if (/\.(?:taxVersionId|treatment|taxRuleId)$/u.test(issue.path)
-    || /tax|GST policy/iu.test(issue.message)) {
-    return { path: rowPath, message: FIXED_GST_POLICY_MESSAGE };
-  }
-  if (/\.(?:sourcePriceVersionId|priceEntryId|priceVersionId|specificationId|modeId|status|versionNumber)$/u.test(issue.path)) {
-    return {
-      path: rowPath,
-      message: "This saved budget can no longer be updated safely. Reload Budgeting and try again."
-    };
-  }
-  if (issue.path.endsWith(".vendorId")) {
-    return { path: `${rowPath}.vendorId`, message: "Choose an available Vendor." };
-  }
-  if (issue.path.endsWith(".uomId")) {
-    return { path: `${rowPath}.uomId`, message: "Choose an available Unit of measure." };
-  }
-  if (issue.path.endsWith(".inputAmountPaise")) {
-    return {
-      path: `${rowPath}.inputAmountPaise`,
-      message: "Enter a non-negative Unit budget before GST in rupees with up to two decimal places."
-    };
-  }
-  if (issue.path.endsWith(".effectiveFrom")) {
-    return { path: `${rowPath}.effectiveFrom`, message: "Enter a valid Starts on date and time." };
-  }
-  if (issue.path.endsWith(".effectiveTo")) {
-    return { path: `${rowPath}.effectiveTo`, message: "Enter a valid Ends on date and time." };
-  }
-  return {
-    path: rowPath,
-    message: "Review this budget and try again."
-  };
-}
-
-/* GST is a fixed 18% system policy the server applies on save, so the only way
-   it can fail is stored policy drift, which retrying never clears. */
-const FIXED_GST_POLICY_MESSAGE = "The stored GST policy does not match the system GST 18% policy. Contact support.";
-
-function budgetServerIssues(
-  payload: KnowledgeJsonObject,
-  issues: readonly KnowledgeModeConfigurationIssue[],
-  errorCode: string | null
-): readonly KnowledgeModeConfigurationIssue[] {
-  const mapped = issues.map((issue) => businessBudgetIssue(issue, errorCode));
-  if (errorCode !== "FIXED_GST_POLICY_MISMATCH") return mapped;
-  if (mapped.some(({ path }) => /^priceEntries\.\d+(?:\.|$)/u.test(path))) return mapped;
-  const entries = Array.isArray(payload.priceEntries) ? payload.priceEntries : [];
-  const index = entries.findIndex((entry) => isBudgetSetCommand(entry));
-  return index < 0
-    ? mapped
-    : [...mapped, { path: `priceEntries.${index}`, message: FIXED_GST_POLICY_MESSAGE }];
-}
-
-function isBudgetSetCommand(value: unknown): boolean {
-  return value !== null
-    && typeof value === "object"
-    && !Array.isArray(value)
-    && "operation" in value
-    && value.operation === "set_budget";
-}
-
-function hasFocusableBudgetIssue(
-  payload: KnowledgeJsonObject,
-  issues: readonly KnowledgeModeConfigurationIssue[]
-): boolean {
-  const rows = Array.isArray(payload.priceEntries) ? payload.priceEntries : [];
-  return issues.some((issue) => {
-    const match = /^priceEntries\.(\d+)(?:\.|$)/u.exec(issue.path);
-    return match ? Number(match[1]) < rows.length : false;
-  });
-}
-
-function budgetFailureMessage(failure: unknown): string {
-  if (failure instanceof ApiError) {
-    if (failure.status === 403) {
-      return "You no longer have permission to update this Draft.";
-    }
-    if (failure.code === "VERSION_CONFLICT") return "Budgeting changed elsewhere.";
-    if (failure.code === "EFFECTIVE_WINDOW_OVERLAP") {
-      return "Another budget for this unit already covers these dates.";
-    }
-    if (failure.code === "FIXED_GST_OUTSIDE_COVERAGE") {
-      return "This budget starts before GST 18% took effect. Choose a later start date.";
-    }
-    if (failure.code === "FIXED_GST_POLICY_MISMATCH" || failure.code === "KNOWLEDGE_TAX_WINDOW_MISMATCH") {
-      return FIXED_GST_POLICY_MESSAGE;
-    }
-  }
-  return "Review the highlighted budget and try again.";
-}
-
-function modeSectionPayloadForUpdate(
-  sectionKey: ModeSectionKey,
-  payload: KnowledgeJsonObject
-): KnowledgeJsonObject {
-  const prepared = knowledgeSectionPayloadForUpdate(sectionKey, payload);
-  if (sectionKey !== "pricing" || !Array.isArray(prepared.priceEntries)) {
-    return prepared;
-  }
-
-  return {
-    ...prepared,
-    priceEntries: prepared.priceEntries.map((entry) => {
-      if (
-        entry === null ||
-        typeof entry !== "object" ||
-        Array.isArray(entry) ||
-        entry.operation !== "append"
-      ) {
-        return entry;
-      }
-      return { ...entry, specificationId: null };
-    })
-  };
 }
 
 function ModeBlockToolbar({
@@ -1188,263 +761,6 @@ function ModeBlockToolbar({
           {saving ? "Saving…" : "Unsaved changes"}
         </span>
       ) : null}
-    </div>
-  );
-}
-
-function KnowledgePreviewPanel({ disabled }: { readonly disabled: boolean }) {
-  const [unitRateRupees, setUnitRateRupees] = useState("");
-  const [quantity, setQuantity] = useState("");
-  const [quantityScale, setQuantityScale] = useState("0");
-  const [quantityAdjustmentBps, setQuantityAdjustmentBps] = useState("");
-  const [wastageBps, setWastageBps] = useState("");
-  const [taxRateBps, setTaxRateBps] = useState("");
-  const [taxTreatment, setTaxTreatment] = useState<"exclusive" | "inclusive">(
-    "exclusive"
-  );
-  const [startMarginBps, setStartMarginBps] = useState("");
-  const [bottomMarginBps, setBottomMarginBps] = useState("");
-  const [pmcMarkupBps, setPmcMarkupBps] = useState("");
-  const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [preview, setPreview] = useState<KnowledgePreview | null>(null);
-  const parsedUnitRate = parseRupeeInputToPaise(unitRateRupees);
-  const unitRateError =
-    unitRateRupees === "" || parsedUnitRate.status === "valid"
-      ? undefined
-      : parsedUnitRate.status === "incomplete"
-        ? "Complete the rupee amount with one or two digits after the decimal point."
-        : parsedUnitRate.reason === "unsafe"
-          ? "Enter a rupee amount within the supported range."
-          : "Enter a non-negative rupee amount with no more than two decimal places.";
-  const ready =
-    parsedUnitRate.status === "valid" &&
-    /^(?:0|[1-9]\d*)(?:\.\d+)?$/u.test(quantity) &&
-    isBoundedInteger(quantityScale, 0, 18);
-
-  async function runPreview() {
-    setPending(true);
-    setError(null);
-    try {
-      setPreview(
-        await previewKnowledge(
-          previewRequest({
-            unitRateRupees,
-            quantity,
-            quantityScale,
-            quantityAdjustmentBps,
-            wastageBps,
-            taxRateBps,
-            taxTreatment,
-            startMarginBps,
-            bottomMarginBps,
-            pmcMarkupBps
-          })
-        )
-      );
-    } catch (failure) {
-      setError(
-        failure instanceof Error ? failure.message : "The preview could not be run."
-      );
-    } finally {
-      setPending(false);
-    }
-  }
-
-  return (
-    <Surface
-      as="section"
-      variant="subtle"
-      className="knowledge-preview-panel"
-      aria-labelledby="knowledge-preview-title"
-    >
-      <div className="knowledge-section-heading">
-        <div>
-          <h3 id="knowledge-preview-title">Server calculation preview</h3>
-          <p>
-            The server remains authoritative for monetary amounts, percentages,
-            and canonical decimal quantities; the client does not calculate totals.
-          </p>
-        </div>
-      </div>
-      <div className="knowledge-form-grid">
-        <Field
-          id="preview-rate"
-          label="Unit rate (₹)"
-          hint="Enter a non-negative rupee amount with up to two decimal places, for example 0, 0.01, or 125.50."
-          error={unitRateError}
-        >
-          {(props) => (
-            <Input
-              {...props}
-              type="text"
-              inputMode="decimal"
-              value={unitRateRupees}
-              onChange={(event) => setUnitRateRupees(event.target.value)}
-              onBlur={() => {
-                if (parsedUnitRate.status === "valid") {
-                  setUnitRateRupees(
-                    formatPaiseForRupeeInput(parsedUnitRate.paise)
-                  );
-                }
-              }}
-            />
-          )}
-        </Field>
-        <PreviewInput id="preview-quantity" label="Quantity" value={quantity} setValue={setQuantity} text />
-        <PreviewInput id="preview-scale" label="Quantity scale" value={quantityScale} setValue={setQuantityScale} />
-        <PreviewInput id="preview-adjustment" label="Quantity adjustment (BPS)" value={quantityAdjustmentBps} setValue={setQuantityAdjustmentBps} />
-        <PreviewInput id="preview-wastage" label="Wastage (BPS)" value={wastageBps} setValue={setWastageBps} />
-        <PreviewInput id="preview-tax" label="Tax rate (BPS)" value={taxRateBps} setValue={setTaxRateBps} />
-        {taxRateBps !== "" ? (
-          <Field id="preview-treatment" label="Tax treatment">
-            {(props) => (
-              <Select
-                {...props}
-                value={taxTreatment}
-                onChange={(event) =>
-                  setTaxTreatment(event.target.value as typeof taxTreatment)
-                }
-              >
-                <option value="exclusive">Exclusive</option>
-                <option value="inclusive">Inclusive</option>
-              </Select>
-            )}
-          </Field>
-        ) : null}
-        <PreviewInput id="preview-start-margin" label="Start margin (BPS)" value={startMarginBps} setValue={setStartMarginBps} />
-        <PreviewInput id="preview-bottom-margin" label="Bottom margin (BPS)" value={bottomMarginBps} setValue={setBottomMarginBps} />
-        <PreviewInput id="preview-pmc" label="PMC markup (BPS)" value={pmcMarkupBps} setValue={setPmcMarkupBps} />
-      </div>
-      <div className="knowledge-preview-actions">
-        <Button
-          variant="secondary"
-          busy={pending}
-          disabled={disabled || !ready}
-          onClick={() => void runPreview()}
-        >
-          Run server preview
-        </Button>
-      </div>
-      {error ? (
-        <InlineMessage tone="error" role="alert">{error}</InlineMessage>
-      ) : preview ? (
-        <KnowledgePreviewResult preview={preview} />
-      ) : null}
-    </Surface>
-  );
-}
-
-function PreviewInput({
-  id,
-  label,
-  value,
-  setValue,
-  text = false
-}: {
-  readonly id: string;
-  readonly label: string;
-  readonly value: string;
-  readonly setValue: (value: string) => void;
-  readonly text?: boolean;
-}) {
-  return (
-    <Field id={id} label={label}>
-      {(props) => (
-        <Input
-          {...props}
-          type={text ? "text" : "number"}
-          min={text ? undefined : 0}
-          step={text ? undefined : 1}
-          value={value}
-          onChange={(event) => setValue(event.target.value)}
-        />
-      )}
-    </Field>
-  );
-}
-
-function previewRequest(
-  values: Readonly<{
-    unitRateRupees: string;
-    quantity: string;
-    quantityScale: string;
-    quantityAdjustmentBps: string;
-    wastageBps: string;
-    taxRateBps: string;
-    taxTreatment: string;
-    startMarginBps: string;
-    bottomMarginBps: string;
-    pmcMarkupBps: string;
-  }>
-): KnowledgePreviewRequest {
-  const unitRate = parseRupeeInputToPaise(values.unitRateRupees);
-  if (unitRate.status !== "valid") {
-    throw new Error("Enter a valid unit rate in rupees before running the preview.");
-  }
-  const integer = (value: string) => (value === "" ? undefined : Number(value));
-  const taxRateBps = integer(values.taxRateBps);
-  return {
-    unitRatePaise: unitRate.paise,
-    quantity: values.quantity || null,
-    quantityScale: Number(values.quantityScale),
-    quantityAdjustmentBps: integer(values.quantityAdjustmentBps),
-    wastageBps: integer(values.wastageBps),
-    taxRateBps,
-    ...(taxRateBps === undefined
-      ? {}
-      : { taxTreatment: values.taxTreatment as "exclusive" | "inclusive" }),
-    startMarginBps: integer(values.startMarginBps),
-    bottomMarginBps: integer(values.bottomMarginBps),
-    pmcMarkupBps: integer(values.pmcMarkupBps)
-  };
-}
-
-function isBoundedInteger(
-  value: string,
-  minimum: number,
-  maximum: number
-): boolean {
-  return (
-    value !== "" &&
-    Number.isInteger(Number(value)) &&
-    Number(value) >= minimum &&
-    Number(value) <= maximum
-  );
-}
-
-function KnowledgePreviewResult({ preview }: { readonly preview: KnowledgePreview }) {
-  const amounts = [
-    ["Effective unit rate", preview.effectiveUnitRatePaise],
-    ["Vendor pre-tax", preview.vendorPreTax?.amountPaise],
-    ["Vendor tax", preview.vendorTax?.amountPaise],
-    ["Vendor total", preview.vendorTotal?.amountPaise],
-    ["Start margin", preview.startMargin?.amountPaise],
-    ["Bottom margin", preview.bottomMargin?.amountPaise],
-    ["PMC markup", preview.pmcMarkup?.amountPaise]
-  ] as const;
-  return (
-    <div className="knowledge-preview-result" role="status">
-      <h4>Preview components</h4>
-      <dl>
-        {amounts.map(([label, value]) => (
-          <div key={label}>
-            <dt>{label}</dt>
-            <dd>{typeof value === "number" ? formatKnowledgeMoney(value) : "Not resolved"}</dd>
-          </div>
-        ))}
-        <div>
-          <dt>Procurement quantity</dt>
-          <dd>{preview.procurementQuantity ?? "Not resolved"}</dd>
-        </div>
-        {preview.startMargin?.rateBps !== null &&
-        preview.startMargin?.rateBps !== undefined ? (
-          <div>
-            <dt>Start margin rate</dt>
-            <dd>{formatKnowledgePercentage(preview.startMargin.rateBps)}</dd>
-          </div>
-        ) : null}
-      </dl>
     </div>
   );
 }

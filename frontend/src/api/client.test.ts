@@ -9,6 +9,7 @@ import {
   type PaginatedData
 } from "./client";
 import { server } from "../test/server";
+import { requestActivity } from "./requestActivity";
 
 class FakeXMLHttpRequest {
   static instances: FakeXMLHttpRequest[] = [];
@@ -18,6 +19,7 @@ class FakeXMLHttpRequest {
   onload: (() => void) | null = null;
   onerror: (() => void) | null = null;
   onabort: (() => void) | null = null;
+  ontimeout: (() => void) | null = null;
   upload = { onprogress: null as ((event: ProgressEvent) => void) | null };
   readonly headers = new Map<string, string>();
   method = "";
@@ -50,6 +52,7 @@ function installFakeXMLHttpRequest(): typeof FakeXMLHttpRequest {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  expect(requestActivity.getSnapshot()).toBe(0);
 });
 
 describe("apiClient", () => {
@@ -266,11 +269,13 @@ describe("apiClient", () => {
     xhr.upload.onprogress?.({ lengthComputable: true, loaded: 2, total: 3 } as ProgressEvent);
     xhr.upload.onprogress?.({ lengthComputable: true, loaded: 23, total: 20 } as ProgressEvent);
     xhr.upload.onprogress?.({ lengthComputable: true, loaded: -1, total: 20 } as ProgressEvent);
+    expect(requestActivity.getSnapshot()).toBe(1);
     xhr.status = 201;
     xhr.responseText = JSON.stringify({ data: { id: "version-1" } });
     xhr.onload?.();
 
     await expect(upload).resolves.toEqual({ id: "version-1" });
+    expect(requestActivity.getSnapshot()).toBe(0);
     expect(progress).toHaveBeenNthCalledWith(1, 67);
     expect(progress).toHaveBeenNthCalledWith(2, 100);
     expect(progress).toHaveBeenNthCalledWith(3, 0);
@@ -324,17 +329,29 @@ describe("apiClient", () => {
     window.removeEventListener("lisno:unauthorized", listener);
   });
 
-  it("rejects multipart uploads when XHR errors or is aborted", async () => {
+  it.each(["onerror", "onabort", "ontimeout"] as const)("clears multipart activity on %s", async (event) => {
     const XMLHttpRequest = installFakeXMLHttpRequest();
-    const errored = apiClient.postMultipartWithProgress("/design-versions", new FormData(), vi.fn());
-    XMLHttpRequest.instances[0].onerror?.();
+    const upload = apiClient.postMultipartWithProgress("/design-versions", new FormData(), vi.fn());
+    expect(requestActivity.getSnapshot()).toBe(1);
+    XMLHttpRequest.instances[0][event]?.();
+    await expect(upload).rejects.toBeInstanceOf(ApiError);
+  });
 
-    await expect(errored).rejects.toBeInstanceOf(ApiError);
+  it("clears multipart activity after an invalid response or synchronous send failure", async () => {
+    const XMLHttpRequest = installFakeXMLHttpRequest();
+    const upload = apiClient.postMultipartWithProgress("/design-versions", new FormData(), vi.fn());
+    const xhr = XMLHttpRequest.instances[0];
+    xhr.status = 201;
+    xhr.responseText = "not JSON";
+    xhr.onload?.();
+    await expect(upload).rejects.toBeInstanceOf(ApiError);
+    expect(requestActivity.getSnapshot()).toBe(0);
 
-    const aborted = apiClient.postMultipartWithProgress("/design-versions", new FormData(), vi.fn());
-    XMLHttpRequest.instances[1].onabort?.();
-
-    await expect(aborted).rejects.toBeInstanceOf(ApiError);
+    vi.spyOn(XMLHttpRequest.prototype, "send").mockImplementationOnce(() => {
+      throw new Error("Could not send");
+    });
+    await expect(apiClient.postMultipartWithProgress("/design-versions", new FormData(), vi.fn()))
+      .rejects.toThrow("Could not send");
   });
 
   it("returns authenticated downloads with the server filename", async () => {

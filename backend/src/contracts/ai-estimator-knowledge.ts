@@ -276,6 +276,12 @@ export interface KnowledgeModeField {
   options: string[];
 }
 
+export interface KnowledgePmcScopeItem {
+  id: KnowledgeStableId;
+  name: string;
+  selected: boolean;
+}
+
 interface KnowledgeModeConfigurationBase {
   id: KnowledgeStableId;
   fields: KnowledgeModeField[];
@@ -284,6 +290,8 @@ interface KnowledgeModeConfigurationBase {
 export type KnowledgeModeConfiguration =
   | (KnowledgeModeConfigurationBase & {
       modeKind: Extract<KnowledgeModeKind, "pmc">;
+      inclusions?: KnowledgePmcScopeItem[];
+      exclusions?: KnowledgePmcScopeItem[];
       executionSource?: never;
       modeId?: never;
     })
@@ -319,7 +327,22 @@ export interface KnowledgePreviewAmountComponent {
   rateBps: KnowledgeBasisPoints | null;
 }
 
+export interface KnowledgeModeCalculationSettings {
+  baseRatePaise: KnowledgePaise;
+  lowQuantityLimit: KnowledgeCanonicalDecimal;
+  minimumMarkupBps: KnowledgeBasisPoints;
+  startingMarkupBps: KnowledgeBasisPoints;
+}
+
+export interface KnowledgeModeCalculationPreview {
+  revisedUnitRatePaise: KnowledgePaise;
+  revisedAmountPaise: KnowledgePaise;
+  totalPaise: KnowledgePaise;
+  appliedImpactBps: KnowledgeBasisPoints;
+}
+
 export interface KnowledgePreview {
+  modeCalculation?: KnowledgeModeCalculationPreview;
   formulaVersion: "knowledge-preview-v1";
   effectivePriceVersionId: KnowledgeStableId | null;
   taxVersionId: KnowledgeStableId | null;

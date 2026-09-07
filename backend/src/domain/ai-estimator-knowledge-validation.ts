@@ -283,7 +283,7 @@ const ALLOWED_SECTION_KEYS: Record<KnowledgeSectionKey, ReadonlySet<string>> = {
   recommendations: new Set(["recommendations", "exclusions"]),
   quality: new Set(["parameters"]),
   execution: new Set(["steps", "productivity"]),
-  advanced: new Set(["dependencies", "modeOverrides", "revisionLineage", "modeConfigurations"])
+  advanced: new Set(["dependencies", "modeOverrides", "revisionLineage", "modeConfigurations", "modeDescription", "modeCalculation", "pmcMarginBps"])
 };
 
 function inspectBoundedValue(
@@ -358,10 +358,11 @@ export function validateKnowledgeSectionPayload(
   }
 
   for (const [key, value] of Object.entries(record)) {
-    if (typeof value === "string" && value.length > AI_ESTIMATOR_KNOWLEDGE_MAX_SHORT_TEXT && !["description", "technicalDescription", "internalVendorNotes"].includes(key)) {
+    if (typeof value === "string" && value.length > AI_ESTIMATOR_KNOWLEDGE_MAX_SHORT_TEXT && !["description", "technicalDescription", "internalVendorNotes", "modeDescription"].includes(key)) {
       issues.push({ path: `payload.${key}`, code: "TEXT_TOO_LONG", message: `${key} exceeds the supported short-text length.` });
     }
-    if (key.endsWith("Bps") && (
+    const unconfiguredPmcMargin = sectionKey === "advanced" && key === "pmcMarginBps" && value === null;
+    if (key.endsWith("Bps") && !unconfiguredPmcMargin && (
       !Number.isSafeInteger(value) ||
       (value as number) < 0 ||
       (value as number) > AI_ESTIMATOR_KNOWLEDGE_BASIS_POINTS
@@ -1301,6 +1302,31 @@ function validateAdvancedPayload(
   record: Record<string, unknown>
 ): KnowledgeValidationIssue[] {
   const issues: KnowledgeValidationIssue[] = [];
+  if (record.pmcMarginBps !== undefined && record.pmcMarginBps !== null) {
+    validateInteger(record.pmcMarginBps, "payload.pmcMarginBps", issues, 1_000, 2_000);
+  }
+  if (record.modeCalculation !== undefined && record.modeCalculation !== null) {
+    const path = "payload.modeCalculation";
+    const row = record.modeCalculation;
+    if (typeof row !== "object" || Array.isArray(row)) {
+      issues.push(invalidTypeIssue(path, "a calculation settings object or null"));
+    } else {
+      const settings = row as Record<string, unknown>;
+      const keys = ["baseRatePaise", "lowQuantityLimit", "minimumMarkupBps", "startingMarkupBps"];
+      validateExactRowKeys(settings, keys, keys, path, issues);
+      validateInteger(settings.baseRatePaise, `${path}.baseRatePaise`, issues, 0, Number.MAX_SAFE_INTEGER);
+      validateCanonicalDecimal(settings.lowQuantityLimit, `${path}.lowQuantityLimit`, issues);
+      for (const key of ["minimumMarkupBps", "startingMarkupBps"] as const) {
+        validateInteger(settings[key], `${path}.${key}`, issues, 0, Number.MAX_SAFE_INTEGER - 10_000);
+      }
+      if (typeof settings.minimumMarkupBps === "number" && typeof settings.startingMarkupBps === "number" && settings.startingMarkupBps < settings.minimumMarkupBps) {
+        issues.push({ path: `${path}.startingMarkupBps`, code: "INVALID_MARKUP", message: "Starting markup must be at least the minimum markup." });
+      }
+    }
+  }
+  if ("modeDescription" in record) {
+    validateNullableText(record.modeDescription, "payload.modeDescription", issues, AI_ESTIMATOR_KNOWLEDGE_MAX_TEXT);
+  }
   if ("dependencies" in record) {
     validateRelationshipRows(
       record.dependencies,
@@ -1358,7 +1384,7 @@ function validateModeConfigurations(
     const configurationPath = `${path}.${configurationIndex}`;
     validateExactRowKeys(
       configuration,
-      ["id", "modeKind", "executionSource", "modeId", "fields"],
+      ["id", "modeKind", "executionSource", "modeId", "fields", "inclusions", "exclusions"],
       ["id", "fields"],
       configurationPath,
       issues
@@ -1443,11 +1469,35 @@ function validateModeConfigurations(
         issues
       );
     }
+    for (const list of ["inclusions", "exclusions"] as const) {
+      if (!(list in configuration)) continue;
+      if (configuration.modeKind !== "pmc" || hasModeId) {
+        issues.push(irrelevantFieldIssue(`${configurationPath}.${list}`));
+      }
+      validatePmcScopeItems(configuration[list], `${configurationPath}.${list}`, issues);
+    }
     validateModeConfigurationFields(
       configuration.fields,
       `${configurationPath}.fields`,
       issues
     );
+  });
+}
+
+function validatePmcScopeItems(value: unknown, path: string, issues: KnowledgeValidationIssue[]): void {
+  const rows = validateObjectArray(value, path, issues);
+  const ids = new Set<string>();
+  const names = new Set<string>();
+  rows.forEach((row, index) => {
+    const rowPath = `${path}.${index}`;
+    validateExactRowKeys(row, ["id", "name", "selected"], ["id", "name", "selected"], rowPath, issues);
+    validateModeOwnedStableId(row.id, `${rowPath}.id`, issues);
+    validateText(row.name, `${rowPath}.name`, issues, AI_ESTIMATOR_KNOWLEDGE_MAX_SHORT_TEXT);
+    validateBoolean(row.selected, `${rowPath}.selected`, issues);
+    addUniqueString(row.id, ids, `${rowPath}.id`, "DUPLICATE_ID", issues);
+    if (typeof row.name === "string" && row.name.trim()) {
+      addUniqueString(normalizeKnowledgeIdentity(row.name), names, `${rowPath}.name`, "DUPLICATE_LABEL", issues);
+    }
   });
 }
 

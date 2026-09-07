@@ -60,6 +60,114 @@ afterAll(async () => {
 });
 
 describe("AI estimator knowledge item service", () => {
+  it("persists independent PMC margins across reloads and rejects stale or invalid saves", async () => {
+    const { service } = createService();
+    for (const [name, pmcMarginBps] of [["First PMC margin line", 1_000], ["Second PMC margin line", 2_000]] as const) {
+      const created = await service.createMainLine(ACTOR, "basket-carpentry", { name });
+      const revisionId = created.draftRevisionId!;
+      const advanced = await service.getSection(ACTOR, created.mainLineId, revisionId, "advanced");
+      const payload = { pmcMarginBps, modeDescription: "Saved scope.", modeConfigurations: [{ id: "pmc", modeKind: "pmc", fields: [] }] };
+      const saved = await service.updateSection(ACTOR, created.mainLineId, revisionId, "advanced", {
+        expectedVersion: advanced.version, expectedAggregateVersion: created.version, applicability: "configured", payload
+      });
+      expect((await service.getSection(ACTOR, created.mainLineId, revisionId, "advanced")).payload).toEqual(payload);
+      await expect(service.updateSection(ACTOR, created.mainLineId, revisionId, "advanced", {
+        expectedVersion: saved.version, expectedAggregateVersion: saved.aggregateVersion, payload: { ...payload, pmcMarginBps: 2_001 }
+      })).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+      const updatedPayload = { ...payload, pmcMarginBps: 1_375 };
+      await service.updateSection(ACTOR, created.mainLineId, revisionId, "advanced", {
+        expectedVersion: saved.version, expectedAggregateVersion: saved.aggregateVersion, payload: updatedPayload
+      });
+      await expect(service.updateSection(ACTOR, created.mainLineId, revisionId, "advanced", {
+        expectedVersion: saved.version, expectedAggregateVersion: saved.aggregateVersion, payload
+      })).rejects.toMatchObject({ code: "VERSION_CONFLICT" });
+      expect((await service.getSection(ACTOR, created.mainLineId, revisionId, "advanced")).payload).toEqual(updatedPayload);
+    }
+  });
+
+  it("round-trips shared Mode calculation settings with version checks and isolated main lines", async () => {
+    const { service } = createService();
+    const first = await service.createMainLine(ACTOR, "basket-carpentry", { name: "First calculation line" });
+    const second = await service.createMainLine(ACTOR, "basket-carpentry", { name: "Second calculation line" });
+    for (const [created, baseRatePaise] of [[first, 150_000], [second, 50_000]] as const) {
+      const revisionId = created.draftRevisionId!;
+      const advanced = await service.getSection(ACTOR, created.mainLineId, revisionId, "advanced");
+      const payload = {
+        modeDescription: "Shared scope paragraph.",
+        modeConfigurations: [{ id: "pmc", modeKind: "pmc", fields: [] }],
+        modeCalculation: { baseRatePaise, lowQuantityLimit: "15", minimumMarkupBps: 2_500, startingMarkupBps: 3_500 }
+      };
+      const saved = await service.updateSection(ACTOR, created.mainLineId, revisionId, "advanced", {
+        expectedVersion: advanced.version, expectedAggregateVersion: created.version, applicability: "configured", payload
+      });
+      expect((await service.getSection(ACTOR, created.mainLineId, revisionId, "advanced")).payload).toEqual(payload);
+      const edited = { ...payload, modeCalculation: { ...payload.modeCalculation, startingMarkupBps: 4_000 } };
+      await service.updateSection(ACTOR, created.mainLineId, revisionId, "advanced", {
+        expectedVersion: saved.version, expectedAggregateVersion: saved.aggregateVersion, payload: edited
+      });
+      await expect(service.updateSection(ACTOR, created.mainLineId, revisionId, "advanced", {
+        expectedVersion: saved.version, expectedAggregateVersion: saved.aggregateVersion, payload
+      })).rejects.toMatchObject({ code: "VERSION_CONFLICT" });
+      expect((await service.getSection(ACTOR, created.mainLineId, revisionId, "advanced")).payload).toEqual(edited);
+    }
+  });
+
+  it("stores one shared Mode paragraph across saves, reloads, and stale-version rejection", async () => {
+    const { service } = createService();
+    const created = await service.createMainLine(ACTOR, "basket-carpentry", { name: "Shared paragraph line" });
+    const revisionId = created.draftRevisionId!;
+    const advanced = await service.getSection(ACTOR, created.mainLineId, revisionId, "advanced");
+    const modeConfigurations = [
+      { id: "pmc", modeKind: "pmc", fields: [], inclusions: [{ id: "transport", name: "Transport", selected: true }] },
+      { id: "execution", modeKind: "execution", executionSource: "in_house", fields: [] }
+    ];
+    const payload = { modeDescription: "Shared wording for PMC and Execution. ".repeat(10), modeConfigurations };
+    const saved = await service.updateSection(ACTOR, created.mainLineId, revisionId, "advanced", {
+      expectedVersion: advanced.version, expectedAggregateVersion: created.version, applicability: "configured", payload
+    });
+    expect((await service.getSection(ACTOR, created.mainLineId, revisionId, "advanced")).payload).toEqual(payload);
+    const updatedPayload = { ...payload, modeDescription: "Updated shared wording." };
+    const updated = await service.updateSection(ACTOR, created.mainLineId, revisionId, "advanced", {
+      expectedVersion: saved.version, expectedAggregateVersion: saved.aggregateVersion, payload: updatedPayload
+    });
+    expect((await service.getSection(ACTOR, created.mainLineId, revisionId, "advanced")).payload).toEqual(updatedPayload);
+    await expect(service.updateSection(ACTOR, created.mainLineId, revisionId, "advanced", {
+      expectedVersion: saved.version, expectedAggregateVersion: saved.aggregateVersion, payload
+    })).rejects.toMatchObject({ code: "VERSION_CONFLICT" });
+    const reset = await service.updateSection(ACTOR, created.mainLineId, revisionId, "advanced", {
+      expectedVersion: updated.version, expectedAggregateVersion: updated.aggregateVersion,
+      payload: { ...updatedPayload, modeDescription: null }
+    });
+    expect(reset.payload).toEqual({ ...updatedPayload, modeDescription: null });
+  });
+
+  it("round-trips independent PMC checklists through versioned saves without changing Execution", async () => {
+    const { service } = createService();
+    const created = await service.createMainLine(ACTOR, "basket-carpentry", { name: "PMC scope line" });
+    const revisionId = created.draftRevisionId!;
+    const advanced = await service.getSection(ACTOR, created.mainLineId, revisionId, "advanced");
+    const execution = { id: "execution", modeKind: "execution", executionSource: "in_house", fields: [] };
+    const pmc = {
+      id: "pmc", modeKind: "pmc", fields: [],
+      inclusions: [{ id: "transport-in", name: "Transport", selected: true }],
+      exclusions: [{ id: "transport-out", name: "Transport", selected: true }, { id: "custom", name: "Night unloading", selected: false }]
+    };
+    const payload = { dependencies: [], modeConfigurations: [pmc, execution] };
+    const saved = await service.updateSection(ACTOR, created.mainLineId, revisionId, "advanced", {
+      expectedVersion: advanced.version, expectedAggregateVersion: created.version, applicability: "configured", payload
+    });
+    expect((await service.getSection(ACTOR, created.mainLineId, revisionId, "advanced")).payload).toEqual(payload);
+    const updatedPayload = { ...payload, modeConfigurations: [{ ...pmc, inclusions: [{ ...pmc.inclusions[0]!, selected: false }] }, execution] };
+    const updated = await service.updateSection(ACTOR, created.mainLineId, revisionId, "advanced", {
+      expectedVersion: saved.version, expectedAggregateVersion: saved.aggregateVersion, payload: updatedPayload
+    });
+    expect(updated.payload).toEqual(updatedPayload);
+    expect((await service.getSection(ACTOR, created.mainLineId, revisionId, "advanced")).payload).toEqual(updatedPayload);
+    await expect(service.updateSection(ACTOR, created.mainLineId, revisionId, "advanced", {
+      expectedVersion: saved.version, expectedAggregateVersion: saved.aggregateVersion, payload
+    })).rejects.toMatchObject({ code: "VERSION_CONFLICT" });
+  });
+
   it("coordinates Overview Surface assignments, preserves Priority, and retains unavailable history", async () => {
     const { service, appendAudit } = createService();
     const created = await service.createMainLine(ACTOR, "basket-carpentry", {

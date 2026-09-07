@@ -5,6 +5,7 @@ import type {
   KnowledgeMaster,
   KnowledgeModeKind
 } from "./knowledgeTypes";
+import { parsePmcScopeItems, PMC_SCOPE_LISTS, type KnowledgePmcScopeItem } from "./knowledgePmcScope";
 
 export const KNOWLEDGE_MODE_FIELD_TYPES = [
   "text",
@@ -57,6 +58,8 @@ export interface KnowledgeModeConfiguration {
   /** Present only when this configuration was read from the legacy shape. */
   readonly legacyModeId: string | null;
   readonly fields: readonly KnowledgeModeConfigurationField[];
+  readonly inclusions?: readonly KnowledgePmcScopeItem[];
+  readonly exclusions?: readonly KnowledgePmcScopeItem[];
 }
 
 export interface KnowledgeModeConfigurationIssue {
@@ -134,7 +137,7 @@ export function parseKnowledgeModeConfigurations(
       return;
     }
     for (const key of Object.keys(entry)) {
-      if (!["id", "modeKind", "modeId", "executionSource", "fields"].includes(key)) {
+      if (!["id", "modeKind", "modeId", "executionSource", "fields", "inclusions", "exclusions"].includes(key)) {
         issues.push({ path: `${path}.${key}`, message: "Unknown Mode configuration property." });
       }
     }
@@ -235,12 +238,23 @@ export function parseKnowledgeModeConfigurations(
         });
       }
     });
+    const scope: Partial<Record<(typeof PMC_SCOPE_LISTS)[number], readonly KnowledgePmcScopeItem[]>> = {};
+    for (const list of PMC_SCOPE_LISTS) {
+      if (entry[list] === undefined) continue;
+      if (modeKind !== "pmc" || hasModeId) {
+        issues.push({ path: `${path}.${list}`, message: "Inclusions and Exclusions are available only for PMC." });
+      }
+      const parsedScope = parsePmcScopeItems(entry[list], `${path}.${list}`);
+      issues.push(...parsedScope.issues);
+      scope[list] = parsedScope.items;
+    }
     configurations.push({
       id,
       modeKind: resolvedModeKind,
       executionSource,
       legacyModeId,
-      fields
+      fields,
+      ...scope
     });
   });
 
@@ -508,6 +522,9 @@ export function withKnowledgeModeConfigurations(
                 : {})
             }
           : {}),
+      ...Object.fromEntries(PMC_SCOPE_LISTS.flatMap((list) => configuration[list] === undefined
+        ? []
+        : [[list, configuration[list].map((item) => ({ ...item }))]])),
       fields: configuration.fields.map((field) => ({
         id: field.id,
         type: field.type,

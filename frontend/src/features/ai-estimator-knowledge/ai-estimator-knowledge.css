@@ -3437,8 +3437,379 @@ body:has(.ui-app-shell[data-role]) .modal .knowledge-dialog-actions .ui-button--
   min-inline-size: 0;
 }
 
-.knowledge-page--item-workspace .knowledge-mode-configuration > .ui-field {
-  inline-size: min(100%, 30rem);
+.knowledge-mode-configuration__mode-selector {
+  min-inline-size: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.knowledge-mode-configuration__mode-selector legend {
+  margin-block-end: 4px;
+  padding: 0;
+  font-weight: 700;
+}
+
+.knowledge-mode-configuration__mode-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+}
+
+.knowledge-mode-configuration__mode-options label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-block-size: 24px;
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.knowledge-mode-configuration__mode-options .ui-checkbox {
+  inline-size: 12px;
+  block-size: 12px;
+  min-inline-size: 12px;
+  min-block-size: 12px;
+  flex: 0 0 12px;
+  margin: 0;
+}
+
+.knowledge-mode-configuration__mode-context {
+  margin: 4px 0 0;
+  font-size: 14px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.knowledge-mode-configuration__pmc-context:not([hidden]) {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin-block-start: 4px;
+}
+
+.knowledge-mode-configuration__pmc-context .knowledge-mode-configuration__mode-context {
+  margin: 0;
+}
+
+.knowledge-mode-configuration__mode-content {
+  display: grid;
+  gap: var(--space-3);
+  min-inline-size: 0;
+}
+
+.knowledge-mode-configuration__mode-content > h3 {
+  margin: 0;
+}
+
+.knowledge-mode-description {
+  display: grid;
+  gap: 8px;
+  min-inline-size: 0;
+}
+
+.knowledge-mode-description__text {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-mode-description__text .ui-icon-button {
+  display: inline-flex;
+  inline-size: 24px;
+  block-size: 24px;
+  min-inline-size: 24px;
+  min-block-size: 24px;
+  padding: 4px;
+  vertical-align: middle;
+}
+
+.knowledge-mode-description__text .ui-icon-button svg {
+  inline-size: 14px;
+  block-size: 14px;
+}
+
+.knowledge-mode-description__actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.knowledge-mode-calculation-slot {
+  min-inline-size: 0;
+}
+
+.knowledge-mode-calculation {
+  display: grid;
+  gap: 12px;
+  min-inline-size: 0;
+  font-size: 14px;
+  container-type: inline-size;
+}
+
+.knowledge-mode-calculation__header h3,
+.knowledge-mode-calculation__hint {
+  margin: 0;
+}
+
+.knowledge-mode-calculation__header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+}
+
+.knowledge-mode-calculation__header h3 {
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.knowledge-mode-calculation__groups {
+  display: grid;
+  grid-template-columns: minmax(0, 1.65fr) minmax(0, 1fr);
+  gap: 12px;
+  min-inline-size: 0;
+}
+
+.knowledge-mode-calculation__group {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  min-inline-size: 0;
+  padding: 16px;
+  background: var(--color-surface);
+  border: 1px solid var(--role-line, var(--color-border));
+  border-radius: 12px;
+}
+
+.knowledge-mode-calculation__group h4 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.knowledge-mode-calculation__rate-fields {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.8fr) minmax(0, 1.2fr) minmax(0, 0.85fr);
+  gap: 12px;
+  min-inline-size: 0;
+}
+
+.knowledge-mode-calculation__markup-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  min-inline-size: 0;
+}
+
+.knowledge-mode-calculation__group .ui-field,
+.knowledge-mode-calculation__fixed {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-inline-size: 0;
+  margin: 0;
+}
+
+.knowledge-mode-calculation__group .ui-field__label,
+.knowledge-mode-calculation__fixed dt {
+  margin: 0;
+  color: var(--role-text-muted, var(--color-text-muted));
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.5;
+}
+
+.knowledge-mode-calculation__input {
+  position: relative;
+  min-inline-size: 0;
+}
+
+.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-mode-calculation .knowledge-mode-calculation__control,
+.knowledge-mode-calculation__input .knowledge-mode-calculation__control {
+  inline-size: 100%;
+  min-inline-size: 0;
+  block-size: 40px;
+  min-block-size: 40px;
+  padding: 8px 10px;
+  border: 1px solid var(--role-line, var(--color-border));
+  border-radius: 8px;
+  background: var(--color-surface);
+  font-size: 14px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.5;
+}
+
+.knowledge-mode-calculation .knowledge-mode-calculation__input[data-affix="leading"] .knowledge-mode-calculation__control {
+  padding-inline-start: 28px;
+}
+
+.knowledge-mode-calculation .knowledge-mode-calculation__input[data-affix="trailing"] .knowledge-mode-calculation__control {
+  padding-inline-end: 28px;
+}
+
+.knowledge-mode-calculation__affix {
+  position: absolute;
+  inset-inline-end: 10px;
+  inset-block-start: 50%;
+  transform: translateY(-50%);
+  color: var(--role-text-muted, var(--color-text-muted));
+  font-size: 13px;
+  pointer-events: none;
+}
+
+.knowledge-mode-calculation__input[data-affix="leading"] .knowledge-mode-calculation__affix {
+  inset-inline-start: 10px;
+  inset-inline-end: auto;
+}
+
+.knowledge-mode-calculation__fixed dd {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  min-inline-size: 0;
+  min-block-size: 40px;
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: var(--role-deck-tint, var(--color-surface-subtle));
+  font-size: 14px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.knowledge-mode-calculation__fixed svg {
+  flex: 0 0 12px;
+  inline-size: 12px;
+  block-size: 12px;
+  color: var(--role-text-muted, var(--color-text-muted));
+}
+
+.knowledge-mode-calculation__note,
+.knowledge-mode-calculation .knowledge-mode-calculation__hint {
+  margin: 0;
+  color: var(--role-text-muted, var(--color-text-muted));
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.knowledge-mode-calculation__actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-mode-calculation__actions .ui-button,
+.knowledge-mode-calculation__actions .ui-button {
+  min-block-size: 34px;
+  padding: 6px 12px;
+  font-size: 12px;
+}
+
+.knowledge-mode-calculation__actions svg {
+  inline-size: 14px;
+  block-size: 14px;
+}
+
+@container (max-width: 760px) {
+  .knowledge-mode-calculation__groups {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@container (max-width: 560px) {
+  .knowledge-mode-calculation__rate-fields {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@container (max-width: 340px) {
+  .knowledge-mode-calculation__group {
+    padding: 12px;
+  }
+
+  .knowledge-mode-calculation__rate-fields .ui-field__label,
+  .knowledge-mode-calculation__fixed dt {
+    min-block-size: 36px;
+  }
+}
+
+.knowledge-mode-simulator__fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr));
+  align-items: start;
+  gap: 16px;
+}
+
+.knowledge-mode-simulator__markup {
+  display: grid;
+  gap: 8px;
+  min-inline-size: 0;
+  margin: 0;
+  padding: 12px;
+  border: 1px solid var(--role-line, var(--color-border));
+  border-radius: var(--radius-field);
+}
+
+.knowledge-mode-simulator__markup label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+}
+
+.knowledge-mode-simulator__markup .ui-radio {
+  inline-size: 16px;
+  block-size: 16px;
+  min-inline-size: 16px;
+  min-block-size: 16px;
+  flex: 0 0 16px;
+}
+
+.knowledge-mode-simulator__result {
+  display: grid;
+  gap: 12px;
+  padding: 12px;
+  background: var(--role-deck-tint, var(--color-surface-subtle));
+  border: 1px solid var(--role-line, var(--color-border));
+  border-radius: var(--radius-field);
+}
+
+.knowledge-mode-calculation__totals {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+}
+
+.knowledge-mode-calculation__totals > div {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.knowledge-mode-calculation__totals dd {
+  margin: 0;
+  font-weight: 700;
+}
+
+.knowledge-page--item-workspace .knowledge-mode-description .ui-control {
+  font-size: 14px;
+  resize: vertical;
 }
 
 .knowledge-page--item-workspace .knowledge-mode-configuration__execution-source {
@@ -3484,6 +3855,124 @@ body:has(.ui-app-shell[data-role]) .modal .knowledge-dialog-actions .ui-button--
   margin: 0;
   color: var(--role-text-muted, var(--color-text-muted));
   overflow-wrap: anywhere;
+}
+
+.knowledge-pmc-scope {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 18rem), 1fr));
+  gap: 12px;
+  min-inline-size: 0;
+}
+
+.knowledge-pmc-scope__list {
+  display: flex;
+  flex-direction: column;
+  min-inline-size: 0;
+  margin: 0;
+  padding: 8px;
+  border: 1px solid var(--role-line, var(--color-border));
+  border-radius: var(--radius-field);
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.knowledge-pmc-scope__list legend {
+  padding-inline: var(--space-1);
+  font-weight: 700;
+  font-size: 10px;
+}
+
+.knowledge-pmc-scope__items,
+.knowledge-pmc-scope__add {
+  display: grid;
+  gap: 4px;
+  min-inline-size: 0;
+}
+
+.knowledge-pmc-scope__items label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-block-size: 24px;
+  font-size: 10px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+  flex: 1;
+  min-inline-size: 0;
+}
+
+.knowledge-pmc-scope__item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-inline-size: 0;
+}
+
+.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-pmc-scope__delete,
+.knowledge-pmc-scope__item .knowledge-pmc-scope__delete {
+  inline-size: 24px;
+  block-size: 24px;
+  min-inline-size: 24px;
+  min-block-size: 24px;
+  flex: 0 0 24px;
+  padding: 4px;
+}
+
+.knowledge-pmc-scope__delete svg {
+  inline-size: 12px;
+  block-size: 12px;
+}
+
+.knowledge-pmc-scope__empty {
+  margin: 0;
+  font-size: 10px;
+}
+
+.knowledge-pmc-scope__items .ui-checkbox {
+  inline-size: 12px;
+  block-size: 12px;
+  min-inline-size: 12px;
+  min-block-size: 12px;
+  flex: 0 0 12px;
+  margin: 0;
+}
+
+.knowledge-pmc-scope__add {
+  margin-block-start: auto;
+  padding-block-start: 8px;
+}
+
+.knowledge-pmc-scope__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 4px;
+}
+
+.knowledge-pmc-scope__add .ui-field {
+  gap: 4px;
+}
+
+.knowledge-pmc-scope__add .ui-field__label,
+.knowledge-pmc-scope__add .ui-field__error {
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.knowledge-pmc-scope__add .ui-field__error-icon {
+  inline-size: 12px;
+  block-size: 12px;
+}
+
+.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-pmc-scope__add .ui-control,
+.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-pmc-scope__add .ui-button {
+  min-block-size: 28px;
+  padding: 4px 8px;
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.knowledge-pmc-scope__add .ui-button {
+  justify-self: end;
 }
 
 .knowledge-page--item-workspace .knowledge-mode-field {

@@ -10,6 +10,90 @@ import {
 } from "../src/domain/ai-estimator-knowledge-validation.js";
 
 describe("AI estimator knowledge validation", () => {
+  it("accepts optional PMC margin from 10 to 20 percent and rejects out-of-range or imprecise values", () => {
+    for (const pmcMarginBps of [null, 1_000, 1_001, 1_250, 2_000]) {
+      expect(validateKnowledgeSectionPayload("advanced", { pmcMarginBps })).toEqual([]);
+    }
+    for (const pmcMarginBps of [999, 2_001, 0, -1, 1_250.5, "15", {}, true, Number.MAX_SAFE_INTEGER]) {
+      expect(validateKnowledgeSectionPayload("advanced", { pmcMarginBps }))
+        .toContainEqual(expect.objectContaining({ path: "payload.pmcMarginBps" }));
+    }
+    expect(validateKnowledgeSectionPayload("pricing", { pmcMarginBps: 1_500 }))
+      .toContainEqual(expect.objectContaining({ path: "payload.pmcMarginBps", code: "UNKNOWN_FIELD" }));
+    expect(validateKnowledgeSectionPayload("quantity-margin", { pmcMarkupBps: null }))
+      .toContainEqual(expect.objectContaining({ path: "payload.pmcMarkupBps", code: "INVALID_BPS" }));
+  });
+
+  it("accepts optional shared Mode calculation inputs and rejects authored totals or invalid settings", () => {
+    const modeCalculation = { baseRatePaise: 150_000, lowQuantityLimit: "15", minimumMarkupBps: 2_500, startingMarkupBps: 3_500 };
+    for (const value of [null, modeCalculation]) {
+      expect(validateKnowledgeSectionPayload("advanced", { modeCalculation: value })).toEqual([]);
+    }
+    for (const [key, value] of Object.entries({ baseRatePaise: -1, lowQuantityLimit: "01", minimumMarkupBps: 2_500.5, startingMarkupBps: 2_499 })) {
+      expect(validateKnowledgeSectionPayload("advanced", { modeCalculation: { ...modeCalculation, [key]: value } }))
+        .toContainEqual(expect.objectContaining({ path: `payload.modeCalculation.${key}` }));
+    }
+    for (const key of ["impactBps", "uomId", "quantity", "revisedUnitRatePaise", "totalPaise", "modeCalculationMarkupBasis"]) {
+      expect(validateKnowledgeSectionPayload("advanced", { modeCalculation: { ...modeCalculation, [key]: 1 } }))
+        .toContainEqual(expect.objectContaining({ path: `payload.modeCalculation.${key}`, code: "UNKNOWN_FIELD" }));
+    }
+    expect(new Set(validateKnowledgeSectionPayload("advanced", { modeCalculation: {} }).map((issue) => issue.path)))
+      .toEqual(new Set(Object.keys(modeCalculation).map((key) => `payload.modeCalculation.${key}`)));
+    expect(validateKnowledgeSectionPayload("pricing", { modeCalculation }))
+      .toContainEqual(expect.objectContaining({ path: "payload.modeCalculation", code: "UNKNOWN_FIELD" }));
+  });
+
+  it("accepts a shared Mode paragraph, generated defaults, and older payloads", () => {
+    for (const modeDescription of [null, "Custom shared wording", "A".repeat(4000)]) {
+      expect(validateKnowledgeSectionPayload("advanced", { modeDescription })).toEqual([]);
+    }
+    expect(validateKnowledgeSectionPayload("advanced", {})).toEqual([]);
+  });
+
+  it("rejects invalid shared Mode paragraphs and paragraphs in other sections", () => {
+    for (const modeDescription of ["", "   ", 42, true, {}, [], "A".repeat(4001)]) {
+      expect(validateKnowledgeSectionPayload("advanced", { modeDescription }))
+        .toContainEqual(expect.objectContaining({ path: "payload.modeDescription" }));
+    }
+    expect(validateKnowledgeSectionPayload("execution", { modeDescription: "Wrong section" }))
+      .toContainEqual(expect.objectContaining({ path: "payload.modeDescription", code: "UNKNOWN_FIELD" }));
+  });
+
+  it("accepts independent PMC Inclusions and Exclusions and keeps older configurations valid", () => {
+    const transport = { id: "transport", name: "Transport", selected: true };
+    expect(validateKnowledgeSectionPayload("advanced", { modeConfigurations: [{
+      id: "pmc", modeKind: "pmc", fields: [], inclusions: [transport], exclusions: [transport]
+    }] })).toEqual([]);
+    expect(validateKnowledgeSectionPayload("advanced", { modeConfigurations: [{
+      id: "pmc", modeKind: "pmc", fields: []
+    }] })).toEqual([]);
+  });
+
+  it("rejects invalid PMC checklist rows and scope on Execution", () => {
+    const issues = validateKnowledgeSectionPayload("advanced", { modeConfigurations: [{
+      id: "pmc", modeKind: "pmc", fields: [],
+      inclusions: [
+        { id: "same", name: "Transport", selected: true },
+        { id: "same", name: "  TRANSPORT  ", selected: "true", privateValue: "unknown" },
+        { id: "", name: "", selected: false }
+      ],
+      exclusions: "invalid"
+    }, {
+      id: "execution", modeKind: "execution", executionSource: "in_house", fields: [],
+      inclusions: [{ id: "transport", name: "Transport", selected: true }]
+    }] });
+    for (const path of [
+      "payload.modeConfigurations.0.inclusions.1.id",
+      "payload.modeConfigurations.0.inclusions.1.name",
+      "payload.modeConfigurations.0.inclusions.1.selected",
+      "payload.modeConfigurations.0.inclusions.1.privateValue",
+      "payload.modeConfigurations.0.inclusions.2.id",
+      "payload.modeConfigurations.0.inclusions.2.name",
+      "payload.modeConfigurations.0.exclusions",
+      "payload.modeConfigurations.1.inclusions"
+    ]) expect(issues).toContainEqual(expect.objectContaining({ path }));
+  });
+
   it("uses start-inclusive/end-exclusive effective windows", () => {
     const first = { id: "first", effectiveFrom: new Date("2026-01-01T00:00:00Z"), effectiveTo: new Date("2026-02-01T00:00:00Z") };
     const touching = { id: "touching", effectiveFrom: new Date("2026-02-01T00:00:00Z"), effectiveTo: null };

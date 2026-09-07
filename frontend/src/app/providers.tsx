@@ -3,6 +3,7 @@ import { useState, type ReactNode } from "react";
 
 import { AuthProvider } from "../auth/AuthProvider";
 import { FeedbackProvider } from "../components/feedback/FeedbackProvider";
+import { GlobalRequestLoader } from "../components/ui/GlobalRequestLoader";
 
 export function AppProviders({ children }: { children: ReactNode }) {
   const [queryClient] = useState(
@@ -21,6 +22,7 @@ export function AppProviders({ children }: { children: ReactNode }) {
 
   return (
     <QueryClientProvider client={queryClient}>
+      <GlobalRequestLoader />
       <FeedbackProvider>
         <AuthProvider>{children}</AuthProvider>
       </FeedbackProvider>

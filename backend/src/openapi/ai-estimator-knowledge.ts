@@ -828,12 +828,27 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
       properties: sectionPayloadProperties(sectionKey)
     }))
   },
+  KnowledgeModeCalculationSettings: {
+    ...strictObject(["baseRatePaise", "lowQuantityLimit", "minimumMarkupBps", "startingMarkupBps"], {
+      baseRatePaise: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
+      lowQuantityLimit: decimal,
+      minimumMarkupBps: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER - 10_000 },
+      startingMarkupBps: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER - 10_000 }
+    }),
+    description: "Shared Mode settings. Starting markup must be at least minimum markup. Markup is added to cost; the fixed 10% impact applies strictly below the quantity limit. UOM, test quantity, and derived amounts are not stored here."
+  },
+  KnowledgeModeCalculationPreview: strictObject(["revisedUnitRatePaise", "revisedAmountPaise", "totalPaise", "appliedImpactBps"], {
+    revisedUnitRatePaise: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
+    revisedAmountPaise: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
+    totalPaise: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
+    appliedImpactBps: { type: "integer", enum: [0, 1_000] }
+  }),
   KnowledgePreviewRequest: strictObject(["quantityScale"], {
     priceVersionId: { ...id, nullable: true },
     taxVersionId: { ...id, nullable: true },
     unitRatePaise: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER, nullable: true },
     quantityAdjustmentBps: { type: "integer", minimum: 0, maximum: 10_000, nullable: true },
-    quantity: { ...decimal, nullable: true },
+    quantity: { ...decimal, nullable: true, description: "Required and non-null when modeCalculation is supplied." },
     quantityScale: { type: "integer", minimum: 0, maximum: 18 },
     wastageBps: { type: "integer", minimum: 0, nullable: true },
     taxRateBps: { type: "integer", minimum: 0, nullable: true },
@@ -841,7 +856,12 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
     startMarginBps: { type: "integer", minimum: 0, maximum: 9_999, nullable: true },
     bottomMarginBps: { type: "integer", minimum: 0, maximum: 9_999, nullable: true },
     pmcMarkupBps: { type: "integer", minimum: 0, nullable: true },
-    duration: { allOf: [ref("KnowledgeDurationPreviewRequest")], nullable: true }
+    duration: { allOf: [ref("KnowledgeDurationPreviewRequest")], nullable: true },
+    modeCalculation: ref("KnowledgeModeCalculationSettings"),
+    modeCalculationMarkupBasis: {
+      type: "string", enum: ["starting", "minimum"], default: "starting",
+      description: "Simulator-only choice of additive markup. Requires modeCalculation. Never persisted with Mode settings."
+    }
   }),
   KnowledgeDurationPreviewRequest: strictObject(["productivity", "productivityScale", "unit"], {
     productivity: decimal,
@@ -1117,6 +1137,7 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
       startMargin: nullableRef("KnowledgePreviewAmountComponent"),
       bottomMargin: nullableRef("KnowledgePreviewAmountComponent"),
       pmcMarkup: nullableRef("KnowledgePreviewAmountComponent"),
+      modeCalculation: ref("KnowledgeModeCalculationPreview"),
       duration: {
         type: "object",
         nullable: true,
@@ -1182,7 +1203,7 @@ function sectionPayloadKeys(sectionKey: string): readonly string[] {
     recommendations: ["recommendations"],
     quality: ["parameters"],
     execution: ["steps", "productivity"],
-    advanced: ["dependencies", "modeOverrides", "revisionLineage", "modeConfigurations"]
+    advanced: ["dependencies", "modeOverrides", "revisionLineage", "modeConfigurations", "modeDescription", "modeCalculation", "pmcMarginBps"]
   };
   return keys[sectionKey] ?? [];
 }
@@ -1192,6 +1213,12 @@ function sectionPayloadProperties(sectionKey: string): Readonly<Record<string, u
     sectionPayloadKeys(sectionKey).map((key) => [key, {}])
   );
   if (sectionKey === "advanced") {
+    properties.modeDescription = { type: "string", minLength: 1, maxLength: 4_000, nullable: true };
+    properties.modeCalculation = nullableRef("KnowledgeModeCalculationSettings");
+    properties.pmcMarginBps = {
+      type: "integer", minimum: 1_000, maximum: 2_000, nullable: true,
+      description: "Configured PMC margin in basis points: 10% to 20% inclusive. Null or absent means not configured."
+    };
     properties.modeConfigurations = {
       type: "array",
       items: ref("KnowledgeModeConfiguration")

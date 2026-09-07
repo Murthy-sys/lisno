@@ -19,7 +19,7 @@ export type KnowledgeWorkspaceSectionKey =
 /** Backend-owned sections read or edited by each visible workspace section. */
 export const KNOWLEDGE_WORKSPACE_BACKEND_SECTIONS = {
   overview: ["overview"],
-  mode: ["advanced", "pricing", "quantity-margin"],
+  mode: ["advanced", "pricing"],
   recommendations: ["recommendations"],
   quality: ["quality"]
 } as const satisfies Readonly<
