@@ -276,6 +276,12 @@ export interface KnowledgeModeField {
   options: string[];
 }
 
+export interface KnowledgePmcScopeItem {
+  id: KnowledgeStableId;
+  name: string;
+  selected: boolean;
+}
+
 interface KnowledgeModeConfigurationBase {
   id: KnowledgeStableId;
   fields: KnowledgeModeField[];
@@ -284,6 +290,8 @@ interface KnowledgeModeConfigurationBase {
 export type KnowledgeModeConfiguration =
   | (KnowledgeModeConfigurationBase & {
       modeKind: Extract<KnowledgeModeKind, "pmc">;
+      inclusions?: KnowledgePmcScopeItem[];
+      exclusions?: KnowledgePmcScopeItem[];
       executionSource?: never;
       modeId?: never;
     })

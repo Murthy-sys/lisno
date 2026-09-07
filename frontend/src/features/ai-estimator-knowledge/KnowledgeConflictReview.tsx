@@ -32,6 +32,7 @@ interface ConflictReviewValue {
 
 export interface KnowledgeConflictReviewProps {
   readonly sectionKey: KnowledgeSectionKey;
+  readonly sectionLabel?: string;
   readonly localVersion: number;
   readonly serverVersion: number;
   readonly payload: KnowledgeJsonObject;
@@ -44,6 +45,7 @@ export interface KnowledgeConflictReviewProps {
 
 export function KnowledgeConflictReview({
   sectionKey,
+  sectionLabel,
   localVersion,
   serverVersion,
   payload,
@@ -53,7 +55,7 @@ export function KnowledgeConflictReview({
   relationshipBaskets,
   relationshipItems
 }: KnowledgeConflictReviewProps) {
-  const label = KNOWLEDGE_SECTION_LABELS[sectionKey];
+  const label = sectionLabel ?? KNOWLEDGE_SECTION_LABELS[sectionKey];
   const context = {
     masters,
     relationshipBaskets,
@@ -127,7 +129,11 @@ function advancedValues(
     ));
   });
 
-  const { modeConfigurations: _privateModeConfigurations, ...otherAdvanced } = payload;
+  if (Object.hasOwn(payload, "modeDescription")) values.push({
+    label: "Mode paragraph",
+    value: typeof payload.modeDescription === "string" ? payload.modeDescription : "Generated from the main line and selected inclusions and exclusions."
+  });
+  const { modeConfigurations: _privateModeConfigurations, modeDescription: _modeDescription, ...otherAdvanced } = payload;
   return [...values, ...projectValues(otherAdvanced, {
     ...context,
     rootPayload: otherAdvanced
@@ -138,9 +144,18 @@ function modeDefinitionValues(
   prefix: string,
   configuration: KnowledgeModeConfiguration
 ): readonly ConflictReviewValue[] {
-  return projectKnowledgeModeConfigurationFieldSummaries(configuration).flatMap(
+  const fields = projectKnowledgeModeConfigurationFieldSummaries(configuration).flatMap(
     (field, index) => definitionConflictValues(prefix, field, index)
   );
+  return [
+    ...fields,
+    ...(["inclusions", "exclusions"] as const).flatMap((list) =>
+      (configuration[list] ?? []).map((item) => ({
+        label: `${prefix} · ${list === "inclusions" ? "Inclusion" : "Exclusion"} · ${item.name}`,
+        value: item.selected ? "Selected" : "Not selected"
+      }))
+    )
+  ];
 }
 
 function definitionConflictValues(

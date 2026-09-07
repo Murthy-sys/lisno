@@ -133,9 +133,7 @@ function renderPanel(ref: React.RefObject<KnowledgeModePanelHandle | null>) {
     relationshipBaskets: [],
     relationshipItems: [],
     editable: true,
-    canQuickAdd: false,
     legacyModeCatalogState: { status: "ready" },
-    onQuickAdd: vi.fn(),
     onDirtyChange: vi.fn(),
     onSavingChange: vi.fn(),
     onBusyChange: vi.fn(),
@@ -240,7 +238,7 @@ describe("Knowledge Mode Specifications save integration", () => {
     expect(screen.getByRole("textbox", { name: "Brief description" })).toBe(descriptionControl);
   });
 
-  it("rebases a conflicted Budgeting draft before retrying the business-only command", async () => {
+  it("rebases Specifications onto the latest hidden Pricing data before retry", async () => {
     const user = userEvent.setup();
     let pricingReads = 0;
     vi.mocked(knowledgeApi.getKnowledgeSection).mockImplementation(
@@ -258,7 +256,7 @@ describe("Knowledge Mode Specifications save integration", () => {
         );
         if (sectionKey !== "pricing") return base;
         pricingReads += 1;
-        return pricingReads === 1 ? base : { ...base, version: 13 };
+        return pricingReads === 1 ? base : { ...base, version: 13, payload: { ...base.payload, brands: [{ id: "vendor-latest", name: "Latest vendor" }], serverOwnedExtension: { updated: true } } };
       }
     );
     let updateAttempts = 0;
@@ -278,11 +276,8 @@ describe("Knowledge Mode Specifications save integration", () => {
     const ref = createRef<KnowledgeModePanelHandle>();
     renderPanel(ref);
 
-    const budgeting = await screen.findByRole("region", { name: "Budgeting" });
-    await user.click(within(budgeting).getByRole("button", { name: "Set budget" }));
-    await user.selectOptions(within(budgeting).getByRole("combobox", { name: "Vendor" }), budgetVendor.id);
-    await user.selectOptions(within(budgeting).getByRole("combobox", { name: "Unit of measure" }), squareFoot.id);
-    await user.type(within(budgeting).getByRole("textbox", { name: "Unit budget (₹, before GST)" }), "120.50");
+    await user.click(await screen.findByRole("button", { name: "Add Specification" }));
+    await user.type(screen.getByRole("textbox", { name: "Specification name" }), "Local plywood");
 
     let saved: boolean | undefined;
     await act(async () => {
@@ -301,68 +296,15 @@ describe("Knowledge Mode Specifications save integration", () => {
     expect(calls[1]?.[2]).toBe("pricing");
     expect(calls[1]?.[3].expectedVersion).toBe(13);
     expect(calls[1]?.[3].expectedAggregateVersion).toBe(7);
-    expect((calls[1]?.[3].payload.priceEntries as readonly KnowledgeJsonObject[])[0]).toEqual({
-      operation: "set_budget",
-      vendorId: budgetVendor.id,
-      uomId: squareFoot.id,
-      inputAmountPaise: 12_050,
-      effectiveFrom: expect.any(String),
-      effectiveTo: null
+    expect(calls[1]?.[3].payload).toMatchObject({
+      specifications: [{ name: "Local plywood" }],
+      brands: [{ id: "vendor-latest", name: "Latest vendor" }],
+      serverOwnedExtension: { updated: true }
     });
   });
 
-  it("hydrates saved budget details after a same-version Retry response", async () => {
-    const user = userEvent.setup();
-    const unresolved = {
-      operation: "reference",
-      priceEntryId: "price-entry-retry",
-      priceVersionId: "price-version-retry"
-    } as const;
-    const resolved = {
-      ...unresolved,
-      priceVersion: {
-        id: "price-version-retry",
-        versionNumber: 2,
-        vendorId: budgetVendor.id,
-        uomId: squareFoot.id,
-        taxRuleId: "tax-1",
-        inputAmountPaise: 12_050,
-        baseAmountPaise: 12_050,
-        taxAmountPaise: 2_169,
-        totalAmountPaise: 14_219,
-        effectiveFrom: "2026-09-02T08:00:00.000Z",
-        effectiveTo: null,
-        status: "active"
-      }
-    } as const;
-    let pricingReads = 0;
-    vi.mocked(knowledgeApi.getKnowledgeSection).mockImplementation(
-      async (_mainLineId, _revisionId, sectionKey) => {
-        if (sectionKey !== "pricing") {
-          return section(sectionKey as "advanced" | "pricing" | "quantity-margin");
-        }
-        pricingReads += 1;
-        return section("pricing", {
-          specifications: [],
-          brands: [],
-          priceEntries: [pricingReads === 1 ? unresolved : resolved]
-        });
-      }
-    );
-    const ref = createRef<KnowledgeModePanelHandle>();
-    renderPanel(ref);
 
-    const budgeting = await screen.findByRole("region", { name: "Budgeting" });
-    await user.click(within(budgeting).getByRole("button", { name: "Budget needs attention" }));
-    expect(within(budgeting).getByText("Saved budget details are unavailable")).toBeVisible();
-    await user.click(within(budgeting).getByRole("button", { name: "Retry" }));
-
-    expect(await within(budgeting).findByRole("group", { name: "Saved budget details" })).toBeVisible();
-    expect(within(budgeting).getByRole("button", { name: "Update budget" })).toBeEnabled();
-    expect(pricingReads).toBe(2);
-  });
-
-  it("removes stale Specification price scope at the save boundary for append commands", async () => {
+  it("preserves existing Specification price scope when saving descriptive changes", async () => {
     const user = userEvent.setup();
     vi.mocked(knowledgeApi.getKnowledgeSection).mockImplementation(
       async (_mainLineId, _revisionId, sectionKey) => section(
@@ -422,7 +364,7 @@ describe("Knowledge Mode Specifications save integration", () => {
         priceEntries: [{
           operation: "append",
           priceEntryId: "price-entry-stale-client",
-          specificationId: null,
+          specificationId: "spec-panel-grade",
           inputAmountPaise: 12_000
         }]
       });
@@ -447,7 +389,7 @@ describe("Knowledge Mode Specifications save integration", () => {
     )).toBe(true);
   });
 
-  it("saves a live renamed Specification before its priced slab with exact paise inputs", async () => {
+  it("renames a Specification without writing hidden Quantity data", async () => {
     const user = userEvent.setup();
     const returnedAggregateVersions = [31, 32] as const;
     let saveIndex = 0;
@@ -464,32 +406,16 @@ describe("Knowledge Mode Specifications save integration", () => {
     const specificationName = await screen.findByRole("textbox", { name: "Specification name" });
     await user.clear(specificationName);
     await user.type(specificationName, "Renamed plywood");
-    const quantitySection = screen.getByRole("region", { name: "Quantity & margin" });
-    await user.click(within(quantitySection).getByRole("button", { name: "Add Quantity slab" }));
-    const quantitySlab = within(quantitySection).getByRole("group", { name: "Quantity slab 1" });
-    await user.selectOptions(within(quantitySlab).getByRole("combobox", { name: "Specification" }), "spec-panel-grade");
-    await user.selectOptions(within(quantitySlab).getByRole("combobox", { name: "Unit of measure" }), squareFoot.id);
-    await user.type(within(quantitySlab).getByRole("textbox", { name: "Quantity" }), "12.5");
-    await user.type(within(quantitySlab).getByRole("textbox", { name: "Unit rate (₹)" }), "80");
-
     await act(async () => {
       expect(await ref.current?.save()).toBe(true);
     });
 
     const calls = vi.mocked(knowledgeApi.updateKnowledgeSection).mock.calls;
-    expect(calls.map((call) => call[2])).toEqual(["pricing", "quantity-margin"]);
+    expect(calls.map((call) => call[2])).toEqual(["pricing"]);
     expect(calls[0]?.[3].expectedAggregateVersion).toBe(7);
-    expect(calls[1]?.[3].expectedAggregateVersion).toBe(31);
-    expect(calls[1]?.[3].payload).toMatchObject({
-      slabRates: [{
-        id: expect.stringMatching(/^knowledge-slabRates-/u),
-        specificationId: "spec-panel-grade",
-        uomId: "uom-square-foot",
-        quantity: "12.5",
-        unitRatePaise: 8_000
-      }]
-    });
-    expect(calls[1]?.[3].payload).not.toHaveProperty("estimatedCostPaise");
+    expect(calls[0]?.[3].payload.specifications).toEqual([
+      expect.objectContaining({ id: "spec-panel-grade", name: "Renamed plywood" })
+    ]);
   });
 
   it("preflights every dirty Mode draft before the first section update", async () => {
@@ -500,15 +426,15 @@ describe("Knowledge Mode Specifications save integration", () => {
     const description = await screen.findByRole("textbox", { name: "Brief description" });
     await user.clear(description);
     await user.type(description, "Valid Pricing change that must not save alone");
-    const quantitySection = screen.getByRole("region", { name: "Quantity & margin" });
-    await user.click(within(quantitySection).getByRole("button", { name: "Add Quantity slab" }));
+    await user.click(await screen.findByRole("checkbox", { name: "Execution" }));
+    await user.click(screen.getByRole("button", { name: "Add component" }));
 
     await act(async () => {
       expect(await ref.current?.save()).toBe(false);
     });
 
     expect(knowledgeApi.updateKnowledgeSection).not.toHaveBeenCalled();
-    expect(within(quantitySection).getAllByText(/Specification is required/u)[0]).toBeVisible();
+    expect(screen.getByRole("textbox", { name: "Component label" })).toHaveAttribute("aria-invalid", "true");
   });
 
   it("uses revision-wide response metadata to block history-only Specification removal", async () => {
@@ -552,44 +478,31 @@ describe("Knowledge Mode Specifications save integration", () => {
     expect(nameControl).not.toHaveAttribute("aria-invalid", "true");
   });
 
-  it("maps only allowed Pricing server issues and clears Vendor feedback on edit", async () => {
+  it("shows only Specification field issues from a failed Pricing save", async () => {
     const user = userEvent.setup();
     vi.mocked(knowledgeApi.updateKnowledgeSection).mockRejectedValueOnce(
-      new ApiError(400, "VALIDATION_ERROR", "Vendor is invalid.", {
-        "payload.brands.0.name": "Vendor name is no longer accepted.",
-        "payload.internalVendorNotes": "Private pricing feedback must stay hidden.",
-        "payload.priceEntries.0.vendorId": "Price lineage feedback must stay hidden."
+      new ApiError(400, "VALIDATION_ERROR", "Specification is invalid.", {
+        "payload.specifications.0.name": "Choose another name.",
+        "payload.brands.0.name": "Hidden vendor feedback.",
+        "payload.internalVendorNotes": "Private pricing feedback.",
+        "payload.priceEntries.0.vendorId": "Hidden price feedback."
       })
     );
     const ref = createRef<KnowledgeModePanelHandle>();
     renderPanel(ref);
-
-    await screen.findByDisplayValue("Plywood");
-    await user.click(await screen.findByRole("button", { name: "Add vendor" }));
-    const vendorName = await screen.findByRole("textbox", { name: "Vendor name" });
-    await user.type(vendorName, "Rejected vendor");
-    await act(async () => {
-      expect(await ref.current?.save()).toBe(false);
-    });
-
-    expect(await screen.findByText("Vendor name is no longer accepted.")).toBeVisible();
-    expect(screen.getAllByRole("alert").some((alert) =>
-      alert.textContent?.includes("Vendors → 0 → name")
-    )).toBe(true);
-    expect(screen.queryByText("Private pricing feedback must stay hidden.")).not.toBeInTheDocument();
-    expect(screen.queryByText("Price lineage feedback must stay hidden.")).not.toBeInTheDocument();
-
-    await user.clear(vendorName);
-    await user.type(vendorName, "Accepted vendor");
-    await waitFor(() => {
-      expect(screen.queryByText("Vendor name is no longer accepted.")).not.toBeInTheDocument();
-      expect(screen.queryAllByRole("alert").some((alert) =>
-        alert.textContent?.includes("Vendors → 0 → name")
-      )).toBe(false);
-    });
+    const name = await screen.findByRole("textbox", { name: "Specification name" });
+    await user.type(name, " update");
+    await act(async () => { expect(await ref.current?.save()).toBe(false); });
+    expect(name).toHaveAttribute("aria-invalid", "true");
+    expect(name).toHaveFocus();
+    for (const text of ["Hidden vendor feedback.", "Private pricing feedback.", "Hidden price feedback."]) {
+      expect(screen.queryByText(text)).not.toBeInTheDocument();
+    }
+    await user.type(name, " corrected");
+    expect(screen.queryAllByText("Choose another name.")).toHaveLength(0);
   });
 
-  it("preserves Vendor rows and all Pricing data through add-edit-move-remove and two saves", async () => {
+  it("preserves hidden Vendor rows and immutable price references through two Specification saves", async () => {
     const user = userEvent.setup();
     const pricingPayload: KnowledgeJsonObject = {
       serverOwnedExtension: { preserve: true, marker: "vendor-lifecycle" },
@@ -641,76 +554,27 @@ describe("Knowledge Mode Specifications save integration", () => {
     const ref = createRef<KnowledgeModePanelHandle>();
     renderPanel(ref);
 
-    await screen.findByDisplayValue("Plywood");
-    const vendors = await screen.findByRole("region", { name: "Vendors" });
-    let vendorNames = await within(vendors).findAllByRole("textbox", { name: "Vendor name" });
-    expect(vendorNames.map((control) => control.getAttribute("value"))).toEqual([
-      "Alpha vendor",
-      "Beta vendor"
-    ]);
-    await user.clear(vendorNames[0]);
-    await user.type(vendorNames[0], "Alpha vendor edited");
-    await user.click(within(vendors).getByRole("button", { name: "Add vendor" }));
-
-    vendorNames = within(vendors).getAllByRole("textbox", { name: "Vendor name" });
-    await user.type(vendorNames[2], "Gamma vendor");
-    const descriptions = within(vendors).getAllByRole("textbox", { name: "Description" });
-    await user.type(descriptions[2], "Newly approved supplier");
-    await user.click(within(vendors).getByRole("button", { name: "Move Vendors entry 3 up" }));
-    await user.click(within(vendors).getByRole("button", { name: "Remove Vendors entry 3" }));
-
-    await act(async () => {
-      expect(await ref.current?.save()).toBe(true);
-    });
-
-    const vendorsAfterFirstSave = await screen.findByRole("region", { name: "Vendors" });
-    const namesAfterFirstSave = within(vendorsAfterFirstSave).getAllByRole("textbox", { name: "Vendor name" });
-    expect(namesAfterFirstSave).toHaveLength(2);
-    expect(namesAfterFirstSave[0]).toHaveValue("Alpha vendor edited");
-    expect(namesAfterFirstSave[1]).toHaveValue("Gamma vendor");
-    await user.clear(namesAfterFirstSave[1]);
-    await user.type(namesAfterFirstSave[1], "Gamma vendor final");
-
-    await act(async () => {
-      expect(await ref.current?.save()).toBe(true);
-    });
-
+    const description = await screen.findByRole("textbox", { name: "Brief description" });
+    expect(screen.queryByRole("region", { name: "Vendors" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Budgeting" })).not.toBeInTheDocument();
+    for (const value of ["First specification update", "Second specification update"]) {
+      await user.clear(description);
+      await user.type(description, value);
+      await act(async () => { expect(await ref.current?.save()).toBe(true); });
+    }
     const calls = vi.mocked(knowledgeApi.updateKnowledgeSection).mock.calls;
-    expect(calls.map((call) => call[2])).toEqual(["pricing", "pricing"]);
-    expect(calls.map((call) => call[3].expectedVersion)).toEqual([12, 13]);
     expect(calls.map((call) => call[3].expectedAggregateVersion)).toEqual([7, 51]);
-
-    const firstPayload = calls[0]?.[3].payload as KnowledgeJsonObject;
-    const secondPayload = calls[1]?.[3].payload as KnowledgeJsonObject;
-    const firstBrands = firstPayload.brands as readonly KnowledgeJsonObject[];
-    const secondBrands = secondPayload.brands as readonly KnowledgeJsonObject[];
-    const newVendorId = firstBrands[1]?.id;
-    expect(newVendorId).toEqual(expect.stringMatching(/^knowledge-brands-/u));
-    expect(firstBrands).toEqual([
-      { id: "brand-alpha", name: "Alpha vendor edited", description: "Primary supplier" },
-      { id: newVendorId, name: "Gamma vendor", description: "Newly approved supplier" }
-    ]);
-    expect(secondBrands).toEqual([
-      { id: "brand-alpha", name: "Alpha vendor edited", description: "Primary supplier" },
-      { id: newVendorId, name: "Gamma vendor final", description: "Newly approved supplier" }
-    ]);
-    for (const payload of [firstPayload, secondPayload]) {
-      expect(payload).toMatchObject({
-        serverOwnedExtension: { preserve: true, marker: "vendor-lifecycle" },
-        technicalDescription: "Hidden technical detail",
-        internalVendorNotes: "Hidden internal note",
-        qualityLevel: "premium",
-        specifications: [expect.objectContaining({
-          id: "spec-panel-grade",
-          name: "Plywood",
-          value: "A1"
-        })],
-        priceEntries: [{
-          operation: "reference",
-          priceEntryId: "price-entry-vendor-lifecycle",
-          priceVersionId: "price-version-vendor-lifecycle"
-        }]
+    for (const call of calls) {
+      expect(call[2]).toBe("pricing");
+      expect(call[3].payload).toMatchObject({
+        brands: pricingPayload.brands,
+        serverOwnedExtension: pricingPayload.serverOwnedExtension,
+        technicalDescription: pricingPayload.technicalDescription,
+        internalVendorNotes: pricingPayload.internalVendorNotes,
+        qualityLevel: pricingPayload.qualityLevel,
+        priceEntries: [{ operation: "reference", priceEntryId: "price-entry-vendor-lifecycle", priceVersionId: "price-version-vendor-lifecycle" }]
       });
+      expect(call[3].payload.priceEntries).toEqual([{ operation: "reference", priceEntryId: "price-entry-vendor-lifecycle", priceVersionId: "price-version-vendor-lifecycle" }]);
     }
   });
 });

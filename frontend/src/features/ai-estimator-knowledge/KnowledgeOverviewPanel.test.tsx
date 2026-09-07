@@ -347,7 +347,8 @@ describe("KnowledgeOverviewPanel", () => {
     expect(results.violations).toEqual([]);
   });
 
-  it("ignores a failed Surface reference without affecting available UOM controls", () => {
+  it("offers a local Surface retry without affecting available UOM controls", async () => {
+    const user = userEvent.setup();
     const retrySurface = vi.fn();
     renderPanel({
       referenceStates: {
@@ -371,7 +372,11 @@ describe("KnowledgeOverviewPanel", () => {
     expect(screen.queryByText("Loading Surface options…")).not.toBeInTheDocument();
     expect(screen.queryByText("Some reusable labels are unavailable")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Try again" })).not.toBeInTheDocument();
-    expect(retrySurface).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Applicable surfaces" })).toBeDisabled();
+    const surfaces = screen.getByRole("region", { name: "Surfaces" });
+    expect(within(surfaces).getByText("Surfaces could not be loaded.")).toBeVisible();
+    await user.click(within(surfaces).getByRole("button", { name: "Retry" }));
+    expect(retrySurface).toHaveBeenCalledOnce();
   });
 
   it("keeps a saved price visible with one non-blocking reference-loading status", () => {
@@ -686,7 +691,7 @@ describe("KnowledgeOverviewPanel", () => {
     expectSectionSummaryCardsAbsent();
     expect(screen.queryByText("pricing is not configured.")).not.toBeInTheDocument();
     expect(screen.queryByText("quantity-margin is not configured.")).not.toBeInTheDocument();
-    expect(screen.getAllByRole("button", { name: "Open Mode" })).toHaveLength(3);
+    expect(screen.getAllByRole("button", { name: "Open Mode" })).toHaveLength(2);
     expect(screen.getAllByRole("button", { name: "Open Recommendation & Exclusions" })).toHaveLength(1);
     expect(screen.getAllByRole("button", { name: "Open Quality Parameter" })).toHaveLength(1);
 
@@ -909,11 +914,6 @@ describe("KnowledgeOverviewPanel", () => {
         key: "mode"
       },
       {
-        heading: screen.getByRole("heading", { name: "Budgeting", level: 2 }),
-        action: "Open Mode",
-        key: "mode"
-      },
-      {
         heading: screen.getByRole("heading", { name: "Recommendation & Exclusions", level: 2 }),
         action: "Open Recommendation & Exclusions",
         key: "recommendations"
@@ -931,13 +931,13 @@ describe("KnowledgeOverviewPanel", () => {
     }
 
     expectSectionSummaryCardsAbsent();
-    expect(props.onOpenSection).toHaveBeenCalledTimes(5);
+    expect(props.onOpenSection).toHaveBeenCalledTimes(4);
     expect(vi.mocked(props.onOpenSection).mock.calls.map(([key]) => key)).toEqual([
       ...principalPanels.map(({ key }) => key)
     ]);
   });
 
-  it("keeps saved summaries visible when UOM labels fail and ignores Surface failure", async () => {
+  it("keeps saved summaries visible with separate retries for UOM and Surface failures", async () => {
     const user = userEvent.setup();
     const retryUom = vi.fn();
     const retrySurface = vi.fn();
@@ -976,6 +976,8 @@ describe("KnowledgeOverviewPanel", () => {
     await user.click(within(warning as HTMLElement).getByRole("button", { name: "Try again" }));
     expect(retryUom).toHaveBeenCalledTimes(1);
     expect(retrySurface).not.toHaveBeenCalled();
+    await user.click(within(screen.getByRole("region", { name: "Surfaces" })).getByRole("button", { name: "Retry" }));
+    expect(retrySurface).toHaveBeenCalledOnce();
 
     const results = await axe.run(document.body, {
       rules: { "color-contrast": { enabled: false } }

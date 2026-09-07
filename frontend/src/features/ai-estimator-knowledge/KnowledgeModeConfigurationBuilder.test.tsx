@@ -62,6 +62,7 @@ function Harness({
     <main>
       <KnowledgeModeConfigurationBuilder
         payload={payload}
+        mainLineName="Wall panelling"
         modes={modes}
         legacyModeCatalogState={legacyModeCatalogState}
         serverIssues={serverIssues}
@@ -85,8 +86,9 @@ function Harness({
 const definitionPayload: KnowledgeJsonObject = {
   modeConfigurations: [
     {
-      id: "configuration-pmc",
-      modeKind: "pmc",
+      id: "configuration-definitions",
+      modeKind: "execution",
+      executionSource: "sub_vendor",
       fields: [
         { id: "field-text", type: "text", label: "PMC mark", options: [], value: "legacy answer" },
         { id: "field-textarea", type: "textarea", label: "Installation notes", options: [] },
@@ -97,9 +99,8 @@ const definitionPayload: KnowledgeJsonObject = {
       ]
     },
     {
-      id: "configuration-sub-vendor",
-      modeKind: "execution",
-      executionSource: "sub_vendor",
+      id: "configuration-pmc",
+      modeKind: "pmc",
       fields: [{ id: "field-sub-vendor", type: "text", label: "Sub-Vendor scope", options: [] }]
     },
     {
@@ -112,14 +113,18 @@ const definitionPayload: KnowledgeJsonObject = {
 };
 
 describe("KnowledgeModeConfigurationBuilder", () => {
-  it("renders fixed Modes and keeps PMC direct without an Execution source selector", async () => {
+  it("renders Mode checkboxes and keeps PMC direct without an Execution source selector", async () => {
     render(<Harness />);
 
-    const selector = screen.getByRole("combobox", { name: "Mode" });
-    expect(within(selector).getAllByRole("option").map((option) => option.textContent))
-      .toEqual(["PMC", "Execution"]);
-    expect(screen.getByRole("region", { name: "PMC components" })).toBeVisible();
-    expect(screen.getByRole("button", { name: "Add component" })).toBeEnabled();
+    expect(screen.queryByRole("combobox", { name: "Mode" })).not.toBeInTheDocument();
+    const selector = screen.getByRole("group", { name: "Mode" });
+    expect(within(selector).getAllByRole("checkbox")).toHaveLength(2);
+    expect(within(selector).getByRole("checkbox", { name: "PMC" })).toBeChecked();
+    expect(within(selector).getByRole("checkbox", { name: "Execution" })).not.toBeChecked();
+    expect(screen.queryByRole("region", { name: "PMC components" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Add component" })).not.toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Inclusions" })).toBeVisible();
+    expect(screen.getByRole("group", { name: "Exclusions" })).toBeVisible();
     expect(screen.queryByRole("group", { name: "Execution source" }))
       .not.toBeInTheDocument();
     expect(screen.getByText(/the value the estimator should use/u)).toBeVisible();
@@ -130,17 +135,47 @@ describe("KnowledgeModeConfigurationBuilder", () => {
     expect(results.violations).toEqual([]);
   });
 
+  it("shows each checked Mode independently and supports hiding both without editing saved data", async () => {
+    const user = userEvent.setup();
+    const onPayload = vi.fn();
+    const onDirty = vi.fn();
+    render(<Harness onPayload={onPayload} onDirty={onDirty} />);
+    const pmc = screen.getByRole("checkbox", { name: "PMC" });
+    const execution = screen.getByRole("checkbox", { name: "Execution" });
+    expect(pmc).toHaveAccessibleDescription("PMC for Wall panelling");
+    execution.focus();
+    await user.keyboard(" ");
+    expect(pmc).toBeChecked();
+    expect(execution).toBeChecked();
+    expect(screen.getByRole("region", { name: "PMC" })).toBeVisible();
+    expect(screen.getByRole("region", { name: "Execution" })).toBeVisible();
+    expect((await axe.run(document.body, { rules: { "color-contrast": { enabled: false } } })).violations).toEqual([]);
+    await user.click(pmc);
+    expect(screen.queryByText("PMC for Wall panelling")).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "PMC" })).not.toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Execution" })).toBeVisible();
+    await user.click(execution);
+    expect(screen.queryByRole("region", { name: "Execution" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Add component" })).not.toBeInTheDocument();
+    await user.click(pmc);
+    expect(screen.getByRole("group", { name: "Inclusions" })).toBeVisible();
+    expect(screen.getByText("PMC for Wall panelling")).toBeVisible();
+    expect(onPayload).not.toHaveBeenCalled();
+    expect(onDirty).not.toHaveBeenCalled();
+  });
+
   it("preserves independent PMC, Sub-Vendor, and In-house unsaved buffers", async () => {
     const user = userEvent.setup();
     const onPayload = vi.fn();
     render(<Harness onPayload={onPayload} />);
 
-    await user.click(screen.getByRole("button", { name: "Add component" }));
-    await user.type(screen.getByRole("textbox", { name: "Component label" }), "PMC mark");
+    await user.click(within(screen.getByRole("group", { name: "Inclusions" })).getByRole("checkbox", { name: "Transport" }));
 
-    await user.selectOptions(screen.getByRole("combobox", { name: "Mode" }), "execution");
+    await user.click(screen.getByRole("checkbox", { name: "Execution" }));
     const sourceGroup = screen.getByRole("group", { name: "Execution source" });
     expect(within(sourceGroup).getByRole("radio", { name: "Sub-Vendor" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Execution" }))
+      .toHaveAccessibleDescription("Execution (Sub-Vendor) for Wall panelling");
     expect(within(sourceGroup).getAllByRole("radio")).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ required: true }),
@@ -149,25 +184,36 @@ describe("KnowledgeModeConfigurationBuilder", () => {
     );
     await user.click(screen.getByRole("button", { name: "Add component" }));
     await user.type(screen.getByRole("textbox", { name: "Component label" }), "Sub-Vendor scope");
+    await user.click(within(screen.getByRole("group", { name: "Exclusions" })).getByRole("checkbox", { name: "Shifting" }));
 
     within(sourceGroup).getByRole("radio", { name: "Sub-Vendor" }).focus();
     await user.keyboard("{ArrowRight}");
     expect(within(sourceGroup).getByRole("radio", { name: "In-house" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Execution" }))
+      .toHaveAccessibleDescription("Execution (In-house) for Wall panelling");
     expect(screen.getByRole("region", { name: "In-house components" })).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Add component" }));
     await user.type(screen.getByRole("textbox", { name: "Component label" }), "In-house crew");
 
     await user.click(within(sourceGroup).getByRole("radio", { name: "Sub-Vendor" }));
+    expect(screen.getByRole("checkbox", { name: "Execution" }))
+      .toHaveAccessibleDescription("Execution (Sub-Vendor) for Wall panelling");
     expect(screen.getByDisplayValue("Sub-Vendor scope")).toBeVisible();
-    await user.selectOptions(screen.getByRole("combobox", { name: "Mode" }), "pmc");
-    expect(screen.getByDisplayValue("PMC mark")).toBeVisible();
-    await user.selectOptions(screen.getByRole("combobox", { name: "Mode" }), "execution");
+    await user.click(screen.getByRole("checkbox", { name: "PMC" }));
+    await user.click(screen.getByRole("checkbox", { name: "Execution" }));
+    await user.click(screen.getByRole("checkbox", { name: "PMC" }));
+    expect(within(screen.getByRole("group", { name: "Inclusions" })).getByRole("checkbox", { name: "Transport" })).toBeChecked();
+    await user.click(screen.getByRole("checkbox", { name: "Execution" }));
     await user.click(screen.getByRole("radio", { name: "In-house" }));
     expect(screen.getByDisplayValue("In-house crew")).toBeVisible();
 
     const latest = onPayload.mock.calls.at(-1)?.[0] as KnowledgeJsonObject;
     expect(latest.modeConfigurations).toEqual(expect.arrayContaining([
-      expect.objectContaining({ modeKind: "pmc" }),
+      expect.objectContaining({
+        modeKind: "pmc",
+        inclusions: expect.arrayContaining([expect.objectContaining({ name: "Transport", selected: true })]),
+        exclusions: expect.arrayContaining([expect.objectContaining({ name: "Shifting", selected: true })])
+      }),
       expect.objectContaining({
         modeKind: "execution",
         executionSource: "sub_vendor"
@@ -186,6 +232,7 @@ describe("KnowledgeModeConfigurationBuilder", () => {
   it("renders six definition types each with a value control matching its own type", async () => {
     const user = userEvent.setup();
     render(<Harness initialPayload={definitionPayload} />);
+    await user.click(await screen.findByRole("checkbox", { name: "Execution" }));
 
     expect(screen.getAllByRole("combobox", { name: "Component type" })).toHaveLength(6);
     expect(screen.getAllByRole("textbox", { name: "Component label" })).toHaveLength(6);
@@ -217,6 +264,7 @@ describe("KnowledgeModeConfigurationBuilder", () => {
     const user = userEvent.setup();
     const onPayload = vi.fn();
     render(<Harness initialPayload={definitionPayload} onPayload={onPayload} />);
+    await user.click(await screen.findByRole("checkbox", { name: "Execution" }));
 
     await user.type(screen.getAllByRole("textbox", { name: "Value" })[1]!, "Two coats");
     await user.selectOptions(screen.getAllByRole("combobox", { name: "Value" })[1]!, "Gloss");
@@ -239,14 +287,15 @@ describe("KnowledgeModeConfigurationBuilder", () => {
     const user = userEvent.setup();
     const onPayload = vi.fn();
     render(<Harness initialPayload={definitionPayload} onPayload={onPayload} />);
+    await user.click(await screen.findByRole("checkbox", { name: "Execution" }));
 
     await user.click(screen.getByRole("button", {
-      name: "Move PMC components PMC mark down"
+      name: "Move Sub-Vendor components PMC mark down"
     }));
     let latest = onPayload.mock.calls.at(-1)?.[0] as KnowledgeJsonObject;
     expect(latest.modeConfigurations).toEqual(expect.arrayContaining([
       expect.objectContaining({
-        modeKind: "pmc",
+        modeKind: "execution",
         fields: expect.arrayContaining([
           expect.objectContaining({ id: "field-text", label: "PMC mark" }),
           expect.objectContaining({ id: "field-textarea", label: "Installation notes" })
@@ -262,7 +311,7 @@ describe("KnowledgeModeConfigurationBuilder", () => {
       .map(({ id }) => id).slice(0, 2)).toEqual(["field-textarea", "field-text"]);
 
     await user.click(screen.getByRole("button", {
-      name: "Remove PMC components PMC mark"
+      name: "Remove Sub-Vendor components PMC mark"
     }));
     latest = onPayload.mock.calls.at(-1)?.[0] as KnowledgeJsonObject;
     const remainingIds = (
@@ -275,15 +324,15 @@ describe("KnowledgeModeConfigurationBuilder", () => {
   it("keeps definitions visible but disables mutation controls in read-only history", async () => {
     const user = userEvent.setup();
     render(<Harness initialPayload={definitionPayload} readOnly />);
+    await user.click(await screen.findByRole("checkbox", { name: "Execution" }));
 
-    const pmc = screen.getByRole("region", { name: "PMC components" });
+    const pmc = screen.getByRole("region", { name: "Sub-Vendor components" });
     expect(within(pmc).queryByRole("button", { name: /Add|Move|Remove/u }))
       .not.toBeInTheDocument();
     expect(within(pmc).getAllByRole("textbox", { name: "Component label" })[0])
       .toBeDisabled();
     expect(screen.queryByText("legacy answer")).not.toBeInTheDocument();
 
-    await user.selectOptions(screen.getByRole("combobox", { name: "Mode" }), "execution");
     await user.click(screen.getByRole("radio", { name: "In-house" }));
     expect(screen.getByDisplayValue("In-house crew")).toBeDisabled();
     expect(screen.queryByRole("button", { name: "Add component" })).not.toBeInTheDocument();
@@ -292,13 +341,17 @@ describe("KnowledgeModeConfigurationBuilder", () => {
   it("focuses the first invalid Component label and announces user-facing validation", async () => {
     const user = userEvent.setup();
     render(<Harness />);
+    await user.click(await screen.findByRole("checkbox", { name: "Execution" }));
 
     await user.click(screen.getByRole("button", { name: "Add component" }));
+    await user.click(screen.getByRole("checkbox", { name: "Execution" }));
+    expect(screen.queryByRole("textbox", { name: "Component label" })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Attempt save" }));
 
     await waitFor(() => {
       expect(screen.getByRole("textbox", { name: "Component label" })).toHaveFocus();
     });
+    expect(screen.getByRole("checkbox", { name: "Execution" })).toBeChecked();
     expect(screen.getByRole("alert")).toHaveTextContent("Component label is required.");
     expect(screen.getByRole("textbox", { name: "Component label" }))
       .toHaveAttribute("aria-invalid", "true");

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { Button } from "../../components/ui/Button";
 import { Checkbox, Field, Input, Radio, Select, Textarea } from "../../components/ui/Field";
@@ -25,6 +25,10 @@ import {
   type KnowledgeModeKind
 } from "./knowledgeModeConfiguration";
 import { KnowledgeRepeater } from "./KnowledgeRepeater";
+import { KnowledgePmcScopeChecklist } from "./KnowledgePmcScopeChecklist";
+import { KnowledgeModeDescriptionEditor } from "./KnowledgeModeDescriptionEditor";
+import { generateModeDescription, modeDescriptionIssues } from "./knowledgeModeDescription";
+import { defaultPmcScopeItems, PMC_SCOPE_LISTS } from "./knowledgePmcScope";
 import type {
   KnowledgeJsonObject,
   KnowledgeMaster
@@ -32,6 +36,9 @@ import type {
 
 export interface KnowledgeModeConfigurationBuilderProps {
   readonly payload: KnowledgeJsonObject;
+  readonly mainLineName: string;
+  readonly descriptionResetKey?: string;
+  readonly onPendingDescriptionChange?: (pending: boolean) => void;
   readonly modes: readonly KnowledgeMaster[];
   readonly legacyModeCatalogState?: KnowledgeLegacyModeCatalogState;
   readonly serverIssues?: readonly KnowledgeModeConfigurationIssue[];
@@ -51,6 +58,9 @@ export interface KnowledgeLegacyModeCatalogState {
 
 export function KnowledgeModeConfigurationBuilder({
   payload,
+  mainLineName,
+  descriptionResetKey = "default",
+  onPendingDescriptionChange = ignorePendingDescription,
   modes,
   legacyModeCatalogState = { status: "ready" },
   serverIssues = [],
@@ -69,58 +79,61 @@ export function KnowledgeModeConfigurationBuilder({
     [parsed.configurations]
   );
   const issues = useMemo(
-    () => [...parsed.issues, ...serverIssues],
-    [parsed.issues, serverIssues]
+    () => [...parsed.issues, ...modeDescriptionIssues(payload.modeDescription), ...serverIssues],
+    [parsed.issues, payload.modeDescription, serverIssues]
   );
-  const [selectedMode, setSelectedMode] = useState<KnowledgeModeKind>("pmc");
+  const [paragraphPending, setParagraphPending] = useState(false);
+  const handlePendingDescriptionChange = useCallback((pending: boolean) => {
+    setParagraphPending(pending);
+    onPendingDescriptionChange(pending);
+  }, [onPendingDescriptionChange]);
+  const generatedDescription = generateModeDescription(mainLineName, partitioned.primary.pmc);
+  const description = typeof payload.modeDescription === "string" ? payload.modeDescription : generatedDescription;
+  const [visibleModes, setVisibleModes] = useState<Record<KnowledgeModeKind, boolean>>({
+    pmc: true,
+    execution: false
+  });
+  const showMode = useCallback((mode: KnowledgeModeKind) => {
+    setVisibleModes((current) => ({ ...current, [mode]: true }));
+  }, []);
   const [selectedExecutionSource, setSelectedExecutionSource] =
     useState<KnowledgeExecutionSource>("sub_vendor");
   const validationSummaryRef = useRef<HTMLDivElement>(null);
   const fieldRefs = useRef(new Map<string, HTMLDivElement>());
   const lastValidationAttempt = useRef(0);
-  const selectedConfiguration = selectedMode === "pmc"
-    ? partitioned.primary.pmc
-    : partitioned.primary.execution[selectedExecutionSource];
-  const selectedSourceLabel = selectedMode === "pmc"
-    ? "PMC"
-    : executionSourceLabel(selectedExecutionSource);
+  const executionConfiguration = partitioned.primary.execution[selectedExecutionSource];
+  const selectedSourceLabel = executionSourceLabel(selectedExecutionSource);
   const repeaterLabel = `${selectedSourceLabel} components`;
 
   useEffect(() => {
-    onValidationChange(issues.length === 0);
-  }, [issues.length, onValidationChange]);
+    onValidationChange(issues.length === 0 && !paragraphPending);
+  }, [issues.length, onValidationChange, paragraphPending]);
   useEffect(() => {
     if (validationAttempt === 0) {
       lastValidationAttempt.current = 0;
       return;
     }
-    if (validationAttempt <= lastValidationAttempt.current || !issues.length) return;
+    if (validationAttempt <= lastValidationAttempt.current || (!issues.length && !paragraphPending)) return;
     lastValidationAttempt.current = validationAttempt;
-    const firstIssue = issues[0]!;
+    if ((paragraphPending || issues[0]?.path === "modeDescription") && !visibleModes.pmc && !visibleModes.execution) showMode("pmc");
+    const firstIssue = paragraphPending ? { path: "modeDescription", message: "Save or cancel the paragraph." } : issues[0]!;
     selectConfigurationForIssue(
       firstIssue,
       parsed.configurations,
-      setSelectedMode,
+      showMode,
       setSelectedExecutionSource
     );
     globalThis.setTimeout(() => {
       focusIssue(firstIssue, fieldRefs.current, validationSummaryRef.current);
     }, 0);
-  }, [issues, parsed.configurations, validationAttempt]);
+  }, [issues, paragraphPending, parsed.configurations, showMode, validationAttempt, visibleModes]);
 
   function updateConfigurations(next: readonly KnowledgeModeConfiguration[]) {
     onDirty();
     onChange(withKnowledgeModeConfigurations(payload, next));
   }
 
-  function ensureSelectedConfiguration(): KnowledgeModeConfiguration {
-    return selectedConfiguration ?? createKnowledgeModeConfiguration(
-      selectedMode,
-      selectedMode === "execution" ? selectedExecutionSource : null
-    );
-  }
-
-  function updateSelectedConfiguration(nextConfiguration: KnowledgeModeConfiguration) {
+  function updateConfiguration(nextConfiguration: KnowledgeModeConfiguration) {
     const existingIndex = parsed.configurations.findIndex(
       ({ id }) => id === nextConfiguration.id
     );
@@ -134,40 +147,42 @@ export function KnowledgeModeConfigurationBuilder({
   }
 
   function addComponent() {
-    const configuration = ensureSelectedConfiguration();
+    const configuration = executionConfiguration ?? createKnowledgeModeConfiguration(
+      "execution", selectedExecutionSource
+    );
     if (configuration.fields.length >= 50) return;
-    updateSelectedConfiguration({
+    updateConfiguration({
       ...configuration,
       fields: [...configuration.fields, createKnowledgeModeField()]
     });
   }
 
   function replaceField(fieldId: string, next: KnowledgeModeConfigurationField) {
-    if (!selectedConfiguration) return;
-    updateSelectedConfiguration({
-      ...selectedConfiguration,
-      fields: selectedConfiguration.fields.map((field) =>
+    if (!executionConfiguration) return;
+    updateConfiguration({
+      ...executionConfiguration,
+      fields: executionConfiguration.fields.map((field) =>
         field.id === fieldId ? next : field
       )
     });
   }
 
   function removeField(fieldId: string) {
-    if (!selectedConfiguration) return;
-    updateSelectedConfiguration({
-      ...selectedConfiguration,
-      fields: selectedConfiguration.fields.filter(({ id }) => id !== fieldId)
+    if (!executionConfiguration) return;
+    updateConfiguration({
+      ...executionConfiguration,
+      fields: executionConfiguration.fields.filter(({ id }) => id !== fieldId)
     });
   }
 
   function moveField(fieldId: string, direction: "up" | "down") {
-    if (!selectedConfiguration) return;
-    const fields = [...selectedConfiguration.fields];
+    if (!executionConfiguration) return;
+    const fields = [...executionConfiguration.fields];
     const from = fields.findIndex(({ id }) => id === fieldId);
     const to = direction === "up" ? from - 1 : from + 1;
     if (from < 0 || to < 0 || to >= fields.length) return;
     [fields[from], fields[to]] = [fields[to]!, fields[from]!];
-    updateSelectedConfiguration({ ...selectedConfiguration, fields });
+    updateConfiguration({ ...executionConfiguration, fields });
   }
 
   function removeRecoveryConfiguration(configurationId: string) {
@@ -190,7 +205,7 @@ export function KnowledgeModeConfigurationBuilder({
           }
         : configuration
     ));
-    setSelectedMode("execution");
+    showMode("execution");
     setSelectedExecutionSource(executionSource);
   }
 
@@ -199,7 +214,7 @@ export function KnowledgeModeConfigurationBuilder({
   }
 
   const configurationIndex = parsed.configurations.findIndex(
-    ({ id }) => id === selectedConfiguration?.id
+    ({ id }) => id === executionConfiguration?.id
   );
 
   return (
@@ -229,10 +244,11 @@ export function KnowledgeModeConfigurationBuilder({
                 <button
                   type="button"
                   onClick={() => {
+                    if (issue.path === "modeDescription" && !visibleModes.pmc && !visibleModes.execution) showMode("pmc");
                     selectConfigurationForIssue(
                       issue,
                       parsed.configurations,
-                      setSelectedMode,
+                      showMode,
                       setSelectedExecutionSource
                     );
                     globalThis.setTimeout(() => {
@@ -248,151 +264,217 @@ export function KnowledgeModeConfigurationBuilder({
         </div>
       ) : null}
 
-      <Field id="knowledge-mode-configuration-selector" label="Mode" required>
-        {(props) => (
-          <Select
-            {...props}
-            value={selectedMode}
-            onChange={(event) => setSelectedMode(event.target.value as KnowledgeModeKind)}
-          >
-            {KNOWLEDGE_MODE_OPTIONS.map((choice) => (
-              <option key={choice.modeKind} value={choice.modeKind}>{choice.label}</option>
-            ))}
-          </Select>
-        )}
-      </Field>
+      <fieldset className="knowledge-mode-configuration__mode-selector">
+        <legend>Mode</legend>
+        <div className="knowledge-mode-configuration__mode-options">
+          {KNOWLEDGE_MODE_OPTIONS.map((choice) => (
+            <label key={choice.modeKind}>
+              <Checkbox
+                checked={visibleModes[choice.modeKind]}
+                aria-controls={`knowledge-mode-section-${choice.modeKind}`}
+                aria-describedby={visibleModes[choice.modeKind] ? `knowledge-mode-${choice.modeKind}-context` : undefined}
+                onChange={(event) => {
+                  const checked = event.target.checked;
+                  setVisibleModes((current) => ({ ...current, [choice.modeKind]: checked }));
+                }}
+              />
+              <span>{choice.label}</span>
+            </label>
+          ))}
+        </div>
+        {visibleModes.pmc ? (
+          <p id="knowledge-mode-pmc-context" className="knowledge-mode-configuration__mode-context">
+            PMC for {mainLineName}
+          </p>
+        ) : null}
+        {visibleModes.execution ? (
+          <p id="knowledge-mode-execution-context" className="knowledge-mode-configuration__mode-context">
+            Execution ({selectedSourceLabel}) for {mainLineName}
+          </p>
+        ) : null}
+      </fieldset>
 
-      {selectedMode === "execution" ? (
-        <fieldset className="knowledge-mode-configuration__execution-source">
-          <legend>Execution source</legend>
-          <div className="knowledge-mode-configuration__execution-source-options">
-            {KNOWLEDGE_EXECUTION_SOURCE_OPTIONS.map((option) => (
-              <label key={option.executionSource}>
-                <Radio
-                  name="knowledge-mode-execution-source"
-                  value={option.executionSource}
-                  required
-                  checked={selectedExecutionSource === option.executionSource}
-                  onChange={() => setSelectedExecutionSource(option.executionSource)}
-                />
-                <span>{option.label}</span>
-              </label>
+      <div hidden={!visibleModes.pmc && !visibleModes.execution}
+        ref={(node) => {
+          if (node) fieldRefs.current.set("modeDescription", node);
+          else fieldRefs.current.delete("modeDescription");
+        }}
+      >
+        <KnowledgeModeDescriptionEditor
+          key={descriptionResetKey}
+          description={description}
+          readOnly={readOnly}
+          validationAttempt={validationAttempt}
+          error={issueFor("modeDescription")}
+          onPendingChange={handlePendingDescriptionChange}
+          onSave={(text) => {
+            const modeDescription = text === generatedDescription ? null : text;
+            if (modeDescription === (payload.modeDescription ?? null)) return;
+            onDirty();
+            onChange({ ...payload, modeDescription });
+          }}
+        />
+      </div>
+
+      <section id="knowledge-mode-section-pmc" hidden={!visibleModes.pmc} aria-labelledby="knowledge-mode-pmc-title">
+        {visibleModes.pmc ? <div className="knowledge-mode-configuration__mode-content">
+          <h3 id="knowledge-mode-pmc-title">PMC</h3>
+          <div className="knowledge-pmc-scope">
+            {PMC_SCOPE_LISTS.map((list) => (
+              <KnowledgePmcScopeChecklist
+                key={list}
+                list={list}
+                items={partitioned.primary.pmc?.[list] ?? defaultPmcScopeItems(list)}
+                readOnly={readOnly}
+                onChange={(items) => {
+                  const configuration = partitioned.primary.pmc ?? createKnowledgeModeConfiguration("pmc");
+                  updateConfiguration({
+                    ...configuration,
+                    inclusions: configuration.inclusions ?? defaultPmcScopeItems("inclusions"),
+                    exclusions: configuration.exclusions ?? defaultPmcScopeItems("exclusions"),
+                    [list]: items
+                  });
+                }}
+              />
             ))}
           </div>
-        </fieldset>
-      ) : null}
+        </div> : null}
+      </section>
 
-      <KnowledgeRepeater
-        label={repeaterLabel}
-        addLabel="Add component"
-        items={selectedConfiguration?.fields ?? []}
-        readOnly={readOnly}
-        emptyMessage={`No components configured for ${selectedSourceLabel}.`}
-        itemLabel={(field, index) => field.label.trim() || `component ${index + 1}`}
-        onAdd={addComponent}
-        onRemove={removeField}
-        onMove={moveField}
-        renderItem={(field, index) => {
-          const fieldPath = `modeConfigurations.${configurationIndex}.fields.${index}`;
-          return (
-            <div
-              ref={(node) => {
-                if (node) fieldRefs.current.set(fieldPath, node);
-                else fieldRefs.current.delete(fieldPath);
-              }}
-              className="knowledge-mode-field"
-            >
-              <div className="knowledge-mode-field__definition">
-                <Field
-                  id={`${domId(field.id)}-type`}
-                  label="Component type"
-                  required
-                  error={issueFor(`${fieldPath}.type`)}
-                >
-                  {(props) => (
-                    <Select
-                      {...props}
-                      disabled={readOnly}
-                      value={field.type}
-                      onChange={(event) => {
-                        const type = event.target.value as KnowledgeModeFieldType;
-                        const options = isChoiceField(type) ? field.options : [];
-                        replaceField(field.id, {
-                          ...field,
-                          type,
-                          options,
-                          value: coerceKnowledgeModeFieldValue(field.value, type, options)
-                        });
-                      }}
-                    >
-                      {KNOWLEDGE_MODE_FIELD_TYPES.map((type) => (
-                        <option key={type} value={type}>{knowledgeModeFieldTypeLabel(type)}</option>
-                      ))}
-                    </Select>
-                  )}
-                </Field>
-                <Field
-                  id={`${domId(field.id)}-label`}
-                  label="Component label"
-                  required
-                  error={issueFor(`${fieldPath}.label`)}
-                >
-                  {(props) => (
-                    <Input
-                      {...props}
-                      maxLength={240}
-                      disabled={readOnly}
-                      value={field.label}
-                      onChange={(event) => replaceField(field.id, {
-                        ...field,
-                        label: event.target.value
-                      })}
-                    />
-                  )}
-                </Field>
-                {isChoiceField(field.type) ? (
-                  <Field
-                    id={`${domId(field.id)}-options`}
-                    label="Allowed options"
-                    hint="Enter one option per line."
+      <section id="knowledge-mode-section-execution" hidden={!visibleModes.execution} aria-labelledby="knowledge-mode-execution-title">
+        {visibleModes.execution ? <div className="knowledge-mode-configuration__mode-content">
+          <h3 id="knowledge-mode-execution-title">Execution</h3>
+          <fieldset className="knowledge-mode-configuration__execution-source">
+            <legend>Execution source</legend>
+            <div className="knowledge-mode-configuration__execution-source-options">
+              {KNOWLEDGE_EXECUTION_SOURCE_OPTIONS.map((option) => (
+                <label key={option.executionSource}>
+                  <Radio
+                    name="knowledge-mode-execution-source"
+                    value={option.executionSource}
                     required
-                    error={issueForPrefix(`${fieldPath}.options`, issues)}
-                  >
-                    {(props) => (
-                      <Textarea
-                        {...props}
-                        disabled={readOnly}
-                        value={field.options.join("\n")}
-                        onChange={(event) => {
-                          const options = event.target.value === ""
-                            ? []
-                            : event.target.value.split("\n");
-                          replaceField(field.id, {
-                            ...field,
-                            options,
-                            value: coerceKnowledgeModeFieldValue(
-                              field.value,
-                              field.type,
-                              options
-                            )
-                          });
-                        }}
-                      />
-                    )}
-                  </Field>
-                ) : null}
-                <ModeFieldValueControl
-                  field={field}
-                  id={`${domId(field.id)}-value`}
-                  readOnly={readOnly}
-                  error={issueFor(`${fieldPath}.value`)}
-                  onChange={(value) => replaceField(field.id, { ...field, value })}
-                />
-              </div>
+                    checked={selectedExecutionSource === option.executionSource}
+                    onChange={() => setSelectedExecutionSource(option.executionSource)}
+                  />
+                  <span>{option.label}</span>
+                </label>
+              ))}
             </div>
-          );
-        }}
-      />
+          </fieldset>
+
+          <KnowledgeRepeater
+            label={repeaterLabel}
+            addLabel="Add component"
+            items={executionConfiguration?.fields ?? []}
+            readOnly={readOnly}
+            emptyMessage={`No components configured for ${selectedSourceLabel}.`}
+            itemLabel={(field, index) => field.label.trim() || `component ${index + 1}`}
+            onAdd={addComponent}
+            onRemove={removeField}
+            onMove={moveField}
+            renderItem={(field, index) => {
+              const fieldPath = `modeConfigurations.${configurationIndex}.fields.${index}`;
+              return (
+                <div
+                  ref={(node) => {
+                    if (node) fieldRefs.current.set(fieldPath, node);
+                    else fieldRefs.current.delete(fieldPath);
+                  }}
+                  className="knowledge-mode-field"
+                >
+                  <div className="knowledge-mode-field__definition">
+                    <Field
+                      id={`${domId(field.id)}-type`}
+                      label="Component type"
+                      required
+                      error={issueFor(`${fieldPath}.type`)}
+                    >
+                      {(props) => (
+                        <Select
+                          {...props}
+                          disabled={readOnly}
+                          value={field.type}
+                          onChange={(event) => {
+                            const type = event.target.value as KnowledgeModeFieldType;
+                            const options = isChoiceField(type) ? field.options : [];
+                            replaceField(field.id, {
+                              ...field,
+                              type,
+                              options,
+                              value: coerceKnowledgeModeFieldValue(field.value, type, options)
+                            });
+                          }}
+                        >
+                          {KNOWLEDGE_MODE_FIELD_TYPES.map((type) => (
+                            <option key={type} value={type}>{knowledgeModeFieldTypeLabel(type)}</option>
+                          ))}
+                        </Select>
+                      )}
+                    </Field>
+                    <Field
+                      id={`${domId(field.id)}-label`}
+                      label="Component label"
+                      required
+                      error={issueFor(`${fieldPath}.label`)}
+                    >
+                      {(props) => (
+                        <Input
+                          {...props}
+                          maxLength={240}
+                          disabled={readOnly}
+                          value={field.label}
+                          onChange={(event) => replaceField(field.id, {
+                            ...field,
+                            label: event.target.value
+                          })}
+                        />
+                      )}
+                    </Field>
+                    {isChoiceField(field.type) ? (
+                      <Field
+                        id={`${domId(field.id)}-options`}
+                        label="Allowed options"
+                        hint="Enter one option per line."
+                        required
+                        error={issueForPrefix(`${fieldPath}.options`, issues)}
+                      >
+                        {(props) => (
+                          <Textarea
+                            {...props}
+                            disabled={readOnly}
+                            value={field.options.join("\n")}
+                            onChange={(event) => {
+                              const options = event.target.value === ""
+                                ? []
+                                : event.target.value.split("\n");
+                              replaceField(field.id, {
+                                ...field,
+                                options,
+                                value: coerceKnowledgeModeFieldValue(
+                                  field.value,
+                                  field.type,
+                                  options
+                                )
+                              });
+                            }}
+                          />
+                        )}
+                      </Field>
+                    ) : null}
+                    <ModeFieldValueControl
+                      field={field}
+                      id={`${domId(field.id)}-value`}
+                      readOnly={readOnly}
+                      error={issueFor(`${fieldPath}.value`)}
+                      onChange={(value) => replaceField(field.id, { ...field, value })}
+                    />
+                  </div>
+                </div>
+              );
+            }}
+          />
+        </div> : null}
+      </section>
 
       {partitioned.recovery.length ? (
         <section
@@ -483,6 +565,8 @@ export function KnowledgeModeConfigurationBuilder({
     </div>
   );
 }
+
+function ignorePendingDescription() {}
 
 /**
  * Renders the configured answer using the control the component type describes,

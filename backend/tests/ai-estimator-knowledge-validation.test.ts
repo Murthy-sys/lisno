@@ -10,6 +10,57 @@ import {
 } from "../src/domain/ai-estimator-knowledge-validation.js";
 
 describe("AI estimator knowledge validation", () => {
+  it("accepts a shared Mode paragraph, generated defaults, and older payloads", () => {
+    for (const modeDescription of [null, "Custom shared wording", "A".repeat(4000)]) {
+      expect(validateKnowledgeSectionPayload("advanced", { modeDescription })).toEqual([]);
+    }
+    expect(validateKnowledgeSectionPayload("advanced", {})).toEqual([]);
+  });
+
+  it("rejects invalid shared Mode paragraphs and paragraphs in other sections", () => {
+    for (const modeDescription of ["", "   ", 42, true, {}, [], "A".repeat(4001)]) {
+      expect(validateKnowledgeSectionPayload("advanced", { modeDescription }))
+        .toContainEqual(expect.objectContaining({ path: "payload.modeDescription" }));
+    }
+    expect(validateKnowledgeSectionPayload("execution", { modeDescription: "Wrong section" }))
+      .toContainEqual(expect.objectContaining({ path: "payload.modeDescription", code: "UNKNOWN_FIELD" }));
+  });
+
+  it("accepts independent PMC Inclusions and Exclusions and keeps older configurations valid", () => {
+    const transport = { id: "transport", name: "Transport", selected: true };
+    expect(validateKnowledgeSectionPayload("advanced", { modeConfigurations: [{
+      id: "pmc", modeKind: "pmc", fields: [], inclusions: [transport], exclusions: [transport]
+    }] })).toEqual([]);
+    expect(validateKnowledgeSectionPayload("advanced", { modeConfigurations: [{
+      id: "pmc", modeKind: "pmc", fields: []
+    }] })).toEqual([]);
+  });
+
+  it("rejects invalid PMC checklist rows and scope on Execution", () => {
+    const issues = validateKnowledgeSectionPayload("advanced", { modeConfigurations: [{
+      id: "pmc", modeKind: "pmc", fields: [],
+      inclusions: [
+        { id: "same", name: "Transport", selected: true },
+        { id: "same", name: "  TRANSPORT  ", selected: "true", privateValue: "unknown" },
+        { id: "", name: "", selected: false }
+      ],
+      exclusions: "invalid"
+    }, {
+      id: "execution", modeKind: "execution", executionSource: "in_house", fields: [],
+      inclusions: [{ id: "transport", name: "Transport", selected: true }]
+    }] });
+    for (const path of [
+      "payload.modeConfigurations.0.inclusions.1.id",
+      "payload.modeConfigurations.0.inclusions.1.name",
+      "payload.modeConfigurations.0.inclusions.1.selected",
+      "payload.modeConfigurations.0.inclusions.1.privateValue",
+      "payload.modeConfigurations.0.inclusions.2.id",
+      "payload.modeConfigurations.0.inclusions.2.name",
+      "payload.modeConfigurations.0.exclusions",
+      "payload.modeConfigurations.1.inclusions"
+    ]) expect(issues).toContainEqual(expect.objectContaining({ path }));
+  });
+
   it("uses start-inclusive/end-exclusive effective windows", () => {
     const first = { id: "first", effectiveFrom: new Date("2026-01-01T00:00:00Z"), effectiveTo: new Date("2026-02-01T00:00:00Z") };
     const touching = { id: "touching", effectiveFrom: new Date("2026-02-01T00:00:00Z"), effectiveTo: null };

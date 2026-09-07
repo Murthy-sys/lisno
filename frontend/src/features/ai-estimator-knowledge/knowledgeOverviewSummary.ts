@@ -125,6 +125,10 @@ export interface KnowledgeOverviewModeOverrideDetail {
 }
 
 export interface KnowledgeOverviewModeDetail {
+  readonly pmcScope?: {
+    readonly inclusions: readonly { readonly id: string; readonly name: string; readonly selected: boolean }[];
+    readonly exclusions: readonly { readonly id: string; readonly name: string; readonly selected: boolean }[];
+  };
   readonly option: KnowledgeOverviewReference;
   readonly configured: boolean;
   readonly referencedByOverview: boolean;
@@ -295,8 +299,12 @@ export function projectKnowledgeOverviewSummary(
     );
     return dynamicFields.length ? [{ source, label, dynamicFields }] : [];
   });
+  const pmc = partitionedModeConfigurations.primary.pmc;
+  const pmcScope = pmc && (pmc.inclusions !== undefined || pmc.exclusions !== undefined)
+    ? { inclusions: pmc.inclusions ?? [], exclusions: pmc.exclusions ?? [] }
+    : undefined;
   const modeDetails: KnowledgeOverviewModeDetail[] = [
-    ...(pmcFields.length ? [{
+    ...(pmcFields.length || pmcScope ? [{
       option: directReference("pmc", "PMC"),
       configured: true,
       referencedByOverview: false,
@@ -304,6 +312,7 @@ export function projectKnowledgeOverviewSummary(
       prices: [],
       overrides: [],
       dynamicFields: pmcFields,
+      ...(pmcScope ? { pmcScope } : {}),
       executionSources: [],
       hasAssociatedRecords: true
     }] : []),

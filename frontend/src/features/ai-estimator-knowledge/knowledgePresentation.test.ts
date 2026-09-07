@@ -33,8 +33,7 @@ describe("knowledge presentation", () => {
     expect(Object.keys(KNOWLEDGE_WORKSPACE_SECTION_LABELS)).toHaveLength(4);
     expect(KNOWLEDGE_WORKSPACE_BACKEND_SECTIONS.mode).toEqual([
       "advanced",
-      "pricing",
-      "quantity-margin"
+      "pricing"
     ]);
     expect(KNOWLEDGE_SECTION_LABELS.pricing).toBe("Budgeting");
   });
