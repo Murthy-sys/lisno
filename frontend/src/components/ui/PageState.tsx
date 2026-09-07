@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import { Button } from "./Button";
 import { InlineMessage } from "./InlineMessage";
 import { BrandLoadingMark } from "./BrandLoadingMark";
+import { useSharedLoadingStatus } from "./GlobalRequestLoader";
 
 export interface StateAction {
   label: string;
@@ -18,11 +19,15 @@ export interface PageStateProps {
   action?: StateAction;
 }
 
-function DefaultLoadingVisual() {
+function LoadingContent({ message, statusLabel, skeleton }: { message: string; statusLabel: string; skeleton?: ReactNode }) {
+  const shared = useSharedLoadingStatus({ message, statusLabel });
   return (
-    <div className="lisno-page-loader">
-      <BrandLoadingMark />
-    </div>
+    <>
+      <div className="ui-state__skeleton" aria-hidden="true">
+        {skeleton ?? <div className="lisno-page-loader">{shared ? null : <BrandLoadingMark />}</div>}
+      </div>
+      {!shared ? <p className="lisno-loading-message" role="status" aria-label={statusLabel}>{message}</p> : null}
+    </>
   );
 }
 
@@ -34,16 +39,7 @@ export function StateContent({
   action
 }: PageStateProps) {
   if (state === "loading") {
-    return (
-      <>
-        <div className="ui-state__skeleton" aria-hidden="true">
-          {skeleton ?? <DefaultLoadingVisual />}
-        </div>
-        <p className="lisno-loading-message" role="status" aria-label={statusLabel}>
-          {message}
-        </p>
-      </>
-    );
+    return <LoadingContent message={message} statusLabel={statusLabel} skeleton={skeleton} />;
   }
 
   if (state === "error") {

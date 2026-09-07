@@ -6,6 +6,7 @@ import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { apiClient } from "../../../api/client";
+import { LoadingProvider } from "../../../components/ui/GlobalRequestLoader";
 import {
   superAdminDashboardOverviewFixture,
   superAdminDashboardProjectsPageFixture,
@@ -43,7 +44,7 @@ function renderDashboard(
     queryClient,
     ...render(
     <QueryClientProvider client={queryClient}>
-      <MemoryRouter initialEntries={[entry]}><SuperAdminDashboardPage /></MemoryRouter>
+      <LoadingProvider><MemoryRouter initialEntries={[entry]}><SuperAdminDashboardPage /></MemoryRouter></LoadingProvider>
     </QueryClientProvider>
     )
   };
@@ -60,6 +61,23 @@ function deferred<T>() {
 }
 
 describe("Super Admin dashboard page", () => {
+  it("shows only one logo while the dashboard API and page are both loading", async () => {
+    const pending = deferred<Response>();
+    vi.spyOn(globalThis, "fetch").mockReturnValueOnce(pending.promise);
+    const { queryClient } = renderDashboard();
+    try {
+      expect(screen.getByRole("status", { name: "Dashboard status" })).toHaveTextContent("Loading organization dashboard…");
+      expect(document.querySelectorAll(".lisno-loading-mark")).toHaveLength(1);
+      expect(screen.getAllByRole("status")).toHaveLength(1);
+      pending.resolve(Response.json({ data: superAdminDashboardOverviewFixture }));
+      expect(await screen.findByRole("heading", { name: "Organization dashboard" })).toBeVisible();
+      await waitFor(() => expect(document.querySelectorAll(".lisno-loading-mark")).toHaveLength(0));
+    } finally {
+      pending.resolve(Response.json({ data: superAdminDashboardOverviewFixture }));
+      queryClient.clear();
+    }
+  });
+
   it("renders one organization-wide Overview request with every approved domain summary", async () => {
     const get = installDashboardApi();
     const { container } = renderDashboard();
