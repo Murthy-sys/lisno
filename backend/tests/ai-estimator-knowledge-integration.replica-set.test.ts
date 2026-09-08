@@ -102,6 +102,107 @@ afterAll(async () => {
 });
 
 describe("AI estimator knowledge integrated replica-set invariants", { timeout: 30_000 }, () => {
+  it("resolves independent cost settings from each Main Line's active revision and Overview UOM", async () => {
+    const services = createServices();
+    const secondUom = await services.reference.createMaster(SUPER_ADMIN, "uoms", {
+      code: "NOS-ANALYSIS", name: "Number", decimalScale: 0
+    });
+    const base = { baseRatePaise: 150_000, lowQuantityLimit: "15", impactBps: 1_000, minimumMarkupBps: 2_500, startingMarkupBps: 3_500 };
+    const firstMap = {
+      pmc: base,
+      sub_vendor: { ...base, baseRatePaise: 85_000, impactBps: 750 },
+      in_house_labor: { ...base, baseRatePaise: 42_000, impactBps: 0 },
+      in_house_material: { ...base, baseRatePaise: 63_000, startingMarkupBps: 3_100 }
+    };
+    const secondMap = {
+      pmc: { ...base, baseRatePaise: 211_000 },
+      sub_vendor: { ...base, baseRatePaise: 125_000, impactBps: 250 },
+      in_house_labor: { ...base, baseRatePaise: 10_000, impactBps: 500 },
+      in_house_material: { ...base, baseRatePaise: 27_500, startingMarkupBps: 4_200 }
+    };
+    async function createActive(name: string, uomId: string, modeCalculations: typeof firstMap) {
+      let draft = await createConfiguredDraft(services.item, name);
+      draft = await updateDraftSection(services.item, draft, "overview", { ...overviewPayload(name), uomId });
+      const advanced = { modeCalculations, modeDescription: `Custom ${name} wording`, modeConfigurations: [{
+        id: `scope-${draft.mainLineId}`, modeKind: "pmc", fields: [],
+        inclusions: [{ id: `in-${draft.mainLineId}`, name: "Transport", selected: true }, { id: "unchecked", name: "Unchecked label", selected: false }],
+        exclusions: [{ id: `out-${draft.mainLineId}`, name: "Transport", selected: true }]
+      }] };
+      draft = await updateDraftSection(services.item, draft, "advanced", advanced);
+      const active = await services.item.activate(SUPER_ADMIN, draft.mainLineId, draft.revisionId, { expectedVersion: draft.aggregateVersion });
+      return { ...draft, active, advanced };
+    }
+    const first = await createActive("Wardrobe analysis", UOM_ID, firstMap);
+    const second = await createActive("TV Unit analysis", secondUom.id, secondMap);
+    for (const line of [first, second]) {
+      const contextInput = { mainBasketId: BASKET_ID, mainLineId: line.mainLineId, quantity: "1" };
+      const map = line.advanced.modeCalculations;
+      const pmc = await services.context.resolve(SUPER_ADMIN, { ...contextInput, modeKind: "pmc" });
+      const vendor = await services.context.resolve(SUPER_ADMIN, { ...contextInput, modeKind: "execution", executionSource: "sub_vendor" });
+      const inHouse = await services.context.resolve(SUPER_ADMIN, { ...contextInput, modeKind: "execution", executionSource: "in_house" });
+      expect(pmc.lineage).toMatchObject({ mainLineId: line.mainLineId, revisionId: line.revisionId, contentDigest: line.active.activeRevision?.contentDigest });
+      expect(pmc.configuration.state).toBe("ready");
+      expect(vendor.configuration.state).toBe("ready");
+      expect(inHouse.configuration.state).toBe("ready");
+      expect(pmc.configuration.calculations).toEqual([{ scope: "pmc", source: "scoped", settings: map.pmc, maximumDiscountBps: 1_000 }]);
+      expect(vendor.configuration.calculations).toEqual([{ scope: "sub_vendor", source: "scoped", settings: map.sub_vendor, maximumDiscountBps: 1_000 }]);
+      expect(inHouse.configuration.calculations.map((row) => row.settings)).toEqual([map.in_house_labor, map.in_house_material]);
+      expect(pmc.configuration.uom?.id).toBe(line === first ? UOM_ID : secondUom.id);
+      expect(pmc.configuration.uom?.decimalScale).toBe(line === first ? 2 : 0);
+      expect(inHouse.configuration.shared).toEqual(pmc.configuration.shared);
+      expect(vendor.configuration.shared).toMatchObject({ paragraph: line.advanced.modeDescription,
+        inclusions: [{ id: `in-${line.mainLineId}`, name: "Transport" }], exclusions: [{ id: `out-${line.mainLineId}`, name: "Transport" }] });
+      expect(JSON.stringify(pmc.configuration)).not.toContain("Unchecked label");
+      // New Mode settings are usable independently of the legacy vendor-price system.
+      expect(pmc.preview).toBeNull();
+    }
+    await expect(services.context.resolve(SUPER_ADMIN, { mainBasketId: BASKET_ID, mainLineId: first.mainLineId, modeKind: "pmc", uomId: secondUom.id }))
+      .rejects.toMatchObject({ status: 400, code: "VALIDATION_ERROR", fields: { uomId: expect.any(String) } });
+    await expect(services.context.resolve(SUPER_ADMIN, { mainBasketId: "wrong-basket", mainLineId: first.mainLineId, modeKind: "pmc" }))
+      .rejects.toMatchObject({ status: 422, code: "KNOWLEDGE_NOT_RESOLVABLE" });
+
+    const withDraft = await services.item.createRevision(SUPER_ADMIN, first.mainLineId, { expectedVersion: first.active.version });
+    const nextMap = { ...firstMap, sub_vendor: { ...firstMap.sub_vendor, baseRatePaise: 999_000 } };
+    const edited = await updateDraftSection(services.item, {
+      mainLineId: first.mainLineId, revisionId: withDraft.draftRevisionId!, aggregateVersion: withDraft.version
+    }, "advanced", { ...first.advanced, modeCalculations: nextMap });
+    const vendorInput = { mainBasketId: BASKET_ID, mainLineId: first.mainLineId, modeKind: "execution" as const, executionSource: "sub_vendor" as const };
+    const beforeActivation = await services.context.resolve(SUPER_ADMIN, vendorInput);
+    expect(beforeActivation.lineage.revisionId).toBe(first.revisionId);
+    expect(beforeActivation.configuration.calculations[0]?.settings).toEqual(firstMap.sub_vendor);
+    await services.item.activate(SUPER_ADMIN, edited.mainLineId, edited.revisionId, { expectedVersion: edited.aggregateVersion });
+    const afterActivation = await services.context.resolve(SUPER_ADMIN, vendorInput);
+    expect(afterActivation.lineage.revisionId).toBe(edited.revisionId);
+    expect(afterActivation.configuration.calculations[0]?.settings).toEqual(nextMap.sub_vendor);
+    expect((await services.context.resolve(SUPER_ADMIN, { ...vendorInput, mainLineId: second.mainLineId })).configuration.calculations[0]?.settings).toEqual(secondMap.sub_vendor);
+    expect((await services.context.resolve(SUPER_ADMIN, { ...vendorInput, executionSource: "in_house" })).configuration.calculations.map((row) => row.settings))
+      .toEqual([firstMap.in_house_labor, firstMap.in_house_material]);
+  });
+
+  it("reports absent selected costs and ignores payloads in unconfigured sections", async () => {
+    const services = createServices();
+    const base = { baseRatePaise: 42_000, lowQuantityLimit: "15", minimumMarkupBps: 2_500, startingMarkupBps: 3_500 };
+    let draft = await createConfiguredDraft(services.item, "Incomplete in-house analysis");
+    draft = await updateDraftSection(services.item, draft, "advanced", {
+      modeCalculation: base,
+      modeCalculations: { pmc: base, sub_vendor: null, in_house: base, in_house_labor: base, in_house_material: null }
+    });
+    await services.item.activate(SUPER_ADMIN, draft.mainLineId, draft.revisionId, { expectedVersion: draft.aggregateVersion });
+    const input = { mainBasketId: BASKET_ID, mainLineId: draft.mainLineId, modeKind: "execution" as const, executionSource: "in_house" as const };
+    const context = await services.context.resolve(SUPER_ADMIN, input);
+    expect(context.configuration).toMatchObject({ state: "not_configured", issues: [{ code: "CALCULATION_NOT_CONFIGURED", scope: "in_house_material" }] });
+    expect(context.configuration.calculations[1]).toEqual({ scope: "in_house_material", source: "scoped", settings: null, maximumDiscountBps: null });
+    expect((await services.context.resolve(SUPER_ADMIN, { ...input, executionSource: undefined })).configuration)
+      .toMatchObject({ state: "selection_required", calculations: [] });
+    // Historical/corrupt retained data must not override section applicability.
+    await AiEstimatorKnowledgeSectionModel.updateOne({ revisionId: draft.revisionId, sectionKey: "advanced" }, { $set: { applicability: "not_configured" } }).exec();
+    const unconfigured = await services.context.resolve(SUPER_ADMIN, input);
+    expect(unconfigured.configuration.calculations.every((row) => row.settings === null)).toBe(true);
+    expect(unconfigured.configuration.shared).toEqual({ paragraph: null, scopeConfigurationId: null, inclusions: [], exclusions: [] });
+    await seedActor(ADMIN);
+    await expect(services.context.resolve(ADMIN, input)).rejects.toMatchObject({ status: 403, code: "FORBIDDEN" });
+  });
+
   it("reloads the stored actor for reads and mutations and requires exactly one active Super Admin", async () => {
     const services = createServices();
 
@@ -1762,7 +1863,42 @@ describe("AI estimator knowledge integrated replica-set invariants", { timeout: 
     expect(await AuditEventModel.countDocuments()).toBe(auditBeforeItemCycle);
   });
 
-  it("keeps inactive nested rows as history while omitting them from context, graphs, and inbound archive protection", async () => {
+  it("labels current draft and active Main Line references and excludes superseded rules", async () => {
+    const services = createServices();
+    const temp = await services.item.createMainLine(SUPER_ADMIN, BASKET_ID, { name: "Temporary pendant reference", itemType: "temporary" });
+    let source = await createConfiguredDraft(services.item, "Ceiling source reference");
+    const rule = { id: "lineage-rule", trigger: "removed", action: "add", requirement: "can", targetType: "temporary", targetBasketId: BASKET_ID, targetSubBasketId: null, targetMainLineId: temp.mainLineId, reason: "A replacement fitting may be needed.", active: true };
+    source = await updateDraftSection(services.item, source, "recommendations", { budgetAlterations: [rule] });
+    const activated = await services.item.activate(SUPER_ADMIN, source.mainLineId, source.revisionId, { expectedVersion: source.aggregateVersion });
+    const draft = await services.item.createRevision(SUPER_ADMIN, source.mainLineId, { expectedVersion: activated.version });
+    const linked = (await services.item.getItem(SUPER_ADMIN, temp.mainLineId)).linkedMainLines!;
+    expect(linked.map((row) => [row.revisionStatus, row.revisionId])).toEqual([["active", source.revisionId], ["draft", draft.draftRevisionId]]);
+    const section = await services.item.getSection(SUPER_ADMIN, source.mainLineId, draft.draftRevisionId!, "recommendations");
+    const cleared = await services.item.updateSection(SUPER_ADMIN, source.mainLineId, draft.draftRevisionId!, "recommendations", { expectedVersion: section.version, expectedAggregateVersion: draft.version, payload: { budgetAlterations: [] } });
+    expect((await services.item.getItem(SUPER_ADMIN, temp.mainLineId)).linkedMainLines).toMatchObject([{ revisionStatus: "active", revisionId: source.revisionId }]);
+    await services.item.activate(SUPER_ADMIN, source.mainLineId, draft.draftRevisionId!, { expectedVersion: cleared.aggregateVersion });
+    expect((await services.item.getItem(SUPER_ADMIN, temp.mainLineId)).linkedMainLines).toEqual([]);
+  });
+
+  it("projects enabled Budget Alterations with revision lineage and current target availability", async () => {
+    const services = createServices();
+    const target = await createAndActivateOverviewOnly(services.item, "Ceiling COB Lights");
+    const temporary = await services.item.createMainLine(SUPER_ADMIN, BASKET_ID, { name: "Temporary pendant", itemType: "temporary" });
+    let source = await createConfiguredDraft(services.item, "POP False Ceiling");
+    const rule = { id: "budget-rule-active", trigger: "removed", action: "remove", requirement: "must", targetType: "catalog", targetBasketId: BASKET_ID, targetSubBasketId: null, targetMainLineId: target.mainLineId, reason: "The lights need the ceiling for recessed fixing.", active: true };
+    const temporaryRule = { ...rule, id: "budget-rule-temporary", trigger: "added", requirement: "can", action: "add", targetType: "temporary", targetMainLineId: temporary.mainLineId };
+    source = await updateDraftSection(services.item, source, "recommendations", { budgetAlterations: [rule, temporaryRule, { ...rule, id: "budget-rule-disabled", reason: "Private disabled explanation", active: false }] });
+    const activated = await services.item.activate(SUPER_ADMIN, source.mainLineId, source.revisionId, { expectedVersion: source.aggregateVersion });
+    const context = await services.context.resolve(SUPER_ADMIN, { mainBasketId: BASKET_ID, mainLineId: source.mainLineId, quantity: "1.00", uomId: UOM_ID });
+    expect(context.sections.recommendations).toMatchObject({ budgetAlterations: [{ ...rule, target: { status: "active", name: "Ceiling COB Lights" } }, { ...temporaryRule, target: { status: "draft", itemType: "temporary", activeRevisionId: null } }] });
+    expect(context.lineage).toMatchObject({ mainLineId: source.mainLineId, revisionId: source.revisionId, contentDigest: activated.activeRevision?.contentDigest });
+    expect(JSON.stringify(context)).not.toContain("Private disabled explanation");
+    await services.item.deactivate(SUPER_ADMIN, target.mainLineId, { expectedVersion: target.aggregateVersion });
+    const refreshed = await services.context.resolve(SUPER_ADMIN, { mainBasketId: BASKET_ID, mainLineId: source.mainLineId, quantity: "1.00", uomId: UOM_ID });
+    expect(refreshed.sections.recommendations).toMatchObject({ budgetAlterations: [{ target: { status: "inactive" } }, { target: { status: "draft" } }] });
+  });
+
+  it("keeps inactive nested history while projecting mandatory quality and filtering other inactive sections", async () => {
     const services = createServices();
     const target = await createAndActivateOverviewOnly(services.item, "Inactive Relation Target");
     let source = await createConfiguredDraft(services.item, "Inactive Row Source");
@@ -1868,7 +2004,9 @@ describe("AI estimator knowledge integrated replica-set invariants", { timeout: 
     });
     expect(context.sections.scope).toMatchObject({ exclusions: [] });
     expect(context.sections.recommendations).toMatchObject({ recommendations: [] });
-    expect(context.sections.quality).toMatchObject({ parameters: [] });
+    expect(context.sections.quality).toMatchObject({ parameters: [{ id: "inactive-quality-parameter", required: true, active: true }] });
+    expect(await services.item.getSection(SUPER_ADMIN, source.mainLineId, source.revisionId, "quality"))
+      .toMatchObject({ payload: { parameters: [{ id: "inactive-quality-parameter", required: false, active: false }] } });
     expect(context.sections.advanced).toMatchObject({ dependencies: [] });
     expect(context.sections.advanced).not.toHaveProperty("modeOverrides");
     expect(context.sections.execution).toMatchObject({
@@ -1879,7 +2017,6 @@ describe("AI estimator knowledge integrated replica-set invariants", { timeout: 
     for (const privateValue of [
       "inactive-scope-exclusion",
       "inactive-recommendation",
-      "inactive-quality-parameter",
       "inactive-step-a",
       "inactive-step-b",
       "inactive-productivity",

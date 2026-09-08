@@ -15,6 +15,7 @@ const basketSchema = new Schema(
     displayOrder: { type: Number, required: true, min: 0, validate: Number.isSafeInteger },
     status: { type: String, enum: AI_ESTIMATOR_KNOWLEDGE_MASTER_STATUSES, required: true, default: "active" },
     version: { type: Number, required: true, default: 1, min: 1, validate: Number.isSafeInteger },
+    qualityRevisionId: { type: String, ref: "AiEstimatorKnowledgeBasketQualityRevision", default: null },
     dependencyEpoch: {
       type: Number,
       default: 0,

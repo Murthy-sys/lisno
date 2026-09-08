@@ -10,6 +10,7 @@ const mainLineSchema = new Schema(
   {
     _id: { type: String, required: true, immutable: true },
     basketId: { type: String, ref: "AiEstimatorKnowledgeBasket", required: true, immutable: true },
+    itemType: { type: String, enum: ["main_line", "temporary"], default: "main_line", immutable: true },
     subBasketId: { type: String, ref: "AiEstimatorKnowledgeSubBasket", default: null, immutable: true },
     name: { type: String, required: true, minlength: 1, maxlength: AI_ESTIMATOR_KNOWLEDGE_MAX_SHORT_TEXT },
     nameNormalized: { type: String, required: true, maxlength: AI_ESTIMATOR_KNOWLEDGE_MAX_SHORT_TEXT },
@@ -19,6 +20,7 @@ const mainLineSchema = new Schema(
     activeRevisionId: { type: String, ref: "AiEstimatorKnowledgeRevision", default: null },
     draftRevisionId: { type: String, ref: "AiEstimatorKnowledgeRevision", default: null },
     version: { type: Number, required: true, default: 1, min: 1, validate: Number.isSafeInteger },
+    dependencyEpoch: { type: Number, default: 0, min: 0, validate: Number.isSafeInteger },
     createdById: { type: String, ref: "User", required: true, immutable: true },
     updatedById: { type: String, ref: "User", required: true },
     deactivatedAt: { type: Date, default: null },

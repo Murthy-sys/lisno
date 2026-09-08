@@ -236,6 +236,7 @@ function renderPanel(
   return {
     queryClient,
     props,
+    unmount: view.unmount,
     rerenderModes(currentModes: readonly KnowledgeMaster[]) {
       view.rerender(panel(currentModes));
     }
@@ -266,7 +267,7 @@ describe("Knowledge Mode section-state removal", () => {
     );
   });
 
-  it("preserves a previously saved PMC margin when editing Mode with the range shown as text", async () => {
+  it("preserves a previously saved PMC margin when editing another Mode field", async () => {
     const ref = createRef<KnowledgeModePanelHandle>();
     let saved = section("advanced", "configured", { pmcMarginBps: 1_525 });
     vi.mocked(knowledgeApi.getKnowledgeSection).mockImplementation(async (_line, _revision, key) =>
@@ -277,7 +278,8 @@ describe("Knowledge Mode section-state removal", () => {
       return result;
     });
     renderPanel(ref);
-    expect(await screen.findByText("PMC Margin (10%–20%)")).toBeVisible();
+    expect(await screen.findByText("PMC Margin")).toBeVisible();
+    await waitFor(() => expect(screen.getByRole("spinbutton", { name: "PMC Margin" })).toHaveValue(15.25));
     expect(screen.queryByRole("textbox", { name: "PMC Margin (%)" })).not.toBeInTheDocument();
     await userEvent.click(within(screen.getByRole("group", { name: "Inclusions" })).getByRole("checkbox", { name: "Transport" }));
     await act(async () => { expect(await ref.current?.save()).toBe(true); });
@@ -290,7 +292,39 @@ describe("Knowledge Mode section-state removal", () => {
     expect(knowledgeApi.updateKnowledgeSection).toHaveBeenCalledTimes(1);
   });
 
-  it("uses the saved Overview UOM and saves shared calculation inputs without the temporary test quantity", async () => {
+  it.each([525, 2300])("requires correction of saved PMC margin %i before saving, then supports reload and discard", async (pmcMarginBps) => {
+    const ref = createRef<KnowledgeModePanelHandle>();
+    let saved = section("advanced", "configured", { pmcMarginBps, modeDescription: "Original scope" });
+    vi.mocked(knowledgeApi.getKnowledgeSection).mockImplementation(async (_line, _revision, key) =>
+      key === "advanced" ? saved : section(key as "pricing" | "overview"));
+    vi.mocked(knowledgeApi.updateKnowledgeSection).mockImplementation(async (_line, _revision, key, input) => {
+      const result = savedSection(key as "advanced", input);
+      saved = result;
+      return result;
+    });
+    const panel = renderPanel(ref);
+    const margin = () => screen.getByRole("spinbutton", { name: "PMC Margin" });
+    await waitFor(() => expect(margin()).toHaveValue(pmcMarginBps / 100));
+    expect(margin()).toHaveAttribute("aria-invalid", "true");
+    await userEvent.click(within(screen.getByRole("group", { name: "Inclusions" })).getByRole("checkbox", { name: "Transport" }));
+    await act(async () => { expect(await ref.current?.save()).toBe(false); });
+    expect(knowledgeApi.updateKnowledgeSection).not.toHaveBeenCalled();
+    fireEvent.change(margin(), { target: { value: "15.75" } });
+    await act(async () => { expect(await ref.current?.save()).toBe(true); });
+    expect(saved.payload).toMatchObject({ pmcMarginBps: 1575, modeDescription: expect.stringContaining("Original scope") });
+    fireEvent.change(margin(), { target: { value: "23" } });
+    await userEvent.click(screen.getByRole("checkbox", { name: "PMC" }));
+    await act(async () => { expect(await ref.current?.save()).toBe(false); });
+    expect(knowledgeApi.updateKnowledgeSection).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(margin()).toHaveFocus());
+    act(() => ref.current?.discard());
+    expect(margin()).toHaveValue(15.75);
+    panel.unmount();
+    renderPanel(ref);
+    await waitFor(() => expect(margin()).toHaveValue(15.75));
+  });
+
+  it("uses the saved Overview UOM and saves PMC calculation inputs without the temporary test quantity", async () => {
     const ref = createRef<KnowledgeModePanelHandle>();
     const payload = { modeDescription: "Shared saved paragraph", dependencies: [] };
     let savedAdvanced = section("advanced", "configured", payload);
@@ -304,7 +338,7 @@ describe("Knowledge Mode section-state removal", () => {
     const { props } = renderPanel(ref);
     const rate = await screen.findByRole("textbox", { name: "Base Rate (₹)" });
     await screen.findByText("Sq.ft");
-    const calculations = screen.getByRole("region", { name: "Calculations" });
+    const calculations = screen.getByRole("region", { name: "PMC calculations" });
     expect(screen.getByRole("group", { name: "Exclusions" }).compareDocumentPosition(calculations) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     fireEvent.change(rate, { target: { value: "1500" } });
     expect(screen.queryByRole("textbox", { name: "Quantity (test)" })).not.toBeInTheDocument();
@@ -316,19 +350,19 @@ describe("Knowledge Mode section-state removal", () => {
     await userEvent.click(screen.getByRole("button", { name: "Calculate" }));
     await waitFor(() => expect(knowledgeApi.previewKnowledge).toHaveBeenLastCalledWith({
       quantity: "14.25", quantityScale: 2, modeCalculationMarkupBasis: "minimum",
-      modeCalculation: { baseRatePaise: 50_000, lowQuantityLimit: "15", minimumMarkupBps: 2_500, startingMarkupBps: 3_500 }
+      modeCalculation: { baseRatePaise: 50_000, lowQuantityLimit: "15", impactBps: 1_000, minimumMarkupBps: 2_500, startingMarkupBps: 3_500 }
     }));
     await userEvent.click(screen.getByRole("button", { name: "Close" }));
     await act(async () => { expect(await ref.current?.save()).toBe(true); });
     expect(knowledgeApi.updateKnowledgeSection).toHaveBeenCalledTimes(1);
     expect(knowledgeApi.updateKnowledgeSection).toHaveBeenCalledWith("line-1", "revision-1", "advanced", expect.objectContaining({
       expectedVersion: 11, expectedAggregateVersion: 7,
-      payload: { ...payload, modeCalculation: { baseRatePaise: 150_000, lowQuantityLimit: "15", minimumMarkupBps: 2_500, startingMarkupBps: 3_500 } }
+      payload: { ...payload, modeCalculations: { pmc: { baseRatePaise: 150_000, lowQuantityLimit: "15", impactBps: 1_000, minimumMarkupBps: 2_500, startingMarkupBps: 3_500 }, sub_vendor: null, in_house_labor: null, in_house_material: null } }
     }));
     expect(props.onDirtyChange).toHaveBeenLastCalledWith(false);
     await userEvent.click(screen.getByRole("checkbox", { name: "Execution" }));
-    expect(screen.getAllByRole("region", { name: "Calculations" })).toHaveLength(1);
-    fireEvent.change(screen.getByRole("textbox", { name: "Starting Gross Margin Markup (%)" }), { target: { value: "20" } });
+    expect(screen.getAllByRole("region", { name: / calculations$/ })).toHaveLength(2);
+    fireEvent.change(within(screen.getByRole("region", { name: "PMC calculations" })).getByRole("textbox", { name: "Starting Gross Margin Markup (%)" }), { target: { value: "20" } });
     await userEvent.click(screen.getByRole("checkbox", { name: "PMC" }));
     await userEvent.click(screen.getByRole("checkbox", { name: "Execution" }));
     await act(async () => { expect(await ref.current?.save()).toBe(false); });
@@ -338,6 +372,251 @@ describe("Knowledge Mode section-state removal", () => {
     expect(screen.getByRole("textbox", { name: "Base Rate (₹)" })).toHaveValue("1500.00");
     expect(screen.queryByRole("textbox", { name: "Quantity (test)" })).not.toBeInTheDocument();
     expect(props.onDirtyChange).toHaveBeenLastCalledWith(false);
+  });
+
+  it("uses the PMC layout for Sub-Vendor while saving its calculations independently", async () => {
+    const user = userEvent.setup();
+    const ref = createRef<KnowledgeModePanelHandle>();
+    const pmc = { id: "shared-scope", modeKind: "pmc", fields: [],
+      inclusions: [{ id: "transport-in", name: "Transport", selected: true }],
+      exclusions: [{ id: "transport-out", name: "Transport", selected: false }]
+    };
+    const inHouse = { id: "in-house-existing", modeKind: "execution", executionSource: "in_house",
+      fields: [{ id: "crew", type: "number", label: "Crew size", options: [], value: "4" }]
+    };
+    const settings = { baseRatePaise: 150_000, lowQuantityLimit: "15", minimumMarkupBps: 2_500, startingMarkupBps: 3_500 };
+    const payload = { modeConfigurations: [pmc, inHouse], modeCalculation: settings, dependencies: [] };
+    let savedAdvanced = section("advanced", "configured", payload);
+    vi.mocked(knowledgeApi.getKnowledgeSection).mockImplementation(async (_line, _revision, key) =>
+      key === "advanced" ? savedAdvanced : key === "overview" ? section("overview", "configured", { uomId: uoms[0]!.id }) : section("pricing"));
+    vi.mocked(knowledgeApi.updateKnowledgeSection).mockImplementation(async (_line, _revision, key, input) => {
+      const saved = savedSection(key as "advanced", input);
+      savedAdvanced = saved;
+      return saved;
+    });
+    renderPanel(ref);
+    await screen.findByRole("textbox", { name: "Base Rate (₹)" });
+    await screen.findByText("Sq.ft");
+    await user.click(screen.getByRole("checkbox", { name: "PMC" }));
+    await user.click(screen.getByRole("checkbox", { name: "Execution" }));
+    const rate = screen.getByRole("textbox", { name: "Base Rate (₹)" });
+    expect(screen.getByRole("radio", { name: "Sub-Vendor" })).toBeChecked();
+    expect(screen.queryByText("PMC Margin")).not.toBeVisible();
+    expect(screen.getByText(`Execution (Sub-Vendor) for ${item.mainLineName}`)).toBeVisible();
+    const inclusions = screen.getByRole("group", { name: "Inclusions" });
+    const exclusions = screen.getByRole("group", { name: "Exclusions" });
+    const calculations = screen.getByRole("region", { name: "Sub-Vendor calculations" });
+    expect(screen.getByRole("group", { name: "Execution source" }).compareDocumentPosition(inclusions) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(exclusions.compareDocumentPosition(calculations) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(within(inclusions).getByRole("checkbox", { name: "Transport" })).toBeChecked();
+    expect(rate).toHaveValue("1500.00");
+    expect(screen.getByRole("textbox", { name: "Impact (%)" })).toHaveValue("10.00");
+    expect(screen.getByRole("status", { name: "Max Discount" })).toHaveTextContent("10.00%");
+    await user.click(within(exclusions).getByRole("checkbox", { name: "Transport" }));
+    expect(within(inclusions).getByRole("checkbox", { name: "Transport" })).toBeChecked();
+    fireEvent.change(rate, { target: { value: "1750" } });
+    fireEvent.change(screen.getByRole("textbox", { name: "Impact (%)" }), { target: { value: "12.5" } });
+    await user.click(screen.getByRole("button", { name: "Test calculations" }));
+    await user.click(screen.getByRole("button", { name: "Calculate" }));
+    await waitFor(() => expect(knowledgeApi.previewKnowledge).toHaveBeenLastCalledWith({
+      quantity: "1", quantityScale: 2, modeCalculationMarkupBasis: "starting", modeCalculation: { ...settings, baseRatePaise: 175_000, impactBps: 1_250 }
+    }));
+    await user.click(screen.getByRole("button", { name: "Close" }));
+    await act(async () => { expect(await ref.current?.save()).toBe(true); });
+    expect(knowledgeApi.updateKnowledgeSection).toHaveBeenLastCalledWith("line-1", "revision-1", "advanced", expect.objectContaining({
+      payload: { ...payload, modeCalculations: { pmc: settings, sub_vendor: { ...settings, baseRatePaise: 175_000, impactBps: 1_250 }, in_house_labor: settings, in_house_material: settings },
+        modeConfigurations: [{ ...pmc, exclusions: [{ ...pmc.exclusions[0], selected: true }] }, inHouse]
+      }
+    }));
+    await user.click(screen.getByRole("radio", { name: "In-house" }));
+    expect(screen.queryByRole("group", { name: "Inclusions" })).not.toBeInTheDocument();
+    expect(screen.getByRole("spinbutton", { name: "Value" })).toHaveValue(4);
+    expect(screen.queryByRole("region", { name: "In-house calculations" })).not.toBeInTheDocument();
+    for (const label of ["Labor cost", "Material cost"]) {
+      const cost = within(screen.getByRole("region", { name: `${label} calculations` }));
+      expect(cost.getByRole("textbox", { name: "Base Rate (₹)" })).toHaveValue("1500.00");
+      expect(cost.getByRole("textbox", { name: "Impact (%)" })).toHaveValue("10.00");
+    }
+    await user.click(screen.getByRole("radio", { name: "Sub-Vendor" }));
+    expect(screen.getByRole("textbox", { name: "Base Rate (₹)" })).toHaveValue("1750");
+    await user.click(screen.getByRole("checkbox", { name: "PMC" }));
+    expect(screen.getAllByRole("region", { name: / calculations$/ })).toHaveLength(2);
+    expect(screen.getAllByRole("group", { name: "Inclusions" })).toHaveLength(1);
+    await user.click(screen.getByRole("checkbox", { name: "Execution" }));
+    expect(within(screen.getByRole("group", { name: "Exclusions" })).getByRole("checkbox", { name: "Transport" })).toBeChecked();
+    act(() => ref.current?.discard());
+    expect(screen.getByRole("textbox", { name: "Base Rate (₹)" })).toHaveValue("1500.00");
+    expect(screen.getByRole("textbox", { name: "Impact (%)" })).toHaveValue("10.00");
+    await user.click(screen.getByRole("checkbox", { name: "PMC" }));
+    await user.click(screen.getByRole("checkbox", { name: "Execution" }));
+    expect(screen.getByRole("textbox", { name: "Base Rate (₹)" })).toHaveValue("1750.00");
+    expect(screen.getByRole("textbox", { name: "Impact (%)" })).toHaveValue("12.50");
+    expect(within(screen.getByRole("group", { name: "Exclusions" })).getByRole("checkbox", { name: "Transport" })).toBeChecked();
+  });
+
+  it("keeps all five calculation inputs and simulator requests individual through switches, validation, save and reload", async () => {
+    const user = userEvent.setup();
+    const ref = createRef<KnowledgeModePanelHandle>();
+    const legacy = { baseRatePaise: 150_000, lowQuantityLimit: "15", minimumMarkupBps: 2_500, startingMarkupBps: 3_500 };
+    let saved = section("advanced", "configured", { modeCalculation: legacy });
+    vi.mocked(knowledgeApi.getKnowledgeSection).mockImplementation(async (_line, _revision, key) =>
+      key === "advanced" ? saved : key === "overview" ? section("overview", "configured", { uomId: uoms[0]!.id }) : section("pricing"));
+    vi.mocked(knowledgeApi.updateKnowledgeSection).mockImplementation(async (_line, _revision, key, input) => {
+      const updated = savedSection(key as "advanced", input); saved = updated; return updated;
+    });
+    renderPanel(ref);
+    await screen.findByRole("region", { name: "PMC calculations" });
+    await screen.findByDisplayValue("1500.00");
+    const cases = [
+      { scope: "pmc", label: "PMC", inputs: ["2100", "12", "7.25", "26", "43"], discount: "17.00%", settings: { baseRatePaise: 210_000, lowQuantityLimit: "12", impactBps: 725, minimumMarkupBps: 2_600, startingMarkupBps: 4_300 } },
+      { scope: "sub_vendor", label: "Sub-Vendor", inputs: ["800", "8", "5.25", "12", "31"], discount: "19.00%", settings: { baseRatePaise: 80_000, lowQuantityLimit: "8", impactBps: 525, minimumMarkupBps: 1_200, startingMarkupBps: 3_100 } },
+      { scope: "in_house_labor", label: "Labor cost", inputs: ["450", "4", "0", "8", "23"], discount: "15.00%", settings: { baseRatePaise: 45_000, lowQuantityLimit: "4", impactBps: 0, minimumMarkupBps: 800, startingMarkupBps: 2_300 } },
+      { scope: "in_house_material", label: "Material cost", inputs: ["650", "9", "12.75", "18", "36"], discount: "18.00%", settings: { baseRatePaise: 65_000, lowQuantityLimit: "9", impactBps: 1_275, minimumMarkupBps: 1_800, startingMarkupBps: 3_600 } }
+    ] as const;
+    const labels = ["Base Rate (₹)", "Low Quantity Limit", "Impact (%)", "Min. Gross Margin Markup (%)", "Starting Gross Margin Markup (%)"];
+    async function select(label: string) {
+      const pmc = screen.getByRole("checkbox", { name: "PMC" });
+      const execution = screen.getByRole("checkbox", { name: "Execution" });
+      if ((pmc as HTMLInputElement).checked !== (label === "PMC")) await user.click(pmc);
+      if ((execution as HTMLInputElement).checked !== (label !== "PMC")) await user.click(execution);
+      if (label !== "PMC") await user.click(screen.getByRole("radio", { name: label === "Sub-Vendor" ? label : "In-house" }));
+      return within(screen.getByRole("region", { name: `${label} calculations` }));
+    }
+    for (const scenario of cases) {
+      const region = await select(scenario.label);
+      expect(region.getByRole("textbox", { name: labels[0] })).toHaveValue("1500.00");
+      labels.forEach((name, index) => fireEvent.change(region.getByRole("textbox", { name }), { target: { value: scenario.inputs[index] } }));
+      expect(region.getByRole("status", { name: "Max Discount" })).toHaveTextContent(scenario.discount);
+      if (scenario.scope === "sub_vendor") fireEvent.change(region.getByRole("textbox", { name: "Impact (%)" }), { target: { value: "5." } });
+    }
+    await act(async () => { expect(await ref.current?.save()).toBe(false); });
+    expect(knowledgeApi.updateKnowledgeSection).not.toHaveBeenCalled();
+    await waitFor(() => expect(within(screen.getByRole("region", { name: "Sub-Vendor calculations" })).getByRole("textbox", { name: "Impact (%)" })).toHaveFocus());
+    expect(screen.getByRole("radio", { name: "Sub-Vendor" })).toBeChecked();
+    expect(screen.getByRole("textbox", { name: "Impact (%)" })).toHaveValue("5.");
+    fireEvent.change(screen.getByRole("textbox", { name: "Impact (%)" }), { target: { value: "5.25" } });
+    await act(async () => { expect(await ref.current?.save()).toBe(true); });
+    expect(saved.payload).toEqual({ modeCalculation: legacy, modeCalculations: Object.fromEntries(cases.map(({ scope, settings }) => [scope, settings])) });
+    act(() => ref.current?.discard());
+    for (const scenario of cases) {
+      const region = await select(scenario.label);
+      labels.forEach((name, index) => expect(Number((region.getByRole("textbox", { name }) as HTMLInputElement).value)).toBe(Number(scenario.inputs[index])));
+      expect(region.getByRole("status", { name: "Max Discount" })).toHaveTextContent(scenario.discount);
+      await user.click(region.getByRole("button", { name: "Test calculations" }));
+      expect(screen.getByText(`${scenario.label} calculation simulator`)).toBeVisible();
+      await user.click(screen.getByRole("button", { name: "Calculate" }));
+      expect(knowledgeApi.previewKnowledge).toHaveBeenLastCalledWith({ modeCalculation: scenario.settings, quantity: "1", quantityScale: 2, modeCalculationMarkupBasis: "starting" });
+      await user.click(screen.getByRole("button", { name: "Close" }));
+    }
+  });
+
+  it("shows the combined total after both cost sections without saving test values and clears it on an incomplete cost edit", async () => {
+    const user = userEvent.setup();
+    const ref = createRef<KnowledgeModePanelHandle>();
+    const labor = { baseRatePaise: 45_000, lowQuantityLimit: "4", impactBps: 0, minimumMarkupBps: 800, startingMarkupBps: 2_300 };
+    const material = { baseRatePaise: 65_000, lowQuantityLimit: "9", impactBps: 1_275, minimumMarkupBps: 1_800, startingMarkupBps: 3_600 };
+    vi.mocked(knowledgeApi.getKnowledgeSection).mockImplementation(async (_line, _revision, key) => key === "advanced"
+      ? section("advanced", "configured", { modeCalculations: { pmc: null, sub_vendor: null, in_house_labor: labor, in_house_material: material } })
+      : key === "overview" ? section("overview", "configured", { uomId: uoms[0]!.id }) : section("pricing"));
+    vi.mocked(knowledgeApi.previewKnowledge).mockResolvedValue({
+      formulaVersion: "knowledge-preview-v1", effectivePriceVersionId: null, taxVersionId: null, effectiveUnitRatePaise: null,
+      adjustedUnitRate: null, requiredQuantity: "1", procurementQuantity: null, vendorPreTax: null, vendorTax: null, vendorTotal: null,
+      startMargin: null, bottomMargin: null, pmcMarkup: null, duration: null,
+      inHouseCalculation: { labor: { revisedUnitRatePaise: 45_000, revisedAmountPaise: 45_000, totalPaise: 55_350, appliedImpactBps: 0 },
+        material: { revisedUnitRatePaise: 73_288, revisedAmountPaise: 73_288, totalPaise: 99_672, appliedImpactBps: 1_275 }, totalPaise: 155_022 }
+    });
+    const { props } = renderPanel(ref);
+    await user.click(await screen.findByRole("checkbox", { name: "PMC" }));
+    await user.click(screen.getByRole("checkbox", { name: "Execution" }));
+    await user.click(screen.getByRole("radio", { name: "In-house" }));
+    const total = screen.getByRole("region", { name: "In-house total" });
+    const materialSection = screen.getByRole("region", { name: "Material cost calculations" });
+    expect(materialSection.compareDocumentPosition(total) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    await user.click(within(total).getByRole("button", { name: "Test In-house total" }));
+    await user.click(screen.getByRole("button", { name: "Calculate total" }));
+    await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Close" }));
+    expect(within(total).getByLabelText("Labor + Material total")).toHaveTextContent("₹1,550.22");
+    expect(knowledgeApi.previewKnowledge).toHaveBeenCalledWith({ inHouseCalculation: { labor, material }, quantity: "1", quantityScale: 2, modeCalculationMarkupBasis: "starting" });
+    expect(knowledgeApi.updateKnowledgeSection).not.toHaveBeenCalled();
+    expect(props.onDirtyChange).toHaveBeenLastCalledWith(false);
+    fireEvent.change(within(materialSection).getByRole("textbox", { name: "Impact (%)" }), { target: { value: "12." } });
+    expect(screen.queryByLabelText("Labor + Material total")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Test In-house total" })).toBeDisabled();
+    await user.click(screen.getByRole("radio", { name: "Sub-Vendor" }));
+    expect(screen.queryByRole("region", { name: "In-house total" })).not.toBeInTheDocument();
+  });
+
+  it.each(["Labor cost", "Material cost"])("preserves an incomplete %s draft and reveals its field when saving from another source", async (label) => {
+    const user = userEvent.setup();
+    const ref = createRef<KnowledgeModePanelHandle>();
+    const settings = { baseRatePaise: 90_000, lowQuantityLimit: "15", impactBps: 525, minimumMarkupBps: 1_200, startingMarkupBps: 3_100 };
+    const payload = { modeCalculations: { pmc: null, sub_vendor: null, in_house: settings } };
+    vi.mocked(knowledgeApi.getKnowledgeSection).mockImplementation(async (_line, _revision, key) =>
+      key === "advanced" ? section("advanced", "configured", payload) : key === "overview" ? section("overview", "configured", { uomId: uoms[0]!.id }) : section("pricing"));
+    renderPanel(ref);
+    await user.click(await screen.findByRole("checkbox", { name: "PMC" }));
+    await user.click(screen.getByRole("checkbox", { name: "Execution" }));
+    await user.click(screen.getByRole("radio", { name: "In-house" }));
+    const cost = () => within(screen.getByRole("region", { name: `${label} calculations` }));
+    expect(cost().getByRole("textbox", { name: "Base Rate (₹)" })).toHaveValue("900.00");
+    fireEvent.change(cost().getByRole("textbox", { name: "Impact (%)" }), { target: { value: "7." } });
+    await user.click(screen.getByRole("radio", { name: "Sub-Vendor" }));
+    await act(async () => { expect(await ref.current?.save()).toBe(false); });
+    expect(knowledgeApi.updateKnowledgeSection).not.toHaveBeenCalled();
+    await waitFor(() => expect(cost().getByRole("textbox", { name: "Impact (%)" })).toHaveFocus());
+    expect(screen.getByRole("radio", { name: "In-house" })).toBeChecked();
+    expect(cost().getByRole("textbox", { name: "Impact (%)" })).toHaveValue("7.");
+    const sibling = within(screen.getByRole("region", { name: `${label === "Labor cost" ? "Material cost" : "Labor cost"} calculations` }));
+    expect(sibling.getByRole("textbox", { name: "Impact (%)" })).toHaveValue("5.25");
+    act(() => ref.current?.discard());
+    expect(cost().getByRole("textbox", { name: "Impact (%)" })).toHaveValue("5.25");
+  });
+
+  it("rebases a Labor edit onto newly split server costs without overwriting Material or other modes", async () => {
+    const user = userEvent.setup();
+    const ref = createRef<KnowledgeModePanelHandle>();
+    const settings = { baseRatePaise: 90_000, lowQuantityLimit: "15", impactBps: 525, minimumMarkupBps: 1_200, startingMarkupBps: 3_100 };
+    const initial = { modeCalculations: { pmc: null, sub_vendor: null, in_house: settings } };
+    vi.mocked(knowledgeApi.getKnowledgeSection).mockImplementation(async (_line, _revision, key) => key === "advanced" ? section("advanced", "configured", initial) : section("pricing"));
+    renderPanel(ref);
+    await user.click(await screen.findByRole("checkbox", { name: "PMC" }));
+    await user.click(screen.getByRole("checkbox", { name: "Execution" }));
+    await user.click(screen.getByRole("radio", { name: "In-house" }));
+    fireEvent.change(within(screen.getByRole("region", { name: "Labor cost calculations" })).getByRole("textbox", { name: "Base Rate (₹)" }), { target: { value: "450" } });
+    const serverScopes = { ...initial.modeCalculations,
+      pmc: { ...settings, baseRatePaise: 200_000 }, sub_vendor: { ...settings, baseRatePaise: 125_000 },
+      in_house_labor: settings, in_house_material: { ...settings, baseRatePaise: 65_000, impactBps: 1_275 }
+    };
+    vi.mocked(knowledgeApi.updateKnowledgeSection).mockRejectedValueOnce(new ApiError(409, "VERSION_CONFLICT", "Changed elsewhere."));
+    vi.mocked(knowledgeApi.getKnowledgeSection).mockImplementation(async (_line, _revision, key) => key === "advanced" ? section("advanced", "configured", { modeCalculations: serverScopes }, 25) : section("pricing"));
+    vi.mocked(knowledgeApi.getKnowledgeItem).mockResolvedValue({ ...item, version: 30 });
+    await act(async () => { expect(await ref.current?.save()).toBe(false); });
+    await user.click(within(screen.getByRole("alertdialog", { name: "This section changed elsewhere" })).getByRole("button", { name: "Keep editing" }));
+    expect(within(screen.getByRole("region", { name: "Material cost calculations" })).getByRole("textbox", { name: "Base Rate (₹)" })).toHaveValue("650.00");
+    await act(async () => { expect(await ref.current?.save()).toBe(true); });
+    expect(vi.mocked(knowledgeApi.updateKnowledgeSection).mock.calls[1]?.[3]).toMatchObject({ expectedVersion: 25, expectedAggregateVersion: 30,
+      payload: { modeCalculations: { ...serverScopes, in_house_labor: { ...settings, baseRatePaise: 45_000 } } }
+    });
+  });
+
+  it("rebases only the locally edited calculation mode and keeps newer server values for the other modes", async () => {
+    const ref = createRef<KnowledgeModePanelHandle>();
+    const settings = { baseRatePaise: 150_000, lowQuantityLimit: "15", impactBps: 1_000, minimumMarkupBps: 2_500, startingMarkupBps: 3_500 };
+    const scopes = { pmc: settings, sub_vendor: { ...settings, baseRatePaise: 75_000 }, in_house: { ...settings, baseRatePaise: 45_000 } };
+    const initial = { modeCalculations: scopes, modeDescription: "Shared paragraph." };
+    vi.mocked(knowledgeApi.getKnowledgeSection).mockImplementation(async (_line, _revision, key) => key === "advanced" ? section("advanced", "configured", initial) : section("pricing"));
+    renderPanel(ref);
+    fireEvent.change(await screen.findByRole("textbox", { name: "Base Rate (₹)" }), { target: { value: "1750" } });
+    const serverScopes = { ...scopes, sub_vendor: { ...scopes.sub_vendor, impactBps: 1_275, baseRatePaise: 95_000 }, in_house: { ...scopes.in_house, lowQuantityLimit: "9" } };
+    vi.mocked(knowledgeApi.updateKnowledgeSection).mockRejectedValueOnce(new ApiError(409, "VERSION_CONFLICT", "Changed elsewhere."));
+    vi.mocked(knowledgeApi.getKnowledgeSection).mockImplementation(async (_line, _revision, key) => key === "advanced" ? section("advanced", "configured", { ...initial, modeCalculations: serverScopes }, 25) : section("pricing"));
+    vi.mocked(knowledgeApi.getKnowledgeItem).mockResolvedValue({ ...item, version: 30 });
+    await act(async () => { expect(await ref.current?.save()).toBe(false); });
+    await userEvent.click(within(screen.getByRole("alertdialog", { name: "This section changed elsewhere" })).getByRole("button", { name: "Keep editing" }));
+    await act(async () => { expect(await ref.current?.save()).toBe(true); });
+    expect(vi.mocked(knowledgeApi.updateKnowledgeSection).mock.calls[1]?.[3]).toMatchObject({ expectedVersion: 25, expectedAggregateVersion: 30,
+      payload: { ...initial, modeCalculations: { ...serverScopes, pmc: { ...settings, baseRatePaise: 175_000 }, in_house_labor: serverScopes.in_house, in_house_material: serverScopes.in_house } }
+    });
   });
 
   it("does not preview configured calculations when saved Overview UOM cannot be loaded", async () => {
@@ -429,9 +708,11 @@ describe("Knowledge Mode section-state removal", () => {
     expect(submitted).toMatchObject({ expectedVersion: 25, expectedAggregateVersion: 30, payload: {
       modeDescription: edited === "paragraph" ? "Local paragraph" : "Server paragraph",
       pmcMarginBps: 1_000,
-      modeCalculation: edited === "calculation"
-        ? { baseRatePaise: 150_000, lowQuantityLimit: "15", minimumMarkupBps: 2_500, startingMarkupBps: 3_500 }
-        : serverCalculation,
+      modeCalculation: serverCalculation,
+      ...(edited === "calculation" ? { modeCalculations: {
+        pmc: { baseRatePaise: 150_000, lowQuantityLimit: "15", impactBps: 1_000, minimumMarkupBps: 2_500, startingMarkupBps: 3_500 },
+        sub_vendor: serverCalculation, in_house_labor: serverCalculation, in_house_material: serverCalculation
+      } } : {}),
       dependencies: []
     } });
     if (edited !== "configuration") expect(submitted?.payload.modeConfigurations).toEqual(serverConfigurations);
@@ -689,7 +970,8 @@ describe("Knowledge Mode section-state removal", () => {
       7,
       8
     ]);
-    expect(invalidateSpy).toHaveBeenCalledTimes(5);
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: knowledgeQueryKeys.item(item.mainLineId) });
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: knowledgeQueryKeys.contexts() });
     expect(screen.getByRole("textbox", { name: "Component label" })).toBeEnabled();
     expect(screen.getByRole("checkbox", { name: "PMC" })).toBeEnabled();
     expect(screen.getByRole("checkbox", { name: "Execution" })).toBeEnabled();

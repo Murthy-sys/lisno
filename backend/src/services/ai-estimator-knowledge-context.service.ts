@@ -11,7 +11,8 @@ import {
   parseScaledDecimal,
   type CalculateKnowledgePreviewInput
 } from "../domain/ai-estimator-knowledge-calculation.js";
-import { calculateKnowledgeModePrice } from "../domain/ai-estimator-knowledge-mode-calculation.js";
+import { calculateKnowledgeInHousePrice, calculateKnowledgeModePrice } from "../domain/ai-estimator-knowledge-mode-calculation.js";
+import { buildKnowledgeConfigurationContext } from "../domain/ai-estimator-knowledge-configuration-context.js";
 import {
   AI_ESTIMATOR_KNOWLEDGE_MODE_FIELD_TYPES,
   AI_ESTIMATOR_KNOWLEDGE_SECTION_KEYS,
@@ -43,6 +44,7 @@ import {
 } from "./ai-estimator-knowledge-actor.js";
 import type { Clock } from "./workflow.js";
 import { systemClock } from "./workflow.js";
+import { mandatoryQualityParameters, readBasketQualityRevision } from "./ai-estimator-knowledge-basket-quality.js";
 
 type Row = Record<string, unknown>;
 
@@ -84,14 +86,24 @@ export function createAiEstimatorKnowledgeContextService(
     async preview(actor, input) {
       await actorGuard.requireReadActor(actor);
       try {
-        if (input.modeCalculation && input.quantity == null) {
+        if ((input.modeCalculation || input.inHouseCalculation) && input.quantity == null) {
           throw new KnowledgeCalculationError("INVALID_DECIMAL", "A test quantity is required for Mode calculations.");
+        }
+        if (input.modeCalculation && input.inHouseCalculation) {
+          throw new KnowledgeCalculationError("INVALID_AMOUNT", "Choose either an individual calculation or an In-house total.");
+        }
+        if (input.modeCalculationDiscountBps !== undefined && !input.modeCalculation && !input.inHouseCalculation) {
+          throw new KnowledgeCalculationError("INVALID_AMOUNT", "Mode calculation settings are required when applying a discount.");
         }
         return {
           ...calculateKnowledgePreview(input),
           ...(input.modeCalculation ? { modeCalculation: calculateKnowledgeModePrice({
             ...input.modeCalculation, quantity: input.quantity!, quantityScale: input.quantityScale,
-            markupBasis: input.modeCalculationMarkupBasis
+            markupBasis: input.modeCalculationMarkupBasis, discountBps: input.modeCalculationDiscountBps
+          }) } : {}),
+          ...(input.inHouseCalculation ? { inHouseCalculation: calculateKnowledgeInHousePrice({
+            ...input.inHouseCalculation, quantity: input.quantity!, quantityScale: input.quantityScale,
+            markupBasis: input.modeCalculationMarkupBasis, discountBps: input.modeCalculationDiscountBps
           }) } : {})
         };
       } catch (error) {
@@ -163,6 +175,7 @@ async function resolveContext(
   const basket = asRow(basketDocument);
   const revision = asRow(revisionDocument);
   if (!basket || !revision) unresolvedCore();
+  const basketQuality = await readBasketQualityRevision(basket, session);
 
   const sections = new Map<KnowledgeSectionKey, Row>();
   for (const document of sectionDocuments) {
@@ -184,6 +197,8 @@ async function resolveContext(
 
   const overview = projectedPayloads.get("overview")!;
   const advanced = projectedPayloads.get("advanced")!;
+  const analysisAdvanced = sections.get("advanced")?.applicability === "configured"
+    ? structuredClone(advanced) : {};
   const resolvedPriority = sections.get("overview")?.applicability === "configured"
     ? await resolveConfiguredPriority(overview, session)
     : null;
@@ -251,6 +266,12 @@ async function resolveContext(
   });
 
   const availability = availabilityFor(sections);
+  if (basketQuality) {
+    const index = availability.findIndex((entry) => entry.sectionKey === "quality");
+    const hasChecks = basketQuality.parameters.length > 0;
+    availability[index] = { sectionKey: "quality", state: hasChecks ? "available" : "not_configured",
+      reasonCode: hasChecks ? null : "NO_ACTIVE_QUALITY_CHECKS" };
+  }
   const pricingAvailabilityIndex = availability.findIndex(
     (entry) => entry.sectionKey === "pricing"
   );
@@ -284,9 +305,17 @@ async function resolveContext(
     const section = sections.get(key);
     if (!section || section.applicability !== "configured") continue;
     contextSections[key] = sanitizeSectionPayload(key, projectedPayloads.get(key)!);
+    if (key === "recommendations") await resolveBudgetAlterationTargets(contextSections[key] as Row, session);
   }
 
   const contentDigest = requiredString(revision.contentDigest);
+  if (basketQuality) {
+    contextSections.quality = {
+      parameters: mandatoryQualityParameters(basketQuality.parameters),
+      source: { kind: "main_basket", basketId: input.mainBasketId, revisionId: basketQuality._id,
+        revisionNumber: basketQuality.revisionNumber, contentDigest: basketQuality.contentDigest }
+    };
+  }
   return {
     lineage: {
       mainLineId: input.mainLineId,
@@ -296,6 +325,7 @@ async function resolveContext(
       taxVersionId: taxVersion ? requiredString(taxVersion._id) : null,
       formulaVersion: "knowledge-preview-v1",
       contentDigest,
+      ...(basketQuality ? { basketQualityRevisionId: basketQuality._id, basketQualityContentDigest: basketQuality.contentDigest } : {}),
       evaluatedAt: evaluatedAt.toISOString()
     },
     availability,
@@ -305,10 +335,19 @@ async function resolveContext(
         ...(contextSections.overview as Row | undefined),
         ...(resolvedPriority ? { priority: resolvedPriority } : {}),
         basket: publicIdentity(basket),
-        mainLine: publicIdentity(mainLine)
+        mainLine: { ...publicIdentity(mainLine), itemType: mainLine.itemType === "temporary" ? "temporary" : "main_line" }
       }
     },
-    preview: calculationPreview
+    preview: calculationPreview,
+    configuration: buildKnowledgeConfigurationContext({
+      advanced: analysisAdvanced,
+      uom: sections.get("overview")?.applicability === "configured" && uom
+        ? { id: requiredString(uom._id), name: requiredString(uom.name), decimalScale: requiredInteger(uom.decimalScale) }
+        : null,
+      modeKind: input.modeKind,
+      executionSource: input.executionSource,
+      quantity: input.quantity
+    })
   };
 }
 
@@ -678,15 +717,40 @@ function filterSpecifications(payload: Row, requested: string | undefined): void
   });
 }
 
+/** Resolve current target availability separately from the saved conditional rule. */
+async function resolveBudgetAlterationTargets(payload: Row, session: ClientSession): Promise<void> {
+  const rules = activeRows(payload.budgetAlterations);
+  if (!rules.length) return;
+  const targets = await AiEstimatorKnowledgeMainLineModel.find({ _id: { $in: rules.map((rule) => rule.targetMainLineId) } })
+    .select({ _id: 1, name: 1, status: 1, itemType: 1, basketId: 1, subBasketId: 1, activeRevisionId: 1 })
+    .session(session).lean().exec();
+  const byId = new Map(targets.map((target) => [String(target._id), target]));
+  payload.budgetAlterations = rules.map((rule) => {
+    const target = byId.get(String(rule.targetMainLineId));
+    const compatible = target && target.basketId === rule.targetBasketId
+      && (target.subBasketId ?? null) === rule.targetSubBasketId
+      && (target.itemType === "temporary" ? "temporary" : "catalog") === rule.targetType;
+    return { ...rule, target: compatible ? {
+      mainLineId: String(target._id), name: target.name,
+      itemType: target.itemType === "temporary" ? "temporary" : "main_line",
+      status: target.status, activeRevisionId: target.activeRevisionId ?? null
+    } : { mainLineId: rule.targetMainLineId, status: "unavailable", activeRevisionId: null } };
+  });
+}
+
 function projectActiveSectionRows(sectionKey: KnowledgeSectionKey, payload: Row): Row {
   const projected = structuredClone(payload);
+  if (sectionKey === "quality") {
+    if (Array.isArray(projected.parameters)) {
+      projected.parameters = mandatoryQualityParameters(projected.parameters.map(asRow).filter((row): row is Row => row !== null));
+    }
+    return projected;
+  }
   const fields = sectionKey === "scope"
     ? ["exclusions"]
     : sectionKey === "recommendations"
-      ? ["recommendations"]
-      : sectionKey === "quality"
-        ? ["parameters"]
-        : sectionKey === "execution"
+      ? ["recommendations", "exclusions", "budgetAlterations"]
+      : sectionKey === "execution"
           ? ["steps", "productivity"]
           : sectionKey === "advanced"
             ? ["dependencies", "modeOverrides"]

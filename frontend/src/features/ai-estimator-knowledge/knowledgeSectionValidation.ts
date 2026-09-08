@@ -3,6 +3,8 @@ import {
   parseScaledQuantity
 } from "./knowledgeSlabRate";
 import { parseKnowledgeSpecifications } from "./knowledgeSpecificationConfiguration";
+import { validateQualityParameters } from "./knowledgeQuality";
+import { budgetAlterationIssues } from "./knowledgeBudgetAlterations";
 import type {
   KnowledgeJsonObject,
   KnowledgeJsonValue,
@@ -18,6 +20,7 @@ export interface KnowledgeValidationIssue {
 const DECIMAL = /^(?:0|[1-9]\d*)(?:\.\d+)?$/u;
 
 export interface KnowledgeSectionValidationContext {
+  readonly currentMainLineId?: string;
   readonly specifications?: KnowledgeJsonValue;
   readonly uoms?: readonly KnowledgeMaster[];
   readonly vendors?: readonly KnowledgeMaster[];
@@ -194,6 +197,7 @@ export function validateKnowledgeSection(
   if (sectionKey === "scope") rows("exclusions").forEach((row, index) => {
     if (!string(row.targetBasketId) && !string(row.targetMainLineId)) issues.push({ path: `exclusions.${index}`, message: "Choose a target Basket or Main Line." });
   });
+  if (sectionKey === "recommendations") issues.push(...budgetAlterationIssues(payload.budgetAlterations, context.currentMainLineId));
   if (sectionKey === "recommendations") rows("exclusions").forEach((row, index) => {
     requireString(row, "name", `exclusions.${index}`);
   });
@@ -201,19 +205,7 @@ export function validateKnowledgeSection(
     const path = `recommendations.${index}`;
     for (const key of ["name", "priorityId"]) requireString(row, key, path);
   });
-  if (sectionKey === "quality") rows("parameters").forEach((row, index) => {
-    const path = `parameters.${index}`;
-    requireString(row, "type", path); requireString(row, "label", path);
-    const type = string(row.type);
-    const allowed = Array.isArray(row.allowedValues) ? row.allowedValues.filter((item): item is string => typeof item === "string") : [];
-    if (["dropdown", "radio", "multi_select"].includes(type) && allowed.length === 0) issues.push({ path: `${path}.allowedValues`, message: "Add at least one allowed value." });
-    if (type === "number") {
-      if (row.defaultValue !== null && row.defaultValue !== undefined) requireCanonical(row.defaultValue, `${path}.defaultValue`, issues);
-      if (typeof row.minimum === "string" && typeof row.maximum === "string" && Number(row.minimum) > Number(row.maximum)) issues.push({ path: `${path}.maximum`, message: "Maximum must be greater than or equal to minimum." });
-    }
-    if ((type === "dropdown" || type === "radio") && typeof row.defaultValue === "string" && row.defaultValue && !allowed.includes(row.defaultValue)) issues.push({ path: `${path}.defaultValue`, message: "Default value must be one of the allowed values." });
-    if (type === "multi_select" && Array.isArray(row.defaultValue) && row.defaultValue.some((item) => typeof item !== "string" || !allowed.includes(item))) issues.push({ path: `${path}.defaultValue`, message: "Every default value must be allowed." });
-  });
+  if (sectionKey === "quality") issues.push(...validateQualityParameters(payload.parameters));
   if (sectionKey === "execution") {
     const steps = rows("steps");
     const ids = new Set(steps.map((row) => string(row.id)).filter(Boolean));

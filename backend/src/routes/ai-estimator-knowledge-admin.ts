@@ -29,6 +29,14 @@ const stableIdSchema = z.string().trim().min(1).max(128);
 const shortTextSchema = z.string().trim().min(1).max(240);
 const optionalDescriptionSchema = z.string().trim().min(1).max(4_000).nullable().optional();
 const expectedVersionSchema = z.number().int().min(1);
+const basketQualityUpdateSchema = z.object({
+  expectedVersion: expectedVersionSchema,
+  parameters: z.array(z.record(z.string(), z.unknown())).max(200)
+}).strict().superRefine((value, context) => {
+  for (const issue of validateKnowledgeSectionPayload("quality", { parameters: value.parameters })) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: issue.path.replace(/^payload\./u, "").split("."), message: issue.message });
+  }
+});
 const displayOrderSchema = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
 const paginationFields = {
   limit: z.coerce.number().int().min(1).max(100).default(20),
@@ -109,6 +117,7 @@ const mainLineListQuerySchema = z
 
 const mainLineCreateSchema = z
   .object({
+    itemType: z.enum(["main_line", "temporary"]).optional(),
     subBasketId: stableIdSchema.optional(),
     subBasketName: shortTextSchema.optional(),
     name: shortTextSchema,
@@ -249,17 +258,25 @@ function hasMasterChange(input: { expectedVersion: number } & Record<string, unk
   );
 }
 
+const modeCalculationSettingsSchema = z.object({
+  baseRatePaise: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+  lowQuantityLimit: canonicalDecimalSchema,
+  impactBps: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER - 10_000).optional(),
+  minimumMarkupBps: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER - 10_000),
+  startingMarkupBps: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER - 10_000)
+}).strict().refine((value) => value.startingMarkupBps >= value.minimumMarkupBps, {
+  path: ["startingMarkupBps"], message: "Starting markup must be at least the minimum markup."
+});
+
 export const aiEstimatorKnowledgePreviewSchema = z
   .object({
     modeCalculationMarkupBasis: z.enum(["starting", "minimum"]).optional(),
-    modeCalculation: z.object({
-      baseRatePaise: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
-      lowQuantityLimit: canonicalDecimalSchema,
-      minimumMarkupBps: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER - 10_000),
-      startingMarkupBps: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER - 10_000)
-    }).strict().refine((value) => value.startingMarkupBps >= value.minimumMarkupBps, {
-      path: ["startingMarkupBps"], message: "Starting markup must be at least the minimum markup."
-    }).optional(),
+    modeCalculationDiscountBps: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER - 10_000).optional(),
+    modeCalculation: modeCalculationSettingsSchema.optional(),
+    inHouseCalculation: z.object({
+      labor: modeCalculationSettingsSchema,
+      material: modeCalculationSettingsSchema
+    }).strict().optional(),
     priceVersionId: stableIdSchema.nullable().optional(),
     taxVersionId: stableIdSchema.nullable().optional(),
     unitRatePaise: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).nullable().optional(),
@@ -284,10 +301,14 @@ export const aiEstimatorKnowledgePreviewSchema = z
       .nullable()
       .optional()
   })
-  .strict().refine((value) => !value.modeCalculation || value.quantity != null, {
+  .strict().refine((value) => (!value.modeCalculation && !value.inHouseCalculation) || value.quantity != null, {
     path: ["quantity"], message: "A test quantity is required for Mode calculations."
-  }).refine((value) => !value.modeCalculationMarkupBasis || Boolean(value.modeCalculation), {
+  }).refine((value) => !value.modeCalculationMarkupBasis || Boolean(value.modeCalculation || value.inHouseCalculation), {
     path: ["modeCalculation"], message: "Mode calculation settings are required when choosing a markup."
+  }).refine((value) => !(value.modeCalculation && value.inHouseCalculation), {
+    path: ["inHouseCalculation"], message: "Choose either an individual calculation or an In-house total."
+  }).refine((value) => value.modeCalculationDiscountBps === undefined || Boolean(value.modeCalculation || value.inHouseCalculation), {
+    path: ["modeCalculationDiscountBps"], message: "Mode calculation settings are required when applying a discount."
   });
 
 export interface AiEstimatorKnowledgeAdminRouterServices {
@@ -336,6 +357,19 @@ export function createAiEstimatorKnowledgeAdminRouter(
     requireOperation("PATCH /admin/ai-estimator-knowledge/baskets/:basketId"),
     validateBody(basketUpdateSchema),
     handler(async (request) => services.reference.updateBasket(request.authenticatedUser!, String(request.params.basketId), request.body))
+  );
+  router.get(
+    `${prefix}/baskets/:basketId/quality`,
+    protectedRoute,
+    requireOperation("GET /admin/ai-estimator-knowledge/baskets/:basketId/quality"),
+    handler(async (request) => services.reference.getBasketQuality(request.authenticatedUser!, String(request.params.basketId)))
+  );
+  router.put(
+    `${prefix}/baskets/:basketId/quality`,
+    protectedRoute,
+    requireOperation("PUT /admin/ai-estimator-knowledge/baskets/:basketId/quality"),
+    validateBody(basketQualityUpdateSchema),
+    handler(async (request) => services.reference.updateBasketQuality(request.authenticatedUser!, String(request.params.basketId), request.body))
   );
   router.delete(
     `${prefix}/baskets/:basketId`,

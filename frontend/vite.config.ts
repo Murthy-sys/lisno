@@ -7,6 +7,7 @@ import { developmentServer } from "./development-server";
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   server: developmentServer,
+  worker: { format: "es" },
   test: {
     environment: "jsdom",
     setupFiles: ["./src/test/setup.ts"],

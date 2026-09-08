@@ -39,6 +39,7 @@ vi.mock("./knowledgeApi", async (importOriginal) => {
     permanentlyDeleteKnowledgeMainLine: vi.fn(),
     deactivateKnowledgeItem: vi.fn(),
     getKnowledgeHistory: vi.fn(),
+    getKnowledgeBasketQuality: vi.fn(),
     getKnowledgeItem: vi.fn(),
     getKnowledgeSection: vi.fn(),
     listKnowledgeBaskets: vi.fn(),
@@ -145,6 +146,17 @@ async function submitReasonedLifecycleAction(buttonName: "Delete" | "Deactivate"
 beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(knowledgeApi.getKnowledgeItem).mockResolvedValue(draftItem);
+  vi.mocked(knowledgeApi.getKnowledgeBasketQuality).mockResolvedValue({
+    basketId: draftItem.basketId,
+    basketName: draftItem.basketName,
+    basketStatus: "active",
+    version: 1,
+    revisionId: null,
+    revisionNumber: 0,
+    contentDigest: null,
+    parameters: [],
+    updatedAt: null
+  });
   vi.mocked(knowledgeApi.getKnowledgeHistory).mockResolvedValue({ items: [revision], pagination });
   vi.mocked(knowledgeApi.getKnowledgeSection).mockImplementation(async (_mainLineId, _revisionId, sectionKey) => section(sectionKey));
   vi.mocked(knowledgeApi.listKnowledgeBaskets).mockResolvedValue({ items: [], pagination });

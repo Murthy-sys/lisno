@@ -143,6 +143,19 @@ export interface KnowledgeBasket extends KnowledgeVersionedResource {
   readonly status: KnowledgeMasterStatus;
 }
 
+export interface KnowledgeBasketQuality {
+  readonly basketId: string;
+  readonly basketName: string;
+  readonly basketStatus: KnowledgeMasterStatus;
+  /** Main Basket CAS version, independent of the item revision. */
+  readonly version: number;
+  readonly revisionId: string | null;
+  readonly revisionNumber: number;
+  readonly contentDigest: string | null;
+  readonly parameters: readonly KnowledgeJsonObject[];
+  readonly updatedAt: string | null;
+}
+
 /** What a deletion carries away. Nothing here can refuse one. */
 export interface KnowledgeSubBasket extends Omit<KnowledgeBasket, "description" | "status"> {
   readonly basketId: string;
@@ -176,6 +189,7 @@ export interface KnowledgePermanentDeleteBasketResult {
 }
 
 export interface KnowledgeMainLine extends KnowledgeVersionedResource {
+  readonly itemType?: "main_line" | "temporary";
   readonly subBasketId?: string | null;
   readonly basketId: string;
   readonly name: string;
@@ -186,7 +200,22 @@ export interface KnowledgeMainLine extends KnowledgeVersionedResource {
   readonly draftRevisionId: string | null;
 }
 
+export interface KnowledgeTemporaryMainLineReference {
+  mainLineId: string;
+  mainLineName: string;
+  basketId: string;
+  basketName: string;
+  subBasketId: string | null;
+  subBasketName: string | null;
+  status: KnowledgeItemStatus;
+  revisionId: string;
+  revisionStatus: "draft" | "active";
+  rules: Array<{ id: string; trigger: "added" | "removed"; action: "add" | "remove"; requirement: "must" | "can"; reason: string; active: boolean }>;
+}
+
 export interface KnowledgeItemListItem extends KnowledgeVersionedResource {
+  readonly linkedMainLines?: readonly KnowledgeTemporaryMainLineReference[];
+  readonly itemType?: "main_line" | "temporary";
   readonly basketId: string;
   readonly basketName: string;
   readonly subBasketId?: string | null;
@@ -283,11 +312,22 @@ export interface KnowledgePreviewAmountComponent {
 }
 
 export interface KnowledgePreview {
+  readonly inHouseCalculation?: {
+    readonly labor: NonNullable<KnowledgePreview["modeCalculation"]>;
+    readonly material: NonNullable<KnowledgePreview["modeCalculation"]>;
+    readonly totalPaise: number;
+  };
   readonly modeCalculation?: {
     readonly revisedUnitRatePaise: number;
     readonly revisedAmountPaise: number;
     readonly totalPaise: number;
     readonly appliedImpactBps: number;
+    readonly discount?: {
+      readonly rateBps: number;
+      readonly effectiveMarkupBps: number;
+      readonly totalBeforeDiscountPaise: number;
+      readonly amountPaise: number;
+    };
   };
   readonly formulaVersion: "knowledge-preview-v1";
   readonly effectivePriceVersionId: string | null;
@@ -323,6 +363,8 @@ export interface KnowledgeContextLineage {
   readonly taxVersionId: string | null;
   readonly formulaVersion: "knowledge-preview-v1";
   readonly contentDigest: string;
+  readonly basketQualityRevisionId?: string;
+  readonly basketQualityContentDigest?: string;
   readonly evaluatedAt: string;
 }
 
@@ -333,6 +375,41 @@ export interface KnowledgeContext {
     Partial<Record<KnowledgeSectionKey, KnowledgeJsonValue>>
   >;
   readonly preview: KnowledgePreview | null;
+  readonly configuration: KnowledgeConfigurationContext;
+}
+
+export type KnowledgeCalculationScope = "pmc" | "sub_vendor" | "in_house_labor" | "in_house_material";
+
+/** Active-revision configuration. Monetary amounts are paise and percentage rates are basis points. */
+export interface KnowledgeConfigurationContext {
+  readonly formulaVersion: "mode-markup-v1";
+  readonly moneyUnit: "paise";
+  readonly percentageUnit: "basis_points";
+  readonly selection: {
+    readonly modeKind: KnowledgeModeKind | null;
+    readonly executionSource: KnowledgeExecutionSource | null;
+  };
+  readonly uom: { readonly id: string; readonly name: string; readonly decimalScale: number } | null;
+  readonly shared: {
+    readonly paragraph: string | null;
+    readonly scopeConfigurationId: string | null;
+    readonly inclusions: readonly { readonly id: string; readonly name: string }[];
+    readonly exclusions: readonly { readonly id: string; readonly name: string }[];
+  };
+  readonly state: "ready" | "selection_required" | "not_configured" | "invalid";
+  readonly issues: readonly { readonly code: string; readonly scope: KnowledgeCalculationScope | null }[];
+  readonly calculations: readonly {
+    readonly scope: KnowledgeCalculationScope;
+    readonly source: "scoped" | "legacy_shared" | "legacy_in_house" | null;
+    readonly settings: {
+      readonly baseRatePaise: number;
+      readonly lowQuantityLimit: string;
+      readonly impactBps: number;
+      readonly minimumMarkupBps: number;
+      readonly startingMarkupBps: number;
+    } | null;
+    readonly maximumDiscountBps: number | null;
+  }[];
 }
 
 export interface KnowledgeItemListResponse

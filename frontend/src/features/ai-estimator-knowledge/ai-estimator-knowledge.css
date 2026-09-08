@@ -576,7 +576,7 @@
 
 .knowledge-mode-block__dirty {
   margin-inline-start: auto;
-  color: var(--role-accent, var(--color-brand-violet));
+  color: var(--color-warning);
   font-size: var(--text-sm);
   font-weight: 700;
 }
@@ -702,7 +702,7 @@
   align-content: start;
   gap: var(--space-4);
   min-width: 0;
-  padding: var(--space-5);
+  padding: 16px 18px;
   border: 1px solid var(--role-line, var(--color-border));
   border-radius: var(--radius-field);
   background: var(--role-deck, var(--color-surface));
@@ -717,6 +717,34 @@
   border-color: var(--role-line-strong, var(--color-border-strong));
   box-shadow: var(--role-shadow-soft, var(--shadow-soft));
   transform: translateY(-2px);
+}
+
+.knowledge-item-card[data-item-type="temporary"] {
+  border-color: #c39126;
+  border-inline-start-width: 4px;
+  background: #fffaf0;
+}
+
+.knowledge-item-card[data-item-type="temporary"]:hover,
+.knowledge-item-card[data-item-type="temporary"]:focus-within {
+  border-color: #956409;
+  box-shadow: 0 4px 14px rgb(149 100 9 / 12%);
+}
+
+.knowledge-temporary-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 8px;
+  border: 1px solid #d8af57;
+  border-radius: 6px;
+  background: #ffedbe;
+  color: #694707;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.5;
+  letter-spacing: 0.02em;
+  text-transform: none;
+  vertical-align: middle;
 }
 
 .knowledge-item-card h3 {
@@ -785,8 +813,15 @@
   transition: color var(--duration-fast) var(--ease-standard);
 }
 
+.knowledge-item-card .knowledge-item-link {
+  display: flex;
+  align-items: center;
+  min-block-size: 44px;
+}
+
 .knowledge-item-link:hover {
-  color: var(--role-accent, var(--color-brand-violet));
+  color: var(--role-ink, var(--color-text));
+  text-decoration: underline;
   text-decoration-color: currentcolor;
 }
 
@@ -3485,12 +3520,61 @@ body:has(.ui-app-shell[data-role]) .modal .knowledge-dialog-actions .ui-button--
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 4px 12px;
-  margin-block-start: 4px;
+  gap: 12px 24px;
+  margin-block-start: 12px;
 }
 
 .knowledge-mode-configuration__pmc-context .knowledge-mode-configuration__mode-context {
   margin: 0;
+}
+
+.knowledge-pmc-margin {
+  display: grid;
+  grid-template-columns: 104px minmax(0, auto);
+  align-items: center;
+  gap: 6px 10px;
+  max-inline-size: 100%;
+}
+
+.knowledge-pmc-margin .ui-field__label {
+  grid-column: 1 / -1;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.knowledge-pmc-margin__control {
+  position: relative;
+  min-inline-size: 0;
+}
+
+.knowledge-mode-configuration .knowledge-pmc-margin .ui-input {
+  min-block-size: 38px;
+  block-size: 38px;
+  padding: 4px 36px 4px 10px;
+  border-radius: 8px;
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+
+.knowledge-pmc-margin__suffix {
+  position: absolute;
+  inset-inline-end: 24px;
+  inset-block-start: 50%;
+  transform: translateY(-50%);
+  color: var(--color-text-muted);
+  font-size: 12px;
+  pointer-events: none;
+}
+
+.knowledge-pmc-margin .ui-field__hint,
+.knowledge-pmc-margin .ui-field__error {
+  margin: 0;
+  font-size: 11px;
+}
+
+.knowledge-pmc-margin .ui-field__error {
+  grid-column: 1 / -1;
+  max-inline-size: 250px;
 }
 
 .knowledge-mode-configuration__mode-content {
@@ -3706,6 +3790,32 @@ body:has(.ui-app-shell[data-role]) .modal .knowledge-dialog-actions .ui-button--
   overflow-wrap: anywhere;
 }
 
+.knowledge-mode-calculation__discount {
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--role-deck-tint, var(--color-surface-subtle));
+}
+
+.knowledge-mode-calculation__discount-value {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 4px 12px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.knowledge-mode-calculation__discount-value output {
+  font-size: 16px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+  min-inline-size: 0;
+}
+
 .knowledge-mode-calculation__actions {
   display: flex;
   flex-wrap: wrap;
@@ -3805,6 +3915,57 @@ body:has(.ui-app-shell[data-role]) .modal .knowledge-dialog-actions .ui-button--
 .knowledge-mode-calculation__totals dd {
   margin: 0;
   font-weight: 700;
+}
+
+.knowledge-in-house-total {
+  display: grid;
+  gap: 16px;
+  min-inline-size: 0;
+  padding: 16px;
+  border: 1px solid var(--role-line, var(--color-border));
+  border-radius: var(--radius-field);
+  background: var(--role-deck-tint, var(--color-surface-subtle));
+}
+
+.knowledge-in-house-total__amounts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr));
+  gap: 12px;
+  margin: 0;
+}
+
+.knowledge-in-house-total__amounts > div {
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  min-inline-size: 0;
+  padding: 12px;
+  border-radius: 8px;
+  background: var(--color-surface);
+}
+
+.knowledge-in-house-total__amounts > div:last-child {
+  border: 1px solid var(--role-line, var(--color-border));
+}
+
+.knowledge-in-house-total__amounts dt {
+  font-size: 12px;
+}
+
+.knowledge-in-house-total__amounts dd {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.knowledge-in-house-simulator .knowledge-mode-calculation__groups {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.knowledge-in-house-simulator .knowledge-mode-calculation__rate-fields {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .knowledge-page--item-workspace .knowledge-mode-description .ui-control {
@@ -4458,3 +4619,72 @@ body:has(.ui-app-shell[data-role]) .modal .knowledge-dialog-actions .ui-button--
     transition: none;
   }
 }
+
+.knowledge-budget-alterations { display: grid; gap: 16px; min-inline-size: 0; }
+.knowledge-budget-alterations__heading,
+.knowledge-budget-rule__heading { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+.knowledge-budget-alterations__heading { justify-content: space-between; }
+.knowledge-budget-alterations__heading h3,
+.knowledge-budget-rule__heading h4 { margin: 0; }
+.knowledge-budget-alterations__heading p { margin: 6px 0 0; font-size: 13px; }
+.knowledge-budget-alterations__help { margin: 0; color: var(--color-text-muted); font-size: 12px; }
+.knowledge-budget-alterations__empty { padding: 24px; border: 1px dashed var(--color-border-strong); border-radius: 12px; color: var(--color-text-muted); font-size: 13px; }
+.knowledge-budget-rule { display: grid; gap: 16px; padding: 20px; border: 1px solid var(--color-border); border-radius: 12px; background: var(--color-surface); min-inline-size: 0; }
+.knowledge-budget-rule__heading h4 { font-size: 14px; }
+.knowledge-budget-rule__badge { padding: 3px 8px; border-radius: 6px; color: var(--color-text-muted); background: var(--color-surface-subtle); font-size: 11px; }
+.knowledge-budget-rule__badge--required { color: var(--color-text); background: color-mix(in srgb, var(--color-warning) 15%, var(--color-surface)); }
+.knowledge-budget-rule__enabled { display: flex; align-items: center; gap: 6px; margin-inline-start: auto; font-size: 12px; }
+.knowledge-budget-rule__condition,
+.knowledge-budget-rule__targets { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+.knowledge-budget-rule .ui-field { min-inline-size: 0; }
+.knowledge-budget-rule .ui-field__label { font-size: 12px; }
+.knowledge-budget-rule .ui-control { font-size: 13px; border-radius: 8px; }
+.knowledge-budget-rule__temporary { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; color: var(--color-text-muted); font-size: 12px; }
+.knowledge-budget-rule__temporary a { color: var(--color-text); text-decoration: underline; text-underline-offset: 3px; }
+.knowledge-budget-rule__preview { padding: 12px 14px; border-inline-start: 3px solid var(--color-border-strong); background: var(--color-surface-subtle); border-radius: 0 8px 8px 0; overflow-wrap: anywhere; }
+.knowledge-budget-rule__preview p { margin: 0; font-size: 13px; line-height: 1.55; white-space: pre-wrap; }
+.knowledge-budget-rule__preview p + p { margin-block-start: 6px; }
+.knowledge-budget-rule__preview .knowledge-budget-rule__application { color: var(--color-text-muted); font-size: 11px; }
+@media (max-width: 700px) {
+  .knowledge-budget-rule { padding: 14px; }
+  .knowledge-budget-rule__condition,
+  .knowledge-budget-rule__targets { grid-template-columns: minmax(0, 1fr); }
+}
+
+.knowledge-page--item-workspace .knowledge-section-tab[aria-selected="true"] {
+  color: var(--role-ink, var(--color-text));
+}
+.ui-app-shell[data-role] .knowledge-budget-rule .knowledge-budget-rule__enabled .ui-checkbox {
+  inline-size: 14px;
+  block-size: 14px;
+  min-inline-size: 14px;
+  min-block-size: 14px;
+  padding: 0;
+  margin: 0;
+  flex: 0 0 14px;
+}
+.knowledge-budget-rule__enabled { min-block-size: 44px; cursor: pointer; }
+
+.knowledge-temporary-main-lines {
+  min-inline-size: 0;
+  padding: 16px 18px;
+  border: 1px solid #dfc796;
+  border-radius: 10px;
+  background: #fffaf0;
+  color: #292433;
+  overflow-wrap: anywhere;
+}
+.knowledge-temporary-main-lines h2,
+.knowledge-temporary-main-lines h4 { margin: 0 0 10px; font-size: 14px; font-weight: 700; }
+.knowledge-temporary-main-lines p { margin: 4px 0 0; font-size: 12px; line-height: 1.6; }
+.knowledge-temporary-main-lines ul { display: grid; gap: 14px; margin: 0; padding: 0; list-style: none; }
+.knowledge-temporary-main-lines li + li { border-block-start: 1px solid #e7d8ba; padding-block-start: 14px; }
+.knowledge-temporary-main-lines__name { color: #423013; font-size: 14px; font-weight: 650; text-decoration: underline; text-underline-offset: 3px; }
+.knowledge-temporary-main-lines__location,
+.knowledge-temporary-main-lines__revisions { color: #665b49; }
+.knowledge-temporary-main-lines__reference { margin-block-start: 10px; }
+.knowledge-temporary-main-lines__revision { display: inline-block; padding: 2px 7px; border-radius: 4px; color: #594719; background: #f5e8ca; font-size: 11px; font-weight: 650; }
+.knowledge-temporary-main-lines__rule { margin-block-start: 8px; }
+.knowledge-temporary-main-lines--compact { padding: 12px 0 0; border: 0; border-block-start: 1px solid #e7d8ba; border-radius: 0; background: transparent; }
+.knowledge-temporary-main-lines--compact h4 { font-size: 12px; margin-block-end: 8px; }
+.knowledge-temporary-main-lines--compact .knowledge-temporary-main-lines__name { font-size: 13px; }

@@ -6,6 +6,7 @@ import mongoose, { type ClientSession } from "mongoose";
 import type {
   KnowledgeCompletenessSummary,
   KnowledgeItemListItem,
+  KnowledgeTemporaryMainLineReference,
   KnowledgeQuantitySlab,
   KnowledgeSlabRate,
   KnowledgeRevision,
@@ -80,6 +81,7 @@ import {
   observeExplicitAiEstimatorKnowledgeDisplayOrder
 } from "./ai-estimator-knowledge-display-order.service.js";
 import { systemClock, type Clock } from "./workflow.js";
+import { readBasketQualityRevisions, type AiEstimatorKnowledgeBasketQualityRevision } from "./ai-estimator-knowledge-basket-quality.js";
 
 type Row = Record<string, unknown>;
 
@@ -94,6 +96,7 @@ export interface KnowledgePage<T> {
 }
 
 export interface KnowledgeMainLineInput {
+  readonly itemType?: "main_line" | "temporary";
   readonly subBasketId?: string;
   readonly subBasketName?: string;
   readonly name: string;
@@ -101,7 +104,7 @@ export interface KnowledgeMainLineInput {
   readonly displayOrder?: number;
 }
 
-export interface KnowledgeMainLineUpdateInput extends Partial<Omit<KnowledgeMainLineInput, "subBasketId" | "subBasketName">> {
+export interface KnowledgeMainLineUpdateInput extends Partial<Omit<KnowledgeMainLineInput, "subBasketId" | "subBasketName" | "itemType">> {
   readonly expectedVersion: number;
 }
 
@@ -249,6 +252,7 @@ export function createAiEstimatorKnowledgeItemService(
     },
 
     async createMainLine(actor, basketId, input) {
+      if (input.itemType !== undefined && !["main_line", "temporary"].includes(input.itemType)) throw new ApiError(400, "VALIDATION_ERROR", "Select a valid item type.");
       const mainLineId = knowledgeId("main-line", uuid());
       await mongoose.connection.transaction(async (session) => {
         const storedActor = await actorGuard.requireMutationActor(actor, session);
@@ -292,7 +296,7 @@ export function createAiEstimatorKnowledgeItemService(
           if (!child) throw new ApiError(400, "VALIDATION_ERROR", "Select a Sub Basket belonging to the active Main Basket.", { subBasketId: "Sub Basket is unavailable for this Main Basket." });
         }
         const revisionId = knowledgeId("revision", uuid());
-        const completeness = emptyCompleteness(mainLineId);
+        const completeness = emptyCompleteness(mainLineId, input.itemType);
         const displayOrderTarget = {
           scope: createAiEstimatorKnowledgeMainLineDisplayOrderScope(basketId),
           resourceModel: AiEstimatorKnowledgeMainLineModel,
@@ -313,6 +317,7 @@ export function createAiEstimatorKnowledgeItemService(
             _id: mainLineId,
             basketId,
             subBasketId,
+            itemType: input.itemType ?? "main_line",
             name: input.name,
             nameNormalized: normalizeKnowledgeIdentity(input.name),
             description: input.description ?? null,
@@ -351,7 +356,7 @@ export function createAiEstimatorKnowledgeItemService(
             mainLineId,
             revisionId,
             sectionKey,
-            applicability: "not_configured",
+            applicability: input.itemType === "temporary" && !TEMPORARY_ITEM_SECTIONS.includes(sectionKey) ? "not_applicable" : "not_configured",
             payload: {},
             version: 1,
             createdById: storedActor.id,
@@ -375,7 +380,7 @@ export function createAiEstimatorKnowledgeItemService(
           entityType: "ai_estimator_knowledge_main_line",
           entityId: mainLineId,
           occurredAt: occurredAt.toISOString(),
-          newValues: { basketId, subBasketId, revisionId, displayOrder, version: 1 }
+          newValues: { basketId, subBasketId, itemType: input.itemType ?? "main_line", revisionId, displayOrder, version: 1 }
         }, session);
       });
       return getItemAfterMutation(actor, mainLineId, actorGuard);
@@ -521,12 +526,10 @@ export function createAiEstimatorKnowledgeItemService(
           .sort({ updatedAt: -1, _id: 1 })
           .lean()
           .exec();
-        const summaries = await Promise.all(
-          documents.map((document) => buildItemSummary(asRow(document)!))
-        );
+        const summaries = await buildItemSummaries(documents.map((document) => asRow(document)!));
         const filtered = summaries.filter((item) => itemMatches(item, filters));
         return {
-          items: filtered.slice(pagination.offset, pagination.offset + pagination.limit),
+          items: await attachTemporaryMainLineReferences(filtered.slice(pagination.offset, pagination.offset + pagination.limit)),
           total: filtered.length
         };
       }
@@ -540,7 +543,7 @@ export function createAiEstimatorKnowledgeItemService(
         AiEstimatorKnowledgeMainLineModel.countDocuments(filter).exec()
       ]);
       return {
-        items: await Promise.all(documents.map((document) => buildItemSummary(asRow(document)!))),
+        items: await attachTemporaryMainLineReferences(await buildItemSummaries(documents.map((document) => asRow(document)!))),
         total
       };
     },
@@ -699,6 +702,9 @@ export function createAiEstimatorKnowledgeItemService(
         const revision = asRow(revisionDocument);
         const section = asRow(sectionDocument);
         if (!line || !revision || !section) notFound();
+        if (line.itemType === "temporary" && !TEMPORARY_ITEM_SECTIONS.includes(sectionKey)) {
+          throw new ApiError(400, "VALIDATION_ERROR", "Temporary items support only Overview, Mode and Quality Parameters.");
+        }
         if (revision.status !== "draft" || line.draftRevisionId !== revisionId) immutableHistory();
         if (requiredInteger(section.version) !== input.expectedVersion) versionConflict();
         const expectedAggregateVersion = input.expectedAggregateVersion ?? requiredInteger(line.version);
@@ -1013,6 +1019,7 @@ export function createAiEstimatorKnowledgeItemService(
           _id: duplicateId,
           basketId,
           subBasketId: source.subBasketId ?? null,
+          itemType: source.itemType ?? "main_line",
           name: duplicateName,
           nameNormalized: normalizeKnowledgeIdentity(duplicateName),
           description: source.description ?? null,
@@ -1061,6 +1068,7 @@ export function createAiEstimatorKnowledgeItemService(
           occurredAt: occurredAt.toISOString(),
           newValues: {
             sourceMainLineId: mainLineId,
+            itemType: source.itemType ?? "main_line",
             subBasketId: source.subBasketId ?? null,
             sourceRevisionId,
             revisionId,
@@ -1891,18 +1899,17 @@ async function loadItemDetail(mainLineId: string, includeArchived = false): Prom
     }).lean().exec()
   );
   if (!line) notFound();
-  const summary = await buildItemSummary(line);
+  const [summary] = await attachTemporaryMainLineReferences(await buildItemSummaries([line]));
   const [activeRevision, draftRevision] = await Promise.all([
     optionalString(line.activeRevisionId) ? loadRevision(requiredString(line.activeRevisionId)) : null,
     optionalString(line.draftRevisionId) ? loadRevision(requiredString(line.draftRevisionId)) : null
   ]);
-  const current = draftRevision ?? activeRevision;
   return {
     ...summary,
     activeRevision,
     draftRevision,
-    blockers: current?.completeness.blockers ?? [],
-    warnings: current?.completeness.warnings ?? []
+    blockers: summary!.completeness.blockers,
+    warnings: summary!.completeness.warnings
   };
 }
 
@@ -1916,10 +1923,83 @@ async function getItemAfterMutation(
   return loadItemDetail(mainLineId, includeArchived);
 }
 
-async function buildItemSummary(line: Row): Promise<KnowledgeItemListItem> {
+/** Read current incoming rule references in a batch; names are presentation, never joins. */
+async function attachTemporaryMainLineReferences(items: KnowledgeItemListItem[]): Promise<KnowledgeItemListItem[]> {
+  const targets = new Map(items.filter((item) => item.itemType === "temporary").map((item) => [item.mainLineId, item]));
+  if (!targets.size) return items;
+  const references = new Map<string, KnowledgeTemporaryMainLineReference[]>([...targets.keys()].map((id) => [id, []]));
+  const sections = (await AiEstimatorKnowledgeSectionModel.find({
+    sectionKey: "recommendations", applicability: "configured",
+    "payload.budgetAlterations": { $elemMatch: { targetType: "temporary", targetMainLineId: { $in: [...targets.keys()] } } }
+  }).select({ mainLineId: 1, revisionId: 1, payload: 1 }).lean().exec()).map((section) => asRow(section)!);
+  const sources = (await AiEstimatorKnowledgeMainLineModel.find({
+    _id: { $in: [...new Set(sections.map((section) => section.mainLineId))] },
+    itemType: { $ne: "temporary" }, status: { $ne: "archived" }
+  }).select({ _id: 1, name: 1, basketId: 1, subBasketId: 1, status: 1, activeRevisionId: 1, draftRevisionId: 1 }).lean().exec()).map((line) => asRow(line)!);
+  const [baskets, subBaskets] = await Promise.all([
+    AiEstimatorKnowledgeBasketModel.find({ _id: { $in: [...new Set(sources.map((line) => line.basketId))] }, status: { $ne: "archived" } }).select({ _id: 1, name: 1 }).lean().exec(),
+    AiEstimatorKnowledgeSubBasketModel.find({ _id: { $in: sources.flatMap((line) => line.subBasketId ? [line.subBasketId] : []) } }).select({ _id: 1, name: 1, basketId: 1 }).lean().exec()
+  ]);
+  const sourceById = new Map(sources.map((line) => [requiredString(line._id), line]));
+  const basketById = new Map(baskets.map((basket) => [String(basket._id), basket]));
+  const subBasketById = new Map(subBaskets.map((basket) => [String(basket._id), basket]));
+  for (const section of sections) {
+    const source = sourceById.get(requiredString(section.mainLineId));
+    if (!source) continue;
+    const revisionStatus = section.revisionId === source.draftRevisionId ? "draft" : section.revisionId === source.activeRevisionId ? "active" : null;
+    const basket = basketById.get(requiredString(source.basketId));
+    if (!revisionStatus || !basket) continue;
+    const subBasket = subBasketById.get(optionalString(source.subBasketId) ?? "");
+    const grouped = new Map<string, KnowledgeTemporaryMainLineReference["rules"]>();
+    for (const rule of structuredRows(payloadFor(section).budgetAlterations)) {
+      const targetId = optionalString(rule.targetMainLineId);
+      const target = targetId ? targets.get(targetId) : null;
+      if (!target || rule.targetType !== "temporary" || rule.targetBasketId !== target.basketId
+        || (rule.targetSubBasketId ?? null) !== (target.subBasketId ?? null)
+        || !["added", "removed"].includes(String(rule.trigger)) || !["add", "remove"].includes(String(rule.action))
+        || !["must", "can"].includes(String(rule.requirement)) || typeof rule.reason !== "string" || typeof rule.active !== "boolean") continue;
+      const rules = grouped.get(targetId!) ?? [];
+      rules.push({ id: requiredString(rule.id), trigger: rule.trigger as "added" | "removed", action: rule.action as "add" | "remove",
+        requirement: rule.requirement as "must" | "can", reason: rule.reason, active: rule.active });
+      grouped.set(targetId!, rules);
+    }
+    for (const [targetId, rules] of grouped) references.get(targetId)!.push({
+      mainLineId: requiredString(source._id), mainLineName: requiredString(source.name),
+      basketId: requiredString(source.basketId), basketName: String(basket.name),
+      subBasketId: optionalString(source.subBasketId) ?? null,
+      subBasketName: subBasket?.basketId === source.basketId ? String(subBasket.name) : null,
+      status: source.status as KnowledgeItemListItem["status"],
+      revisionId: requiredString(section.revisionId), revisionStatus, rules
+    });
+  }
+  return items.map((item) => item.itemType === "temporary" ? { ...item,
+    linkedMainLines: references.get(item.mainLineId)!.sort((left, right) => left.mainLineName.localeCompare(right.mainLineName)
+      || left.mainLineId.localeCompare(right.mainLineId) || left.revisionStatus.localeCompare(right.revisionStatus))
+  } : item);
+}
+
+async function buildItemSummaries(lines: Row[]): Promise<KnowledgeItemListItem[]> {
+  if (!lines.length) return [];
+  const baskets = (await AiEstimatorKnowledgeBasketModel.find({
+    _id: { $in: [...new Set(lines.map((line) => requiredString(line.basketId)))] }
+  }).lean().exec()).map((document) => asRow(document)!);
+  const basketById = new Map(baskets.map((basket) => [requiredString(basket._id), basket]));
+  const qualityByBasket = await readBasketQualityRevisions(baskets);
+  return Promise.all(lines.map((line) => {
+    const basketId = requiredString(line.basketId);
+    const basket = basketById.get(basketId);
+    if (!basket) unresolved("Knowledge Basket is unavailable.");
+    return buildItemSummary(line, basket, qualityByBasket.get(basketId) ?? null);
+  }));
+}
+
+async function buildItemSummary(
+  line: Row,
+  basket: Row,
+  basketQuality: AiEstimatorKnowledgeBasketQualityRevision | null
+): Promise<KnowledgeItemListItem> {
   const revisionId = optionalString(line.draftRevisionId) ?? optionalString(line.activeRevisionId);
-  const [basketDocument, revisionDocument, overviewDocument, pricingDocument, subBasketDocument] = await Promise.all([
-    AiEstimatorKnowledgeBasketModel.findById(requiredString(line.basketId)).lean().exec(),
+  const [revisionDocument, overviewDocument, pricingDocument, subBasketDocument] = await Promise.all([
     revisionId ? AiEstimatorKnowledgeRevisionModel.findById(revisionId).lean().exec() : null,
     revisionId ? AiEstimatorKnowledgeSectionModel.findOne({ revisionId, sectionKey: "overview" }).lean().exec() : null,
     revisionId ? AiEstimatorKnowledgeSectionModel.findOne({ revisionId, sectionKey: "pricing" }).lean().exec() : null,
@@ -1932,15 +2012,14 @@ async function buildItemSummary(line: Row): Promise<KnowledgeItemListItem> {
         _id: { $in: retainedPriceVersionIds },
         revisionId
       }).select({ vendorId: 1 }).lean().exec();
-  const basket = asRow(basketDocument);
-  if (!basket) unresolved("Knowledge Basket is unavailable.");
   const revision = asRow(revisionDocument);
   const overview = payloadFor(asRow(overviewDocument));
-  const completeness = revision ? completenessDto(revision.completeness) : emptyCompleteness(requiredString(line._id));
+  const completeness = revision ? completenessDto(revision.completeness) : emptyCompleteness(requiredString(line._id), line.itemType === "temporary" ? "temporary" : "main_line");
   return {
     id: requiredString(line._id),
     basketId: requiredString(line.basketId),
     basketName: requiredString(basket.name),
+    itemType: line.itemType === "temporary" ? "temporary" : "main_line",
     subBasketId: optionalString(line.subBasketId) ?? null,
     subBasketName: subBasketDocument ? requiredString(asRow(subBasketDocument)!.name) : null,
     mainLineId: requiredString(line._id),
@@ -1955,13 +2034,37 @@ async function buildItemSummary(line: Row): Promise<KnowledgeItemListItem> {
     modeIds: stringArray(overview.modeIds),
     surfaceIds: stringArray(overview.surfaceIds),
     vendorIds: [...new Set(priceDocuments.map((row) => optionalString(asRow(row)?.vendorId)).filter((id): id is string => Boolean(id)))],
-    completeness,
+    completeness: effectiveBasketQualityCompleteness(completeness, basketQuality),
     allowedActions: allowedActions(requiredString(line.status), Boolean(line.draftRevisionId)),
     version: requiredInteger(line.version),
     createdById: requiredString(line.createdById),
     updatedById: requiredString(line.updatedById),
     createdAt: requiredDate(line.createdAt).toISOString(),
     updatedAt: requiredDate(line.updatedAt).toISOString()
+  };
+}
+
+/** Presentation only: saved revisions and revision history keep their original completeness. */
+function effectiveBasketQualityCompleteness(
+  historical: KnowledgeCompletenessSummary,
+  basketQuality: AiEstimatorKnowledgeBasketQualityRevision | null
+): KnowledgeCompletenessSummary {
+  if (!basketQuality) return historical;
+  const hasChecks = basketQuality.parameters.length > 0;
+  const quality: KnowledgeCompletenessSummary["sections"][number] = {
+    sectionKey: "quality", state: hasChecks ? "complete" : "not_configured",
+    findings: hasChecks ? [] : [{ code: "SECTION_NOT_CONFIGURED", sectionKey: "quality",
+      message: "quality is not configured.", blocking: false }]
+  };
+  const sections = historical.sections.map((section) => section.sectionKey === "quality" ? quality : section);
+  if (!sections.some((section) => section.sectionKey === "quality")) sections.push(quality);
+  const applicable = sections.filter((section) => section.state !== "not_applicable");
+  const findings = sections.flatMap((section) => section.findings);
+  return {
+    percentage: applicable.length ? Math.round(100 * applicable.filter((section) => section.state === "complete").length / applicable.length) : 100,
+    sections,
+    blockers: findings.filter((finding) => finding.blocking),
+    warnings: findings.filter((finding) => !finding.blocking)
   };
 }
 
@@ -2138,12 +2241,14 @@ function activationCompletenessFindings(
   }];
 }
 
-function emptyCompleteness(mainLineId: string): KnowledgeCompletenessSummary {
+const TEMPORARY_ITEM_SECTIONS: readonly KnowledgeSectionKey[] = ["overview", "advanced", "pricing", "quality"];
+
+function emptyCompleteness(mainLineId: string, itemType?: "main_line" | "temporary"): KnowledgeCompletenessSummary {
   return deriveKnowledgeCompleteness({
     identity: { basketId: "resolved-by-main-line", mainLineId, uomId: null },
     sections: AI_ESTIMATOR_KNOWLEDGE_SECTION_KEYS.map((sectionKey) => ({
       sectionKey,
-      applicability: "not_configured",
+      applicability: itemType === "temporary" && !TEMPORARY_ITEM_SECTIONS.includes(sectionKey) ? "not_applicable" : "not_configured",
       payload: {}
     }))
   });
@@ -2482,6 +2587,8 @@ function basketTargetIds(sectionKey: KnowledgeSectionKey, payload: Row): Set<str
     ? payload.exclusions
     : sectionKey === "advanced"
       ? payload.dependencies
+      : sectionKey === "recommendations"
+        ? payload.budgetAlterations
       : null;
   return new Set(
     structuredRows(candidates)
@@ -2512,6 +2619,9 @@ async function validateRevisionRelationships(
   await validateRevisionMasterReferences(rows, session, context);
   await validateRevisionSectionRules(rows, session, context);
   await validateScopeBasketReferences(rows, session);
+  if (!context || context.updatedSectionKey === "recommendations") {
+    await validateBudgetAlterationReferences(mainLineId, rows, session);
+  }
   const stepIssues = sectionGraphIssues(rows);
   if (stepIssues.length > 0) {
     throw new ApiError(409, "DEPENDENCY_CYCLE", "Execution dependencies are invalid.", {
@@ -2853,6 +2963,44 @@ async function validateScopeBasketReferences(rows: Row[], session: ClientSession
   }).session(session).exec() !== basketIds.size) invalidKnowledgeReference("Basket");
 }
 
+async function validateBudgetAlterationReferences(mainLineId: string, rows: Row[], session: ClientSession): Promise<void> {
+  const rules = structuredRows(payloadFor(rows.find((row) => row.sectionKey === "recommendations")).budgetAlterations);
+  const basketIds = new Set<string>();
+  const lineIds = new Set<string>();
+  for (const [index, rule] of rules.entries()) {
+    if (rule.active === false) continue;
+    const path = `payload.budgetAlterations.${index}`;
+    const reject = (field: string, message: string): never => invalidRevisionSectionRules([validationIssue(`${path}.${field}`, "INVALID_REFERENCE", message)]);
+    const basketId = optionalString(rule.targetBasketId);
+    if (!basketId || !await AiEstimatorKnowledgeBasketModel.exists({ _id: basketId, status: "active" }).session(session)) {
+      reject("targetBasketId", "Select an available Main Basket.");
+    }
+    basketIds.add(basketId!);
+    const subBasketId = optionalString(rule.targetSubBasketId) ?? null;
+    if (subBasketId && !await AiEstimatorKnowledgeSubBasketModel.exists({ _id: subBasketId, basketId }).session(session)) {
+      reject("targetSubBasketId", "Select a Sub Basket belonging to this Main Basket.");
+    }
+    const targetId = optionalString(rule.targetMainLineId);
+    if (targetId === mainLineId) reject("targetMainLineId", "Select a different Main Line as the affected item.");
+    const target = await AiEstimatorKnowledgeMainLineModel.findOne({
+      _id: targetId, basketId, subBasketId, status: { $in: ["draft", "active"] },
+      itemType: rule.targetType === "temporary" ? "temporary" : { $ne: "temporary" }
+    }).select({ _id: 1 }).session(session).lean().exec();
+    if (!target) reject("targetMainLineId", "Select an available Main Line belonging to the chosen Main Basket and Sub Basket.");
+    lineIds.add(targetId!);
+  }
+  // Share writes with target deletion/status changes so reference validation cannot race them.
+  await coordinateBasketDependencies(basketIds, session);
+  for (const targetId of [...lineIds].sort()) {
+    const target = await AiEstimatorKnowledgeMainLineModel.findOneAndUpdate(
+      { _id: targetId, status: { $in: ["draft", "active"] } },
+      { $inc: { dependencyEpoch: 1 } },
+      { returnDocument: "after", runValidators: true, session, timestamps: false }
+    ).select({ _id: 1 }).lean().exec();
+    if (!target) invalidKnowledgeReference("Main Line");
+  }
+}
+
 function structuredRows(value: unknown): Row[] {
   if (value === undefined || value === null) return [];
   const candidates = Array.isArray(value) ? value : [value];
@@ -3184,6 +3332,7 @@ function publicMainLine(value: unknown): Row {
   if (!row) unresolved("Knowledge Main Line is corrupt.");
   return {
     id: requiredString(row._id),
+    itemType: row.itemType === "temporary" ? "temporary" : "main_line",
     basketId: requiredString(row.basketId),
     subBasketId: optionalString(row.subBasketId) ?? null,
     name: requiredString(row.name),

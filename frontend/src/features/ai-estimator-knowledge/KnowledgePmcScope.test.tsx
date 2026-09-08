@@ -51,9 +51,16 @@ describe("PMC Inclusions and Exclusions", () => {
     await user.click(screen.getByRole("checkbox", { name: "PMC" }));
     await user.click(screen.getByRole("checkbox", { name: "Execution" }));
     expect(screen.getByRole("button", { name: "Add component" })).toBeEnabled();
+    for (const title of ["Inclusions", "Exclusions"]) {
+      expect(within(screen.getByRole("group", { name: title })).getByRole("checkbox", { name: "Transport" })).toBeChecked();
+    }
+    await user.click(screen.getByRole("radio", { name: "In-house" }));
     expect(screen.queryByRole("group", { name: "Inclusions" })).not.toBeInTheDocument();
     expect(screen.queryByRole("group", { name: "Exclusions" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("radio", { name: "Sub-Vendor" }));
     await user.click(screen.getByRole("checkbox", { name: "PMC" }));
+    expect(screen.getAllByRole("group", { name: "Inclusions" })).toHaveLength(1);
+    expect(screen.getAllByRole("group", { name: "Exclusions" })).toHaveLength(1);
     for (const title of ["Inclusions", "Exclusions"]) {
       expect(within(screen.getByRole("group", { name: title })).getByRole("checkbox", { name: "Transport" })).toBeChecked();
     }
@@ -121,6 +128,13 @@ describe("PMC Inclusions and Exclusions", () => {
     expect(screen.queryByRole("button", { name: "Add Inclusion" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Add Exclusion" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^Delete (inclusion|exclusion) / })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("checkbox", { name: "PMC" }));
+    await user.click(screen.getByRole("checkbox", { name: "Execution" }));
+    for (const title of ["Inclusions", "Exclusions"]) {
+      for (const box of within(screen.getByRole("group", { name: title })).getAllByRole("checkbox")) expect(box).toBeDisabled();
+    }
+    expect(screen.queryByRole("button", { name: "Add Inclusion" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Add Exclusion" })).not.toBeInTheDocument();
     expect(onChange).not.toHaveBeenCalled();
   });
 

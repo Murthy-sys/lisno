@@ -16,6 +16,9 @@ export interface KnowledgeModeCalculationUom {
 }
 
 interface Props {
+  readonly active?: boolean;
+  readonly contextLabel?: string;
+  readonly issuePath?: string;
   readonly value: KnowledgeJsonValue | undefined;
   readonly uom: KnowledgeModeCalculationUom;
   readonly readOnly: boolean;
@@ -26,7 +29,7 @@ interface Props {
   readonly onValidationChange: (valid: boolean) => void;
 }
 
-export function KnowledgeModeCalculationEditor({ value, uom, readOnly, validationAttempt, issues, onChange, onDirty, onValidationChange }: Props) {
+export function KnowledgeModeCalculationEditor({ value, uom, readOnly, validationAttempt, issues, onChange, onDirty, onValidationChange, active = true, contextLabel, issuePath = "modeCalculation" }: Props) {
   const [draft, setDraft] = useState(() => modeCalculationDraft(value));
   const [touched, setTouched] = useState(value != null);
   const [simulator, setSimulator] = useState<{ scopeKey: string; initialDraft: KnowledgeModeCalculationDraft } | null>(null);
@@ -45,14 +48,15 @@ export function KnowledgeModeCalculationEditor({ value, uom, readOnly, validatio
     }
   }, [value]);
   useEffect(() => onValidationChange(valid), [onValidationChange, valid]);
+  useEffect(() => { if (!active) setSimulator(null); }, [active]);
   useEffect(() => {
-    if (validationAttempt > 0) rootRef.current?.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus();
-  }, [validationAttempt]);
+    if (active && validationAttempt > 0) rootRef.current?.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus();
+  }, [active, validationAttempt]);
 
   const errors = { ...(touched ? parsed.errors : {}) };
-  const paths = { baseRate: "baseRatePaise", lowQuantityLimit: "lowQuantityLimit", minimumRate: "minimumMarkupBps", startingRate: "startingMarkupBps" } as const;
+  const paths = { baseRate: "baseRatePaise", lowQuantityLimit: "lowQuantityLimit", impactRate: "impactBps", minimumRate: "minimumMarkupBps", startingRate: "startingMarkupBps" } as const;
   for (const [field, path] of Object.entries(paths)) {
-    const error = issues.find((issue) => issue.path === `modeCalculation.${path}`)?.message;
+    const error = issues.find((issue) => issue.path === `${issuePath}.${path}`)?.message;
     if (error) errors[field as keyof KnowledgeModeCalculationDraft] = error;
   }
 
@@ -70,7 +74,8 @@ export function KnowledgeModeCalculationEditor({ value, uom, readOnly, validatio
   }
 
   return <div ref={rootRef}>
-    <KnowledgeModeCalculationTable value={draft} uomLabel={uom.label} uomMessage={uom.message}
+    {active ? <KnowledgeModeCalculationTable value={draft} uomLabel={uom.label} uomMessage={uom.message}
+      title={contextLabel ? `${contextLabel} calculations` : undefined}
       readOnly={readOnly} errors={errors} onChange={change}
       actions={<div className="knowledge-mode-calculation__actions">
         {uom.onRetry ? <Button variant="secondary" onClick={uom.onRetry}>Retry UOM</Button> : null}
@@ -78,10 +83,10 @@ export function KnowledgeModeCalculationEditor({ value, uom, readOnly, validatio
           Test calculations
         </Button>
       </div>}
-    />
-    {simulator?.scopeKey === uom.scopeKey ? <KnowledgeModeCalculationSimulator
+    /> : null}
+    {active && simulator?.scopeKey === uom.scopeKey ? <KnowledgeModeCalculationSimulator
       key={`${uom.scopeKey}:${uom.id ?? "missing"}:${uom.decimalScale ?? "missing"}`}
-      initialDraft={simulator.initialDraft} uom={uom} onClose={() => setSimulator(null)}
+      initialDraft={simulator.initialDraft} uom={uom} contextLabel={contextLabel} onClose={() => setSimulator(null)}
     /> : null}
   </div>;
 }

@@ -39,6 +39,8 @@ import type { KnowledgeModeConfigurationIssue } from "./knowledgeModeConfigurati
 import { KnowledgeConflictReview } from "./KnowledgeConflictReview";
 import { KnowledgeVersionConflictDialog } from "./KnowledgeVersionConflictDialog";
 import { KnowledgeModeCalculationEditor, type KnowledgeModeCalculationUom } from "./KnowledgeModeCalculationEditor";
+import { KnowledgeInHouseTotal } from "./KnowledgeInHouseTotal";
+import { MODE_CALCULATION_LABELS, MODE_CALCULATION_SCOPES, modeCalculationsForPayload, modeCalculationsForStorage, withModeCalculation, type ModeCalculationScope } from "./knowledgeModeCalculation";
 import type { KnowledgeBudgetCatalogState } from "./KnowledgeBudgetBuilder";
 import type {
   KnowledgeBasket,
@@ -65,10 +67,13 @@ const MODE_SECTION_LABELS = {
 } as const satisfies Readonly<Record<ModeSectionKey, string>>;
 
 const PENDING_DESCRIPTION_MESSAGE = "Save or cancel the paragraph before saving Mode.";
+const ADVANCED_EDITABLE_FIELDS = ["modeConfigurations", "modeDescription", "modeCalculation", "pmcMarginBps"] as const;
+type AdvancedEditableField = (typeof ADVANCED_EDITABLE_FIELDS)[number];
 
 interface ModeDraft {
   readonly payload: KnowledgeJsonObject;
-  readonly editedAdvancedFields: readonly ("modeConfigurations" | "modeDescription" | "modeCalculation" | "pmcMarginBps")[];
+  readonly editedAdvancedFields: readonly AdvancedEditableField[];
+  readonly editedCalculationScopes: readonly ModeCalculationScope[];
   readonly specificationReferenceIds: readonly string[];
   readonly applicability: KnowledgeSectionApplicability;
   readonly envelopeVersion: number | null;
@@ -141,7 +146,10 @@ export const KnowledgeModePanel = forwardRef<
   const pricingQuery = useModeSectionQuery(mainLineId, revisionId, "pricing");
   const overviewQuery = useModeSectionQuery(mainLineId, revisionId, "overview");
   const [drafts, setDrafts] = useState(createEmptyModeDrafts);
-  const [calculationValid, setCalculationValid] = useState(true);
+  const [calculationValidity, setCalculationValidity] = useState<Record<ModeCalculationScope, boolean>>({ pmc: true, sub_vendor: true, in_house_labor: true, in_house_material: true });
+  const setCalculationValid = useCallback((scope: ModeCalculationScope, valid: boolean) => {
+    setCalculationValidity((current) => current[scope] === valid ? current : { ...current, [scope]: valid });
+  }, []);
   const [descriptionPending, setDescriptionPending] = useState(false);
   const [descriptionResetVersion, setDescriptionResetVersion] = useState(0);
   useEffect(() => {
@@ -244,10 +252,15 @@ export const KnowledgeModePanel = forwardRef<
           ...current[sectionKey],
           payload,
           editedAdvancedFields: sectionKey === "advanced"
-            ? [...new Set([...current.advanced.editedAdvancedFields, ...(["modeConfigurations", "modeDescription", "modeCalculation", "pmcMarginBps"] as const).filter(
+            ? [...new Set([...current.advanced.editedAdvancedFields, ...ADVANCED_EDITABLE_FIELDS.filter(
                 (field) => JSON.stringify(current.advanced.payload[field]) !== JSON.stringify(payload[field])
               )])]
-            : current[sectionKey].editedAdvancedFields
+            : current[sectionKey].editedAdvancedFields,
+          editedCalculationScopes: sectionKey === "advanced"
+            ? [...new Set([...current.advanced.editedCalculationScopes, ...MODE_CALCULATION_SCOPES.filter(
+                (scope) => JSON.stringify(modeCalculationsForPayload(current.advanced.payload)[scope]) !== JSON.stringify(modeCalculationsForPayload(payload)[scope])
+              )])]
+            : current[sectionKey].editedCalculationScopes
         }
       }));
     },
@@ -433,7 +446,7 @@ export const KnowledgeModePanel = forwardRef<
           } else {
             const message = failure instanceof Error ? failure.message : "This block could not be saved.";
             const serverIssues = failure instanceof ApiError
-              ? sectionIssuesFromApiError(failure, sectionKey === "advanced" ? ["modeConfigurations", "modeDescription", "modeCalculation", "pmcMarginBps"] : ["specifications"])
+              ? sectionIssuesFromApiError(failure, sectionKey === "advanced" ? [...ADVANCED_EDITABLE_FIELDS, "modeCalculations"] : ["specifications"])
               : [];
             setDrafts((current) => ({
               ...current,
@@ -559,17 +572,26 @@ export const KnowledgeModePanel = forwardRef<
           onChange={(payload) => setPayload("advanced", payload)}
           onDirty={markAdvancedConfigurationDirty}
           onValidationChange={setAdvancedValid}
-          calculationValid={calculationValid}
-          calculation={<KnowledgeModeCalculationEditor
-            key={`${revisionId}-${descriptionResetVersion}`}
-            value={drafts.advanced.payload.modeCalculation}
-            uom={calculationUom}
+          calculationValidity={calculationValidity}
+          inHouseTotal={(active) => <KnowledgeInHouseTotal key={`${uomScopeKey}-${descriptionResetVersion}-total`}
+            active={active} uom={calculationUom}
+            labor={modeCalculationsForPayload(drafts.advanced.payload).in_house_labor}
+            material={modeCalculationsForPayload(drafts.advanced.payload).in_house_material}
+            valid={calculationValidity.in_house_labor && calculationValidity.in_house_material}
+          />}
+          calculation={(scope, active) => <KnowledgeModeCalculationEditor
+            key={`${uomScopeKey}-${descriptionResetVersion}-${scope}`}
+            active={active}
+            contextLabel={MODE_CALCULATION_LABELS[scope]}
+            issuePath={`modeCalculations.${scope}`}
+            value={modeCalculationsForPayload(drafts.advanced.payload)[scope]}
+            uom={{ ...calculationUom, scopeKey: `${calculationUom.scopeKey}:${scope}` }}
             readOnly={!editable || saving}
             validationAttempt={drafts.advanced.validationAttempt}
             issues={drafts.advanced.serverIssues}
-            onChange={(modeCalculation) => setPayload("advanced", { ...drafts.advanced.payload, modeCalculation: { ...modeCalculation } })}
+            onChange={(modeCalculation) => setPayload("advanced", withModeCalculation(drafts.advanced.payload, scope, modeCalculation))}
             onDirty={markAdvancedConfigurationDirty}
-            onValidationChange={setCalculationValid}
+            onValidationChange={(valid) => setCalculationValid(scope, valid)}
           />}
         />
       )}
@@ -669,6 +691,7 @@ function emptyModeDraft(): ModeDraft {
   return {
     payload: {},
     editedAdvancedFields: [],
+    editedCalculationScopes: [],
     specificationReferenceIds: [],
     applicability: "not_configured",
     envelopeVersion: null,
@@ -694,6 +717,7 @@ function draftFromEnvelope(
   return {
     payload: envelope.payload,
     editedAdvancedFields: [],
+    editedCalculationScopes: [],
     specificationReferenceIds: envelope.referenceState?.specificationIds ?? [],
     applicability: envelope.applicability,
     envelopeVersion: envelope.version,
@@ -717,7 +741,13 @@ function rebaseDraftAfterConflict(
       ...server.payload,
       ...(server.sectionKey === "pricing"
         ? { specifications: draft.payload.specifications ?? [] }
-        : Object.fromEntries(draft.editedAdvancedFields.map((field) => [field, draft.payload[field] ?? (field === "modeConfigurations" ? [] : null)])))
+        : {
+            ...Object.fromEntries(draft.editedAdvancedFields.map((field) => [field, draft.payload[field] ?? (field === "modeConfigurations" ? [] : null)])),
+            ...(draft.editedCalculationScopes.length ? { modeCalculations: {
+              ...modeCalculationsForStorage(server.payload),
+              ...Object.fromEntries(draft.editedCalculationScopes.map((scope) => [scope, modeCalculationsForPayload(draft.payload)[scope]]))
+            } } : {})
+          })
     },
     specificationReferenceIds: server.referenceState?.specificationIds ?? [],
     applicability: server.sectionKey === "advanced" ? draft.applicability : server.applicability,
@@ -729,7 +759,7 @@ function rebaseDraftAfterConflict(
 
 function sectionIssuesFromApiError(
   failure: ApiError,
-  allowedRootPaths: readonly ("modeConfigurations" | "modeDescription" | "modeCalculation" | "pmcMarginBps" | "specifications")[]
+  allowedRootPaths: readonly (AdvancedEditableField | "modeCalculations" | "specifications")[]
 ): readonly KnowledgeModeConfigurationIssue[] {
   if (allowedRootPaths.length === 0) return [];
   return Object.entries(failure.fields ?? {}).flatMap(([path, message]) => {

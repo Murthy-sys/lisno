@@ -41,7 +41,7 @@ import {
   updateKnowledgeBasket,
   type KnowledgeListParams
 } from "./knowledgeApi";
-import { syncKnowledgeBasketDeletion } from "./knowledgeMutationSync";
+import { invalidateTemporaryMainLineDetails, syncKnowledgeBasketDeletion } from "./knowledgeMutationSync";
 import { knowledgeQueryKeys } from "./knowledgeQueryKeys";
 import { KNOWLEDGE_ITEM_STATUS_LABELS } from "./knowledgePresentation";
 import { CreateKnowledgeItemDialog } from "./CreateKnowledgeItemDialog";
@@ -59,14 +59,6 @@ import type {
   KnowledgePermanentDeleteBasketResult
 } from "./knowledgeTypes";
 import "./ai-estimator-knowledge.css";
-
-/*
- * Priority is hidden on the Main Line cards for now and will be switched back
- * on if it is needed. Flip this to true to restore the row. The Priority filter
- * below is deliberately unaffected, and Recommendation rows still require a
- * Priority, so the master itself stays in use.
- */
-const ITEM_CARD_PRIORITY_ENABLED = false;
 
 const PAGE_SIZE = 20;
 const BASKET_MANAGEMENT_PAGE_SIZE = 100;
@@ -101,14 +93,6 @@ const emptyFilters: FilterState = {
   uomId: "",
   vendorId: ""
 };
-
-function statusTone(status: KnowledgeItemStatus): StatusTone {
-  if (status === "active") return "success";
-  if (status === "draft") return "warning";
-  if (status === "archived") return "danger";
-  return "neutral";
-}
-
 function errorMessage(error: Error | null): string {
   return error?.message ?? "The knowledge base could not be loaded.";
 }
@@ -125,6 +109,7 @@ export function KnowledgeBaseIndexPage() {
   const [basketEditor, setBasketEditor] = useState<KnowledgeBasket | null>(null);
   const [basketDelete, setBasketDelete] = useState<KnowledgeBasket | null>(null);
   const [itemDialogOpen, setItemDialogOpen] = useState(false);
+  const [temporaryBasketId, setTemporaryBasketId] = useState<string | null>(null);
   const [announcement, setAnnouncement] = useState("");
   const [advancedFiltersOpen, setAdvancedFiltersOpen] = useState(false);
   const [collapsedBaskets, setCollapsedBaskets] = useState<readonly string[]>([]);
@@ -507,6 +492,7 @@ export function KnowledgeBaseIndexPage() {
                         but not shown: several baskets each offer this command, and
                         "Add estimation item" alone would name them all alike. */}
                     {canCreate ? <Button size="compact" variant="secondary" leadingIcon={<Plus />} onClick={() => setItemDialogOpen(true)}>Add estimation item<span className="sr-only"> to {group.basketName}</span></Button> : null}
+                    {canCreate ? <Button size="compact" variant="secondary" onClick={() => setTemporaryBasketId(basketId)}>Add temporary item<span className="sr-only"> to {group.basketName}</span></Button> : null}
                     {canUpdate ? <Button size="compact" variant="quiet" leadingIcon={<Pencil />} onClick={() => setBasketEditor((basketsQuery.data?.items ?? []).find(({ id }) => id === basketId) ?? null)}>Edit basket</Button> : null}
                     {canLifecycle ? <Button size="compact" variant="destructive-outline" leadingIcon={<Trash2 />} onClick={() => setBasketDelete((basketsQuery.data?.items ?? []).find(({ id }) => id === basketId) ?? null)}>Delete<span className="sr-only"> {group.basketName}</span></Button> : null}
                   </div>
@@ -515,25 +501,17 @@ export function KnowledgeBaseIndexPage() {
               <div id={panelId} className="knowledge-basket-panel__body" hidden={!expanded}>
               <div className="knowledge-item-grid">
                 {group.items.map((item) => (
-                  <article key={item.id} className="knowledge-item-card">
-                    <div className="knowledge-item-card__heading">
-                      <div>
-                        <p className="knowledge-breadcrumb">{item.basketName} → {item.subBasketName ? `${item.subBasketName} → ` : ""}Main Line</p>
-                        <h3>
-                          <Link
-                            className="knowledge-item-link"
-                            to={`/admin/configuration/estimation/items/${encodeURIComponent(item.mainLineId)}`}
-                          >
-                            {item.mainLineName}
-                          </Link>
-                        </h3>
-                      </div>
-                      <StatusBadge
-                        label={KNOWLEDGE_ITEM_STATUS_LABELS[item.status]}
-                        tone={statusTone(item.status)}
-                      />
-                    </div>
-                    <p>{item.description ?? "No description provided."}</p>
+                  <article key={item.id} className="knowledge-item-card" data-item-type={item.itemType ?? "main_line"}>
+                    <h3>
+                      <Link
+                        className="knowledge-item-link"
+                        to={`/admin/configuration/estimation/items/${encodeURIComponent(item.mainLineId)}`}
+                        aria-describedby={item.itemType === "temporary" ? `temporary-kind-${item.id}` : undefined}
+                      >
+                        {item.mainLineName}
+                      </Link>
+                    </h3>
+                    {item.itemType === "temporary" && <span id={`temporary-kind-${item.id}`} className="sr-only">Temporary item</span>}
                     <div className="knowledge-item-card__progress">
                       <span>{item.completeness.percentage}% complete</span>
                       <ProgressBar
@@ -541,17 +519,6 @@ export function KnowledgeBaseIndexPage() {
                         label={`${item.mainLineName} completeness`}
                         valueText={`${item.completeness.percentage}% complete`}
                       />
-                    </div>
-                    <dl className="knowledge-item-metadata">
-                      <div><dt>Revision</dt><dd>{item.revisionNumber ?? "Not available"}</dd></div>
-                      <div><dt>UOM</dt><dd>{nameFor(masters.uoms, item.uomId)}</dd></div>
-                      {ITEM_CARD_PRIORITY_ENABLED ? <div><dt>Priority</dt><dd>{nameFor(masters.priorities, item.priorityId)}</dd></div> : null}
-                      <div><dt>Modes</dt><dd>{namesFor(masters.modes, item.modeIds)}</dd></div>
-                      <div><dt>Surfaces</dt><dd>{namesFor(masters.surfaces, item.surfaceIds)}</dd></div>
-                      <div><dt>Updated</dt><dd>{new Date(item.updatedAt).toLocaleDateString("en-IN")}</dd></div>
-                    </dl>
-                    <div className="knowledge-item-card__actions">
-                      <Button variant="secondary" onClick={() => navigate(`/admin/configuration/estimation/items/${encodeURIComponent(item.mainLineId)}`)}>Open workspace</Button>
                     </div>
                   </article>
                 ))}
@@ -609,6 +576,7 @@ export function KnowledgeBaseIndexPage() {
           onClose={() => setBasketEditor(null)}
           onCreated={async () => {
             await Promise.all([
+              invalidateTemporaryMainLineDetails(queryClient),
               queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.basketLists() }),
               queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.itemLists() })
             ]);
@@ -632,6 +600,11 @@ export function KnowledgeBaseIndexPage() {
           }}
         />
       ) : null}
+      {temporaryBasketId && <CreateKnowledgeItemDialog itemType="temporary" initialBasketId={temporaryBasketId}
+        onClose={() => setTemporaryBasketId(null)} onCreated={async (id) => {
+          setTemporaryBasketId(null);
+          navigate(`/admin/configuration/estimation/items/${encodeURIComponent(id)}`);
+        }} />}
       {itemDialogOpen ? (
         <CreateKnowledgeItemDialog
           onClose={() => setItemDialogOpen(false)}
@@ -1055,11 +1028,6 @@ function filterLabel(type: (typeof FILTER_MASTER_TYPES)[number]) {
 function nameFor(masters: readonly KnowledgeMaster[], id: string | null) {
   if (!id) return "Not configured";
   return masters.find((master) => master.id === id)?.name ?? "Unavailable";
-}
-
-function namesFor(masters: readonly KnowledgeMaster[], ids: readonly string[]) {
-  if (!ids.length) return "Not configured";
-  return ids.map((id) => masters.find((master) => master.id === id)?.name ?? "Unavailable").join(", ");
 }
 
 function FilterSelect({ id, label, value, options, onChange }: {

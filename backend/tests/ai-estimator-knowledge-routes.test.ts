@@ -41,6 +41,8 @@ function services() {
     listBaskets: vi.fn(async () => ({ items: [{ id: "basket-1" }], total: 1 })),
     createBasket: vi.fn(async () => ({ id: "basket-1" })),
     updateBasket: vi.fn(async () => ({ id: "basket-1" })),
+    getBasketQuality: vi.fn(async () => ({ basketId: "basket-1", version: 1, revisionId: null, parameters: [] })),
+    updateBasketQuality: vi.fn(async () => ({ basketId: "basket-1", version: 2, revisionId: "quality-1", parameters: [] })),
     getBasketDeletionImpact: vi.fn(async () => ({
       basketId: "basket-1",
       basketName: "Custom basket",
@@ -103,6 +105,67 @@ function appFor(testServices: AiEstimatorKnowledgeAdminRouterServices) {
 }
 
 describe("AI Estimator Knowledge HTTP routes", () => {
+  it("creates temporary items through the existing Super Admin operation and rejects subtype changes", async () => {
+    const testServices = services();
+    const app = appFor(testServices);
+    const path = "/api/v1/admin/ai-estimator-knowledge/baskets/basket-1/main-lines";
+    const input = { name: "Temporary fixture", itemType: "temporary" };
+    expect((await request(app).post(path).set("Authorization", "Bearer admin-token").send(input)).status).toBe(403);
+    expect(testServices.item.createMainLine).not.toHaveBeenCalled();
+    expect((await request(app).post(path).set("Authorization", "Bearer super-admin-token").send(input)).status).toBe(201);
+    expect(testServices.item.createMainLine).toHaveBeenCalledWith(superAdmin, "basket-1", input);
+    expect((await request(app).post(path).set("Authorization", "Bearer super-admin-token").send({ ...input, itemType: "other" })).status).toBe(400);
+    expect((await request(app).patch("/api/v1/admin/ai-estimator-knowledge/main-lines/line-1").set("Authorization", "Bearer super-admin-token").send({ expectedVersion: 1, itemType: "temporary" })).status).toBe(400);
+  });
+
+  it("authorizes shared Basket quality reads and updates before validating input", async () => {
+    const testServices = services();
+    const app = appFor(testServices);
+    const path = "/api/v1/admin/ai-estimator-knowledge/baskets/basket-1/quality";
+    expect((await request(app).get(path)).status).toBe(401);
+    expect((await request(app).put(path).send({ invalid: true })).status).toBe(401);
+    expect((await request(app).get(path).set("Authorization", "Bearer admin-token")).status).toBe(403);
+    expect((await request(app).put(path).set("Authorization", "Bearer admin-token").send({ invalid: true })).status).toBe(403);
+    expect(testServices.reference.getBasketQuality).not.toHaveBeenCalled();
+    expect(testServices.reference.updateBasketQuality).not.toHaveBeenCalled();
+    expect((await request(app).get(path).set("Authorization", "Bearer super-admin-token")).status).toBe(200);
+    expect(testServices.reference.getBasketQuality).toHaveBeenCalledWith(superAdmin, "basket-1");
+    expect((await request(app).put(path).set("Authorization", "Bearer super-admin-token").send({ expectedVersion: 1, parameters: [] })).status).toBe(200);
+    expect(testServices.reference.updateBasketQuality).toHaveBeenCalledWith(superAdmin, "basket-1", { expectedVersion: 1, parameters: [] });
+  });
+
+  it("accepts inspection requirements and rejects malformed shared checklists before service calls", async () => {
+    const testServices = services();
+    const app = appFor(testServices);
+    const path = "/api/v1/admin/ai-estimator-knowledge/baskets/basket-1/quality";
+    const parameter = { id: "fixture-inspection", type: "boolean", label: "Installed fixtures checked?",
+      sampling: { method: "percentage", value: 10, unit: "installed electrical fixtures" },
+      evidence: { photos: true, documents: false, video: false, minPhotosPerSample: 1 } };
+    const input = { expectedVersion: 1, parameters: [parameter] };
+    expect((await request(app).put(path).set("Authorization", "Bearer super-admin-token").send(input)).status).toBe(200);
+    expect(testServices.reference.updateBasketQuality).toHaveBeenCalledWith(superAdmin, "basket-1", input);
+    for (const invalid of [
+      { ...input, expectedVersion: 0 }, { ...input, extra: true }, { expectedVersion: 1 },
+      { ...input, parameters: [{ ...parameter, sampling: { method: "percentage", value: 101, unit: "fixtures" } }] },
+      { ...input, parameters: [{ ...parameter, evidence: { photos: true, documents: false, video: false } }] },
+      { ...input, parameters: [{ ...parameter, severity: "optional" }] },
+      { ...input, parameters: Array.from({ length: 201 }, (_, index) => ({ ...parameter, id: `check-${index}` })) }
+    ]) {
+      expect((await request(app).put(path).set("Authorization", "Bearer super-admin-token").send(invalid)).status).toBe(400);
+    }
+    expect(testServices.reference.updateBasketQuality).toHaveBeenCalledTimes(1);
+  });
+
+  it("validates Budget Alterations before the section mutation", async () => {
+    const testServices = services();
+    const app = appFor(testServices);
+    const path = "/api/v1/admin/ai-estimator-knowledge/main-lines/line-1/revisions/revision-1/sections/recommendations";
+    const rule = { id: "rule-1", trigger: "removed", action: "remove", requirement: "must", targetType: "temporary", targetBasketId: "basket-1", targetSubBasketId: null, targetMainLineId: "line-2", reason: "Ceiling fixtures require support.", active: true };
+    expect((await request(app).put(path).set("Authorization", "Bearer super-admin-token").send({ expectedVersion: 1, expectedAggregateVersion: 1, payload: { budgetAlterations: [rule] } })).status).toBe(200);
+    expect((await request(app).put(path).set("Authorization", "Bearer super-admin-token").send({ expectedVersion: 1, expectedAggregateVersion: 1, payload: { budgetAlterations: [{ ...rule, reason: " " }] } })).status).toBe(400);
+    expect(testServices.item.updateSection).toHaveBeenCalledTimes(1);
+  });
+
   it("accepts a Sub Basket text name and rejects blank or ambiguous mappings", async () => {
     const testServices = services();
     const app = appFor(testServices);
@@ -689,22 +752,47 @@ describe("AI Estimator Knowledge HTTP routes", () => {
     expect(testServices.item.updateSection).toHaveBeenCalledTimes(1);
   });
 
+  it("accepts separately keyed calculations and reports the specific invalid mode before persistence", async () => {
+    const testServices = services();
+    const settings = { baseRatePaise: 150_000, lowQuantityLimit: "15", impactBps: 1_000, minimumMarkupBps: 2_500, startingMarkupBps: 3_500 };
+    const modeCalculations = { pmc: settings, sub_vendor: { ...settings, baseRatePaise: 75_000 }, in_house_labor: null, in_house_material: { ...settings, baseRatePaise: 45_000 } };
+    const send = (scopes: unknown) => request(appFor(testServices))
+      .put("/api/v1/admin/ai-estimator-knowledge/main-lines/line-1/revisions/revision-1/sections/advanced")
+      .set("Authorization", "Bearer super-admin-token")
+      .send({ expectedVersion: 3, expectedAggregateVersion: 7, payload: { modeCalculations: scopes } });
+    expect((await send(modeCalculations)).status).toBe(200);
+    expect(testServices.item.updateSection).toHaveBeenLastCalledWith(superAdmin, "line-1", "revision-1", "advanced", {
+      expectedVersion: 3, expectedAggregateVersion: 7, payload: { modeCalculations }
+    });
+    for (const scope of ["in_house_labor", "in_house_material"]) {
+      const rejected = await send({ ...modeCalculations, [scope]: { ...settings, impactBps: -1 } });
+      expect(rejected.status).toBe(400);
+      expect(rejected.body.error.fields).toMatchObject({ [`payload.modeCalculations.${scope}.impactBps`]: expect.any(String) });
+    }
+    const { in_house_material: _material, ...partial } = modeCalculations;
+    expect((await send({ ...partial, in_house: settings })).status).toBe(400);
+    expect((await send({ pmc: settings, execution: settings })).status).toBe(400);
+    expect(testServices.item.updateSection).toHaveBeenCalledTimes(1);
+  });
+
   it("validates the PMC margin before persisting a Mode section", async () => {
     const testServices = services();
     const send = (pmcMarginBps: unknown) => request(appFor(testServices))
       .put("/api/v1/admin/ai-estimator-knowledge/main-lines/line-1/revisions/revision-1/sections/advanced")
       .set("Authorization", "Bearer super-admin-token")
       .send({ expectedVersion: 3, expectedAggregateVersion: 7, payload: { pmcMarginBps } });
-    expect((await send(1_250)).status).toBe(200);
-    expect(testServices.item.updateSection).toHaveBeenLastCalledWith(superAdmin, "line-1", "revision-1", "advanced", {
-      expectedVersion: 3, expectedAggregateVersion: 7, payload: { pmcMarginBps: 1_250 }
-    });
-    for (const value of [999, 2_001, 1_000.5]) {
+    for (const pmcMarginBps of [1_000, 1_250, 2_000]) {
+      expect((await send(pmcMarginBps)).status).toBe(200);
+      expect(testServices.item.updateSection).toHaveBeenLastCalledWith(superAdmin, "line-1", "revision-1", "advanced", {
+        expectedVersion: 3, expectedAggregateVersion: 7, payload: { pmcMarginBps }
+      });
+    }
+    for (const value of [0, 999, 2_001, 2_300, -1, Number.MAX_SAFE_INTEGER + 1, 1_000.5]) {
       const rejected = await send(value);
       expect(rejected.status).toBe(400);
       expect(rejected.body.error.fields).toMatchObject({ "payload.pmcMarginBps": expect.any(String) });
     }
-    expect(testServices.item.updateSection).toHaveBeenCalledTimes(1);
+    expect(testServices.item.updateSection).toHaveBeenCalledTimes(3);
   });
 
   it("accepts strict mode configurations and rejects malformed fields after authorization", async () => {
@@ -817,15 +905,66 @@ describe("AI Estimator Knowledge HTTP routes", () => {
       expect((await send({ ...input, modeCalculationMarkupBasis })).status).toBe(200);
       expect(testServices.context.preview).toHaveBeenLastCalledWith(superAdmin, { ...input, modeCalculationMarkupBasis });
     }
+    for (const impactBps of [0, 1_275, 15_000]) {
+      const edited = { ...input, modeCalculation: { ...modeCalculation, impactBps } };
+      expect((await send(edited)).status).toBe(200);
+      expect(testServices.context.preview).toHaveBeenLastCalledWith(superAdmin, edited);
+    }
     for (const invalid of [
       { ...input, modeCalculationMarkupBasis: "other" },
       { quantityScale: 0, modeCalculationMarkupBasis: "minimum" },
       { ...input, quantity: null }, { modeCalculation, quantityScale: 0 },
       { ...input, modeCalculation: { ...modeCalculation, startingMarkupBps: 2_000 } },
-      { ...input, modeCalculation: { ...modeCalculation, impactBps: 500 } },
+      ...[-1, 1.5, null, "10", Number.MAX_SAFE_INTEGER].map((impactBps) => ({ ...input, modeCalculation: { ...modeCalculation, impactBps } })),
       { ...input, modeCalculation: { ...modeCalculation, uomId: "invented" } }
     ]) expect((await send(invalid)).status).toBe(400);
-    expect(testServices.context.preview).toHaveBeenCalledTimes(3);
+    expect(testServices.context.preview).toHaveBeenCalledTimes(6);
+  });
+
+  it("validates both In-house cost settings and rejects incomplete or mixed preview requests", async () => {
+    const testServices = services();
+    const labor = { baseRatePaise: 45_000, lowQuantityLimit: "4", impactBps: 0, minimumMarkupBps: 800, startingMarkupBps: 2_300 };
+    const material = { ...labor, baseRatePaise: 65_000, impactBps: 1_275, startingMarkupBps: 3_600 };
+    const input = { inHouseCalculation: { labor, material }, quantity: "1", quantityScale: 0 };
+    const send = (body: unknown) => request(appFor(testServices)).post("/api/v1/admin/ai-estimator-knowledge/preview")
+      .set("Authorization", "Bearer super-admin-token").send(body);
+    for (const modeCalculationMarkupBasis of ["starting", "minimum"]) {
+      expect((await send({ ...input, modeCalculationMarkupBasis })).status).toBe(200);
+      expect(testServices.context.preview).toHaveBeenLastCalledWith(superAdmin, { ...input, modeCalculationMarkupBasis });
+    }
+    for (const [body, path] of [
+      [{ ...input, quantity: null }, "quantity"],
+      [{ inHouseCalculation: input.inHouseCalculation, quantityScale: 0 }, "quantity"],
+      [{ ...input, inHouseCalculation: { labor } }, "inHouseCalculation.material"],
+      [{ ...input, inHouseCalculation: { labor, material: { ...material, impactBps: -1 } } }, "inHouseCalculation.material.impactBps"],
+      [{ ...input, inHouseCalculation: { material, labor: { ...labor, startingMarkupBps: 0 } } }, "inHouseCalculation.labor.startingMarkupBps"],
+      [{ ...input, modeCalculation: labor }, "inHouseCalculation"],
+      [{ ...input, inHouseCalculation: { labor, material, totalPaise: 1 } }, "totalPaise"]
+    ] as const) {
+      const response = await send(body);
+      expect(response.status).toBe(400);
+      expect(response.body.error.fields).toMatchObject({ [path]: expect.any(String) });
+    }
+    expect(testServices.context.preview).toHaveBeenCalledTimes(2);
+  });
+
+  it("accepts simulator-only discount basis points and rejects malformed or unrelated discounts", async () => {
+    const testServices = services();
+    const modeCalculation = { baseRatePaise: 150_000, lowQuantityLimit: "15", minimumMarkupBps: 2_500, startingMarkupBps: 3_500 };
+    const input = { modeCalculation, quantity: "1", quantityScale: 0, modeCalculationDiscountBps: 500 };
+    const send = (body: unknown) => request(appFor(testServices)).post("/api/v1/admin/ai-estimator-knowledge/preview")
+      .set("Authorization", "Bearer super-admin-token").send(body);
+    expect((await send(input)).status).toBe(200);
+    expect(testServices.context.preview).toHaveBeenLastCalledWith(superAdmin, input);
+    const combined = { inHouseCalculation: { labor: modeCalculation, material: modeCalculation }, quantity: "1", quantityScale: 0, modeCalculationDiscountBps: 0 };
+    expect((await send(combined)).status).toBe(200);
+    expect(testServices.context.preview).toHaveBeenLastCalledWith(superAdmin, combined);
+    for (const discount of [-1, 1.5, "5", null, Number.MAX_SAFE_INTEGER]) {
+      expect((await send({ ...input, modeCalculationDiscountBps: discount })).status).toBe(400);
+    }
+    expect((await send({ quantityScale: 0, modeCalculationDiscountBps: 0 })).status).toBe(400);
+    expect((await send({ ...input, modeCalculation: { ...modeCalculation, discountBps: 500 } })).status).toBe(400);
+    expect(testServices.context.preview).toHaveBeenCalledTimes(2);
   });
 
   it("accepts only the deterministic preview contract", async () => {

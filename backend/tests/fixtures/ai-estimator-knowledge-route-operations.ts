@@ -19,8 +19,10 @@ const adminOperation = {
 
 export const EXPECTED_AI_ESTIMATOR_KNOWLEDGE_OPERATIONS = [
   { key: "GET /admin/ai-estimator-knowledge/baskets", permission: "ai_estimator_knowledge.configuration.read", ...readOperation },
+  { key: "GET /admin/ai-estimator-knowledge/baskets/:basketId/quality", permission: "ai_estimator_knowledge.configuration.read", ...readOperation },
   { key: "POST /admin/ai-estimator-knowledge/baskets", permission: "ai_estimator_knowledge.configuration.create", ...adminOperation },
   { key: "PATCH /admin/ai-estimator-knowledge/baskets/:basketId", permission: "ai_estimator_knowledge.configuration.update", ...adminOperation },
+  { key: "PUT /admin/ai-estimator-knowledge/baskets/:basketId/quality", permission: "ai_estimator_knowledge.configuration.update", ...adminOperation },
   { key: "DELETE /admin/ai-estimator-knowledge/baskets/:basketId", permission: "ai_estimator_knowledge.configuration.lifecycle", ...adminOperation },
   { key: "GET /admin/ai-estimator-knowledge/baskets/:basketId/deletion-impact", permission: "ai_estimator_knowledge.configuration.lifecycle", ...adminOperation },
   { key: "GET /admin/ai-estimator-knowledge/baskets/:basketId/sub-baskets", permission: "ai_estimator_knowledge.configuration.read", ...readOperation },

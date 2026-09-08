@@ -32,7 +32,7 @@ function renderRecommendations(
   return render(
     <KnowledgeSectionEditor
       sectionKey="recommendations"
-      payload={{ recommendations: [], exclusions: [] }}
+      payload={{ recommendations: [{ id: "legacy-note", name: "Existing recommendation", reason: "Existing explanation", priorityId: priority.id, dependency: false, active: true }], exclusions: [] }}
       masters={masters}
       relationshipBaskets={[]}
       relationshipItems={[]}

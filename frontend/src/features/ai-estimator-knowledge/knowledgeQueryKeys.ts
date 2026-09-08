@@ -42,6 +42,7 @@ export const knowledgeQueryKeys = {
   activationReview: (itemId: string, revisionId: string) =>
     ["ai-estimator-knowledge", "activation-review", itemId, revisionId] as const,
   subBasketLists: (basketId: string) => ["ai-estimator-knowledge", "sub-baskets", basketId] as const,
+  basketQuality: (basketId: string) => ["ai-estimator-knowledge", "basket-quality", basketId] as const,
   basketLists: () => ["ai-estimator-knowledge", "baskets"] as const,
   basketList: (params: KnowledgeReferenceListParams) =>
     ["ai-estimator-knowledge", "baskets", params] as const,

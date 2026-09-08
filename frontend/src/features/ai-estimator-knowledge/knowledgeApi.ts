@@ -1,6 +1,7 @@
 import { apiClient } from "../../api/client";
 import type {
   KnowledgeBasket,
+  KnowledgeBasketQuality,
   KnowledgeSubBasket,
   KnowledgeSubBasketListResponse,
   KnowledgeBasketDeletionImpact,
@@ -125,10 +126,16 @@ export interface KnowledgeContextRequest {
 }
 
 export interface KnowledgePreviewRequest {
+  readonly inHouseCalculation?: {
+    readonly labor: NonNullable<KnowledgePreviewRequest["modeCalculation"]>;
+    readonly material: NonNullable<KnowledgePreviewRequest["modeCalculation"]>;
+  };
   readonly modeCalculationMarkupBasis?: "starting" | "minimum";
+  readonly modeCalculationDiscountBps?: number;
   readonly modeCalculation?: {
     readonly baseRatePaise: number;
     readonly lowQuantityLimit: string;
+    readonly impactBps?: number;
     readonly minimumMarkupBps: number;
     readonly startingMarkupBps: number;
   };
@@ -174,6 +181,7 @@ export interface KnowledgePermanentDeleteBasketInput {
 }
 
 export interface KnowledgeCreateMainLineInput {
+  readonly itemType?: "main_line" | "temporary";
   readonly subBasketId?: string;
   readonly subBasketName?: string;
   readonly name: string;
@@ -487,4 +495,15 @@ export function listKnowledgeSubBaskets(basketId: string, params: Pick<Knowledge
 
 export function createKnowledgeSubBasket(basketId: string, input: { readonly name: string }): Promise<KnowledgeSubBasket> {
   return apiClient.post<KnowledgeSubBasket>(`${ADMIN_PREFIX}/baskets/${segment(basketId)}/sub-baskets`, input);
+}
+
+export function getKnowledgeBasketQuality(basketId: string): Promise<KnowledgeBasketQuality> {
+  return apiClient.get<KnowledgeBasketQuality>(`${ADMIN_PREFIX}/baskets/${segment(basketId)}/quality`);
+}
+
+export function updateKnowledgeBasketQuality(basketId: string, input: {
+  readonly expectedVersion: number;
+  readonly parameters: readonly KnowledgeJsonObject[];
+}): Promise<KnowledgeBasketQuality> {
+  return apiClient.put<KnowledgeBasketQuality>(`${ADMIN_PREFIX}/baskets/${segment(basketId)}/quality`, input);
 }

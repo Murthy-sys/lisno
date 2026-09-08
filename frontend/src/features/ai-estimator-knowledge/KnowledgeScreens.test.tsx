@@ -38,12 +38,15 @@ vi.mock("./knowledgeApi", async (importOriginal) => {
     ...actual,
     listKnowledgeItems: vi.fn(),
     listKnowledgeBaskets: vi.fn(),
+    listKnowledgeSubBaskets: vi.fn(),
     listKnowledgeMasters: vi.fn(),
     createKnowledgeMaster: vi.fn(),
     createKnowledgeSurface: vi.fn(),
     getKnowledgeItem: vi.fn(),
     getKnowledgeHistory: vi.fn(),
     getKnowledgeSection: vi.fn(),
+    getKnowledgeBasketQuality: vi.fn(),
+    updateKnowledgeBasketQuality: vi.fn(),
     updateKnowledgeSection: vi.fn(),
     previewKnowledge: vi.fn()
   };
@@ -274,14 +277,77 @@ function mockConfiguredModeSections(
 }
 
 beforeEach(() => {
+  vi.mocked(knowledgeApi.getKnowledgeBasketQuality).mockResolvedValue({ basketId: "basket-1", basketName: "Carpentry", basketStatus: "active", version: 1, revisionId: null, revisionNumber: 0, contentDigest: null, parameters: [], updatedAt: null });
+
   vi.clearAllMocks();
   vi.mocked(authorization.hasFrontendPermission).mockReturnValue(true);
   vi.mocked(knowledgeApi.listKnowledgeMasters).mockResolvedValue({ items: [], pagination: page });
   vi.mocked(knowledgeApi.listKnowledgeBaskets).mockResolvedValue({ items: [], pagination: page });
+  vi.mocked(knowledgeApi.listKnowledgeSubBaskets).mockResolvedValue({ items: [], pagination: page });
   vi.mocked(knowledgeApi.listKnowledgeItems).mockResolvedValue({ items: [], pagination: { ...page, limit: 20 } });
   vi.mocked(knowledgeApi.getKnowledgeItem).mockResolvedValue(item);
   vi.mocked(knowledgeApi.getKnowledgeHistory).mockResolvedValue({ items: [revision], pagination: page });
   vi.mocked(knowledgeApi.getKnowledgeSection).mockImplementation(async (_lineId, _revisionId, sectionKey) => section(sectionKey));
+});
+
+describe("temporary item workspace", () => {
+  it("lists temporary items under their Main Basket beside regular Main Lines and opens Basket-scoped creation", async () => {
+    const user = userEvent.setup();
+    const temporary = { ...item, id: "temp-1", mainLineId: "temp-1", mainLineName: "Temporary pendant", itemType: "temporary" as const };
+    const basket = { ...squareFoot, id: "basket-1", name: "Carpentry", status: "active" as const };
+    vi.mocked(knowledgeApi.listKnowledgeItems).mockResolvedValue({ items: [item, temporary], pagination: { ...page, total: 2 } });
+    vi.mocked(knowledgeApi.listKnowledgeBaskets).mockResolvedValue({ items: [basket], pagination: { ...page, total: 1 } });
+    renderRoute(<KnowledgeBaseIndexPage />, "/admin/configuration/estimation", "/admin/configuration/estimation");
+    expect(await screen.findByRole("link", { name: "Temporary pendant" })).toHaveAttribute("href", "/admin/configuration/estimation/items/temp-1");
+    expect(screen.getByRole("link", { name: "Wall panelling" })).toBeVisible();
+    const temporaryCard = screen.getByRole("link", { name: "Temporary pendant" }).closest("article")!;
+    expect(temporaryCard).toHaveAttribute("data-item-type", "temporary");
+    expect(within(temporaryCard).getByRole("progressbar")).toHaveAttribute("aria-valuenow", "50");
+    expect(within(temporaryCard).queryByRole("heading", { name: "Main Line info" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Overview · Mode · Quality Parameters")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Add temporary item to Carpentry" }));
+    const dialog = screen.getByRole("dialog", { name: "Add temporary item" });
+    await waitFor(() => expect(within(dialog).getByRole("combobox", { name: "Main basket" })).toHaveValue("basket-1"));
+    expect(within(dialog).getByRole("textbox", { name: "Sub basket" })).not.toBeRequired();
+    expect(within(dialog).getByRole("textbox", { name: "Temporary item name" })).toBeRequired();
+  });
+
+  it("loads every related-item page and saves the rule with stable identities and section CAS", async () => {
+    const user = userEvent.setup();
+    const target = { ...item, id: "target-2", mainLineId: "target-2", mainLineName: "Ceiling COB Lights", subBasketId: null };
+    const basket = { ...squareFoot, id: "basket-1", name: "Carpentry", status: "active" as const };
+    vi.mocked(knowledgeApi.listKnowledgeBaskets).mockResolvedValue({ items: [basket], pagination: { ...page, total: 1 } });
+    vi.mocked(knowledgeApi.listKnowledgeItems).mockImplementation(async (params) => params?.offset === 0
+      ? { items: [item], pagination: { ...page, total: 2, hasMore: true } }
+      : { items: [target], pagination: { ...page, offset: 1, total: 2 } });
+    const budgetRule = { id: "budget-1", trigger: "removed", action: "remove", requirement: "must", targetType: "catalog", targetBasketId: "basket-1", targetSubBasketId: null, targetMainLineId: "target-2", reason: "Ceiling support is needed.", active: true };
+    const notes = [{ id: "old-note", name: "Retained exclusion", reason: "Existing note", active: true }];
+    vi.mocked(knowledgeApi.getKnowledgeSection).mockImplementation(async (_id, _revision, key) => section(key, key === "recommendations" ? { budgetAlterations: [budgetRule], exclusions: notes } : {}));
+    vi.mocked(knowledgeApi.updateKnowledgeSection).mockImplementation(async (_id, _revision, key, input) => mutationSection(key, input.payload, 3, 5));
+    renderRoute(<KnowledgeItemWorkspacePage />, "/admin/configuration/estimation/items/line-1", "/admin/configuration/estimation/items/:itemId");
+    await user.click(await screen.findByRole("tab", { name: "Recommendation & Exclusions" }));
+    expect(await screen.findByRole("option", { name: "Ceiling COB Lights" })).toBeInTheDocument();
+    expect(knowledgeApi.listKnowledgeItems).toHaveBeenCalledWith({ limit: 100, offset: 1 });
+    const reason = screen.getByRole("textbox", { name: "Why is this change needed?" });
+    await user.clear(reason);
+    await user.type(reason, "Recessed lights need the false ceiling.");
+    await user.click(screen.getByRole("button", { name: "Save Recommendation & Exclusions" }));
+    await waitFor(() => expect(knowledgeApi.updateKnowledgeSection).toHaveBeenCalledWith("line-1", "revision-1", "recommendations", expect.objectContaining({ expectedVersion: 2, expectedAggregateVersion: 4, payload: { budgetAlterations: [{ ...budgetRule, reason: "Recessed lights need the false ceiling." }], exclusions: notes } })));
+  });
+
+  it("exposes only Overview, Mode and Quality without changing regular Main Line navigation", async () => {
+    vi.mocked(knowledgeApi.getKnowledgeItem).mockResolvedValue({ ...item, itemType: "temporary" });
+    const user = userEvent.setup();
+    renderRoute(<KnowledgeItemWorkspacePage />, "/admin/configuration/estimation/items/line-1", "/admin/configuration/estimation/items/:itemId");
+    await screen.findByRole("heading", { name: "Wall panelling" });
+    expect(screen.queryByRole("tab", { name: "Recommendation & Exclusions" })).not.toBeInTheDocument();
+    expect(screen.getAllByRole("tab")).toHaveLength(3);
+    await user.click(screen.getByRole("tab", { name: "Mode" }));
+    expect(await screen.findByRole("checkbox", { name: "PMC" })).toBeVisible();
+    await user.click(screen.getByRole("tab", { name: "Quality Parameter" }));
+    expect(await screen.findByRole("button", { name: "Add Quality parameter" })).toBeVisible();
+    await expectNoAutomatedAccessibilityViolations();
+  });
 });
 
 describe("AI estimator knowledge screens", () => {
@@ -461,7 +527,42 @@ describe("AI estimator knowledge screens", () => {
     expect(within(history).getByText("No revision history is available.")).toBeVisible();
   });
 
-  it("renders the grouped searchable index with status, completeness, and workspace action", async () => {
+  it("saves shared quality through the unsaved-navigation guard without editing the item revision", async () => {
+    const user = userEvent.setup();
+    vi.mocked(knowledgeApi.updateKnowledgeBasketQuality).mockImplementation(async (basketId, input) => ({ basketId, basketName: "Carpentry", basketStatus: "active", version: 2, revisionId: "shared-v1", revisionNumber: 1, contentDigest: "shared-digest", parameters: input.parameters, updatedAt: item.updatedAt }));
+    renderRoute(<KnowledgeItemWorkspacePage />, "/admin/configuration/estimation/items/line-1", "/admin/configuration/estimation/items/:itemId");
+    await user.click(await screen.findByRole("tab", { name: "Quality Parameter" }));
+    await user.click(await screen.findByRole("button", { name: "Add Quality parameter" }));
+    await user.type(screen.getByRole("textbox", { name: "Question / check" }), "Check the completed finish");
+    await user.selectOptions(screen.getByRole("combobox", { name: "Answer type" }), "boolean");
+    await user.click(screen.getByRole("tab", { name: "Overview" }));
+    const guard = screen.getByRole("alertdialog", { name: "Save changes before leaving?" });
+    await user.click(within(guard).getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(knowledgeApi.updateKnowledgeBasketQuality).toHaveBeenCalledWith("basket-1", expect.objectContaining({ expectedVersion: 1, parameters: [expect.objectContaining({ label: "Check the completed finish" })] })));
+    expect(knowledgeApi.updateKnowledgeSection).not.toHaveBeenCalled();
+    expect(await screen.findByText("Shared checklist · Carpentry · Version 1")).toBeVisible();
+    expect(screen.getByText("Check the completed finish")).toBeVisible();
+  });
+
+  it("shows a shared-source refresh failure while retaining and labelling a cached legacy checklist", async () => {
+    const user = userEvent.setup();
+    vi.mocked(knowledgeApi.getKnowledgeSection).mockImplementation(async (_id, _revision, key) => section(key, key === "quality" ? { parameters: [{ id: "legacy-check", type: "text", label: "Legacy finish check" }] } : {}));
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: 30000 } } });
+    render(<QueryClientProvider client={client}><MemoryRouter initialEntries={["/admin/configuration/estimation/items/line-1"]}><Routes><Route path="/admin/configuration/estimation/items/:itemId" element={<KnowledgeItemWorkspacePage />} /></Routes></MemoryRouter></QueryClientProvider>);
+    expect(await screen.findByText("Legacy finish check")).toBeVisible();
+    expect(screen.getByText("Item-specific checklist · no shared checklist saved")).toBeVisible();
+    vi.mocked(knowledgeApi.getKnowledgeBasketQuality).mockRejectedValue(new ApiError(503, "UPSTREAM_UNAVAILABLE", "Shared checklist refresh unavailable."));
+    await client.invalidateQueries({ queryKey: ["ai-estimator-knowledge", "basket-quality", "basket-1"] });
+    expect(await screen.findByText(/Shared checklist refresh unavailable/)).toBeVisible();
+    const summary = screen.getByRole("heading", { name: "Quality Parameter", level: 2 }).closest("section")!;
+    vi.mocked(knowledgeApi.getKnowledgeBasketQuality).mockResolvedValue({ basketId: "basket-1", basketName: "Carpentry", basketStatus: "active", version: 2, revisionId: "shared-v1", revisionNumber: 1, contentDigest: "shared-digest", parameters: [{ id: "shared-check", type: "text", label: "Current shared finish check" }], updatedAt: item.updatedAt });
+    await user.click(within(summary).getByRole("button", { name: /Try again|Retry/ }));
+    expect(await screen.findByText("Current shared finish check")).toBeVisible();
+    expect(screen.queryByText("Legacy finish check")).not.toBeInTheDocument();
+    expect(screen.getByText("Shared checklist · Carpentry · Version 1")).toBeVisible();
+  });
+
+  it("renders minimal item cards with only the linked heading and completeness", async () => {
     vi.mocked(knowledgeApi.listKnowledgeBaskets).mockResolvedValue({ items: [{ id: "basket-1", name: "Carpentry", description: null, displayOrder: 0, status: "active", version: 1, createdById: "super-admin-1", updatedById: "super-admin-1", createdAt: item.createdAt, updatedAt: item.updatedAt }], pagination: { ...page, total: 1 } });
     vi.mocked(knowledgeApi.listKnowledgeItems).mockResolvedValue({ items: [item], pagination: { ...page, limit: 20, total: 1 } });
     renderRoute(<KnowledgeBaseIndexPage />, "/admin/configuration/estimation", "/admin/configuration/estimation");
@@ -469,7 +570,15 @@ describe("AI estimator knowledge screens", () => {
     expect(await screen.findByRole("heading", { name: "AI Estimator Knowledge Base" })).toBeVisible();
     expect(await screen.findByRole("heading", { name: "Carpentry" })).toBeVisible();
     expect(screen.getByText("50% complete")).toBeVisible();
-    expect(screen.getByRole("button", { name: "Open workspace" })).toBeVisible();
+    const title = screen.getByRole("link", { name: "Wall panelling" });
+    expect(title).toHaveAttribute("href", "/admin/configuration/estimation/items/line-1");
+    const card = title.closest("article")!;
+    expect(within(card).getAllByRole("heading")).toHaveLength(1);
+    expect(within(card).getByRole("progressbar")).toHaveAttribute("aria-valuenow", "50");
+    expect(within(card).queryByRole("button")).not.toBeInTheDocument();
+    expect(card.querySelector("dl")).toBeNull();
+    expect(within(card).queryByText("Draft")).not.toBeInTheDocument();
+    expect(within(card).queryByText(item.description!)).not.toBeInTheDocument();
     expect(screen.getByRole("region", { name: "Knowledge base isolation notice" })).toBeVisible();
   });
 
@@ -1166,6 +1275,8 @@ describe("AI estimator knowledge screens", () => {
   });
 
   it("renders four guided sections without hidden-section Overview summaries while preserving Overview and Mode behavior", async () => {
+    vi.mocked(knowledgeApi.getKnowledgeBasketQuality).mockResolvedValue({ basketId: "basket-1", basketName: "Carpentry", basketStatus: "active", version: 3, revisionId: "basket-quality-1", revisionNumber: 1, contentDigest: "quality-digest", parameters: [{ id: "shared-quality-1", type: "number", label: "Thickness", unit: "mm", required: true, active: true }], updatedAt: item.updatedAt });
+
     const user = userEvent.setup();
     const relatedItem: KnowledgeItemDetail = { ...item, id: "line-2", mainLineId: "line-2", mainLineName: "Related panel", draftRevisionId: null, draftRevision: null, activeRevisionId: "revision-2" };
     vi.mocked(knowledgeApi.listKnowledgeBaskets).mockResolvedValue({ items: [{ id: "basket-1", name: "Carpentry", description: null, displayOrder: 0, status: "active", version: 1, createdById: "super-admin-1", updatedById: "super-admin-1", createdAt: item.createdAt, updatedAt: item.updatedAt }], pagination: { ...page, total: 1 } });
@@ -1238,8 +1349,8 @@ describe("AI estimator knowledge screens", () => {
     expect(screen.getByRole("textbox", { name: "Reason" })).toHaveValue("Use matching panel");
 
     await user.click(screen.getByRole("tab", { name: "Quality Parameter" }));
-    expect(await screen.findByRole("combobox", { name: "Parameter type" })).toHaveValue("number");
-    expect(screen.getByRole("textbox", { name: "Label" })).toHaveValue("Thickness");
+    expect(await screen.findByRole("combobox", { name: "Answer type" })).toHaveValue("number");
+    expect(screen.getByRole("textbox", { name: "Question / check" })).toHaveValue("Thickness");
 
   });
 

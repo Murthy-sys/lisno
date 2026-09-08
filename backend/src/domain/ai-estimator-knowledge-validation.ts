@@ -280,17 +280,18 @@ const ALLOWED_SECTION_KEYS: Record<KnowledgeSectionKey, ReadonlySet<string>> = {
   pricing: new Set(["specifications", "brands", "technicalDescription", "qualityLevel", "internalVendorNotes", "priceEntries"]),
   "quantity-margin": new Set(["quantitySlabs", "slabRates", "gapBehavior", "startMarginBps", "bottomMarginBps", "pmcMarkupBps", "wastageBps", "previewInputs"]),
   scope: new Set(["modeIds", "surfaceIds", "exclusions"]),
-  recommendations: new Set(["recommendations", "exclusions"]),
+  recommendations: new Set(["recommendations", "exclusions", "budgetAlterations"]),
   quality: new Set(["parameters"]),
   execution: new Set(["steps", "productivity"]),
-  advanced: new Set(["dependencies", "modeOverrides", "revisionLineage", "modeConfigurations", "modeDescription", "modeCalculation", "pmcMarginBps"])
+  advanced: new Set(["dependencies", "modeOverrides", "revisionLineage", "modeConfigurations", "modeDescription", "modeCalculation", "modeCalculations", "pmcMarginBps"])
 };
 
 function inspectBoundedValue(
   value: unknown,
   path: string,
   depth: number,
-  issues: KnowledgeValidationIssue[]
+  issues: KnowledgeValidationIssue[],
+  finiteDecimalPaths?: ReadonlySet<string>
 ): void {
   if (depth > MAX_NESTING_DEPTH) {
     issues.push({ path, code: "TOO_DEEP", message: "Section payload nesting is too deep." });
@@ -302,7 +303,8 @@ function inspectBoundedValue(
     }
     return;
   }
-  if (typeof value === "number" && !Number.isSafeInteger(value)) {
+  if (typeof value === "number" && !Number.isSafeInteger(value)
+    && !(Number.isFinite(value) && finiteDecimalPaths?.has(path))) {
     issues.push({ path, code: "UNSAFE_NUMBER", message: "Section numeric values must be safe integers; decimals use strings." });
     return;
   }
@@ -311,7 +313,7 @@ function inspectBoundedValue(
       issues.push({ path, code: "TOO_MANY_ITEMS", message: "Section array exceeds the supported length." });
       return;
     }
-    value.forEach((entry, index) => inspectBoundedValue(entry, `${path}.${index}`, depth + 1, issues));
+    value.forEach((entry, index) => inspectBoundedValue(entry, `${path}.${index}`, depth + 1, issues, finiteDecimalPaths));
     return;
   }
   if (value !== null && typeof value === "object") {
@@ -320,7 +322,7 @@ function inspectBoundedValue(
       issues.push({ path, code: "TOO_MANY_FIELDS", message: "Section object contains too many fields." });
       return;
     }
-    entries.forEach(([key, entry]) => inspectBoundedValue(entry, `${path}.${key}`, depth + 1, issues));
+    entries.forEach(([key, entry]) => inspectBoundedValue(entry, `${path}.${key}`, depth + 1, issues, finiteDecimalPaths));
   }
 }
 
@@ -346,7 +348,17 @@ export function validateKnowledgeSectionPayload(
     issues.push({ path: "payload", code: "PAYLOAD_TOO_LARGE", message: "Section payload exceeds 256 KiB." });
     return issues;
   }
-  inspectBoundedValue(payload, "payload", 0, issues);
+  // Sampling percentages are measured fractions, not monetary amounts or BPS.
+  // Permit decimals only for this exact quality field; its range is checked below.
+  const finiteDecimalPaths = new Set<string>();
+  if (sectionKey === "quality" && Array.isArray(record.parameters)) {
+    record.parameters.forEach((row, index) => {
+      if (row && typeof row === "object" && row.sampling?.method === "percentage") {
+        finiteDecimalPaths.add(`payload.parameters.${index}.sampling.value`);
+      }
+    });
+  }
+  inspectBoundedValue(payload, "payload", 0, issues, finiteDecimalPaths);
 
   if (sectionKey === "pricing") {
     issues.push(...validatePricingPayload(record));
@@ -361,8 +373,9 @@ export function validateKnowledgeSectionPayload(
     if (typeof value === "string" && value.length > AI_ESTIMATOR_KNOWLEDGE_MAX_SHORT_TEXT && !["description", "technicalDescription", "internalVendorNotes", "modeDescription"].includes(key)) {
       issues.push({ path: `payload.${key}`, code: "TEXT_TOO_LONG", message: `${key} exceeds the supported short-text length.` });
     }
-    const unconfiguredPmcMargin = sectionKey === "advanced" && key === "pmcMarginBps" && value === null;
-    if (key.endsWith("Bps") && !unconfiguredPmcMargin && (
+    // PMC has its own optional, strictly bounded validation below.
+    const separatelyValidatedPmcMargin = sectionKey === "advanced" && key === "pmcMarginBps";
+    if (key.endsWith("Bps") && !separatelyValidatedPmcMargin && (
       !Number.isSafeInteger(value) ||
       (value as number) < 0 ||
       (value as number) > AI_ESTIMATOR_KNOWLEDGE_BASIS_POINTS
@@ -976,6 +989,7 @@ function validateRecommendationsPayload(
   record: Record<string, unknown>
 ): KnowledgeValidationIssue[] {
   const issues: KnowledgeValidationIssue[] = [];
+  if ("budgetAlterations" in record) validateBudgetAlterations(record.budgetAlterations, issues);
   /* Recommendations and Exclusions are authored as free text beside the Main
      Line they belong to. The Basket is the item's own, so neither row selects
      one, and neither participates in the relationship graph. */
@@ -1013,6 +1027,33 @@ function validateRecommendationsPayload(
   return issues;
 }
 
+function validateBudgetAlterations(value: unknown, issues: KnowledgeValidationIssue[]): void {
+  const rows = validateObjectArray(value, "payload.budgetAlterations", issues);
+  if (rows.length > 100) issues.push({ path: "payload.budgetAlterations", code: "TOO_MANY_ITEMS", message: "Use at most 100 budget alteration rules." });
+  const ids = new Set<string>();
+  const targets = new Set<string>();
+  rows.forEach((row, index) => {
+    const path = `payload.budgetAlterations.${index}`;
+    const keys = ["id", "trigger", "action", "requirement", "targetType", "targetBasketId", "targetSubBasketId", "targetMainLineId", "reason", "active"];
+    validateExactRowKeys(row, keys, keys, path, issues);
+    validateStableId(row.id, `${path}.id`, issues);
+    addUniqueString(row.id, ids, `${path}.id`, "DUPLICATE_ID", issues);
+    validateClosedEnum(row.trigger, ["added", "removed"], `${path}.trigger`, issues);
+    validateClosedEnum(row.action, ["add", "remove"], `${path}.action`, issues);
+    validateClosedEnum(row.requirement, ["must", "can"], `${path}.requirement`, issues);
+    validateClosedEnum(row.targetType, ["catalog", "temporary"], `${path}.targetType`, issues);
+    validateStableId(row.targetBasketId, `${path}.targetBasketId`, issues);
+    validateNullableStableId(row.targetSubBasketId, `${path}.targetSubBasketId`, issues);
+    validateText(row.reason, `${path}.reason`, issues, AI_ESTIMATOR_KNOWLEDGE_MAX_TEXT);
+    validateBoolean(row.active, `${path}.active`, issues);
+    validateStableId(row.targetMainLineId, `${path}.targetMainLineId`, issues);
+    if (row.active === false) return;
+    const targetKey = JSON.stringify([row.trigger, row.targetMainLineId]);
+    if (targets.has(targetKey)) issues.push({ path, code: "DUPLICATE_RULE", message: "Use one active rule per related item and trigger; combine its explanation instead of adding conflicting actions." });
+    targets.add(targetKey);
+  });
+}
+
 function validateQualityPayload(
   record: Record<string, unknown>
 ): KnowledgeValidationIssue[] {
@@ -1038,7 +1079,9 @@ function validateQualityPayload(
         "defaultValue",
         "required",
         "category",
-        "active"
+        "active",
+        "instructions", "acceptanceCriteria", "stage", "checkMethod", "severity",
+        "responsibleRole", "failureAction", "sampling", "evidence"
       ],
       ["id", "type", "label"],
       path,
@@ -1069,6 +1112,7 @@ function validateQualityPayload(
       validateNullableText(row.category, `${path}.category`, issues, AI_ESTIMATOR_KNOWLEDGE_MAX_SHORT_TEXT);
     }
     if ("active" in row) validateBoolean(row.active, `${path}.active`, issues);
+    validateQualityInspection(row, path, issues);
     addUniqueString(row.id, ids, `${path}.id`, "DUPLICATE_ID", issues);
     const parameter = completeQualityParameter(row);
     if (parameter) {
@@ -1080,6 +1124,56 @@ function validateQualityPayload(
     }
   });
   return issues;
+}
+
+function validateQualityInspection(row: Record<string, unknown>, path: string, issues: KnowledgeValidationIssue[]) {
+  for (const key of ["instructions", "acceptanceCriteria", "failureAction"] as const) {
+    if (key in row) validateNullableText(row[key], `${path}.${key}`, issues, AI_ESTIMATOR_KNOWLEDGE_MAX_TEXT);
+  }
+  for (const key of ["stage", "responsibleRole"] as const) {
+    if (key in row) validateNullableText(row[key], `${path}.${key}`, issues, AI_ESTIMATOR_KNOWLEDGE_MAX_SHORT_TEXT);
+  }
+  if (row.checkMethod !== undefined && row.checkMethod !== null) validateClosedEnum(row.checkMethod, ["visual", "measurement", "functional_test", "document_review"], `${path}.checkMethod`, issues);
+  if (row.severity !== undefined && row.severity !== null) validateClosedEnum(row.severity, ["critical", "major", "minor"], `${path}.severity`, issues);
+  if (row.sampling !== undefined && row.sampling !== null) {
+    const sampling = row.sampling;
+    const p = `${path}.sampling`;
+    if (typeof sampling !== "object" || Array.isArray(sampling)) {
+      issues.push({ path: p, code: "INVALID_TYPE", message: "Sampling must be an object or null." });
+    } else {
+      const sample = sampling as Record<string, unknown>;
+      validateExactRowKeys(sample, ["method", "value", "unit"], ["method", "unit"], p, issues);
+      validateClosedEnum(sample.method, ["all", "percentage", "fixed_count"], `${p}.method`, issues);
+      validateText(sample.unit, `${p}.unit`, issues, AI_ESTIMATOR_KNOWLEDGE_MAX_SHORT_TEXT);
+      if (sample.method === "percentage" && (typeof sample.value !== "number" || !Number.isFinite(sample.value) || sample.value <= 0 || sample.value > 100)) {
+        issues.push({ path: `${p}.value`, code: "INVALID_RANGE", message: "Sample percentage must be greater than 0 and at most 100." });
+      }
+      if (sample.method === "fixed_count" && (typeof sample.value !== "number" || !Number.isSafeInteger(sample.value) || sample.value < 1 || sample.value > 1000000)) {
+        issues.push({ path: `${p}.value`, code: "INVALID_RANGE", message: "Sample count must be a whole number from 1 to 1,000,000." });
+      }
+      if (sample.method === "all" && sample.value !== undefined && sample.value !== null) {
+        issues.push({ path: `${p}.value`, code: "IRRELEVANT_FIELD", message: "All units does not use a sample value." });
+      }
+    }
+  }
+  if (row.evidence !== undefined && row.evidence !== null) {
+    const evidence = row.evidence;
+    const p = `${path}.evidence`;
+    if (typeof evidence !== "object" || Array.isArray(evidence)) {
+      issues.push({ path: p, code: "INVALID_TYPE", message: "Evidence must be an object or null." });
+    } else {
+      const entry = evidence as Record<string, unknown>;
+      validateExactRowKeys(entry, ["photos", "documents", "video", "minPhotosPerSample", "instructions"], ["photos", "documents", "video"], p, issues);
+      for (const key of ["photos", "documents", "video"]) validateBoolean(entry[key], `${p}.${key}`, issues);
+      if (entry.photos === true && (typeof entry.minPhotosPerSample !== "number" || !Number.isSafeInteger(entry.minPhotosPerSample) || entry.minPhotosPerSample < 1 || entry.minPhotosPerSample > 100)) {
+        issues.push({ path: `${p}.minPhotosPerSample`, code: "INVALID_RANGE", message: "Enter 1 to 100 photos per sampled unit." });
+      }
+      if (entry.photos !== true && entry.minPhotosPerSample !== undefined && entry.minPhotosPerSample !== null) {
+        issues.push({ path: `${p}.minPhotosPerSample`, code: "IRRELEVANT_FIELD", message: "Photo count requires photo evidence." });
+      }
+      if ("instructions" in entry) validateNullableText(entry.instructions, `${p}.instructions`, issues, AI_ESTIMATOR_KNOWLEDGE_MAX_TEXT);
+    }
+  }
 }
 
 /**
@@ -1298,6 +1392,26 @@ function validateProductivityRows(
   });
 }
 
+function validateModeCalculationSettings(row: unknown, path: string, issues: KnowledgeValidationIssue[]): void {
+  if (row === null) return;
+  if (!row || typeof row !== "object" || Array.isArray(row)) {
+    issues.push(invalidTypeIssue(path, "a calculation settings object or null"));
+    return;
+  }
+  const settings = row as Record<string, unknown>;
+  const keys = ["baseRatePaise", "lowQuantityLimit", "minimumMarkupBps", "startingMarkupBps"];
+  validateExactRowKeys(settings, [...keys, "impactBps"], keys, path, issues);
+  if (Object.hasOwn(settings, "impactBps")) validateInteger(settings.impactBps, `${path}.impactBps`, issues, 0, Number.MAX_SAFE_INTEGER - 10_000);
+  validateInteger(settings.baseRatePaise, `${path}.baseRatePaise`, issues, 0, Number.MAX_SAFE_INTEGER);
+  validateCanonicalDecimal(settings.lowQuantityLimit, `${path}.lowQuantityLimit`, issues);
+  for (const key of ["minimumMarkupBps", "startingMarkupBps"] as const) {
+    validateInteger(settings[key], `${path}.${key}`, issues, 0, Number.MAX_SAFE_INTEGER - 10_000);
+  }
+  if (typeof settings.minimumMarkupBps === "number" && typeof settings.startingMarkupBps === "number" && settings.startingMarkupBps < settings.minimumMarkupBps) {
+    issues.push({ path: `${path}.startingMarkupBps`, code: "INVALID_MARKUP", message: "Starting markup must be at least the minimum markup." });
+  }
+}
+
 function validateAdvancedPayload(
   record: Record<string, unknown>
 ): KnowledgeValidationIssue[] {
@@ -1305,22 +1419,19 @@ function validateAdvancedPayload(
   if (record.pmcMarginBps !== undefined && record.pmcMarginBps !== null) {
     validateInteger(record.pmcMarginBps, "payload.pmcMarginBps", issues, 1_000, 2_000);
   }
-  if (record.modeCalculation !== undefined && record.modeCalculation !== null) {
-    const path = "payload.modeCalculation";
-    const row = record.modeCalculation;
-    if (typeof row !== "object" || Array.isArray(row)) {
-      issues.push(invalidTypeIssue(path, "a calculation settings object or null"));
+  if (record.modeCalculation !== undefined) validateModeCalculationSettings(record.modeCalculation, "payload.modeCalculation", issues);
+  if (Object.hasOwn(record, "modeCalculations")) {
+    const scopes = ["pmc", "sub_vendor", "in_house", "in_house_labor", "in_house_material"];
+    const row = record.modeCalculations;
+    if (!row || typeof row !== "object" || Array.isArray(row)) {
+      issues.push(invalidTypeIssue("payload.modeCalculations", "an object with PMC, Sub-Vendor, Labor cost, and Material cost settings"));
     } else {
       const settings = row as Record<string, unknown>;
-      const keys = ["baseRatePaise", "lowQuantityLimit", "minimumMarkupBps", "startingMarkupBps"];
-      validateExactRowKeys(settings, keys, keys, path, issues);
-      validateInteger(settings.baseRatePaise, `${path}.baseRatePaise`, issues, 0, Number.MAX_SAFE_INTEGER);
-      validateCanonicalDecimal(settings.lowQuantityLimit, `${path}.lowQuantityLimit`, issues);
-      for (const key of ["minimumMarkupBps", "startingMarkupBps"] as const) {
-        validateInteger(settings[key], `${path}.${key}`, issues, 0, Number.MAX_SAFE_INTEGER - 10_000);
-      }
-      if (typeof settings.minimumMarkupBps === "number" && typeof settings.startingMarkupBps === "number" && settings.startingMarkupBps < settings.minimumMarkupBps) {
-        issues.push({ path: `${path}.startingMarkupBps`, code: "INVALID_MARKUP", message: "Starting markup must be at least the minimum markup." });
+      const required = Object.hasOwn(settings, "in_house_labor") || Object.hasOwn(settings, "in_house_material")
+        ? ["pmc", "sub_vendor", "in_house_labor", "in_house_material"] : ["pmc", "sub_vendor", "in_house"];
+      validateExactRowKeys(settings, scopes, required, "payload.modeCalculations", issues);
+      for (const scope of scopes) {
+        if (Object.hasOwn(settings, scope)) validateModeCalculationSettings(settings[scope], `payload.modeCalculations.${scope}`, issues);
       }
     }
   }

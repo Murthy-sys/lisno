@@ -86,7 +86,22 @@ export interface KnowledgeCompletenessSummary {
   warnings: KnowledgeCompletenessFinding[];
 }
 
+export interface KnowledgeTemporaryMainLineReference {
+  mainLineId: string;
+  mainLineName: string;
+  basketId: string;
+  basketName: string;
+  subBasketId: string | null;
+  subBasketName: string | null;
+  status: KnowledgeItemStatus;
+  revisionId: string;
+  revisionStatus: "draft" | "active";
+  rules: Array<Pick<KnowledgeBudgetAlteration, "id" | "trigger" | "action" | "requirement" | "reason" | "active">>;
+}
+
 export interface KnowledgeItemListItem extends KnowledgeVersionedResource {
+  itemType?: "main_line" | "temporary";
+  linkedMainLines?: KnowledgeTemporaryMainLineReference[];
   basketId: KnowledgeStableId;
   basketName: string;
   subBasketId?: KnowledgeStableId | null;
@@ -103,6 +118,7 @@ export interface KnowledgeItemListItem extends KnowledgeVersionedResource {
   modeIds: KnowledgeStableId[];
   surfaceIds: KnowledgeStableId[];
   vendorIds: KnowledgeStableId[];
+  /** Current display projection, including the Main Basket checklist when configured. */
   completeness: KnowledgeCompletenessSummary;
   allowedActions: string[];
 }
@@ -113,6 +129,7 @@ export interface KnowledgeRevision extends KnowledgeVersionedResource {
   status: KnowledgeRevisionStatus;
   sourceRevisionId: KnowledgeStableId | null;
   contentDigest: string | null;
+  /** Stored item-revision snapshot; shared Basket edits do not rewrite this history. */
   completeness: KnowledgeCompletenessSummary;
   activatedAt: string | null;
   activatedById: KnowledgeStableId | null;
@@ -248,6 +265,20 @@ export interface KnowledgeRecommendation {
   active: boolean;
 }
 
+/** Conditional scope guidance, never an instruction to mutate an estimate automatically. */
+export interface KnowledgeBudgetAlteration {
+  id: KnowledgeStableId;
+  trigger: "added" | "removed";
+  action: "add" | "remove";
+  requirement: "must" | "can";
+  targetType: "catalog" | "temporary";
+  targetBasketId: KnowledgeStableId;
+  targetSubBasketId: KnowledgeStableId | null;
+  targetMainLineId: KnowledgeStableId;
+  reason: string;
+  active: boolean;
+}
+
 export interface KnowledgeExclusion {
   id: KnowledgeStableId;
   name: string;
@@ -267,6 +298,15 @@ export interface KnowledgeQualityParameter {
   required: boolean;
   category: string | null;
   active: boolean;
+  instructions?: string | null;
+  acceptanceCriteria?: string | null;
+  stage?: string | null;
+  checkMethod?: "visual" | "measurement" | "functional_test" | "document_review" | null;
+  severity?: "critical" | "major" | "minor" | null;
+  responsibleRole?: string | null;
+  failureAction?: string | null;
+  sampling?: { method: "all" | "percentage" | "fixed_count"; value?: number | null; unit: string } | null;
+  evidence?: { photos: boolean; documents: boolean; video: boolean; minPhotosPerSample?: number | null; instructions?: string | null } | null;
 }
 
 export interface KnowledgeModeField {
@@ -330,19 +370,47 @@ export interface KnowledgePreviewAmountComponent {
 export interface KnowledgeModeCalculationSettings {
   baseRatePaise: KnowledgePaise;
   lowQuantityLimit: KnowledgeCanonicalDecimal;
+  /** Defaults to 1,000 (10%) for configurations saved before editable Impact. */
+  impactBps?: KnowledgeBasisPoints;
   minimumMarkupBps: KnowledgeBasisPoints;
   startingMarkupBps: KnowledgeBasisPoints;
 }
+
+/** Each scope owns its settings; null means that scope has not been configured. */
+export type KnowledgeModeCalculations = Record<"pmc" | "sub_vendor", KnowledgeModeCalculationSettings | null> & (
+  | { in_house_labor: KnowledgeModeCalculationSettings | null; in_house_material: KnowledgeModeCalculationSettings | null;
+      /** Retained legacy In-house snapshot; split costs never inherit later changes. */
+      in_house?: KnowledgeModeCalculationSettings | null }
+  | { in_house: KnowledgeModeCalculationSettings | null; in_house_labor?: never; in_house_material?: never }
+);
 
 export interface KnowledgeModeCalculationPreview {
   revisedUnitRatePaise: KnowledgePaise;
   revisedAmountPaise: KnowledgePaise;
   totalPaise: KnowledgePaise;
   appliedImpactBps: KnowledgeBasisPoints;
+  discount?: {
+    rateBps: KnowledgeBasisPoints;
+    effectiveMarkupBps: KnowledgeBasisPoints;
+    totalBeforeDiscountPaise: KnowledgePaise;
+    amountPaise: KnowledgePaise;
+  };
+}
+
+export interface KnowledgeInHouseCalculationSettings {
+  labor: KnowledgeModeCalculationSettings;
+  material: KnowledgeModeCalculationSettings;
+}
+
+export interface KnowledgeInHouseCalculationPreview {
+  labor: KnowledgeModeCalculationPreview;
+  material: KnowledgeModeCalculationPreview;
+  totalPaise: KnowledgePaise;
 }
 
 export interface KnowledgePreview {
   modeCalculation?: KnowledgeModeCalculationPreview;
+  inHouseCalculation?: KnowledgeInHouseCalculationPreview;
   formulaVersion: "knowledge-preview-v1";
   effectivePriceVersionId: KnowledgeStableId | null;
   taxVersionId: KnowledgeStableId | null;
@@ -377,6 +445,8 @@ export interface KnowledgeContextLineage {
   taxVersionId: KnowledgeStableId | null;
   formulaVersion: "knowledge-preview-v1";
   contentDigest: string;
+  basketQualityRevisionId?: KnowledgeStableId;
+  basketQualityContentDigest?: string;
   evaluatedAt: string;
 }
 
@@ -385,4 +455,35 @@ export interface KnowledgeContext {
   availability: KnowledgeAvailability[];
   sections: Partial<Record<KnowledgeSectionKey, unknown>>;
   preview: KnowledgePreview | null;
+  configuration: KnowledgeConfigurationContext;
+}
+
+export type KnowledgeCalculationScope = "pmc" | "sub_vendor" | "in_house_labor" | "in_house_material";
+
+/** Active-revision settings for future analysis, separate from the legacy price-version preview. */
+export interface KnowledgeConfigurationContext {
+  formulaVersion: "mode-markup-v1";
+  moneyUnit: "paise";
+  percentageUnit: "basis_points";
+  selection: {
+    modeKind: KnowledgeModeKind | null;
+    executionSource: KnowledgeExecutionSource | null;
+  };
+  uom: { id: string; name: string; decimalScale: number } | null;
+  shared: {
+    /** Saved wording only. The structured lists remain authoritative even if wording differs. */
+    paragraph: string | null;
+    scopeConfigurationId: string | null;
+    inclusions: Array<{ id: string; name: string }>;
+    exclusions: Array<{ id: string; name: string }>;
+  };
+  state: "ready" | "selection_required" | "not_configured" | "invalid";
+  issues: Array<{ code: string; scope: KnowledgeCalculationScope | null }>;
+  calculations: Array<{
+    scope: KnowledgeCalculationScope;
+    source: "scoped" | "legacy_shared" | "legacy_in_house" | null;
+    settings: Required<KnowledgeModeCalculationSettings> | null;
+    /** A difference in markup percentage points, not a selling-price discount. */
+    maximumDiscountBps: number | null;
+  }>;
 }

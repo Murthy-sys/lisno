@@ -1,4 +1,5 @@
 import { Surface } from "../../components/ui/Surface";
+import { BUDGET_ACTIONS, budgetAlterationRows } from "./knowledgeBudgetAlterations";
 import {
   KNOWLEDGE_SECTION_LABELS,
   formatKnowledgeDateTime,
@@ -69,6 +70,8 @@ export function KnowledgeConflictReview({
       ? pricingValues(payload, context)
       : sectionKey === "advanced"
         ? advancedValues(payload, context)
+      : sectionKey === "recommendations"
+        ? recommendationValues(payload, context)
       : projectValues(payload, context);
 
   return (
@@ -97,6 +100,21 @@ export function KnowledgeConflictReview({
       )}
     </Surface>
   );
+}
+
+function recommendationValues(payload: KnowledgeJsonObject, context: ProjectionContext): readonly ConflictReviewValue[] {
+  const { budgetAlterations, ...notes } = payload;
+  return [...budgetAlterationRows(budgetAlterations).flatMap((rule, index) => {
+    const item = context.relationshipItems.find((candidate) => candidate.mainLineId === rule.targetMainLineId);
+    const basket = context.relationshipBaskets.find((candidate) => candidate.id === rule.targetBasketId);
+    const action = BUDGET_ACTIONS.find((candidate) => candidate.action === rule.action && candidate.requirement === rule.requirement);
+    return [
+      { label: `Budget rule ${index + 1}`, value: `When this item is ${rule.trigger === "added" ? "added" : "removed"}: ${item?.mainLineName ?? "Unavailable item"} ${action?.label.toLowerCase() ?? "needs review"}.` },
+      { label: `Budget rule ${index + 1} · Location`, value: [basket?.name ?? "Unavailable Main Basket", item?.subBasketName].filter(Boolean).join(" → ") },
+      { label: `Budget rule ${index + 1} · Why`, value: typeof rule.reason === "string" ? rule.reason : "Not provided" },
+      { label: `Budget rule ${index + 1} · Status`, value: rule.active === false ? "Disabled" : "Enabled" }
+    ];
+  }), ...projectValues(notes, context)];
 }
 
 function advancedValues(
@@ -469,6 +487,12 @@ function displayLabel(key: string): string {
     taxAmountPaise: "Tax amount",
     totalAmountPaise: "Total amount",
     modeCalculation: "Calculation settings",
+    modeCalculations: "Mode calculation settings",
+    pmc: "PMC",
+    sub_vendor: "Sub-Vendor",
+    in_house: "In-house",
+    in_house_labor: "Labor cost",
+    in_house_material: "Material cost",
     baseRatePaise: "Base Rate",
     minimumMarkupBps: "Min. Gross Margin Markup",
     startingMarkupBps: "Starting Gross Margin Markup"
