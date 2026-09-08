@@ -45,7 +45,6 @@ import { invalidateTemporaryMainLineDetails, syncKnowledgeBasketDeletion } from 
 import { knowledgeQueryKeys } from "./knowledgeQueryKeys";
 import { KNOWLEDGE_ITEM_STATUS_LABELS } from "./knowledgePresentation";
 import { CreateKnowledgeItemDialog } from "./CreateKnowledgeItemDialog";
-import { KnowledgeTemporaryMainLineInfo } from "./KnowledgeTemporaryMainLineInfo";
 import { KnowledgeSafetyNotice } from "./KnowledgeSafetyNotice";
 import { collectAllKnowledgeMasterPages } from "./knowledgeMasterPagination";
 import { KnowledgeLifecycleDialog } from "./KnowledgeLifecycleDialogs";
@@ -60,14 +59,6 @@ import type {
   KnowledgePermanentDeleteBasketResult
 } from "./knowledgeTypes";
 import "./ai-estimator-knowledge.css";
-
-/*
- * Priority is hidden on the Main Line cards for now and will be switched back
- * on if it is needed. Flip this to true to restore the row. The Priority filter
- * below is deliberately unaffected, and Recommendation rows still require a
- * Priority, so the master itself stays in use.
- */
-const ITEM_CARD_PRIORITY_ENABLED = false;
 
 const PAGE_SIZE = 20;
 const BASKET_MANAGEMENT_PAGE_SIZE = 100;
@@ -102,14 +93,6 @@ const emptyFilters: FilterState = {
   uomId: "",
   vendorId: ""
 };
-
-function statusTone(status: KnowledgeItemStatus): StatusTone {
-  if (status === "active") return "success";
-  if (status === "draft") return "warning";
-  if (status === "archived") return "danger";
-  return "neutral";
-}
-
 function errorMessage(error: Error | null): string {
   return error?.message ?? "The knowledge base could not be loaded.";
 }
@@ -519,25 +502,16 @@ export function KnowledgeBaseIndexPage() {
               <div className="knowledge-item-grid">
                 {group.items.map((item) => (
                   <article key={item.id} className="knowledge-item-card" data-item-type={item.itemType ?? "main_line"}>
-                    <div className="knowledge-item-card__heading">
-                      <div>
-                        <p className="knowledge-breadcrumb">{item.basketName} → {item.subBasketName ? `${item.subBasketName} → ` : ""}{item.itemType === "temporary" ? <span className="knowledge-temporary-badge">Temporary item</span> : "Main Line"}</p>
-                        <h3>
-                          <Link
-                            className="knowledge-item-link"
-                            to={`/admin/configuration/estimation/items/${encodeURIComponent(item.mainLineId)}`}
-                          >
-                            {item.mainLineName}
-                          </Link>
-                        </h3>
-                      </div>
-                      <StatusBadge
-                        label={KNOWLEDGE_ITEM_STATUS_LABELS[item.status]}
-                        tone={statusTone(item.status)}
-                      />
-                    </div>
-                    <p>{item.itemType === "temporary" ? "Overview · Mode · Quality Parameters" : item.description ?? "No description provided."}</p>
-                    <KnowledgeTemporaryMainLineInfo item={item} compact />
+                    <h3>
+                      <Link
+                        className="knowledge-item-link"
+                        to={`/admin/configuration/estimation/items/${encodeURIComponent(item.mainLineId)}`}
+                        aria-describedby={item.itemType === "temporary" ? `temporary-kind-${item.id}` : undefined}
+                      >
+                        {item.mainLineName}
+                      </Link>
+                    </h3>
+                    {item.itemType === "temporary" && <span id={`temporary-kind-${item.id}`} className="sr-only">Temporary item</span>}
                     <div className="knowledge-item-card__progress">
                       <span>{item.completeness.percentage}% complete</span>
                       <ProgressBar
@@ -545,17 +519,6 @@ export function KnowledgeBaseIndexPage() {
                         label={`${item.mainLineName} completeness`}
                         valueText={`${item.completeness.percentage}% complete`}
                       />
-                    </div>
-                    <dl className="knowledge-item-metadata">
-                      <div><dt>Revision</dt><dd>{item.revisionNumber ?? "Not available"}</dd></div>
-                      <div><dt>UOM</dt><dd>{nameFor(masters.uoms, item.uomId)}</dd></div>
-                      {ITEM_CARD_PRIORITY_ENABLED ? <div><dt>Priority</dt><dd>{nameFor(masters.priorities, item.priorityId)}</dd></div> : null}
-                      <div><dt>Modes</dt><dd>{namesFor(masters.modes, item.modeIds)}</dd></div>
-                      <div><dt>Surfaces</dt><dd>{namesFor(masters.surfaces, item.surfaceIds)}</dd></div>
-                      <div><dt>Updated</dt><dd>{new Date(item.updatedAt).toLocaleDateString("en-IN")}</dd></div>
-                    </dl>
-                    <div className="knowledge-item-card__actions">
-                      <Button variant="secondary" onClick={() => navigate(`/admin/configuration/estimation/items/${encodeURIComponent(item.mainLineId)}`)}>Open workspace</Button>
                     </div>
                   </article>
                 ))}
@@ -1065,11 +1028,6 @@ function filterLabel(type: (typeof FILTER_MASTER_TYPES)[number]) {
 function nameFor(masters: readonly KnowledgeMaster[], id: string | null) {
   if (!id) return "Not configured";
   return masters.find((master) => master.id === id)?.name ?? "Unavailable";
-}
-
-function namesFor(masters: readonly KnowledgeMaster[], ids: readonly string[]) {
-  if (!ids.length) return "Not configured";
-  return ids.map((id) => masters.find((master) => master.id === id)?.name ?? "Unavailable").join(", ");
 }
 
 function FilterSelect({ id, label, value, options, onChange }: {

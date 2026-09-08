@@ -364,6 +364,7 @@ describe("AI estimator knowledge reference service", () => {
           bootstrapOwned: false,
           deletedMainLineIds: [],
           deletedSubBasketCount: 0,
+          deletedQualityRevisionCount: 0,
           deletedRevisionCount: 0,
           deletedSectionCount: 0,
           deletedPriceVersionCount: 0,

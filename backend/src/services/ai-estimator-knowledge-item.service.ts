@@ -81,6 +81,7 @@ import {
   observeExplicitAiEstimatorKnowledgeDisplayOrder
 } from "./ai-estimator-knowledge-display-order.service.js";
 import { systemClock, type Clock } from "./workflow.js";
+import { readBasketQualityRevisions, type AiEstimatorKnowledgeBasketQualityRevision } from "./ai-estimator-knowledge-basket-quality.js";
 
 type Row = Record<string, unknown>;
 
@@ -525,9 +526,7 @@ export function createAiEstimatorKnowledgeItemService(
           .sort({ updatedAt: -1, _id: 1 })
           .lean()
           .exec();
-        const summaries = await Promise.all(
-          documents.map((document) => buildItemSummary(asRow(document)!))
-        );
+        const summaries = await buildItemSummaries(documents.map((document) => asRow(document)!));
         const filtered = summaries.filter((item) => itemMatches(item, filters));
         return {
           items: await attachTemporaryMainLineReferences(filtered.slice(pagination.offset, pagination.offset + pagination.limit)),
@@ -544,7 +543,7 @@ export function createAiEstimatorKnowledgeItemService(
         AiEstimatorKnowledgeMainLineModel.countDocuments(filter).exec()
       ]);
       return {
-        items: await attachTemporaryMainLineReferences(await Promise.all(documents.map((document) => buildItemSummary(asRow(document)!)))),
+        items: await attachTemporaryMainLineReferences(await buildItemSummaries(documents.map((document) => asRow(document)!))),
         total
       };
     },
@@ -1900,18 +1899,17 @@ async function loadItemDetail(mainLineId: string, includeArchived = false): Prom
     }).lean().exec()
   );
   if (!line) notFound();
-  const [summary] = await attachTemporaryMainLineReferences([await buildItemSummary(line)]);
+  const [summary] = await attachTemporaryMainLineReferences(await buildItemSummaries([line]));
   const [activeRevision, draftRevision] = await Promise.all([
     optionalString(line.activeRevisionId) ? loadRevision(requiredString(line.activeRevisionId)) : null,
     optionalString(line.draftRevisionId) ? loadRevision(requiredString(line.draftRevisionId)) : null
   ]);
-  const current = draftRevision ?? activeRevision;
   return {
     ...summary,
     activeRevision,
     draftRevision,
-    blockers: current?.completeness.blockers ?? [],
-    warnings: current?.completeness.warnings ?? []
+    blockers: summary!.completeness.blockers,
+    warnings: summary!.completeness.warnings
   };
 }
 
@@ -1980,10 +1978,28 @@ async function attachTemporaryMainLineReferences(items: KnowledgeItemListItem[])
   } : item);
 }
 
-async function buildItemSummary(line: Row): Promise<KnowledgeItemListItem> {
+async function buildItemSummaries(lines: Row[]): Promise<KnowledgeItemListItem[]> {
+  if (!lines.length) return [];
+  const baskets = (await AiEstimatorKnowledgeBasketModel.find({
+    _id: { $in: [...new Set(lines.map((line) => requiredString(line.basketId)))] }
+  }).lean().exec()).map((document) => asRow(document)!);
+  const basketById = new Map(baskets.map((basket) => [requiredString(basket._id), basket]));
+  const qualityByBasket = await readBasketQualityRevisions(baskets);
+  return Promise.all(lines.map((line) => {
+    const basketId = requiredString(line.basketId);
+    const basket = basketById.get(basketId);
+    if (!basket) unresolved("Knowledge Basket is unavailable.");
+    return buildItemSummary(line, basket, qualityByBasket.get(basketId) ?? null);
+  }));
+}
+
+async function buildItemSummary(
+  line: Row,
+  basket: Row,
+  basketQuality: AiEstimatorKnowledgeBasketQualityRevision | null
+): Promise<KnowledgeItemListItem> {
   const revisionId = optionalString(line.draftRevisionId) ?? optionalString(line.activeRevisionId);
-  const [basketDocument, revisionDocument, overviewDocument, pricingDocument, subBasketDocument] = await Promise.all([
-    AiEstimatorKnowledgeBasketModel.findById(requiredString(line.basketId)).lean().exec(),
+  const [revisionDocument, overviewDocument, pricingDocument, subBasketDocument] = await Promise.all([
     revisionId ? AiEstimatorKnowledgeRevisionModel.findById(revisionId).lean().exec() : null,
     revisionId ? AiEstimatorKnowledgeSectionModel.findOne({ revisionId, sectionKey: "overview" }).lean().exec() : null,
     revisionId ? AiEstimatorKnowledgeSectionModel.findOne({ revisionId, sectionKey: "pricing" }).lean().exec() : null,
@@ -1996,8 +2012,6 @@ async function buildItemSummary(line: Row): Promise<KnowledgeItemListItem> {
         _id: { $in: retainedPriceVersionIds },
         revisionId
       }).select({ vendorId: 1 }).lean().exec();
-  const basket = asRow(basketDocument);
-  if (!basket) unresolved("Knowledge Basket is unavailable.");
   const revision = asRow(revisionDocument);
   const overview = payloadFor(asRow(overviewDocument));
   const completeness = revision ? completenessDto(revision.completeness) : emptyCompleteness(requiredString(line._id), line.itemType === "temporary" ? "temporary" : "main_line");
@@ -2020,13 +2034,37 @@ async function buildItemSummary(line: Row): Promise<KnowledgeItemListItem> {
     modeIds: stringArray(overview.modeIds),
     surfaceIds: stringArray(overview.surfaceIds),
     vendorIds: [...new Set(priceDocuments.map((row) => optionalString(asRow(row)?.vendorId)).filter((id): id is string => Boolean(id)))],
-    completeness,
+    completeness: effectiveBasketQualityCompleteness(completeness, basketQuality),
     allowedActions: allowedActions(requiredString(line.status), Boolean(line.draftRevisionId)),
     version: requiredInteger(line.version),
     createdById: requiredString(line.createdById),
     updatedById: requiredString(line.updatedById),
     createdAt: requiredDate(line.createdAt).toISOString(),
     updatedAt: requiredDate(line.updatedAt).toISOString()
+  };
+}
+
+/** Presentation only: saved revisions and revision history keep their original completeness. */
+function effectiveBasketQualityCompleteness(
+  historical: KnowledgeCompletenessSummary,
+  basketQuality: AiEstimatorKnowledgeBasketQualityRevision | null
+): KnowledgeCompletenessSummary {
+  if (!basketQuality) return historical;
+  const hasChecks = basketQuality.parameters.length > 0;
+  const quality: KnowledgeCompletenessSummary["sections"][number] = {
+    sectionKey: "quality", state: hasChecks ? "complete" : "not_configured",
+    findings: hasChecks ? [] : [{ code: "SECTION_NOT_CONFIGURED", sectionKey: "quality",
+      message: "quality is not configured.", blocking: false }]
+  };
+  const sections = historical.sections.map((section) => section.sectionKey === "quality" ? quality : section);
+  if (!sections.some((section) => section.sectionKey === "quality")) sections.push(quality);
+  const applicable = sections.filter((section) => section.state !== "not_applicable");
+  const findings = sections.flatMap((section) => section.findings);
+  return {
+    percentage: applicable.length ? Math.round(100 * applicable.filter((section) => section.state === "complete").length / applicable.length) : 100,
+    sections,
+    blockers: findings.filter((finding) => finding.blocking),
+    warnings: findings.filter((finding) => !finding.blocking)
   };
 }
 

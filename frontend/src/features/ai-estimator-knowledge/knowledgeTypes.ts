@@ -143,6 +143,19 @@ export interface KnowledgeBasket extends KnowledgeVersionedResource {
   readonly status: KnowledgeMasterStatus;
 }
 
+export interface KnowledgeBasketQuality {
+  readonly basketId: string;
+  readonly basketName: string;
+  readonly basketStatus: KnowledgeMasterStatus;
+  /** Main Basket CAS version, independent of the item revision. */
+  readonly version: number;
+  readonly revisionId: string | null;
+  readonly revisionNumber: number;
+  readonly contentDigest: string | null;
+  readonly parameters: readonly KnowledgeJsonObject[];
+  readonly updatedAt: string | null;
+}
+
 /** What a deletion carries away. Nothing here can refuse one. */
 export interface KnowledgeSubBasket extends Omit<KnowledgeBasket, "description" | "status"> {
   readonly basketId: string;
@@ -350,6 +363,8 @@ export interface KnowledgeContextLineage {
   readonly taxVersionId: string | null;
   readonly formulaVersion: "knowledge-preview-v1";
   readonly contentDigest: string;
+  readonly basketQualityRevisionId?: string;
+  readonly basketQualityContentDigest?: string;
   readonly evaluatedAt: string;
 }
 

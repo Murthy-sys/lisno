@@ -7,6 +7,8 @@ import {
   KnowledgeBudgetBuilder,
   type KnowledgeBudgetCatalogState
 } from "./KnowledgeBudgetBuilder";
+import { KnowledgeQualityInspectionFields } from "./KnowledgeQualityInspectionFields";
+import { mandatoryQualityParameters } from "./knowledgeQuality";
 import { KnowledgeRepeater } from "./KnowledgeRepeater";
 import { KnowledgeBudgetAlterationBuilder } from "./KnowledgeBudgetAlterationBuilder";
 import {
@@ -236,7 +238,9 @@ export function KnowledgeSectionEditor({
     onDirty();
     const next = { ...payload } as Record<string, KnowledgeJsonValue>;
     if (value === undefined || value === "") delete next[key];
-    else next[key] = value;
+    else next[key] = sectionKey === "quality" && key === "parameters" && Array.isArray(value)
+      ? mandatoryQualityParameters(value as readonly KnowledgeJsonObject[])
+      : value;
     if (
       key === "quantitySlabs" &&
       Array.isArray(value) &&
@@ -551,7 +555,7 @@ function AllowedValuesInput({ id, values, disabled, onChange }: { readonly id: s
     ownValues.current = values;
     setText(values.join(", "));
   }, [values]);
-  return <RowInput id={id} label="Allowed values" hint="Separate each value with a comma." value={text} disabled={disabled} onChange={(next) => {
+  return <RowInput id={id} label="Options" hint="Separate each option with a comma." value={text} disabled={disabled} onChange={(next) => {
     setText(next);
     const parsed = next.split(",").map((entry) => entry.trim()).filter(Boolean);
     ownValues.current = parsed;
@@ -567,7 +571,6 @@ function QualityRow({ prefix, value, disabled, onChange }: { readonly prefix: st
   const set = (key: string, next: KnowledgeJsonValue | undefined) => onChange(setObjectValue(value, key, next));
   const type = stringValue(value.type);
   const choice = ["dropdown", "radio", "multi_select"].includes(type);
-  const numeric = type === "number";
   const changeType = (next: string) => {
     const copy = { ...value } as Record<string, KnowledgeJsonValue>;
     copy.type = next;
@@ -576,15 +579,26 @@ function QualityRow({ prefix, value, disabled, onChange }: { readonly prefix: st
     if (next !== "number") { delete copy.minimum; delete copy.maximum; delete copy.unit; }
     onChange(copy);
   };
-  const allowed = stringArray(value.allowedValues);
-  return <div className="knowledge-form-grid"><RowSelect id={`${prefix}-type`} label="Parameter type" value={type} values={["text", "number", "dropdown", "radio", "checkbox", "multi_select", "boolean"]} disabled={disabled} onChange={changeType} /><RowInput id={`${prefix}-label`} label="Label" value={stringValue(value.label)} disabled={disabled} required onChange={(next) => set("label", next || undefined)} />{numeric ? <><RowInput id={`${prefix}-unit`} label="Unit" value={stringValue(value.unit)} disabled={disabled} onChange={(next) => set("unit", next || null)} /><RowInput id={`${prefix}-minimum`} label="Minimum" value={stringValue(value.minimum)} disabled={disabled} onChange={(next) => set("minimum", next || null)} /><RowInput id={`${prefix}-maximum`} label="Maximum" value={stringValue(value.maximum)} disabled={disabled} onChange={(next) => set("maximum", next || null)} /></> : null}{choice ? <AllowedValuesInput id={`${prefix}-values`} values={allowed} disabled={disabled} onChange={(next) => set("allowedValues", next)} /> : null}<QualityDefaultControl prefix={prefix} type={type} value={value.defaultValue} allowedValues={allowed} disabled={disabled} onChange={(next) => set("defaultValue", next)} /><RowInput id={`${prefix}-category`} label="Category" value={stringValue(value.category)} disabled={disabled} onChange={(next) => set("category", next || null)} /><RowCheckbox label="Required" checked={booleanValue(value.required)} disabled={disabled} onChange={(next) => set("required", next)} /><RowCheckbox label="Active" checked={booleanValue(value.active, true)} disabled={disabled} onChange={(next) => set("active", next)} /></div>;
-}
-
-function QualityDefaultControl({ prefix, type, value, allowedValues, disabled, onChange }: { readonly prefix: string; readonly type: string; readonly value: KnowledgeJsonValue | undefined; readonly allowedValues: readonly string[]; readonly disabled: boolean; readonly onChange: (value: KnowledgeJsonValue) => void }) {
-  if (type === "boolean" || type === "checkbox") return <RowSelect id={`${prefix}-default`} label="Default value" value={value === true ? "true" : value === false ? "false" : ""} values={["true", "false"]} disabled={disabled} onChange={(next) => onChange(next === "" ? null : next === "true")} />;
-  if (type === "dropdown" || type === "radio") return <StableIdSelect id={`${prefix}-default`} label="Default value" value={stringValue(value)} options={allowedValues.map((entry) => ({ id: entry, label: entry }))} disabled={disabled} nullable onChange={(next) => onChange(next || null)} />;
-  if (type === "multi_select") return <StableIdMultiSelect id={`${prefix}-default`} label="Default values" values={stringArray(value)} options={allowedValues.map((entry) => ({ id: entry, label: entry }))} disabled={disabled} onChange={onChange} />;
-  return <RowInput id={`${prefix}-default`} label="Default value" value={stringValue(value)} disabled={disabled} onChange={(next) => onChange(next || null)} />;
+  const changeOptions = (allowedValues: readonly string[]) => {
+    const copy = { ...value, allowedValues } as Record<string, KnowledgeJsonValue>;
+    if (Array.isArray(copy.defaultValue)) copy.defaultValue = copy.defaultValue.filter((entry) => typeof entry === "string" && allowedValues.includes(entry));
+    else if (typeof copy.defaultValue === "string" && !allowedValues.includes(copy.defaultValue)) copy.defaultValue = null;
+    onChange(copy);
+  };
+  const typeLabels = { boolean: "Yes / No", text: "Text", number: "Number", dropdown: "Single choice", multi_select: "Multiple choice", radio: "Single choice (radio)", checkbox: "Checkbox" };
+  return <div className="knowledge-quality-check">
+    <RowInput id={`${prefix}-label`} label="Question / check" value={stringValue(value.label)} disabled={disabled} required multiline onChange={(next) => set("label", next || undefined)} />
+    <div className="knowledge-form-grid">
+      <Field id={`${prefix}-type`} label="Answer type" required>
+        {(props) => <Select {...props} value={type} disabled={disabled} onChange={(event) => changeType(event.target.value)}>
+          <option value="">Select</option>
+          {Object.entries(typeLabels).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
+        </Select>}
+      </Field>
+      {choice ? <AllowedValuesInput id={`${prefix}-values`} values={stringArray(value.allowedValues)} disabled={disabled} onChange={changeOptions} /> : null}
+    </div>
+    <KnowledgeQualityInspectionFields prefix={prefix} value={value} disabled={disabled} onChange={onChange} />
+  </div>;
 }
 
 function ExecutionStepRow({ prefix, value, steps, disabled, set }: { readonly prefix: string; readonly value: KnowledgeJsonObject; readonly steps: readonly KnowledgeJsonObject[]; readonly disabled: boolean; readonly set: (key: string, value: KnowledgeJsonValue | undefined) => void }) {
@@ -601,8 +615,8 @@ function RowNumber({ id, label, value, disabled, onChange, min = 0, max, require
   return <Field id={id} label={label} required={required}>{(props) => <Input {...props} type="number" min={min} max={max} step={1} disabled={disabled} value={value ?? ""} onChange={(event) => onChange(event.target.value === "" ? undefined : Number(event.target.value))} />}</Field>;
 }
 
-function RowSelect({ id, label, value, values, disabled, onChange }: { readonly id: string; readonly label: string; readonly value: string; readonly values: readonly string[]; readonly disabled: boolean; readonly onChange: (value: string) => void }) {
-  return <Field id={id} label={label} required>{(props) => <Select {...props} disabled={disabled} value={value} onChange={(event) => onChange(event.target.value)}><option value="">Select</option>{values.map((entry) => <option key={entry} value={entry}>{entry.replaceAll("_", " ")}</option>)}</Select>}</Field>;
+function RowSelect({ id, label, value, values, disabled, onChange, required = true }: { readonly id: string; readonly label: string; readonly value: string; readonly values: readonly string[]; readonly disabled: boolean; readonly onChange: (value: string) => void; readonly required?: boolean }) {
+  return <Field id={id} label={label} required={required}>{(props) => <Select {...props} disabled={disabled} value={value} onChange={(event) => onChange(event.target.value)}><option value="">Select</option>{values.map((entry) => <option key={entry} value={entry}>{entry.replaceAll("_", " ")}</option>)}</Select>}</Field>;
 }
 
 /*
@@ -685,7 +699,7 @@ function ReadOnlyStructuredData({ label, value }: { readonly label: string; read
 /* Fields the backend requires on every row but the author never sees. Hiding a
    control does not remove it from the contract, so new rows carry its default. */
 const NEW_ROW_DEFAULTS: Readonly<Record<string, KnowledgeJsonObject>> = {
-  parameters: { required: false, active: true },
+  parameters: { required: true, active: true },
   recommendations: { active: true, dependency: false },
   exclusions: { active: true }
 };
@@ -764,7 +778,7 @@ function sectionHelp(sectionKey: KnowledgeSectionKey): string {
     "quantity-margin": "Configure priced Quantity slabs and shared basis-point margins. Legacy adjustment slabs retain their existing calculation behavior.",
     scope: "Define applicable modes, surfaces, and explicit exclusions.",
     recommendations: "Describe related scope changes when this item is added or removed, and explain why each change is required or optional.",
-    quality: "Define customer-facing and technical quality parameters.",
+    quality: "All quality checks are required. Define what to inspect, what passes, and which evidence the site team must provide.",
     execution: "Order execution steps and productivity rules.",
     advanced: "Maintain dependencies, mode overrides, and revision lineage."
   } as const)[sectionKey];

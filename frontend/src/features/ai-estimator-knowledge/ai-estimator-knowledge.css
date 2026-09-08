@@ -702,7 +702,7 @@
   align-content: start;
   gap: var(--space-4);
   min-width: 0;
-  padding: var(--space-5);
+  padding: 16px 18px;
   border: 1px solid var(--role-line, var(--color-border));
   border-radius: var(--radius-field);
   background: var(--role-deck, var(--color-surface));
@@ -813,8 +813,15 @@
   transition: color var(--duration-fast) var(--ease-standard);
 }
 
+.knowledge-item-card .knowledge-item-link {
+  display: flex;
+  align-items: center;
+  min-block-size: 44px;
+}
+
 .knowledge-item-link:hover {
-  color: var(--role-accent, var(--color-brand-violet));
+  color: var(--role-ink, var(--color-text));
+  text-decoration: underline;
   text-decoration-color: currentcolor;
 }
 

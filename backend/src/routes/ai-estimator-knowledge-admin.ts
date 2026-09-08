@@ -29,6 +29,14 @@ const stableIdSchema = z.string().trim().min(1).max(128);
 const shortTextSchema = z.string().trim().min(1).max(240);
 const optionalDescriptionSchema = z.string().trim().min(1).max(4_000).nullable().optional();
 const expectedVersionSchema = z.number().int().min(1);
+const basketQualityUpdateSchema = z.object({
+  expectedVersion: expectedVersionSchema,
+  parameters: z.array(z.record(z.string(), z.unknown())).max(200)
+}).strict().superRefine((value, context) => {
+  for (const issue of validateKnowledgeSectionPayload("quality", { parameters: value.parameters })) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: issue.path.replace(/^payload\./u, "").split("."), message: issue.message });
+  }
+});
 const displayOrderSchema = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
 const paginationFields = {
   limit: z.coerce.number().int().min(1).max(100).default(20),
@@ -349,6 +357,19 @@ export function createAiEstimatorKnowledgeAdminRouter(
     requireOperation("PATCH /admin/ai-estimator-knowledge/baskets/:basketId"),
     validateBody(basketUpdateSchema),
     handler(async (request) => services.reference.updateBasket(request.authenticatedUser!, String(request.params.basketId), request.body))
+  );
+  router.get(
+    `${prefix}/baskets/:basketId/quality`,
+    protectedRoute,
+    requireOperation("GET /admin/ai-estimator-knowledge/baskets/:basketId/quality"),
+    handler(async (request) => services.reference.getBasketQuality(request.authenticatedUser!, String(request.params.basketId)))
+  );
+  router.put(
+    `${prefix}/baskets/:basketId/quality`,
+    protectedRoute,
+    requireOperation("PUT /admin/ai-estimator-knowledge/baskets/:basketId/quality"),
+    validateBody(basketQualityUpdateSchema),
+    handler(async (request) => services.reference.updateBasketQuality(request.authenticatedUser!, String(request.params.basketId), request.body))
   );
   router.delete(
     `${prefix}/baskets/:basketId`,

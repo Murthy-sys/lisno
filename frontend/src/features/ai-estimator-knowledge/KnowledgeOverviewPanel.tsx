@@ -72,11 +72,13 @@ export interface KnowledgeOverviewPanelProps {
   readonly onQuickAddSurface?: (select: (master: KnowledgeMaster) => void) => void;
   readonly saving?: boolean;
   readonly surfacesDirty?: boolean;
+  readonly qualitySourceLabel?: string;
   readonly showRecommendations?: boolean;
   readonly onOpenSection: (section: KnowledgeWorkspaceSectionKey) => void;
 }
 
 export function KnowledgeOverviewPanel({
+  qualitySourceLabel,
   item,
   overviewPayload,
   summary,
@@ -490,6 +492,7 @@ export function KnowledgeOverviewPanel({
             actionLabel="Open Quality Parameter"
             onAction={() => onOpenSection("quality")}
           />
+          {qualitySourceLabel ? <p className="knowledge-help-text">{qualitySourceLabel}</p> : null}
           <SourceBoundary keys={["quality"]} states={sectionStates}>
             {summary.qualityDetails.length ? (
               <ul className="knowledge-overview__quality-list">

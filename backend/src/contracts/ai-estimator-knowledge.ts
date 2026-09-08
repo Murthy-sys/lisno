@@ -118,6 +118,7 @@ export interface KnowledgeItemListItem extends KnowledgeVersionedResource {
   modeIds: KnowledgeStableId[];
   surfaceIds: KnowledgeStableId[];
   vendorIds: KnowledgeStableId[];
+  /** Current display projection, including the Main Basket checklist when configured. */
   completeness: KnowledgeCompletenessSummary;
   allowedActions: string[];
 }
@@ -128,6 +129,7 @@ export interface KnowledgeRevision extends KnowledgeVersionedResource {
   status: KnowledgeRevisionStatus;
   sourceRevisionId: KnowledgeStableId | null;
   contentDigest: string | null;
+  /** Stored item-revision snapshot; shared Basket edits do not rewrite this history. */
   completeness: KnowledgeCompletenessSummary;
   activatedAt: string | null;
   activatedById: KnowledgeStableId | null;
@@ -296,6 +298,15 @@ export interface KnowledgeQualityParameter {
   required: boolean;
   category: string | null;
   active: boolean;
+  instructions?: string | null;
+  acceptanceCriteria?: string | null;
+  stage?: string | null;
+  checkMethod?: "visual" | "measurement" | "functional_test" | "document_review" | null;
+  severity?: "critical" | "major" | "minor" | null;
+  responsibleRole?: string | null;
+  failureAction?: string | null;
+  sampling?: { method: "all" | "percentage" | "fixed_count"; value?: number | null; unit: string } | null;
+  evidence?: { photos: boolean; documents: boolean; video: boolean; minPhotosPerSample?: number | null; instructions?: string | null } | null;
 }
 
 export interface KnowledgeModeField {
@@ -434,6 +445,8 @@ export interface KnowledgeContextLineage {
   taxVersionId: KnowledgeStableId | null;
   formulaVersion: "knowledge-preview-v1";
   contentDigest: string;
+  basketQualityRevisionId?: KnowledgeStableId;
+  basketQualityContentDigest?: string;
   evaluatedAt: string;
 }
 

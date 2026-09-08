@@ -1898,7 +1898,7 @@ describe("AI estimator knowledge integrated replica-set invariants", { timeout: 
     expect(refreshed.sections.recommendations).toMatchObject({ budgetAlterations: [{ target: { status: "inactive" } }, { target: { status: "draft" } }] });
   });
 
-  it("keeps inactive nested rows as history while omitting them from context, graphs, and inbound archive protection", async () => {
+  it("keeps inactive nested history while projecting mandatory quality and filtering other inactive sections", async () => {
     const services = createServices();
     const target = await createAndActivateOverviewOnly(services.item, "Inactive Relation Target");
     let source = await createConfiguredDraft(services.item, "Inactive Row Source");
@@ -2004,7 +2004,9 @@ describe("AI estimator knowledge integrated replica-set invariants", { timeout: 
     });
     expect(context.sections.scope).toMatchObject({ exclusions: [] });
     expect(context.sections.recommendations).toMatchObject({ recommendations: [] });
-    expect(context.sections.quality).toMatchObject({ parameters: [] });
+    expect(context.sections.quality).toMatchObject({ parameters: [{ id: "inactive-quality-parameter", required: true, active: true }] });
+    expect(await services.item.getSection(SUPER_ADMIN, source.mainLineId, source.revisionId, "quality"))
+      .toMatchObject({ payload: { parameters: [{ id: "inactive-quality-parameter", required: false, active: false }] } });
     expect(context.sections.advanced).toMatchObject({ dependencies: [] });
     expect(context.sections.advanced).not.toHaveProperty("modeOverrides");
     expect(context.sections.execution).toMatchObject({
@@ -2015,7 +2017,6 @@ describe("AI estimator knowledge integrated replica-set invariants", { timeout: 
     for (const privateValue of [
       "inactive-scope-exclusion",
       "inactive-recommendation",
-      "inactive-quality-parameter",
       "inactive-step-a",
       "inactive-step-b",
       "inactive-productivity",

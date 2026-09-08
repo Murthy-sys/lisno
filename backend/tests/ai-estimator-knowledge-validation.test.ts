@@ -10,6 +10,21 @@ import {
 } from "../src/domain/ai-estimator-knowledge-validation.js";
 
 describe("AI estimator knowledge validation", () => {
+  it("accepts fractional sampling percentages without relaxing numeric cost or count invariants", () => {
+    const check = { id: "fixture-check", type: "boolean", label: "Are fixtures secure?",
+      sampling: { method: "percentage", value: 10.5, unit: "installed fixtures" } };
+    expect(validateKnowledgeSectionPayload("quality", { parameters: [check] })).toEqual([]);
+    for (const value of [0, -0.5, 100.01, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(validateKnowledgeSectionPayload("quality", { parameters: [{ ...check, sampling: { ...check.sampling, value } }] }))
+        .toContainEqual(expect.objectContaining({ path: "payload.parameters.0.sampling.value", code: "INVALID_RANGE" }));
+    }
+    expect(validateKnowledgeSectionPayload("quality", { parameters: [{ ...check, sampling: { ...check.sampling, method: "fixed_count" } }] }))
+      .toContainEqual(expect.objectContaining({ path: "payload.parameters.0.sampling.value", code: "UNSAFE_NUMBER" }));
+    const cost = { baseRatePaise: 150000.5, lowQuantityLimit: "15", impactBps: 1000, minimumMarkupBps: 2500, startingMarkupBps: 3500 };
+    expect(validateKnowledgeSectionPayload("advanced", { modeCalculation: cost }))
+      .toContainEqual(expect.objectContaining({ path: "payload.modeCalculation.baseRatePaise", code: "UNSAFE_NUMBER" }));
+  });
+
   it("validates conditional Budget Alterations with stable catalog or temporary item references", () => {
     const rule = { id: "rule-1", trigger: "removed", action: "remove", requirement: "must", targetType: "catalog", targetBasketId: "basket-electrical", targetSubBasketId: null, targetMainLineId: "line-lights", reason: "Recessed lights require the ceiling.", active: true };
     for (const trigger of ["added", "removed"]) for (const action of ["add", "remove"]) for (const requirement of ["must", "can"]) for (const targetType of ["catalog", "temporary"]) {

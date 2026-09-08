@@ -14,6 +14,7 @@ import {
   AI_ESTIMATOR_KNOWLEDGE_MAX_SPECIFICATION_FIELD_OPTIONS,
   AI_ESTIMATOR_KNOWLEDGE_MODE_KINDS,
   AI_ESTIMATOR_KNOWLEDGE_QUANTITY_GAP_BEHAVIORS,
+  AI_ESTIMATOR_KNOWLEDGE_QUALITY_PARAMETER_TYPES,
   AI_ESTIMATOR_KNOWLEDGE_REVISION_STATUSES,
   AI_ESTIMATOR_KNOWLEDGE_SECTION_APPLICABILITY,
   AI_ESTIMATOR_KNOWLEDGE_SECTION_KEYS,
@@ -38,6 +39,7 @@ const masterFamilies = ["uoms", "vendors", "taxes", "priorities", "surfaces", "m
 export const AI_ESTIMATOR_KNOWLEDGE_REQUEST_BODIES: Readonly<Record<string, OpenApiObject>> = {
   [`POST ${admin}/baskets`]: jsonRequest("KnowledgeBasketCreateRequest"),
   [`PATCH ${admin}/baskets/:basketId`]: jsonRequest("KnowledgeBasketUpdateRequest"),
+  [`PUT ${admin}/baskets/:basketId/quality`]: jsonRequest("KnowledgeBasketQualityUpdateRequest"),
   [`DELETE ${admin}/baskets/:basketId`]: jsonRequest("KnowledgePermanentDeleteBasketRequest"),
   [`POST ${admin}/baskets/:basketId/sub-baskets`]: jsonRequest("KnowledgeSubBasketCreateRequest"),
   [`POST ${admin}/baskets/:basketId/main-lines`]: jsonRequest("KnowledgeMainLineCreateRequest"),
@@ -79,6 +81,8 @@ export const AI_ESTIMATOR_KNOWLEDGE_RESPONSE_SCHEMAS: Readonly<Record<string, st
   [`GET ${admin}/baskets`]: "KnowledgeBasketPage",
   [`POST ${admin}/baskets`]: "KnowledgeBasket",
   [`PATCH ${admin}/baskets/:basketId`]: "KnowledgeBasket",
+  [`GET ${admin}/baskets/:basketId/quality`]: "KnowledgeBasketQuality",
+  [`PUT ${admin}/baskets/:basketId/quality`]: "KnowledgeBasketQuality",
   [`DELETE ${admin}/baskets/:basketId`]: "KnowledgePermanentDeleteBasketResult",
   [`GET ${admin}/baskets/:basketId/deletion-impact`]: "KnowledgeBasketDeletionImpact",
   [`GET ${admin}/baskets/:basketId/main-lines`]: "KnowledgeMainLinePage",
@@ -122,6 +126,8 @@ export const AI_ESTIMATOR_KNOWLEDGE_OPERATION_SUMMARIES: Readonly<Record<string,
   [`GET ${admin}/baskets`]: "List knowledge Baskets",
   [`POST ${admin}/baskets`]: "Create a knowledge Basket",
   [`PATCH ${admin}/baskets/:basketId`]: "Update a knowledge Basket",
+  [`GET ${admin}/baskets/:basketId/quality`]: "Read the shared Main Basket quality checklist",
+  [`PUT ${admin}/baskets/:basketId/quality`]: "Save an immutable shared Main Basket quality checklist revision",
   [`DELETE ${admin}/baskets/:basketId`]: "Permanently delete a knowledge Basket and everything in it",
   [`GET ${admin}/baskets/:basketId/deletion-impact`]: "Read permanent-deletion impact for a knowledge Basket",
   [`GET ${admin}/baskets/:basketId/main-lines`]: "List a Basket's Main Lines",
@@ -327,6 +333,46 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
     description,
     displayOrder: editableDisplayOrder,
     status: { type: "string", enum: ["active", "inactive"] }
+  }),
+  KnowledgeBasketQualityUpdateRequest: strictObject(["expectedVersion", "parameters"], {
+    expectedVersion: version,
+    parameters: { type: "array", maxItems: 200, items: ref("KnowledgeQualityParameter"), description: "Full replacement, including an intentional empty list. Combined payload limit 256 KiB. Validated before any writes." }
+  }),
+  KnowledgeBasketQuality: strictObject(["basketId", "basketName", "basketStatus", "version", "revisionId", "revisionNumber", "contentDigest", "parameters", "updatedAt"], {
+    basketId: id, basketName: masterProperties.name, basketStatus: { type: "string", enum: [...AI_ESTIMATOR_KNOWLEDGE_MASTER_STATUSES] },
+    version, revisionId: { ...id, nullable: true }, revisionNumber: { type: "integer", minimum: 0 },
+    contentDigest: { type: "string", pattern: "^[a-f0-9]{64}$", nullable: true },
+    parameters: { type: "array", maxItems: 200, items: ref("KnowledgeQualityParameter") }, updatedAt: nullableDateTime
+  }),
+  KnowledgeQualityParameter: strictObject(["id", "type", "label"], {
+    id, type: { type: "string", enum: [...AI_ESTIMATOR_KNOWLEDGE_QUALITY_PARAMETER_TYPES] },
+    label: masterProperties.name, unit: { ...masterProperties.name, nullable: true }, category: { ...masterProperties.name, nullable: true },
+    allowedValues: { type: "array", items: { type: "string", maxLength: 240 }, maxItems: 200 },
+    minimum: { type: "string", nullable: true, description: "Canonical nonnegative decimal string." },
+    maximum: { type: "string", nullable: true, description: "Canonical nonnegative decimal string." },
+    defaultValue: { description: "Value compatible with the parameter type, or null." },
+    required: { type: "boolean", description: "Compatibility field. Current quality parameters are always required; shared saves and effective reads normalize this to true." },
+    active: { type: "boolean", description: "Compatibility field. Every listed quality parameter is active; shared saves and effective reads normalize this to true." },
+    instructions: description, acceptanceCriteria: description, stage: { ...masterProperties.name, nullable: true },
+    checkMethod: { type: "string", nullable: true, enum: ["visual", "measurement", "functional_test", "document_review", null] },
+    severity: { type: "string", nullable: true, enum: ["critical", "major", "minor", null] },
+    responsibleRole: { ...masterProperties.name, nullable: true }, failureAction: description,
+    sampling: { ...strictObject(["method", "unit"], {
+      method: { type: "string", enum: ["all", "percentage", "fixed_count"] }, unit: masterProperties.name,
+      value: { type: "number", nullable: true, description: "Percentage >0 and <=100; fixed count integer 1..1,000,000; absent/null for all. Runtime validation is authoritative." }
+    }), nullable: true },
+    evidence: { ...strictObject(["photos", "documents", "video"], {
+      photos: { type: "boolean" }, documents: { type: "boolean" }, video: { type: "boolean" },
+      minPhotosPerSample: { type: "integer", minimum: 1, maximum: 100, nullable: true, description: "Required when photos=true, otherwise absent or null." },
+      instructions: description
+    }), nullable: true }
+  }),
+  KnowledgeQualityContext: strictObject(["parameters"], {
+    parameters: { type: "array", maxItems: 200, items: ref("KnowledgeQualityParameter") },
+    source: strictObject(["kind", "basketId", "revisionId", "revisionNumber", "contentDigest"], {
+      kind: { type: "string", enum: ["main_basket"] }, basketId: id, revisionId: id,
+      revisionNumber: { type: "integer", minimum: 1 }, contentDigest: { type: "string", pattern: "^[a-f0-9]{64}$" }
+    })
   }),
   KnowledgeSubBasketCreateRequest: strictObject(["name"], { name: masterProperties.name }),
   KnowledgeMainLineCreateRequest: { ...strictObject(["name"], {
@@ -1080,7 +1126,7 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
       modeIds: { type: "array", items: id },
       surfaceIds: { type: "array", items: id },
       vendorIds: { type: "array", items: id },
-      completeness: ref("KnowledgeCompleteness"),
+      completeness: { allOf: [ref("KnowledgeCompleteness")], description: "Current display completeness includes the shared Main Basket checklist, if configured. Item revision snapshots remain unchanged." },
       allowedActions: { type: "array", items: { type: "string" } },
       version,
       ...actorMetadata
@@ -1109,7 +1155,7 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
       modeIds: { type: "array", items: id },
       surfaceIds: { type: "array", items: id },
       vendorIds: { type: "array", items: id },
-      completeness: ref("KnowledgeCompleteness"),
+      completeness: { allOf: [ref("KnowledgeCompleteness")], description: "Current display completeness includes the shared Main Basket checklist, if configured. Item revision snapshots remain unchanged." },
       allowedActions: { type: "array", items: { type: "string" } },
       version,
       ...actorMetadata,
@@ -1128,7 +1174,7 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
       status: { type: "string", enum: [...AI_ESTIMATOR_KNOWLEDGE_REVISION_STATUSES] },
       sourceRevisionId: { ...id, nullable: true },
       contentDigest: { type: "string", pattern: "^[a-f0-9]{64}$", nullable: true },
-      completeness: ref("KnowledgeCompleteness"),
+      completeness: { allOf: [ref("KnowledgeCompleteness")], description: "Stored historical item revision completeness. Shared Basket edits never rewrite this snapshot." },
       activatedAt: nullableDateTime,
       activatedById: { ...id, nullable: true },
       supersededAt: nullableDateTime,
@@ -1255,7 +1301,9 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
       taxVersionId: { ...id, nullable: true },
       formulaVersion: { type: "string", enum: ["knowledge-preview-v1"] },
       contentDigest: { type: "string", pattern: "^[a-f0-9]{64}$" },
-      evaluatedAt: dateTime
+      evaluatedAt: dateTime,
+      basketQualityRevisionId: id,
+      basketQualityContentDigest: { type: "string", pattern: "^[a-f0-9]{64}$" }
     }),
     availability: {
       type: "array",
@@ -1268,7 +1316,7 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
     sections: {
       type: "object",
       additionalProperties: false,
-      properties: Object.fromEntries(AI_ESTIMATOR_KNOWLEDGE_SECTION_KEYS.map((key) => [key, {}]))
+      properties: Object.fromEntries(AI_ESTIMATOR_KNOWLEDGE_SECTION_KEYS.map((key) => [key, key === "quality" ? ref("KnowledgeQualityContext") : {}]))
     },
     preview: { ...nullableRef("KnowledgePreview"), description: "Legacy price-version preview only. For independent Mode cost settings use configuration; do not combine these pricing systems." },
     configuration: ref("KnowledgeConfigurationContext")

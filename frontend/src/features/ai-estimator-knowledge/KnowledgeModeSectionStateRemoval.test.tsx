@@ -970,7 +970,8 @@ describe("Knowledge Mode section-state removal", () => {
       7,
       8
     ]);
-    expect(invalidateSpy).toHaveBeenCalledTimes(5);
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: knowledgeQueryKeys.item(item.mainLineId) });
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: knowledgeQueryKeys.contexts() });
     expect(screen.getByRole("textbox", { name: "Component label" })).toBeEnabled();
     expect(screen.getByRole("checkbox", { name: "PMC" })).toBeEnabled();
     expect(screen.getByRole("checkbox", { name: "Execution" })).toBeEnabled();

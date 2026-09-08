@@ -1,6 +1,7 @@
 import { apiClient } from "../../api/client";
 import type {
   KnowledgeBasket,
+  KnowledgeBasketQuality,
   KnowledgeSubBasket,
   KnowledgeSubBasketListResponse,
   KnowledgeBasketDeletionImpact,
@@ -494,4 +495,15 @@ export function listKnowledgeSubBaskets(basketId: string, params: Pick<Knowledge
 
 export function createKnowledgeSubBasket(basketId: string, input: { readonly name: string }): Promise<KnowledgeSubBasket> {
   return apiClient.post<KnowledgeSubBasket>(`${ADMIN_PREFIX}/baskets/${segment(basketId)}/sub-baskets`, input);
+}
+
+export function getKnowledgeBasketQuality(basketId: string): Promise<KnowledgeBasketQuality> {
+  return apiClient.get<KnowledgeBasketQuality>(`${ADMIN_PREFIX}/baskets/${segment(basketId)}/quality`);
+}
+
+export function updateKnowledgeBasketQuality(basketId: string, input: {
+  readonly expectedVersion: number;
+  readonly parameters: readonly KnowledgeJsonObject[];
+}): Promise<KnowledgeBasketQuality> {
+  return apiClient.put<KnowledgeBasketQuality>(`${ADMIN_PREFIX}/baskets/${segment(basketId)}/quality`, input);
 }

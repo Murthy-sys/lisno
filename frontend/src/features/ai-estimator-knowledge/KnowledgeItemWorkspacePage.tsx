@@ -21,6 +21,7 @@ import {
   deactivateKnowledgeItem,
   duplicateKnowledgeItem,
   getKnowledgeHistory,
+  getKnowledgeBasketQuality,
   getKnowledgeItem,
   getKnowledgeSection,
   listKnowledgeBaskets,
@@ -31,6 +32,7 @@ import {
 import { KnowledgeLifecycleDialog, type KnowledgeLifecycleAction } from "./KnowledgeLifecycleDialogs";
 import { KnowledgeMasterEditorDialog } from "./KnowledgeMasterEditorDialog";
 import { KnowledgeSurfaceEditorDialog } from "./KnowledgeSurfaceEditorDialog";
+import { KnowledgeBasketQualityPanel, type KnowledgeBasketQualityPanelHandle } from "./KnowledgeBasketQualityPanel";
 import { KnowledgeModePanel, type KnowledgeModePanelHandle } from "./KnowledgeModePanel";
 import { KnowledgeConflictReview } from "./KnowledgeConflictReview";
 import { KnowledgeRevisionHistory } from "./KnowledgeRevisionHistory";
@@ -53,6 +55,7 @@ import {
   formatKnowledgeDateTime,
 } from "./knowledgePresentation";
 import { knowledgeQueryKeys } from "./knowledgeQueryKeys";
+import { mandatoryQualityParameters } from "./knowledgeQuality";
 import { collectAllKnowledgeMasterPages } from "./knowledgeMasterPagination";
 import {
   knowledgeOverviewPayloadForUpdate,
@@ -100,6 +103,9 @@ export function KnowledgeItemWorkspacePage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const modePanelRef = useRef<KnowledgeModePanelHandle>(null);
+  const qualityPanelRef = useRef<KnowledgeBasketQualityPanelHandle>(null);
+  const [qualityDirty, setQualityDirty] = useState(false);
+  const [qualitySaving, setQualitySaving] = useState(false);
   const [activeSection, setActiveSection] = useState<KnowledgeWorkspaceSectionKey>("overview");
   const [payload, setPayload] = useState<KnowledgeJsonObject>({});
   const [dirty, setDirty] = useState(false);
@@ -129,11 +135,17 @@ export function KnowledgeItemWorkspacePage() {
     enabled: Boolean(mainLineId)
   });
   const item = itemQuery.data;
+  const basketQualityQuery = useQuery({
+    queryKey: knowledgeQueryKeys.basketQuality(item?.basketId ?? ""),
+    queryFn: () => getKnowledgeBasketQuality(item!.basketId),
+    enabled: Boolean(item?.basketId && activeSection === "overview")
+  });
+
   useEffect(() => {
     if (item?.itemType === "temporary" && activeSection === "recommendations") setActiveSection("overview");
   }, [item?.itemType, activeSection]);
   const revision = item?.draftRevision ?? item?.activeRevision ?? null;
-  const backendSection: KnowledgeSectionKey | null = activeSection === "mode"
+  const backendSection: KnowledgeSectionKey | null = activeSection === "mode" || activeSection === "quality"
     ? null
     : activeSection;
   const sectionQuery = useQuery({
@@ -241,29 +253,35 @@ export function KnowledgeItemWorkspacePage() {
     const envelope = overviewSummaryQueries[index]?.data;
     if (envelope) overviewSections[sectionKey] = envelope.payload;
   });
+  if (activeSection === "overview") {
+    if (basketQualityQuery.data?.revisionId) overviewSections.quality = { parameters: basketQualityQuery.data.parameters };
+    else if (!basketQualityQuery.data) delete overviewSections.quality;
+    if (Array.isArray(overviewSections.quality?.parameters)) {
+      overviewSections.quality = { ...overviewSections.quality,
+        parameters: mandatoryQualityParameters(overviewSections.quality.parameters as readonly KnowledgeJsonObject[]) };
+    }
+  }
   const overviewSummary = projectKnowledgeOverviewSummary({
     sections: overviewSections,
     masters,
     baskets: relationshipBasketsQuery.data?.items ?? [],
     items: relationshipItemsQuery.data?.items ?? [],
-    completeness: revision?.completeness ?? item?.completeness ?? null
+    completeness: item?.completeness ?? revision?.completeness ?? null
   });
   const overviewSectionStates = Object.fromEntries(
     OVERVIEW_SUMMARY_SECTION_KEYS.map((sectionKey, index) => {
-      const query = overviewSummaryQueries[index]!;
-      const hasData = Boolean(query.data);
+      const queries = sectionKey === "quality"
+        ? basketQualityQuery.data?.revisionId ? [basketQualityQuery] : [basketQualityQuery, overviewSummaryQueries[index]!]
+        : [overviewSummaryQueries[index]!];
+      const hasData = queries.every(query => Boolean(query.data));
+      const failed = queries.find(query => query.isError);
+      const errorMessage = failed?.error instanceof Error ? failed.error.message : undefined;
       const state: KnowledgeOverviewSectionState = {
-        status: query.isError && !hasData
-          ? "error"
-          : query.isPending && !hasData
-            ? "loading"
-            : "ready",
-        refreshing: hasData && query.isFetching,
-        errorMessage: query.error instanceof Error ? query.error.message : undefined,
-        refreshErrorMessage: query.isError && hasData && query.error instanceof Error
-          ? query.error.message
-          : undefined,
-        onRetry: () => { void query.refetch(); }
+        status: failed && !hasData ? "error" : !hasData ? "loading" : "ready",
+        refreshing: hasData && queries.some(query => query.isFetching),
+        errorMessage,
+        refreshErrorMessage: hasData ? errorMessage : undefined,
+        onRetry: () => { queries.forEach(query => { void query.refetch(); }); }
       };
       return [sectionKey, state];
     })
@@ -366,6 +384,7 @@ export function KnowledgeItemWorkspacePage() {
   }, [backendSection, editable, editorValid, itemQuery, saveMutation, sectionQuery]);
 
   const saveActiveSection = useCallback(async (): Promise<boolean> => {
+    if (activeSection === "quality") return qualityPanelRef.current?.save() ?? false;
     if (activeSection === "mode") {
       return modePanelRef.current?.save() ?? false;
     }
@@ -373,6 +392,7 @@ export function KnowledgeItemWorkspacePage() {
   }, [activeSection, saveSection]);
 
   const discardActiveSection = useCallback(() => {
+    if (activeSection === "quality") { qualityPanelRef.current?.discard(); setQualityDirty(false); return; }
     if (activeSection === "mode") {
       modePanelRef.current?.discard();
       setModeDirty(false);
@@ -387,8 +407,8 @@ export function KnowledgeItemWorkspacePage() {
     setEditorValid(true);
   }, [activeSection, sectionQuery.data]);
 
-  const activeDirty = activeSection === "mode" ? modeDirty : dirty;
-  const activeSaving = activeSection === "mode" ? modeSaving : saveMutation.isPending;
+  const activeDirty = activeSection === "quality" ? qualityDirty : activeSection === "mode" ? modeDirty : dirty;
+  const activeSaving = activeSection === "quality" ? qualitySaving : activeSection === "mode" ? modeSaving : saveMutation.isPending;
   const activeSaveError = activeSection === "mode"
     ? modeSaveError
     : saveMutation.error && !(saveMutation.error instanceof ApiError && saveMutation.error.code === "VERSION_CONFLICT")
@@ -452,6 +472,7 @@ export function KnowledgeItemWorkspacePage() {
       setDirty(false);
       setOverviewDirtyFields(new Set());
       setModeDirty(false);
+      setQualityDirty(false);
       setModeSaveError(null);
       setEditorValid(true);
       setConflict(null);
@@ -489,12 +510,12 @@ export function KnowledgeItemWorkspacePage() {
       <KnowledgeWorkspaceStatus item={item} />
       <KnowledgeTemporaryMainLineInfo item={item} onOpenMainLine={(id) => guard.requestNavigation(() => navigate(`/admin/configuration/estimation/items/${encodeURIComponent(id)}`))} />
       {announcement ? <p className="sr-only" role="status">{announcement}</p> : null}
-      {item.status === "archived" ? <InlineMessage tone="warning" title="Archived configuration">This item and its revision history are read-only.</InlineMessage> : revision && !editable && revision.status !== "draft" ? <InlineMessage tone="info" title="Active history is read-only">Create a Draft revision to change section data. The active revision remains available until a new Draft is activated.</InlineMessage> : null}
+      {item.status === "archived" ? <InlineMessage tone="warning" title="Archived configuration">This item and its revision history are read-only.</InlineMessage> : revision && !editable && revision.status !== "draft" && activeSection !== "quality" ? <InlineMessage tone="info" title="Active history is read-only">Create a Draft revision to change section data. The active revision remains available until a new Draft is activated.</InlineMessage> : null}
 
       <div className="knowledge-workspace-layout">
         <div className="knowledge-workspace-main">
           <KnowledgeSectionNavigation sections={item.itemType === "temporary" ? ["overview", "mode", "quality"] : undefined} activeSection={activeSection} onSectionChange={selectWorkspaceSection} panelBusy={activeSection === "mode" ? modeBusy : activeSection === "overview" ? sectionQuery.isFetching || overviewSummaryQueries.some(({ isFetching }) => isFetching) : sectionQuery.isFetching}>
-            {revision ? (
+            {revision && activeSection !== "quality" ? (
               <KnowledgeSectionCommandBar
                 sectionLabel={activeSectionLabel}
                 versionLabel={commandVersionLabel}
@@ -505,7 +526,9 @@ export function KnowledgeItemWorkspacePage() {
                 onSave={() => void saveActiveSection()}
               />
             ) : null}
-            {!revision ? (
+            {activeSection === "quality" ? (
+              <KnowledgeBasketQualityPanel key={item.basketId} ref={qualityPanelRef} item={item} revisionId={revision?.id} canUpdate={canUpdate} onDirtyChange={setQualityDirty} onSavingChange={setQualitySaving} />
+            ) : !revision ? (
               <PageState state="empty" message="This item has no revision to display." />
             ) : activeSection === "mode" ? (
               <KnowledgeModePanel
@@ -541,6 +564,7 @@ export function KnowledgeItemWorkspacePage() {
                 {backendSection === "overview" && revision ? (
                   <KnowledgeOverviewPanel
                     showRecommendations={item.itemType !== "temporary"}
+                    qualitySourceLabel={basketQualityQuery.data?.revisionId ? `Shared checklist · ${item.basketName} · Version ${basketQualityQuery.data.revisionNumber}` : basketQualityQuery.data ? "Item-specific checklist · no shared checklist saved" : undefined}
                     key={revision.id}
                     item={item}
                     revision={revision}

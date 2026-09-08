@@ -41,6 +41,8 @@ function services() {
     listBaskets: vi.fn(async () => ({ items: [{ id: "basket-1" }], total: 1 })),
     createBasket: vi.fn(async () => ({ id: "basket-1" })),
     updateBasket: vi.fn(async () => ({ id: "basket-1" })),
+    getBasketQuality: vi.fn(async () => ({ basketId: "basket-1", version: 1, revisionId: null, parameters: [] })),
+    updateBasketQuality: vi.fn(async () => ({ basketId: "basket-1", version: 2, revisionId: "quality-1", parameters: [] })),
     getBasketDeletionImpact: vi.fn(async () => ({
       basketId: "basket-1",
       basketName: "Custom basket",
@@ -114,6 +116,44 @@ describe("AI Estimator Knowledge HTTP routes", () => {
     expect(testServices.item.createMainLine).toHaveBeenCalledWith(superAdmin, "basket-1", input);
     expect((await request(app).post(path).set("Authorization", "Bearer super-admin-token").send({ ...input, itemType: "other" })).status).toBe(400);
     expect((await request(app).patch("/api/v1/admin/ai-estimator-knowledge/main-lines/line-1").set("Authorization", "Bearer super-admin-token").send({ expectedVersion: 1, itemType: "temporary" })).status).toBe(400);
+  });
+
+  it("authorizes shared Basket quality reads and updates before validating input", async () => {
+    const testServices = services();
+    const app = appFor(testServices);
+    const path = "/api/v1/admin/ai-estimator-knowledge/baskets/basket-1/quality";
+    expect((await request(app).get(path)).status).toBe(401);
+    expect((await request(app).put(path).send({ invalid: true })).status).toBe(401);
+    expect((await request(app).get(path).set("Authorization", "Bearer admin-token")).status).toBe(403);
+    expect((await request(app).put(path).set("Authorization", "Bearer admin-token").send({ invalid: true })).status).toBe(403);
+    expect(testServices.reference.getBasketQuality).not.toHaveBeenCalled();
+    expect(testServices.reference.updateBasketQuality).not.toHaveBeenCalled();
+    expect((await request(app).get(path).set("Authorization", "Bearer super-admin-token")).status).toBe(200);
+    expect(testServices.reference.getBasketQuality).toHaveBeenCalledWith(superAdmin, "basket-1");
+    expect((await request(app).put(path).set("Authorization", "Bearer super-admin-token").send({ expectedVersion: 1, parameters: [] })).status).toBe(200);
+    expect(testServices.reference.updateBasketQuality).toHaveBeenCalledWith(superAdmin, "basket-1", { expectedVersion: 1, parameters: [] });
+  });
+
+  it("accepts inspection requirements and rejects malformed shared checklists before service calls", async () => {
+    const testServices = services();
+    const app = appFor(testServices);
+    const path = "/api/v1/admin/ai-estimator-knowledge/baskets/basket-1/quality";
+    const parameter = { id: "fixture-inspection", type: "boolean", label: "Installed fixtures checked?",
+      sampling: { method: "percentage", value: 10, unit: "installed electrical fixtures" },
+      evidence: { photos: true, documents: false, video: false, minPhotosPerSample: 1 } };
+    const input = { expectedVersion: 1, parameters: [parameter] };
+    expect((await request(app).put(path).set("Authorization", "Bearer super-admin-token").send(input)).status).toBe(200);
+    expect(testServices.reference.updateBasketQuality).toHaveBeenCalledWith(superAdmin, "basket-1", input);
+    for (const invalid of [
+      { ...input, expectedVersion: 0 }, { ...input, extra: true }, { expectedVersion: 1 },
+      { ...input, parameters: [{ ...parameter, sampling: { method: "percentage", value: 101, unit: "fixtures" } }] },
+      { ...input, parameters: [{ ...parameter, evidence: { photos: true, documents: false, video: false } }] },
+      { ...input, parameters: [{ ...parameter, severity: "optional" }] },
+      { ...input, parameters: Array.from({ length: 201 }, (_, index) => ({ ...parameter, id: `check-${index}` })) }
+    ]) {
+      expect((await request(app).put(path).set("Authorization", "Bearer super-admin-token").send(invalid)).status).toBe(400);
+    }
+    expect(testServices.reference.updateBasketQuality).toHaveBeenCalledTimes(1);
   });
 
   it("validates Budget Alterations before the section mutation", async () => {

@@ -44,6 +44,7 @@ import {
 } from "./ai-estimator-knowledge-actor.js";
 import type { Clock } from "./workflow.js";
 import { systemClock } from "./workflow.js";
+import { mandatoryQualityParameters, readBasketQualityRevision } from "./ai-estimator-knowledge-basket-quality.js";
 
 type Row = Record<string, unknown>;
 
@@ -174,6 +175,7 @@ async function resolveContext(
   const basket = asRow(basketDocument);
   const revision = asRow(revisionDocument);
   if (!basket || !revision) unresolvedCore();
+  const basketQuality = await readBasketQualityRevision(basket, session);
 
   const sections = new Map<KnowledgeSectionKey, Row>();
   for (const document of sectionDocuments) {
@@ -264,6 +266,12 @@ async function resolveContext(
   });
 
   const availability = availabilityFor(sections);
+  if (basketQuality) {
+    const index = availability.findIndex((entry) => entry.sectionKey === "quality");
+    const hasChecks = basketQuality.parameters.length > 0;
+    availability[index] = { sectionKey: "quality", state: hasChecks ? "available" : "not_configured",
+      reasonCode: hasChecks ? null : "NO_ACTIVE_QUALITY_CHECKS" };
+  }
   const pricingAvailabilityIndex = availability.findIndex(
     (entry) => entry.sectionKey === "pricing"
   );
@@ -301,6 +309,13 @@ async function resolveContext(
   }
 
   const contentDigest = requiredString(revision.contentDigest);
+  if (basketQuality) {
+    contextSections.quality = {
+      parameters: mandatoryQualityParameters(basketQuality.parameters),
+      source: { kind: "main_basket", basketId: input.mainBasketId, revisionId: basketQuality._id,
+        revisionNumber: basketQuality.revisionNumber, contentDigest: basketQuality.contentDigest }
+    };
+  }
   return {
     lineage: {
       mainLineId: input.mainLineId,
@@ -310,6 +325,7 @@ async function resolveContext(
       taxVersionId: taxVersion ? requiredString(taxVersion._id) : null,
       formulaVersion: "knowledge-preview-v1",
       contentDigest,
+      ...(basketQuality ? { basketQualityRevisionId: basketQuality._id, basketQualityContentDigest: basketQuality.contentDigest } : {}),
       evaluatedAt: evaluatedAt.toISOString()
     },
     availability,
@@ -724,13 +740,17 @@ async function resolveBudgetAlterationTargets(payload: Row, session: ClientSessi
 
 function projectActiveSectionRows(sectionKey: KnowledgeSectionKey, payload: Row): Row {
   const projected = structuredClone(payload);
+  if (sectionKey === "quality") {
+    if (Array.isArray(projected.parameters)) {
+      projected.parameters = mandatoryQualityParameters(projected.parameters.map(asRow).filter((row): row is Row => row !== null));
+    }
+    return projected;
+  }
   const fields = sectionKey === "scope"
     ? ["exclusions"]
     : sectionKey === "recommendations"
       ? ["recommendations", "exclusions", "budgetAlterations"]
-      : sectionKey === "quality"
-        ? ["parameters"]
-        : sectionKey === "execution"
+      : sectionKey === "execution"
           ? ["steps", "productivity"]
           : sectionKey === "advanced"
             ? ["dependencies", "modeOverrides"]

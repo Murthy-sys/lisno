@@ -16,6 +16,7 @@ import {
 } from "../domain/ai-estimator-knowledge.js";
 import {
   findOverlappingEffectiveWindows,
+  validateKnowledgeSectionPayload,
   validateEffectiveWindow
 } from "../domain/ai-estimator-knowledge-validation.js";
 import {
@@ -31,6 +32,8 @@ import {
 import { ApiError } from "../middleware/errors.js";
 import { AiEstimatorKnowledgeSubBasketModel } from "../models/AiEstimatorKnowledgeSubBasket.js";
 import { AiEstimatorKnowledgeBasketModel } from "../models/AiEstimatorKnowledgeBasket.js";
+import { AiEstimatorKnowledgeBasketQualityRevisionModel } from "../models/AiEstimatorKnowledgeBasketQualityRevision.js";
+import { basketQualityDigest, basketQualityDto, mandatoryQualityParameters, readBasketQualityRevision, type AiEstimatorKnowledgeBasketQualityDto } from "./ai-estimator-knowledge-basket-quality.js";
 import { AiEstimatorKnowledgeMainLineModel } from "../models/AiEstimatorKnowledgeMainLine.js";
 import { cascadeDeleteMainLines, stripReferencesToDeleted } from "./ai-estimator-knowledge-cascade.js";
 import { AiEstimatorKnowledgeModeModel } from "../models/AiEstimatorKnowledgeMode.js";
@@ -232,6 +235,10 @@ type AiEstimatorKnowledgeAnyUpdateMasterInput =
   | AiEstimatorKnowledgeUpdateSurfaceInput;
 
 export interface AiEstimatorKnowledgeReferenceService {
+  getBasketQuality(actor: PublicUser, basketId: string): Promise<AiEstimatorKnowledgeBasketQualityDto>;
+  updateBasketQuality(actor: PublicUser, basketId: string, input: {
+    readonly expectedVersion: number; readonly parameters: Row[];
+  }): Promise<AiEstimatorKnowledgeBasketQualityDto>;
   listSubBaskets(actor: PublicUser, basketId: string, filters: Pick<AiEstimatorKnowledgeListFilters, "search">, pagination: PaginationInput): Promise<PageResult<AiEstimatorKnowledgeSubBasketDto>>;
   createSubBasket(actor: PublicUser, basketId: string, input: { readonly name: string }): Promise<AiEstimatorKnowledgeSubBasketDto>;
   listBaskets(
@@ -466,6 +473,62 @@ export function createAiEstimatorKnowledgeReferenceService(
       }));
     },
 
+    async getBasketQuality(actor, basketId) {
+      return withMongoTransaction(startSession, async (session) => {
+        await actorGuard.requireReadActor(actor, session);
+        const basket = await AiEstimatorKnowledgeBasketModel.findById(basketId).session(session).lean().exec() as Row | null;
+        if (!basket) notFound();
+        if (basket.status === "archived") archived();
+        return basketQualityDto(basket, await readBasketQualityRevision(basket, session));
+      });
+    },
+
+    async updateBasketQuality(actor, basketId, input) {
+      return withMongoTransaction(startSession, async (session) => {
+        const authorized = await actorGuard.requireMutationActor(actor, session);
+        validateExpectedVersion(input.expectedVersion);
+        const issues = validateKnowledgeSectionPayload("quality", { parameters: input.parameters });
+        if (issues.length) {
+          throw new ApiError(400, "VALIDATION_ERROR", "Quality checklist contains invalid parameters.",
+            Object.fromEntries(issues.map((issue) => [issue.path, issue.message])));
+        }
+        const parameters = mandatoryQualityParameters(input.parameters);
+        const normalizedIssues = validateKnowledgeSectionPayload("quality", { parameters });
+        if (normalizedIssues.length) {
+          throw new ApiError(400, "VALIDATION_ERROR", "Quality checklist contains invalid parameters.",
+            Object.fromEntries(normalizedIssues.map((issue) => [issue.path, issue.message])));
+        }
+        const current = await AiEstimatorKnowledgeBasketModel.findById(basketId).session(session).lean().exec() as Row | null;
+        requireCurrent(current, input.expectedVersion);
+        if (current.status === "archived") archived();
+        const previous = await readBasketQualityRevision(current, session);
+        const timestamp = now();
+        const next = {
+          _id: `knowledge-basket-quality-${createId()}`, basketId,
+          revisionNumber: (previous?.revisionNumber ?? 0) + 1,
+          parameters,
+          contentDigest: basketQualityDigest(basketId, parameters),
+          createdById: authorized.id, createdAt: timestamp
+        };
+        // The Basket CAS serializes checklist changes with rename, lifecycle and deletion.
+        const updated = await AiEstimatorKnowledgeBasketModel.findOneAndUpdate(
+          { _id: basketId, version: input.expectedVersion, status: { $ne: "archived" } },
+          { $set: { qualityRevisionId: next._id, updatedById: authorized.id, updatedAt: timestamp }, $inc: { version: 1 } },
+          { returnDocument: "after", runValidators: true, session }
+        ).lean().exec() as Row | null;
+        if (!updated) versionConflict();
+        await AiEstimatorKnowledgeBasketQualityRevisionModel.create([next], { session });
+        await dependencies.audit.appendInMongoTransaction({
+          actorId: authorized.id, action: "ai_estimator_knowledge_basket_updated",
+          entityType: "ai_estimator_knowledge_basket", entityId: basketId, occurredAt: timestamp.toISOString(),
+          oldValues: { version: current.version, qualityRevisionId: previous?._id ?? null, contentDigest: previous?.contentDigest ?? null },
+          newValues: { version: updated!.version, qualityRevisionId: next._id, qualityRevisionNumber: next.revisionNumber,
+            contentDigest: next.contentDigest, parameterCount: next.parameters.length }
+        }, session);
+        return basketQualityDto(updated!, next);
+      });
+    },
+
     async getBasketDeletionImpact(actor, basketId) {
       await actorGuard.requireReadActor(actor);
       const basket = await AiEstimatorKnowledgeBasketModel.findById(basketId)
@@ -524,6 +587,7 @@ export function createAiEstimatorKnowledgeReferenceService(
         if (deleted.deletedCount !== 1) versionConflict();
 
         const deletedSubBaskets = await AiEstimatorKnowledgeSubBasketModel.deleteMany({ basketId }).session(session).exec();
+        const deletedQualityRevisions = await AiEstimatorKnowledgeBasketQualityRevisionModel.deleteMany({ basketId }).session(session).exec();
         const cascade = await cascadeDeleteMainLines(mainLineIds, session);
         const strippedReferences = await stripReferencesToDeleted(
           { basketIds: new Set([basketId]), mainLineIds: new Set(mainLineIds) },
@@ -547,6 +611,7 @@ export function createAiEstimatorKnowledgeReferenceService(
             /* What went with it, so the trail explains the cascade. */
             deletedMainLineIds: mainLineIds,
             deletedSubBasketCount: deletedSubBaskets.deletedCount,
+            deletedQualityRevisionCount: deletedQualityRevisions.deletedCount,
             deletedRevisionCount: cascade.revisions,
             deletedSectionCount: cascade.sections,
             deletedPriceVersionCount: cascade.priceVersions,

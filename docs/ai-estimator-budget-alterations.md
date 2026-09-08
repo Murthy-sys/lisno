@@ -55,7 +55,7 @@ Consumers must evaluate the trigger and current scope: removal applies when the 
 
 ## Main Line info on temporary items
 
-Temporary cards list the Main Lines that reference them, with Main Basket/Sub Basket context. Their workspaces show a **Main Line info** panel with links to those Main Lines and the conditional rule explanations. Multiple Main Lines are supported. Current active and draft revision references are labelled separately; disabled rules are explicitly marked. Superseded revisions and archived/deleted source Main Lines are excluded.
+Cards show only the item heading and completion progress; temporary cards retain their gold highlight. The heading opens the workspace. Temporary workspaces show a **Main Line info** panel with links to the Main Lines that reference them and the conditional rule explanations. Multiple Main Lines are supported. Current active and draft revision references are labelled separately; disabled rules are explicitly marked. Superseded revisions and archived/deleted source Main Lines are excluded.
 
 The existing item list/detail responses expose an optional, read-only `linkedMainLines` array for temporary items. Entries carry source Main Line and Basket/Sub Basket IDs and current names, source status, revision ID/status, and the associated rule IDs, trigger, action, requirement, reason and enabled flag. The backend derives this information from saved rules in batches, independently of the catalog's visible Basket filter or page. It does not store a second parent mapping or copy any calculations.
 
