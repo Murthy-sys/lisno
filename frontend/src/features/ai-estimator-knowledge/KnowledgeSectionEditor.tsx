@@ -8,6 +8,7 @@ import {
   type KnowledgeBudgetCatalogState
 } from "./KnowledgeBudgetBuilder";
 import { KnowledgeRepeater } from "./KnowledgeRepeater";
+import { KnowledgeBudgetAlterationBuilder } from "./KnowledgeBudgetAlterationBuilder";
 import {
   KnowledgeQuantitySlabBuilder,
   type KnowledgeUomCatalogState
@@ -88,6 +89,8 @@ export interface KnowledgeSectionEditorProps {
   readonly relationshipBaskets: readonly KnowledgeBasket[];
   readonly relationshipItems: readonly KnowledgeItemListItem[];
   readonly currentMainLineId: string;
+  readonly mainLineName?: string;
+  readonly relationshipCatalogState?: KnowledgeBudgetCatalogState;
   /* The item's own Main Basket, shown as context where a row used to select
      one. Display only — this section never changes it. */
   readonly basketName?: string;
@@ -175,6 +178,8 @@ export function KnowledgeSectionEditor({
   relationshipBaskets,
   relationshipItems,
   currentMainLineId,
+  mainLineName = "this item",
+  relationshipCatalogState,
   basketName,
   readOnly,
   readOnlyRevision = readOnly,
@@ -200,13 +205,14 @@ export function KnowledgeSectionEditor({
 }: KnowledgeSectionEditorProps) {
   const issues = useMemo(
     () => [...validateKnowledgeSection(sectionKey, payload, {
+      currentMainLineId,
       specifications: pricingSpecifications,
       uoms: masters.uoms,
       vendors: masters.vendors,
       uomCatalogStatus: uomCatalogState.status,
       vendorCatalogStatus: vendorCatalogState.status
     }), ...serverIssues],
-    [masters.uoms, masters.vendors, payload, pricingSpecifications, sectionKey, serverIssues, uomCatalogState.status, vendorCatalogState.status]
+    [currentMainLineId, masters.uoms, masters.vendors, payload, pricingSpecifications, sectionKey, serverIssues, uomCatalogState.status, vendorCatalogState.status]
   );
   const validationSummaryRef = useRef<HTMLDivElement>(null);
   const lastValidationAttempt = useRef(0);
@@ -256,7 +262,12 @@ export function KnowledgeSectionEditor({
       ) : null}
       {issues.length ? <div ref={validationSummaryRef} className="knowledge-validation-summary" role="alert" tabIndex={-1}><strong>Review {issues.length} section issue{issues.length === 1 ? "" : "s"}</strong><ul>{issues.map((issue) => <li key={`${issue.path}-${issue.message}`}><span>{validationPathLabel(issue.path)}: </span>{issue.message}</li>)}</ul></div> : null}
 
-      <MasterCatalogNotices sectionKey={sectionKey} masters={masters} states={masterCatalogStates} />
+      {sectionKey !== "recommendations" || objectArray(payload.recommendations).length > 0 ? <MasterCatalogNotices sectionKey={sectionKey} masters={masters} states={masterCatalogStates} /> : null}
+
+      {sectionKey === "recommendations" && <KnowledgeBudgetAlterationBuilder value={payload.budgetAlterations}
+        mainLineId={currentMainLineId} mainLineName={mainLineName} baskets={relationshipBaskets} items={relationshipItems}
+        catalogState={relationshipCatalogState} readOnly={readOnly} canCreate={canQuickAdd} issues={issues}
+        onChange={(value) => change("budgetAlterations", value)} />}
 
       {sectionKey === "quantity-margin" ? (
         <>
@@ -304,7 +315,7 @@ export function KnowledgeSectionEditor({
         </div>
       ) : null}
 
-      {ARRAY_FIELDS[sectionKey].map((field) => field === "specifications" ? (
+      {ARRAY_FIELDS[sectionKey].filter((field) => sectionKey !== "recommendations" || objectArray(payload[field]).length > 0).map((field) => field === "specifications" ? (
         <Fragment key={`${specificationScopeKey ?? resetKey}-${field}`}>
           <KnowledgeSpecificationBuilder
             value={payload.specifications}
@@ -752,7 +763,7 @@ function sectionHelp(sectionKey: KnowledgeSectionKey): string {
     pricing: "Maintain Specifications, Vendors, and the unit budgets used by the estimator.",
     "quantity-margin": "Configure priced Quantity slabs and shared basis-point margins. Legacy adjustment slabs retain their existing calculation behavior.",
     scope: "Define applicable modes, surfaces, and explicit exclusions.",
-    recommendations: "Recommend related components, and exclude Baskets or Main Lines this item never covers.",
+    recommendations: "Describe related scope changes when this item is added or removed, and explain why each change is required or optional.",
     quality: "Define customer-facing and technical quality parameters.",
     execution: "Order execution steps and productivity rules.",
     advanced: "Maintain dependencies, mode overrides, and revision lineage."

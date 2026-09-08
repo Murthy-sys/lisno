@@ -109,6 +109,7 @@ const mainLineListQuerySchema = z
 
 const mainLineCreateSchema = z
   .object({
+    itemType: z.enum(["main_line", "temporary"]).optional(),
     subBasketId: stableIdSchema.optional(),
     subBasketName: shortTextSchema.optional(),
     name: shortTextSchema,

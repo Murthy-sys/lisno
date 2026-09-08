@@ -60,6 +60,105 @@ afterAll(async () => {
 });
 
 describe("AI estimator knowledge item service", () => {
+  it("resolves all incoming Main Lines for temporary items by identity across Basket filters and follows edits/removal", async () => {
+    const { service } = createService();
+    await AiEstimatorKnowledgeBasketModel.create(basketDocument("basket-electrical", "Electrical", "active", 2));
+    const temp = await service.createMainLine(ACTOR, "basket-electrical", { name: "Pendant alternative", itemType: "temporary" });
+    const unrelatedTemp = await service.createMainLine(ACTOR, "basket-electrical", { name: "Unrelated fixture", itemType: "temporary" });
+    const first = await service.createMainLine(ACTOR, "basket-carpentry", { name: "False Ceiling", subBasketName: "Ceilings" });
+    const second = await service.createMainLine(ACTOR, "basket-carpentry", { name: "Display Unit", subBasketName: "Furniture" });
+    expect(temp.linkedMainLines).toEqual([]);
+    expect(first).not.toHaveProperty("linkedMainLines");
+    const rule = { id: "incoming-rule", trigger: "removed", action: "add", requirement: "can", targetType: "temporary", targetBasketId: temp.basketId, targetSubBasketId: null, targetMainLineId: temp.mainLineId, reason: "Alternative surface-mounted lighting.", active: true };
+    for (const [source, active] of [[first, true], [second, false]] as const) {
+      await service.updateSection(ACTOR, source.mainLineId, source.draftRevisionId!, "recommendations", { expectedVersion: 1, expectedAggregateVersion: source.version, payload: { budgetAlterations: [{ ...rule, active }] } });
+    }
+    const detail = await service.getItem(ACTOR, temp.mainLineId);
+    expect(detail.linkedMainLines).toHaveLength(2);
+    expect(detail.linkedMainLines).toEqual(expect.arrayContaining([
+      expect.objectContaining({ mainLineId: first.mainLineId, mainLineName: "False Ceiling", basketName: "Carpentry", subBasketName: "Ceilings", revisionId: first.draftRevisionId, revisionStatus: "draft", rules: [expect.objectContaining({ reason: rule.reason, active: true })] }),
+      expect.objectContaining({ mainLineId: second.mainLineId, subBasketName: "Furniture", rules: [expect.objectContaining({ active: false })] })
+    ]));
+    const listed = await service.listItems(ACTOR, { basketId: "basket-electrical" }, { limit: 100, offset: 0 });
+    expect(listed.items.find((row) => row.mainLineId === temp.mainLineId)?.linkedMainLines).toEqual(detail.linkedMainLines);
+    expect(listed.items.find((row) => row.mainLineId === unrelatedTemp.mainLineId)?.linkedMainLines).toEqual([]);
+    await service.updateMainLine(ACTOR, first.mainLineId, { expectedVersion: 2, name: "Renamed Ceiling" });
+    expect((await service.getItem(ACTOR, temp.mainLineId)).linkedMainLines).toContainEqual(expect.objectContaining({ mainLineId: first.mainLineId, mainLineName: "Renamed Ceiling" }));
+    await service.updateSection(ACTOR, first.mainLineId, first.draftRevisionId!, "recommendations", { expectedVersion: 2, expectedAggregateVersion: 3, payload: { budgetAlterations: [] } });
+    expect((await service.getItem(ACTOR, temp.mainLineId)).linkedMainLines?.map((row) => row.mainLineId)).toEqual([second.mainLineId]);
+    await service.permanentlyDeleteMainLine(ACTOR, second.mainLineId, { expectedVersion: 2 });
+    expect((await service.getItem(ACTOR, temp.mainLineId)).linkedMainLines).toEqual([]);
+  });
+
+  it("gives temporary items only Overview, Mode and Quality while preserving regular Main Lines", async () => {
+    const { service } = createService();
+    const temporary = await service.createMainLine(ACTOR, "basket-carpentry", { name: "Temporary fixture", itemType: "temporary" });
+    const regular = await service.createMainLine(ACTOR, "basket-carpentry", { name: "Regular fixture" });
+    expect(await service.getItem(ACTOR, temporary.mainLineId)).toMatchObject({ itemType: "temporary", basketId: "basket-carpentry", subBasketId: null });
+    expect(regular).toMatchObject({ itemType: "main_line" });
+    let version = temporary.version;
+    for (const sectionKey of ["overview", "advanced", "pricing", "quality"] as const) {
+      const section = await service.getSection(ACTOR, temporary.mainLineId, temporary.draftRevisionId!, sectionKey);
+      expect(section.applicability).toBe("not_configured");
+      const payload = sectionKey === "advanced" ? { pmcMarginBps: 1_500, modeConfigurations: [{ id: "pmc", modeKind: "pmc", fields: [] }] } : {};
+      const saved = await service.updateSection(ACTOR, temporary.mainLineId, temporary.draftRevisionId!, sectionKey, { expectedVersion: section.version, expectedAggregateVersion: version, payload });
+      version = saved.aggregateVersion;
+    }
+    for (const sectionKey of ["recommendations", "scope", "execution", "quantity-margin"] as const) {
+      const section = await service.getSection(ACTOR, temporary.mainLineId, temporary.draftRevisionId!, sectionKey);
+      expect(section.applicability).toBe("not_applicable");
+      await expect(service.updateSection(ACTOR, temporary.mainLineId, temporary.draftRevisionId!, sectionKey, { expectedVersion: section.version, expectedAggregateVersion: version, payload: {} })).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+      expect((await service.getSection(ACTOR, regular.mainLineId, regular.draftRevisionId!, sectionKey)).applicability).toBe("not_configured");
+    }
+    const duplicate = await service.duplicate(ACTOR, temporary.mainLineId, { expectedVersion: version, name: "Temporary fixture copy" });
+    expect(duplicate.itemType).toBe("temporary");
+    expect((await service.getSection(ACTOR, duplicate.mainLineId, duplicate.draftRevisionId!, "advanced")).payload).toMatchObject({ pmcMarginBps: 1_500 });
+    expect((await service.getSection(ACTOR, duplicate.mainLineId, duplicate.draftRevisionId!, "recommendations")).applicability).toBe("not_applicable");
+  });
+
+  it("saves Budget Alterations independently and rejects stale, mismatched and self references atomically", async () => {
+    const { service } = createService();
+    const source = await service.createMainLine(ACTOR, "basket-carpentry", { name: "POP False Ceiling" });
+    const catalog = await service.createMainLine(ACTOR, "basket-carpentry", { name: "Ceiling COB Lights", subBasketName: "Lights Procurement" });
+    const temporary = await service.createMainLine(ACTOR, "basket-carpentry", { name: "Temporary LED Lights", itemType: "temporary" });
+    const rule = { id: "rule-1", trigger: "removed", action: "remove", requirement: "must", targetType: "catalog", targetBasketId: catalog.basketId, targetSubBasketId: catalog.subBasketId ?? null, targetMainLineId: catalog.mainLineId, reason: "Recessed lights need the false ceiling for fixing.", active: true };
+    const rules = [rule, { ...rule, id: "rule-2", requirement: "can", targetType: "temporary", targetSubBasketId: null, targetMainLineId: temporary.mainLineId }];
+    const advanced = await service.updateSection(ACTOR, source.mainLineId, source.draftRevisionId!, "advanced", { expectedVersion: 1, expectedAggregateVersion: source.version, payload: { pmcMarginBps: 1_750 } });
+    const payload = { budgetAlterations: rules, exclusions: [{ id: "existing", name: "Painting", reason: "Kept existing note", active: true }] };
+    const saved = await service.updateSection(ACTOR, source.mainLineId, source.draftRevisionId!, "recommendations", { expectedVersion: 1, expectedAggregateVersion: advanced.aggregateVersion, payload });
+    expect((await service.getSection(ACTOR, source.mainLineId, source.draftRevisionId!, "recommendations")).payload).toEqual(payload);
+    expect((await service.getSection(ACTOR, source.mainLineId, source.draftRevisionId!, "advanced")).payload).toEqual({ pmcMarginBps: 1_750 });
+    expect(await service.getItem(ACTOR, catalog.mainLineId)).toMatchObject({ version: catalog.version });
+    expect(await AiEstimatorKnowledgeMainLineModel.findById(catalog.mainLineId).lean()).toMatchObject({ dependencyEpoch: 1 });
+    await expect(service.updateSection(ACTOR, source.mainLineId, source.draftRevisionId!, "recommendations", { expectedVersion: 1, expectedAggregateVersion: advanced.aggregateVersion, payload })).rejects.toMatchObject({ code: "VERSION_CONFLICT" });
+    for (const invalid of [
+      { ...rule, targetMainLineId: source.mainLineId, targetSubBasketId: null },
+      { ...rule, targetType: "temporary" }, { ...rule, targetSubBasketId: null },
+      { ...rule, targetBasketId: "basket-missing" }, { ...rule, targetMainLineId: "line-missing" }
+    ]) {
+      await expect(service.updateSection(ACTOR, source.mainLineId, source.draftRevisionId!, "recommendations", { expectedVersion: saved.version, expectedAggregateVersion: saved.aggregateVersion, payload: { budgetAlterations: [invalid] } })).rejects.toMatchObject({ status: invalid.targetBasketId === "basket-missing" ? 409 : 400 });
+      expect((await service.getSection(ACTOR, source.mainLineId, source.draftRevisionId!, "recommendations")).payload).toEqual(payload);
+    }
+    await service.permanentlyDeleteMainLine(ACTOR, temporary.mainLineId, { expectedVersion: temporary.version });
+    expect((await service.getSection(ACTOR, source.mainLineId, source.draftRevisionId!, "recommendations")).payload).toEqual({ ...payload, budgetAlterations: [rule] });
+  });
+
+  it("cannot leave a dangling alteration target when a save races permanent deletion", async () => {
+    const { service } = createService();
+    const source = await service.createMainLine(ACTOR, "basket-carpentry", { name: "Concurrent source" });
+    const target = await service.createMainLine(ACTOR, "basket-carpentry", { name: "Concurrent temporary", itemType: "temporary" });
+    const budgetAlterations = [{ id: "race-rule", trigger: "added", action: "add", requirement: "can", targetType: "temporary", targetBasketId: target.basketId, targetSubBasketId: null, targetMainLineId: target.mainLineId, reason: "Optional finishing detail.", active: true }];
+    const results = await Promise.allSettled([
+      service.updateSection(ACTOR, source.mainLineId, source.draftRevisionId!, "recommendations", { expectedVersion: 1, expectedAggregateVersion: source.version, payload: { budgetAlterations } }),
+      service.permanentlyDeleteMainLine(ACTOR, target.mainLineId, { expectedVersion: target.version })
+    ]);
+    expect(results[1].status).toBe("fulfilled");
+    expect(await AiEstimatorKnowledgeMainLineModel.exists({ _id: target.mainLineId })).toBeNull();
+    const remaining = (await service.getSection(ACTOR, source.mainLineId, source.draftRevisionId!, "recommendations")).payload;
+    expect(JSON.stringify(remaining)).not.toContain(target.mainLineId);
+    if (results[0].status === "rejected") expect(results[0].reason).toMatchObject({ status: 400, code: "VALIDATION_ERROR" });
+  });
+
   it("persists independent PMC margins across reloads and rejects stale or invalid saves", async () => {
     const { service } = createService();
     for (const [name, pmcMarginBps] of [["First PMC margin line", 1_000], ["Second PMC margin line", 2_000]] as const) {

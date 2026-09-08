@@ -14,8 +14,8 @@ import { AiEstimatorKnowledgeSectionModel } from "../models/AiEstimatorKnowledge
 
 type Row = Record<string, unknown>;
 
-/* The three payload arrays that can point at a Basket or a Main Line. */
-const RELATIONSHIP_FIELDS = ["exclusions", "dependencies", "recommendations"] as const;
+/* The payload arrays that can point at a Basket or a Main Line. */
+const RELATIONSHIP_FIELDS = ["exclusions", "dependencies", "recommendations", "budgetAlterations"] as const;
 
 export interface DeletionTargets {
   readonly basketIds: ReadonlySet<string>;

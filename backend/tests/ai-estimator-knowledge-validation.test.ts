@@ -10,6 +10,20 @@ import {
 } from "../src/domain/ai-estimator-knowledge-validation.js";
 
 describe("AI estimator knowledge validation", () => {
+  it("validates conditional Budget Alterations with stable catalog or temporary item references", () => {
+    const rule = { id: "rule-1", trigger: "removed", action: "remove", requirement: "must", targetType: "catalog", targetBasketId: "basket-electrical", targetSubBasketId: null, targetMainLineId: "line-lights", reason: "Recessed lights require the ceiling.", active: true };
+    for (const trigger of ["added", "removed"]) for (const action of ["add", "remove"]) for (const requirement of ["must", "can"]) for (const targetType of ["catalog", "temporary"]) {
+      expect(validateKnowledgeSectionPayload("recommendations", { budgetAlterations: [{ ...rule, trigger, action, requirement, targetType }] })).toEqual([]);
+    }
+    for (const [key, value] of Object.entries({ reason: " ", targetMainLineId: null, trigger: "changed", action: "replace", targetType: "inline", active: "true", temporaryItemName: "Unlinked light" })) {
+      expect(validateKnowledgeSectionPayload("recommendations", { budgetAlterations: [{ ...rule, [key]: value }] })).toContainEqual(expect.objectContaining({ path: `payload.budgetAlterations.0.${key}` }));
+    }
+    expect(validateKnowledgeSectionPayload("recommendations", { budgetAlterations: [rule, { ...rule, id: "rule-2", action: "add" }] })).toContainEqual(expect.objectContaining({ code: "DUPLICATE_RULE" }));
+    expect(validateKnowledgeSectionPayload("recommendations", { budgetAlterations: [rule, { ...rule, id: "rule-2", active: false }] })).toEqual([]);
+    expect(validateKnowledgeSectionPayload("recommendations", { budgetAlterations: Array.from({ length: 101 }, (_, i) => ({ ...rule, id: `rule-${i}`, targetMainLineId: `line-${i}` })) })).toContainEqual(expect.objectContaining({ code: "TOO_MANY_ITEMS" }));
+    expect(validateKnowledgeSectionPayload("recommendations", { budgetAlterations: [], exclusions: [{ id: "old-note", name: "Existing exclusion", reason: "Existing reason", active: true }] })).toEqual([]);
+  });
+
   it("accepts split Labor and Material costs, requires both keys, and reports precise cost errors", () => {
     const settings = { baseRatePaise: 90_000, lowQuantityLimit: "8", impactBps: 525, minimumMarkupBps: 1_200, startingMarkupBps: 3_100 };
     const split = { pmc: null, sub_vendor: settings, in_house_labor: settings, in_house_material: null };

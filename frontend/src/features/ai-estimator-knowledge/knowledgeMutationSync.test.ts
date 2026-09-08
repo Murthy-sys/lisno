@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   syncKnowledgeBasketDeletion,
+  syncKnowledgeMainLineDeletion,
   syncKnowledgeLifecycleMutation,
   syncKnowledgeMasterMutation,
   syncKnowledgeSectionMutation
@@ -36,6 +37,31 @@ function queryClient() {
 }
 
 describe("knowledge mutation cache synchronization", () => {
+  it("refreshes temporary Main Line references after source edits, lifecycle changes and deletion without invalidating other drafts", async () => {
+    const client = queryClient();
+    const targetKey = knowledgeQueryKeys.item("temporary-1");
+    const otherKey = knowledgeQueryKeys.item("other-line");
+    const draftKey = knowledgeQueryKeys.section("temporary-1", "revision-1", "advanced");
+    const seed = () => {
+      client.setQueryData(targetKey, { itemType: "temporary", linkedMainLines: [{ mainLineId: "source" }] });
+      client.setQueryData(otherKey, { itemType: "main_line" });
+      client.setQueryData(draftKey, { payload: { modeDescription: "Keep this draft" } });
+    };
+    const assert = () => {
+      expect(client.getQueryState(targetKey)?.isInvalidated).toBe(true);
+      expect(client.getQueryState(otherKey)?.isInvalidated).toBe(false);
+      expect(client.getQueryState(draftKey)?.isInvalidated).toBe(false);
+      expect(client.getQueryData(draftKey)).toEqual({ payload: { modeDescription: "Keep this draft" } });
+    };
+    seed();
+    await syncKnowledgeSectionMutation(client, { ...actor, id: "saved-section", mainLineId: "source", revisionId: "revision-source", sectionKey: "recommendations", applicability: "configured", version: 2, aggregateVersion: 4, payload: { budgetAlterations: [] } });
+    assert(); seed();
+    await syncKnowledgeLifecycleMutation(client, { mainLineId: "source" } as KnowledgeItemDetail);
+    assert(); seed();
+    await syncKnowledgeMainLineDeletion(client, "source");
+    assert();
+  });
+
   it("removes a permanently deleted Basket and invalidates every dependent knowledge cache", async () => {
     const client = queryClient();
     const activeListKey = knowledgeQueryKeys.basketList({ limit: 100, offset: 0 });

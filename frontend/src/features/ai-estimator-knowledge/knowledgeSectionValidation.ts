@@ -3,6 +3,7 @@ import {
   parseScaledQuantity
 } from "./knowledgeSlabRate";
 import { parseKnowledgeSpecifications } from "./knowledgeSpecificationConfiguration";
+import { budgetAlterationIssues } from "./knowledgeBudgetAlterations";
 import type {
   KnowledgeJsonObject,
   KnowledgeJsonValue,
@@ -18,6 +19,7 @@ export interface KnowledgeValidationIssue {
 const DECIMAL = /^(?:0|[1-9]\d*)(?:\.\d+)?$/u;
 
 export interface KnowledgeSectionValidationContext {
+  readonly currentMainLineId?: string;
   readonly specifications?: KnowledgeJsonValue;
   readonly uoms?: readonly KnowledgeMaster[];
   readonly vendors?: readonly KnowledgeMaster[];
@@ -194,6 +196,7 @@ export function validateKnowledgeSection(
   if (sectionKey === "scope") rows("exclusions").forEach((row, index) => {
     if (!string(row.targetBasketId) && !string(row.targetMainLineId)) issues.push({ path: `exclusions.${index}`, message: "Choose a target Basket or Main Line." });
   });
+  if (sectionKey === "recommendations") issues.push(...budgetAlterationIssues(payload.budgetAlterations, context.currentMainLineId));
   if (sectionKey === "recommendations") rows("exclusions").forEach((row, index) => {
     requireString(row, "name", `exclusions.${index}`);
   });

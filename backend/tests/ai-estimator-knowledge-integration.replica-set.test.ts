@@ -1863,6 +1863,41 @@ describe("AI estimator knowledge integrated replica-set invariants", { timeout: 
     expect(await AuditEventModel.countDocuments()).toBe(auditBeforeItemCycle);
   });
 
+  it("labels current draft and active Main Line references and excludes superseded rules", async () => {
+    const services = createServices();
+    const temp = await services.item.createMainLine(SUPER_ADMIN, BASKET_ID, { name: "Temporary pendant reference", itemType: "temporary" });
+    let source = await createConfiguredDraft(services.item, "Ceiling source reference");
+    const rule = { id: "lineage-rule", trigger: "removed", action: "add", requirement: "can", targetType: "temporary", targetBasketId: BASKET_ID, targetSubBasketId: null, targetMainLineId: temp.mainLineId, reason: "A replacement fitting may be needed.", active: true };
+    source = await updateDraftSection(services.item, source, "recommendations", { budgetAlterations: [rule] });
+    const activated = await services.item.activate(SUPER_ADMIN, source.mainLineId, source.revisionId, { expectedVersion: source.aggregateVersion });
+    const draft = await services.item.createRevision(SUPER_ADMIN, source.mainLineId, { expectedVersion: activated.version });
+    const linked = (await services.item.getItem(SUPER_ADMIN, temp.mainLineId)).linkedMainLines!;
+    expect(linked.map((row) => [row.revisionStatus, row.revisionId])).toEqual([["active", source.revisionId], ["draft", draft.draftRevisionId]]);
+    const section = await services.item.getSection(SUPER_ADMIN, source.mainLineId, draft.draftRevisionId!, "recommendations");
+    const cleared = await services.item.updateSection(SUPER_ADMIN, source.mainLineId, draft.draftRevisionId!, "recommendations", { expectedVersion: section.version, expectedAggregateVersion: draft.version, payload: { budgetAlterations: [] } });
+    expect((await services.item.getItem(SUPER_ADMIN, temp.mainLineId)).linkedMainLines).toMatchObject([{ revisionStatus: "active", revisionId: source.revisionId }]);
+    await services.item.activate(SUPER_ADMIN, source.mainLineId, draft.draftRevisionId!, { expectedVersion: cleared.aggregateVersion });
+    expect((await services.item.getItem(SUPER_ADMIN, temp.mainLineId)).linkedMainLines).toEqual([]);
+  });
+
+  it("projects enabled Budget Alterations with revision lineage and current target availability", async () => {
+    const services = createServices();
+    const target = await createAndActivateOverviewOnly(services.item, "Ceiling COB Lights");
+    const temporary = await services.item.createMainLine(SUPER_ADMIN, BASKET_ID, { name: "Temporary pendant", itemType: "temporary" });
+    let source = await createConfiguredDraft(services.item, "POP False Ceiling");
+    const rule = { id: "budget-rule-active", trigger: "removed", action: "remove", requirement: "must", targetType: "catalog", targetBasketId: BASKET_ID, targetSubBasketId: null, targetMainLineId: target.mainLineId, reason: "The lights need the ceiling for recessed fixing.", active: true };
+    const temporaryRule = { ...rule, id: "budget-rule-temporary", trigger: "added", requirement: "can", action: "add", targetType: "temporary", targetMainLineId: temporary.mainLineId };
+    source = await updateDraftSection(services.item, source, "recommendations", { budgetAlterations: [rule, temporaryRule, { ...rule, id: "budget-rule-disabled", reason: "Private disabled explanation", active: false }] });
+    const activated = await services.item.activate(SUPER_ADMIN, source.mainLineId, source.revisionId, { expectedVersion: source.aggregateVersion });
+    const context = await services.context.resolve(SUPER_ADMIN, { mainBasketId: BASKET_ID, mainLineId: source.mainLineId, quantity: "1.00", uomId: UOM_ID });
+    expect(context.sections.recommendations).toMatchObject({ budgetAlterations: [{ ...rule, target: { status: "active", name: "Ceiling COB Lights" } }, { ...temporaryRule, target: { status: "draft", itemType: "temporary", activeRevisionId: null } }] });
+    expect(context.lineage).toMatchObject({ mainLineId: source.mainLineId, revisionId: source.revisionId, contentDigest: activated.activeRevision?.contentDigest });
+    expect(JSON.stringify(context)).not.toContain("Private disabled explanation");
+    await services.item.deactivate(SUPER_ADMIN, target.mainLineId, { expectedVersion: target.aggregateVersion });
+    const refreshed = await services.context.resolve(SUPER_ADMIN, { mainBasketId: BASKET_ID, mainLineId: source.mainLineId, quantity: "1.00", uomId: UOM_ID });
+    expect(refreshed.sections.recommendations).toMatchObject({ budgetAlterations: [{ target: { status: "inactive" } }, { target: { status: "draft" } }] });
+  });
+
   it("keeps inactive nested rows as history while omitting them from context, graphs, and inbound archive protection", async () => {
     const services = createServices();
     const target = await createAndActivateOverviewOnly(services.item, "Inactive Relation Target");

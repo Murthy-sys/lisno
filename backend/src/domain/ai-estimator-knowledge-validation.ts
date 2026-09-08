@@ -280,7 +280,7 @@ const ALLOWED_SECTION_KEYS: Record<KnowledgeSectionKey, ReadonlySet<string>> = {
   pricing: new Set(["specifications", "brands", "technicalDescription", "qualityLevel", "internalVendorNotes", "priceEntries"]),
   "quantity-margin": new Set(["quantitySlabs", "slabRates", "gapBehavior", "startMarginBps", "bottomMarginBps", "pmcMarkupBps", "wastageBps", "previewInputs"]),
   scope: new Set(["modeIds", "surfaceIds", "exclusions"]),
-  recommendations: new Set(["recommendations", "exclusions"]),
+  recommendations: new Set(["recommendations", "exclusions", "budgetAlterations"]),
   quality: new Set(["parameters"]),
   execution: new Set(["steps", "productivity"]),
   advanced: new Set(["dependencies", "modeOverrides", "revisionLineage", "modeConfigurations", "modeDescription", "modeCalculation", "modeCalculations", "pmcMarginBps"])
@@ -977,6 +977,7 @@ function validateRecommendationsPayload(
   record: Record<string, unknown>
 ): KnowledgeValidationIssue[] {
   const issues: KnowledgeValidationIssue[] = [];
+  if ("budgetAlterations" in record) validateBudgetAlterations(record.budgetAlterations, issues);
   /* Recommendations and Exclusions are authored as free text beside the Main
      Line they belong to. The Basket is the item's own, so neither row selects
      one, and neither participates in the relationship graph. */
@@ -1012,6 +1013,33 @@ function validateRecommendationsPayload(
     addUniqueString(row.id, ids, `${path}.id`, "DUPLICATE_ID", issues);
   });
   return issues;
+}
+
+function validateBudgetAlterations(value: unknown, issues: KnowledgeValidationIssue[]): void {
+  const rows = validateObjectArray(value, "payload.budgetAlterations", issues);
+  if (rows.length > 100) issues.push({ path: "payload.budgetAlterations", code: "TOO_MANY_ITEMS", message: "Use at most 100 budget alteration rules." });
+  const ids = new Set<string>();
+  const targets = new Set<string>();
+  rows.forEach((row, index) => {
+    const path = `payload.budgetAlterations.${index}`;
+    const keys = ["id", "trigger", "action", "requirement", "targetType", "targetBasketId", "targetSubBasketId", "targetMainLineId", "reason", "active"];
+    validateExactRowKeys(row, keys, keys, path, issues);
+    validateStableId(row.id, `${path}.id`, issues);
+    addUniqueString(row.id, ids, `${path}.id`, "DUPLICATE_ID", issues);
+    validateClosedEnum(row.trigger, ["added", "removed"], `${path}.trigger`, issues);
+    validateClosedEnum(row.action, ["add", "remove"], `${path}.action`, issues);
+    validateClosedEnum(row.requirement, ["must", "can"], `${path}.requirement`, issues);
+    validateClosedEnum(row.targetType, ["catalog", "temporary"], `${path}.targetType`, issues);
+    validateStableId(row.targetBasketId, `${path}.targetBasketId`, issues);
+    validateNullableStableId(row.targetSubBasketId, `${path}.targetSubBasketId`, issues);
+    validateText(row.reason, `${path}.reason`, issues, AI_ESTIMATOR_KNOWLEDGE_MAX_TEXT);
+    validateBoolean(row.active, `${path}.active`, issues);
+    validateStableId(row.targetMainLineId, `${path}.targetMainLineId`, issues);
+    if (row.active === false) return;
+    const targetKey = JSON.stringify([row.trigger, row.targetMainLineId]);
+    if (targets.has(targetKey)) issues.push({ path, code: "DUPLICATE_RULE", message: "Use one active rule per related item and trigger; combine its explanation instead of adding conflicting actions." });
+    targets.add(targetKey);
+  });
 }
 
 function validateQualityPayload(

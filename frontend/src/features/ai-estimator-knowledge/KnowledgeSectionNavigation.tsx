@@ -19,6 +19,7 @@ export interface KnowledgeSectionNavigationProps {
   readonly onSectionChange: (section: KnowledgeWorkspaceSectionKey) => void;
   readonly children: ReactNode;
   readonly disabledSections?: readonly KnowledgeWorkspaceSectionKey[];
+  readonly sections?: readonly KnowledgeWorkspaceSectionKey[];
   readonly panelBusy?: boolean;
 }
 
@@ -27,6 +28,7 @@ export function KnowledgeSectionNavigation({
   onSectionChange,
   children,
   disabledSections = [],
+  sections = KNOWLEDGE_WORKSPACE_SECTION_KEYS,
   panelBusy = false
 }: KnowledgeSectionNavigationProps) {
   const id = useId().replace(/:/g, "");
@@ -36,10 +38,10 @@ export function KnowledgeSectionNavigation({
   const pendingFocusRef = useRef<KnowledgeWorkspaceSectionKey | null>(null);
   const enabledSections = useMemo(
     () =>
-      KNOWLEDGE_WORKSPACE_SECTION_KEYS.filter(
+      sections.filter(
         (section) => !disabledSections.includes(section)
       ),
-    [disabledSections]
+    [disabledSections, sections]
   );
   const activeTabId = `${id}-${activeSection}-tab`;
   const panelId = `${id}-panel`;
@@ -94,7 +96,7 @@ export function KnowledgeSectionNavigation({
           role="tablist"
           aria-label="Configuration sections"
         >
-          {KNOWLEDGE_WORKSPACE_SECTION_KEYS.map((section) => {
+          {sections.map((section) => {
             const selected = section === activeSection;
             const disabled = disabledSections.includes(section);
             return (
@@ -137,7 +139,7 @@ export function KnowledgeSectionNavigation({
                 )
               }
             >
-              {KNOWLEDGE_WORKSPACE_SECTION_KEYS.map((section) => (
+              {sections.map((section) => (
                 <option
                   key={section}
                   value={section}

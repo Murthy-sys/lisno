@@ -297,6 +297,7 @@ async function resolveContext(
     const section = sections.get(key);
     if (!section || section.applicability !== "configured") continue;
     contextSections[key] = sanitizeSectionPayload(key, projectedPayloads.get(key)!);
+    if (key === "recommendations") await resolveBudgetAlterationTargets(contextSections[key] as Row, session);
   }
 
   const contentDigest = requiredString(revision.contentDigest);
@@ -318,7 +319,7 @@ async function resolveContext(
         ...(contextSections.overview as Row | undefined),
         ...(resolvedPriority ? { priority: resolvedPriority } : {}),
         basket: publicIdentity(basket),
-        mainLine: publicIdentity(mainLine)
+        mainLine: { ...publicIdentity(mainLine), itemType: mainLine.itemType === "temporary" ? "temporary" : "main_line" }
       }
     },
     preview: calculationPreview,
@@ -700,12 +701,33 @@ function filterSpecifications(payload: Row, requested: string | undefined): void
   });
 }
 
+/** Resolve current target availability separately from the saved conditional rule. */
+async function resolveBudgetAlterationTargets(payload: Row, session: ClientSession): Promise<void> {
+  const rules = activeRows(payload.budgetAlterations);
+  if (!rules.length) return;
+  const targets = await AiEstimatorKnowledgeMainLineModel.find({ _id: { $in: rules.map((rule) => rule.targetMainLineId) } })
+    .select({ _id: 1, name: 1, status: 1, itemType: 1, basketId: 1, subBasketId: 1, activeRevisionId: 1 })
+    .session(session).lean().exec();
+  const byId = new Map(targets.map((target) => [String(target._id), target]));
+  payload.budgetAlterations = rules.map((rule) => {
+    const target = byId.get(String(rule.targetMainLineId));
+    const compatible = target && target.basketId === rule.targetBasketId
+      && (target.subBasketId ?? null) === rule.targetSubBasketId
+      && (target.itemType === "temporary" ? "temporary" : "catalog") === rule.targetType;
+    return { ...rule, target: compatible ? {
+      mainLineId: String(target._id), name: target.name,
+      itemType: target.itemType === "temporary" ? "temporary" : "main_line",
+      status: target.status, activeRevisionId: target.activeRevisionId ?? null
+    } : { mainLineId: rule.targetMainLineId, status: "unavailable", activeRevisionId: null } };
+  });
+}
+
 function projectActiveSectionRows(sectionKey: KnowledgeSectionKey, payload: Row): Row {
   const projected = structuredClone(payload);
   const fields = sectionKey === "scope"
     ? ["exclusions"]
     : sectionKey === "recommendations"
-      ? ["recommendations"]
+      ? ["recommendations", "exclusions", "budgetAlterations"]
       : sectionKey === "quality"
         ? ["parameters"]
         : sectionKey === "execution"

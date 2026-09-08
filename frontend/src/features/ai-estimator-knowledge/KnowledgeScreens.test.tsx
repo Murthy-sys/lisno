@@ -38,6 +38,7 @@ vi.mock("./knowledgeApi", async (importOriginal) => {
     ...actual,
     listKnowledgeItems: vi.fn(),
     listKnowledgeBaskets: vi.fn(),
+    listKnowledgeSubBaskets: vi.fn(),
     listKnowledgeMasters: vi.fn(),
     createKnowledgeMaster: vi.fn(),
     createKnowledgeSurface: vi.fn(),
@@ -278,10 +279,67 @@ beforeEach(() => {
   vi.mocked(authorization.hasFrontendPermission).mockReturnValue(true);
   vi.mocked(knowledgeApi.listKnowledgeMasters).mockResolvedValue({ items: [], pagination: page });
   vi.mocked(knowledgeApi.listKnowledgeBaskets).mockResolvedValue({ items: [], pagination: page });
+  vi.mocked(knowledgeApi.listKnowledgeSubBaskets).mockResolvedValue({ items: [], pagination: page });
   vi.mocked(knowledgeApi.listKnowledgeItems).mockResolvedValue({ items: [], pagination: { ...page, limit: 20 } });
   vi.mocked(knowledgeApi.getKnowledgeItem).mockResolvedValue(item);
   vi.mocked(knowledgeApi.getKnowledgeHistory).mockResolvedValue({ items: [revision], pagination: page });
   vi.mocked(knowledgeApi.getKnowledgeSection).mockImplementation(async (_lineId, _revisionId, sectionKey) => section(sectionKey));
+});
+
+describe("temporary item workspace", () => {
+  it("lists temporary items under their Main Basket beside regular Main Lines and opens Basket-scoped creation", async () => {
+    const user = userEvent.setup();
+    const temporary = { ...item, id: "temp-1", mainLineId: "temp-1", mainLineName: "Temporary pendant", itemType: "temporary" as const };
+    const basket = { ...squareFoot, id: "basket-1", name: "Carpentry", status: "active" as const };
+    vi.mocked(knowledgeApi.listKnowledgeItems).mockResolvedValue({ items: [item, temporary], pagination: { ...page, total: 2 } });
+    vi.mocked(knowledgeApi.listKnowledgeBaskets).mockResolvedValue({ items: [basket], pagination: { ...page, total: 1 } });
+    renderRoute(<KnowledgeBaseIndexPage />, "/admin/configuration/estimation", "/admin/configuration/estimation");
+    expect(await screen.findByRole("link", { name: "Temporary pendant" })).toHaveAttribute("href", "/admin/configuration/estimation/items/temp-1");
+    expect(screen.getByRole("link", { name: "Wall panelling" })).toBeVisible();
+    expect(screen.getByText("Overview · Mode · Quality Parameters")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Add temporary item to Carpentry" }));
+    const dialog = screen.getByRole("dialog", { name: "Add temporary item" });
+    await waitFor(() => expect(within(dialog).getByRole("combobox", { name: "Main basket" })).toHaveValue("basket-1"));
+    expect(within(dialog).getByRole("textbox", { name: "Sub basket" })).not.toBeRequired();
+    expect(within(dialog).getByRole("textbox", { name: "Temporary item name" })).toBeRequired();
+  });
+
+  it("loads every related-item page and saves the rule with stable identities and section CAS", async () => {
+    const user = userEvent.setup();
+    const target = { ...item, id: "target-2", mainLineId: "target-2", mainLineName: "Ceiling COB Lights", subBasketId: null };
+    const basket = { ...squareFoot, id: "basket-1", name: "Carpentry", status: "active" as const };
+    vi.mocked(knowledgeApi.listKnowledgeBaskets).mockResolvedValue({ items: [basket], pagination: { ...page, total: 1 } });
+    vi.mocked(knowledgeApi.listKnowledgeItems).mockImplementation(async (params) => params?.offset === 0
+      ? { items: [item], pagination: { ...page, total: 2, hasMore: true } }
+      : { items: [target], pagination: { ...page, offset: 1, total: 2 } });
+    const budgetRule = { id: "budget-1", trigger: "removed", action: "remove", requirement: "must", targetType: "catalog", targetBasketId: "basket-1", targetSubBasketId: null, targetMainLineId: "target-2", reason: "Ceiling support is needed.", active: true };
+    const notes = [{ id: "old-note", name: "Retained exclusion", reason: "Existing note", active: true }];
+    vi.mocked(knowledgeApi.getKnowledgeSection).mockImplementation(async (_id, _revision, key) => section(key, key === "recommendations" ? { budgetAlterations: [budgetRule], exclusions: notes } : {}));
+    vi.mocked(knowledgeApi.updateKnowledgeSection).mockImplementation(async (_id, _revision, key, input) => mutationSection(key, input.payload, 3, 5));
+    renderRoute(<KnowledgeItemWorkspacePage />, "/admin/configuration/estimation/items/line-1", "/admin/configuration/estimation/items/:itemId");
+    await user.click(await screen.findByRole("tab", { name: "Recommendation & Exclusions" }));
+    expect(await screen.findByRole("option", { name: "Ceiling COB Lights" })).toBeInTheDocument();
+    expect(knowledgeApi.listKnowledgeItems).toHaveBeenCalledWith({ limit: 100, offset: 1 });
+    const reason = screen.getByRole("textbox", { name: "Why is this change needed?" });
+    await user.clear(reason);
+    await user.type(reason, "Recessed lights need the false ceiling.");
+    await user.click(screen.getByRole("button", { name: "Save Recommendation & Exclusions" }));
+    await waitFor(() => expect(knowledgeApi.updateKnowledgeSection).toHaveBeenCalledWith("line-1", "revision-1", "recommendations", expect.objectContaining({ expectedVersion: 2, expectedAggregateVersion: 4, payload: { budgetAlterations: [{ ...budgetRule, reason: "Recessed lights need the false ceiling." }], exclusions: notes } })));
+  });
+
+  it("exposes only Overview, Mode and Quality without changing regular Main Line navigation", async () => {
+    vi.mocked(knowledgeApi.getKnowledgeItem).mockResolvedValue({ ...item, itemType: "temporary" });
+    const user = userEvent.setup();
+    renderRoute(<KnowledgeItemWorkspacePage />, "/admin/configuration/estimation/items/line-1", "/admin/configuration/estimation/items/:itemId");
+    await screen.findByRole("heading", { name: "Wall panelling" });
+    expect(screen.queryByRole("tab", { name: "Recommendation & Exclusions" })).not.toBeInTheDocument();
+    expect(screen.getAllByRole("tab")).toHaveLength(3);
+    await user.click(screen.getByRole("tab", { name: "Mode" }));
+    expect(await screen.findByRole("checkbox", { name: "PMC" })).toBeVisible();
+    await user.click(screen.getByRole("tab", { name: "Quality Parameter" }));
+    expect(await screen.findByRole("button", { name: "Add Quality parameter" })).toBeVisible();
+    await expectNoAutomatedAccessibilityViolations();
+  });
 });
 
 describe("AI estimator knowledge screens", () => {

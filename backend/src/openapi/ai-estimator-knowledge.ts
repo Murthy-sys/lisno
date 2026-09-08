@@ -330,6 +330,7 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
   }),
   KnowledgeSubBasketCreateRequest: strictObject(["name"], { name: masterProperties.name }),
   KnowledgeMainLineCreateRequest: { ...strictObject(["name"], {
+    itemType: { type: "string", enum: ["main_line", "temporary"], description: "Temporary items expose only Overview, Mode and Quality Parameters." },
     subBasketId: id,
     subBasketName: { ...masterProperties.name, description: "Resolved or created under the selected Main Basket. Mutually exclusive with subBasketId." },
     name: masterProperties.name,
@@ -1013,6 +1014,7 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
     {
       id,
       basketId: id,
+      itemType: { type: "string", enum: ["main_line", "temporary"] },
       subBasketId: { ...id, nullable: true },
       name: masterProperties.name,
       description,
@@ -1044,11 +1046,25 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
     blockers: { type: "array", items: ref("KnowledgeCompletenessFinding") },
     warnings: { type: "array", items: ref("KnowledgeCompletenessFinding") }
   }),
+  KnowledgeTemporaryMainLineReference: strictObject(
+    ["mainLineId", "mainLineName", "basketId", "basketName", "subBasketId", "subBasketName", "status", "revisionId", "revisionStatus", "rules"], {
+      mainLineId: id, mainLineName: { type: "string" }, basketId: id, basketName: { type: "string" },
+      subBasketId: { ...id, nullable: true }, subBasketName: { type: "string", nullable: true },
+      status: { type: "string", enum: [...AI_ESTIMATOR_KNOWLEDGE_ITEM_STATUSES] }, revisionId: id,
+      revisionStatus: { type: "string", enum: ["draft", "active"] },
+      rules: { type: "array", items: strictObject(["id", "trigger", "action", "requirement", "reason", "active"], {
+        id, trigger: { type: "string", enum: ["added", "removed"] }, action: { type: "string", enum: ["add", "remove"] },
+        requirement: { type: "string", enum: ["must", "can"] }, reason: { type: "string" }, active: { type: "boolean" }
+      }) }
+    }
+  ),
   KnowledgeItemListItem: strictObject(
     ["id", "basketId", "basketName", "mainLineId", "mainLineName", "description", "status", "activeRevisionId", "draftRevisionId", "revisionNumber", "uomId", "priorityId", "modeIds", "surfaceIds", "vendorIds", "completeness", "allowedActions", "version", ...Object.keys(actorMetadata)],
     {
       id,
       basketId: id,
+      itemType: { type: "string", enum: ["main_line", "temporary"] },
+      linkedMainLines: { type: "array", items: ref("KnowledgeTemporaryMainLineReference") },
       basketName: { type: "string" },
       subBasketId: { ...id, nullable: true },
       subBasketName: { type: "string", nullable: true },
@@ -1076,6 +1092,8 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
     {
       id,
       basketId: id,
+      itemType: { type: "string", enum: ["main_line", "temporary"] },
+      linkedMainLines: { type: "array", items: ref("KnowledgeTemporaryMainLineReference") },
       basketName: { type: "string" },
       subBasketId: { ...id, nullable: true },
       subBasketName: { type: "string", nullable: true },
@@ -1278,7 +1296,7 @@ function sectionPayloadKeys(sectionKey: string): readonly string[] {
     pricing: ["specifications", "brands", "technicalDescription", "qualityLevel", "internalVendorNotes", "priceEntries"],
     "quantity-margin": ["quantitySlabs", "slabRates", "gapBehavior", "startMarginBps", "bottomMarginBps", "pmcMarkupBps", "wastageBps", "previewInputs"],
     scope: ["modeIds", "surfaceIds", "exclusions"],
-    recommendations: ["recommendations"],
+    recommendations: ["recommendations", "exclusions", "budgetAlterations"],
     quality: ["parameters"],
     execution: ["steps", "productivity"],
     advanced: ["dependencies", "modeOverrides", "revisionLineage", "modeConfigurations", "modeDescription", "modeCalculation", "modeCalculations", "pmcMarginBps"]
@@ -1290,6 +1308,23 @@ function sectionPayloadProperties(sectionKey: string): Readonly<Record<string, u
   const properties = Object.fromEntries(
     sectionPayloadKeys(sectionKey).map((key) => [key, {}])
   );
+  if (sectionKey === "recommendations") {
+    properties.budgetAlterations = {
+      type: "array", maxItems: 100,
+      description: "Conditional scope guidance for this Main Line. Must/can actions are proposals, not automatic estimate mutations. Temporary items have their own Overview, Mode and Quality configuration. Catalog targets use stable Basket, Sub Basket and Main Line identities.",
+      items: { type: "object", additionalProperties: false,
+        required: ["id", "trigger", "action", "requirement", "targetType", "targetBasketId", "targetSubBasketId", "targetMainLineId", "reason", "active"],
+        properties: {
+          id: { type: "string" }, trigger: { type: "string", enum: ["added", "removed"] },
+          action: { type: "string", enum: ["add", "remove"] }, requirement: { type: "string", enum: ["must", "can"] },
+          targetType: { type: "string", enum: ["catalog", "temporary"] },
+          targetBasketId: { type: "string" }, targetSubBasketId: { type: "string", nullable: true },
+          targetMainLineId: { type: "string" },
+          reason: { type: "string", minLength: 1, maxLength: 4000 }, active: { type: "boolean" }
+        }
+      }
+    };
+  }
   if (sectionKey === "advanced") {
     properties.modeDescription = { type: "string", minLength: 1, maxLength: 4_000, nullable: true };
     properties.modeCalculation = { ...nullableRef("KnowledgeModeCalculationSettings"), deprecated: true,

@@ -180,6 +180,7 @@ export interface KnowledgePermanentDeleteBasketInput {
 }
 
 export interface KnowledgeCreateMainLineInput {
+  readonly itemType?: "main_line" | "temporary";
   readonly subBasketId?: string;
   readonly subBasketName?: string;
   readonly name: string;

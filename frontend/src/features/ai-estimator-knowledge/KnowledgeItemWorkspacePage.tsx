@@ -61,6 +61,7 @@ import {
 } from "./knowledgeSectionPayload";
 import { KnowledgeSectionEditor } from "./KnowledgeSectionEditor";
 import { KnowledgeSectionNavigation } from "./KnowledgeSectionNavigation";
+import { KnowledgeTemporaryMainLineInfo } from "./KnowledgeTemporaryMainLineInfo";
 import { KnowledgeSafetyNotice } from "./KnowledgeSafetyNotice";
 import { KnowledgeUnsavedChangesDialog } from "./KnowledgeUnsavedChangesDialog";
 import { KnowledgeVersionConflictDialog } from "./KnowledgeVersionConflictDialog";
@@ -128,6 +129,9 @@ export function KnowledgeItemWorkspacePage() {
     enabled: Boolean(mainLineId)
   });
   const item = itemQuery.data;
+  useEffect(() => {
+    if (item?.itemType === "temporary" && activeSection === "recommendations") setActiveSection("overview");
+  }, [item?.itemType, activeSection]);
   const revision = item?.draftRevision ?? item?.activeRevision ?? null;
   const backendSection: KnowledgeSectionKey | null = activeSection === "mode"
     ? null
@@ -150,12 +154,12 @@ export function KnowledgeItemWorkspacePage() {
     enabled: Boolean(mainLineId)
   });
   const relationshipBasketsQuery = useQuery({
-    queryKey: knowledgeQueryKeys.basketList({ limit: 100, offset: 0 }),
-    queryFn: () => listKnowledgeBaskets({ limit: 100, offset: 0 })
+    queryKey: [...knowledgeQueryKeys.basketLists(), "relationship-catalog"],
+    queryFn: () => collectAllKnowledgeMasterPages((params) => listKnowledgeBaskets(params), "Main Basket")
   });
   const relationshipItemsQuery = useQuery({
-    queryKey: knowledgeQueryKeys.itemList({ limit: 100, offset: 0 }),
-    queryFn: () => listKnowledgeItems({ limit: 100, offset: 0 })
+    queryKey: [...knowledgeQueryKeys.itemLists(), "relationship-catalog"],
+    queryFn: () => collectAllKnowledgeMasterPages((params) => listKnowledgeItems(params), "Related items")
   });
   const masterQueries = useQueries({
     queries: MASTER_TYPES.map((type) => ({
@@ -478,17 +482,18 @@ export function KnowledgeItemWorkspacePage() {
         breadcrumb={<Button variant="quiet" size="compact" leadingIcon={<ArrowLeft />} onClick={() => guard.requestNavigation(() => navigate("/admin/configuration/estimation"))}>Back to Main Baskets</Button>}
         eyebrow={`Main Basket · ${item.basketName}${item.subBasketName ? ` · Sub Basket · ${item.subBasketName}` : ""}`}
         title={item.mainLineName}
-        metadata={<div className="knowledge-header-metadata"><StatusBadge label={KNOWLEDGE_ITEM_STATUS_LABELS[item.status]} tone={item.status === "active" ? "success" : item.status === "draft" ? "warning" : item.status === "archived" ? "danger" : "neutral"} /><span>Updated {formatKnowledgeDateTime(item.updatedAt)}</span></div>}
+        metadata={<div className="knowledge-header-metadata">{item.itemType === "temporary" && <span className="knowledge-temporary-badge">Temporary item</span>}<StatusBadge label={KNOWLEDGE_ITEM_STATUS_LABELS[item.status]} tone={item.status === "active" ? "success" : item.status === "draft" ? "warning" : item.status === "archived" ? "danger" : "neutral"} /><span>Updated {formatKnowledgeDateTime(item.updatedAt)}</span></div>}
         actions={<WorkspaceActions item={item} canCreate={canCreate} canLifecycle={canLifecycle} onCommand={(next) => guard.requestNavigation(() => setCommand(next))} onLifecycle={(next) => guard.requestNavigation(() => setLifecycleAction(next))} />}
       />
       <KnowledgeSafetyNotice />
       <KnowledgeWorkspaceStatus item={item} />
+      <KnowledgeTemporaryMainLineInfo item={item} onOpenMainLine={(id) => guard.requestNavigation(() => navigate(`/admin/configuration/estimation/items/${encodeURIComponent(id)}`))} />
       {announcement ? <p className="sr-only" role="status">{announcement}</p> : null}
       {item.status === "archived" ? <InlineMessage tone="warning" title="Archived configuration">This item and its revision history are read-only.</InlineMessage> : revision && !editable && revision.status !== "draft" ? <InlineMessage tone="info" title="Active history is read-only">Create a Draft revision to change section data. The active revision remains available until a new Draft is activated.</InlineMessage> : null}
 
       <div className="knowledge-workspace-layout">
         <div className="knowledge-workspace-main">
-          <KnowledgeSectionNavigation activeSection={activeSection} onSectionChange={selectWorkspaceSection} panelBusy={activeSection === "mode" ? modeBusy : activeSection === "overview" ? sectionQuery.isFetching || overviewSummaryQueries.some(({ isFetching }) => isFetching) : sectionQuery.isFetching}>
+          <KnowledgeSectionNavigation sections={item.itemType === "temporary" ? ["overview", "mode", "quality"] : undefined} activeSection={activeSection} onSectionChange={selectWorkspaceSection} panelBusy={activeSection === "mode" ? modeBusy : activeSection === "overview" ? sectionQuery.isFetching || overviewSummaryQueries.some(({ isFetching }) => isFetching) : sectionQuery.isFetching}>
             {revision ? (
               <KnowledgeSectionCommandBar
                 sectionLabel={activeSectionLabel}
@@ -535,6 +540,7 @@ export function KnowledgeItemWorkspacePage() {
                 {(relationshipBasketsQuery.isError || relationshipItemsQuery.isError) && activeSection === "recommendations" ? <InlineMessage tone="warning">Some Basket or Main Line choices could not be loaded. Existing stable-ID selections remain visible; retry before changing relationships.</InlineMessage> : null}
                 {backendSection === "overview" && revision ? (
                   <KnowledgeOverviewPanel
+                    showRecommendations={item.itemType !== "temporary"}
                     key={revision.id}
                     item={item}
                     revision={revision}
@@ -563,7 +569,7 @@ export function KnowledgeItemWorkspacePage() {
                     onOpenSection={selectWorkspaceSection}
                   />
                 ) : (
-                  <KnowledgeSectionEditor sectionKey={backendSection} payload={payload} masters={masters} relationshipBaskets={relationshipBasketsQuery.data?.items ?? []} relationshipItems={relationshipItemsQuery.data?.items ?? []} currentMainLineId={mainLineId} basketName={item.basketName} readOnly={!editable} canQuickAdd={canCreate} uomCatalogState={uomCatalogState} vendorCatalogState={vendorCatalogState} masterCatalogStates={masterCatalogStates} resetKey={`${sectionQuery.data.id}-${sectionQuery.data.version}`} validationAttempt={validationAttempt} onChange={setPayload} onDirty={() => setDirty(true)} onValidationChange={setEditorValid} onQuickAdd={(type, select) => setQuickAdd({ type, select })} />
+                  <KnowledgeSectionEditor sectionKey={backendSection} payload={payload} masters={masters} relationshipBaskets={relationshipBasketsQuery.data?.items ?? []} relationshipItems={relationshipItemsQuery.data?.items ?? []} currentMainLineId={mainLineId} mainLineName={item.mainLineName} basketName={item.basketName} relationshipCatalogState={overviewRelationshipState} readOnly={!editable} canQuickAdd={canCreate} uomCatalogState={uomCatalogState} vendorCatalogState={vendorCatalogState} masterCatalogStates={masterCatalogStates} resetKey={`${sectionQuery.data.id}-${sectionQuery.data.version}`} validationAttempt={validationAttempt} onChange={setPayload} onDirty={() => setDirty(true)} onValidationChange={setEditorValid} onQuickAdd={(type, select) => setQuickAdd({ type, select })} />
                 )}
                 {activeSaveError ? <InlineMessage tone="error" role="alert">{activeSaveError}</InlineMessage> : null}
               </Surface>

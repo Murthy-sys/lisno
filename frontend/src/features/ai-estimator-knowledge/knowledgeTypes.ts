@@ -176,6 +176,7 @@ export interface KnowledgePermanentDeleteBasketResult {
 }
 
 export interface KnowledgeMainLine extends KnowledgeVersionedResource {
+  readonly itemType?: "main_line" | "temporary";
   readonly subBasketId?: string | null;
   readonly basketId: string;
   readonly name: string;
@@ -186,7 +187,22 @@ export interface KnowledgeMainLine extends KnowledgeVersionedResource {
   readonly draftRevisionId: string | null;
 }
 
+export interface KnowledgeTemporaryMainLineReference {
+  mainLineId: string;
+  mainLineName: string;
+  basketId: string;
+  basketName: string;
+  subBasketId: string | null;
+  subBasketName: string | null;
+  status: KnowledgeItemStatus;
+  revisionId: string;
+  revisionStatus: "draft" | "active";
+  rules: Array<{ id: string; trigger: "added" | "removed"; action: "add" | "remove"; requirement: "must" | "can"; reason: string; active: boolean }>;
+}
+
 export interface KnowledgeItemListItem extends KnowledgeVersionedResource {
+  readonly linkedMainLines?: readonly KnowledgeTemporaryMainLineReference[];
+  readonly itemType?: "main_line" | "temporary";
   readonly basketId: string;
   readonly basketName: string;
   readonly subBasketId?: string | null;

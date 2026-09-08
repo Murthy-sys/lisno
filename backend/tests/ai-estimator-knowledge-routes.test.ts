@@ -103,6 +103,29 @@ function appFor(testServices: AiEstimatorKnowledgeAdminRouterServices) {
 }
 
 describe("AI Estimator Knowledge HTTP routes", () => {
+  it("creates temporary items through the existing Super Admin operation and rejects subtype changes", async () => {
+    const testServices = services();
+    const app = appFor(testServices);
+    const path = "/api/v1/admin/ai-estimator-knowledge/baskets/basket-1/main-lines";
+    const input = { name: "Temporary fixture", itemType: "temporary" };
+    expect((await request(app).post(path).set("Authorization", "Bearer admin-token").send(input)).status).toBe(403);
+    expect(testServices.item.createMainLine).not.toHaveBeenCalled();
+    expect((await request(app).post(path).set("Authorization", "Bearer super-admin-token").send(input)).status).toBe(201);
+    expect(testServices.item.createMainLine).toHaveBeenCalledWith(superAdmin, "basket-1", input);
+    expect((await request(app).post(path).set("Authorization", "Bearer super-admin-token").send({ ...input, itemType: "other" })).status).toBe(400);
+    expect((await request(app).patch("/api/v1/admin/ai-estimator-knowledge/main-lines/line-1").set("Authorization", "Bearer super-admin-token").send({ expectedVersion: 1, itemType: "temporary" })).status).toBe(400);
+  });
+
+  it("validates Budget Alterations before the section mutation", async () => {
+    const testServices = services();
+    const app = appFor(testServices);
+    const path = "/api/v1/admin/ai-estimator-knowledge/main-lines/line-1/revisions/revision-1/sections/recommendations";
+    const rule = { id: "rule-1", trigger: "removed", action: "remove", requirement: "must", targetType: "temporary", targetBasketId: "basket-1", targetSubBasketId: null, targetMainLineId: "line-2", reason: "Ceiling fixtures require support.", active: true };
+    expect((await request(app).put(path).set("Authorization", "Bearer super-admin-token").send({ expectedVersion: 1, expectedAggregateVersion: 1, payload: { budgetAlterations: [rule] } })).status).toBe(200);
+    expect((await request(app).put(path).set("Authorization", "Bearer super-admin-token").send({ expectedVersion: 1, expectedAggregateVersion: 1, payload: { budgetAlterations: [{ ...rule, reason: " " }] } })).status).toBe(400);
+    expect(testServices.item.updateSection).toHaveBeenCalledTimes(1);
+  });
+
   it("accepts a Sub Basket text name and rejects blank or ambiguous mappings", async () => {
     const testServices = services();
     const app = appFor(testServices);

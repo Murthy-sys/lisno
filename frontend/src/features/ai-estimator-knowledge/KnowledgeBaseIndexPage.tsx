@@ -41,10 +41,11 @@ import {
   updateKnowledgeBasket,
   type KnowledgeListParams
 } from "./knowledgeApi";
-import { syncKnowledgeBasketDeletion } from "./knowledgeMutationSync";
+import { invalidateTemporaryMainLineDetails, syncKnowledgeBasketDeletion } from "./knowledgeMutationSync";
 import { knowledgeQueryKeys } from "./knowledgeQueryKeys";
 import { KNOWLEDGE_ITEM_STATUS_LABELS } from "./knowledgePresentation";
 import { CreateKnowledgeItemDialog } from "./CreateKnowledgeItemDialog";
+import { KnowledgeTemporaryMainLineInfo } from "./KnowledgeTemporaryMainLineInfo";
 import { KnowledgeSafetyNotice } from "./KnowledgeSafetyNotice";
 import { collectAllKnowledgeMasterPages } from "./knowledgeMasterPagination";
 import { KnowledgeLifecycleDialog } from "./KnowledgeLifecycleDialogs";
@@ -125,6 +126,7 @@ export function KnowledgeBaseIndexPage() {
   const [basketEditor, setBasketEditor] = useState<KnowledgeBasket | null>(null);
   const [basketDelete, setBasketDelete] = useState<KnowledgeBasket | null>(null);
   const [itemDialogOpen, setItemDialogOpen] = useState(false);
+  const [temporaryBasketId, setTemporaryBasketId] = useState<string | null>(null);
   const [announcement, setAnnouncement] = useState("");
   const [advancedFiltersOpen, setAdvancedFiltersOpen] = useState(false);
   const [collapsedBaskets, setCollapsedBaskets] = useState<readonly string[]>([]);
@@ -507,6 +509,7 @@ export function KnowledgeBaseIndexPage() {
                         but not shown: several baskets each offer this command, and
                         "Add estimation item" alone would name them all alike. */}
                     {canCreate ? <Button size="compact" variant="secondary" leadingIcon={<Plus />} onClick={() => setItemDialogOpen(true)}>Add estimation item<span className="sr-only"> to {group.basketName}</span></Button> : null}
+                    {canCreate ? <Button size="compact" variant="secondary" onClick={() => setTemporaryBasketId(basketId)}>Add temporary item<span className="sr-only"> to {group.basketName}</span></Button> : null}
                     {canUpdate ? <Button size="compact" variant="quiet" leadingIcon={<Pencil />} onClick={() => setBasketEditor((basketsQuery.data?.items ?? []).find(({ id }) => id === basketId) ?? null)}>Edit basket</Button> : null}
                     {canLifecycle ? <Button size="compact" variant="destructive-outline" leadingIcon={<Trash2 />} onClick={() => setBasketDelete((basketsQuery.data?.items ?? []).find(({ id }) => id === basketId) ?? null)}>Delete<span className="sr-only"> {group.basketName}</span></Button> : null}
                   </div>
@@ -515,10 +518,10 @@ export function KnowledgeBaseIndexPage() {
               <div id={panelId} className="knowledge-basket-panel__body" hidden={!expanded}>
               <div className="knowledge-item-grid">
                 {group.items.map((item) => (
-                  <article key={item.id} className="knowledge-item-card">
+                  <article key={item.id} className="knowledge-item-card" data-item-type={item.itemType ?? "main_line"}>
                     <div className="knowledge-item-card__heading">
                       <div>
-                        <p className="knowledge-breadcrumb">{item.basketName} → {item.subBasketName ? `${item.subBasketName} → ` : ""}Main Line</p>
+                        <p className="knowledge-breadcrumb">{item.basketName} → {item.subBasketName ? `${item.subBasketName} → ` : ""}{item.itemType === "temporary" ? <span className="knowledge-temporary-badge">Temporary item</span> : "Main Line"}</p>
                         <h3>
                           <Link
                             className="knowledge-item-link"
@@ -533,7 +536,8 @@ export function KnowledgeBaseIndexPage() {
                         tone={statusTone(item.status)}
                       />
                     </div>
-                    <p>{item.description ?? "No description provided."}</p>
+                    <p>{item.itemType === "temporary" ? "Overview · Mode · Quality Parameters" : item.description ?? "No description provided."}</p>
+                    <KnowledgeTemporaryMainLineInfo item={item} compact />
                     <div className="knowledge-item-card__progress">
                       <span>{item.completeness.percentage}% complete</span>
                       <ProgressBar
@@ -609,6 +613,7 @@ export function KnowledgeBaseIndexPage() {
           onClose={() => setBasketEditor(null)}
           onCreated={async () => {
             await Promise.all([
+              invalidateTemporaryMainLineDetails(queryClient),
               queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.basketLists() }),
               queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.itemLists() })
             ]);
@@ -632,6 +637,11 @@ export function KnowledgeBaseIndexPage() {
           }}
         />
       ) : null}
+      {temporaryBasketId && <CreateKnowledgeItemDialog itemType="temporary" initialBasketId={temporaryBasketId}
+        onClose={() => setTemporaryBasketId(null)} onCreated={async (id) => {
+          setTemporaryBasketId(null);
+          navigate(`/admin/configuration/estimation/items/${encodeURIComponent(id)}`);
+        }} />}
       {itemDialogOpen ? (
         <CreateKnowledgeItemDialog
           onClose={() => setItemDialogOpen(false)}

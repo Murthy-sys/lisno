@@ -842,6 +842,7 @@ async function basketDeletionImpact(
   const sectionQuery = AiEstimatorKnowledgeSectionModel.find({
     $or: [
       { "payload.exclusions.targetBasketId": basketId },
+      { "payload.budgetAlterations.targetBasketId": basketId },
       { "payload.dependencies.targetBasketId": basketId }
     ]
   }).select({ payload: 1 });
@@ -884,7 +885,7 @@ function basketReferenceCount(payload: unknown, basketId: string): number {
   const row = payload && typeof payload === "object" && !Array.isArray(payload)
     ? payload as Row
     : {};
-  return [row.exclusions, row.dependencies]
+  return [row.exclusions, row.dependencies, row.budgetAlterations]
     .flatMap((value) => Array.isArray(value) ? value : value == null ? [] : [value])
     .reduce((count, candidate) => {
       const relation = candidate && typeof candidate === "object" && !Array.isArray(candidate)

@@ -159,7 +159,7 @@ describe("Super Admin knowledge item workspace layout", () => {
         <KnowledgeSectionEditor
           {...editorProps}
           sectionKey="recommendations"
-          payload={{}}
+          payload={{ recommendations: [{ id: "legacy", name: "Existing note", priorityId: null, reason: "Retained", dependency: false, active: true }] }}
           resetKey="recommendations-layout"
         />
         <KnowledgeSectionEditor

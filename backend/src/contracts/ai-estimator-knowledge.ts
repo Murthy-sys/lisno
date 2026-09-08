@@ -86,7 +86,22 @@ export interface KnowledgeCompletenessSummary {
   warnings: KnowledgeCompletenessFinding[];
 }
 
+export interface KnowledgeTemporaryMainLineReference {
+  mainLineId: string;
+  mainLineName: string;
+  basketId: string;
+  basketName: string;
+  subBasketId: string | null;
+  subBasketName: string | null;
+  status: KnowledgeItemStatus;
+  revisionId: string;
+  revisionStatus: "draft" | "active";
+  rules: Array<Pick<KnowledgeBudgetAlteration, "id" | "trigger" | "action" | "requirement" | "reason" | "active">>;
+}
+
 export interface KnowledgeItemListItem extends KnowledgeVersionedResource {
+  itemType?: "main_line" | "temporary";
+  linkedMainLines?: KnowledgeTemporaryMainLineReference[];
   basketId: KnowledgeStableId;
   basketName: string;
   subBasketId?: KnowledgeStableId | null;
@@ -245,6 +260,20 @@ export interface KnowledgeRecommendation {
   priorityId: KnowledgeStableId;
   reason: string | null;
   dependency: boolean;
+  active: boolean;
+}
+
+/** Conditional scope guidance, never an instruction to mutate an estimate automatically. */
+export interface KnowledgeBudgetAlteration {
+  id: KnowledgeStableId;
+  trigger: "added" | "removed";
+  action: "add" | "remove";
+  requirement: "must" | "can";
+  targetType: "catalog" | "temporary";
+  targetBasketId: KnowledgeStableId;
+  targetSubBasketId: KnowledgeStableId | null;
+  targetMainLineId: KnowledgeStableId;
+  reason: string;
   active: boolean;
 }
 

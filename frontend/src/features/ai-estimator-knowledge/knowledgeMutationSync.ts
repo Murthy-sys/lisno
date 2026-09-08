@@ -10,6 +10,13 @@ import type {
   KnowledgeSectionMutationEnvelope
 } from "./knowledgeTypes";
 
+export function invalidateTemporaryMainLineDetails(queryClient: QueryClient): Promise<void> {
+  return queryClient.invalidateQueries({
+    queryKey: knowledgeQueryKeys.items(),
+    predicate: (query) => query.queryKey.length === 3 && (query.state.data as KnowledgeItemDetail | undefined)?.itemType === "temporary"
+  });
+}
+
 export function commitKnowledgeSectionMutation(
   queryClient: QueryClient,
   section: KnowledgeSectionMutationEnvelope
@@ -35,6 +42,7 @@ export async function invalidateKnowledgeSectionMutation(
   mainLineId: string
 ): Promise<void> {
   await Promise.allSettled([
+    invalidateTemporaryMainLineDetails(queryClient),
     queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.itemLists() }),
     queryClient.invalidateQueries({
       queryKey: knowledgeQueryKeys.item(mainLineId)
@@ -124,6 +132,7 @@ export async function syncKnowledgeMainLineDeletion(
   });
 
   await Promise.all([
+    invalidateTemporaryMainLineDetails(queryClient),
     queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.itemLists() }),
     queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.mainLineLists() }),
     queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.histories() }),
@@ -139,6 +148,7 @@ export async function syncKnowledgeLifecycleMutation(
   queryClient.setQueryData(knowledgeQueryKeys.item(item.mainLineId), item);
 
   await Promise.all([
+    invalidateTemporaryMainLineDetails(queryClient),
     queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.itemLists() }),
     queryClient.invalidateQueries({
       queryKey: knowledgeQueryKeys.item(item.mainLineId)
