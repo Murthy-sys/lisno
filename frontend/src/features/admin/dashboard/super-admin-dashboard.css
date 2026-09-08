@@ -101,4 +101,63 @@
   @media (prefers-reduced-motion: reduce) {
     .super-admin-dashboard *, .super-admin-dashboard *::before, .super-admin-dashboard *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; }
   }
+
+  /* ---------------------------------------------------------------------
+     Token parity with Estimator/Sales (see estimator-dashboard.css, not
+     modified). Buttons, headings and cards on this screen read the same
+     tokens.css variables that role uses for font size, font color, font
+     weight, box-shadow and border-radius, replacing the values above. Only
+     these 5 properties are touched here — layout, spacing/padding and grid
+     structure are unchanged. Scoped to .super-admin-dashboard so no other
+     Super Admin screen and no other role is affected.
+     ------------------------------------------------------------------- */
+
+  /* Cards: .ui-surface (Surface component) and .metric-card back every card
+     on this screen, the same way .estimate-panel / .estimate-total-card /
+     .estimate-terms do on Estimator/Sales. */
+  .ui-app-shell[data-role="super_admin"] .super-admin-dashboard .ui-surface,
+  .ui-app-shell[data-role="super_admin"] .super-admin-dashboard .metric-card {
+    border-radius: var(--radius-card);
+    box-shadow: var(--shadow-card);
+  }
+  .ui-app-shell[data-role="super_admin"] .super-admin-dashboard .dashboard-table-wrap,
+  .ui-app-shell[data-role="super_admin"] .super-admin-dashboard .dashboard-mobile-row,
+  .ui-app-shell[data-role="super_admin"] .super-admin-dashboard .dashboard-governance-grid a,
+  .ui-app-shell[data-role="super_admin"] .super-admin-dashboard .dashboard-definition-grid div {
+    border-radius: var(--radius-card);
+  }
+
+  /* Headings: eyebrow labels and section/tab headings match Estimator's
+     .eyebrow / section-heading h2 / panel h2 treatment. */
+  .ui-app-shell[data-role="super_admin"] .super-admin-dashboard .eyebrow {
+    color: var(--color-highlight);
+    font-weight: var(--text-title);
+    font-size: var(--text-title-size);
+  }
+  .ui-app-shell[data-role="super_admin"] .super-admin-dashboard .dashboard-panel > h2 {
+    color: var(--color-primary);
+    font-weight: var(--text-mainheading2);
+    font-size: var(--text-mainheading2-size);
+  }
+  .ui-app-shell[data-role="super_admin"] .super-admin-dashboard .dashboard-section-heading h3 {
+    color: var(--color-primary);
+    font-weight: var(--text-subheading2);
+    font-size: var(--text-subheading2-size);
+  }
+
+  /* Buttons: Button.tsx renders .ui-button / .ui-button--primary /
+     .ui-button--secondary here, the equivalents of Estimator/Sales'
+     .button--primary / .button--secondary. */
+  .ui-app-shell[data-role="super_admin"] .super-admin-dashboard .ui-button {
+    border-radius: var(--radius-card);
+    box-shadow: var(--shadow-card);
+    font-weight: var(--text-text2);
+    font-size: var(--text-text2-size);
+  }
+  .ui-app-shell[data-role="super_admin"] .super-admin-dashboard .ui-button--primary {
+    color: var(--color-bg);
+  }
+  .ui-app-shell[data-role="super_admin"] .super-admin-dashboard .ui-button--secondary {
+    color: var(--color-text-strong);
+  }
 }

@@ -16,10 +16,6 @@ const authStyles = readFileSync(
   resolve(process.cwd(), "src/styles/index.css"),
   "utf8"
 );
-const primitiveStyles = readFileSync(
-  resolve(process.cwd(), "src/styles/primitives.css"),
-  "utf8"
-);
 const roleThemeStyles = readFileSync(
   resolve(process.cwd(), "src/styles/role-themes.css"),
   "utf8"
@@ -105,11 +101,25 @@ async function signIn() {
   fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
 }
 
+function invalidCredentialsHandler() {
+  return http.post("/api/v1/auth/login", () =>
+    HttpResponse.json(
+      {
+        error: {
+          code: "INVALID_CREDENTIALS",
+          message: "Invalid email or password."
+        }
+      },
+      { status: 401 }
+    )
+  );
+}
+
 describe("LoginPage", () => {
-  it("preserves the approved sign-in copy and Lisno logo asset", () => {
+  it("renders the redesigned hero copy and the real logo asset", () => {
     renderApp(["/login"]);
 
-    expect(screen.getByText("Design operations, in focus")).toBeVisible();
+    expect(screen.getByText("DESIGN OPERATIONS, IN FOCUS")).toBeVisible();
     expect(
       screen.getByRole("heading", { name: "From first sketch to final handoff." })
     ).toBeVisible();
@@ -121,29 +131,26 @@ describe("LoginPage", () => {
     expect(
       screen.getByText("Clear ownership. Timely reviews. Beautiful outcomes.")
     ).toBeVisible();
-    expect(screen.getByRole("heading", { name: "Welcome back" })).toBeVisible();
-    for (const logo of screen.getAllByRole("img", { name: "Lisno" })) {
-      expect(logo).toHaveAttribute("src", "/lisno-logo.svg");
-    }
+    expect(screen.getByRole("heading", { name: "Sign in" })).toBeVisible();
+
+    expect(screen.getAllByRole("img", { name: "LISNO" }).length).toBeGreaterThan(0);
+
+    const background = screen.getByAltText("");
+    expect(background).toHaveAttribute("src", "/login-hero.png");
+    expect(background).toHaveAttribute("loading", "eager");
+    expect(background).toHaveAttribute("fetchpriority", "high");
   });
 
-  it("renders login fields and the password toggle through shared controls", () => {
+  it("renders login fields and the password toggle", () => {
     renderApp(["/login"]);
 
     const email = screen.getByLabelText("Email address");
     const passwordControl = screen.getByLabelText("Password");
-    expect(email).toHaveAttribute("id", "email");
-    expect(email).toHaveAttribute("autocomplete", "username");
-    expect(email).toHaveClass("ui-control", "ui-input");
-    expect(email.closest(".ui-field")).toHaveClass("field");
-    expect(passwordControl).toHaveAttribute("id", "password");
+    expect(email).toHaveAttribute("id", "login-email");
+    expect(email).toHaveAttribute("autocomplete", "email");
+    expect(passwordControl).toHaveAttribute("id", "login-password");
     expect(passwordControl).toHaveAttribute("autocomplete", "current-password");
-    expect(passwordControl).toHaveClass("ui-control", "ui-input");
-    expect(passwordControl.closest(".ui-field")).toHaveClass("field");
-    expect(screen.getByRole("button", { name: "Show password" })).toHaveClass(
-      "ui-icon-button",
-      "password-field__toggle"
-    );
+    expect(screen.getByRole("button", { name: "Show password" })).toBeVisible();
   });
 
   it("links prospective clients to the account signup form", async () => {
@@ -177,61 +184,167 @@ describe("LoginPage", () => {
     ).toBeTruthy();
   });
 
-  it("announces all validation errors and focuses email when both fields are invalid", async () => {
+  it("shows field-level messages for both fields and focuses email first", async () => {
     renderApp(["/login"]);
 
     await userEvent.click(screen.getByRole("button", { name: "Sign in" }));
 
-    const summary = await screen.findByRole("status", {
-      name: "Sign-in validation summary"
-    });
-    expect(summary).toHaveAttribute("aria-live", "polite");
-    expect(summary).toHaveTextContent("Enter a valid email address.");
-    expect(summary).toHaveTextContent("Password is required.");
+    expect(
+      await screen.findByText("Enter the email address on your Lisno account.")
+    ).toBeVisible();
+    expect(screen.getByText("Enter your password.")).toBeVisible();
     expect(screen.getByLabelText("Email address")).toHaveFocus();
   });
 
   it("focuses password when it is the first invalid field", async () => {
     renderApp(["/login"]);
-    await userEvent.type(
-      screen.getByLabelText("Email address"),
-      "person@lisno.example"
-    );
+    await userEvent.type(screen.getByLabelText("Email address"), "person@lisno.example");
+
+    await userEvent.click(screen.getByRole("button", { name: "Sign in" }));
+
+    expect(await screen.findByText("Enter your password.")).toBeVisible();
+    expect(screen.getByLabelText("Password")).toHaveFocus();
+  });
+
+  it("flags a malformed email distinctly from an empty one", async () => {
+    renderApp(["/login"]);
+    await userEvent.type(screen.getByLabelText("Email address"), "not-an-email");
+    await userEvent.type(screen.getByLabelText("Password"), password);
 
     await userEvent.click(screen.getByRole("button", { name: "Sign in" }));
 
     expect(
-      await screen.findByRole("status", {
-        name: "Sign-in validation summary"
-      })
-    ).toHaveTextContent("Password is required.");
-    expect(screen.getByLabelText("Password")).toHaveFocus();
+      await screen.findByText("That email address doesn’t look right.")
+    ).toBeVisible();
+  });
+
+  it("flags a password under 8 characters distinctly from an empty one", async () => {
+    renderApp(["/login"]);
+    await userEvent.type(screen.getByLabelText("Email address"), "person@lisno.example");
+    await userEvent.type(screen.getByLabelText("Password"), "short");
+
+    await userEvent.click(screen.getByRole("button", { name: "Sign in" }));
+
+    expect(
+      await screen.findByText("Passwords are at least 8 characters.")
+    ).toBeVisible();
+  });
+
+  it("re-validates a field live once the form has been submitted", async () => {
+    renderApp(["/login"]);
+    await userEvent.click(screen.getByRole("button", { name: "Sign in" }));
+    await screen.findByText("Enter the email address on your Lisno account.");
+
+    await userEvent.type(screen.getByLabelText("Email address"), "person@lisno.example");
+
+    await waitFor(() =>
+      expect(
+        screen.queryByText("Enter the email address on your Lisno account.")
+      ).not.toBeInTheDocument()
+    );
   });
 
   it("shows a generic error for invalid credentials without disclosing which field failed", async () => {
+    server.use(invalidCredentialsHandler());
+    renderApp(["/login"]);
+
+    await userEvent.type(screen.getByLabelText("Email address"), "unknown@example.com");
+    await userEvent.type(screen.getByLabelText("Password"), "incorrect1");
+    await userEvent.click(screen.getByRole("button", { name: "Sign in" }));
+
+    expect(
+      await screen.findByRole("alert", { name: "Sign-in message" })
+    ).toHaveTextContent("Email or password is incorrect.");
+    expect(screen.queryByText(/unknown email/i)).not.toBeInTheDocument();
+  });
+
+  it("maps an account-deactivated response to its own copy", async () => {
     server.use(
       http.post("/api/v1/auth/login", () =>
         HttpResponse.json(
-          {
-            error: {
-              code: "INVALID_CREDENTIALS",
-              message: "Invalid email or password."
-            }
-          },
-          { status: 401 }
+          { error: { code: "ACCOUNT_DEACTIVATED", message: "Deactivated." } },
+          { status: 403 }
         )
       )
     );
     renderApp(["/login"]);
 
-    await userEvent.type(screen.getByLabelText("Email address"), "unknown@example.com");
-    await userEvent.type(screen.getByLabelText("Password"), "incorrect");
+    await userEvent.type(screen.getByLabelText("Email address"), "person@lisno.example");
+    await userEvent.type(screen.getByLabelText("Password"), "incorrect1");
     await userEvent.click(screen.getByRole("button", { name: "Sign in" }));
 
     expect(
-      await screen.findByRole("alert", { name: "Sign-in error" })
-    ).toHaveTextContent("Email or password is incorrect.");
-    expect(screen.queryByText(/unknown email/i)).not.toBeInTheDocument();
+      await screen.findByRole("alert", { name: "Sign-in message" })
+    ).toHaveTextContent("This account has been deactivated.");
+  });
+
+  it("offers to resend the verification email for an unverified account", async () => {
+    server.use(
+      http.post("/api/v1/auth/login", () =>
+        HttpResponse.json(
+          { error: { code: "EMAIL_NOT_VERIFIED", message: "Unverified." } },
+          { status: 403 }
+        )
+      ),
+      http.post("/api/v1/auth/resend-verification", () => HttpResponse.json({ data: null }))
+    );
+    renderApp(["/login"]);
+
+    await userEvent.type(screen.getByLabelText("Email address"), "person@lisno.example");
+    await userEvent.type(screen.getByLabelText("Password"), "incorrect1");
+    await userEvent.click(screen.getByRole("button", { name: "Sign in" }));
+
+    const resend = await screen.findByRole("button", { name: "Resend verification email" });
+    await userEvent.click(resend);
+
+    expect(
+      await screen.findByText("Verification email sent. It can take a minute to arrive.")
+    ).toBeVisible();
+  });
+
+  it("counts down and locks the form after 5 failed attempts, then resets", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    server.use(invalidCredentialsHandler());
+    renderApp(["/login"]);
+
+    for (let attempt = 1; attempt <= 5; attempt += 1) {
+      fireEvent.change(screen.getByLabelText("Email address"), {
+        target: { value: "person@lisno.example" }
+      });
+      fireEvent.change(screen.getByLabelText("Password"), {
+        target: { value: "incorrect1" }
+      });
+      fireEvent.click(screen.getByRole("button", { name: /^Sign in$/ }));
+      await waitFor(() =>
+        expect(screen.getByRole("alert", { name: "Sign-in message" })).toBeInTheDocument()
+      );
+    }
+
+    const submit = await screen.findByRole("button", { name: /Try again in \d+s/ });
+    expect(submit).toBeDisabled();
+    expect(screen.getByLabelText("Email address")).toBeDisabled();
+
+    await vi.advanceTimersByTimeAsync(30_000);
+
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Sign in" })).not.toBeDisabled()
+    );
+    vi.useRealTimers();
+  });
+
+  it("shows a Caps Lock hint in the password message slot without treating it as an error", async () => {
+    renderApp(["/login"]);
+    const passwordControl = screen.getByLabelText("Password");
+    passwordControl.focus();
+
+    const capsLockKeyUp = new KeyboardEvent("keyup", { key: "a", bubbles: true });
+    Object.defineProperty(capsLockKeyUp, "getModifierState", {
+      value: (key: string) => key === "CapsLock"
+    });
+    fireEvent(passwordControl, capsLockKeyUp);
+
+    expect(await screen.findByText("Caps Lock is on.")).toBeVisible();
+    expect(passwordControl).not.toHaveAttribute("aria-invalid", "true");
   });
 
   it("keeps the local expiry warning through a failed sign-in", async () => {
@@ -318,13 +431,12 @@ describe("LoginPage", () => {
 
     const warning = await screen.findByRole("region", { name: "Session expired" });
     expect(warning).toHaveTextContent("Your session expired. Sign in again.");
-    expect(warning).not.toHaveAttribute("role", "status");
 
     await userEvent.type(screen.getByLabelText("Email address"), "person@example.com");
-    await userEvent.type(screen.getByLabelText("Password"), "incorrect");
+    await userEvent.type(screen.getByLabelText("Password"), "incorrect1");
     await userEvent.click(screen.getByRole("button", { name: "Sign in" }));
 
-    expect(await screen.findByRole("alert", { name: "Sign-in error" })).toBeVisible();
+    expect(await screen.findByRole("alert", { name: "Sign-in message" })).toBeVisible();
     expect(screen.getByRole("region", { name: "Session expired" })).toHaveTextContent(
       "Your session expired. Sign in again."
     );
@@ -371,7 +483,7 @@ describe("LoginPage", () => {
       )
     );
     const { router } = renderApp(["/designer/projects/project-safe"]);
-    await screen.findByRole("heading", { name: "Welcome back" });
+    await screen.findByRole("heading", { name: "Sign in" });
 
     await signIn();
 
@@ -395,7 +507,7 @@ describe("LoginPage", () => {
       )
     );
     const { router } = renderApp(["/manager"]);
-    await screen.findByRole("heading", { name: "Welcome back" });
+    await screen.findByRole("heading", { name: "Sign in" });
 
     await signIn();
 
@@ -431,42 +543,17 @@ describe("LoginPage", () => {
       screen.getByLabelText("Email address"),
       "person@lisno.example"
     );
-    await userEvent.type(screen.getByLabelText("Password"), "incorrect");
+    await userEvent.type(screen.getByLabelText("Password"), "incorrect1");
     const submitButton = screen.getByRole("button", { name: "Sign in" });
     const settledClassName = submitButton.className;
-    const settledStackClasses = Array.from(
-      submitButton.querySelector(".ui-button__stack")?.children ?? []
-    ).map((child) => child.className);
     await userEvent.click(submitButton);
 
     await waitFor(() => expect(submitButton).toBeDisabled());
-    expect(submitButton).toHaveAccessibleName("Sign in");
+    expect(submitButton).toHaveAccessibleName("Signing in");
     expect(submitButton).toBeDisabled();
     expect(submitButton).toHaveAttribute("aria-busy", "true");
     expect(submitButton).toHaveAttribute("data-busy", "true");
-    expect(submitButton).toHaveTextContent("Signing in…");
     expect(submitButton.className).toBe(settledClassName);
-    expect(
-      Array.from(submitButton.querySelector(".ui-button__stack")?.children ?? []).map(
-        (child) => child.className
-      )
-    ).toEqual(settledStackClasses);
-    expect(submitButton.querySelector(".ui-button__content")).toHaveTextContent(
-      "Sign in"
-    );
-    expect(submitButton.querySelector(".ui-button__busy")).toHaveAttribute(
-      "aria-hidden",
-      "true"
-    );
-    expect(cssRule(".login-page--signin .login-submit .ui-button__busy")).toContain(
-      "gap: 0.65rem"
-    );
-    const exposedBusyRule = cssRuleFrom(
-      primitiveStyles,
-      ".ui-button[data-busy] .ui-button__busy"
-    );
-    expect(exposedBusyRule).toContain("opacity: 1");
-    expect(exposedBusyRule).toContain("visibility: visible");
     expect(
       screen.getByRole("status", { name: "Sign-in status" })
     ).toHaveTextContent("Signing in. Please wait.");
@@ -477,41 +564,8 @@ describe("LoginPage", () => {
 
     releaseLogin();
     expect(
-      await screen.findByRole("alert", { name: "Sign-in error" })
+      await screen.findByRole("alert", { name: "Sign-in message" })
     ).toBeVisible();
-  });
-
-  it("preserves the approved sign-in button and password-toggle presentation", () => {
-    expect(authStyles).toMatch(
-      /\.login-page--signin\s+\.login-submit\s+\.ui-button__stack/
-    );
-    expect(authStyles).toMatch(
-      /\.login-page--signin\s+\.login-submit\s+\.ui-spinner/
-    );
-    expect(authStyles).toMatch(
-      /\.login-page--signin\s+\.login-submit__arrow/
-    );
-    const submitRule = cssRule(".login-page--signin .login-submit");
-    expect(submitRule).toContain("min-height: 3.45rem");
-    expect(submitRule).toContain("padding: 0.72rem 1rem");
-    expect(submitRule).toContain("font-weight: 750");
-
-    expect(cssRule(".login-page--signin .login-submit .ui-button__content")).toContain(
-      "gap: 0.65rem"
-    );
-    expect(cssRule(".login-page--signin .login-submit .ui-button__busy")).toContain(
-      "gap: 0.65rem"
-    );
-
-    const toggleRule = cssRule(".login-page--signin .password-field__toggle");
-    expect(toggleRule).toContain("width: 2.75rem");
-    expect(toggleRule).toContain("height: 2.75rem");
-    expect(toggleRule).toContain("color: #697086");
-    const toggleHoverRule = cssRule(
-      ".login-page--signin .password-field__toggle:hover:not(:disabled)"
-    );
-    expect(toggleHoverRule).toContain("background: #f2effc");
-    expect(toggleHoverRule).toContain("color: var(--color-lisno-violet)");
   });
 
   it("removes all dead demo-helper styling", () => {

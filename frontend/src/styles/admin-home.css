@@ -211,19 +211,6 @@ body:has(.ui-app-shell[data-role="super_admin"]) {
   mask-position: left center;
 }
 
-/* --------------------------------------------------------------- account */
-
-.ui-app-shell[data-role="admin"] .ui-sidebar__sign-out,
-.ui-app-shell[data-role="super_admin"] .ui-sidebar__sign-out {
-  border-radius: var(--radius-pill);
-  border-color: rgb(226 171 92 / 32%);
-}
-
-.ui-app-shell[data-role="admin"] .ui-sidebar__sign-out:not(:disabled):hover,
-.ui-app-shell[data-role="super_admin"] .ui-sidebar__sign-out:not(:disabled):hover {
-  border-color: rgb(226 171 92 / 55%);
-}
-
 /* ------------------------------------------------------------ page header */
 
 .ui-app-shell[data-role="admin"] .ui-page-header__eyebrow,
