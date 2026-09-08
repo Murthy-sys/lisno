@@ -10,7 +10,7 @@ describe("App", () => {
       render(<App />);
 
       expect(
-        await screen.findByRole("heading", { name: "Welcome back" })
+        await screen.findByRole("heading", { name: "Sign in" })
       ).toBeVisible();
       expect(screen.getByLabelText("Email address")).toBeEnabled();
     } finally {

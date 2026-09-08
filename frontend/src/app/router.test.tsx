@@ -1312,7 +1312,7 @@ describe("protected role routing", () => {
       throw new Error(`Unhandled request: ${url}`);
     });
     const { router } = renderApp(["/designer/projects/project-return"]);
-    await screen.findByRole("heading", { name: "Welcome back" });
+    await screen.findByRole("heading", { name: "Sign in" });
 
     fireEvent.change(screen.getByLabelText("Email address"), {
       target: { value: "ananya@lisno.example" }
@@ -1491,10 +1491,10 @@ describe("protected role routing", () => {
   });
 
   it.each([
-    ["/login", "Welcome back"],
+    ["/login", "From first sketch to final handoff."],
     ["/signup", "Create your client account"],
-    ["/", "Welcome back"],
-    ["/missing-route", "Welcome back"]
+    ["/", "From first sketch to final handoff."],
+    ["/missing-route", "From first sketch to final handoff."]
   ])("settles %s with one main and one page heading", async (path, heading) => {
     renderApp([path]);
 
@@ -1522,7 +1522,7 @@ describe("protected role routing", () => {
     const { router } = renderApp(["/designer"]);
 
     expect(
-      await screen.findByRole("heading", { name: "Welcome back" })
+      await screen.findByRole("heading", { name: "Sign in" })
     ).toBeVisible();
     expect(router.state.location.pathname).toBe("/login");
     expect(tokenStorage.get()).toBeNull();
@@ -1542,7 +1542,7 @@ describe("protected role routing", () => {
       })
     );
 
-    expect(await screen.findByRole("heading", { name: "Welcome back" })).toBeVisible();
+    expect(await screen.findByRole("heading", { name: "Sign in" })).toBeVisible();
     expect(screen.getByText("Your session expired. Sign in again.")).toBeVisible();
     expect(screen.queryByRole("heading", { name: "Design workspace" })).not.toBeInTheDocument();
     expect(screen.getAllByRole("main")).toHaveLength(1);
@@ -1592,6 +1592,7 @@ describe("protected role routing", () => {
       await cleanupGate.promise;
     });
 
+    await userEvent.click(screen.getByRole("button", { name: designer.name }));
     await userEvent.click(screen.getByRole("button", { name: "Sign out" }));
 
     expect(screen.queryByRole("button", { name: "Sign out" })).not.toBeInTheDocument();
@@ -1605,7 +1606,7 @@ describe("protected role routing", () => {
     expect(router.state.location.pathname).toBe("/designer");
 
     cleanupGate.resolve();
-    expect(await screen.findByRole("heading", { name: "Welcome back" })).toBeVisible();
+    expect(await screen.findByRole("heading", { name: "Sign in" })).toBeVisible();
     expect(router.state.location.pathname).toBe("/login");
   });
 
@@ -1615,9 +1616,10 @@ describe("protected role routing", () => {
     const { router } = renderApp(["/designer"]);
     await screen.findByRole("heading", { name: "Design workspace" });
 
+    await userEvent.click(screen.getByRole("button", { name: designer.name }));
     await userEvent.click(screen.getByRole("button", { name: "Sign out" }));
 
-    expect(await screen.findByRole("heading", { name: "Welcome back" })).toBeVisible();
+    expect(await screen.findByRole("heading", { name: "Sign in" })).toBeVisible();
     expect(router.state.location.pathname).toBe("/login");
     expect(tokenStorage.get()).toBeNull();
   });
@@ -1659,14 +1661,14 @@ describe("protected role routing", () => {
     const closeButton = within(drawer).getByRole("button", {
       name: "Close navigation"
     });
-    const signOutButton = within(drawer).getByRole("button", {
-      name: "Sign out"
+    const accountTrigger = within(drawer).getByRole("button", {
+      name: designer.name
     });
     closeButton.focus();
     fireEvent.keyDown(document, { key: "Tab", shiftKey: true });
-    expect(signOutButton).toHaveFocus();
+    expect(accountTrigger).toHaveFocus();
 
-    signOutButton.focus();
+    accountTrigger.focus();
     fireEvent.keyDown(document, { key: "Tab" });
     expect(closeButton).toHaveFocus();
 

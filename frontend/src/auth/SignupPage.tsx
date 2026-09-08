@@ -6,12 +6,8 @@ import { z } from "zod";
 
 import { ApiError } from "../api/client";
 import type { ClientSignupInput } from "../api/types";
-import { BrandLogo } from "../components/ui/BrandLogo";
-import { Button } from "../components/ui/Button";
-import { Field, Input, Textarea } from "../components/ui/Field";
-import { IconButton } from "../components/ui/IconButton";
-import { InlineMessage } from "../components/ui/InlineMessage";
 import { useAuth } from "./AuthProvider";
+import "./login-page.css";
 
 const signupSchema = z
   .object({
@@ -166,142 +162,287 @@ export function SignupPage() {
   });
 
   return (
-    <main className="login-page login-page--signup">
-      <section className="login-story" aria-label="Lisno client portal">
-        <a href="#signup-form" className="skip-link">Skip to account creation</a>
-        <div className="brand brand--light"><BrandLogo light /></div>
-        <div className="login-story__content">
-          <p className="eyebrow">Your project, in view</p>
-          <h2>Follow every design decision.</h2>
-          <p>Create your client account to see approved plans, progress, and delivery updates in one place.</p>
-        </div>
-        <p className="login-story__note">Clear updates. Confident approvals. Beautiful outcomes.</p>
-      </section>
+    <main className="login-screen">
+      <a href="#signup-form" className="login-skip-link">
+        Skip to account creation
+      </a>
+      <img
+        className="login-bg"
+        src="/login-hero.png"
+        alt=""
+        loading="eager"
+        fetchPriority="high"
+      />
+      <div className="login-scrim login-scrim--diagonal" aria-hidden="true" />
+      <div className="login-scrim login-scrim--base" aria-hidden="true" />
 
-      <section className="login-panel" aria-labelledby="signup-title">
-        <div className="login-card signup-card">
-          <div className="brand brand--mobile"><BrandLogo /></div>
-          <p className="eyebrow">Client portal</p>
-          <h1 id="signup-title">Create your client account</h1>
-          <p className="login-card__intro">Use the email associated with your design project.</p>
+      <div className="login-grid">
+        <section className="login-hero" aria-label="Lisno client portal">
+          <div className="login-hero__brand">
+            <span className="login-hero__logo" role="img" aria-label="LISNO" />
+            <span className="login-hero__wordmark">LISNO</span>
+          </div>
 
+          <div className="login-hero__eyebrow">
+            <span className="login-rule login-rule--hero" aria-hidden="true" />
+            <span>YOUR PROJECT, IN VIEW</span>
+          </div>
+
+          <h2 className="login-hero__title">Follow every design decision.</h2>
+
+          <p className="login-hero__body">
+            Create your client account to see approved plans, progress, and delivery updates in
+            one place.
+          </p>
+
+          <div className="login-hero__footer">
+            <p>Clear updates. Confident approvals. Beautiful outcomes.</p>
+          </div>
+        </section>
+
+        <div className="login-card-wrap">
           <form
             id="signup-form"
+            className="login-card"
             onSubmit={submit}
             noValidate
             aria-busy={isSubmitting}
           >
+            <div className="login-card__eyebrow">
+              <span className="login-rule login-rule--card" aria-hidden="true" />
+              <span>CLIENT PORTAL</span>
+            </div>
+            <h1 id="signup-title" className="login-card__title">
+              Create your client account
+            </h1>
+            <p className="login-card__subtitle">Use the email associated with your design project.</p>
+
             <p
-              className="sr-only"
               role="status"
               aria-live="polite"
               aria-atomic="true"
               aria-label="Signup status"
+              className="sr-only"
             >
               {isSubmitting ? "Creating account. Please wait." : ""}
             </p>
+
             {submitError ? (
-              <InlineMessage tone="error" role="alert" label="Signup error">
-                {submitError}
-              </InlineMessage>
-            ) : null}
-            {validationSummary.length > 0 ? (
-              <div className="form-alert form-alert--validation" role="status" aria-live="polite" aria-label="Signup validation summary">
-                <strong>Review the highlighted fields:</strong>
-                <ul>{validationSummary.map((message) => <li key={message}>{message}</li>)}</ul>
+              <div role="alert" aria-label="Signup error" className="login-banner login-banner--error">
+                <span className="login-banner__dot" aria-hidden="true" />
+                <div className="login-banner__content">
+                  <p className="login-banner__message">{submitError}</p>
+                </div>
               </div>
             ) : null}
 
-            <Field id="signup-name" className="field" label="Full name" error={errors.name?.message}>
-              {(controlProps) => (
-                <Input {...controlProps} autoComplete="name" {...assignRef("name")} />
-              )}
-            </Field>
-            <Field id="signup-email" className="field" label="Email address" error={errors.email?.message}>
-              {(controlProps) => (
-                <Input {...controlProps} type="email" autoComplete="email" {...assignRef("email")} />
-              )}
-            </Field>
-            <Field id="signup-mobile" className="field" label="Mobile number" error={errors.mobile?.message}>
-              {(controlProps) => (
-                <Input {...controlProps} type="tel" autoComplete="tel" {...assignRef("mobile")} />
-              )}
-            </Field>
-            <Field id="signup-address" className="field" label="Address" error={errors.address?.message}>
-              {(controlProps) => (
-                <Textarea
-                  {...controlProps}
-                  autoComplete="street-address"
-                  rows={3}
-                  {...assignRef("address")}
-                />
-              )}
-            </Field>
-            <Field id="signup-password" className="field" label="Password" error={errors.password?.message}>
-              {(controlProps) => (
-                <div className="password-field">
-                  <Input
-                    {...controlProps}
-                    type={showPassword ? "text" : "password"}
-                    autoComplete="new-password"
-                    {...assignRef("password")}
-                  />
-                  <IconButton
-                    type="button"
-                    variant="quiet"
-                    className="password-field__toggle"
-                    label={showPassword ? "Hide password" : "Show password"}
-                    aria-pressed={showPassword}
-                    icon={showPassword ? <EyeOff aria-hidden="true" /> : <Eye aria-hidden="true" />}
-                    onClick={() => setShowPassword((visible) => !visible)}
-                  />
+            {validationSummary.length > 0 ? (
+              <div
+                role="status"
+                aria-live="polite"
+                aria-label="Signup validation summary"
+                className="login-banner login-banner--error"
+              >
+                <span className="login-banner__dot" aria-hidden="true" />
+                <div className="login-banner__content">
+                  <p className="login-banner__message">
+                    <strong>Review the highlighted fields:</strong>
+                  </p>
+                  <ul className="login-banner__list">
+                    {validationSummary.map((message) => (
+                      <li key={message}>{message}</li>
+                    ))}
+                  </ul>
                 </div>
-              )}
-            </Field>
-            <Field
-              id="signup-password-confirmation"
-              className="field"
-              label="Confirm password"
-              error={errors.passwordConfirmation?.message}
-            >
-              {(controlProps) => (
-                <div className="password-field">
-                  <Input
-                    {...controlProps}
-                    type={showPasswordConfirmation ? "text" : "password"}
-                    autoComplete="new-password"
-                    {...assignRef("passwordConfirmation")}
-                  />
-                  <IconButton
-                    type="button"
-                    variant="quiet"
-                    className="password-field__toggle"
-                    label={
-                      showPasswordConfirmation
-                        ? "Hide confirmation password"
-                        : "Show confirmation password"
-                    }
-                    aria-pressed={showPasswordConfirmation}
-                    icon={showPasswordConfirmation ? <EyeOff aria-hidden="true" /> : <Eye aria-hidden="true" />}
-                    onClick={() => setShowPasswordConfirmation((visible) => !visible)}
-                  />
-                </div>
-              )}
-            </Field>
+              </div>
+            ) : null}
 
-            <Button
+            <div className="login-field">
+              <label htmlFor="signup-name" className="login-field__label">
+                Full name
+              </label>
+              <input
+                id="signup-name"
+                autoComplete="name"
+                aria-invalid={errors.name ? true : undefined}
+                aria-describedby="signup-name-error"
+                className="login-input"
+                {...assignRef("name")}
+              />
+              <p
+                id="signup-name-error"
+                className={errors.name ? "login-field__message login-field__message--error" : "login-field__message"}
+              >
+                {errors.name?.message ?? ""}
+              </p>
+            </div>
+
+            <div className="login-field">
+              <label htmlFor="signup-email" className="login-field__label">
+                Email address
+              </label>
+              <input
+                id="signup-email"
+                type="email"
+                autoComplete="email"
+                aria-invalid={errors.email ? true : undefined}
+                aria-describedby="signup-email-error"
+                className="login-input"
+                {...assignRef("email")}
+              />
+              <p
+                id="signup-email-error"
+                className={errors.email ? "login-field__message login-field__message--error" : "login-field__message"}
+              >
+                {errors.email?.message ?? ""}
+              </p>
+            </div>
+
+            <div className="login-field">
+              <label htmlFor="signup-mobile" className="login-field__label">
+                Mobile number
+              </label>
+              <input
+                id="signup-mobile"
+                type="tel"
+                autoComplete="tel"
+                aria-invalid={errors.mobile ? true : undefined}
+                aria-describedby="signup-mobile-error"
+                className="login-input"
+                {...assignRef("mobile")}
+              />
+              <p
+                id="signup-mobile-error"
+                className={errors.mobile ? "login-field__message login-field__message--error" : "login-field__message"}
+              >
+                {errors.mobile?.message ?? ""}
+              </p>
+            </div>
+
+            {/* <div className="login-field">
+              <label htmlFor="signup-address" className="login-field__label">
+                Address
+              </label>
+              <textarea
+                id="signup-address"
+                rows={3}
+                autoComplete="street-address"
+                aria-invalid={errors.address ? true : undefined}
+                aria-describedby="signup-address-error"
+                className="login-textarea"
+                {...assignRef("address")}
+              />
+              <p
+                id="signup-address-error"
+                className={errors.address ? "login-field__message login-field__message--error" : "login-field__message"}
+              >
+                {errors.address?.message ?? ""}
+              </p>
+            </div> */}
+
+            <div className="login-field">
+              <label htmlFor="signup-password" className="login-field__label">
+                Password
+              </label>
+              <div className="login-password-wrap">
+                <input
+                  id="signup-password"
+                  type={showPassword ? "text" : "password"}
+                  autoComplete="new-password"
+                  aria-invalid={errors.password ? true : undefined}
+                  aria-describedby="signup-password-error"
+                  className="login-input login-input--password"
+                  {...assignRef("password")}
+                />
+                <button
+                  type="button"
+                  aria-label={showPassword ? "Hide password" : "Show password"}
+                  aria-pressed={showPassword}
+                  onClick={() => setShowPassword((visible) => !visible)}
+                  className="login-password-toggle"
+                >
+                  {showPassword ? (
+                    <EyeOff size={18} aria-hidden="true" />
+                  ) : (
+                    <Eye size={18} aria-hidden="true" />
+                  )}
+                </button>
+              </div>
+              <p
+                id="signup-password-error"
+                className={errors.password ? "login-field__message login-field__message--error" : "login-field__message"}
+              >
+                {errors.password?.message ?? ""}
+              </p>
+            </div>
+
+            <div className="login-field">
+              <label htmlFor="signup-password-confirmation" className="login-field__label">
+                Confirm password
+              </label>
+              <div className="login-password-wrap">
+                <input
+                  id="signup-password-confirmation"
+                  type={showPasswordConfirmation ? "text" : "password"}
+                  autoComplete="new-password"
+                  aria-invalid={errors.passwordConfirmation ? true : undefined}
+                  aria-describedby="signup-password-confirmation-error"
+                  className="login-input login-input--password"
+                  {...assignRef("passwordConfirmation")}
+                />
+                <button
+                  type="button"
+                  aria-label={
+                    showPasswordConfirmation ? "Hide confirmation password" : "Show confirmation password"
+                  }
+                  aria-pressed={showPasswordConfirmation}
+                  onClick={() => setShowPasswordConfirmation((visible) => !visible)}
+                  className="login-password-toggle"
+                >
+                  {showPasswordConfirmation ? (
+                    <EyeOff size={18} aria-hidden="true" />
+                  ) : (
+                    <Eye size={18} aria-hidden="true" />
+                  )}
+                </button>
+              </div>
+              <p
+                id="signup-password-confirmation-error"
+                className={
+                  errors.passwordConfirmation
+                    ? "login-field__message login-field__message--error"
+                    : "login-field__message"
+                }
+              >
+                {errors.passwordConfirmation?.message ?? ""}
+              </p>
+            </div>
+
+            <button
               type="submit"
-              className="signup-submit"
-              fullWidth
-              busy={isSubmitting}
-              busyLabel="Creating account…"
+              className="login-submit"
+              disabled={isSubmitting}
+              aria-busy={isSubmitting}
+              data-busy={isSubmitting || undefined}
             >
-              Create client account
-            </Button>
+              {isSubmitting ? (
+                <>
+                  <span className="login-spinner" aria-hidden="true" />
+                  Creating account…
+                </>
+              ) : (
+                "Create client account"
+              )}
+            </button>
+
+            <hr className="login-hairline" />
+
+            <p className="login-footer-text">
+              Already have an account? <Link to="/login">Sign in</Link>
+            </p>
           </form>
-          <p className="auth-switch">Already have an account? <Link to="/login">Sign in</Link></p>
         </div>
-      </section>
+      </div>
     </main>
   );
 }

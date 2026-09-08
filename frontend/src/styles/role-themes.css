@@ -397,53 +397,6 @@
   box-shadow: inset 0 0 0 1px rgb(255 255 255 / 7%);
 }
 
-/* -------------------------------------------------------- sidebar account */
-
-/*
- * Icon-only sign-out. The label used to eat the row, truncating the name to
- * "P…"; trimming the avatar and the trigger buys the identity ~30px back.
- */
-.ui-app-shell[data-role] .ui-sidebar__account {
-  gap: var(--space-2);
-  align-items: center;
-  padding: var(--space-4) 0 var(--space-2);
-}
-
-.ui-app-shell[data-role] .ui-sidebar__avatar {
-  block-size: 2.25rem;
-  inline-size: 2.25rem;
-  background: linear-gradient(140deg, var(--role-accent-bright), var(--role-accent));
-  box-shadow: inset 0 1px 0 rgb(255 255 255 / 40%);
-  color: #1c130c;
-}
-
-.ui-app-shell[data-role] .ui-sidebar__identity strong {
-  font-size: var(--text-sm);
-  letter-spacing: -0.005em;
-}
-
-.ui-app-shell[data-role] .ui-sidebar__identity span {
-  color: color-mix(in srgb, var(--role-band-ink) 58%, transparent);
-}
-
-.ui-app-shell[data-role] .ui-sidebar__sign-out {
-  min-block-size: 2.25rem;
-  inline-size: 2.25rem;
-  border: 1px solid rgb(255 255 255 / 16%);
-  border-radius: var(--radius-control);
-  background: rgb(255 255 255 / 8%);
-  color: var(--role-band-ink);
-  transition:
-    background var(--duration-fast) var(--role-ease),
-    border-color var(--duration-fast) var(--role-ease);
-}
-
-.ui-app-shell[data-role] .ui-sidebar__sign-out:not(:disabled):hover {
-  border-color: color-mix(in srgb, var(--role-accent-bright) 55%, transparent);
-  background: rgb(255 255 255 / 16%);
-  color: var(--role-accent-bright);
-}
-
 .ui-app-shell[data-role] .ui-mobile-header {
   background: var(--role-rail);
   border-block-end: 0;
@@ -1628,6 +1581,87 @@ body:has(.ui-app-shell[data-role]) .knowledge-dialog-actions .ui-button--primary
 body:has(.ui-app-shell[data-role]) .knowledge-dialog-body .ui-checkbox,
 body:has(.ui-app-shell[data-role]) .knowledge-dialog-body .ui-radio {
   accent-color: var(--role-accent);
+}
+
+/* -------------------------------------------- super admin (dashboard palette) */
+
+/*
+ * The organization dashboard is restyled off the same 4 tokens the auth
+ * pages and the sidebar account menu already use — --color-primary (navy),
+ * --color-highlight (gold), --color-bg (white) and --color-text-strong
+ * (black) — nothing outside that set. That's deliberately narrower than the
+ * warm multi-hex "Teak" palette role-themes.css gives every other role's
+ * dashboard: this screen only borrows Teak's shape (ink/accent/line/deck
+ * roles, one canvas, one card recipe), not its literal wood-tone hexes.
+ * Muted text, borders and tints are derived from those 4 with color-mix
+ * rather than introducing new colors.
+ *
+ * admin-home.css loads after this file and repaints every admin/super_admin
+ * screen in its own "Ledger" theme by redefining these same --role-* tokens
+ * on `.ui-app-shell[data-role="super_admin"]`. Redeclaring the leaf tokens
+ * here, scoped to the dashboard's own container, outranks that shell-wide
+ * rule on specificity (an extra class) regardless of load order, so only
+ * this one screen's content — not the shared rail/mobile header, and not
+ * super_admin's other screens — switches palettes.
+ *
+ * super-admin-dashboard.css was also built straight against the app's
+ * original cool violet/grey tokens (--color-text-muted, --color-border,
+ * --color-surface, --color-heading, --color-focus-ring) rather than
+ * --role-*, so its nav tabs, tables and metric cards are repainted the
+ * same way, one level down. --color-primary itself is left alone: it
+ * already carries the correct navy (#1e183b) as the app-wide default.
+ */
+.ui-app-shell[data-role="super_admin"] .super-admin-dashboard {
+  --role-canvas: var(--color-bg);
+  --role-band: var(--color-primary);
+  --role-band-ink: var(--color-bg);
+  --role-band-ink-muted: color-mix(in srgb, var(--color-bg) 70%, transparent);
+  --role-ink: var(--color-text-strong);
+  --role-ink-muted: color-mix(in srgb, var(--color-text-strong) 55%, transparent);
+  --role-accent: var(--color-highlight);
+  --role-accent-bright: var(--color-highlight);
+  --role-line: color-mix(in srgb, var(--color-primary) 14%, transparent);
+  --role-line-strong: color-mix(in srgb, var(--color-primary) 28%, transparent);
+  --role-deck: var(--color-bg);
+  --role-deck-tint: color-mix(in srgb, var(--color-highlight) 8%, var(--color-bg));
+  --role-glass: var(--color-bg);
+  --role-glass-strong: var(--color-bg);
+  --role-glass-edge: color-mix(in srgb, var(--color-primary) 12%, transparent);
+  --role-glass-filter: none;
+  --role-glass-sheen: none;
+  --role-shadow-tint: 30 24 59;
+  --role-focus: var(--color-highlight);
+  --role-cta: var(--color-primary);
+  --role-cta-hover: color-mix(in srgb, var(--color-primary) 85%, black);
+  --role-cta-ink: var(--color-bg);
+
+  --color-text-muted: var(--role-ink-muted);
+  --color-heading: var(--role-ink);
+  --color-border: var(--role-line);
+  --color-surface: var(--role-deck);
+  --color-surface-subtle: var(--role-deck-tint);
+  --color-focus-ring: var(--role-focus);
+  /*
+   * These two are set once, unscoped, on `.ui-app-shell[data-role]` itself
+   * (the "violet holdouts" section above) as `var(--role-ink)` /
+   * `var(--role-accent)` — a custom property's value is computed at the
+   * element that declares it, then inherited already-resolved, so that
+   * outer declaration froze in the shell's own (Ledger) --role-ink/-accent.
+   * Redeclaring them here, referencing this block's own --role-ink/-accent,
+   * is what actually pulls .metric-card__value and the other consumers of
+   * --color-lisno-navy/-violet onto this screen's palette.
+   */
+  --color-lisno-navy: var(--role-ink);
+  --color-lisno-violet: var(--role-accent);
+
+  background: var(--role-canvas);
+  color: var(--role-ink);
+}
+
+/* admin-home.css hardcodes the page title as a literal (#07070d), not a
+   token, so it can't be reached by redeclaring --role-ink above. */
+.ui-app-shell[data-role="super_admin"] .super-admin-dashboard .ui-page-header__title {
+  color: var(--color-text-strong);
 }
 
 /* ------------------------------------------- super admin (dense type scale) */

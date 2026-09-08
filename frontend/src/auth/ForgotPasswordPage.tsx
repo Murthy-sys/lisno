@@ -1,14 +1,11 @@
-import { ArrowLeft, Info, Mail } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { Link } from "react-router-dom";
 import { z } from "zod";
 
 import { ApiError } from "../api/client";
-import { BrandLogo } from "../components/ui/BrandLogo";
-import { Button } from "../components/ui/Button";
-import { Field, Input } from "../components/ui/Field";
 import { requestPasswordReset } from "./passwordResetApi";
+import "./login-page.css";
 
 const requestSchema = z.object({
   email: z.string().trim().email("Enter a valid email address.")
@@ -88,108 +85,155 @@ export function ForgotPasswordPage() {
   };
 
   return (
-    <main className="invitation-page password-reset-page">
-      <section
-        className="invitation-card password-reset-card"
-        aria-label="Lisno password recovery"
-      >
-        <BrandLogo />
-        <div className="invitation-card__heading">
-          <p className="eyebrow">Account recovery</p>
-          <h1 tabIndex={-1}>Reset your password</h1>
-          <p>Enter your account email to receive a secure reset link.</p>
-        </div>
+    <main className="login-screen">
+      <img
+        className="login-bg"
+        src="/login-hero.png"
+        alt=""
+        loading="eager"
+        fetchPriority="high"
+      />
+      <div className="login-scrim login-scrim--diagonal" aria-hidden="true" />
+      <div className="login-scrim login-scrim--base" aria-hidden="true" />
 
-        {accepted ? (
-          <div
-            className="invitation-state password-reset-result"
-            role="status"
-            aria-live="polite"
-            aria-atomic="true"
-          >
-            <span className="password-reset-information-mark" aria-hidden="true">
-              <Info />
-            </span>
-            <h2 ref={acceptedHeadingRef} tabIndex={-1}>
-              Request received
-            </h2>
-            <p>{ACCEPTED_MESSAGE}</p>
-            <p className="password-reset-supporting-copy">
-              {ACCEPTED_SUPPORTING_COPY}
-            </p>
-            <div className="password-reset-actions">
-              <Link className="invitation-link invitation-link--primary" to="/login">
-                <ArrowLeft aria-hidden="true" />
-                Back to sign in
-              </Link>
-              <button
-                type="button"
-                className="invitation-secondary-action"
-                onClick={tryAnotherEmail}
-              >
-                Try another email
-              </button>
-            </div>
+      <div className="login-grid">
+        <section className="login-hero" aria-label="Lisno password recovery">
+          <div className="login-hero__brand">
+            <span className="login-hero__logo" role="img" aria-label="LISNO" />
+            <span className="login-hero__wordmark">LISNO</span>
           </div>
-        ) : (
-          <form
-            className="password-reset-form"
-            onSubmit={submit}
-            noValidate
-            aria-busy={isSubmitting}
-          >
-            <p
-              className="sr-only"
-              role="status"
-              aria-live="polite"
-              aria-atomic="true"
-              aria-label="Password-reset request status"
-            >
-              {isSubmitting ? "Requesting password reset instructions." : ""}
-            </p>
 
-            {requestError ? (
-              <p className="invitation-submit-error" role="alert">
-                {requestErrorMessage(requestError)}
-              </p>
-            ) : null}
+          <div className="login-hero__eyebrow">
+            <span className="login-rule login-rule--hero" aria-hidden="true" />
+            <span>ACCOUNT RECOVERY</span>
+          </div>
 
-            <Field
-              id="password-reset-email"
-              label="Email address"
-              error={errors.email?.message}
-            >
-              {(controlProps) => (
-                <Input
-                  {...controlProps}
-                  type="email"
-                  autoComplete="email"
-                  inputMode="email"
-                  {...emailRegistration}
-                  ref={(element) => {
-                    registerEmail(element);
-                    emailRef.current = element;
-                  }}
-                />
-              )}
-            </Field>
+          <h2 className="login-hero__title">Back into your workspace in minutes.</h2>
 
-            <Button
-              type="submit"
-              fullWidth
-              busy={isSubmitting}
-              busyLabel="Sending instructions…"
-              leadingIcon={<Mail aria-hidden="true" />}
-            >
-              Send reset instructions
-            </Button>
-            <Link className="invitation-link password-reset-back-link" to="/login">
-              <ArrowLeft aria-hidden="true" />
-              Back to sign in
-            </Link>
-          </form>
-        )}
-      </section>
+          <p className="login-hero__body">
+            We&rsquo;ll email you a secure link to choose a new password, no back-and-forth
+            required.
+          </p>
+
+          <div className="login-hero__footer">
+            <p>Secure by design. Fast to recover. Back to work in minutes.</p>
+          </div>
+        </section>
+
+        <div className="login-card-wrap">
+          <div className="login-card">
+            <div className="login-card__eyebrow">
+              <span className="login-rule login-rule--card" aria-hidden="true" />
+              <span>ACCOUNT RECOVERY</span>
+            </div>
+
+            {accepted ? (
+              <div className="login-state" role="status" aria-live="polite" aria-atomic="true">
+                <h2 ref={acceptedHeadingRef} tabIndex={-1}>
+                  Request received
+                </h2>
+                <p>{ACCEPTED_MESSAGE}</p>
+                <p>{ACCEPTED_SUPPORTING_COPY}</p>
+
+                <Link to="/login" className="login-submit">
+                  Back to sign in
+                </Link>
+                <button type="button" className="login-text-action" onClick={tryAnotherEmail}>
+                  Try another email
+                </button>
+              </div>
+            ) : (
+              <>
+                <h1 id="forgot-password-title" tabIndex={-1} className="login-card__title">
+                  Reset your password
+                </h1>
+                <p className="login-card__subtitle">
+                  Enter your account email to receive a secure reset link.
+                </p>
+
+                <form onSubmit={submit} noValidate aria-busy={isSubmitting}>
+                  <p
+                    role="status"
+                    aria-live="polite"
+                    aria-atomic="true"
+                    aria-label="Password-reset request status"
+                    className="sr-only"
+                  >
+                    {isSubmitting ? "Requesting password reset instructions." : ""}
+                  </p>
+
+                  {requestError ? (
+                    <div role="alert" className="login-banner login-banner--error">
+                      <span className="login-banner__dot" aria-hidden="true" />
+                      <div className="login-banner__content">
+                        <p className="login-banner__message">{requestErrorMessage(requestError)}</p>
+                      </div>
+                    </div>
+                  ) : null}
+
+                  <div className="login-field">
+                    <label htmlFor="password-reset-email" className="login-field__label">
+                      Email address
+                    </label>
+                    <input
+                      id="password-reset-email"
+                      type="email"
+                      autoComplete="email"
+                      inputMode="email"
+                      aria-invalid={errors.email ? true : undefined}
+                      aria-describedby="password-reset-email-error"
+                      className="login-input"
+                      {...emailRegistration}
+                      ref={(element) => {
+                        registerEmail(element);
+                        emailRef.current = element;
+                      }}
+                    />
+                    <p
+                      id="password-reset-email-error"
+                      className={
+                        errors.email
+                          ? "login-field__message login-field__message--error"
+                          : "login-field__message"
+                      }
+                    >
+                      {errors.email?.message ?? ""}
+                    </p>
+                  </div>
+
+                  <button
+                    type="submit"
+                    className="login-submit"
+                    disabled={isSubmitting}
+                    aria-busy={isSubmitting}
+                    data-busy={isSubmitting || undefined}
+                  >
+                    {isSubmitting ? (
+                      <>
+                        <span className="login-spinner" aria-hidden="true" />
+                        Sending instructions…
+                      </>
+                    ) : (
+                      <>
+                        Send reset instructions
+                        <span className="login-submit__arrow" aria-hidden="true">
+                          &rarr;
+                        </span>
+                      </>
+                    )}
+                  </button>
+
+                  <hr className="login-hairline" />
+
+                  <p className="login-footer-text">
+                    <Link to="/login">Back to sign in</Link>
+                  </p>
+                </form>
+              </>
+            )}
+          </div>
+        </div>
+      </div>
     </main>
   );
 }
