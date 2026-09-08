@@ -11,7 +11,8 @@ import {
   parseScaledDecimal,
   type CalculateKnowledgePreviewInput
 } from "../domain/ai-estimator-knowledge-calculation.js";
-import { calculateKnowledgeModePrice } from "../domain/ai-estimator-knowledge-mode-calculation.js";
+import { calculateKnowledgeInHousePrice, calculateKnowledgeModePrice } from "../domain/ai-estimator-knowledge-mode-calculation.js";
+import { buildKnowledgeConfigurationContext } from "../domain/ai-estimator-knowledge-configuration-context.js";
 import {
   AI_ESTIMATOR_KNOWLEDGE_MODE_FIELD_TYPES,
   AI_ESTIMATOR_KNOWLEDGE_SECTION_KEYS,
@@ -84,14 +85,24 @@ export function createAiEstimatorKnowledgeContextService(
     async preview(actor, input) {
       await actorGuard.requireReadActor(actor);
       try {
-        if (input.modeCalculation && input.quantity == null) {
+        if ((input.modeCalculation || input.inHouseCalculation) && input.quantity == null) {
           throw new KnowledgeCalculationError("INVALID_DECIMAL", "A test quantity is required for Mode calculations.");
+        }
+        if (input.modeCalculation && input.inHouseCalculation) {
+          throw new KnowledgeCalculationError("INVALID_AMOUNT", "Choose either an individual calculation or an In-house total.");
+        }
+        if (input.modeCalculationDiscountBps !== undefined && !input.modeCalculation && !input.inHouseCalculation) {
+          throw new KnowledgeCalculationError("INVALID_AMOUNT", "Mode calculation settings are required when applying a discount.");
         }
         return {
           ...calculateKnowledgePreview(input),
           ...(input.modeCalculation ? { modeCalculation: calculateKnowledgeModePrice({
             ...input.modeCalculation, quantity: input.quantity!, quantityScale: input.quantityScale,
-            markupBasis: input.modeCalculationMarkupBasis
+            markupBasis: input.modeCalculationMarkupBasis, discountBps: input.modeCalculationDiscountBps
+          }) } : {}),
+          ...(input.inHouseCalculation ? { inHouseCalculation: calculateKnowledgeInHousePrice({
+            ...input.inHouseCalculation, quantity: input.quantity!, quantityScale: input.quantityScale,
+            markupBasis: input.modeCalculationMarkupBasis, discountBps: input.modeCalculationDiscountBps
           }) } : {})
         };
       } catch (error) {
@@ -184,6 +195,8 @@ async function resolveContext(
 
   const overview = projectedPayloads.get("overview")!;
   const advanced = projectedPayloads.get("advanced")!;
+  const analysisAdvanced = sections.get("advanced")?.applicability === "configured"
+    ? structuredClone(advanced) : {};
   const resolvedPriority = sections.get("overview")?.applicability === "configured"
     ? await resolveConfiguredPriority(overview, session)
     : null;
@@ -308,7 +321,16 @@ async function resolveContext(
         mainLine: publicIdentity(mainLine)
       }
     },
-    preview: calculationPreview
+    preview: calculationPreview,
+    configuration: buildKnowledgeConfigurationContext({
+      advanced: analysisAdvanced,
+      uom: sections.get("overview")?.applicability === "configured" && uom
+        ? { id: requiredString(uom._id), name: requiredString(uom.name), decimalScale: requiredInteger(uom.decimalScale) }
+        : null,
+      modeKind: input.modeKind,
+      executionSource: input.executionSource,
+      quantity: input.quantity
+    })
   };
 }
 

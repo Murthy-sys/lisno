@@ -330,19 +330,47 @@ export interface KnowledgePreviewAmountComponent {
 export interface KnowledgeModeCalculationSettings {
   baseRatePaise: KnowledgePaise;
   lowQuantityLimit: KnowledgeCanonicalDecimal;
+  /** Defaults to 1,000 (10%) for configurations saved before editable Impact. */
+  impactBps?: KnowledgeBasisPoints;
   minimumMarkupBps: KnowledgeBasisPoints;
   startingMarkupBps: KnowledgeBasisPoints;
 }
+
+/** Each scope owns its settings; null means that scope has not been configured. */
+export type KnowledgeModeCalculations = Record<"pmc" | "sub_vendor", KnowledgeModeCalculationSettings | null> & (
+  | { in_house_labor: KnowledgeModeCalculationSettings | null; in_house_material: KnowledgeModeCalculationSettings | null;
+      /** Retained legacy In-house snapshot; split costs never inherit later changes. */
+      in_house?: KnowledgeModeCalculationSettings | null }
+  | { in_house: KnowledgeModeCalculationSettings | null; in_house_labor?: never; in_house_material?: never }
+);
 
 export interface KnowledgeModeCalculationPreview {
   revisedUnitRatePaise: KnowledgePaise;
   revisedAmountPaise: KnowledgePaise;
   totalPaise: KnowledgePaise;
   appliedImpactBps: KnowledgeBasisPoints;
+  discount?: {
+    rateBps: KnowledgeBasisPoints;
+    effectiveMarkupBps: KnowledgeBasisPoints;
+    totalBeforeDiscountPaise: KnowledgePaise;
+    amountPaise: KnowledgePaise;
+  };
+}
+
+export interface KnowledgeInHouseCalculationSettings {
+  labor: KnowledgeModeCalculationSettings;
+  material: KnowledgeModeCalculationSettings;
+}
+
+export interface KnowledgeInHouseCalculationPreview {
+  labor: KnowledgeModeCalculationPreview;
+  material: KnowledgeModeCalculationPreview;
+  totalPaise: KnowledgePaise;
 }
 
 export interface KnowledgePreview {
   modeCalculation?: KnowledgeModeCalculationPreview;
+  inHouseCalculation?: KnowledgeInHouseCalculationPreview;
   formulaVersion: "knowledge-preview-v1";
   effectivePriceVersionId: KnowledgeStableId | null;
   taxVersionId: KnowledgeStableId | null;
@@ -385,4 +413,35 @@ export interface KnowledgeContext {
   availability: KnowledgeAvailability[];
   sections: Partial<Record<KnowledgeSectionKey, unknown>>;
   preview: KnowledgePreview | null;
+  configuration: KnowledgeConfigurationContext;
+}
+
+export type KnowledgeCalculationScope = "pmc" | "sub_vendor" | "in_house_labor" | "in_house_material";
+
+/** Active-revision settings for future analysis, separate from the legacy price-version preview. */
+export interface KnowledgeConfigurationContext {
+  formulaVersion: "mode-markup-v1";
+  moneyUnit: "paise";
+  percentageUnit: "basis_points";
+  selection: {
+    modeKind: KnowledgeModeKind | null;
+    executionSource: KnowledgeExecutionSource | null;
+  };
+  uom: { id: string; name: string; decimalScale: number } | null;
+  shared: {
+    /** Saved wording only. The structured lists remain authoritative even if wording differs. */
+    paragraph: string | null;
+    scopeConfigurationId: string | null;
+    inclusions: Array<{ id: string; name: string }>;
+    exclusions: Array<{ id: string; name: string }>;
+  };
+  state: "ready" | "selection_required" | "not_configured" | "invalid";
+  issues: Array<{ code: string; scope: KnowledgeCalculationScope | null }>;
+  calculations: Array<{
+    scope: KnowledgeCalculationScope;
+    source: "scoped" | "legacy_shared" | "legacy_in_house" | null;
+    settings: Required<KnowledgeModeCalculationSettings> | null;
+    /** A difference in markup percentage points, not a selling-price discount. */
+    maximumDiscountBps: number | null;
+  }>;
 }

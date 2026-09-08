@@ -10,11 +10,44 @@ import {
 } from "../src/domain/ai-estimator-knowledge-validation.js";
 
 describe("AI estimator knowledge validation", () => {
-  it("accepts optional PMC margin from 10 to 20 percent and rejects out-of-range or imprecise values", () => {
-    for (const pmcMarginBps of [null, 1_000, 1_001, 1_250, 2_000]) {
+  it("accepts split Labor and Material costs, requires both keys, and reports precise cost errors", () => {
+    const settings = { baseRatePaise: 90_000, lowQuantityLimit: "8", impactBps: 525, minimumMarkupBps: 1_200, startingMarkupBps: 3_100 };
+    const split = { pmc: null, sub_vendor: settings, in_house_labor: settings, in_house_material: null };
+    expect(validateKnowledgeSectionPayload("advanced", { modeCalculations: split })).toEqual([]);
+    expect(validateKnowledgeSectionPayload("advanced", { modeCalculations: { ...split, in_house: settings } })).toEqual([]);
+    const { in_house_material: _material, ...partial } = split;
+    expect(validateKnowledgeSectionPayload("advanced", { modeCalculations: { ...partial, in_house: settings } }))
+      .toContainEqual(expect.objectContaining({ path: "payload.modeCalculations.in_house_material" }));
+    expect(validateKnowledgeSectionPayload("advanced", { modeCalculations: { ...split,
+      in_house_labor: { ...settings, impactBps: -1 }, in_house_material: { ...settings, startingMarkupBps: 0 }
+    } })).toEqual(expect.arrayContaining([
+      expect.objectContaining({ path: "payload.modeCalculations.in_house_labor.impactBps" }),
+      expect.objectContaining({ path: "payload.modeCalculations.in_house_material.startingMarkupBps" })
+    ]));
+  });
+
+  it("validates independent PMC, Sub-Vendor and In-house calculations without requiring unused scopes", () => {
+    const settings = { baseRatePaise: 150_000, lowQuantityLimit: "15", impactBps: 1_000, minimumMarkupBps: 2_500, startingMarkupBps: 3_500 };
+    expect(validateKnowledgeSectionPayload("advanced", { modeCalculations: { pmc: settings, sub_vendor: null, in_house: null } })).toEqual([]);
+    const invalid = { pmc: settings, sub_vendor: { ...settings, impactBps: -1 }, in_house: { ...settings, startingMarkupBps: 2_000 } };
+    expect(validateKnowledgeSectionPayload("advanced", { modeCalculations: invalid })).toEqual(expect.arrayContaining([
+      expect.objectContaining({ path: "payload.modeCalculations.sub_vendor.impactBps" }),
+      expect.objectContaining({ path: "payload.modeCalculations.in_house.startingMarkupBps" })
+    ]));
+    expect(validateKnowledgeSectionPayload("advanced", { modeCalculations: { pmc: settings, execution: settings } })).toEqual(expect.arrayContaining([
+      expect.objectContaining({ path: "payload.modeCalculations.execution", code: "UNKNOWN_FIELD" }),
+      expect.objectContaining({ path: "payload.modeCalculations.sub_vendor" }),
+      expect.objectContaining({ path: "payload.modeCalculations.in_house" })
+    ]));
+    expect(validateKnowledgeSectionPayload("advanced", { modeCalculations: null })).not.toEqual([]);
+    expect(validateKnowledgeSectionPayload("pricing", { modeCalculations: { pmc: settings, sub_vendor: null, in_house: null } }))
+      .toContainEqual(expect.objectContaining({ path: "payload.modeCalculations", code: "UNKNOWN_FIELD" }));
+  });
+  it("accepts optional PMC margins from 10 to 20 percent inclusive and rejects out-of-range or imprecise values", () => {
+    for (const pmcMarginBps of [null, 1_000, 1_001, 1_250, 1_999, 2_000]) {
       expect(validateKnowledgeSectionPayload("advanced", { pmcMarginBps })).toEqual([]);
     }
-    for (const pmcMarginBps of [999, 2_001, 0, -1, 1_250.5, "15", {}, true, Number.MAX_SAFE_INTEGER]) {
+    for (const pmcMarginBps of [-1, 0, 525, 999, 2_001, 2_300, 1_250.5, "15", {}, true, Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER + 1]) {
       expect(validateKnowledgeSectionPayload("advanced", { pmcMarginBps }))
         .toContainEqual(expect.objectContaining({ path: "payload.pmcMarginBps" }));
     }
@@ -26,14 +59,18 @@ describe("AI estimator knowledge validation", () => {
 
   it("accepts optional shared Mode calculation inputs and rejects authored totals or invalid settings", () => {
     const modeCalculation = { baseRatePaise: 150_000, lowQuantityLimit: "15", minimumMarkupBps: 2_500, startingMarkupBps: 3_500 };
-    for (const value of [null, modeCalculation]) {
+    for (const value of [null, modeCalculation, { ...modeCalculation, impactBps: 0 }, { ...modeCalculation, impactBps: 1_275 }]) {
       expect(validateKnowledgeSectionPayload("advanced", { modeCalculation: value })).toEqual([]);
     }
     for (const [key, value] of Object.entries({ baseRatePaise: -1, lowQuantityLimit: "01", minimumMarkupBps: 2_500.5, startingMarkupBps: 2_499 })) {
       expect(validateKnowledgeSectionPayload("advanced", { modeCalculation: { ...modeCalculation, [key]: value } }))
         .toContainEqual(expect.objectContaining({ path: `payload.modeCalculation.${key}` }));
     }
-    for (const key of ["impactBps", "uomId", "quantity", "revisedUnitRatePaise", "totalPaise", "modeCalculationMarkupBasis"]) {
+    for (const impactBps of [-1, 10.5, "10", null, Number.MAX_SAFE_INTEGER]) {
+      expect(validateKnowledgeSectionPayload("advanced", { modeCalculation: { ...modeCalculation, impactBps } }))
+        .toContainEqual(expect.objectContaining({ path: "payload.modeCalculation.impactBps" }));
+    }
+    for (const key of ["uomId", "quantity", "revisedUnitRatePaise", "totalPaise", "modeCalculationMarkupBasis"]) {
       expect(validateKnowledgeSectionPayload("advanced", { modeCalculation: { ...modeCalculation, [key]: 1 } }))
         .toContainEqual(expect.objectContaining({ path: `payload.modeCalculation.${key}`, code: "UNKNOWN_FIELD" }));
     }

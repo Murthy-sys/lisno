@@ -102,6 +102,107 @@ afterAll(async () => {
 });
 
 describe("AI estimator knowledge integrated replica-set invariants", { timeout: 30_000 }, () => {
+  it("resolves independent cost settings from each Main Line's active revision and Overview UOM", async () => {
+    const services = createServices();
+    const secondUom = await services.reference.createMaster(SUPER_ADMIN, "uoms", {
+      code: "NOS-ANALYSIS", name: "Number", decimalScale: 0
+    });
+    const base = { baseRatePaise: 150_000, lowQuantityLimit: "15", impactBps: 1_000, minimumMarkupBps: 2_500, startingMarkupBps: 3_500 };
+    const firstMap = {
+      pmc: base,
+      sub_vendor: { ...base, baseRatePaise: 85_000, impactBps: 750 },
+      in_house_labor: { ...base, baseRatePaise: 42_000, impactBps: 0 },
+      in_house_material: { ...base, baseRatePaise: 63_000, startingMarkupBps: 3_100 }
+    };
+    const secondMap = {
+      pmc: { ...base, baseRatePaise: 211_000 },
+      sub_vendor: { ...base, baseRatePaise: 125_000, impactBps: 250 },
+      in_house_labor: { ...base, baseRatePaise: 10_000, impactBps: 500 },
+      in_house_material: { ...base, baseRatePaise: 27_500, startingMarkupBps: 4_200 }
+    };
+    async function createActive(name: string, uomId: string, modeCalculations: typeof firstMap) {
+      let draft = await createConfiguredDraft(services.item, name);
+      draft = await updateDraftSection(services.item, draft, "overview", { ...overviewPayload(name), uomId });
+      const advanced = { modeCalculations, modeDescription: `Custom ${name} wording`, modeConfigurations: [{
+        id: `scope-${draft.mainLineId}`, modeKind: "pmc", fields: [],
+        inclusions: [{ id: `in-${draft.mainLineId}`, name: "Transport", selected: true }, { id: "unchecked", name: "Unchecked label", selected: false }],
+        exclusions: [{ id: `out-${draft.mainLineId}`, name: "Transport", selected: true }]
+      }] };
+      draft = await updateDraftSection(services.item, draft, "advanced", advanced);
+      const active = await services.item.activate(SUPER_ADMIN, draft.mainLineId, draft.revisionId, { expectedVersion: draft.aggregateVersion });
+      return { ...draft, active, advanced };
+    }
+    const first = await createActive("Wardrobe analysis", UOM_ID, firstMap);
+    const second = await createActive("TV Unit analysis", secondUom.id, secondMap);
+    for (const line of [first, second]) {
+      const contextInput = { mainBasketId: BASKET_ID, mainLineId: line.mainLineId, quantity: "1" };
+      const map = line.advanced.modeCalculations;
+      const pmc = await services.context.resolve(SUPER_ADMIN, { ...contextInput, modeKind: "pmc" });
+      const vendor = await services.context.resolve(SUPER_ADMIN, { ...contextInput, modeKind: "execution", executionSource: "sub_vendor" });
+      const inHouse = await services.context.resolve(SUPER_ADMIN, { ...contextInput, modeKind: "execution", executionSource: "in_house" });
+      expect(pmc.lineage).toMatchObject({ mainLineId: line.mainLineId, revisionId: line.revisionId, contentDigest: line.active.activeRevision?.contentDigest });
+      expect(pmc.configuration.state).toBe("ready");
+      expect(vendor.configuration.state).toBe("ready");
+      expect(inHouse.configuration.state).toBe("ready");
+      expect(pmc.configuration.calculations).toEqual([{ scope: "pmc", source: "scoped", settings: map.pmc, maximumDiscountBps: 1_000 }]);
+      expect(vendor.configuration.calculations).toEqual([{ scope: "sub_vendor", source: "scoped", settings: map.sub_vendor, maximumDiscountBps: 1_000 }]);
+      expect(inHouse.configuration.calculations.map((row) => row.settings)).toEqual([map.in_house_labor, map.in_house_material]);
+      expect(pmc.configuration.uom?.id).toBe(line === first ? UOM_ID : secondUom.id);
+      expect(pmc.configuration.uom?.decimalScale).toBe(line === first ? 2 : 0);
+      expect(inHouse.configuration.shared).toEqual(pmc.configuration.shared);
+      expect(vendor.configuration.shared).toMatchObject({ paragraph: line.advanced.modeDescription,
+        inclusions: [{ id: `in-${line.mainLineId}`, name: "Transport" }], exclusions: [{ id: `out-${line.mainLineId}`, name: "Transport" }] });
+      expect(JSON.stringify(pmc.configuration)).not.toContain("Unchecked label");
+      // New Mode settings are usable independently of the legacy vendor-price system.
+      expect(pmc.preview).toBeNull();
+    }
+    await expect(services.context.resolve(SUPER_ADMIN, { mainBasketId: BASKET_ID, mainLineId: first.mainLineId, modeKind: "pmc", uomId: secondUom.id }))
+      .rejects.toMatchObject({ status: 400, code: "VALIDATION_ERROR", fields: { uomId: expect.any(String) } });
+    await expect(services.context.resolve(SUPER_ADMIN, { mainBasketId: "wrong-basket", mainLineId: first.mainLineId, modeKind: "pmc" }))
+      .rejects.toMatchObject({ status: 422, code: "KNOWLEDGE_NOT_RESOLVABLE" });
+
+    const withDraft = await services.item.createRevision(SUPER_ADMIN, first.mainLineId, { expectedVersion: first.active.version });
+    const nextMap = { ...firstMap, sub_vendor: { ...firstMap.sub_vendor, baseRatePaise: 999_000 } };
+    const edited = await updateDraftSection(services.item, {
+      mainLineId: first.mainLineId, revisionId: withDraft.draftRevisionId!, aggregateVersion: withDraft.version
+    }, "advanced", { ...first.advanced, modeCalculations: nextMap });
+    const vendorInput = { mainBasketId: BASKET_ID, mainLineId: first.mainLineId, modeKind: "execution" as const, executionSource: "sub_vendor" as const };
+    const beforeActivation = await services.context.resolve(SUPER_ADMIN, vendorInput);
+    expect(beforeActivation.lineage.revisionId).toBe(first.revisionId);
+    expect(beforeActivation.configuration.calculations[0]?.settings).toEqual(firstMap.sub_vendor);
+    await services.item.activate(SUPER_ADMIN, edited.mainLineId, edited.revisionId, { expectedVersion: edited.aggregateVersion });
+    const afterActivation = await services.context.resolve(SUPER_ADMIN, vendorInput);
+    expect(afterActivation.lineage.revisionId).toBe(edited.revisionId);
+    expect(afterActivation.configuration.calculations[0]?.settings).toEqual(nextMap.sub_vendor);
+    expect((await services.context.resolve(SUPER_ADMIN, { ...vendorInput, mainLineId: second.mainLineId })).configuration.calculations[0]?.settings).toEqual(secondMap.sub_vendor);
+    expect((await services.context.resolve(SUPER_ADMIN, { ...vendorInput, executionSource: "in_house" })).configuration.calculations.map((row) => row.settings))
+      .toEqual([firstMap.in_house_labor, firstMap.in_house_material]);
+  });
+
+  it("reports absent selected costs and ignores payloads in unconfigured sections", async () => {
+    const services = createServices();
+    const base = { baseRatePaise: 42_000, lowQuantityLimit: "15", minimumMarkupBps: 2_500, startingMarkupBps: 3_500 };
+    let draft = await createConfiguredDraft(services.item, "Incomplete in-house analysis");
+    draft = await updateDraftSection(services.item, draft, "advanced", {
+      modeCalculation: base,
+      modeCalculations: { pmc: base, sub_vendor: null, in_house: base, in_house_labor: base, in_house_material: null }
+    });
+    await services.item.activate(SUPER_ADMIN, draft.mainLineId, draft.revisionId, { expectedVersion: draft.aggregateVersion });
+    const input = { mainBasketId: BASKET_ID, mainLineId: draft.mainLineId, modeKind: "execution" as const, executionSource: "in_house" as const };
+    const context = await services.context.resolve(SUPER_ADMIN, input);
+    expect(context.configuration).toMatchObject({ state: "not_configured", issues: [{ code: "CALCULATION_NOT_CONFIGURED", scope: "in_house_material" }] });
+    expect(context.configuration.calculations[1]).toEqual({ scope: "in_house_material", source: "scoped", settings: null, maximumDiscountBps: null });
+    expect((await services.context.resolve(SUPER_ADMIN, { ...input, executionSource: undefined })).configuration)
+      .toMatchObject({ state: "selection_required", calculations: [] });
+    // Historical/corrupt retained data must not override section applicability.
+    await AiEstimatorKnowledgeSectionModel.updateOne({ revisionId: draft.revisionId, sectionKey: "advanced" }, { $set: { applicability: "not_configured" } }).exec();
+    const unconfigured = await services.context.resolve(SUPER_ADMIN, input);
+    expect(unconfigured.configuration.calculations.every((row) => row.settings === null)).toBe(true);
+    expect(unconfigured.configuration.shared).toEqual({ paragraph: null, scopeConfigurationId: null, inclusions: [], exclusions: [] });
+    await seedActor(ADMIN);
+    await expect(services.context.resolve(ADMIN, input)).rejects.toMatchObject({ status: 403, code: "FORBIDDEN" });
+  });
+
   it("reloads the stored actor for reads and mutations and requires exactly one active Super Admin", async () => {
     const services = createServices();
 

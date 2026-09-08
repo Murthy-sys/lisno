@@ -283,7 +283,7 @@ const ALLOWED_SECTION_KEYS: Record<KnowledgeSectionKey, ReadonlySet<string>> = {
   recommendations: new Set(["recommendations", "exclusions"]),
   quality: new Set(["parameters"]),
   execution: new Set(["steps", "productivity"]),
-  advanced: new Set(["dependencies", "modeOverrides", "revisionLineage", "modeConfigurations", "modeDescription", "modeCalculation", "pmcMarginBps"])
+  advanced: new Set(["dependencies", "modeOverrides", "revisionLineage", "modeConfigurations", "modeDescription", "modeCalculation", "modeCalculations", "pmcMarginBps"])
 };
 
 function inspectBoundedValue(
@@ -361,8 +361,9 @@ export function validateKnowledgeSectionPayload(
     if (typeof value === "string" && value.length > AI_ESTIMATOR_KNOWLEDGE_MAX_SHORT_TEXT && !["description", "technicalDescription", "internalVendorNotes", "modeDescription"].includes(key)) {
       issues.push({ path: `payload.${key}`, code: "TEXT_TOO_LONG", message: `${key} exceeds the supported short-text length.` });
     }
-    const unconfiguredPmcMargin = sectionKey === "advanced" && key === "pmcMarginBps" && value === null;
-    if (key.endsWith("Bps") && !unconfiguredPmcMargin && (
+    // PMC has its own optional, strictly bounded validation below.
+    const separatelyValidatedPmcMargin = sectionKey === "advanced" && key === "pmcMarginBps";
+    if (key.endsWith("Bps") && !separatelyValidatedPmcMargin && (
       !Number.isSafeInteger(value) ||
       (value as number) < 0 ||
       (value as number) > AI_ESTIMATOR_KNOWLEDGE_BASIS_POINTS
@@ -1298,6 +1299,26 @@ function validateProductivityRows(
   });
 }
 
+function validateModeCalculationSettings(row: unknown, path: string, issues: KnowledgeValidationIssue[]): void {
+  if (row === null) return;
+  if (!row || typeof row !== "object" || Array.isArray(row)) {
+    issues.push(invalidTypeIssue(path, "a calculation settings object or null"));
+    return;
+  }
+  const settings = row as Record<string, unknown>;
+  const keys = ["baseRatePaise", "lowQuantityLimit", "minimumMarkupBps", "startingMarkupBps"];
+  validateExactRowKeys(settings, [...keys, "impactBps"], keys, path, issues);
+  if (Object.hasOwn(settings, "impactBps")) validateInteger(settings.impactBps, `${path}.impactBps`, issues, 0, Number.MAX_SAFE_INTEGER - 10_000);
+  validateInteger(settings.baseRatePaise, `${path}.baseRatePaise`, issues, 0, Number.MAX_SAFE_INTEGER);
+  validateCanonicalDecimal(settings.lowQuantityLimit, `${path}.lowQuantityLimit`, issues);
+  for (const key of ["minimumMarkupBps", "startingMarkupBps"] as const) {
+    validateInteger(settings[key], `${path}.${key}`, issues, 0, Number.MAX_SAFE_INTEGER - 10_000);
+  }
+  if (typeof settings.minimumMarkupBps === "number" && typeof settings.startingMarkupBps === "number" && settings.startingMarkupBps < settings.minimumMarkupBps) {
+    issues.push({ path: `${path}.startingMarkupBps`, code: "INVALID_MARKUP", message: "Starting markup must be at least the minimum markup." });
+  }
+}
+
 function validateAdvancedPayload(
   record: Record<string, unknown>
 ): KnowledgeValidationIssue[] {
@@ -1305,22 +1326,19 @@ function validateAdvancedPayload(
   if (record.pmcMarginBps !== undefined && record.pmcMarginBps !== null) {
     validateInteger(record.pmcMarginBps, "payload.pmcMarginBps", issues, 1_000, 2_000);
   }
-  if (record.modeCalculation !== undefined && record.modeCalculation !== null) {
-    const path = "payload.modeCalculation";
-    const row = record.modeCalculation;
-    if (typeof row !== "object" || Array.isArray(row)) {
-      issues.push(invalidTypeIssue(path, "a calculation settings object or null"));
+  if (record.modeCalculation !== undefined) validateModeCalculationSettings(record.modeCalculation, "payload.modeCalculation", issues);
+  if (Object.hasOwn(record, "modeCalculations")) {
+    const scopes = ["pmc", "sub_vendor", "in_house", "in_house_labor", "in_house_material"];
+    const row = record.modeCalculations;
+    if (!row || typeof row !== "object" || Array.isArray(row)) {
+      issues.push(invalidTypeIssue("payload.modeCalculations", "an object with PMC, Sub-Vendor, Labor cost, and Material cost settings"));
     } else {
       const settings = row as Record<string, unknown>;
-      const keys = ["baseRatePaise", "lowQuantityLimit", "minimumMarkupBps", "startingMarkupBps"];
-      validateExactRowKeys(settings, keys, keys, path, issues);
-      validateInteger(settings.baseRatePaise, `${path}.baseRatePaise`, issues, 0, Number.MAX_SAFE_INTEGER);
-      validateCanonicalDecimal(settings.lowQuantityLimit, `${path}.lowQuantityLimit`, issues);
-      for (const key of ["minimumMarkupBps", "startingMarkupBps"] as const) {
-        validateInteger(settings[key], `${path}.${key}`, issues, 0, Number.MAX_SAFE_INTEGER - 10_000);
-      }
-      if (typeof settings.minimumMarkupBps === "number" && typeof settings.startingMarkupBps === "number" && settings.startingMarkupBps < settings.minimumMarkupBps) {
-        issues.push({ path: `${path}.startingMarkupBps`, code: "INVALID_MARKUP", message: "Starting markup must be at least the minimum markup." });
+      const required = Object.hasOwn(settings, "in_house_labor") || Object.hasOwn(settings, "in_house_material")
+        ? ["pmc", "sub_vendor", "in_house_labor", "in_house_material"] : ["pmc", "sub_vendor", "in_house"];
+      validateExactRowKeys(settings, scopes, required, "payload.modeCalculations", issues);
+      for (const scope of scopes) {
+        if (Object.hasOwn(settings, scope)) validateModeCalculationSettings(settings[scope], `payload.modeCalculations.${scope}`, issues);
       }
     }
   }

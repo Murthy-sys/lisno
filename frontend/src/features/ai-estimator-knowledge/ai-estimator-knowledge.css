@@ -576,7 +576,7 @@
 
 .knowledge-mode-block__dirty {
   margin-inline-start: auto;
-  color: var(--role-accent, var(--color-brand-violet));
+  color: var(--color-warning);
   font-size: var(--text-sm);
   font-weight: 700;
 }
@@ -3485,12 +3485,61 @@ body:has(.ui-app-shell[data-role]) .modal .knowledge-dialog-actions .ui-button--
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 4px 12px;
-  margin-block-start: 4px;
+  gap: 12px 24px;
+  margin-block-start: 12px;
 }
 
 .knowledge-mode-configuration__pmc-context .knowledge-mode-configuration__mode-context {
   margin: 0;
+}
+
+.knowledge-pmc-margin {
+  display: grid;
+  grid-template-columns: 104px minmax(0, auto);
+  align-items: center;
+  gap: 6px 10px;
+  max-inline-size: 100%;
+}
+
+.knowledge-pmc-margin .ui-field__label {
+  grid-column: 1 / -1;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.knowledge-pmc-margin__control {
+  position: relative;
+  min-inline-size: 0;
+}
+
+.knowledge-mode-configuration .knowledge-pmc-margin .ui-input {
+  min-block-size: 38px;
+  block-size: 38px;
+  padding: 4px 36px 4px 10px;
+  border-radius: 8px;
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+
+.knowledge-pmc-margin__suffix {
+  position: absolute;
+  inset-inline-end: 24px;
+  inset-block-start: 50%;
+  transform: translateY(-50%);
+  color: var(--color-text-muted);
+  font-size: 12px;
+  pointer-events: none;
+}
+
+.knowledge-pmc-margin .ui-field__hint,
+.knowledge-pmc-margin .ui-field__error {
+  margin: 0;
+  font-size: 11px;
+}
+
+.knowledge-pmc-margin .ui-field__error {
+  grid-column: 1 / -1;
+  max-inline-size: 250px;
 }
 
 .knowledge-mode-configuration__mode-content {
@@ -3706,6 +3755,32 @@ body:has(.ui-app-shell[data-role]) .modal .knowledge-dialog-actions .ui-button--
   overflow-wrap: anywhere;
 }
 
+.knowledge-mode-calculation__discount {
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--role-deck-tint, var(--color-surface-subtle));
+}
+
+.knowledge-mode-calculation__discount-value {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 4px 12px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.knowledge-mode-calculation__discount-value output {
+  font-size: 16px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+  min-inline-size: 0;
+}
+
 .knowledge-mode-calculation__actions {
   display: flex;
   flex-wrap: wrap;
@@ -3805,6 +3880,57 @@ body:has(.ui-app-shell[data-role]) .modal .knowledge-dialog-actions .ui-button--
 .knowledge-mode-calculation__totals dd {
   margin: 0;
   font-weight: 700;
+}
+
+.knowledge-in-house-total {
+  display: grid;
+  gap: 16px;
+  min-inline-size: 0;
+  padding: 16px;
+  border: 1px solid var(--role-line, var(--color-border));
+  border-radius: var(--radius-field);
+  background: var(--role-deck-tint, var(--color-surface-subtle));
+}
+
+.knowledge-in-house-total__amounts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr));
+  gap: 12px;
+  margin: 0;
+}
+
+.knowledge-in-house-total__amounts > div {
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  min-inline-size: 0;
+  padding: 12px;
+  border-radius: 8px;
+  background: var(--color-surface);
+}
+
+.knowledge-in-house-total__amounts > div:last-child {
+  border: 1px solid var(--role-line, var(--color-border));
+}
+
+.knowledge-in-house-total__amounts dt {
+  font-size: 12px;
+}
+
+.knowledge-in-house-total__amounts dd {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.knowledge-in-house-simulator .knowledge-mode-calculation__groups {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.knowledge-in-house-simulator .knowledge-mode-calculation__rate-fields {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .knowledge-page--item-workspace .knowledge-mode-description .ui-control {

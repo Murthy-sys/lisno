@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import axe from "axe-core";
 import { describe, expect, it, vi } from "vitest";
@@ -19,11 +19,15 @@ function Harness({ initial = {}, readOnly = false, onChange = vi.fn(), onValidat
 }
 
 describe("PMC Margin", () => {
-  it("shows the margin range as plain text beside the main line when PMC is visible", async () => {
+  it("shows a compact number input beside the main line with strict limits", async () => {
     const onChange = vi.fn();
     render(<Harness onChange={onChange} />);
-    const margin = within(screen.getByText("PMC for TV Unit").parentElement!).getByText("PMC Margin (10%–20%)");
+    const margin = within(screen.getByText("PMC for TV Unit").parentElement!).getByText("PMC Margin");
     expect(margin).toBeVisible();
+    expect(screen.getByRole("spinbutton", { name: "PMC Margin" })).toHaveAttribute("type", "number");
+    expect(screen.getByRole("spinbutton", { name: "PMC Margin" })).toHaveAttribute("min", "10");
+    expect(screen.getByRole("spinbutton", { name: "PMC Margin" })).toHaveAttribute("max", "20");
+    expect(screen.getByRole("spinbutton", { name: "PMC Margin" })).toHaveAccessibleDescription("Allowed: 10%–20%");
     expect(screen.queryByRole("textbox", { name: "PMC Margin (%)" })).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole("checkbox", { name: "PMC" }));
     await userEvent.click(screen.getByRole("checkbox", { name: "Execution" }));
@@ -34,10 +38,12 @@ describe("PMC Margin", () => {
     expect((await axe.run(document.body, { rules: { "color-contrast": { enabled: false } } })).violations).toEqual([]);
   });
 
-  it("shows plain text in read-only revisions and retains saved values in conflict review", () => {
+  it("disables the saved number in read-only revisions and retains values in conflict review", () => {
     const onChange = vi.fn();
     const view = render(<Harness initial={{ pmcMarginBps: 2_000 }} readOnly onChange={onChange} />);
-    expect(screen.getByText("PMC Margin (10%–20%)")).toBeVisible();
+    expect(screen.getByText("PMC Margin")).toBeVisible();
+    expect(screen.getByRole("spinbutton", { name: "PMC Margin" })).toHaveValue(20);
+    expect(screen.getByRole("spinbutton", { name: "PMC Margin" })).toBeDisabled();
     expect(screen.queryByRole("textbox", { name: "PMC Margin (%)" })).not.toBeInTheDocument();
     expect(onChange).not.toHaveBeenCalled();
     view.unmount();
@@ -45,5 +51,39 @@ describe("PMC Margin", () => {
       localVersion={1} serverVersion={2} masters={{}} relationshipBaskets={[]} relationshipItems={[]} />);
     expect(screen.getByText("PMC Margin")).toBeVisible();
     expect(screen.getByText("12.50%")).toBeVisible();
+  });
+
+  it("accepts both bounds and decimal margins within them while retaining other fields", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    const onValidationChange = vi.fn();
+    const other = { modeDescription: "Custom scope", modeCalculations: { pmc: null, sub_vendor: null, in_house_labor: null, in_house_material: null } };
+    render(<Harness initial={other} onChange={onChange} onValidationChange={onValidationChange} />);
+    const input = screen.getByRole("spinbutton", { name: "PMC Margin" });
+    for (const [text, bps] of [["10", 1000], ["15.25", 1525], ["19.99", 1999], ["20", 2000]] as const) {
+      await user.clear(input);
+      await user.type(input, text);
+      expect(input).toHaveValue(Number(text));
+      expect(onChange).toHaveBeenLastCalledWith({ ...other, pmcMarginBps: bps });
+      expect(onValidationChange).toHaveBeenLastCalledWith(true);
+    }
+    await user.clear(input);
+    expect(onChange).toHaveBeenLastCalledWith({ ...other, pmcMarginBps: null });
+    expect(onValidationChange).toHaveBeenLastCalledWith(true);
+  });
+
+  it("rejects margins outside 10–20 percent, over-precise and unsafe values without silently clamping", () => {
+    const onValidationChange = vi.fn();
+    render(<Harness onValidationChange={onValidationChange} />);
+    const input = screen.getByRole("spinbutton", { name: "PMC Margin" });
+    for (const value of ["-1", "0", "9.99", "20.01", "23", "12.345", "90071992547409.92"]) {
+      fireEvent.change(input, { target: { value } });
+      expect(input).toHaveAttribute("aria-invalid", "true");
+      expect(onValidationChange).toHaveBeenLastCalledWith(false);
+      expect(screen.getByRole("alert")).toHaveTextContent("Enter a PMC margin from 10% to 20%");
+    }
+    fireEvent.change(input, { target: { value: "15.75" } });
+    expect(input).not.toHaveAttribute("aria-invalid");
+    expect(onValidationChange).toHaveBeenLastCalledWith(true);
   });
 });

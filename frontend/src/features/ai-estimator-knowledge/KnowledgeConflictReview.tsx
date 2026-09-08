@@ -469,6 +469,12 @@ function displayLabel(key: string): string {
     taxAmountPaise: "Tax amount",
     totalAmountPaise: "Total amount",
     modeCalculation: "Calculation settings",
+    modeCalculations: "Mode calculation settings",
+    pmc: "PMC",
+    sub_vendor: "Sub-Vendor",
+    in_house: "In-house",
+    in_house_labor: "Labor cost",
+    in_house_material: "Material cost",
     baseRatePaise: "Base Rate",
     minimumMarkupBps: "Min. Gross Margin Markup",
     startingMarkupBps: "Starting Gross Margin Markup"

@@ -203,6 +203,7 @@ export const AI_ESTIMATOR_KNOWLEDGE_QUERY_PARAMETERS: Readonly<
 };
 
 const id = { type: "string", minLength: 1, maxLength: 128 } as const;
+const shortText = { type: "string", minLength: 1, maxLength: 240 } as const;
 const version = { type: "integer", minimum: 1 } as const;
 const dateTime = { type: "string", format: "date-time" } as const;
 const nullableDateTime = { ...dateTime, nullable: true } as const;
@@ -832,23 +833,58 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
     ...strictObject(["baseRatePaise", "lowQuantityLimit", "minimumMarkupBps", "startingMarkupBps"], {
       baseRatePaise: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
       lowQuantityLimit: decimal,
+      impactBps: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER - 10_000, default: 1_000,
+        description: "Low-quantity Impact in basis points. Defaults to 10% when omitted; 0 disables the uplift." },
       minimumMarkupBps: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER - 10_000 },
       startingMarkupBps: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER - 10_000 }
     }),
-    description: "Shared Mode settings. Starting markup must be at least minimum markup. Markup is added to cost; the fixed 10% impact applies strictly below the quantity limit. UOM, test quantity, and derived amounts are not stored here."
+    description: "Settings for one Mode calculation. Starting markup must be at least minimum markup. Markup is added to cost; the configured Impact applies strictly below the quantity limit. UOM, test quantity, and derived amounts are not stored here."
+  },
+  KnowledgeModeCalculations: {
+    oneOf: [
+      strictObject(["pmc", "sub_vendor", "in_house_labor", "in_house_material"], {
+        pmc: nullableRef("KnowledgeModeCalculationSettings"),
+        sub_vendor: nullableRef("KnowledgeModeCalculationSettings"),
+        in_house_labor: nullableRef("KnowledgeModeCalculationSettings"),
+        in_house_material: nullableRef("KnowledgeModeCalculationSettings"),
+        in_house: { ...nullableRef("KnowledgeModeCalculationSettings"), deprecated: true,
+          description: "Preserved legacy In-house snapshot. Split costs do not inherit subsequent edits." }
+      }),
+      { ...strictObject(["pmc", "sub_vendor", "in_house"], {
+        pmc: nullableRef("KnowledgeModeCalculationSettings"),
+        sub_vendor: nullableRef("KnowledgeModeCalculationSettings"),
+        in_house: nullableRef("KnowledgeModeCalculationSettings")
+      }), deprecated: true }
+    ],
+    description: "Independent PMC, Sub-Vendor, In-house Labor cost, and In-house Material cost settings. Null means unconfigured. Older maps without split costs remain accepted; their In-house values seed both costs once on the next calculation edit. Maps never inherit from the root legacy modeCalculation."
   },
   KnowledgeModeCalculationPreview: strictObject(["revisedUnitRatePaise", "revisedAmountPaise", "totalPaise", "appliedImpactBps"], {
     revisedUnitRatePaise: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
     revisedAmountPaise: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
     totalPaise: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
-    appliedImpactBps: { type: "integer", enum: [0, 1_000] }
+    appliedImpactBps: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER - 10_000 },
+    discount: strictObject(["rateBps", "effectiveMarkupBps", "totalBeforeDiscountPaise", "amountPaise"], {
+      rateBps: { type: "integer", minimum: 0 }, effectiveMarkupBps: { type: "integer", minimum: 0 },
+      totalBeforeDiscountPaise: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
+      amountPaise: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER }
+    })
   }),
+  KnowledgeInHouseCalculationSettings: strictObject(["labor", "material"], {
+    labor: ref("KnowledgeModeCalculationSettings"), material: ref("KnowledgeModeCalculationSettings")
+  }),
+  KnowledgeInHouseCalculationPreview: {
+    ...strictObject(["labor", "material", "totalPaise"], {
+      labor: ref("KnowledgeModeCalculationPreview"), material: ref("KnowledgeModeCalculationPreview"),
+      totalPaise: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER }
+    }),
+    description: "Sum of the independently rounded Labor and Material final amounts, after each cost's own Impact and chosen additive markup. Both use the same test quantity and markup basis."
+  },
   KnowledgePreviewRequest: strictObject(["quantityScale"], {
     priceVersionId: { ...id, nullable: true },
     taxVersionId: { ...id, nullable: true },
     unitRatePaise: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER, nullable: true },
     quantityAdjustmentBps: { type: "integer", minimum: 0, maximum: 10_000, nullable: true },
-    quantity: { ...decimal, nullable: true, description: "Required and non-null when modeCalculation is supplied." },
+    quantity: { ...decimal, nullable: true, description: "Required and non-null when modeCalculation or inHouseCalculation is supplied." },
     quantityScale: { type: "integer", minimum: 0, maximum: 18 },
     wastageBps: { type: "integer", minimum: 0, nullable: true },
     taxRateBps: { type: "integer", minimum: 0, nullable: true },
@@ -858,9 +894,14 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
     pmcMarkupBps: { type: "integer", minimum: 0, nullable: true },
     duration: { allOf: [ref("KnowledgeDurationPreviewRequest")], nullable: true },
     modeCalculation: ref("KnowledgeModeCalculationSettings"),
+    inHouseCalculation: { ...ref("KnowledgeInHouseCalculationSettings"), description: "Combined simulator settings. Cannot be supplied together with modeCalculation." },
     modeCalculationMarkupBasis: {
       type: "string", enum: ["starting", "minimum"], default: "starting",
-      description: "Simulator-only choice of additive markup. Requires modeCalculation. Never persisted with Mode settings."
+      description: "Simulator-only choice of additive markup. Requires modeCalculation or inHouseCalculation. Never persisted with Mode settings."
+    },
+    modeCalculationDiscountBps: {
+      type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER - 10_000, default: 0,
+      description: "Simulator-only reduction in markup basis points, not a percentage off selling price. Requires Mode or In-house settings. Cannot exceed chosen markup minus minimum markup (0 when using minimum). For In-house, both costs must satisfy the limit. Never persisted."
     }
   }),
   KnowledgeDurationPreviewRequest: strictObject(["productivity", "productivityScale", "unit"], {
@@ -1138,6 +1179,7 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
       bottomMargin: nullableRef("KnowledgePreviewAmountComponent"),
       pmcMarkup: nullableRef("KnowledgePreviewAmountComponent"),
       modeCalculation: ref("KnowledgeModeCalculationPreview"),
+      inHouseCalculation: ref("KnowledgeInHouseCalculationPreview"),
       duration: {
         type: "object",
         nullable: true,
@@ -1151,7 +1193,42 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
       }
     }
   ),
-  KnowledgeContext: strictObject(["lineage", "availability", "sections", "preview"], {
+  KnowledgeConfigurationContext: strictObject(
+    ["formulaVersion", "moneyUnit", "percentageUnit", "selection", "uom", "shared", "state", "issues", "calculations"],
+    {
+      formulaVersion: { type: "string", enum: ["mode-markup-v1"] },
+      moneyUnit: { type: "string", enum: ["paise"] },
+      percentageUnit: { type: "string", enum: ["basis_points"] },
+      selection: strictObject(["modeKind", "executionSource"], {
+        modeKind: { type: "string", enum: [...AI_ESTIMATOR_KNOWLEDGE_MODE_KINDS, null], nullable: true },
+        executionSource: { type: "string", enum: [...AI_ESTIMATOR_KNOWLEDGE_EXECUTION_SOURCES, null], nullable: true }
+      }),
+      uom: { ...strictObject(["id", "name", "decimalScale"], {
+        id, name: shortText, decimalScale: { type: "integer", minimum: 0, maximum: 3 }
+      }), nullable: true },
+      shared: strictObject(["paragraph", "scopeConfigurationId", "inclusions", "exclusions"], {
+        paragraph: { type: "string", nullable: true, description: "Saved shared wording only; null uses the UI's generated description. Structured selected lists are authoritative for analysis." },
+        scopeConfigurationId: { ...shortText, nullable: true },
+        inclusions: { type: "array", items: strictObject(["id", "name"], { id: shortText, name: shortText }) },
+        exclusions: { type: "array", items: strictObject(["id", "name"], { id: shortText, name: shortText }) }
+      }),
+      state: { type: "string", enum: ["ready", "selection_required", "not_configured", "invalid"] },
+      issues: { type: "array", items: strictObject(["code", "scope"], {
+        code: { type: "string" },
+        scope: { type: "string", enum: ["pmc", "sub_vendor", "in_house_labor", "in_house_material", null], nullable: true }
+      }) },
+      calculations: { type: "array", maxItems: 2, items: strictObject(["scope", "source", "settings", "maximumDiscountBps"], {
+        scope: { type: "string", enum: ["pmc", "sub_vendor", "in_house_labor", "in_house_material"] },
+        source: { type: "string", enum: ["scoped", "legacy_shared", "legacy_in_house", null], nullable: true },
+        settings: { ...strictObject(["baseRatePaise", "lowQuantityLimit", "impactBps", "minimumMarkupBps", "startingMarkupBps"], {
+          baseRatePaise: { type: "integer", minimum: 0 }, lowQuantityLimit: decimal,
+          impactBps: { type: "integer", minimum: 0 }, minimumMarkupBps: { type: "integer", minimum: 0 }, startingMarkupBps: { type: "integer", minimum: 0 }
+        }), nullable: true },
+        maximumDiscountBps: { type: "integer", minimum: 0, nullable: true, description: "Starting markup minus minimum markup, in basis points. This is not a discount percentage on selling price." }
+      }) }
+    }
+  ),
+  KnowledgeContext: strictObject(["lineage", "availability", "sections", "preview", "configuration"], {
     lineage: strictObject(["mainLineId", "revisionId", "revisionNumber", "priceVersionId", "taxVersionId", "formulaVersion", "contentDigest", "evaluatedAt"], {
       mainLineId: id,
       revisionId: id,
@@ -1175,7 +1252,8 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
       additionalProperties: false,
       properties: Object.fromEntries(AI_ESTIMATOR_KNOWLEDGE_SECTION_KEYS.map((key) => [key, {}]))
     },
-    preview: nullableRef("KnowledgePreview")
+    preview: { ...nullableRef("KnowledgePreview"), description: "Legacy price-version preview only. For independent Mode cost settings use configuration; do not combine these pricing systems." },
+    configuration: ref("KnowledgeConfigurationContext")
   })
 };
 
@@ -1203,7 +1281,7 @@ function sectionPayloadKeys(sectionKey: string): readonly string[] {
     recommendations: ["recommendations"],
     quality: ["parameters"],
     execution: ["steps", "productivity"],
-    advanced: ["dependencies", "modeOverrides", "revisionLineage", "modeConfigurations", "modeDescription", "modeCalculation", "pmcMarginBps"]
+    advanced: ["dependencies", "modeOverrides", "revisionLineage", "modeConfigurations", "modeDescription", "modeCalculation", "modeCalculations", "pmcMarginBps"]
   };
   return keys[sectionKey] ?? [];
 }
@@ -1214,10 +1292,12 @@ function sectionPayloadProperties(sectionKey: string): Readonly<Record<string, u
   );
   if (sectionKey === "advanced") {
     properties.modeDescription = { type: "string", minLength: 1, maxLength: 4_000, nullable: true };
-    properties.modeCalculation = nullableRef("KnowledgeModeCalculationSettings");
+    properties.modeCalculation = { ...nullableRef("KnowledgeModeCalculationSettings"), deprecated: true,
+      description: "Legacy shared settings, retained for compatibility. New edits use modeCalculations." };
+    properties.modeCalculations = ref("KnowledgeModeCalculations");
     properties.pmcMarginBps = {
       type: "integer", minimum: 1_000, maximum: 2_000, nullable: true,
-      description: "Configured PMC margin in basis points: 10% to 20% inclusive. Null or absent means not configured."
+      description: "Configured PMC margin in integer basis points, from 10% to 20% inclusive. Null or absent means not configured."
     };
     properties.modeConfigurations = {
       type: "array",

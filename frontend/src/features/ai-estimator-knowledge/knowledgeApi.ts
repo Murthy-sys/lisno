@@ -125,10 +125,16 @@ export interface KnowledgeContextRequest {
 }
 
 export interface KnowledgePreviewRequest {
+  readonly inHouseCalculation?: {
+    readonly labor: NonNullable<KnowledgePreviewRequest["modeCalculation"]>;
+    readonly material: NonNullable<KnowledgePreviewRequest["modeCalculation"]>;
+  };
   readonly modeCalculationMarkupBasis?: "starting" | "minimum";
+  readonly modeCalculationDiscountBps?: number;
   readonly modeCalculation?: {
     readonly baseRatePaise: number;
     readonly lowQuantityLimit: string;
+    readonly impactBps?: number;
     readonly minimumMarkupBps: number;
     readonly startingMarkupBps: number;
   };

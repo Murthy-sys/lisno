@@ -127,7 +127,8 @@ describe("KnowledgeModeConfigurationBuilder", () => {
     expect(screen.getByRole("group", { name: "Exclusions" })).toBeVisible();
     expect(screen.queryByRole("group", { name: "Execution source" }))
       .not.toBeInTheDocument();
-    expect(screen.getByText(/the value the estimator should use/u)).toBeVisible();
+    expect(screen.getByText(/each have separate calculation settings/u)).toBeVisible();
+    expect(screen.getByText(/Inclusion\/Exclusion lists are shared for this Main Line/u)).toBeVisible();
 
     const results = await axe.run(document.body, {
       rules: { "color-contrast": { enabled: false } }

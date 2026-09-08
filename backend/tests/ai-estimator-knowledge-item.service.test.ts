@@ -71,9 +71,11 @@ describe("AI estimator knowledge item service", () => {
         expectedVersion: advanced.version, expectedAggregateVersion: created.version, applicability: "configured", payload
       });
       expect((await service.getSection(ACTOR, created.mainLineId, revisionId, "advanced")).payload).toEqual(payload);
-      await expect(service.updateSection(ACTOR, created.mainLineId, revisionId, "advanced", {
-        expectedVersion: saved.version, expectedAggregateVersion: saved.aggregateVersion, payload: { ...payload, pmcMarginBps: 2_001 }
-      })).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+      for (const invalidMargin of [999, 2_001]) {
+        await expect(service.updateSection(ACTOR, created.mainLineId, revisionId, "advanced", {
+          expectedVersion: saved.version, expectedAggregateVersion: saved.aggregateVersion, payload: { ...payload, pmcMarginBps: invalidMargin }
+        })).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+      }
       const updatedPayload = { ...payload, pmcMarginBps: 1_375 };
       await service.updateSection(ACTOR, created.mainLineId, revisionId, "advanced", {
         expectedVersion: saved.version, expectedAggregateVersion: saved.aggregateVersion, payload: updatedPayload
@@ -89,7 +91,7 @@ describe("AI estimator knowledge item service", () => {
     const { service } = createService();
     const first = await service.createMainLine(ACTOR, "basket-carpentry", { name: "First calculation line" });
     const second = await service.createMainLine(ACTOR, "basket-carpentry", { name: "Second calculation line" });
-    for (const [created, baseRatePaise] of [[first, 150_000], [second, 50_000]] as const) {
+    for (const [created, baseRatePaise, impactBps] of [[first, 150_000, 1_275], [second, 50_000, 0]] as const) {
       const revisionId = created.draftRevisionId!;
       const advanced = await service.getSection(ACTOR, created.mainLineId, revisionId, "advanced");
       const payload = {
@@ -101,7 +103,7 @@ describe("AI estimator knowledge item service", () => {
         expectedVersion: advanced.version, expectedAggregateVersion: created.version, applicability: "configured", payload
       });
       expect((await service.getSection(ACTOR, created.mainLineId, revisionId, "advanced")).payload).toEqual(payload);
-      const edited = { ...payload, modeCalculation: { ...payload.modeCalculation, startingMarkupBps: 4_000 } };
+      const edited = { ...payload, modeCalculation: { ...payload.modeCalculation, impactBps, startingMarkupBps: 4_000 } };
       await service.updateSection(ACTOR, created.mainLineId, revisionId, "advanced", {
         expectedVersion: saved.version, expectedAggregateVersion: saved.aggregateVersion, payload: edited
       });
@@ -109,6 +111,46 @@ describe("AI estimator knowledge item service", () => {
         expectedVersion: saved.version, expectedAggregateVersion: saved.aggregateVersion, payload
       })).rejects.toMatchObject({ code: "VERSION_CONFLICT" });
       expect((await service.getSection(ACTOR, created.mainLineId, revisionId, "advanced")).payload).toEqual(edited);
+    }
+  });
+
+  it("round-trips split In-house costs without mixing Labor, Material, other modes or main lines", async () => {
+    const { service } = createService();
+    const first = await service.createMainLine(ACTOR, "basket-carpentry", { name: "Separate modes first" });
+    const second = await service.createMainLine(ACTOR, "basket-carpentry", { name: "Separate modes second" });
+    const expected = new Map<string, unknown>();
+    for (const [created, base] of [[first, 150_000], [second, 50_000]] as const) {
+      const revisionId = created.draftRevisionId!;
+      const advanced = await service.getSection(ACTOR, created.mainLineId, revisionId, "advanced");
+      const legacy = { baseRatePaise: base, lowQuantityLimit: "15", minimumMarkupBps: 2_500, startingMarkupBps: 3_500 };
+      const payload = { modeCalculation: legacy, modeCalculations: {
+        pmc: { ...legacy, impactBps: 1_000 },
+        sub_vendor: { ...legacy, baseRatePaise: base + 37_000, impactBps: 525, lowQuantityLimit: "7" },
+        in_house: { ...legacy, baseRatePaise: base + 19_000, impactBps: 0, minimumMarkupBps: 1_000, startingMarkupBps: 4_000 }
+      } };
+      const saved = await service.updateSection(ACTOR, created.mainLineId, revisionId, "advanced", {
+        expectedVersion: advanced.version, expectedAggregateVersion: created.version, applicability: "configured", payload
+      });
+      const split = { ...payload, modeCalculations: { ...payload.modeCalculations,
+        in_house_labor: { ...payload.modeCalculations.in_house, baseRatePaise: base + 8_000, minimumMarkupBps: 500 },
+        in_house_material: { ...payload.modeCalculations.in_house, baseRatePaise: base + 64_000, impactBps: 1_275, lowQuantityLimit: "9" }
+      } };
+      const splitSaved = await service.updateSection(ACTOR, created.mainLineId, revisionId, "advanced", {
+        expectedVersion: saved.version, expectedAggregateVersion: saved.aggregateVersion, payload: split
+      });
+      const edited = { ...split, modeCalculations: { ...split.modeCalculations,
+        in_house_labor: { ...split.modeCalculations.in_house_labor, impactBps: 725 }
+      } };
+      await service.updateSection(ACTOR, created.mainLineId, revisionId, "advanced", {
+        expectedVersion: splitSaved.version, expectedAggregateVersion: splitSaved.aggregateVersion, payload: edited
+      });
+      await expect(service.updateSection(ACTOR, created.mainLineId, revisionId, "advanced", {
+        expectedVersion: saved.version, expectedAggregateVersion: saved.aggregateVersion, payload
+      })).rejects.toMatchObject({ code: "VERSION_CONFLICT" });
+      expected.set(created.mainLineId, edited);
+    }
+    for (const created of [first, second]) {
+      expect((await service.getSection(ACTOR, created.mainLineId, created.draftRevisionId!, "advanced")).payload).toEqual(expected.get(created.mainLineId));
     }
   });
 

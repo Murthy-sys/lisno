@@ -689,22 +689,47 @@ describe("AI Estimator Knowledge HTTP routes", () => {
     expect(testServices.item.updateSection).toHaveBeenCalledTimes(1);
   });
 
+  it("accepts separately keyed calculations and reports the specific invalid mode before persistence", async () => {
+    const testServices = services();
+    const settings = { baseRatePaise: 150_000, lowQuantityLimit: "15", impactBps: 1_000, minimumMarkupBps: 2_500, startingMarkupBps: 3_500 };
+    const modeCalculations = { pmc: settings, sub_vendor: { ...settings, baseRatePaise: 75_000 }, in_house_labor: null, in_house_material: { ...settings, baseRatePaise: 45_000 } };
+    const send = (scopes: unknown) => request(appFor(testServices))
+      .put("/api/v1/admin/ai-estimator-knowledge/main-lines/line-1/revisions/revision-1/sections/advanced")
+      .set("Authorization", "Bearer super-admin-token")
+      .send({ expectedVersion: 3, expectedAggregateVersion: 7, payload: { modeCalculations: scopes } });
+    expect((await send(modeCalculations)).status).toBe(200);
+    expect(testServices.item.updateSection).toHaveBeenLastCalledWith(superAdmin, "line-1", "revision-1", "advanced", {
+      expectedVersion: 3, expectedAggregateVersion: 7, payload: { modeCalculations }
+    });
+    for (const scope of ["in_house_labor", "in_house_material"]) {
+      const rejected = await send({ ...modeCalculations, [scope]: { ...settings, impactBps: -1 } });
+      expect(rejected.status).toBe(400);
+      expect(rejected.body.error.fields).toMatchObject({ [`payload.modeCalculations.${scope}.impactBps`]: expect.any(String) });
+    }
+    const { in_house_material: _material, ...partial } = modeCalculations;
+    expect((await send({ ...partial, in_house: settings })).status).toBe(400);
+    expect((await send({ pmc: settings, execution: settings })).status).toBe(400);
+    expect(testServices.item.updateSection).toHaveBeenCalledTimes(1);
+  });
+
   it("validates the PMC margin before persisting a Mode section", async () => {
     const testServices = services();
     const send = (pmcMarginBps: unknown) => request(appFor(testServices))
       .put("/api/v1/admin/ai-estimator-knowledge/main-lines/line-1/revisions/revision-1/sections/advanced")
       .set("Authorization", "Bearer super-admin-token")
       .send({ expectedVersion: 3, expectedAggregateVersion: 7, payload: { pmcMarginBps } });
-    expect((await send(1_250)).status).toBe(200);
-    expect(testServices.item.updateSection).toHaveBeenLastCalledWith(superAdmin, "line-1", "revision-1", "advanced", {
-      expectedVersion: 3, expectedAggregateVersion: 7, payload: { pmcMarginBps: 1_250 }
-    });
-    for (const value of [999, 2_001, 1_000.5]) {
+    for (const pmcMarginBps of [1_000, 1_250, 2_000]) {
+      expect((await send(pmcMarginBps)).status).toBe(200);
+      expect(testServices.item.updateSection).toHaveBeenLastCalledWith(superAdmin, "line-1", "revision-1", "advanced", {
+        expectedVersion: 3, expectedAggregateVersion: 7, payload: { pmcMarginBps }
+      });
+    }
+    for (const value of [0, 999, 2_001, 2_300, -1, Number.MAX_SAFE_INTEGER + 1, 1_000.5]) {
       const rejected = await send(value);
       expect(rejected.status).toBe(400);
       expect(rejected.body.error.fields).toMatchObject({ "payload.pmcMarginBps": expect.any(String) });
     }
-    expect(testServices.item.updateSection).toHaveBeenCalledTimes(1);
+    expect(testServices.item.updateSection).toHaveBeenCalledTimes(3);
   });
 
   it("accepts strict mode configurations and rejects malformed fields after authorization", async () => {
@@ -817,15 +842,66 @@ describe("AI Estimator Knowledge HTTP routes", () => {
       expect((await send({ ...input, modeCalculationMarkupBasis })).status).toBe(200);
       expect(testServices.context.preview).toHaveBeenLastCalledWith(superAdmin, { ...input, modeCalculationMarkupBasis });
     }
+    for (const impactBps of [0, 1_275, 15_000]) {
+      const edited = { ...input, modeCalculation: { ...modeCalculation, impactBps } };
+      expect((await send(edited)).status).toBe(200);
+      expect(testServices.context.preview).toHaveBeenLastCalledWith(superAdmin, edited);
+    }
     for (const invalid of [
       { ...input, modeCalculationMarkupBasis: "other" },
       { quantityScale: 0, modeCalculationMarkupBasis: "minimum" },
       { ...input, quantity: null }, { modeCalculation, quantityScale: 0 },
       { ...input, modeCalculation: { ...modeCalculation, startingMarkupBps: 2_000 } },
-      { ...input, modeCalculation: { ...modeCalculation, impactBps: 500 } },
+      ...[-1, 1.5, null, "10", Number.MAX_SAFE_INTEGER].map((impactBps) => ({ ...input, modeCalculation: { ...modeCalculation, impactBps } })),
       { ...input, modeCalculation: { ...modeCalculation, uomId: "invented" } }
     ]) expect((await send(invalid)).status).toBe(400);
-    expect(testServices.context.preview).toHaveBeenCalledTimes(3);
+    expect(testServices.context.preview).toHaveBeenCalledTimes(6);
+  });
+
+  it("validates both In-house cost settings and rejects incomplete or mixed preview requests", async () => {
+    const testServices = services();
+    const labor = { baseRatePaise: 45_000, lowQuantityLimit: "4", impactBps: 0, minimumMarkupBps: 800, startingMarkupBps: 2_300 };
+    const material = { ...labor, baseRatePaise: 65_000, impactBps: 1_275, startingMarkupBps: 3_600 };
+    const input = { inHouseCalculation: { labor, material }, quantity: "1", quantityScale: 0 };
+    const send = (body: unknown) => request(appFor(testServices)).post("/api/v1/admin/ai-estimator-knowledge/preview")
+      .set("Authorization", "Bearer super-admin-token").send(body);
+    for (const modeCalculationMarkupBasis of ["starting", "minimum"]) {
+      expect((await send({ ...input, modeCalculationMarkupBasis })).status).toBe(200);
+      expect(testServices.context.preview).toHaveBeenLastCalledWith(superAdmin, { ...input, modeCalculationMarkupBasis });
+    }
+    for (const [body, path] of [
+      [{ ...input, quantity: null }, "quantity"],
+      [{ inHouseCalculation: input.inHouseCalculation, quantityScale: 0 }, "quantity"],
+      [{ ...input, inHouseCalculation: { labor } }, "inHouseCalculation.material"],
+      [{ ...input, inHouseCalculation: { labor, material: { ...material, impactBps: -1 } } }, "inHouseCalculation.material.impactBps"],
+      [{ ...input, inHouseCalculation: { material, labor: { ...labor, startingMarkupBps: 0 } } }, "inHouseCalculation.labor.startingMarkupBps"],
+      [{ ...input, modeCalculation: labor }, "inHouseCalculation"],
+      [{ ...input, inHouseCalculation: { labor, material, totalPaise: 1 } }, "totalPaise"]
+    ] as const) {
+      const response = await send(body);
+      expect(response.status).toBe(400);
+      expect(response.body.error.fields).toMatchObject({ [path]: expect.any(String) });
+    }
+    expect(testServices.context.preview).toHaveBeenCalledTimes(2);
+  });
+
+  it("accepts simulator-only discount basis points and rejects malformed or unrelated discounts", async () => {
+    const testServices = services();
+    const modeCalculation = { baseRatePaise: 150_000, lowQuantityLimit: "15", minimumMarkupBps: 2_500, startingMarkupBps: 3_500 };
+    const input = { modeCalculation, quantity: "1", quantityScale: 0, modeCalculationDiscountBps: 500 };
+    const send = (body: unknown) => request(appFor(testServices)).post("/api/v1/admin/ai-estimator-knowledge/preview")
+      .set("Authorization", "Bearer super-admin-token").send(body);
+    expect((await send(input)).status).toBe(200);
+    expect(testServices.context.preview).toHaveBeenLastCalledWith(superAdmin, input);
+    const combined = { inHouseCalculation: { labor: modeCalculation, material: modeCalculation }, quantity: "1", quantityScale: 0, modeCalculationDiscountBps: 0 };
+    expect((await send(combined)).status).toBe(200);
+    expect(testServices.context.preview).toHaveBeenLastCalledWith(superAdmin, combined);
+    for (const discount of [-1, 1.5, "5", null, Number.MAX_SAFE_INTEGER]) {
+      expect((await send({ ...input, modeCalculationDiscountBps: discount })).status).toBe(400);
+    }
+    expect((await send({ quantityScale: 0, modeCalculationDiscountBps: 0 })).status).toBe(400);
+    expect((await send({ ...input, modeCalculation: { ...modeCalculation, discountBps: 500 } })).status).toBe(400);
+    expect(testServices.context.preview).toHaveBeenCalledTimes(2);
   });
 
   it("accepts only the deterministic preview contract", async () => {
