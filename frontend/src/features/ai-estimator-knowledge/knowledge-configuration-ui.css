@@ -92,6 +92,20 @@
   line-height: 1.5;
 }
 
+/* App styles can register the components layer before the base reset. Keep
+   native dropdown edges and text/chevron spacing independent of that order. */
+.ui-app-shell[data-role] .knowledge-page .ui-select,
+.ui-dialog.modal:has(.knowledge-dialog-body, .knowledge-quality-import) .ui-select {
+  border-width: 1px;
+  border-style: solid;
+  padding-inline: var(--space-3) var(--space-8);
+}
+
+.ui-app-shell[data-role] .knowledge-page .ui-select:is([multiple], [size]:not([size="1"])),
+.ui-dialog.modal:has(.knowledge-dialog-body, .knowledge-quality-import) .ui-select:is([multiple], [size]:not([size="1"])) {
+  padding: var(--space-2) var(--space-3);
+}
+
 .ui-app-shell[data-role] .knowledge-page .ui-textarea {
   min-block-size: 6rem;
   resize: vertical;
