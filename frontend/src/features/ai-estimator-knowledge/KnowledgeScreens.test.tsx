@@ -39,6 +39,7 @@ vi.mock("./knowledgeApi", async (importOriginal) => {
     listKnowledgeItems: vi.fn(),
     listKnowledgeBaskets: vi.fn(),
     listKnowledgeSubBaskets: vi.fn(),
+    createKnowledgeMainLine: vi.fn(),
     listKnowledgeMasters: vi.fn(),
     createKnowledgeMaster: vi.fn(),
     createKnowledgeSurface: vi.fn(),
@@ -291,6 +292,52 @@ beforeEach(() => {
 });
 
 describe("temporary item workspace", () => {
+  it("creates a related starter, saves its real identity, reloads it, and excludes archived starters", async () => {
+    const user = userEvent.setup();
+    const electrical = { id: "electrical", name: "Electrical", description: null, displayOrder: 1, status: "active" as const, version: 1, createdById: "super-admin-1", updatedById: "super-admin-1", createdAt: item.createdAt, updatedAt: item.updatedAt };
+    const lighting = { ...electrical, id: "ceiling-lighting", basketId: electrical.id, name: "Ceiling lighting" };
+    const archived: KnowledgeItemDetail = { ...item, id: "archived-spotlight", mainLineId: "archived-spotlight", mainLineName: "Adjustable recessed spotlight", basketId: electrical.id, basketName: electrical.name, subBasketId: lighting.id, subBasketName: lighting.name, status: "archived" };
+    const created: KnowledgeItemDetail = { ...item, id: "created-downlight", mainLineId: "created-downlight", mainLineName: "Recessed LED downlight", basketId: electrical.id, basketName: electrical.name, subBasketId: lighting.id, subBasketName: lighting.name, itemType: "main_line" };
+    let catalog: KnowledgeItemDetail[] = [];
+    let savedPayload: KnowledgeJsonObject = {};
+    vi.mocked(knowledgeApi.listKnowledgeBaskets).mockResolvedValue({ items: [electrical], pagination: { ...page, total: 1 } });
+    vi.mocked(knowledgeApi.listKnowledgeSubBaskets).mockResolvedValue({ items: [lighting], pagination: { ...page, total: 1 } });
+    vi.mocked(knowledgeApi.listKnowledgeItems).mockImplementation(async (params) => ({ items: params?.status === "archived" ? [archived] : catalog, pagination: { ...page, total: params?.status === "archived" ? 1 : catalog.length } }));
+    vi.mocked(knowledgeApi.createKnowledgeMainLine).mockImplementation(async () => { catalog = [created]; return created; });
+    vi.mocked(knowledgeApi.getKnowledgeSection).mockImplementation(async (_lineId, _revisionId, key) => section(key, key === "recommendations" ? savedPayload : {}));
+    vi.mocked(knowledgeApi.updateKnowledgeSection).mockImplementation(async (_lineId, _revisionId, key, input) => {
+      savedPayload = input.payload;
+      return mutationSection(key, savedPayload);
+    });
+    const route = "/admin/configuration/estimation/items/line-1";
+    const pattern = "/admin/configuration/estimation/items/:itemId";
+    const view = renderRoute(<KnowledgeItemWorkspacePage />, route, pattern);
+    await user.click(await screen.findByRole("tab", { name: "Recommendation & Exclusions" }));
+    await user.click(await screen.findByRole("button", { name: "Add rule" }));
+    await user.selectOptions(screen.getByRole("combobox", { name: "Main Basket" }), electrical.id);
+    const related = screen.getByRole("combobox", { name: "Related item" });
+    await waitFor(() => expect(related).toBeEnabled());
+    expect(within(related).queryByRole("option", { name: /Adjustable recessed spotlight/ })).not.toBeInTheDocument();
+    const starter = within(related).getByRole("option", { name: "Recessed LED downlight · Ceiling lighting" }) as HTMLOptionElement;
+    await user.selectOptions(related, starter.value);
+    const dialog = screen.getByRole("dialog", { name: "Add related item" });
+    await waitFor(() => expect(within(dialog).getByRole("button", { name: "Add related item" })).toBeEnabled());
+    await user.click(within(dialog).getByRole("button", { name: "Add related item" }));
+    await waitFor(() => expect(related).toHaveValue(created.mainLineId));
+    expect(knowledgeApi.updateKnowledgeSection).not.toHaveBeenCalled();
+    await user.type(screen.getByRole("textbox", { name: "Why is this change needed?" }), "Review the mounting when the supporting ceiling is removed.");
+    await user.click(screen.getByRole("button", { name: "Save Recommendation & Exclusions" }));
+    await waitFor(() => expect(knowledgeApi.updateKnowledgeSection).toHaveBeenCalledOnce());
+    expect(savedPayload.budgetAlterations).toEqual([expect.objectContaining({ targetMainLineId: created.mainLineId, targetBasketId: electrical.id, targetSubBasketId: lighting.id, targetType: "catalog" })]);
+    expect(JSON.stringify(savedPayload)).not.toContain("suggestion:");
+    view.unmount();
+    renderRoute(<KnowledgeItemWorkspacePage />, route, pattern);
+    await user.click(await screen.findByRole("tab", { name: "Recommendation & Exclusions" }));
+    await waitFor(() => expect(screen.getByRole("combobox", { name: "Related item" })).toHaveDisplayValue(created.mainLineName));
+    expect(knowledgeApi.createKnowledgeMainLine).toHaveBeenCalledOnce();
+    expect(knowledgeApi.listKnowledgeItems).toHaveBeenCalledWith({ limit: 100, offset: 0, status: "archived" });
+  });
+
   it("lists temporary items under their Main Basket beside regular Main Lines and opens Basket-scoped creation", async () => {
     const user = userEvent.setup();
     const temporary = { ...item, id: "temp-1", mainLineId: "temp-1", mainLineName: "Temporary pendant", itemType: "temporary" as const };

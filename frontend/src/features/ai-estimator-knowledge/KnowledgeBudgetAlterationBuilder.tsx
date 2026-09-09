@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { CreateKnowledgeItemDialog } from "./CreateKnowledgeItemDialog";
 
@@ -10,6 +10,7 @@ import { listKnowledgeSubBaskets } from "./knowledgeApi";
 import { BUDGET_ACTIONS, budgetAlterationRows, createBudgetAlteration } from "./knowledgeBudgetAlterations";
 import { collectAllKnowledgeMasterPages } from "./knowledgeMasterPagination";
 import { knowledgeQueryKeys } from "./knowledgeQueryKeys";
+import { relatedItemSuggestions } from "./knowledgeRelatedItemSuggestions";
 import type { KnowledgeBudgetCatalogState } from "./KnowledgeBudgetBuilder";
 import type { KnowledgeBasket, KnowledgeItemDetail, KnowledgeItemListItem, KnowledgeJsonObject, KnowledgeJsonValue } from "./knowledgeTypes";
 import type { KnowledgeValidationIssue } from "./knowledgeSectionValidation";
@@ -29,6 +30,21 @@ interface Props {
 
 export function KnowledgeBudgetAlterationBuilder({ value, mainLineName, catalogState = { status: "ready" }, ...props }: Props) {
   const id = useId();
+  const [createdItems, setCreatedItems] = useState<readonly KnowledgeItemDetail[]>([]);
+  // Keep returned details available to every rule until the catalog acknowledges them.
+  // Once acknowledged, the catalog owns future lifecycle changes and removals.
+  useEffect(() => {
+    setCreatedItems((current) => {
+      const pending = current.filter((item) => !props.items.some((listed) => listed.mainLineId === item.mainLineId && listed.version >= item.version));
+      return pending.length === current.length ? current : pending;
+    });
+  }, [props.items]);
+  const byId = new Map(props.items.map((item) => [item.mainLineId, item]));
+  for (const item of createdItems) {
+    const listed = byId.get(item.mainLineId);
+    if (!listed || listed.version < item.version) byId.set(item.mainLineId, item);
+  }
+  const items = [...byId.values()];
   const rows = budgetAlterationRows(value);
   const invalidShape = value !== undefined && (!Array.isArray(value) || rows.length !== value.length);
   return <section className="knowledge-budget-alterations" aria-labelledby={`${id}-title`}>
@@ -44,18 +60,26 @@ export function KnowledgeBudgetAlterationBuilder({ value, mainLineName, catalogS
     </InlineMessage> : null}
     {invalidShape && <InlineMessage tone="error">Saved rules contain unsupported data. Reload the configuration before editing these rules.</InlineMessage>}
     {!rows.length ? <div className="knowledge-budget-alterations__empty">No scope-change rules yet. Add a rule to describe which related items are affected and why.</div> : null}
-    {rows.map((row, index) => <BudgetAlterationRow key={String(row.id ?? index)} {...props} row={row} index={index}
-      mainLineName={mainLineName} catalogState={catalogState} readOnly={props.readOnly || invalidShape}
+    {rows.map((row, index) => <BudgetAlterationRow key={`${props.mainLineId}:${String(row.id ?? index)}`} {...props} row={row} index={index}
+      items={items} mainLineName={mainLineName} catalogState={catalogState} readOnly={props.readOnly || invalidShape}
+      onItemCreated={(item) => setCreatedItems((current) => [...current.filter((entry) => entry.mainLineId !== item.mainLineId), item])}
       onChange={(next) => props.onChange(rows.map((current, position) => position === index ? next : current))}
       onRemove={() => props.onChange(rows.filter((_, position) => position !== index))} />)}
   </section>;
 }
 
-function BudgetAlterationRow({ row, index, mainLineId, mainLineName, baskets, items, readOnly, canCreate, issues, catalogState,
-  onChange, onRemove }: Omit<Props, "value" | "onChange"> & { row: KnowledgeJsonObject; index: number; catalogState: KnowledgeBudgetCatalogState; onChange: (row: KnowledgeJsonObject) => void; onRemove: () => void }) {
+function BudgetAlterationRow({ row, index, mainLineId, mainLineName, baskets, items, readOnly, canCreate, issues, catalogState, onItemCreated,
+  onChange, onRemove }: Omit<Props, "value" | "onChange"> & { row: KnowledgeJsonObject; index: number; catalogState: KnowledgeBudgetCatalogState; onItemCreated: (item: KnowledgeItemDetail) => void; onChange: (row: KnowledgeJsonObject) => void; onRemove: () => void }) {
   const id = useId();
   const queryClient = useQueryClient();
-  const [creatingTemporary, setCreatingTemporary] = useState(false);
+  const ownerMounted = useRef(false);
+  useEffect(() => {
+    ownerMounted.current = true;
+    return () => { ownerMounted.current = false; };
+  }, []);
+  const [creatingItem, setCreatingItem] = useState<{ type: "main_line" | "temporary"; name: string; subBasketName: string } | null>(null);
+  const [creationNotice, setCreationNotice] = useState("");
+  const [refreshWarning, setRefreshWarning] = useState("");
   const text = (key: string) => typeof row[key] === "string" ? row[key] as string : "";
   const set = (key: string, next: KnowledgeJsonValue) => onChange({ ...row, [key]: next });
   const error = (key: string) => issues.find((issue) => issue.path === `budgetAlterations.${index}.${key}`)?.message;
@@ -78,6 +102,23 @@ function BudgetAlterationRow({ row, index, mainLineId, mainLineName, baskets, it
   const action = BUDGET_ACTIONS.find((choice) => choice.action === row.action && choice.requirement === row.requirement);
   const catalogDisabled = readOnly || catalogState.status !== "ready" || Boolean(catalogState.refreshErrorMessage);
   const subUnavailable = subBaskets.isPending || subBaskets.isError;
+  const suggestions = !temporary && canCreate && !readOnly ? relatedItemSuggestions({
+    basket: availableBaskets.find((basket) => basket.id === basketId),
+    subBasket: subOptions.find((basket) => basket.id === subBasketId),
+    subBasketId, items, catalogReady: !catalogDisabled && !subUnavailable
+  }) : [];
+  const openCreation = (type: "main_line" | "temporary") => setCreatingItem({
+    type, name: "", subBasketName: subOptions.find((basket) => basket.id === subBasketId)?.name ?? ""
+  });
+  const retryCatalogRefresh = async () => {
+    const results = await Promise.allSettled([
+      queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.itemLists() }, { throwOnError: true }),
+      queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.mainLineLists(basketId) }, { throwOnError: true }),
+      queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.subBasketLists(basketId) }, { throwOnError: true }),
+      queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.basketDeletionImpact(basketId) }, { throwOnError: true })
+    ]);
+    if (results.every((result) => result.status === "fulfilled")) setRefreshWarning("");
+  };
   return <article className="knowledge-budget-rule" aria-labelledby={`${id}-title`}>
     <div className="knowledge-budget-rule__heading">
       <h4 id={`${id}-title`}>Rule {index + 1}</h4>
@@ -91,7 +132,7 @@ function BudgetAlterationRow({ row, index, mainLineId, mainLineName, baskets, it
           <option value="removed">The item is removed from scope</option><option value="added">The item is added to scope</option>
         </Select>}
       </Field>
-      <Field id={`${id}-action`} label="Related item" required error={error("action")}>
+      <Field id={`${id}-action`} label="Scope action" required error={error("action")}>
         {(control) => <Select {...control} value={action?.value ?? ""} disabled={readOnly} onChange={(event) => {
           const choice = BUDGET_ACTIONS.find((candidate) => candidate.value === event.target.value)!;
           onChange({ ...row, action: choice.action, requirement: choice.requirement });
@@ -99,7 +140,7 @@ function BudgetAlterationRow({ row, index, mainLineId, mainLineName, baskets, it
       </Field>
       <Field id={`${id}-type`} label="Item type" required error={error("targetType")}>
         {(control) => <Select {...control} value={text("targetType")} disabled={readOnly} onChange={(event) => onChange({ ...row, targetType: event.target.value, targetMainLineId: null })}>
-          <option value="catalog">Main Line</option><option value="temporary">Temporary item</option>
+          <option value="catalog">Catalog item</option><option value="temporary">Temporary item</option>
         </Select>}
       </Field>
     </div>
@@ -120,31 +161,56 @@ function BudgetAlterationRow({ row, index, mainLineId, mainLineName, baskets, it
           {subOptions.map((basket) => <option key={basket.id} value={basket.id}>{basket.name}</option>)}
         </Select>}
       </Field>
-      <Field id={`${id}-line`} label={temporary ? "Temporary item" : "Main Line"} required error={error("targetMainLineId")}>
+      <Field id={`${id}-line`} label="Related item" required error={error("targetMainLineId")}>
         {(control) => <Select {...control} value={lineId} disabled={catalogDisabled || !basketId || subUnavailable} onChange={(event) => {
+          const suggestion = suggestions.find((candidate) => `suggestion:${candidate.key}` === event.target.value);
+          if (suggestion) {
+            setCreatingItem({ type: "main_line", name: suggestion.name, subBasketName: suggestion.subBasketName });
+            return;
+          }
           const item = availableItems.find((candidate) => candidate.mainLineId === event.target.value);
           onChange({ ...row, targetMainLineId: item?.mainLineId ?? null, targetSubBasketId: item?.subBasketId ?? null });
         }}>
-          <option value="">{temporary ? "Select temporary item" : "Select Main Line"}</option>
-          {lineId && !availableItems.some((item) => item.mainLineId === lineId) && <option value={lineId} disabled>{selectedItem?.mainLineName ?? "Unavailable Main Line"}</option>}
-          {availableItems.map((item) => <option key={item.mainLineId} value={item.mainLineId}>{item.mainLineName}{!subBasketId && item.subBasketName ? ` · ${item.subBasketName}` : ""}</option>)}
+          <option value="">Select related item</option>
+          {lineId && !availableItems.some((item) => item.mainLineId === lineId) && <option value={lineId} disabled>{selectedItem?.mainLineName ?? "Unavailable related item"}</option>}
+          {availableItems.length > 0 && <optgroup label="Existing items">
+            {availableItems.map((item) => <option key={item.mainLineId} value={item.mainLineId}>{item.mainLineName}{!subBasketId && item.subBasketName ? ` · ${item.subBasketName}` : ""}</option>)}
+          </optgroup>}
+          {suggestions.length > 0 && <optgroup label="Suggested items — add to catalog">
+            {suggestions.map((suggestion) => <option key={suggestion.key} value={`suggestion:${suggestion.key}`}>{suggestion.name}{!subBasketId ? ` · ${suggestion.subBasketName}` : ""}</option>)}
+          </optgroup>}
         </Select>}
       </Field>
     </div>
     {basketId && subBaskets.isPending && <p role="status">Loading Sub Baskets…</p>}
     {basketId && subBaskets.isError && <InlineMessage tone="warning">Sub Baskets could not be loaded. <Button type="button" variant="secondary" onClick={() => void subBaskets.refetch()}>Retry Sub Baskets</Button></InlineMessage>}
+    {!basketId && <p className="knowledge-budget-alterations__help">Select a Main Basket to see related items.</p>}
+    {basketId && !catalogDisabled && !subUnavailable && !availableItems.length && !suggestions.length && <p className="knowledge-budget-alterations__help">
+      No related items available.{subBasketId && !temporary ? " Choose All Sub Baskets to see more items and suggestions." : ""}
+    </p>}
     <div className="knowledge-budget-rule__temporary">
       <span>{temporary ? "Temporary items have Overview, Mode and Quality Parameters." : "Item missing from the catalog?"}</span>
-      {!readOnly && canCreate && <Button type="button" variant="secondary" size="compact" disabled={!basketId || catalogDisabled || subUnavailable} onClick={() => setCreatingTemporary(true)}>Add temporary item</Button>}
+      {!readOnly && canCreate && <>
+        <Button type="button" variant="secondary" size="compact" disabled={!basketId || catalogDisabled || subUnavailable} onClick={() => openCreation(temporary ? "temporary" : "main_line")}>Add related item</Button>
+        {!temporary && <Button type="button" variant="quiet" size="compact" disabled={!basketId || catalogDisabled || subUnavailable} onClick={() => openCreation("temporary")}>Add temporary item</Button>}
+      </>}
       {temporary && lineId && <Link to={`/admin/configuration/estimation/items/${encodeURIComponent(lineId)}`} target="_blank" rel="noopener noreferrer">Configure temporary item</Link>}
     </div>
-    {creatingTemporary && <CreateKnowledgeItemDialog itemType="temporary" initialBasketId={basketId}
-      initialSubBasketName={subOptions.find((basket) => basket.id === subBasketId)?.name ?? ""}
-      onClose={() => setCreatingTemporary(false)} onCreated={async (createdId) => {
-        const created = queryClient.getQueryData<KnowledgeItemDetail>(knowledgeQueryKeys.item(createdId));
-        onChange({ ...row, targetType: "temporary", targetBasketId: created?.basketId ?? basketId,
-          targetSubBasketId: created?.subBasketId ?? null, targetMainLineId: createdId });
-        setCreatingTemporary(false);
+    {creationNotice && <p role="status" className="knowledge-budget-alterations__help">{creationNotice}</p>}
+    {refreshWarning && <InlineMessage tone="warning">{refreshWarning} <Button type="button" variant="quiet" size="compact" onClick={() => void retryCatalogRefresh()}>Retry catalog refresh</Button></InlineMessage>}
+    {creatingItem && !readOnly && canCreate && <CreateKnowledgeItemDialog context="related-item" itemType={creatingItem.type}
+      initialBasketId={basketId} initialName={creatingItem.name} initialSubBasketName={creatingItem.subBasketName}
+      excludeMainLineId={mainLineId} onRefreshError={(message) => { if (ownerMounted.current) setRefreshWarning(message); }}
+      onClose={() => setCreatingItem(null)} onCreated={async (createdId, detail) => {
+        if (!ownerMounted.current) return;
+        const created = detail ?? queryClient.getQueryData<KnowledgeItemDetail>(knowledgeQueryKeys.item(createdId));
+        if (!created || created.mainLineId !== createdId || createdId === mainLineId) return;
+        onItemCreated(created);
+        onChange({ ...row, targetType: created.itemType === "temporary" ? "temporary" : "catalog", targetBasketId: created.basketId,
+          targetSubBasketId: created.subBasketId ?? null, targetMainLineId: createdId });
+        setCreationNotice(`${created.mainLineName} is in the catalog. Save this section to keep the rule change.`);
+        setRefreshWarning("");
+        setCreatingItem(null);
       }} />}
     <Field id={`${id}-reason`} label="Why is this change needed?" required error={error("reason")}>
       {(control) => <Textarea {...control} rows={2} value={text("reason")} maxLength={4000} disabled={readOnly}
