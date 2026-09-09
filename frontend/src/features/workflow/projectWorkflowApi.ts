@@ -23,7 +23,7 @@ export const projectWorkflowKeys = {
 };
 
 export const getDesignerPlanTasks = () =>
-  apiClient.get<DesignPlanTask[]>("/designer/design-plan-tasks");
+  apiClient.get<DesignPlanTask[]>("/designer/design-plan-tasks", { showGlobalLoader: false });
 
 export const getDesignerAssignmentOptions = () =>
   apiClient.get<DesignerAssignmentOption[]>("/admin/designers");

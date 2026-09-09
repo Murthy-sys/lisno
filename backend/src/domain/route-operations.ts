@@ -140,6 +140,7 @@ export const HUMAN_JWT_OPERATION_LIST = [
   { key: "GET /admin/projects", permission: "projects.list", scope: { kind: "project", module: "projects" }, operationClass: "read", superAdminBehavior: "global_read", availability: "prompt_2" },
   { key: "GET /admin/projects/:projectId", permission: "projects.read", scope: { kind: "project", module: "projects" }, operationClass: "read", superAdminBehavior: "global_read", availability: "prompt_2" },
   { key: "POST /admin/projects", permission: "projects.initiate", scope: { kind: "project", module: "projects" }, operationClass: "admin", superAdminBehavior: "admin_override", availability: "prompt_2" },
+  { key: "GET /admin/sales-managers", permission: "projects.initiate", scope: { kind: "non_project", namespace: "organization" }, operationClass: "read", superAdminBehavior: "global_read", availability: "prompt_2" },
   { key: "GET /admin/estimators", permission: "organization.estimators.read", scope: { kind: "non_project", namespace: "organization" }, operationClass: "read", superAdminBehavior: "global_read", availability: "prompt_2" },
   { key: "GET /admin/user-invitations", permission: "identity.user_invitations.read", scope: { kind: "non_project", namespace: "identity" }, operationClass: "read", superAdminBehavior: "global_read", availability: "identity_provisioning" },
   { key: "POST /admin/user-invitations", permission: "identity.user_invitations.create", scope: { kind: "non_project", namespace: "identity" }, operationClass: "admin", superAdminBehavior: "admin_override", availability: "identity_provisioning" },
@@ -223,7 +224,8 @@ export const HUMAN_JWT_OPERATION_LIST = [
   { key: "POST /ai-estimator-knowledge/context", permission: "ai_estimator_knowledge.context.read", scope: { kind: "non_project", namespace: "ai_estimator_knowledge" }, operationClass: "read", superAdminBehavior: "global_read", availability: "ai_estimator_knowledge" },
   { key: "GET /admin/dashboard/overview", permission: "admin.dashboard.read", scope: { kind: "non_project", namespace: "super_admin_dashboard" }, operationClass: "read", superAdminBehavior: "global_read", availability: "super_admin_dashboard" },
   { key: "GET /admin/dashboard/projects", permission: "admin.dashboard.read", scope: { kind: "non_project", namespace: "super_admin_dashboard" }, operationClass: "read", superAdminBehavior: "global_read", availability: "super_admin_dashboard" },
-  { key: "GET /admin/dashboard/workforce", permission: "admin.dashboard.read", scope: { kind: "non_project", namespace: "super_admin_dashboard" }, operationClass: "read", superAdminBehavior: "global_read", availability: "super_admin_dashboard" }
+  { key: "GET /admin/dashboard/workforce", permission: "admin.dashboard.read", scope: { kind: "non_project", namespace: "super_admin_dashboard" }, operationClass: "read", superAdminBehavior: "global_read", availability: "super_admin_dashboard" },
+  { key: "DELETE /estimate-design-uploads/:uploadId", permission: "estimation.design_upload.delete", scope: { kind: "non_project", namespace: "estimation_ownership" }, operationClass: "personal", superAdminBehavior: "deny_personal", availability: "baseline" },
 ] as const satisfies readonly HumanJwtOperation[];
 
 export type HumanJwtOperationKey =

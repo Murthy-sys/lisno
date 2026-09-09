@@ -4,6 +4,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { ApiError, apiClient } from "../../api/client";
 import type { DesignVersion, TaskRecord } from "../../api/types";
 import { designerKeys } from "../../features/designer/designerApi";
+import { Button } from "../ui/Button";
 import { Dialog } from "../ui/Dialog";
 import { ProgressBar } from "../ui/ProgressBar";
 
@@ -26,7 +27,8 @@ export function DesignUploadDialog({
       form.append("file", selectedFile);
       return apiClient.postMultipart<DesignVersion>(
         `/tasks/${task.id}/design-versions`,
-        form
+        form,
+        { showGlobalLoader: false }
       );
     },
     onError: (uploadError) => {
@@ -54,6 +56,7 @@ export function DesignUploadDialog({
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
+    if (mutation.isPending) return;
     setError(null);
     if (!file) {
       setError("Choose a PDF or image file to upload.");
@@ -73,7 +76,7 @@ export function DesignUploadDialog({
       onClose={onClose}
       busy={mutation.isPending}
     >
-      <form className="modal-form" onSubmit={submit}>
+      <form className="modal-form design-upload-form" onSubmit={submit}>
         {error ? <div className="form-alert" role="alert">{error}</div> : null}
         <div className="upload-dropzone">
           <label htmlFor={`design-file-${task.id}`}>Design file</label>
@@ -81,6 +84,7 @@ export function DesignUploadDialog({
             id={`design-file-${task.id}`}
             type="file"
             accept="application/pdf,image/png,image/jpeg,image/webp"
+            disabled={mutation.isPending}
             onChange={(event) => setFile(event.target.files?.[0] ?? null)}
           />
           <p>PDF, PNG, JPEG, or WebP. Server upload limits apply.</p>
@@ -105,13 +109,14 @@ export function DesignUploadDialog({
           >
             Cancel
           </button>
-          <button
+          <Button
             type="submit"
             className="button button--primary"
-            disabled={mutation.isPending}
+            busy={mutation.isPending}
+            busyLabel="Uploading…"
           >
-            {mutation.isPending ? "Uploading…" : "Upload file"}
-          </button>
+            Upload file
+          </Button>
         </div>
       </form>
     </Dialog>

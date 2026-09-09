@@ -200,7 +200,7 @@ export function DesignerDashboard() {
             <div>
               <h3>No design projects assigned</h3>
               <p>
-                Approved estimates will appear after an Admin or Super Admin assigns you.
+                Approved estimates will appear after a Sales Manager or Super Admin assigns you.
               </p>
             </div>
           </div>

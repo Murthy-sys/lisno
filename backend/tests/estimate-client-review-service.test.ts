@@ -490,7 +490,7 @@ describe("estimate client review scoped queries", () => {
     expect(text).toContain('"$latestRound._id","$_id"');
   });
 
-  it("allows the owning Estimator/Sales actor to read proof bytes", async () => {
+  it("allows the owning Sales actor to read proof bytes", async () => {
     const storage = storageDouble();
     const aggregateSpy = vi
       .spyOn(EstimateClientReviewRoundModel, "aggregate")

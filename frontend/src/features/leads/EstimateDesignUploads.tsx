@@ -1,16 +1,20 @@
 import { useCallback, useId, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
+import { ApiError } from "../../api/client";
 import type {
   CropRect,
   EstimateDesignDrawing,
   EstimateDesignRevision,
-  EstimateDesignSourcePage
+  EstimateDesignSourcePage,
+  EstimateDesignUpload
 } from "../../api/types";
 import { CropEditor, cropIsValid } from "../../components/design/CropEditor";
 import { EstimateDrawingPreviewDialog } from "../../components/design/EstimateDrawingPreviewDialog";
+import { Button } from "../../components/ui/Button";
 import { Dialog } from "../../components/ui/Dialog";
 import { ProgressBar } from "../../components/ui/ProgressBar";
+import { projectWorkflowKeys } from "../workflow/projectWorkflowApi";
 import { EstimateDrawingRow } from "./EstimateDrawingRow";
 import {
   createManualEstimateDrawing,
@@ -22,6 +26,7 @@ import {
   getEstimateDesignWorkspace,
   replaceEstimateDrawing,
   removeEstimateDrawing,
+  removeEstimateDesignUpload,
   retryEstimateDesignUpload,
   submitEstimateDrawings,
   uploadEstimateDesign
@@ -131,6 +136,7 @@ export function EstimateDesignUploads({
   const [formError, setFormError] = useState("");
   const [actionNotice, setActionNotice] = useState("");
   const [manualOpen, setManualOpen] = useState(false);
+  const [uploadToDelete, setUploadToDelete] = useState<EstimateDesignUpload>();
   const [focusRevision, setFocusRevision] = useState<{
     drawingId: string;
     revisionNumber: number;
@@ -151,6 +157,29 @@ export function EstimateDesignUploads({
       onUploaded?.();
     },
     onSettled: () => setUploadProgress(undefined)
+  });
+  const deleteUpload = useMutation({
+    mutationFn: removeEstimateDesignUpload,
+    onSuccess: async () => {
+      setUploadToDelete(undefined);
+      closeDialog();
+      setManualOpen(false);
+      setFocusRevision(undefined);
+      setActionNotice("Design upload deleted.");
+      await Promise.all([
+        client.invalidateQueries({ queryKey: estimateDesignKeys.workspace(estimateId) }),
+        client.invalidateQueries({ queryKey: projectWorkflowKeys.all }),
+        client.invalidateQueries({ queryKey: ["estimate-plan-change-requests"] }),
+        client.invalidateQueries({ queryKey: ["estimate-plan-change-request"] }),
+        client.invalidateQueries({ queryKey: estimateDesignKeys.clientWorkspace(estimateId) }),
+        client.invalidateQueries({ queryKey: estimateDesignKeys.clientPlanWorkspace(estimateId) })
+      ]);
+    },
+    onError: () => {
+      // Approval may have completed while the confirmation was open.
+      void client.invalidateQueries({ queryKey: estimateDesignKeys.workspace(estimateId) });
+      void client.invalidateQueries({ queryKey: projectWorkflowKeys.all });
+    }
   });
   const correct = useMutation({
     mutationFn: ({ drawing, revision, input }: DrawingSelection & { input: DrawingChange }) =>
@@ -215,11 +244,11 @@ export function EstimateDesignUploads({
         setActionNotice("Design submitted and emailed to the Client.");
       } else if (result.deliveryStatus === "failed") {
         setActionNotice(
-          "Design submitted, but the Client email was not delivered. An Admin can retry it."
+          "Design submitted, but the Client email was not delivered. A Sales Manager can retry it."
         );
       } else if (result.deliveryStatus === "disabled") {
         setActionNotice(
-          "Design submitted, but Client email is unavailable. An Admin can retry it after email is configured."
+          "Design submitted, but Client email is unavailable. A Sales Manager can retry it after email is configured."
         );
       } else if (
         result.deliveryStatus === "queued" ||
@@ -301,6 +330,10 @@ export function EstimateDesignUploads({
   const designerExperience = variant === "designer";
   const uploadButtonLabel = designerExperience ? "Upload design" : "Upload design plan";
   const uploadProgressLabel = designerExperience ? "Uploading design" : "Uploading design plan";
+  const currentUploadToDelete = workspace.data?.uploads.find((item) => item.id === uploadToDelete?.id);
+  const closeDeleteDialog = () => {
+    if (!deleteUpload.isPending) setUploadToDelete(undefined);
+  };
 
   return (
     <section
@@ -327,7 +360,7 @@ export function EstimateDesignUploads({
           <form
             onSubmit={(event) => {
               event.preventDefault();
-              if (file) {
+              if (file && !upload.isPending) {
                 setUploadProgress(0);
                 upload.mutate(file);
               }
@@ -353,13 +386,15 @@ export function EstimateDesignUploads({
                 <small>{formatBytes(file.size)}</small>
               </p>
             ) : null}
-            <button
+            <Button
               type="submit"
               className="button button--primary"
-              disabled={!file || upload.isPending}
+              busy={upload.isPending}
+              busyLabel="Uploading…"
+              disabled={!file}
             >
-              {upload.isPending ? "Uploading…" : uploadButtonLabel}
-            </button>
+              {uploadButtonLabel}
+            </Button>
             {uploadProgress !== undefined ? (
               <div className="estimate-design-uploads__progress">
                 <ProgressBar value={uploadProgress} label={uploadProgressLabel} />
@@ -383,6 +418,21 @@ export function EstimateDesignUploads({
                 <li key={item.id}>
                   <span>{item.originalFilename}</span>
                   <strong>{statusLabel(item.extractionStatus)}</strong>
+                  {designerExperience && item.canDelete ? (
+                    <Button
+                      variant="destructive-outline"
+                      size="compact"
+                      className="estimate-design-uploads__delete"
+                      aria-label={`Delete upload ${item.originalFilename}`}
+                      disabled={deleteUpload.isPending}
+                      onClick={() => {
+                        deleteUpload.reset();
+                        setUploadToDelete(item);
+                      }}
+                    >
+                      Delete upload
+                    </Button>
+                  ) : null}
                   {item.failureMessage ? <small>{item.failureMessage}</small> : null}
                   {!readOnly && item.extractionStatus === "processing_failed" && item.canRetry ? (
                     <button
@@ -505,6 +555,54 @@ export function EstimateDesignUploads({
             </p>
           ) : null}
         </>
+      ) : null}
+      {uploadToDelete ? (
+        <Dialog
+          title="Delete design upload?"
+          eyebrow="Uploaded design"
+          description="This removes the uploaded file and its extracted drawings from the workspace."
+          role="alertdialog"
+          busy={deleteUpload.isPending}
+          onClose={closeDeleteDialog}
+        >
+          <div className="estimate-design-uploads__delete-confirmation">
+            <p className="estimate-design-uploads__delete-filename">{uploadToDelete.originalFilename}</p>
+            <p>
+              If this design is awaiting Client approval, its pending review will be withdrawn.
+              You can then upload and submit an updated design.
+            </p>
+            {deleteUpload.isError ? (
+              <p role="alert" className="estimate-design-uploads__error">
+                {deleteUpload.error instanceof ApiError
+                  ? deleteUpload.error.message
+                  : "The design upload could not be deleted. Try again."}
+              </p>
+            ) : null}
+            {!currentUploadToDelete?.canDelete && !deleteUpload.isPending ? (
+              <p role="status">
+                {currentUploadToDelete?.deleteBlockedReason ?? "This upload is no longer available to delete."}
+              </p>
+            ) : null}
+            <div className="estimate-design-uploads__delete-actions">
+              <Button variant="secondary" disabled={deleteUpload.isPending} onClick={closeDeleteDialog}>
+                Cancel
+              </Button>
+              <Button
+                variant="destructive"
+                busy={deleteUpload.isPending}
+                busyLabel="Deleting…"
+                disabled={!currentUploadToDelete?.canDelete}
+                onClick={() => {
+                  if (currentUploadToDelete?.canDelete && !deleteUpload.isPending) {
+                    deleteUpload.mutate(uploadToDelete.id);
+                  }
+                }}
+              >
+                Delete upload
+              </Button>
+            </div>
+          </div>
+        </Dialog>
       ) : null}
       {selection && mode === "preview" ? <PreviewDialog selection={selection} onClose={closeDialog} /> : null}
       {!readOnly && selection && mode === "correct" ? <CorrectionDialog selection={selection} defaultVerified={verifyOnOpen} page={workspace.data?.pages.find((page) => page.id === selection.revision.sourcePageId) ?? workspace.data?.pages.find((page) => page.id === selection.drawing.sourcePageId)} busy={correct.isPending} error={correct.isError ? "The correction was not saved." : ""} onSubmit={(input) => correct.mutate({ ...selection, input })} onClose={closeDialog} /> : null}

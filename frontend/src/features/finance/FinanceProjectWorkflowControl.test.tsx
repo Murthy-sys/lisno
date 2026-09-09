@@ -237,7 +237,7 @@ describe("Finance project workflow control", () => {
     expect(submissionStage).toHaveTextContent("Submitted");
     expect(submissionStage).toHaveTextContent("design plan version 2");
     const approvalStage = screen.getByRole("heading", { name: "5. Design approved" }).closest("section")!;
-    expect(approvalStage).toHaveTextContent("Approved by the Client, or by an Admin with recorded proof.");
+    expect(approvalStage).toHaveTextContent("Approved by the Client, or by a Sales Manager with recorded proof.");
     const executionStage = screen.getByRole("heading", { name: "6. Execution queues" }).closest("section")!;
     expect(await within(executionStage).findByRole("progressbar", {
       name: "Overall project execution: 25% complete"

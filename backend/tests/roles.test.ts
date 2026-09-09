@@ -34,8 +34,8 @@ describe("canonical role catalog", () => {
   it("provides an exhaustive product-friendly label for every role", () => {
     expect(ROLE_LABELS).toEqual({
       super_admin: "Super Admin",
-      admin: "Admin",
-      estimator_sales: "Estimator/Sales",
+      admin: "Sales Manager",
+      estimator_sales: "Sales",
       designer: "Designer",
       procurement: "Procurement",
       finance_head: "Finance Manager",

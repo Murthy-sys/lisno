@@ -84,13 +84,13 @@ describe("frontend authorization contract parity", () => {
     expect(FRONTEND_POLICY_VERSION).toBe(AUTHORIZATION_POLICY_VERSION);
   });
 
-  it("publishes the exact 119-code Super Admin dashboard policy on both sides", () => {
-    expect(AUTHORIZATION_POLICY_VERSION).toBe("2026-08-30.super-admin-dashboard.v1");
-    expect(FRONTEND_POLICY_VERSION).toBe("2026-08-30.super-admin-dashboard.v1");
-    expect(PERMISSION_CODES).toHaveLength(119);
-    expect(FRONTEND_PERMISSION_CODES).toHaveLength(119);
-    expect(new Set(PERMISSION_CODES).size).toBe(119);
-    expect(new Set(FRONTEND_PERMISSION_CODES).size).toBe(119);
+  it("publishes the 120-code Designer upload deletion policy on both sides", () => {
+    expect(AUTHORIZATION_POLICY_VERSION).toBe("2026-09-09.designer-upload-delete.v1");
+    expect(FRONTEND_POLICY_VERSION).toBe("2026-09-09.designer-upload-delete.v1");
+    expect(PERMISSION_CODES).toHaveLength(120);
+    expect(FRONTEND_PERMISSION_CODES).toHaveLength(120);
+    expect(new Set(PERMISSION_CODES).size).toBe(120);
+    expect(new Set(FRONTEND_PERMISSION_CODES).size).toBe(120);
     expect(PERMISSION_CODES.at(-1)).toBe("admin.dashboard.read");
     expect(FRONTEND_PERMISSION_CODES.at(-1)).toBe("admin.dashboard.read");
     for (const permission of STAFF_INVITATION_PERMISSIONS) {

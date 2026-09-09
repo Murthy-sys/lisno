@@ -9,6 +9,7 @@ import type { AdminProjectSummary } from "../../api/types";
 import { renderWithQuery } from "../../test/render";
 import { server } from "../../test/server";
 import { AdminProjectInitiationDialog } from "./AdminProjectInitiationDialog";
+import { leadKeys } from "../leads/leadsApi";
 import { dashboardKeys } from "./dashboard/superAdminDashboardApi";
 
 const estimator = {
@@ -16,6 +17,13 @@ const estimator = {
   name: "Ravi Estimator",
   email: "ravi@lisno.example",
   title: "Senior Estimator"
+};
+
+const salesManager = {
+  id: "sales-manager-2",
+  name: "Meera Manager",
+  email: "meera@lisno.example",
+  title: "Sales Manager"
 };
 
 afterEach(() => vi.restoreAllMocks());
@@ -55,31 +63,33 @@ function requiredLabel(name: string) {
 
 function renderDialog({
   onClose = vi.fn(),
-  onCreated = vi.fn()
+  onCreated = vi.fn(),
+  assignmentMode = "estimator"
 }: {
   onClose?: () => void;
   onCreated?: (project: AdminProjectSummary) => void;
+  assignmentMode?: "estimator" | "sales-manager";
 } = {}) {
   return {
     onClose,
     onCreated,
     ...renderWithQuery(
       <MemoryRouter>
-        <AdminProjectInitiationDialog onClose={onClose} onCreated={onCreated} />
+        <AdminProjectInitiationDialog onClose={onClose} onCreated={onCreated} assignmentMode={assignmentMode} />
       </MemoryRouter>
     )
   };
 }
 
 async function selectEstimator(user: ReturnType<typeof userEvent.setup>) {
-  const combobox = screen.getByRole("combobox", { name: "Estimator/Sales" });
+  const combobox = screen.getByRole("combobox", { name: "Sales" });
   await user.click(combobox);
   expect(await screen.findByRole("option", { name: /Ravi Estimator/ })).toBeVisible();
   await user.keyboard("{ArrowDown}{Enter}");
   expect(combobox).toHaveValue("Ravi Estimator");
 }
 
-async function fillForm(user: ReturnType<typeof userEvent.setup>) {
+async function fillForm(user: ReturnType<typeof userEvent.setup>, select = true) {
   const fields = {
     "Client name": "Asha Shah",
     "Client email": "asha@example.com",
@@ -95,7 +105,7 @@ async function fillForm(user: ReturnType<typeof userEvent.setup>) {
   for (const [name, value] of Object.entries(fields)) {
     await user.type(screen.getByLabelText(requiredLabel(name)), value);
   }
-  await selectEstimator(user);
+  if (select) await selectEstimator(user);
 }
 
 describe("AdminProjectInitiationDialog", () => {
@@ -116,7 +126,7 @@ describe("AdminProjectInitiationDialog", () => {
       "Maximum budget",
       "Next action",
       "Next action date",
-      "Estimator/Sales"
+      "Sales"
     ]) {
       expect(within(dialog).getByLabelText(requiredLabel(name))).toBeRequired();
     }
@@ -125,15 +135,20 @@ describe("AdminProjectInitiationDialog", () => {
     }
   });
 
-  it("supports loading, server options, debounced search, keyboard selection, empty, and retryable error states", async () => {
+  it.each([
+    { assignmentMode: "estimator" as const, label: "Sales", endpoint: "/api/v1/admin/estimators", option: estimator },
+    { assignmentMode: "sales-manager" as const, label: "Sales Manager", endpoint: "/api/v1/admin/sales-managers", option: salesManager }
+  ])("supports $label loading, debounced search, keyboard selection, empty, and retryable error states", async ({ assignmentMode, label, endpoint, option }) => {
     let requestCount = 0;
     let fail = false;
     const searches: string[] = [];
     let releaseInitial!: () => void;
     const initial = new Promise<void>((resolve) => { releaseInitial = resolve; });
     server.use(
-      http.get("/api/v1/admin/estimators", async ({ request }) => {
+      http.get(endpoint, async ({ request }) => {
         requestCount += 1;
+        expect(new URL(request.url).searchParams.get("limit")).toBe("20");
+        expect(new URL(request.url).searchParams.get("offset")).toBe("0");
         const search = new URL(request.url).searchParams.get("search") ?? "";
         searches.push(search);
         if (requestCount === 1) await initial;
@@ -143,19 +158,19 @@ describe("AdminProjectInitiationDialog", () => {
             { status: 503 }
           );
         }
-        return HttpResponse.json(estimatorPage(search === "nobody" ? [] : [estimator]));
+        return HttpResponse.json(estimatorPage(search === "nobody" ? [] : [option]));
       })
     );
 
     const user = userEvent.setup();
-    renderDialog();
-    const combobox = screen.getByRole("combobox", { name: "Estimator/Sales" });
+    renderDialog({ assignmentMode });
+    const combobox = screen.getByRole("combobox", { name: label });
     await user.click(combobox);
     expect(within(screen.getByRole("dialog", { name: "Initiate project" })).getByRole("status")).toHaveTextContent("Loading options");
     releaseInitial();
-    expect(await screen.findByRole("option", { name: /Ravi Estimator/ })).toBeVisible();
+    expect(await screen.findByRole("option", { name: new RegExp(option.name) })).toBeVisible();
     await user.keyboard("{ArrowDown}{Enter}");
-    expect(combobox).toHaveValue("Ravi Estimator");
+    expect(combobox).toHaveValue(option.name);
 
     await user.clear(combobox);
     await user.type(combobox, "nobody");
@@ -171,7 +186,7 @@ describe("AdminProjectInitiationDialog", () => {
 
     fail = false;
     await user.click(screen.getByRole("button", { name: "Try again" }));
-    expect(await screen.findByRole("option", { name: /Ravi Estimator/ })).toBeVisible();
+    expect(await screen.findByRole("option", { name: new RegExp(option.name) })).toBeVisible();
     expect(requestCount).toBeGreaterThanOrEqual(4);
     expect(searches.filter((search) => search === "nobody")).toHaveLength(1);
   });
@@ -216,7 +231,7 @@ describe("AdminProjectInitiationDialog", () => {
     });
     expect(body).not.toHaveProperty("source");
     release();
-    expect(await screen.findByText("The Estimator/Sales handoff is ready.")).toBeVisible();
+    expect(await screen.findByText("The Sales handoff is ready.")).toBeVisible();
   });
 
   it("retains every value, renders field feedback, and focuses the first server-invalid control", async () => {
@@ -231,7 +246,7 @@ describe("AdminProjectInitiationDialog", () => {
               message: "Request validation failed.",
               fields: {
                 clientEmail: "This email belongs to an internal account.",
-                estimatorId: "Select an active Estimator/Sales user."
+                estimatorId: "Select an active Sales user."
               }
             }
           },
@@ -249,8 +264,8 @@ describe("AdminProjectInitiationDialog", () => {
     expect(email).toHaveFocus();
     expect(email).toHaveValue("asha@example.com");
     expect(email).toHaveAccessibleDescription("This email belongs to an internal account.");
-    expect(screen.getByRole("combobox", { name: "Estimator/Sales" })).toHaveValue("Ravi Estimator");
-    expect(screen.getByText("Select an active Estimator/Sales user.")).toBeVisible();
+    expect(screen.getByRole("combobox", { name: "Sales" })).toHaveValue("Ravi Estimator");
+    expect(screen.getByText("Select an active Sales user.")).toBeVisible();
     expect(screen.getByRole("textbox", { name: "Project / property name" })).toHaveValue("Asha home");
     expect(invalidate).not.toHaveBeenCalledWith({ queryKey: dashboardKeys.all });
   });
@@ -270,12 +285,96 @@ describe("AdminProjectInitiationDialog", () => {
     await fillForm(user);
     await user.click(screen.getByRole("button", { name: "Initiate project" }));
 
-    expect(await screen.findByText("The Estimator/Sales handoff is ready.")).toBeVisible();
+    expect(await screen.findByText("The Sales handoff is ready.")).toBeVisible();
     await waitFor(() => {
       expect(invalidate).toHaveBeenCalledWith({ queryKey: ["admin-projects"] });
       expect(invalidate).toHaveBeenCalledWith({ queryKey: dashboardKeys.all });
+      expect(invalidate).toHaveBeenCalledWith({ queryKey: leadKeys.all });
       expect(onClose).toHaveBeenCalledOnce();
       expect(onCreated).toHaveBeenCalledWith(createdProject);
     });
   });
+  it("requires a selected Sales Manager and submits their stable ID without an estimator override", async () => {
+    let body: unknown;
+    const onCreated = vi.fn();
+    const invalidate = vi.spyOn(QueryClient.prototype, "invalidateQueries");
+    server.use(
+      http.get("/api/v1/admin/sales-managers", () => HttpResponse.json(estimatorPage([salesManager]))),
+      http.post("/api/v1/admin/projects", async ({ request }) => {
+        body = await request.json();
+        return HttpResponse.json({ data: createdProject }, { status: 201 });
+      })
+    );
+    const user = userEvent.setup();
+    renderDialog({ assignmentMode: "sales-manager", onCreated });
+    await fillForm(user, false);
+    const combobox = screen.getByRole("combobox", { name: "Sales Manager" });
+    expect(combobox).toBeRequired();
+    expect(screen.queryByRole("combobox", { name: "Sales" })).not.toBeInTheDocument();
+    await user.type(combobox, "Meera Manager");
+    expect(screen.getByRole("button", { name: "Initiate project" })).toBeDisabled();
+    fireEvent.submit(combobox.closest("form")!);
+    expect(body).toBeUndefined();
+    expect(await screen.findByText("Select an active Sales Manager user.")).toBeVisible();
+    await user.click(await screen.findByRole("option", { name: /Meera Manager/ }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Initiate project" })).toBeEnabled());
+    await user.click(screen.getByRole("button", { name: "Initiate project" }));
+    await waitFor(() => expect(onCreated).toHaveBeenCalledWith(createdProject));
+    expect(body).toEqual({
+      clientName: "Asha Shah",
+      clientEmail: "asha@example.com",
+      clientMobile: "+91 90000 00000",
+      projectName: "Asha home",
+      location: "Pune",
+      propertyType: "3BHK",
+      budgetMin: 800000,
+      budgetMax: 1200000,
+      nextAction: "Schedule site visit",
+      nextActionAt: expect.stringMatching(/Z$/),
+      salesManagerId: "sales-manager-2"
+    });
+    expect(body).not.toHaveProperty("estimatorId");
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: leadKeys.all });
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ["admin-projects"] });
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: dashboardKeys.all });
+    expect(screen.getByText("Your lead is ready with the selected Sales Manager.")).toBeVisible();
+  });
+
+  it("retains sales project inputs, focuses an invalid manager, and allows a corrected retry", async () => {
+    let attempts = 0;
+    const onCreated = vi.fn();
+    server.use(
+      http.get("/api/v1/admin/sales-managers", () => HttpResponse.json(estimatorPage([salesManager]))),
+      http.post("/api/v1/admin/projects", () => {
+        attempts += 1;
+        return attempts === 1
+          ? HttpResponse.json({ error: {
+            code: "VALIDATION_ERROR",
+            message: "The selected manager is no longer available.",
+            fields: { salesManagerId: "Select an active Sales Manager." }
+          } }, { status: 400 })
+          : HttpResponse.json({ data: createdProject }, { status: 201 });
+      })
+    );
+    const user = userEvent.setup();
+    renderDialog({ assignmentMode: "sales-manager", onCreated });
+    await fillForm(user, false);
+    const combobox = screen.getByRole("combobox", { name: "Sales Manager" });
+    await user.click(combobox);
+    await user.click(await screen.findByRole("option", { name: /Meera Manager/ }));
+    await user.click(screen.getByRole("button", { name: "Initiate project" }));
+    await waitFor(() => expect(combobox).toHaveFocus());
+    expect(combobox).toHaveValue("Meera Manager");
+    expect(combobox).toHaveAccessibleDescription("Select an active Sales Manager.");
+    expect(combobox).toHaveAttribute("aria-invalid", "true");
+    expect(screen.getByRole("textbox", { name: "Project / property name" })).toHaveValue("Asha home");
+    expect(onCreated).not.toHaveBeenCalled();
+    await user.click(await screen.findByRole("option", { name: /Meera Manager/ }));
+    expect(combobox).not.toHaveAttribute("aria-invalid");
+    await waitFor(() => expect(screen.getByRole("button", { name: "Initiate project" })).toBeEnabled());
+    await user.click(screen.getByRole("button", { name: "Initiate project" }));
+    await waitFor(() => expect(onCreated).toHaveBeenCalledOnce());
+    expect(attempts).toBe(2);
+  });
+
 });

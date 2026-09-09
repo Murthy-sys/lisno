@@ -16,6 +16,8 @@ const estimateDesignUploadSchema = new Schema({
   replacesRevisionId: { type: String, ref: "EstimateDesignRevision", default: null, immutable: true },
   replacementVersion: { type: Number, default: null, min: 1, immutable: true },
   failureCode: { type: String, default: null, maxlength: 64 },
+  deletedAt: { type: Date, default: null },
+  deletedById: { type: String, ref: "User", default: null },
   failureMessage: { type: String, default: null, maxlength: 500 }
 }, { timestamps: true, versionKey: false });
 

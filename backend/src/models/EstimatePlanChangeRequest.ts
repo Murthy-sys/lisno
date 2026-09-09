@@ -23,7 +23,10 @@ export const estimatePlanChangeRequestSchema = new Schema({
   unassigned: { type: Boolean, required: true },
   unassignedResolved: { type: Boolean, default: false },
   resolutionNote: { type: String, trim: true, maxlength: 1_000, default: null },
-  status: { type: String, enum: ["open", "resolved"], required: true }
+  status: { type: String, enum: ["open", "resolved", "withdrawn"], required: true },
+  withdrawnAt: { type: Date, default: null },
+  withdrawnById: { type: String, ref: "User", default: null },
+  withdrawalReason: { type: String, default: null, maxlength: 500 }
 }, { timestamps: true, versionKey: false, strict: "throw" });
 
 estimatePlanChangeRequestSchema.pre("validate", function validateRequest() {
@@ -37,7 +40,11 @@ estimatePlanChangeRequestSchema.pre("validate", function validateRequest() {
     throw new Error("Plan feedback targets require unique drawing IDs.");
   }
   const derived = derivePlanRequestStatus(targets.map((target) => target.status), unassigned, Boolean(this.get("unassignedResolved")));
-  if (this.get("status") !== derived) throw new Error("Plan feedback status must match its target lifecycle.");
+  if (this.get("status") === "withdrawn") {
+    if (!this.get("withdrawnAt") || !this.get("withdrawnById") || !this.get("withdrawalReason")) {
+      throw new Error("Withdrawn plan feedback requires its withdrawal identity and reason.");
+    }
+  } else if (this.get("status") !== derived) throw new Error("Plan feedback status must match its target lifecycle.");
 });
 estimatePlanChangeRequestSchema.index(
   { clientId: 1, sourcePageId: 1, idempotencyKey: 1 },

@@ -180,7 +180,8 @@ export function DesignerDesignPlanTasksPage() {
             ) : null}
             {task.status === "ready_for_client" ? (
               <p className="designer-plan-workspace__notice" role="status">
-                Submitted to the Client. The design and extracted images are read-only while approval is pending.
+                Submitted to the Client. Other edits are read-only while approval is pending.
+                You can delete your unapproved uploads to withdraw the review and update the design.
               </p>
             ) : null}
             <EstimateDesignUploads

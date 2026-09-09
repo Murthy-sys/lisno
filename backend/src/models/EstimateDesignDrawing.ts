@@ -70,6 +70,8 @@ const estimateDesignDrawingSchema = new Schema({
   sourcePageId: { type: String, ref: "EstimateDesignSourcePage", required: true, immutable: true },
   estimateId: { type: String, ref: "Estimate", required: true, immutable: true },
   active: { type: Boolean, required: true, default: true },
+  deletedAt: { type: Date, default: null },
+  deletedById: { type: String, ref: "User", default: null },
   verified: { type: Boolean, required: true, default: false },
   roomId: nullableMappingIdentifier(),
   scopeSectionId: nullableMappingIdentifier(),

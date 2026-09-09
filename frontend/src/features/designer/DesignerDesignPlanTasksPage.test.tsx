@@ -79,7 +79,8 @@ EstimateDesignWorkspace {
       extractionStatus: "estimator_review",
       failureCode: null,
       failureMessage: null,
-      canRetry: false
+      canRetry: false,
+      canDelete: false
     }],
     pages: [{
       id: `page-${estimateId}`,
@@ -362,5 +363,55 @@ describe("DesignerDesignPlanTasksPage", () => {
     expect(screen.queryByRole("button", { name: "Submit drawings to client" }))
       .not.toBeInTheDocument();
     expect(screen.getByText(/submitted design and extracted images are read-only/)).toBeVisible();
+  });
+
+  it("deletes a pending upload and refreshes the workspace and project queue for another upload", async () => {
+    let deleted = false;
+    const deleteRequests: string[] = [];
+    let workspaceReads = 0;
+    let taskReads = 0;
+    server.use(
+      http.get("/api/v1/designer/design-plan-tasks", () => {
+        taskReads += 1;
+        return HttpResponse.json({
+          data: [{ ...assignedTask, status: deleted ? "assigned" : "ready_for_client", designPlanVersion: 1 }]
+        });
+      }),
+      http.get("/api/v1/estimates/estimate-1/design-uploads", () => {
+        workspaceReads += 1;
+        const workspace = extractedWorkspace("estimate-1");
+        workspace.uploads[0]!.canDelete = true;
+        return HttpResponse.json({ data: deleted ? emptyWorkspace() : workspace });
+      }),
+      http.get("/api/v1/estimate-design-revisions/revision-estimate-1/image", () =>
+        new HttpResponse(new Uint8Array([137, 80, 78, 71]), {
+          headers: { "Content-Type": "image/png" }
+        })
+      ),
+      http.delete("/api/v1/estimate-design-uploads/:uploadId", ({ params }) => {
+        deleteRequests.push(String(params.uploadId));
+        deleted = true;
+        return HttpResponse.json({ data: { id: params.uploadId, deleted: true } });
+      })
+    );
+    const user = userEvent.setup();
+    renderPage();
+
+    expect(await screen.findByText(/You can delete your unapproved uploads/)).toBeVisible();
+    expect(screen.queryByLabelText("Design plan file")).not.toBeInTheDocument();
+    await user.click(await screen.findByRole("button", { name: "Delete upload client-design.pdf" }));
+    const dialog = screen.getByRole("alertdialog", { name: "Delete design upload?" });
+    await user.click(within(dialog).getByRole("button", { name: "Delete upload" }));
+
+    expect(await screen.findByLabelText("Design plan file")).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByText("client-design.pdf")).not.toBeInTheDocument());
+    expect(screen.queryByRole("heading", { name: "Extracted images" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    expect(screen.getByText("Design upload deleted.")).toBeVisible();
+    const queue = screen.getByRole("region", { name: "Assigned projects" });
+    expect(within(queue).getByRole("button", { name: /Aurora Villa.*Ready to upload/ })).toBeVisible();
+    expect(taskReads).toBeGreaterThanOrEqual(2);
+    expect(workspaceReads).toBeGreaterThanOrEqual(2);
+    expect(deleteRequests).toEqual(["upload-estimate-1"]);
   });
 });

@@ -632,7 +632,7 @@ describe("Admin-initiated projects", () => {
         .set("Authorization", bearer("user-admin", "admin"))
         .send({ ...valid, estimatorId }).expect(400);
       expect(response.body.error.fields).toEqual({
-        estimatorId: "Select an active Estimator/Sales user."
+        estimatorId: "Select an active Sales user."
       });
     }
   });

@@ -1,11 +1,15 @@
 import { useQuery } from "@tanstack/react-query";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { useState } from "react";
-import { Download } from "lucide-react";
+import { Download, Plus } from "lucide-react";
 
 import type { Lead, LeadStage } from "../../api/types";
+import { useAuth } from "../../auth/AuthProvider";
+import { hasFrontendPermission } from "../../auth/authorization";
 import { AsyncState } from "../../components/ui/AsyncState";
+import { Button } from "../../components/ui/Button";
 import { DownloadButton } from "../../components/ui/DownloadButton";
+import { AdminProjectInitiationDialog } from "../admin/AdminProjectInitiationDialog";
 import "../../styles/estimator-dashboard.css";
 import {
   downloadEstimatePdf,
@@ -29,6 +33,10 @@ const labels: Record<LeadStage, string> = {
 const money = (value: number) => `₹${value.toLocaleString("en-IN")}`;
 
 export function LeadDashboard() {
+  const auth = useAuth();
+  const navigate = useNavigate();
+  const [initiationOpen, setInitiationOpen] = useState(false);
+  const canInitiate = hasFrontendPermission(auth.authorization, "projects.initiate");
   const [search, setSearch] = useState("");
   const [stage, setStage] = useState<LeadStage | "all">("all");
   const query = useQuery({
@@ -50,10 +58,15 @@ export function LeadDashboard() {
   return <section className="lead-page estimator-dashboard" aria-labelledby="lead-title">
     <header className="workspace-header">
       <div>
-        <p className="eyebrow">Estimator / Sales</p>
+        <p className="eyebrow">Sales</p>
         <h1 id="lead-title">Lead workspace</h1>
         <p>Track client conversations and continue every saved estimate.</p>
       </div>
+      {canInitiate ? (
+        <Button leadingIcon={<Plus size={18} />} onClick={() => setInitiationOpen(true)}>
+          Initiate project
+        </Button>
+      ) : null}
     </header>
 
     <section className="estimator-dashboard__overview" aria-label="Pipeline overview">
@@ -94,8 +107,15 @@ export function LeadDashboard() {
           estimatesPending={estimates.isPending}
           estimatesUnavailable={estimates.isError}
         />)}
-      </div> : <div className="inline-empty"><h2>No leads yet</h2><p>Leads appear here once an admin initiates a project.</p></div>}
+      </div> : <div className="inline-empty"><h2>No leads yet</h2><p>{canInitiate ? "Initiate a project to create your first lead." : "Assigned project leads appear here."}</p></div>}
     </section>
+    {initiationOpen && canInitiate ? (
+      <AdminProjectInitiationDialog
+        assignmentMode="sales-manager"
+        onClose={() => setInitiationOpen(false)}
+        onCreated={(project) => navigate(`/estimator-sales/leads/${encodeURIComponent(project.lead.id)}`)}
+      />
+    ) : null}
   </section>;
 }
 

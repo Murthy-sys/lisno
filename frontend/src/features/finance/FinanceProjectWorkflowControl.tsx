@@ -188,7 +188,7 @@ function WorkflowSnapshot({
           tone={designApproved ? "success" : designStatus === "changes_requested" ? "warning" : "neutral"}
           status={designApproved ? "Approved" : formatWorkflowLabel(designStatus)}
           detail={designApproved
-            ? "Approved by the Client, or by an Admin with recorded proof."
+            ? "Approved by the Client, or by a Sales Manager with recorded proof."
             : "Execution remains locked until the design decision is approved."}
         />
         <WorkflowStage

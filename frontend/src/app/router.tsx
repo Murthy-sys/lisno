@@ -76,7 +76,7 @@ const roleHomeContent: Record<Role, RoleHomeContent> = {
     status: "Ready for staged access"
   },
   admin: {
-    heading: "Admin workspace",
+    heading: "Sales Manager workspace",
     eyebrow: "Project administration",
     description: "Your project administration tools are being prepared.",
     status: "Ready for staged access"
@@ -102,7 +102,7 @@ const roleHomeContent: Record<Role, RoleHomeContent> = {
       "Manager teams, organization health, and evaluation coverage will live here.",
     status: "Ready for organization review"
   },
-  estimator_sales: { heading: "Estimator / Sales workspace", eyebrow: "Lead operations", description: "Your leads and estimates will live here.", status: "Ready for lead work" },
+  estimator_sales: { heading: "Sales workspace", eyebrow: "Lead operations", description: "Your leads and estimates will live here.", status: "Ready for lead work" },
   procurement: {
     heading: "Procurement workspace",
     eyebrow: "Project procurement",

@@ -361,7 +361,7 @@ describe("AdminProjectsPage", () => {
     ] as const) {
       fireEvent.change(within(dialog).getByLabelText(requiredLabel(label)), { target: { value } });
     }
-    const estimatorInput = within(dialog).getByRole("combobox", { name: "Estimator/Sales" });
+    const estimatorInput = within(dialog).getByRole("combobox", { name: "Sales" });
     await user.click(estimatorInput);
     await within(dialog).findByRole("option", { name: /Ravi Estimator/ });
     await user.keyboard("{ArrowDown}{Enter}");

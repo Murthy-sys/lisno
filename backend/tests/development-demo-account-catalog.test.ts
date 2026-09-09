@@ -12,8 +12,8 @@ const HASH = "$2b$10$7EqJtq98hPqEX7fNZaFWoOhqP8D5iEyOH6v9mJEkjEBlrptHw28.O";
 
 const expected = [
   ["user-super-admin", "Aditi Rao", "super-admin@lisno.example", "super_admin", "Super Admin", null, []],
-  ["user-admin", "Arjun Patel", "admin@lisno.example", "admin", "Admin", null, []],
-  ["user-estimator-sales", "Priya Sharma", "sales@lisno.example", "estimator_sales", "Estimator / Sales", null, []],
+  ["user-admin", "Arjun Patel", "admin@lisno.example", "admin", "Sales Manager", null, []],
+  ["user-estimator-sales", "Priya Sharma", "sales@lisno.example", "estimator_sales", "Sales", null, []],
   ["user-designer-ananya", "Ananya Rao", "ananya@lisno.example", "designer", "Senior Designer", "user-manager-aarav", ["user-client-aurora", "user-client-celeste"]],
   ["user-procurement", "Nisha Verma", "procurement@lisno.example", "procurement", "Procurement", null, []],
   ["user-finance-head", "Rohan Gupta", "finance-head@lisno.example", "finance_head", "Finance Manager", null, []],

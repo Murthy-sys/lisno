@@ -21,8 +21,8 @@ export type Role = (typeof ROLE_CODES)[number];
 
 export const ROLE_LABELS = {
   super_admin: "Super Admin",
-  admin: "Admin",
-  estimator_sales: "Estimator/Sales",
+  admin: "Sales Manager",
+  estimator_sales: "Sales",
   designer: "Designer",
   procurement: "Procurement",
   finance_head: "Finance Manager",
@@ -149,6 +149,7 @@ export const PERMISSION_CODES = [
   "estimation.design_upload.create",
   "estimation.design_upload.read",
   "estimation.design_upload.retry",
+  "estimation.design_upload.delete",
   "estimation.source_page_image.read",
   "estimation.drawing.create",
   "estimation.design_revision_image.read",
@@ -225,7 +226,7 @@ export const PERMISSION_CODES = [
 export type PermissionCode = (typeof PERMISSION_CODES)[number];
 
 export const AUTHORIZATION_POLICY_VERSION =
-  "2026-08-30.super-admin-dashboard.v1" as const;
+  "2026-09-09.designer-upload-delete.v1" as const;
 
 export interface AuthorizationSnapshot {
   readonly role: Role;

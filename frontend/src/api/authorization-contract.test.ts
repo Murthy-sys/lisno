@@ -87,13 +87,14 @@ describe("frontend authorization contract", () => {
       "execution"
     ]);
     expect(AUTHORIZATION_POLICY_VERSION).toBe(
-      "2026-08-30.super-admin-dashboard.v1"
+      "2026-09-09.designer-upload-delete.v1"
     );
   });
 
-  it("publishes all 119 unique permissions with the additive dashboard permission in canonical order", () => {
-    expect(PERMISSION_CODES).toHaveLength(119);
-    expect(new Set(PERMISSION_CODES)).toHaveLength(119);
+  it("publishes all 120 unique permissions with designer upload deletion in canonical order", () => {
+    expect(PERMISSION_CODES).toHaveLength(120);
+    expect(new Set(PERMISSION_CODES)).toHaveLength(120);
+    expect(PERMISSION_CODES).toContain("estimation.design_upload.delete");
     expect(PERMISSION_CODES).toContain("projects.initiate");
     expect(PERMISSION_CODES).toContain("organization.estimators.read");
     const identityMutationIndex = PERMISSION_CODES.indexOf(
@@ -189,8 +190,8 @@ describe("frontend authorization contract", () => {
     expect(Object.keys(ROLE_LABELS)).toEqual(expectedRoles);
     expect(ROLE_LABELS).toEqual({
       super_admin: "Super Admin",
-      admin: "Admin",
-      estimator_sales: "Estimator/Sales",
+      admin: "Sales Manager",
+      estimator_sales: "Sales",
       designer: "Designer",
       procurement: "Procurement",
       finance_head: "Finance Manager",

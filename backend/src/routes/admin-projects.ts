@@ -19,7 +19,8 @@ const initiationSchema = z.object({
   budgetMax: z.number().nonnegative(),
   nextAction: z.string().trim().min(1),
   nextActionAt: z.string().datetime({ offset: true }),
-  estimatorId: z.string().trim().min(1)
+  estimatorId: z.string().trim().min(1).optional(),
+  salesManagerId: z.string().trim().min(1).optional()
 }).strict().refine((value) => value.budgetMax >= value.budgetMin, {
   path: ["budgetMax"],
   message: "Maximum budget must be at least the minimum budget."
@@ -70,6 +71,26 @@ export function createAdminProjectsRouter(
         response.json({
           data: paginatedEnvelope(
             await service.estimators(request.authenticatedUser!, search, pagination),
+            pagination
+          )
+        });
+      } catch (error) {
+        next(error);
+      }
+    }
+  );
+
+  router.get(
+    "/admin/sales-managers",
+    protectedRoute,
+    requireOperation("GET /admin/sales-managers"),
+    validateQuery(estimatorQuerySchema),
+    async (request, response, next) => {
+      try {
+        const { search, ...pagination } = response.locals.validatedQuery;
+        response.json({
+          data: paginatedEnvelope(
+            await service.salesManagers(request.authenticatedUser!, search, pagination),
             pagination
           )
         });

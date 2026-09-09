@@ -55,8 +55,8 @@ const responsibilityLabels: Readonly<
     "linked client projects remain"
   ],
   adminInitiatorGrants: [
-    "Admin initiator grant remains recorded",
-    "Admin initiator grants remain recorded"
+    "Sales Manager project grant remains recorded",
+    "Sales Manager project grants remain recorded"
   ]
 };
 

@@ -63,8 +63,12 @@ export const tokenStorage = {
   }
 };
 
-type JsonRequestOptions = Omit<RequestInit, "body"> & { body?: unknown };
-type RequestOptions = Omit<RequestInit, "body" | "method">;
+interface LoadingOptions {
+  /** Disable the page indicator when the caller owns local or background feedback. */
+  showGlobalLoader?: boolean;
+}
+type JsonRequestOptions = Omit<RequestInit, "body"> & LoadingOptions & { body?: unknown };
+type RequestOptions = Omit<RequestInit, "body" | "method"> & LoadingOptions;
 
 async function parseApiError(response: Response): Promise<ApiError> {
   let body: ApiErrorBody | undefined;
@@ -143,9 +147,9 @@ async function fetchApi(
 
 async function request<T>(
   path: string,
-  { body, headers, ...options }: JsonRequestOptions = {}
+  { body, headers, showGlobalLoader = true, ...options }: JsonRequestOptions = {}
 ): Promise<T> {
-  const finish = beginApiRequest();
+  const finish = showGlobalLoader ? beginApiRequest() : () => {};
   try {
     const hasBody = body !== undefined;
     const requestToken = tokenStorage.get();
@@ -163,9 +167,9 @@ async function request<T>(
 
 async function publicRequest<T>(
   path: string,
-  { body, headers, ...options }: JsonRequestOptions = {}
+  { body, headers, showGlobalLoader = true, ...options }: JsonRequestOptions = {}
 ): Promise<T> {
-  const finish = beginApiRequest();
+  const finish = showGlobalLoader ? beginApiRequest() : () => {};
   try {
     const hasBody = body !== undefined;
     const publicHeaders = new Headers(headers);
@@ -207,11 +211,11 @@ export const apiClient = {
   put<T>(path: string, body?: unknown): Promise<T> {
     return request<T>(path, { method: "PUT", body });
   },
-  delete<T>(path: string, body?: unknown): Promise<T> {
-    return request<T>(path, { method: "DELETE", body });
+  delete<T>(path: string, body?: unknown, options?: RequestOptions): Promise<T> {
+    return request<T>(path, { ...options, method: "DELETE", body });
   },
-  async postMultipart<T>(path: string, body: FormData): Promise<T> {
-    const finish = beginApiRequest();
+  async postMultipart<T>(path: string, body: FormData, { showGlobalLoader = true }: LoadingOptions = {}): Promise<T> {
+    const finish = showGlobalLoader ? beginApiRequest() : () => {};
     try {
       const requestToken = tokenStorage.get();
       const response = await fetchApi(path, {
@@ -228,11 +232,12 @@ export const apiClient = {
   postMultipartWithProgress<T>(
     path: string,
     body: FormData,
-    onProgress: (percent: number) => void
+    onProgress: (percent: number) => void,
+    { showGlobalLoader = true }: LoadingOptions = {}
   ): Promise<T> {
     const requestToken = tokenStorage.get();
     const url = resolveApiUrl(API_BASE_URL, path);
-    const finish = beginApiRequest();
+    const finish = showGlobalLoader ? beginApiRequest() : () => {};
     return new Promise<T>((resolve, reject) => {
       const xhr = new XMLHttpRequest();
       xhr.open("POST", url);

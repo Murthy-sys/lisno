@@ -14,6 +14,12 @@ import { ProjectAccessGrantModel } from "../src/models/ProjectAccessGrant.js";
 import { UserModel } from "../src/models/User.js";
 import { createMongoRepository } from "../src/repositories/mongo.js";
 import type { AppRepository } from "../src/repositories/types.js";
+import { sha256Hex } from "../src/domain/estimate-client-review.js";
+import { createAuditService } from "../src/services/audit.service.js";
+import type { EstimateClientReviewStorage } from "../src/services/estimate-client-review-storage.js";
+import { createEstimateClientReviewService } from "../src/services/estimate-client-review.service.js";
+import { createEstimateDeliveryService } from "../src/services/estimate-delivery.service.js";
+import { createEstimatePublicationService } from "../src/services/estimate-publication.service.js";
 import { startMongoReplicaSet } from "./helpers/mongo-replica-set.js";
 
 const JWT_SECRET = "admin-project-mongo-secret-at-least-32-characters";
@@ -40,7 +46,7 @@ beforeAll(async () => {
 beforeEach(async () => replica.clear());
 afterAll(async () => replica.stop());
 
-function bearer(id: string, role: "admin" | "super_admin") {
+function bearer(id: string, role: "admin" | "super_admin" | "estimator_sales") {
   return `Bearer ${jwt.sign({ id, role }, JWT_SECRET, { expiresIn: 900 })}`;
 }
 
@@ -118,11 +124,13 @@ describe("Admin project Mongo transactions", () => {
   });
 
   it.each([
-    ["actor", "mongo-admin", 1, 401],
-    ["estimator", "mongo-estimator", 2, 400]
+    ["actor", "mongo-admin", 1, 401, "admin"],
+    ["estimator", "mongo-estimator", 2, 400, "admin"],
+    ["sales actor", "mongo-estimator", 1, 401, "estimator_sales"],
+    ["selected manager", "mongo-admin", 2, 400, "estimator_sales"]
   ] as const)(
     "serializes a concurrent %s deactivation before authorization reads",
-    async (_label, targetId, gatedReadOrdinal, expectedStatus) => {
+    async (_label, targetId, gatedReadOrdinal, expectedStatus, actorRole) => {
       await Promise.all([
         insertUser("mongo-admin", "admin"),
         insertUser("mongo-estimator", "estimator_sales")
@@ -200,8 +208,8 @@ describe("Admin project Mongo transactions", () => {
       });
       const responsePromise = request(createApp({ repository, auth, clock }))
         .post("/api/v1/admin/projects")
-        .set("Authorization", bearer("mongo-admin", "admin"))
-        .send(input)
+        .set("Authorization", bearer(actorRole === "admin" ? "mongo-admin" : "mongo-estimator", actorRole))
+        .send(actorRole === "admin" ? input : { ...input, salesManagerId: "mongo-admin" })
         .then((response) => response);
 
       await initiationReachedAuthorization;
@@ -248,6 +256,88 @@ describe("Admin project Mongo transactions", () => {
     const list = await request(app).get("/api/v1/admin/projects")
       .set("Authorization", bearer("mongo-admin", "admin")).expect(200);
     expect(list.body.data.items).toHaveLength(1);
+  });
+
+  it("commits Sales initiation with the selected manager grant and actual Sales actor audit", async () => {
+    await Promise.all([
+      insertUser("mongo-admin", "admin"),
+      insertUser("mongo-other-admin", "admin"),
+      insertUser("mongo-estimator", "estimator_sales")
+    ]);
+    const app = createApp({ repository: createMongoRepository(), auth, clock });
+    const { estimatorId: _, ...salesInput } = input;
+    const created = await request(app).post("/api/v1/admin/projects")
+      .set("Authorization", bearer("mongo-estimator", "estimator_sales"))
+      .send({ ...salesInput, salesManagerId: "mongo-admin" }).expect(201);
+    const projectId = created.body.data.id;
+    expect(created.body.data).toMatchObject({ estimator: { id: "mongo-estimator" }, lead: { stage: "new_lead" } });
+    expect(await ProjectModel.findById(projectId).lean()).toMatchObject({
+      assignedEstimatorId: "mongo-estimator", managerId: null
+    });
+    expect(await LeadModel.findOne({ projectId }).lean()).toMatchObject({ ownerId: "mongo-estimator" });
+    const grants = await ProjectAccessGrantModel.find({ projectId }).lean();
+    expect(grants).toEqual([expect.objectContaining({
+      userId: "mongo-admin", source: "admin_initiator", grantedById: "mongo-estimator", active: true
+    })]);
+    const audits = await AuditEventModel.find().lean();
+    expect(audits).toHaveLength(3);
+    expect(audits.every(({ actorId }) => actorId === "mongo-estimator")).toBe(true);
+    await request(app).get(`/api/v1/admin/projects/${projectId}`)
+      .set("Authorization", bearer("mongo-admin", "admin")).expect(200);
+    await request(app).get(`/api/v1/admin/projects/${projectId}`)
+      .set("Authorization", bearer("mongo-other-admin", "admin")).expect(404);
+    await request(app).get(`/api/v1/admin/projects/${projectId}`)
+      .set("Authorization", bearer("mongo-estimator", "estimator_sales")).expect(403);
+    const options = await request(app).get("/api/v1/admin/sales-managers?search=mongo-admin")
+      .set("Authorization", bearer("mongo-estimator", "estimator_sales")).expect(200);
+    expect(options.body.data.items).toEqual([{
+      id: "mongo-admin", name: "mongo-admin", email: "mongo-admin@admin-project.test"
+    }]);
+
+    await EstimateModel.create({
+      _id: "sales-initiated-estimate", leadId: created.body.data.lead.id,
+      projectId, ownerId: "mongo-estimator", version: 1,
+      status: "draft", propertyType: "3BHK", rooms: [], scopes: ["interiors"],
+      lineItems: [{ catalogueId: "line-1", roomName: "Living room", specification: "Painting",
+        unit: "sqft", rate: 100_000, quantity: 1, included: true, amount: 100_000 }],
+      subtotal: 100_000, gst: 0, total: 100_000, approvalRequired: false,
+      assignedManagerId: null, assignedDesignerId: null, reviews: [], notifications: [],
+      createdAt: new Date(NOW), updatedAt: new Date(NOW)
+    });
+    const pdfBytes = Buffer.from("%PDF-1.7\nSales initiation test\n%%EOF");
+    const storage: EstimateClientReviewStorage = {
+      async savePdfSnapshot({ bytes, filename }) {
+        return { storageReference: "synthetic-sales.pdf", filename, mimeType: "application/pdf",
+          byteSize: bytes.byteLength, sha256: sha256Hex(bytes) };
+      },
+      async saveProof() { throw new Error("No proof upload during publication."); },
+      async read() { return pdfBytes; },
+      async deleteQuietly() {}
+    };
+    const reviews = createEstimateClientReviewService({ storage });
+    const audit = createAuditService(createMongoRepository());
+    const delivery = createEstimateDeliveryService({
+      reviews, storage, mailer: { deliveryKind: "disabled" },
+      portalUrl: "https://client.example.test", audit, now: clock
+    });
+    const publication = createEstimatePublicationService({
+      pdf: { async generate() { return { bytes: pdfBytes, filename: "estimate.pdf" }; } },
+      storage, reviews, audit, deliverInitial: delivery.deliverInitial, now: clock
+    });
+    const published = await publication.publishEstimateToClient({
+      estimateId: "sales-initiated-estimate", leadId: created.body.data.lead.id,
+      actorId: "mongo-estimator", expectedEstimateVersion: 1, expectedStatus: "draft"
+    });
+    expect(await EstimateClientReviewRoundModel.findById(published.clientReview.id).lean())
+      .toMatchObject({ assignedAdminId: "mongo-admin", status: "pending", deliveryStatus: "disabled" });
+    const manager = { id: "mongo-admin", name: "Manager", email: "mongo-admin@admin-project.test", role: "admin" as const };
+    await expect(reviews.list(manager, {}, { limit: 20, offset: 0 }))
+      .resolves.toMatchObject({ total: 1, items: [expect.objectContaining({ id: published.clientReview.id })] });
+    await expect(reviews.list({ ...manager, id: "mongo-other-admin" }, {}, { limit: 20, offset: 0 }))
+      .resolves.toMatchObject({ total: 0, items: [] });
+    await expect(reviews.requireDecisionScope(manager, published.clientReview.id)).resolves.toBeUndefined();
+    await expect(reviews.requireDecisionScope({ ...manager, id: "mongo-other-admin" }, published.clientReview.id))
+      .rejects.toMatchObject({ status: 404 });
   });
 
   it("reads the joined Admin summary inside an explicit Mongo transaction", async () => {
@@ -456,14 +546,14 @@ describe("Admin project Mongo transactions", () => {
     });
   });
 
-  it.each([
+  it.each((["admin", "estimator_sales"] as const).flatMap((actorRole) => ([
     ["createProject", 0],
     ["createProjectAccessGrant", 0],
     ["createLead", 0],
     ["appendAuditEvent", 1],
     ["appendAuditEvent", 2],
     ["appendAuditEvent", 3]
-  ] as const)("rolls back every Mongo write when %s failure point %s throws", async (method, auditFailureAt) => {
+  ] as const).map(([method, auditFailureAt]) => [method, auditFailureAt, actorRole] as const)))("rolls back every Mongo write when %s failure point %s throws for %s", async (method, auditFailureAt, actorRole) => {
     await Promise.all([
       insertUser("mongo-admin", "admin"),
       insertUser("mongo-estimator", "estimator_sales")
@@ -493,8 +583,8 @@ describe("Admin project Mongo transactions", () => {
     });
     const app = createApp({ repository, auth, clock });
     await request(app).post("/api/v1/admin/projects")
-      .set("Authorization", bearer("mongo-admin", "admin"))
-      .send(input).expect(500);
+      .set("Authorization", bearer(actorRole === "admin" ? "mongo-admin" : "mongo-estimator", actorRole))
+      .send(actorRole === "admin" ? input : { ...input, salesManagerId: "mongo-admin" }).expect(500);
     expect(await ProjectModel.countDocuments()).toBe(0);
     expect(await ProjectAccessGrantModel.countDocuments()).toBe(0);
     expect(await LeadModel.countDocuments()).toBe(0);

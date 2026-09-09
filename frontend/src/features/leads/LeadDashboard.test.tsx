@@ -1,4 +1,5 @@
-import { screen, within } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import type { Lead } from "../../api/types";
@@ -153,10 +154,12 @@ describe("LeadDashboard", () => {
     ).not.toBeInTheDocument();
     expect(
       screen.getAllByRole("button", { name: "Export as PDF" })
-    ).toHaveLength(2);
+    ).toHaveLength(1);
+    expect(within(screen.getByRole("article", { name: "Aurora Villa" })).queryByRole("button", { name: "Export as PDF" })).not.toBeInTheDocument();
     expect(screen.getByText("Estimate", { selector: ".lead-list__header span" })).toBeVisible();
     expect(screen.queryByText("Contact architect")).not.toBeInTheDocument();
-    // Leads now arrive from admin project initiation, not from this screen.
+    expect(screen.getByRole("button", { name: "Initiate project" })).toBeVisible();
+    // Initiation replaces standalone lead creation.
     expect(screen.queryByRole("button", { name: "New lead" })).not.toBeInTheDocument();
   });
 
@@ -201,4 +204,89 @@ describe("LeadDashboard", () => {
     expect(screen.getAllByText("Unavailable")).toHaveLength(2);
     expect(screen.getByRole("button", { name: "Try again" })).toBeEnabled();
   });
+  it("hides initiation when the backend permission snapshot does not grant it", async () => {
+    tokenStorage.set("sales-token");
+    const authorization = authorizationFor(salesUser.role);
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url === "/api/v1/auth/me") return Response.json({ data: salesUser });
+      if (url === "/api/v1/auth/authorization") return Response.json({ data: {
+        ...authorization,
+        permissions: authorization.permissions.filter((permission) => permission !== "projects.initiate")
+      } });
+      if (url.startsWith("/api/v1/leads?")) return Response.json({ data: {
+        items: [], pagination: { limit: 20, offset: 0, total: 0, hasMore: false }
+      } });
+      if (url === "/api/v1/estimates") return Response.json({ data: [] });
+      throw new Error(`Unhandled request: ${url}`);
+    });
+    renderApp(["/estimator-sales"]);
+    expect(await screen.findByRole("heading", { name: "No leads yet" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Initiate project" })).not.toBeInTheDocument();
+    expect(screen.getByText("Assigned project leads appear here.")).toBeVisible();
+  });
+
+  it("initiates from an empty sales pipeline and opens the created lead after refreshing the list", async () => {
+    tokenStorage.set("sales-token");
+    const manager = { id: "manager-1", name: "Meera Manager", email: "meera@example.com", title: "Sales Manager" };
+    const createdLead = { ...leads[0]!, id: "lead-created", projectId: "project-created" };
+    let initiated = false;
+    let refreshed = false;
+    let payload: Record<string, unknown> | undefined;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url === "/api/v1/auth/me") return Response.json({ data: salesUser });
+      if (url === "/api/v1/auth/authorization") return Response.json({ data: authorizationFor(salesUser.role) });
+      if (url.startsWith("/api/v1/leads?")) {
+        if (initiated) refreshed = true;
+        return Response.json({ data: {
+          items: initiated ? [createdLead] : [],
+          pagination: { limit: 20, offset: 0, total: initiated ? 1 : 0, hasMore: false }
+        } });
+      }
+      if (url === "/api/v1/estimates") return Response.json({ data: [] });
+      if (url.startsWith("/api/v1/admin/sales-managers?")) return Response.json({ data: {
+        items: [manager], pagination: { limit: 20, offset: 0, total: 1, hasMore: false }
+      } });
+      if (url === "/api/v1/admin/projects" && init?.method === "POST") {
+        payload = JSON.parse(String(init.body)) as Record<string, unknown>;
+        initiated = true;
+        return Response.json({ data: {
+          id: "project-created", name: "Aurora Villa", status: "planning", location: "Bengaluru",
+          client: { name: "Aurora Homes", email: "aurora@example.com", mobile: "9000000001" },
+          propertyType: "3BHK", budgetMin: 2500000, budgetMax: 3500000,
+          estimator: { id: salesUser.id, name: salesUser.name, email: salesUser.email },
+          lead: { id: "lead-created", stage: "new_lead", nextAction: "Site visit", nextActionAt: "2026-10-01T05:00:00.000Z" },
+          estimate: null, createdAt: "2026-09-09T10:00:00.000Z"
+        } }, { status: 201 });
+      }
+      if (url === "/api/v1/leads/lead-created") return Response.json({ data: createdLead });
+      if (url.startsWith("/api/v1/leads/lead-created/activities?")) return Response.json({ data: {
+        items: [], pagination: { limit: 50, offset: 0, total: 0, hasMore: false }
+      } });
+      throw new Error(`Unhandled request: ${url}`);
+    });
+    const user = userEvent.setup();
+    const { router } = renderApp(["/estimator-sales"]);
+    expect(await screen.findByText("Initiate a project to create your first lead.")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Initiate project" }));
+    const dialog = screen.getByRole("dialog", { name: "Initiate project" });
+    for (const [label, value] of Object.entries({
+      "Client name": "Aurora Homes", "Client email": "aurora@example.com", Mobile: "9000000001",
+      "Project / property name": "Aurora Villa", Location: "Bengaluru", "Property type": "3BHK",
+      "Minimum budget": "2500000", "Maximum budget": "3500000", "Next action": "Site visit", "Next action date": "2026-10-01T10:30"
+    })) {
+      await user.type(within(dialog).getByLabelText(new RegExp(`^${label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\*?$`)), value);
+    }
+    await user.click(within(dialog).getByRole("combobox", { name: "Sales Manager" }));
+    await user.click(await within(dialog).findByRole("option", { name: /Meera Manager/ }));
+    await user.click(within(dialog).getByRole("button", { name: "Initiate project" }));
+    await waitFor(() => expect(router.state.location.pathname).toBe("/estimator-sales/leads/lead-created"));
+    expect(await screen.findByRole("heading", { name: "Aurora Homes" })).toBeVisible();
+    expect(refreshed).toBe(true);
+    expect(payload).toMatchObject({ salesManagerId: "manager-1", projectName: "Aurora Villa" });
+    expect(payload).not.toHaveProperty("estimatorId");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
 });

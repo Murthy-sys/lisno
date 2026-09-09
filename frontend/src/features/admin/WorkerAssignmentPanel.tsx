@@ -83,7 +83,7 @@ function WorkerAssignmentPanelForProject({ project }: { project: AdminProjectSum
             <h2 id="worker-assignment-title">Task assignment</h2>
           </div>
         </div>
-        <p>Worker assignment opens after the Client—or an Admin acting with proof—approves the design plan.</p>
+        <p>Worker assignment opens after the Client—or a Sales Manager acting with proof—approves the design plan.</p>
       </Surface>
     );
   }

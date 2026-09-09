@@ -113,6 +113,33 @@ function sortedLean(value: unknown) {
   return { sort: vi.fn().mockReturnValue(lean(value)) };
 }
 
+function mockWorkspaceSource() {
+  // Legacy mappings still belong to a persisted upload and source page.
+  vi.spyOn(EstimateDesignUploadModel, "find").mockReturnValue(sortedLean([{
+    _id: "upload-1",
+    estimateId: "estimate-draft",
+    leadId: "lead-aurora",
+    originalFilename: "plan.png",
+    storedFileReference: "original-secret.png",
+    mimeType: "image/png",
+    sizeBytes: 8,
+    uploaderId: "user-estimator-sales",
+    uploadedAt: now(),
+    extractionStatus: "estimator_review",
+    failureCode: null,
+    failureMessage: null,
+    deletedAt: null
+  }]) as never);
+  vi.spyOn(EstimateDesignSourcePageModel, "find").mockReturnValue(sortedLean([{
+    _id: "page-1",
+    uploadId: "upload-1",
+    pageNumber: 1,
+    normalizedFileReference: "page-secret.png",
+    width: 1200,
+    height: 800
+  }]) as never);
+}
+
 function setup(options: { maxUploadBytes?: number } = {}) {
   const storage = new TestStorage();
   const uploads: Array<Record<string, unknown>> = [];
@@ -433,8 +460,7 @@ describe("estimate design uploads", () => {
   it("collapses incoherent legacy mappings to the null Misc tuple in workspace DTOs", async () => {
     const { app, setEstimate } = setup();
     setEstimate(legacyEstimatorEstimate());
-    vi.spyOn(EstimateDesignUploadModel, "find").mockReturnValue(sortedLean([]) as never);
-    vi.spyOn(EstimateDesignSourcePageModel, "find").mockReturnValue(sortedLean([]) as never);
+    mockWorkspaceSource();
     vi.spyOn(EstimateDesignDrawingModel, "find").mockReturnValue(sortedLean([{
       _id: "legacy-drawing",
       estimateId: "estimate-draft",
@@ -483,8 +509,7 @@ describe("estimate design uploads", () => {
   it("does not serialize legacy mapping sentinels as mapped identifiers", async () => {
     const { app, setEstimate } = setup();
     setEstimate(legacyEstimatorEstimate());
-    vi.spyOn(EstimateDesignUploadModel, "find").mockReturnValue(sortedLean([]) as never);
-    vi.spyOn(EstimateDesignSourcePageModel, "find").mockReturnValue(sortedLean([]) as never);
+    mockWorkspaceSource();
     vi.spyOn(EstimateDesignDrawingModel, "find").mockReturnValue(sortedLean([{
       _id: "sentinel-drawing",
       estimateId: "estimate-draft",

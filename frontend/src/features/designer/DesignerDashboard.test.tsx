@@ -407,7 +407,7 @@ describe("DesignerDashboard", () => {
     expect(await screen.findByText("No design projects assigned")).toBeVisible();
     expect(
       screen.getByText(
-        "Approved estimates will appear after an Admin or Super Admin assigns you."
+        "Approved estimates will appear after a Sales Manager or Super Admin assigns you."
       )
     ).toBeVisible();
     expect(screen.queryByRole("button", { name: /create project/i }))

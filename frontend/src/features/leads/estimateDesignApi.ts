@@ -27,7 +27,8 @@ export const estimateDesignKeys = {
 
 export const getEstimateDesignWorkspace = (estimateId: string) =>
   apiClient.get<EstimateDesignWorkspace>(
-    `/estimates/${encodeURIComponent(estimateId)}/design-uploads`
+    `/estimates/${encodeURIComponent(estimateId)}/design-uploads`,
+    { showGlobalLoader: false }
   );
 
 export function uploadEstimateDesign(
@@ -40,7 +41,8 @@ export function uploadEstimateDesign(
   return apiClient.postMultipartWithProgress<EstimateDesignUpload>(
     `/estimates/${encodeURIComponent(estimateId)}/design-uploads`,
     body,
-    onProgress
+    onProgress,
+    { showGlobalLoader: false }
   );
 }
 
@@ -96,6 +98,12 @@ export function replaceEstimateDrawing(drawingId: string, version: number, file:
 
 export const retryEstimateDesignUpload = (uploadId: string) => apiClient.post<EstimateDesignUpload>(
   `/estimate-design-uploads/${encodeURIComponent(uploadId)}/retry`
+);
+
+export const removeEstimateDesignUpload = (uploadId: string) => apiClient.delete<{ id: string; deleted: true }>(
+  `/estimate-design-uploads/${encodeURIComponent(uploadId)}`,
+  undefined,
+  { showGlobalLoader: false }
 );
 
 export const removeEstimateDrawing = (drawingId: string, version: number) => apiClient.delete<{ id: string; active: false }>(

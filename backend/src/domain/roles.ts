@@ -24,8 +24,8 @@ export const roleSchema = z.enum(ROLE_CODES);
 
 export const ROLE_LABELS = {
   super_admin: "Super Admin",
-  admin: "Admin",
-  estimator_sales: "Estimator/Sales",
+  admin: "Sales Manager",
+  estimator_sales: "Sales",
   designer: "Designer",
   procurement: "Procurement",
   finance_head: "Finance Manager",

@@ -65,7 +65,7 @@ const designPlanReviewRoundSchema = new Schema(
     deliveryFailureCode: { type: String, default: null, maxlength: 64 },
     status: {
       type: String,
-      enum: ["pending", "approved", "changes_requested"],
+      enum: ["pending", "approved", "changes_requested", "withdrawn"],
       required: true,
       default: "pending"
     },
@@ -74,6 +74,9 @@ const designPlanReviewRoundSchema = new Schema(
       enum: ["approve", "request_changes", null],
       default: null
     },
+    withdrawnAt: { type: Date, default: null },
+    withdrawnById: { type: String, ref: "User", default: null },
+    withdrawalReason: { type: String, default: null, maxlength: 500 },
     decisionSource: {
       type: String,
       enum: ["client_portal", "admin_proof", null],

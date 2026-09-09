@@ -41,6 +41,7 @@ import {
 } from "./estimate-plan-review.service.js";
 import type { ProjectWorkflowService } from "./project-workflow.service.js";
 import { synchronizeEstimateDesignReviewState } from "./estimate-design-review-state.js";
+import { deleteEstimateDesignUpload, uploadDeleteAvailability } from "./estimate-design-upload-deletion.js";
 import { deduplicateExtractionProposals } from "./extraction-worker.service.js";
 
 const mutableDesignEstimateStatuses = [
@@ -84,6 +85,8 @@ export interface EstimateDesignUploadDto {
   failureCode: string | null;
   failureMessage: string | null;
   canRetry: boolean;
+  canDelete: boolean;
+  deleteBlockedReason?: string;
 }
 
 export interface EstimateDesignWorkspaceDto {
@@ -243,6 +246,7 @@ export interface EstimateDesignService {
   ): Promise<Record<string, unknown>>;
   editDrawing(user: AuthenticatedUser, drawingId: string, change: EditEstimateDrawingInput): Promise<Record<string, unknown>>;
   retryUpload(user: AuthenticatedUser, uploadId: string): Promise<EstimateDesignUploadDto>;
+  deleteUpload(user: AuthenticatedUser, uploadId: string): Promise<{ id: string; deleted: true }>;
   removeDrawing(user: AuthenticatedUser, drawingId: string, version: number): Promise<{ id: string; active: false }>;
   submitDrawings(user: AuthenticatedUser, estimateId: string): Promise<{
     submittedCount: number;
@@ -358,17 +362,18 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
         extractionStatus: "queued",
         failureCode: null,
         failureMessage: null,
-        canRetry: false
+        canRetry: false,
+        canDelete: user.role === "designer"
       };
     },
 
     async listEstimator(user, estimateId) {
-      await requireEstimateWorkspaceReader(user, estimateId);
-      const uploads = await EstimateDesignUploadModel.find({ estimateId }).sort({ uploadedAt: -1, _id: -1 }).lean();
+      const estimate = await requireEstimateWorkspaceReader(user, estimateId);
+      const uploads = await EstimateDesignUploadModel.find({ estimateId, deletedAt: null }).sort({ uploadedAt: -1, _id: -1 }).lean();
       const uploadIds = uploads.map((upload) => upload._id);
       const [pages, drawings] = await Promise.all([
         EstimateDesignSourcePageModel.find({ uploadId: { $in: uploadIds } }).sort({ uploadId: 1, pageNumber: 1 }).lean(),
-        EstimateDesignDrawingModel.find({ estimateId }).sort({ _id: 1 }).lean()
+        EstimateDesignDrawingModel.find({ estimateId, deletedAt: null }).sort({ _id: 1 }).lean()
       ]);
       const drawingIds = drawings.map((drawing) => drawing._id);
       const revisions = await EstimateDesignRevisionModel.find({ drawingId: { $in: drawingIds } }).sort({ drawingId: 1, revisionNumber: 1 }).lean();
@@ -400,17 +405,22 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
       return {
         uploads: await Promise.all(
           uploads.map(async (upload) =>
-            uploadDto(upload, await canRetryUpload(upload))
+            ({ ...uploadDto(upload, await canRetryUpload(upload)), ...uploadDeleteAvailability(user, estimate, upload, pages, drawings, revisions) })
           )
         ),
         pages: pages.map(sourcePageDto),
         drawings: drawings.map(drawingDto),
-        revisions: revisionRows.map(revisionDto)
+        revisions: revisionRows.filter((revision) => pages.some((page) => String(page._id) === String(revision.sourcePageId))).map(revisionDto)
       };
     },
 
     async listClient(user, estimateId) {
-      const { clientId } = await requireClientVisibleEstimateReader(user, estimateId);
+      const { clientId, estimate } = await requireClientVisibleEstimateReader(user, estimateId);
+      const deletedUploads = (await EstimateDesignUploadModel.find({ estimateId, deletedAt: { $ne: null } }).sort({ _id: 1 }).lean()).filter((upload) => upload.deletedAt);
+      const deletedPages = deletedUploads.length
+        ? await EstimateDesignSourcePageModel.find({ uploadId: { $in: deletedUploads.map((upload) => upload._id) } }).sort({ _id: 1 }).lean()
+        : [];
+      const deletedPageIds = new Set(deletedPages.map((page) => String(page._id)));
       const drawings = await EstimateDesignDrawingModel.find({
         estimateId,
         active: true
@@ -423,7 +433,9 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
         const history = await EstimateDesignRevisionModel.find({
           drawingId: drawing._id
         }).sort({ revisionNumber: 1 }).lean();
+        if (estimate.status === "client_approved" && estimate.designPlanStatus === "in_progress" && history.at(-1)?.reviewStatus === "draft") continue;
         const visibleHistory = history.filter((revision) =>
+          !deletedPageIds.has(String(revision.sourcePageId)) &&
           ["submitted", "approved", "changes_requested"].includes(
             String(revision.reviewStatus)
           )
@@ -452,7 +464,7 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
         pages.set(String(page._id), sourcePageDto(page));
       }
       const uploads = await EstimateDesignUploadModel.find({
-        _id: { $in: [...uploadIds] }
+        _id: { $in: [...uploadIds] }, deletedAt: null
       }).sort({ uploadedAt: -1, _id: -1 }).lean();
       return {
         uploads: uploads.map((upload) => uploadDto(upload)),
@@ -700,7 +712,7 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
 
     async replaceDrawing(user, drawingId, replacement) {
       const drawing = await EstimateDesignDrawingModel.findById(drawingId).lean();
-      if (!drawing) throw estimateNotFound();
+      if (!drawing || drawing.deletedAt) throw estimateNotFound();
       const estimate = await requireOwnedEstimate(user, String(drawing.estimateId));
       if (!estimateCanReplaceDrawingForActor(estimate, user)) drawingLocked();
       const latest = await EstimateDesignRevisionModel.findOne({ drawingId })
@@ -777,7 +789,7 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
           const currentDrawing = await EstimateDesignDrawingModel.findById(drawingId)
             .session(session)
             .lean();
-          if (!currentDrawing) throw estimateNotFound();
+          if (!currentDrawing || currentDrawing.deletedAt) throw estimateNotFound();
           const currentEstimate = await requireOwnedEstimate(
             user,
             String(currentDrawing.estimateId),
@@ -880,7 +892,7 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
       const page = await EstimateDesignSourcePageModel.findById(pageId).lean();
       if (!page) throw estimateNotFound();
       const upload = await EstimateDesignUploadModel.findById(page.uploadId).lean();
-      if (!upload) throw estimateNotFound();
+      if (!upload || upload.deletedAt) throw estimateNotFound();
       await requireEstimateWorkspaceReader(user, upload.estimateId);
       return openStoredImage(input.storage, page.normalizedFileReference);
     },
@@ -889,7 +901,7 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
       const revision = await EstimateDesignRevisionModel.findById(revisionId).lean();
       if (!revision) throw estimateNotFound();
       const drawing = await EstimateDesignDrawingModel.findById(revision.drawingId).lean();
-      if (!drawing) throw estimateNotFound();
+      if (!drawing || drawing.deletedAt) throw estimateNotFound();
       if (
         user.role === "estimator_sales" ||
         user.role === "designer" ||
@@ -904,6 +916,9 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
       } else {
         throw estimateNotFound();
       }
+      const page = await EstimateDesignSourcePageModel.findById(revision.sourcePageId).lean();
+      const upload = page ? await EstimateDesignUploadModel.findById(page.uploadId).lean() : null;
+      if (!upload || upload.deletedAt) throw estimateNotFound();
       return openStoredImage(input.storage, revision.croppedFileReference);
     },
 
@@ -945,7 +960,7 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
               .session(session)
               .lean()
           : null;
-        if (!upload || !estimate) {
+        if (!upload || upload.deletedAt || !estimate) {
           throw new ApiError(
             500,
             "EXTRACTION_JOB_INVALID",
@@ -1012,7 +1027,7 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
       if (!job) return null;
       requireEstimateClaim(job, claimToken, at);
       const upload = await EstimateDesignUploadModel.findById(job.uploadId).lean();
-      if (!upload) throw estimateNotFound();
+      if (!upload || upload.deletedAt) throw estimateNotFound();
       return {
         reference: String(upload.storedFileReference),
         filename: String(upload.originalFilename),
@@ -1047,7 +1062,7 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
       const estimate = upload
         ? await EstimateModel.findById(upload.estimateId).lean()
         : null;
-      if (!upload || !estimate) throw estimateNotFound();
+      if (!upload || upload.deletedAt || !estimate) throw estimateNotFound();
       const taxonomy = taxonomyForEstimate(estimate);
       const mappingContext = mappingContextForEstimate(estimate);
       const resultMode: EstimateResultMode =
@@ -1141,7 +1156,7 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
             .session(session)
             .lean();
           if (
-            !currentUpload ||
+            !currentUpload || currentUpload.deletedAt ||
             String(currentUpload._id) !== String(upload._id) ||
             String(currentUpload.extractionStatus) !== "processing"
           ) {
@@ -1257,7 +1272,7 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
         const currentUpload = await EstimateDesignUploadModel.findById(currentJob.uploadId)
           .session(session)
           .lean();
-        if (!currentUpload || String(currentUpload.extractionStatus) !== "processing") {
+        if (!currentUpload || currentUpload.deletedAt || String(currentUpload.extractionStatus) !== "processing") {
           extractionStateConflict();
         }
         const currentEstimate = await EstimateModel.findById(
@@ -1343,7 +1358,7 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
       const page = await EstimateDesignSourcePageModel.findById(pageId).lean();
       if (!page) throw estimateNotFound();
       const upload = await EstimateDesignUploadModel.findById(page.uploadId).lean();
-      if (!upload) throw estimateNotFound();
+      if (!upload || upload.deletedAt) throw estimateNotFound();
       const estimate = await requireOwnedEditableEstimate(user, String(upload.estimateId));
       requireManualDrawingState(upload);
       resolveDeprecatedMapping(manualInput, estimate);
@@ -1386,7 +1401,7 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
             currentPage.uploadId
           ).session(session).lean();
           if (
-            !currentUpload ||
+            !currentUpload || currentUpload.deletedAt ||
             String(currentUpload._id) !== String(upload._id) ||
             String(currentUpload.estimateId) !== String(upload.estimateId)
           ) {
@@ -1529,7 +1544,7 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
 
     async assignEstimateItem(user, drawingId, assignment) {
       const drawing = await EstimateDesignDrawingModel.findById(drawingId).lean();
-      if (!drawing) throw estimateNotFound();
+      if (!drawing || drawing.deletedAt) throw estimateNotFound();
       const estimate = await requireOwnedEstimate(user, String(drawing.estimateId));
       const latest = await EstimateDesignRevisionModel.findOne({ drawingId })
         .sort({ revisionNumber: -1 })
@@ -1546,7 +1561,7 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
         const currentDrawing = await EstimateDesignDrawingModel.findById(drawingId)
           .session(session)
           .lean();
-        if (!currentDrawing) throw estimateNotFound();
+        if (!currentDrawing || currentDrawing.deletedAt) throw estimateNotFound();
         const currentEstimate = await requireOwnedEstimate(user, String(currentDrawing.estimateId), session);
         const currentUpload = await EstimateDesignUploadModel.findById(currentDrawing.uploadId).session(session).lean();
         const currentJob = await EstimateDesignExtractionJobModel.findOne({ uploadId: currentDrawing.uploadId })
@@ -1561,7 +1576,7 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
         }
         if (
           !currentDrawing.active ||
-          !currentUpload ||
+          !currentUpload || currentUpload.deletedAt ||
           !currentJob ||
           String(currentUpload.estimateId) !== String(currentDrawing.estimateId) ||
           String(currentUpload.extractionStatus) !== "estimator_review" ||
@@ -1636,7 +1651,7 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
 
     async editDrawing(user, drawingId, change) {
       const drawing = await EstimateDesignDrawingModel.findById(drawingId).lean();
-      if (!drawing) throw estimateNotFound();
+      if (!drawing || drawing.deletedAt) throw estimateNotFound();
       const estimate = await requireOwnedEstimate(user, drawing.estimateId);
       const latest = await EstimateDesignRevisionModel.findOne({ drawingId })
         .sort({ revisionNumber: -1 })
@@ -1686,7 +1701,7 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
           const currentDrawing = await EstimateDesignDrawingModel.findById(drawingId)
             .session(session)
             .lean();
-          if (!currentDrawing) throw estimateNotFound();
+          if (!currentDrawing || currentDrawing.deletedAt) throw estimateNotFound();
           const currentEstimate = await requireOwnedEstimate(
             user,
             String(currentDrawing.estimateId),
@@ -1706,7 +1721,7 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
             .session(session)
             .lean();
           if (
-            !currentUpload ||
+            !currentUpload || currentUpload.deletedAt ||
             !currentJob ||
             String(currentUpload.estimateId) !== String(currentDrawing.estimateId) ||
             String(currentUpload.extractionStatus) !== "estimator_review" ||
@@ -1900,23 +1915,32 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
       };
     },
 
+    async deleteUpload(user, uploadId) {
+      return deleteEstimateDesignUpload({ user, uploadId, audit: input.audit, occurredAt: now(), transaction: withMongoTransaction, guardLifecycle: guardDesignLifecycle });
+    },
+
     async retryUpload(user, uploadId) {
       const upload = await EstimateDesignUploadModel.findById(uploadId).lean();
-      if (!upload) throw estimateNotFound();
+      if (!upload || upload.deletedAt) throw estimateNotFound();
       await requireOwnedEditableEstimate(user, String(upload.estimateId));
       const queuedAt = now();
       let saved: Record<string, any> | null = null;
       await withMongoTransaction(async (session) => {
         const currentUpload = await EstimateDesignUploadModel.findById(uploadId).session(session).lean();
-        if (!currentUpload) throw estimateNotFound();
+        if (!currentUpload || currentUpload.deletedAt) throw estimateNotFound();
         const estimate = await requireOwnedEstimate(user, String(currentUpload.estimateId), session);
         if (!estimateDesignIsEditableForActor(estimate, user)) drawingLocked();
         const job = await EstimateDesignExtractionJobModel.findOne({ uploadId }).session(session).lean();
+        if (currentUpload.failureCode === "ESTIMATE_DESIGN_UPLOAD_DELETED" || job?.failureCode === "ESTIMATE_DESIGN_UPLOAD_DELETED") {
+          throw new ApiError(409, "ESTIMATE_DESIGN_UPLOAD_LOCKED", "A deleted design source cannot be retried.");
+        }
         if (!job || currentUpload.extractionStatus !== "processing_failed" || job.status !== "processing_failed") {
           extractionStateConflict();
         }
         await guardDesignLifecycle(estimate, session);
         if (currentUpload.replacesRevisionId) {
+          const drawing = await EstimateDesignDrawingModel.findById(currentUpload.replacementDrawingId).session(session).lean();
+          if (!drawing || !drawing.active || drawing.deletedAt) drawingLocked();
           const reserved = await EstimateDesignRevisionModel.updateOne(
             {
               _id: currentUpload.replacesRevisionId,
@@ -1961,12 +1985,12 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
         saved = { ...currentUpload, extractionStatus: "queued", failureCode: null, failureMessage: null };
       });
       if (!saved) throw new Error("Estimate upload retry did not complete.");
-      return uploadDto(saved);
+      return uploadDto(saved, false, user.role === "designer");
     },
 
     async removeDrawing(user, drawingId, version) {
       const drawing = await EstimateDesignDrawingModel.findById(drawingId).lean();
-      if (!drawing) throw estimateNotFound();
+      if (!drawing || drawing.deletedAt) throw estimateNotFound();
       await requireOwnedEditableEstimate(user, String(drawing.estimateId));
       const latest = await EstimateDesignRevisionModel.findOne({ drawingId }).sort({ revisionNumber: -1 }).lean();
       if (!latest || !drawing.active || drawing.verified || latest.reviewStatus !== "draft" || Number(latest.revisionNumber) !== version) {
@@ -1974,7 +1998,7 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
       }
       await withMongoTransaction(async (session) => {
         const currentDrawing = await EstimateDesignDrawingModel.findById(drawingId).session(session).lean();
-        if (!currentDrawing) throw estimateNotFound();
+        if (!currentDrawing || currentDrawing.deletedAt) throw estimateNotFound();
         const estimate = await requireOwnedEstimate(user, String(currentDrawing.estimateId), session);
         if (!estimateDesignIsEditableForActor(estimate, user)) drawingLocked();
         const currentRevision = await EstimateDesignRevisionModel.findOne({ drawingId }).sort({ revisionNumber: -1 }).session(session).lean();
@@ -2052,6 +2076,7 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
           );
         }
         const extractionCandidates = await EstimateDesignUploadModel.find({
+          deletedAt: null,
           estimateId,
           extractionStatus: { $in: ["queued", "processing"] }
         }).session(session).lean();
@@ -2639,7 +2664,7 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
         failureCode: null,
         failureMessage: null,
         canRetry: false
-      })
+      }, false, user.role === "designer")
     };
   }
 
@@ -2674,7 +2699,7 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
           .session(session)
           .lean();
         if (
-          !currentUpload ||
+          !currentUpload || currentUpload.deletedAt ||
           currentUpload.extractionStatus !== "processing" ||
           String(currentUpload.replacementDrawingId) !==
             String(upload.replacementDrawingId) ||
@@ -3057,7 +3082,8 @@ function forbidden(): never {
 
 function uploadDto(
   upload: Record<string, unknown>,
-  canRetry = false
+  canRetry = false,
+  canDelete = false
 ): EstimateDesignUploadDto {
   return {
     id: String(upload._id),
@@ -3071,7 +3097,8 @@ function uploadDto(
     extractionStatus: upload.extractionStatus as EstimateDesignExtractionStatus,
     failureCode: upload.failureCode === null ? null : String(upload.failureCode),
     failureMessage: upload.failureMessage === null ? null : String(upload.failureMessage),
-    canRetry
+    canRetry,
+    canDelete
   };
 }
 

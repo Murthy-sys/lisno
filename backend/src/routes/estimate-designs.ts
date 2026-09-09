@@ -113,6 +113,9 @@ export function createEstimateDesignsRouter(
       next(error);
     }
   });
+  router.delete("/estimate-design-uploads/:uploadId", protectedRoute, requireOperation("DELETE /estimate-design-uploads/:uploadId"), async (request, response, next) => {
+    try { response.json({ data: await estimateDesigns.deleteUpload(request.authenticatedUser!, request.params.uploadId as string) }); } catch (error) { next(error); }
+  });
   router.post("/estimate-design-uploads/:uploadId/retry", protectedRoute, requireOperation("POST /estimate-design-uploads/:uploadId/retry"), async (request, response, next) => {
     try { response.json({ data: await estimateDesigns.retryUpload(request.authenticatedUser!, request.params.uploadId as string) }); } catch (error) { next(error); }
   });
