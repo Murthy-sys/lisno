@@ -2,6 +2,7 @@ import express from "express";
 import request from "supertest";
 import { describe, expect, it, vi } from "vitest";
 
+import { ROLE_CODES } from "../src/domain/roles.js";
 import { errorHandler } from "../src/middleware/errors.js";
 import {
   createAiEstimatorKnowledgeAdminRouter,
@@ -27,10 +28,10 @@ const admin: PublicUser = {
   role: "admin"
 };
 
-function authService(): AuthService {
+function authService(actor?: PublicUser): AuthService {
   return {
     authenticate: vi.fn(async (token: string) =>
-      token === "admin-token" ? admin : superAdmin)
+      actor ?? (token === "admin-token" ? admin : superAdmin))
   } as unknown as AuthService;
 }
 
@@ -94,10 +95,10 @@ function services() {
   return { reference, item, context };
 }
 
-function appFor(testServices: AiEstimatorKnowledgeAdminRouterServices) {
+function appFor(testServices: AiEstimatorKnowledgeAdminRouterServices, actor?: PublicUser) {
   const app = express();
   app.use(express.json({ limit: "300kb" }));
-  const auth = authService();
+  const auth = authService(actor);
   app.use("/api/v1", createAiEstimatorKnowledgeAdminRouter(auth, testServices));
   app.use("/api/v1", createAiEstimatorKnowledgeContextRouter(auth, testServices.context));
   app.use(errorHandler);
@@ -105,6 +106,32 @@ function appFor(testServices: AiEstimatorKnowledgeAdminRouterServices) {
 }
 
 describe("AI Estimator Knowledge HTTP routes", () => {
+  it.each(ROLE_CODES.filter((role) => role !== "super_admin"))(
+    "preserves direct related-item read, create and rule-save denial for %s",
+    async (role) => {
+      const testServices = services();
+      const app = appFor(testServices, { ...admin, role });
+      const prefix = "/api/v1/admin/ai-estimator-knowledge";
+      const requests = [
+        request(app).get(`${prefix}/items`).query({ basketId: "basket-1", status: "archived" }),
+        request(app).get(`${prefix}/main-lines/line-1`),
+        request(app).post(`${prefix}/baskets/basket-1/main-lines`)
+          .send({ name: "Recessed LED downlight", subBasketName: "Ceiling lighting" }),
+        request(app).put(`${prefix}/main-lines/line-1/revisions/revision-1/sections/recommendations`)
+          .send({ invalid: true })
+      ];
+      for (const operation of requests) {
+        const response = await operation.set("Authorization", "Bearer staff-token");
+        expect(response.status).toBe(403);
+        expect(response.body.error.code).toBe("FORBIDDEN");
+      }
+      expect(testServices.item.listItems).not.toHaveBeenCalled();
+      expect(testServices.item.getItem).not.toHaveBeenCalled();
+      expect(testServices.item.createMainLine).not.toHaveBeenCalled();
+      expect(testServices.item.updateSection).not.toHaveBeenCalled();
+    }
+  );
+
   it("creates temporary items through the existing Super Admin operation and rejects subtype changes", async () => {
     const testServices = services();
     const app = appFor(testServices);

@@ -2981,12 +2981,12 @@ async function validateBudgetAlterationReferences(mainLineId: string, rows: Row[
       reject("targetSubBasketId", "Select a Sub Basket belonging to this Main Basket.");
     }
     const targetId = optionalString(rule.targetMainLineId);
-    if (targetId === mainLineId) reject("targetMainLineId", "Select a different Main Line as the affected item.");
+    if (targetId === mainLineId) reject("targetMainLineId", "Select a different related item.");
     const target = await AiEstimatorKnowledgeMainLineModel.findOne({
       _id: targetId, basketId, subBasketId, status: { $in: ["draft", "active"] },
       itemType: rule.targetType === "temporary" ? "temporary" : { $ne: "temporary" }
     }).select({ _id: 1 }).session(session).lean().exec();
-    if (!target) reject("targetMainLineId", "Select an available Main Line belonging to the chosen Main Basket and Sub Basket.");
+    if (!target) reject("targetMainLineId", "Select an available related item belonging to the chosen Main Basket and Sub Basket.");
     lineIds.add(targetId!);
   }
   // Share writes with target deletion/status changes so reference validation cannot race them.
@@ -2997,7 +2997,7 @@ async function validateBudgetAlterationReferences(mainLineId: string, rows: Row[
       { $inc: { dependencyEpoch: 1 } },
       { returnDocument: "after", runValidators: true, session, timestamps: false }
     ).select({ _id: 1 }).lean().exec();
-    if (!target) invalidKnowledgeReference("Main Line");
+    if (!target) invalidKnowledgeReference("related item");
   }
 }
 

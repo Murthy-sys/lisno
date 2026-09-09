@@ -171,7 +171,20 @@ export function KnowledgeItemWorkspacePage() {
   });
   const relationshipItemsQuery = useQuery({
     queryKey: [...knowledgeQueryKeys.itemLists(), "relationship-catalog"],
-    queryFn: () => collectAllKnowledgeMasterPages((params) => listKnowledgeItems(params), "Related items")
+    queryFn: async () => {
+      const [current, archived] = await Promise.all([
+        collectAllKnowledgeMasterPages((params) => listKnowledgeItems(params), "Related items"),
+        collectAllKnowledgeMasterPages((params) => listKnowledgeItems({ ...params, status: "archived" }), "Archived related items")
+      ]);
+      const byId = new Map(current.items.map((item) => [item.mainLineId, item]));
+      for (const item of archived.items) {
+        const previous = byId.get(item.mainLineId);
+        if (!previous || previous.version <= item.version) byId.set(item.mainLineId, item);
+      }
+      // Archived entries are only needed to suppress duplicate related-item starters.
+      // Keep the established relationship catalog for the other section editors.
+      return { ...current, allItems: [...byId.values()] };
+    }
   });
   const masterQueries = useQueries({
     queries: MASTER_TYPES.map((type) => ({
@@ -593,7 +606,7 @@ export function KnowledgeItemWorkspacePage() {
                     onOpenSection={selectWorkspaceSection}
                   />
                 ) : (
-                  <KnowledgeSectionEditor sectionKey={backendSection} payload={payload} masters={masters} relationshipBaskets={relationshipBasketsQuery.data?.items ?? []} relationshipItems={relationshipItemsQuery.data?.items ?? []} currentMainLineId={mainLineId} mainLineName={item.mainLineName} basketName={item.basketName} relationshipCatalogState={overviewRelationshipState} readOnly={!editable} canQuickAdd={canCreate} uomCatalogState={uomCatalogState} vendorCatalogState={vendorCatalogState} masterCatalogStates={masterCatalogStates} resetKey={`${sectionQuery.data.id}-${sectionQuery.data.version}`} validationAttempt={validationAttempt} onChange={setPayload} onDirty={() => setDirty(true)} onValidationChange={setEditorValid} onQuickAdd={(type, select) => setQuickAdd({ type, select })} />
+                  <KnowledgeSectionEditor sectionKey={backendSection} payload={payload} masters={masters} relationshipBaskets={relationshipBasketsQuery.data?.items ?? []} relationshipItems={(backendSection === "recommendations" ? relationshipItemsQuery.data?.allItems : relationshipItemsQuery.data?.items) ?? []} currentMainLineId={mainLineId} mainLineName={item.mainLineName} basketName={item.basketName} relationshipCatalogState={overviewRelationshipState} readOnly={!editable} canQuickAdd={canCreate} uomCatalogState={uomCatalogState} vendorCatalogState={vendorCatalogState} masterCatalogStates={masterCatalogStates} resetKey={`${sectionQuery.data.id}-${sectionQuery.data.version}`} validationAttempt={validationAttempt} onChange={setPayload} onDirty={() => setDirty(true)} onValidationChange={setEditorValid} onQuickAdd={(type, select) => setQuickAdd({ type, select })} />
                 )}
                 {activeSaveError ? <InlineMessage tone="error" role="alert">{activeSaveError}</InlineMessage> : null}
               </Surface>
