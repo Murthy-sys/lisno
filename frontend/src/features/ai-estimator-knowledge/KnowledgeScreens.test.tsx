@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import axe from "axe-core";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -11,6 +11,7 @@ import { KnowledgeBaseIndexPage } from "./KnowledgeBaseIndexPage";
 import { KnowledgeItemWorkspacePage } from "./KnowledgeItemWorkspacePage";
 import { KnowledgeReusableValuesPage } from "./KnowledgeReusableValuesPage";
 import * as knowledgeApi from "./knowledgeApi";
+import { knowledgeQueryKeys } from "./knowledgeQueryKeys";
 import type {
   KnowledgeCompleteness,
   KnowledgeItemDetail,
@@ -208,13 +209,14 @@ function renderRoute(element: React.ReactElement, path: string, route: string) {
       mutations: { retry: false }
     }
   });
-  return render(
+  const view = render(
     <QueryClientProvider client={queryClient}>
       <MemoryRouter initialEntries={[path]}>
         <Routes><Route path={route} element={<main>{element}</main>} /></Routes>
       </MemoryRouter>
     </QueryClientProvider>
   );
+  return { ...view, queryClient };
 }
 
 async function expectNoAutomatedAccessibilityViolations() {
@@ -289,6 +291,160 @@ beforeEach(() => {
   vi.mocked(knowledgeApi.getKnowledgeItem).mockResolvedValue(item);
   vi.mocked(knowledgeApi.getKnowledgeHistory).mockResolvedValue({ items: [revision], pagination: page });
   vi.mocked(knowledgeApi.getKnowledgeSection).mockImplementation(async (_lineId, _revisionId, sectionKey) => section(sectionKey));
+});
+
+describe("unsaved session request card", () => {
+  const route = "/admin/configuration/estimation/items/line-1";
+  const pattern = "/admin/configuration/estimation/items/:itemId";
+  const rule = { id: "pending-rule", trigger: "removed", action: "remove", requirement: "must", targetType: "catalog", targetBasketId: "basket-1", targetSubBasketId: null, targetMainLineId: "target-2", reason: "Saved support requirement", active: true };
+  const savedPayload = { budgetAlterations: [rule], exclusions: [{ id: "untouched", name: "Untouched exclusion", reason: "Saved exclusion sentinel", active: true }] };
+
+  function setupRecommendations() {
+    vi.mocked(knowledgeApi.getKnowledgeSection).mockImplementation(async (_id, _revision, key) => section(key, key === "recommendations" ? savedPayload : {}));
+    const target = { ...item, id: "target-2", mainLineId: "target-2", mainLineName: "Ceiling light", subBasketId: null };
+    vi.mocked(knowledgeApi.listKnowledgeItems).mockResolvedValue({ items: [target], pagination: { ...page, total: 1 } });
+    vi.mocked(knowledgeApi.listKnowledgeBaskets).mockResolvedValue({ items: [{ ...squareFoot, id: "basket-1", name: "Carpentry", status: "active" }], pagination: { ...page, total: 1 } });
+  }
+
+  it("shows only the edited value under history, survives history errors, and disappears on revert", async () => {
+    setupRecommendations();
+    vi.mocked(knowledgeApi.getKnowledgeHistory).mockRejectedValue(new Error("History unavailable"));
+    const user = userEvent.setup();
+    renderRoute(<KnowledgeItemWorkspacePage />, route, pattern);
+    await user.click(await screen.findByRole("tab", { name: "Recommendation & Exclusions" }));
+    const reason = await screen.findByRole("textbox", { name: "Why is this change needed?" });
+    expect(screen.queryByRole("region", { name: "Now requesting" })).not.toBeInTheDocument();
+    await user.clear(reason); await user.type(reason, "Local mounting requirement");
+    const card = screen.getByRole("region", { name: "Now requesting" });
+    expect(card).toHaveTextContent("Local mounting requirement");
+    expect(card).not.toHaveTextContent("Saved support requirement");
+    expect(card).not.toHaveTextContent("Saved exclusion sentinel");
+    expect(card).not.toHaveTextContent("Untouched exclusion");
+    const history = screen.getByRole("region", { name: "Revision history" });
+    expect(history.compareDocumentPosition(card) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(reason).toHaveFocus();
+    await user.clear(reason); await user.type(reason, rule.reason);
+    expect(screen.queryByRole("region", { name: "Now requesting" })).not.toBeInTheDocument();
+  });
+
+  it("freezes the displayed baseline during refetch and discards only through the navigation guard", async () => {
+    setupRecommendations();
+    const user = userEvent.setup();
+    const { queryClient } = renderRoute(<KnowledgeItemWorkspacePage />, route, pattern);
+    await user.click(await screen.findByRole("tab", { name: "Recommendation & Exclusions" }));
+    await user.type(await screen.findByRole("textbox", { name: "Why is this change needed?" }), " local edit");
+    await act(async () => {
+      queryClient.setQueryData(knowledgeQueryKeys.section("line-1", "revision-1", "recommendations"), section("recommendations", {
+        ...savedPayload, budgetAlterations: [{ ...rule, reason: "Another editor's saved wording", action: "add" }]
+      }, 8));
+    });
+    const card = screen.getByRole("region", { name: "Now requesting" });
+    expect(card).toHaveTextContent("Saved support requirement local edit");
+    expect(card).not.toHaveTextContent("Another editor's saved wording");
+    expect(within(card).queryByText("Scope action")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("tab", { name: "Overview" }));
+    await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Stay here" }));
+    expect(screen.getByRole("region", { name: "Now requesting" })).toBeVisible();
+    await user.click(screen.getByRole("tab", { name: "Overview" }));
+    await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Discard changes" }));
+    expect(screen.queryByRole("region", { name: "Now requesting" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("tab", { name: "Recommendation & Exclusions" }));
+    expect(await screen.findByRole("textbox", { name: "Why is this change needed?" })).toHaveValue("Another editor's saved wording");
+    expect(screen.queryByRole("region", { name: "Now requesting" })).not.toBeInTheDocument();
+  });
+
+  it("clears confirmed changes before refresh finishes and retains edits made during the refresh", async () => {
+    setupRecommendations();
+    const user = userEvent.setup();
+    const { queryClient } = renderRoute(<KnowledgeItemWorkspacePage />, route, pattern);
+    await user.click(await screen.findByRole("tab", { name: "Recommendation & Exclusions" }));
+    await user.type(await screen.findByRole("textbox", { name: "Why is this change needed?" }), " confirmed");
+    let releaseHistory!: () => void;
+    vi.mocked(knowledgeApi.getKnowledgeHistory).mockImplementation(() => new Promise((resolve) => { releaseHistory = () => resolve({ items: [revision], pagination: page }); }));
+    vi.mocked(knowledgeApi.updateKnowledgeSection).mockImplementation(async (_id, _revision, key, input) => mutationSection(key, input.payload));
+    await user.click(screen.getByRole("button", { name: "Save Recommendation & Exclusions" }));
+    await waitFor(() => expect(releaseHistory).toBeTypeOf("function"));
+    expect(screen.queryByRole("region", { name: "Now requesting" })).not.toBeInTheDocument();
+    const reason = screen.getByRole("textbox", { name: "Why is this change needed?" });
+    await user.type(reason, " later edit");
+    expect(screen.getByRole("region", { name: "Now requesting" })).toHaveTextContent("later edit");
+    await act(async () => { releaseHistory(); });
+    await waitFor(() => expect(queryClient.isMutating()).toBe(0));
+    expect(reason).toHaveValue(`${rule.reason} confirmed later edit`);
+    expect(screen.getByRole("region", { name: "Now requesting" })).toHaveTextContent("later edit");
+  });
+
+  it("retains failed saves and hides the card after a successful retry", async () => {
+    setupRecommendations();
+    const user = userEvent.setup();
+    renderRoute(<KnowledgeItemWorkspacePage />, route, pattern);
+    await user.click(await screen.findByRole("tab", { name: "Recommendation & Exclusions" }));
+    await user.type(await screen.findByRole("textbox", { name: "Why is this change needed?" }), " retry me");
+    vi.mocked(knowledgeApi.updateKnowledgeSection).mockRejectedValueOnce(new Error("Save interrupted"));
+    await user.click(screen.getByRole("button", { name: "Save Recommendation & Exclusions" }));
+    expect(await screen.findByRole("region", { name: "Now requesting" })).toHaveTextContent("retry me");
+    vi.mocked(knowledgeApi.updateKnowledgeSection).mockImplementation(async (_id, _revision, key, input) => mutationSection(key, input.payload));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Save Recommendation & Exclusions" })).toBeEnabled());
+    await user.click(screen.getByRole("button", { name: "Save Recommendation & Exclusions" }));
+    await waitFor(() => expect(screen.queryByRole("region", { name: "Now requesting" })).not.toBeInTheDocument());
+  });
+
+  it("shows Specifications changes while opening Mode controls alone stays clean", async () => {
+    mockConfiguredModeSections();
+    const user = userEvent.setup();
+    renderRoute(<KnowledgeItemWorkspacePage />, route, pattern);
+    await user.click(await screen.findByRole("tab", { name: "Mode" }));
+    const name = await findPricingSpecificationName();
+    await user.click(screen.getByRole("checkbox", { name: "Execution" }));
+    expect(screen.queryByRole("region", { name: "Now requesting" })).not.toBeInTheDocument();
+    await user.clear(name); await user.type(name, "Moisture-resistant board");
+    const card = await screen.findByRole("region", { name: "Now requesting" });
+    expect(card).toHaveTextContent("Specifications");
+    expect(card).toHaveTextContent("Moisture-resistant board");
+    expect(card).not.toHaveTextContent("Server pricing");
+    await user.clear(name); await user.type(name, serverPricingSpecification.name);
+    await waitFor(() => expect(screen.queryByRole("region", { name: "Now requesting" })).not.toBeInTheDocument());
+  });
+
+  it("shows only an edited shared-checklist field and omits saved item-specific and untouched rows", async () => {
+    const user = userEvent.setup();
+    vi.mocked(knowledgeApi.getKnowledgeBasketQuality).mockResolvedValue({ basketId: "basket-1", basketName: "Carpentry", basketStatus: "active", version: 3, revisionId: "quality-three", revisionNumber: 3, contentDigest: null, updatedAt: item.updatedAt,
+      parameters: [{ id: "q-one", label: "Ceiling alignment", type: "text", acceptanceCriteria: "Saved alignment criteria" }, { id: "q-two", label: "Untouched saved question", type: "boolean" }] });
+    vi.mocked(knowledgeApi.getKnowledgeSection).mockImplementation(async (_id, _revision, key) => section(key, key === "quality" ? { parameters: [{ label: "Historical item-only check", type: "text" }] } : {}));
+    renderRoute(<KnowledgeItemWorkspacePage />, route, pattern);
+    await user.click(await screen.findByRole("tab", { name: "Quality Parameter" }));
+    const criteria = (await screen.findAllByRole("textbox", { name: "Acceptance criteria" }))[0]!;
+    expect(screen.queryByRole("region", { name: "Now requesting" })).not.toBeInTheDocument();
+    await user.clear(criteria); await user.type(criteria, "Joints follow the approved layout");
+    const card = await screen.findByRole("region", { name: "Now requesting" });
+    expect(card).toHaveTextContent("Shared checklist · Carpentry");
+    expect(card).toHaveTextContent("Joints follow the approved layout");
+    for (const saved of ["Saved alignment criteria", "Untouched saved question", "Historical item-only check", "Answer type"]) expect(card).not.toHaveTextContent(saved);
+    await user.clear(criteria); await user.type(criteria, "Saved alignment criteria");
+    await waitFor(() => expect(screen.queryByRole("region", { name: "Now requesting" })).not.toBeInTheDocument());
+  });
+
+  it("tracks successive legacy-row edits without copying saved fields or sending preview IDs", async () => {
+    const user = userEvent.setup();
+    const exclusions = [{ name: "First saved exclusion", reason: "First saved reason", active: true }, { name: "Second saved exclusion", reason: "Second saved reason", active: true }];
+    vi.mocked(knowledgeApi.getKnowledgeSection).mockImplementation(async (_id, _revision, key) => section(key, key === "recommendations" ? { exclusions } : {}));
+    vi.mocked(knowledgeApi.updateKnowledgeSection).mockImplementation(async (_id, _revision, key, input) => mutationSection(key, input.payload));
+    renderRoute(<KnowledgeItemWorkspacePage />, route, pattern);
+    await user.click(await screen.findByRole("tab", { name: "Recommendation & Exclusions" }));
+    const reasons = await screen.findAllByRole("textbox", { name: "Reason" });
+    await user.clear(reasons[0]!); await user.type(reasons[0]!, "First pending reason");
+    await user.clear(reasons[1]!); await user.type(reasons[1]!, "Second pending reason");
+    const card = screen.getByRole("region", { name: "Now requesting" });
+    expect(within(card).getAllByText("Updated")).toHaveLength(2);
+    expect(within(card).queryByText("Added")).not.toBeInTheDocument();
+    expect(within(card).queryByText("Removed")).not.toBeInTheDocument();
+    expect(card).not.toHaveTextContent("First saved reason");
+    expect(card).not.toHaveTextContent("Second saved reason");
+    await user.click(screen.getByRole("button", { name: "Save Recommendation & Exclusions" }));
+    await waitFor(() => expect(knowledgeApi.updateKnowledgeSection).toHaveBeenCalled());
+    const submitted = vi.mocked(knowledgeApi.updateKnowledgeSection).mock.lastCall?.[3].payload;
+    expect(submitted).toEqual({ exclusions: [{ ...exclusions[0], reason: "First pending reason" }, { ...exclusions[1], reason: "Second pending reason" }] });
+  });
 });
 
 describe("temporary item workspace", () => {
@@ -418,7 +574,7 @@ describe("AI estimator knowledge screens", () => {
   it("has no automated accessibility violations on the editable workspace", async () => {
     renderRoute(<KnowledgeItemWorkspacePage />, "/admin/configuration/estimation/items/line-1", "/admin/configuration/estimation/items/:itemId");
 
-    await screen.findByRole("heading", { name: "Configured values" });
+    await screen.findByRole("heading", { name: "UOM" });
     expect(screen.queryByText(/by super-admin-1/u)).not.toBeInTheDocument();
     await expectNoAutomatedAccessibilityViolations();
   });
@@ -426,7 +582,7 @@ describe("AI estimator knowledge screens", () => {
   it("renders one Main Line identity, backend-owned workspace status, and main-before-history structure", async () => {
     renderRoute(<KnowledgeItemWorkspacePage />, "/admin/configuration/estimation/items/line-1", "/admin/configuration/estimation/items/:itemId");
 
-    await screen.findByRole("heading", { name: "Configured values" });
+    await screen.findByRole("heading", { name: "UOM" });
     expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
     expect(screen.getByRole("heading", { name: "Wall panelling", level: 1 })).toBeVisible();
     expect(screen.getByRole("button", { name: "Back to Main Baskets" })).toBeVisible();
@@ -479,7 +635,7 @@ describe("AI estimator knowledge screens", () => {
     });
     renderRoute(<KnowledgeItemWorkspacePage />, "/admin/configuration/estimation/items/line-1", "/admin/configuration/estimation/items/:itemId");
 
-    await screen.findByRole("heading", { name: "Configured values" });
+    await screen.findByRole("heading", { name: "UOM" });
     const actions = screen.getByRole("group", { name: "Page actions" });
     expect(within(actions).getAllByRole("button")).toEqual([
       within(actions).getByRole("button", { name: "Review activation" }),
@@ -521,7 +677,7 @@ describe("AI estimator knowledge screens", () => {
     });
     renderRoute(<KnowledgeItemWorkspacePage />, "/admin/configuration/estimation/items/line-1", "/admin/configuration/estimation/items/:itemId");
 
-    await screen.findByRole("heading", { name: "Configured values" });
+    await screen.findByRole("heading", { name: "UOM" });
     expect(screen.queryByRole("button", { name: "Review and activate" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Delete" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Duplicate" })).toBeVisible();
@@ -541,7 +697,7 @@ describe("AI estimator knowledge screens", () => {
     });
     renderRoute(<KnowledgeItemWorkspacePage />, "/admin/configuration/estimation/items/line-1", "/admin/configuration/estimation/items/:itemId");
 
-    expect(await screen.findByRole("heading", { name: "Configured values" })).toBeVisible();
+    expect(await screen.findByRole("heading", { name: "UOM" })).toBeVisible();
     const history = screen.getByRole("region", { name: "Revision history" });
     expect(within(history).getByRole("alert")).toHaveTextContent("Revision history is temporarily unavailable.");
     await expectNoAutomatedAccessibilityViolations();
@@ -559,7 +715,7 @@ describe("AI estimator knowledge screens", () => {
     }));
     renderRoute(<KnowledgeItemWorkspacePage />, "/admin/configuration/estimation/items/line-1", "/admin/configuration/estimation/items/:itemId");
 
-    expect(await screen.findByRole("heading", { name: "Configured values" })).toBeVisible();
+    expect(await screen.findByRole("heading", { name: "UOM" })).toBeVisible();
     expect(screen.getByRole("status", { name: "Revision history status" })).toHaveTextContent("Loading revision history…");
     await expectNoAutomatedAccessibilityViolations();
     resolveHistory({ items: [revision], pagination: { ...page, total: 1 } });
@@ -587,26 +743,28 @@ describe("AI estimator knowledge screens", () => {
     await user.click(within(guard).getByRole("button", { name: "Save changes" }));
     await waitFor(() => expect(knowledgeApi.updateKnowledgeBasketQuality).toHaveBeenCalledWith("basket-1", expect.objectContaining({ expectedVersion: 1, parameters: [expect.objectContaining({ label: "Check the completed finish" })] })));
     expect(knowledgeApi.updateKnowledgeSection).not.toHaveBeenCalled();
-    expect(await screen.findByText("Shared checklist · Carpentry · Version 1")).toBeVisible();
-    expect(screen.getByText("Check the completed finish")).toBeVisible();
+    expect(await screen.findByRole("heading", { name: "UOM" })).toBeVisible();
+    expect(screen.queryByText("Check the completed finish")).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Shared quality checklist" })).not.toBeInTheDocument();
   });
 
-  it("shows a shared-source refresh failure while retaining and labelling a cached legacy checklist", async () => {
+  it("retains the shared quality checklist when refresh fails in its own tab and retries there", async () => {
     const user = userEvent.setup();
-    vi.mocked(knowledgeApi.getKnowledgeSection).mockImplementation(async (_id, _revision, key) => section(key, key === "quality" ? { parameters: [{ id: "legacy-check", type: "text", label: "Legacy finish check" }] } : {}));
-    const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: 30000 } } });
-    render(<QueryClientProvider client={client}><MemoryRouter initialEntries={["/admin/configuration/estimation/items/line-1"]}><Routes><Route path="/admin/configuration/estimation/items/:itemId" element={<KnowledgeItemWorkspacePage />} /></Routes></MemoryRouter></QueryClientProvider>);
-    expect(await screen.findByText("Legacy finish check")).toBeVisible();
-    expect(screen.getByText("Item-specific checklist · no shared checklist saved")).toBeVisible();
+    const saved = { basketId: "basket-1", basketName: "Carpentry", basketStatus: "active" as const, version: 2, revisionId: "shared-v1", revisionNumber: 1, contentDigest: "shared-digest", parameters: [{ id: "shared-check", type: "text", label: "Saved finish check" }], updatedAt: item.updatedAt };
+    vi.mocked(knowledgeApi.getKnowledgeBasketQuality).mockResolvedValue(saved);
+    const { queryClient } = renderRoute(<KnowledgeItemWorkspacePage />, "/admin/configuration/estimation/items/line-1", "/admin/configuration/estimation/items/:itemId");
+    await user.click(await screen.findByRole("tab", { name: "Quality Parameter" }));
+    expect(await screen.findByRole("textbox", { name: "Question / check" })).toHaveValue("Saved finish check");
     vi.mocked(knowledgeApi.getKnowledgeBasketQuality).mockRejectedValue(new ApiError(503, "UPSTREAM_UNAVAILABLE", "Shared checklist refresh unavailable."));
-    await client.invalidateQueries({ queryKey: ["ai-estimator-knowledge", "basket-quality", "basket-1"] });
-    expect(await screen.findByText(/Shared checklist refresh unavailable/)).toBeVisible();
-    const summary = screen.getByRole("heading", { name: "Quality Parameter", level: 2 }).closest("section")!;
-    vi.mocked(knowledgeApi.getKnowledgeBasketQuality).mockResolvedValue({ basketId: "basket-1", basketName: "Carpentry", basketStatus: "active", version: 2, revisionId: "shared-v1", revisionNumber: 1, contentDigest: "shared-digest", parameters: [{ id: "shared-check", type: "text", label: "Current shared finish check" }], updatedAt: item.updatedAt });
-    await user.click(within(summary).getByRole("button", { name: /Try again|Retry/ }));
-    expect(await screen.findByText("Current shared finish check")).toBeVisible();
-    expect(screen.queryByText("Legacy finish check")).not.toBeInTheDocument();
-    expect(screen.getByText("Shared checklist · Carpentry · Version 1")).toBeVisible();
+    await act(async () => {
+      await queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.basketQuality("basket-1") });
+    });
+    expect(await screen.findByText("The latest shared checklist could not be refreshed.")).toBeVisible();
+    expect(screen.getByRole("textbox", { name: "Question / check" })).toHaveValue("Saved finish check");
+    vi.mocked(knowledgeApi.getKnowledgeBasketQuality).mockResolvedValue({ ...saved, version: 3, parameters: [{ ...saved.parameters[0]!, label: "Current shared finish check" }] });
+    await user.click(screen.getByRole("button", { name: "Retry refresh" }));
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "Question / check" })).toHaveValue("Current shared finish check"));
+    expect(screen.queryByText("The latest shared checklist could not be refreshed.")).not.toBeInTheDocument();
   });
 
   it("renders minimal item cards with only the linked heading and completeness", async () => {
@@ -684,7 +842,7 @@ describe("AI estimator knowledge screens", () => {
     const user = userEvent.setup();
     renderRoute(<KnowledgeItemWorkspacePage />, "/admin/configuration/estimation/items/line-1", "/admin/configuration/estimation/items/:itemId");
 
-    await screen.findByRole("heading", { name: "Configured values", level: 2 });
+    await screen.findByRole("heading", { name: "UOM", level: 2 });
     expect(screen.queryByRole("combobox", { name: "Section state" })).not.toBeInTheDocument();
 
     for (const sectionName of ["Recommendation & Exclusions", "Quality Parameter"]) {
@@ -1014,7 +1172,7 @@ describe("AI estimator knowledge screens", () => {
     expect(await screen.findByRole("heading", { name: "Knowledge home" })).toBeVisible();
   });
 
-  it("guards Overview Open actions while UOM changes are unsaved", async () => {
+  it("guards Mode tab navigation while Overview UOM changes are unsaved", async () => {
     const user = userEvent.setup();
     vi.mocked(knowledgeApi.listKnowledgeMasters).mockImplementation(async (type) => ({
       items: type === "uoms" ? [squareFoot, squareMetre] : [],
@@ -1033,25 +1191,23 @@ describe("AI estimator knowledge screens", () => {
     renderRoute(<KnowledgeItemWorkspacePage />, "/admin/configuration/estimation/items/line-1", "/admin/configuration/estimation/items/:itemId");
 
     await user.selectOptions(await screen.findByRole("combobox", { name: "Unit of measure (UOM)" }), squareMetre.id);
-    const pricingSummary = (await screen.findByRole("heading", { name: "Specifications" })).closest("section");
-    expect(pricingSummary).not.toBeNull();
-    await user.click(within(pricingSummary as HTMLElement).getByRole("button", { name: "Open Mode" }));
+    await user.click(screen.getByRole("tab", { name: "Mode" }));
     const guard = screen.getByRole("alertdialog", { name: "Save changes before leaving?" });
     await user.click(within(guard).getByRole("button", { name: "Stay here" }));
     expect(screen.getByRole("tab", { name: "Overview" })).toHaveAttribute("aria-selected", "true");
 
-    await user.click(within(pricingSummary as HTMLElement).getByRole("button", { name: "Open Mode" }));
+    await user.click(screen.getByRole("tab", { name: "Mode" }));
     await user.click(within(screen.getByRole("alertdialog", { name: "Save changes before leaving?" })).getByRole("button", { name: "Discard changes" }));
     expect(await screen.findByRole("tabpanel", { name: "Mode" })).toBeVisible();
   });
 
-  it("omits every tab-derived Overview summary after all empty sources load", async () => {
+  it("shows only UOM and Surface configuration for an empty Overview", async () => {
     vi.mocked(knowledgeApi.getKnowledgeSection).mockImplementation(async (_lineId, _revisionId, sectionKey) =>
       section(sectionKey)
     );
     renderRoute(<KnowledgeItemWorkspacePage />, "/admin/configuration/estimation/items/line-1", "/admin/configuration/estimation/items/:itemId");
 
-    expect(await screen.findByRole("heading", { name: "Configured values" })).toBeVisible();
+    expect(await screen.findByRole("heading", { name: "UOM" })).toBeVisible();
     expect(screen.getByRole("combobox", { name: "Unit of measure (UOM)" })).toBeVisible();
     expect(screen.getByRole("button", { name: "Add Unit" })).toBeVisible();
     expect(screen.queryByRole("button", { name: "Add unit of measure" })).not.toBeInTheDocument();
@@ -1356,7 +1512,7 @@ describe("AI estimator knowledge screens", () => {
     expect(within(tablist).queryByRole("tab", { name: "Advanced" })).not.toBeInTheDocument();
     expect(within(tablist).queryByRole("tab", { name: "Pricing" })).not.toBeInTheDocument();
     expect(within(tablist).queryByRole("tab", { name: "Quantity & margin" })).not.toBeInTheDocument();
-    expect(await screen.findByRole("heading", { name: "Configured values" })).toBeVisible();
+    expect(await screen.findByRole("heading", { name: "UOM" })).toBeVisible();
     expect(screen.queryByRole("heading", { name: "Section applicability rules" })).not.toBeInTheDocument();
     expect(screen.queryByRole("combobox", { name: "Section key" })).not.toBeInTheDocument();
     expect(screen.queryByRole("textbox", { name: "Description" })).not.toBeInTheDocument();
@@ -1364,10 +1520,10 @@ describe("AI estimator knowledge screens", () => {
     expect(screen.getByRole("button", { name: "Add Unit" })).toBeVisible();
     expect(screen.queryByRole("button", { name: "Add unit of measure" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Applicable surfaces" })).toBeVisible();
-    expect(screen.getByRole("heading", { name: "Recommendation & Exclusions", level: 2 })).toBeVisible();
-    expect(screen.getByRole("heading", { name: "Quality Parameter", level: 2 })).toBeVisible();
-    expect(screen.getByText("Use matching panel")).toBeVisible();
-    expect(screen.getByText("Thickness")).toBeVisible();
+    expect(screen.queryByRole("heading", { name: "Recommendation & Exclusions", level: 2 })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Quality Parameter", level: 2 })).not.toBeInTheDocument();
+    expect(screen.queryByText("Use matching panel")).not.toBeInTheDocument();
+    expect(screen.queryByText("Thickness")).not.toBeInTheDocument();
     const overview = document.querySelector(".knowledge-overview");
     expect(overview).not.toBeNull();
     expect(within(overview as HTMLElement).queryByRole("heading", { name: "All section summaries" })).not.toBeInTheDocument();
@@ -1662,34 +1818,26 @@ describe("AI estimator knowledge screens", () => {
     expect(knowledgeApi.updateKnowledgeSection).not.toHaveBeenCalled();
   });
 
-  it("keeps healthy Overview summaries usable while retrying one failed section load", async () => {
-    const user = userEvent.setup();
-    let pricingReads = 0;
+  it("loads only Overview section data and omits saved summaries from the Overview tab", async () => {
+    mockConfiguredModeSections();
     vi.mocked(knowledgeApi.getKnowledgeSection).mockImplementation(async (_lineId, _revisionId, sectionKey) => {
-      if (sectionKey === "pricing" && pricingReads++ === 0) {
-        throw new ApiError(503, "UPSTREAM_UNAVAILABLE", "Pricing is temporarily unavailable.");
-      }
-      if (sectionKey === "overview") return section(sectionKey, { uomId: squareFoot.id });
-      if (sectionKey === "pricing") return section(sectionKey, { technicalDescription: "Recovered pricing" });
-      if (sectionKey === "quantity-margin") return section(sectionKey, { startMarginBps: 100 });
-      return section(sectionKey);
+      if (sectionKey === "overview") return section(sectionKey, { uomId: squareFoot.id, description: "Hidden saved description", priorityId: "hidden-priority", modeIds: ["hidden-mode"], surfaceIds: [wallSurface.id] });
+      throw new Error(`Overview must not request ${sectionKey}`);
     });
+    vi.mocked(knowledgeApi.getKnowledgeBasketQuality).mockRejectedValue(new Error("Overview must not request the shared checklist"));
     renderRoute(<KnowledgeItemWorkspacePage />, "/admin/configuration/estimation/items/line-1", "/admin/configuration/estimation/items/:itemId");
 
-    const pricingSummary = (await screen.findByRole("heading", { name: "Specifications" })).closest("section");
-    const sharedValues = screen.getByRole("heading", { name: "Shared calculation values" }).closest("section");
-    expect(pricingSummary).not.toBeNull();
-    expect(sharedValues).not.toBeNull();
-    expect(within(pricingSummary as HTMLElement).getByText(/Pricing is temporarily unavailable/u)).toBeVisible();
-    expect(within(sharedValues as HTMLElement).getByText("1.00%")).toBeVisible();
-
-    await user.click(within(pricingSummary as HTMLElement).getByRole("button", { name: "Try again" }));
-    await waitFor(() => {
-      expect(screen.queryByRole("heading", { name: "Specifications" })).not.toBeInTheDocument();
-      expect(screen.queryByRole("heading", { name: "Budgeting" })).not.toBeInTheDocument();
-    });
-    expect(screen.queryByText(/No (?:Specifications|Pricing) configured/u)).not.toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Shared calculation values" })).toBeVisible();
+    expect(await screen.findByRole("combobox", { name: "Unit of measure (UOM)" })).toHaveDisplayValue("Square foot");
+    expect(screen.getByRole("button", { name: "Applicable surfaces" })).toHaveAccessibleDescription("Wall");
+    const overview = document.querySelector(".knowledge-overview") as HTMLElement;
+    expect(within(overview).getAllByRole("heading").map((heading) => heading.textContent)).toEqual(["UOM", "Surfaces"]);
+    expect(overview).not.toHaveTextContent("Hidden saved description");
+    expect(overview).not.toHaveTextContent("Main Basket");
+    expect(within(overview).queryByRole("button", { name: /^Open /u })).not.toBeInTheDocument();
+    expect(vi.mocked(knowledgeApi.getKnowledgeSection).mock.calls.map(([, , sectionKey]) => sectionKey)).toEqual(["overview"]);
+    expect(knowledgeApi.getKnowledgeBasketQuality).not.toHaveBeenCalled();
+    expect(screen.getByRole("region", { name: "Revision history" })).toBeVisible();
+    await expectNoAutomatedAccessibilityViolations();
   });
 
   it("keeps all Mode blocks visible and non-mutable for an active read-only revision", async () => {
@@ -1745,7 +1893,7 @@ describe("AI estimator knowledge screens", () => {
 
     expect(await screen.findByText("Archived configuration")).toBeVisible();
     expect(screen.queryByRole("button", { name: "Save Overview" })).not.toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Applicable surfaces" }));
+    await user.click(await screen.findByRole("button", { name: "Applicable surfaces" }));
     expect(screen.getByRole("listbox", { name: "Surface options" })).toHaveAttribute("aria-readonly", "true");
     await user.click(screen.getByRole("option", { name: "Wall" }));
     expect(screen.getByRole("option", { name: "Wall" })).toHaveAttribute("aria-selected", "false");
@@ -1909,7 +2057,7 @@ describe("AI estimator knowledge screens", () => {
     const user = userEvent.setup();
     setViewportWidth(1024);
     renderRoute(<KnowledgeItemWorkspacePage />, "/admin/configuration/estimation/items/line-1", "/admin/configuration/estimation/items/:itemId");
-    await screen.findByRole("heading", { name: "Configured values" });
+    await screen.findByRole("heading", { name: "UOM" });
     const overview = screen.getByRole("tab", { name: "Overview" });
     overview.focus();
 
@@ -1952,7 +2100,7 @@ describe("AI estimator knowledge screens", () => {
     const user = userEvent.setup();
     setViewportWidth(width);
     const workspace = renderRoute(<KnowledgeItemWorkspacePage />, "/admin/configuration/estimation/items/line-1", "/admin/configuration/estimation/items/:itemId");
-    await screen.findByRole("heading", { name: "Configured values" });
+    await screen.findByRole("heading", { name: "UOM" });
 
     if (width <= 640) {
       const selector = screen.getByRole("combobox", { name: "Configuration section" });

@@ -1,6 +1,6 @@
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Copy, Plus, ShieldCheck, Trash2 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 
 import { ApiError } from "../../api/client";
@@ -21,7 +21,6 @@ import {
   deactivateKnowledgeItem,
   duplicateKnowledgeItem,
   getKnowledgeHistory,
-  getKnowledgeBasketQuality,
   getKnowledgeItem,
   getKnowledgeSection,
   listKnowledgeBaskets,
@@ -36,6 +35,15 @@ import { KnowledgeBasketQualityPanel, type KnowledgeBasketQualityPanelHandle } f
 import { KnowledgeModePanel, type KnowledgeModePanelHandle } from "./KnowledgeModePanel";
 import { KnowledgeConflictReview } from "./KnowledgeConflictReview";
 import { KnowledgeRevisionHistory } from "./KnowledgeRevisionHistory";
+import { KnowledgePendingChangesCard } from "./KnowledgePendingChangesCard";
+import { pendingValuesEqual, type KnowledgePendingChangesSnapshot } from "./knowledgePendingChanges";
+import {
+  acknowledgeRecommendationPendingChangesTracker,
+  advanceRecommendationPendingChangesTracker,
+  createRecommendationPendingChangesTracker,
+  projectRecommendationPendingChanges,
+  type KnowledgeRecommendationPendingChangesTracker
+} from "./knowledgeRecommendationPendingChanges";
 import { KnowledgeSectionCommandBar } from "./KnowledgeSectionCommandBar";
 import { KnowledgeWorkspaceStatus } from "./KnowledgeWorkspaceStatus";
 import {
@@ -47,7 +55,6 @@ import {
   KnowledgeOverviewPanel,
   type KnowledgeOverviewSectionState
 } from "./KnowledgeOverviewPanel";
-import { projectKnowledgeOverviewSummary } from "./knowledgeOverviewSummary";
 import {
   KNOWLEDGE_ITEM_STATUS_LABELS,
   KNOWLEDGE_SECTION_LABELS,
@@ -55,7 +62,6 @@ import {
   formatKnowledgeDateTime,
 } from "./knowledgePresentation";
 import { knowledgeQueryKeys } from "./knowledgeQueryKeys";
-import { mandatoryQualityParameters } from "./knowledgeQuality";
 import { collectAllKnowledgeMasterPages } from "./knowledgeMasterPagination";
 import {
   knowledgeOverviewPayloadForUpdate,
@@ -79,21 +85,35 @@ import type {
 } from "./knowledgeTypes";
 import { useUnsavedKnowledgeGuard } from "./useUnsavedKnowledgeGuard";
 import "./ai-estimator-knowledge.css";
+import "./knowledge-configuration-ui.css";
 
 const MASTER_TYPES = ["uoms", "vendors", "taxes", "priorities", "surfaces", "modes"] as const satisfies readonly KnowledgeMasterType[];
-const OVERVIEW_SUMMARY_SECTION_KEYS = [
-  "pricing",
-  "quantity-margin",
-  "scope",
-  "recommendations",
-  "quality",
-  "execution",
-  "advanced"
-] as const satisfies readonly KnowledgeSectionKey[];
 
 interface ConflictState {
   readonly localVersion: number;
   readonly server: KnowledgeSectionEnvelope<KnowledgeJsonObject>;
+}
+
+interface PendingEditorSession { readonly sourceKey: string }
+interface PendingRecommendationDraft {
+  readonly session: PendingEditorSession;
+  readonly tracker: KnowledgeRecommendationPendingChangesTracker;
+}
+
+function KnowledgeWorkspaceRail({ children }: { readonly children: ReactNode }) {
+  const rail = useRef<HTMLDivElement>(null);
+  const [tooTall, setTooTall] = useState(false);
+  useLayoutEffect(() => {
+    const element = rail.current;
+    if (!element) return;
+    const measure = () => setTooTall(element.getBoundingClientRect().height > window.innerHeight - 32);
+    measure();
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(measure);
+    observer?.observe(element);
+    window.addEventListener("resize", measure);
+    return () => { observer?.disconnect(); window.removeEventListener("resize", measure); };
+  }, []);
+  return <div ref={rail} className={`knowledge-workspace-rail${tooTall ? " knowledge-workspace-rail--long" : ""}`}>{children}</div>;
 }
 
 export function KnowledgeItemWorkspacePage() {
@@ -135,16 +155,37 @@ export function KnowledgeItemWorkspacePage() {
     enabled: Boolean(mainLineId)
   });
   const item = itemQuery.data;
-  const basketQualityQuery = useQuery({
-    queryKey: knowledgeQueryKeys.basketQuality(item?.basketId ?? ""),
-    queryFn: () => getKnowledgeBasketQuality(item!.basketId),
-    enabled: Boolean(item?.basketId && activeSection === "overview")
-  });
 
   useEffect(() => {
     if (item?.itemType === "temporary" && activeSection === "recommendations") setActiveSection("overview");
   }, [item?.itemType, activeSection]);
   const revision = item?.draftRevision ?? item?.activeRevision ?? null;
+  const pendingSession = useMemo<PendingEditorSession>(() => ({
+    sourceKey: JSON.stringify([mainLineId, revision?.id ?? "", item?.basketId ?? "", activeSection])
+  }), [mainLineId, revision?.id, item?.basketId, activeSection]);
+  const currentPendingSession = useRef(pendingSession);
+  currentPendingSession.current = pendingSession;
+  const currentPayload = useRef(payload);
+  currentPayload.current = payload;
+  const [panelPending, setPanelPending] = useState<{ session: PendingEditorSession; snapshot: KnowledgePendingChangesSnapshot } | null>(null);
+  const [recommendationPending, setRecommendationPending] = useState<PendingRecommendationDraft | null>(null);
+  const recommendationPendingRef = useRef(recommendationPending);
+  recommendationPendingRef.current = recommendationPending;
+  const [confirmedRelatedItems, setConfirmedRelatedItems] = useState<{ session: PendingEditorSession; items: readonly KnowledgeItemDetail[] } | null>(null);
+  const receivePendingChanges = useCallback((snapshot: KnowledgePendingChangesSnapshot) => {
+    if (currentPendingSession.current !== pendingSession || snapshot.sourceKey !== pendingSession.sourceKey) return;
+    setPanelPending((previous) => previous?.session === pendingSession && pendingValuesEqual(previous.snapshot, snapshot)
+      ? previous : { session: pendingSession, snapshot });
+  }, [pendingSession]);
+  const receiveRelatedItem = useCallback((confirmed: KnowledgeItemDetail) => {
+    if (currentPendingSession.current !== pendingSession) return;
+    setConfirmedRelatedItems((previous) => {
+      const items = previous?.session === pendingSession ? previous.items : [];
+      const existing = items.find((entry) => entry.mainLineId === confirmed.mainLineId);
+      return existing && existing.version > confirmed.version ? previous
+        : { session: pendingSession, items: [...items.filter((entry) => entry.mainLineId !== confirmed.mainLineId), confirmed] };
+    });
+  }, [pendingSession]);
   const backendSection: KnowledgeSectionKey | null = activeSection === "mode" || activeSection === "quality"
     ? null
     : activeSection;
@@ -152,13 +193,6 @@ export function KnowledgeItemWorkspacePage() {
     queryKey: knowledgeQueryKeys.section(mainLineId, revision?.id ?? "", backendSection ?? "overview"),
     queryFn: () => getKnowledgeSection<KnowledgeJsonObject>(mainLineId, revision!.id, backendSection!),
     enabled: Boolean(mainLineId && revision?.id && backendSection)
-  });
-  const overviewSummaryQueries = useQueries({
-    queries: OVERVIEW_SUMMARY_SECTION_KEYS.map((sectionKey) => ({
-      queryKey: knowledgeQueryKeys.section(mainLineId, revision?.id ?? "", sectionKey),
-      queryFn: () => getKnowledgeSection<KnowledgeJsonObject>(mainLineId, revision!.id, sectionKey),
-      enabled: Boolean(mainLineId && revision?.id && activeSection === "overview")
-    }))
   });
   const historyQuery = useQuery({
     queryKey: knowledgeQueryKeys.history(mainLineId, { limit: 100, offset: 0 }),
@@ -258,67 +292,6 @@ export function KnowledgeItemWorkspacePage() {
   const overviewDraftPayload = activeSection === "overview" && sectionQuery.data
     ? dirty ? payload : sectionQuery.data.payload
     : payload;
-  const overviewSections: Partial<Record<KnowledgeSectionKey, KnowledgeJsonObject>> = {};
-  if (activeSection === "overview" && sectionQuery.data?.sectionKey === "overview") {
-    overviewSections.overview = overviewDraftPayload;
-  }
-  OVERVIEW_SUMMARY_SECTION_KEYS.forEach((sectionKey, index) => {
-    const envelope = overviewSummaryQueries[index]?.data;
-    if (envelope) overviewSections[sectionKey] = envelope.payload;
-  });
-  if (activeSection === "overview") {
-    if (basketQualityQuery.data?.revisionId) overviewSections.quality = { parameters: basketQualityQuery.data.parameters };
-    else if (!basketQualityQuery.data) delete overviewSections.quality;
-    if (Array.isArray(overviewSections.quality?.parameters)) {
-      overviewSections.quality = { ...overviewSections.quality,
-        parameters: mandatoryQualityParameters(overviewSections.quality.parameters as readonly KnowledgeJsonObject[]) };
-    }
-  }
-  const overviewSummary = projectKnowledgeOverviewSummary({
-    sections: overviewSections,
-    masters,
-    baskets: relationshipBasketsQuery.data?.items ?? [],
-    items: relationshipItemsQuery.data?.items ?? [],
-    completeness: item?.completeness ?? revision?.completeness ?? null
-  });
-  const overviewSectionStates = Object.fromEntries(
-    OVERVIEW_SUMMARY_SECTION_KEYS.map((sectionKey, index) => {
-      const queries = sectionKey === "quality"
-        ? basketQualityQuery.data?.revisionId ? [basketQualityQuery] : [basketQualityQuery, overviewSummaryQueries[index]!]
-        : [overviewSummaryQueries[index]!];
-      const hasData = queries.every(query => Boolean(query.data));
-      const failed = queries.find(query => query.isError);
-      const errorMessage = failed?.error instanceof Error ? failed.error.message : undefined;
-      const state: KnowledgeOverviewSectionState = {
-        status: failed && !hasData ? "error" : !hasData ? "loading" : "ready",
-        refreshing: hasData && queries.some(query => query.isFetching),
-        errorMessage,
-        refreshErrorMessage: hasData ? errorMessage : undefined,
-        onRetry: () => { queries.forEach(query => { void query.refetch(); }); }
-      };
-      return [sectionKey, state];
-    })
-  ) as Readonly<Partial<Record<KnowledgeSectionKey, KnowledgeOverviewSectionState>>>;
-  const overviewMasterStates = Object.fromEntries(
-    MASTER_TYPES.map((type, index) => {
-      const query = masterQueries[index]!;
-      const hasData = Boolean(query.data);
-      const state: KnowledgeOverviewSectionState = {
-        status: query.isError && !hasData
-          ? "error"
-          : query.isPending && !hasData
-            ? "loading"
-            : "ready",
-        refreshing: hasData && query.isFetching,
-        errorMessage: query.error instanceof Error ? query.error.message : undefined,
-        refreshErrorMessage: query.isError && hasData && query.error instanceof Error
-          ? query.error.message
-          : undefined,
-        onRetry: () => { void query.refetch(); }
-      };
-      return [type, state];
-    })
-  ) as Readonly<Partial<Record<KnowledgeMasterType, KnowledgeOverviewSectionState>>>;
   const relationshipsHaveData = Boolean(
     relationshipBasketsQuery.data && relationshipItemsQuery.data
   );
@@ -351,6 +324,8 @@ export function KnowledgeItemWorkspacePage() {
   }, [dirty, sectionQuery.data]);
 
   const saveMutation = useMutation({
+    onMutate: () => ({ session: pendingSession, payload: currentPayload.current,
+      recommendationTracker: recommendationPendingRef.current?.session === pendingSession ? recommendationPendingRef.current.tracker : null }),
     mutationFn: async () => {
       if (!item || !revision || !backendSection || !sectionQuery.data) throw new Error("The draft section is unavailable.");
       const rebasedPayload = backendSection === "overview"
@@ -370,8 +345,18 @@ export function KnowledgeItemWorkspacePage() {
         payload: knowledgeSectionPayloadForUpdate(backendSection, rebasedPayload)
       });
     },
-    onSuccess: async (saved) => {
+    onSuccess: async (saved, _variables, submitted) => {
+      if (saved.sectionKey === "recommendations" && submitted && currentPendingSession.current === submitted.session) {
+        // The confirmed request is no longer pending, even while list refresh is running.
+        const local = recommendationPendingRef.current;
+        if (local?.session === submitted.session && submitted.recommendationTracker) {
+          const next = { session: submitted.session, tracker: acknowledgeRecommendationPendingChangesTracker(local.tracker, submitted.recommendationTracker) };
+          recommendationPendingRef.current = next;
+          setRecommendationPending(next);
+        }
+      }
       await syncKnowledgeSectionMutation(queryClient, saved);
+      if (submitted && (currentPendingSession.current !== submitted.session || !pendingValuesEqual(currentPayload.current, submitted.payload))) return;
       setPayload(saved.payload);
       setDirty(false);
       setOverviewDirtyFields(new Set());
@@ -501,6 +486,19 @@ export function KnowledgeItemWorkspacePage() {
   const lifecycleError = lifecycleMutation.error instanceof ApiError && lifecycleMutation.error.code === "VERSION_CONFLICT" ? "This item changed elsewhere. Refresh before retrying." : lifecycleMutation.error?.message ?? null;
   const commandError = commandMutation.error instanceof ApiError && commandMutation.error.code === "VERSION_CONFLICT" ? "This item changed elsewhere. Refresh before retrying." : commandMutation.error?.message ?? null;
   const activeSectionLabel = KNOWLEDGE_WORKSPACE_SECTION_LABELS[activeSection];
+  const pendingRelatedItems = new Map((relationshipItemsQuery.data?.allItems ?? []).map((entry) => [entry.mainLineId, entry]));
+  for (const confirmed of confirmedRelatedItems?.session === pendingSession ? confirmedRelatedItems.items : []) {
+    const existing = pendingRelatedItems.get(confirmed.mainLineId);
+    if (!existing || existing.version < confirmed.version) pendingRelatedItems.set(confirmed.mainLineId, confirmed);
+  }
+  const pendingSnapshot: KnowledgePendingChangesSnapshot = {
+    sourceKey: pendingSession.sourceKey,
+    groups: activeSection === "recommendations" && editable && dirty && recommendationPending?.session === pendingSession
+      ? projectRecommendationPendingChanges({ ...recommendationPending.tracker.projection,
+          baskets: relationshipBasketsQuery.data?.items ?? [], items: [...pendingRelatedItems.values()], masters })
+      : (activeSection === "mode" && editable || activeSection === "quality" && canUpdate && item.status !== "archived")
+        && panelPending?.session === pendingSession ? panelPending.snapshot.groups : []
+  };
   const commandVersionLabel = activeSection === "mode"
     ? revision
       ? `Version ${revision.revisionNumber}`
@@ -527,7 +525,7 @@ export function KnowledgeItemWorkspacePage() {
 
       <div className="knowledge-workspace-layout">
         <div className="knowledge-workspace-main">
-          <KnowledgeSectionNavigation sections={item.itemType === "temporary" ? ["overview", "mode", "quality"] : undefined} activeSection={activeSection} onSectionChange={selectWorkspaceSection} panelBusy={activeSection === "mode" ? modeBusy : activeSection === "overview" ? sectionQuery.isFetching || overviewSummaryQueries.some(({ isFetching }) => isFetching) : sectionQuery.isFetching}>
+          <KnowledgeSectionNavigation sections={item.itemType === "temporary" ? ["overview", "mode", "quality"] : undefined} activeSection={activeSection} onSectionChange={selectWorkspaceSection} panelBusy={activeSection === "mode" ? modeBusy : sectionQuery.isFetching}>
             {revision && activeSection !== "quality" ? (
               <KnowledgeSectionCommandBar
                 sectionLabel={activeSectionLabel}
@@ -540,11 +538,12 @@ export function KnowledgeItemWorkspacePage() {
               />
             ) : null}
             {activeSection === "quality" ? (
-              <KnowledgeBasketQualityPanel key={item.basketId} ref={qualityPanelRef} item={item} revisionId={revision?.id} canUpdate={canUpdate} onDirtyChange={setQualityDirty} onSavingChange={setQualitySaving} />
+              <KnowledgeBasketQualityPanel key={pendingSession.sourceKey} ref={qualityPanelRef} item={item} revisionId={revision?.id} canUpdate={canUpdate} onDirtyChange={setQualityDirty} onSavingChange={setQualitySaving} pendingChangesSourceKey={pendingSession.sourceKey} onPendingChanges={receivePendingChanges} />
             ) : !revision ? (
               <PageState state="empty" message="This item has no revision to display." />
             ) : activeSection === "mode" ? (
               <KnowledgeModePanel
+                key={pendingSession.sourceKey}
                 ref={modePanelRef}
                 item={item}
                 revisionId={revision.id}
@@ -559,6 +558,8 @@ export function KnowledgeItemWorkspacePage() {
                 onBusyChange={setModeBusy}
                 onSaveErrorChange={setModeSaveError}
                 onAnnouncement={setAnnouncement}
+                pendingChangesSourceKey={pendingSession.sourceKey}
+                onPendingChanges={receivePendingChanges}
               />
             ) : sectionQuery.isPending ? <PageState state="loading" message={`Loading ${activeSectionLabel}…`} /> : sectionQuery.isError ? <PageState state="error" message={sectionQuery.error.message} action={{ label: "Try again", onAction: () => void sectionQuery.refetch() }} /> : sectionQuery.data && backendSection ? (
               <Surface as="section" className={`knowledge-workspace-section${backendSection === "overview" ? " knowledge-workspace-section--overview" : ""}`}>
@@ -576,19 +577,10 @@ export function KnowledgeItemWorkspacePage() {
                 {(relationshipBasketsQuery.isError || relationshipItemsQuery.isError) && activeSection === "recommendations" ? <InlineMessage tone="warning">Some Basket or Main Line choices could not be loaded. Existing stable-ID selections remain visible; retry before changing relationships.</InlineMessage> : null}
                 {backendSection === "overview" && revision ? (
                   <KnowledgeOverviewPanel
-                    showRecommendations={item.itemType !== "temporary"}
-                    qualitySourceLabel={basketQualityQuery.data?.revisionId ? `Shared checklist · ${item.basketName} · Version ${basketQualityQuery.data.revisionNumber}` : basketQualityQuery.data ? "Item-specific checklist · no shared checklist saved" : undefined}
                     key={revision.id}
-                    item={item}
-                    revision={revision}
                     overviewPayload={overviewDraftPayload}
-                    summary={overviewSummary}
                     masters={masters}
-                    sectionStates={overviewSectionStates}
-                    referenceStates={{
-                      masters: overviewMasterStates,
-                      relationships: overviewRelationshipState
-                    }}
+                    referenceStates={{ masters: masterCatalogStates }}
                     editable={editable}
                     canQuickAdd={canCreate}
                     onOverviewPayloadChange={setPayload}
@@ -603,23 +595,41 @@ export function KnowledgeItemWorkspacePage() {
                     } })}
                     saving={saveMutation.isPending}
                     surfacesDirty={overviewDirtyFields.has("surfaceIds")}
-                    onOpenSection={selectWorkspaceSection}
                   />
                 ) : (
-                  <KnowledgeSectionEditor sectionKey={backendSection} payload={payload} masters={masters} relationshipBaskets={relationshipBasketsQuery.data?.items ?? []} relationshipItems={(backendSection === "recommendations" ? relationshipItemsQuery.data?.allItems : relationshipItemsQuery.data?.items) ?? []} currentMainLineId={mainLineId} mainLineName={item.mainLineName} basketName={item.basketName} relationshipCatalogState={overviewRelationshipState} readOnly={!editable} canQuickAdd={canCreate} uomCatalogState={uomCatalogState} vendorCatalogState={vendorCatalogState} masterCatalogStates={masterCatalogStates} resetKey={`${sectionQuery.data.id}-${sectionQuery.data.version}`} validationAttempt={validationAttempt} onChange={setPayload} onDirty={() => setDirty(true)} onValidationChange={setEditorValid} onQuickAdd={(type, select) => setQuickAdd({ type, select })} />
+                  <KnowledgeSectionEditor key={`${pendingSession.sourceKey}:${sectionQuery.data.id}`} sectionKey={backendSection} payload={payload} masters={masters} relationshipBaskets={relationshipBasketsQuery.data?.items ?? []} relationshipItems={(backendSection === "recommendations" ? relationshipItemsQuery.data?.allItems : relationshipItemsQuery.data?.items) ?? []} currentMainLineId={mainLineId} mainLineName={item.mainLineName} basketName={item.basketName} relationshipCatalogState={overviewRelationshipState} readOnly={!editable} canQuickAdd={canCreate} uomCatalogState={uomCatalogState} vendorCatalogState={vendorCatalogState} masterCatalogStates={masterCatalogStates} resetKey={`${sectionQuery.data.id}-${sectionQuery.data.version}`} validationAttempt={validationAttempt} onChange={(next) => {
+                    const local = recommendationPendingRef.current;
+                    if (backendSection === "recommendations" && local?.session === pendingSession) {
+                      const updated = { session: pendingSession, tracker: advanceRecommendationPendingChangesTracker(local.tracker, next) };
+                      recommendationPendingRef.current = updated;
+                      setRecommendationPending(updated);
+                    }
+                    currentPayload.current = next;
+                    setPayload(next);
+                  }} onDirty={() => {
+                    if (backendSection === "recommendations" && (!dirty || recommendationPendingRef.current?.session !== pendingSession)) {
+                      const next = { session: pendingSession, tracker: createRecommendationPendingChangesTracker(currentPayload.current) };
+                      recommendationPendingRef.current = next;
+                      setRecommendationPending(next);
+                    }
+                    setDirty(true);
+                  }} onRelatedItemConfirmed={receiveRelatedItem} onValidationChange={setEditorValid} onQuickAdd={(type, select) => setQuickAdd({ type, select })} />
                 )}
                 {activeSaveError ? <InlineMessage tone="error" role="alert">{activeSaveError}</InlineMessage> : null}
               </Surface>
             ) : <PageState state="empty" message="This revision has no section data." />}
           </KnowledgeSectionNavigation>
         </div>
-        <KnowledgeRevisionHistory
-          entries={historyQuery.data?.items}
-          loading={historyQuery.isPending}
-          refreshing={historyQuery.isFetching}
-          error={historyQuery.error instanceof Error ? historyQuery.error : null}
-          onRetry={() => void historyQuery.refetch()}
-        />
+        <KnowledgeWorkspaceRail>
+          <KnowledgeRevisionHistory
+            entries={historyQuery.data?.items}
+            loading={historyQuery.isPending}
+            refreshing={historyQuery.isFetching}
+            error={historyQuery.error instanceof Error ? historyQuery.error : null}
+            onRetry={() => void historyQuery.refetch()}
+          />
+          <KnowledgePendingChangesCard snapshot={pendingSnapshot} sectionLabel={activeSectionLabel} saving={activeSaving} />
+        </KnowledgeWorkspaceRail>
       </div>
 
       {guard.dialogOpen ? <KnowledgeUnsavedChangesDialog onSave={() => void guard.saveAndContinue()} onDiscard={guard.discardAndContinue} onStay={guard.stayHere} busy={guard.busy} error={guard.error} /> : null}

@@ -105,8 +105,8 @@ describe("Super Admin knowledge item workspace layout", () => {
     expect(fieldSource).not.toContain("knowledge-overview__");
     expect(overviewPanelSource).toContain('className="knowledge-overview__configured-grid"');
     expect(overviewPanelSource).toContain('className="knowledge-overview__uom-control-row"');
-    expect(overviewPanelSource).toContain('className="knowledge-overview__context"');
-    expect(overviewPanelSource).toContain('className="knowledge-overview__principal-grid"');
+    expect(overviewPanelSource).not.toContain('className="knowledge-overview__context"');
+    expect(overviewPanelSource).not.toContain('className="knowledge-overview__principal-grid"');
     expect(overviewPanelSource).not.toContain("KnowledgeSurfaceMultiSelect");
     expect(overviewPanelSource).not.toContain("knowledge-overview__configured-field--surfaces");
     expect(overviewPanelSource).not.toContain("knowledge-overview__cards");
@@ -268,7 +268,7 @@ describe("Super Admin knowledge item workspace layout", () => {
     expect(stylesheet).not.toContain("max-inline-size: 72rem");
   });
 
-  it("aligns the Overview command bar and card with compatible token insets", () => {
+  it("keeps the Overview command bar inset and the outer configuration area unpadded", () => {
     const commandBar = declarations(
       ".knowledge-page--item-workspace .knowledge-section-command-bar",
       professionalWorkspaceStart
@@ -285,7 +285,7 @@ describe("Super Admin knowledge item workspace layout", () => {
       overviewSurfaceSelector,
       professionalWorkspaceStart
     );
-    expect(overviewSurface.get("padding")).toBe("var(--space-5)");
+    expect(overviewSurface.get("padding")).toBe("0");
 
     const workspaceSurface = declarations(
       ".knowledge-page--item-workspace .knowledge-workspace-section--overview",
@@ -555,7 +555,7 @@ describe("Super Admin knowledge item workspace layout", () => {
     expect(mobileStart).toBeGreaterThan(compactStart);
 
     const directSurface = declarations(
-      '.ui-app-shell[data-role="super_admin"] .knowledge-page.knowledge-page--item-workspace .ui-surface.knowledge-workspace-section',
+      '.ui-app-shell[data-role="super_admin"] .knowledge-page.knowledge-page--item-workspace .ui-surface.knowledge-workspace-section,',
       mobileStart
     );
     expect(directSurface.get("padding")).toBe("var(--space-4)");
@@ -685,7 +685,7 @@ describe("Super Admin knowledge item workspace layout", () => {
     );
   });
 
-  it("keeps the UOM control row unstacked through tablet, mobile, and the 320px minimum", () => {
+  it("keeps UOM inline on tablet and stacks its action on narrow mobile screens", () => {
     const tabletStart = stylesheet.indexOf(
       "@media (max-width: 768px)",
       professionalWorkspaceStart
@@ -722,7 +722,7 @@ describe("Super Admin knowledge item workspace layout", () => {
       '.ui-app-shell[data-role="super_admin"] .knowledge-page.knowledge-page--item-workspace .ui-surface.knowledge-workspace-section--overview',
       mobileStart
     );
-    expect(overviewSurface.get("padding")).toBe("var(--space-4)");
+    expect(overviewSurface.get("padding")).toBe("0");
 
     const context = declarations(
       ".knowledge-page--item-workspace .knowledge-overview__context",
@@ -745,7 +745,7 @@ describe("Super Admin knowledge item workspace layout", () => {
       ".knowledge-page--item-workspace .knowledge-overview__uom-control-row",
       mobileStart
     );
-    expect(mobileUomRow.get("grid-template-columns")).toBe("minmax(0, 1fr) auto");
+    expect(mobileUomRow.get("grid-template-columns")).toBe("minmax(0, 1fr)");
     expect(mobileUomRow.get("min-inline-size")).toBe("0");
 
     const mobileQuickAdd = declarations(

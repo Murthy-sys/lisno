@@ -45,6 +45,7 @@ export interface KnowledgeModeConfigurationBuilderProps {
   readonly calculationValidity?: Readonly<Record<ModeCalculationScope, boolean>>;
   readonly descriptionResetKey?: string;
   readonly onPendingDescriptionChange?: (pending: boolean) => void;
+  readonly onPendingDescriptionTextChange?: (text: string | null) => void;
   readonly modes: readonly KnowledgeMaster[];
   readonly legacyModeCatalogState?: KnowledgeLegacyModeCatalogState;
   readonly serverIssues?: readonly KnowledgeModeConfigurationIssue[];
@@ -70,6 +71,7 @@ export function KnowledgeModeConfigurationBuilder({
   calculationValidity = { pmc: true, sub_vendor: true, in_house_labor: true, in_house_material: true },
   descriptionResetKey = "default",
   onPendingDescriptionChange = ignorePendingDescription,
+  onPendingDescriptionTextChange,
   modes,
   legacyModeCatalogState = { status: "ready" },
   serverIssues = [],
@@ -339,6 +341,7 @@ export function KnowledgeModeConfigurationBuilder({
           validationAttempt={validationAttempt}
           error={issueFor("modeDescription")}
           onPendingChange={handlePendingDescriptionChange}
+          onPendingTextChange={onPendingDescriptionTextChange}
           onSave={(text) => {
             const modeDescription = text === generatedDescription ? null : text;
             if (modeDescription === (payload.modeDescription ?? null)) return;

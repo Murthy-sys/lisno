@@ -25,6 +25,7 @@ interface Props {
   readOnly: boolean;
   canCreate: boolean;
   issues: readonly KnowledgeValidationIssue[];
+  onItemConfirmed?: (item: KnowledgeItemDetail) => void;
   onChange: (value: KnowledgeJsonValue) => void;
 }
 
@@ -62,7 +63,10 @@ export function KnowledgeBudgetAlterationBuilder({ value, mainLineName, catalogS
     {!rows.length ? <div className="knowledge-budget-alterations__empty">No scope-change rules yet. Add a rule to describe which related items are affected and why.</div> : null}
     {rows.map((row, index) => <BudgetAlterationRow key={`${props.mainLineId}:${String(row.id ?? index)}`} {...props} row={row} index={index}
       items={items} mainLineName={mainLineName} catalogState={catalogState} readOnly={props.readOnly || invalidShape}
-      onItemCreated={(item) => setCreatedItems((current) => [...current.filter((entry) => entry.mainLineId !== item.mainLineId), item])}
+      onItemCreated={(item) => {
+        setCreatedItems((current) => [...current.filter((entry) => entry.mainLineId !== item.mainLineId), item]);
+        props.onItemConfirmed?.(item);
+      }}
       onChange={(next) => props.onChange(rows.map((current, position) => position === index ? next : current))}
       onRemove={() => props.onChange(rows.filter((_, position) => position !== index))} />)}
   </section>;

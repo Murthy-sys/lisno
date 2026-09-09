@@ -28,6 +28,7 @@ import { KNOWLEDGE_MASTER_LABELS, formatKnowledgeDateTime } from "./knowledgePre
 import { knowledgeQueryKeys } from "./knowledgeQueryKeys";
 import type { KnowledgeMaster, KnowledgeMasterStatus, KnowledgeMasterType } from "./knowledgeTypes";
 import "./ai-estimator-knowledge.css";
+import "./knowledge-configuration-ui.css";
 
 const PAGE_SIZE = 25;
 const MASTER_TYPES: readonly KnowledgeMasterType[] = [

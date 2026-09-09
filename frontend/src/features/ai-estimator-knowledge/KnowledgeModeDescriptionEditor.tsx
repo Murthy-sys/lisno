@@ -16,9 +16,10 @@ interface Props {
   readonly error?: string;
   readonly onSave: (value: string) => void;
   readonly onPendingChange: (pending: boolean) => void;
+  readonly onPendingTextChange?: (text: string | null) => void;
 }
 
-export function KnowledgeModeDescriptionEditor({ description, pmc, readOnly, validationAttempt, error, onSave, onPendingChange }: Props) {
+export function KnowledgeModeDescriptionEditor({ description, pmc, readOnly, validationAttempt, error, onSave, onPendingChange, onPendingTextChange }: Props) {
   const id = useId();
   const [text, setText] = useState<string | null>(null);
   const [localError, setLocalError] = useState<string>();
@@ -41,6 +42,8 @@ export function KnowledgeModeDescriptionEditor({ description, pmc, readOnly, val
     if (removed) setText((current) => current === null ? null : syncModeDescription(current, pmc, previous));
   }, [pmc]);
 
+  useEffect(() => { onPendingTextChange?.(pending ? preview : null); }, [onPendingTextChange, pending, preview]);
+  useEffect(() => () => onPendingTextChange?.(null), [onPendingTextChange]);
   useEffect(() => onPendingChange(pending), [onPendingChange, pending]);
   useEffect(() => () => onPendingChange(false), [onPendingChange]);
   useEffect(() => {

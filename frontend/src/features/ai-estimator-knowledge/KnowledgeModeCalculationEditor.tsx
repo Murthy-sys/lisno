@@ -4,6 +4,7 @@ import { Button } from "../../components/ui/Button";
 import { KnowledgeModeCalculationTable, type KnowledgeModeCalculationDraft } from "./KnowledgeModeCalculationTable";
 import { KnowledgeModeCalculationSimulator } from "./KnowledgeModeCalculationSimulator";
 import { modeCalculationDraft, parseModeCalculationDraft, type ModeCalculationSettings } from "./knowledgeModeCalculation";
+import type { KnowledgePendingCalculation } from "./knowledgeModePendingChanges";
 import type { KnowledgeJsonValue } from "./knowledgeTypes";
 
 export interface KnowledgeModeCalculationUom {
@@ -27,10 +28,14 @@ interface Props {
   readonly onChange: (settings: ModeCalculationSettings) => void;
   readonly onDirty: () => void;
   readonly onValidationChange: (valid: boolean) => void;
+  readonly pendingSaveVersion?: number;
+  readonly onPendingInputChange?: (pending: KnowledgePendingCalculation | null) => void;
 }
 
-export function KnowledgeModeCalculationEditor({ value, uom, readOnly, validationAttempt, issues, onChange, onDirty, onValidationChange, active = true, contextLabel, issuePath = "modeCalculation" }: Props) {
+export function KnowledgeModeCalculationEditor({ value, uom, readOnly, validationAttempt, issues, onChange, onDirty, onValidationChange, onPendingInputChange, pendingSaveVersion = 0, active = true, contextLabel, issuePath = "modeCalculation" }: Props) {
   const [draft, setDraft] = useState(() => modeCalculationDraft(value));
+  const [locallyEdited, setLocallyEdited] = useState(false);
+  const baselineDraft = useRef(modeCalculationDraft(value));
   const [touched, setTouched] = useState(value != null);
   const [simulator, setSimulator] = useState<{ scopeKey: string; initialDraft: KnowledgeModeCalculationDraft } | null>(null);
   const previousValue = useRef(JSON.stringify(value));
@@ -43,10 +48,21 @@ export function KnowledgeModeCalculationEditor({ value, uom, readOnly, validatio
     const serialized = JSON.stringify(value);
     if (serialized !== previousValue.current) {
       setDraft(modeCalculationDraft(value));
+      setLocallyEdited(false);
+      baselineDraft.current = modeCalculationDraft(value);
       setTouched(value != null);
       previousValue.current = serialized;
     }
   }, [value]);
+  useEffect(() => {
+    setLocallyEdited(false);
+    baselineDraft.current = modeCalculationDraft(value);
+  }, [pendingSaveVersion]);
+  const pendingCallbackRef = useRef(onPendingInputChange);
+  pendingCallbackRef.current = onPendingInputChange;
+  const invalidFieldsKey = Object.keys(parsed.errors).join(",");
+  useEffect(() => { pendingCallbackRef.current?.(locallyEdited ? { draft, baselineDraft: baselineDraft.current, invalidFields: Object.keys(parsed.errors) as (keyof KnowledgeModeCalculationDraft)[] } : null); }, [draft, locallyEdited, invalidFieldsKey]);
+  useEffect(() => () => pendingCallbackRef.current?.(null), []);
   useEffect(() => onValidationChange(valid), [onValidationChange, valid]);
   useEffect(() => { if (!active) setSimulator(null); }, [active]);
   useEffect(() => {
@@ -64,6 +80,7 @@ export function KnowledgeModeCalculationEditor({ value, uom, readOnly, validatio
     if (readOnly) return;
     const next = { ...draft, [field]: text };
     setDraft(next);
+    setLocallyEdited(true);
     setTouched(true);
     onDirty();
     const settings = parseModeCalculationDraft(next, scale).settings;

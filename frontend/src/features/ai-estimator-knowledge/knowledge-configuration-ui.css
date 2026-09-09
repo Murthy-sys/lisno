@@ -1,0 +1,355 @@
+/* Shared presentation for every Configuration route and its own dialogs. */
+.ui-app-shell[data-role] .knowledge-page,
+.ui-dialog.modal:has(.knowledge-dialog-body, .knowledge-quality-import) {
+  --knowledge-control-edge: color-mix(in srgb, var(--color-border-strong) 72%, var(--color-text));
+  --knowledge-card-padding: var(--space-5);
+}
+
+.ui-app-shell[data-role] .knowledge-page {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.ui-app-shell[data-role] .knowledge-page > *,
+.ui-app-shell[data-role] .knowledge-page [role="tabpanel"] {
+  min-inline-size: 0;
+  max-inline-size: 100%;
+}
+
+/* Keep action sizing independent of the length of a neighbouring field. */
+.ui-app-shell[data-role] .knowledge-page .ui-button,
+.ui-dialog.modal:has(.knowledge-dialog-body, .knowledge-quality-import) .ui-button {
+  min-block-size: 44px;
+  max-inline-size: 100%;
+  padding: var(--space-2) var(--space-4);
+  border-width: 1px;
+  border-style: solid;
+  border-radius: var(--radius-field);
+  box-shadow: none;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  line-height: 1.4;
+  white-space: normal;
+}
+
+.ui-app-shell[data-role] .knowledge-page .ui-button:not(.ui-button--full-width),
+.ui-dialog.modal:has(.knowledge-dialog-body, .knowledge-quality-import) .ui-button:not(.ui-button--full-width) {
+  inline-size: fit-content;
+}
+
+.ui-app-shell[data-role] .knowledge-page .ui-button:is(.ui-button--secondary, .ui-button--quiet),
+.ui-dialog.modal:has(.knowledge-dialog-body, .knowledge-quality-import) .ui-button:is(.ui-button--secondary, .ui-button--quiet) {
+  border-color: var(--knowledge-control-edge);
+  background: var(--role-deck, var(--color-surface));
+  color: var(--role-ink, var(--color-text));
+}
+
+.ui-app-shell[data-role] .knowledge-page .ui-button:is(.ui-button--secondary, .ui-button--quiet):not(:disabled):hover,
+.ui-dialog.modal:has(.knowledge-dialog-body, .knowledge-quality-import) .ui-button:is(.ui-button--secondary, .ui-button--quiet):not(:disabled):hover {
+  border-color: var(--role-ink-muted, var(--color-text-muted));
+  background: var(--role-deck-tint, var(--color-surface-subtle));
+  color: var(--role-ink, var(--color-text));
+  box-shadow: none;
+  transform: none;
+}
+
+.ui-app-shell[data-role] .knowledge-page .ui-button--primary,
+.ui-dialog.modal:has(.knowledge-dialog-body, .knowledge-quality-import) .ui-button--primary {
+  border-color: transparent;
+}
+
+.ui-app-shell[data-role] .knowledge-page :is(.ui-button, .ui-icon-button):focus-visible,
+.ui-dialog.modal:has(.knowledge-dialog-body, .knowledge-quality-import) :is(.ui-button, .ui-icon-button):focus-visible {
+  outline: 2px solid var(--focus-ring-color);
+  outline-offset: 3px;
+}
+
+.ui-app-shell[data-role] .knowledge-page .ui-icon-button,
+.ui-app-shell[data-role] .knowledge-page .knowledge-pmc-scope__delete,
+.ui-dialog.modal:has(.knowledge-dialog-body, .knowledge-quality-import) .ui-icon-button {
+  flex: 0 0 44px;
+  inline-size: 44px;
+  block-size: 44px;
+  min-inline-size: 44px;
+  min-block-size: 44px;
+  padding: var(--space-2);
+  border: 1px solid var(--role-line-strong, var(--color-border-strong));
+  border-radius: var(--radius-control);
+}
+
+.ui-app-shell[data-role] .knowledge-page .ui-icon-button.ui-icon-button--quiet {
+  color: var(--role-ink, var(--color-text));
+  background: var(--role-deck, var(--color-surface));
+}
+
+/* Native checkbox, radio and switch dimensions remain independent of fields. */
+.ui-app-shell[data-role] .knowledge-page .ui-control,
+.ui-dialog.modal:has(.knowledge-dialog-body, .knowledge-quality-import) .ui-control {
+  min-inline-size: 0;
+  max-inline-size: 100%;
+  min-block-size: 44px;
+  border-radius: var(--radius-field);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+}
+
+.ui-app-shell[data-role] .knowledge-page .ui-textarea {
+  min-block-size: 6rem;
+  resize: vertical;
+}
+
+.ui-app-shell[data-role] .knowledge-page :is(.ui-field, .knowledge-master-control, .knowledge-form-grid, .knowledge-mode-field__definition, .knowledge-budget-rule__condition, .knowledge-budget-rule__targets, .knowledge-quality-inspection) {
+  min-inline-size: 0;
+}
+
+.ui-app-shell[data-role] .knowledge-page :is(.ui-field__label, .ui-field__hint, .ui-field__error) {
+  overflow-wrap: anywhere;
+  line-height: 1.5;
+}
+
+.ui-app-shell[data-role] .knowledge-page .ui-field__label {
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .ui-surface.knowledge-workspace-section:not(.knowledge-workspace-section--overview),
+.ui-app-shell[data-role] .knowledge-page .ui-surface:has(> .knowledge-table-scroll),
+.ui-app-shell[data-role] .knowledge-page .ui-surface.knowledge-workspace-history-rail {
+  padding: var(--knowledge-card-padding);
+  border: 1px solid var(--role-line, var(--color-border));
+  border-radius: var(--radius-card);
+  background: var(--role-deck, var(--color-surface));
+  box-shadow: none;
+  overflow: visible;
+}
+
+.ui-app-shell[data-role] .knowledge-page .knowledge-section-panel > :is(.knowledge-mode-panel, .knowledge-workspace-section:not(.knowledge-workspace-section--overview)) {
+  margin-block-start: var(--space-4);
+}
+
+.ui-app-shell[data-role] .knowledge-page :is(.knowledge-section-heading, .knowledge-repeater__header, .knowledge-budget-alterations__heading, .knowledge-basket-quality__intro) {
+  align-items: start;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin: 0;
+  padding-block-end: var(--space-4);
+  border-block-end: 1px solid var(--role-line, var(--color-border));
+}
+
+.ui-app-shell[data-role] .knowledge-page :is(.knowledge-section-heading, .knowledge-repeater__header, .knowledge-budget-alterations__heading, .knowledge-basket-quality__intro, .knowledge-mode-calculation__header) :is(h2, h3) {
+  margin: 0;
+  font-size: 1.125rem;
+  font-weight: 650;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.ui-app-shell[data-role] .knowledge-page :is(.knowledge-section-heading, .knowledge-basket-quality__intro) p:not(.knowledge-section-eyebrow) {
+  margin-block: var(--space-1) 0;
+  max-inline-size: 75ch;
+  color: var(--role-ink-muted, var(--color-text-muted));
+  font-size: var(--text-sm);
+  line-height: 1.6;
+}
+
+.ui-app-shell[data-role] .knowledge-page :is(.knowledge-repeater__row, .knowledge-budget-rule, .knowledge-pmc-scope__list, .knowledge-mode-calculation__group, .knowledge-quality-inspection, .knowledge-item-card) {
+  min-inline-size: 0;
+  padding: var(--space-4);
+  border: 1px solid var(--role-line, var(--color-border));
+  border-radius: var(--radius-control);
+  background: var(--role-deck-tint, var(--color-surface-subtle));
+  box-shadow: none;
+}
+
+.ui-app-shell[data-role] .knowledge-page :is(.knowledge-repeater__list, .knowledge-budget-alterations__rules, .knowledge-mode-panel, .knowledge-section-editor) {
+  gap: var(--space-5);
+}
+
+.ui-app-shell[data-role] .knowledge-page :is(.knowledge-row-actions, .knowledge-quality-actions, .knowledge-mode-calculation__actions, .knowledge-pmc-scope__actions, .knowledge-mode-description__actions, .knowledge-budget-rule__temporary) {
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  min-inline-size: 0;
+}
+
+.ui-app-shell[data-role] .knowledge-page :is(.knowledge-repeater__header, .knowledge-budget-alterations__heading, .knowledge-mode-calculation__actions, .knowledge-pmc-scope__actions, .knowledge-mode-description__actions, .knowledge-quality-actions) > .ui-button {
+  flex: 0 1 auto;
+  inline-size: fit-content;
+  min-block-size: 44px;
+}
+
+.ui-app-shell[data-role] .knowledge-page .knowledge-mode-configuration__mode-options label,
+.ui-app-shell[data-role] .knowledge-page .knowledge-pmc-scope__items label {
+  min-block-size: 44px;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+}
+
+.ui-app-shell[data-role] .knowledge-page .knowledge-mode-configuration__mode-options label {
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--role-line-strong, var(--color-border-strong));
+  border-radius: var(--radius-control);
+  background: var(--role-deck, var(--color-surface));
+}
+
+.ui-app-shell[data-role] .knowledge-page .knowledge-mode-configuration__mode-options label:has(:checked) {
+  border-color: var(--role-ink-muted, var(--color-text-muted));
+  background: var(--role-deck-tint, var(--color-surface-subtle));
+}
+
+.ui-app-shell[data-role] .knowledge-page :is(.knowledge-mode-configuration__mode-options, .knowledge-pmc-scope__items) .ui-checkbox {
+  flex: 0 0 16px;
+  inline-size: 16px;
+  block-size: 16px;
+  min-inline-size: 16px;
+  min-block-size: 16px;
+}
+
+.ui-app-shell[data-role] .knowledge-page .knowledge-pmc-scope__list :is(legend, .knowledge-pmc-scope__empty, .ui-field__label, .ui-field__error),
+.ui-app-shell[data-role] .knowledge-page .knowledge-pmc-scope__add :is(.ui-control, .ui-button) {
+  font-size: var(--text-sm);
+  line-height: 1.5;
+}
+
+.ui-app-shell[data-role] .knowledge-page .knowledge-pmc-scope__add :is(.ui-control, .ui-button) {
+  min-block-size: 44px;
+  padding: var(--space-2) var(--space-3);
+}
+
+.ui-app-shell[data-role] .knowledge-page .knowledge-mode-calculation__control {
+  block-size: 44px;
+  min-block-size: 44px;
+}
+
+.ui-app-shell[data-role] .knowledge-page .knowledge-specification-field .knowledge-mode-field__definition {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr);
+}
+
+.ui-app-shell[data-role] .knowledge-page .knowledge-basket-panel__meta {
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+.ui-app-shell[data-role] .knowledge-page .knowledge-item-card {
+  padding: var(--knowledge-card-padding);
+  background: var(--role-deck, var(--color-surface));
+  overflow-wrap: anywhere;
+}
+
+.ui-app-shell[data-role] .knowledge-page .knowledge-table td:last-child .knowledge-row-actions {
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.ui-app-shell[data-role] .knowledge-page .knowledge-table-scroll {
+  position: relative;
+  min-inline-size: 0;
+  max-inline-size: 100%;
+  overflow-x: auto;
+}
+
+.ui-app-shell[data-role] .knowledge-page .knowledge-surface-table {
+  min-inline-size: 48rem;
+}
+
+/* Portalled dialogs are identified by Configuration content, not all modals. */
+.ui-dialog.modal:has(.knowledge-dialog-body, .knowledge-quality-import) {
+  --role-line: var(--color-border);
+  --role-line-strong: var(--color-border-strong);
+  --role-ink: var(--color-text);
+  --role-ink-muted: var(--color-text-muted);
+  --role-deck: var(--color-surface);
+  --role-deck-tint: var(--color-surface-subtle);
+}
+
+.ui-dialog.modal:has(.knowledge-dialog-body, .knowledge-quality-import) .modal__header .eyebrow {
+  color: var(--color-text-muted);
+}
+
+.ui-dialog.modal:has(.knowledge-dialog-body, .knowledge-quality-import) .ui-button.ui-button--primary {
+  border-color: transparent;
+  background: var(--color-primary);
+  color: var(--color-surface);
+  box-shadow: none;
+}
+
+.ui-dialog.modal:has(.knowledge-dialog-body, .knowledge-quality-import) .ui-button.ui-button--primary:not(:disabled):hover {
+  background: var(--color-brand-midnight-raised);
+}
+
+.ui-dialog.modal:has(.knowledge-dialog-body) .modal__header,
+.ui-dialog.modal:has(.knowledge-dialog-body) .knowledge-dialog-body,
+.ui-dialog.modal:has(.knowledge-dialog-body) .knowledge-dialog-actions {
+  padding-inline: var(--knowledge-card-padding);
+}
+
+.ui-dialog.modal:has(.knowledge-dialog-body) .modal__header h2 {
+  font-size: 1.25rem;
+  line-height: 1.4;
+}
+
+.ui-dialog.modal:has(.knowledge-dialog-body) .knowledge-dialog-actions {
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+@media (max-width: 900px) {
+  .ui-app-shell[data-role] .knowledge-page :is(.knowledge-budget-rule__condition, .knowledge-budget-rule__targets, .knowledge-mode-field__definition) {
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr));
+  }
+}
+
+@media (max-width: 480px) {
+  .ui-app-shell[data-role] .knowledge-page,
+  .ui-dialog.modal:has(.knowledge-dialog-body, .knowledge-quality-import) {
+    --knowledge-card-padding: var(--space-4);
+  }
+
+  .ui-app-shell[data-role] .knowledge-page .knowledge-surface-table {
+    min-inline-size: 0;
+  }
+
+  .ui-app-shell[data-role] .knowledge-page :is(.knowledge-repeater__header, .knowledge-budget-alterations__heading, .knowledge-mode-description__actions, .knowledge-mode-calculation__actions, .knowledge-quality-actions, .knowledge-filter-actions) > .ui-button,
+  .ui-app-shell[data-role] .knowledge-page .knowledge-section-command-bar > .ui-button,
+  .ui-app-shell[data-role] .knowledge-page .ui-page-header__actions .ui-button,
+  .ui-dialog.modal:has(.knowledge-dialog-body) .knowledge-dialog-actions > .ui-button {
+    inline-size: 100%;
+    flex: 0 0 auto;
+  }
+
+  .ui-app-shell[data-role] .knowledge-page :is(.knowledge-repeater__header, .knowledge-budget-alterations__heading) {
+    align-items: stretch;
+    flex-direction: column;
+    flex-wrap: nowrap;
+  }
+
+  .ui-app-shell[data-role] .knowledge-page .knowledge-repeater__row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .ui-app-shell[data-role] .knowledge-page .knowledge-repeater__actions {
+    justify-content: flex-end;
+    flex-direction: row;
+    flex-wrap: wrap;
+    padding-block-start: var(--space-3);
+    border-block-start: 1px solid var(--role-line, var(--color-border));
+  }
+
+  .ui-app-shell[data-role] .knowledge-page :is(.knowledge-form-grid, .knowledge-budget-rule__condition, .knowledge-budget-rule__targets, .knowledge-mode-field__definition),
+  .ui-app-shell[data-role] .knowledge-page .knowledge-specification-field .knowledge-mode-field__definition {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.ui-app-shell[data-role] .knowledge-page .ui-page-header__eyebrow {
+  color: var(--role-ink-muted, var(--color-text-muted));
+}
+
+.ui-app-shell[data-role] .knowledge-page :is(.knowledge-section-tab, .knowledge-master-tab) {
+  min-block-size: 44px;
+}
+
+.ui-app-shell[data-role] .knowledge-page :is(.knowledge-section-tab, .knowledge-master-tab)[aria-selected="true"] {
+  color: var(--role-ink, var(--color-text));
+}

@@ -2966,7 +2966,11 @@ body:has(.ui-app-shell[data-role]) .modal .knowledge-dialog-actions .ui-button--
    their contents the same deliberate horizontal inset. This stronger,
    item-scoped selector survives the role theme loaded after this stylesheet. */
 .ui-app-shell[data-role="super_admin"] .knowledge-page.knowledge-page--item-workspace .ui-surface.knowledge-workspace-section--overview {
-  padding: var(--space-5);
+  margin-block-start: var(--space-4);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
 .knowledge-page--item-workspace .knowledge-workspace-section--overview .knowledge-overview {
@@ -4207,6 +4211,67 @@ body:has(.ui-app-shell[data-role]) .modal .knowledge-dialog-actions .ui-button--
   background: var(--role-deck-tint, var(--color-surface-subtle));
 }
 
+.knowledge-workspace-rail {
+  display: grid;
+  gap: var(--space-4);
+  align-self: start;
+  min-inline-size: 0;
+  max-inline-size: 18rem;
+  position: sticky;
+  inset-block-start: var(--space-2);
+}
+
+/* Expanded pending values must remain reachable through normal page scrolling. */
+.knowledge-workspace-rail--long { position: static; }
+.knowledge-workspace-rail > .knowledge-workspace-history-rail {
+  position: static;
+  max-inline-size: none;
+}
+
+.ui-surface.knowledge-pending-changes {
+  min-inline-size: 0;
+  padding: var(--space-4);
+  border: 1px solid var(--role-line, var(--color-border));
+  border-block-start: 3px solid color-mix(in srgb, var(--color-warning) 65%, var(--color-border));
+  border-radius: 12px;
+  background: var(--role-deck, var(--color-surface));
+  color: var(--role-ink, var(--color-text));
+  box-shadow: none;
+  overflow-wrap: anywhere;
+}
+
+.knowledge-pending-changes__heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+.knowledge-pending-changes__heading h2 { margin: 0; font-size: 16px; line-height: 1.4; }
+.knowledge-pending-changes__heading .ui-status { font-size: 11px; }
+.knowledge-pending-changes__context { margin: var(--space-3) 0 var(--space-1); font-size: 13px; font-weight: 650; }
+.knowledge-pending-changes__help { margin: 0 0 var(--space-4); color: var(--color-text-muted); font-size: 12px; line-height: 1.5; }
+.knowledge-pending-changes__groups { display: grid; gap: var(--space-4); }
+.knowledge-pending-changes__group h3 { margin: 0 0 var(--space-2); font-size: 12px; color: var(--color-text-muted); font-weight: 650; }
+.knowledge-pending-changes__group > ul { display: grid; gap: var(--space-2); margin: 0; padding: 0; list-style: none; }
+.knowledge-pending-changes__entry { min-inline-size: 0; padding: var(--space-3); border-radius: 8px; background: var(--role-deck-tint, var(--color-surface-subtle)); }
+.knowledge-pending-changes__entry-heading { display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-2); align-items: baseline; justify-content: space-between; }
+.knowledge-pending-changes__entry-heading h4 { margin: 0; font-size: 13px; line-height: 1.5; }
+.knowledge-pending-changes__kind { font-size: 11px; color: var(--color-text-muted); }
+.knowledge-pending-changes__incomplete { display: inline-block; margin-block-start: var(--space-1); font-size: 11px; font-weight: 650; }
+.knowledge-pending-changes__entry dl { display: grid; gap: var(--space-2); margin: var(--space-2) 0 0; font-size: 12px; line-height: 1.5; }
+.knowledge-pending-changes__entry dt { color: var(--color-text-muted); }
+.knowledge-pending-changes__entry dd { margin: 2px 0 0; white-space: pre-wrap; }
+.knowledge-pending-changes__cleared { font-style: italic; }
+.knowledge-pending-changes__text-toggle { display: block; padding: 4px 0; border: 0; background: transparent; color: inherit; font: inherit; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+.knowledge-pending-changes__text-toggle:focus-visible { outline: 2px solid var(--color-text); outline-offset: 3px; border-radius: 2px; }
+.knowledge-pending-changes__disclosure { margin-block-start: var(--space-3); white-space: normal; }
+.knowledge-pending-changes .knowledge-pending-changes__disclosure,
+.ui-app-shell[data-role] .knowledge-page--item-workspace .knowledge-pending-changes .knowledge-pending-changes__disclosure.ui-button,
+.ui-app-shell[data-role] .knowledge-page--item-workspace .knowledge-pending-changes .knowledge-pending-changes__disclosure.ui-button:not(:disabled):hover {
+  color: var(--role-ink, var(--color-text));
+}
+
 .knowledge-conflict-review {
   padding: var(--space-4);
   border-color: color-mix(in srgb, var(--color-warning) 45%, var(--role-line, var(--color-border)));
@@ -4265,6 +4330,12 @@ body:has(.ui-app-shell[data-role]) .modal .knowledge-dialog-actions .ui-button--
 }
 
 @media (max-width: 1180px) {
+  .knowledge-workspace-rail {
+    max-inline-size: none;
+    position: static;
+    inset-block-start: auto;
+  }
+
   .knowledge-workspace-layout {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -4482,7 +4553,7 @@ body:has(.ui-app-shell[data-role]) .modal .knowledge-dialog-actions .ui-button--
   }
 
   .ui-app-shell[data-role="super_admin"] .knowledge-page.knowledge-page--item-workspace .ui-surface.knowledge-workspace-section--overview {
-    padding: var(--space-4);
+    padding: 0;
   }
 
   .ui-app-shell[data-role="super_admin"] .knowledge-page.knowledge-page--item-workspace .ui-surface.knowledge-workspace-section,
@@ -4588,7 +4659,7 @@ body:has(.ui-app-shell[data-role]) .modal .knowledge-dialog-actions .ui-button--
   }
 
   .knowledge-page--item-workspace .knowledge-overview__uom-control-row {
-    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-columns: minmax(0, 1fr);
     min-inline-size: 0;
   }
 
@@ -4688,3 +4759,118 @@ body:has(.ui-app-shell[data-role]) .modal .knowledge-dialog-actions .ui-button--
 .knowledge-temporary-main-lines--compact { padding: 12px 0 0; border: 0; border-block-start: 1px solid #e7d8ba; border-radius: 0; background: transparent; }
 .knowledge-temporary-main-lines--compact h4 { font-size: 12px; margin-block-end: 8px; }
 .knowledge-temporary-main-lines--compact .knowledge-temporary-main-lines__name { font-size: 13px; }
+
+/* Overview: two equally inset configuration cards with aligned controls. */
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-overview .ui-surface.knowledge-overview__configuration-card {
+  display: grid;
+  gap: var(--space-4);
+  min-inline-size: 0;
+  padding: var(--space-5);
+  border: 1px solid var(--role-line, var(--color-border));
+  border-radius: var(--radius-card);
+  background: var(--role-deck, var(--color-surface));
+  box-shadow: none;
+  overflow: visible;
+}
+
+.knowledge-page--item-workspace .knowledge-overview .knowledge-section-heading {
+  align-items: start;
+  margin: 0;
+  padding-block-end: var(--space-4);
+  border-block-end: 1px solid var(--role-line, var(--color-border));
+}
+
+.knowledge-page--item-workspace .knowledge-overview .knowledge-section-heading h2 {
+  margin: 0;
+  font-size: 1.125rem;
+  font-weight: 650;
+  line-height: 1.4;
+}
+
+.knowledge-page--item-workspace .knowledge-overview .knowledge-section-heading p {
+  margin: var(--space-1) 0 0;
+  color: var(--role-ink-muted, var(--color-text-muted));
+  font-size: var(--text-sm);
+  line-height: 1.5;
+}
+
+.knowledge-page--item-workspace .knowledge-overview .knowledge-mode-surfaces {
+  gap: var(--space-4);
+}
+
+.knowledge-page--item-workspace .knowledge-overview .knowledge-overview__uom-control-row,
+.knowledge-page--item-workspace .knowledge-overview .knowledge-mode-surfaces__controls {
+  grid-template-columns: minmax(0, 1fr) 9.5rem;
+  align-items: end;
+  gap: var(--space-3);
+}
+
+.knowledge-page--item-workspace .knowledge-overview .knowledge-overview__uom-control-row:not(:has(> .ui-button)),
+.knowledge-page--item-workspace .knowledge-overview .knowledge-mode-surfaces__controls:not(:has(> .ui-button)) {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-overview :is(.knowledge-overview__quick-add, .knowledge-mode-surfaces__controls > .ui-button) {
+  inline-size: 100%;
+  min-inline-size: 0;
+  min-block-size: 44px;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--role-line-strong, var(--color-border-strong));
+  border-radius: var(--radius-field);
+  background: var(--role-deck, var(--color-surface));
+  color: var(--role-ink, var(--color-text));
+  box-shadow: none;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  white-space: normal;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-overview :is(.knowledge-overview__quick-add, .knowledge-mode-surfaces__controls > .ui-button):not(:disabled):hover {
+  border-color: var(--role-ink-muted, var(--color-text-muted));
+  background: var(--role-deck-tint, var(--color-surface-subtle));
+  color: var(--role-ink, var(--color-text));
+  transform: none;
+}
+
+.knowledge-page--item-workspace .knowledge-overview :is(.knowledge-overview__quick-add, .knowledge-mode-surfaces__controls > .ui-button):focus-visible {
+  outline: 2px solid var(--focus-ring-color);
+  outline-offset: 3px;
+}
+
+.knowledge-page--item-workspace .knowledge-overview .knowledge-mode-surfaces__selected {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 18rem), 1fr));
+  gap: var(--space-3);
+}
+
+.knowledge-page--item-workspace .knowledge-overview .knowledge-mode-surfaces__selected > li {
+  display: grid;
+  align-content: start;
+  gap: var(--space-1);
+  padding: var(--space-3);
+  border: 1px solid var(--role-line, var(--color-border));
+  border-radius: var(--radius-control);
+  background: var(--role-deck-tint, var(--color-surface-subtle));
+  line-height: 1.5;
+}
+
+.knowledge-page--item-workspace .knowledge-overview .knowledge-overview__source-state {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.knowledge-page--item-workspace .knowledge-overview .knowledge-overview__source-state .ui-button {
+  min-block-size: 44px;
+}
+
+@media (max-width: 480px) {
+  .ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-overview .ui-surface.knowledge-overview__configuration-card {
+    padding: var(--space-4);
+  }
+
+  .knowledge-page--item-workspace .knowledge-overview .knowledge-overview__uom-control-row,
+  .knowledge-page--item-workspace .knowledge-overview .knowledge-mode-surfaces__controls {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

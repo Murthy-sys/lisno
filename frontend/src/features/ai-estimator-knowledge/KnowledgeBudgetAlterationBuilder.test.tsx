@@ -24,7 +24,7 @@ const items = [
 ].map((item) => ({ ...meta, itemType: "main_line", status: "draft", ...item })) as KnowledgeItemListItem[];
 const page = <T,>(entries: T[]) => ({ items: entries, pagination: { offset: 0, limit: 100, total: entries.length, hasMore: false } });
 const rule = { ...createBudgetAlteration(), id: "rule-1", targetBasketId: "basket-0", targetSubBasketId: sub.id, targetMainLineId: "lights", reason: "Recessed lights require the ceiling for fixing." };
-function setup(initial: KnowledgeJsonValue = [], options: { readOnly?: boolean; canCreate?: boolean; items?: KnowledgeItemListItem[]; catalogState?: KnowledgeBudgetCatalogState } = {}) {
+function setup(initial: KnowledgeJsonValue = [], options: { readOnly?: boolean; canCreate?: boolean; items?: KnowledgeItemListItem[]; catalogState?: KnowledgeBudgetCatalogState; onItemConfirmed?: (item: KnowledgeItemDetail) => void } = {}) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   const change = vi.fn();
   let updateItems!: (items: KnowledgeItemListItem[]) => void;
@@ -37,6 +37,7 @@ function setup(initial: KnowledgeJsonValue = [], options: { readOnly?: boolean; 
     updateItems = setCatalogItems;
     return <main><h1>POP False Ceiling</h1><h2>Recommendation &amp; Exclusions</h2><KnowledgeBudgetAlterationBuilder value={value} mainLineId={sourceId} mainLineName="POP False Ceiling" baskets={baskets} items={catalogItems} catalogState={options.catalogState}
       readOnly={options.readOnly ?? false} canCreate={options.canCreate ?? true} issues={budgetAlterationIssues(value, "source")}
+      onItemConfirmed={options.onItemConfirmed}
       onChange={(next) => { change(next); setValue(next); }} /></main>;
   }
   const view = render(<QueryClientProvider client={client}><MemoryRouter><Harness /></MemoryRouter></QueryClientProvider>);
@@ -84,7 +85,8 @@ describe("Budget Alterations", () => {
   });
 
   it("creates a reusable temporary item under the chosen Basket and links its identity", async () => {
-    const { user, change, client } = setup([{ ...rule, targetSubBasketId: null, targetMainLineId: null }]);
+    const onItemConfirmed = vi.fn();
+    const { user, change, client } = setup([{ ...rule, targetSubBasketId: null, targetMainLineId: null }], { onItemConfirmed });
     await screen.findByRole("option", { name: sub.name });
     await user.click(screen.getByRole("button", { name: "Add temporary item" }));
     const dialog = screen.getByRole("dialog", { name: "Add related item" });
@@ -95,6 +97,7 @@ describe("Budget Alterations", () => {
     expect(api.createKnowledgeMainLine).toHaveBeenCalledWith("basket-0", { name: "Pendant alternative", itemType: "temporary" });
     expect(change.mock.lastCall![0][0]).toMatchObject({ targetType: "temporary", targetBasketId: "basket-0", targetMainLineId: "new-temp", targetSubBasketId: null });
     expect(change.mock.lastCall![0][0]).not.toHaveProperty("temporaryItemName");
+    expect(onItemConfirmed).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ mainLineId: "new-temp", itemType: "temporary" }));
     expect(screen.getByRole("link", { name: "Configure temporary item" })).toHaveAttribute("href", "/admin/configuration/estimation/items/new-temp");
     client.clear();
   });
@@ -124,7 +127,8 @@ describe("Budget Alterations", () => {
   });
 
   it("opens a starter without mutating the rule and restores the previous selection on cancel", async () => {
-    const { user, change } = setup([{ ...rule, targetSubBasketId: null }]);
+    const onItemConfirmed = vi.fn();
+    const { user, change } = setup([{ ...rule, targetSubBasketId: null }], { onItemConfirmed });
     await screen.findByRole("option", { name: sub.name });
     const select = screen.getByRole("combobox", { name: "Related item" });
     const suggestion = within(select).getByRole("option", { name: "Recessed LED downlight · Ceiling lighting" }) as HTMLOptionElement;
@@ -138,12 +142,14 @@ describe("Budget Alterations", () => {
     expect(select).toHaveValue("lights");
     await waitFor(() => expect(select).toHaveFocus());
     expect(change).not.toHaveBeenCalled();
+    expect(onItemConfirmed).not.toHaveBeenCalled();
   });
 
   it("creates a starter using its saved ID and name immediately, then makes it reusable in another rule", async () => {
     const created = { ...items[1], mainLineId: "created-downlight", mainLineName: "Recessed LED downlight", subBasketId: "sub-ceiling", subBasketName: "Ceiling lighting" } as KnowledgeItemDetail;
     vi.mocked(api.createKnowledgeMainLine).mockResolvedValue(created);
-    const { user, change } = setup([{ ...rule, targetSubBasketId: null }, { ...rule, id: "rule-2", targetSubBasketId: null, targetMainLineId: null }]);
+    const onItemConfirmed = vi.fn();
+    const { user, change } = setup([{ ...rule, targetSubBasketId: null }, { ...rule, id: "rule-2", targetSubBasketId: null, targetMainLineId: null }], { onItemConfirmed });
     await screen.findAllByRole("option", { name: sub.name });
     const [first, second] = screen.getAllByRole("combobox", { name: "Related item" });
     const option = within(first).getByRole("option", { name: "Recessed LED downlight · Ceiling lighting" }) as HTMLOptionElement;
@@ -162,6 +168,7 @@ describe("Budget Alterations", () => {
     await user.selectOptions(second, created.mainLineId);
     expect(change.mock.lastCall![0][1]).toMatchObject({ targetMainLineId: created.mainLineId, targetSubBasketId: created.subBasketId });
     expect(api.createKnowledgeMainLine).toHaveBeenCalledTimes(1);
+    expect(onItemConfirmed).toHaveBeenCalledExactlyOnceWith(created);
   });
 
   it("adds a custom catalog item in an unrecognized basket and preserves the selected context", async () => {
@@ -177,6 +184,21 @@ describe("Budget Alterations", () => {
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     expect(change.mock.lastCall![0][0]).toMatchObject({ targetMainLineId: "custom", targetBasketId: "basket-1", targetSubBasketId: "custom-sub", targetType: "catalog" });
     expect(screen.getByRole("combobox", { name: "Related item" })).toHaveDisplayValue("Custom panel");
+  });
+
+  it("does not publish related-item details or change the rule when catalog creation fails", async () => {
+    vi.mocked(api.createKnowledgeMainLine).mockRejectedValue(new ApiError(400, "VALIDATION_ERROR", "Review the related item name."));
+    const onItemConfirmed = vi.fn();
+    const { user, change } = setup([rule], { onItemConfirmed });
+    await screen.findByRole("option", { name: sub.name });
+    await user.click(screen.getByRole("button", { name: "Add related item" }));
+    const dialog = screen.getByRole("dialog", { name: "Add related item" });
+    await user.type(within(dialog).getByRole("textbox", { name: "Related item name" }), "New fitting");
+    await user.click(within(dialog).getByRole("button", { name: "Add related item" }));
+    expect(await within(dialog).findByText("Review the related item name.")).toBeInTheDocument();
+    expect(change).not.toHaveBeenCalled();
+    expect(onItemConfirmed).not.toHaveBeenCalled();
+    expect(screen.getByRole("combobox", { name: "Related item" })).toHaveValue("lights");
   });
 
   it.each([{ canCreate: false }, { readOnly: true }])("hides custom and starter creation for restricted access: %j", async (options) => {
@@ -235,7 +257,8 @@ describe("Budget Alterations", () => {
     vi.mocked(api.createKnowledgeMainLine).mockRejectedValue(new ApiError(409, "CONFLICT", "Already exists"));
     vi.mocked(api.listKnowledgeMainLines).mockResolvedValue(page([{ ...meta, id: "lights", name: confirmed.mainLineName, basketId: "basket-0", subBasketId: sub.id, status: "active", itemType: "main_line", displayOrder: 0, description: null, activeRevisionId: "confirmed-active", draftRevisionId: null }]));
     vi.mocked(api.getKnowledgeItem).mockResolvedValue(confirmed);
-    const { user, updateItems } = setup([rule, { ...rule, id: "second", targetMainLineId: null }], { items: items.map((item) => item.mainLineId === "lights" ? stale : item) });
+    const onItemConfirmed = vi.fn();
+    const { user, updateItems } = setup([rule, { ...rule, id: "second", targetMainLineId: null }], { items: items.map((item) => item.mainLineId === "lights" ? stale : item), onItemConfirmed });
     await screen.findAllByRole("option", { name: sub.name });
     await user.click(screen.getAllByRole("button", { name: "Add related item" })[0]);
     const dialog = screen.getByRole("dialog", { name: "Add related item" });
@@ -244,6 +267,7 @@ describe("Budget Alterations", () => {
     await user.click(await within(dialog).findByRole("button", { name: "Use existing item" }));
     const [first, second] = screen.getAllByRole("combobox", { name: "Related item" });
     await waitFor(() => expect(first).toHaveDisplayValue(confirmed.mainLineName));
+    expect(onItemConfirmed).toHaveBeenCalledExactlyOnceWith(confirmed);
     expect(within(first).getByRole("option", { name: confirmed.mainLineName })).toBeEnabled();
     await user.selectOptions(second, "lights");
     expect(second).toHaveDisplayValue(confirmed.mainLineName);
@@ -255,7 +279,8 @@ describe("Budget Alterations", () => {
   it("does not apply a delayed create response to a different source with the same rule ID", async () => {
     let complete!: (item: KnowledgeItemDetail) => void;
     vi.mocked(api.createKnowledgeMainLine).mockImplementation(() => new Promise((resolve) => { complete = resolve; }));
-    const { user, change, switchSource, client } = setup([rule]);
+    const onItemConfirmed = vi.fn();
+    const { user, change, switchSource, client } = setup([rule], { onItemConfirmed });
     await screen.findByRole("option", { name: sub.name });
     const invalidation = vi.spyOn(client, "invalidateQueries");
     await user.click(screen.getByRole("button", { name: "Add related item" }));
@@ -268,6 +293,7 @@ describe("Budget Alterations", () => {
     await act(async () => complete(detail));
     await waitFor(() => expect(invalidation).toHaveBeenCalled());
     expect(change).not.toHaveBeenCalled();
+    expect(onItemConfirmed).not.toHaveBeenCalled();
     expect(screen.getByRole("combobox", { name: "Related item" })).toHaveValue("lights");
     expect(client.getQueryData(["ai-estimator-knowledge", "item", "late-fitting"])).toEqual(detail);
   });

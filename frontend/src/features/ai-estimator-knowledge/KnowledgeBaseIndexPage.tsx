@@ -59,6 +59,7 @@ import type {
   KnowledgePermanentDeleteBasketResult
 } from "./knowledgeTypes";
 import "./ai-estimator-knowledge.css";
+import "./knowledge-configuration-ui.css";
 
 const PAGE_SIZE = 20;
 const BASKET_MANAGEMENT_PAGE_SIZE = 100;

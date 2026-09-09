@@ -8,6 +8,7 @@ import {
   useCallback,
   useEffect,
   useImperativeHandle,
+  useMemo,
   useRef,
   useState,
   type ReactNode
@@ -29,6 +30,8 @@ import {
 } from "./knowledgeMutationSync";
 import { knowledgeQueryKeys } from "./knowledgeQueryKeys";
 import { knowledgeSectionPayloadForUpdate } from "./knowledgeSectionPayload";
+import { pendingValuesEqual, type KnowledgePendingChangesCallback } from "./knowledgePendingChanges";
+import { projectKnowledgeModePendingChanges, type KnowledgePendingCalculation } from "./knowledgeModePendingChanges";
 import { KnowledgeSpecificationBuilder } from "./KnowledgeSpecificationBuilder";
 import { parseKnowledgeSpecifications } from "./knowledgeSpecificationConfiguration";
 import {
@@ -47,6 +50,7 @@ import type {
   KnowledgeItemDetail,
   KnowledgeItemListItem,
   KnowledgeJsonObject,
+  KnowledgeJsonValue,
   KnowledgeMaster,
   KnowledgeMasterType,
   KnowledgeSectionApplicability,
@@ -72,6 +76,8 @@ type AdvancedEditableField = (typeof ADVANCED_EDITABLE_FIELDS)[number];
 
 interface ModeDraft {
   readonly payload: KnowledgeJsonObject;
+  readonly pendingBaseline: KnowledgeJsonObject | null;
+  readonly pendingPayload: KnowledgeJsonObject;
   readonly editedAdvancedFields: readonly AdvancedEditableField[];
   readonly editedCalculationScopes: readonly ModeCalculationScope[];
   readonly specificationReferenceIds: readonly string[];
@@ -117,6 +123,8 @@ export interface KnowledgeModePanelProps {
   readonly onBusyChange: (busy: boolean) => void;
   readonly onSaveErrorChange?: (error: string | null) => void;
   readonly onAnnouncement: (message: string) => void;
+  readonly pendingChangesSourceKey?: string;
+  readonly onPendingChanges?: KnowledgePendingChangesCallback;
 }
 
 export const KnowledgeModePanel = forwardRef<
@@ -136,12 +144,18 @@ export const KnowledgeModePanel = forwardRef<
     onSavingChange,
     onBusyChange,
     onSaveErrorChange = ignoreSaveError,
-    onAnnouncement
+    onAnnouncement,
+    pendingChangesSourceKey,
+    onPendingChanges
   },
   ref
 ) {
   const queryClient = useQueryClient();
   const mainLineId = item.mainLineId;
+  const sourceKey = pendingChangesSourceKey ?? `${mainLineId}:${revisionId}:mode`;
+  const [draftSourceKey, setDraftSourceKey] = useState(sourceKey);
+  const currentSource = useRef(sourceKey);
+  currentSource.current = sourceKey;
   const advancedQuery = useModeSectionQuery(mainLineId, revisionId, "advanced");
   const pricingQuery = useModeSectionQuery(mainLineId, revisionId, "pricing");
   const overviewQuery = useModeSectionQuery(mainLineId, revisionId, "overview");
@@ -151,6 +165,16 @@ export const KnowledgeModePanel = forwardRef<
     setCalculationValidity((current) => current[scope] === valid ? current : { ...current, [scope]: valid });
   }, []);
   const [descriptionPending, setDescriptionPending] = useState(false);
+  const [pendingCalculationSaveVersion, setPendingCalculationSaveVersion] = useState(0);
+  const [pendingDescription, setPendingDescription] = useState<string | null>(null);
+  const [pendingCalculations, setPendingCalculations] = useState<Partial<Record<ModeCalculationScope, KnowledgePendingCalculation | null>>>({});
+  const publishDescription = useCallback((text: string | null) => {
+    if (currentSource.current === sourceKey) setPendingDescription(text);
+  }, [sourceKey]);
+  const calculationPublishers = useMemo(() => Object.fromEntries(MODE_CALCULATION_SCOPES.map((scope) => [scope, (pending: KnowledgePendingCalculation | null) => {
+    if (currentSource.current !== sourceKey) return;
+    setPendingCalculations((current) => pendingValuesEqual(current[scope] ?? null, pending) ? current : { ...current, [scope]: pending });
+  }])) as Record<ModeCalculationScope, (pending: KnowledgePendingCalculation | null) => void>, [sourceKey]);
   const [descriptionResetVersion, setDescriptionResetVersion] = useState(0);
   useEffect(() => {
     if (!descriptionPending) setDrafts((current) => current.advanced.error === PENDING_DESCRIPTION_MESSAGE
@@ -179,9 +203,14 @@ export const KnowledgeModePanel = forwardRef<
   }
 
   useEffect(() => {
+    setDraftSourceKey(sourceKey);
     setDrafts(createEmptyModeDrafts());
+    setPendingDescription(null);
+    setPendingCalculations({});
+    setDescriptionPending(false);
+    setDescriptionResetVersion((current) => current + 1);
     setConflict(null);
-  }, [revisionId]);
+  }, [sourceKey]);
 
   useEffect(() => {
     const envelopes = {
@@ -197,7 +226,7 @@ export const KnowledgeModePanel = forwardRef<
         const draft = current[sectionKey];
         if (
           !envelope ||
-          draft.dirty ||
+          draft.dirty || (sectionKey === "advanced" && descriptionPending) ||
           (draft.envelopeVersion !== null &&
             envelope.version < draft.envelopeVersion)
         ) {
@@ -208,7 +237,7 @@ export const KnowledgeModePanel = forwardRef<
       }
       return changed ? next : current;
     });
-  }, [advancedQuery.data, pricingQuery.data]);
+  }, [advancedQuery.data, pricingQuery.data, descriptionPending, sourceKey]);
 
   const dirty = descriptionPending || MODE_SECTION_KEYS.some((sectionKey) => drafts[sectionKey].dirty);
   const busy = advancedQuery.isFetching || pricingQuery.isFetching || overviewQuery.isFetching;
@@ -226,6 +255,17 @@ export const KnowledgeModePanel = forwardRef<
           : !savedUom || savedUom.decimalScale === undefined
             ? { scopeKey: uomScopeKey, label: savedUom?.name ?? "Unavailable", message: "The saved UOM details are unavailable. Review the UOM in Overview.", onRetry: uomCatalogState.onRetry }
             : { scopeKey: uomScopeKey, id: savedUom.id, label: savedUom.name, decimalScale: savedUom.decimalScale };
+
+  const pendingGroups = useMemo(() => editable && draftSourceKey === sourceKey ? projectKnowledgeModePendingChanges({
+    advancedBaseline: drafts.advanced.pendingBaseline,
+    advancedDraft: drafts.advanced.pendingPayload,
+    pricingBaseline: drafts.pricing.pendingBaseline,
+    pricingDraft: drafts.pricing.pendingPayload,
+    mainLineName: item.mainLineName, modes: masters.modes,
+    pendingDescription, pendingCalculations, uomLabel: calculationUom.label
+  }) : [], [editable, draftSourceKey, sourceKey, drafts, item.mainLineName, masters.modes, pendingDescription, pendingCalculations, calculationUom.label]);
+  useEffect(() => { onPendingChanges?.({ sourceKey, groups: pendingGroups }); }, [onPendingChanges, sourceKey, pendingGroups]);
+  useEffect(() => () => { onPendingChanges?.({ sourceKey, groups: [] }); }, [onPendingChanges, sourceKey]);
 
   useEffect(() => onDirtyChange(dirty), [dirty, onDirtyChange]);
   useEffect(() => onSavingChange(saving), [onSavingChange, saving]);
@@ -251,6 +291,7 @@ export const KnowledgeModePanel = forwardRef<
         [sectionKey]: {
           ...current[sectionKey],
           payload,
+          ...pendingModeStateAfterEdit(current[sectionKey], payload, sectionKey),
           editedAdvancedFields: sectionKey === "advanced"
             ? [...new Set([...current.advanced.editedAdvancedFields, ...ADVANCED_EDITABLE_FIELDS.filter(
                 (field) => JSON.stringify(current.advanced.payload[field]) !== JSON.stringify(payload[field])
@@ -304,6 +345,8 @@ export const KnowledgeModePanel = forwardRef<
   );
   const discard = useCallback(() => {
     setDescriptionPending(false);
+    setPendingDescription(null);
+    setPendingCalculations({});
     setDescriptionResetVersion((current) => current + 1);
     setDrafts({
       advanced: advancedQuery.data
@@ -395,10 +438,13 @@ export const KnowledgeModePanel = forwardRef<
             version: saved.aggregateVersion
           };
           commitKnowledgeSectionMutation(queryClient, saved);
-          setDrafts((current) => ({
-            ...current,
-            [sectionKey]: draftFromEnvelope(saved)
-          }));
+          if (currentSource.current === sourceKey) {
+            setDrafts((current) => ({
+              ...current,
+              [sectionKey]: draftFromEnvelope(saved)
+            }));
+            if (sectionKey === "advanced") { setPendingCalculations({}); setPendingDescription(null); setPendingCalculationSaveVersion((version) => version + 1); }
+          }
           committedAnySection = true;
         } catch (failure) {
           if (
@@ -473,7 +519,7 @@ export const KnowledgeModePanel = forwardRef<
       setSavingSection(null);
       setSaving(false);
     }
-  }, [descriptionPending, drafts, editable, mainLineId, onAnnouncement, queryClient, revisionId, saving]);
+  }, [descriptionPending, drafts, editable, mainLineId, onAnnouncement, queryClient, revisionId, saving, sourceKey]);
 
   useImperativeHandle(ref, () => ({ save, discard }), [discard, save]);
 
@@ -564,6 +610,7 @@ export const KnowledgeModePanel = forwardRef<
           mainLineName={item.mainLineName}
           descriptionResetKey={`${revisionId}-${descriptionResetVersion}`}
           onPendingDescriptionChange={setDescriptionPending}
+          onPendingDescriptionTextChange={publishDescription}
           modes={masters.modes ?? []}
           legacyModeCatalogState={legacyModeCatalogState}
           serverIssues={drafts.advanced.serverIssues}
@@ -592,6 +639,8 @@ export const KnowledgeModePanel = forwardRef<
             onChange={(modeCalculation) => setPayload("advanced", withModeCalculation(drafts.advanced.payload, scope, modeCalculation))}
             onDirty={markAdvancedConfigurationDirty}
             onValidationChange={(valid) => setCalculationValid(scope, valid)}
+            onPendingInputChange={calculationPublishers[scope]}
+            pendingSaveVersion={pendingCalculationSaveVersion}
           />}
         />
       )}
@@ -654,6 +703,14 @@ export const KnowledgeModePanel = forwardRef<
             setConflict(null);
           }}
           onDiscardLocalChanges={() => {
+            if (conflict.sectionKey === "advanced") {
+              setPendingCalculations({});
+              setPendingDescription(null);
+              setDescriptionPending(false);
+              // A matching server value will not trigger the input's value effect.
+              // Remount the discarded advanced inputs to accept its new baseline.
+              setDescriptionResetVersion((version) => version + 1);
+            }
             setDrafts((current) => ({
               ...current,
               [conflict.sectionKey]: draftFromEnvelope(conflict.server)
@@ -690,6 +747,8 @@ function ignoreSaveError() {
 function emptyModeDraft(): ModeDraft {
   return {
     payload: {},
+    pendingBaseline: null,
+    pendingPayload: {},
     editedAdvancedFields: [],
     editedCalculationScopes: [],
     specificationReferenceIds: [],
@@ -716,6 +775,8 @@ function draftFromEnvelope(
 ): ModeDraft {
   return {
     payload: envelope.payload,
+    pendingBaseline: envelope.payload,
+    pendingPayload: envelope.payload,
     editedAdvancedFields: [],
     editedCalculationScopes: [],
     specificationReferenceIds: envelope.referenceState?.specificationIds ?? [],
@@ -793,4 +854,107 @@ function ModeBlockToolbar({
       ) : null}
     </div>
   );
+}
+
+/** Apply only the latest local edit, excluding values incorporated by conflict rebase. */
+function pendingModeStateAfterEdit(draft: ModeDraft, after: KnowledgeJsonObject, sectionKey: ModeSectionKey): Pick<ModeDraft, "pendingBaseline" | "pendingPayload"> {
+  const baseline = { ...(draft.pendingBaseline ?? {}) };
+  const next = { ...draft.pendingPayload };
+  const before = draft.payload;
+  const apply = (localBaseline: KnowledgeJsonValue | undefined, local: KnowledgeJsonValue | undefined, saved: KnowledgeJsonValue | undefined, edited: KnowledgeJsonValue | undefined) => {
+    const acceptedBaseline = pendingBaselineForNewEdit(localBaseline, local, saved, edited);
+    const acceptedDraft = applyPendingEdit(local, localBaseline, acceptedBaseline);
+    return { baseline: acceptedBaseline, payload: applyPendingEdit(acceptedDraft, saved, edited) };
+  };
+  const fields = sectionKey === "pricing" ? ["specifications"] : ADVANCED_EDITABLE_FIELDS;
+  for (const field of fields) {
+    if (pendingValuesEqual(before[field], after[field])) continue;
+    const updated = apply(baseline[field], next[field], before[field], after[field]);
+    baseline[field] = updated.baseline ?? null;
+    next[field] = updated.payload ?? null;
+  }
+  if (sectionKey === "advanced") {
+    const oldCalculations = modeCalculationsForPayload(before);
+    const calculations = modeCalculationsForPayload(after);
+    const changed = MODE_CALCULATION_SCOPES.filter((scope) => !pendingValuesEqual(oldCalculations[scope], calculations[scope]));
+    if (changed.length) {
+      const baselineCalculations = { ...modeCalculationsForStorage(baseline) };
+      const localCalculations = { ...modeCalculationsForStorage(next) };
+      for (const scope of changed) {
+        const updated = apply(modeCalculationsForPayload(baseline)[scope], modeCalculationsForPayload(next)[scope], oldCalculations[scope], calculations[scope]);
+        baselineCalculations[scope] = updated.baseline ?? null;
+        localCalculations[scope] = updated.payload ?? null;
+      }
+      baseline.modeCalculations = baselineCalculations;
+      next.modeCalculations = localCalculations;
+    }
+  }
+  return { pendingBaseline: baseline, pendingPayload: next };
+}
+const pendingObject = (value: KnowledgeJsonValue | undefined): value is KnowledgeJsonObject => Boolean(value && typeof value === "object" && !Array.isArray(value));
+/** Conflict recovery can expose a saved row/field that this session has not edited.
+ * Capture its accepted pre-edit value only when the user first changes it. Existing
+ * local differences retain their original comparison values. */
+function pendingBaselineForNewEdit(baseline: KnowledgeJsonValue | undefined, local: KnowledgeJsonValue | undefined, before: KnowledgeJsonValue | undefined, after: KnowledgeJsonValue | undefined): KnowledgeJsonValue | undefined {
+  if (pendingValuesEqual(before, after)) return baseline;
+  if (pendingObject(before) && pendingObject(after) && pendingObject(baseline) && pendingObject(local)) {
+    const result = { ...baseline };
+    for (const key of new Set([...Object.keys(before), ...Object.keys(after)])) {
+      const value = pendingBaselineForNewEdit(baseline[key], local[key], before[key], after[key]);
+      if (value === undefined) delete result[key]; else result[key] = value;
+    }
+    return result;
+  }
+  if (Array.isArray(before) && Array.isArray(after) && Array.isArray(baseline) && Array.isArray(local)
+    && [...before, ...after, ...baseline, ...local].every((row) => pendingObject(row) && typeof row.id === "string")) {
+    const result = [...baseline] as KnowledgeJsonObject[];
+    for (const row of before as KnowledgeJsonObject[]) {
+      if (!(after as KnowledgeJsonObject[]).some((candidate) => candidate.id === row.id)
+        && !result.some((candidate) => candidate.id === row.id)
+        && !(local as KnowledgeJsonObject[]).some((candidate) => candidate.id === row.id)) result.push(row);
+    }
+    for (const row of after as KnowledgeJsonObject[]) {
+      const previous = (before as KnowledgeJsonObject[]).find((candidate) => candidate.id === row.id);
+      if (!previous || pendingValuesEqual(previous, row)) continue;
+      const index = result.findIndex((candidate) => candidate.id === row.id);
+      const current = (local as KnowledgeJsonObject[]).find((candidate) => candidate.id === row.id);
+      const value = pendingBaselineForNewEdit(index < 0 ? undefined : result[index], current, previous, row) as KnowledgeJsonObject;
+      if (index < 0) result.push(value); else result[index] = value;
+    }
+    return result;
+  }
+  return pendingValuesEqual(baseline, local) ? before : baseline;
+}
+function applyPendingEdit(local: KnowledgeJsonValue | undefined, before: KnowledgeJsonValue | undefined, after: KnowledgeJsonValue | undefined): KnowledgeJsonValue | undefined {
+  if (pendingValuesEqual(before, after)) return local;
+  const object = (value: KnowledgeJsonValue | undefined): value is KnowledgeJsonObject => Boolean(value && typeof value === "object" && !Array.isArray(value));
+  if (object(before) && object(after)) {
+    const next = { ...(object(local) ? local : before) };
+    for (const key of new Set([...Object.keys(before), ...Object.keys(after)])) {
+      if (!pendingValuesEqual(before[key], after[key])) {
+        const value = applyPendingEdit(next[key], before[key], after[key]);
+        if (value === undefined) delete next[key]; else next[key] = value;
+      }
+    }
+    return next;
+  }
+  if (Array.isArray(before) && Array.isArray(after) && before.every((row) => object(row) && typeof row.id === "string") && after.every((row) => object(row) && typeof row.id === "string")) {
+    const oldRows = before as KnowledgeJsonObject[];
+    const rows = after as KnowledgeJsonObject[];
+    const localRows = Array.isArray(local) ? local.filter(object) : oldRows;
+    const removed = new Set(oldRows.filter((row) => !rows.some((candidate) => candidate.id === row.id)).map((row) => row.id));
+    const result = localRows.filter((row) => !removed.has(row.id));
+    for (const row of rows) {
+      const previous = oldRows.find((candidate) => candidate.id === row.id);
+      if (pendingValuesEqual(previous, row)) continue;
+      const index = result.findIndex((candidate) => candidate.id === row.id);
+      const updated = applyPendingEdit(index < 0 ? previous : result[index], previous, row) as KnowledgeJsonObject;
+      if (index < 0) result.push(updated); else result[index] = updated;
+    }
+    const retained = rows.filter((row) => oldRows.some((previous) => previous.id === row.id));
+    const reordered = retained.some((row, index) => index > 0 && oldRows.findIndex((previous) => previous.id === row.id) < oldRows.findIndex((previous) => previous.id === retained[index - 1]!.id));
+    if (reordered) result.sort((a, b) => rows.findIndex((row) => row.id === a.id) - rows.findIndex((row) => row.id === b.id));
+    return result;
+  }
+  return after;
 }

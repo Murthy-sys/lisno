@@ -9,6 +9,8 @@ import { PageState } from "../../components/ui/PageState";
 import { Surface } from "../../components/ui/Surface";
 import { getKnowledgeBasketQuality, getKnowledgeSection, updateKnowledgeBasketQuality } from "./knowledgeApi";
 import { knowledgeQueryKeys } from "./knowledgeQueryKeys";
+import type { KnowledgePendingChangesCallback } from "./knowledgePendingChanges";
+import { qualityPendingChanges, qualityPendingRowState, type QualityPendingRowState } from "./knowledgeQualityPendingChanges";
 import { mandatoryQualityParameters, qualityImportIssues, validateQualityParameters } from "./knowledgeQuality";
 import { downloadQualityChecklist, downloadQualityTemplate, qualityAiPrompt } from "./knowledgeQualityWorkbook";
 import { KnowledgeQualityImportDialog } from "./KnowledgeQualityImportDialog";
@@ -21,16 +23,29 @@ export interface KnowledgeBasketQualityPanelHandle {
   discard(): void;
 }
 
-export const KnowledgeBasketQualityPanel = forwardRef<KnowledgeBasketQualityPanelHandle, {
+interface KnowledgeBasketQualityPanelProps {
   readonly item: KnowledgeItemDetail;
   readonly revisionId?: string;
   readonly canUpdate: boolean;
   readonly onDirtyChange: (dirty: boolean) => void;
   readonly onSavingChange: (saving: boolean) => void;
-}>(function KnowledgeBasketQualityPanel({ item, revisionId, canUpdate, onDirtyChange, onSavingChange }, ref) {
+  readonly pendingChangesSourceKey?: string;
+  readonly onPendingChanges?: KnowledgePendingChangesCallback;
+}
+
+// A checklist draft belongs to one mounted item/revision/basket editing session.
+export const KnowledgeBasketQualityPanel = forwardRef<KnowledgeBasketQualityPanelHandle, KnowledgeBasketQualityPanelProps>(function KnowledgeBasketQualityPanel(props, ref) {
+  const source = JSON.stringify([props.item.mainLineId, props.revisionId, props.item.basketId, props.pendingChangesSourceKey]);
+  return <KnowledgeBasketQualityEditor key={source} {...props} ref={ref} />;
+});
+
+const KnowledgeBasketQualityEditor = forwardRef<KnowledgeBasketQualityPanelHandle, KnowledgeBasketQualityPanelProps>(function KnowledgeBasketQualityEditor({ item, revisionId, canUpdate, onDirtyChange, onSavingChange, pendingChangesSourceKey, onPendingChanges }, ref) {
   const queryClient = useQueryClient();
   const query = useQuery({ queryKey: knowledgeQueryKeys.basketQuality(item.basketId), queryFn: () => getKnowledgeBasketQuality(item.basketId) });
-  const [draft, setDraft] = useState<{ parameters: readonly KnowledgeJsonObject[]; version: number } | null>(null);
+  const [draft, setDraft] = useState<{
+    parameters: readonly KnowledgeJsonObject[]; version: number; basketName: string;
+    baseline: readonly KnowledgeJsonObject[]; baselineRows: QualityPendingRowState; parameterRows: QualityPendingRowState;
+  } | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [conflict, setConflict] = useState(false);
@@ -48,9 +63,22 @@ export const KnowledgeBasketQualityPanel = forwardRef<KnowledgeBasketQualityPane
   const legacy = useQuery({ queryKey: knowledgeQueryKeys.section(item.mainLineId, revisionId ?? "", "quality"), queryFn: () => getKnowledgeSection<KnowledgeJsonObject>(item.mainLineId, revisionId!, "quality"), enabled: showLegacy && Boolean(revisionId) });
   useEffect(() => onDirtyChange(Boolean(draft)), [draft, onDirtyChange]);
   useEffect(() => onSavingChange(saving), [saving, onSavingChange]);
+  const sourceKey = pendingChangesSourceKey ?? JSON.stringify([item.mainLineId, revisionId, item.basketId, "quality"]);
+  const pending = useMemo(() => editable && draft ? qualityPendingChanges({
+    sourceKey, basketId: item.basketId, basketName: draft.basketName,
+    baseline: draft.baseline, parameters: draft.parameters, baselineRows: draft.baselineRows, parameterRows: draft.parameterRows
+  }) : { sourceKey, groups: [] }, [draft, editable, item.basketId, sourceKey]);
+  useEffect(() => {
+    onPendingChanges?.(pending);
+  }, [onPendingChanges, pending]);
+  useEffect(() => () => onPendingChanges?.({ sourceKey, groups: [] }), [onPendingChanges, sourceKey]);
   function change(next: KnowledgeJsonObject) {
     if (!editable || saving || !query.data) return;
-    setDraft({ parameters: mandatoryQualityParameters((next.parameters ?? []) as readonly KnowledgeJsonObject[]), version: draft?.version ?? query.data.version });
+    const nextParameters = mandatoryQualityParameters((next.parameters ?? []) as readonly KnowledgeJsonObject[]);
+    const baselineRows = draft?.baselineRows ?? qualityPendingRowState(query.data.parameters);
+    setDraft({ parameters: nextParameters, version: draft?.version ?? query.data.version,
+      basketName: draft?.basketName ?? query.data.basketName, baseline: draft?.baseline ?? query.data.parameters, baselineRows,
+      parameterRows: qualityPendingRowState(nextParameters, draft?.parameterRows ?? baselineRows) });
     setError(null);
     setAnnouncement("");
   }
