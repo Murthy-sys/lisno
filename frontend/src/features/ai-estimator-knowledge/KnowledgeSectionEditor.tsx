@@ -24,6 +24,7 @@ import type {
   KnowledgeJsonObject,
   KnowledgeJsonValue,
   KnowledgeBasket,
+  KnowledgeItemDetail,
   KnowledgeItemListItem,
   KnowledgeMaster,
   KnowledgeMasterType,
@@ -93,6 +94,7 @@ export interface KnowledgeSectionEditorProps {
   readonly currentMainLineId: string;
   readonly mainLineName?: string;
   readonly relationshipCatalogState?: KnowledgeBudgetCatalogState;
+  readonly onRelatedItemConfirmed?: (item: KnowledgeItemDetail) => void;
   /* The item's own Main Basket, shown as context where a row used to select
      one. Display only — this section never changes it. */
   readonly basketName?: string;
@@ -182,6 +184,7 @@ export function KnowledgeSectionEditor({
   currentMainLineId,
   mainLineName = "this item",
   relationshipCatalogState,
+  onRelatedItemConfirmed,
   basketName,
   readOnly,
   readOnlyRevision = readOnly,
@@ -271,6 +274,7 @@ export function KnowledgeSectionEditor({
       {sectionKey === "recommendations" && <KnowledgeBudgetAlterationBuilder value={payload.budgetAlterations}
         mainLineId={currentMainLineId} mainLineName={mainLineName} baskets={relationshipBaskets} items={relationshipItems}
         catalogState={relationshipCatalogState} readOnly={readOnly} canCreate={canQuickAdd} issues={issues}
+        onItemConfirmed={onRelatedItemConfirmed}
         onChange={(value) => change("budgetAlterations", value)} />}
 
       {sectionKey === "quantity-margin" ? (
