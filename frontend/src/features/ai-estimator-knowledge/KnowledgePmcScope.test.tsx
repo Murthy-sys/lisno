@@ -30,14 +30,19 @@ const saved: KnowledgeJsonObject = { modeConfigurations: [{
   exclusions: [{ id: "transport-out", name: "Transport", selected: true }, { id: "custom", name: "Night unloading", selected: false }]
 }] };
 
-describe("PMC Inclusions and Exclusions", () => {
-  it("shows six unchecked defaults in each list and retains independent selections across Mode switches", async () => {
+describe("Sub-Vendor Inclusions and Exclusions", () => {
+  it("keeps the lists out of PMC and In-house while retaining Sub-Vendor selections across Mode switches", async () => {
     const user = userEvent.setup();
     const onChange = vi.fn();
     render(<Harness onChange={onChange} />);
     expect(screen.queryByRole("region", { name: "PMC components" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Add component" })).not.toBeInTheDocument();
     expect(screen.queryByText("No components configured for PMC.")).not.toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: "Inclusions" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: "Exclusions" })).not.toBeInTheDocument();
+    expect(onChange).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("checkbox", { name: "Execution" }));
+    expect(screen.getByRole("region", { name: "Sub-Vendor scope" })).toBeVisible();
     for (const title of ["Inclusions", "Exclusions"]) {
       const list = screen.getByRole("group", { name: title });
       const boxes = within(list).getAllByRole("checkbox");
@@ -49,21 +54,25 @@ describe("PMC Inclusions and Exclusions", () => {
     }
     expect(onChange).toHaveBeenCalledTimes(2);
     await user.click(screen.getByRole("checkbox", { name: "PMC" }));
-    await user.click(screen.getByRole("checkbox", { name: "Execution" }));
     expect(screen.getByRole("button", { name: "Add component" })).toBeEnabled();
     for (const title of ["Inclusions", "Exclusions"]) {
       expect(within(screen.getByRole("group", { name: title })).getByRole("checkbox", { name: "Transport" })).toBeChecked();
     }
     await user.click(screen.getByRole("radio", { name: "In-house" }));
+    await user.click(screen.getByRole("checkbox", { name: "PMC" }));
+    expect(screen.getByRole("checkbox", { name: "PMC" })).toBeChecked();
     expect(screen.queryByRole("group", { name: "Inclusions" })).not.toBeInTheDocument();
     expect(screen.queryByRole("group", { name: "Exclusions" })).not.toBeInTheDocument();
     await user.click(screen.getByRole("radio", { name: "Sub-Vendor" }));
-    await user.click(screen.getByRole("checkbox", { name: "PMC" }));
     expect(screen.getAllByRole("group", { name: "Inclusions" })).toHaveLength(1);
     expect(screen.getAllByRole("group", { name: "Exclusions" })).toHaveLength(1);
     for (const title of ["Inclusions", "Exclusions"]) {
       expect(within(screen.getByRole("group", { name: title })).getByRole("checkbox", { name: "Transport" })).toBeChecked();
     }
+    await user.click(screen.getByRole("checkbox", { name: "Execution" }));
+    expect(screen.queryByRole("group", { name: "Inclusions" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: "Exclusions" })).not.toBeInTheDocument();
+    expect(onChange).toHaveBeenCalledTimes(2);
     expect((await axe.run(document.body, { rules: { "color-contrast": { enabled: false } } })).violations).toEqual([]);
   });
 
@@ -71,6 +80,7 @@ describe("PMC Inclusions and Exclusions", () => {
     const user = userEvent.setup();
     const onChange = vi.fn();
     render(<Harness onChange={onChange} />);
+    await user.click(screen.getByRole("checkbox", { name: "Execution" }));
     for (const singular of ["Inclusion", "Exclusion"]) {
       const list = screen.getByRole("group", { name: `${singular}s` });
       expect(within(list).queryByRole("textbox")).not.toBeInTheDocument();
@@ -98,6 +108,7 @@ describe("PMC Inclusions and Exclusions", () => {
     const user = userEvent.setup();
     const onChange = vi.fn();
     render(<Harness onChange={onChange} />);
+    await user.click(screen.getByRole("checkbox", { name: "Execution" }));
     const inclusions = screen.getByRole("group", { name: "Inclusions" });
     const exclusions = screen.getByRole("group", { name: "Exclusions" });
     await user.click(within(inclusions).getByRole("button", { name: "Add Inclusion" }));
@@ -120,8 +131,11 @@ describe("PMC Inclusions and Exclusions", () => {
     const user = userEvent.setup();
     const onChange = vi.fn();
     render(<Harness initial={saved} readOnly onChange={onChange} />);
+    expect(screen.queryByRole("group", { name: "Inclusions" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: "Exclusions" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("checkbox", { name: "Execution" }));
     expect(screen.getAllByRole("checkbox", { name: "Transport" }).every((box) => (box as HTMLInputElement).checked)).toBe(true);
-    for (const box of within(screen.getByRole("region", { name: "PMC" })).getAllByRole("checkbox")) {
+    for (const box of within(screen.getByRole("region", { name: "Sub-Vendor scope" })).getAllByRole("checkbox")) {
       expect(box).toBeDisabled();
       await user.click(box);
     }
@@ -129,7 +143,6 @@ describe("PMC Inclusions and Exclusions", () => {
     expect(screen.queryByRole("button", { name: "Add Exclusion" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^Delete (inclusion|exclusion) / })).not.toBeInTheDocument();
     await user.click(screen.getByRole("checkbox", { name: "PMC" }));
-    await user.click(screen.getByRole("checkbox", { name: "Execution" }));
     for (const title of ["Inclusions", "Exclusions"]) {
       for (const box of within(screen.getByRole("group", { name: title })).getAllByRole("checkbox")) expect(box).toBeDisabled();
     }
@@ -142,6 +155,7 @@ describe("PMC Inclusions and Exclusions", () => {
     const user = userEvent.setup();
     const onChange = vi.fn();
     render(<Harness onChange={onChange} />);
+    await user.click(screen.getByRole("checkbox", { name: "Execution" }));
     const chosen = screen.getByRole("group", { name: kind === "inclusion" ? "Inclusions" : "Exclusions" });
     const other = screen.getByRole("group", { name: kind === "inclusion" ? "Exclusions" : "Inclusions" });
     const remove = within(chosen).getByRole("button", { name: `Delete ${kind} Transport` });
@@ -161,6 +175,7 @@ describe("PMC Inclusions and Exclusions", () => {
     const user = userEvent.setup();
     const onChange = vi.fn();
     const view = render(<Harness initial={saved} onChange={onChange} />);
+    await user.click(screen.getByRole("checkbox", { name: "Execution" }));
     const inclusions = screen.getByRole("group", { name: "Inclusions" });
     await user.click(within(inclusions).getByRole("button", { name: "Delete inclusion Transport" }));
     expect(within(inclusions).getByText("No inclusions added.")).toBeVisible();
@@ -169,6 +184,7 @@ describe("PMC Inclusions and Exclusions", () => {
     expect(next.modeConfigurations).toEqual([{ ...(saved.modeConfigurations as KnowledgeJsonObject[])[0], inclusions: [] }]);
     view.unmount();
     render(<Harness initial={next} readOnly />);
+    await user.click(screen.getByRole("checkbox", { name: "Execution" }));
     expect(within(screen.getByRole("group", { name: "Inclusions" })).queryByRole("checkbox")).not.toBeInTheDocument();
     expect(within(screen.getByRole("group", { name: "Exclusions" })).getByRole("checkbox", { name: "Transport" })).toBeChecked();
   });
@@ -182,6 +198,7 @@ describe("PMC Inclusions and Exclusions", () => {
         exclusions: [{ id: "lift-out", name: "Lift service", selected: true }]
       }] };
     render(<Harness initial={initial} onChange={onChange} />);
+    await user.click(screen.getByRole("checkbox", { name: "Execution" }));
     await user.click(screen.getByRole("button", { name: "Edit Mode paragraph" }));
     const text = screen.getByRole("textbox", { name: "Mode paragraph" });
     await user.type(text, " Keep this edit.");
@@ -206,6 +223,7 @@ describe("PMC Inclusions and Exclusions", () => {
     render(<Harness initial={{ modeConfigurations: [{ id: "pmc", modeKind: "pmc", fields }] }} onChange={onChange} />);
     expect(screen.queryByRole("region", { name: "PMC components" })).not.toBeInTheDocument();
     expect(screen.queryByRole("textbox", { name: "Component label" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("checkbox", { name: "Execution" }));
     await user.click(within(screen.getByRole("group", { name: "Inclusions" })).getByRole("checkbox", { name: "Transport" }));
     expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ modeConfigurations: [expect.objectContaining({ fields })] }));
   });

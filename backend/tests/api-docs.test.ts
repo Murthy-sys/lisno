@@ -351,6 +351,23 @@ describe("OpenAPI and Swagger UI", () => {
     };
     expect(previewRequest.additionalProperties).toBe(false);
     expect(previewRequest.properties).not.toHaveProperty("finalPrice");
+    expect(previewRequest.properties.pmcCalculation).toMatchObject({ $ref: "#/components/schemas/KnowledgePmcCalculationSettings" });
+    expect(previewResponse.properties.pmcCalculation).toEqual({ $ref: "#/components/schemas/KnowledgePmcCalculationPreview" });
+    expect(componentSchemas().KnowledgePmcCalculationSettings).toMatchObject({
+      additionalProperties: false,
+      required: ["baseRatePaise", "lowQuantityLimit", "pmcMarginBps"],
+      properties: { pmcMarginBps: { type: "integer", minimum: 1_000, maximum: 2_000 },
+        impactBps: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER - 10_000 } }
+    });
+    expect(componentSchemas().KnowledgePmcCalculationPreview).toMatchObject({
+      required: expect.arrayContaining(["baseAmountPaise", "lowQuantityImpactAmountPaise", "pmcMarginBps", "pmcMarginAmountPaise", "totalBeforeDiscountPaise", "totalPaise", "finalVendorChargesPaise"]),
+      properties: { pmcMarginAmountPaise: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
+        finalVendorChargesPaise: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER } }
+    });
+    expect(componentSchemas().KnowledgePmcCalculationPreview).not.toHaveProperty("properties.effectiveMarginBps");
+    expect(componentSchemas().KnowledgePmcCalculationPreview).not.toHaveProperty("properties.discount.properties.effectiveMarginBps");
+    expect(componentSchemas().KnowledgePmcCalculationPreview).not.toHaveProperty("properties.additionalLowQuantityImpactBps");
+    expect(componentSchemas().KnowledgePmcCalculationPreview).not.toHaveProperty("properties.additionalLowQuantityImpactAmountPaise");
     expect(contextRequest.additionalProperties).toBe(false);
     expect(contextRequest.required).toEqual(["mainBasketId", "mainLineId"]);
     expect(contextRequest.properties).not.toHaveProperty("name");

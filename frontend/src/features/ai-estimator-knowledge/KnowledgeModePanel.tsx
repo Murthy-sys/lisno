@@ -626,9 +626,12 @@ export const KnowledgeModePanel = forwardRef<
             material={modeCalculationsForPayload(drafts.advanced.payload).in_house_material}
             valid={calculationValidity.in_house_labor && calculationValidity.in_house_material}
           />}
-          calculation={(scope, active) => <KnowledgeModeCalculationEditor
+          calculation={(scope, active, pmcMarginControl) => <KnowledgeModeCalculationEditor
             key={`${uomScopeKey}-${descriptionResetVersion}-${scope}`}
             active={active}
+            scope={scope}
+            pmcMarginBps={scope === "pmc" ? drafts.advanced.payload.pmcMarginBps : undefined}
+            pmcMarginControl={pmcMarginControl}
             contextLabel={MODE_CALCULATION_LABELS[scope]}
             issuePath={`modeCalculations.${scope}`}
             value={modeCalculationsForPayload(drafts.advanced.payload)[scope]}

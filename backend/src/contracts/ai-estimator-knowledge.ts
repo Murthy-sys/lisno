@@ -397,6 +397,32 @@ export interface KnowledgeModeCalculationPreview {
   };
 }
 
+/** Simulator inputs; PMC uses the separate saved margin, never Mode markups. */
+export interface KnowledgePmcCalculationSettings {
+  baseRatePaise: KnowledgePaise;
+  lowQuantityLimit: KnowledgeCanonicalDecimal;
+  impactBps?: KnowledgeBasisPoints;
+  pmcMarginBps: KnowledgeBasisPoints;
+}
+
+export interface KnowledgePmcCalculationPreview {
+  baseAmountPaise: KnowledgePaise;
+  lowQuantityImpactAmountPaise: KnowledgePaise;
+  revisedUnitRatePaise: KnowledgePaise;
+  revisedAmountPaise: KnowledgePaise;
+  totalPaise: KnowledgePaise;
+  appliedImpactBps: KnowledgeBasisPoints;
+  pmcMarginBps: KnowledgeBasisPoints;
+  pmcMarginAmountPaise: KnowledgePaise;
+  totalBeforeDiscountPaise: KnowledgePaise;
+  finalVendorChargesPaise: KnowledgePaise;
+  discount?: {
+    rateBps: KnowledgeBasisPoints;
+    totalBeforeDiscountPaise: KnowledgePaise;
+    amountPaise: KnowledgePaise;
+  };
+}
+
 export interface KnowledgeInHouseCalculationSettings {
   labor: KnowledgeModeCalculationSettings;
   material: KnowledgeModeCalculationSettings;
@@ -411,6 +437,7 @@ export interface KnowledgeInHouseCalculationPreview {
 export interface KnowledgePreview {
   modeCalculation?: KnowledgeModeCalculationPreview;
   inHouseCalculation?: KnowledgeInHouseCalculationPreview;
+  pmcCalculation?: KnowledgePmcCalculationPreview;
   formulaVersion: "knowledge-preview-v1";
   effectivePriceVersionId: KnowledgeStableId | null;
   taxVersionId: KnowledgeStableId | null;

@@ -2,7 +2,7 @@ import { useId, type ReactNode } from "react";
 import { LockKeyhole } from "lucide-react";
 
 import { Field, Input } from "../../components/ui/Field";
-import { maximumModeDiscountBps } from "./knowledgeModeCalculation";
+import { maximumModeDiscountBps, type ModeCalculationScope } from "./knowledgeModeCalculation";
 import { formatKnowledgePercentage } from "./knowledgePresentation";
 import type { KnowledgePreview } from "./knowledgeTypes";
 
@@ -17,6 +17,8 @@ export interface KnowledgeModeCalculationDraft {
 export type KnowledgeModeCalculationResult = NonNullable<KnowledgePreview["modeCalculation"]>;
 
 interface Props {
+  readonly scope?: ModeCalculationScope;
+  readonly pmcMarginControl?: ReactNode;
   readonly title?: string;
   readonly value: KnowledgeModeCalculationDraft;
   readonly uomLabel: string;
@@ -28,7 +30,7 @@ interface Props {
 }
 
 export function KnowledgeModeCalculationTable({
-  value, uomLabel, uomMessage, readOnly, errors = {}, actions, onChange, title = "Calculations"
+  value, uomLabel, uomMessage, readOnly, errors = {}, actions, onChange, title = "Calculations", scope, pmcMarginControl
 }: Props) {
   const id = useId();
   const maximumDiscountBps = maximumModeDiscountBps(value);
@@ -64,10 +66,13 @@ export function KnowledgeModeCalculationTable({
             {editableField("lowQuantityLimit", "Low Quantity Limit")}
             {editableField("impactRate", <>Impact<span className="sr-only"> (%)</span></>, "%")}
           </div>
-          <p className="knowledge-mode-calculation__note">UOM follows Overview. Impact applies below the quantity limit.</p>
+          <p className="knowledge-mode-calculation__note">{scope === "pmc" ? "UOM follows Overview. The configured Impact applies at or below the quantity limit." : "UOM follows Overview. Impact applies below the quantity limit."}</p>
           {uomMessage ? <p id={`${id}-uom-message`} className="knowledge-mode-calculation__hint">{uomMessage}</p> : null}
         </div>
-        <div className="knowledge-mode-calculation__group" role="group" aria-labelledby={`${id}-markup-title`}>
+        {scope === "pmc" ? <div className="knowledge-mode-calculation__group knowledge-mode-calculation__pmc" role="group" aria-labelledby={`${id}-pmc-title`}>
+          <h4 id={`${id}-pmc-title`}>PMC Margin</h4>
+          {pmcMarginControl}
+        </div> : <div className="knowledge-mode-calculation__group" role="group" aria-labelledby={`${id}-markup-title`}>
           <h4 id={`${id}-markup-title`}>Gross margin markup</h4>
           <div className="knowledge-mode-calculation__markup-fields">
             {editableField("minimumRate", <>Min.<span className="sr-only"> Gross Margin Markup (%)</span></>, "%")}
@@ -87,7 +92,7 @@ export function KnowledgeModeCalculationTable({
                 : "Estimate discount limit = Starting markup − Min. markup."}
             </p>
           </div>
-        </div>
+        </div>}
       </div>
     </section>
   );

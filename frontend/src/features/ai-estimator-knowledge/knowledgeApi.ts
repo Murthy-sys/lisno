@@ -126,6 +126,12 @@ export interface KnowledgeContextRequest {
 }
 
 export interface KnowledgePreviewRequest {
+  readonly pmcCalculation?: {
+    readonly baseRatePaise: number;
+    readonly lowQuantityLimit: string;
+    readonly impactBps?: number;
+    readonly pmcMarginBps: number;
+  };
   readonly inHouseCalculation?: {
     readonly labor: NonNullable<KnowledgePreviewRequest["modeCalculation"]>;
     readonly material: NonNullable<KnowledgePreviewRequest["modeCalculation"]>;
