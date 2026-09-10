@@ -9,7 +9,8 @@ function marginText(value: KnowledgeJsonValue | undefined): string {
   return typeof value === "string" ? value : "";
 }
 
-export function KnowledgePmcMarginInput({ value, readOnly, error, onChange }: {
+export function KnowledgePmcMarginInput({ value, readOnly, error, onChange, scope = "pmc" }: {
+  scope?: "pmc" | "sub_vendor";
   value: KnowledgeJsonValue | undefined;
   readOnly: boolean;
   error?: string;
@@ -25,8 +26,8 @@ export function KnowledgePmcMarginInput({ value, readOnly, error, onChange }: {
     }
   }, [value]);
 
-  return <Field id={`${id}-pmc-margin`} className="knowledge-pmc-margin"
-    label="PMC Margin" hint="Allowed: 10%–20%" error={error}>
+  return <Field id={`${id}-${scope}-margin`} className="knowledge-pmc-margin"
+    label={scope === "pmc" ? "PMC Margin" : "Sub-Vendor Margin"} hint="Allowed: 10%–20%" error={error}>
     {(controlProps) => <div className="knowledge-pmc-margin__control">
       <Input {...controlProps} type="number" inputMode="decimal" min={10} max={20} step="0.01"
       value={text} disabled={readOnly} placeholder="10–20"

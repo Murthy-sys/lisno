@@ -41,13 +41,55 @@ describe("Mode pending publication lifecycle", () => {
     await screen.findByRole("textbox", { name: "Specification name" });
     expect(panel.latest()?.groups).toEqual([]);
     await user.click(screen.getByRole("checkbox", { name: "Execution" }));
-    await user.click(screen.getByRole("radio", { name: "In-house" }));
+    await user.click(screen.getByRole("checkbox", { name: "In-house" }));
     expect(panel.latest()?.groups).toEqual([]);
     const description = screen.getByRole("textbox", { name: "Brief description" });
     fireEvent.change(description, { target: { value: "Only local requirement" } });
     expect(panel.latest()?.groups[0]?.entries[0]?.fields).toEqual([{ key: "description", label: "Description", value: "Only local requirement" }]);
     expect(JSON.stringify(panel.latest())).not.toContain("Saved specification detail");
     fireEvent.change(description, { target: { value: "Saved specification detail" } });
+    expect(panel.latest()?.groups).toEqual([]);
+  });
+
+  it("publishes only the independent Sub-Vendor margin edit and clears it after confirmed save", async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.getKnowledgeSection).mockImplementation(async (_id, revision, key) => section(key, key === "advanced"
+      ? { pmcMarginBps: 1_200, subVendorMarginBps: 1_700 } : key === "pricing" ? savedPricing : {}, 1, revision));
+    const panel = setup();
+    await user.click(await screen.findByRole("checkbox", { name: "Execution" }));
+    expect(panel.latest()?.groups).toEqual([]);
+    fireEvent.change(screen.getByRole("spinbutton", { name: "Sub-Vendor Margin" }), { target: { value: "18.25" } });
+    expect(screen.getByRole("spinbutton", { name: "PMC Margin" })).toHaveValue(12);
+    expect(panel.latest()?.groups.map(({ key }) => key)).toEqual(["sub_vendor:margin"]);
+    expect(panel.latest()?.groups[0]?.entries[0]?.fields).toEqual([{ key: "margin", label: "Margin", value: "18.25%" }]);
+    await act(async () => { expect(await panel.ref.current?.save()).toBe(true); });
+    expect(api.updateKnowledgeSection).toHaveBeenCalledWith(item.mainLineId, "revision-1", "advanced", expect.objectContaining({
+      payload: { pmcMarginBps: 1_200, subVendorMarginBps: 1_825 }
+    }));
+    expect(panel.latest()?.groups).toEqual([]);
+    expect(screen.getByRole("spinbutton", { name: "Sub-Vendor Margin" })).toHaveValue(18.25);
+  });
+
+  it("keeps local Sub-Vendor margin across a conflict while accepting the remote PMC margin", async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.getKnowledgeSection).mockImplementation(async (_id, revision, key) => section(key, key === "advanced"
+      ? { pmcMarginBps: 1_200, subVendorMarginBps: 1_700 } : key === "pricing" ? savedPricing : {}, 1, revision));
+    const panel = setup();
+    await user.click(await screen.findByRole("checkbox", { name: "Execution" }));
+    fireEvent.change(screen.getByRole("spinbutton", { name: "Sub-Vendor Margin" }), { target: { value: "18.25" } });
+    vi.mocked(api.updateKnowledgeSection).mockRejectedValueOnce(new ApiError(409, "VERSION_CONFLICT", "Updated elsewhere."));
+    vi.mocked(api.getKnowledgeSection).mockImplementation(async (_id, revision, key) => section(key, key === "advanced"
+      ? { pmcMarginBps: 1_450, subVendorMarginBps: 1_900 } : key === "pricing" ? savedPricing : {}, 2, revision));
+    await act(async () => { expect(await panel.ref.current?.save()).toBe(false); });
+    await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Keep editing" }));
+    expect(screen.getByRole("spinbutton", { name: "PMC Margin" })).toHaveValue(14.5);
+    expect(screen.getByRole("spinbutton", { name: "Sub-Vendor Margin" })).toHaveValue(18.25);
+    expect(panel.latest()?.groups.map(({ key }) => key)).toEqual(["sub_vendor:margin"]);
+    expect(panel.latest()?.groups[0]?.entries[0]?.fields).toEqual([{ key: "margin", label: "Margin", value: "18.25%" }]);
+    await act(async () => { expect(await panel.ref.current?.save()).toBe(true); });
+    expect(api.updateKnowledgeSection).toHaveBeenLastCalledWith(item.mainLineId, "revision-1", "advanced", expect.objectContaining({
+      expectedVersion: 2, payload: { pmcMarginBps: 1_450, subVendorMarginBps: 1_825 }
+    }));
     expect(panel.latest()?.groups).toEqual([]);
   });
 

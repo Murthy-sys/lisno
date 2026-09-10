@@ -3,6 +3,7 @@ import type {
   KnowledgeModeCalculationSettings,
   KnowledgeInHouseCalculationSettings,
   KnowledgePmcCalculationSettings,
+  KnowledgeSubVendorCalculationSettings,
   KnowledgePreview,
   KnowledgePreviewAmountComponent
 } from "../contracts/ai-estimator-knowledge.js";
@@ -17,6 +18,7 @@ import {
 const DECIMAL_PATTERN = /^(0|[1-9]\d*)(?:\.(\d+))?$/u;
 const TEN = 10n;
 const DURATION_SCALE = 6;
+export const KNOWLEDGE_CUSTOM_DISCOUNT_MESSAGE = "Enter a discount from 0% to 100%, with up to two decimal places.";
 
 export class KnowledgeCalculationError extends Error {
   constructor(
@@ -371,6 +373,7 @@ export interface CalculateKnowledgePreviewInput {
   modeCalculation?: KnowledgeModeCalculationSettings;
   inHouseCalculation?: KnowledgeInHouseCalculationSettings;
   pmcCalculation?: KnowledgePmcCalculationSettings;
+  subVendorCalculation?: KnowledgeSubVendorCalculationSettings;
   modeCalculationMarkupBasis?: "starting" | "minimum";
   modeCalculationDiscountBps?: number;
   priceVersionId?: string | null;
@@ -400,12 +403,21 @@ export function calculateKnowledgePreview(
   if (input.pmcCalculation !== undefined && (input.pmcCalculation === null || typeof input.pmcCalculation !== "object" || Array.isArray(input.pmcCalculation))) {
     throw new KnowledgeCalculationError("INVALID_AMOUNT", "PMC calculation settings are required.");
   }
-  const hasCalculation = Boolean(input.modeCalculation || input.inHouseCalculation || input.pmcCalculation);
-  if (input.pmcCalculation && (input.modeCalculation || input.inHouseCalculation)) {
+  if (input.subVendorCalculation !== undefined && (input.subVendorCalculation === null || typeof input.subVendorCalculation !== "object" || Array.isArray(input.subVendorCalculation))) {
+    throw new KnowledgeCalculationError("INVALID_AMOUNT", "Sub-Vendor calculation settings are required.");
+  }
+  const hasCalculation = Boolean(input.modeCalculation || input.inHouseCalculation || input.pmcCalculation || input.subVendorCalculation);
+  if (input.pmcCalculation && (input.modeCalculation || input.inHouseCalculation || input.subVendorCalculation)) {
     throw new KnowledgeCalculationError("INVALID_AMOUNT", "PMC calculations cannot be combined with Execution calculations.");
   }
   if (input.pmcCalculation && input.modeCalculationMarkupBasis !== undefined) {
     throw new KnowledgeCalculationError("INVALID_AMOUNT", "PMC calculations use PMC margin; a markup selection is not allowed.");
+  }
+  if (input.subVendorCalculation && (input.modeCalculation || input.inHouseCalculation || input.pmcCalculation)) {
+    throw new KnowledgeCalculationError("INVALID_AMOUNT", "Sub-Vendor calculations cannot be combined with other calculations.");
+  }
+  if (input.subVendorCalculation && input.modeCalculationMarkupBasis !== undefined) {
+    throw new KnowledgeCalculationError("INVALID_AMOUNT", "Sub-Vendor calculations use Sub-Vendor margin; a markup selection is not allowed.");
   }
   if (hasCalculation && input.quantity == null) {
     throw new KnowledgeCalculationError("INVALID_DECIMAL", "A test quantity is required for Mode calculations.");
@@ -413,11 +425,18 @@ export function calculateKnowledgePreview(
   if (input.pmcCalculation && typeof input.quantity !== "string") {
     throw new KnowledgeCalculationError("INVALID_DECIMAL", "PMC quantity must be a non-negative decimal string.");
   }
+  if (input.subVendorCalculation && typeof input.quantity !== "string") {
+    throw new KnowledgeCalculationError("INVALID_DECIMAL", "Sub-Vendor quantity must be a non-negative decimal string.");
+  }
   if (input.modeCalculation && input.inHouseCalculation) {
     throw new KnowledgeCalculationError("INVALID_AMOUNT", "Choose either an individual calculation or an In-house total.");
   }
   if (input.modeCalculationDiscountBps !== undefined && !hasCalculation) {
     throw new KnowledgeCalculationError("INVALID_AMOUNT", "Mode calculation settings are required when applying a discount.");
+  }
+  if ((input.pmcCalculation || input.subVendorCalculation) && input.modeCalculationDiscountBps !== undefined &&
+      (!Number.isSafeInteger(input.modeCalculationDiscountBps) || input.modeCalculationDiscountBps < 0 || input.modeCalculationDiscountBps > 10_000)) {
+    throw new KnowledgeCalculationError("INVALID_BASIS_POINTS", KNOWLEDGE_CUSTOM_DISCOUNT_MESSAGE);
   }
   if (input.modeCalculationMarkupBasis !== undefined && !hasCalculation) {
     throw new KnowledgeCalculationError("INVALID_AMOUNT", "Mode calculation settings are required when choosing a markup.");

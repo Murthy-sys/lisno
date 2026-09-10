@@ -18,7 +18,7 @@ export type KnowledgeModeCalculationResult = NonNullable<KnowledgePreview["modeC
 
 interface Props {
   readonly scope?: ModeCalculationScope;
-  readonly pmcMarginControl?: ReactNode;
+  readonly marginControl?: ReactNode;
   readonly title?: string;
   readonly value: KnowledgeModeCalculationDraft;
   readonly uomLabel: string;
@@ -30,10 +30,12 @@ interface Props {
 }
 
 export function KnowledgeModeCalculationTable({
-  value, uomLabel, uomMessage, readOnly, errors = {}, actions, onChange, title = "Calculations", scope, pmcMarginControl
+  value, uomLabel, uomMessage, readOnly, errors = {}, actions, onChange, title = "Calculations", scope, marginControl
 }: Props) {
   const id = useId();
   const maximumDiscountBps = maximumModeDiscountBps(value);
+  const usesMargin = scope === "pmc" || scope === "sub_vendor";
+  const marginLabel = scope === "sub_vendor" ? "Sub-Vendor" : "PMC";
 
   function editableField(field: keyof KnowledgeModeCalculationDraft, label: ReactNode, affix?: string, leading = false) {
     return <Field id={`${id}-${field}`} label={label} error={errors[field]}>
@@ -66,12 +68,12 @@ export function KnowledgeModeCalculationTable({
             {editableField("lowQuantityLimit", "Low Quantity Limit")}
             {editableField("impactRate", <>Impact<span className="sr-only"> (%)</span></>, "%")}
           </div>
-          <p className="knowledge-mode-calculation__note">{scope === "pmc" ? "UOM follows Overview. The configured Impact applies at or below the quantity limit." : "UOM follows Overview. Impact applies below the quantity limit."}</p>
+          <p className="knowledge-mode-calculation__note">{usesMargin ? "UOM follows Overview. The configured Impact applies at or below the quantity limit." : "UOM follows Overview. Impact applies below the quantity limit."}</p>
           {uomMessage ? <p id={`${id}-uom-message`} className="knowledge-mode-calculation__hint">{uomMessage}</p> : null}
         </div>
-        {scope === "pmc" ? <div className="knowledge-mode-calculation__group knowledge-mode-calculation__pmc" role="group" aria-labelledby={`${id}-pmc-title`}>
-          <h4 id={`${id}-pmc-title`}>PMC Margin</h4>
-          {pmcMarginControl}
+        {usesMargin ? <div className="knowledge-mode-calculation__group knowledge-mode-calculation__pmc" role="group" aria-labelledby={`${id}-margin-title`}>
+          <h4 id={`${id}-margin-title`}>{marginLabel} Margin</h4>
+          {marginControl}
         </div> : <div className="knowledge-mode-calculation__group" role="group" aria-labelledby={`${id}-markup-title`}>
           <h4 id={`${id}-markup-title`}>Gross margin markup</h4>
           <div className="knowledge-mode-calculation__markup-fields">

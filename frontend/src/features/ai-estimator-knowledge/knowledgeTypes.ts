@@ -312,6 +312,10 @@ export interface KnowledgePreviewAmountComponent {
 }
 
 export interface KnowledgePreview {
+  readonly subVendorCalculation?: Omit<NonNullable<KnowledgePreview["pmcCalculation"]>, "pmcMarginBps" | "pmcMarginAmountPaise"> & {
+    readonly subVendorMarginBps: number;
+    readonly subVendorMarginAmountPaise: number;
+  };
   readonly pmcCalculation?: {
     readonly baseAmountPaise: number;
     readonly lowQuantityImpactAmountPaise: number;
@@ -322,6 +326,7 @@ export interface KnowledgePreview {
     readonly pmcMarginBps: number;
     readonly pmcMarginAmountPaise: number;
     readonly totalBeforeDiscountPaise: number;
+    /** Signed remainder after subtracting the configured margin from the discounted total. */
     readonly finalVendorChargesPaise: number;
     readonly discount?: {
       readonly rateBps: number;

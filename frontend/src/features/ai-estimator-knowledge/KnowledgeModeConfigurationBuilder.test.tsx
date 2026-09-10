@@ -1,6 +1,6 @@
 import { useState } from "react";
 import axe from "axe-core";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
@@ -211,7 +211,72 @@ describe("KnowledgeModeConfigurationBuilder", () => {
     expect(onDirty).not.toHaveBeenCalled();
   });
 
-  it("preserves independent PMC, Sub-Vendor, and In-house unsaved buffers", async () => {
+  it.each([false, true])("keeps both Execution sources independently selectable and keyboard collapsible (read-only: %s)", async (readOnly) => {
+    const user = userEvent.setup();
+    const onPayload = vi.fn();
+    const onDirty = vi.fn();
+    render(<Harness readOnly={readOnly} onPayload={onPayload} onDirty={onDirty} initialPayload={definitionPayload} />);
+    await user.click(screen.getByRole("checkbox", { name: "Execution" }));
+    const inHouseSelection = screen.getByRole("checkbox", { name: "In-house" });
+    inHouseSelection.focus();
+    await user.keyboard(" ");
+    const subVendorSelection = screen.getByRole("checkbox", { name: "Sub-Vendor" });
+    expect(subVendorSelection).toBeChecked();
+    expect(inHouseSelection).toBeChecked();
+    const subVendor = document.getElementById("knowledge-mode-body-sub_vendor")!;
+    const inHouse = document.getElementById("knowledge-mode-body-in_house")!;
+    expect(screen.queryByRole("region", { name: /components$/u })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Add component" })).not.toBeInTheDocument();
+    expect(subVendor).toBeVisible();
+    expect(inHouse).toBeVisible();
+    const subVendorToggle = screen.getByRole("button", { name: "Collapse Sub-Vendor" });
+    const inHouseToggle = screen.getByRole("button", { name: "Collapse In-house" });
+    subVendorToggle.focus();
+    await user.keyboard("{Enter}");
+    expect(subVendorToggle).toHaveAttribute("aria-expanded", "false");
+    expect(document.getElementById(subVendorToggle.getAttribute("aria-controls")!)).toBe(subVendor);
+    expect(subVendor).not.toBeVisible();
+    expect(inHouse).toBeVisible();
+    inHouseToggle.focus();
+    await user.keyboard(" ");
+    expect(inHouse).not.toBeVisible();
+    expect(screen.getByRole("button", { name: "Collapse Execution" })).toHaveAttribute("aria-expanded", "true");
+    await user.click(screen.getByRole("button", { name: "Collapse Execution" }));
+    await user.click(screen.getByRole("button", { name: "Expand Execution" }));
+    expect(subVendor).not.toBeVisible();
+    expect(inHouse).not.toBeVisible();
+    await user.click(subVendorSelection);
+    await user.click(subVendorSelection);
+    expect(subVendor).toBeVisible();
+    expect(inHouse).not.toBeVisible();
+    expect(inHouseSelection).toBeChecked();
+    await user.click(screen.getByRole("button", { name: "Expand In-house" }));
+    expect(inHouse).toBeVisible();
+    expect(onPayload).not.toHaveBeenCalled();
+    expect(onDirty).not.toHaveBeenCalled();
+  });
+
+  it("reveals both collapsed Execution panels and focuses an invalid Sub-Vendor margin", async () => {
+    const user = userEvent.setup();
+    render(<Harness initialPayload={{ pmcMarginBps: 1_200, subVendorMarginBps: 1_700 }} />);
+    await user.click(screen.getByRole("checkbox", { name: "Execution" }));
+    await user.click(screen.getByRole("checkbox", { name: "In-house" }));
+    const margin = screen.getByRole("spinbutton", { name: "Sub-Vendor Margin" });
+    fireEvent.change(margin, { target: { value: "21" } });
+    await user.click(screen.getByRole("button", { name: "Collapse Sub-Vendor" }));
+    await user.click(screen.getByRole("button", { name: "Collapse In-house" }));
+    await user.click(screen.getByRole("button", { name: "Collapse Execution" }));
+    await user.click(screen.getByRole("button", { name: "Attempt save" }));
+    await waitFor(() => expect(margin).toHaveFocus());
+    expect(margin).toBeVisible();
+    expect(margin).toHaveValue(21);
+    expect(screen.getByRole("button", { name: "Collapse Execution" })).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("button", { name: "Collapse Sub-Vendor" })).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("button", { name: "Expand In-house" })).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByRole("spinbutton", { name: "PMC Margin" })).toHaveValue(12);
+  });
+
+  it("preserves independent margins and Sub-Vendor scope while toggling sources", async () => {
     const user = userEvent.setup();
     const onPayload = vi.fn();
     render(<Harness onPayload={onPayload} />);
@@ -221,32 +286,25 @@ describe("KnowledgeModeConfigurationBuilder", () => {
     await user.click(screen.getByRole("checkbox", { name: "Execution" }));
     await user.click(within(screen.getByRole("group", { name: "Inclusions" })).getByRole("checkbox", { name: "Transport" }));
     const sourceGroup = screen.getByRole("group", { name: "Execution source" });
-    expect(within(sourceGroup).getByRole("radio", { name: "Sub-Vendor" })).toBeChecked();
+    expect(within(sourceGroup).getByRole("checkbox", { name: "Sub-Vendor" })).toBeChecked();
     expect(screen.getByRole("checkbox", { name: "Execution" }))
       .toHaveAccessibleDescription("Execution (Sub-Vendor) for Wall panelling");
-    expect(within(sourceGroup).getAllByRole("radio")).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ required: true }),
-        expect.objectContaining({ required: true })
-      ])
-    );
-    await user.click(screen.getByRole("button", { name: "Add component" }));
-    await user.type(screen.getByRole("textbox", { name: "Component label" }), "Sub-Vendor scope");
+    expect(within(sourceGroup).getAllByRole("checkbox")).toHaveLength(2);
+    expect(within(sourceGroup).queryByRole("radio")).not.toBeInTheDocument();
+    await user.type(screen.getByRole("spinbutton", { name: "Sub-Vendor Margin" }), "17");
     await user.click(within(screen.getByRole("group", { name: "Exclusions" })).getByRole("checkbox", { name: "Shifting" }));
 
-    within(sourceGroup).getByRole("radio", { name: "Sub-Vendor" }).focus();
-    await user.keyboard("{ArrowRight}");
-    expect(within(sourceGroup).getByRole("radio", { name: "In-house" })).toBeChecked();
+    within(sourceGroup).getByRole("checkbox", { name: "In-house" }).focus();
+    await user.keyboard(" ");
+    expect(within(sourceGroup).getByRole("checkbox", { name: "In-house" })).toBeChecked();
     expect(screen.getByRole("checkbox", { name: "Execution" }))
-      .toHaveAccessibleDescription("Execution (In-house) for Wall panelling");
-    expect(screen.getByRole("region", { name: "In-house components" })).toBeVisible();
-    await user.click(screen.getByRole("button", { name: "Add component" }));
-    await user.type(screen.getByRole("textbox", { name: "Component label" }), "In-house crew");
+      .toHaveAccessibleDescription("Execution (Sub-Vendor + In-house) for Wall panelling");
+    expect(within(sourceGroup).getByRole("checkbox", { name: "Sub-Vendor" })).toBeChecked();
+    expect(screen.getByRole("region", { name: "In-house" })).toBeVisible();
 
-    await user.click(within(sourceGroup).getByRole("radio", { name: "Sub-Vendor" }));
     expect(screen.getByRole("checkbox", { name: "Execution" }))
-      .toHaveAccessibleDescription("Execution (Sub-Vendor) for Wall panelling");
-    expect(screen.getByDisplayValue("Sub-Vendor scope")).toBeVisible();
+      .toHaveAccessibleDescription("Execution (Sub-Vendor + In-house) for Wall panelling");
+    expect(screen.getByRole("spinbutton", { name: "Sub-Vendor Margin" })).toHaveValue(17);
     await user.click(screen.getByRole("checkbox", { name: "PMC" }));
     await user.click(screen.getByRole("checkbox", { name: "Execution" }));
     await user.click(screen.getByRole("checkbox", { name: "PMC" }));
@@ -255,24 +313,18 @@ describe("KnowledgeModeConfigurationBuilder", () => {
     expect(screen.queryByRole("group", { name: "Exclusions" })).not.toBeInTheDocument();
     await user.click(screen.getByRole("checkbox", { name: "Execution" }));
     expect(within(screen.getByRole("group", { name: "Inclusions" })).getByRole("checkbox", { name: "Transport" })).toBeChecked();
-    await user.click(screen.getByRole("radio", { name: "In-house" }));
-    expect(screen.getByDisplayValue("In-house crew")).toBeVisible();
+    expect(screen.getByRole("checkbox", { name: "In-house" })).toBeChecked();
+    expect(screen.getByRole("region", { name: "In-house" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Add component" })).not.toBeInTheDocument();
 
     const latest = onPayload.mock.calls.at(-1)?.[0] as KnowledgeJsonObject;
     expect(latest.pmcMarginBps).toBe(1_500);
+    expect(latest.subVendorMarginBps).toBe(1_700);
     expect(latest.modeConfigurations).toEqual(expect.arrayContaining([
       expect.objectContaining({
         modeKind: "pmc",
         inclusions: expect.arrayContaining([expect.objectContaining({ name: "Transport", selected: true })]),
         exclusions: expect.arrayContaining([expect.objectContaining({ name: "Shifting", selected: true })])
-      }),
-      expect.objectContaining({
-        modeKind: "execution",
-        executionSource: "sub_vendor"
-      }),
-      expect.objectContaining({
-        modeKind: "execution",
-        executionSource: "in_house"
       })
     ]));
     /* No value was entered in any buffer, so an unanswered component must not
@@ -281,132 +333,75 @@ describe("KnowledgeModeConfigurationBuilder", () => {
     expect(JSON.stringify(latest.modeConfigurations)).not.toContain("modeId");
   });
 
-  it("renders six definition types each with a value control matching its own type", async () => {
+  it.each([false, true])("omits saved component sections and controls in both sources (read-only: %s)", async (readOnly) => {
+    const user = userEvent.setup();
+    const onPayload = vi.fn();
+    render(<Harness initialPayload={definitionPayload} readOnly={readOnly} onPayload={onPayload} />);
+    await user.click(screen.getByRole("checkbox", { name: "Execution" }));
+    await user.click(screen.getByRole("checkbox", { name: "In-house" }));
+    expect(screen.getByRole("region", { name: "Sub-Vendor" })).toBeVisible();
+    expect(screen.getByRole("region", { name: "In-house" })).toBeVisible();
+    expect(screen.queryByRole("region", { name: /components$/u })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Add component" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: "Component label" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("combobox", { name: "Component type" })).not.toBeInTheDocument();
+    expect(screen.queryByDisplayValue("legacy answer")).not.toBeInTheDocument();
+    expect(payload()).toEqual(definitionPayload);
+    expect(screen.queryByRole("region", { name: "Saved Mode configurations needing recovery" })).not.toBeInTheDocument();
+    expect(onPayload).not.toHaveBeenCalled();
+  });
+
+  it("preserves all stored component types, values, IDs, and ordering after independent margin edits", async () => {
     const user = userEvent.setup();
     render(<Harness initialPayload={definitionPayload} />);
-    await user.click(await screen.findByRole("checkbox", { name: "Execution" }));
-
-    expect(screen.getAllByRole("combobox", { name: "Component type" })).toHaveLength(6);
-    expect(screen.getAllByRole("textbox", { name: "Component label" })).toHaveLength(6);
-    expect(screen.getAllByRole("textbox", { name: "Allowed options" })).toHaveLength(2);
-    /* Text and text-area answer in a textbox, number in a spin button, the two
-       choice types pick from their own allowed options, and checkbox ticks. */
-    expect(screen.getAllByRole("textbox", { name: "Value" })).toHaveLength(2);
-    expect(screen.getAllByRole("spinbutton", { name: "Value" })).toHaveLength(1);
-    expect(screen.getAllByRole("combobox", { name: "Value" })).toHaveLength(2);
-    expect(screen.getAllByRole("checkbox", { name: "Value" })).toHaveLength(1);
-    expect(screen.getAllByRole("textbox", { name: "Value" })[0]).toHaveValue("legacy answer");
-    expect(
-      within(screen.getAllByRole("combobox", { name: "Value" })[1]!)
-        .getAllByRole("option")
-        .map((option) => option.textContent)
-    ).toEqual(["Not set", "Matte", "Gloss"]);
-
-    await user.selectOptions(
-      screen.getAllByRole("combobox", { name: "Component type" })[0]!,
-      "dropdown"
-    );
-    expect(screen.getAllByRole("textbox", { name: "Allowed options" })).toHaveLength(3);
-    /* A text answer cannot survive the switch to a choice component, so it is
-       dropped rather than saved as an option that does not exist. */
-    expect(JSON.stringify(payload())).not.toContain("legacy answer");
-  });
-
-  it("saves an entered value beside its component definition", async () => {
-    const user = userEvent.setup();
-    const onPayload = vi.fn();
-    render(<Harness initialPayload={definitionPayload} onPayload={onPayload} />);
-    await user.click(await screen.findByRole("checkbox", { name: "Execution" }));
-
-    await user.type(screen.getAllByRole("textbox", { name: "Value" })[1]!, "Two coats");
-    await user.selectOptions(screen.getAllByRole("combobox", { name: "Value" })[1]!, "Gloss");
-    await user.click(screen.getByRole("checkbox", { name: "Value" }));
-
-    const fields = (
-      (onPayload.mock.calls.at(-1)?.[0] as KnowledgeJsonObject)
-        .modeConfigurations as KnowledgeJsonObject[]
-    )[0]?.fields as KnowledgeJsonObject[];
-    expect(fields).toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: "field-textarea", value: "Two coats" }),
-      expect.objectContaining({ id: "field-dropdown", value: "Gloss" }),
-      expect.objectContaining({ id: "field-checkbox", value: true })
-    ]));
-    /* Untouched components stay unanswered instead of persisting an empty string. */
-    expect(fields.find(({ id }) => id === "field-number")).not.toHaveProperty("value");
-  });
-
-  it("reorders and removes definitions while retaining stable component IDs", async () => {
-    const user = userEvent.setup();
-    const onPayload = vi.fn();
-    render(<Harness initialPayload={definitionPayload} onPayload={onPayload} />);
-    await user.click(await screen.findByRole("checkbox", { name: "Execution" }));
-
-    await user.click(screen.getByRole("button", {
-      name: "Move Sub-Vendor components PMC mark down"
-    }));
-    let latest = onPayload.mock.calls.at(-1)?.[0] as KnowledgeJsonObject;
-    expect(latest.modeConfigurations).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        modeKind: "execution",
-        fields: expect.arrayContaining([
-          expect.objectContaining({ id: "field-text", label: "PMC mark" }),
-          expect.objectContaining({ id: "field-textarea", label: "Installation notes" })
-        ])
-      })
-    ]));
-    expect((latest.modeConfigurations as KnowledgeJsonObject[])[0]?.fields)
-      .toEqual(expect.arrayContaining([
-        expect.objectContaining({ id: "field-textarea" }),
-        expect.objectContaining({ id: "field-text" })
-      ]));
-    expect(((latest.modeConfigurations as KnowledgeJsonObject[])[0]?.fields as KnowledgeJsonObject[])
-      .map(({ id }) => id).slice(0, 2)).toEqual(["field-textarea", "field-text"]);
-
-    await user.click(screen.getByRole("button", {
-      name: "Remove Sub-Vendor components PMC mark"
-    }));
-    latest = onPayload.mock.calls.at(-1)?.[0] as KnowledgeJsonObject;
-    const remainingIds = (
-      (latest.modeConfigurations as KnowledgeJsonObject[])[0]?.fields as KnowledgeJsonObject[]
-    ).map(({ id }) => id);
-    expect(remainingIds).not.toContain("field-text");
-    expect(remainingIds).toContain("field-textarea");
-  });
-
-  it("keeps definitions visible but disables mutation controls in read-only history", async () => {
-    const user = userEvent.setup();
-    render(<Harness initialPayload={definitionPayload} readOnly />);
-    await user.click(await screen.findByRole("checkbox", { name: "Execution" }));
-
-    const pmc = screen.getByRole("region", { name: "Sub-Vendor components" });
-    expect(within(pmc).queryByRole("button", { name: /Add|Move|Remove/u }))
-      .not.toBeInTheDocument();
-    expect(within(pmc).getAllByRole("textbox", { name: "Component label" })[0])
-      .toBeDisabled();
-    expect(screen.queryByText("legacy answer")).not.toBeInTheDocument();
-
-    await user.click(screen.getByRole("radio", { name: "In-house" }));
-    expect(screen.getByDisplayValue("In-house crew")).toBeDisabled();
-    expect(screen.queryByRole("button", { name: "Add component" })).not.toBeInTheDocument();
-  });
-
-  it("focuses the first invalid Component label and announces user-facing validation", async () => {
-    const user = userEvent.setup();
-    render(<Harness />);
-    await user.click(await screen.findByRole("checkbox", { name: "Execution" }));
-
-    await user.click(screen.getByRole("button", { name: "Add component" }));
+    await user.type(screen.getByRole("spinbutton", { name: "PMC Margin" }), "15");
     await user.click(screen.getByRole("checkbox", { name: "Execution" }));
-    expect(screen.queryByRole("textbox", { name: "Component label" })).not.toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Attempt save" }));
+    await user.type(screen.getByRole("spinbutton", { name: "Sub-Vendor Margin" }), "17");
+    expect(payload()).toEqual({ ...definitionPayload, pmcMarginBps: 1_500, subVendorMarginBps: 1_700 });
+  });
 
-    await waitFor(() => {
-      expect(screen.getByRole("textbox", { name: "Component label" })).toHaveFocus();
-    });
+  it("announces authoritative errors for retained historical fields without dropping them", async () => {
+    const user = userEvent.setup();
+    render(<Harness initialPayload={definitionPayload}
+      serverIssues={[{ path: "modeConfigurations.0.fields.0.label", message: "Review the saved component label." }]} />);
+    await user.click(screen.getByRole("button", { name: "Attempt save" }));
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveFocus());
+    expect(screen.getByRole("alert")).toHaveTextContent("Review the saved component label.");
     expect(screen.getByRole("checkbox", { name: "Execution" })).toBeChecked();
-    expect(screen.getByRole("alert")).toHaveTextContent("Component label is required.");
-    expect(screen.getByRole("textbox", { name: "Component label" }))
-      .toHaveAttribute("aria-invalid", "true");
+    expect(payload()).toEqual(definitionPayload);
+  });
+
+  it.each([false, true])("keeps invalid retained Execution fields in explicit recovery without hiding validation (read-only: %s)", async (readOnly) => {
+    const user = userEvent.setup();
+    const onPayload = vi.fn();
+    const onValidationChange = vi.fn();
+    const validInHouse = (definitionPayload.modeConfigurations as KnowledgeJsonObject[])[2]!;
+    const invalidSubVendor = {
+      id: "invalid-sub-vendor", modeKind: "execution", executionSource: "sub_vendor",
+      fields: [{ id: "legacy-choice", type: "dropdown", label: "Historic finish", options: [], value: null }]
+    };
+    const initialPayload = { pmcMarginBps: 1_200, subVendorMarginBps: 1_700,
+      modeConfigurations: [invalidSubVendor, validInHouse] };
+    render(<Harness initialPayload={initialPayload} readOnly={readOnly} onPayload={onPayload}
+      onValidationChange={onValidationChange} />);
+    const recovery = screen.getByRole("region", { name: "Saved Mode configurations needing recovery" });
+    expect(recovery).toHaveTextContent("Historic finish");
+    expect(recovery).not.toHaveTextContent("In-house crew");
+    expect(recovery).toHaveTextContent("Calculation and margin settings are retained.");
+    expect(screen.getByRole("alert")).toHaveTextContent("Add at least one allowed option.");
+    expect(onValidationChange).toHaveBeenLastCalledWith(false);
+    expect(payload()).toEqual(initialPayload);
+    expect(onPayload).not.toHaveBeenCalled();
+    expect(screen.queryByRole("button", { name: "Add component" })).not.toBeInTheDocument();
+    if (readOnly) {
+      expect(within(recovery).queryByRole("button", { name: "Remove saved Mode recovery 1" })).not.toBeInTheDocument();
+      return;
+    }
+    await user.click(within(recovery).getByRole("button", { name: "Remove saved Mode recovery 1" }));
+    expect(payload()).toEqual({ ...initialPayload, modeConfigurations: [validInHouse] });
+    expect(screen.queryByRole("region", { name: "Saved Mode configurations needing recovery" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(onValidationChange).toHaveBeenLastCalledWith(true);
   });
 
   it.each(["inclusions", "exclusions"])("reveals Sub-Vendor scope for a saved %s validation issue", async (list) => {
@@ -418,15 +413,17 @@ describe("KnowledgeModeConfigurationBuilder", () => {
       onPayload={onPayload}
     />);
     await user.click(screen.getByRole("checkbox", { name: "Execution" }));
-    await user.click(screen.getByRole("radio", { name: "In-house" }));
-    await user.click(screen.getByRole("checkbox", { name: "Execution" }));
+    await user.click(screen.getByRole("checkbox", { name: "In-house" }));
+    await user.click(screen.getByRole("button", { name: "Collapse Sub-Vendor" }));
+    await user.click(screen.getByRole("checkbox", { name: "Sub-Vendor" }));
+    await user.click(screen.getByRole("button", { name: "Collapse Execution" }));
     expect(screen.queryByRole("region", { name: "Sub-Vendor scope" })).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Attempt save" }));
 
     await waitFor(() => expect(screen.getByRole("region", { name: "Sub-Vendor scope" })).toBeVisible());
     expect(screen.getByRole("checkbox", { name: "Execution" })).toBeChecked();
-    expect(screen.getByRole("radio", { name: "Sub-Vendor" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Sub-Vendor" })).toBeChecked();
     expect(screen.getByRole("group", { name: list === "inclusions" ? "Inclusions" : "Exclusions" })).toBeVisible();
     expect(screen.getByRole("alert")).toHaveTextContent("Review the saved scope list.");
     expect(onPayload).not.toHaveBeenCalled();

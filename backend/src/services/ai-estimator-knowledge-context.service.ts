@@ -11,7 +11,7 @@ import {
   parseScaledDecimal,
   type CalculateKnowledgePreviewInput
 } from "../domain/ai-estimator-knowledge-calculation.js";
-import { calculateKnowledgeInHousePrice, calculateKnowledgeModePrice, calculateKnowledgePmcPrice } from "../domain/ai-estimator-knowledge-mode-calculation.js";
+import { calculateKnowledgeInHousePrice, calculateKnowledgeModePrice, calculateKnowledgePmcPrice, calculateKnowledgeSubVendorPrice } from "../domain/ai-estimator-knowledge-mode-calculation.js";
 import { buildKnowledgeConfigurationContext } from "../domain/ai-estimator-knowledge-configuration-context.js";
 import {
   AI_ESTIMATOR_KNOWLEDGE_MODE_FIELD_TYPES,
@@ -98,6 +98,10 @@ export function createAiEstimatorKnowledgeContextService(
           }) } : {}),
           ...(input.pmcCalculation ? { pmcCalculation: calculateKnowledgePmcPrice({
             ...input.pmcCalculation, quantity: input.quantity!, quantityScale: input.quantityScale,
+            discountBps: input.modeCalculationDiscountBps
+          }) } : {}),
+          ...(input.subVendorCalculation ? { subVendorCalculation: calculateKnowledgeSubVendorPrice({
+            ...input.subVendorCalculation, quantity: input.quantity!, quantityScale: input.quantityScale,
             discountBps: input.modeCalculationDiscountBps
           }) } : {})
         };

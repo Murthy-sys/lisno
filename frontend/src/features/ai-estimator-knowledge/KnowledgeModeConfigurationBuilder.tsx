@@ -1,16 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { ChevronDown, ClipboardCheck, HardHat } from "lucide-react";
+import { ChevronDown, ClipboardCheck, HardHat, Users, Wrench } from "lucide-react";
 
 import { Button } from "../../components/ui/Button";
-import { Checkbox, Field, Input, Radio, Select, Textarea } from "../../components/ui/Field";
+import { Checkbox } from "../../components/ui/Field";
 import { InlineMessage } from "../../components/ui/InlineMessage";
 import {
   KNOWLEDGE_EXECUTION_SOURCE_OPTIONS,
-  KNOWLEDGE_MODE_FIELD_TYPES,
   KNOWLEDGE_MODE_OPTIONS,
-  coerceKnowledgeModeFieldValue,
   createKnowledgeModeConfiguration,
-  createKnowledgeModeField,
   isChoiceField,
   knowledgeModeFieldTypeLabel,
   knowledgeModeFieldValueLabel,
@@ -21,16 +18,13 @@ import {
   type KnowledgeModeConfiguration,
   type KnowledgeModeConfigurationField,
   type KnowledgeModeConfigurationIssue,
-  type KnowledgeModeFieldType,
-  type KnowledgeModeFieldValue,
   type KnowledgeModeKind
 } from "./knowledgeModeConfiguration";
-import { KnowledgeRepeater } from "./KnowledgeRepeater";
 import { KnowledgePmcScopeChecklist } from "./KnowledgePmcScopeChecklist";
 import { KnowledgeModeDescriptionEditor } from "./KnowledgeModeDescriptionEditor";
 import { generateModeDescription, modeDescriptionIssues, syncModeDescription } from "./knowledgeModeDescription";
 import { calculationScopeForIssue, MODE_CALCULATION_SCOPES, modeCalculationsIssues, type ModeCalculationScope } from "./knowledgeModeCalculation";
-import { pmcMarginIssues } from "./knowledgePmcMargin";
+import { pmcMarginIssues, subVendorMarginIssues } from "./knowledgePmcMargin";
 import { KnowledgePmcMarginInput } from "./KnowledgePmcMarginInput";
 import { defaultPmcScopeItems, PMC_SCOPE_LISTS } from "./knowledgePmcScope";
 import type {
@@ -41,7 +35,7 @@ import type {
 export interface KnowledgeModeConfigurationBuilderProps {
   readonly payload: KnowledgeJsonObject;
   readonly mainLineName: string;
-  readonly calculation?: (scope: ModeCalculationScope, active: boolean, pmcMarginControl?: ReactNode) => ReactNode;
+  readonly calculation?: (scope: ModeCalculationScope, active: boolean, marginControl?: ReactNode) => ReactNode;
   readonly inHouseTotal?: (active: boolean) => ReactNode;
   readonly calculationValidity?: Readonly<Record<ModeCalculationScope, boolean>>;
   readonly descriptionResetKey?: string;
@@ -94,9 +88,21 @@ export function KnowledgeModeConfigurationBuilder({
   const description = typeof payload.modeDescription === "string"
     ? syncModeDescription(payload.modeDescription, partitioned.primary.pmc) : generatedDescription;
   const issues = useMemo(
-    () => [...parsed.issues, ...modeDescriptionIssues(payload.modeDescription == null || typeof payload.modeDescription === "string" ? description : payload.modeDescription), ...modeCalculationsIssues(payload), ...pmcMarginIssues(payload.pmcMarginBps), ...serverIssues],
+    () => [...parsed.issues, ...modeDescriptionIssues(payload.modeDescription == null || typeof payload.modeDescription === "string" ? description : payload.modeDescription), ...modeCalculationsIssues(payload), ...pmcMarginIssues(payload.pmcMarginBps), ...subVendorMarginIssues(payload.subVendorMarginBps), ...serverIssues],
     [parsed.issues, description, payload, serverIssues]
   );
+  const recoveries = [
+    ...partitioned.recovery,
+    ...parsed.configurations.flatMap((configuration, index) => {
+      const fieldPath = `modeConfigurations.${index}.fields`;
+      const isPrimaryExecution = configuration === partitioned.primary.execution.sub_vendor ||
+        configuration === partitioned.primary.execution.in_house;
+      return isPrimaryExecution && issues.some(({ path }) => path === fieldPath || path.startsWith(`${fieldPath}.`))
+        ? [{ configuration, reason: "invalid_fields" as const, modeKind: configuration.modeKind,
+          executionSource: configuration.executionSource }]
+        : [];
+    })
+  ];
   const [paragraphPending, setParagraphPending] = useState(false);
   const handlePendingDescriptionChange = useCallback((pending: boolean) => {
     setParagraphPending(pending);
@@ -114,15 +120,26 @@ export function KnowledgeModeConfigurationBuilder({
     setVisibleModes((current) => ({ ...current, [mode]: true }));
     setExpandedModes((current) => ({ ...current, [mode]: true }));
   }, []);
-  const [selectedExecutionSource, setSelectedExecutionSource] =
-    useState<KnowledgeExecutionSource>("sub_vendor");
+  const [visibleExecutionSources, setVisibleExecutionSources] = useState<Record<KnowledgeExecutionSource, boolean>>({
+    sub_vendor: true,
+    in_house: false
+  });
+  const [expandedExecutionSources, setExpandedExecutionSources] = useState<Record<KnowledgeExecutionSource, boolean>>({
+    sub_vendor: true,
+    in_house: true
+  });
+  const showExecutionSource = useCallback((source: KnowledgeExecutionSource) => {
+    showMode("execution");
+    setVisibleExecutionSources((current) => ({ ...current, [source]: true }));
+    setExpandedExecutionSources((current) => ({ ...current, [source]: true }));
+  }, [showMode]);
   const validationSummaryRef = useRef<HTMLDivElement>(null);
   const fieldRefs = useRef(new Map<string, HTMLElement>());
   const lastValidationAttempt = useRef(0);
-  const executionConfiguration = partitioned.primary.execution[selectedExecutionSource];
-  const selectedSourceLabel = executionSourceLabel(selectedExecutionSource);
-  const repeaterLabel = `${selectedSourceLabel} components`;
-  const showSubVendorScope = visibleModes.execution && selectedExecutionSource === "sub_vendor";
+  const selectedSourceLabel = KNOWLEDGE_EXECUTION_SOURCE_OPTIONS
+    .filter(({ executionSource }) => visibleExecutionSources[executionSource])
+    .map(({ label }) => label).join(" + ");
+  const showSubVendorScope = visibleModes.execution && visibleExecutionSources.sub_vendor;
   const invalidCalculationScope = MODE_CALCULATION_SCOPES.find((scope) => !calculationValidity[scope]);
   const calculationValid = invalidCalculationScope === undefined;
 
@@ -144,12 +161,12 @@ export function KnowledgeModeConfigurationBuilder({
       firstIssue,
       parsed.configurations,
       showMode,
-      setSelectedExecutionSource
+      showExecutionSource
     );
     globalThis.setTimeout(() => {
       focusIssue(firstIssue, fieldRefs.current, validationSummaryRef.current);
     }, 0);
-  }, [issues, paragraphPending, calculationValid, invalidCalculationScope, parsed.configurations, showMode, validationAttempt, visibleModes]);
+  }, [issues, paragraphPending, calculationValid, invalidCalculationScope, parsed.configurations, showMode, showExecutionSource, validationAttempt, visibleModes]);
 
   function updateConfigurations(next: readonly KnowledgeModeConfiguration[]) {
     onDirty();
@@ -173,45 +190,6 @@ export function KnowledgeModeConfigurationBuilder({
     ));
   }
 
-  function addComponent() {
-    const configuration = executionConfiguration ?? createKnowledgeModeConfiguration(
-      "execution", selectedExecutionSource
-    );
-    if (configuration.fields.length >= 50) return;
-    updateConfiguration({
-      ...configuration,
-      fields: [...configuration.fields, createKnowledgeModeField()]
-    });
-  }
-
-  function replaceField(fieldId: string, next: KnowledgeModeConfigurationField) {
-    if (!executionConfiguration) return;
-    updateConfiguration({
-      ...executionConfiguration,
-      fields: executionConfiguration.fields.map((field) =>
-        field.id === fieldId ? next : field
-      )
-    });
-  }
-
-  function removeField(fieldId: string) {
-    if (!executionConfiguration) return;
-    updateConfiguration({
-      ...executionConfiguration,
-      fields: executionConfiguration.fields.filter(({ id }) => id !== fieldId)
-    });
-  }
-
-  function moveField(fieldId: string, direction: "up" | "down") {
-    if (!executionConfiguration) return;
-    const fields = [...executionConfiguration.fields];
-    const from = fields.findIndex(({ id }) => id === fieldId);
-    const to = direction === "up" ? from - 1 : from + 1;
-    if (from < 0 || to < 0 || to >= fields.length) return;
-    [fields[from], fields[to]] = [fields[to]!, fields[from]!];
-    updateConfiguration({ ...executionConfiguration, fields });
-  }
-
   function removeRecoveryConfiguration(configurationId: string) {
     updateConfigurations(parsed.configurations.filter(({ id }) =>
       id !== configurationId
@@ -232,17 +210,13 @@ export function KnowledgeModeConfigurationBuilder({
           }
         : configuration
     ));
-    showMode("execution");
-    setSelectedExecutionSource(executionSource);
+    showExecutionSource(executionSource);
   }
 
   function issueFor(path: string): string | undefined {
     return issues.find((issue) => issue.path === path)?.message;
   }
 
-  const configurationIndex = parsed.configurations.findIndex(
-    ({ id }) => id === executionConfiguration?.id
-  );
   const pmcMarginControl = <div ref={(node) => {
     if (node) fieldRefs.current.set("pmcMarginBps", node);
     else fieldRefs.current.delete("pmcMarginBps");
@@ -255,43 +229,65 @@ export function KnowledgeModeConfigurationBuilder({
       }} />
   </div>;
 
+  const subVendorMarginControl = <div ref={(node) => {
+    if (node) fieldRefs.current.set("subVendorMarginBps", node);
+    else fieldRefs.current.delete("subVendorMarginBps");
+  }}>
+    <KnowledgePmcMarginInput key={descriptionResetKey} scope="sub_vendor" value={payload.subVendorMarginBps}
+      readOnly={readOnly} error={issueFor("subVendorMarginBps")}
+      onChange={(subVendorMarginBps) => {
+        onDirty();
+        onChange({ ...payload, subVendorMarginBps });
+      }} />
+  </div>;
+
   // Keep calculators mounted so changing visible modes preserves incomplete inputs.
   function calculationSlot(scope: ModeCalculationScope) {
     if (!calculation) return null;
     const executionSource = scope === "sub_vendor" ? "sub_vendor" : "in_house";
-    const active = scope === "pmc" ? visibleModes.pmc : visibleModes.execution && selectedExecutionSource === executionSource;
+    const active = scope === "pmc" ? visibleModes.pmc : visibleModes.execution && visibleExecutionSources[executionSource];
     return <div className="knowledge-mode-calculation-slot" key={scope} hidden={!active}
       ref={(node) => {
         if (node) fieldRefs.current.set(`modeCalculations.${scope}`, node);
         else fieldRefs.current.delete(`modeCalculations.${scope}`);
       }}
-    >{calculation(scope, active, scope === "pmc" ? pmcMarginControl : undefined)}</div>;
+    >{calculation(scope, active, scope === "pmc" ? pmcMarginControl : scope === "sub_vendor" ? subVendorMarginControl : undefined)}</div>;
   }
 
-  function sectionHeader(mode: KnowledgeModeKind) {
-    const label = mode === "pmc" ? "PMC" : "Execution";
-    const Icon = mode === "pmc" ? ClipboardCheck : HardHat;
-    const expanded = expandedModes[mode];
+  function sectionHeader(mode: KnowledgeModeKind | KnowledgeExecutionSource) {
+    const isExecutionSource = mode === "sub_vendor" || mode === "in_house";
+    const label = mode === "pmc" ? "PMC" : mode === "execution" ? "Execution" : executionSourceLabel(mode);
+    const Icon = mode === "pmc" ? ClipboardCheck : mode === "execution" ? HardHat : mode === "sub_vendor" ? Users : Wrench;
+    const expanded = isExecutionSource ? expandedExecutionSources[mode] : expandedModes[mode];
+    const Heading = isExecutionSource ? "h4" : "h3";
+    const context = mode === "pmc" ? `PMC fee for ${mainLineName}`
+      : mode === "execution" ? `Execution${selectedSourceLabel ? ` (${selectedSourceLabel})` : ""} for ${mainLineName}`
+      : mode === "sub_vendor" ? `Vendor costs and margin for ${mainLineName}` : `Labor and material costs for ${mainLineName}`;
+    const tag = mode === "pmc" ? "Management fee" : mode === "execution" ? "Work costs"
+      : mode === "sub_vendor" ? "Vendor delivery" : "Own team";
     const action = expanded ? "Collapse" : "Expand";
     return <header className="knowledge-mode-configuration__section-header" data-expanded={expanded}>
-      <h3 className="knowledge-mode-configuration__section-heading">
+      <Heading className="knowledge-mode-configuration__section-heading">
         <button type="button" className="knowledge-mode-configuration__section-toggle"
           aria-label={`${action} ${label}`} aria-expanded={expanded} aria-controls={`knowledge-mode-body-${mode}`}
-          onClick={() => setExpandedModes((current) => ({ ...current, [mode]: !current[mode] }))}>
+          onClick={() => {
+            if (isExecutionSource) setExpandedExecutionSources((current) => ({ ...current, [mode]: !current[mode] }));
+            else setExpandedModes((current) => ({ ...current, [mode]: !current[mode] }));
+          }}>
           <span className="knowledge-mode-configuration__section-icon"><Icon aria-hidden="true" /></span>
           <span className="knowledge-mode-configuration__section-labels">
             <span id={`knowledge-mode-${mode}-title`} className="knowledge-mode-configuration__section-title">{label}</span>
             <span id={`knowledge-mode-${mode}-context`} className="knowledge-mode-configuration__mode-context">
-              {mode === "pmc" ? `PMC fee for ${mainLineName}` : `Execution (${selectedSourceLabel}) for ${mainLineName}`}
+              {context}
             </span>
           </span>
-          <span className="knowledge-mode-configuration__section-tag">{mode === "pmc" ? "Management fee" : "Work costs"}</span>
+          <span className="knowledge-mode-configuration__section-tag">{tag}</span>
           <span className="knowledge-mode-configuration__section-disclosure">
             <span className="knowledge-mode-configuration__section-toggle-label">{action}</span>
             <ChevronDown aria-hidden="true" />
           </span>
         </button>
-      </h3>
+      </Heading>
     </header>;
   }
 
@@ -329,7 +325,7 @@ export function KnowledgeModeConfigurationBuilder({
                       issue,
                       parsed.configurations,
                       showMode,
-                      setSelectedExecutionSource
+                      showExecutionSource
                     );
                     globalThis.setTimeout(() => {
                       focusIssue(issue, fieldRefs.current, validationSummaryRef.current);
@@ -409,15 +405,19 @@ export function KnowledgeModeConfigurationBuilder({
             {visibleModes.execution ? <div className="knowledge-mode-configuration__mode-content">
               <fieldset className="knowledge-mode-configuration__execution-source">
                 <legend>Execution source</legend>
+                <p className="knowledge-mode-configuration__source-hint">Select one or both sources. Each keeps its own settings.</p>
                 <div className="knowledge-mode-configuration__execution-source-options">
                   {KNOWLEDGE_EXECUTION_SOURCE_OPTIONS.map((option) => (
-                    <label key={option.executionSource}>
-                      <Radio
-                        name="knowledge-mode-execution-source"
-                        value={option.executionSource}
-                        required
-                        checked={selectedExecutionSource === option.executionSource}
-                        onChange={() => setSelectedExecutionSource(option.executionSource)}
+                    <label key={option.executionSource}
+                      className={`knowledge-mode-configuration__source-choice knowledge-mode-configuration__source-choice--${option.executionSource}`}
+                      data-selected={visibleExecutionSources[option.executionSource]}>
+                      <Checkbox
+                        checked={visibleExecutionSources[option.executionSource]}
+                        aria-controls={`knowledge-mode-section-${option.executionSource}`}
+                        onChange={(event) => {
+                          if (event.target.checked) showExecutionSource(option.executionSource);
+                          else setVisibleExecutionSources((current) => ({ ...current, [option.executionSource]: false }));
+                        }}
                       />
                       <span>{option.label}</span>
                     </label>
@@ -426,154 +426,51 @@ export function KnowledgeModeConfigurationBuilder({
               </fieldset>
             </div> : null}
 
-            <section hidden={!showSubVendorScope} aria-label="Sub-Vendor scope">
-              {showSubVendorScope ? <div className="knowledge-mode-configuration__mode-content">
-                <div className="knowledge-pmc-scope">
-                  {PMC_SCOPE_LISTS.map((list) => (
-                    <KnowledgePmcScopeChecklist
-                      key={list}
-                      list={list}
-                      items={partitioned.primary.pmc?.[list] ?? defaultPmcScopeItems(list)}
-                      readOnly={readOnly}
-                      onChange={(items) => {
-                        const configuration = partitioned.primary.pmc ?? createKnowledgeModeConfiguration("pmc");
-                        updateConfiguration({
-                          ...configuration,
-                          inclusions: configuration.inclusions ?? defaultPmcScopeItems("inclusions"),
-                          exclusions: configuration.exclusions ?? defaultPmcScopeItems("exclusions"),
-                          [list]: items
-                        });
-                      }}
-                    />
-                  ))}
-                </div>
-              </div> : null}
-            </section>
-
-            {MODE_CALCULATION_SCOPES.filter((scope) => scope !== "pmc").map(calculationSlot)}
-
-            {inHouseTotal?.(visibleModes.execution && selectedExecutionSource === "in_house")}
-
-            <div hidden={!visibleModes.execution}>
-              {visibleModes.execution ? <div className="knowledge-mode-configuration__mode-content">
-                <KnowledgeRepeater
-                  label={repeaterLabel}
-                  addLabel="Add component"
-                  items={executionConfiguration?.fields ?? []}
-                  readOnly={readOnly}
-                  emptyMessage={`No components configured for ${selectedSourceLabel}.`}
-                  itemLabel={(field, index) => field.label.trim() || `component ${index + 1}`}
-                  onAdd={addComponent}
-                  onRemove={removeField}
-                  onMove={moveField}
-                  renderItem={(field, index) => {
-                    const fieldPath = `modeConfigurations.${configurationIndex}.fields.${index}`;
-                    return (
-                      <div
-                        ref={(node) => {
-                          if (node) fieldRefs.current.set(fieldPath, node);
-                          else fieldRefs.current.delete(fieldPath);
-                        }}
-                        className="knowledge-mode-field"
-                      >
-                        <div className="knowledge-mode-field__definition">
-                          <Field
-                            id={`${domId(field.id)}-type`}
-                            label="Component type"
-                            required
-                            error={issueFor(`${fieldPath}.type`)}
-                          >
-                            {(props) => (
-                              <Select
-                                {...props}
-                                disabled={readOnly}
-                                value={field.type}
-                                onChange={(event) => {
-                                  const type = event.target.value as KnowledgeModeFieldType;
-                                  const options = isChoiceField(type) ? field.options : [];
-                                  replaceField(field.id, {
-                                    ...field,
-                                    type,
-                                    options,
-                                    value: coerceKnowledgeModeFieldValue(field.value, type, options)
-                                  });
-                                }}
-                              >
-                                {KNOWLEDGE_MODE_FIELD_TYPES.map((type) => (
-                                  <option key={type} value={type}>{knowledgeModeFieldTypeLabel(type)}</option>
-                                ))}
-                              </Select>
-                            )}
-                          </Field>
-                          <Field
-                            id={`${domId(field.id)}-label`}
-                            label="Component label"
-                            required
-                            error={issueFor(`${fieldPath}.label`)}
-                          >
-                            {(props) => (
-                              <Input
-                                {...props}
-                                maxLength={240}
-                                disabled={readOnly}
-                                value={field.label}
-                                onChange={(event) => replaceField(field.id, {
-                                  ...field,
-                                  label: event.target.value
-                                })}
-                              />
-                            )}
-                          </Field>
-                          {isChoiceField(field.type) ? (
-                            <Field
-                              id={`${domId(field.id)}-options`}
-                              label="Allowed options"
-                              hint="Enter one option per line."
-                              required
-                              error={issueForPrefix(`${fieldPath}.options`, issues)}
-                            >
-                              {(props) => (
-                                <Textarea
-                                  {...props}
-                                  disabled={readOnly}
-                                  value={field.options.join("\n")}
-                                  onChange={(event) => {
-                                    const options = event.target.value === ""
-                                      ? []
-                                      : event.target.value.split("\n");
-                                    replaceField(field.id, {
-                                      ...field,
-                                      options,
-                                      value: coerceKnowledgeModeFieldValue(
-                                        field.value,
-                                        field.type,
-                                        options
-                                      )
-                                    });
-                                  }}
-                                />
-                              )}
-                            </Field>
-                          ) : null}
-                          <ModeFieldValueControl
-                            field={field}
-                            id={`${domId(field.id)}-value`}
-                            readOnly={readOnly}
-                            error={issueFor(`${fieldPath}.value`)}
-                            onChange={(value) => replaceField(field.id, { ...field, value })}
-                          />
+            {KNOWLEDGE_EXECUTION_SOURCE_OPTIONS.map(({ executionSource: source }) => {
+              const active = visibleModes.execution && visibleExecutionSources[source];
+              return <section key={source} id={`knowledge-mode-section-${source}`}
+                aria-labelledby={`knowledge-mode-${source}-title`} hidden={!active}
+                className={`knowledge-mode-configuration__section knowledge-mode-configuration__section--source knowledge-mode-configuration__section--${source}`}>
+                {active ? sectionHeader(source) : null}
+                <div id={`knowledge-mode-body-${source}`} className="knowledge-mode-configuration__section-body" hidden={!expandedExecutionSources[source]}>
+                  {source === "sub_vendor" ? <>
+                    <section hidden={!showSubVendorScope} aria-label="Sub-Vendor scope">
+                      {showSubVendorScope ? <div className="knowledge-mode-configuration__mode-content">
+                        <div className="knowledge-pmc-scope">
+                          {PMC_SCOPE_LISTS.map((list) => (
+                            <KnowledgePmcScopeChecklist
+                              key={list}
+                              list={list}
+                              items={partitioned.primary.pmc?.[list] ?? defaultPmcScopeItems(list)}
+                              readOnly={readOnly}
+                              onChange={(items) => {
+                                const configuration = partitioned.primary.pmc ?? createKnowledgeModeConfiguration("pmc");
+                                updateConfiguration({
+                                  ...configuration,
+                                  inclusions: configuration.inclusions ?? defaultPmcScopeItems("inclusions"),
+                                  exclusions: configuration.exclusions ?? defaultPmcScopeItems("exclusions"),
+                                  [list]: items
+                                });
+                              }}
+                            />
+                          ))}
                         </div>
-                      </div>
-                    );
-                  }}
-                />
-              </div> : null}
-            </div>
+                      </div> : null}
+                    </section>
+                    {!calculation ? subVendorMarginControl : calculationSlot("sub_vendor")}
+                  </> : <>
+                    {calculationSlot("in_house_labor")}
+                    {calculationSlot("in_house_material")}
+                    {inHouseTotal?.(active)}
+                  </>}
+                </div>
+              </section>;
+            })}
           </div>
         </section>
       </div>
 
-      {partitioned.recovery.length ? (
+      {recoveries.length ? (
         <section
           className="knowledge-mode-configuration__recovery"
           aria-labelledby="knowledge-mode-recovery-title"
@@ -601,7 +498,7 @@ export function KnowledgeModeConfigurationBuilder({
               {legacyModeCatalogState.errorMessage ?? "Existing saved configurations could not be matched to PMC or Execution."}
             </InlineMessage>
           ) : null}
-          {partitioned.recovery.map((recovery, recoveryIndex) => {
+          {recoveries.map((recovery, recoveryIndex) => {
             const canMoveExecution = recovery.reason === "unscoped_execution" &&
               recovery.modeKind === "execution" &&
               recovery.executionSource === null;
@@ -665,99 +562,6 @@ export function KnowledgeModeConfigurationBuilder({
 
 function ignorePendingDescription() {}
 
-/**
- * Renders the configured answer using the control the component type describes,
- * so a dropdown component is answered from its own allowed options rather than
- * free text that would later fail validation.
- */
-function ModeFieldValueControl({
-  field,
-  id,
-  readOnly,
-  error,
-  onChange
-}: {
-  readonly field: KnowledgeModeConfigurationField;
-  readonly id: string;
-  readonly readOnly: boolean;
-  readonly error?: string;
-  readonly onChange: (value: KnowledgeModeFieldValue) => void;
-}) {
-  if (field.type === "checkbox") {
-    return (
-      <Field id={id} label="Value" hint="Leave cleared if this is not decided yet." error={error}>
-        {(props) => (
-          <Checkbox
-            {...props}
-            disabled={readOnly}
-            checked={field.value === true}
-            onChange={(event) => onChange(event.target.checked)}
-          />
-        )}
-      </Field>
-    );
-  }
-
-  const text = typeof field.value === "string" ? field.value : "";
-
-  if (isChoiceField(field.type)) {
-    return (
-      <Field
-        id={id}
-        label="Value"
-        hint={field.options.length ? undefined : "Add allowed options first."}
-        error={error}
-      >
-        {(props) => (
-          <Select
-            {...props}
-            disabled={readOnly || field.options.length === 0}
-            value={text}
-            onChange={(event) => onChange(event.target.value || null)}
-          >
-            <option value="">Not set</option>
-            {field.options.map((option) => (
-              <option key={option} value={option}>{option}</option>
-            ))}
-          </Select>
-        )}
-      </Field>
-    );
-  }
-
-  if (field.type === "textarea") {
-    return (
-      <Field id={id} label="Value" error={error}>
-        {(props) => (
-          <Textarea
-            {...props}
-            maxLength={4000}
-            disabled={readOnly}
-            value={text}
-            onChange={(event) => onChange(event.target.value || null)}
-          />
-        )}
-      </Field>
-    );
-  }
-
-  return (
-    <Field id={id} label="Value" error={error}>
-      {(props) => (
-        <Input
-          {...props}
-          type={field.type === "number" ? "number" : "text"}
-          inputMode={field.type === "number" ? "decimal" : undefined}
-          maxLength={field.type === "number" ? undefined : 4000}
-          disabled={readOnly}
-          value={text}
-          onChange={(event) => onChange(event.target.value || null)}
-        />
-      )}
-    </Field>
-  );
-}
-
 function RecoveryModeFields({
   fields,
   index
@@ -787,9 +591,10 @@ function RecoveryModeFields({
 }
 
 function recoveryTitle(
-  reason: ReturnType<typeof partitionKnowledgeModeConfigurations>["recovery"][number]["reason"],
+  reason: ReturnType<typeof partitionKnowledgeModeConfigurations>["recovery"][number]["reason"] | "invalid_fields",
   index: number
 ): string {
+  if (reason === "invalid_fields") return "Saved Execution components need recovery";
   if (reason === "unscoped_execution") return "Saved Execution configuration needs a source";
   if (reason === "legacy_reference") return "Saved legacy Mode configuration needs recovery";
   if (reason === "collision") return "Saved Mode configuration conflicts with another configuration";
@@ -798,8 +603,11 @@ function recoveryTitle(
 }
 
 function recoveryMessage(
-  reason: ReturnType<typeof partitionKnowledgeModeConfigurations>["recovery"][number]["reason"]
+  reason: ReturnType<typeof partitionKnowledgeModeConfigurations>["recovery"][number]["reason"] | "invalid_fields"
 ): string {
+  if (reason === "invalid_fields") {
+    return "These saved components no longer pass validation. Remove this component configuration from the Draft to continue. Calculation and margin settings are retained.";
+  }
   if (reason === "unscoped_execution") {
     return "This historical configuration was not assigned automatically. Move it to an empty Execution source or remove it from this Draft.";
   }
@@ -821,21 +629,17 @@ function executionSourceLabel(source: KnowledgeExecutionSource): "Sub-Vendor" | 
   )!.label;
 }
 
-function issueForPrefix(
-  path: string,
-  issues: readonly KnowledgeModeConfigurationIssue[]
-): string | undefined {
-  return issues.find((issue) =>
-    issue.path === path || issue.path.startsWith(`${path}.`)
-  )?.message;
-}
-
 function selectConfigurationForIssue(
   issue: KnowledgeModeConfigurationIssue,
   configurations: readonly KnowledgeModeConfiguration[],
   selectMode: (mode: KnowledgeModeKind) => void,
   selectExecutionSource: (source: KnowledgeExecutionSource) => void
 ) {
+  if (issue.path === "subVendorMarginBps") {
+    selectMode("execution");
+    selectExecutionSource("sub_vendor");
+    return;
+  }
   const scope = calculationScopeForIssue(issue.path);
   if (scope) {
     selectMode(scope === "pmc" ? "pmc" : "execution");
@@ -885,8 +689,4 @@ function focusIssue(
     "[aria-invalid='true'], input, select, textarea, button"
   );
   (target ?? fallback)?.focus();
-}
-
-function domId(id: string): string {
-  return `knowledge-mode-${id.replace(/[^a-zA-Z0-9_-]/gu, "-")}`;
 }

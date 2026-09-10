@@ -186,6 +186,48 @@ describe("AI estimator knowledge item service", () => {
     }
   });
 
+  it("isolates Sub-Vendor and PMC margins across lines, activation and later draft changes", async () => {
+    const { service } = createService();
+    const published: Array<{ mainLineId: string; revisionId: string; pmcMarginBps: number; subVendorMarginBps: number }> = [];
+    for (const [name, pmcMarginBps, subVendorMarginBps] of [["First Sub-Vendor margin", 1_900, 1_000], ["Second Sub-Vendor margin", 1_050, 2_000]] as const) {
+      const created = await service.createMainLine(ACTOR, "basket-carpentry", { name });
+      const revisionId = created.draftRevisionId!;
+      const overview = await service.updateSection(ACTOR, created.mainLineId, revisionId, "overview", {
+        expectedVersion: 1, expectedAggregateVersion: created.version, payload: { uomId: "uom-sqft" }
+      });
+      const payload = { pmcMarginBps, subVendorMarginBps, modeConfigurations: [
+        { id: "pmc", modeKind: "pmc", fields: [] },
+        { id: "sub-vendor", modeKind: "execution", executionSource: "sub_vendor", fields: [] },
+        { id: "in-house", modeKind: "execution", executionSource: "in_house", fields: [] }
+      ] };
+      const saved = await service.updateSection(ACTOR, created.mainLineId, revisionId, "advanced", {
+        expectedVersion: 1, expectedAggregateVersion: overview.aggregateVersion, payload
+      });
+      expect((await service.getSection(ACTOR, created.mainLineId, revisionId, "advanced")).payload).toEqual(payload);
+      await expect(service.updateSection(ACTOR, created.mainLineId, revisionId, "advanced", {
+        expectedVersion: 1, expectedAggregateVersion: overview.aggregateVersion, payload: { ...payload, subVendorMarginBps: 1_500 }
+      })).rejects.toMatchObject({ code: "VERSION_CONFLICT" });
+      await expect(service.updateSection(ACTOR, created.mainLineId, revisionId, "advanced", {
+        expectedVersion: saved.version, expectedAggregateVersion: saved.aggregateVersion, payload: { ...payload, subVendorMarginBps: 2_001 }
+      })).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+      const active = await service.activate(ACTOR, created.mainLineId, revisionId, { expectedVersion: saved.aggregateVersion });
+      expect(active.activeRevision?.contentDigest).toMatch(/^[a-f0-9]{64}$/u);
+      published.push({ mainLineId: created.mainLineId, revisionId, pmcMarginBps, subVendorMarginBps });
+      const next = await service.createRevision(ACTOR, created.mainLineId, { expectedVersion: active.version });
+      const draft = await service.getSection(ACTOR, created.mainLineId, next.draftRevisionId!, "advanced");
+      expect(draft.payload).toEqual(payload);
+      await service.updateSection(ACTOR, created.mainLineId, next.draftRevisionId!, "advanced", {
+        expectedVersion: draft.version, expectedAggregateVersion: next.version, payload: { ...draft.payload, subVendorMarginBps: null }
+      });
+      expect((await service.getSection(ACTOR, created.mainLineId, next.draftRevisionId!, "advanced")).payload)
+        .toMatchObject({ pmcMarginBps, subVendorMarginBps: null });
+    }
+    for (const { mainLineId, revisionId, pmcMarginBps, subVendorMarginBps } of published) {
+      expect((await service.getSection(ACTOR, mainLineId, revisionId, "advanced")).payload)
+        .toMatchObject({ pmcMarginBps, subVendorMarginBps });
+    }
+  });
+
   it("round-trips shared Mode calculation settings with version checks and isolated main lines", async () => {
     const { service } = createService();
     const first = await service.createMainLine(ACTOR, "basket-carpentry", { name: "First calculation line" });

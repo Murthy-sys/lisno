@@ -1,8 +1,8 @@
 import { Router, type RequestHandler } from "express";
 import { z } from "zod";
 
-import type { CalculateKnowledgePreviewInput } from "../domain/ai-estimator-knowledge-calculation.js";
-import { KNOWLEDGE_PMC_DISCOUNT_LIMIT_MESSAGE, KNOWLEDGE_PMC_MAX_IMPACT_BPS, maximumKnowledgePmcDiscountBps } from "../domain/ai-estimator-knowledge-mode-calculation.js";
+import { KNOWLEDGE_CUSTOM_DISCOUNT_MESSAGE, type CalculateKnowledgePreviewInput } from "../domain/ai-estimator-knowledge-calculation.js";
+import { KNOWLEDGE_PMC_MAX_IMPACT_BPS } from "../domain/ai-estimator-knowledge-mode-calculation.js";
 import {
   AI_ESTIMATOR_KNOWLEDGE_DURATION_UNITS,
   AI_ESTIMATOR_KNOWLEDGE_ITEM_STATUSES,
@@ -284,6 +284,12 @@ export const aiEstimatorKnowledgePreviewSchema = z
       impactBps: z.number().int().min(0).max(KNOWLEDGE_PMC_MAX_IMPACT_BPS).optional(),
       pmcMarginBps: z.number().int().min(1_000).max(2_000)
     }).strict().optional(),
+    subVendorCalculation: z.object({
+      baseRatePaise: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+      lowQuantityLimit: canonicalDecimalSchema,
+      impactBps: z.number().int().min(0).max(KNOWLEDGE_PMC_MAX_IMPACT_BPS).optional(),
+      subVendorMarginBps: z.number().int().min(1_000).max(2_000)
+    }).strict().optional(),
     priceVersionId: stableIdSchema.nullable().optional(),
     taxVersionId: stableIdSchema.nullable().optional(),
     unitRatePaise: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).nullable().optional(),
@@ -308,20 +314,24 @@ export const aiEstimatorKnowledgePreviewSchema = z
       .nullable()
       .optional()
   })
-  .strict().refine((value) => (!value.modeCalculation && !value.inHouseCalculation && !value.pmcCalculation) || value.quantity != null, {
+  .strict().refine((value) => (!value.modeCalculation && !value.inHouseCalculation && !value.pmcCalculation && !value.subVendorCalculation) || value.quantity != null, {
     path: ["quantity"], message: "A test quantity is required for Mode calculations."
-  }).refine((value) => !value.modeCalculationMarkupBasis || Boolean(value.modeCalculation || value.inHouseCalculation || value.pmcCalculation), {
+  }).refine((value) => !value.modeCalculationMarkupBasis || Boolean(value.modeCalculation || value.inHouseCalculation || value.pmcCalculation || value.subVendorCalculation), {
     path: ["modeCalculation"], message: "Mode calculation settings are required when choosing a markup."
   }).refine((value) => !(value.modeCalculation && value.inHouseCalculation), {
     path: ["inHouseCalculation"], message: "Choose either an individual calculation or an In-house total."
-  }).refine((value) => !value.pmcCalculation || (!value.modeCalculation && !value.inHouseCalculation), {
+  }).refine((value) => !value.pmcCalculation || (!value.modeCalculation && !value.inHouseCalculation && !value.subVendorCalculation), {
     path: ["pmcCalculation"], message: "PMC calculations cannot be combined with Execution calculations."
   }).refine((value) => !value.pmcCalculation || value.modeCalculationMarkupBasis === undefined, {
     path: ["modeCalculationMarkupBasis"], message: "PMC calculations use PMC margin; a markup selection is not allowed."
-  }).refine((value) => value.modeCalculationDiscountBps === undefined || Boolean(value.modeCalculation || value.inHouseCalculation || value.pmcCalculation), {
+  }).refine((value) => !value.subVendorCalculation || (!value.modeCalculation && !value.inHouseCalculation && !value.pmcCalculation), {
+    path: ["subVendorCalculation"], message: "Sub-Vendor calculations cannot be combined with other calculations."
+  }).refine((value) => !value.subVendorCalculation || value.modeCalculationMarkupBasis === undefined, {
+    path: ["modeCalculationMarkupBasis"], message: "Sub-Vendor calculations use Sub-Vendor margin; a markup selection is not allowed."
+  }).refine((value) => value.modeCalculationDiscountBps === undefined || Boolean(value.modeCalculation || value.inHouseCalculation || value.pmcCalculation || value.subVendorCalculation), {
     path: ["modeCalculationDiscountBps"], message: "Mode calculation settings are required when applying a discount."
-  }).refine((value) => !value.pmcCalculation || (value.modeCalculationDiscountBps ?? 0) <= maximumKnowledgePmcDiscountBps(value.pmcCalculation.pmcMarginBps), {
-    path: ["modeCalculationDiscountBps"], message: KNOWLEDGE_PMC_DISCOUNT_LIMIT_MESSAGE
+  }).refine((value) => (!value.pmcCalculation && !value.subVendorCalculation) || (value.modeCalculationDiscountBps ?? 0) <= 10_000, {
+    path: ["modeCalculationDiscountBps"], message: KNOWLEDGE_CUSTOM_DISCOUNT_MESSAGE
   });
 
 export interface AiEstimatorKnowledgeAdminRouterServices {

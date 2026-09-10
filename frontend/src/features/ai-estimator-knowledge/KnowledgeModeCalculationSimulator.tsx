@@ -9,21 +9,22 @@ import type { KnowledgeModeCalculationDraft, KnowledgeModeCalculationResult } fr
 import { previewKnowledge, type KnowledgePreviewRequest } from "./knowledgeApi";
 import { parseModeCalculationDraft, parseModeQuantity, type ModeCalculationScope } from "./knowledgeModeCalculation";
 import { formatKnowledgeMoney, formatKnowledgePercentage, formatPaiseForRupeeInput, parseRupeeInputToPaise } from "./knowledgePresentation";
-import { PMC_MARGIN_ERROR, pmcMarginIssues } from "./knowledgePmcMargin";
+import { PMC_MARGIN_ERROR, SUB_VENDOR_MARGIN_ERROR, pmcMarginIssues, subVendorMarginIssues } from "./knowledgePmcMargin";
 import type { KnowledgeJsonValue, KnowledgePreview } from "./knowledgeTypes";
 import { KnowledgeSimulatorDiscountField } from "./KnowledgeSimulatorDiscountField";
-import { maximumPmcSimulatorDiscountBps, maximumSimulatorDiscountBps, parseSimulatorDiscount } from "./knowledgeSimulatorDiscount";
+import { CUSTOM_SIMULATOR_DISCOUNT_MAX_BPS, maximumSimulatorDiscountBps, parseSimulatorDiscount } from "./knowledgeSimulatorDiscount";
 
 interface Props {
   readonly scope?: ModeCalculationScope;
   readonly pmcMarginBps?: KnowledgeJsonValue;
+  readonly subVendorMarginBps?: KnowledgeJsonValue;
   readonly contextLabel?: string;
   readonly initialDraft: KnowledgeModeCalculationDraft;
   readonly uom: KnowledgeModeCalculationUom;
   readonly onClose: () => void;
 }
 
-function parsePmcRates(draft: KnowledgeModeCalculationDraft, scale: number) {
+function parseMarginRates(draft: KnowledgeModeCalculationDraft, scale: number) {
   const base = parseRupeeInputToPaise(draft.baseRate);
   const impact = parseRupeeInputToPaise(draft.impactRate);
   const limit = parseModeQuantity(draft.lowQuantityLimit, scale);
@@ -35,15 +36,21 @@ function parsePmcRates(draft: KnowledgeModeCalculationDraft, scale: number) {
     ? undefined : { baseRatePaise: base.paise, lowQuantityLimit: limit, impactBps: impact.paise } };
 }
 
-type SimulatorResult = { kind: "mode"; value: KnowledgeModeCalculationResult }
-  | { kind: "pmc"; value: NonNullable<KnowledgePreview["pmcCalculation"]> };
+type MarginCalculationResult = Omit<NonNullable<KnowledgePreview["pmcCalculation"]>, "pmcMarginBps" | "pmcMarginAmountPaise"> & {
+  readonly marginBps: number;
+  readonly marginAmountPaise: number;
+};
 
-function reconcilesPmcCalculation(calculation: NonNullable<KnowledgePreview["pmcCalculation"]>, configuredImpactBps: number, quantity: string, limit: string, scale: number) {
+type SimulatorResult = { kind: "mode"; value: KnowledgeModeCalculationResult }
+  | { kind: "margin"; value: MarginCalculationResult };
+
+function reconcilesMarginCalculation(calculation: MarginCalculationResult, configuredImpactBps: number, quantity: string, limit: string, scale: number) {
   const discountAmount = calculation.discount ? calculation.discount.amountPaise : 0;
   const amounts = [calculation.baseAmountPaise, calculation.lowQuantityImpactAmountPaise,
-    calculation.revisedUnitRatePaise, calculation.revisedAmountPaise, calculation.pmcMarginAmountPaise,
-    calculation.totalBeforeDiscountPaise, calculation.finalVendorChargesPaise, calculation.totalPaise, discountAmount];
+    calculation.revisedUnitRatePaise, calculation.revisedAmountPaise, calculation.marginAmountPaise,
+    calculation.totalBeforeDiscountPaise, calculation.totalPaise, discountAmount];
   if (amounts.some((value) => !Number.isSafeInteger(value) || value < 0)) return false;
+  if (!Number.isSafeInteger(calculation.finalVendorChargesPaise)) return false;
   const scaledQuantity = (value: string) => {
     const [whole, fraction = ""] = value.split(".");
     return BigInt(`${whole}${fraction.padEnd(scale, "0")}`);
@@ -52,17 +59,21 @@ function reconcilesPmcCalculation(calculation: NonNullable<KnowledgePreview["pmc
   if (calculation.appliedImpactBps !== (lowQuantityApplies ? configuredImpactBps : 0)
     || (!lowQuantityApplies && calculation.lowQuantityImpactAmountPaise !== 0)
     || (configuredImpactBps === 0 && calculation.lowQuantityImpactAmountPaise !== 0)) return false;
-  if (calculation.discount && (!Number.isSafeInteger(calculation.discount.rateBps) || calculation.discount.rateBps < 0
+  if (calculation.discount && (!Number.isSafeInteger(calculation.discount.rateBps) || calculation.discount.rateBps < 0 || calculation.discount.rateBps > CUSTOM_SIMULATOR_DISCOUNT_MAX_BPS
     || calculation.discount.totalBeforeDiscountPaise !== calculation.totalBeforeDiscountPaise
     || (calculation.discount.rateBps === 0 && discountAmount !== 0))) return false;
   return BigInt(calculation.baseAmountPaise) + BigInt(calculation.lowQuantityImpactAmountPaise) === BigInt(calculation.revisedAmountPaise)
-    && BigInt(calculation.revisedAmountPaise) + BigInt(calculation.pmcMarginAmountPaise) === BigInt(calculation.totalBeforeDiscountPaise)
+    && BigInt(calculation.revisedAmountPaise) + BigInt(calculation.marginAmountPaise) === BigInt(calculation.totalBeforeDiscountPaise)
     && BigInt(calculation.totalBeforeDiscountPaise) - BigInt(discountAmount) === BigInt(calculation.totalPaise)
-    && BigInt(calculation.finalVendorChargesPaise) + BigInt(calculation.pmcMarginAmountPaise) === BigInt(calculation.totalPaise);
+    && BigInt(calculation.finalVendorChargesPaise) + BigInt(calculation.marginAmountPaise) === BigInt(calculation.totalPaise);
 }
 
-export function KnowledgeModeCalculationSimulator({ initialDraft, uom, onClose, contextLabel, scope, pmcMarginBps }: Props) {
-  const isPmc = scope === "pmc";
+export function KnowledgeModeCalculationSimulator({ initialDraft, uom, onClose, contextLabel, scope, pmcMarginBps, subVendorMarginBps }: Props) {
+  const usesMargin = scope === "pmc" || scope === "sub_vendor";
+  const marginLabel = scope === "sub_vendor" ? "Sub-Vendor" : "PMC";
+  const configuredMargin = scope === "sub_vendor" ? subVendorMarginBps : pmcMarginBps;
+  const marginIssues = scope === "sub_vendor" ? subVendorMarginIssues : pmcMarginIssues;
+  const discountBasis = scope === "pmc" || scope === "sub_vendor" ? scope : "markup";
   const id = useId();
   const formRef = useRef<HTMLFormElement>(null);
   const requestSequence = useRef(0);
@@ -76,13 +87,13 @@ export function KnowledgeModeCalculationSimulator({ initialDraft, uom, onClose, 
   const [error, setError] = useState<string>();
   const scale = uom.decimalScale ?? 6;
   const parsedMode = parseModeCalculationDraft(draft, scale);
-  const parsedPmc = parsePmcRates(draft, scale);
-  const parsed = isPmc ? parsedPmc : parsedMode;
-  const margin = typeof pmcMarginBps === "number" && !pmcMarginIssues(pmcMarginBps).length ? pmcMarginBps : undefined;
-  const marginError = isPmc && margin === undefined ? `Close this simulator and set the PMC Margin in the configuration. ${PMC_MARGIN_ERROR}` : undefined;
+  const parsedMargin = parseMarginRates(draft, scale);
+  const parsed = usesMargin ? parsedMargin : parsedMode;
+  const margin = typeof configuredMargin === "number" && !marginIssues(configuredMargin).length ? configuredMargin : undefined;
+  const marginError = usesMargin && margin === undefined ? `Close this simulator and set the ${marginLabel} Margin in the configuration. ${scope === "sub_vendor" ? SUB_VENDOR_MARGIN_ERROR : PMC_MARGIN_ERROR}` : undefined;
   const testQuantity = parseModeQuantity(quantity, scale);
-  const maximumDiscountBps = isPmc ? maximumPmcSimulatorDiscountBps(margin) : maximumSimulatorDiscountBps([draft], markupBasis);
-  const parsedDiscount = parseSimulatorDiscount(discount, maximumDiscountBps, isPmc ? "pmc" : "markup");
+  const maximumDiscountBps = usesMargin ? CUSTOM_SIMULATOR_DISCOUNT_MAX_BPS : maximumSimulatorDiscountBps([draft], markupBasis);
+  const parsedDiscount = parseSimulatorDiscount(discount, maximumDiscountBps, discountBasis);
   const uomReady = Boolean(uom.id) && uom.decimalScale !== undefined;
   const errors = attempted ? {
     ...parsed.errors,
@@ -103,7 +114,7 @@ export function KnowledgeModeCalculationSimulator({ initialDraft, uom, onClose, 
     event.preventDefault();
     setAttempted(true);
     clearResult();
-    if (!parsed.settings || (isPmc && margin === undefined) || testQuantity === undefined || !uomReady || parsedDiscount.bps === undefined) {
+    if (!parsed.settings || (usesMargin && margin === undefined) || testQuantity === undefined || !uomReady || parsedDiscount.bps === undefined) {
       globalThis.setTimeout(() => formRef.current?.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus(), 0);
       return;
     }
@@ -112,21 +123,28 @@ export function KnowledgeModeCalculationSimulator({ initialDraft, uom, onClose, 
     try {
       const common = { quantity: testQuantity, quantityScale: uom.decimalScale!,
         ...(parsedDiscount.bps > 0 ? { modeCalculationDiscountBps: parsedDiscount.bps } : {}) };
-      const request: KnowledgePreviewRequest = isPmc
-        ? { ...common, pmcCalculation: { ...parsedPmc.settings!, pmcMarginBps: margin! } }
-        : { ...common, modeCalculation: parsedMode.settings!, modeCalculationMarkupBasis: markupBasis };
+      const request: KnowledgePreviewRequest = scope === "pmc"
+        ? { ...common, pmcCalculation: { ...parsedMargin.settings!, pmcMarginBps: margin! } }
+        : scope === "sub_vendor"
+          ? { ...common, subVendorCalculation: { ...parsedMargin.settings!, subVendorMarginBps: margin! } }
+          : { ...common, modeCalculation: parsedMode.settings!, modeCalculationMarkupBasis: markupBasis };
       const preview = await previewKnowledge(request);
       if (sequence !== requestSequence.current) return;
-      if (isPmc) {
-        const calculation = preview.pmcCalculation;
-        if (!calculation) throw new Error("The server did not return a PMC calculation. Please try again.");
-        if (calculation.pmcMarginBps !== margin || (calculation.discount?.rateBps ?? 0) !== parsedDiscount.bps) {
-          throw new Error("The server returned a different PMC margin or discount. Please calculate again.");
+      if (usesMargin) {
+        // Normalize presentation labels only; all amounts must come from the requested server branch.
+        const calculation: MarginCalculationResult | undefined = scope === "sub_vendor"
+          ? preview.subVendorCalculation && { ...preview.subVendorCalculation,
+            marginBps: preview.subVendorCalculation.subVendorMarginBps, marginAmountPaise: preview.subVendorCalculation.subVendorMarginAmountPaise }
+          : preview.pmcCalculation && { ...preview.pmcCalculation,
+            marginBps: preview.pmcCalculation.pmcMarginBps, marginAmountPaise: preview.pmcCalculation.pmcMarginAmountPaise };
+        if (!calculation) throw new Error(`The server did not return a ${marginLabel} calculation. Please try again.`);
+        if (calculation.marginBps !== margin || (calculation.discount?.rateBps ?? 0) !== parsedDiscount.bps) {
+          throw new Error(`The server returned a different ${marginLabel} margin or discount. Please calculate again.`);
         }
-        if (!reconcilesPmcCalculation(calculation, parsedPmc.settings!.impactBps, testQuantity, parsedPmc.settings!.lowQuantityLimit, scale)) {
-          throw new Error("The server returned an incomplete or inconsistent PMC breakdown. Please calculate again.");
+        if (!reconcilesMarginCalculation(calculation, parsedMargin.settings!.impactBps, testQuantity, parsedMargin.settings!.lowQuantityLimit, scale)) {
+          throw new Error(`The server returned an incomplete or inconsistent ${marginLabel} breakdown. Please calculate again.`);
         }
-        setResult({ kind: "pmc", value: calculation });
+        setResult({ kind: "margin", value: calculation });
       } else {
         if (!preview.modeCalculation) throw new Error("The server did not return a calculation. Please try again.");
         if (parsedDiscount.bps > 0 && preview.modeCalculation.discount?.rateBps !== parsedDiscount.bps) {
@@ -144,14 +162,14 @@ export function KnowledgeModeCalculationSimulator({ initialDraft, uom, onClose, 
   function editable(field: keyof KnowledgeModeCalculationDraft, label: string) {
     return <Field id={`${id}-${field}`} label={label} error={errors[field]}>
       {(props) => <Input {...props} inputMode="decimal" autoComplete="off" maxLength={64}
-        value={draft[field]} readOnly={isPmc} onChange={(event) => { if (isPmc) return; clearResult(); setDraft({ ...draft, [field]: event.target.value }); }} />}
+        value={draft[field]} readOnly={usesMargin} onChange={(event) => { if (usesMargin) return; clearResult(); setDraft({ ...draft, [field]: event.target.value }); }} />}
     </Field>;
   }
 
   return <Dialog title="Test calculations" eyebrow={contextLabel ? `${contextLabel} calculation simulator` : "Calculation simulator"}
-    description={isPmc ? "Test Quantity and Discount using the current PMC configuration. Simulator changes are temporary." : "Try different values using the current configuration. Simulator changes are temporary."}
+    description={usesMargin ? `Test Quantity and Discount using the current ${marginLabel} configuration. Simulator changes are temporary.` : "Try different values using the current configuration. Simulator changes are temporary."}
     onClose={onClose}>
-    <form ref={formRef} className={`knowledge-mode-simulator${isPmc ? " knowledge-mode-simulator--pmc" : ""}`} onSubmit={(event) => void calculate(event)} noValidate>
+    <form ref={formRef} className={`knowledge-mode-simulator${usesMargin ? " knowledge-mode-simulator--pmc" : ""}`} onSubmit={(event) => void calculate(event)} noValidate>
       <div className="knowledge-dialog-body">
         <div className="knowledge-mode-simulator__fields">
           <Field id={`${id}-uom`} label="UOM">
@@ -164,8 +182,8 @@ export function KnowledgeModeCalculationSimulator({ initialDraft, uom, onClose, 
               value={quantity} onChange={(event) => { clearResult(); setQuantity(event.target.value); }} />}
           </Field>
           {editable("lowQuantityLimit", "Low Quantity Limit")}
-          {isPmc ? <Field id={`${id}-pmc-margin`} label="PMC Margin (%)" error={marginError}>
-            {(props) => <Input {...props} value={margin === undefined ? typeof pmcMarginBps === "string" ? pmcMarginBps : "" : formatPaiseForRupeeInput(margin)} readOnly placeholder="Not configured" />}
+          {usesMargin ? <Field id={`${id}-margin`} label={`${marginLabel} Margin (%)`} error={marginError}>
+            {(props) => <Input {...props} value={margin === undefined ? typeof configuredMargin === "string" ? configuredMargin : "" : formatPaiseForRupeeInput(margin)} readOnly placeholder="Not configured" />}
           </Field> : <>
             {editable("startingRate", "Starting Gross Margin Markup (%)")}
             {editable("minimumRate", "Min. Gross Margin Markup (%)")}
@@ -175,7 +193,7 @@ export function KnowledgeModeCalculationSimulator({ initialDraft, uom, onClose, 
           {uom.message ?? "Save a UOM in Overview before calculating."}
           {uom.onRetry ? <Button variant="quiet" onClick={uom.onRetry}>Retry UOM</Button> : null}
         </InlineMessage> : null}
-        {!isPmc ? <fieldset className="knowledge-mode-simulator__markup">
+        {!usesMargin ? <fieldset className="knowledge-mode-simulator__markup">
           <legend>Calculate with</legend>
           <label><Radio name={`${id}-markup`} value="starting" checked={markupBasis === "starting"}
             onChange={() => { clearResult(); setMarkupBasis("starting"); }} /> Starting Gross Margin Markup</label>
@@ -183,20 +201,20 @@ export function KnowledgeModeCalculationSimulator({ initialDraft, uom, onClose, 
             onChange={() => { clearResult(); setMarkupBasis("minimum"); }} /> Min. Gross Margin Markup</label>
         </fieldset> : null}
         <KnowledgeSimulatorDiscountField value={discount} onChange={(value) => { clearResult(); setDiscount(value); }}
-          maximumBps={maximumDiscountBps} attempted={attempted} basis={isPmc ? "pmc" : "markup"} />
-        <p className="knowledge-mode-calculation__hint">{isPmc ? "The configured Impact applies at or below the Low Quantity Limit. PMC margin is added to the base amount including the low-quantity charge. Update fixed values in the configuration." : "Impact applies only below the Low Quantity Limit. Markup is added to the revised amount."}</p>
+          maximumBps={maximumDiscountBps} attempted={attempted} basis={discountBasis} />
+        <p className="knowledge-mode-calculation__hint">{usesMargin ? `The configured Impact applies at or below the Low Quantity Limit. ${marginLabel} margin is added to the base amount including the low-quantity charge. Update fixed values in the configuration.` : "Impact applies only below the Low Quantity Limit. Markup is added to the revised amount."}</p>
         {calculating ? <p role="status">Calculating…</p> : null}
         {error ? <InlineMessage tone="error" title="Calculation unavailable" role="alert">{error}</InlineMessage> : null}
         {result ? <div className="knowledge-mode-simulator__result" role="status" aria-label="Calculation results">
           <dl className="knowledge-mode-calculation__totals">
-            {result.kind === "pmc" ? <>
+            {result.kind === "margin" ? <>
               <div><dt>Base amount</dt><dd><output aria-label="Base amount">{formatKnowledgeMoney(result.value.baseAmountPaise)}</output></dd></div>
               {result.value.lowQuantityImpactAmountPaise > 0 ? <div><dt>Low-quantity impact ({formatKnowledgePercentage(result.value.appliedImpactBps)})</dt><dd><output aria-label="Low-quantity impact amount">+{formatKnowledgeMoney(result.value.lowQuantityImpactAmountPaise)}</output></dd></div> : null}
               <div className="knowledge-mode-simulator__subtotal"><dt>Total including low-quantity charges</dt><dd><output aria-label="Total including low-quantity charges">{formatKnowledgeMoney(result.value.revisedAmountPaise)}</output></dd></div>
-              <div><dt>PMC margin ({formatKnowledgePercentage(result.value.pmcMarginBps)})</dt><dd><output aria-label="PMC margin amount">+{formatKnowledgeMoney(result.value.pmcMarginAmountPaise)}</output></dd></div>
-              <div className="knowledge-mode-simulator__subtotal"><dt>Subtotal after PMC margin</dt><dd><output aria-label="Subtotal after PMC margin">{formatKnowledgeMoney(result.value.totalBeforeDiscountPaise)}</output></dd></div>
+              <div><dt>{marginLabel} margin ({formatKnowledgePercentage(result.value.marginBps)})</dt><dd><output aria-label={`${marginLabel} margin amount`}>+{formatKnowledgeMoney(result.value.marginAmountPaise)}</output></dd></div>
+              <div className="knowledge-mode-simulator__subtotal"><dt>Subtotal after {marginLabel} margin</dt><dd><output aria-label={`Subtotal after ${marginLabel} margin`}>{formatKnowledgeMoney(result.value.totalBeforeDiscountPaise)}</output></dd></div>
               <div><dt>Discount ({formatKnowledgePercentage(result.value.discount?.rateBps ?? 0)})</dt><dd><output aria-label="Discount amount">−{formatKnowledgeMoney(result.value.discount?.amountPaise ?? 0)}</output></dd></div>
-              <div className="knowledge-mode-simulator__vendor"><dt>Final vendor charges</dt><dd><output aria-label="Final vendor charges">{formatKnowledgeMoney(result.value.finalVendorChargesPaise)}</output></dd></div>
+              <div className="knowledge-mode-simulator__vendor"><dt>{result.value.finalVendorChargesPaise < 0 ? "Balance after margin" : "Final vendor charges"}</dt><dd><output aria-label={result.value.finalVendorChargesPaise < 0 ? "Balance after margin" : "Final vendor charges"}>{result.value.finalVendorChargesPaise < 0 ? "−" : ""}{formatKnowledgeMoney(Math.abs(result.value.finalVendorChargesPaise))}</output></dd></div>
               <div className="knowledge-mode-simulator__final"><dt>Final total</dt><dd><output aria-label="Final total">{formatKnowledgeMoney(result.value.totalPaise)}</output></dd></div>
             </> : <>
             <div><dt>Revised Base Rate</dt><dd><output aria-label="Revised Base Rate">{formatKnowledgeMoney(result.value.revisedUnitRatePaise)}</output></dd></div>
@@ -209,7 +227,9 @@ export function KnowledgeModeCalculationSimulator({ initialDraft, uom, onClose, 
             <div><dt>{result.value.discount && result.value.discount.rateBps > 0 ? "Total after discount" : `Total with ${markupBasis} markup`}</dt><dd><output aria-label={result.value.discount && result.value.discount.rateBps > 0 ? "Total after discount" : `Total with ${markupBasis} markup`}>{formatKnowledgeMoney(result.value.totalPaise)}</output></dd></div>
             </>}
           </dl>
-          {result.kind === "pmc" ? <p className="knowledge-mode-calculation__hint">Final vendor charges exclude the PMC margin shown above. Vendor charges + PMC margin = final total.</p> : null}
+          {result.kind === "margin" ? <p className="knowledge-mode-calculation__hint">{result.value.finalVendorChargesPaise < 0
+            ? `The discount exceeds the amount excluding ${marginLabel} margin. The negative balance plus the margin shown above equals the final total.`
+            : `Final vendor charges exclude the ${marginLabel} margin shown above. Vendor charges + ${marginLabel} margin = final total.`}</p> : null}
           <p className="knowledge-mode-calculation__hint">{result.value.appliedImpactBps > 0 ? `${formatKnowledgePercentage(result.value.appliedImpactBps)} low-quantity impact applied.` : "No low-quantity impact applied."}</p>
         </div> : null}
       </div>

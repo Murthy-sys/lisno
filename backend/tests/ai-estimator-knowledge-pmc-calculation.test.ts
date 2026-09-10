@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { calculateKnowledgePreview, type CalculateKnowledgePreviewInput } from "../src/domain/ai-estimator-knowledge-calculation.js";
-import { calculateKnowledgePmcPrice, calculateKnowledgeModePrice, calculateKnowledgeInHousePrice, KNOWLEDGE_PMC_DISCOUNT_LIMIT_MESSAGE, KNOWLEDGE_PMC_MAX_IMPACT_BPS, maximumKnowledgePmcDiscountBps } from "../src/domain/ai-estimator-knowledge-mode-calculation.js";
+import { calculateKnowledgePreview, KNOWLEDGE_CUSTOM_DISCOUNT_MESSAGE, type CalculateKnowledgePreviewInput } from "../src/domain/ai-estimator-knowledge-calculation.js";
+import { calculateKnowledgePmcPrice, calculateKnowledgeModePrice, calculateKnowledgeInHousePrice, KNOWLEDGE_PMC_MAX_IMPACT_BPS } from "../src/domain/ai-estimator-knowledge-mode-calculation.js";
 import { aiEstimatorKnowledgePreviewSchema } from "../src/routes/ai-estimator-knowledge-admin.js";
 import { createAiEstimatorKnowledgeContextService } from "../src/services/ai-estimator-knowledge-context.service.js";
 import type { PublicUser } from "../src/services/auth.service.js";
@@ -128,31 +128,42 @@ describe("PMC simulator arithmetic", () => {
     expect(result).not.toHaveProperty("discount");
   });
 
-  it("allows no discount at 10% and caps the after-margin discount to retain the floor", () => {
-    expect(maximumKnowledgePmcDiscountBps(1_000)).toBe(0);
-    expect(maximumKnowledgePmcDiscountBps(1_525)).toBe(455);
-    expect(maximumKnowledgePmcDiscountBps(2_000)).toBe(833);
-    expect(calculateKnowledgePmcPrice({ ...input, pmcMarginBps: 1_000, discountBps: 0 }).totalPaise).toBe(38_192);
-    expect(calculateKnowledgePmcPrice({ ...input, pmcMarginBps: 2_000, discountBps: 833 }).totalPaise).toBe(38_193);
-    for (const [pmcMarginBps, discountBps] of [[1_000, 1], [1_525, 456], [2_000, 834]]) {
-      expect(() => calculateKnowledgePmcPrice({ ...input, pmcMarginBps, discountBps })).toThrow(KNOWLEDGE_PMC_DISCOUNT_LIMIT_MESSAGE);
+  it.each([[1_000, 1, 38_188], [1_525, 456, 38_190], [2_000, 834, 38_189]])(
+    "accepts custom discount %s/%s that previously crossed the margin floor", (pmcMarginBps, discountBps, totalPaise) => {
+      expect(calculateKnowledgePmcPrice({ ...input, pmcMarginBps, discountBps }).totalPaise).toBe(totalPaise);
     }
+  );
+
+  it.each([[0, 0, 11_000, 10_000], [2_000, 2_200, 8_800, 7_800], [5_000, 5_500, 5_500, 4_500], [10_000, 11_000, 0, -1_000]])(
+    "allows a %s-bps custom discount at the lowest configured PMC margin", (discountBps, amountPaise, totalPaise, finalVendorChargesPaise) => {
+      const result = calculateKnowledgePmcPrice({ baseRatePaise: 10_000, lowQuantityLimit: "0", impactBps: 0,
+        quantity: "1", quantityScale: 0, pmcMarginBps: 1_000, discountBps });
+      expect(result).toMatchObject({ revisedAmountPaise: 10_000, pmcMarginAmountPaise: 1_000, totalBeforeDiscountPaise: 11_000,
+        discount: { rateBps: discountBps, amountPaise }, totalPaise, finalVendorChargesPaise });
+      expect(result.totalPaise + result.discount!.amountPaise).toBe(result.totalBeforeDiscountPaise);
+      expect(result.finalVendorChargesPaise + result.pmcMarginAmountPaise).toBe(result.totalPaise);
+    }
+  );
+
+  it("preserves the generic Mode and In-house markup discount guards", () => {
+    expect(() => calculateKnowledgeModePrice({ ...execution, quantity: "1", quantityScale: 0, discountBps: 1_001 })).toThrow("below the minimum standard");
+    expect(() => calculateKnowledgeInHousePrice({ labor: execution, material: { ...execution, startingMarkupBps: 3_000 },
+      quantity: "1", quantityScale: 0, discountBps: 501 })).toThrow("below the minimum standard");
   });
 
-  it("rejects a nominally allowed discount when separate paise rounding would cross the monetary floor", () => {
+  it("rounds a custom discount without enforcing a minimum final margin", () => {
     const roundingInput = { baseRatePaise: 2_275, lowQuantityLimit: "0", quantity: "1", quantityScale: 0, pmcMarginBps: 1_003 };
-    expect(maximumKnowledgePmcDiscountBps(roundingInput.pmcMarginBps)).toBe(2);
     expect(calculateKnowledgePmcPrice(roundingInput)).toMatchObject({ revisedAmountPaise: 2_275, pmcMarginAmountPaise: 228, totalBeforeDiscountPaise: 2_503, totalPaise: 2_503 });
     expect(calculateKnowledgePmcPrice({ ...roundingInput, discountBps: 1 }).totalPaise).toBe(2_503);
-    expect(() => calculateKnowledgePmcPrice({ ...roundingInput, discountBps: 2 })).toThrow(KNOWLEDGE_PMC_DISCOUNT_LIMIT_MESSAGE);
+    expect(calculateKnowledgePmcPrice({ ...roundingInput, discountBps: 2 })).toMatchObject({ discount: { amountPaise: 1 }, totalPaise: 2_502, finalVendorChargesPaise: 2_274 });
   });
 
   it.each([999, 2_001, 1_525.5, NaN, Infinity])("rejects invalid PMC margin %s", (pmcMarginBps) => {
     expect(() => calculateKnowledgePmcPrice({ ...input, pmcMarginBps })).toThrow("PMC margin must be between 10% and 20%");
   });
 
-  it.each([-1, 1.5, NaN, Infinity])("rejects malformed PMC discount %s", (discountBps) => {
-    expect(() => calculateKnowledgePmcPrice({ ...input, discountBps })).toThrow("non-negative PMC discount");
+  it.each([-1, 1.5, 10_001, Number.MAX_SAFE_INTEGER + 1, NaN, Infinity])("rejects invalid PMC discount %s", (discountBps) => {
+    expect(() => calculateKnowledgePmcPrice({ ...input, discountBps })).toThrow(KNOWLEDGE_CUSTOM_DISCOUNT_MESSAGE);
   });
 
   it("rejects malformed source values and unsafe results", () => {
@@ -181,8 +192,10 @@ describe("PMC simulator arithmetic", () => {
 describe("PMC preview boundaries", () => {
   it("accepts only the independent PMC request and bounded discounts at the route schema", () => {
     expect(aiEstimatorKnowledgePreviewSchema.parse(previewInput)).toEqual(previewInput);
-    expect(aiEstimatorKnowledgePreviewSchema.parse({ ...previewInput, modeCalculationDiscountBps: 455 }))
-      .toEqual({ ...previewInput, modeCalculationDiscountBps: 455 });
+    for (const modeCalculationDiscountBps of [0, 1, 455, 456, 2_000, 5_000, 10_000]) {
+      const request = { ...previewInput, pmcCalculation: { ...settings, pmcMarginBps: 1_000 }, modeCalculationDiscountBps };
+      expect(aiEstimatorKnowledgePreviewSchema.parse(request)).toEqual(request);
+    }
     const invalidRequests = [
       { ...previewInput, quantity: undefined }, { ...previewInput, quantity: null },
       { ...previewInput, quantity: 2 }, { ...previewInput, pmcCalculation: null },
@@ -190,17 +203,17 @@ describe("PMC preview boundaries", () => {
       { ...previewInput, inHouseCalculation: { labor: execution, material: execution } },
       { ...previewInput, modeCalculationMarkupBasis: "starting" },
       { ...previewInput, modeCalculationMarkupBasis: "minimum" },
-      { ...previewInput, modeCalculationDiscountBps: 456 },
+      { ...previewInput, modeCalculationDiscountBps: 10_001 },
       ...[-1, 1.5, null, "5"].map((discount) => ({ ...previewInput, modeCalculationDiscountBps: discount })),
       ...[999, 2_001, 1_500.5, null, "15", undefined].map((pmcMarginBps) => ({ ...previewInput, pmcCalculation: { ...settings, pmcMarginBps } })),
       ...[{ baseRatePaise: -1 }, { baseRatePaise: 1.5 }, { lowQuantityLimit: "-1" }, { impactBps: -1 }, { startingMarkupBps: 3_500 }]
         .map((patch) => ({ ...previewInput, pmcCalculation: { ...settings, ...patch } }))
     ];
     for (const request of invalidRequests) expect(aiEstimatorKnowledgePreviewSchema.safeParse(request).success).toBe(false);
-    const excessiveDiscount = aiEstimatorKnowledgePreviewSchema.safeParse({ ...previewInput, modeCalculationDiscountBps: 456 });
+    const excessiveDiscount = aiEstimatorKnowledgePreviewSchema.safeParse({ ...previewInput, modeCalculationDiscountBps: 10_001 });
     expect(excessiveDiscount.success).toBe(false);
     if (!excessiveDiscount.success) expect(excessiveDiscount.error.issues).toContainEqual(expect.objectContaining({
-      path: ["modeCalculationDiscountBps"], message: KNOWLEDGE_PMC_DISCOUNT_LIMIT_MESSAGE
+      path: ["modeCalculationDiscountBps"], message: KNOWLEDGE_CUSTOM_DISCOUNT_MESSAGE
     }));
   });
 
@@ -211,6 +224,15 @@ describe("PMC preview boundaries", () => {
       { modeCalculationMarkupBasis: "starting" }, { modeCalculationMarkupBasis: "minimum" }
     ]) {
       expect(() => calculateKnowledgePreview({ ...previewInput, ...patch } as unknown as CalculateKnowledgePreviewInput)).toThrow();
+    }
+  });
+
+  it("validates custom discount bounds even for direct preview domain callers", () => {
+    for (const modeCalculationDiscountBps of [0, 456, 2_000, 5_000, 10_000]) {
+      expect(() => calculateKnowledgePreview({ ...previewInput, modeCalculationDiscountBps })).not.toThrow();
+    }
+    for (const modeCalculationDiscountBps of [-1, 1.5, 10_001, NaN, Infinity]) {
+      expect(() => calculateKnowledgePreview({ ...previewInput, modeCalculationDiscountBps })).toThrow(KNOWLEDGE_CUSTOM_DISCOUNT_MESSAGE);
     }
   });
 
@@ -246,15 +268,25 @@ describe("PMC preview boundaries", () => {
       { pmcCalculation: { ...settings, pmcMarginBps: 2_001 } },
       { pmcCalculation: { ...settings, lowQuantityLimit: null } },
       { pmcCalculation: { ...settings, impactBps: KNOWLEDGE_PMC_MAX_IMPACT_BPS + 1 } },
-      { modeCalculationDiscountBps: -1 }, { modeCalculationDiscountBps: 1.5 }, { modeCalculationDiscountBps: 456 }
+      { modeCalculationDiscountBps: -1 }, { modeCalculationDiscountBps: 1.5 }, { modeCalculationDiscountBps: 10_001 }
     ]) {
       await expect(service.preview(actor, { ...previewInput, ...patch } as unknown as CalculateKnowledgePreviewInput))
         .rejects.toMatchObject({ status: 400, code: "VALIDATION_ERROR" });
     }
+    await expect(service.preview(actor, { ...previewInput, modeCalculationDiscountBps: 10_001 }))
+      .rejects.toMatchObject({ message: KNOWLEDGE_CUSTOM_DISCOUNT_MESSAGE });
+  });
+
+  it("returns custom discounts and a signed residual through the service", async () => {
+    const service = createAiEstimatorKnowledgeContextService({ actorGuard: {
+      requireReadActor: vi.fn().mockResolvedValue({ id: actor.id, role: actor.role }), requireMutationActor: vi.fn()
+    } });
     await expect(service.preview(actor, { ...previewInput, modeCalculationDiscountBps: 456 }))
-      .rejects.toMatchObject({ message: KNOWLEDGE_PMC_DISCOUNT_LIMIT_MESSAGE });
+      .resolves.toMatchObject({ pmcCalculation: { totalPaise: 38_190 } });
+    await expect(service.preview(actor, { ...previewInput, modeCalculationDiscountBps: 10_000 }))
+      .resolves.toMatchObject({ pmcCalculation: { totalPaise: 0, pmcMarginAmountPaise: 5_295, finalVendorChargesPaise: -5_295 } });
     await expect(service.preview(actor, { quantity: "1", quantityScale: 0, pmcCalculation: {
       baseRatePaise: 2_275, lowQuantityLimit: "0", pmcMarginBps: 1_003
-    }, modeCalculationDiscountBps: 2 })).rejects.toMatchObject({ status: 400, message: KNOWLEDGE_PMC_DISCOUNT_LIMIT_MESSAGE });
+    }, modeCalculationDiscountBps: 2 })).resolves.toMatchObject({ pmcCalculation: { totalPaise: 2_502 } });
   });
 });

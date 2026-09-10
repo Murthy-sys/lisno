@@ -40,7 +40,7 @@ describe("shared Mode paragraph", () => {
     expect(screen.getAllByRole("button", { name: "Edit Mode paragraph" })).toHaveLength(1);
     await user.click(screen.getByRole("checkbox", { name: "PMC" }));
     expect(screen.getByText(expected)).toBeVisible();
-    await user.click(screen.getByRole("radio", { name: "In-house" }));
+    await user.click(screen.getByRole("checkbox", { name: "In-house" }));
     expect(screen.getByText(expected)).toBeVisible();
     await user.click(screen.getByRole("checkbox", { name: "Execution" }));
     expect(screen.getByText(expected)).not.toBeVisible();

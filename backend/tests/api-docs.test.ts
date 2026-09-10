@@ -362,12 +362,31 @@ describe("OpenAPI and Swagger UI", () => {
     expect(componentSchemas().KnowledgePmcCalculationPreview).toMatchObject({
       required: expect.arrayContaining(["baseAmountPaise", "lowQuantityImpactAmountPaise", "pmcMarginBps", "pmcMarginAmountPaise", "totalBeforeDiscountPaise", "totalPaise", "finalVendorChargesPaise"]),
       properties: { pmcMarginAmountPaise: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
-        finalVendorChargesPaise: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER } }
+        finalVendorChargesPaise: { type: "integer", minimum: -Number.MAX_SAFE_INTEGER, maximum: Number.MAX_SAFE_INTEGER },
+        totalPaise: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
+        discount: { properties: { rateBps: { type: "integer", minimum: 0, maximum: 10_000 } } } }
     });
     expect(componentSchemas().KnowledgePmcCalculationPreview).not.toHaveProperty("properties.effectiveMarginBps");
     expect(componentSchemas().KnowledgePmcCalculationPreview).not.toHaveProperty("properties.discount.properties.effectiveMarginBps");
     expect(componentSchemas().KnowledgePmcCalculationPreview).not.toHaveProperty("properties.additionalLowQuantityImpactBps");
     expect(componentSchemas().KnowledgePmcCalculationPreview).not.toHaveProperty("properties.additionalLowQuantityImpactAmountPaise");
+    expect(previewRequest.properties.subVendorCalculation).toMatchObject({ $ref: "#/components/schemas/KnowledgeSubVendorCalculationSettings" });
+    expect(previewResponse.properties.subVendorCalculation).toEqual({ $ref: "#/components/schemas/KnowledgeSubVendorCalculationPreview" });
+    expect(componentSchemas().KnowledgeSubVendorCalculationSettings).toMatchObject({
+      additionalProperties: false,
+      required: ["baseRatePaise", "lowQuantityLimit", "subVendorMarginBps"],
+      properties: { subVendorMarginBps: { type: "integer", minimum: 1_000, maximum: 2_000 } }
+    });
+    expect(componentSchemas().KnowledgeSubVendorCalculationSettings).not.toHaveProperty("properties.pmcMarginBps");
+    expect(componentSchemas().KnowledgeSubVendorCalculationPreview).toMatchObject({
+      additionalProperties: false,
+      required: expect.arrayContaining(["baseAmountPaise", "lowQuantityImpactAmountPaise", "subVendorMarginBps", "subVendorMarginAmountPaise", "totalBeforeDiscountPaise", "totalPaise", "finalVendorChargesPaise"]),
+      properties: { subVendorMarginAmountPaise: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
+        finalVendorChargesPaise: { type: "integer", minimum: -Number.MAX_SAFE_INTEGER, maximum: Number.MAX_SAFE_INTEGER },
+        totalPaise: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
+        discount: { properties: { rateBps: { type: "integer", minimum: 0, maximum: 10_000 } } } }
+    });
+    expect(componentSchemas().KnowledgeSubVendorCalculationPreview).not.toHaveProperty("properties.pmcMarginAmountPaise");
     expect(contextRequest.additionalProperties).toBe(false);
     expect(contextRequest.required).toEqual(["mainBasketId", "mainLineId"]);
     expect(contextRequest.properties).not.toHaveProperty("name");

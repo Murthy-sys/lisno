@@ -71,7 +71,7 @@ const MODE_SECTION_LABELS = {
 } as const satisfies Readonly<Record<ModeSectionKey, string>>;
 
 const PENDING_DESCRIPTION_MESSAGE = "Save or cancel the paragraph before saving Mode.";
-const ADVANCED_EDITABLE_FIELDS = ["modeConfigurations", "modeDescription", "modeCalculation", "pmcMarginBps"] as const;
+const ADVANCED_EDITABLE_FIELDS = ["modeConfigurations", "modeDescription", "modeCalculation", "pmcMarginBps", "subVendorMarginBps"] as const;
 type AdvancedEditableField = (typeof ADVANCED_EDITABLE_FIELDS)[number];
 
 interface ModeDraft {
@@ -626,12 +626,13 @@ export const KnowledgeModePanel = forwardRef<
             material={modeCalculationsForPayload(drafts.advanced.payload).in_house_material}
             valid={calculationValidity.in_house_labor && calculationValidity.in_house_material}
           />}
-          calculation={(scope, active, pmcMarginControl) => <KnowledgeModeCalculationEditor
+          calculation={(scope, active, marginControl) => <KnowledgeModeCalculationEditor
             key={`${uomScopeKey}-${descriptionResetVersion}-${scope}`}
             active={active}
             scope={scope}
             pmcMarginBps={scope === "pmc" ? drafts.advanced.payload.pmcMarginBps : undefined}
-            pmcMarginControl={pmcMarginControl}
+            subVendorMarginBps={scope === "sub_vendor" ? drafts.advanced.payload.subVendorMarginBps : undefined}
+            marginControl={marginControl}
             contextLabel={MODE_CALCULATION_LABELS[scope]}
             issuePath={`modeCalculations.${scope}`}
             value={modeCalculationsForPayload(drafts.advanced.payload)[scope]}

@@ -415,12 +415,26 @@ export interface KnowledgePmcCalculationPreview {
   pmcMarginBps: KnowledgeBasisPoints;
   pmcMarginAmountPaise: KnowledgePaise;
   totalBeforeDiscountPaise: KnowledgePaise;
+  /** Signed remainder after the configured margin; can be negative for a large custom discount. */
   finalVendorChargesPaise: KnowledgePaise;
   discount?: {
     rateBps: KnowledgeBasisPoints;
     totalBeforeDiscountPaise: KnowledgePaise;
     amountPaise: KnowledgePaise;
   };
+}
+
+/** Independent Sub-Vendor margin settings; shares PMC's pricing arithmetic. */
+export interface KnowledgeSubVendorCalculationSettings {
+  baseRatePaise: KnowledgePaise;
+  lowQuantityLimit: KnowledgeCanonicalDecimal;
+  impactBps?: KnowledgeBasisPoints;
+  subVendorMarginBps: KnowledgeBasisPoints;
+}
+
+export interface KnowledgeSubVendorCalculationPreview extends Omit<KnowledgePmcCalculationPreview, "pmcMarginBps" | "pmcMarginAmountPaise"> {
+  subVendorMarginBps: KnowledgeBasisPoints;
+  subVendorMarginAmountPaise: KnowledgePaise;
 }
 
 export interface KnowledgeInHouseCalculationSettings {
@@ -438,6 +452,7 @@ export interface KnowledgePreview {
   modeCalculation?: KnowledgeModeCalculationPreview;
   inHouseCalculation?: KnowledgeInHouseCalculationPreview;
   pmcCalculation?: KnowledgePmcCalculationPreview;
+  subVendorCalculation?: KnowledgeSubVendorCalculationPreview;
   formulaVersion: "knowledge-preview-v1";
   effectivePriceVersionId: KnowledgeStableId | null;
   taxVersionId: KnowledgeStableId | null;

@@ -86,6 +86,20 @@ describe("AI estimator knowledge validation", () => {
       .toContainEqual(expect.objectContaining({ path: "payload.pmcMarkupBps", code: "INVALID_BPS" }));
   });
 
+  it("validates Sub-Vendor margin independently without requiring or inheriting PMC margin", () => {
+    expect(validateKnowledgeSectionPayload("advanced", {})).toEqual([]);
+    for (const subVendorMarginBps of [null, 1_000, 1_001, 1_275, 2_000]) {
+      expect(validateKnowledgeSectionPayload("advanced", { subVendorMarginBps })).toEqual([]);
+      expect(validateKnowledgeSectionPayload("advanced", { pmcMarginBps: 1_900, subVendorMarginBps })).toEqual([]);
+    }
+    for (const subVendorMarginBps of [-1, 0, 999, 2_001, 1_250.5, "15", {}, true, Number.MAX_SAFE_INTEGER]) {
+      expect(validateKnowledgeSectionPayload("advanced", { pmcMarginBps: 1_500, subVendorMarginBps }))
+        .toContainEqual(expect.objectContaining({ path: "payload.subVendorMarginBps" }));
+    }
+    expect(validateKnowledgeSectionPayload("pricing", { subVendorMarginBps: 1_500 }))
+      .toContainEqual(expect.objectContaining({ path: "payload.subVendorMarginBps", code: "UNKNOWN_FIELD" }));
+  });
+
   it("accepts optional shared Mode calculation inputs and rejects authored totals or invalid settings", () => {
     const modeCalculation = { baseRatePaise: 150_000, lowQuantityLimit: "15", minimumMarkupBps: 2_500, startingMarkupBps: 3_500 };
     for (const value of [null, modeCalculation, { ...modeCalculation, impactBps: 0 }, { ...modeCalculation, impactBps: 1_275 }]) {

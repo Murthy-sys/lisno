@@ -822,6 +822,26 @@ describe("AI Estimator Knowledge HTTP routes", () => {
     expect(testServices.item.updateSection).toHaveBeenCalledTimes(3);
   });
 
+  it("validates and passes through an independent Sub-Vendor margin", async () => {
+    const testServices = services();
+    const send = (subVendorMarginBps: unknown) => request(appFor(testServices))
+      .put("/api/v1/admin/ai-estimator-knowledge/main-lines/line-1/revisions/revision-1/sections/advanced")
+      .set("Authorization", "Bearer super-admin-token")
+      .send({ expectedVersion: 3, expectedAggregateVersion: 7, payload: { pmcMarginBps: 1_825, subVendorMarginBps } });
+    for (const subVendorMarginBps of [null, 1_000, 1_250, 2_000]) {
+      expect((await send(subVendorMarginBps)).status).toBe(200);
+      expect(testServices.item.updateSection).toHaveBeenLastCalledWith(superAdmin, "line-1", "revision-1", "advanced", {
+        expectedVersion: 3, expectedAggregateVersion: 7, payload: { pmcMarginBps: 1_825, subVendorMarginBps }
+      });
+    }
+    for (const value of [999, 2_001, 1_000.5, "15"]) {
+      const rejected = await send(value);
+      expect(rejected.status).toBe(400);
+      expect(rejected.body.error.fields).toMatchObject({ "payload.subVendorMarginBps": expect.any(String) });
+    }
+    expect(testServices.item.updateSection).toHaveBeenCalledTimes(4);
+  });
+
   it("accepts strict mode configurations and rejects malformed fields after authorization", async () => {
     const testServices = services();
     const input = {

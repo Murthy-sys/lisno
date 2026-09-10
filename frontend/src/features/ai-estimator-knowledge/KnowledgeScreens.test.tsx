@@ -257,11 +257,10 @@ async function findPricingSpecificationName() {
   return within(specifications).getByRole("textbox", { name: "Specification name" });
 }
 
-async function addModeComponent(user: ReturnType<typeof userEvent.setup>, label = "Execution mark") {
-  const execution = await screen.findByRole("checkbox", { name: "Execution" });
-  if (!(execution as HTMLInputElement).checked) await user.click(execution);
-  await user.click(await screen.findByRole("button", { name: "Add component" }));
-  await user.type(screen.getByRole("textbox", { name: "Component label" }), label);
+async function editPmcMargin(user: ReturnType<typeof userEvent.setup>) {
+  const margin = await screen.findByRole("spinbutton", { name: "PMC Margin" });
+  await user.clear(margin);
+  await user.type(margin, "15");
 }
 
 function mockConfiguredModeSections(
@@ -1572,14 +1571,14 @@ describe("AI estimator knowledge screens", () => {
     const specificationName = await findPricingSpecificationName();
     await user.clear(specificationName);
     await user.type(specificationName, "Updated specification");
-    await addModeComponent(user);
+    await editPmcMargin(user);
     await user.click(screen.getAllByRole("button", { name: "Save Mode" })[0]);
 
     await waitFor(() => expect(knowledgeApi.updateKnowledgeSection).toHaveBeenCalledTimes(2));
     expect(vi.mocked(knowledgeApi.updateKnowledgeSection).mock.calls.map((call) => call[2])).toEqual(["advanced", "pricing"]);
     expect(knowledgeApi.updateKnowledgeSection).toHaveBeenNthCalledWith(1, "line-1", "revision-1", "advanced", expect.objectContaining({
       expectedVersion: 2, expectedAggregateVersion: 4, applicability: "configured",
-      payload: { modeConfigurations: [expect.objectContaining({ modeKind: "execution", executionSource: "sub_vendor", fields: [expect.objectContaining({ label: "Execution mark" })] })] }
+      payload: { pmcMarginBps: 1500 }
     }));
     expect(knowledgeApi.updateKnowledgeSection).toHaveBeenNthCalledWith(2, "line-1", "revision-1", "pricing", {
       expectedVersion: 2, expectedAggregateVersion: 5, applicability: "configured",
@@ -1631,7 +1630,7 @@ describe("AI estimator knowledge screens", () => {
     const specificationName = await findPricingSpecificationName();
     await user.clear(specificationName);
     await user.type(specificationName, "Unsaved specification");
-    await addModeComponent(user);
+    await editPmcMargin(user);
     await user.click(screen.getAllByRole("button", { name: "Save Mode" })[0]);
 
     const partialFailure = await screen.findByRole("alert");
@@ -1682,7 +1681,7 @@ describe("AI estimator knowledge screens", () => {
     const specificationName = await findPricingSpecificationName();
     await user.clear(specificationName);
     await user.type(specificationName, "My local specification");
-    await addModeComponent(user);
+    await editPmcMargin(user);
     await user.click(screen.getAllByRole("button", { name: "Save Mode" })[0]);
 
     const conflict = await screen.findByRole("alertdialog", { name: "This section changed elsewhere" });
@@ -1692,11 +1691,11 @@ describe("AI estimator knowledge screens", () => {
     expect(pricingReads).toBeGreaterThan(1);
     expect(knowledgeApi.getKnowledgeItem).toHaveBeenCalled();
     expect(specificationName).toHaveValue("My local specification");
-    expect(screen.getByRole("textbox", { name: "Component label" })).toHaveValue("Execution mark");
+    expect(screen.getByRole("spinbutton", { name: "PMC Margin" })).toHaveValue(15);
 
     await user.click(within(conflict).getByRole("button", { name: "Discard local changes" }));
     expect(await findPricingSpecificationName()).toHaveValue("Latest server specification");
-    expect(screen.getByRole("textbox", { name: "Component label" })).toHaveValue("Execution mark");
+    expect(screen.getByRole("spinbutton", { name: "PMC Margin" })).toHaveValue(15);
 
     expect(screen.getByRole("button", { name: "Save Mode" })).toBeDisabled();
     expect(knowledgeApi.updateKnowledgeSection).toHaveBeenCalledTimes(2);
@@ -1806,7 +1805,7 @@ describe("AI estimator knowledge screens", () => {
     const specificationName = await findPricingSpecificationName();
     await user.clear(specificationName);
     await user.type(specificationName, "Local specification");
-    await addModeComponent(user);
+    await editPmcMargin(user);
     await user.click(screen.getByRole("tab", { name: "Recommendation & Exclusions" }));
     const guard = screen.getByRole("alertdialog", { name: "Save changes before leaving?" });
     await user.click(within(guard).getByRole("button", { name: "Discard changes" }));
@@ -1814,7 +1813,7 @@ describe("AI estimator knowledge screens", () => {
     expect(await screen.findByRole("tabpanel", { name: "Recommendation & Exclusions" })).toBeVisible();
     await user.click(screen.getByRole("tab", { name: "Mode" }));
     expect(await findPricingSpecificationName()).toHaveValue("Server specification");
-    expect(screen.queryByRole("textbox", { name: "Component label" })).not.toBeInTheDocument();
+    expect(screen.getByRole("spinbutton", { name: "PMC Margin" })).toHaveValue(null);
     expect(knowledgeApi.updateKnowledgeSection).not.toHaveBeenCalled();
   });
 
@@ -1876,6 +1875,7 @@ describe("AI estimator knowledge screens", () => {
     expect(screen.queryByRole("combobox", { name: "Priority" })).not.toBeInTheDocument();
     expect(within(screen.getByRole("region", { name: "Specifications" })).queryByRole("textbox", { name: "Technical description" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Add component" })).not.toBeInTheDocument();
+    expect(screen.getByRole("spinbutton", { name: "PMC Margin" })).toBeDisabled();
     expect(screen.queryByRole("button", { name: "Add UOM" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Save Mode" })).not.toBeInTheDocument();
     await expectNoAutomatedAccessibilityViolations();
