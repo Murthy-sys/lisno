@@ -106,7 +106,12 @@ createRoot(document.getElementById("root")!).render(
   <QueryClientProvider client={queryClient}>
     <BrowserRouter>
       <FeedbackProvider>
-        <main className="app-main"><SuperAdminDashboardPage /></main>
+        <div className="ui-app-shell" data-role="super_admin">
+          <aside className="ui-sidebar-rail" aria-hidden="true" />
+          <main className="ui-workspace" data-role="super_admin">
+            <SuperAdminDashboardPage />
+          </main>
+        </div>
       </FeedbackProvider>
     </BrowserRouter>
   </QueryClientProvider>

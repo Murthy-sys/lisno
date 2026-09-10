@@ -1,4 +1,4 @@
-import { useMemo, useState, type KeyboardEvent } from "react";
+import { useId, useMemo, useState, type KeyboardEvent } from "react";
 
 import { barPath, clamp, compactNumber, labelFits, linearScale, niceTicks } from "./chartScale";
 import { CHART_AXIS, CHART_GRID, ordinalColor, seriesColor } from "./chartTokens";
@@ -56,6 +56,7 @@ export function CategoryBarChart({
 }: CategoryBarChartProps) {
   const { ref, width } = useChartWidth(600);
   const [active, setActive] = useState<number | null>(null);
+  const gradientId = useId();
 
   const labelGutter = clamp(
     Math.round(Math.max(...data.map((datum) => datum.label.length), 6) * 6.6) + 8,
@@ -132,6 +133,15 @@ export function CategoryBarChart({
           onBlur={() => setActive(null)}
           onPointerLeave={() => setActive(null)}
         >
+          <defs>
+            {bars.map((bar, index) => (
+              <linearGradient key={bar.key} id={`${gradientId}-${index}`} x1="0" y1="0" x2="1" y2="0">
+                <stop offset="0%" stopColor={bar.color} />
+                <stop offset="100%" stopColor={bar.color} stopOpacity={0.72} />
+              </linearGradient>
+            ))}
+          </defs>
+
           {ticks.map((tick) => (
             <g key={tick}>
               <line
@@ -187,13 +197,13 @@ export function CategoryBarChart({
                   y={top}
                   width={Math.max(1, plotWidth)}
                   height={thickness}
-                  rx={4}
+                  rx={thickness / 2}
                   fill="var(--chart-track)"
                   opacity={active === index ? 0.9 : 0.55}
                 />
                 <path
-                  d={barPath(labelGutter, top, barWidth, thickness, 4, "horizontal")}
-                  fill={bar.color}
+                  d={barPath(labelGutter, top, barWidth, thickness, thickness / 2, "horizontal")}
+                  fill={`url(#${gradientId}-${index})`}
                   opacity={active === null || active === index ? 1 : 0.55}
                 />
                 <text

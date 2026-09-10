@@ -11,23 +11,29 @@ import { MetricCard } from "../../../components/ui/MetricCard";
 import { PageHeader } from "../../../components/ui/PageHeader";
 import { PageState } from "../../../components/ui/PageState";
 import { SectionState } from "../../../components/ui/SectionState";
+import { SelectMenu } from "../../../components/ui/SelectMenu";
 import { Surface } from "../../../components/ui/Surface";
+import { CoverageChart } from "./dashboardCharts";
 import { DashboardModuleCharts } from "./DashboardModuleCharts";
 import { DashboardNavigation } from "./DashboardNavigation";
 import { DashboardOverview } from "./DashboardOverview";
 import { DashboardProjectDrilldown } from "./DashboardProjectDrilldown";
+import {
+  dashboardMockOverview,
+  dashboardMockProjectsPage,
+  dashboardMockWorkforcePage,
+  isDashboardMockPreviewEnabled
+} from "./dashboardMockPreview"; // TEMPORARY — remove before raising the PR
 import { DashboardWorkforceDrilldown } from "./DashboardWorkforceDrilldown";
 import {
   formatBps,
   dashboardMetricPresentation,
-  dashboardMetricUnavailableReason,
   formatDashboardRatio,
   formatDashboardTimestamp,
   formatDays,
   formatNullablePaise,
   formatPaise,
   humanize,
-  isDashboardMetricUnavailable,
   ratioDetail
 } from "./dashboardPresentation";
 import {
@@ -56,6 +62,11 @@ import "./super-admin-dashboard.css";
 const PROJECT_STATUSES = ["planning", "active", "on_hold", "completed"] as const;
 const WORKER_ROLES = ["worker_electrician", "worker_plumber", "worker_carpenter", "worker_painter", "worker_civil", "worker_other"] as const;
 const PROJECT_TABS = ["projects", "estimation", "design", "procurement", "finance", "execution", "risk"] as const;
+const PERIOD_OPTIONS = [
+  { value: "7", label: "Last 7 days" },
+  { value: "30", label: "Last 30 days" },
+  { value: "90", label: "Last 90 days" }
+];
 const hasValue = <T extends readonly string[]>(values: T, value: string | null): value is T[number] =>
   value !== null && (values as readonly string[]).includes(value);
 
@@ -104,9 +115,7 @@ function workforceFiltersFromUrl(params: URLSearchParams): DashboardWorkforceFil
 }
 
 function CoverageDetail({ eligible, tracked, unavailable, module, dataQuality }: { eligible: number; tracked: number; unavailable: number; module: string; dataQuality: SuperAdminDashboardOverview["dataQuality"] }) {
-  const unavailableKey = [`${module}.eligibleProjects`, `${module}.trackedProjects`, `${module}.unavailableProjects`]
-    .find((key) => isDashboardMetricUnavailable(dataQuality, key));
-  return <p className="dashboard-coverage">{unavailableKey ? <><strong>Not available.</strong> {dashboardMetricUnavailableReason(dataQuality, unavailableKey)}</> : <>{eligible} eligible · {tracked} tracked · {unavailable} unavailable</>}</p>;
+  return <CoverageChart eligible={eligible} tracked={tracked} unavailable={unavailable} module={module} dataQuality={dataQuality} />;
 }
 
 const metricKeyOverrides: Record<string, string> = {
@@ -198,79 +207,81 @@ function tabMetricKey(tab: Exclude<DashboardTab, "overview">, label: string) {
   return `${tab}.${suffix}`;
 }
 
+type MetricTone = "neutral" | "active" | "hold" | "done" | "overdue" | "risk";
+
 function TabSummary({ tab, data }: { tab: Exclude<DashboardTab, "overview">; data: SuperAdminDashboardOverview }) {
-  let cards: Array<{ label: string; value: string | number; detail?: string }> = [];
+  let cards: Array<{ label: string; value: string | number; detail?: string; tone?: MetricTone }> = [];
   let coverage: { eligible: number; tracked: number; unavailable: number } | null = null;
   if (tab === "projects") cards = [
-    { label: "All projects", value: data.projects.total }, { label: "Created in period", value: data.projects.createdInPeriod },
-    { label: "Planning", value: data.projects.planning }, { label: "Active", value: data.projects.active },
-    { label: "On hold", value: data.projects.onHold }, { label: "Completed", value: data.projects.completed },
-    { label: "Live overdue", value: data.projects.liveOverdue }, { label: "Completed late", value: data.projects.completedLate },
+    { label: "All projects", value: data.projects.total, tone: "neutral" }, { label: "Created in period", value: data.projects.createdInPeriod, tone: "neutral" },
+    { label: "Planning", value: data.projects.planning, tone: "neutral" }, { label: "Active", value: data.projects.active, tone: "active" },
+    { label: "On hold", value: data.projects.onHold, tone: "hold" }, { label: "Completed", value: data.projects.completed, tone: "done" },
+    { label: "Live overdue", value: data.projects.liveOverdue, tone: "overdue" }, { label: "Completed late", value: data.projects.completedLate, tone: "overdue" },
     { label: "Completion rate", value: formatDashboardRatio(data.projects.completionRate), detail: ratioDetail(data.projects.completionRate, "projects") },
-    { label: "Unique projects at risk", value: data.projects.atRisk }
+    { label: "Unique projects at risk", value: data.projects.atRisk, tone: "risk" }
   ];
   if (tab === "estimation") {
     coverage = { eligible: data.estimation.eligibleProjects, tracked: data.estimation.trackedProjects, unavailable: data.estimation.unavailableProjects };
     cards = [
-      { label: "No estimate", value: data.estimation.noEstimate }, { label: "Draft / internal", value: data.estimation.draftInternal },
-      { label: "Ready to send", value: data.estimation.readyToSend }, { label: "Awaiting Client", value: data.estimation.awaitingClient },
-      { label: "Changes requested", value: data.estimation.changesRequested }, { label: "Client approved", value: data.estimation.clientApproved },
-      { label: "Approved net revenue, excluding GST", value: formatPaise(data.estimation.approvedSubtotalPaise) },
-      { label: "Client-approved contract value, including GST", value: formatPaise(data.estimation.approvedContractTotalPaise) },
-      { label: "Median waiting age", value: formatDays(data.estimation.medianWaitingAgeDays) },
-      { label: "Oldest waiting age", value: formatDays(data.estimation.oldestWaitingAgeDays) }
+      { label: "No estimate", value: data.estimation.noEstimate, tone: "neutral" }, { label: "Draft / internal", value: data.estimation.draftInternal, tone: "neutral" },
+      { label: "Ready to send", value: data.estimation.readyToSend, tone: "active" }, { label: "Awaiting Client", value: data.estimation.awaitingClient, tone: "hold" },
+      { label: "Changes requested", value: data.estimation.changesRequested, tone: "overdue" }, { label: "Client approved", value: data.estimation.clientApproved, tone: "done" },
+      { label: "Approved net revenue, excluding GST", value: formatPaise(data.estimation.approvedSubtotalPaise), tone: "neutral" },
+      { label: "Client-approved contract value, including GST", value: formatPaise(data.estimation.approvedContractTotalPaise), tone: "neutral" },
+      { label: "Median waiting age", value: formatDays(data.estimation.medianWaitingAgeDays), tone: "neutral" },
+      { label: "Oldest waiting age", value: formatDays(data.estimation.oldestWaitingAgeDays), tone: "hold" }
     ];
   }
   if (tab === "design") {
     coverage = { eligible: data.design.eligibleProjects, tracked: data.design.trackedProjects, unavailable: data.design.unavailableProjects };
     cards = [
-      { label: "Pending assignment", value: data.design.pendingAssignment }, { label: "Assigned", value: data.design.assigned },
-      { label: "In progress", value: data.design.inProgress }, { label: "Ready for Client", value: data.design.readyForClient },
-      { label: "Changes requested", value: data.design.changesRequested }, { label: "Approved", value: data.design.approved },
+      { label: "Pending assignment", value: data.design.pendingAssignment, tone: "hold" }, { label: "Assigned", value: data.design.assigned, tone: "neutral" },
+      { label: "In progress", value: data.design.inProgress, tone: "active" }, { label: "Ready for Client", value: data.design.readyForClient, tone: "active" },
+      { label: "Changes requested", value: data.design.changesRequested, tone: "overdue" }, { label: "Approved", value: data.design.approved, tone: "done" },
       { label: "Approval rate", value: formatDashboardRatio(data.design.approvalRate), detail: ratioDetail(data.design.approvalRate, "eligible plans") },
-      { label: "Oldest pending review", value: formatDays(data.design.oldestPendingReviewAgeDays) },
-      { label: "Failed deliveries", value: data.design.failedDeliveryCount }, { label: "Disabled deliveries", value: data.design.disabledDeliveryCount }
+      { label: "Oldest pending review", value: formatDays(data.design.oldestPendingReviewAgeDays), tone: "hold" },
+      { label: "Failed deliveries", value: data.design.failedDeliveryCount, tone: "risk" }, { label: "Disabled deliveries", value: data.design.disabledDeliveryCount, tone: "overdue" }
     ];
   }
   if (tab === "procurement") {
     coverage = { eligible: data.procurement.eligibleProjects, tracked: data.procurement.trackedProjects, unavailable: data.procurement.unavailableProjects };
     cards = [
-      { label: "Not started", value: data.procurement.notStarted }, { label: "Open", value: data.procurement.open },
-      { label: "In progress", value: data.procurement.inProgress }, { label: "Completed", value: data.procurement.completed },
+      { label: "Not started", value: data.procurement.notStarted, tone: "neutral" }, { label: "Open", value: data.procurement.open, tone: "hold" },
+      { label: "In progress", value: data.procurement.inProgress, tone: "active" }, { label: "Completed", value: data.procurement.completed, tone: "done" },
       { label: "Average persisted progress", value: formatDashboardRatio(data.procurement.averageProgress), detail: ratioDetail(data.procurement.averageProgress, "tracked tasks") },
-      { label: "Approved procurement amount", value: formatNullablePaise(data.procurement.plannedAmountPaise) },
-      { label: "Posted procurement spend", value: formatPaise(data.procurement.postedSpendPaise) },
-      { label: "Variance", value: formatNullablePaise(data.procurement.variancePaise) }
+      { label: "Approved procurement amount", value: formatNullablePaise(data.procurement.plannedAmountPaise), tone: "neutral" },
+      { label: "Posted procurement spend", value: formatPaise(data.procurement.postedSpendPaise), tone: "neutral" },
+      { label: "Variance", value: formatNullablePaise(data.procurement.variancePaise), tone: "overdue" }
     ];
   }
   if (tab === "finance") cards = [
-    { label: "Client-approved contract value, including GST", value: formatPaise(data.finance.approvedContractTotalPaise) },
-    { label: "Approved net revenue, excluding GST", value: formatPaise(data.finance.approvedSubtotalPaise) },
-    { label: "GST", value: formatPaise(data.finance.approvedGstPaise) }, { label: "Target profit", value: formatPaise(data.finance.targetProfitPaise) },
-    { label: "Cost budget", value: formatPaise(data.finance.costBudgetPaise) }, { label: "Recorded expenses", value: formatPaise(data.finance.recordedCostPaise) },
-    { label: "Recorded overheads", value: formatPaise(data.finance.overheadPaise) }, { label: "Current profit (live)", value: formatPaise(data.finance.currentProfitPaise) },
-    { label: "Current margin", value: formatBps(data.finance.currentMarginBps) }, { label: "Budget exceptions", value: data.finance.overBudgetProjectCount }
+    { label: "Client-approved contract value, including GST", value: formatPaise(data.finance.approvedContractTotalPaise), tone: "neutral" },
+    { label: "Approved net revenue, excluding GST", value: formatPaise(data.finance.approvedSubtotalPaise), tone: "neutral" },
+    { label: "GST", value: formatPaise(data.finance.approvedGstPaise), tone: "neutral" }, { label: "Target profit", value: formatPaise(data.finance.targetProfitPaise), tone: "neutral" },
+    { label: "Cost budget", value: formatPaise(data.finance.costBudgetPaise), tone: "neutral" }, { label: "Recorded expenses", value: formatPaise(data.finance.recordedCostPaise), tone: "neutral" },
+    { label: "Recorded overheads", value: formatPaise(data.finance.overheadPaise), tone: "neutral" }, { label: "Current profit (live)", value: formatPaise(data.finance.currentProfitPaise), tone: "done" },
+    { label: "Current margin", value: formatBps(data.finance.currentMarginBps), tone: "done" }, { label: "Budget exceptions", value: data.finance.overBudgetProjectCount, tone: "risk" }
   ];
   if (tab === "execution") cards = [
-    { label: "All execution tasks", value: data.execution.total }, { label: "Open", value: data.execution.open },
-    { label: "In progress", value: data.execution.inProgress }, { label: "Completed", value: data.execution.completed },
-    { label: "Completed in period", value: data.execution.completedInPeriod }, { label: "Overdue incomplete", value: data.execution.overdue },
-    { label: "Unassigned", value: data.execution.unassigned }, { label: "Unassigned overdue", value: data.execution.overdueUnassigned },
+    { label: "All execution tasks", value: data.execution.total, tone: "neutral" }, { label: "Open", value: data.execution.open, tone: "hold" },
+    { label: "In progress", value: data.execution.inProgress, tone: "active" }, { label: "Completed", value: data.execution.completed, tone: "done" },
+    { label: "Completed in period", value: data.execution.completedInPeriod, tone: "done" }, { label: "Overdue incomplete", value: data.execution.overdue, tone: "overdue" },
+    { label: "Unassigned", value: data.execution.unassigned, tone: "hold" }, { label: "Unassigned overdue", value: data.execution.overdueUnassigned, tone: "risk" },
     { label: "Weighted progress", value: formatDashboardRatio(data.execution.weightedProgress), detail: `${ratioDetail(data.execution.weightedProgress, "effort units")} · ${data.execution.weightedProgress.fallbackTaskCount} fallback tasks` }
   ];
   if (tab === "workforce") cards = [
-    { label: "Active workers", value: data.workforce.activeWorkers }, { label: "Workers with assignments", value: data.workforce.assignedWorkers },
-    { label: "Unassigned workers", value: data.workforce.unassignedWorkers }, { label: "Active assigned tasks", value: data.workforce.activeAssignedTaskCount },
-    { label: "Active unassigned tasks", value: data.workforce.activeUnassignedTaskCount }, { label: "Tasks completed in period", value: data.workforce.completedInPeriodTaskCount },
+    { label: "Active workers", value: data.workforce.activeWorkers, tone: "active" }, { label: "Workers with assignments", value: data.workforce.assignedWorkers, tone: "done" },
+    { label: "Unassigned workers", value: data.workforce.unassignedWorkers, tone: "hold" }, { label: "Active assigned tasks", value: data.workforce.activeAssignedTaskCount, tone: "neutral" },
+    { label: "Active unassigned tasks", value: data.workforce.activeUnassignedTaskCount, tone: "hold" }, { label: "Tasks completed in period", value: data.workforce.completedInPeriodTaskCount, tone: "done" },
     { label: "Average calculated KPI", value: formatDashboardRatio(data.workforce.averageKpi), detail: ratioDetail(data.workforce.averageKpi, "eligible workers") },
-    { label: "KPI eligible", value: data.workforce.kpiEligibleWorkers }, { label: "No KPI data", value: data.workforce.kpiUnavailableWorkers },
-    { label: "Over capacity", value: data.workforce.capacityAvailable ? (data.workforce.overCapacityWorkers ?? "Not available") : "Not available", detail: data.workforce.capacityAvailable ? undefined : "No authoritative capacity denominator" },
-    { label: "Inactive assignee exceptions", value: data.workforce.inactiveAssigneeTaskCount }
+    { label: "KPI eligible", value: data.workforce.kpiEligibleWorkers, tone: "neutral" }, { label: "No KPI data", value: data.workforce.kpiUnavailableWorkers, tone: "overdue" },
+    { label: "Over capacity", value: data.workforce.capacityAvailable ? (data.workforce.overCapacityWorkers ?? "Not available") : "Not available", detail: data.workforce.capacityAvailable ? undefined : "No authoritative capacity denominator", tone: "overdue" },
+    { label: "Inactive assignee exceptions", value: data.workforce.inactiveAssigneeTaskCount, tone: "risk" }
   ];
   if (tab === "risk") cards = [
-    { label: "Red-risk projects", value: data.risk.projectDistribution.red }, { label: "Yellow-risk projects", value: data.risk.projectDistribution.yellow },
-    { label: "Clear projects", value: data.risk.projectDistribution.green }, { label: "Not tracked", value: data.risk.projectDistribution.gray },
-    { label: "Unique projects at risk", value: data.projects.atRisk }
+    { label: "Red-risk projects", value: data.risk.projectDistribution.red, tone: "risk" }, { label: "Yellow-risk projects", value: data.risk.projectDistribution.yellow, tone: "overdue" },
+    { label: "Clear projects", value: data.risk.projectDistribution.green, tone: "done" }, { label: "Not tracked", value: data.risk.projectDistribution.gray, tone: "neutral" },
+    { label: "Unique projects at risk", value: data.projects.atRisk, tone: "risk" }
   ];
   return <section className="dashboard-tab-summary" aria-label={`${humanize(tab)} summary`}>{coverage ? <CoverageDetail {...coverage} module={tab} dataQuality={data.dataQuality} /> : null}<DashboardModuleCharts tab={tab} data={data} /><div className="dashboard-metric-grid">{cards.map((card) => {
     const presentation = dashboardMetricPresentation(
@@ -279,7 +290,7 @@ function TabSummary({ tab, data }: { tab: Exclude<DashboardTab, "overview">; dat
       card.value,
       card.detail
     );
-    return <MetricCard key={card.label} label={card.label} value={presentation.value} detail={presentation.detail} />;
+    return <MetricCard key={card.label} label={card.label} value={presentation.value} detail={presentation.detail} tone={card.tone} />;
   })}</div></section>;
 }
 
@@ -294,20 +305,25 @@ export function SuperAdminDashboardPage() {
   const panelHeading = useRef<HTMLHeadingElement>(null);
   const [manualRefresh, setManualRefresh] = useState(false);
   const [announcement, setAnnouncement] = useState("");
+  // MOCK PREVIEW — TEMPORARY, remove before raising the PR (see dashboardMockPreview.ts).
   const overview = useQuery({
-    queryKey: dashboardKeys.overview(periodDays), queryFn: () => getSuperAdminDashboardOverview(periodDays),
+    queryKey: dashboardKeys.overview(periodDays),
+    queryFn: () => isDashboardMockPreviewEnabled() ? Promise.resolve(dashboardMockOverview) : getSuperAdminDashboardOverview(periodDays),
     staleTime: 30_000, refetchOnWindowFocus: true
   });
   const projects = useQuery({
-    queryKey: dashboardKeys.projects(periodDays, projectFilters), queryFn: () => getSuperAdminDashboardProjects(periodDays, projectFilters),
+    queryKey: dashboardKeys.projects(periodDays, projectFilters),
+    queryFn: () => isDashboardMockPreviewEnabled() ? Promise.resolve(dashboardMockProjectsPage) : getSuperAdminDashboardProjects(periodDays, projectFilters),
     enabled: PROJECT_TABS.includes(tab as never), staleTime: 30_000,
     refetchOnWindowFocus: true, placeholderData: keepPreviousData
   });
   const workforce = useQuery({
-    queryKey: dashboardKeys.workforce(periodDays, workforceFilters), queryFn: () => getSuperAdminDashboardWorkforce(periodDays, workforceFilters),
+    queryKey: dashboardKeys.workforce(periodDays, workforceFilters),
+    queryFn: () => isDashboardMockPreviewEnabled() ? Promise.resolve(dashboardMockWorkforcePage) : getSuperAdminDashboardWorkforce(periodDays, workforceFilters),
     enabled: tab === "workforce", staleTime: 30_000,
     refetchOnWindowFocus: true, placeholderData: keepPreviousData
   });
+  // END MOCK PREVIEW
 
   const setQuery = (updates: Record<string, string | number | undefined>, replace = false) => {
     const next = new URLSearchParams(params);
@@ -350,9 +366,9 @@ export function SuperAdminDashboardPage() {
 
   return (
     <section className="super-admin-dashboard" aria-labelledby="super-admin-dashboard-title">
-      <PageHeader id="super-admin-dashboard-title" eyebrow="Super Admin command center" title="Organization dashboard" description="Organization-wide metrics and explainable risk. Overview totals are not changed by drill-down filters." metadata={<div className="dashboard-freshness"><span>Updated {formatDashboardTimestamp(data.observedAt)}</span>{refreshing ? <span role="status">Refreshing dashboard…</span> : null}</div>} actions={<><label className="dashboard-period"><span>Period</span><select aria-label="Dashboard period" value={periodDays} onChange={(event) => setQuery({ periodDays: event.target.value, offset: undefined })}><option value="7">Last 7 days</option><option value="30">Last 30 days</option><option value="90">Last 90 days</option></select></label><Button variant="secondary" disabled={manualRefresh} aria-label="Refresh dashboard" onClick={() => void refresh()}><RefreshCw aria-hidden="true" />{manualRefresh ? "Refreshing…" : "Refresh"}</Button></>} />
+      <PageHeader id="super-admin-dashboard-title" eyebrow="Super Admin command center" title="Organization dashboard" description="Organization-wide metrics and explainable risk. Overview totals are not changed by drill-down filters." metadata={<div className="dashboard-freshness"><span>Updated {formatDashboardTimestamp(data.observedAt)}</span>{refreshing ? <span role="status">Refreshing dashboard…</span> : null}</div>} actions={<><SelectMenu id="dashboard-period" className="dashboard-period" label="Period" value={String(periodDays)} options={PERIOD_OPTIONS} onChange={(value) => setQuery({ periodDays: value, offset: undefined })} /><Button variant="secondary" disabled={manualRefresh} aria-label="Refresh dashboard" onClick={() => void refresh()}><RefreshCw aria-hidden="true" />{manualRefresh ? "Refreshing…" : "Refresh"}</Button></>} />
       <p className="sr-only" aria-live="polite">{announcement}</p>
-      {data.dataQuality.status === "partial" ? <InlineMessage tone="warning"><strong>Some dashboard metrics are unavailable.</strong> {data.dataQuality.issues.map((issue) => issue.message).join(" ")}</InlineMessage> : null}
+      {data.dataQuality.status === "partial" ? <InlineMessage tone="warning"><strong>Some dashboard metrics are unavailable.</strong> {Array.from(new Set(data.dataQuality.issues.map((issue) => issue.message))).join(" ")}</InlineMessage> : null}
       {overview.isError && overview.data ? <InlineMessage tone="error">The latest refresh failed. Showing the last successfully observed dashboard.</InlineMessage> : null}
       <DashboardNavigation activeTab={tab} onSelect={selectTab} />
       <section id={`dashboard-panel-${tab}`} role="tabpanel" aria-labelledby={`dashboard-tab-${tab}`} aria-busy={refreshing || undefined} className="dashboard-panel">

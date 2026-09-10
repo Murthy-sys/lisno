@@ -90,7 +90,7 @@ describe("Super Admin dashboard page", () => {
     expect(screen.getByRole("heading", { name: "Execution health" })).toBeVisible();
     expect(screen.getByRole("heading", { name: "Workforce health" })).toBeVisible();
     expect(screen.getByRole("heading", { name: "Governance attention" })).toBeVisible();
-    expect(screen.getByText("Approved net revenue, excluding GST")).toBeVisible();
+    expect(screen.getByText("Current margin (live)")).toBeVisible();
     expect(screen.queryByRole("combobox", { name: /project/i })).not.toBeInTheDocument();
 
     const requested = get.mock.calls.map(([path]) => path);
@@ -142,7 +142,8 @@ describe("Super Admin dashboard page", () => {
       "/admin/dashboard/projects?periodDays=30&"
     ))).toBe(true);
 
-    await user.selectOptions(screen.getByRole("combobox", { name: "Dashboard period" }), "90");
+    await user.click(screen.getByRole("button", { name: "Period" }));
+    await user.click(screen.getByRole("option", { name: "Last 90 days" }));
     await waitFor(() => expect(get.mock.calls.some(([path]) => path.startsWith(
       "/admin/dashboard/projects?periodDays=90&"
     ))).toBe(true));
@@ -233,9 +234,9 @@ describe("Super Admin dashboard page", () => {
     });
     const overviewRender = renderDashboard();
 
-    const redRisk = (await screen.findByText("Red-risk projects")).closest("article");
+    const redRisk = (await screen.findByText("Red-risk projects")).closest("li");
     const completion = screen.getByText("Completion rate").closest("article");
-    expect(within(redRisk!).getByText("Not available")).toBeVisible();
+    expect(within(redRisk!).getByText("—")).toBeVisible();
     expect(within(redRisk!).getByText("risk.projectDistribution could not be verified.")).toBeVisible();
     expect(within(completion!).getByText("Not available")).toBeVisible();
     expect(within(completion!).queryByText("0.00%")).not.toBeInTheDocument();

@@ -2,6 +2,7 @@ import { Surface } from "../../../components/ui/Surface";
 import {
   ApprovalThroughputChart,
   BudgetConsumptionMeter,
+  DesignApprovalRateMeter,
   DesignPipelineChart,
   EstimationPipelineChart,
   ExecutionProgressMeter,
@@ -11,12 +12,14 @@ import {
   FinanceWaterfallChart,
   MarginMeter,
   ProcurementPipelineChart,
+  ProcurementProgressMeter,
   ProcurementSpendMeter,
   ProjectFlowChart,
   ProjectLifecycleChart,
   RiskDistributionChart,
   RiskFactorChart,
   SpendCompositionChart,
+  WaitingAgeChart,
   WorkerRoleChart,
   WorkforceAssignmentChart,
   WorkforceKpiMeter
@@ -62,6 +65,7 @@ export function DashboardModuleCharts({
       <div className="dashboard-chart-grid dashboard-chart-grid--single">
         <ChartCard><EstimationPipelineChart data={data} /></ChartCard>
         <ChartCard><ApprovalThroughputChart data={data} /></ChartCard>
+        <ChartCard><WaitingAgeChart data={data} /></ChartCard>
       </div>
     );
   }
@@ -70,6 +74,7 @@ export function DashboardModuleCharts({
     return (
       <div className="dashboard-chart-grid dashboard-chart-grid--single">
         <ChartCard><DesignPipelineChart data={data} /></ChartCard>
+        <ChartCard><DesignApprovalRateMeter data={data} /></ChartCard>
       </div>
     );
   }
@@ -79,7 +84,10 @@ export function DashboardModuleCharts({
       <div className="dashboard-chart-grid dashboard-chart-grid--single">
         <ChartCard><ProcurementPipelineChart data={data} /></ChartCard>
         <ChartCard>
-          <ProcurementSpendMeter data={data} />
+          <div className="dashboard-meter-stack">
+            <ProcurementSpendMeter data={data} />
+            <ProcurementProgressMeter data={data} />
+          </div>
         </ChartCard>
       </div>
     );
@@ -109,7 +117,7 @@ export function DashboardModuleCharts({
         <ChartCard><ExecutionRoleChart data={data} /></ChartCard>
         <ChartCard>
           <div className="dashboard-meter-stack">
-            <ExecutionProgressMeter data={data} />
+            <ExecutionProgressMeter data={data} shape="radial" />
           </div>
         </ChartCard>
       </div>

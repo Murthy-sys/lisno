@@ -1,6 +1,8 @@
 import { useId, useState, type ReactNode } from "react";
 import { Table2 } from "lucide-react";
 
+import { Dialog } from "../ui/Dialog";
+
 /*
  * The frame every chart is mounted in.
  *
@@ -44,6 +46,8 @@ export interface ChartFigureProps {
   emptyMessage?: string;
   children: ReactNode;
   className?: string;
+  /** "modal" pops the values table into a dialog instead of expanding the card in place. */
+  tableDisplay?: "inline" | "modal";
 }
 
 export function ChartFigure({
@@ -58,12 +62,42 @@ export function ChartFigure({
   empty = false,
   emptyMessage = "No values are tracked for this period yet.",
   children,
-  className
+  className,
+  tableDisplay = "inline"
 }: ChartFigureProps) {
   const headingId = useId();
   const tableId = useId();
   const [showTable, setShowTable] = useState(false);
   const suppressed = Boolean(unavailableReason);
+  const isModal = tableDisplay === "modal";
+
+  const tableContent = (
+    <table>
+      {/* In modal mode the same text reads as the dialog's description,
+          above its header rule, so the caption stays for table semantics
+          but is visually redundant here — kept for screen readers only. */}
+      <caption className={isModal ? "sr-only" : undefined}>{table.caption}</caption>
+      <thead>
+        <tr>
+          {table.columns.map((column) => (
+            <th key={column} scope="col">
+              {column}
+            </th>
+          ))}
+        </tr>
+      </thead>
+      <tbody>
+        {table.rows.map((row) => (
+          <tr key={row.header}>
+            <th scope="row">{row.header}</th>
+            {row.cells.map((cell, index) => (
+              <td key={table.columns[index + 1] ?? index}>{cell}</td>
+            ))}
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
 
   return (
     <figure
@@ -83,7 +117,7 @@ export function ChartFigure({
               type="button"
               className="chart-figure__table-toggle"
               aria-expanded={showTable}
-              aria-controls={tableId}
+              aria-controls={isModal ? undefined : tableId}
               onClick={() => setShowTable((open) => !open)}
             >
               <Table2 aria-hidden="true" />
@@ -123,30 +157,20 @@ export function ChartFigure({
         <figcaption className="chart-figure__footnote">{footnote}</figcaption>
       ) : null}
 
-      {suppressed ? null : (
+      {suppressed ? null : isModal ? (
+        showTable ? (
+          <Dialog
+            title={title}
+            eyebrow={eyebrow ?? "Chart values"}
+            description={table.caption}
+            onClose={() => setShowTable(false)}
+          >
+            <div className="chart-figure__table chart-figure__table--modal">{tableContent}</div>
+          </Dialog>
+        ) : null
+      ) : (
         <div id={tableId} className="chart-figure__table" hidden={!showTable}>
-          <table>
-            <caption>{table.caption}</caption>
-            <thead>
-              <tr>
-                {table.columns.map((column) => (
-                  <th key={column} scope="col">
-                    {column}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {table.rows.map((row) => (
-                <tr key={row.header}>
-                  <th scope="row">{row.header}</th>
-                  {row.cells.map((cell, index) => (
-                    <td key={table.columns[index + 1] ?? index}>{cell}</td>
-                  ))}
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          {tableContent}
         </div>
       )}
     </figure>

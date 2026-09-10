@@ -10,12 +10,19 @@ import {
   type ChartStatus,
   type StackedSegment
 } from "../../../components/charts";
+import { DashboardBreakdownDonut } from "./DashboardBreakdownDonut";
+import { DashboardCategoryBarChart } from "./DashboardCategoryBarChart";
+import { DashboardQueueChart } from "./DashboardQueueChart";
+import { DashboardRiskFactorChart, type RiskFactorBarDatum } from "./DashboardRiskFactorChart";
 import {
   dashboardMetricUnavailableReason,
   formatDashboardDate,
+  formatDashboardRatio,
+  formatDays,
   formatPaise,
   humanize,
   isDashboardMetricUnavailable,
+  ratioDetail,
   workerRoleLabel
 } from "./dashboardPresentation";
 import type {
@@ -151,7 +158,6 @@ export function ExpenseTrendChart({ data }: { data: SuperAdminDashboardOverview 
       subtitle="Daily posted spend, on its own scale."
       labels={trendLabels(data)}
       tableValueColumnLabel="Date"
-      area
       series={[
         {
           key: "expenses",
@@ -179,15 +185,13 @@ export function ProjectLifecycleChart({ data }: { data: SuperAdminDashboardOverv
     { key: "completed", label: "Completed", value: data.projects.completed }
   ];
   return (
-    <StackedBarChart
+    <DashboardBreakdownDonut
       eyebrow="Lifecycle"
       title="Projects by stage"
       subtitle="Every project in the organization, by its current stage."
       segments={segments}
       scale="ordinal"
       totalLabel="Total"
-      categoryColumnLabel="Stage"
-      valueColumnLabel="Projects"
       unavailableReason={suppressionReason(data.dataQuality, [
         "projects.planning",
         "projects.active",
@@ -204,7 +208,8 @@ export function ProjectLifecycleChart({ data }: { data: SuperAdminDashboardOverv
 export function RiskDistributionChart({ data }: { data: SuperAdminDashboardOverview }) {
   const levels: DashboardRiskLevel[] = ["red", "yellow", "green", "gray"];
   return (
-    <StackedBarChart
+    <DashboardBreakdownDonut
+      className="chart-donut--risk-mix"
       eyebrow="Explainable risk"
       title="Risk mix"
       subtitle="Every project sits in exactly one band at the observation time."
@@ -215,8 +220,6 @@ export function RiskDistributionChart({ data }: { data: SuperAdminDashboardOverv
         color: statusColor(riskStatus[level])
       }))}
       totalLabel="Total"
-      categoryColumnLabel="Band"
-      valueColumnLabel="Projects"
       unavailableReason={suppressionReason(data.dataQuality, ["risk.projectDistribution"])}
       emptyMessage="No projects are tracked, so no risk band has a value."
     />
@@ -229,7 +232,7 @@ export function RiskDistributionChart({ data }: { data: SuperAdminDashboardOverv
  * carrier of severity.
  */
 export function RiskFactorChart({ data }: { data: SuperAdminDashboardOverview }) {
-  const bars: CategoryBarDatum[] = data.risk.factorDistribution.map((factor) => ({
+  const bars: RiskFactorBarDatum[] = data.risk.factorDistribution.map((factor) => ({
     key: `${factor.kind}-${factor.level}-${factor.reasonCode}`,
     label: humanize(factor.reasonCode),
     value: factor.occurrenceCount,
@@ -237,14 +240,14 @@ export function RiskFactorChart({ data }: { data: SuperAdminDashboardOverview })
     detail: `${humanize(factor.kind)} · across ${factor.projectCount} ${factor.projectCount === 1 ? "project" : "projects"}`
   }));
   return (
-    <CategoryBarChart
+    <DashboardRiskFactorChart
       eyebrow="Why projects are flagged"
       title="Risk factor occurrences"
       subtitle="Each bar is one reason code, at the level it was raised."
       data={bars}
       legend={[
-        { label: "Red risk", color: statusColor("critical"), mark: "swatch" },
-        { label: "Yellow risk", color: statusColor("warning"), mark: "swatch" }
+        { label: "Red risk", color: statusColor("critical") },
+        { label: "Yellow risk", color: statusColor("warning") }
       ]}
       categoryColumnLabel="Reason"
       valueColumnLabel="Occurrences"
@@ -298,27 +301,27 @@ export function FinanceWaterfallChart({ data }: { data: SuperAdminDashboardOverv
 }
 
 /**
- * What the recorded cost is made of. Coloured from the finance palette the
- * portfolio ring beside it already uses, so the same four classes never wear
- * two different colours in one view.
+ * What the recorded cost is made of, as a variable-radius pie: the same
+ * "Projects by stage" ring — hover callout, legend, shrink-left expand — but
+ * each arc also reaches further out the bigger its own share is, so
+ * magnitude reads through radius as well as angle.
  */
 export function SpendCompositionChart({ data }: { data: SuperAdminDashboardOverview }) {
   const finance = data.finance;
   return (
-    <StackedBarChart
+    <DashboardBreakdownDonut
       eyebrow="Recorded cost"
       title="Spend composition"
       subtitle="Every rupee posted against the cost budget."
+      variant="variable-radius"
       segments={[
-        { key: "procurement", label: "Procurement", value: finance.procurementCostPaise, color: "var(--finance-chart-spend-procurement)" },
-        { key: "employee", label: "Employee payments", value: finance.employeePaymentPaise, color: "var(--finance-chart-spend-employee)" },
-        { key: "other", label: "Other expenses", value: finance.otherExpensePaise, color: "var(--finance-chart-spend-other)" },
-        { key: "overhead", label: "Overheads", value: finance.overheadPaise, color: "var(--finance-chart-spend-overhead)" }
+        { key: "procurement", label: "Procurement", value: finance.procurementCostPaise },
+        { key: "employee", label: "Employee payments", value: finance.employeePaymentPaise },
+        { key: "other", label: "Other expenses", value: finance.otherExpensePaise },
+        { key: "overhead", label: "Overheads", value: finance.overheadPaise }
       ]}
       formatValue={formatPaise}
       totalLabel="Total recorded"
-      categoryColumnLabel="Class"
-      valueColumnLabel="Amount"
       unavailableReason={suppressionReason(data.dataQuality, [
         "finance.procurementCostPaise",
         "finance.employeePaymentPaise",
@@ -330,8 +333,16 @@ export function SpendCompositionChart({ data }: { data: SuperAdminDashboardOverv
   );
 }
 
-/** Budget consumption against its limit, with the reserved-profit line marked. */
-export function BudgetConsumptionMeter({ data }: { data: SuperAdminDashboardOverview }) {
+export interface DashboardRatioMetric {
+  share: number | null;
+  valueText: string;
+  detail: string | undefined;
+  status: ChartStatus;
+  unavailableReason: string | undefined;
+}
+
+/** Budget consumption against its limit — the numbers `BudgetConsumptionMeter` and the hero donut both plot. */
+export function budgetConsumptionMetric(data: SuperAdminDashboardOverview): DashboardRatioMetric {
   const { costBudgetPaise, recordedCostPaise, remainingBudgetPaise, overBudgetProjectCount } = data.finance;
   const reason = suppressionReason(data.dataQuality, [
     "finance.costBudgetPaise",
@@ -340,22 +351,36 @@ export function BudgetConsumptionMeter({ data }: { data: SuperAdminDashboardOver
   const share = costBudgetPaise > 0 ? recordedCostPaise / costBudgetPaise : null;
   const status: ChartStatus =
     share === null ? "neutral" : share > 1 ? "critical" : share > 0.85 ? "warning" : "good";
+  return {
+    share: reason ? null : share,
+    valueText: share === null ? "Not available" : `${Math.round(share * 100)}% · ${formatPaise(recordedCostPaise)}`,
+    detail: share === null
+      ? undefined
+      : `${formatPaise(remainingBudgetPaise)} remaining of ${formatPaise(costBudgetPaise)} · ${overBudgetProjectCount} budget ${overBudgetProjectCount === 1 ? "exception" : "exceptions"}`,
+    status,
+    unavailableReason: reason
+  };
+}
+
+/** Budget consumption against its limit, with the reserved-profit line marked. */
+export function BudgetConsumptionMeter({
+  data,
+  shape = "linear"
+}: {
+  data: SuperAdminDashboardOverview;
+  /** Radial in the Overview hero, alongside the other two headline meters; linear on the Finance tab, next to the margin ring. */
+  shape?: "linear" | "radial";
+}) {
+  const metric = budgetConsumptionMetric(data);
   return (
     <MeterChart
       label="Cost budget consumed"
-      value={reason ? null : share}
-      valueText={
-        share === null
-          ? "Not available"
-          : `${Math.round(share * 100)}% · ${formatPaise(recordedCostPaise)}`
-      }
-      detail={
-        share === null
-          ? undefined
-          : `${formatPaise(remainingBudgetPaise)} remaining of ${formatPaise(costBudgetPaise)} · ${overBudgetProjectCount} budget ${overBudgetProjectCount === 1 ? "exception" : "exceptions"}`
-      }
-      status={status}
-      unavailableReason={reason}
+      value={metric.share}
+      valueText={metric.valueText}
+      detail={metric.detail}
+      status={metric.status}
+      shape={shape}
+      unavailableReason={metric.unavailableReason}
     />
   );
 }
@@ -374,6 +399,7 @@ export function MarginMeter({ data }: { data: SuperAdminDashboardOverview }) {
       valueText={marginBps === null ? "Not available" : `${(marginBps / 100).toFixed(2)}%`}
       detail={`${formatPaise(data.finance.currentProfitPaise)} live profit against ${formatPaise(data.finance.approvedSubtotalPaise)} net revenue`}
       status={status}
+      shape="radial"
       unavailableReason={reason ?? (marginBps === null ? "No eligible margin denominator." : undefined)}
     />
   );
@@ -445,6 +471,24 @@ export function DesignPipelineChart({ data }: { data: SuperAdminDashboardOvervie
   );
 }
 
+/** Design plans approved against every plan eligible to be reviewed. */
+export function DesignApprovalRateMeter({ data }: { data: SuperAdminDashboardOverview }) {
+  const design = data.design;
+  const reason = suppressionReason(data.dataQuality, ["design.approvalRate"]);
+  const share = ratioShare(design.approvalRate);
+  return (
+    <MeterChart
+      label="Approval rate"
+      value={reason ? null : share}
+      valueText={formatDashboardRatio(design.approvalRate)}
+      detail={ratioDetail(design.approvalRate, "eligible plans")}
+      status={share === null ? "neutral" : share >= 0.6 ? "good" : "warning"}
+      shape="radial"
+      unavailableReason={reason}
+    />
+  );
+}
+
 export function ProcurementPipelineChart({ data }: { data: SuperAdminDashboardOverview }) {
   const procurement = data.procurement;
   return (
@@ -501,6 +545,84 @@ export function ProcurementSpendMeter({ data }: { data: SuperAdminDashboardOverv
   );
 }
 
+/** How far posted progress has gotten across every tracked procurement task. */
+export function ProcurementProgressMeter({ data }: { data: SuperAdminDashboardOverview }) {
+  const procurement = data.procurement;
+  const reason = suppressionReason(data.dataQuality, ["procurement.averageProgress"]);
+  const share = ratioShare(procurement.averageProgress);
+  return (
+    <MeterChart
+      label="Average persisted progress"
+      value={reason ? null : share}
+      valueText={formatDashboardRatio(procurement.averageProgress)}
+      detail={ratioDetail(procurement.averageProgress, "tracked tasks")}
+      status={share === null ? "neutral" : share >= 0.6 ? "good" : "warning"}
+      shape="radial"
+      unavailableReason={reason}
+    />
+  );
+}
+
+/** Estimation waiting age: median against the single oldest case. */
+export function WaitingAgeChart({ data }: { data: SuperAdminDashboardOverview }) {
+  const estimation = data.estimation;
+  const reason = suppressionReason(data.dataQuality, ["estimation.waitingAge"]);
+  const bars: CategoryBarDatum[] = [
+    { key: "median", label: "Median waiting age", value: estimation.medianWaitingAgeDays ?? 0 },
+    { key: "oldest", label: "Oldest waiting age", value: estimation.oldestWaitingAgeDays ?? 0 }
+  ];
+  return (
+    <CategoryBarChart
+      eyebrow="Time in queue"
+      title="Estimation waiting age"
+      subtitle="How long Client-facing estimates have been waiting, in days."
+      data={bars}
+      scale="ordinal"
+      formatValue={(value) => `${value} ${value === 1 ? "day" : "days"}`}
+      categoryColumnLabel="Measure"
+      valueColumnLabel="Days"
+      unavailableReason={reason}
+      empty={estimation.medianWaitingAgeDays === null && estimation.oldestWaitingAgeDays === null}
+      emptyMessage="No estimates are currently waiting."
+    />
+  );
+}
+
+/** Eligible/tracked/unavailable coverage for one module, as a small stacked bar. */
+export function CoverageChart({
+  eligible,
+  tracked,
+  unavailable,
+  module,
+  dataQuality
+}: {
+  eligible: number;
+  tracked: number;
+  unavailable: number;
+  module: string;
+  dataQuality: DashboardDataQuality;
+}) {
+  const unavailableKey = [`${module}.eligibleProjects`, `${module}.trackedProjects`, `${module}.unavailableProjects`]
+    .find((key) => isDashboardMetricUnavailable(dataQuality, key));
+  return (
+    <StackedBarChart
+      eyebrow="Coverage"
+      title={`${humanize(module)} data coverage`}
+      subtitle={`${eligible} eligible ${eligible === 1 ? "project" : "projects"} for this module.`}
+      segments={[
+        { key: "tracked", label: "Tracked", value: tracked, color: statusColor("good") },
+        { key: "unavailable", label: "Unavailable", value: unavailable, color: statusColor("warning") }
+      ]}
+      height={22}
+      totalLabel="Eligible"
+      categoryColumnLabel="Coverage"
+      valueColumnLabel="Projects"
+      unavailableReason={unavailableKey ? dashboardMetricUnavailableReason(dataQuality, unavailableKey) : undefined}
+      emptyMessage="No eligible projects for this module yet."
+    />
+  );
+}
+
 /* ------------------------------------------------- execution & workforce -- */
 
 export function ExecutionStateChart({ data }: { data: SuperAdminDashboardOverview }) {
@@ -528,30 +650,50 @@ export function ExecutionStateChart({ data }: { data: SuperAdminDashboardOvervie
   );
 }
 
-export function ExecutionProgressMeter({ data }: { data: SuperAdminDashboardOverview }) {
+/** Weighted execution progress — the numbers `ExecutionProgressMeter` and the hero donut both plot. */
+export function executionProgressMetric(data: SuperAdminDashboardOverview): DashboardRatioMetric {
   const progress = data.execution.weightedProgress;
   const reason = suppressionReason(data.dataQuality, ["execution.weightedProgress"]);
   const share = ratioShare(progress);
+  return {
+    share: reason ? null : share,
+    valueText: share === null ? "Not available" : `${(progress.rateBps! / 100).toFixed(2)}%`,
+    detail: `${progress.numerator} of ${progress.denominator} effort units · ${progress.fallbackTaskCount} fallback ${progress.fallbackTaskCount === 1 ? "task" : "tasks"}`,
+    status: share === null ? "neutral" : share >= 0.75 ? "good" : share >= 0.4 ? "warning" : "serious",
+    unavailableReason: reason ?? (share === null ? "No eligible effort denominator." : undefined)
+  };
+}
+
+export function ExecutionProgressMeter({
+  data,
+  shape = "linear"
+}: {
+  data: SuperAdminDashboardOverview;
+  /** Radial on the Execution tab, where it's the panel's one headline ratio; linear in the Overview hero, alongside two other meters. */
+  shape?: "linear" | "radial";
+}) {
+  const metric = executionProgressMetric(data);
   return (
     <MeterChart
       label="Weighted execution progress"
-      value={reason ? null : share}
-      valueText={share === null ? "Not available" : `${(progress.rateBps! / 100).toFixed(2)}%`}
-      detail={`${progress.numerator} of ${progress.denominator} effort units · ${progress.fallbackTaskCount} fallback ${progress.fallbackTaskCount === 1 ? "task" : "tasks"}`}
-      status={share === null ? "neutral" : share >= 0.75 ? "good" : share >= 0.4 ? "warning" : "serious"}
-      unavailableReason={reason ?? (share === null ? "No eligible effort denominator." : undefined)}
+      value={metric.share}
+      valueText={metric.valueText}
+      detail={metric.detail}
+      status={metric.status}
+      shape={shape}
+      unavailableReason={metric.unavailableReason}
     />
   );
 }
 
 export function WorkerRoleChart({ data }: { data: SuperAdminDashboardOverview }) {
-  const bars: CategoryBarDatum[] = data.workforce.roleDistribution.map((entry) => ({
+  const bars = data.workforce.roleDistribution.map((entry) => ({
     key: entry.role,
     label: workerRoleLabel(entry.role),
     value: entry.workerCount
   }));
   return (
-    <CategoryBarChart
+    <DashboardCategoryBarChart
       eyebrow="Capacity"
       title="Active workers by trade"
       subtitle="Trades have no natural order, so every bar takes the same hue."
@@ -566,13 +708,13 @@ export function WorkerRoleChart({ data }: { data: SuperAdminDashboardOverview })
 }
 
 export function ExecutionRoleChart({ data }: { data: SuperAdminDashboardOverview }) {
-  const bars: CategoryBarDatum[] = data.execution.roleDistribution.map((entry) => ({
+  const bars = data.execution.roleDistribution.map((entry) => ({
     key: entry.role,
     label: humanize(entry.role.replace(/^worker_/, "")),
     value: entry.taskCount
   }));
   return (
-    <CategoryBarChart
+    <DashboardCategoryBarChart
       eyebrow="Where the work sits"
       title="Execution tasks by trade"
       data={bars}
@@ -585,7 +727,14 @@ export function ExecutionRoleChart({ data }: { data: SuperAdminDashboardOverview
   );
 }
 
-export function WorkforceKpiMeter({ data }: { data: SuperAdminDashboardOverview }) {
+export function WorkforceKpiMeter({
+  data,
+  shape = "radial"
+}: {
+  data: SuperAdminDashboardOverview;
+  /** Radial on the Workforce tab, where it is the panel's one headline ratio; linear on the Overview's compact Workforce health card. */
+  shape?: "linear" | "radial";
+}) {
   const reason = suppressionReason(data.dataQuality, ["workforce.averageKpi"]);
   const share = ratioShare(data.workforce.averageKpi);
   return (
@@ -597,6 +746,7 @@ export function WorkforceKpiMeter({ data }: { data: SuperAdminDashboardOverview 
       }
       detail={`${data.workforce.kpiEligibleWorkers} eligible · ${data.workforce.kpiUnavailableWorkers} without KPI data`}
       status={share === null ? "neutral" : share >= 0.75 ? "good" : share >= 0.5 ? "warning" : "serious"}
+      shape={shape}
       unavailableReason={reason ?? (share === null ? "No KPI-eligible workers in this period." : undefined)}
     />
   );
@@ -628,36 +778,32 @@ export function WorkforceAssignmentChart({ data }: { data: SuperAdminDashboardOv
 
 export function GovernanceQueueChart({ data }: { data: SuperAdminDashboardOverview }) {
   const governance = data.governance;
-  const bars: CategoryBarDatum[] = [
-    { key: "invitations", label: "Pending invitations", value: governance.pendingInvitations },
-    { key: "expired", label: "Expired invitations", value: governance.expiredInvitations },
-    { key: "access", label: "Access requests", value: governance.pendingAccessRequests },
-    { key: "client", label: "Client responses", value: governance.pendingClientResponses },
-    { key: "design", label: "Design responses", value: governance.pendingDesignResponses },
-    {
-      key: "failed",
-      label: "Failed deliveries",
-      value:
-        governance.failedInvitationDeliveries +
-        governance.failedClientDeliveries +
-        governance.failedDesignDeliveries,
-      color: statusColor("critical"),
-      detail: "Invitation, Client and Design deliveries that failed"
-    }
+  const waiting = statusColor("neutral");
+  const bars = [
+    { key: "invitations", label: "Pending invitations", value: governance.pendingInvitations, color: waiting },
+    { key: "expired", label: "Expired invitations", value: governance.expiredInvitations, color: statusColor("warning") },
+    { key: "failedInvitations", label: "Failed invitation deliveries", value: governance.failedInvitationDeliveries, color: statusColor("critical") },
+    { key: "access", label: "Pending access requests", value: governance.pendingAccessRequests, color: waiting },
+    { key: "client", label: "Pending Client responses", value: governance.pendingClientResponses, color: waiting },
+    { key: "failedClient", label: "Failed Client deliveries", value: governance.failedClientDeliveries, color: statusColor("critical") },
+    { key: "disabledClient", label: "Disabled Client deliveries", value: governance.disabledClientDeliveries, color: statusColor("warning") },
+    { key: "design", label: "Pending Design responses", value: governance.pendingDesignResponses, color: waiting },
+    { key: "failedDesign", label: "Failed Design deliveries", value: governance.failedDesignDeliveries, color: statusColor("critical") },
+    { key: "disabledDesign", label: "Disabled Design deliveries", value: governance.disabledDesignDeliveries, color: statusColor("warning") }
   ];
   return (
-    <CategoryBarChart
+    <DashboardQueueChart
       eyebrow="Queue depth"
       title="Waiting on an administrator"
-      subtitle="Failed deliveries wear the reserved attention colour; the rest are queue depth."
+      subtitle="Waiting on someone, needing a second look, and outright failed each wear their own colour."
       data={bars}
       legend={[
-        { label: "Queue depth", color: "var(--chart-series-1)", mark: "swatch" },
-        { label: "Failed deliveries", color: statusColor("critical"), mark: "swatch" }
+        { label: "Waiting on someone", color: waiting },
+        { label: "Needs a look (expired / disabled)", color: statusColor("warning") },
+        { label: "Failed delivery", color: statusColor("critical") }
       ]}
       categoryColumnLabel="Queue"
       valueColumnLabel="Waiting"
-      detailColumnLabel="Note"
       unavailableReason={suppressionReason(data.dataQuality, ["governance"])}
     />
   );

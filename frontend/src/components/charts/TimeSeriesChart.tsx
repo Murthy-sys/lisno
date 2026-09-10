@@ -1,6 +1,6 @@
-import { useMemo, useState, type KeyboardEvent, type PointerEvent } from "react";
+import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent } from "react";
 
-import { areaPath, clamp, compactNumber, linePath, linearScale, niceTicks } from "./chartScale";
+import { clamp, compactNumber, linearScale, niceTicks, smoothAreaPath, smoothPath } from "./chartScale";
 import { CHART_AXIS, CHART_DE_EMPHASIS, CHART_GRID, seriesColor } from "./chartTokens";
 import { ChartFigure, type ChartFigureProps } from "./ChartFigure";
 import { ChartTooltip, type ChartTooltipRow } from "./ChartTooltip";
@@ -8,8 +8,11 @@ import { useChartWidth } from "./useChartWidth";
 
 /*
  * Trend over time. One y-axis, always: two measures of different scale get two
- * charts, never a second axis. Lines are 2px with round joins; the single-series
- * case adds a ~10% wash rather than a saturated block.
+ * charts, never a second axis. Lines are drawn as a smooth Catmull-Rom curve
+ * through every real point — never a fit, just a gentler join than a straight
+ * polyline — with a 2px stroke and round joins. The first series carries a
+ * soft gradient down to the axis, so the primary trend has a floor to stand
+ * on; every other series stays a clean line so the two never compete.
  *
  * Identity never rests on colour alone — the legend is always present for two
  * or more series, and end labels supplement it where they fit without collision.
@@ -30,8 +33,6 @@ export interface TimeSeriesChartProps
   formatValue?: (value: number) => string;
   formatTick?: (value: number) => string;
   height?: number;
-  /** Draws the wash under a single series; ignored when several are plotted. */
-  area?: boolean;
   /** Emphasis form: this series keeps its hue, the rest recede to gray. */
   emphasisKey?: string;
   tableValueColumnLabel?: string;
@@ -48,13 +49,40 @@ export function TimeSeriesChart({
   formatValue = compactNumber,
   formatTick = compactNumber,
   height = 220,
-  area = false,
   emphasisKey,
   tableValueColumnLabel,
   ...figure
 }: TimeSeriesChartProps) {
   const { ref, width } = useChartWidth(680);
   const [cursor, setCursor] = useState<number | null>(null);
+  const gradientId = useId();
+
+  /*
+   * The line draws in once this chart first scrolls into view, rather than
+   * on mount — these three cards sit below the fold, and a mount-triggered
+   * animation would already be finished by the time a reader scrolls to
+   * them. IntersectionObserver is absent in jsdom, so tests (and any engine
+   * without it) fall back to already-visible, matching the ResizeObserver
+   * fallback in useChartWidth.
+   */
+  const [inView, setInView] = useState(typeof IntersectionObserver === "undefined");
+  useEffect(() => {
+    if (inView) return;
+    const node = ref.current;
+    if (!node) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting) {
+          setInView(true);
+          observer.disconnect();
+        }
+      },
+      { threshold: 0.2 }
+    );
+    observer.observe(node);
+    return () => observer.disconnect();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const colored = useMemo(
     () =>
@@ -195,8 +223,9 @@ export function TimeSeriesChart({
           )
         }))
       }}
+      tableDisplay="modal"
     >
-      <div className="chart-plot" ref={ref}>
+      <div className={`chart-plot${inView ? " chart-plot--in-view" : ""}`} ref={ref}>
         <svg
           className="chart-plot__canvas"
           width={width}
@@ -211,6 +240,15 @@ export function TimeSeriesChart({
           }
           onPointerLeave={() => setCursor(null)}
         >
+          <defs>
+            {paths[0] ? (
+              <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor={paths[0].color} stopOpacity={0.22} />
+                <stop offset="100%" stopColor={paths[0].color} stopOpacity={0} />
+              </linearGradient>
+            ) : null}
+          </defs>
+
           {ticks.map((tick) => (
             <g key={tick}>
               <line
@@ -247,19 +285,21 @@ export function TimeSeriesChart({
             </text>
           ))}
 
-          {area && paths.length === 1 && paths[0].points.length > 1 ? (
+          {paths[0] && paths[0].points.length > 1 ? (
             <path
-              d={areaPath(paths[0].points, MARGIN.top + plotHeight)}
-              fill={paths[0].color}
-              fillOpacity={0.1}
+              className="chart-plot__area"
+              d={smoothAreaPath(paths[0].points, MARGIN.top + plotHeight)}
+              fill={`url(#${gradientId})`}
             />
           ) : null}
 
-          {paths.map((entry) =>
+          {paths.map((entry, index) =>
             entry.points.length > 1 ? (
               <path
                 key={entry.key}
-                d={linePath(entry.points)}
+                className="chart-plot__line"
+                style={{ animationDelay: `${index * 140}ms` }}
+                d={smoothPath(entry.points)}
                 fill="none"
                 stroke={entry.color}
                 strokeWidth={2}
@@ -326,6 +366,7 @@ export function TimeSeriesChart({
                   opacity={0.6}
                 />
               ) : null}
+              <circle cx={label.x} cy={label.anchorY} r={3} fill={label.color} stroke="var(--chart-surface)" strokeWidth={1.5} />
               <text
                 className="chart-value-text"
                 x={label.x + 8}

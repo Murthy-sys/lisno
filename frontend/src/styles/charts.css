@@ -130,13 +130,14 @@
     margin: 0;
     color: var(--color-text-muted);
     font-size: var(--text-xs);
+    margin-top: 20px;
   }
 
   .chart-figure__table {
     max-width: 100%;
     overflow-x: auto;
     border: 1px solid var(--color-border);
-    border-radius: var(--radius-control);
+    /* border-radius: var(--radius-control); */
   }
 
   .chart-figure__table table { width: 100%; border-collapse: collapse; }
@@ -175,6 +176,26 @@
     outline-offset: 2px;
     border-radius: var(--radius-control);
   }
+
+  /* Draws the line in and fades the area up once the chart first scrolls
+     into view (.chart-plot--in-view, set on IntersectionObserver). The dash
+     value only needs to exceed the longest real line this chart ever draws,
+     not match it — same approach as the sparkline's mount animation. */
+  .chart-plot__line { stroke-dasharray: 4000; stroke-dashoffset: 4000; }
+  .chart-plot--in-view .chart-plot__line { animation: chart-plot-draw 1100ms ease-out forwards; }
+  .chart-plot__area { opacity: 0; }
+  .chart-plot--in-view .chart-plot__area { animation: chart-plot-area-in 900ms ease-out 500ms forwards; }
+  @keyframes chart-plot-draw {
+    to { stroke-dashoffset: 0; }
+  }
+  @keyframes chart-plot-area-in {
+    to { opacity: 1; }
+  }
+
+  /* The modal-display variant of the values table (ChartFigure's
+     tableDisplay="modal"): margin stands in for the padding a Dialog's body
+     would normally get, since Dialog renders children with none of its own. */
+  .chart-figure__table--modal { margin: 1.4rem 1.5rem 1.5rem; }
 
   .chart-axis-text,
   .chart-category-text,
@@ -303,7 +324,78 @@
     font-size: var(--text-xs);
   }
 
+  .chart-meter--radial {
+    justify-items: center;
+    text-align: center;
+    gap: .5rem;
+  }
+
+  .chart-meter__radial-figure {
+    inline-size: min(11rem, 100%);
+  }
+
+  .chart-meter__radial-figure svg {
+    display: block;
+    inline-size: 100%;
+    block-size: auto;
+    overflow: visible;
+  }
+
+  .chart-meter__radial-figure circle {
+    transition: stroke-dasharray var(--duration-settle) var(--ease-standard);
+  }
+
+  .chart-meter__radial-value {
+    font-family: var(--font-tabular), var(--font-interface);
+    font-variant-numeric: tabular-nums;
+    font-size: 22px;
+    font-weight: 800;
+    fill: var(--color-text);
+  }
+
+  .chart-meter__radial-label {
+    max-inline-size: 16ch;
+    margin: 0;
+    color: var(--color-text-muted);
+    font-size: var(--text-xs);
+    font-weight: 800;
+    line-height: 1.25;
+    letter-spacing: .03em;
+    text-align: center;
+    text-transform: uppercase;
+    text-wrap: balance;
+  }
+
+  .chart-meter__detail--radial {
+    max-width: 22ch;
+  }
+
   .chart-sparkline { display: block; flex: 0 0 auto; overflow: visible; }
+  .chart-sparkline__pulse { transform-box: fill-box; transform-origin: center; animation: chart-sparkline-pulse 2.4s ease-out infinite; }
+  @keyframes chart-sparkline-pulse {
+    0% { transform: scale(0.7); opacity: .6; }
+    100% { transform: scale(2.1); opacity: 0; }
+  }
+
+  /* A one-time draw-in on mount, so the line reads as freshly loading data
+     rather than appearing fully-formed the instant the page opens. The dash
+     value is generous on purpose: it only needs to exceed the longest real
+     path this line ever draws, not match it exactly. */
+  .chart-sparkline__line {
+    stroke-dasharray: 3000;
+    stroke-dashoffset: 3000;
+    animation: chart-sparkline-draw 900ms ease-out forwards;
+  }
+  .chart-sparkline__area {
+    opacity: 0;
+    animation: chart-sparkline-area-in 700ms ease-out 350ms forwards;
+  }
+  @keyframes chart-sparkline-draw {
+    to { stroke-dashoffset: 0; }
+  }
+  @keyframes chart-sparkline-area-in {
+    to { opacity: 1; }
+  }
 
   .stat-tile {
     display: grid;
@@ -381,7 +473,7 @@
   .chart-hero {
     display: grid;
     align-content: start;
-    gap: var(--space-3);
+    gap: var(--space-1);
     min-width: 0;
   }
 

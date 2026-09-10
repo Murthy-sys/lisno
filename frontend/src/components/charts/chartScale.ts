@@ -55,6 +55,35 @@ export const areaPath = (points: Point[], baseline: number) =>
     : `${linePath(points)} L${round(points[points.length - 1].x)} ${round(baseline)} L${round(points[0].x)} ${round(baseline)} Z`;
 
 /**
+ * The same line, drawn as a smooth Catmull-Rom-to-Bezier curve instead of
+ * straight segments. Passes through every real point — this is an
+ * interpolation of the actual data, not a fit — so it never invents a trend
+ * that isn't there.
+ */
+export function smoothPath(points: Point[]): string {
+  if (points.length === 0) return "";
+  if (points.length < 3) return linePath(points);
+  let d = `M${round(points[0].x)} ${round(points[0].y)}`;
+  for (let index = 0; index < points.length - 1; index++) {
+    const p0 = points[index === 0 ? index : index - 1];
+    const p1 = points[index];
+    const p2 = points[index + 1];
+    const p3 = points[index + 2 < points.length ? index + 2 : index + 1];
+    const c1x = p1.x + (p2.x - p0.x) / 6;
+    const c1y = p1.y + (p2.y - p0.y) / 6;
+    const c2x = p2.x - (p3.x - p1.x) / 6;
+    const c2y = p2.y - (p3.y - p1.y) / 6;
+    d += ` C${round(c1x)} ${round(c1y)} ${round(c2x)} ${round(c2y)} ${round(p2.x)} ${round(p2.y)}`;
+  }
+  return d;
+}
+
+export const smoothAreaPath = (points: Point[], baseline: number) =>
+  points.length === 0
+    ? ""
+    : `${smoothPath(points)} L${round(points[points.length - 1].x)} ${round(baseline)} L${round(points[0].x)} ${round(baseline)} Z`;
+
+/**
  * A bar with its data-end rounded and its baseline end square. Drawn as an
  * explicit path so the two ends can differ; `rx` on a <rect> cannot do that.
  */

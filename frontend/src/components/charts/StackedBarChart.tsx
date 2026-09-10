@@ -123,7 +123,7 @@ export function StackedBarChart({
         >
           <defs>
             <clipPath id={clipId}>
-              <rect x={0} y={0} width={Math.max(0, width)} height={height} rx={6} />
+              <rect x={0} y={0} width={Math.max(0, width)} height={height} rx={height / 2} />
             </clipPath>
           </defs>
           <g clipPath={`url(#${clipId})`}>

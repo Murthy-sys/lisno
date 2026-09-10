@@ -149,8 +149,10 @@ export function HeroFigure({
         <Sparkline
           values={trend}
           accent={seriesColor(0)}
-          width={168}
-          height={40}
+          width={140}
+          height={28}
+          lineColor="var(--color-primary)"
+          lineWidth={1}
           label={trendLabel ?? `${label} trend`}
         />
       ) : null}

@@ -22,13 +22,16 @@ const openTable = async (figure: HTMLElement) => {
 };
 
 describe("chart primitives", () => {
-  it("keeps every plotted value reachable in the table view, not only on hover", async () => {
+  it("keeps every plotted value reachable in a values dialog, not only on hover", async () => {
+    const user = userEvent.setup();
     render(
       <TimeSeriesChart title="Projects created and completed" labels={labels} series={series} />
     );
     const figure = screen.getByRole("figure", { name: "Projects created and completed" });
-    const table = await openTable(figure);
+    await user.click(within(figure).getByRole("button", { name: "Show values" }));
 
+    const dialog = screen.getByRole("dialog", { name: "Projects created and completed" });
+    const table = within(dialog).getByRole("table");
     for (const label of labels) {
       expect(within(table).getByRole("rowheader", { name: label })).toBeInTheDocument();
     }
@@ -36,6 +39,9 @@ describe("chart primitives", () => {
       expect(within(table).getByRole("columnheader", { name: column })).toBeInTheDocument();
     }
     expect(within(table).getAllByRole("row")).toHaveLength(labels.length + 1);
+
+    await user.click(within(dialog).getByRole("button", { name: /close/i }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
   it("names every series in a legend so identity never rests on colour alone", () => {
@@ -120,6 +126,7 @@ describe("chart primitives", () => {
   });
 
   it("steps a waterfall through its running total and signs every change", async () => {
+    const user = userEvent.setup();
     render(
       <WaterfallChart
         title="Contract value to remaining budget"
@@ -136,8 +143,13 @@ describe("chart primitives", () => {
     expect(within(figure).queryByText("Adds")).not.toBeInTheDocument();
     expect(within(figure).getByText("Subtracts")).toBeVisible();
 
-    const table = await openTable(figure);
-    expect(within(table).getByRole("row", { name: "GST −₹18 ₹82" })).toBeInTheDocument();
+    /* "Show values" here shrinks the chart aside rather than expanding a
+       table below it, so the plotted values are read from that details
+       row rather than from a semantic <table>. */
+    await user.click(within(figure).getByRole("button", { name: "Show values" }));
+    const gstRow = within(figure).getByText("GST").closest(".commercial-baseline__details-row");
+    expect(gstRow).toHaveTextContent("−₹18");
+    expect(gstRow).toHaveTextContent("₹82");
   });
 
   it("reports a meter's value to assistive technology, and suppresses it when unverified", () => {
@@ -206,7 +218,10 @@ describe("chart primitives", () => {
     for (const toggle of screen.getAllByRole("button", { name: "Show values" })) {
       await user.click(toggle);
     }
-    expect((await axe.run(container, { rules: { "color-contrast": { enabled: false } } })).violations)
+    // TimeSeriesChart's values table now opens in a dialog portaled to
+    // document.body, outside `container` — audit the whole document so that
+    // content is covered too, not just the cards that still expand in place.
+    expect((await axe.run(document.body, { rules: { "color-contrast": { enabled: false } } })).violations)
       .toEqual([]);
   });
 });
