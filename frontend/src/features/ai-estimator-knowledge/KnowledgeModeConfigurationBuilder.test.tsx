@@ -166,6 +166,51 @@ describe("KnowledgeModeConfigurationBuilder", () => {
     expect(onDirty).not.toHaveBeenCalled();
   });
 
+  it.each([false, true])("supports independent keyboard collapse without changing selections or data (read-only: %s)", async (readOnly) => {
+    const user = userEvent.setup();
+    const onPayload = vi.fn();
+    const onDirty = vi.fn();
+    render(<Harness readOnly={readOnly} onPayload={onPayload} onDirty={onDirty} />);
+    const pmcSelection = screen.getByRole("checkbox", { name: "PMC" });
+    const executionSelection = screen.getByRole("checkbox", { name: "Execution" });
+    await user.click(executionSelection);
+    const pmcToggle = screen.getByRole("button", { name: "Collapse PMC" });
+    const executionToggle = screen.getByRole("button", { name: "Collapse Execution" });
+    const pmcBody = document.getElementById(pmcToggle.getAttribute("aria-controls")!);
+    const executionBody = document.getElementById(executionToggle.getAttribute("aria-controls")!);
+    expect(pmcBody).toContainElement(screen.getByRole("spinbutton", { name: "PMC Margin" }));
+    expect(executionBody).toContainElement(screen.getByRole("group", { name: "Execution source" }));
+    expect(pmcToggle).toBeEnabled();
+    expect(executionToggle).toBeEnabled();
+
+    pmcToggle.focus();
+    await user.keyboard(" ");
+    expect(pmcToggle).toHaveAccessibleName("Expand PMC");
+    expect(pmcToggle).toHaveAttribute("aria-expanded", "false");
+    expect(pmcBody).toHaveAttribute("hidden");
+    expect(executionToggle).toHaveAttribute("aria-expanded", "true");
+    expect(executionBody).toBeVisible();
+    executionToggle.focus();
+    await user.keyboard("{Enter}");
+    expect(executionToggle).toHaveAccessibleName("Expand Execution");
+    expect(executionToggle).toHaveAttribute("aria-expanded", "false");
+    expect(executionBody).toHaveAttribute("hidden");
+    expect(pmcSelection).toBeChecked();
+    expect(executionSelection).toBeChecked();
+    expect(screen.getByRole("heading", { name: "Shared description" })).toBeVisible();
+
+    await user.keyboard(" ");
+    expect(executionToggle).toHaveAttribute("aria-expanded", "true");
+    expect(executionBody).toBeVisible();
+    expect(pmcBody).not.toBeVisible();
+    await user.click(pmcSelection);
+    await user.click(pmcSelection);
+    expect(screen.getByRole("button", { name: "Collapse PMC" })).toHaveAttribute("aria-expanded", "true");
+    expect(pmcBody).toBeVisible();
+    expect(onPayload).not.toHaveBeenCalled();
+    expect(onDirty).not.toHaveBeenCalled();
+  });
+
   it("preserves independent PMC, Sub-Vendor, and In-house unsaved buffers", async () => {
     const user = userEvent.setup();
     const onPayload = vi.fn();
