@@ -140,11 +140,11 @@ describe("Mode pending publication lifecycle", () => {
     const paragraph = screen.getByRole("textbox", { name: "Mode paragraph" });
     fireEvent.change(paragraph, { target: { value: "Pending ceiling requirement." } });
     expect(panel.latest()?.groups[0]?.entries[0]?.fields[0]?.value).toBe("Pending ceiling requirement.");
-    await user.click(screen.getByRole("button", { name: "Cancel", exact: true }));
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
     expect(panel.latest()?.groups).toEqual([]);
     await user.click(screen.getByRole("button", { name: "Edit Mode paragraph" }));
     fireEvent.change(screen.getByRole("textbox", { name: "Mode paragraph" }), { target: { value: "Applied ceiling requirement." } });
-    await user.click(screen.getByRole("button", { name: "Save", exact: true }));
+    await user.click(screen.getByRole("button", { name: "Save" }));
     expect(panel.latest()?.groups[0]?.entries[0]?.fields[0]?.value).toBe("Applied ceiling requirement.");
     await act(async () => { expect(await panel.ref.current?.save()).toBe(true); });
     expect(panel.latest()?.groups).toEqual([]);
@@ -158,7 +158,7 @@ describe("Mode pending publication lifecycle", () => {
     act(() => panel.queryClient.setQueryData(knowledgeQueryKeys.section(item.mainLineId, "revision-1", "advanced"), section("advanced", { modeDescription: "Remote saved wording.", pmcMarginBps: 1_900 }, 2)));
     expect(panel.latest()?.groups).toHaveLength(1);
     expect(JSON.stringify(panel.latest())).not.toContain("Remote");
-    await user.click(screen.getByRole("button", { name: "Cancel", exact: true }));
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
     expect(panel.latest()?.groups).toEqual([]);
   });
 
