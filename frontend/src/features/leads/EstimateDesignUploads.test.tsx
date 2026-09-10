@@ -1,7 +1,8 @@
-import { screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import type { EstimateDesignUpload } from "../../api/types";
 import { renderWithQuery } from "../../test/render";
 import { EstimateDesignUploads } from "./EstimateDesignUploads";
 
@@ -61,6 +62,21 @@ const drawings = [
   }
 ];
 const response = (data: unknown, status = 200) => Response.json({ data }, { status });
+const deletableUpload: EstimateDesignUpload = {
+  id: "upload-own",
+  estimateId: "estimate-1",
+  leadId: "lead-1",
+  originalFilename: "living-room-design.pdf",
+  mimeType: "application/pdf",
+  sizeBytes: 4096,
+  uploaderId: "designer-1",
+  uploadedAt: "2026-09-09T08:00:00.000Z",
+  extractionStatus: "estimator_review",
+  failureCode: null,
+  failureMessage: null,
+  canRetry: false,
+  canDelete: true
+};
 
 class FakeXMLHttpRequest {
   static instances: FakeXMLHttpRequest[] = [];
@@ -96,6 +112,110 @@ afterEach(() => {
 });
 
 describe("EstimateDesignUploads", () => {
+  it("names the uploaded file and cancels deletion without sending a request", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(response({
+      uploads: [deletableUpload], pages: [], drawings: [], revisions: []
+    }));
+    const user = userEvent.setup();
+    renderWithQuery(<EstimateDesignUploads estimateId="estimate-1" rooms={rooms} scopes={scopes} items={[]} variant="designer" />);
+
+    const deleteButton = await screen.findByRole("button", { name: "Delete upload living-room-design.pdf" });
+    await user.click(deleteButton);
+    const dialog = screen.getByRole("alertdialog", { name: "Delete design upload?" });
+    expect(within(dialog).getByText("living-room-design.pdf")).toBeVisible();
+    expect(dialog).toHaveAccessibleDescription(/removes the uploaded file and its extracted drawings/);
+    expect(within(dialog).getByText(/pending review will be withdrawn/)).toBeVisible();
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    expect(deleteButton).toHaveFocus();
+    expect(fetchSpy.mock.calls.some(([, options]) => options?.method === "DELETE")).toBe(false);
+  });
+
+  it.each([
+    ["approved by the Client", "The design is already approved."],
+    ["approved on behalf of the Client", "The design is already approved."],
+    ["uploaded by another designer", "You can only delete your own uploads."]
+  ])("hides deletion for uploads %s when the server denies it", async (_state, reason) => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(response({
+      uploads: [{ ...deletableUpload, canDelete: false, deleteBlockedReason: reason }],
+      pages: [], drawings: [], revisions: []
+    }));
+    renderWithQuery(<EstimateDesignUploads estimateId="estimate-1" rooms={rooms} scopes={scopes} items={[]} variant="designer" readOnly />);
+
+    expect(await screen.findByText("living-room-design.pdf")).toBeVisible();
+    expect(screen.queryByRole("button", { name: /Delete upload/ })).not.toBeInTheDocument();
+  });
+
+  it("keeps deletion errors in the confirmation and allows a successful retry", async () => {
+    let attempts = 0;
+    let deleted = false;
+    let finishRetry!: (value: Response) => void;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, options) => {
+      if (options?.method === "DELETE") {
+        attempts += 1;
+        if (attempts === 1) {
+          return Response.json({ error: { code: "DELETE_FAILED", message: "The design could not be deleted. Try again." } }, { status: 500 });
+        }
+        return new Promise<Response>((resolve) => { finishRetry = resolve; });
+      }
+      return response({ uploads: deleted ? [] : [deletableUpload], pages: [], drawings: [], revisions: [] });
+    });
+    const user = userEvent.setup();
+    renderWithQuery(<EstimateDesignUploads estimateId="estimate-1" rooms={rooms} scopes={scopes} items={[]} variant="designer" readOnly />);
+    await user.click(await screen.findByRole("button", { name: "Delete upload living-room-design.pdf" }));
+    const dialog = screen.getByRole("alertdialog", { name: "Delete design upload?" });
+    const confirm = within(dialog).getByRole("button", { name: "Delete upload" });
+    await user.click(confirm);
+
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent("The design could not be deleted. Try again.");
+    expect(confirm).toBeEnabled();
+    await user.click(confirm);
+    expect(confirm).toHaveAttribute("aria-busy", "true");
+    expect(confirm).toBeDisabled();
+    expect(within(dialog).getByRole("button", { name: "Cancel" })).toBeDisabled();
+    expect(confirm.querySelector(".ui-spinner")).toBeInTheDocument();
+    await user.keyboard("{Escape}");
+    expect(dialog).toBeInTheDocument();
+    expect(attempts).toBe(2);
+    deleted = true;
+    finishRetry(response({ id: deletableUpload.id, deleted: true }));
+
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByText("living-room-design.pdf")).not.toBeInTheDocument());
+    expect(screen.getByText("Design upload deleted.")).toBeVisible();
+  });
+
+  it("refreshes permission after approval wins a race and prevents another delete attempt", async () => {
+    let approved = false;
+    let attempts = 0;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, options) => {
+      if (options?.method === "DELETE") {
+        attempts += 1;
+        approved = true;
+        return Response.json({ error: { code: "UPLOAD_APPROVED", message: "The design is already approved." } }, { status: 409 });
+      }
+      return response({
+        uploads: [{ ...deletableUpload, canDelete: !approved, deleteBlockedReason: approved ? "Approved designs cannot be deleted." : undefined }],
+        pages: [], drawings: [], revisions: []
+      });
+    });
+    const user = userEvent.setup();
+    renderWithQuery(<EstimateDesignUploads estimateId="estimate-1" rooms={rooms} scopes={scopes} items={[]} variant="designer" readOnly />);
+    await user.click(await screen.findByRole("button", { name: "Delete upload living-room-design.pdf" }));
+    const dialog = screen.getByRole("alertdialog", { name: "Delete design upload?" });
+    const confirm = within(dialog).getByRole("button", { name: "Delete upload" });
+    await user.click(confirm);
+
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent("The design is already approved.");
+    await waitFor(() => expect(confirm).toBeDisabled());
+    expect(within(dialog).getByRole("status")).toHaveTextContent("Approved designs cannot be deleted.");
+    await user.click(confirm);
+    expect(attempts).toBe(1);
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("button", { name: /Delete upload/ })).not.toBeInTheDocument();
+  });
+
   it("shows verified Misc, assigns an exact item without scope, and does not block submit", async () => {
     const miscDrawing = {
       ...drawings[0],
@@ -213,7 +333,7 @@ describe("EstimateDesignUploads", () => {
     })).toBeVisible();
   });
 
-  it("shows the selected design file and keeps its upload progress visible until the request settles", async () => {
+  it.each(["estimator", "designer"] as const)("keeps the %s upload button loading until the response settles", async (variant) => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       if (String(input).endsWith("/estimates/estimate-1/design-uploads")) {
         return response({ uploads: [], pages: [], drawings: [], revisions: [] });
@@ -224,29 +344,45 @@ describe("EstimateDesignUploads", () => {
     vi.stubGlobal("XMLHttpRequest", FakeXMLHttpRequest);
 
     const user = userEvent.setup();
-    renderWithQuery(<EstimateDesignUploads estimateId="estimate-1" rooms={rooms} scopes={scopes} items={[]} />);
+    renderWithQuery(<EstimateDesignUploads estimateId="estimate-1" rooms={rooms} scopes={scopes} items={[]} variant={variant} />);
+    const buttonLabel = variant === "designer" ? "Upload design" : "Upload design plan";
+    const progressLabel = variant === "designer" ? "Uploading design" : "Uploading design plan";
     const file = new File(["%PDF-1.7"], "kitchen-plan.pdf", { type: "application/pdf" });
 
     await user.upload(await screen.findByLabelText("Design plan file"), file);
 
     expect(screen.getByText("kitchen-plan.pdf")).toBeVisible();
     expect(screen.getByText("8 B")).toBeVisible();
-    expect(screen.getByText("Choose file")).toBeVisible();
+    expect(screen.getByText(variant === "designer" ? "Select design file" : "Choose file")).toBeVisible();
 
-    await user.click(screen.getByRole("button", { name: "Upload design plan" }));
+    const button = screen.getByRole("button", { name: buttonLabel });
+    await user.click(button);
+    expect(button).toHaveAttribute("aria-busy", "true");
+    expect(button).toBeDisabled();
+    expect(button.querySelector(".ui-spinner")).toBeInTheDocument();
+    expect(within(button).getByText("Uploading…")).toBeInTheDocument();
+    fireEvent.submit(button.closest("form")!);
+    expect(FakeXMLHttpRequest.instances).toHaveLength(1);
     const xhr = FakeXMLHttpRequest.instances[0]!;
     xhr.upload.onprogress?.({ lengthComputable: true, loaded: 3, total: 4 } as ProgressEvent);
 
-    await waitFor(() => expect(screen.getByRole("progressbar", { name: "Uploading design plan" })).toHaveAttribute("aria-valuenow", "75"));
+    await waitFor(() => expect(screen.getByRole("progressbar", { name: progressLabel })).toHaveAttribute("aria-valuenow", "75"));
+
+    xhr.upload.onprogress?.({ lengthComputable: true, loaded: 4, total: 4 } as ProgressEvent);
+    await waitFor(() => expect(screen.getByRole("progressbar", { name: progressLabel })).toHaveAttribute("aria-valuenow", "100"));
+    expect(button).toHaveAttribute("aria-busy", "true");
+    expect(button).toBeDisabled();
 
     xhr.status = 201;
     xhr.responseText = JSON.stringify({ data: { id: "upload-1" } });
     xhr.onload?.();
 
-    await waitFor(() => expect(screen.queryByRole("progressbar", { name: "Uploading design plan" })).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByRole("progressbar", { name: progressLabel })).not.toBeInTheDocument());
+    expect(button).not.toHaveAttribute("aria-busy");
+    expect(button).toBeDisabled();
   });
 
-  it("retains the selected file details after a non-successful upload while clearing progress", async () => {
+  it.each(["estimator", "designer"] as const)("clears the %s upload loader after failure and allows retry with the selected file", async (variant) => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       if (String(input).endsWith("/estimates/estimate-1/design-uploads")) {
         return response({ uploads: [], pages: [], drawings: [], revisions: [] });
@@ -257,13 +393,17 @@ describe("EstimateDesignUploads", () => {
     vi.stubGlobal("XMLHttpRequest", FakeXMLHttpRequest);
 
     const user = userEvent.setup();
-    renderWithQuery(<EstimateDesignUploads estimateId="estimate-1" rooms={rooms} scopes={scopes} items={[]} />);
+    renderWithQuery(<EstimateDesignUploads estimateId="estimate-1" rooms={rooms} scopes={scopes} items={[]} variant={variant} />);
+    const buttonLabel = variant === "designer" ? "Upload design" : "Upload design plan";
+    const progressLabel = variant === "designer" ? "Uploading design" : "Uploading design plan";
     const file = new File(["failed upload"], "failed-plan.pdf", { type: "application/pdf" });
     await user.upload(await screen.findByLabelText("Design plan file"), file);
-    await user.click(screen.getByRole("button", { name: "Upload design plan" }));
+    const button = screen.getByRole("button", { name: buttonLabel });
+    await user.click(button);
+    expect(button).toHaveAttribute("aria-busy", "true");
     const xhr = FakeXMLHttpRequest.instances[0]!;
     xhr.upload.onprogress?.({ lengthComputable: true, loaded: 6, total: 12 } as ProgressEvent);
-    await waitFor(() => expect(screen.getByRole("progressbar", { name: "Uploading design plan" })).toHaveAttribute("aria-valuenow", "50"));
+    await waitFor(() => expect(screen.getByRole("progressbar", { name: progressLabel })).toHaveAttribute("aria-valuenow", "50"));
 
     xhr.status = 422;
     xhr.responseText = JSON.stringify({ error: { code: "INVALID_FILE", message: "Choose another plan." } });
@@ -272,7 +412,12 @@ describe("EstimateDesignUploads", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("The plan could not be uploaded.");
     expect(screen.getByText("failed-plan.pdf")).toBeVisible();
     expect(screen.getByText("13 B")).toBeVisible();
-    expect(screen.queryByRole("progressbar", { name: "Uploading design plan" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("progressbar", { name: progressLabel })).not.toBeInTheDocument();
+    expect(button).not.toHaveAttribute("aria-busy");
+    expect(button).toBeEnabled();
+    await user.click(button);
+    expect(button).toHaveAttribute("aria-busy", "true");
+    expect(FakeXMLHttpRequest.instances).toHaveLength(2);
   });
 
   it("identifies a retried extraction while preserving the extraction failure message", async () => {

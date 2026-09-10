@@ -784,7 +784,7 @@ describe("accessibility smoke coverage", () => {
 
     await user.click(trigger);
     const dialog = screen.getByRole("dialog", { name: "Initiate project" });
-    const estimator = within(dialog).getByRole("combobox", { name: "Estimator/Sales" });
+    const estimator = within(dialog).getByRole("combobox", { name: "Sales" });
     await user.click(estimator);
     expect(await within(dialog).findByRole("option", { name: /Accessible Estimator/ })).toBeVisible();
     await user.keyboard("{ArrowDown}{Enter}");

@@ -200,6 +200,8 @@ describe("authorization policy", () => {
       if (role === "super_admin") continue;
       const historicalPermissions = ROLE_PERMISSIONS[role].filter(
         (permission) =>
+          permission !== "estimation.design_upload.delete" &&
+          !(role === "estimator_sales" && permission === "projects.initiate") &&
           !ESTIMATE_CLIENT_RESPONSE_PERMISSIONS.includes(permission as never) &&
           !PROJECT_WORKFLOW_PERMISSIONS.includes(permission as never) &&
           !PROCUREMENT_PERMISSIONS.includes(permission as never) &&
@@ -223,9 +225,19 @@ describe("authorization policy", () => {
         permissionsForRows([...COMMON_ROWS, ...ADDITIONAL_ROWS[role]])
       );
     }
-    expect(PERMISSION_CODES).toHaveLength(119);
-    expect(new Set(PERMISSION_CODES).size).toBe(119);
+    expect(PERMISSION_CODES).toHaveLength(120);
+    expect(new Set(PERMISSION_CODES).size).toBe(120);
     expect(ROLE_PERMISSIONS.super_admin).toEqual(PERMISSION_CODES);
+  });
+
+  it("allows project initiation only for Sales, Sales Manager, and Super Admin without giving Sales client decisions", () => {
+    for (const role of ROLE_CODES) {
+      expect(hasPermission(role, "projects.initiate"), role).toBe(
+        ["estimator_sales", "admin", "super_admin"].includes(role)
+      );
+    }
+    expect(hasPermission("estimator_sales", "estimation.client_response_tasks.decide")).toBe(false);
+    expect(hasPermission("estimator_sales", "design.plan_response_tasks.decide")).toBe(false);
   });
 
   it("adds the six project-workflow permissions to exactly the participating roles", () => {

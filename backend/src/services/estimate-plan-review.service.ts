@@ -6,7 +6,7 @@ import sharp, { type OverlayOptions } from "sharp";
 
 import { annotationDocumentSchema, type AnnotationDocumentV1 } from "../domain/estimate-design.js";
 import { normalizeEmail } from "../domain/email.js";
-import { detectAnnotationTargets, projectAnnotationToCrop } from "../domain/estimate-plan-review.js";
+import { derivePlanRequestStatus, detectAnnotationTargets, projectAnnotationToCrop } from "../domain/estimate-plan-review.js";
 import { ApiError } from "../middleware/errors.js";
 import { EstimateDesignDrawingModel } from "../models/EstimateDesignDrawing.js";
 import { EstimateDesignAnnotationDraftModel } from "../models/EstimateDesignAnnotationDraft.js";
@@ -187,7 +187,7 @@ export async function approvePlanTargetsForDrawingRevision(
     }
     if (!changed) continue;
     request.version += 1;
-    request.status = request.targets.every((target: Record<string, any>) => target.status === "approved" || target.status === "resolved") ? "resolved" : "open";
+    request.status = derivePlanRequestStatus(request.targets.map((target: Record<string, any>) => target.status), Boolean(request.unassigned), Boolean(request.unassignedResolved));
     await request.save({ session });
   }
 }
@@ -233,7 +233,7 @@ export function createEstimatePlanReviewService(input: CreateEstimatePlanReviewS
     const page = await EstimateDesignSourcePageModel.findById(pageId).lean();
     if (!page) throw notFound();
     const upload = await EstimateDesignUploadModel.findById(page.uploadId).lean();
-    if (!upload) throw notFound();
+    if (!upload || upload.deletedAt) throw notFound();
     await input.estimateDesigns.listClient(user, dtoId(upload.estimateId));
     await requireDesignPlanState(dtoId(upload.estimateId), mode);
     return { page, estimateId: dtoId(upload.estimateId) };
@@ -334,6 +334,7 @@ export function createEstimatePlanReviewService(input: CreateEstimatePlanReviewS
     await requireDesignPlanState(estimateId, "visible");
     const uploads = await EstimateDesignUploadModel.find({
       estimateId,
+      deletedAt: null,
       replacementDrawingId: null,
       replacesRevisionId: null
     }).sort({ uploadedAt: 1, _id: 1 }).lean();
@@ -567,7 +568,7 @@ export function createEstimatePlanReviewService(input: CreateEstimatePlanReviewS
       const page = await EstimateDesignSourcePageModel.findById(pageId).lean();
       if (!page) throw notFound();
       const upload = await EstimateDesignUploadModel.findById(page.uploadId).lean();
-      if (!upload) throw notFound();
+      if (!upload || upload.deletedAt) throw notFound();
       await requireStaffEstimate(user, dtoId(upload.estimateId));
       const revision = await bootstrapPageRevision(dtoId(upload.estimateId), pageId);
       return Readable.from(await renderPageRevision(revision));

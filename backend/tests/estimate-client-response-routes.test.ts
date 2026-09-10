@@ -408,7 +408,7 @@ describe("estimate client response routes", () => {
     expect(harness.storage.deleteQuietly).not.toHaveBeenCalled();
   });
 
-  it("validates retry JSON and delegates only owner-scoped Estimator/Sales or Super Admin", async () => {
+  it("validates retry JSON and delegates only owner-scoped Sales or Super Admin", async () => {
     const harness = createHarness();
 
     const response = await request(harness.app)

@@ -66,7 +66,7 @@ export interface AuthPayload {
 }
 
 export const AUTHORIZATION_POLICY_VERSION =
-  "2026-08-30.super-admin-dashboard.v1" as const;
+  "2026-09-09.designer-upload-delete.v1" as const;
 
 export interface AuthorizationSnapshot {
   readonly role: Role;

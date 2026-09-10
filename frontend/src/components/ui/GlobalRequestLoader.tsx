@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useLayoutEffect, useState, useSyncExternalStore, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 
 import { requestActivity } from "../../api/requestActivity";
@@ -38,13 +38,35 @@ export function useSharedLoadingStatus({ message, statusLabel }: LoadingStatus) 
 
 export function GlobalRequestLoader({ pageStatus }: { pageStatus?: LoadingStatus } = {}) {
   const pending = useSyncExternalStore(requestActivity.subscribe, requestActivity.getSnapshot, () => 0);
-  if (pending === 0 && !pageStatus) return null;
+  const active = pending > 0 || Boolean(pageStatus);
+  const visible = useStableLoadingIndicator(active);
+  if (!active && !visible) return null;
 
   return createPortal(
-    <div className="lisno-request-loader" role="status" aria-label={pageStatus?.statusLabel ?? "Request status"} aria-live="polite" aria-atomic="true">
-      <BrandLoadingMark />
+    <div className="lisno-request-loader" data-visible={visible || undefined} role={active ? "status" : undefined} aria-hidden={!active || undefined} aria-label={pageStatus?.statusLabel ?? "Request status"} aria-live="polite" aria-atomic="true">
+      <span aria-hidden="true" style={{ visibility: visible ? "visible" : "hidden" }}><BrandLoadingMark /></span>
       <span className="lisno-loading-message">{pageStatus?.message ?? "Loading Lisno…"}</span>
     </div>,
     document.body
   );
+}
+
+/** Ignore fast requests and bridge short gaps between consecutive page reads. */
+function useStableLoadingIndicator(active: boolean) {
+  const [visible, setVisible] = useState(false);
+  const shownAt = useRef(0);
+  useEffect(() => {
+    if (active && !visible) {
+      const timer = window.setTimeout(() => {
+        shownAt.current = Date.now();
+        setVisible(true);
+      }, 180);
+      return () => window.clearTimeout(timer);
+    }
+    if (!active && visible) {
+      const timer = window.setTimeout(() => setVisible(false), Math.max(0, 350 - (Date.now() - shownAt.current)));
+      return () => window.clearTimeout(timer);
+    }
+  }, [active, visible]);
+  return visible;
 }

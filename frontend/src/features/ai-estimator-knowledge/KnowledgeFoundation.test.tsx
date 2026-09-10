@@ -77,7 +77,7 @@ describe("knowledge feature foundation", () => {
     expect(
       screen.getByRole("region", { name: "Knowledge base isolation notice" })
     ).toHaveTextContent(
-      "Knowledge-base changes do not modify current estimates or the existing Estimator/Sales builder."
+      "Knowledge-base changes do not modify current estimates or the existing Sales estimate builder."
     );
   });
 

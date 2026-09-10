@@ -336,7 +336,7 @@ describe("ClientResponseTaskDetailPage", () => {
     renderApp(["/admin/client-responses/round-1"]);
     expect(await screen.findByText("Changes requested")).toBeVisible();
     expect(screen.getByText("Please revise the kitchen finish.")).toBeVisible();
-    expect(screen.getByText("Recorded with Admin proof")).toBeVisible();
+    expect(screen.getByText("Recorded with Sales Manager proof")).toBeVisible();
     expect(screen.getByText("Decided").parentElement).toHaveTextContent(
       "Decided24 Aug 2026, 08:30"
     );

@@ -4,8 +4,10 @@ import type {
   AdminProjectSummary,
   EstimatorOption,
   InitiateAdminProjectInput,
+  InitiatedAdminProjectSummary,
   PageData,
-  PaginationInput
+  PaginationInput,
+  SalesManagerOption
 } from "../../api/types";
 
 export const adminProjectKeys = {
@@ -15,7 +17,9 @@ export const adminProjectKeys = {
   detail: (projectId: string) =>
     ["admin-projects", "detail", projectId] as const,
   estimators: (search: string, pagination: PaginationInput) =>
-    ["admin-projects", "estimators", search, pagination] as const
+    ["admin-projects", "estimators", search, pagination] as const,
+  salesManagers: (search: string, pagination: PaginationInput) =>
+    ["admin-projects", "sales-managers", search, pagination] as const
 };
 
 export function adminProjectsPath(pagination: PaginationInput): string {
@@ -53,5 +57,24 @@ export const getEstimatorOptions = (
     estimatorOptionsPath(search, pagination)
   );
 
+export function salesManagerOptionsPath(
+  search: string,
+  pagination: PaginationInput
+): string {
+  const query = new URLSearchParams();
+  if (search.trim()) query.set("search", search.trim());
+  query.set("limit", String(pagination.limit));
+  query.set("offset", String(pagination.offset));
+  return `/admin/sales-managers?${query.toString()}`;
+}
+
+export const getSalesManagerOptions = (
+  search: string,
+  pagination: PaginationInput
+) =>
+  apiClient.get<PageData<SalesManagerOption>>(
+    salesManagerOptionsPath(search, pagination)
+  );
+
 export const initiateAdminProject = (input: InitiateAdminProjectInput) =>
-  apiClient.post<AdminProjectSummary>("/admin/projects", input);
+  apiClient.post<InitiatedAdminProjectSummary>("/admin/projects", input);

@@ -50,7 +50,7 @@ function AdminProjectsHeaderRow() {
       <span className="admin-projects__header-cell"><Tag aria-hidden="true" /><span>Project</span></span>
       <div className="admin-project-card__meta">
         <div><Building2 aria-hidden="true" /><span>Location</span></div>
-        <div><User aria-hidden="true" /><span>Estimator/Sales</span></div>
+        <div><User aria-hidden="true" /><span>Sales</span></div>
         <div><TrendingUp aria-hidden="true" /><span>Lead progress</span></div>
         <div><CalendarClock aria-hidden="true" /><span>Next action</span></div>
         <div><IndianRupee aria-hidden="true" /><span>Estimate</span></div>
@@ -99,7 +99,7 @@ function AdminProjectCard({
               <dt className="sr-only">Location</dt>
               <dd>{project.propertyType ?? "Property not captured"} · {project.location}</dd>
             </div>
-            <div><dt className="sr-only">Estimator/Sales</dt><dd>{project.estimator?.name ?? "Unassigned handoff"}</dd></div>
+            <div><dt className="sr-only">Sales</dt><dd>{project.estimator?.name ?? "Unassigned handoff"}</dd></div>
             <div><dt className="sr-only">Lead progress</dt><dd>{project.lead ? formatWorkflowLabel(project.lead.stage) : "Unassigned handoff"}</dd></div>
             <div><dt className="sr-only">Next action</dt><dd>{nextAction ?? "No action pending"}</dd></div>
             <div>
@@ -161,7 +161,7 @@ export function AdminProjectsPage() {
         title={projectCollectionLabel}
         description={isSuperAdmin
           ? "All projects across the organization."
-          : "Projects you initiated and handed to Estimator/Sales."}
+          : "Projects you initiated and handed to Sales."}
         metadata={page ? <StatusBadge tone="info" label={`${page.pagination.total} project${page.pagination.total === 1 ? "" : "s"}`} /> : undefined}
         actions={hasFrontendPermission(auth.authorization, "projects.initiate") ? <Button onClick={() => setDialogOpen(true)}>Initiate project</Button> : undefined}
       />

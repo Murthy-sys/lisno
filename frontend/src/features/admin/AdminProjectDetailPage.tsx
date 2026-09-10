@@ -123,9 +123,9 @@ export function AdminProjectDetailPage() {
             icon={<User aria-hidden="true" />}
             tone="cool"
             title="Assignment & progress"
-            subtitle="Estimator/Sales assignment and lead progress"
+            subtitle="Sales assignment and lead progress"
           >
-            <h3>Estimator/Sales</h3>
+            <h3>Sales</h3>
             <dl><div><dt>Assigned to</dt><dd>{project.estimator?.name ?? "Unassigned handoff"}</dd></div>{project.estimator ? <div><dt>Email</dt><dd>{project.estimator.email}</dd></div> : null}</dl>
             <h3>Lead progress</h3>
             {project.lead ? <dl><div><dt>Stage</dt><dd>{formatWorkflowLabel(project.lead.stage)}</dd></div><div><dt>Next action</dt><dd>{nextAction}</dd></div><div><dt>Next action date</dt><dd><time dateTime={project.lead.nextActionAt}>{dateTime.format(new Date(project.lead.nextActionAt))}</time></dd></div></dl> : <p>Unassigned handoff</p>}

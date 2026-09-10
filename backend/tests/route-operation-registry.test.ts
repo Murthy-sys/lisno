@@ -36,7 +36,8 @@ const EXPECTED_ALL_HUMAN_JWT_OPERATIONS = [
   ...EXPECTED_HUMAN_JWT_OPERATIONS,
   ...EXPECTED_PROJECT_FINANCE_HUMAN_JWT_OPERATIONS,
   ...EXPECTED_AI_ESTIMATOR_KNOWLEDGE_OPERATIONS,
-  ...EXPECTED_SUPER_ADMIN_DASHBOARD_OPERATIONS
+  ...EXPECTED_SUPER_ADMIN_DASHBOARD_OPERATIONS,
+  { key: "DELETE /estimate-design-uploads/:uploadId", permission: "estimation.design_upload.delete", scope: { kind: "non_project", namespace: "estimation_ownership" }, operationClass: "personal", superAdminBehavior: "deny_personal", availability: "baseline" }
 ] as const;
 const EXPECTED_STAFF_INVITATION_OPERATIONS =
   EXPECTED_STAFF_INVITATION_HUMAN_JWT_OPERATIONS.slice(
@@ -209,9 +210,9 @@ describe("human JWT operation registry", () => {
     expect(HUMAN_JWT_OPERATION_LIST.slice(start, end)).toEqual(expected);
   });
 
-  it("matches all 178 normative operation rows", () => {
+  it("matches all 182 normative operation rows", () => {
     expect(Object.values(HUMAN_JWT_OPERATIONS)).toEqual(EXPECTED_ALL_HUMAN_JWT_OPERATIONS);
-    expect(Object.keys(HUMAN_JWT_OPERATIONS)).toHaveLength(178);
+    expect(Object.keys(HUMAN_JWT_OPERATIONS)).toHaveLength(182);
   });
 
   it("mounts rows 2 through 23 as exact router groups with one ordered marker pair", () => {
@@ -263,7 +264,7 @@ describe("human JWT operation registry", () => {
     );
     expect(matches).toHaveLength(1);
     expect(matches[0]!.routes.map(({ key }) => key).sort()).toEqual(
-      [...ESTIMATE_DESIGN_EXPECTED_ROUTES].sort()
+      [...ESTIMATE_DESIGN_EXPECTED_ROUTES, "DELETE /estimate-design-uploads/:uploadId"].sort()
     );
     for (const route of matches[0]!.routes) {
       expect(route.authenticationIndices, `${route.key} authentication markers`).toHaveLength(1);
@@ -362,7 +363,7 @@ describe("human JWT operation registry", () => {
     }
   });
 
-  it("mounts all four Prompt 2 Admin project operations in one authenticated router", () => {
+  it("mounts all five Prompt 2 Admin project operations in one authenticated router", () => {
     const expected = EXPECTED_PROMPT_2_HUMAN_JWT_OPERATIONS.map(({ key }) => key);
     const matches = mountedHumanRouters().filter((router) =>
       router.routes.some(({ key }) => expected.includes(key as never))
@@ -376,7 +377,7 @@ describe("human JWT operation registry", () => {
   });
 
   it("appends exactly four identity-provisioning operations with the approved scope and access metadata", () => {
-    expect(HUMAN_JWT_OPERATION_LIST.slice(97, 101)).toEqual(
+    expect(HUMAN_JWT_OPERATION_LIST.slice(98, 102)).toEqual(
       EXPECTED_STAFF_INVITATION_OPERATIONS
     );
     expect(
@@ -387,7 +388,7 @@ describe("human JWT operation registry", () => {
   });
 
   it("composes exactly six estimate-client-response operations after the staff-invitation layer", () => {
-    expect(HUMAN_JWT_OPERATION_LIST.slice(101, 107)).toEqual(
+    expect(HUMAN_JWT_OPERATION_LIST.slice(102, 108)).toEqual(
       EXPECTED_ESTIMATE_CLIENT_RESPONSE_OPERATIONS
     );
     expect(
@@ -405,7 +406,7 @@ describe("human JWT operation registry", () => {
   });
 
   it("appends exactly seventeen project-workflow operations with explicit scope and access metadata", () => {
-    expect(HUMAN_JWT_OPERATION_LIST.slice(107, 124)).toEqual(
+    expect(HUMAN_JWT_OPERATION_LIST.slice(108, 125)).toEqual(
       EXPECTED_PROJECT_WORKFLOW_OPERATIONS
     );
     expect(
@@ -433,7 +434,7 @@ describe("human JWT operation registry", () => {
   });
 
   it("appends and mounts five project-finance operations in one authenticated router", () => {
-    expect(HUMAN_JWT_OPERATION_LIST.slice(124, 129)).toEqual(
+    expect(HUMAN_JWT_OPERATION_LIST.slice(125, 130)).toEqual(
       EXPECTED_PROJECT_FINANCE_OPERATIONS
     );
     expect(HUMAN_JWT_OPERATION_LIST.filter(
@@ -449,11 +450,11 @@ describe("human JWT operation registry", () => {
     );
   });
 
-  it("appends exactly 46 AI Estimator Knowledge operations with one closed namespace", () => {
-    expect(HUMAN_JWT_OPERATION_LIST.slice(129, 175)).toEqual(
+  it("appends exactly 48 AI Estimator Knowledge operations with one closed namespace", () => {
+    expect(HUMAN_JWT_OPERATION_LIST.slice(130, 178)).toEqual(
       EXPECTED_AI_ESTIMATOR_KNOWLEDGE_OPERATIONS
     );
-    expect(EXPECTED_AI_ESTIMATOR_KNOWLEDGE_OPERATIONS).toHaveLength(46);
+    expect(EXPECTED_AI_ESTIMATOR_KNOWLEDGE_OPERATIONS).toHaveLength(48);
     expect(HUMAN_JWT_OPERATION_LIST.filter(
       ({ availability }) => availability === "ai_estimator_knowledge"
     )).toEqual(EXPECTED_AI_ESTIMATOR_KNOWLEDGE_OPERATIONS);
@@ -477,7 +478,7 @@ describe("human JWT operation registry", () => {
   });
 
   it("appends exactly three Super Admin dashboard reads", () => {
-    expect(HUMAN_JWT_OPERATION_LIST.slice(175)).toEqual(
+    expect(HUMAN_JWT_OPERATION_LIST.slice(178, 181)).toEqual(
       EXPECTED_SUPER_ADMIN_DASHBOARD_OPERATIONS
     );
   });
@@ -503,7 +504,7 @@ describe("human JWT operation registry", () => {
     }
   });
 
-  it("mounts the exact 178-operation manifest with one ordered marker pair each", () => {
+  it("mounts the exact 182-operation manifest with one ordered marker pair each", () => {
     const expectedKeys = EXPECTED_ALL_HUMAN_JWT_OPERATIONS.map(
       ({ key }) => key
     ).sort();
@@ -513,8 +514,8 @@ describe("human JWT operation registry", () => {
     const mountedOperations = mountedRoutes.map(({ key }) => key);
 
     expect([...mountedOperations].sort()).toEqual(expectedKeys);
-    expect(expectedKeys).toHaveLength(178);
-    expect(new Set(expectedKeys).size).toBe(178);
+    expect(expectedKeys).toHaveLength(182);
+    expect(new Set(expectedKeys).size).toBe(182);
     expect(mountedOperations).toContain(
       "POST /execution/worker-assignments/override"
     );
@@ -561,9 +562,9 @@ describe("human JWT operation registry", () => {
     expect(() => assertTaskSixRouteMounts(routers)).toThrow();
   });
 
-  it("has 178 unique keys and exactly 119 routed permissions", () => {
-    expect(new Set(HUMAN_JWT_OPERATION_LIST.map(({ key }) => key)).size).toBe(178);
-    expect(new Set(HUMAN_JWT_OPERATION_LIST.map(({ permission }) => permission)).size).toBe(119);
+  it("has 182 unique keys and exactly 120 routed permissions", () => {
+    expect(new Set(HUMAN_JWT_OPERATION_LIST.map(({ key }) => key)).size).toBe(182);
+    expect(new Set(HUMAN_JWT_OPERATION_LIST.map(({ permission }) => permission)).size).toBe(120);
     expect(HUMAN_JWT_OPERATION_LIST.every(({ permission }) =>
       (PERMISSION_CODES as readonly string[]).includes(permission)
     )).toBe(true);

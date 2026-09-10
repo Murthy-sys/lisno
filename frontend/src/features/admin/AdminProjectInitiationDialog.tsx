@@ -9,9 +9,9 @@ import {
 
 import { ApiError } from "../../api/client";
 import type {
-  AdminProjectSummary,
   EstimatorOption,
-  InitiateAdminProjectInput
+  InitiateAdminProjectInput,
+  InitiatedAdminProjectSummary
 } from "../../api/types";
 import { useFeedback } from "../../components/feedback/FeedbackProvider";
 import { Button } from "../../components/ui/Button";
@@ -21,8 +21,10 @@ import { SearchCombobox } from "../../components/ui/SearchCombobox";
 import {
   adminProjectKeys,
   getEstimatorOptions,
+  getSalesManagerOptions,
   initiateAdminProject
 } from "./adminProjectsApi";
+import { leadKeys } from "../leads/leadsApi";
 import { dashboardKeys } from "./dashboard/superAdminDashboardApi";
 
 interface ProjectInitiationForm {
@@ -66,7 +68,9 @@ const fields = [
 
 function validate(
   form: ProjectInitiationForm,
-  selectedEstimator: EstimatorOption | null
+  selectedAssignee: EstimatorOption | null,
+  assignmentField: "estimatorId" | "salesManagerId",
+  assignmentLabel: string
 ): Record<string, string> {
   const errors: Record<string, string> = {};
   for (const [key, label] of fields) {
@@ -90,47 +94,52 @@ function validate(
   if (form.nextActionAt.trim() && Number.isNaN(new Date(form.nextActionAt).getTime())) {
     errors.nextActionAt = "Next action date must be valid.";
   }
-  if (!selectedEstimator) {
-    errors.estimatorId = "Select an active Estimator/Sales user.";
+  if (!selectedAssignee) {
+    errors[assignmentField] = `Select an active ${assignmentLabel} user.`;
   }
   return errors;
 }
 
 export function AdminProjectInitiationDialog({
   onClose,
-  onCreated
+  onCreated,
+  assignmentMode = "estimator"
 }: {
   onClose: () => void;
-  onCreated: (project: AdminProjectSummary) => void;
+  onCreated: (project: InitiatedAdminProjectSummary) => void;
+  assignmentMode?: "estimator" | "sales-manager";
 }) {
+  const selectsSalesManager = assignmentMode === "sales-manager";
+  const assignmentField = selectsSalesManager ? "salesManagerId" : "estimatorId";
+  const assignmentLabel = selectsSalesManager ? "Sales Manager" : "Sales";
   const queryClient = useQueryClient();
   const feedback = useFeedback();
   const [form, setForm] = useState<ProjectInitiationForm>(emptyForm);
-  const [estimatorQuery, setEstimatorQuery] = useState("");
-  const [debouncedEstimatorQuery, setDebouncedEstimatorQuery] = useState("");
-  const [selectedEstimator, setSelectedEstimator] = useState<EstimatorOption | null>(null);
+  const [assigneeSearch, setAssigneeSearch] = useState("");
+  const [debouncedAssigneeSearch, setDebouncedAssigneeSearch] = useState("");
+  const [selectedAssignee, setSelectedAssignee] = useState<EstimatorOption | null>(null);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [submissionError, setSubmissionError] = useState<string | null>(null);
   const refs = useRef<Record<string, HTMLInputElement | null>>({});
   const submissionStarted = useRef(false);
 
   useEffect(() => {
-    const normalized = estimatorQuery.trim();
+    const normalized = assigneeSearch.trim();
     const timer = window.setTimeout(
-      () => setDebouncedEstimatorQuery(normalized),
+      () => setDebouncedAssigneeSearch(normalized),
       normalized ? 300 : 0
     );
     return () => window.clearTimeout(timer);
-  }, [estimatorQuery]);
+  }, [assigneeSearch]);
 
-  const estimatorPagination = { limit: 20, offset: 0 } as const;
-  const estimatorsQuery = useQuery({
-    queryKey: adminProjectKeys.estimators(
-      debouncedEstimatorQuery,
-      estimatorPagination
+  const assigneePagination = { limit: 20, offset: 0 } as const;
+  const assigneesQuery = useQuery({
+    queryKey: (selectsSalesManager ? adminProjectKeys.salesManagers : adminProjectKeys.estimators)(
+      debouncedAssigneeSearch,
+      assigneePagination
     ),
     queryFn: () =>
-      getEstimatorOptions(debouncedEstimatorQuery, estimatorPagination)
+      (selectsSalesManager ? getSalesManagerOptions : getEstimatorOptions)(debouncedAssigneeSearch, assigneePagination)
   });
 
   const focusFirst = (errors: Record<string, string>) => {
@@ -143,11 +152,14 @@ export function AdminProjectInitiationDialog({
     onSuccess: async (project) => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: adminProjectKeys.all }),
-        queryClient.invalidateQueries({ queryKey: dashboardKeys.all })
+        queryClient.invalidateQueries({ queryKey: dashboardKeys.all }),
+        queryClient.invalidateQueries({ queryKey: leadKeys.all })
       ]);
       feedback.success({
         title: "Project initiated",
-        message: "The Estimator/Sales handoff is ready."
+        message: selectsSalesManager
+          ? "Your lead is ready with the selected Sales Manager."
+          : "The Sales handoff is ready."
       });
       onClose();
       onCreated(project);
@@ -178,13 +190,13 @@ export function AdminProjectInitiationDialog({
     event.preventDefault();
     if (submissionStarted.current || mutation.isPending) return;
     setSubmissionError(null);
-    const errors = validate(form, selectedEstimator);
+    const errors = validate(form, selectedAssignee, assignmentField, assignmentLabel);
     setFieldErrors(errors);
     if (Object.keys(errors).length > 0) {
       focusFirst(errors);
       return;
     }
-    if (!selectedEstimator) return;
+    if (!selectedAssignee) return;
 
     const input: InitiateAdminProjectInput = {
       clientName: form.clientName.trim(),
@@ -197,30 +209,34 @@ export function AdminProjectInitiationDialog({
       budgetMax: Number(form.budgetMax),
       nextAction: form.nextAction.trim(),
       nextActionAt: new Date(form.nextActionAt).toISOString(),
-      estimatorId: selectedEstimator.id
+      ...(selectsSalesManager
+        ? { salesManagerId: selectedAssignee.id }
+        : { estimatorId: selectedAssignee.id })
     };
     submissionStarted.current = true;
     mutation.mutate(input);
   };
 
-  const estimatorErrorId = "admin-project-estimator-error";
-  const estimatorLookupError = estimatorsQuery.error instanceof ApiError
-    ? estimatorsQuery.error.message
-    : estimatorsQuery.isError
-      ? "We couldn't load Estimator/Sales options."
+  const assigneeErrorId = `admin-project-${assignmentField}-error`;
+  const assigneeLookupError = assigneesQuery.error instanceof ApiError
+    ? assigneesQuery.error.message
+    : assigneesQuery.isError
+      ? `We couldn't load ${assignmentLabel} options.`
       : undefined;
   const submitDisabled =
     mutation.isPending ||
-    estimatorsQuery.isPending ||
-    estimatorsQuery.isFetching ||
-    estimatorsQuery.isError ||
-    !selectedEstimator;
+    assigneesQuery.isPending ||
+    assigneesQuery.isFetching ||
+    assigneesQuery.isError ||
+    !selectedAssignee;
 
   return (
     <Dialog
       eyebrow="Project administration"
       title="Initiate project"
-      description="Create the project now and hand its lead to Estimator/Sales."
+      description={selectsSalesManager
+        ? "Create your project and select the Sales Manager who will oversee it."
+        : "Create the project now and hand its lead to Sales."}
       onClose={onClose}
       busy={mutation.isPending}
     >
@@ -254,24 +270,24 @@ export function AdminProjectInitiationDialog({
         ))}
         <div className="admin-project-form__estimator">
           <SearchCombobox
-            label="Estimator/Sales"
-            name="estimatorId"
-            placeholder="Search and select estimator / sales"
-            value={selectedEstimator}
+            label={assignmentLabel}
+            name={assignmentField}
+            placeholder={selectsSalesManager ? "Search and select Sales Manager" : "Search and select Sales"}
+            value={selectedAssignee}
             onChange={(option) => {
-              setSelectedEstimator(option);
+              setSelectedAssignee(option);
               if (option) {
                 setFieldErrors((current) => {
-                  if (!current.estimatorId) return current;
+                  if (!current[assignmentField]) return current;
                   const next = { ...current };
-                  delete next.estimatorId;
+                  delete next[assignmentField];
                   return next;
                 });
               }
             }}
-            query={estimatorQuery}
-            onQueryChange={setEstimatorQuery}
-            items={estimatorsQuery.data?.items ?? []}
+            query={assigneeSearch}
+            onQueryChange={setAssigneeSearch}
+            items={assigneesQuery.data?.items ?? []}
             itemKey={(option) => option.id}
             itemLabel={(option) => option.name}
             renderItem={(option) => (
@@ -280,18 +296,18 @@ export function AdminProjectInitiationDialog({
                 <span>{option.email}{option.title ? ` · ${option.title}` : ""}</span>
               </span>
             )}
-            loading={estimatorsQuery.isPending || estimatorsQuery.isFetching}
-            error={estimatorLookupError}
-            onRetry={() => void estimatorsQuery.refetch()}
+            loading={assigneesQuery.isPending || assigneesQuery.isFetching}
+            error={assigneeLookupError}
+            onRetry={() => void assigneesQuery.refetch()}
             required
-            invalid={Boolean(fieldErrors.estimatorId)}
-            describedBy={fieldErrors.estimatorId ? estimatorErrorId : undefined}
-            inputRef={(node) => { refs.current.estimatorId = node; }}
+            invalid={Boolean(fieldErrors[assignmentField])}
+            describedBy={fieldErrors[assignmentField] ? assigneeErrorId : undefined}
+            inputRef={(node) => { refs.current[assignmentField] = node; }}
           />
-          {fieldErrors.estimatorId ? (
-            <p className="ui-field__error" id={estimatorErrorId}>{fieldErrors.estimatorId}</p>
-          ) : !selectedEstimator ? (
-            <p className="ui-field__hint">Pick an option from the list — Initiate project stays disabled until an Estimator/Sales is selected.</p>
+          {fieldErrors[assignmentField] ? (
+            <p className="ui-field__error" id={assigneeErrorId}>{fieldErrors[assignmentField]}</p>
+          ) : !selectedAssignee ? (
+            <p className="ui-field__hint">Pick an option from the list — Initiate project stays disabled until {selectsSalesManager ? "a Sales Manager" : "a Sales user"} is selected.</p>
           ) : null}
         </div>
         <div className="modal-form__actions admin-project-form__actions">

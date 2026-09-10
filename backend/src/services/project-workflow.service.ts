@@ -73,7 +73,7 @@ export interface DesignPlanReviewTaskDto {
   projectName: string;
   clientName: string;
   designPlanVersion: number;
-  status: "pending" | "approved" | "changes_requested";
+  status: "pending" | "approved" | "changes_requested" | "withdrawn";
   deliveryStatus: "queued" | "sending" | "sent" | "failed" | "disabled";
   submittedAt: string;
   version: number;
@@ -1635,7 +1635,7 @@ async function resolveDesignReviewAdmin(
     active: true
   }).sort({ createdAt: 1, _id: 1 }).session(session).lean();
   if (!superAdmin) {
-    throw new ApiError(409, "DESIGN_REVIEW_ASSIGNEE_REQUIRED", "An active Admin is required for Design review.");
+    throw new ApiError(409, "DESIGN_REVIEW_ASSIGNEE_REQUIRED", "An active Sales Manager is required for Design review.");
   }
   return String(superAdmin._id);
 }

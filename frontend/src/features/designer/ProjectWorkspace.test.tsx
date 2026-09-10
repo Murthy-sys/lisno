@@ -173,6 +173,7 @@ function installWorkspaceApi(options?: {
   let projectReads = 0;
   const patchBodies: unknown[] = [];
   let uploadBody: FormData | undefined;
+  let uploadCount = 0;
   const structureRequests: Array<{ path: string; body: unknown }> = [];
   let releaseUpload: () => void = () => {};
   const uploadGate = options?.holdUpload
@@ -318,6 +319,7 @@ function installWorkspaceApi(options?: {
       init?.method === "POST"
     ) {
       uploadBody = init.body as FormData;
+      uploadCount += 1;
       await uploadGate;
       if (options?.uploadError) {
         return Response.json(
@@ -356,6 +358,7 @@ function installWorkspaceApi(options?: {
   return {
     getPatchBodies: () => patchBodies,
     getUploadBody: () => uploadBody,
+    getUploadCount: () => uploadCount,
     getProjectReads: () => projectReads,
     getStructureRequests: () => structureRequests,
     releaseUpload
@@ -660,7 +663,16 @@ describe("ProjectWorkspace", () => {
       type: "application/pdf"
     });
     await user.upload(within(dialog).getByLabelText("Design file"), file);
-    await user.click(within(dialog).getByRole("button", { name: "Upload file" }));
+    const uploadButton = within(dialog).getByRole("button", { name: "Upload file" });
+    await user.click(uploadButton);
+
+    expect(uploadButton).toHaveAttribute("aria-busy", "true");
+    expect(uploadButton).toBeDisabled();
+    expect(uploadButton.querySelector(".ui-spinner")).toBeInTheDocument();
+    expect(uploadButton).toHaveTextContent("Uploading…");
+    expect(within(dialog).getByLabelText("Design file")).toBeDisabled();
+    fireEvent.submit(uploadButton.closest("form")!);
+    expect(api.getUploadCount()).toBe(1);
 
     expect(within(dialog).getByRole("status")).toHaveTextContent(
       "Uploading securely"
@@ -675,11 +687,12 @@ describe("ProjectWorkspace", () => {
     expect(screen.getByRole("status", { name: "Project updates" })).toHaveTextContent(
       "circulation.pdf uploaded as version 2."
     );
+    expect(screen.queryByRole("dialog", { name: "Upload design" })).not.toBeInTheDocument();
   });
 
   it("keeps the upload dialog open and explains a server file error", async () => {
     tokenStorage.set("valid-token");
-    const api = installWorkspaceApi({ uploadError: true });
+    const api = installWorkspaceApi({ holdUpload: true, uploadError: true });
     const user = userEvent.setup();
     renderApp([`/designer/projects/${project.id}`]);
     await expandTask();
@@ -688,16 +701,30 @@ describe("ProjectWorkspace", () => {
       name: "Upload design for Circulation planning"
     }));
     const dialog = screen.getByRole("dialog", { name: "Upload design" });
-    await user.upload(
-      within(dialog).getByLabelText("Design file"),
-      new File(["%PDF-1.7"], "spoofed.pdf", { type: "application/pdf" })
-    );
-    await user.click(within(dialog).getByRole("button", { name: "Upload file" }));
+    const input = within(dialog).getByLabelText("Design file") as HTMLInputElement;
+    const file = new File(["%PDF-1.7"], "spoofed.pdf", { type: "application/pdf" });
+    await user.upload(input, file);
+    const uploadButton = within(dialog).getByRole("button", { name: "Upload file" });
+    await user.click(uploadButton);
+
+    expect(uploadButton).toHaveAttribute("aria-busy", "true");
+    expect(uploadButton).toBeDisabled();
+    expect(uploadButton.querySelector(".ui-spinner")).toBeInTheDocument();
+    expect(input).toBeDisabled();
+    api.releaseUpload();
 
     expect(await within(dialog).findByRole("alert")).toHaveTextContent(
       "The uploaded file type is not supported."
     );
     expect(screen.getByRole("dialog", { name: "Upload design" })).toBeVisible();
+    expect(uploadButton).not.toHaveAttribute("aria-busy");
+    expect(uploadButton).toBeEnabled();
+    expect(input).toBeEnabled();
+    expect(input.files?.[0]).toBe(file);
+    expect(within(dialog).getByText("spoofed.pdf · 8 B")).toBeVisible();
+    expect(within(dialog).queryByRole("progressbar")).not.toBeInTheDocument();
+    await user.click(uploadButton);
+    await waitFor(() => expect(api.getUploadCount()).toBe(2));
     await new Promise((resolve) => window.setTimeout(resolve, 20));
     expect(api.getProjectReads()).toBe(1);
   });

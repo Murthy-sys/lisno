@@ -50,7 +50,7 @@ export function DesignAssignmentPanel({ project }: { project: AdminProjectSummar
         id="design-assignment-title"
         defaultOpen
       >
-        <p>This task opens after the Client—or an Admin acting with proof—approves the estimate.</p>
+        <p>This task opens after the Client—or a Sales Manager acting with proof—approves the estimate.</p>
       </AdminDetailSection>
     );
   }

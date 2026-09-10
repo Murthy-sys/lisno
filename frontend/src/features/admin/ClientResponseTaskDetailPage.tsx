@@ -66,7 +66,7 @@ function detailErrorMessage(error: unknown): string {
 function decisionSourceLabel(
   source: EstimateClientResponseTaskDetail["decisionSource"]
 ): string {
-  if (source === "admin_proof") return "Recorded with Admin proof";
+  if (source === "admin_proof") return "Recorded with Sales Manager proof";
   if (source === "client_portal") return "Recorded through the Client portal";
   return "Awaiting Client response";
 }
@@ -171,7 +171,7 @@ export function ClientResponseTaskDetailPage() {
         <dl>
           <div><dt>Project</dt><dd>{task.project?.name ?? "Project unavailable"}</dd></div>
           <div><dt>Client email</dt><dd>{task.client.email}</dd></div>
-          <div><dt>Assigned Admin</dt><dd>{task.assignedAdmin.name}</dd></div>
+          <div><dt>Assigned Sales Manager</dt><dd>{task.assignedAdmin.name}</dd></div>
           <div>
             <dt>Delivery status</dt>
             <dd><StatusBadge tone={delivery.tone} label={delivery.label} /></dd>

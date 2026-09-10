@@ -191,7 +191,12 @@ const responseSchemaByOperation: Readonly<Record<string, string>> = {
   "POST /auth/password-reset/inspect": "PasswordResetAvailable",
   "POST /auth/password-reset/complete": "PasswordResetCompleted",
   "GET /auth/me": "PublicUser",
+  "DELETE /estimate-design-uploads/:uploadId": "EstimateDesignUploadDeleted",
+  "POST /estimates/:estimateId/design-uploads": "EstimateDesignUpload",
+  "POST /estimate-design-uploads/:uploadId/retry": "EstimateDesignUpload",
+  "GET /estimates/:estimateId/design-uploads": "EstimateDesignWorkspace",
   "GET /auth/authorization": "AuthorizationSnapshot",
+  "GET /admin/sales-managers": "SalesManagerOptionPage",
   "GET /admin/designers": "DesignerOptionList",
   "POST /admin/projects/:projectId/design-assignment": "DesignPlanTask",
   "GET /designer/design-plan-tasks": "DesignPlanTaskList",
@@ -277,7 +282,8 @@ const operationSummaries: Readonly<Record<string, string>> = {
   "POST /auth/user-invitations/inspect": "Inspect a staff invitation",
   "POST /auth/user-invitations/accept": "Accept a staff invitation",
   "GET /admin/projects": "List projects for Admin or Super Admin",
-  "POST /admin/projects": "Initiate a project and assign an Estimator",
+  "POST /admin/projects": "Initiate a project with its Sales Manager and Sales user",
+  "GET /admin/sales-managers": "List active Sales Managers available for project initiation",
   "GET /admin/projects/:projectId": "Read Admin project details",
   "GET /admin/designers": "List assignable Designers",
   "POST /admin/projects/:projectId/design-assignment":
@@ -316,6 +322,7 @@ const operationSummaries: Readonly<Record<string, string>> = {
     "Upload a design plan for extraction",
   "GET /estimates/:estimateId/design-uploads":
     "Read design uploads and extracted drawings",
+  "DELETE /estimate-design-uploads/:uploadId": "Delete an uploaded design before Client approval (assigned Designer uploader only)",
   "POST /estimate-design-uploads/:uploadId/retry":
     "Retry failed design-plan extraction",
   "POST /internal/extraction-jobs/claim": "Claim the next extraction job",
@@ -382,7 +389,7 @@ const statusFilterParameter: OpenApiParameter = {
   required: false,
   schema: {
     type: "string",
-    enum: ["pending", "approved", "changes_requested"]
+    enum: ["pending", "approved", "changes_requested", "withdrawn"]
   }
 };
 
@@ -450,6 +457,26 @@ const queryParametersByOperation: Readonly<
     ...dashboardPaginationParameters()
   ],
   "GET /admin/estimators": [
+    {
+      name: "search",
+      in: "query",
+      required: false,
+      schema: { type: "string", maxLength: 100, default: "" }
+    },
+    {
+      name: "limit",
+      in: "query",
+      required: false,
+      schema: { type: "integer", minimum: 1, maximum: 50, default: 20 }
+    },
+    {
+      name: "offset",
+      in: "query",
+      required: false,
+      schema: { type: "integer", minimum: 0, default: 0 }
+    }
+  ],
+  "GET /admin/sales-managers": [
     {
       name: "search",
       in: "query",
@@ -771,7 +798,7 @@ export const openApiDocument: LisnoOpenApiDocument = Object.freeze({
       "Project finance",
       "Client-approved project values, GST-exclusive revenue, fixed 20% target profit, live recorded costs, and deadline risk. Monetary overhead is ledger-posted only."
     ),
-    tag("Leads", "Estimator/Sales lead management."),
+    tag("Leads", "Sales lead management."),
     tag("Estimates", "Estimate drafting, publication, and Client decisions."),
     tag("Estimate design", "Estimate plan uploads, extraction, drawings, and annotations."),
     tag("Design delivery", "Task design versions, sections, approvals, and downloads."),
@@ -1575,7 +1602,8 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
     AdminProjectInitiationRequest: {
       type: "object",
       additionalProperties: false,
-      required: ["clientName", "clientEmail", "clientMobile", "projectName", "location", "propertyType", "budgetMin", "budgetMax", "nextAction", "nextActionAt", "estimatorId"],
+      required: ["clientName", "clientEmail", "clientMobile", "projectName", "location", "propertyType", "budgetMin", "budgetMax", "nextAction", "nextActionAt"],
+      description: "Sales must select salesManagerId; the authenticated actor owns the sales lead. Sales Manager and Super Admin must select estimatorId and cannot supply salesManagerId.",
       properties: {
         clientName: { type: "string", minLength: 1 },
         clientEmail: { type: "string", format: "email" },
@@ -1587,7 +1615,30 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
         budgetMax: { type: "number", minimum: 0, description: "Must be greater than or equal to budgetMin." },
         nextAction: { type: "string", minLength: 1 },
         nextActionAt: dateTime,
-        estimatorId: id
+        estimatorId: { ...id, description: "Required for Sales Manager and Super Admin. For Sales, omit or supply only your own ID." },
+        salesManagerId: { ...id, description: "Required for Sales: ID of an active Sales Manager (role code admin). Not accepted for Sales Manager or Super Admin initiation." }
+      }
+    },
+    SalesManagerOptionPage: {
+      type: "object",
+      additionalProperties: false,
+      required: ["items", "pagination"],
+      properties: {
+        items: {
+          type: "array",
+          items: {
+            type: "object",
+            additionalProperties: false,
+            required: ["id", "name", "email"],
+            properties: {
+              id,
+              name: { type: "string" },
+              email: { type: "string", format: "email" },
+              title: { type: "string" }
+            }
+          }
+        },
+        pagination: { $ref: "#/components/schemas/Pagination" }
       }
     },
     DesignerAssignmentRequest: {
@@ -1800,6 +1851,33 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
       type: "array",
       items: { $ref: "#/components/schemas/DesignPlanTask" }
     },
+    EstimateDesignUploadDeleted: {
+      type: "object", additionalProperties: false, required: ["id", "deleted"],
+      properties: { id, deleted: { type: "boolean", enum: [true] } }
+    },
+    EstimateDesignUpload: {
+      type: "object",
+      required: ["id", "estimateId", "leadId", "originalFilename", "mimeType", "sizeBytes", "uploaderId", "uploadedAt", "extractionStatus", "failureCode", "failureMessage", "canRetry", "canDelete"],
+      properties: {
+        id, estimateId: id, leadId: id, uploaderId: id,
+        originalFilename: { type: "string" }, mimeType: { type: "string" },
+        sizeBytes: { type: "integer", minimum: 0 }, uploadedAt: dateTime,
+        extractionStatus: { type: "string" },
+        failureCode: { type: "string", nullable: true }, failureMessage: { type: "string", nullable: true },
+        canRetry: { type: "boolean" },
+        canDelete: { type: "boolean", description: "True only for the assigned Designer uploader before this source or the final Design plan is approved." },
+        deleteBlockedReason: { type: "string", description: "Human-readable explanation when deletion is unavailable." }
+      }
+    },
+    EstimateDesignWorkspace: {
+      type: "object", required: ["uploads", "pages", "drawings", "revisions"],
+      properties: {
+        uploads: { type: "array", items: { $ref: "#/components/schemas/EstimateDesignUpload" } },
+        pages: { type: "array", items: { type: "object", additionalProperties: true } },
+        drawings: { type: "array", items: { type: "object", additionalProperties: true } },
+        revisions: { type: "array", items: { type: "object", additionalProperties: true } }
+      }
+    },
     DesignPlanReviewTask: {
       type: "object",
       required: ["id", "estimateId", "projectId", "projectName", "clientName", "designPlanVersion", "status", "deliveryStatus", "submittedAt", "version", "attachmentNames"],
@@ -1812,7 +1890,7 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
         designPlanVersion: { type: "integer", minimum: 1 },
         status: {
           type: "string",
-          enum: ["pending", "approved", "changes_requested"]
+          enum: ["pending", "approved", "changes_requested", "withdrawn"]
         },
         deliveryStatus: {
           type: "string",

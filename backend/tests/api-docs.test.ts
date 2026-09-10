@@ -32,6 +32,27 @@ describe("OpenAPI and Swagger UI", () => {
     ).resolves.toMatchObject({ openapi: "3.0.3" });
   });
 
+  it("documents Sales project initiation and safe bounded Sales Manager options", () => {
+    const schemas = componentSchemas();
+    const initiation = schemas.AdminProjectInitiationRequest!;
+    expect(initiation.required).not.toContain("estimatorId");
+    expect(initiation.properties).toMatchObject({
+      estimatorId: { type: "string", description: expect.stringContaining("Required for Sales Manager") },
+      salesManagerId: { type: "string", description: expect.stringContaining("Required for Sales") }
+    });
+    const paths = openApiDocument.paths as Record<string, Record<string, OpenApiObject>>;
+    const options = paths["/admin/sales-managers"]!.get!;
+    expect(options.parameters).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: "search", schema: { type: "string", maxLength: 100, default: "" } }),
+      expect.objectContaining({ name: "limit", schema: { type: "integer", minimum: 1, maximum: 50, default: 20 } }),
+      expect.objectContaining({ name: "offset", schema: { type: "integer", minimum: 0, default: 0 } })
+    ]));
+    const properties = schemas.SalesManagerOptionPage!.properties as Record<string, OpenApiObject>;
+    const item = properties.items!.items as OpenApiObject;
+    expect(item.additionalProperties).toBe(false);
+    expect(Object.keys(item.properties as OpenApiObject)).toEqual(["id", "name", "email", "title"]);
+  });
+
   it("serves a public OpenAPI document with local API and JWT configuration", async () => {
     const response = await request(app).get("/openapi.json");
 
@@ -209,7 +230,7 @@ describe("OpenAPI and Swagger UI", () => {
     }
   });
 
-  it("contains all 193 routes without versioning paths twice", () => {
+  it("contains all 195 routes without versioning paths twice", () => {
     const methods = new Set(["get", "post", "put", "patch", "delete"]);
     const operationCount = Object.values(openApiDocument.paths).reduce(
       (total, pathItem) =>
@@ -218,7 +239,7 @@ describe("OpenAPI and Swagger UI", () => {
     );
 
     expect(operationCount).toBe(HUMAN_JWT_OPERATION_LIST.length + 13);
-    expect(operationCount).toBe(193);
+    expect(operationCount).toBe(195);
     expect(Object.keys(openApiDocument.paths).some((path) =>
       path.startsWith("/api/v1")
     )).toBe(false);

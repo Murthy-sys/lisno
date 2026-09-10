@@ -51,6 +51,7 @@ const DEFAULT_PERMISSIONS_BY_ROLE = {
   ],
   estimator_sales: [
     ...BASE_SESSION_PERMISSIONS,
+    "projects.initiate",
     "estimation.lead.list",
     "estimation.lead.read",
     "estimation.estimate.read"

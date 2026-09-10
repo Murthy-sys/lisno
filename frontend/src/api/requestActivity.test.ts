@@ -15,6 +15,26 @@ afterEach(() => {
 });
 
 describe("API request activity", () => {
+  it.each([
+    ["workspace polling", () => apiClient.get("/example", { showGlobalLoader: false })],
+    ["file upload", () => apiClient.postMultipart("/example", new FormData(), { showGlobalLoader: false })],
+    ["upload deletion", () => apiClient.delete("/example", undefined, { showGlobalLoader: false })]
+  ])("keeps %s local without changing another request's activity", async (_name, start) => {
+    const reply = deferred<Response>();
+    const fetch = vi.spyOn(globalThis, "fetch").mockReturnValueOnce(reply.promise);
+    const finishOther = beginApiRequest();
+    try {
+      const operation = start();
+      expect(requestActivity.getSnapshot()).toBe(1);
+      expect(fetch.mock.calls[0]?.[1]).not.toHaveProperty("showGlobalLoader");
+      reply.resolve(Response.json({ error: { code: "QA_FAILED", message: "Try again." } }, { status: 422 }));
+      await expect(operation).rejects.toMatchObject({ code: "QA_FAILED" });
+      expect(requestActivity.getSnapshot()).toBe(1);
+    } finally {
+      finishOther();
+    }
+  });
+
   it("keeps concurrent public and authenticated operations pending until each settles", async () => {
     const first = deferred<Response>();
     const second = deferred<Response>();

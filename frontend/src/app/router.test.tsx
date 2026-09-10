@@ -997,7 +997,7 @@ describe("registered permission routes", () => {
       expect(await screen.findByRole("heading", { name: title })).toBeVisible();
       expect(
         screen.getByText(
-          "Knowledge-base changes do not modify current estimates or the existing Estimator/Sales builder."
+          "Knowledge-base changes do not modify current estimates or the existing Sales estimate builder."
         )
       ).toBeVisible();
       expect(router.state.location.pathname).toBe(path);

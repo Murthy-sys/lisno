@@ -85,6 +85,7 @@ function query<T>(value: T) {
 function matches(record: Record<string, any>, filter: Record<string, any>): boolean {
   for (const [key, expected] of Object.entries(filter)) {
     const actual = record[key];
+    if (expected === null && actual == null) continue;
     if (expected && typeof expected === "object") {
       if ("$in" in expected && !expected.$in.includes(actual)) return false;
       continue;

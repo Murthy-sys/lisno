@@ -194,6 +194,84 @@
   gap: var(--space-4);
 }
 
+.estimate-design-uploads--designer .estimate-design-uploads__status-list li {
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+}
+
+.estimate-design-uploads__delete {
+  grid-column: 3;
+  grid-row: 1;
+  justify-self: end;
+  white-space: nowrap;
+  min-block-size: 40px;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid #d9aeb2;
+  border-radius: var(--radius-control);
+  background: #fff7f7;
+  color: #9d2934;
+  font-weight: 600;
+  box-shadow: none;
+}
+
+.estimate-design-uploads__delete-confirmation {
+  display: grid;
+  gap: var(--space-4);
+  padding: var(--space-6);
+}
+
+.estimate-design-uploads__delete-confirmation p {
+  margin: 0;
+}
+
+.ui-dialog:has(.estimate-design-uploads__delete-confirmation) .ui-dialog__header > div > p.eyebrow {
+  color: #765500;
+}
+
+.estimate-design-uploads__delete-filename {
+  padding: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  background: var(--color-surface-subtle);
+  overflow-wrap: anywhere;
+  font-weight: 700;
+}
+
+.estimate-design-uploads__delete-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-3);
+}
+
+.estimate-design-uploads__delete-actions .ui-button {
+  min-block-size: 44px;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-weight: 600;
+  box-shadow: none;
+}
+
+.estimate-design-uploads__delete-actions .ui-button--destructive {
+  border-color: #b42318;
+  background: #b42318;
+  color: #fff;
+}
+
+.estimate-design-uploads__delete:focus-visible,
+.estimate-design-uploads__delete-actions .ui-button:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 3px;
+}
+
+.estimate-design-uploads__delete-confirmation .ui-spinner {
+  border: 2px solid currentColor;
+  border-inline-end-color: transparent;
+}
+
 .estimate-design-uploads__results-heading {
   align-items: center;
 }
@@ -271,6 +349,19 @@
 }
 
 @media (max-width: 640px) {
+  .estimate-design-uploads--designer .estimate-design-uploads__status-list li {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .estimate-design-uploads--designer .estimate-design-uploads__status-list li > span {
+    grid-column: 1 / -1;
+  }
+
+  .estimate-design-uploads__delete {
+    grid-column: 2;
+    grid-row: 2;
+  }
+
   .designer-plan-project dl {
     grid-template-columns: 1fr;
   }

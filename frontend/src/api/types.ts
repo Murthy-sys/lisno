@@ -248,6 +248,8 @@ export interface EstimatorOption {
   title: string | null;
 }
 
+export type SalesManagerOption = EstimatorOption;
+
 export interface EstimateClientReviewSummary {
   id: string;
   sendGeneration: number;
@@ -403,7 +405,7 @@ export interface DesignPlanReviewTask {
   projectName: string;
   clientName: string;
   designPlanVersion: number;
-  status: "pending" | "approved" | "changes_requested";
+  status: "pending" | "approved" | "changes_requested" | "withdrawn";
   deliveryStatus: "queued" | "sending" | "sent" | "failed" | "disabled";
   submittedAt: string;
   version: number;
@@ -622,7 +624,11 @@ export interface DesignerAssignmentOption {
 
 export type AdminProjectPage = PageData<AdminProjectSummary>;
 
-export interface InitiateAdminProjectInput {
+export type InitiatedAdminProjectSummary = AdminProjectSummary & {
+  lead: NonNullable<AdminProjectSummary["lead"]>;
+};
+
+interface InitiateProjectFields {
   clientName: string;
   clientEmail: string;
   clientMobile: string;
@@ -633,8 +639,12 @@ export interface InitiateAdminProjectInput {
   budgetMax: number;
   nextAction: string;
   nextActionAt: string;
-  estimatorId: string;
 }
+
+export type InitiateAdminProjectInput = InitiateProjectFields & (
+  | { estimatorId: string; salesManagerId?: never }
+  | { salesManagerId: string; estimatorId?: never }
+);
 
 export interface UserDirectoryFilters {
   search?: string;
@@ -1200,6 +1210,8 @@ export interface EstimateDesignUpload {
   failureCode: string | null;
   failureMessage: string | null;
   canRetry: boolean;
+  canDelete: boolean;
+  deleteBlockedReason?: string;
 }
 
 export interface EstimateDesignSourcePage {
@@ -1317,9 +1329,9 @@ export interface EstimatePlanChangeRequest {
   version: number;
   summary: string;
   annotations: AnnotationDocumentV1;
-  targets: Array<{ drawingId: string; requestedRevisionId: string; status: "open" | "replacement_submitted" | "approved" | "resolved"; resolvedByRevisionId: string | null }>;
+  targets: Array<{ drawingId: string; requestedRevisionId: string; status: "open" | "replacement_submitted" | "approved" | "resolved" | "withdrawn"; resolvedByRevisionId: string | null }>;
   unassigned: boolean;
-  status: "open" | "resolved";
+  status: "open" | "resolved" | "withdrawn";
 }
 
 export interface EstimatePlanClientWorkspace {
@@ -1342,18 +1354,18 @@ export interface EstimatePlanChangeRequestQueueItem {
   clientId: string;
   version: number;
   summary: string;
-  status: "open" | "resolved";
+  status: "open" | "resolved" | "withdrawn";
   unassigned: boolean;
   targetCount: number;
-  targets: Array<{ drawingId: string; status: "open" | "replacement_submitted" | "approved" | "resolved" }>;
+  targets: Array<{ drawingId: string; status: "open" | "replacement_submitted" | "approved" | "resolved" | "withdrawn" }>;
   createdAt: string;
 }
 
 export interface EstimatePlanChangeRequestDetail extends EstimatePlanChangeRequest {
   currentImageUrl: string;
   resolutionNote: string | null;
-  drawingTargets: Array<{ drawingId: string; title: string; latestRevisionId: string; latestRevisionNumber: number; status: "open" | "replacement_submitted" | "approved" | "resolved" }>;
-  drawingCandidates: Array<{ drawingId: string; title: string; latestRevisionId: string; latestRevisionNumber: number; status: "open" | "replacement_submitted" | "approved" | "resolved" | null }>;
+  drawingTargets: Array<{ drawingId: string; title: string; latestRevisionId: string; latestRevisionNumber: number; status: "open" | "replacement_submitted" | "approved" | "resolved" | "withdrawn" }>;
+  drawingCandidates: Array<{ drawingId: string; title: string; latestRevisionId: string; latestRevisionNumber: number; status: "open" | "replacement_submitted" | "approved" | "resolved" | "withdrawn" | null }>;
 }
 
 export interface EstimateDesignDrawingUpdate extends EstimateDesignDrawing {

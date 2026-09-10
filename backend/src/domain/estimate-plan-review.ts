@@ -31,16 +31,18 @@ export const planRequestTargetStatuses = [
   "open",
   "replacement_submitted",
   "approved",
-  "resolved"
+  "resolved",
+  "withdrawn"
 ] as const;
 export type PlanRequestTargetStatus = typeof planRequestTargetStatuses[number];
-export type PlanRequestStatus = "open" | "resolved";
+export type PlanRequestStatus = "open" | "resolved" | "withdrawn";
 
 const allowedTargetTransitions: Record<PlanRequestTargetStatus, readonly PlanRequestTargetStatus[]> = {
-  open: ["replacement_submitted", "resolved"],
-  replacement_submitted: ["open", "approved"],
+  open: ["replacement_submitted", "resolved", "withdrawn"],
+  replacement_submitted: ["open", "approved", "withdrawn"],
   approved: [],
-  resolved: []
+  resolved: [],
+  withdrawn: []
 };
 
 export function requirePlanRequestTransition(
@@ -58,8 +60,9 @@ export function derivePlanRequestStatus(
   unassignedResolved = false
 ): PlanRequestStatus {
   if (unassigned) return unassignedResolved ? "resolved" : "open";
+  if (targetStatuses.length > 0 && targetStatuses.every((status) => status === "withdrawn")) return "withdrawn";
   return targetStatuses.length > 0 && targetStatuses.every((status) =>
-    status === "approved" || status === "resolved"
+    status === "approved" || status === "resolved" || status === "withdrawn"
   ) ? "resolved" : "open";
 }
 

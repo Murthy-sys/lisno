@@ -46,6 +46,7 @@ export async function synchronizeEstimateDesignReviewState(
     {
       _id: { $in: ids },
       estimateId,
+      deletedAt: null,
       extractionStatus: { $in: reviewStates }
     },
     { $set: { extractionStatus: status } },

@@ -247,7 +247,7 @@ describe("apiClient", () => {
     ).resolves.toEqual({ id: "version-1" });
   });
 
-  it("reports clamped integer multipart upload progress and unwraps its response", async () => {
+  it.each([true, false])("reports multipart progress with global loading %s and unwraps its response", async (showGlobalLoader) => {
     tokenStorage.set("upload-token");
     const XMLHttpRequest = installFakeXMLHttpRequest();
     const body = new FormData();
@@ -255,7 +255,8 @@ describe("apiClient", () => {
     const upload = apiClient.postMultipartWithProgress<{ id: string }>(
       "/design-versions",
       body,
-      progress
+      progress,
+      { showGlobalLoader }
     );
     const xhr = XMLHttpRequest.instances[0];
 
@@ -269,7 +270,7 @@ describe("apiClient", () => {
     xhr.upload.onprogress?.({ lengthComputable: true, loaded: 2, total: 3 } as ProgressEvent);
     xhr.upload.onprogress?.({ lengthComputable: true, loaded: 23, total: 20 } as ProgressEvent);
     xhr.upload.onprogress?.({ lengthComputable: true, loaded: -1, total: 20 } as ProgressEvent);
-    expect(requestActivity.getSnapshot()).toBe(1);
+    expect(requestActivity.getSnapshot()).toBe(showGlobalLoader ? 1 : 0);
     xhr.status = 201;
     xhr.responseText = JSON.stringify({ data: { id: "version-1" } });
     xhr.onload?.();

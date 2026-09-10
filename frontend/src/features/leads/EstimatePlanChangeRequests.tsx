@@ -70,7 +70,9 @@ export function EstimatePlanChangeRequests({ estimateId }: { estimateId?: string
             {detail.isPending ? <p role="status">Loading request detail…</p> : null}
             {detail.isError ? <p role="alert">Request detail changed. Refresh and try again.</p> : null}
             {detail.data ? (
-              <>
+              detail.data.status === "withdrawn" ? (
+                <p role="status">This change request was withdrawn because its design upload was deleted.</p>
+              ) : <>
                 <div className="plan-request-workspace__page">
                   <ProtectedImage source={detail.data.currentImageUrl} alt="Current full design page" onSourceChange={setPageSource} className={pageSource ? "sr-only" : undefined} />
                   {pageSource ? <AnnotationOverlay imageSource={pageSource} imageWidth={detail.data.annotations.imageWidth} imageHeight={detail.data.annotations.imageHeight} value={detail.data.annotations} /> : null}
@@ -84,6 +86,8 @@ export function EstimatePlanChangeRequests({ estimateId }: { estimateId?: string
                         <label>Replacement for {target.title}<input type="file" accept="image/*,.pdf,.heic,.heif" onChange={(event) => setFiles({ ...files, [target.drawingId]: event.target.files?.[0] })} /></label>
                         <button type="button" className="button button--primary" disabled={!files[target.drawingId] || replace.isPending} onClick={() => replace.mutate({ drawingId: target.drawingId, version: target.latestRevisionNumber, file: files[target.drawingId]! })}>Upload {target.title} replacement</button>
                       </>
+                    ) : target.status === "withdrawn" ? (
+                      <p>This drawing was deleted. Its feedback is retained for reference.</p>
                     ) : <p>Replacement submitted for client review.</p>}
                   </section>
                 ))}
