@@ -283,7 +283,7 @@ const ALLOWED_SECTION_KEYS: Record<KnowledgeSectionKey, ReadonlySet<string>> = {
   recommendations: new Set(["recommendations", "exclusions", "budgetAlterations"]),
   quality: new Set(["parameters"]),
   execution: new Set(["steps", "productivity"]),
-  advanced: new Set(["dependencies", "modeOverrides", "revisionLineage", "modeConfigurations", "modeDescription", "modeCalculation", "modeCalculations", "pmcMarginBps"])
+  advanced: new Set(["dependencies", "modeOverrides", "revisionLineage", "modeConfigurations", "modeDescription", "modeCalculation", "modeCalculations", "pmcMarginBps", "subVendorMarginBps"])
 };
 
 function inspectBoundedValue(
@@ -373,9 +373,9 @@ export function validateKnowledgeSectionPayload(
     if (typeof value === "string" && value.length > AI_ESTIMATOR_KNOWLEDGE_MAX_SHORT_TEXT && !["description", "technicalDescription", "internalVendorNotes", "modeDescription"].includes(key)) {
       issues.push({ path: `payload.${key}`, code: "TEXT_TOO_LONG", message: `${key} exceeds the supported short-text length.` });
     }
-    // PMC has its own optional, strictly bounded validation below.
-    const separatelyValidatedPmcMargin = sectionKey === "advanced" && key === "pmcMarginBps";
-    if (key.endsWith("Bps") && !separatelyValidatedPmcMargin && (
+    // Configuration margins have optional, strictly bounded validation below.
+    const separatelyValidatedMargin = sectionKey === "advanced" && ["pmcMarginBps", "subVendorMarginBps"].includes(key);
+    if (key.endsWith("Bps") && !separatelyValidatedMargin && (
       !Number.isSafeInteger(value) ||
       (value as number) < 0 ||
       (value as number) > AI_ESTIMATOR_KNOWLEDGE_BASIS_POINTS
@@ -1416,8 +1416,10 @@ function validateAdvancedPayload(
   record: Record<string, unknown>
 ): KnowledgeValidationIssue[] {
   const issues: KnowledgeValidationIssue[] = [];
-  if (record.pmcMarginBps !== undefined && record.pmcMarginBps !== null) {
-    validateInteger(record.pmcMarginBps, "payload.pmcMarginBps", issues, 1_000, 2_000);
+  for (const key of ["pmcMarginBps", "subVendorMarginBps"] as const) {
+    if (record[key] !== undefined && record[key] !== null) {
+      validateInteger(record[key], `payload.${key}`, issues, 1_000, 2_000);
+    }
   }
   if (record.modeCalculation !== undefined) validateModeCalculationSettings(record.modeCalculation, "payload.modeCalculation", issues);
   if (Object.hasOwn(record, "modeCalculations")) {

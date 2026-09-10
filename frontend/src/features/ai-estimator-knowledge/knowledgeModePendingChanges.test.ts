@@ -50,6 +50,22 @@ describe("Mode pending change projection", () => {
     expect(project({ modeConfigurations: [{ ...config, executionSource: undefined } as unknown as KnowledgeJsonObject] }, { modeConfigurations: [config] })[0]?.entries[0]?.fields[0]?.value).toBe("Execution · Sub-Vendor");
   });
 
+  it("shows only the independently edited Sub-Vendor margin and clears it after save or revert", () => {
+    const before = { pmcMarginBps: 1_250, subVendorMarginBps: 1_600 };
+    const after = { ...before, subVendorMarginBps: 1_875 };
+    expect(project(before, after)).toEqual([{ key: "sub_vendor:margin", label: "Execution · Sub-Vendor", entries: [{
+      key: "sub_vendor:margin", title: "Sub-Vendor margin", kind: "updated",
+      fields: [{ key: "margin", label: "Margin", value: "18.75%" }]
+    }] }]);
+    expect(project(after, after)).toEqual([]);
+    expect(project(before, before)).toEqual([]);
+    expect(project(before, { ...before, subVendorMarginBps: null })[0]?.entries[0]?.fields).toEqual([
+      { key: "margin", label: "Margin", value: "", cleared: true }
+    ]);
+    expect(project(before, { ...before, subVendorMarginBps: 999 })[0]?.entries[0]).toMatchObject({ incomplete: true, fields: [{ value: "9.99%" }] });
+    expect(project(before, { ...before, subVendorMarginBps: "12.345" })[0]?.entries[0]).toMatchObject({ incomplete: true, fields: [{ value: "12.345" }] });
+  });
+
   it("shows blank user-added components as incomplete and removes add-then-delete", () => {
     expect(project({}, { modeConfigurations: [{ ...config, fields: [{ id: "new", type: "text", label: "", options: [], value: null }] }] })[0]?.entries[0]).toMatchObject({ kind: "added", title: "Component", incomplete: true });
     expect(project({}, { modeConfigurations: [{ ...config, fields: [] }] })).toEqual([]);

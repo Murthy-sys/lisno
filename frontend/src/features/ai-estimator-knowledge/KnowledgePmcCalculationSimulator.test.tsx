@@ -8,7 +8,7 @@ import { KnowledgeModeCalculationEditor } from "./KnowledgeModeCalculationEditor
 import { KnowledgeModeCalculationSimulator } from "./KnowledgeModeCalculationSimulator";
 import { previewKnowledge } from "./knowledgeApi";
 import type { KnowledgePreview } from "./knowledgeTypes";
-import { PMC_SIMULATOR_DISCOUNT_LIMIT_MESSAGE } from "./knowledgeSimulatorDiscount";
+import { CUSTOM_SIMULATOR_DISCOUNT_LIMIT_MESSAGE } from "./knowledgeSimulatorDiscount";
 
 vi.mock("./knowledgeApi", () => ({ previewKnowledge: vi.fn() }));
 const settings = { baseRatePaise: 150_000, lowQuantityLimit: "15", impactBps: 1_000, minimumMarkupBps: 2_500, startingMarkupBps: 3_500 };
@@ -27,7 +27,7 @@ function response(pmcCalculation: KnowledgePreview["pmcCalculation"] = pmcResult
 function setup(overrides: Partial<ComponentProps<typeof KnowledgeModeCalculationEditor>> = {}) {
   let props: ComponentProps<typeof KnowledgeModeCalculationEditor> = {
     scope: "pmc", contextLabel: "PMC", pmcMarginBps: 1_525,
-    pmcMarginControl: <label>PMC Margin<input defaultValue="15.25" /></label>,
+    marginControl: <label>PMC Margin<input defaultValue="15.25" /></label>,
     value: settings, uom: { scopeKey: "pmc:first", id: "nos", label: "Nos", decimalScale: 0 },
     readOnly: false, validationAttempt: 0, issues: [], onChange: vi.fn(), onDirty: vi.fn(), onValidationChange: vi.fn(),
     ...overrides
@@ -50,7 +50,7 @@ async function calculate() { await userEvent.click(screen.getByRole("button", { 
 describe("PMC calculation configuration and simulator", () => {
   beforeEach(() => { vi.clearAllMocks(); vi.mocked(previewKnowledge).mockResolvedValue(response()); });
 
-  it("replaces only PMC's markup card and keeps editable configuration rates", async () => {
+  it("replaces PMC's markup card and keeps In-house markups and editable configuration rates", async () => {
     const view = setup();
     const card = screen.getByRole("group", { name: "PMC Margin" });
     expect(within(card).getByRole("textbox", { name: "PMC Margin" })).toHaveValue("15.25");
@@ -61,7 +61,7 @@ describe("PMC calculation configuration and simulator", () => {
     expect(base).not.toHaveAttribute("readonly");
     fireEvent.change(base, { target: { value: "1800" } });
     expect(view.props.onChange).toHaveBeenLastCalledWith({ ...settings, baseRatePaise: 180_000 });
-    view.rerenderEditor({ scope: "sub_vendor", contextLabel: "Sub-Vendor" });
+    view.rerenderEditor({ scope: "in_house_labor", contextLabel: "Labor" });
     expect(screen.getByText("Gross margin markup")).toBeVisible();
     expect(screen.getByRole("status", { name: "Max Discount" })).toBeVisible();
     expect(screen.queryByRole("group", { name: "PMC Margin" })).not.toBeInTheDocument();
@@ -103,7 +103,8 @@ describe("PMC calculation configuration and simulator", () => {
   it("shows PMC margin separately and discounts the subtotal using the authoritative reconciled result", async () => {
     setup();
     const dialog = await open();
-    expect(within(dialog).getByText(/Maximum allowed: 4.55%/)).toBeVisible();
+    expect(field("Discount (%)")).toHaveAccessibleDescription("Discount applies to the subtotal after PMC margin. Enter your custom percentage.");
+    expect(within(dialog).queryByText(/Maximum allowed|discount allowance|retain at least 10%/)).not.toBeInTheDocument();
     change("Discount (%)", "2.25");
     vi.mocked(previewKnowledge).mockResolvedValueOnce(response(discountedResult));
     await calculate();
@@ -118,12 +119,72 @@ describe("PMC calculation configuration and simulator", () => {
     expect(within(dialog).getByLabelText("Discount amount")).toHaveTextContent("−₹42.79");
     expect(within(dialog).getByLabelText("Final vendor charges")).toHaveTextContent("₹1,607.21");
     expect(within(dialog).getByLabelText("Final total")).toHaveTextContent("₹1,858.84");
-    change("Discount (%)", "4.56");
-    expect(within(dialog).getByRole("alert")).toHaveTextContent(PMC_SIMULATOR_DISCOUNT_LIMIT_MESSAGE);
+    change("Discount (%)", "100.01");
+    expect(within(dialog).getByRole("alert")).toHaveTextContent(CUSTOM_SIMULATOR_DISCOUNT_LIMIT_MESSAGE);
     await calculate();
     await waitFor(() => expect(field("Discount (%)")).toHaveFocus());
     expect(previewKnowledge).toHaveBeenCalledTimes(1);
     expect(within(dialog).queryByRole("status", { name: "Calculation results" })).not.toBeInTheDocument();
+  });
+
+  it.each([
+    { percentage: "20", rateBps: 2_000, discountAmountPaise: 22_000, totalPaise: 88_000, finalVendorChargesPaise: 78_000, expectedDiscount: "−₹220.00", expectedTotal: "₹880.00", expectedBalance: "₹780.00" },
+    { percentage: "50", rateBps: 5_000, discountAmountPaise: 55_000, totalPaise: 55_000, finalVendorChargesPaise: 45_000, expectedDiscount: "−₹550.00", expectedTotal: "₹550.00", expectedBalance: "₹450.00" },
+    { percentage: "95", rateBps: 9_500, discountAmountPaise: 104_500, totalPaise: 5_500, finalVendorChargesPaise: -4_500, expectedDiscount: "−₹1,045.00", expectedTotal: "₹55.00", expectedBalance: "−₹45.00" },
+    { percentage: "100", rateBps: 10_000, discountAmountPaise: 110_000, totalPaise: 0, finalVendorChargesPaise: -10_000, expectedDiscount: "−₹1,100.00", expectedTotal: "₹0.00", expectedBalance: "−₹100.00" }
+  ])("accepts a typed $percentage% custom discount even at the minimum PMC margin", async (sample) => {
+    const user = userEvent.setup();
+    const { props } = setup({ pmcMarginBps: 1_000, value: { ...settings, baseRatePaise: 100_000, impactBps: 0 } });
+    const dialog = await open();
+    const discount = field("Discount (%)");
+    expect(discount).toBeEnabled();
+    expect(discount).not.toHaveAttribute("readonly");
+    await user.clear(discount);
+    await user.type(discount, sample.percentage);
+    expect(discount).toHaveValue(sample.percentage);
+    vi.mocked(previewKnowledge).mockResolvedValueOnce(response({ baseAmountPaise: 100_000, lowQuantityImpactAmountPaise: 0,
+      revisedUnitRatePaise: 100_000, revisedAmountPaise: 100_000, appliedImpactBps: 0,
+      pmcMarginBps: 1_000, pmcMarginAmountPaise: 10_000, totalBeforeDiscountPaise: 110_000,
+      totalPaise: sample.totalPaise, finalVendorChargesPaise: sample.finalVendorChargesPaise,
+      discount: { rateBps: sample.rateBps, totalBeforeDiscountPaise: 110_000, amountPaise: sample.discountAmountPaise } }));
+    await calculate();
+    expect(previewKnowledge).toHaveBeenLastCalledWith({ pmcCalculation: { baseRatePaise: 100_000,
+      lowQuantityLimit: "15", impactBps: 0, pmcMarginBps: 1_000 }, quantity: "1", quantityScale: 0,
+      modeCalculationDiscountBps: sample.rateBps });
+    expect(within(dialog).queryByRole("alert")).not.toBeInTheDocument();
+    expect(within(dialog).getByLabelText("PMC margin amount")).toHaveTextContent("+₹100.00");
+    expect(within(dialog).getByLabelText("Discount amount")).toHaveTextContent(sample.expectedDiscount);
+    expect(within(dialog).getByLabelText("Final total")).toHaveTextContent(sample.expectedTotal);
+    const balanceLabel = sample.finalVendorChargesPaise < 0 ? "Balance after margin" : "Final vendor charges";
+    expect(within(dialog).getByLabelText(balanceLabel)).toHaveTextContent(sample.expectedBalance);
+    expect(props.onChange).not.toHaveBeenCalled();
+    expect(props.onDirty).not.toHaveBeenCalled();
+  });
+
+  it("accepts independently rounded amounts below the former ten-percent floor", async () => {
+    setup({ pmcMarginBps: 1_003, value: { ...settings, baseRatePaise: 2_275, lowQuantityLimit: "0" } });
+    const dialog = await open();
+    change("Discount (%)", "0.02");
+    vi.mocked(previewKnowledge).mockResolvedValueOnce(response({ baseAmountPaise: 2_275, lowQuantityImpactAmountPaise: 0,
+      revisedUnitRatePaise: 2_275, revisedAmountPaise: 2_275, appliedImpactBps: 0,
+      pmcMarginBps: 1_003, pmcMarginAmountPaise: 228, totalBeforeDiscountPaise: 2_503,
+      totalPaise: 2_502, finalVendorChargesPaise: 2_274,
+      discount: { rateBps: 2, totalBeforeDiscountPaise: 2_503, amountPaise: 1 } }));
+    await calculate();
+    expect(within(dialog).queryByRole("alert")).not.toBeInTheDocument();
+    expect(within(dialog).getByLabelText("Discount amount")).toHaveTextContent("−₹0.01");
+    expect(within(dialog).getByLabelText("Final total")).toHaveTextContent("₹25.02");
+  });
+
+  it.each(["", "-1", "20.001", "20.", "invalid", "100.01"])("preserves invalid custom discount %j and prevents a request", async (value) => {
+    setup({ pmcMarginBps: 1_000 });
+    const dialog = await open();
+    change("Discount (%)", value);
+    await calculate();
+    expect(field("Discount (%)")).toHaveValue(value);
+    expect(field("Discount (%)")).toHaveAttribute("aria-invalid", "true");
+    expect(within(dialog).getByRole("alert")).toBeVisible();
+    expect(previewKnowledge).not.toHaveBeenCalled();
   });
 
   it.each([undefined, null, "15.25", 999, 2_001, 1_525.1])("requires a valid configured margin (%s), with no silent default", async (pmcMarginBps) => {
@@ -264,7 +325,8 @@ describe("PMC calculation configuration and simulator", () => {
   it.each([
     { ...discountedResult, pmcMarginBps: 1_500 },
     { ...discountedResult, discount: undefined },
-    { ...discountedResult, discount: { ...discountedResult.discount, rateBps: 200 } }
+    { ...discountedResult, discount: { ...discountedResult.discount, rateBps: 200 } },
+    { ...discountedResult, discount: { ...discountedResult.discount, rateBps: 10_001 } }
   ])("rejects an inconsistent PMC response %#", async (serverResult) => {
     setup();
     const dialog = await open();
@@ -286,6 +348,11 @@ describe("PMC calculation configuration and simulator", () => {
     { ...discountedResult, appliedImpactBps: 0 },
     { ...discountedResult, totalBeforeDiscountPaise: undefined },
     { ...discountedResult, pmcMarginAmountPaise: -1 },
+    { ...discountedResult, totalPaise: -1 },
+    { ...discountedResult, revisedAmountPaise: -1 },
+    { ...discountedResult, finalVendorChargesPaise: -1 },
+    { ...discountedResult, finalVendorChargesPaise: Number.MIN_SAFE_INTEGER - 1 },
+    { ...discountedResult, finalVendorChargesPaise: 160_721.5 },
     { ...discountedResult, pmcMarginAmountPaise: 25_163.5 },
     { ...discountedResult, totalBeforeDiscountPaise: Number.MAX_SAFE_INTEGER + 1 },
     { ...discountedResult, pmcMarginAmountPaise: 25_000 },
@@ -303,7 +370,7 @@ describe("PMC calculation configuration and simulator", () => {
     expect(within(dialog).queryByRole("status", { name: "Calculation results" })).not.toBeInTheDocument();
   });
 
-  it("rejects an old percentage-point response and allows retry after a rounded-limit rejection", async () => {
+  it("rejects an old percentage-point response and allows retry after a server failure", async () => {
     setup();
     const dialog = await open();
     const legacy = { revisedUnitRatePaise: 165_000, revisedAmountPaise: 165_000, totalPaise: 186_450,
@@ -314,9 +381,9 @@ describe("PMC calculation configuration and simulator", () => {
     await calculate();
     expect(within(dialog).getByRole("alert")).toHaveTextContent("incomplete or inconsistent PMC breakdown");
     change("Discount (%)", "4.55");
-    vi.mocked(previewKnowledge).mockRejectedValueOnce(new Error("Reduce the discount to keep the rounded total above the minimum."));
+    vi.mocked(previewKnowledge).mockRejectedValueOnce(new Error("Calculation service is temporarily unavailable."));
     await calculate();
-    expect(within(dialog).getByRole("alert")).toHaveTextContent("Reduce the discount");
+    expect(within(dialog).getByRole("alert")).toHaveTextContent("Calculation service is temporarily unavailable.");
     change("Discount (%)", "2.25");
     vi.mocked(previewKnowledge).mockResolvedValueOnce(response(discountedResult));
     await calculate();

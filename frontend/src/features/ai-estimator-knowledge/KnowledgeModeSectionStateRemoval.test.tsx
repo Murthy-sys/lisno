@@ -243,6 +243,13 @@ function renderPanel(
   };
 }
 
+async function selectExecutionSource(user: ReturnType<typeof userEvent.setup>, source: "Sub-Vendor" | "In-house") {
+  for (const label of ["Sub-Vendor", "In-house"] as const) {
+    const checkbox = screen.getByRole("checkbox", { name: label }) as HTMLInputElement;
+    if (checkbox.checked !== (label === source)) await user.click(checkbox);
+  }
+}
+
 describe("Knowledge Mode section-state removal", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -450,27 +457,33 @@ describe("Knowledge Mode section-state removal", () => {
     expect(within(execution).getByRole("region", { name: "Sub-Vendor scope" })).toContainElement(
       within(execution).getByRole("group", { name: "Inclusions" })
     );
-    expect(within(execution).getByRole("region", { name: "Sub-Vendor components" })).toBeVisible();
+    expect(within(execution).queryByRole("region", { name: "Sub-Vendor components" })).not.toBeInTheDocument();
+    expect(within(execution).queryByRole("button", { name: "Add component" })).not.toBeInTheDocument();
     for (const mode of [pmc, execution]) {
       expect(mode).not.toContainElement(paragraph);
       expect(mode).not.toContainElement(paragraphEditor);
       expect(paragraph.compareDocumentPosition(mode) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     }
 
-    await user.click(within(execution).getByRole("radio", { name: "In-house" }));
-    expect(subVendorCalculation).not.toBeVisible();
-    expect(within(execution).queryByRole("region", { name: "Sub-Vendor scope" })).not.toBeInTheDocument();
+    await user.click(within(execution).getByRole("checkbox", { name: "In-house" }));
+    expect(subVendorCalculation).toBeVisible();
+    expect(within(execution).getByRole("region", { name: "Sub-Vendor scope" })).toBeVisible();
+    expect(within(execution).getByRole("checkbox", { name: "Sub-Vendor" })).toBeChecked();
     expect(within(execution).getByRole("region", { name: "Labor cost calculations" })).toBeVisible();
     const material = within(execution).getByRole("region", { name: "Material cost calculations" });
     const total = within(execution).getByRole("region", { name: "In-house total" });
     expect(material.compareDocumentPosition(total) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(within(execution).getByRole("region", { name: "In-house components" })).toBeVisible();
+    expect(within(execution).queryByRole("region", { name: "In-house components" })).not.toBeInTheDocument();
+    expect(within(execution).queryByRole("button", { name: "Add component" })).not.toBeInTheDocument();
     expect(within(pmc).getByRole("region", { name: "PMC calculations" })).toBe(pmcCalculation);
     expect(pmcCalculation).toBeVisible();
     expect(screen.getAllByText("Shared delivery requirements.")).toEqual([paragraph]);
 
-    await user.click(within(execution).getByRole("radio", { name: "Sub-Vendor" }));
-    expect(within(execution).getByRole("region", { name: "Sub-Vendor calculations" })).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Collapse Sub-Vendor" }));
+    expect(subVendorCalculation).not.toBeVisible();
+    expect(material).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Expand Sub-Vendor" }));
+    expect(within(execution).getByRole("region", { name: "Sub-Vendor calculations" })).toBe(subVendorCalculation);
     expect(knowledgeApi.updateKnowledgeSection).not.toHaveBeenCalled();
     expect(knowledgeApi.previewKnowledge).not.toHaveBeenCalled();
     expect(props.onDirtyChange).toHaveBeenLastCalledWith(false);
@@ -515,6 +528,41 @@ describe("Knowledge Mode section-state removal", () => {
     expect(knowledgeApi.updateKnowledgeSection).not.toHaveBeenCalled();
   });
 
+  it.each([
+    { source: "Sub-Vendor", calculation: "Sub-Vendor calculations" },
+    { source: "In-house", calculation: "Labor cost calculations" },
+    { source: "In-house", calculation: "Material cost calculations" }
+  ])("retains a $calculation draft through nested collapse and reveals it for save validation", async ({ source, calculation }) => {
+    const user = userEvent.setup();
+    const ref = createRef<KnowledgeModePanelHandle>();
+    const settings = { baseRatePaise: 10_000, lowQuantityLimit: "15", impactBps: 1_000, minimumMarkupBps: 2_500, startingMarkupBps: 3_500 };
+    vi.mocked(knowledgeApi.getKnowledgeSection).mockImplementation(async (_line, _revision, key) => key === "advanced"
+      ? section("advanced", "configured", { pmcMarginBps: 1_200, subVendorMarginBps: 1_700, modeCalculation: settings }) : section("pricing"));
+    const { props } = renderPanel(ref);
+    await user.click(await screen.findByRole("checkbox", { name: "Execution" }));
+    await user.click(screen.getByRole("checkbox", { name: "In-house" }));
+    const input = within(screen.getByRole("region", { name: calculation })).getByRole("textbox", { name: "Base Rate (₹)" });
+    fireEvent.change(input, { target: { value: "333." } });
+    const dirtyCalls = vi.mocked(props.onDirtyChange).mock.calls.length;
+    await user.click(screen.getByRole("button", { name: `Collapse ${source}` }));
+    expect(input).toBeInTheDocument();
+    expect(input).not.toBeVisible();
+    await user.click(screen.getByRole("button", { name: `Expand ${source}` }));
+    expect(within(screen.getByRole("region", { name: calculation })).getByRole("textbox", { name: "Base Rate (₹)" })).toBe(input);
+    expect(input).toHaveValue("333.");
+    await user.click(screen.getByRole("button", { name: `Collapse ${source}` }));
+    await user.click(screen.getByRole("button", { name: "Collapse Execution" }));
+    expect(vi.mocked(props.onDirtyChange).mock.calls).toHaveLength(dirtyCalls);
+    await act(async () => { expect(await ref.current?.save()).toBe(false); });
+    await waitFor(() => expect(input).toHaveFocus());
+    expect(input).toBeVisible();
+    expect(input).toHaveValue("333.");
+    expect(screen.getByRole("button", { name: "Collapse Execution" })).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("button", { name: `Collapse ${source}` })).toHaveAttribute("aria-expanded", "true");
+    expect(knowledgeApi.updateKnowledgeSection).not.toHaveBeenCalled();
+    expect(knowledgeApi.previewKnowledge).not.toHaveBeenCalled();
+  });
+
   it("keeps scope lists under Sub-Vendor while saving its calculations independently", async () => {
     const user = userEvent.setup();
     const ref = createRef<KnowledgeModePanelHandle>();
@@ -526,7 +574,7 @@ describe("Knowledge Mode section-state removal", () => {
       fields: [{ id: "crew", type: "number", label: "Crew size", options: [], value: "4" }]
     };
     const settings = { baseRatePaise: 150_000, lowQuantityLimit: "15", minimumMarkupBps: 2_500, startingMarkupBps: 3_500 };
-    const payload = { modeConfigurations: [pmc, inHouse], modeCalculation: settings, dependencies: [] };
+    const payload = { modeConfigurations: [pmc, inHouse], modeCalculation: settings, subVendorMarginBps: 1_700, dependencies: [] };
     let savedAdvanced = section("advanced", "configured", payload);
     vi.mocked(knowledgeApi.getKnowledgeSection).mockImplementation(async (_line, _revision, key) =>
       key === "advanced" ? savedAdvanced : key === "overview" ? section("overview", "configured", { uomId: uoms[0]!.id }) : section("pricing"));
@@ -541,7 +589,7 @@ describe("Knowledge Mode section-state removal", () => {
     await user.click(screen.getByRole("checkbox", { name: "PMC" }));
     await user.click(screen.getByRole("checkbox", { name: "Execution" }));
     const rate = screen.getByRole("textbox", { name: "Base Rate (₹)" });
-    expect(screen.getByRole("radio", { name: "Sub-Vendor" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Sub-Vendor" })).toBeChecked();
     expect(screen.queryByRole("spinbutton", { name: "PMC Margin" })).not.toBeInTheDocument();
     expect(screen.getByText(`Execution (Sub-Vendor) for ${item.mainLineName}`)).toBeVisible();
     const inclusions = screen.getByRole("group", { name: "Inclusions" });
@@ -552,7 +600,8 @@ describe("Knowledge Mode section-state removal", () => {
     expect(within(inclusions).getByRole("checkbox", { name: "Transport" })).toBeChecked();
     expect(rate).toHaveValue("1500.00");
     expect(screen.getByRole("textbox", { name: "Impact (%)" })).toHaveValue("10.00");
-    expect(screen.getByRole("status", { name: "Max Discount" })).toHaveTextContent("10.00%");
+    expect(screen.queryByRole("status", { name: "Max Discount" })).not.toBeInTheDocument();
+    expect(screen.getByRole("spinbutton", { name: "Sub-Vendor Margin" })).toHaveValue(17);
     await user.click(within(exclusions).getByRole("checkbox", { name: "Transport" }));
     expect(within(inclusions).getByRole("checkbox", { name: "Transport" })).toBeChecked();
     fireEvent.change(rate, { target: { value: "1750" } });
@@ -560,7 +609,7 @@ describe("Knowledge Mode section-state removal", () => {
     await user.click(screen.getByRole("button", { name: "Test calculations" }));
     await user.click(screen.getByRole("button", { name: "Calculate" }));
     await waitFor(() => expect(knowledgeApi.previewKnowledge).toHaveBeenLastCalledWith({
-      quantity: "1", quantityScale: 2, modeCalculationMarkupBasis: "starting", modeCalculation: { ...settings, baseRatePaise: 175_000, impactBps: 1_250 }
+      quantity: "1", quantityScale: 2, subVendorCalculation: { baseRatePaise: 175_000, lowQuantityLimit: "15", impactBps: 1_250, subVendorMarginBps: 1_700 }
     }));
     await user.click(screen.getByRole("button", { name: "Close" }));
     await act(async () => { expect(await ref.current?.save()).toBe(true); });
@@ -569,16 +618,16 @@ describe("Knowledge Mode section-state removal", () => {
         modeConfigurations: [{ ...pmc, exclusions: [{ ...pmc.exclusions[0], selected: true }] }, inHouse]
       }
     }));
-    await user.click(screen.getByRole("radio", { name: "In-house" }));
+    await selectExecutionSource(user, "In-house");
     expect(screen.queryByRole("group", { name: "Inclusions" })).not.toBeInTheDocument();
-    expect(screen.getByRole("spinbutton", { name: "Value" })).toHaveValue(4);
+    expect(screen.queryByRole("spinbutton", { name: "Value" })).not.toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "In-house calculations" })).not.toBeInTheDocument();
     for (const label of ["Labor cost", "Material cost"]) {
       const cost = within(screen.getByRole("region", { name: `${label} calculations` }));
       expect(cost.getByRole("textbox", { name: "Base Rate (₹)" })).toHaveValue("1500.00");
       expect(cost.getByRole("textbox", { name: "Impact (%)" })).toHaveValue("10.00");
     }
-    await user.click(screen.getByRole("radio", { name: "Sub-Vendor" }));
+    await selectExecutionSource(user, "Sub-Vendor");
     expect(screen.getByRole("textbox", { name: "Base Rate (₹)" })).toHaveValue("1750");
     await user.click(screen.getByRole("checkbox", { name: "PMC" }));
     expect(screen.getAllByRole("region", { name: / calculations$/ })).toHaveLength(2);
@@ -596,11 +645,11 @@ describe("Knowledge Mode section-state removal", () => {
     expect(within(screen.getByRole("group", { name: "Exclusions" })).getByRole("checkbox", { name: "Transport" })).toBeChecked();
   });
 
-  it("keeps PMC margin and Execution markups independent through switches, validation, save and reload", async () => {
+  it("keeps PMC and Sub-Vendor margins separate from In-house markups through validation, save and reload", async () => {
     const user = userEvent.setup();
     const ref = createRef<KnowledgeModePanelHandle>();
     const legacy = { baseRatePaise: 150_000, lowQuantityLimit: "15", minimumMarkupBps: 2_500, startingMarkupBps: 3_500 };
-    let saved = section("advanced", "configured", { modeCalculation: legacy, pmcMarginBps: 1_750 });
+    let saved = section("advanced", "configured", { modeCalculation: legacy, pmcMarginBps: 1_750, subVendorMarginBps: 1_850 });
     vi.mocked(knowledgeApi.getKnowledgeSection).mockImplementation(async (_line, _revision, key) =>
       key === "advanced" ? saved : key === "overview" ? section("overview", "configured", { uomId: uoms[0]!.id }) : section("pricing"));
     vi.mocked(knowledgeApi.updateKnowledgeSection).mockImplementation(async (_line, _revision, key, input) => {
@@ -611,7 +660,7 @@ describe("Knowledge Mode section-state removal", () => {
     await screen.findByDisplayValue("1500.00");
     const cases = [
       { scope: "pmc", label: "PMC", inputs: ["2100", "12", "7.25"], settings: { ...legacy, baseRatePaise: 210_000, lowQuantityLimit: "12", impactBps: 725 } },
-      { scope: "sub_vendor", label: "Sub-Vendor", inputs: ["800", "8", "5.25", "12", "31"], discount: "19.00%", settings: { baseRatePaise: 80_000, lowQuantityLimit: "8", impactBps: 525, minimumMarkupBps: 1_200, startingMarkupBps: 3_100 } },
+      { scope: "sub_vendor", label: "Sub-Vendor", inputs: ["800", "8", "5.25"], settings: { ...legacy, baseRatePaise: 80_000, lowQuantityLimit: "8", impactBps: 525 } },
       { scope: "in_house_labor", label: "Labor cost", inputs: ["450", "4", "0", "8", "23"], discount: "15.00%", settings: { baseRatePaise: 45_000, lowQuantityLimit: "4", impactBps: 0, minimumMarkupBps: 800, startingMarkupBps: 2_300 } },
       { scope: "in_house_material", label: "Material cost", inputs: ["650", "9", "12.75", "18", "36"], discount: "18.00%", settings: { baseRatePaise: 65_000, lowQuantityLimit: "9", impactBps: 1_275, minimumMarkupBps: 1_800, startingMarkupBps: 3_600 } }
     ] as const;
@@ -621,34 +670,39 @@ describe("Knowledge Mode section-state removal", () => {
       const execution = screen.getByRole("checkbox", { name: "Execution" });
       if ((pmc as HTMLInputElement).checked !== (label === "PMC")) await user.click(pmc);
       if ((execution as HTMLInputElement).checked !== (label !== "PMC")) await user.click(execution);
-      if (label !== "PMC") await user.click(screen.getByRole("radio", { name: label === "Sub-Vendor" ? label : "In-house" }));
+      if (label !== "PMC") await selectExecutionSource(user, label === "Sub-Vendor" ? label : "In-house");
       return within(screen.getByRole("region", { name: `${label} calculations` }));
     }
     for (const scenario of cases) {
       const region = await select(scenario.label);
       expect(region.getByRole("textbox", { name: labels[0] })).toHaveValue("1500.00");
-      const editableLabels = scenario.scope === "pmc" ? labels.slice(0, 3) : labels;
+      const editableLabels = scenario.scope === "pmc" || scenario.scope === "sub_vendor" ? labels.slice(0, 3) : labels;
       editableLabels.forEach((name, index) => fireEvent.change(region.getByRole("textbox", { name }), { target: { value: scenario.inputs[index] } }));
       if (scenario.scope === "pmc") {
         expect(region.queryByRole("status", { name: "Max Discount" })).not.toBeInTheDocument();
         expect(region.getByRole("spinbutton", { name: "PMC Margin" })).toHaveValue(17.5);
+      } else if (scenario.scope === "sub_vendor") {
+        expect(region.queryByRole("status", { name: "Max Discount" })).not.toBeInTheDocument();
+        expect(region.getByRole("spinbutton", { name: "Sub-Vendor Margin" })).toHaveValue(18.5);
       } else expect(region.getByRole("status", { name: "Max Discount" })).toHaveTextContent(scenario.discount);
       if (scenario.scope === "sub_vendor") fireEvent.change(region.getByRole("textbox", { name: "Impact (%)" }), { target: { value: "5." } });
     }
     await act(async () => { expect(await ref.current?.save()).toBe(false); });
     expect(knowledgeApi.updateKnowledgeSection).not.toHaveBeenCalled();
     await waitFor(() => expect(within(screen.getByRole("region", { name: "Sub-Vendor calculations" })).getByRole("textbox", { name: "Impact (%)" })).toHaveFocus());
-    expect(screen.getByRole("radio", { name: "Sub-Vendor" })).toBeChecked();
-    expect(screen.getByRole("textbox", { name: "Impact (%)" })).toHaveValue("5.");
-    fireEvent.change(screen.getByRole("textbox", { name: "Impact (%)" }), { target: { value: "5.25" } });
+    expect(screen.getByRole("checkbox", { name: "Sub-Vendor" })).toBeChecked();
+    const subVendorImpact = within(screen.getByRole("region", { name: "Sub-Vendor calculations" })).getByRole("textbox", { name: "Impact (%)" });
+    expect(subVendorImpact).toHaveValue("5.");
+    fireEvent.change(subVendorImpact, { target: { value: "5.25" } });
     await act(async () => { expect(await ref.current?.save()).toBe(true); });
-    expect(saved.payload).toEqual({ modeCalculation: legacy, pmcMarginBps: 1_750, modeCalculations: Object.fromEntries(cases.map(({ scope, settings }) => [scope, settings])) });
+    expect(saved.payload).toEqual({ modeCalculation: legacy, pmcMarginBps: 1_750, subVendorMarginBps: 1_850, modeCalculations: Object.fromEntries(cases.map(({ scope, settings }) => [scope, settings])) });
     act(() => ref.current?.discard());
     for (const scenario of cases) {
       const region = await select(scenario.label);
-      const editableLabels = scenario.scope === "pmc" ? labels.slice(0, 3) : labels;
+      const editableLabels = scenario.scope === "pmc" || scenario.scope === "sub_vendor" ? labels.slice(0, 3) : labels;
       editableLabels.forEach((name, index) => expect(Number((region.getByRole("textbox", { name }) as HTMLInputElement).value)).toBe(Number(scenario.inputs[index])));
       if (scenario.scope === "pmc") expect(region.getByRole("spinbutton", { name: "PMC Margin" })).toHaveValue(17.5);
+      else if (scenario.scope === "sub_vendor") expect(region.getByRole("spinbutton", { name: "Sub-Vendor Margin" })).toHaveValue(18.5);
       else expect(region.getByRole("status", { name: "Max Discount" })).toHaveTextContent(scenario.discount);
       await user.click(region.getByRole("button", { name: "Test calculations" }));
       expect(screen.getByText(`${scenario.label} calculation simulator`)).toBeVisible();
@@ -664,11 +718,26 @@ describe("Knowledge Mode section-state removal", () => {
           totalPaise: 264_639, finalVendorChargesPaise: 225_225
         }
       });
+      if (scenario.scope === "sub_vendor") vi.mocked(knowledgeApi.previewKnowledge).mockResolvedValueOnce({
+        formulaVersion: "knowledge-preview-v1", effectivePriceVersionId: null, taxVersionId: null,
+        effectiveUnitRatePaise: null, adjustedUnitRate: null, requiredQuantity: "1", procurementQuantity: null,
+        vendorPreTax: null, vendorTax: null, vendorTotal: null, startMargin: null, bottomMargin: null,
+        pmcMarkup: null, duration: null,
+        subVendorCalculation: {
+          baseAmountPaise: 80_000, lowQuantityImpactAmountPaise: 4_200,
+          revisedUnitRatePaise: 84_200, revisedAmountPaise: 84_200, appliedImpactBps: 525,
+          subVendorMarginBps: 1_850, subVendorMarginAmountPaise: 15_577, totalBeforeDiscountPaise: 99_777,
+          totalPaise: 99_777, finalVendorChargesPaise: 84_200
+        }
+      });
       await user.click(screen.getByRole("button", { name: "Calculate" }));
       expect(knowledgeApi.previewKnowledge).toHaveBeenLastCalledWith(scenario.scope === "pmc"
         ? { pmcCalculation: { baseRatePaise: scenario.settings.baseRatePaise, lowQuantityLimit: scenario.settings.lowQuantityLimit, impactBps: scenario.settings.impactBps, pmcMarginBps: 1_750 }, quantity: "1", quantityScale: 2 }
-        : { modeCalculation: scenario.settings, quantity: "1", quantityScale: 2, modeCalculationMarkupBasis: "starting" });
+        : scenario.scope === "sub_vendor"
+          ? { subVendorCalculation: { baseRatePaise: scenario.settings.baseRatePaise, lowQuantityLimit: scenario.settings.lowQuantityLimit, impactBps: scenario.settings.impactBps, subVendorMarginBps: 1_850 }, quantity: "1", quantityScale: 2 }
+          : { modeCalculation: scenario.settings, quantity: "1", quantityScale: 2, modeCalculationMarkupBasis: "starting" });
       if (scenario.scope === "pmc") expect(await screen.findByLabelText("Final total")).toHaveTextContent("₹2,646.39");
+      if (scenario.scope === "sub_vendor") expect(await screen.findByLabelText("Final total")).toHaveTextContent("₹997.77");
       await user.click(screen.getByRole("button", { name: "Close" }));
     }
   });
@@ -691,7 +760,7 @@ describe("Knowledge Mode section-state removal", () => {
     const { props } = renderPanel(ref);
     await user.click(await screen.findByRole("checkbox", { name: "PMC" }));
     await user.click(screen.getByRole("checkbox", { name: "Execution" }));
-    await user.click(screen.getByRole("radio", { name: "In-house" }));
+    await selectExecutionSource(user, "In-house");
     const total = screen.getByRole("region", { name: "In-house total" });
     const materialSection = screen.getByRole("region", { name: "Material cost calculations" });
     expect(screen.getByRole("region", { name: "Execution" })).toContainElement(total);
@@ -707,7 +776,7 @@ describe("Knowledge Mode section-state removal", () => {
     fireEvent.change(within(materialSection).getByRole("textbox", { name: "Impact (%)" }), { target: { value: "12." } });
     expect(screen.queryByLabelText("Labor + Material total")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Test In-house total" })).toBeDisabled();
-    await user.click(screen.getByRole("radio", { name: "Sub-Vendor" }));
+    await selectExecutionSource(user, "Sub-Vendor");
     expect(screen.queryByRole("region", { name: "In-house total" })).not.toBeInTheDocument();
   });
 
@@ -721,15 +790,15 @@ describe("Knowledge Mode section-state removal", () => {
     renderPanel(ref);
     await user.click(await screen.findByRole("checkbox", { name: "PMC" }));
     await user.click(screen.getByRole("checkbox", { name: "Execution" }));
-    await user.click(screen.getByRole("radio", { name: "In-house" }));
+    await selectExecutionSource(user, "In-house");
     const cost = () => within(screen.getByRole("region", { name: `${label} calculations` }));
     expect(cost().getByRole("textbox", { name: "Base Rate (₹)" })).toHaveValue("900.00");
     fireEvent.change(cost().getByRole("textbox", { name: "Impact (%)" }), { target: { value: "7." } });
-    await user.click(screen.getByRole("radio", { name: "Sub-Vendor" }));
+    await selectExecutionSource(user, "Sub-Vendor");
     await act(async () => { expect(await ref.current?.save()).toBe(false); });
     expect(knowledgeApi.updateKnowledgeSection).not.toHaveBeenCalled();
     await waitFor(() => expect(cost().getByRole("textbox", { name: "Impact (%)" })).toHaveFocus());
-    expect(screen.getByRole("radio", { name: "In-house" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "In-house" })).toBeChecked();
     expect(cost().getByRole("textbox", { name: "Impact (%)" })).toHaveValue("7.");
     const sibling = within(screen.getByRole("region", { name: `${label === "Labor cost" ? "Material cost" : "Labor cost"} calculations` }));
     expect(sibling.getByRole("textbox", { name: "Impact (%)" })).toHaveValue("5.25");
@@ -746,7 +815,7 @@ describe("Knowledge Mode section-state removal", () => {
     renderPanel(ref);
     await user.click(await screen.findByRole("checkbox", { name: "PMC" }));
     await user.click(screen.getByRole("checkbox", { name: "Execution" }));
-    await user.click(screen.getByRole("radio", { name: "In-house" }));
+    await selectExecutionSource(user, "In-house");
     fireEvent.change(within(screen.getByRole("region", { name: "Labor cost calculations" })).getByRole("textbox", { name: "Base Rate (₹)" }), { target: { value: "450" } });
     const serverScopes = { ...initial.modeCalculations,
       pmc: { ...settings, baseRatePaise: 200_000 }, sub_vendor: { ...settings, baseRatePaise: 125_000 },
@@ -1064,8 +1133,7 @@ describe("Knowledge Mode section-state removal", () => {
     renderPanel(ref);
 
     await user.click(await screen.findByRole("checkbox", { name: "Execution" }));
-    await user.click(await screen.findByRole("button", { name: "Add component" }));
-    await user.type(screen.getByRole("textbox", { name: "Component label" }), "PMC mark");
+    await user.type(screen.getByRole("spinbutton", { name: "Sub-Vendor Margin" }), "15");
     await user.click(screen.getByRole("button", { name: "Add Specification" }));
     await user.type(screen.getByRole("textbox", { name: "Specification name" }), "Plywood");
 
@@ -1086,17 +1154,8 @@ describe("Knowledge Mode section-state removal", () => {
       modeOverrides: [{ id: "override-keep", modeId: modes[0]!.id, active: true }],
       revisionLineage: [{ revisionId: "revision-source" }],
       serverOwnedExtension: { preserve: true },
-      modeConfigurations: [
-        expect.objectContaining({
-          modeKind: "execution",
-          executionSource: "sub_vendor",
-          fields: [expect.objectContaining({ label: "PMC mark" })]
-        })
-      ]
+      subVendorMarginBps: 1_500
     });
-    /* The new component was never answered, so it must not persist an empty value. */
-    expect(JSON.stringify(vi.mocked(knowledgeApi.updateKnowledgeSection).mock.calls[0]?.[3].payload))
-      .not.toContain('"value"');
   });
 
   it("does not let a pending secondary refresh block later PUTs or post-save editability", async () => {
@@ -1116,8 +1175,7 @@ describe("Knowledge Mode section-state removal", () => {
     const panel = renderPanel(ref);
 
     await user.click(await screen.findByRole("checkbox", { name: "Execution" }));
-    await user.click(await screen.findByRole("button", { name: "Add component" }));
-    await user.type(screen.getByRole("textbox", { name: "Component label" }), "PMC mark");
+    await user.type(screen.getByRole("spinbutton", { name: "Sub-Vendor Margin" }), "15");
     await user.click(screen.getByRole("button", { name: "Add Specification" }));
     await user.type(screen.getByRole("textbox", { name: "Specification name" }), "Plywood");
 
@@ -1141,13 +1199,13 @@ describe("Knowledge Mode section-state removal", () => {
     ]);
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: knowledgeQueryKeys.item(item.mainLineId) });
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: knowledgeQueryKeys.contexts() });
-    expect(screen.getByRole("textbox", { name: "Component label" })).toBeEnabled();
+    expect(screen.getByRole("spinbutton", { name: "Sub-Vendor Margin" })).toBeEnabled();
     expect(screen.getByRole("checkbox", { name: "PMC" })).toBeEnabled();
     expect(screen.getByRole("checkbox", { name: "Execution" })).toBeEnabled();
     expect(screen.getByRole("alert")).toHaveTextContent("Specifications unavailable.");
   });
 
-  it("keeps both Execution definitions editable through same-mounted save-edit-save with authoritative CAS rebasing", async () => {
+  it("preserves both sources’ saved components through margin save-edit-save with authoritative CAS rebasing", async () => {
     const user = userEvent.setup();
     const initialAdvancedPayload: KnowledgeJsonObject = {
       serverOwnedExtension: { preserve: true },
@@ -1200,24 +1258,21 @@ describe("Knowledge Mode section-state removal", () => {
     const panel = renderPanel(ref);
 
     await user.click(await screen.findByRole("checkbox", { name: "Execution" }));
-    await user.click(screen.getByRole("radio", { name: "In-house" }));
-    const pmcMark = await screen.findByRole("textbox", { name: "Component label" });
-    await user.clear(pmcMark);
-    await user.type(pmcMark, "In-house saved once");
+    expect(screen.queryByRole("button", { name: "Add component" })).not.toBeInTheDocument();
+    await user.type(screen.getByRole("spinbutton", { name: "Sub-Vendor Margin" }), "15");
     await act(async () => {
       expect(await ref.current?.save()).toBe(true);
     });
 
-    await waitFor(() => expect(screen.getByRole("textbox", { name: "Component label" })).toBeEnabled());
+    await waitFor(() => expect(screen.getByRole("spinbutton", { name: "Sub-Vendor Margin" })).toBeEnabled());
     panel.queryClient.setQueryData(knowledgeQueryKeys.item(item.mainLineId), {
       ...item,
       version: 999
     });
-    await user.click(screen.getByRole("radio", { name: "Sub-Vendor" }));
-    const executionNote = screen.getByRole("textbox", { name: "Component label" });
-    expect(executionNote).toBeEnabled();
-    await user.clear(executionNote);
-    await user.type(executionNote, "Execution saved twice");
+    const margin = screen.getByRole("spinbutton", { name: "Sub-Vendor Margin" });
+    expect(margin).toBeEnabled();
+    await user.clear(margin);
+    await user.type(margin, "17");
     await act(async () => {
       expect(await ref.current?.save()).toBe(true);
     });
@@ -1235,64 +1290,12 @@ describe("Knowledge Mode section-state removal", () => {
       41
     ]);
     expect(vi.mocked(knowledgeApi.updateKnowledgeSection).mock.calls[0]?.[3].payload).toEqual({
-      serverOwnedExtension: { preserve: true },
-      modeConfigurations: [
-        {
-          id: "configuration-in-house-stable",
-          modeKind: "execution",
-          executionSource: "in_house",
-          fields: [{
-            id: "field-in-house-stable",
-            type: "text",
-            label: "In-house saved once",
-            options: [],
-            value: "In-house initial"
-          }]
-        },
-        {
-          id: "configuration-execution-stable",
-          modeKind: "execution",
-          executionSource: "sub_vendor",
-          fields: [{
-            id: "field-execution-stable",
-            type: "text",
-            label: "Execution note",
-            options: [],
-            value: "Execution initial"
-          }]
-        }
-      ]
+      ...initialAdvancedPayload, subVendorMarginBps: 1_500
     });
     expect(vi.mocked(knowledgeApi.updateKnowledgeSection).mock.calls[1]?.[3].payload).toEqual({
-      serverOwnedExtension: { preserve: true },
-      modeConfigurations: [
-        {
-          id: "configuration-in-house-stable",
-          modeKind: "execution",
-          executionSource: "in_house",
-          fields: [{
-            id: "field-in-house-stable",
-            type: "text",
-            label: "In-house saved once",
-            options: [],
-            value: "In-house initial"
-          }]
-        },
-        {
-          id: "configuration-execution-stable",
-          modeKind: "execution",
-          executionSource: "sub_vendor",
-          fields: [{
-            id: "field-execution-stable",
-            type: "text",
-            label: "Execution saved twice",
-            options: [],
-            value: "Execution initial"
-          }]
-        }
-      ]
+      ...initialAdvancedPayload, subVendorMarginBps: 1_700
     });
-    expect(screen.getByRole("textbox", { name: "Component label" })).toBeEnabled();
+    expect(screen.getByRole("spinbutton", { name: "Sub-Vendor Margin" })).toBeEnabled();
     expect(screen.queryByText("Unsaved changes")).not.toBeInTheDocument();
   });
 
@@ -1311,8 +1314,7 @@ describe("Knowledge Mode section-state removal", () => {
     renderPanel(ref);
 
     await user.click(await screen.findByRole("checkbox", { name: "Execution" }));
-    await user.click(await screen.findByRole("button", { name: "Add component" }));
-    await user.type(screen.getByRole("textbox", { name: "Component label" }), "PMC mark");
+    await user.type(screen.getByRole("spinbutton", { name: "Sub-Vendor Margin" }), "15");
 
     await act(async () => {
       expect(await ref.current?.save()).toBe(true);
@@ -1352,8 +1354,7 @@ describe("Knowledge Mode section-state removal", () => {
     renderPanel(ref);
 
     await user.click(await screen.findByRole("checkbox", { name: "Execution" }));
-    await user.click(await screen.findByRole("button", { name: "Add component" }));
-    await user.type(screen.getByRole("textbox", { name: "Component label" }), "PMC mark");
+    await user.type(screen.getByRole("spinbutton", { name: "Sub-Vendor Margin" }), "15");
     await user.click(screen.getByRole("button", { name: "Add Specification" }));
     await user.type(screen.getByRole("textbox", { name: "Specification name" }), "Plywood");
 
@@ -1390,8 +1391,7 @@ describe("Knowledge Mode section-state removal", () => {
     renderPanel(ref);
 
     await user.click(await screen.findByRole("checkbox", { name: "Execution" }));
-    await user.click(await screen.findByRole("button", { name: "Add component" }));
-    await user.type(screen.getByRole("textbox", { name: "Component label" }), "Local definition");
+    await user.type(screen.getByRole("spinbutton", { name: "Sub-Vendor Margin" }), "15");
 
     await act(async () => {
       expect(await ref.current?.save()).toBe(false);
@@ -1404,8 +1404,8 @@ describe("Knowledge Mode section-state removal", () => {
     const conflict = screen.getByRole("alertdialog", { name: "This section changed elsewhere" });
     expect(conflict).toBeVisible();
     expect(conflict).toHaveTextContent("Mode configuration");
-    expect(screen.getByRole("textbox", { name: "Component label" }))
-      .toHaveValue("Local definition");
+    expect(screen.getByRole("spinbutton", { name: "Sub-Vendor Margin" }))
+      .toHaveValue(15);
     expect(screen.getByText("Unsaved changes")).toBeVisible();
     await user.click(within(conflict).getByRole("button", { name: "Keep editing" }));
     vi.mocked(knowledgeApi.updateKnowledgeSection).mockImplementationOnce(
@@ -1414,7 +1414,7 @@ describe("Knowledge Mode section-state removal", () => {
     await act(async () => { expect(await ref.current?.save()).toBe(true); });
     expect(vi.mocked(knowledgeApi.updateKnowledgeSection).mock.calls[1]?.[3]).toMatchObject({
       applicability: "configured",
-      payload: { modeConfigurations: [expect.objectContaining({ fields: [expect.objectContaining({ label: "Local definition" })] })] }
+      payload: { subVendorMarginBps: 1_500 }
     });
 
   });
@@ -1448,12 +1448,12 @@ describe("Knowledge Mode section-state removal", () => {
     const panel = renderPanel(ref);
 
     await user.click(await screen.findByRole("checkbox", { name: "Execution" }));
-    const pmcMark = await screen.findByRole("textbox", { name: "Component label" });
-    await user.clear(pmcMark);
-    await user.type(pmcMark, "Local edit");
+    const margin = await screen.findByRole("spinbutton", { name: "Sub-Vendor Margin" });
+    await user.clear(margin);
+    await user.type(margin, "15");
     panel.rerenderModes([modes[0]!]);
 
-    await waitFor(() => expect(screen.getByRole("textbox", { name: "Component label" })).toBeEnabled());
+    await waitFor(() => expect(screen.getByRole("spinbutton", { name: "Sub-Vendor Margin" })).toBeEnabled());
     await act(async () => {
       expect(await ref.current?.save()).toBe(true);
     });
@@ -1463,8 +1463,9 @@ describe("Knowledge Mode section-state removal", () => {
       modeConfigurations: [expect.objectContaining({
         modeKind: "execution",
                   executionSource: "sub_vendor",
-        fields: [expect.objectContaining({ label: "Local edit", value: "Initial" })]
-      })]
+        fields: [expect.objectContaining({ label: "PMC mark", value: "Initial" })]
+      })],
+      subVendorMarginBps: 1_500
     });
     expect(screen.queryByText(/Execution is missing|reusable Mode/iu)).not.toBeInTheDocument();
   });
@@ -1532,7 +1533,7 @@ describe("Knowledge Mode section-state removal", () => {
     );
   });
 
-  it("stops after an Advanced failure, preserves the local definition, and retries only dirty blocks", async () => {
+  it("stops after an Advanced failure, preserves the local margin, and retries only dirty blocks", async () => {
     const user = userEvent.setup();
     vi.mocked(knowledgeApi.getKnowledgeSection).mockImplementation(
       async (_mainLineId, _revisionId, sectionKey) =>
@@ -1573,9 +1574,9 @@ describe("Knowledge Mode section-state removal", () => {
     renderPanel(ref);
 
     await user.click(await screen.findByRole("checkbox", { name: "Execution" }));
-    const pmcMark = await screen.findByRole("textbox", { name: "Component label" });
-    await user.clear(pmcMark);
-    await user.type(pmcMark, "Local value");
+    const margin = await screen.findByRole("spinbutton", { name: "Sub-Vendor Margin" });
+    await user.clear(margin);
+    await user.type(margin, "15");
     await user.click(screen.getByRole("button", { name: "Add Specification" }));
     await user.type(screen.getByRole("textbox", { name: "Specification name" }), "Plywood");
 
@@ -1585,7 +1586,7 @@ describe("Knowledge Mode section-state removal", () => {
     expect(vi.mocked(knowledgeApi.updateKnowledgeSection).mock.calls.map((call) => call[2])).toEqual([
       "advanced"
     ]);
-    expect(screen.getByRole("textbox", { name: "Component label" })).toHaveValue("Local value");
+    expect(screen.getByRole("spinbutton", { name: "Sub-Vendor Margin" })).toHaveValue(15);
 
     await act(async () => {
       expect(await ref.current?.save()).toBe(true);
@@ -1597,7 +1598,7 @@ describe("Knowledge Mode section-state removal", () => {
     ]);
   });
 
-  it("maps authoritative Advanced validation paths to the component definition and clears them on edit", async () => {
+  it("maps authoritative Advanced validation paths to the Sub-Vendor margin and clears them on edit", async () => {
     const user = userEvent.setup();
     vi.mocked(knowledgeApi.getKnowledgeSection).mockImplementation(
       async (_mainLineId, _revisionId, sectionKey) =>
@@ -1624,32 +1625,32 @@ describe("Knowledge Mode section-state removal", () => {
     );
     vi.mocked(knowledgeApi.updateKnowledgeSection).mockRejectedValueOnce(
       new ApiError(400, "VALIDATION_ERROR", "Mode configuration is invalid.", {
-        "payload.modeConfigurations.0.fields.0.label": "PMC component label is no longer accepted."
+        "payload.subVendorMarginBps": "Sub-Vendor margin is no longer accepted."
       })
     );
     const ref = createRef<KnowledgeModePanelHandle>();
     renderPanel(ref);
 
     await user.click(await screen.findByRole("checkbox", { name: "Execution" }));
-    const pmcMark = await screen.findByRole("textbox", { name: "Component label" });
-    await user.clear(pmcMark);
-    await user.type(pmcMark, "Rejected value");
+    const margin = await screen.findByRole("spinbutton", { name: "Sub-Vendor Margin" });
+    await user.clear(margin);
+    await user.type(margin, "15");
 
     await act(async () => {
       expect(await ref.current?.save()).toBe(false);
     });
 
-    expect(await screen.findAllByText("PMC component label is no longer accepted.")).toHaveLength(2);
-    expect(screen.getByRole("textbox", { name: "Component label" }))
+    expect(await screen.findAllByText("Sub-Vendor margin is no longer accepted.")).toHaveLength(2);
+    expect(screen.getByRole("spinbutton", { name: "Sub-Vendor Margin" }))
       .toHaveAttribute("aria-invalid", "true");
 
-    await user.clear(screen.getByRole("textbox", { name: "Component label" }));
-    await user.type(screen.getByRole("textbox", { name: "Component label" }), "Accepted label");
+    await user.clear(screen.getByRole("spinbutton", { name: "Sub-Vendor Margin" }));
+    await user.type(screen.getByRole("spinbutton", { name: "Sub-Vendor Margin" }), "17");
 
     await waitFor(() => {
-      expect(screen.queryAllByText("PMC component label is no longer accepted.")).toHaveLength(0);
+      expect(screen.queryAllByText("Sub-Vendor margin is no longer accepted.")).toHaveLength(0);
     });
-    expect(screen.getByRole("textbox", { name: "Component label" }))
+    expect(screen.getByRole("spinbutton", { name: "Sub-Vendor Margin" }))
       .not.toHaveAttribute("aria-invalid", "true");
   });
 });

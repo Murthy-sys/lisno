@@ -126,6 +126,12 @@ export interface KnowledgeContextRequest {
 }
 
 export interface KnowledgePreviewRequest {
+  readonly subVendorCalculation?: {
+    readonly baseRatePaise: number;
+    readonly lowQuantityLimit: string;
+    readonly impactBps?: number;
+    readonly subVendorMarginBps: number;
+  };
   readonly pmcCalculation?: {
     readonly baseRatePaise: number;
     readonly lowQuantityLimit: string;

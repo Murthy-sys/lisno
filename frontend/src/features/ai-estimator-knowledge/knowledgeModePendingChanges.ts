@@ -2,7 +2,7 @@ import { modeCalculationDraft, modeCalculationsForPayload, parseModeQuantity, MO
 import { generateModeDescription, syncModeDescription } from "./knowledgeModeDescription";
 import { knowledgeModeFieldTypeLabel, parseKnowledgeModeConfigurations, partitionKnowledgeModeConfigurations, type KnowledgeModeConfiguration } from "./knowledgeModeConfiguration";
 import { defaultPmcScopeItems, PMC_SCOPE_LISTS } from "./knowledgePmcScope";
-import { pmcMarginIssues } from "./knowledgePmcMargin";
+import { pmcMarginIssues, subVendorMarginIssues } from "./knowledgePmcMargin";
 import { formatKnowledgePercentage, parseRupeeInputToPaise } from "./knowledgePresentation";
 import { pairPendingRows, pendingObjectRows, pendingRowsReordered, pendingText, pendingValuesEqual, type KnowledgePendingChangeEntry, type KnowledgePendingChangeField, type KnowledgePendingChangeGroup } from "./knowledgePendingChanges";
 import type { KnowledgeModeCalculationDraft } from "./KnowledgeModeCalculationTable";
@@ -87,6 +87,9 @@ export function projectKnowledgeModePendingChanges(input: KnowledgeModePendingCh
     }
     if (!pendingValuesEqual(before.pmcMarginBps ?? null, after.pmcMarginBps ?? null)) {
       add("pmc:margin", "PMC", [{ key: "pmc:margin", title: "PMC margin", kind: "updated", fields: [field("margin", "Margin", typeof after.pmcMarginBps === "number" ? formatKnowledgePercentage(after.pmcMarginBps) : after.pmcMarginBps)], ...(pmcMarginIssues(after.pmcMarginBps).length ? { incomplete: true } : {}) }]);
+    }
+    if (!pendingValuesEqual(before.subVendorMarginBps ?? null, after.subVendorMarginBps ?? null)) {
+      add("sub_vendor:margin", "Execution · Sub-Vendor", [{ key: "sub_vendor:margin", title: "Sub-Vendor margin", kind: "updated", fields: [field("margin", "Margin", typeof after.subVendorMarginBps === "number" ? formatKnowledgePercentage(after.subVendorMarginBps) : after.subVendorMarginBps)], ...(subVendorMarginIssues(after.subVendorMarginBps).length ? { incomplete: true } : {}) }]);
     }
     // Configuration identities are retained, even when names or sources coincide.
     for (const pair of pairPendingRows(oldConfigs.map((row) => ({ id: row.id, modeKind: row.modeKind, executionSource: row.executionSource, fields: row.fields.map((value) => ({ ...value, options: [...value.options] })) })), configs.map((row) => ({ id: row.id, modeKind: row.modeKind, executionSource: row.executionSource, fields: row.fields.map((value) => ({ ...value, options: [...value.options] })) })))) {

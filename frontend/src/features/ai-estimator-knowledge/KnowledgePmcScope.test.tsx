@@ -54,16 +54,19 @@ describe("Sub-Vendor Inclusions and Exclusions", () => {
     }
     expect(onChange).toHaveBeenCalledTimes(2);
     await user.click(screen.getByRole("checkbox", { name: "PMC" }));
-    expect(screen.getByRole("button", { name: "Add component" })).toBeEnabled();
+    expect(screen.queryByRole("button", { name: "Add component" })).not.toBeInTheDocument();
     for (const title of ["Inclusions", "Exclusions"]) {
       expect(within(screen.getByRole("group", { name: title })).getByRole("checkbox", { name: "Transport" })).toBeChecked();
     }
-    await user.click(screen.getByRole("radio", { name: "In-house" }));
+    await user.click(screen.getByRole("checkbox", { name: "In-house" }));
+    expect(screen.getByRole("region", { name: "Sub-Vendor scope" })).toBeVisible();
+    expect(within(screen.getByRole("region", { name: "In-house" })).queryByRole("group", { name: "Inclusions" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("checkbox", { name: "Sub-Vendor" }));
     await user.click(screen.getByRole("checkbox", { name: "PMC" }));
     expect(screen.getByRole("checkbox", { name: "PMC" })).toBeChecked();
     expect(screen.queryByRole("group", { name: "Inclusions" })).not.toBeInTheDocument();
     expect(screen.queryByRole("group", { name: "Exclusions" })).not.toBeInTheDocument();
-    await user.click(screen.getByRole("radio", { name: "Sub-Vendor" }));
+    await user.click(screen.getByRole("checkbox", { name: "Sub-Vendor" }));
     expect(screen.getAllByRole("group", { name: "Inclusions" })).toHaveLength(1);
     expect(screen.getAllByRole("group", { name: "Exclusions" })).toHaveLength(1);
     for (const title of ["Inclusions", "Exclusions"]) {

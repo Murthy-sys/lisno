@@ -939,14 +939,43 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
       pmcMarginBps: { type: "integer", minimum: 1_000, maximum: 2_000 },
       pmcMarginAmountPaise: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
       totalBeforeDiscountPaise: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
-      finalVendorChargesPaise: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
+      finalVendorChargesPaise: { type: "integer", minimum: -Number.MAX_SAFE_INTEGER, maximum: Number.MAX_SAFE_INTEGER },
       discount: strictObject(["rateBps", "totalBeforeDiscountPaise", "amountPaise"], {
-        rateBps: { type: "integer", minimum: 0, maximum: 833 },
+        rateBps: { type: "integer", minimum: 0, maximum: 10_000 },
         totalBeforeDiscountPaise: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
         amountPaise: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER }
       })
     }),
-    description: "At or below the configured quantity limit, configured Impact revises the unit rate before quantity multiplication. The low-quantity charge is the difference between the rounded revised and base amounts. PMC margin is added to the revised amount, then discount is applied to that subtotal. Final vendor charges exclude the separately reported PMC margin, and their sum equals totalPaise. The discounted total retains at least the rounded 10% margin floor."
+    description: "At or below the configured quantity limit, configured Impact revises the unit rate before quantity multiplication. The low-quantity charge is the difference between the rounded revised and base amounts. PMC margin is added to the revised amount, then a custom 0–100% discount is applied to that subtotal without a margin-based cap. Final vendor charges are the signed balance excluding the separately reported PMC margin; this balance can be negative, and its sum with PMC margin equals the non-negative totalPaise."
+  },
+  KnowledgeSubVendorCalculationSettings: {
+    ...strictObject(["baseRatePaise", "lowQuantityLimit", "subVendorMarginBps"], {
+      baseRatePaise: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
+      lowQuantityLimit: decimal,
+      impactBps: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER - 10_000, default: 1_000 },
+      subVendorMarginBps: { type: "integer", minimum: 1_000, maximum: 2_000 }
+    }),
+    description: "Sub-Vendor simulator settings. Base Rate, Low Quantity Limit and Impact come from the saved Sub-Vendor cost settings; Sub-Vendor margin comes from advanced.subVendorMarginBps. Configured Impact applies at or below the configured quantity limit; zero disables the charge, and omitted Impact defaults to 10%. Sub-Vendor margin applies to the amount after that charge. Starting and minimum Mode markups are not used."
+  },
+  KnowledgeSubVendorCalculationPreview: {
+    ...strictObject(["baseAmountPaise", "lowQuantityImpactAmountPaise", "revisedUnitRatePaise", "revisedAmountPaise", "totalPaise", "appliedImpactBps", "subVendorMarginBps", "subVendorMarginAmountPaise", "totalBeforeDiscountPaise", "finalVendorChargesPaise"], {
+      baseAmountPaise: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
+      lowQuantityImpactAmountPaise: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
+      revisedUnitRatePaise: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
+      revisedAmountPaise: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
+      totalPaise: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
+      appliedImpactBps: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER - 10_000 },
+      subVendorMarginBps: { type: "integer", minimum: 1_000, maximum: 2_000 },
+      subVendorMarginAmountPaise: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
+      totalBeforeDiscountPaise: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
+      finalVendorChargesPaise: { type: "integer", minimum: -Number.MAX_SAFE_INTEGER, maximum: Number.MAX_SAFE_INTEGER },
+      discount: strictObject(["rateBps", "totalBeforeDiscountPaise", "amountPaise"], {
+        rateBps: { type: "integer", minimum: 0, maximum: 10_000 },
+        totalBeforeDiscountPaise: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
+        amountPaise: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER }
+      })
+    }),
+    description: "At or below the configured quantity limit, configured Impact revises the unit rate before quantity multiplication. The low-quantity charge is the difference between the rounded revised and base amounts. Sub-Vendor margin is added to the revised amount, then a custom 0–100% discount is applied to that subtotal without a margin-based cap. Final vendor charges are the signed balance excluding the separately reported Sub-Vendor margin; this balance can be negative, and its sum with Sub-Vendor margin equals the non-negative totalPaise."
   },
   KnowledgeInHouseCalculationPreview: {
     ...strictObject(["labor", "material", "totalPaise"], {
@@ -960,7 +989,7 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
     taxVersionId: { ...id, nullable: true },
     unitRatePaise: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER, nullable: true },
     quantityAdjustmentBps: { type: "integer", minimum: 0, maximum: 10_000, nullable: true },
-    quantity: { ...decimal, nullable: true, description: "Required and non-null when modeCalculation, inHouseCalculation or pmcCalculation is supplied." },
+    quantity: { ...decimal, nullable: true, description: "Required and non-null when modeCalculation, inHouseCalculation, pmcCalculation or subVendorCalculation is supplied." },
     quantityScale: { type: "integer", minimum: 0, maximum: 18 },
     wastageBps: { type: "integer", minimum: 0, nullable: true },
     taxRateBps: { type: "integer", minimum: 0, nullable: true },
@@ -970,15 +999,16 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
     pmcMarkupBps: { type: "integer", minimum: 0, nullable: true },
     duration: { allOf: [ref("KnowledgeDurationPreviewRequest")], nullable: true },
     modeCalculation: ref("KnowledgeModeCalculationSettings"),
-    inHouseCalculation: { ...ref("KnowledgeInHouseCalculationSettings"), description: "Combined simulator settings. Cannot be supplied together with modeCalculation or pmcCalculation." },
-    pmcCalculation: { ...ref("KnowledgePmcCalculationSettings"), description: "PMC simulator settings. Cannot be combined with modeCalculation, inHouseCalculation or modeCalculationMarkupBasis." },
+    inHouseCalculation: { ...ref("KnowledgeInHouseCalculationSettings"), description: "Combined simulator settings. Cannot be supplied together with modeCalculation, pmcCalculation or subVendorCalculation." },
+    pmcCalculation: { ...ref("KnowledgePmcCalculationSettings"), description: "PMC simulator settings. Cannot be combined with modeCalculation, inHouseCalculation, subVendorCalculation or modeCalculationMarkupBasis." },
+    subVendorCalculation: { ...ref("KnowledgeSubVendorCalculationSettings"), description: "Sub-Vendor simulator settings. Cannot be combined with modeCalculation, inHouseCalculation, pmcCalculation or modeCalculationMarkupBasis." },
     modeCalculationMarkupBasis: {
       type: "string", enum: ["starting", "minimum"], default: "starting",
       description: "Simulator-only choice of additive markup. Requires modeCalculation or inHouseCalculation. Never persisted with Mode settings."
     },
     modeCalculationDiscountBps: {
       type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER - 10_000, default: 0,
-      description: "Simulator-only discount. For Mode and In-house, it reduces markup percentage points and cannot exceed chosen markup minus minimum markup (0 when using minimum); both In-house costs must satisfy that limit. For PMC, it discounts the subtotal after adding PMC margin. PMC rate is capped at floor((pmcMarginBps - 1000) * 10000 / (10000 + pmcMarginBps)); independently rounded totals must also retain at least the rounded 10% margin floor. Never persisted."
+      description: "Simulator-only discount. For Mode and In-house, it reduces markup percentage points and cannot exceed chosen markup minus minimum markup (0 when using minimum); both In-house costs must satisfy that limit. For PMC and Sub-Vendor, the custom rate is 0–10000 basis points (0–100%) and discounts the subtotal after adding the independently configured margin. There is no margin-based cap or minimum final margin. Never persisted."
     }
   }),
   KnowledgeDurationPreviewRequest: strictObject(["productivity", "productivityScale", "unit"], {
@@ -1275,6 +1305,7 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
       modeCalculation: ref("KnowledgeModeCalculationPreview"),
       inHouseCalculation: ref("KnowledgeInHouseCalculationPreview"),
       pmcCalculation: ref("KnowledgePmcCalculationPreview"),
+      subVendorCalculation: ref("KnowledgeSubVendorCalculationPreview"),
       duration: {
         type: "object",
         nullable: true,
@@ -1378,7 +1409,7 @@ function sectionPayloadKeys(sectionKey: string): readonly string[] {
     recommendations: ["recommendations", "exclusions", "budgetAlterations"],
     quality: ["parameters"],
     execution: ["steps", "productivity"],
-    advanced: ["dependencies", "modeOverrides", "revisionLineage", "modeConfigurations", "modeDescription", "modeCalculation", "modeCalculations", "pmcMarginBps"]
+    advanced: ["dependencies", "modeOverrides", "revisionLineage", "modeConfigurations", "modeDescription", "modeCalculation", "modeCalculations", "pmcMarginBps", "subVendorMarginBps"]
   };
   return keys[sectionKey] ?? [];
 }
@@ -1412,6 +1443,10 @@ function sectionPayloadProperties(sectionKey: string): Readonly<Record<string, u
     properties.pmcMarginBps = {
       type: "integer", minimum: 1_000, maximum: 2_000, nullable: true,
       description: "Configured PMC margin in integer basis points, from 10% to 20% inclusive. Null or absent means not configured."
+    };
+    properties.subVendorMarginBps = {
+      type: "integer", minimum: 1_000, maximum: 2_000, nullable: true,
+      description: "Independent Sub-Vendor margin in integer basis points, from 10% to 20% inclusive. Null or absent means not configured; never inherits PMC margin or legacy markup."
     };
     properties.modeConfigurations = {
       type: "array",

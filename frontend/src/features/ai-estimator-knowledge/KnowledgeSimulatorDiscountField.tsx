@@ -9,14 +9,14 @@ export function KnowledgeSimulatorDiscountField({ value, onChange, maximumBps, a
   readonly maximumBps: number | undefined;
   readonly attempted: boolean;
   readonly combined?: boolean;
-  readonly basis?: "markup" | "pmc";
+  readonly basis?: "markup" | "pmc" | "sub_vendor";
 }) {
   const id = useId();
   const parsed = parseSimulatorDiscount(value, maximumBps, basis);
   const error = parsed.overLimit || attempted ? parsed.error : undefined;
+  const marginLabel = basis === "sub_vendor" ? "Sub-Vendor" : "PMC";
   return <Field id={`${id}-discount`} label="Discount (%)"
-    hint={basis === "pmc" ? maximumBps === undefined ? "Set a valid PMC margin in the configuration to see the allowed discount."
-      : `Maximum allowed: ${formatKnowledgePercentage(maximumBps)}. Discount applies to the subtotal after PMC margin. The final total must retain at least 10% above the revised amount.`
+    hint={basis !== "markup" ? `Discount applies to the subtotal after ${marginLabel} margin. Enter your custom percentage.`
       : maximumBps === undefined ? "Complete the markup values to see the allowed discount."
       : `Maximum allowed: ${formatKnowledgePercentage(maximumBps)}. Discount reduces the selected markup.${combined ? " Both Labor and Material must stay at or above their minimum markup." : ""}`}
     error={error ? <span role="alert">{error}</span> : undefined}>

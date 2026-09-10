@@ -426,15 +426,16 @@ describe("Knowledge Mode Specifications save integration", () => {
     const description = await screen.findByRole("textbox", { name: "Brief description" });
     await user.clear(description);
     await user.type(description, "Valid Pricing change that must not save alone");
-    await user.click(await screen.findByRole("checkbox", { name: "Execution" }));
-    await user.click(screen.getByRole("button", { name: "Add component" }));
+    const margin = screen.getByRole("spinbutton", { name: "PMC Margin" });
+    await user.clear(margin);
+    await user.type(margin, "9");
 
     await act(async () => {
       expect(await ref.current?.save()).toBe(false);
     });
 
     expect(knowledgeApi.updateKnowledgeSection).not.toHaveBeenCalled();
-    expect(screen.getByRole("textbox", { name: "Component label" })).toHaveAttribute("aria-invalid", "true");
+    expect(margin).toHaveAttribute("aria-invalid", "true");
   });
 
   it("uses revision-wide response metadata to block history-only Specification removal", async () => {
