@@ -3683,6 +3683,39 @@ body:has(.ui-app-shell[data-role]) .modal .knowledge-dialog-actions .ui-button--
   line-height: 1.4;
 }
 
+.knowledge-mode-calculation__pmc .knowledge-pmc-margin .ui-field__label {
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.knowledge-mode-calculation__pmc .knowledge-pmc-margin .ui-input {
+  inline-size: 100%;
+  min-inline-size: 0;
+  min-block-size: 40px;
+  padding: 8px 40px 8px 10px;
+  border: 1px solid #8e9aad;
+  border-radius: 8px;
+  background: var(--color-surface, #fff);
+  font-size: 14px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.knowledge-mode-calculation__pmc .knowledge-pmc-margin .ui-input:focus-visible {
+  outline: 2px solid #886a04;
+  outline-offset: 2px;
+}
+
+.knowledge-mode-calculation__pmc .knowledge-pmc-margin .ui-input[aria-invalid="true"] {
+  border-color: var(--color-danger, #b42318);
+}
+
 .knowledge-mode-calculation__rate-fields {
   display: grid;
   grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.8fr) minmax(0, 1.2fr) minmax(0, 0.85fr);
@@ -3869,6 +3902,34 @@ body:has(.ui-app-shell[data-role]) .modal .knowledge-dialog-actions .ui-button--
   gap: 16px;
 }
 
+.ui-dialog .knowledge-mode-simulator .ui-input {
+  inline-size: 100%;
+  min-inline-size: 0;
+  min-block-size: 44px;
+  padding: 10px 12px;
+  border: 1px solid #8e9aad;
+  border-radius: 8px;
+  background: var(--color-surface, #fff);
+  color: var(--color-text, #172033);
+  font-variant-numeric: tabular-nums;
+}
+
+.ui-dialog .knowledge-mode-simulator .ui-input[readonly] {
+  border-color: #d5dce6;
+  background: #f4f6f9;
+  color: #526078;
+  cursor: default;
+}
+
+.ui-dialog .knowledge-mode-simulator .ui-input:focus-visible {
+  outline: 2px solid #886a04;
+  outline-offset: 2px;
+}
+
+.ui-dialog .knowledge-mode-simulator .ui-input[aria-invalid="true"] {
+  border-color: var(--color-danger, #b42318);
+}
+
 .knowledge-mode-simulator__markup {
   display: grid;
   gap: 8px;
@@ -3918,6 +3979,37 @@ body:has(.ui-app-shell[data-role]) .modal .knowledge-dialog-actions .ui-button--
 
 .knowledge-mode-calculation__totals dd {
   margin: 0;
+  font-weight: 700;
+}
+
+.knowledge-mode-calculation__totals > .knowledge-mode-simulator__subtotal {
+  padding-block-start: 12px;
+  border-block-start: 1px solid var(--role-line, var(--color-border));
+}
+
+.knowledge-mode-simulator--pmc .knowledge-mode-calculation__totals > div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: baseline;
+  column-gap: 16px;
+}
+
+.knowledge-mode-simulator--pmc .knowledge-mode-calculation__totals dd {
+  text-align: end;
+  font-variant-numeric: tabular-nums;
+}
+
+.knowledge-mode-calculation__totals > .knowledge-mode-simulator__vendor {
+  padding-block-start: 12px;
+  border-block-start: 1px solid var(--role-line, var(--color-border));
+  font-weight: 600;
+}
+
+.knowledge-mode-calculation__totals > .knowledge-mode-simulator__final {
+  margin-block-start: 4px;
+  padding-block-start: 16px;
+  border-block-start: 2px solid var(--role-line, var(--color-border));
+  font-size: 17px;
   font-weight: 700;
 }
 

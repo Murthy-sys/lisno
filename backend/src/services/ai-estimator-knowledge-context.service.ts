@@ -11,7 +11,7 @@ import {
   parseScaledDecimal,
   type CalculateKnowledgePreviewInput
 } from "../domain/ai-estimator-knowledge-calculation.js";
-import { calculateKnowledgeInHousePrice, calculateKnowledgeModePrice } from "../domain/ai-estimator-knowledge-mode-calculation.js";
+import { calculateKnowledgeInHousePrice, calculateKnowledgeModePrice, calculateKnowledgePmcPrice } from "../domain/ai-estimator-knowledge-mode-calculation.js";
 import { buildKnowledgeConfigurationContext } from "../domain/ai-estimator-knowledge-configuration-context.js";
 import {
   AI_ESTIMATOR_KNOWLEDGE_MODE_FIELD_TYPES,
@@ -86,15 +86,6 @@ export function createAiEstimatorKnowledgeContextService(
     async preview(actor, input) {
       await actorGuard.requireReadActor(actor);
       try {
-        if ((input.modeCalculation || input.inHouseCalculation) && input.quantity == null) {
-          throw new KnowledgeCalculationError("INVALID_DECIMAL", "A test quantity is required for Mode calculations.");
-        }
-        if (input.modeCalculation && input.inHouseCalculation) {
-          throw new KnowledgeCalculationError("INVALID_AMOUNT", "Choose either an individual calculation or an In-house total.");
-        }
-        if (input.modeCalculationDiscountBps !== undefined && !input.modeCalculation && !input.inHouseCalculation) {
-          throw new KnowledgeCalculationError("INVALID_AMOUNT", "Mode calculation settings are required when applying a discount.");
-        }
         return {
           ...calculateKnowledgePreview(input),
           ...(input.modeCalculation ? { modeCalculation: calculateKnowledgeModePrice({
@@ -104,6 +95,10 @@ export function createAiEstimatorKnowledgeContextService(
           ...(input.inHouseCalculation ? { inHouseCalculation: calculateKnowledgeInHousePrice({
             ...input.inHouseCalculation, quantity: input.quantity!, quantityScale: input.quantityScale,
             markupBasis: input.modeCalculationMarkupBasis, discountBps: input.modeCalculationDiscountBps
+          }) } : {}),
+          ...(input.pmcCalculation ? { pmcCalculation: calculateKnowledgePmcPrice({
+            ...input.pmcCalculation, quantity: input.quantity!, quantityScale: input.quantityScale,
+            discountBps: input.modeCalculationDiscountBps
           }) } : {})
         };
       } catch (error) {

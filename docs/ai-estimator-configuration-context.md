@@ -21,7 +21,7 @@ Use stable IDs from `lineage` and the returned Overview identities, never labels
 
 The Mode checkboxes and Execution source radio buttons choose which configuration the administrator is viewing. They do not enable/disable, delete or merge the other stored configurations. The UI labels this view behavior.
 
-PMC Margin is an optional numeric input saved as `advanced.pmcMarginBps` (integer hundredths of a percent). Both the form and API enforce 10%–20% inclusive, with up to two decimal places. Values outside this range must be corrected before saving; existing invalid values are displayed for correction rather than silently changed. Clearing it saves null. This separate PMC setting does not modify any cost's gross margin markup or simulator formula.
+PMC Margin is an optional numeric input saved as `advanced.pmcMarginBps` (integer hundredths of a percent). Both the form and API enforce 10%–20% inclusive, with up to two decimal places. Values outside this range must be corrected before saving; existing invalid values are displayed for correction rather than silently changed. Clearing it saves null. The PMC test simulator requires this margin and uses it instead of Starting or Minimum markup. Execution calculations and saved legacy markup fields are unchanged.
 
 ## Selected calculation context
 
@@ -51,6 +51,22 @@ Use the existing backend Mode calculator, including its rounding and overflow ch
 
 `maximumDiscountBps = startingMarkupBps - minimumMarkupBps`, independently for each cost. This is a difference in markup percentage points. Test simulators accept temporary `modeCalculationDiscountBps` and subtract it from the chosen markup before calculating the total. It must not reduce that markup below the minimum: the allowed discount at minimum markup is zero. The combined In-house simulator applies one discount to both costs, bounded by the smaller allowance. The backend enforces the limit and returns the effective markup, pre-discount total and saving for each cost. Estimation-level discount entry/enforcement is not yet connected and must not reinterpret this as a percentage discount on the final selling price.
 
-The existing top-level `preview` uses the older immutable price-version/GST calculation system. It remains for compatibility and is **not** the total for `configuration.calculations`. Do not combine both systems or let a generic legacy rate override the selected Mode settings. PMC's displayed 10%–20% margin range also does not add an extra charge to the current Mode formula.
+The existing top-level `preview` uses the older immutable price-version/GST calculation system. It remains for compatibility and is **not** the total for `configuration.calculations`. Do not combine both systems or let a generic legacy rate override the selected Mode settings.
+
+## PMC test simulator
+
+`POST /api/v1/admin/ai-estimator-knowledge/preview` accepts a separate `pmcCalculation` object with `baseRatePaise`, `lowQuantityLimit`, optional `impactBps`, and required `pmcMarginBps`. The configuration editor supplies the first three from its PMC cost settings and the margin from `advanced.pmcMarginBps`. It sends the editable test quantity through `quantity` / Overview `quantityScale`, and the optional test discount through `modeCalculationDiscountBps`. Preview inputs are temporary and do not save configuration changes.
+
+PMC cannot be combined with `modeCalculation`, `inHouseCalculation`, or `modeCalculationMarkupBasis`. It requires a quantity and a 10%–20% PMC margin. Configured Impact applies at or below the configured Low Quantity Limit. For a limit of 15, the charge applies at quantity 15 and stops above 15; the rule uses the configured limit rather than a fixed number. Omitted Impact defaults to 10%, while an explicit zero disables the charge. Configured PMC Impact is limited to `Number.MAX_SAFE_INTEGER - 10000`; Execution retains its strictly-below boundary.
+
+First compute `baseAmountPaise` from the original unit rate and quantity. Apply configured Impact using the inclusive quantity limit, round the revised unit rate in paise, then multiply by quantity and round that amount. `lowQuantityImpactAmountPaise` is the rounded revised amount minus the base amount, so `baseAmountPaise + lowQuantityImpactAmountPaise = revisedAmountPaise` exactly. Do not independently round the surcharge. Zero quantity produces zero amounts.
+
+Add PMC margin to the revised amount: `subtotal = roundHalfUp(revisedAmountPaise * (10000 + pmcMarginBps) / 10000)`. The margin amount is `subtotal - revisedAmountPaise`. Apply discount to that subtotal: `discountAmount = roundHalfUp(subtotal * discountBps / 10000)`, then `total = subtotal - discountAmount`. The PMC margin and discount remain separate amounts. `finalVendorChargesPaise = total - pmcMarginAmountPaise`; vendor charges exclude the PMC margin, and adding the two equals the final total.
+
+The discount rate must retain the 10% margin floor: `maximumDiscountBps = floor((pmcMarginBps - 1000) * 10000 / (10000 + pmcMarginBps))`. The rounded final amount must also be at least `roundHalfUp(revisedAmountPaise * 11000 / 10000)`. Reject a discount that fails either check; do not clamp it. This monetary check matters at small amounts: 2,275 paise with 10.03% margin produces a 2,503-paise subtotal, and a 0.02% discount rounds to 1 paisa, taking the total below the 2,503-paise floor.
+
+The `pmcCalculation` response always reports the base amount, configured low-quantity charge, revised rate and amount, applied Impact, PMC margin rate and amount, pre-discount subtotal, final vendor charges, and total. When a discount is supplied, `discount` reports its rate, amount, and the same pre-discount subtotal for compatibility. It does not report an effective-margin percentage. No Starting or Minimum markup contributes to this result. Execution discounts continue to subtract markup percentage points as documented above.
+
+This simulator branch does not extend the `configuration` context response above. Its existing `mode-markup-v1` fields and `maximumDiscountBps` retain their compatibility meaning; they do not include or resolve `advanced.pmcMarginBps`, and must not be treated as the new PMC simulator's total or discount allowance.
 
 The future estimator integration still needs stable configuration IDs on estimator items, server-authorized resolution for that workflow, deterministic pricing, and saved revision/formula lineage before AI analysis or suggestions can use these configurations on real estimates.

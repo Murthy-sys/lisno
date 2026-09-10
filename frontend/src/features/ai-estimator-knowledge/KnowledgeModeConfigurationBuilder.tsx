@@ -40,7 +40,7 @@ import type {
 export interface KnowledgeModeConfigurationBuilderProps {
   readonly payload: KnowledgeJsonObject;
   readonly mainLineName: string;
-  readonly calculation?: (scope: ModeCalculationScope, active: boolean) => ReactNode;
+  readonly calculation?: (scope: ModeCalculationScope, active: boolean, pmcMarginControl?: ReactNode) => ReactNode;
   readonly inHouseTotal?: (active: boolean) => ReactNode;
   readonly calculationValidity?: Readonly<Record<ModeCalculationScope, boolean>>;
   readonly descriptionResetKey?: string;
@@ -111,12 +111,12 @@ export function KnowledgeModeConfigurationBuilder({
   const [selectedExecutionSource, setSelectedExecutionSource] =
     useState<KnowledgeExecutionSource>("sub_vendor");
   const validationSummaryRef = useRef<HTMLDivElement>(null);
-  const fieldRefs = useRef(new Map<string, HTMLDivElement>());
+  const fieldRefs = useRef(new Map<string, HTMLElement>());
   const lastValidationAttempt = useRef(0);
   const executionConfiguration = partitioned.primary.execution[selectedExecutionSource];
   const selectedSourceLabel = executionSourceLabel(selectedExecutionSource);
   const repeaterLabel = `${selectedSourceLabel} components`;
-  const showSharedScope = visibleModes.pmc || (visibleModes.execution && selectedExecutionSource === "sub_vendor");
+  const showSubVendorScope = visibleModes.execution && selectedExecutionSource === "sub_vendor";
   const invalidCalculationScope = MODE_CALCULATION_SCOPES.find((scope) => !calculationValidity[scope]);
   const calculationValid = invalidCalculationScope === undefined;
 
@@ -237,6 +237,17 @@ export function KnowledgeModeConfigurationBuilder({
   const configurationIndex = parsed.configurations.findIndex(
     ({ id }) => id === executionConfiguration?.id
   );
+  const pmcMarginControl = <div ref={(node) => {
+    if (node) fieldRefs.current.set("pmcMarginBps", node);
+    else fieldRefs.current.delete("pmcMarginBps");
+  }}>
+    <KnowledgePmcMarginInput key={descriptionResetKey} value={payload.pmcMarginBps}
+      readOnly={readOnly} error={issueFor("pmcMarginBps")}
+      onChange={(pmcMarginBps) => {
+        onDirty();
+        onChange({ ...payload, pmcMarginBps });
+      }} />
+  </div>;
 
   return (
     <div
@@ -247,7 +258,7 @@ export function KnowledgeModeConfigurationBuilder({
         <div>
           <h2 id="knowledge-mode-configuration-title">Mode configuration</h2>
           <p>PMC, Sub-Vendor, Labor cost and Material cost each have separate calculation settings.</p>
-          <p>UOM, the paragraph and Inclusion/Exclusion lists are shared for this Main Line. Select a Mode below to view its settings.</p>
+          <p>UOM and the paragraph are shared for this Main Line. Inclusions and Exclusions are available under Execution → Sub-Vendor.</p>
         </div>
         {readOnly ? <span className="knowledge-readonly-label">Read-only revision</span> : null}
       </div>
@@ -305,21 +316,12 @@ export function KnowledgeModeConfigurationBuilder({
             </label>
           ))}
         </div>
-        <div className="knowledge-mode-configuration__pmc-context" hidden={!visibleModes.pmc}
-          ref={(node) => {
-            if (node) fieldRefs.current.set("pmcMarginBps", node);
-            else fieldRefs.current.delete("pmcMarginBps");
-          }}>
+        <section id="knowledge-mode-section-pmc" aria-label="PMC" className="knowledge-mode-configuration__pmc-context" hidden={!visibleModes.pmc}>
           {visibleModes.pmc ? <p id="knowledge-mode-pmc-context" className="knowledge-mode-configuration__mode-context">
-            PMC for {mainLineName}
+            PMC fee for {mainLineName}
           </p> : null}
-          <KnowledgePmcMarginInput key={descriptionResetKey} value={payload.pmcMarginBps}
-            readOnly={readOnly} error={issueFor("pmcMarginBps")}
-            onChange={(pmcMarginBps) => {
-              onDirty();
-              onChange({ ...payload, pmcMarginBps });
-            }} />
-        </div>
+          {!calculation ? pmcMarginControl : null}
+        </section>
         {visibleModes.execution ? (
           <p id="knowledge-mode-execution-context" className="knowledge-mode-configuration__mode-context">
             Execution ({selectedSourceLabel}) for {mainLineName}
@@ -374,11 +376,8 @@ export function KnowledgeModeConfigurationBuilder({
         </div> : null}
       </section>
 
-      <section id="knowledge-mode-section-pmc" hidden={!showSharedScope}
-        aria-labelledby={visibleModes.pmc ? "knowledge-mode-pmc-title" : undefined}
-        aria-label={visibleModes.pmc ? undefined : "Sub-Vendor scope"}>
-        {showSharedScope ? <div className="knowledge-mode-configuration__mode-content">
-          {visibleModes.pmc ? <h3 id="knowledge-mode-pmc-title">PMC</h3> : null}
+      <section hidden={!showSubVendorScope} aria-label="Sub-Vendor scope">
+        {showSubVendorScope ? <div className="knowledge-mode-configuration__mode-content">
           <div className="knowledge-pmc-scope">
             {PMC_SCOPE_LISTS.map((list) => (
               <KnowledgePmcScopeChecklist
@@ -409,7 +408,7 @@ export function KnowledgeModeConfigurationBuilder({
             if (node) fieldRefs.current.set(`modeCalculations.${scope}`, node);
             else fieldRefs.current.delete(`modeCalculations.${scope}`);
           }}
-        >{calculation(scope, active)}</div>;
+        >{calculation(scope, active, scope === "pmc" ? pmcMarginControl : undefined)}</div>;
       }) : null}
 
       {inHouseTotal?.(visibleModes.execution && selectedExecutionSource === "in_house")}
@@ -801,6 +800,11 @@ function selectConfigurationForIssue(
   }
   const match = /^modeConfigurations\.(\d+)/u.exec(issue.path);
   const configuration = match ? configurations[Number(match[1])] : undefined;
+  if (configuration?.modeKind === "pmc" && /^modeConfigurations\.\d+\.(inclusions|exclusions)(?:\.|$)/u.test(issue.path)) {
+    selectMode("execution");
+    selectExecutionSource("sub_vendor");
+    return;
+  }
   if (configuration?.modeKind === "pmc") selectMode("pmc");
   if (
     configuration?.modeKind === "execution" &&
@@ -813,7 +817,7 @@ function selectConfigurationForIssue(
 
 function focusIssue(
   issue: KnowledgeModeConfigurationIssue,
-  refs: ReadonlyMap<string, HTMLDivElement>,
+  refs: ReadonlyMap<string, HTMLElement>,
   fallback: HTMLDivElement | null
 ) {
   const issuePath = issue.path === "modeCalculation" || issue.path.startsWith("modeCalculation.")

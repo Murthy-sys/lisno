@@ -2,6 +2,7 @@ import type {
   KnowledgeCanonicalDecimal,
   KnowledgeModeCalculationSettings,
   KnowledgeInHouseCalculationSettings,
+  KnowledgePmcCalculationSettings,
   KnowledgePreview,
   KnowledgePreviewAmountComponent
 } from "../contracts/ai-estimator-knowledge.js";
@@ -369,6 +370,7 @@ function amountComponent(
 export interface CalculateKnowledgePreviewInput {
   modeCalculation?: KnowledgeModeCalculationSettings;
   inHouseCalculation?: KnowledgeInHouseCalculationSettings;
+  pmcCalculation?: KnowledgePmcCalculationSettings;
   modeCalculationMarkupBasis?: "starting" | "minimum";
   modeCalculationDiscountBps?: number;
   priceVersionId?: string | null;
@@ -395,6 +397,31 @@ export interface CalculateKnowledgePreviewInput {
 export function calculateKnowledgePreview(
   input: CalculateKnowledgePreviewInput
 ): KnowledgePreview {
+  if (input.pmcCalculation !== undefined && (input.pmcCalculation === null || typeof input.pmcCalculation !== "object" || Array.isArray(input.pmcCalculation))) {
+    throw new KnowledgeCalculationError("INVALID_AMOUNT", "PMC calculation settings are required.");
+  }
+  const hasCalculation = Boolean(input.modeCalculation || input.inHouseCalculation || input.pmcCalculation);
+  if (input.pmcCalculation && (input.modeCalculation || input.inHouseCalculation)) {
+    throw new KnowledgeCalculationError("INVALID_AMOUNT", "PMC calculations cannot be combined with Execution calculations.");
+  }
+  if (input.pmcCalculation && input.modeCalculationMarkupBasis !== undefined) {
+    throw new KnowledgeCalculationError("INVALID_AMOUNT", "PMC calculations use PMC margin; a markup selection is not allowed.");
+  }
+  if (hasCalculation && input.quantity == null) {
+    throw new KnowledgeCalculationError("INVALID_DECIMAL", "A test quantity is required for Mode calculations.");
+  }
+  if (input.pmcCalculation && typeof input.quantity !== "string") {
+    throw new KnowledgeCalculationError("INVALID_DECIMAL", "PMC quantity must be a non-negative decimal string.");
+  }
+  if (input.modeCalculation && input.inHouseCalculation) {
+    throw new KnowledgeCalculationError("INVALID_AMOUNT", "Choose either an individual calculation or an In-house total.");
+  }
+  if (input.modeCalculationDiscountBps !== undefined && !hasCalculation) {
+    throw new KnowledgeCalculationError("INVALID_AMOUNT", "Mode calculation settings are required when applying a discount.");
+  }
+  if (input.modeCalculationMarkupBasis !== undefined && !hasCalculation) {
+    throw new KnowledgeCalculationError("INVALID_AMOUNT", "Mode calculation settings are required when choosing a markup.");
+  }
   const baseRate = input.unitRatePaise ?? null;
   if (baseRate !== null) assertSafeMoney(baseRate);
   const adjustedRate =

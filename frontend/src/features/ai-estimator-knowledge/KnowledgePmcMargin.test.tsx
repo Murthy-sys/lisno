@@ -22,7 +22,7 @@ describe("PMC Margin", () => {
   it("shows a compact number input beside the main line with strict limits", async () => {
     const onChange = vi.fn();
     render(<Harness onChange={onChange} />);
-    const margin = within(screen.getByText("PMC for TV Unit").parentElement!).getByText("PMC Margin");
+    const margin = within(screen.getByText(/^PMC fee (?:for )?TV Unit$/).parentElement!).getByText("PMC Margin");
     expect(margin).toBeVisible();
     expect(screen.getByRole("spinbutton", { name: "PMC Margin" })).toHaveAttribute("type", "number");
     expect(screen.getByRole("spinbutton", { name: "PMC Margin" })).toHaveAttribute("min", "10");

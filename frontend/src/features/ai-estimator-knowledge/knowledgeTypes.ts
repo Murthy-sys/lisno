@@ -312,6 +312,23 @@ export interface KnowledgePreviewAmountComponent {
 }
 
 export interface KnowledgePreview {
+  readonly pmcCalculation?: {
+    readonly baseAmountPaise: number;
+    readonly lowQuantityImpactAmountPaise: number;
+    readonly revisedUnitRatePaise: number;
+    readonly revisedAmountPaise: number;
+    readonly totalPaise: number;
+    readonly appliedImpactBps: number;
+    readonly pmcMarginBps: number;
+    readonly pmcMarginAmountPaise: number;
+    readonly totalBeforeDiscountPaise: number;
+    readonly finalVendorChargesPaise: number;
+    readonly discount?: {
+      readonly rateBps: number;
+      readonly totalBeforeDiscountPaise: number;
+      readonly amountPaise: number;
+    };
+  };
   readonly inHouseCalculation?: {
     readonly labor: NonNullable<KnowledgePreview["modeCalculation"]>;
     readonly material: NonNullable<KnowledgePreview["modeCalculation"]>;
